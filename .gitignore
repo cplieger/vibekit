@@ -38,3 +38,6 @@ go.work.sum
 # Stryker mutation-testing artifacts (weekly-stryker.yaml / local npx stryker run)
 reports/
 .stryker-tmp/
+
+# Review/audit evidence notes (functional-review runs)
+.audit/

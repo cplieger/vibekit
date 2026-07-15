@@ -17,7 +17,10 @@ func setKiroSettings(t *testing.T, body string) string {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if body != "" {
-		if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(body), 0o600); err != nil {
+		// cli.json: the file `kiro-cli settings` actually persists to
+		// (kiroSettingsPath reads it; settings.json doesn't exist on
+		// current installs).
+		if err := os.WriteFile(filepath.Join(dir, "cli.json"), []byte(body), 0o600); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
@@ -34,7 +37,7 @@ func TestIsHookStatusEnabled_fileMissing(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	h, _, _ := newTestHub()
 	if !h.isHookStatusEnabled() {
-		t.Error("missing settings.json: want default true")
+		t.Error("missing cli.json: want default true")
 	}
 }
 

@@ -43,7 +43,8 @@ import { signal, effect, el } from "@cplieger/reactive";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
 import { startGitHubDeviceFlow, abortPoll, type OAuthFlowDeps } from "./forge-auth-oauth.js";
 import { renderPATForm, type PATFormDeps } from "./forge-auth-pat.js";
-import { enableTool, getToolsStatus } from "./actions/tools.js";
+import { getToolsStatus } from "./actions/tools.js";
+import { installToolAndWait } from "./tools.js";
 import { RollingOutput } from "./modals.js";
 import {
   renderRepoRow,
@@ -692,11 +693,11 @@ function onAddAccount(kind: ForgeKind, section: HTMLElement): void {
 }
 
 /** Map a forge kind to the CLI binary it drives. */
-const CLI_BY_KIND: Record<ForgeKind, { section: string; name: string }> = {
-  github: { section: "binary", name: "gh" },
-  gitlab: { section: "binary", name: "glab" },
-  codeberg: { section: "binary", name: "tea" },
-  gitea: { section: "binary", name: "tea" },
+const CLI_BY_KIND: Record<ForgeKind, { name: string }> = {
+  github: { name: "gh" },
+  gitlab: { name: "glab" },
+  codeberg: { name: "tea" },
+  gitea: { name: "tea" },
 };
 
 /**
@@ -731,20 +732,21 @@ async function gateAddPaneOnCLI(pane: HTMLElement, kind: ForgeKind): Promise<voi
     "aria-label": `${cli.name} install progress`,
   }) as HTMLDivElement;
 
-  // Disable the button while the enable runs (auto re-enabled on settle);
-  // replaces the manual btn.disabled toggles.
-  bindLoadingState("tools.enable", btn);
+  // Disable the button while the install job runs (auto re-enabled on
+  // settle); replaces the manual btn.disabled toggles.
+  bindLoadingState("tools.ensure", btn);
   btn.addEventListener("click", () => {
     void (async () => {
       const roll = new RollingOutput(out, "git-output-modal");
       out.classList.remove("hidden");
       roll.append(`Installing ${cli.name}…`);
-      const d = await enableTool.dispatch({ section: cli.section, name: cli.name });
-      if (d === null || d.error !== undefined) {
-        roll.append(`Install failed${d?.error !== undefined ? `: ${d.error}` : ""}`);
+      const res = await installToolAndWait(cli.name, (line) => {
+        roll.append(line);
+      });
+      if (!res.ok) {
+        roll.append(`Install failed${res.error !== undefined ? `: ${res.error}` : ""}`);
         return;
       }
-      roll.append(d.output ?? "");
       const after = await getToolsStatus.dispatch();
       if (after !== null && after[cli.name] === true) {
         banner.remove();

@@ -254,8 +254,9 @@ export function renameTab(id: string, name: string): void {
 }
 
 /** Set a status indicator on a tab: "thinking" (pulsing accent dot),
- *  "permission" (amber dot), or "" to clear. */
-export function setTabStatus(id: string, status: "" | "thinking" | "permission"): void {
+ *  "permission" (amber dot), "waiting" (pulsing amber dot — the agent
+ *  declared waiting_on_user and needs input), or "" to clear. */
+export function setTabStatus(id: string, status: "" | "thinking" | "permission" | "waiting"): void {
   const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`);
   if (el === null) {
     return;
@@ -263,6 +264,24 @@ export function setTabStatus(id: string, status: "" | "thinking" | "permission")
   el.classList.toggle("hidden", status === "");
   el.classList.toggle("tab-dot-thinking", status === "thinking");
   el.classList.toggle("tab-dot-permission", status === "permission");
+  el.classList.toggle("tab-dot-waiting", status === "waiting");
+}
+
+/** Set (or clear, with "") a tab's hover tooltip. Used for the agent's
+ *  self-declared "what I'm working on" description on chat tabs. Direct
+ *  DOM write like setTabStatus — reapplied by the store effect after any
+ *  re-render, so transient loss on rebuild self-heals the same way the
+ *  status dot does. */
+export function setTabTooltip(id: string, text: string): void {
+  const el = document.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
+  if (el === null) {
+    return;
+  }
+  if (text === "") {
+    el.removeAttribute("title");
+  } else {
+    el.title = text;
+  }
 }
 
 /** Mark an editor tab as having unsaved changes (a steady accent dot).

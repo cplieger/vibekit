@@ -131,12 +131,69 @@ export function isThinking(id: string): boolean {
 }
 
 export function setThinking(id: string, v: boolean): void {
-  sessions.update(id, (s) => ({
-    ...s,
-    thinking: v,
-    working_label: v ? s.working_label : "Thinking",
-  }));
+  sessions.update(id, (s) => {
+    const next: Session = {
+      ...s,
+      thinking: v,
+      working_label: v ? s.working_label : "Thinking",
+    };
+    // A new turn invalidates the agent's previously declared status
+    // (e.g. a lingering waiting_on_user): the agent re-declares via
+    // focus updates as the turn progresses.
+    if (v) {
+      delete next.agent_status;
+      delete next.agent_status_text;
+    }
+    return next;
+  });
 }
+
+/** Derive the tab activity dot for a session: an in-flight turn shows the
+ *  pulsing "thinking" dot; an agent-declared waiting_on_user (which
+ *  deliberately survives turn end — it means "I asked you something")
+ *  shows the amber "waiting" dot; anything else clears. Single rule shared
+ *  by the store effect (chat.ts) and the turn_ended handler so the two
+ *  writers can't disagree. */
+export function tabStatusFor(s: Session | undefined): "" | "thinking" | "waiting" {
+  if (s === undefined) {
+    return "";
+  }
+  if (s.thinking) {
+    return "thinking";
+  }
+  if (s.agent_status === "waiting_on_user") {
+    return "waiting";
+  }
+  return "";
+}
+
+/** Record the agent-declared activity status/description for a chat
+ *  (chat_status SSE, sourced from the KAS focus_update channel). Empty
+ *  strings clear the respective field. */
+export function setAgentStatus(id: string, status: string, text: string): void {
+  const s = get(id);
+  if (s === undefined) {
+    return;
+  }
+  if ((s.agent_status ?? "") === status && (s.agent_status_text ?? "") === text) {
+    return; // no-op: don't churn the session signal
+  }
+  sessions.update(id, (prev) => {
+    const next: Session = { ...prev };
+    if (status === "") {
+      delete next.agent_status;
+    } else {
+      next.agent_status = status;
+    }
+    if (text === "") {
+      delete next.agent_status_text;
+    } else {
+      next.agent_status_text = text;
+    }
+    return next;
+  });
+}
+
 
 export function setWorkingLabel(id: string, label: string): void {
   sessions.update(id, (s) => ({ ...s, working_label: label }));

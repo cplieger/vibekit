@@ -10,8 +10,9 @@
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";
-import { checkoutBranch } from "./actions/git-branch.js";
+import { checkoutBranch, suggestBranchName } from "./actions/git-branch.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
+import { withAsyncFeedback } from "./async-button.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
 
@@ -66,10 +67,38 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     autocomplete: "off",
     "aria-label": "New branch name",
   }) as HTMLInputElement;
+  // AI branch-name suggestion: fills the create input from the repo's
+  // work in progress; the user edits or presses Enter to accept. Same
+  // pattern as the commit box's "✨ AI message" button.
+  const suggestBtn = el(
+    "button",
+    {
+      type: "button",
+      className: "btn-small git-branch-popover-suggest",
+      "data-tooltip": "Suggest a branch name for the work in progress",
+      "aria-label": "Suggest a branch name",
+    },
+    "✨",
+  ) as HTMLButtonElement;
+  suggestBtn.addEventListener("click", () => {
+    void withAsyncFeedback(suggestBtn, async () => {
+      const res = await suggestBranchName.dispatch({ repo });
+      if (res === null) {
+        throw new Error("suggestion failed");
+      }
+      // Only fill while this popover is still the open one, and never
+      // wipe a name the user already typed past the suggestion.
+      if (res.output !== undefined && res.output !== "" && openPopover === pop) {
+        createInput.value = res.output;
+        createInput.focus();
+      }
+    });
+  });
   const createForm = el(
     "form",
     { className: "git-branch-popover-create" },
     createInput,
+    suggestBtn,
   ) as HTMLFormElement;
   pop.append(filter, list, createForm);
   document.body.appendChild(pop);

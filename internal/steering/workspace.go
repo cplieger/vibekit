@@ -11,7 +11,7 @@ import (
 	"github.com/cplieger/vibekit/internal/fileutil"
 )
 
-func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
+func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, forgeKinds map[string]bool) {
 	entries, err := os.ReadDir(workDir)
 	if err != nil || len(entries) == 0 {
 		b.WriteString("## Workspace\n\nEmpty.\n\n")
@@ -27,11 +27,12 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 	if len(repos) > 0 {
 		b.WriteString("### Git repositories\n\n")
 		b.WriteString("Multiple repos coexist under `/workspace`. ")
-		b.WriteString("Use `cwd` parameter in shell commands to target a specific repo ")
+		b.WriteString("Use the `cwd` parameter in shell commands to target a specific repo ")
 		b.WriteString("(e.g. `cwd: \"myrepo\"` runs in `/workspace/myrepo/`). ")
-		b.WriteString("File paths like `myrepo/src/main.go` work with readFile/readCode.\n\n")
+		b.WriteString("File paths like `myrepo/src/main.go` work with the file tools ")
+		b.WriteString("(read_file, read_code, grep_search).\n\n")
 		for _, r := range repos {
-			writeRepoEntry(b, workDir, r)
+			writeRepoEntry(b, workDir, r, forgeKinds)
 		}
 		b.WriteString("\n")
 		b.WriteString("The Git panel in the UI presents these repositories as collapsible ")
@@ -61,7 +62,7 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string) {
 	}
 }
 
-func writeRepoEntry(b *strings.Builder, workDir, r string) {
+func writeRepoEntry(b *strings.Builder, workDir, r string, forgeKinds map[string]bool) {
 	repoDir := filepath.Join(workDir, r)
 	origin := readGitOrigin(repoDir)
 	branch := readGitBranch(repoDir)
@@ -72,8 +73,12 @@ func writeRepoEntry(b *strings.Builder, workDir, r string) {
 	}
 	if origin != "" {
 		host := hostFromGitURL(origin)
-		cli := forgeCLI(kindFromHost(host))
-		if cli != "" {
+		kind := kindFromHost(host)
+		// Only advertise the forge CLI when that forge kind is
+		// connected — the CLI binary is installed and authenticated
+		// at forge login, so an unconnected kind's CLI isn't on PATH.
+		cli := forgeCLI(kind)
+		if cli != "" && cliKindConnected(forgeKinds, kind) {
 			fmt.Fprintf(b, " (%s — use `%s` for PRs/issues/CI)", host, cli)
 		} else if host != "" {
 			fmt.Fprintf(b, " (%s)", host)
@@ -111,7 +116,8 @@ func writeRepoAgents(b *strings.Builder, repo string, agents []AgentEntry) {
 }
 
 // writeRepoHooks renders the hooks inventory for a repo, one bullet per
-// hook with its trigger label and (when present) a command preview.
+// hook with its name, trigger label, and (when present) an action
+// preview. Fields are pre-sanitised by parseHookDoc.
 func writeRepoHooks(b *strings.Builder, repo string, hooks []HookEntry) {
 	fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", repo)
 	for _, h := range hooks {
@@ -119,7 +125,11 @@ func writeRepoHooks(b *strings.Builder, repo string, hooks []HookEntry) {
 		if trigger == "" {
 			trigger = "unknown"
 		}
-		fmt.Fprintf(b, "    - `%s` [%s]", h.Filename, trigger)
+		fmt.Fprintf(b, "    - `%s`", h.Filename)
+		if h.Name != "" {
+			fmt.Fprintf(b, " %s", h.Name)
+		}
+		fmt.Fprintf(b, " [%s]", trigger)
 		if h.Command != "" {
 			fmt.Fprintf(b, " → `%s`", h.Command)
 		}
@@ -237,29 +247,53 @@ func kindFromHost(host string) string {
 		return ""
 	}
 	if host == "github.com" || strings.HasSuffix(host, ".github.com") || strings.HasPrefix(host, "github.") {
-		return "github"
+		return kindGitHub
 	}
 	if host == "gitlab.com" || strings.HasSuffix(host, ".gitlab.com") || strings.Contains(host, "gitlab") {
-		return "gitlab"
+		return kindGitLab
 	}
 	if host == "codeberg.org" {
-		return "codeberg"
+		return kindCodeberg
 	}
 	if strings.Contains(host, "gitea") || strings.Contains(host, "forgejo") {
-		return "gitea"
+		return kindGitea
 	}
 	return ""
 }
 
+// cliKindConnected reports whether the forge CLI serving `kind` is
+// available: the kind itself is connected, or — for the shared tea
+// CLI — its sibling kind is (codeberg is a named gitea shortcut; one
+// login makes `tea` available for both).
+func cliKindConnected(forgeKinds map[string]bool, kind string) bool {
+	if forgeKinds[kind] {
+		return true
+	}
+	switch kind {
+	case kindGitea:
+		return forgeKinds[kindCodeberg]
+	case kindCodeberg:
+		return forgeKinds[kindGitea]
+	}
+	return false
+}
+
+// classifyEntries splits workspace entries into git repos and plain
+// directories. Dot-NAMED git repos (".kiro", ".github") are legitimate
+// clone targets and must be listed — the Git panel's repo scanner
+// (internal/git/repos.go) learned this the hard way; skipping every
+// dot-dir made such clones invisible while their steering inventories
+// sat unused. Dot-named NON-repos (.cache, .venv) stay hidden: they are
+// tool state, not workspace content the agent should be pointed at.
 func classifyEntries(ctx context.Context, entries []os.DirEntry, workDir string) (repos, dirs []string) {
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, ".") || !e.IsDir() {
+		if !e.IsDir() || name == ".git" {
 			continue
 		}
 		if fileutil.IsGitRepo(ctx, filepath.Join(workDir, name)) {
 			repos = append(repos, name)
-		} else {
+		} else if !strings.HasPrefix(name, ".") {
 			dirs = append(dirs, name)
 		}
 	}

@@ -31,6 +31,7 @@ func NewAIHandler(workDir string, prompter api.UtilityPrompter) *AIHandler {
 func (a *AIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/git/commit-message", a.handleCommitMessage)
 	mux.HandleFunc("/api/git/pr-description", a.handlePRDescription)
+	mux.HandleFunc("/api/git/branch-name", a.handleBranchName)
 }
 
 // repoDir resolves a client-supplied repo name against workDir (same
@@ -91,7 +92,9 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 
 	prompt := buildCommitPrompt(commitHistory, fullDiff)
 
-	result, err := a.prompter.UtilityPrompt(r.Context(), prompt)
+	// Medium effort: the task reads a full staged diff and must infer the
+	// change's intent; low-effort output on complex diffs reads generic.
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortMedium)
 	if err != nil {
 		slog.Error("commit message generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -155,7 +158,9 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 
 	prompt := buildPRPrompt(log, diff)
 
-	result, err := a.prompter.UtilityPrompt(r.Context(), prompt)
+	// Medium effort: reads a branch diff + commit log (same class as the
+	// commit-message task).
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortMedium)
 	if err != nil {
 		slog.Error("PR description generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -170,4 +175,70 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	result = strings.TrimSpace(result)
 
 	api.WriteJSON(w, map[string]string{jsonKeyOutput: result})
+}
+
+// handleBranchName suggests a branch name for the repo's work in progress.
+// Context priority: uncommitted changes (status + capped diff) when any
+// exist, else the most recent commits (the user may have just committed
+// onto the wrong branch and wants a home for the work). Existing branch
+// names feed the prompt for style-matching and collision avoidance.
+func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
+	if !requirePOST(w, r) {
+		return
+	}
+	var body repoBody
+	if !decodePostBody(w, r, &body, "bad request") {
+		return
+	}
+	dir := a.repoDir(body.Repo)
+
+	workContext := uncommittedContext(r.Context(), dir)
+	if workContext == "" {
+		// Nothing uncommitted: fall back to recent commits.
+		commits := getRecentCommits(r.Context(), dir, 5)
+		if commits == "No commit history available" {
+			writeGitError(w, KindNoChanges, "nothing to name a branch after")
+			return
+		}
+		workContext = "Recent commits:\n" + commits
+	}
+
+	branches, err := gitCmd(r.Context(), dir, "branch", "--list", "--format=%(refname:short)")
+	if err != nil {
+		branches = ""
+	}
+	prompt := buildBranchPrompt(strings.TrimSpace(branches), workContext)
+
+	// Low effort: a short name from a small context; no diff reasoning
+	// depth needed.
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortLow)
+	if err != nil {
+		slog.Error("branch name generation failed", "error", err)
+		writeGitError(w, KindGenerationFailed, err.Error())
+		return
+	}
+	name := sanitizeBranchName(result)
+	if name == "" {
+		writeGitError(w, KindGenerationFailed, "model returned no usable name")
+		return
+	}
+	api.WriteJSON(w, map[string]string{jsonKeyOutput: name})
+}
+
+// uncommittedContext summarises the repo's uncommitted state (porcelain
+// status + a capped combined diff) for prompt construction. Empty when the
+// tree is clean.
+func uncommittedContext(ctx context.Context, dir string) string {
+	status, err := gitCmd(ctx, dir, "status", "--porcelain")
+	if err != nil || strings.TrimSpace(status) == "" {
+		return ""
+	}
+	// Combined staged + unstaged diff against HEAD, capped small: branch
+	// naming needs the gist, not the whole change.
+	diff, dErr := gitCmd(ctx, dir, "diff", "HEAD")
+	if dErr != nil {
+		diff = ""
+	}
+	diff = truncateDiff(diff, 6*1024)
+	return "Changed files:\n" + strings.TrimSpace(status) + "\n\nDiff:\n" + diff
 }

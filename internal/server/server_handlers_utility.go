@@ -32,7 +32,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		prompt += "Context: " + body.Context + "\n\n"
 	}
 	prompt += "Error: " + body.Error
-	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt)
+	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt, api.EffortLow)
 	if err != nil {
 		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("generation failed"))
 		return
@@ -87,7 +87,9 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 	sb.WriteString("\n```\n\nTheirs:\n```\n")
 	sb.WriteString(body.Theirs)
 	sb.WriteString("\n```\n\nMerged:")
-	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String())
+	// Medium effort: merging two divergent code edits is the hardest
+	// utility task; a low-effort merge tends to just pick one side.
+	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String(), api.EffortMedium)
 	if err != nil {
 		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("generation failed"))
 		return

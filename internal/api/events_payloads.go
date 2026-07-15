@@ -351,6 +351,18 @@ type CommandsUpdatedPayload struct {
 // CompactionStartedPayload is the payload for type="compaction_started".
 type CompactionStartedPayload struct{}
 
+// ChatStatusPayload is the payload for type="chat_status": the agent's
+// self-declared activity for a chat, sourced from the KAS focus_update
+// channel (the model's update_session_information tool). Status is one of
+// in_progress | waiting_on_user | completed | idle; Description is a short
+// "what I'm working on" line. Ephemeral by design — never persisted, so a
+// restart or reconnect gap resets tabs to a neutral state instead of
+// replaying a stale "in_progress".
+type ChatStatusPayload struct {
+	Status      string `json:"status,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
 // MCPConfigChangedPayload is the payload for type="mcp_config_changed".
 type MCPConfigChangedPayload struct{}
 
@@ -363,6 +375,21 @@ type ForgesChangedPayload struct{}
 // or its .kiro/hooks/*.json file changes on disk (KAS _kiro/hooks/didChange
 // on the utility bridge). The client refetches GET /api/hooks on receipt.
 type HooksChangedPayload struct{}
+
+// ToolJobChangedPayload is the payload for type="tool_job_changed".
+// Broadcast (workspace-global — no chat_id) on every tool-job state
+// transition: enqueued, started, done, failed, cancelled. The job
+// carries no output tail; output streams via tool_job_output.
+type ToolJobChangedPayload struct {
+	Job *ToolJob `json:"job"`
+}
+
+// ToolJobOutputPayload is the payload for type="tool_job_output":
+// a coalesced batch of output lines from the running tool job.
+type ToolJobOutputPayload struct {
+	JobID string   `json:"job_id"`
+	Lines []string `json:"lines"`
+}
 
 // SettingsUpdatedPayload is the payload for type="settings_updated".
 type SettingsUpdatedPayload struct{}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os/exec"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -155,24 +154,4 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleToolsInstall(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	if !s.installing.CompareAndSwap(false, true) {
-		api.Conflict(w, "install already in progress")
-		return
-	}
-	defer s.installing.Store(false)
-	// Detached from r.Context(): the full setup run takes minutes; a client
-	// disconnect must not kill it halfway (the budget below still bounds it).
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), s.cliTimeouts.ToolsInstall)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", "/opt/vibekit/setup-tools.sh")
-	out, err := cmd.CombinedOutput()
-	result := map[string]string{jsonKeyOutput: string(out)}
-	if err != nil {
-		result["error"] = err.Error()
-	}
-	api.WriteJSON(w, result)
-}
+

@@ -1,616 +1,209 @@
-// Package server provides the HTTP server, middleware, and route registration for vibekit.
+// Tools API v2 — thin HTTP layer over internal/tools.Engine.
 //
-// Tools manifest CRUD beyond the existing /api/tools/install endpoint.
+// The engine owns the manifest (tools.json v2), the machine state, the
+// job queue, and the compiled catalog; handlers translate HTTP. Long
+// work never runs on a request: mutating endpoints enqueue a job and
+// return 202 with the job view, output streams over the SSE events
+// tool_job_output / tool_job_changed.
 //
-// Endpoints:
-//
-//	POST   /api/tools/{section}/{name}/enable    flip enabled:true,
-//	                                              auto-enable transitive
-//	                                              requires, run setup-tools.sh
-//	DELETE /api/tools/{section}/{name}            cancel any in-flight install
-//	                                              for this entry, run cleanup
-//	                                              (clear_tool via shell), flip
-//	                                              enabled:false
-//	PATCH  /api/tools/{section}/{name}            update auto_update flag.
-//	                                              Body: {"auto_update": bool}.
-//	GET    /api/tools/status                      map of binary -> bool for
-//	                                              the well-known tools the UI
-//	                                              gates feature panels on
-//	                                              (node, npm, npx, uv, gh,
-//	                                              glab, tea, ...).
-//
-// All mutations write through the same atomic-rename pattern as
-// forges/install.go's addToolsManifestEntry: read, mutate the in-memory
-// map, marshal, write to <path>.tmp, rename. No half-written manifests.
+//	GET    /api/tools                  manifest + install state + active job
+//	POST   /api/tools                  add a tool (catalog- or self-described) -> 202 job
+//	PATCH  /api/tools/{name}           merge fields; version change -> 202 job
+//	DELETE /api/tools/{name}           remove (409 + dependents without force) -> 202 job
+//	POST   /api/tools/{name}/install   (re)install at the manifest version -> 202 job
+//	POST   /api/tools/update           update-all unpinned -> 202 job
+//	GET    /api/tools/search?q=        catalog search (empty q = featured set)
+//	GET    /api/tools/jobs             active job (with output tail) + recent history
+//	POST   /api/tools/jobs/{id}/cancel abort a queued/running job
+//	GET    /api/tools/status           bare PATH probes for feature-gating UIs
 package server
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io/fs"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"slices"
-	"strings"
-	"sync"
-	"time"
 
-	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/tools"
 )
 
-const (
-	// Generous: a cold Rust toolchain (rustup + std), clangd (~160 MB),
-	// or a JRE on a slow connection can each take several minutes. Too
-	// short a timeout cancels mid-download and leaves a partial install.
-	toolsInstallTimeout = 15 * time.Minute
-	maxToolsInstallBody = 4 << 10
-)
+const maxToolsBody = 16 << 10
 
-// inflightInstalls tracks per-entry install contexts so a DELETE can
-// cancel a running enable. Keyed by "section.name". The mutex protects
-// the map; each cancel func is called with the lock held briefly.
-var (
-	inflightMu       sync.Mutex
-	inflightInstalls = map[string]context.CancelFunc{}
-)
-
-// manifestMu serializes read-modify-write cycles on tools.json so two
-// concurrent mutations (e.g. an Enable and a forge-login auto-enable)
-// can't clobber each other (the file is read, mutated in memory, then
-// rewritten — a classic TOCTOU without this guard). Held across the
-// read+write pair, not during the install subprocess.
-var manifestMu sync.Mutex
-
-// statusBinaries is the set of binaries the UI may probe via
-// /api/tools/status. Each key matches a name kiro-cli or vibekit
-// expects to find on PATH; presence determines whether the
-// feature panel shows an "install" prompt.
+// statusBinaries is the set of binaries /api/tools/status probes. Each
+// key is a name kiro-cli or a vibekit feature panel expects on PATH
+// (the MCP add modal gates on node/npx/uv, Sources on the forge CLIs).
 var statusBinaries = []string{
 	"node", "npm", "npx",
 	"go", "gofmt",
 	"java",
-	"ruby", "gem",
 	"cargo", "rustc",
 	"uv", "uvx",
 	"gh", "glab", "tea",
 	"typescript-language-server", "tsc",
 	"pyright", "pyrefly",
 	"gopls", "rust-analyzer", "clangd",
-	"jdtls", "kotlin-language-server", "solargraph",
+	"jdtls", "kotlin-language-server",
 }
 
-// allowedSections is the closed set of top-level sections the API will
-// accept in {section} path params. Anything outside this is a 404 to
-// keep arbitrary jq paths from leaking through the URL.
-var allowedSections = map[string]bool{
-	"runtimes": true,
-	"binary":   true,
-	"go":       true,
-	"npm":      true,
-	"pip":      true,
-	"custom":   true,
-	"cargo":    true,
-	"lsp":      true,
-	"apt":      true,
-}
-
-// toolNamePattern accepts the names we ship in the default and any
-// the user is likely to add via the UI. Conservative on purpose:
-// alphanumeric, dot, dash, underscore, plus and at-sign for npm-style
-// scoped packages. No slashes, no spaces, no shell metas.
-func validToolName(name string) bool {
-	if name == "" || len(name) > 80 {
-		return false
-	}
-	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '.' || r == '-' || r == '_' || r == '+' || r == '@':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-// readManifest returns the parsed tools.json and the path to it.
-// Missing file is treated as empty manifest (lets fresh installs
-// receive their first PATCH/POST without a prior write).
-func (s *Server) readManifest() (manifest map[string]any, path string, err error) {
-	path = filepath.Join(s.configDir, "tools.json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return map[string]any{}, path, nil
-		}
-		return nil, path, fmt.Errorf("read manifest: %w", err)
-	}
-	var m map[string]any
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &m); err != nil {
-			return nil, path, fmt.Errorf("parse manifest: %w", err)
-		}
-	}
-	if m == nil {
-		m = map[string]any{}
-	}
-	return m, path, nil
-}
-
-func writeManifest(path string, m map[string]any) error {
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	_, err = atomicfile.WriteFile(context.Background(), path, append(data, '\n'),
-		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
-	return err
-}
-
-// entryAt returns a typed view of the entry at section.name within
-// the parsed manifest. ok reports whether the entry exists.
-func entryAt(m map[string]any, section, name string) (entry map[string]any, ok bool) {
-	sec, hasSec := m[section].(map[string]any)
-	if !hasSec {
-		return nil, false
-	}
-	e, hasEntry := sec[name].(map[string]any)
-	if !hasEntry {
-		return nil, false
-	}
-	return e, true
-}
-
-// requiresOf returns the section.name strings declared in the entry's
-// .requires array, or nil if absent.
-func requiresOf(entry map[string]any) []string {
-	raw, ok := entry["requires"].([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, r := range raw {
-		if s, ok := r.(string); ok && s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-// resolveDeps walks the .requires graph starting at section.name and
-// returns every entry that needs to be enabled, in dependency order
-// (deps first, then the requested entry last). Cycles abort with an
-// error; the manifest's requires graph is small and human-curated so
-// this should never trigger in practice.
-func resolveDeps(m map[string]any, section, name string) ([]string, error) {
-	d := &depResolver{
-		m:        m,
-		visited:  map[string]bool{},
-		visiting: map[string]bool{},
-	}
-	if err := d.visit(section, name); err != nil {
-		return nil, err
-	}
-	return d.order, nil
-}
-
-// depResolver carries the mutable accounting for resolveDeps's recursive
-// walk: which entries are fully resolved (visited), which are on the current
-// DFS stack (visiting, for cycle detection), and the accumulated enable order.
-type depResolver struct {
-	m        map[string]any
-	visited  map[string]bool
-	visiting map[string]bool
-	order    []string
-}
-
-// visit resolves one section.name entry: it records the entry in the order
-// after all of its transitive requires have been resolved, and returns an
-// error on a cycle or an unknown entry.
-func (d *depResolver) visit(sec, n string) error {
-	key := sec + "." + n
-	if d.visited[key] {
-		return nil
-	}
-	if d.visiting[key] {
-		return fmt.Errorf("requires cycle through %s", key)
-	}
-	d.visiting[key] = true
-	entry, ok := entryAt(d.m, sec, n)
-	if !ok {
-		return fmt.Errorf("requires unknown entry %s", key)
-	}
-	if err := d.visitRequires(entry, key); err != nil {
-		return err
-	}
-	d.visiting[key] = false
-	d.visited[key] = true
-	d.order = append(d.order, key)
-	return nil
-}
-
-// visitRequires recurses into each dependency declared by entry's .requires,
-// validating the "section.name" shape and that the section is allowed.
-func (d *depResolver) visitRequires(entry map[string]any, key string) error {
-	for _, req := range requiresOf(entry) {
-		parts := strings.SplitN(req, ".", 2)
-		if len(parts) != 2 {
-			return fmt.Errorf("invalid requires %q on %s", req, key)
-		}
-		if !allowedSections[parts[0]] {
-			return fmt.Errorf("invalid section %q in requires %q on %s", parts[0], req, key)
-		}
-		if err := d.visit(parts[0], parts[1]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// dependentsOf returns every enabled entry that lists section.name in
-// its .requires. Used by DELETE to surface a cascade warning to the UI.
-func dependentsOf(m map[string]any, section, name string) []string {
-	target := section + "." + name
-	var out []string
-	for sec, secMapAny := range m {
-		// Only scan real tool sections — skips _comment and any other
-		// non-section top-level keys.
-		if !allowedSections[sec] {
-			continue
-		}
-		out = append(out, dependentsInSection(secMapAny, sec, target)...)
-	}
-	return out
-}
-
-// dependentsInSection returns the "sec.name" keys of enabled entries within a
-// single section map that list target in their .requires.
-func dependentsInSection(secMapAny any, sec, target string) []string {
-	secMap, ok := secMapAny.(map[string]any)
-	if !ok {
-		return nil
-	}
-	var out []string
-	for n, eAny := range secMap {
-		e, ok := eAny.(map[string]any)
-		if !ok {
-			continue
-		}
-		// enabled defaults to true when absent, matching
-		// setup-tools.sh's entry_enabled. A missing flag means the
-		// entry IS active, so it must be counted as a dependent —
-		// otherwise cascade-delete would silently orphan it.
-		if !boolField(e, "enabled", true) {
-			continue
-		}
-		if slices.Contains(requiresOf(e), target) {
-			out = append(out, sec+"."+n)
-		}
-	}
-	return out
-}
-
-func boolField(m map[string]any, key string, fallback bool) bool {
-	v, ok := m[key]
-	if !ok {
-		return fallback
-	}
-	b, ok := v.(bool)
-	if !ok {
-		return fallback
-	}
-	return b
-}
-
-// runSetupTools runs setup-tools.sh under the provided context and
-// returns combined output. Used by both /enable and /install handlers.
-func runSetupTools(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "bash", "/opt/vibekit/setup-tools.sh")
-	cmd.Env = os.Environ()
-	out, err := cmd.CombinedOutput()
-	return string(out), err
-}
-
-// parseToolPath extracts {section} and {name} from URL paths like
-// /api/tools/{section}/{name}/... — using net/http's path values.
-// Returns ok=false when either is missing or invalid.
-func parseToolPath(r *http.Request) (section, name string, ok bool) {
-	section = r.PathValue("section")
-	name = r.PathValue("name")
-	if !allowedSections[section] || !validToolName(name) {
-		return "", "", false
-	}
-	return section, name, true
-}
-
-// handleToolEnable: POST /api/tools/{section}/{name}/enable
-//
-// Flips enabled=true on the entry and every transitive dep, then runs
-// setup-tools.sh. Returns the combined script output. Errors during
-// setup are surfaced but the manifest changes stay (so a partial
-// install can be retried by clicking Enable again, idempotent).
-func (s *Server) handleToolEnable(w http.ResponseWriter, r *http.Request) {
-	if !requirePOST(w, r) {
-		return
-	}
-	section, name, ok := parseToolPath(r)
-	if !ok {
-		api.NotFound(w, "unknown tool")
-		return
-	}
-
-	// Read-modify-write of the manifest is serialized so a concurrent
-	// enable / forge-login can't clobber this flag flip. Released before
-	// the long-running install subprocess below.
-	manifestMu.Lock()
-	manifest, path, err := s.readManifest()
-	if err != nil {
-		manifestMu.Unlock()
-		api.WriteJSON(w, api.ErrorJSON(err.Error()))
-		return
-	}
-	if _, exists := entryAt(manifest, section, name); !exists {
-		manifestMu.Unlock()
-		api.NotFound(w, fmt.Sprintf("%s.%s not in tools.json", section, name))
-		return
-	}
-
-	chain, err := resolveDeps(manifest, section, name)
-	if err != nil {
-		manifestMu.Unlock()
-		api.WriteJSON(w, api.ErrorJSON(err.Error()))
-		return
-	}
-	for _, key := range chain {
-		parts := strings.SplitN(key, ".", 2)
-		entry, _ := entryAt(manifest, parts[0], parts[1])
-		entry["enabled"] = true
-	}
-	if err := writeManifest(path, manifest); err != nil {
-		manifestMu.Unlock()
-		api.WriteJSON(w, api.ErrorJSON(err.Error()))
-		return
-	}
-	manifestMu.Unlock()
-
-	// Track this install so a DELETE can cancel it mid-run.
-	key := section + "." + name
-	// Detached from r.Context(): a dropped client (tab close, mobile sleep,
-	// client-side abort) must not SIGKILL a multi-minute install mid-download.
-	// Cancellation stays available through inflightInstalls (the DELETE
-	// handler) and the overall budget below.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), toolsInstallTimeout)
-	defer cancel()
-	inflightMu.Lock()
-	if prior, exists := inflightInstalls[key]; exists {
-		prior() // cancel any older run for the same entry
-	}
-	inflightInstalls[key] = cancel
-	inflightMu.Unlock()
-	defer func() {
-		inflightMu.Lock()
-		delete(inflightInstalls, key)
-		inflightMu.Unlock()
-	}()
-
-	out, runErr := runSetupTools(ctx)
-	resp := map[string]any{
-		"output":        out,
-		"enabled_chain": chain,
-		"section":       section,
-		"name":          name,
-	}
-	if runErr != nil {
-		resp["error"] = runErr.Error()
-		resp["output"] = s.rollbackToolEnable(section, name, out)
-	}
-	api.WriteJSON(w, resp)
-}
-
-// rollbackToolEnable best-effort flips the target entry's enabled flag back to
-// false after a failed setup run, so the UI shows the Enable button again
-// rather than a row that looks enabled+healthy with no working binary.
-// Dependencies stay enabled — they may have installed cleanly and the user can
-// retry just this entry. Returns the output to surface: unchanged on success
-// (or if the manifest can't be re-read / the entry is gone), or annotated with
-// a "[rollback failed: ...]" note when the rewrite itself errors. The original
-// run error remains the user-visible one.
-func (s *Server) rollbackToolEnable(section, name, out string) string {
-	manifestMu.Lock()
-	defer manifestMu.Unlock()
-	m, mp, mErr := s.readManifest()
-	if mErr != nil {
-		return out
-	}
-	e, ok := entryAt(m, section, name)
-	if !ok {
-		return out
-	}
-	e["enabled"] = false
-	if wErr := writeManifest(mp, m); wErr != nil {
-		return out + "\n[rollback failed: " + wErr.Error() + "]"
-	}
-	return out
-}
-
-// handleToolDelete: DELETE /api/tools/{section}/{name}
-//
-// Cancels any in-flight install for this entry, flips enabled=false,
-// and shells out to setup-tools.sh's clear_tool() to remove installed
-// files + shims. Cascade detection: if the body has
-// "force": true, dependents that require this entry also get
-// disabled+cleaned; otherwise the call returns 409 Conflict listing
-// blockers so the UI can confirm.
-func (s *Server) handleToolDelete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		api.MethodNotAllowed(w)
-		return
-	}
-	section, name, ok := parseToolPath(r)
-	if !ok {
-		api.NotFound(w, "unknown tool")
-		return
-	}
-
-	// Cancel any in-flight install first.
-	key := section + "." + name
-	inflightMu.Lock()
-	if cancel, exists := inflightInstalls[key]; exists {
-		cancel()
-		delete(inflightInstalls, key)
-	}
-	inflightMu.Unlock()
-
-	manifestMu.Lock()
-	manifest, path, err := s.readManifest()
-	if err != nil {
-		manifestMu.Unlock()
-		api.WriteJSON(w, api.ErrorJSON(err.Error()))
-		return
-	}
-	entry, exists := entryAt(manifest, section, name)
-	if !exists {
-		manifestMu.Unlock()
-		api.NotFound(w, fmt.Sprintf("%s.%s not in tools.json", section, name))
-		return
-	}
-
-	// Body parse: optional "force" boolean.
-	var body struct {
-		Force bool `json:"force"`
-	}
-	if r.ContentLength > 0 {
-		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxToolsInstallBody))
-		_ = dec.Decode(&body) // soft-fail; missing body == force:false
-	}
-
-	dependents := dependentsOf(manifest, section, name)
-	if len(dependents) > 0 && !body.Force {
-		manifestMu.Unlock()
-		api.WriteJSONStatus(w, http.StatusConflict, map[string]any{
-			"error":      "tool has enabled dependents",
-			"code":       "has_dependents",
-			"dependents": dependents,
-			"hint":       "send {\"force\": true} to disable them too",
-		})
-		return
-	}
-
-	// Cascade: disable the target plus any dependents.
-	toClear := []string{section + "." + name}
-	if body.Force {
-		toClear = append(toClear, dependents...)
-	}
-	for _, key := range toClear {
-		parts := strings.SplitN(key, ".", 2)
-		e, ok := entryAt(manifest, parts[0], parts[1])
-		if !ok {
-			continue
-		}
-		e["enabled"] = false
-	}
-	_ = entry // entry is implicitly mutated via manifest above; keep var for read-clarity
-	if err := writeManifest(path, manifest); err != nil {
-		manifestMu.Unlock()
-		api.WriteJSON(w, api.ErrorJSON(err.Error()))
-		return
-	}
-	manifestMu.Unlock()
-
-	// Shell out to setup-tools.sh's cleanup helper for each disabled entry.
-	// We re-invoke setup-tools.sh in a "clear-only" mode by sourcing it
-	// and calling clear_tool directly. Simpler: spawn one bash command
-	// per entry that sources the script and runs clear_tool.
-	ctx, cancel := context.WithTimeout(r.Context(), toolsInstallTimeout)
-	defer cancel()
-	var out strings.Builder
-	for _, key := range toClear {
-		parts := strings.SplitN(key, ".", 2)
-		// Source the script in a no-op-ish mode: setup-tools.sh runs its
-		// install loop unconditionally on source. Calling clear_tool
-		// directly via a one-liner shell is cleaner.
-		clearCmd := fmt.Sprintf(
-			"set -uo pipefail; source /opt/vibekit/setup-tools.sh >/dev/null 2>&1 || true; clear_tool %q %q",
-			parts[0], parts[1],
-		)
-		cmd := exec.CommandContext(ctx, "bash", "-c", clearCmd) //nolint:gosec // parts come from validated allowlist + name pattern
-		cmd.Env = os.Environ()
-		o, _ := cmd.CombinedOutput()
-		fmt.Fprintf(&out, "cleared %s\n%s", key, o)
-	}
-
-	api.WriteJSON(w, map[string]any{
-		"output":   out.String(),
-		"disabled": toClear,
-	})
-}
-
-// handleToolPatch: PATCH /api/tools/{section}/{name}
-// Body: {"auto_update": bool}
-func (s *Server) handleToolPatch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPatch {
-		api.MethodNotAllowed(w)
-		return
-	}
-	section, name, ok := parseToolPath(r)
-	if !ok {
-		api.NotFound(w, "unknown tool")
-		return
-	}
-	var body struct {
-		AutoUpdate *bool `json:"auto_update"`
-	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxToolsInstallBody))
-	if err := dec.Decode(&body); err != nil {
-		api.BadRequest(w, "invalid body")
-		return
-	}
-	if body.AutoUpdate == nil {
-		api.BadRequest(w, "missing auto_update field")
-		return
-	}
-
-	manifestMu.Lock()
-	defer manifestMu.Unlock()
-	manifest, path, err := s.readManifest()
-	if err != nil {
-		api.WriteJSON(w, api.ErrorJSON(err.Error()))
-		return
-	}
-	entry, exists := entryAt(manifest, section, name)
-	if !exists {
-		api.NotFound(w, fmt.Sprintf("%s.%s not in tools.json", section, name))
-		return
-	}
-	entry["auto_update"] = *body.AutoUpdate
-	if err := writeManifest(path, manifest); err != nil {
-		api.WriteJSON(w, api.ErrorJSON(err.Error()))
-		return
-	}
-	api.WriteJSON(w, map[string]any{
-		"section":     section,
-		"name":        name,
-		"auto_update": *body.AutoUpdate,
-	})
-}
-
-// handleToolStatus: GET /api/tools/status
-//
-// Returns a map of well-known binaries to a presence boolean. The UI
-// uses this to gate feature surfaces — e.g. show "Setting up Node..."
-// when the user opens the npm panel but Node hasn't been enabled yet.
-func (s *Server) handleToolStatus(w http.ResponseWriter, r *http.Request) {
+// handleToolsList: GET /api/tools
+func (s *Server) handleToolsList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		api.MethodNotAllowed(w)
 		return
 	}
+	res, err := s.tools.List()
+	if err != nil {
+		api.InternalError(w, err)
+		return
+	}
+	api.WriteJSON(w, res)
+}
+
+// handleToolsCreate: POST /api/tools
+func (s *Server) handleToolsCreate(w http.ResponseWriter, r *http.Request) {
+	var req tools.CreateRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	job, err := s.tools.Create(r.Context(), req)
+	if err != nil {
+		api.BadRequest(w, err.Error())
+		return
+	}
+	api.WriteJSONStatus(w, http.StatusAccepted, api.ToolJobAccepted{Job: job})
+}
+
+// handleToolPatch: PATCH /api/tools/{name}
+func (s *Server) handleToolPatch(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var req tools.PatchRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	job, err := s.tools.Patch(name, req)
+	switch {
+	case tools.IsNotFound(err):
+		api.NotFound(w, "unknown tool")
+		return
+	case err != nil:
+		api.BadRequest(w, err.Error())
+		return
+	case job != nil:
+		api.WriteJSONStatus(w, http.StatusAccepted, api.ToolJobAccepted{Job: job})
+		return
+	}
+	api.Ok(w)
+}
+
+// handleToolDelete: DELETE /api/tools/{name}
+func (s *Server) handleToolDelete(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var body struct {
+		Force bool `json:"force"`
+	}
+	if r.ContentLength > 0 {
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxToolsBody))
+		if err := dec.Decode(&body); err != nil {
+			// A malformed body must NOT silently demote force:true to
+			// a plain delete (or vice versa).
+			api.BadRequest(w, "invalid body")
+			return
+		}
+	}
+	job, dependents, err := s.tools.Delete(name, body.Force)
+	switch {
+	case tools.IsNotFound(err):
+		api.NotFound(w, "unknown tool")
+		return
+	case tools.IsHasDependents(err):
+		api.WriteJSONStatus(w, http.StatusConflict, map[string]any{
+			"error":      "tool is required by others",
+			"code":       "has_dependents",
+			"dependents": dependents,
+		})
+		return
+	case err != nil:
+		api.InternalError(w, err)
+		return
+	}
+	api.WriteJSONStatus(w, http.StatusAccepted, api.ToolJobAccepted{Job: job})
+}
+
+// handleToolInstallOne: POST /api/tools/{name}/install
+func (s *Server) handleToolInstallOne(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	job, err := s.tools.InstallOne(name)
+	switch {
+	case tools.IsNotFound(err):
+		api.NotFound(w, "unknown tool")
+		return
+	case err != nil:
+		api.InternalError(w, err)
+		return
+	}
+	api.WriteJSONStatus(w, http.StatusAccepted, api.ToolJobAccepted{Job: job})
+}
+
+// handleToolsUpdate: POST /api/tools/update
+func (s *Server) handleToolsUpdate(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Names []string `json:"names"`
+	}
+	if r.ContentLength > 0 {
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxToolsBody))
+		if err := dec.Decode(&body); err != nil {
+			// A malformed per-tool update must NOT silently become a
+			// full update-all run.
+			api.BadRequest(w, "invalid body")
+			return
+		}
+	}
+	job, err := s.tools.UpdateAll(body.Names)
+	if err != nil {
+		api.InternalError(w, err)
+		return
+	}
+	api.WriteJSONStatus(w, http.StatusAccepted, api.ToolJobAccepted{Job: job})
+}
+
+// handleToolsSearch: GET /api/tools/search?q=
+func (s *Server) handleToolsSearch(w http.ResponseWriter, r *http.Request) {
+	results := s.tools.Search(r.URL.Query().Get("q"))
+	// Strip the embedded aqua definitions: the client needs the
+	// display fields, not the install internals.
+	out := make([]api.ToolCatalogHit, 0, len(results))
+	for _, e := range results {
+		out = append(out, api.ToolCatalogHit{
+			Name:        e.Name,
+			Description: e.Description,
+			Source:      e.Source,
+			Featured:    e.Featured,
+			Version:     e.Version,
+		})
+	}
+	api.WriteJSON(w, api.ToolsSearchResponse{Results: out})
+}
+
+// handleToolsJobs: GET /api/tools/jobs
+func (s *Server) handleToolsJobs(w http.ResponseWriter, _ *http.Request) {
+	active, recent := s.tools.Jobs()
+	api.WriteJSON(w, api.ToolsJobsResponse{Active: active, Recent: recent})
+}
+
+// handleToolsJobCancel: POST /api/tools/jobs/{id}/cancel
+func (s *Server) handleToolsJobCancel(w http.ResponseWriter, r *http.Request) {
+	if !s.tools.CancelJob(r.PathValue("id")) {
+		api.NotFound(w, "unknown job")
+		return
+	}
+	api.Ok(w)
+}
+
+// handleToolStatus: GET /api/tools/status
+//
+// Bare PATH presence probes for the well-known binaries feature panels
+// gate on (e.g. the MCP modal's "Setting up Node..." spinner).
+func (s *Server) handleToolStatus(w http.ResponseWriter, _ *http.Request) {
 	out := make(map[string]bool, len(statusBinaries))
 	for _, b := range statusBinaries {
 		_, err := exec.LookPath(b)

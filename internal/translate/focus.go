@@ -1,0 +1,146 @@
+package translate
+
+// v3 (KAS) focus updates: the agent's self-declared session title, activity
+// description, and status, carried as a session_info_update with
+// _meta.kiro.kind == "focus_update".
+//
+// Two writers feed that channel upstream (probe-verified on the live
+// 2.12.1 wire, see kiro-cli-research.md):
+//
+//   - The model calling its update_session_information tool mid-turn.
+//     Titles are short and IDE-grade ("Photo organizer CLI setup"), often
+//     with a description and a status. These are worth adopting: richer
+//     than vibekit's one-shot utility title, refreshed when the chat's
+//     focus shifts, and paid for by tokens the main turn already spends.
+//   - KAS's first-prompt title derivation: a dumb trim+truncate of the
+//     raw prompt text (80 chars, "..." ellipsis), emitted title-only.
+//     These must NOT clobber vibekit's own titles — the utility bridge's
+//     2-3 word summary is strictly better. titleIsPromptDerived filters
+//     them by shape: a derived title is the prompt text itself, or its
+//     "..."-suffixed truncation, and on a freshly primed session it is a
+//     truncation of the priming preamble.
+//
+// Titles land on the chat record (Mutate broadcasts chat_updated, the
+// same path the utility auto-rename uses). Status + description broadcast
+// as an ephemeral chat_status SSE — deliberately unpersisted, so a server
+// restart or reconnect gap resets tabs to neutral instead of replaying a
+// stale "in_progress".
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/cplieger/vibekit/internal/api"
+)
+
+// Prime preambles: the fixed prefixes of the invisible priming prompt the
+// bridge coordinator sends on a fresh session after a model-switch
+// fallback or a degraded rewind (hub bridge_coord.go builds the prime as
+// preamble + history). Exported so the coordinator and the focus filter
+// share one definition — KAS derives a first-prompt title from whatever
+// prompt text it sees first, and on a primed session that is this text.
+const (
+	// PrimePreambleSwitch opens the model-switch recovery prime.
+	PrimePreambleSwitch = "The context was just switched (new agent, new model, " +
+		"or both). Below is the full conversation history. Read it " +
+		"silently and reply with a single short line confirming " +
+		"you're caught up.\n\n"
+	// PrimePreambleRewind opens the degraded-rewind prime.
+	PrimePreambleRewind = "This conversation was rewound to an earlier turn and is " +
+		"resuming in a fresh session. Below is the conversation history " +
+		"up to the rewind point. Read it silently and reply with a " +
+		"single short line confirming you're caught up.\n\n"
+)
+
+// derivedTitleEllipsis matches KAS's SESSION_TITLE_ELLIPSIS.
+const derivedTitleEllipsis = "..."
+
+// maxFocusTitleRunes caps an adopted focus title. KAS itself caps at 80;
+// the clamp here is a guard against a malformed frame, not a formatter.
+const maxFocusTitleRunes = 80
+
+// focusUpdate is the _meta.kiro.focus block of a focus_update
+// session_info_update. All fields are optional partial updates.
+type focusUpdate struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+}
+
+// handleFocusUpdate applies one focus_update: adopt the title onto the
+// chat record (unless it is a first-prompt derivation) and broadcast
+// status/description as an ephemeral chat_status event. Parent-only by
+// construction — HandleSessionInfoUpdate drops subagent frames before
+// dispatching here.
+func (t *Translator) handleFocusUpdate(ctx context.Context, chatID api.ChatID, f *focusUpdate) {
+	if title := strings.TrimSpace(f.Title); title != "" && utf8.RuneCountInString(title) <= maxFocusTitleRunes {
+		t.applyFocusTitle(ctx, chatID, title)
+	}
+	status := strings.TrimSpace(f.Status)
+	desc := strings.TrimSpace(f.Description)
+	if status == "" && desc == "" {
+		return
+	}
+	t.deps.Broadcast(ctx, api.NewEvent(api.EventChatStatus, chatID, api.ChatStatusPayload{
+		Status:      status,
+		Description: desc,
+	}))
+}
+
+// applyFocusTitle writes an agent-authored title onto the chat. The
+// derivation filter runs inside the Mutate closure because it needs the
+// chat's messages; Mutate broadcasts chat_updated on change, which is what
+// flips the tab label live.
+func (t *Translator) applyFocusTitle(ctx context.Context, chatID api.ChatID, title string) {
+	renamed := false
+	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+		if !exists || c.Name == title || titleIsPromptDerived(title, c) {
+			return false
+		}
+		c.Name = title
+		renamed = true
+		return true
+	}); err != nil {
+		slog.Error("focus title: persist", "chat_id", chatID, "error", err)
+		return
+	}
+	if renamed {
+		slog.Info("chat titled by agent focus update", "chat_id", chatID, "title", title)
+	}
+}
+
+// titleIsPromptDerived reports whether title is KAS's first-prompt
+// derivation rather than an agent-authored name. A derived title is the
+// trimmed prompt text verbatim (short prompt) or its "..."-suffixed
+// truncation (long prompt); the prompt KAS saw is either one of the
+// chat's user messages or, on a freshly primed session, the priming
+// preamble + transcript.
+func titleIsPromptDerived(title string, c *api.Chat) bool {
+	stripped, ellipsized := strings.CutSuffix(title, derivedTitleEllipsis)
+	if ellipsized {
+		// The prime is always far longer than the title cap, so a
+		// prime-derived title is always ellipsized — only check here.
+		if strings.HasPrefix(PrimePreambleSwitch, stripped) || strings.HasPrefix(PrimePreambleRewind, stripped) {
+			return true
+		}
+	}
+	for i := range c.Messages {
+		m := &c.Messages[i]
+		if m.Role != api.RoleUser {
+			continue
+		}
+		text := strings.TrimSpace(m.Content)
+		if ellipsized {
+			if strings.HasPrefix(text, stripped) {
+				return true
+			}
+			continue
+		}
+		if text == title {
+			return true
+		}
+	}
+	return false
+}

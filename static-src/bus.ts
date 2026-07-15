@@ -45,6 +45,8 @@ import type {
   SafetyStatusPayload,
   SafetyPropertiesPayload,
   GovernanceStatePayload,
+  ToolJobChangedPayload,
+  ToolJobOutputPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -57,6 +59,7 @@ export interface SSEPayloads {
   readonly chat_created: ChatHeader;
   readonly chat_updated: ChatHeader;
   readonly chat_deleted: { readonly id: string };
+  readonly chat_status: { readonly status?: string; readonly description?: string };
   readonly message_appended: Message;
   readonly message_created: Message;
   readonly message_updated: Message;
@@ -112,6 +115,8 @@ export interface SSEPayloads {
   };
   readonly forges_changed: undefined;
   readonly hooks_changed: undefined;
+  readonly tool_job_changed: ToolJobChangedPayload;
+  readonly tool_job_output: ToolJobOutputPayload;
   readonly pending_change_added: PendingChangeAddedPayload;
   readonly pending_change_resolved: PendingChangeResolvedPayload;
   readonly pending_changes_cleared: PendingChangesClearedPayload;

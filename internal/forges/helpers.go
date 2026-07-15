@@ -30,7 +30,6 @@ const (
 	flagHostname   = "--hostname"
 	protoHTTPS     = "https"
 	versionLatest  = "latest"
-	actionInstall  = "install"
 	stateOpen      = "open"
 	stateSkipped   = "skipped"
 	statePending   = "pending"
@@ -40,11 +39,8 @@ const (
 	statusSuccess  = "success"
 	stateOpened    = "opened"
 	fieldUser      = "user"
-	fieldVersion   = "version"
-	fieldUpdate    = "update"
 	fieldMethod    = "method"
 	fieldRepo      = "repo"
-	fieldEnabled   = "enabled"
 	fieldURL       = "url"
 )
 

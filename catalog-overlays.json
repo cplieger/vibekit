@@ -1,0 +1,154 @@
+{
+  "_comment": [
+    "Vibekit's curated additions to the compiled tool catalog.",
+    "cmd/toolcatalog merges these over the mise+aqua registry data at",
+    "image build time. Entries WITHOUT a source patch display fields",
+    "(featured, description, requires, shims, probe) onto the compiled",
+    "entry; entries WITH a source replace/create the whole entry",
+    "(aqua: sources pull their definition from the aqua registry",
+    "checkout; manual sources carry an install command).",
+    "Manual install commands run under bash with VERSION,",
+    "VERSION_NOPFX (leading v stripped), BIN, TOOLS, OPT and the",
+    "ARCH_*_OR_* naming-convention variables in the environment",
+    "(value = left side on amd64, right side on arm64)."
+  ],
+  "entries": {
+    "node": {
+      "source": "aqua:nodejs/node",
+      "featured": true,
+      "description": "Node.js runtime. Required for npx-based MCP servers and npm-installed language servers."
+    },
+    "go": {
+      "source": "aqua:golang/go",
+      "featured": true,
+      "description": "Go toolchain. Required for gopls and go-installed tools."
+    },
+    "uv": {
+      "featured": true,
+      "description": "Python package runner (uv). Provides uvx for Python MCP servers and installs pip-sourced tools."
+    },
+    "gh": {
+      "source": "aqua:cli/cli",
+      "featured": true,
+      "description": "GitHub CLI. Installed automatically when you connect a GitHub account in Sources."
+    },
+    "glab": {
+      "source": "manual",
+      "version": "v1.108.0",
+      "featured": true,
+      "description": "GitLab CLI. Installed automatically when you connect a GitLab account in Sources.",
+      "install": "curl -fsSL \"https://gitlab.com/gitlab-org/cli/-/releases/${VERSION}/downloads/glab_${VERSION_NOPFX}_linux_${ARCH_AMD64_OR_ARM64}.tar.gz\" | tar -xz -C \"${BIN}\" --strip-components=1 bin/glab",
+      "probe": "glab"
+    },
+    "tea": {
+      "source": "manual",
+      "version": "v0.11.0",
+      "featured": true,
+      "description": "Gitea/Codeberg CLI. Installed automatically when you connect a Gitea account in Sources.",
+      "install": "curl -fsSL -o \"${BIN}/tea\" \"https://dl.gitea.com/tea/${VERSION_NOPFX}/tea-${VERSION_NOPFX}-linux-${ARCH_AMD64_OR_ARM64}\" && chmod 755 \"${BIN}/tea\"",
+      "probe": "tea"
+    },
+    "yq": {
+      "featured": true,
+      "description": "Command-line YAML processor."
+    },
+    "golangci-lint": {
+      "featured": true,
+      "description": "Go meta-linter and formatter runner (bundles gofumpt and gci). Verified against upstream release checksums."
+    },
+    "shellcheck": {
+      "featured": true
+    },
+    "ripgrep": {
+      "featured": true
+    },
+    "typescript": {
+      "source": "npm:typescript",
+      "description": "The TypeScript compiler package (tsserver). Dependency of typescript-language-server."
+    },
+    "typescript-language-server": {
+      "source": "npm:typescript-language-server",
+      "featured": true,
+      "description": "TypeScript/JavaScript LSP (Microsoft canonical, via npm). Full tsc compatibility; pick tsc-native below for ~10x faster type-checking.",
+      "requires": ["typescript"]
+    },
+    "pyright": {
+      "source": "npm:pyright",
+      "featured": true,
+      "description": "Python LSP (Microsoft official, via npm). Full pyright fidelity; pick pyrefly below for native speed."
+    },
+    "pyrefly": {
+      "source": "manual",
+      "version": "1.1.1",
+      "featured": true,
+      "description": "Python LSP (Meta's pyrefly, native Rust binary, ~18 MB, no Node needed). Shimmed as pyright for kiro-cli; ~95% diagnostic-equivalent to Microsoft's pyright.",
+      "install": "curl -fsSL \"https://github.com/facebook/pyrefly/releases/download/${VERSION_NOPFX}/pyrefly-linux-${ARCH_X86_64_OR_ARM64}.tar.gz\" | tar -xz -C \"${BIN}\" pyrefly && chmod 755 \"${BIN}/pyrefly\"",
+      "probe": "pyrefly",
+      "shims": {
+        "pyright": "pyrefly lsp",
+        "pyright-langserver": "pyrefly lsp"
+      }
+    },
+    "tsc-native": {
+      "source": "manual",
+      "version": "7.0.2",
+      "featured": true,
+      "description": "TypeScript 7 native compiler (Go-compiled tsc from the stable typescript package). Self-contained, no Node needed; shimmed as typescript-language-server for kiro-cli. Pick typescript-language-server above for 100% tsc fidelity.",
+      "install": "curl -fsSL \"https://registry.npmjs.org/@typescript/typescript-linux-${ARCH_X64_OR_ARM64}/-/typescript-linux-${ARCH_X64_OR_ARM64}-${VERSION}.tgz\" | tar -xz -C \"${OPT}\" --strip-components=2 --wildcards 'package/lib/tsc' 'package/lib/lib*.d.ts' && chmod 755 \"${OPT}/tsc\" && ln -sf \"${OPT}/tsc\" \"${BIN}/tsc\"",
+      "uninstall": "rm -f \"${BIN}/tsc\"",
+      "probe": "tsc",
+      "shims": {
+        "typescript-language-server": "tsc --lsp --stdio"
+      }
+    },
+    "gopls": {
+      "source": "go:golang.org/x/tools/gopls",
+      "featured": true,
+      "description": "Go LSP (gopls), installed via go install."
+    },
+    "rust-analyzer": {
+      "featured": true,
+      "description": "Rust LSP. Standalone binary; installing the rust toolchain unlocks full project analysis."
+    },
+    "clangd": {
+      "source": "manual",
+      "version": "22.1.6",
+      "featured": true,
+      "description": "C/C++ LSP (~160 MB). Reads compile_commands.json from your workspace. Upstream ships x86_64 builds only — not available on arm64 hosts.",
+      "install": "tmp=$(mktemp -d) && curl -fsSL -o \"$tmp/clangd.zip\" \"https://github.com/clangd/clangd/releases/download/${VERSION}/clangd-linux-${VERSION}.zip\" && unzip -q \"$tmp/clangd.zip\" -d \"$tmp\" && cp \"$tmp/clangd_${VERSION}/bin/clangd\" \"${BIN}/clangd\" && chmod 755 \"${BIN}/clangd\" && rm -rf \"$tmp\"",
+      "probe": "clangd"
+    },
+    "java": {
+      "source": "manual",
+      "version": "jdk-21.0.5+11",
+      "featured": true,
+      "description": "OpenJDK 21 JRE (Eclipse Temurin). Required by jdtls and kotlin-language-server; shared between them.",
+      "install": "safe_tag=$(printf '%s' \"${VERSION}\" | sed 's/+/%2B/g') && rel=$(printf '%s' \"${VERSION}\" | sed 's/jdk-//;s/+/_/') && curl -fsSL \"https://github.com/adoptium/temurin21-binaries/releases/download/${safe_tag}/OpenJDK21U-jre_${ARCH_X86_64_OR_AARCH64}_linux_hotspot_${rel}.tar.gz\" | tar -xz -C \"${OPT}\" --strip-components=1 && ln -sf \"${OPT}/bin/java\" \"${BIN}/java\" && ln -sf \"${OPT}/bin/keytool\" \"${BIN}/keytool\"",
+      "probe": "java"
+    },
+    "rust": {
+      "source": "manual",
+      "version": "stable",
+      "featured": true,
+      "description": "Rust toolchain (rustup + rustc + cargo, minimal profile). Required for cargo-installed tools and full rust-analyzer analysis.",
+      "install": "curl -fsSL https://sh.rustup.rs | RUSTUP_HOME=\"${OPT}/rustup\" CARGO_HOME=\"${OPT}/cargo\" sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path && for b in cargo rustc rustup; do ln -sf \"${OPT}/cargo/bin/$b\" \"${BIN}/$b\"; done",
+      "probe": "cargo"
+    },
+    "jdtls": {
+      "source": "manual",
+      "version": "1.40.0",
+      "description": "Java LSP (Eclipse JDT language server). Requires the java runtime.",
+      "requires": ["java"],
+      "install": "mkdir -p \"${OPT}/dist\" && curl -fsSL https://download.eclipse.org/jdtls/snapshots/jdt-language-server-latest.tar.gz | tar -xz -C \"${OPT}/dist\" && printf '#!/bin/sh\\nexec \"%s/opt/java/bin/java\" -jar \"%s\"/dist/plugins/org.eclipse.equinox.launcher_*.jar -configuration \"%s/dist/config_linux\" -data \"${HOME}/.cache/jdtls-workspace\" \"$@\"\\n' \"${TOOLS}\" \"${OPT}\" \"${OPT}\" > \"${BIN}/jdtls\" && chmod 755 \"${BIN}/jdtls\"",
+      "probe": "jdtls"
+    },
+    "kotlin-language-server": {
+      "source": "manual",
+      "version": "1.3.13",
+      "description": "Kotlin LSP. Requires the java runtime (shared with jdtls).",
+      "requires": ["java"],
+      "install": "tmp=$(mktemp -d) && curl -fsSL -o \"$tmp/kls.zip\" \"https://github.com/fwcd/kotlin-language-server/releases/download/${VERSION}/server.zip\" && rm -rf \"${OPT}/dist\" && unzip -q \"$tmp/kls.zip\" -d \"${OPT}\" && mv \"${OPT}/server\" \"${OPT}/dist\" && rm -rf \"$tmp\" && printf '#!/bin/sh\\nexport JAVA_HOME=\"%s/opt/java\"\\nexec \"%s/dist/bin/kotlin-language-server\" \"$@\"\\n' \"${TOOLS}\" \"${OPT}\" > \"${BIN}/kotlin-language-server\" && chmod 755 \"${BIN}/kotlin-language-server\"",
+      "probe": "kotlin-language-server"
+    }
+  }
+}

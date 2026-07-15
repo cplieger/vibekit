@@ -34,23 +34,26 @@ var _ api.PolicyProvider = (*Hub)(nil)
 // 45s the knowledge/spec sibling reads use.
 const policyCallTimeout = 45 * time.Second
 
-// ensureUtility lazily constructs the shared utility bridge (same guard used
-// by UtilityPrompt / AccountUsage / spec / knowledge) and wires its
-// hooks-management plumbing. Returns the bridge.
+// ensureUtility lazily constructs the shared utility runtime (session +
+// text-gen agent; same guard used by UtilityPrompt / AccountUsage / spec /
+// knowledge) with its hooks-management plumbing injected.
 //
-// The utility bridge opts into KAS's v2 hook engine (enableHooks →
+// The utility session opts into KAS's v2 hook engine (enableHooks →
 // _meta.kiro.hooks) so the hooks dashboard can list/toggle/trigger hooks over
 // it; chat bridges deliberately don't (see hooks.go). It issues no agent tool
 // calls, so no hook ever auto-fires here — the only executeHook it answers is a
 // user-initiated "Run now" trigger, gated on expectingHookExec.
-func (h *Hub) ensureUtility() *utilityBridge {
+func (h *Hub) ensureUtility() *utilityRuntime {
 	h.bridge.utilityOnce.Do(func() {
-		ub := newUtilityBridge(h.lifecycle.shutdownCtx, h.bridge.factory, h.Models)
-		ub.enableHooks = true
-		ub.runHookCommand = h.runHookCommand
-		ub.onHooksChanged = h.broadcastHooksChanged
-		ub.onGovernanceState = h.cacheGovernanceFromUtility
-		h.bridge.utility = ub
+		h.bridge.utility = newUtilityRuntime(
+			h.lifecycle.shutdownCtx, h.bridge.factory, h.Models,
+			utilitySessionHooks{
+				runHookCommand:    h.runHookCommand,
+				onHooksChanged:    h.broadcastHooksChanged,
+				onGovernanceState: h.cacheGovernanceFromUtility,
+			},
+			true, // enableHooks
+		)
 	})
 	return h.bridge.utility
 }
@@ -65,7 +68,7 @@ func (h *Hub) PolicyList(ctx context.Context, scope string) ([]api.PolicyRule, e
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := h.ensureUtility().policyRaw(cctx, methodV3PermissionsList, extra)
+	raw, err := h.ensureUtility().session.policyRaw(cctx, methodV3PermissionsList, extra)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +122,7 @@ func (h *Hub) PolicyExplain(ctx context.Context, req api.PolicyExplainRequest) (
 	}
 	cctx, cancel := context.WithTimeout(ctx, policyCallTimeout)
 	defer cancel()
-	raw, err := h.ensureUtility().policyRaw(cctx, methodV3PermissionsExplain, extra)
+	raw, err := h.ensureUtility().session.policyRaw(cctx, methodV3PermissionsExplain, extra)
 	if err != nil {
 		return nil, err
 	}

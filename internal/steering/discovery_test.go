@@ -260,25 +260,68 @@ func TestWriteRepoSkills_HeadersAndEntryFields(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// parseHookJSON
+// parseHookDoc
 // ---------------------------------------------------------------------------
 
-// TestParseHookJSON_CommandLengthBoundary pins the 80-byte command-preview
+// hookDoc wraps hook-entry JSON objects in the v1 envelope.
+func hookDoc(hooks ...string) string {
+	return `{"version":"v1","hooks":[` + strings.Join(hooks, ",") + `]}`
+}
+
+// TestParseHookDoc_CommandLengthBoundary pins the 80-byte action-preview
 // cap: a command of exactly 80 bytes is kept verbatim, while 81 bytes is
 // truncated to 80 chars ending in "...".
-func TestParseHookJSON_CommandLengthBoundary(t *testing.T) {
+func TestParseHookDoc_CommandLengthBoundary(t *testing.T) {
 	cmd80 := strings.Repeat("a", 80)
-	h := parseHookJSON([]byte(`{"event_type":"preToolUse","command":"` + cmd80 + `"}`))
-	if h.Command != cmd80 {
-		t.Errorf("parseHookJSON(80-byte command).Command = %q (len %d), want the 80-byte command unchanged",
-			h.Command, len(h.Command))
+	hs := parseHookDoc([]byte(hookDoc(
+		`{"name":"n","trigger":"PreToolUse","action":{"type":"command","command":"` + cmd80 + `"}}`)))
+	if len(hs) != 1 || hs[0].Command != cmd80 {
+		t.Errorf("parseHookDoc(80-byte command) = %+v, want one entry with the 80-byte command unchanged", hs)
 	}
 	cmd81 := strings.Repeat("b", 81)
-	h2 := parseHookJSON([]byte(`{"command":"` + cmd81 + `"}`))
-	if len(h2.Command) != 80 || !strings.HasSuffix(h2.Command, "...") {
-		t.Errorf("parseHookJSON(81-byte command).Command = %q (len %d), want 80 bytes ending in '...'",
-			h2.Command, len(h2.Command))
+	hs2 := parseHookDoc([]byte(hookDoc(
+		`{"action":{"type":"command","command":"` + cmd81 + `"}}`)))
+	if len(hs2) != 1 || len(hs2[0].Command) != 80 || !strings.HasSuffix(hs2[0].Command, "...") {
+		t.Errorf("parseHookDoc(81-byte command) = %+v, want 80 bytes ending in '...'", hs2)
 	}
+}
+
+// TestParseHookDoc_Shapes covers the v1 envelope variants: multiple hooks
+// per file, agent hooks previewing their prompt, malformed JSON, and the
+// legacy pre-v1 shape (no hooks array) yielding nothing.
+func TestParseHookDoc_Shapes(t *testing.T) {
+	t.Run("multiple hooks in one document", func(t *testing.T) {
+		hs := parseHookDoc([]byte(hookDoc(
+			`{"name":"A","trigger":"PostFileSave","action":{"type":"command","command":"lint"}}`,
+			`{"name":"B","trigger":"SessionStart","action":{"type":"agent","prompt":"load context"}}`)))
+		if len(hs) != 2 {
+			t.Fatalf("parseHookDoc(2 hooks) = %+v, want 2 entries", hs)
+		}
+		if hs[0].Name != "A" || hs[0].Trigger != "PostFileSave" || hs[0].Command != "lint" {
+			t.Errorf("hs[0] = %+v, want {A PostFileSave lint}", hs[0])
+		}
+		// Agent hooks preview their prompt in the Command field.
+		if hs[1].Name != "B" || hs[1].Trigger != "SessionStart" || hs[1].Command != "load context" {
+			t.Errorf("hs[1] = %+v, want {B SessionStart load context}", hs[1])
+		}
+	})
+	t.Run("malformed and legacy shapes yield nil", func(t *testing.T) {
+		for _, data := range []string{`not json`, ``, `{"event_type":"preToolUse","command":"x"}`} {
+			if hs := parseHookDoc([]byte(data)); len(hs) != 0 {
+				t.Errorf("parseHookDoc(%q) = %+v, want empty", data, hs)
+			}
+		}
+	})
+	t.Run("hostile fields are sanitised", func(t *testing.T) {
+		hs := parseHookDoc([]byte(hookDoc(
+			`{"name":"evil\ninject","trigger":"PreToolUse","action":{"type":"command","command":"run \u0060rm\u0060\nline2"}}`)))
+		if len(hs) != 1 {
+			t.Fatalf("parseHookDoc = %+v, want 1 entry", hs)
+		}
+		if strings.ContainsAny(hs[0].Name+hs[0].Command, "\n\r\t`") {
+			t.Errorf("sanitisation left newline/backtick in fields: %+v", hs[0])
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -303,19 +346,24 @@ func TestFindRepoAgents_ReadableDir(t *testing.T) {
 	}
 }
 
-// TestFindRepoHooks_ReadableDir verifies a readable hooks dir yields the
-// hook, and a missing dir yields nil.
+// TestFindRepoHooks_ReadableDir verifies a readable hooks dir yields every
+// hook in a multi-hook v1 document (stamped with the filename), and a
+// missing dir yields nil.
 func TestFindRepoHooks_ReadableDir(t *testing.T) {
 	repo := t.TempDir()
-	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "guard.json"),
-		`{"event_type":"preToolUse","command":"echo hi"}`)
+	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "guard.json"), hookDoc(
+		`{"name":"Guard","trigger":"PreToolUse","action":{"type":"command","command":"echo hi"}}`,
+		`{"name":"Regen","trigger":"PostFileSave","action":{"type":"command","command":"make gen"}}`))
 
 	got := findRepoHooks(repo)
-	if len(got) != 1 {
-		t.Fatalf("findRepoHooks(readable dir) = %+v (len %d), want 1 hook", got, len(got))
+	if len(got) != 2 {
+		t.Fatalf("findRepoHooks(readable dir) = %+v (len %d), want 2 hooks from one document", got, len(got))
 	}
-	if got[0].Trigger != "preToolUse" || got[0].Filename != "guard.json" {
-		t.Errorf("findRepoHooks()[0] = %+v, want {Filename: guard.json, Trigger: preToolUse}", got[0])
+	if got[0].Trigger != "PreToolUse" || got[0].Filename != "guard.json" || got[0].Name != "Guard" {
+		t.Errorf("findRepoHooks()[0] = %+v, want {Filename: guard.json, Name: Guard, Trigger: PreToolUse}", got[0])
+	}
+	if got[1].Trigger != "PostFileSave" || got[1].Filename != "guard.json" {
+		t.Errorf("findRepoHooks()[1] = %+v, want the second hook from the same file", got[1])
 	}
 	if got := findRepoHooks(filepath.Join(repo, "does-not-exist")); got != nil {
 		t.Errorf("findRepoHooks(missing dir) = %+v, want nil", got)
@@ -357,15 +405,19 @@ func TestDiscoveryEntryCaps(t *testing.T) {
 			t.Errorf("findRepoAgents(12 files) returned %d, want exactly 10 (cap)", got)
 		}
 	})
-	t.Run("findRepoHooks caps at 10", func(t *testing.T) {
+	t.Run("findRepoHooks caps at 10 entries", func(t *testing.T) {
 		repo := t.TempDir()
-		for i := range 12 {
+		// 6 files x 2 hooks = 12 hook entries; the cap counts ENTRIES,
+		// not files.
+		for i := range 6 {
 			mustWriteFile(t,
 				filepath.Join(repo, ".kiro", "hooks", fmt.Sprintf("hook%02d.json", i)),
-				`{"event_type":"preToolUse","command":"x"}`)
+				hookDoc(
+					`{"name":"a","trigger":"PreToolUse","action":{"type":"command","command":"x"}}`,
+					`{"name":"b","trigger":"PostToolUse","action":{"type":"command","command":"y"}}`))
 		}
 		if got := len(findRepoHooks(repo)); got != 10 {
-			t.Errorf("findRepoHooks(12 files) returned %d, want exactly 10 (cap)", got)
+			t.Errorf("findRepoHooks(12 hooks in 6 files) returned %d, want exactly 10 (cap)", got)
 		}
 	})
 	t.Run("findMdDocsInDir caps at 20", func(t *testing.T) {

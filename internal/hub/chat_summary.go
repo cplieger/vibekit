@@ -83,7 +83,7 @@ func (h *Hub) summarizeOnArchive(ctx context.Context, chatID api.ChatID) {
 		return
 	}
 
-	result, err := h.UtilityPrompt(ctx, prompt)
+	result, err := h.UtilityPrompt(ctx, prompt, api.EffortLow)
 	if err != nil {
 		slog.Warn("summary: utility bridge", "chat_id", chatID, "error", err)
 		return

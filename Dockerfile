@@ -45,6 +45,35 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 
+# Compile the tool catalog: the mise registry (name -> install source,
+# descriptions; MIT) joined with the aqua registry (binary asset
+# templates + checksums; MIT) and vibekit's catalog-overlays.json
+# (featured set, LSP shims, manual entries). The result is a single
+# read-only JSON the tools engine loads; both refs are Renovate-pinned
+# so catalog updates arrive as ordinary dependency PRs.
+# renovate: datasource=github-releases depName=jdx/mise
+ARG MISE_REGISTRY_REF=v2026.7.6
+# renovate: datasource=github-releases depName=aquaproj/aqua-registry
+ARG AQUA_REGISTRY_REF=v4.537.0
+RUN mkdir -p /tmp/registries && \
+    curl -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
+      | tar -xz -C /tmp/registries && \
+    curl -fsSL "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" \
+      | tar -xz -C /tmp/registries && \
+    go run ./cmd/toolcatalog \
+      -mise "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/registry" \
+      -aqua "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/pkgs" \
+      -overlay catalog-overlays.json \
+      -refs "mise=${MISE_REGISTRY_REF},aqua=${AQUA_REGISTRY_REF}" \
+      -out /tmp/tool-catalog.json && \
+    # MIT requires the copyright + permission notice to travel with
+    # copies/substantial portions; the compiled catalog embeds data
+    # derived from both registries, so ship both license texts.
+    mkdir -p /tmp/catalog-licenses && \
+    cp "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.mise && \
+    cp "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.aqua-registry && \
+    rm -rf /tmp/registries
+
 # Fetch ansi_up (the only vendor JS dependency now that xterm.js is gone).
 RUN mkdir -p static/vendor && \
     curl -fsSL "https://registry.npmjs.org/ansi_up/-/ansi_up-${ANSI_UP_VERSION}.tgz" \
@@ -227,21 +256,21 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Baked-in dependencies — the minimal stable runtime surface that
 # vibekit and kiro-cli rely on. Everything else (Node, Python, Go,
-# Java, Ruby, Rust, all LSPs, all forge CLIs) is installed on demand
-# via setup-tools.sh into the persistent /config/tools/ volume. See
-# tools.json for the curated list users can enable from the UI.
+# Java, Rust, all LSPs, all forge CLIs) is installed on demand by the
+# in-process tools engine (internal/tools) into the persistent
+# /config/tools/ volume, discovered through the compiled catalog.
 #
 # What's here and why:
 #   - ca-certificates: HTTPS trust for every download
-#   - curl: every install script + entrypoint kiro-cli download
+#   - curl: entrypoint kiro-cli download + manual install commands
 #   - git: vibekit's gitexec, checkpoint system, file history,
 #          forge integrations
 #   - openssh-client: git over ssh, gh ssh
-#   - unzip: kiro-cli installer (it's a zip)
-#   - xz-utils: Node tarball extract (.tar.xz) and other archives
-#   - jq: setup-tools.sh + entrypoint.sh manifest parsing
+#   - unzip: kiro-cli installer (it's a zip) + zip-format tools
+#   - xz-utils: Node/shellcheck tarball extract (.tar.xz)
+#   - jq: entrypoint.sh JSON parsing + a generally useful agent tool
 #
-# Notably NOT here (was here, now opt-in via tools.json):
+# Notably NOT here (opt-in via Settings -> Tools):
 #   nodejs, npm, python3, python3-pip, python3-venv, wget, gcc,
 #   libc6-dev, make, openssl, rsync. Removing these drops ~190 MB
 #   off the compressed image (212 MB -> ~22 MB).
@@ -258,27 +287,39 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Every dev tool — Go, Node, Python, Java, Ruby, Rust, LSPs, forge
-# CLIs — is installed at runtime via setup-tools.sh into the
-# persistent /config/tools/ tree. PATH is pre-shaped to expose all
-# the runtime install locations so a freshly-enabled tool is on
-# PATH the moment setup-tools.sh finishes its install loop.
+# Every dev tool — Go, Node, Python, Java, Rust, LSPs, forge CLIs —
+# is installed at runtime by the tools engine (internal/tools) into
+# the persistent /config/tools/ tree: versioned trees under
+# opt/<name>/, every binary symlinked (or shimmed) into the single
+# bin/ dir, npm and python package trees under npm/ and python/.
+# PATH exposes those plus the package-manager bin dirs so a freshly
+# installed tool is visible the moment its job finishes.
 #
 # /config is the single persistent volume for all container state:
-#   /config/tools/   — runtimes, Go/Node/Python binaries, caches
-#   /config/home/    — auth, ssh, gitconfig, build cache
-#   /config/kiro/    — kiro-cli per-user state (auth.db, sessions, settings,
-#                      steering, agents). Pointed at via KIRO_HOME so vibekit
-#                      and kiro-cli agree on the location regardless of HOME.
-#   /config/*.json   — config.json (vibekit prefs), tools.json, mcp.json, etc.
-#   /config/chats/   — chat history
-ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/tools/runtimes/go/bin:/config/tools/runtimes/node/bin:/config/tools/node/bin:/config/tools/python/bin:/config/tools/runtimes/uv/bin:/config/tools/runtimes/ruby/bin:/config/tools/runtimes/rust/bin:/config/tools/runtimes/java/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ENV GOROOT="/config/tools/runtimes/go"
+#   /config/tools/      — bin/ (PATH), opt/<tool>/, npm/, python/, go/
+#   /config/home/       — auth, ssh, gitconfig, build cache
+#   /config/home/.kiro/ — kiro-cli per-user state (sessions, settings,
+#                         steering, agents, logs). KIRO_HOME MUST equal
+#                         $HOME/.kiro: the v3 engine (KAS) ignores KIRO_HOME
+#                         and hardcodes os.homedir()/.kiro, while the Rust
+#                         wrapper (settings CLI) honors KIRO_HOME — pointing
+#                         KIRO_HOME inside HOME is the only way vibekit, the
+#                         wrapper, and KAS agree on one directory. (Verified
+#                         against the KAS 2.12 bundle: zero KIRO_HOME reads;
+#                         home-dir comes from --home-dir or os.homedir().)
+#   /config/*.json      — config.json (vibekit prefs), tools.json (v2
+#                         manifest), tools-state.json (engine state), mcp.json
+#   /config/chats/      — chat history
+#
+# GOROOT is intentionally absent: the go bin symlink resolves into its
+# versioned dist tree under opt/go/ and the toolchain derives GOROOT
+# from its own resolved location.
+ENV PATH="/config/tools/bin:/config/tools/npm/bin:/config/tools/python/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV GOPATH="/config/tools/go"
-ENV GOBIN="/config/tools/go/bin"
+ENV GOBIN="/config/tools/bin"
 ENV HOME="/config/home"
-ENV KIRO_HOME="/config/kiro"
-RUN mkdir -p /config/home /config/kiro && chmod 777 /config/home /config/kiro
+ENV KIRO_HOME="/config/home/.kiro"
+RUN mkdir -p /config/home/.kiro && chmod 777 /config/home /config/home/.kiro
 
 # Repoint root's pw_dir to /config/home so OpenSSH (which resolves "~"
 # via getpwuid, NOT $HOME) reads and writes ~/.ssh/known_hosts under
@@ -293,8 +334,10 @@ COPY --from=builder /app /app
 # file browser. The blacklist in internal/filehandler/paths.go already
 # hides /opt, so users never see these.
 COPY --chmod=755 entrypoint.sh /opt/vibekit/entrypoint.sh
-COPY --chmod=755 setup-tools.sh /opt/vibekit/setup-tools.sh
-COPY tools.json /opt/vibekit/tools.json.default
+COPY --from=builder /tmp/tool-catalog.json /opt/vibekit/tool-catalog.json
+# Upstream registry license texts (MIT) for the data compiled into the
+# catalog — the notice must accompany substantial portions.
+COPY --from=builder /tmp/catalog-licenses/ /opt/vibekit/licenses/
 
 WORKDIR /workspace
 EXPOSE 9847

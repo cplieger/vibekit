@@ -9,15 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/fileutil"
 	"github.com/cplieger/vibekit/internal/permissions"
+	"github.com/cplieger/vibekit/internal/tools"
 	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/singleflight"
 )
@@ -45,6 +44,7 @@ type Server struct {
 	staticFS      fs.FS
 	cliRunner     CLIRunner
 	rules         *permissions.CommandRules
+	tools         *tools.Engine
 	cliPath       string
 	configDir     string
 	workDir       string
@@ -56,7 +56,6 @@ type Server struct {
 	acctUsage      acctUsageCache
 	cliTimeouts    cliTimeouts
 	settingsMu     sync.Mutex
-	installing     atomic.Bool
 	// ready flips to true once the listener binds and srv.Serve is
 	// running; flips back to false on shutdown signal so /api/health
 	// reports unready during drain. Same semantic across the cplieger
@@ -105,6 +104,9 @@ func WithForges(r api.RouteHandler) Option { return func(s *Server) { s.forges =
 
 // WithRules sets the command rules store for per-command allow/deny evaluation.
 func WithRules(r *permissions.CommandRules) Option { return func(s *Server) { s.rules = r } }
+
+// WithTools sets the tools engine backing the /api/tools surface.
+func WithTools(e *tools.Engine) Option { return func(s *Server) { s.tools = e } }
 
 // WithUtilityPrompt sets the utility prompter used for AI-assisted tasks (rename, commit message, etc.).
 func WithUtilityPrompt(p api.UtilityPrompter) Option {
@@ -177,17 +179,21 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
-	mux.HandleFunc("/api/tools/install", s.handleToolsInstall)
+	mux.HandleFunc("GET /api/tools", s.handleToolsList)
+	mux.HandleFunc("POST /api/tools", s.handleToolsCreate)
 	mux.HandleFunc("GET /api/tools/status", s.handleToolStatus)
-	mux.HandleFunc("POST /api/tools/{section}/{name}/enable", s.handleToolEnable)
-	mux.HandleFunc("DELETE /api/tools/{section}/{name}", s.handleToolDelete)
-	mux.HandleFunc("PATCH /api/tools/{section}/{name}", s.handleToolPatch)
+	mux.HandleFunc("GET /api/tools/search", s.handleToolsSearch)
+	mux.HandleFunc("GET /api/tools/jobs", s.handleToolsJobs)
+	mux.HandleFunc("POST /api/tools/jobs/{id}/cancel", s.handleToolsJobCancel)
+	mux.HandleFunc("POST /api/tools/update", s.handleToolsUpdate)
+	mux.HandleFunc("POST /api/tools/{name}/install", s.handleToolInstallOne)
+	mux.HandleFunc("PATCH /api/tools/{name}", s.handleToolPatch)
+	mux.HandleFunc("DELETE /api/tools/{name}", s.handleToolDelete)
 	s.git.RegisterRoutes(mux)
 	if s.gitAI != nil {
 		s.gitAI.RegisterRoutes(mux)
 	}
 	s.files.RegisterRoutes(mux)
-	fileutil.ServeJSONFile(mux, filepath.Join(s.configDir, "tools.json"), "{}", 0o644)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
 	s.mcpConfig.RegisterRoutes(mux)

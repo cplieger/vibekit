@@ -979,6 +979,12 @@ export interface SpecsResponse {
   specs: Spec[];
 }
 
+/** SystemTool is one image-baked binary surfaced read-only in the UI. */
+export interface SystemTool {
+  name: string;
+  installed: boolean;
+}
+
 /**
  * ToolCall is a tool invocation inside an assistant message. One assistant
  * message may have multiple tool calls; each can be updated in place as
@@ -1028,6 +1034,19 @@ export interface ToolCallUpdatePayload {
   tool_call: ToolCall;
 }
 
+/** ToolCatalogHit is one catalog search result (GET /api/tools/search). */
+export interface ToolCatalogHit {
+  name: string;
+  description?: string;
+  source: string;
+  featured?: boolean;
+  /**
+ * Version is the catalog's default pinned version, set only for
+ * entries without an upstream version source (manual installs).
+ */
+  version?: string;
+}
+
 /**
  * ToolDiff is a before/after text change from a write tool call. Sent
  * by kiro-cli in tool_call notifications for edit operations. Path is
@@ -1042,6 +1061,76 @@ export interface ToolDiff {
 }
 
 /**
+ * ToolInfo is one tool row in GET /api/tools: the manifest entry
+ * joined with the engine's install state.
+ */
+export interface ToolInfo {
+  name: string;
+  source: string;
+  version: string;
+  pin?: boolean;
+  requires?: string[];
+  shims?: Record<string, string>;
+  description?: string;
+  origin?: string;
+  installed: boolean;
+  installed_version?: string;
+  latest?: string;
+  installing: boolean;
+  last_error?: string;
+}
+
+/**
+ * ToolJob is one tools-engine job: an install/uninstall/update/sync
+ * run on the single-flight queue. Terminal states are done, failed,
+ * and cancelled.
+ */
+export interface ToolJob {
+  id: string;
+  kind: string;
+  names?: string[];
+  state: string;
+  error?: string;
+  /** Timestamps are Unix milliseconds. */
+  created_at: number;
+  started_at?: number;
+  ended_at?: number;
+  /**
+ * OutputTail carries the job's most recent output lines; populated
+ * on the jobs endpoints only (live output streams via the
+ * tool_job_output SSE event).
+ */
+  output_tail?: string[];
+}
+
+/**
+ * ToolJobAccepted is the 202 response body for job-enqueuing tool
+ * mutations (create, install, update, delete, version patch).
+ */
+export interface ToolJobAccepted {
+  job?: ToolJob;
+}
+
+/**
+ * ToolJobChangedPayload is the payload for type="tool_job_changed".
+ * Broadcast (workspace-global — no chat_id) on every tool-job state
+ * transition: enqueued, started, done, failed, cancelled. The job
+ * carries no output tail; output streams via tool_job_output.
+ */
+export interface ToolJobChangedPayload {
+  job?: ToolJob;
+}
+
+/**
+ * ToolJobOutputPayload is the payload for type="tool_job_output":
+ * a coalesced batch of output lines from the running tool job.
+ */
+export interface ToolJobOutputPayload {
+  job_id: string;
+  lines: string[];
+}
+
+/**
  * ToolLocation is a file path (and optional line) the agent is working
  * with. Sent by kiro-cli in tool_call and tool_call_update notifications.
  * Used by the editor to scroll to the file the agent is accessing or
@@ -1050,6 +1139,24 @@ export interface ToolDiff {
 export interface ToolLocation {
   path: string;
   line?: number;
+}
+
+/** ToolsJobsResponse is the GET /api/tools/jobs response body. */
+export interface ToolsJobsResponse {
+  active?: ToolJob;
+  recent?: ToolJob[];
+}
+
+/** ToolsList is the GET /api/tools response body. */
+export interface ToolsList {
+  tools: ToolInfo[];
+  system: SystemTool[];
+  job?: ToolJob;
+}
+
+/** ToolsSearchResponse is the GET /api/tools/search response body. */
+export interface ToolsSearchResponse {
+  results: ToolCatalogHit[];
 }
 
 /** TurnEndedPayload is the payload for type="turn_ended". */

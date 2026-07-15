@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
 	"time"
 
 	"github.com/cplieger/atomicfile/v2"
@@ -30,6 +32,7 @@ import (
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/vibekit/internal/tools"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -39,6 +42,7 @@ type App struct {
 	Server         *server.Server
 	purgeScheduler *archive.PurgeScheduler
 	mcpPrewarm     *prewarm.Runner
+	tools          *tools.Engine
 }
 
 // Build constructs all services and wires them together. staticFS is
@@ -122,6 +126,25 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	h.SetMCPOnChange(func() { steer.Generate(h.ShutdownCtx()) })
 	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
 
+	// Tools engine: owns tools.json v2 + the install tree + the job
+	// queue; jobs stream over the hub's SSE. The boot sync job (install
+	// missing, update unpinned) runs async — already-installed tools
+	// persist on the volume, so nothing blocks server start.
+	toolsEngine, err := tools.New(tools.Config{
+		ConfigDir:   cfg.ConfigDir,
+		ToolsDir:    cfg.ToolsDir,
+		CatalogPath: cfg.ToolCatalogPath,
+		Broadcaster: h,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tools engine: %w", err)
+	}
+	toolsEngine.StartBoot()
+	// Installed-tool changes matter to the agent (kiro-cli scans PATH
+	// for language servers); regenerate the steering env on each list
+	// read is overkill, but forge logins need synchronous installs:
+	forgesPkg.EnsureTool = toolsEngine.EnsureInstalled
+
 	forgesManager := forgesPkg.NewManager()
 	if refreshErr := forgesManager.Refresh(ctx); refreshErr != nil {
 		// Non-fatal: refreshing CLI configs may fail if no CLIs are
@@ -140,9 +163,18 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		auth.WithTrustedProxies(cfg.TrustedProxies))
 	forgesHTTP := forgesPkg.NewHTTPHandler(forgesManager, h)
 
-	steer.SetForgeSnapshot(func() steering.ForgeSnapshot {
-		return forgeSnapshot(ctx, forgesManager)
+	// The forge snapshot shells out to the forge CLIs (gh repo list is a
+	// network round trip, 5s cap per forge), and steering.Generate runs
+	// synchronously on the pre-bridge-spawn critical path — so the
+	// snapshot the generator reads is a never-blocking cache. It is
+	// primed off the boot path and refreshed on forge changes and on a
+	// TTL, each refresh regenerating environment.md when data changed.
+	forgeCache := newForgeSnapshotCache(ctx, steer, func(bctx context.Context) steering.ForgeSnapshot {
+		return forgeSnapshot(bctx, forgesManager)
 	})
+	steer.SetForgeSnapshot(forgeCache.snapshot)
+	go forgeCache.refresh()
+	forgesHTTP.SetOnChange(func() { go forgeCache.refresh() })
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -193,6 +225,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithMCPStatus(h.MCPRegistry()),
 		server.WithMCPRegistry(mcpRegistry),
 		server.WithForges(forgesHTTP),
+		server.WithTools(toolsEngine),
 		server.WithRules(h.Rules()),
 		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),
@@ -209,6 +242,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		Server:         srv,
 		purgeScheduler: purgeScheduler,
 		mcpPrewarm:     mcpPrewarm,
+		tools:          toolsEngine,
 	}, nil
 }
 
@@ -232,6 +266,7 @@ func (a *App) Run() error {
 func (a *App) Shutdown() {
 	a.purgeScheduler.Stop()
 	a.mcpPrewarm.Stop()
+	a.tools.Close()
 	a.Hub.Shutdown()
 }
 
@@ -251,9 +286,101 @@ func sweepStaleTemps(configDir, workDir string) {
 	}
 }
 
+// forgeSnapshotTTL bounds how stale the cached forge snapshot may get
+// before a read kicks a background revalidation. Forge connections and
+// repo lists change rarely (login, disconnect, repo created upstream);
+// five minutes keeps the environment.md forge section honest without
+// putting CLI network calls anywhere near the session-start path.
+const forgeSnapshotTTL = 5 * time.Minute
+
+// forgeSnapshotCache is a stale-while-revalidate cache around
+// forgeSnapshot. snapshot() NEVER blocks on the forge CLIs: it returns
+// the current cache immediately (zero-value before the boot prime
+// lands, which omits the forge section for that one render) and kicks
+// an async refresh when stale. refresh() rebuilds synchronously in the
+// calling goroutine and regenerates the steering file when the
+// snapshot actually changed, so logins/disconnects propagate to
+// environment.md within one CLI round trip.
+type forgeSnapshotCache struct {
+	appCtx context.Context
+	build  func(context.Context) steering.ForgeSnapshot
+	steer  *steering.Generator
+	at     time.Time
+	snap   steering.ForgeSnapshot
+	mu     sync.Mutex
+	busy   bool
+	dirty  bool // a refresh request arrived mid-rebuild; go again
+}
+
+// newForgeSnapshotCache wires a cache around build (the CLI-backed
+// forgeSnapshot in production; injectable for tests) that regenerates
+// steer on data changes.
+func newForgeSnapshotCache(ctx context.Context, steer *steering.Generator,
+	build func(context.Context) steering.ForgeSnapshot,
+) *forgeSnapshotCache {
+	return &forgeSnapshotCache{appCtx: ctx, build: build, steer: steer}
+}
+
+// snapshot returns the cached forge snapshot immediately; stale data
+// triggers a background refresh (single-flight via busy). Safe on the
+// pre-bridge-spawn critical path.
+func (c *forgeSnapshotCache) snapshot() steering.ForgeSnapshot {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Since(c.at) >= forgeSnapshotTTL && !c.busy {
+		c.busy = true
+		go c.rebuild()
+	}
+	return c.snap
+}
+
+// refresh rebuilds the snapshot now (network: forge CLI repo listings),
+// then regenerates the steering file if the data changed. When a
+// rebuild is already in flight, the request is coalesced into it via
+// the dirty flag — an in-flight rebuild may have read pre-change CLI
+// config, so dropping the request would strand a fresh login until the
+// TTL. Callers run refresh in their own goroutine.
+func (c *forgeSnapshotCache) refresh() {
+	c.mu.Lock()
+	if c.busy {
+		c.dirty = true
+		c.mu.Unlock()
+		return
+	}
+	c.busy = true
+	c.mu.Unlock()
+	c.rebuild()
+}
+
+// rebuild does the actual snapshot rebuild + conditional regen, looping
+// while coalesced refresh requests (dirty) are pending. Only entered
+// with busy=true already claimed by the caller; clears it when done.
+func (c *forgeSnapshotCache) rebuild() {
+	for {
+		snap := c.build(c.appCtx)
+		c.mu.Lock()
+		changed := !reflect.DeepEqual(c.snap, snap)
+		c.snap = snap
+		c.at = time.Now()
+		again := c.dirty
+		c.dirty = false
+		c.busy = again
+		c.mu.Unlock()
+		// Regenerate only on change: Generate skips byte-identical
+		// writes anyway, but skipping the render for the common
+		// no-change TTL refresh avoids pointless workspace scans.
+		if changed {
+			c.steer.Generate(c.appCtx)
+		}
+		if !again {
+			return
+		}
+	}
+}
+
 // forgeSnapshot builds the steering forge snapshot: one provider per
 // configured forge, each enriched (best-effort) with its repo list.
-// It is the body of the steer.SetForgeSnapshot callback, extracted so
+// It is the body of the forgeSnapshotCache rebuild, extracted so
 // Build stays within the cognitive-complexity ceiling.
 func forgeSnapshot(ctx context.Context, forgesManager *forgesPkg.Manager) steering.ForgeSnapshot {
 	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)

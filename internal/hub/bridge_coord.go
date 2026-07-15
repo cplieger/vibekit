@@ -12,6 +12,7 @@ import (
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/translate"
 )
 
 // BridgeCoordinator encapsulates bridge lifecycle management: creating,
@@ -310,18 +311,15 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 		return
 	}
 
+	// Preambles live in translate (PrimePreamble*) because the focus-title
+	// derivation filter must recognise a title KAS derives from this prime
+	// text — one definition keeps the filter and the prime in lockstep.
 	var prime string
 	switch sb.primeReason {
 	case primeReasonSwitch:
-		prime = "The context was just switched (new agent, new model, " +
-			"or both). Below is the full conversation history. Read it " +
-			"silently and reply with a single short line confirming " +
-			"you're caught up.\n\n" + history
+		prime = translate.PrimePreambleSwitch + history
 	case primeReasonRewind:
-		prime = "This conversation was rewound to an earlier turn and is " +
-			"resuming in a fresh session. Below is the conversation history " +
-			"up to the rewind point. Read it silently and reply with a " +
-			"single short line confirming you're caught up.\n\n" + history
+		prime = translate.PrimePreambleRewind + history
 	default:
 		return
 	}

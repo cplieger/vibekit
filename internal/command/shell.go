@@ -50,7 +50,7 @@ func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
 // chat's first message, derives an initial chat name from the command text.
 // Returns whether the message was persisted (false when the chat record
 // doesn't exist) and whether an async rename should be triggered.
-func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.ChatID, msg *api.Message, text string) (persisted, triggerRename bool, err error) {
+func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.ChatID, msg *api.Message, text string) (persisted bool, placeholder string, err error) {
 	err = deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			c.Name = api.DefaultChatName
@@ -62,13 +62,13 @@ func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.C
 				name += ellipsis
 			}
 			c.Name = name
-			triggerRename = true
+			placeholder = name
 		}
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, msg))
 		persisted = true
 		return true
 	})
-	return persisted, triggerRename, err
+	return persisted, placeholder, err
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
@@ -106,7 +106,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		ID: p.MessageID, Role: api.RoleUser, Ts: time.Now().UnixMilli(),
 		Content: p.Text,
 	}
-	persisted, triggerRename, err := appendShellUserMessage(ctx, deps, cmd.ChatID, &userMsg, p.Text)
+	persisted, placeholder, err := appendShellUserMessage(ctx, deps, cmd.ChatID, &userMsg, p.Text)
 	if err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
@@ -115,9 +115,9 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		d.RespondErr(w, http.StatusConflict, ErrChatNotFound)
 		return
 	}
-	if triggerRename {
+	if placeholder != "" {
 		if prompter := d.Prompter(); prompter != nil {
-			deps.InflightGo(func() { AsyncRenameChat(deps, prompter, cmd.ChatID, p.Text) })
+			deps.InflightGo(func() { AsyncRenameChat(deps, prompter, cmd.ChatID, p.Text, placeholder) })
 		}
 	}
 

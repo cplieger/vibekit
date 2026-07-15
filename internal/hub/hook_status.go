@@ -12,16 +12,24 @@ import (
 // kiroSettingsPath returns the path to kiro-cli's settings file.
 // Resolves through workspace.KiroHome() so vibekit and kiro-cli agree on
 // the location regardless of whether KIRO_HOME is set.
+//
+// The file is cli.json: `kiro-cli settings <key> <value>` (what the
+// entrypoint seeding and vibekit's /api/kiro-settings shell out to)
+// persists every key there — verified on a live 2.12 deployment where
+// settings/ contains only cli.json, holding hooks.showStatus alongside
+// the other seeded flags. The previously-read settings.json does not
+// exist on current installs, which made this cache permanently return
+// the default.
 func kiroSettingsPath() string {
 	if workspace.KiroHome() == ".kiro" {
 		// Defensive fallback inside KiroHome — when both KIRO_HOME
 		// and HOME are unset, returning a relative path here means
-		// we'd read from CWD/settings/settings.json which is wrong.
+		// we'd read from CWD/settings/cli.json which is wrong.
 		// Caller treats empty as "no overrides; fall through to
 		// defaults".
 		return ""
 	}
-	return workspace.KiroSettingsPath("settings.json")
+	return workspace.KiroSettingsPath("cli.json")
 }
 
 // cachedBoolField reads a boolean value from a JSON file with
@@ -83,7 +91,7 @@ func (c *cachedBoolField) get() bool {
 }
 
 // hookStatusCache caches the hooks.showStatus setting from
-// ~/.kiro/settings/settings.json with mtime-based invalidation.
+// ~/.kiro/settings/cli.json with mtime-based invalidation.
 // Reduces per-tool-call cost from os.ReadFile+json.Unmarshal to a
 // single os.Stat in the common case (file changes at most once per
 // user session).
@@ -104,7 +112,7 @@ func (c *hookStatusCache) get() bool {
 // unset, matching kiro-cli's own default.
 //
 // The setting is persisted by kiro-cli itself at
-// ~/.kiro/settings/settings.json (dotted key, not snake_case),
+// ~/.kiro/settings/cli.json (dotted key, not snake_case),
 // and is toggled through `kiro-cli settings hooks.showStatus …`
 // via vibekit's /api/kiro-settings endpoint. Reading from vibekit's
 // configDir would be wrong: vibekit's config.json uses underscore

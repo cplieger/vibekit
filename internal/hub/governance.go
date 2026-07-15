@@ -99,10 +99,10 @@ func (h *Hub) Governance(ctx context.Context) api.GovernanceStatePayload {
 	if p, ok := h.governance.get(); ok {
 		return p
 	}
-	ub := h.ensureUtility()
+	u := h.ensureUtility()
 	warmCtx, cancel := context.WithTimeout(ctx, governanceWarmTimeout)
 	defer cancel()
-	if err := ub.ensureStarted(warmCtx); err != nil {
+	if err := u.session.ensureStarted(warmCtx); err != nil {
 		slog.Warn("governance: utility bridge start failed", "error", err)
 		return api.GovernanceStatePayload{}
 	}

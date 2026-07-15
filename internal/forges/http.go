@@ -49,6 +49,7 @@ const (
 type HTTPHandler struct {
 	manager      *Manager
 	broadcaster  api.Broadcaster
+	onChange     func()
 	probeTimeout time.Duration
 }
 
@@ -62,14 +63,24 @@ func NewHTTPHandler(m *Manager, b api.Broadcaster) *HTTPHandler {
 	}
 }
 
+// SetOnChange wires a callback fired whenever a forge connection
+// changes (PAT login, OAuth completion, disconnect, refresh). Called
+// once at composition; used to refresh the steering forge-snapshot
+// cache and regenerate environment.md. The callback must not block —
+// it runs on the HTTP request path — and must not capture the request
+// context (composition kicks its work onto the app-lifetime context).
+func (h *HTTPHandler) SetOnChange(fn func()) { h.onChange = fn }
+
 // notifyChanged broadcasts a forges_changed event so the UI's repo
-// picker (and any other listeners) refresh. No-op if no broadcaster
-// is wired.
+// picker (and any other listeners) refresh, then fires the onChange
+// callback. No-op parts are skipped when unwired.
 func (h *HTTPHandler) notifyChanged(ctx context.Context) {
-	if h.broadcaster == nil {
-		return
+	if h.broadcaster != nil {
+		h.broadcaster.Broadcast(ctx, api.NewEvent(api.EventForgesChanged, "", api.ForgesChangedPayload{}))
 	}
-	h.broadcaster.Broadcast(ctx, api.NewEvent(api.EventForgesChanged, "", api.ForgesChangedPayload{}))
+	if h.onChange != nil {
+		h.onChange()
+	}
 }
 
 // Compile-time interface assertion.

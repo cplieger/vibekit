@@ -39,5 +39,10 @@
     "@cplieger/ui-primitives": "2.1.2",
     "@cplieger/web-terminal-engine": "2.3.4",
     "@cplieger/web-terminal-ui": "3.4.5"
+  },
+  "overrides": {
+    "typed-rest-client": {
+      "qs": "6.15.2"
+    }
   }
 }

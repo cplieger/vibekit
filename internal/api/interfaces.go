@@ -259,9 +259,13 @@ type PushService interface {
 // UtilityPrompter is the narrow interface for AI-backed prompt
 // generation (error explanations, conflict resolution, commit messages).
 // Declared here so both the server and git packages share a single
-// typed contract.
+// typed contract. effort is the per-task reasoning-effort level: cheap
+// tasks (titles, summaries, error explanations) pass EffortLow, tasks
+// that read a diff or merge code (commit messages, PR descriptions,
+// conflict resolution) pass EffortMedium; "" keeps the session's current
+// level. Best-effort — a model with no effort config ignores it.
 type UtilityPrompter interface {
-	UtilityPrompt(ctx context.Context, prompt string) (string, error)
+	UtilityPrompt(ctx context.Context, prompt string, effort EffortLevel) (string, error)
 }
 
 // AccountUsageProvider fetches account/subscription-level usage (plan,

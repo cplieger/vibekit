@@ -167,10 +167,10 @@ func specRelPath(name, doc string) string {
 // and converts the raw KAS tree into the domain tree. tasksFilePath is passed
 // absolute (unambiguous); workspacePaths is the workspace root.
 func (h *Hub) specTaskStatuses(ctx context.Context, tasksFilePath, featureName string) ([]api.SpecTaskNode, error) {
-	ub := h.ensureUtility()
+	u := h.ensureUtility()
 	cctx, cancel := context.WithTimeout(ctx, specCallTimeout)
 	defer cancel()
-	raw, err := ub.specTaskStatusesRaw(cctx, map[string]any{
+	raw, err := u.session.specTaskStatusesRaw(cctx, map[string]any{
 		"workspacePaths": []string{h.lifecycle.workDir},
 		"tasksFilePath":  tasksFilePath,
 		"featureName":    featureName,

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/singleflight"
 	"pgregory.net/rapid"
@@ -1701,7 +1702,7 @@ type mockPrompter struct {
 	called bool
 }
 
-func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string) (string, error) {
+func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string, _ api.EffortLevel) (string, error) {
 	m.called = true
 	return m.result, m.err
 }
@@ -2789,7 +2790,7 @@ type capturePrompter struct {
 	result string
 }
 
-func (c *capturePrompter) UtilityPrompt(_ context.Context, prompt string) (string, error) {
+func (c *capturePrompter) UtilityPrompt(_ context.Context, prompt string, _ api.EffortLevel) (string, error) {
 	c.prompt = prompt
 	return c.result, nil
 }
@@ -2932,5 +2933,86 @@ func TestHandlePRFetch_UnreachableOriginReportsError(t *testing.T) {
 	}
 	if out, ok := resp["output"]; ok {
 		t.Errorf("pr-fetch returned success output %q; a successful origin lookup must not short-circuit to echoing the URL", out)
+	}
+}
+
+// sanitizeBranchName must turn arbitrary model output into a valid,
+// compact git branch name (or "" when nothing usable remains).
+func TestSanitizeBranchName(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"clean passthrough", "feat/tab-status-badges", "feat/tab-status-badges"},
+		{"uppercase + spaces", "Feat/Tab Status Badges", "feat/tab-status-badges"},
+		{"quoted + fenced", "```\n\"fix/retry-test\"\n```", "fix/retry-test"},
+		{"explanation line dropped", "feat/exif-rename\nThis name reflects...", "feat/exif-rename"},
+		{"underscores to dashes", "chore/update_deps_now", "chore/update-deps-now"},
+		{"exotic chars dropped", "feat/caf\u00e9-\u2728launch!", "feat/caf-launch"},
+		{"dash runs collapsed", "fix/--double--dash--", "fix/double-dash"},
+		{"empty segments removed", "feat//name/", "feat/name"},
+		{"dotdot segment removed", "feat/../escape", "feat/escape"},
+		{"cap at 60 bytes", "feat/" + strings.Repeat("a", 80), "feat/" + strings.Repeat("a", 55)},
+		{"nothing usable", "\u2728\u2728 !!", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeBranchName(tc.in); got != tc.want {
+				t.Errorf("sanitizeBranchName(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// The branch-name endpoint: the model's raw output is sanitized into the
+// response, and the prompt carries the repo's uncommitted context.
+func TestHandleBranchName(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hi\nBRANCH_CONTEXT_MARKER\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cp := &capturePrompter{result: "  Feat/Say Hello World  "}
+	a := NewAIHandler(dir, cp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/branch-name", strings.NewReader(`{}`))
+	a.handleBranchName(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var out map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("bad body: %v", err)
+	}
+	if out["output"] != "feat/say-hello-world" {
+		t.Errorf("output = %q, want sanitized feat/say-hello-world", out["output"])
+	}
+	if !strings.Contains(cp.prompt, "BRANCH_CONTEXT_MARKER") {
+		t.Errorf("prompt missing uncommitted diff context; prompt:\n%s", cp.prompt)
+	}
+}
+
+// A repo with no uncommitted changes falls back to recent commits as the
+// naming context instead of erroring.
+func TestHandleBranchName_CleanTreeUsesCommits(t *testing.T) {
+	skipNoGit(t)
+	dir := t.TempDir()
+	initFixtureRepo(t, dir)
+
+	cp := &capturePrompter{result: "chore/initial-commit-follow-up"}
+	a := NewAIHandler(dir, cp)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/git/branch-name", strings.NewReader(`{}`))
+	a.handleBranchName(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(cp.prompt, "Recent commits:") {
+		t.Errorf("clean-tree prompt should carry the commit fallback; prompt:\n%s", cp.prompt)
 	}
 }

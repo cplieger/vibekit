@@ -242,11 +242,16 @@ func TestIsSensitive(t *testing.T) {
 		path string
 		want bool
 	}{
-		{"exact_vibekit_md", "/config/kiro/steering/vibekit.md", true},
-		{"exact_env_md", "/config/kiro/steering/environment.md", true},
-		{"dir_agents_match", "/config/kiro/agents/foo.json", true},
+		// kiro-cli state lives inside HOME (KIRO_HOME=$HOME/.kiro); the
+		// whole /config/home/ tree is blocked.
+		{"home_env_md", "/config/home/.kiro/steering/environment.md", true},
+		{"home_agents", "/config/home/.kiro/agents/foo.json", true},
+		{"home_ssh_key", "/config/home/.ssh/id_ed25519", true},
+		// Legacy pre-relocation KIRO_HOME tree: blocked wholesale.
+		{"legacy_env_md", "/config/kiro/steering/environment.md", true},
+		{"legacy_agents", "/config/kiro/agents/foo.json", true},
+		{"legacy_any_file", "/config/kiro/steering/other.md", true},
 		{"unrelated_file", "/workspace/repo/main.go", false},
-		{"sibling_steering_ok", "/config/kiro/steering/other.md", false},
 		{"chats_dir_deep", "/config/chats/deep/nested.json", true},
 		{"exact_push_subs", "/config/push-subs.json", true},
 	}
@@ -268,10 +273,11 @@ func TestIsProtectedDir(t *testing.T) {
 	}{
 		// Protected: dir itself listed (or ancestor of listed dir).
 		{"/config/chats", true},
-		{"/config/kiro/agents", true},
-		{"/config/kiro/steering", true}, // contains sensitive files
-		{"/config/kiro", true},          // encloses multiple sensitive dirs
-		{"/config", true},               // encloses push-subs.json
+		{"/config/home/.kiro/agents", true}, // inside the blocked HOME tree
+		{"/config/kiro/steering", true},     // inside the blocked legacy tree
+		{"/config/kiro", true},              // the legacy tree itself
+		{"/config/home", true},              // the HOME tree itself
+		{"/config", true},                   // encloses push-subs.json
 		// Not protected: leaves and unrelated paths.
 		{"/workspace", false},
 		{"/workspace/repo", false},

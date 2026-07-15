@@ -80,7 +80,7 @@ function liftOutput(parsed: unknown): GitCmdResult {
  *  Raw fetch is sanctioned here: action run() implementations are part
  *  of the framework's HTTP surface (see actions/files.ts precedent);
  *  apiAction can't express the envelope check. */
-async function runGitPost(
+export async function runGitPost(
   path: string,
   body: unknown,
   signal: AbortSignal,

@@ -107,7 +107,7 @@ Vibekit is a full workspace in the browser, not just a chat box. Everything belo
 
 **Workspace tools** and agent configuration:
 
-- Manage installed tools — install, enable, and pin versions of language servers, forge CLIs, and more.
+- Manage installed tools — search a catalog of ~700 runtimes, language servers, and CLIs (compiled from the mise and aqua registries), install them in the background with streamed progress, pin versions, or bring your own install command.
 - Knowledge bases: index workspace directories, with live progress.
 - Spec board (`/specs`): a live requirements → design → tasks tree.
 - Hooks: list, enable/disable, and run agent hooks; create one from chat context.

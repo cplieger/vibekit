@@ -57,12 +57,12 @@ type lifecyclePlane struct {
 }
 
 // bridgePlane groups Hub fields related to ACP bridge management
-// and the utility bridge.
+// and the utility runtime (session + text-gen agent).
 type bridgePlane struct {
 	factory       api.ACPBridgeFactory
 	mgr           *bridgeManager
 	assistantBufs *buffer.Store
-	utility       *utilityBridge
+	utility       *utilityRuntime
 	utilityOnce   sync.Once
 }
 
@@ -208,10 +208,10 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	return h
 }
 
-// UtilityPrompt delegates to the utility bridge, satisfying
-// api.UtilityPrompter. The bridge is lazily constructed on first call.
-func (h *Hub) UtilityPrompt(ctx context.Context, prompt string) (string, error) {
-	return h.ensureUtility().UtilityPrompt(ctx, prompt)
+// UtilityPrompt delegates to the utility text-gen agent, satisfying
+// api.UtilityPrompter. The runtime is lazily constructed on first call.
+func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error) {
+	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
 }
 
 // Rules returns the shared CommandRules instance so callers outside
@@ -310,12 +310,18 @@ func (h *Hub) MCPRegistry() api.RouteHandler { return h.mcpRegistry }
 
 // MCPSnapshot returns a stable-ordered snapshot of the runtime registry
 // so callers outside hub (e.g. the steering generator) can read it
-// without taking hub internals as a dependency.
+// without taking hub internals as a dependency. Only servers in the
+// connected state are included: the steering file presents the list as
+// "Connected integrations", and a failed or OAuth-pending server has no
+// live tools for the agent to call.
 func (h *Hub) MCPSnapshot() []api.MCPSnapshotServer {
 	snap := h.mcpRegistry.Snapshot()
-	out := make([]api.MCPSnapshotServer, len(snap))
-	for i, s := range snap {
-		out[i] = api.MCPSnapshotServer{Name: s.Name}
+	out := make([]api.MCPSnapshotServer, 0, len(snap))
+	for i := range snap {
+		if snap[i].State != mcpStateConnected {
+			continue
+		}
+		out = append(out, api.MCPSnapshotServer{Name: snap[i].Name})
 	}
 	return out
 }
@@ -528,11 +534,53 @@ func (h *Hub) sweepSessionsLoop() {
 }
 
 // sweepSessionsOnce runs one orphan-session sweep against a fresh referenced
-// set (every active + archived chat's acp_session_id).
+// set (every active + archived chat's acp_session_id), plus the live utility
+// bridge's session — it is referenced by no chat, and without the exemption
+// the sweep would delete its on-disk KAS state from under the live
+// subprocess once it idles past the reaper's age guard (10 min guard vs the
+// 30 min utility cull leaves a window every hourly sweep can land in).
 func (h *Hub) sweepSessionsOnce() {
 	ctx, cancel := h.hubContext()
 	defer cancel()
-	h.sessionReaper.Sweep(h.sessionRefs(ctx))
+	refs := h.sessionRefs(ctx)
+	if id := h.utilityLiveSessionID(); id != "" {
+		if refs == nil {
+			refs = map[string]struct{}{}
+		}
+		refs[id] = struct{}{}
+	}
+	h.sessionReaper.Sweep(refs)
+}
+
+// utilityLiveSessionID snapshots the utility runtime pointer under
+// lifecycle.mu (same order as the cull path) and asks its session for the
+// live ACP session id. "" when the runtime was never created or is stopped.
+func (h *Hub) utilityLiveSessionID() string {
+	h.lifecycle.mu.Lock()
+	u := h.bridge.utility
+	h.lifecycle.mu.Unlock()
+	if u == nil {
+		return ""
+	}
+	return u.session.liveSessionID()
+}
+
+// stopUtilityBridge stops the utility session if it exists.
+//
+// The h.bridge.utility field read + nil is guarded by h.lifecycle.mu so it
+// serialises with cullIdleBridgesOnce, which reads the same field under
+// that lock (snapshot-and-release). Only called from Shutdown, where
+// inflight.Wait() has already returned, so no in-flight turn or RPC holds
+// a lease on the session being stopped.
+func (h *Hub) stopUtilityBridge() {
+	h.lifecycle.mu.Lock()
+	u := h.bridge.utility
+	h.bridge.utility = nil
+	h.lifecycle.mu.Unlock()
+	if u == nil {
+		return
+	}
+	u.session.Stop()
 }
 
 // cullIdleBridges stops bridges that have been idle for longer than
@@ -569,33 +617,16 @@ func (h *Hub) cullIdleBridgesOnce() {
 		slog.Info("culled idle bridge", "chat_id", c.chatID,
 			"idle_since", c.sb.lastActiveAt.UTC().Format(time.RFC3339))
 	}
-	// Utility bridge lives behind its own mutex; coordinate via
-	// ub.mu to avoid racing an in-flight UtilityPrompt. A slow call
-	// that keeps ub.mu held is trivially "still active" and must
-	// not be culled from underneath. h.bridge.utility itself is read under
-	// h.lifecycle.mu (snapshot-and-release) so a concurrent stopUtilityBridge
-	// clearing the field can't tear the pointer read.
+	// Utility session: stopIfIdle owns the victim-capture dance (the
+	// session mutex is short-held, so this never waits behind an
+	// in-flight text turn; acquire bumps lastActiveAt at turn start, so a
+	// live turn is trivially "recently active"). h.bridge.utility itself
+	// is read under h.lifecycle.mu (snapshot-and-release) so a concurrent
+	// stopUtilityBridge clearing the field can't tear the pointer read.
 	h.lifecycle.mu.Lock()
-	ub := h.bridge.utility
+	u := h.bridge.utility
 	h.lifecycle.mu.Unlock()
-	if ub != nil {
-		now := time.Now()
-		cutoff := now.Add(-bridgeIdleTimeout)
-		ub.mu.Lock()
-		shouldStop := ub.started && !ub.lastActiveAt.IsZero() && ub.lastActiveAt.Before(cutoff)
-		// Capture the bridge to stop INSIDE the lock. start() reassigns
-		// ub.bridge under ub.mu, so reading it after the unlock races that
-		// write and could Stop a freshly-restarted bridge. victim is the
-		// exact instance we decided was idle.
-		var victim api.ACPBridge
-		if shouldStop {
-			ub.started = false
-			victim = ub.bridge
-		}
-		ub.mu.Unlock()
-		if shouldStop {
-			go victim.Stop()
-			slog.Info("culled idle utility bridge")
-		}
+	if u != nil && u.session.stopIfIdle(time.Now().Add(-bridgeIdleTimeout)) {
+		slog.Info("culled idle utility bridge")
 	}
 }

@@ -15,7 +15,7 @@ import (
 func TestWriteWorkspace_Empty(t *testing.T) {
 	dir := t.TempDir()
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
+	writeWorkspace(context.Background(), &b, dir, nil)
 	if !strings.Contains(b.String(), "Empty.") {
 		t.Error("expected 'Empty.' for empty workspace")
 	}
@@ -27,7 +27,7 @@ func TestWriteWorkspace_WithFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch"), 0o644)
 
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
+	writeWorkspace(context.Background(), &b, dir, nil)
 	out := b.String()
 	if !strings.Contains(out, "go.mod") {
 		t.Error("missing go.mod in notable files")
@@ -43,7 +43,7 @@ func TestWriteWorkspace_WithGitRepo(t *testing.T) {
 	os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755)
 
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
+	writeWorkspace(context.Background(), &b, dir, nil)
 	out := b.String()
 	if !strings.Contains(out, "myrepo") {
 		t.Error("missing git repo")
@@ -59,7 +59,7 @@ func TestWriteWorkspace_WithDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "docs"), 0o755)
 
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
+	writeWorkspace(context.Background(), &b, dir, nil)
 	out := b.String()
 	if !strings.Contains(out, "src") {
 		t.Error("missing src directory")
@@ -76,7 +76,7 @@ func TestWriteWorkspace_OmitsEmptySectionHeaders(t *testing.T) {
 			t.Fatal(err)
 		}
 		var b strings.Builder
-		writeWorkspace(context.Background(), &b, dir)
+		writeWorkspace(context.Background(), &b, dir, nil)
 		out := b.String()
 		if strings.Contains(out, "### Git repositories") {
 			t.Errorf("Git repositories header emitted with zero repos:\n%s", out)
@@ -90,7 +90,7 @@ func TestWriteWorkspace_OmitsEmptySectionHeaders(t *testing.T) {
 		// Only a README (a file, not a dir) -> dirs empty, isRoot false.
 		mustWriteFile(t, filepath.Join(dir, "README.md"), "A workspace readme line\n")
 		var b strings.Builder
-		writeWorkspace(context.Background(), &b, dir)
+		writeWorkspace(context.Background(), &b, dir, nil)
 		out := b.String()
 		if strings.Contains(out, "### Directories") {
 			t.Errorf("Directories header emitted with zero dirs:\n%s", out)
@@ -125,7 +125,7 @@ func TestWriteWorkspace_RendersGroupedSteering(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
+	writeWorkspace(context.Background(), &b, dir, nil)
 	out := b.String()
 	checks := []string{
 		"Always-loaded steering",
@@ -153,7 +153,7 @@ func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
 	}
 	// Repo exists but has no .kiro/steering/.
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir)
+	writeWorkspace(context.Background(), &b, dir, nil)
 	out := b.String()
 	if strings.Contains(out, "Per-repo .kiro protocol") {
 		t.Errorf("protocol section emitted with no per-repo steering\n--- output ---\n%s", out)
@@ -178,10 +178,10 @@ func TestWriteRepoEntry_RendersAllFields(t *testing.T) {
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "skills", "build", "SKILL.md"), "body\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "agents", "deploy.json"), `{"name":"deploy"}`)
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "guard.json"),
-		`{"event_type":"preToolUse","command":"echo hi"}`)
+		`{"version":"v1","hooks":[{"name":"Guard","trigger":"PreToolUse","action":{"type":"command","command":"echo hi"}}]}`)
 
 	var b strings.Builder
-	writeRepoEntry(&b, work, "myrepo")
+	writeRepoEntry(&b, work, "myrepo", nil)
 	out := b.String()
 
 	checks := map[string]string{
@@ -202,28 +202,29 @@ func TestWriteRepoEntry_RendersAllFields(t *testing.T) {
 }
 
 // TestWriteRepoEntry_ForgeCLIAndHookFields verifies the forge-CLI guidance
-// line and the per-hook trigger label + command preview render for a repo
-// with a recognised origin and a hook.
+// line (gated on the connected forge kinds) and the per-hook name +
+// trigger label + command preview render for a repo with a recognised
+// origin and a v1 hook document.
 func TestWriteRepoEntry_ForgeCLIAndHookFields(t *testing.T) {
 	work := t.TempDir()
 	repo := filepath.Join(work, "myrepo")
 	mustWriteFile(t, filepath.Join(repo, ".git", "config"),
 		"[remote \"origin\"]\n\turl = https://github.com/acme/widget.git\n")
 	mustWriteFile(t, filepath.Join(repo, ".kiro", "hooks", "guard.json"),
-		`{"event_type":"preToolUse","command":"echo hi"}`)
+		`{"version":"v1","hooks":[{"name":"Guard","trigger":"PreToolUse","action":{"type":"command","command":"echo hi"}}]}`)
 
 	var b strings.Builder
-	writeRepoEntry(&b, work, "myrepo")
+	writeRepoEntry(&b, work, "myrepo", map[string]bool{"github": true})
 	out := b.String()
 
-	// A recognised github origin renders the "use `gh`" guidance, not the
-	// bare "(github.com)" fallback.
+	// A recognised github origin with github CONNECTED renders the
+	// "use `gh`" guidance, not the bare "(github.com)" fallback.
 	if !strings.Contains(out, "use `gh` for PRs") {
-		t.Errorf("missing forge-CLI guidance for github origin:\n%s", out)
+		t.Errorf("missing forge-CLI guidance for connected github origin:\n%s", out)
 	}
-	// A hook with a known event_type renders that trigger, not "unknown".
-	if !strings.Contains(out, "[preToolUse]") {
-		t.Errorf("hook trigger not rendered as [preToolUse]:\n%s", out)
+	// The hook renders its name and PascalCase trigger, not "unknown".
+	if !strings.Contains(out, "Guard [PreToolUse]") {
+		t.Errorf("hook name+trigger not rendered as Guard [PreToolUse]:\n%s", out)
 	}
 	if strings.Contains(out, "[unknown]") {
 		t.Errorf("hook with a known trigger wrongly rendered [unknown]:\n%s", out)
@@ -231,6 +232,18 @@ func TestWriteRepoEntry_ForgeCLIAndHookFields(t *testing.T) {
 	// A hook with a command renders the command preview.
 	if !strings.Contains(out, "echo hi") {
 		t.Errorf("hook command preview not rendered:\n%s", out)
+	}
+
+	// The same repo WITHOUT its forge kind connected gets the bare host —
+	// advertising `gh` would point the agent at an absent binary.
+	var b2 strings.Builder
+	writeRepoEntry(&b2, work, "myrepo", nil)
+	out2 := b2.String()
+	if strings.Contains(out2, "use `gh`") {
+		t.Errorf("forge-CLI guidance rendered without a connected github forge:\n%s", out2)
+	}
+	if !strings.Contains(out2, "(github.com)") {
+		t.Errorf("bare host fallback missing for unconnected forge kind:\n%s", out2)
 	}
 }
 
@@ -243,7 +256,7 @@ func TestWriteRepoEntry_OmitsAgentAndHookHeadersWhenEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	writeRepoEntry(&b, work, "bare")
+	writeRepoEntry(&b, work, "bare", nil)
 	out := b.String()
 	if strings.Contains(out, "**Custom agents**") {
 		t.Errorf("Custom agents header emitted with zero agents:\n%s", out)
@@ -558,16 +571,21 @@ func TestClassifyEntries(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "repo1", ".git"), 0o755)
 	os.MkdirAll(filepath.Join(dir, "plain"), 0o755)
 	os.MkdirAll(filepath.Join(dir, ".hidden"), 0o755)
+	// Dot-NAMED git repos (.kiro, .github) are legitimate clone targets
+	// and must be listed; only ".git" itself and dot-named non-repos
+	// stay hidden.
+	os.MkdirAll(filepath.Join(dir, ".kiro", ".git"), 0o755)
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644)
 
 	entries, _ := os.ReadDir(dir)
 	repos, dirs := classifyEntries(context.Background(), entries, dir)
 
-	if len(repos) != 1 || repos[0] != "repo1" {
-		t.Errorf("repos = %v, want [repo1]", repos)
+	wantRepos := []string{".kiro", "repo1"}
+	if len(repos) != 2 || repos[0] != wantRepos[0] || repos[1] != wantRepos[1] {
+		t.Errorf("repos = %v, want %v", repos, wantRepos)
 	}
 	if len(dirs) != 1 || dirs[0] != "plain" {
-		t.Errorf("dirs = %v, want [plain]", dirs)
+		t.Errorf("dirs = %v, want [plain] (dot-named non-repos stay hidden)", dirs)
 	}
 }
 
