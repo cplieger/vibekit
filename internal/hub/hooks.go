@@ -194,10 +194,10 @@ func (h *Hub) hookRelPath(abs string) string {
 // workspace, returning the parsed KAS hooks. workspacePaths is passed
 // explicitly so the entry is loaded even if the session hasn't yet.
 func (h *Hub) hooksListRaw(ctx context.Context) ([]kasHook, error) {
-	ub := h.ensureUtility()
+	u := h.ensureUtility()
 	cctx, cancel := context.WithTimeout(ctx, hookCallTimeout)
 	defer cancel()
-	raw, err := ub.hooksRaw(cctx, methodKiroHooksList, map[string]any{
+	raw, err := u.session.hooksRaw(cctx, methodKiroHooksList, map[string]any{
 		"workspacePaths": []string{h.lifecycle.workDir},
 	})
 	if err != nil {
@@ -268,10 +268,10 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 	if !api.DecodeJSON(w, r, &body) {
 		return
 	}
-	ub := h.ensureUtility()
+	u := h.ensureUtility()
 	cctx, cancel := context.WithTimeout(r.Context(), hookCallTimeout)
 	defer cancel()
-	raw, err := ub.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
+	raw, err := u.session.hooksRaw(cctx, methodKiroHooksSetEnabled, map[string]any{
 		"hookId":  hookID,
 		"enabled": body.Enabled,
 	})
@@ -320,13 +320,13 @@ func (h *Hub) handleHookTrigger(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "only runCommand hooks can be run here; agent hooks run in a chat")
 		return
 	}
-	ub := h.ensureUtility()
+	u := h.ensureUtility()
 	cctx, cancel := context.WithTimeout(r.Context(), hookTriggerTimeout)
 	defer cancel()
 	// approved:true — the user's explicit "Run now" click is the consent, so
 	// we skip KAS's extra per-command approval round-trip. The command is the
 	// server-sourced hook command, not client input.
-	run, err := ub.triggerRunCommandHook(cctx, hook.ID, hook.Name, hook.Action.Command)
+	run, err := u.session.triggerRunCommandHook(cctx, hook.ID, hook.Name, hook.Action.Command)
 	if err != nil {
 		h.writeHookErr(w, err)
 		return

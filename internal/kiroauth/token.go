@@ -82,27 +82,67 @@ type Reader struct {
 	path        string
 	mu          sync.Mutex
 	loaded      bool
+	// dynamicPath re-resolves the token path on every load (constructed
+	// with an empty path). Keeps the reader tracking whichever candidate
+	// file the latest login wrote.
+	dynamicPath bool
 }
 
+// tokenFileCandidates are the SSO-cache token file names kiro tooling
+// writes, in preference order when mtimes tie. `kiro-auth-token-cli.json`
+// is what a `kiro-cli login` stores (the only login source inside the
+// vibekit container); `kiro-auth-token.json` is the name the Kiro IDE and
+// KAS's own FileAuthProvider default to. Both shapes are identical.
+// Hard-coding only the unsuffixed name broke production: the container's
+// cache held only the -cli file, so every v3 getAccessToken callback
+// failed with ENOENT and no session could start.
+var tokenFileCandidates = []string{"kiro-auth-token-cli.json", "kiro-auth-token.json"}
+
 // DefaultTokenPath returns the SSO cache token path under HOME (in the
-// vibekit container HOME=/config/home). Empty if HOME can't be resolved.
+// vibekit container HOME=/config/home): the freshest existing candidate
+// file, or the CLI-name default when none exists yet. Empty if HOME can't
+// be resolved.
 func DefaultTokenPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".aws", "sso", "cache", "kiro-auth-token.json")
+	return resolveTokenPath(filepath.Join(home, ".aws", "sso", "cache"))
 }
 
-// NewReader returns a Reader for the given token path (empty uses
-// DefaultTokenPath).
-func NewReader(path string) *Reader {
-	if path == "" {
-		path = DefaultTokenPath()
+// resolveTokenPath picks the token file inside an SSO cache dir: the
+// existing candidate with the newest mtime (a re-login rewrites its own
+// name, so the freshest file is the live login), falling back to the
+// primary candidate's path when none exists (the caller's stat then
+// produces a clear not-found error).
+func resolveTokenPath(dir string) string {
+	best := ""
+	var bestMtime time.Time
+	for _, name := range tokenFileCandidates {
+		fi, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		if best == "" || fi.ModTime().After(bestMtime) {
+			best = filepath.Join(dir, name)
+			bestMtime = fi.ModTime()
+		}
 	}
+	if best != "" {
+		return best
+	}
+	return filepath.Join(dir, tokenFileCandidates[0])
+}
+
+// NewReader returns a Reader for the given token path. An empty path
+// enables dynamic resolution: every load re-runs DefaultTokenPath so a
+// login that lands in the other candidate file (or a first login after
+// vibekit booted logged-out) is picked up without a restart.
+func NewReader(path string) *Reader {
 	return &Reader{
-		path:       path,
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		path:        path,
+		dynamicPath: path == "",
+		httpClient:  &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -169,6 +209,12 @@ func (r *Reader) Token(ctx context.Context) (accessToken, expiresAt string, err 
 // (for a lossless write-back). The raw map is always an independent copy, so
 // the caller may mutate it without disturbing the cache. Caller holds r.mu.
 func (r *Reader) loadLocked() (*tokenFile, map[string]json.RawMessage, error) {
+	if r.dynamicPath {
+		if p := DefaultTokenPath(); p != r.path {
+			r.path = p
+			r.loaded = false // path flipped: the mtime cache keys the old file
+		}
+	}
 	if r.path == "" {
 		return nil, nil, errors.New("kiro auth token: HOME not resolvable")
 	}

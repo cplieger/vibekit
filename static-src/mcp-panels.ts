@@ -10,7 +10,8 @@ import { type Server, type KeyPair, type Transport, mcpState } from "./mcp-state
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./ui-primitives.js";
 import { saveServer, searchRegistry } from "./actions/mcp.js";
-import { enableTool, getToolsStatus } from "./actions/tools.js";
+import { getToolsStatus } from "./actions/tools.js";
+import { installToolAndWait } from "./tools.js";
 import { subscribeToActions, bindLoadingState } from "./actions/index.js";
 import type { ActionErrorLike } from "./actions/index.js";
 import { initSearchPanel, setSwitchMode, cleanupSearch } from "./mcp-panels-search.js";
@@ -273,20 +274,21 @@ async function gateNpmPanelOnNode(): Promise<void> {
     "aria-label": "Node install progress",
   }) as HTMLDivElement;
 
-  // Disable the button while the enable runs (auto re-enabled on settle);
-  // replaces the manual btn.disabled toggles.
-  bindLoadingState("tools.enable", btn);
+  // Disable the button while the install job runs (auto re-enabled on
+  // settle); replaces the manual btn.disabled toggles.
+  bindLoadingState("tools.ensure", btn);
   btn.addEventListener("click", () => {
     void (async () => {
       const roll = new RollingOutput(out, "git-output-modal");
       out.classList.remove("hidden");
       roll.append("Installing Node.js runtime…");
-      const d = await enableTool.dispatch({ section: "runtimes", name: "node" });
-      if (d === null || d.error !== undefined) {
-        roll.append(`Install failed${d?.error !== undefined ? `: ${d.error}` : ""}`);
+      const res = await installToolAndWait("node", (line) => {
+        roll.append(line);
+      });
+      if (!res.ok) {
+        roll.append(`Install failed${res.error !== undefined ? `: ${res.error}` : ""}`);
         return;
       }
-      roll.append(d.output ?? "");
       // Re-probe; if npx is now present, drop the banner.
       const after = await getToolsStatus.dispatch();
       if (after !== null && after["npx"] === true) {

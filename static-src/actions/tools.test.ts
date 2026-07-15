@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
-// Tests for tools.ts action configuration: scope, retry, dedupe, idempotencyKey.
+// Tests for tools.ts action configuration: scope, retry, dedupe,
+// idempotencyKey, and the v2 wire shapes (202 + job envelopes, the
+// delete 409 pass-through, the ensure create->install fallback).
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () => ({
@@ -24,10 +26,22 @@ vi.mock("../api-client.js", () => ({
   },
 }));
 
-import { installTools, saveTools, runDiagnostics, loadTools, seedMcp } from "./tools.js";
-import { enableTool, deleteTool, patchTool, getToolsStatus } from "./tools.js";
+import {
+  loadTools,
+  createTool,
+  installTool,
+  updateTools,
+  patchTool,
+  deleteTool,
+  ensureTool,
+  searchTools,
+  getToolsJobs,
+  cancelToolJob,
+  runDiagnostics,
+  seedMcp,
+  getToolsStatus,
+} from "./tools.js";
 import { resetActionFramework, headerValue } from "./__test-helpers__/action-test-setup.js";
-import { getActionLog as recentLog } from "./index.js";
 
 const mockFetch = vi.fn();
 
@@ -42,42 +56,169 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("tools.install", () => {
-  it("has correct name and POSTs to /api/tools/install", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ output: "ok" }), { status: 200 }));
-    expect(installTools.name).toBe("tools.install");
-    await installTools.dispatch(undefined);
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/tools/install");
-    expect(opts.method).toBe("POST");
-  });
+const jobBody = JSON.stringify({ job: { id: "tj-1", kind: "install", state: "queued" } });
 
-  it("includes Idempotency-Key header", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    await installTools.dispatch(undefined);
-    expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));
-  });
-
-  it("does NOT auto-retry on network error (C1: a retry re-POSTs and the server cancels + restarts the in-flight multi-minute install)", async () => {
-    mockFetch.mockRejectedValue(new TypeError("Failed to fetch"));
-
-    const result = await installTools.dispatch(undefined);
-    await vi.advanceTimersByTimeAsync(1000); // would cover the old backoff windows
+describe("tools.load", () => {
+  it("GETs /api/tools and dedupes", async () => {
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ tools: [], system: [] }), { status: 200 }));
+          }, 50),
+        ),
+    );
+    const p1 = loadTools.dispatch(undefined);
+    const p2 = loadTools.dispatch(undefined);
+    await vi.advanceTimersByTimeAsync(50);
+    await Promise.all([p1, p2]);
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(result).toBeNull();
-    expect(recentLog()[0]?.status).toBe("error");
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools");
+    expect(opts.method).toBe("GET");
   });
 });
 
-describe("tools.save", () => {
-  it("PUTs to /api/tools with body", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    const data = { mcp: { server1: { enabled: true } } };
-    await saveTools.dispatch(data);
+describe("tools.create", () => {
+  it("POSTs to /api/tools and returns the 202 job envelope", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    expect(createTool.name).toBe("tools.create");
+    const d = await createTool.dispatch({ name: "ripgrep" });
     const [url, opts] = mockFetch.mock.calls[0]!;
     expect(url).toBe("/api/tools");
-    expect(opts.method).toBe("PUT");
-    expect(JSON.parse(opts.body as string)).toEqual(data);
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string).name).toBe("ripgrep");
+    expect(d?.job?.id).toBe("tj-1");
+  });
+
+  it("includes Idempotency-Key header", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    await createTool.dispatch({ name: "x" });
+    expect(headerValue(mockFetch.mock.calls[0]![1], "idempotency-key")).toEqual(expect.any(String));
+  });
+});
+
+describe("tools.install", () => {
+  it("POSTs to the per-tool install path with URL encoding", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    await installTool.dispatch({ name: "@scope/pkg" });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/%40scope%2Fpkg/install");
+    expect(opts.method).toBe("POST");
+  });
+});
+
+describe("tools.update", () => {
+  it("POSTs to /api/tools/update with empty body by default", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    await updateTools.dispatch(undefined);
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/update");
+    expect(JSON.parse(opts.body as string)).toEqual({});
+  });
+
+  it("passes explicit names through", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    await updateTools.dispatch({ names: ["gh"] });
+    expect(JSON.parse(mockFetch.mock.calls[0]![1].body as string).names).toEqual(["gh"]);
+  });
+});
+
+describe("tools.patch", () => {
+  it("PATCHes pin without the name in the body", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await patchTool.dispatch({ name: "gh", pin: true });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/gh");
+    expect(opts.method).toBe("PATCH");
+    expect(JSON.parse(opts.body as string)).toEqual({ pin: true });
+  });
+});
+
+describe("tools.delete", () => {
+  it("DELETEs and returns the body on 200", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    const d = await deleteTool.dispatch({ name: "gh" });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/gh");
+    expect(opts.method).toBe("DELETE");
+    expect(d?.job?.id).toBe("tj-1");
+  });
+
+  it("returns the 409 has_dependents envelope instead of failing", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ code: "has_dependents", dependents: ["jdtls"] }), {
+        status: 409,
+      }),
+    );
+    const d = await deleteTool.dispatch({ name: "java" });
+    expect(d?.code).toBe("has_dependents");
+    expect(d?.dependents).toEqual(["jdtls"]);
+  });
+
+  it("sends force:true when cascading", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    await deleteTool.dispatch({ name: "java", force: true });
+    expect(JSON.parse(mockFetch.mock.calls[0]![1].body as string).force).toBe(true);
+  });
+});
+
+describe("tools.ensure", () => {
+  it("falls back to per-tool install when create says the tool exists", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'tool "gh" already exists' }), { status: 400 }),
+      )
+      .mockResolvedValueOnce(new Response(jobBody, { status: 202 }));
+    const d = await ensureTool.dispatch({ name: "gh" });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[0]![0]).toBe("/api/tools");
+    expect(mockFetch.mock.calls[1]![0]).toBe("/api/tools/gh/install");
+    expect(d?.job?.id).toBe("tj-1");
+  });
+
+  it("returns the job directly when create succeeds", async () => {
+    mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
+    const d = await ensureTool.dispatch({ name: "gh" });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(d?.job?.id).toBe("tj-1");
+  });
+});
+
+describe("tools.search", () => {
+  it("GETs with the query encoded and dedupes", async () => {
+    mockFetch.mockImplementation(
+      () =>
+        new Promise((r) =>
+          setTimeout(() => {
+            r(new Response(JSON.stringify({ results: [] }), { status: 200 }));
+          }, 50),
+        ),
+    );
+    const p1 = searchTools.dispatch({ q: "rip grep" });
+    const p2 = searchTools.dispatch({ q: "rip grep" });
+    await vi.advanceTimersByTimeAsync(50);
+    await Promise.all([p1, p2]);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0]![0]).toBe("/api/tools/search?q=rip%20grep");
+  });
+});
+
+describe("tools.jobs", () => {
+  it("GETs /api/tools/jobs", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ recent: [] }), { status: 200 }));
+    await getToolsJobs.dispatch(undefined);
+    expect(mockFetch.mock.calls[0]![0]).toBe("/api/tools/jobs");
+  });
+});
+
+describe("tools.cancel_job", () => {
+  it("POSTs to the job cancel path", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await cancelToolJob.dispatch({ id: "tj-9" });
+    const [url, opts] = mockFetch.mock.calls[0]!;
+    expect(url).toBe("/api/tools/jobs/tj-9/cancel");
+    expect(opts.method).toBe("POST");
   });
 });
 
@@ -96,27 +237,6 @@ describe("tools.run_diagnostics", () => {
     await vi.advanceTimersByTimeAsync(50);
     await Promise.all([p1, p2]);
     expect(mockFetch).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("tools.load", () => {
-  it("GETs /api/tools and dedupes", async () => {
-    mockFetch.mockImplementation(
-      () =>
-        new Promise((r) =>
-          setTimeout(() => {
-            r(new Response(JSON.stringify({}), { status: 200 }));
-          }, 50),
-        ),
-    );
-    const p1 = loadTools.dispatch(undefined);
-    const p2 = loadTools.dispatch(undefined);
-    await vi.advanceTimersByTimeAsync(50);
-    await Promise.all([p1, p2]);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/tools");
-    expect(opts.method).toBe("GET");
   });
 });
 
@@ -145,73 +265,16 @@ describe("tools.seed_mcp", () => {
     mockFetch.mockImplementation(async () => {
       log.push(Date.now());
       await new Promise<void>((r) => setTimeout(r, 50));
-      return new Response(JSON.stringify({}), { status: 200 });
+      return new Response(jobBody, { status: 202 });
     });
 
-    const p1 = installTools.dispatch(undefined);
+    const p1 = createTool.dispatch({ name: "x" });
     const p2 = seedMcp.dispatch({ name: "x" });
     await vi.advanceTimersByTimeAsync(50);
     await vi.advanceTimersByTimeAsync(50);
     await Promise.all([p1, p2]);
     // Second call starts after first finishes (serialized via scope "tools")
     expect(log[1]! - log[0]!).toBeGreaterThanOrEqual(50);
-  });
-});
-
-describe("tools.enable", () => {
-  it("POSTs to the section/name/enable path", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({ output: "ok", enabled_chain: ["runtimes.node", "lsp.pyright"] }),
-        {
-          status: 200,
-        },
-      ),
-    );
-    await enableTool.dispatch({ section: "lsp", name: "pyright" });
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/tools/lsp/pyright/enable");
-    expect(opts.method).toBe("POST");
-  });
-
-  it("URL-encodes scoped/odd names", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-    await enableTool.dispatch({ section: "lsp", name: "kotlin-language-server" });
-    const [url] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/tools/lsp/kotlin-language-server/enable");
-  });
-});
-
-describe("tools.delete", () => {
-  it("DELETEs without body when force is undefined", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ disabled: ["binary.gh"] }), { status: 200 }),
-    );
-    await deleteTool.dispatch({ section: "binary", name: "gh" });
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/tools/binary/gh");
-    expect(opts.method).toBe("DELETE");
-    expect(opts.body).toBeUndefined();
-  });
-
-  it("sends force:true in body when cascading", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ disabled: [] }), { status: 200 }));
-    await deleteTool.dispatch({ section: "runtimes", name: "node", force: true });
-    const body = JSON.parse(mockFetch.mock.calls[0]![1].body as string);
-    expect(body.force).toBe(true);
-  });
-});
-
-describe("tools.patch", () => {
-  it("PATCHes auto_update", async () => {
-    mockFetch.mockResolvedValue(
-      new Response(JSON.stringify({ auto_update: false }), { status: 200 }),
-    );
-    await patchTool.dispatch({ section: "binary", name: "gh", auto_update: false });
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/tools/binary/gh");
-    expect(opts.method).toBe("PATCH");
-    expect(JSON.parse(opts.body as string).auto_update).toBe(false);
   });
 });
 

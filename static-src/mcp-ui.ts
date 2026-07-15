@@ -83,7 +83,7 @@ function buildSectionScaffold(): void {
   const hint = el(
     "p",
     { className: "section-hint" },
-    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Configuration changes apply on the next new chat. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a manual install (pip, binary), add them in the Installed tools section above first (category: MCP server), then fill in credentials here.",
+    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Configuration changes apply on the next new chat. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a local package (pip, npm, a binary), install it from the Tools section above first (Add tool), then fill in credentials here.",
   );
 
   const btn = el("button", {

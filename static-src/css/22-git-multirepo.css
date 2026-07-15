@@ -357,8 +357,20 @@
   color: var(--c-accent);
 }
 
+.git-branch-popover-create {
+  display: flex;
+  gap: var(--sp-1);
+  align-items: center;
+}
+
 .git-branch-popover-create-input {
   width: 100%;
+  flex: 1 1 auto;
+}
+
+/* The ✨ suggest button stays compact beside the create input. */
+.git-branch-popover-suggest {
+  flex: 0 0 auto;
 }
 
 .git-repo-dirty-dot {

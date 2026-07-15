@@ -22,10 +22,11 @@ import (
 
 func TestWriteTools(t *testing.T) {
 	data := []byte(`{
-		"go": {"goimports": {"version": "v0.30.0"}, "staticcheck": {"version": "2026.1"}},
-		"npm": {"html-validate": {"version": "10.11.3"}},
-		"binary": {"hadolint": {"version": "v2.14.0"}},
-		"runtimes": {"go": {"version": "1.26.2", "binaries": ["go", "gofmt"]}}
+		"tools": {
+			"goimports": {"installed_version": "v0.30.0", "bins": ["goimports"]},
+			"go": {"installed_version": "1.26.2", "bins": ["go", "gofmt"]},
+			"pyright": {"installed_version": "1.1.411", "pm_bins": ["pyright", "pyright-langserver"]}
+		}
 	}`)
 	var b strings.Builder
 	writeTools(&b, data)
@@ -37,23 +38,26 @@ func TestWriteTools(t *testing.T) {
 	if !strings.Contains(out, "- goimports v0.30.0") {
 		t.Error("missing goimports")
 	}
-	if !strings.Contains(out, "- html-validate 10.11.3") {
-		t.Error("missing html-validate")
-	}
-	// Binaries field should expand to individual entries.
+	// Bins expand to individual entries sharing the tool's version.
 	if !strings.Contains(out, "- go 1.26.2") {
-		t.Error("missing go binary from runtimes")
+		t.Error("missing go binary")
 	}
 	if !strings.Contains(out, "- gofmt 1.26.2") {
-		t.Error("missing gofmt binary from runtimes")
+		t.Error("missing gofmt binary")
+	}
+	// pm_bins expand the same way.
+	if !strings.Contains(out, "- pyright-langserver 1.1.411") {
+		t.Error("missing pyright-langserver pm bin")
 	}
 }
 
-func TestWriteTools_Empty(t *testing.T) {
+func TestWriteTools_EmptyEmitsNothing(t *testing.T) {
+	// No installed tools = no section at all (an empty header would
+	// just waste agent context).
 	var b strings.Builder
 	writeTools(&b, []byte(`{}`))
-	if !strings.Contains(b.String(), "## Installed tools") {
-		t.Error("missing header for empty tools")
+	if b.Len() != 0 {
+		t.Errorf("expected no output for empty state, got:\n%s", b.String())
 	}
 }
 
@@ -66,7 +70,10 @@ func TestWriteTools_InvalidJSON(t *testing.T) {
 }
 
 func TestWriteTools_Sorted(t *testing.T) {
-	data := []byte(`{"go": {"zebra": {"version": "1"}, "alpha": {"version": "2"}}}`)
+	data := []byte(`{"tools": {
+		"zebra": {"installed_version": "1"},
+		"alpha": {"installed_version": "2"}
+	}}`)
 	var b strings.Builder
 	writeTools(&b, data)
 	out := b.String()
@@ -80,65 +87,47 @@ func TestWriteTools_Sorted(t *testing.T) {
 	}
 }
 
-// TestWriteTools_AllSourceMaps pins the eight-collect-call list in
-// writeTools against a future copy-paste edit that drops one silently.
-func TestWriteTools_AllSourceMaps(t *testing.T) {
-	data := []byte(`{
-		"runtimes": {"node": {"version": "20.19.0"}},
-		"binary":   {"hadolint": {"version": "v2.14.0"}},
-		"go":       {"goimports": {"version": "v0.30.0"}},
-		"npm":      {"html-validate": {"version": "10.11.3"}},
-		"pip":      {"yamllint": {"version": "1.38.0"}},
-		"custom":   {"kiro-cli": {"version": "2.0.1"}},
-		"cargo":    {"fallow": {"version": "0.3.0"}},
-		"apt":      {"ripgrep": {"version": "13.0.0"}}
-	}`)
+func TestWriteTools_NotInstalledSkipped(t *testing.T) {
+	// A state entry without installed_version (failed install: only
+	// last_error recorded) must not be listed as installed.
+	data := []byte(`{"tools": {
+		"ok": {"installed_version": "1.0.0"},
+		"broken": {"last_error": "download failed"}
+	}}`)
 	var b strings.Builder
 	writeTools(&b, data)
 	out := b.String()
-
-	wants := []string{
-		"- node 20.19.0",
-		"- hadolint v2.14.0",
-		"- goimports v0.30.0",
-		"- html-validate 10.11.3",
-		"- yamllint 1.38.0",
-		"- kiro-cli 2.0.1",
-		"- fallow 0.3.0",
-		"- ripgrep 13.0.0",
+	if !strings.Contains(out, "- ok 1.0.0") {
+		t.Error("missing installed tool")
 	}
-	for _, w := range wants {
-		if !strings.Contains(out, w) {
-			t.Errorf("writeTools output missing %q\nfull output:\n%s", w, out)
-		}
+	if strings.Contains(out, "broken") {
+		t.Errorf("uninstalled tool listed; output:\n%s", out)
 	}
 }
 
-func TestWriteTools_EmptyBinariesSliceUsesMapKey(t *testing.T) {
-	// binaries: [] must NOT suppress the entry; the map key
-	// ("gh") should appear with its version.
-	data := []byte(`{"binary": {"gh": {"version": "v2.91.0", "binaries": []}}}`)
+func TestWriteTools_NoBinsUsesToolName(t *testing.T) {
+	// bins absent (older state / manual entry) falls back to the
+	// tool name.
+	data := []byte(`{"tools": {"jq": {"installed_version": "1.8.1"}}}`)
 	var b strings.Builder
 	writeTools(&b, data)
-	out := b.String()
-
-	if !strings.Contains(out, "- gh v2.91.0") {
-		t.Errorf("writeTools with empty Binaries slice dropped entry; output:\n%s", out)
+	if !strings.Contains(b.String(), "- jq 1.8.1") {
+		t.Errorf("missing name fallback; output:\n%s", b.String())
 	}
 }
 
-func TestWriteTools_EmptyVersionStillLists(t *testing.T) {
-	// Tool with no version field still shows up so the agent
-	// knows it's installed even if the version can't be pinned.
-	data := []byte(`{"binary": {"jq": {}}}`)
+func TestWriteTools_DuplicateBinsDeduped(t *testing.T) {
+	// Two tools shipping the same bin name (a shim collision) list it
+	// once — the agent cares about what's on PATH, not ownership.
+	data := []byte(`{"tools": {
+		"tsc-native": {"installed_version": "7.0.2", "bins": ["tsc", "typescript-language-server"]},
+		"typescript-language-server": {"installed_version": "5.3.0", "pm_bins": ["typescript-language-server"]}
+	}}`)
 	var b strings.Builder
 	writeTools(&b, data)
 	out := b.String()
-
-	// Output format is "- <name> <version>\n"; an empty version
-	// yields "- jq \n".
-	if !strings.Contains(out, "- jq ") {
-		t.Errorf("writeTools with no version dropped entry; output:\n%s", out)
+	if strings.Count(out, "- typescript-language-server ") != 1 {
+		t.Errorf("duplicate bin not deduped; output:\n%s", out)
 	}
 }
 
@@ -247,7 +236,7 @@ func TestWriteForges_PerProviderFields(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestGenerate_WritesCompleteSteeringFile drives the full Generate
-// flow: reads tools.json, inspects workDir, uses the wired MCP
+// flow: reads tools-state.json, inspects workDir, uses the wired MCP
 // snapshot, and writes ~/.kiro/steering/environment.md.
 func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	home := t.TempDir()
@@ -256,8 +245,8 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
-	tools := `{"go":{"goimports":{"version":"v0.30.0"}}}`
-	if err := os.WriteFile(filepath.Join(configDir, "tools.json"),
+	tools := `{"tools":{"goimports":{"installed_version":"v0.30.0","bins":["goimports"]}}}`
+	if err := os.WriteFile(filepath.Join(configDir, "tools-state.json"),
 		[]byte(tools), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -1,204 +1,198 @@
 // ---------------------------------------------------------------------------
-// Tool management: list, add, edit, delete, update installed tools.
+// Tool management (Settings -> Tools) over the v2 tools engine.
 //
-// State is encapsulated in the ToolsManager class. The module exports
-// delegate functions (initTools, loadToolsList) that forward to the
-// singleton instance, preserving the existing public API.
+// The server owns the manifest, install state, and a single-flight job
+// queue; this module is a pure projection. Mutations return 202 with a
+// job; progress arrives over the tool_job_changed / tool_job_output
+// SSE events (the output panel is a live follower that survives
+// reloads via GET /api/tools/jobs). The add flow is search-first: the
+// catalog (compiled from the mise + aqua registries) is the browse
+// surface, with a manual-command escape hatch.
 // ---------------------------------------------------------------------------
 
 import { closeModal, openModal, RollingOutput } from "./modals.js";
 import { confirm as confirmDialog } from "./confirm.js";
-import { ICON_EDIT, ICON_TRASH, ICON_PIN, ICON_PIN_FILLED } from "./icons.js";
+import { ICON_PIN, ICON_PIN_FILLED, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import {
-  installTools,
-  saveTools,
-  seedMcp,
-  loadTools as loadToolsAction,
-  enableTool,
-  deleteTool,
+  loadTools,
+  createTool,
+  installTool,
+  updateTools,
   patchTool,
+  deleteTool,
+  searchTools,
+  getToolsJobs,
+  ensureTool,
+  cancelToolJob,
 } from "./actions/tools.js";
+import type { CreateToolRequest } from "./actions/tools.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
+import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
+import type { ToolCatalogHit, ToolInfo, ToolJob, ToolsList } from "./types.js";
 
-type ToolEntry =
-  | { kind: "label"; sec: string; isBuiltin: boolean }
-  | {
-      kind: "row";
-      sec: string;
-      name: string;
-      entry: Record<string, unknown> | undefined;
-      isBuiltin: boolean;
-    };
-
-interface MethodSchema {
-  fields: { version: boolean; pkg: boolean; install: boolean; binaries: boolean };
-  hints: { cat: string; version: string; pkg: string; install: string };
+/** Trailing-edge debounce for the catalog search input. */
+function debounce(fn: () => void, ms: number): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return () => {
+    if (timer !== null) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      fn();
+    }, ms);
+  };
 }
 
-const INSTALL_METHODS = {
-  go: {
-    fields: { version: true, pkg: true, install: false, binaries: true },
-    hints: {
-      cat: "Installed via go install. Provide the full module path.",
-      version: "Go module version tag, e.g. v1.2.0",
-      pkg: "Full import path with version, e.g. golang.org/x/tools/cmd/goimports@${VERSION}",
-      install: "",
-    },
-  },
-  npm: {
-    fields: { version: true, pkg: false, install: false, binaries: false },
-    hints: {
-      cat: "Installed globally via npm. Just name and version.",
-      version: "npm package version, e.g. 17.6.0",
-      pkg: "",
-      install: "",
-    },
-  },
-  pip: {
-    fields: { version: true, pkg: false, install: false, binaries: false },
-    hints: {
-      cat: "Installed via pip. Just name and version.",
-      version: "PyPI package version, e.g. 1.38.0",
-      pkg: "",
-      install: "",
-    },
-  },
-  cargo: {
-    fields: { version: true, pkg: false, install: false, binaries: false },
-    hints: {
-      cat: "Installed via cargo install. Just name and version.",
-      version: "Crate version, e.g. v0.13.1",
-      pkg: "",
-      install: "",
-    },
-  },
-  apt: {
-    fields: { version: false, pkg: false, install: false, binaries: false },
-    hints: {
-      cat: "Installed via apt-get. No version pinning; uses distro package.",
-      version: "",
-      pkg: "",
-      install: "",
-    },
-  },
-  binary: {
-    fields: { version: true, pkg: false, install: true, binaries: false },
-    hints: {
-      cat: "Downloaded as a prebuilt binary. Provide a curl/tar install command.",
-      version: "Release tag, e.g. v2.14.0. Use ${VERSION} in the install command.",
-      pkg: "",
-      install:
-        "Shell command using ${VERSION}, ${BIN}, ${TOOLS}. e.g. curl -fsSL ... | tar -xz -C ${BIN}",
-    },
-  },
-  runtimes: {
-    fields: { version: true, pkg: false, install: true, binaries: false },
-    hints: {
-      cat: "A language runtime (Go, Node, etc). Provide a custom install command.",
-      version: "Runtime version, e.g. 1.26.2",
-      pkg: "",
-      install: "Shell command using ${VERSION}, ${RUNTIMES}. Installs to ${RUNTIMES}/<name>/.",
-    },
-  },
-  custom: {
-    fields: { version: true, pkg: false, install: true, binaries: false },
-    hints: {
-      cat: "Fully custom install script. You control everything.",
-      version: "Version label for tracking. Use ${VERSION} in the install command.",
-      pkg: "",
-      install: "Shell command using ${VERSION}, ${BIN}, ${TOOLS}.",
-    },
-  },
-  mcp: {
-    fields: { version: true, pkg: false, install: true, binaries: false },
-    hints: {
-      cat: "Install an MCP server that needs a package manager or binary (pip install ha-mcp, cargo install, curl). An unconfigured entry is added to the MCP section; fill in credentials + stdio command there.",
-      version: "Version label, e.g. 1.0.0",
-      pkg: "",
-      install: "Install command, e.g. pip install --user ha-mcp",
-    },
-  },
-  lsp: {
-    fields: { version: true, pkg: false, install: false, binaries: false },
-    hints: {
-      cat: "A language server. Pre-populated entries install via their bundled method (npm/binary/go/gem); edit only adjusts the pinned version.",
-      version: "LSP version, e.g. 1.1.391",
-      pkg: "",
-      install: "",
-    },
-  },
-} as const satisfies Readonly<Record<string, MethodSchema>>;
+type ListEntry =
+  | { kind: "label"; label: string }
+  | { kind: "tool"; tool: ToolInfo }
+  | { kind: "system"; name: string; installed: boolean };
 
-type MethodKind = keyof typeof INSTALL_METHODS;
-
-function isMethodKind(v: string): v is MethodKind {
-  return v in INSTALL_METHODS;
-}
-
-// Modal form fields that only this module touches. Queried lazily via
-// getters so the module can import before DOMContentLoaded.
+// Modal form fields owned by this module (feature-local ids).
 const f = {
-  get title(): HTMLElement {
-    return byId("tool-modal-title");
+  get cancel(): HTMLButtonElement {
+    return byId("tool-cancel-btn");
   },
-  get cat(): HTMLSelectElement {
-    return byId("tool-cat");
+  get search(): HTMLInputElement {
+    return byId("tool-search");
   },
-  get name(): HTMLInputElement {
-    return byId("tool-name");
+  get results(): HTMLDivElement {
+    return byId("tool-search-results");
   },
-  get version(): HTMLInputElement {
-    return byId("tool-version");
+  get manualToggle(): HTMLButtonElement {
+    return byId("tool-manual-toggle");
   },
-  get install(): HTMLInputElement {
-    return byId("tool-install");
+  get manualForm(): HTMLElement {
+    return byId("tool-manual-form");
   },
-  get binaries(): HTMLInputElement {
-    return byId("tool-binaries");
+  get manualName(): HTMLInputElement {
+    return byId("tool-manual-name");
   },
-  get pkg(): HTMLInputElement {
-    return byId("tool-package");
+  get manualVersion(): HTMLInputElement {
+    return byId("tool-manual-version");
   },
-  get save(): HTMLButtonElement {
-    return byId("tool-modal-save");
+  get manualInstall(): HTMLInputElement {
+    return byId("tool-manual-install");
+  },
+  get manualUninstall(): HTMLInputElement {
+    return byId("tool-manual-uninstall");
+  },
+  get manualProbe(): HTMLInputElement {
+    return byId("tool-manual-probe");
+  },
+  get manualAdd(): HTMLButtonElement {
+    return byId("tool-manual-add");
   },
 };
 
 class ToolsManager {
-  private toolsData: Record<string, Record<string, Record<string, unknown>>> = {};
-  private editingTool: { cat: string; name: string } | null = null;
+  private data: ToolsList | null = null;
+  private output: RollingOutput | null = null;
+  /** Job id the output panel is currently following. */
+  private followedJob = "";
+  private unsubscribes: (() => void)[] = [];
+
   /** Public hook for global cleanup: cancels in-flight tool fetch. */
   cancelLoad(): void {
-    loadToolsAction.cancel();
+    loadTools.cancel();
   }
 
   init(): void {
+    this.output = new RollingOutput($.toolUpdateOutput, "git-output-modal");
+
     $.toolAddBtn.addEventListener("click", () => {
-      this.openToolModal(null, null);
+      this.openAddModal();
+    });
+    $.toolUpdateBtn.addEventListener("click", () => {
+      void updateTools.dispatch(undefined);
+    });
+    bindLoadingState("tools.update", $.toolUpdateBtn);
+    f.cancel.addEventListener("click", () => {
+      if (this.followedJob !== "") {
+        void cancelToolJob.dispatch({ id: this.followedJob });
+      }
     });
 
-    const toolOutput = new RollingOutput($.toolUpdateOutput, "git-output-modal");
-    $.toolUpdateBtn.addEventListener("click", () => void this.runToolsInstall(toolOutput));
-    bindLoadingState("tools.install", $.toolUpdateBtn);
+    // Live job following: state transitions re-render the list (rows
+    // flip installing/installed/error); output lines stream into the
+    // rolling panel. Both survive any number of Settings tab
+    // open/close cycles — subscriptions are module-lifetime.
+    this.unsubscribes.push(
+      onSSE("tool_job_changed", (_chat, payload) => {
+        const job = payload.job;
+        if (job === undefined) {
+          return;
+        }
+        this.followJob(job);
+        this.loadToolsList();
+      }),
+      onSSE("tool_job_output", (_chat, payload) => {
+        if (payload.job_id !== this.followedJob || this.output === null) {
+          return;
+        }
+        for (const line of payload.lines) {
+          this.output.append(line);
+        }
+      }),
+    );
 
-    f.save.addEventListener("click", () => {
-      this.saveToolFromModal();
+    // Add-modal wiring: debounced catalog search + manual escape hatch.
+    const runSearch = debounce(() => {
+      void this.renderSearch(f.search.value);
+    }, 200);
+    f.search.addEventListener("input", runSearch);
+    f.manualToggle.addEventListener("click", () => {
+      const hidden = f.manualForm.classList.toggle("hidden");
+      f.manualToggle.setAttribute("aria-expanded", String(!hidden));
     });
-    const unbindSave = bindLoadingState("tools.save", f.save);
-    const unbindSeed = bindLoadingState("tools.seed_mcp", f.save, { preserveDisabled: true });
-    registerCleanup(unbindSave);
-    registerCleanup(unbindSeed);
+    f.manualAdd.addEventListener("click", () => {
+      void this.submitManual();
+    });
+    bindLoadingState("tools.create", f.manualAdd);
+  }
+
+  dispose(): void {
+    for (const un of this.unsubscribes) {
+      un();
+    }
+    this.unsubscribes = [];
+  }
+
+  /** Point the output panel at a job: reset on a new id, headline the
+   *  terminal state, refresh the follow target, and toggle the Cancel
+   *  affordance with the job's liveness. */
+  private followJob(job: ToolJob): void {
+    if (this.output === null) {
+      return;
+    }
+    const live = job.state === "queued" || job.state === "running";
+    f.cancel.classList.toggle("hidden", !live);
+    if (job.id !== this.followedJob) {
+      this.followedJob = job.id;
+      this.output.clear();
+      this.output.append(jobHeadline(job));
+      return;
+    }
+    if (!live) {
+      this.output.append(jobHeadline(job));
+    }
   }
 
   loadToolsList(): void {
-    void loadToolsAction.dispatch(undefined, {
+    void loadTools.dispatch(undefined, {
       onSuccess: (d) => {
-        this.toolsData = d;
+        this.data = d;
         this.renderToolsList();
+        // A job already running when the panel opens (boot sync, or a
+        // reload mid-install): seed the output panel with its tail.
+        if (d.job !== undefined && d.job.id !== this.followedJob) {
+          void this.resumeJobOutput(d.job);
+        }
       },
       onError: () => {
         $.toolsList.replaceChildren();
@@ -207,49 +201,41 @@ class ToolsManager {
     });
   }
 
-  private async runToolsInstall(toolOutput: RollingOutput): Promise<void> {
-    toolOutput.clear();
-    toolOutput.append("Running setup-tools.sh...");
-    const d = await installTools.dispatch(undefined);
-    toolOutput.clear();
-    if (d === null) {
-      toolOutput.append("Install request failed");
-    } else {
-      toolOutput.append(d.output ?? "");
-      if (d.error !== undefined) {
-        toolOutput.append(`Error: ${d.error}`);
-      }
+  private async resumeJobOutput(job: ToolJob): Promise<void> {
+    this.followedJob = job.id;
+    const jobs = await getToolsJobs.dispatch(undefined);
+    if (jobs === null || this.output === null) {
+      return;
     }
-    this.loadToolsList();
+    const active = jobs.active;
+    if (active?.id !== job.id) {
+      return;
+    }
+    this.output.clear();
+    this.output.append(jobHeadline(active));
+    for (const line of active.output_tail ?? []) {
+      this.output.append(line);
+    }
   }
+
+  // --- list rendering ---
 
   private renderToolsList(): void {
     const container = $.toolsList;
-    const sections = [
-      "runtimes",
-      "binary",
-      "go",
-      "npm",
-      "pip",
-      "cargo",
-      "lsp",
-      "apt",
-      "custom",
-      "builtin",
-    ];
+    const d = this.data;
+    if (d === null) {
+      return;
+    }
 
-    // Flatten groups + rows into a single keyed sequence so reconcile
-    // can patch in place across reloads (no flash of empty list).
-    const flat: ToolEntry[] = [];
-    for (const sec of sections) {
-      const entries = this.toolsData[sec];
-      if (entries === undefined || Object.keys(entries).length === 0) {
-        continue;
-      }
-      const isBuiltin = sec === "builtin";
-      flat.push({ kind: "label", sec, isBuiltin });
-      for (const name of Object.keys(entries).sort()) {
-        flat.push({ kind: "row", sec, name, entry: entries[name], isBuiltin });
+    const flat: ListEntry[] = [];
+    for (const t of d.tools) {
+      flat.push({ kind: "tool", tool: t });
+    }
+    const system = d.system.filter((s) => s.installed);
+    if (system.length > 0) {
+      flat.push({ kind: "label", label: "built into the image" });
+      for (const s of system) {
+        flat.push({ kind: "system", name: s.name, installed: s.installed });
       }
     }
 
@@ -260,215 +246,169 @@ class ToolsManager {
       }
     }
 
-    if (flat.length === 0) {
+    if (d.tools.length === 0) {
       container.replaceChildren();
-      container.appendChild(el("div", { className: "list-empty" }, "No tools configured"));
+      container.appendChild(
+        el(
+          "div",
+          { className: "list-empty" },
+          "No tools installed yet — Add tool searches a catalog of ~700 runtimes, language servers, and CLIs.",
+        ),
+      );
       return;
     }
 
     reconcile(container, flat, {
-      key: (e: ToolEntry) => {
-        if (e.kind === "label") {
-          return `label:${e.sec}`;
+      key: (e: ListEntry) => {
+        switch (e.kind) {
+          case "label":
+            return `label:${e.label}`;
+          case "system":
+            return `sys:${e.name}`;
+          case "tool":
+            // State fields participate in the key so any transition
+            // (installing spinner, error, new version) remounts the
+            // row — reconcile's update path only patches text.
+            return [
+              "tool",
+              e.tool.name,
+              e.tool.version,
+              e.tool.latest ?? "",
+              String(e.tool.installed),
+              String(e.tool.installing),
+              String(e.tool.pin ?? false),
+              e.tool.last_error === undefined || e.tool.last_error === "" ? "ok" : "err",
+            ].join(":");
         }
-        // Include the enabled flag in the key so any flip
-        // (Enable success, Delete, or rollback-on-failure) remounts
-        // the row from scratch — otherwise reconcile reuses the
-        // existing node and update() below only patches meta text,
-        // leaving stale action buttons (e.g. a permanently-disabled
-        // "Installing…" button after a rollback).
-        const enabled = (e.entry?.["enabled"] as boolean | undefined) ?? true;
-        return `row:${e.sec}:${e.name}:${enabled ? "on" : "off"}`;
       },
-      mount: (e: ToolEntry) => {
-        if (e.kind === "label") {
-          return el("div", { className: "list-group-label" }, e.isBuiltin ? "base os" : e.sec);
+      mount: (e: ListEntry) => {
+        switch (e.kind) {
+          case "label":
+            return el("div", { className: "list-group-label" }, e.label);
+          case "system":
+            return this.renderSystemRow(e.name);
+          case "tool":
+            return this.renderToolRow(e.tool);
         }
-        return this.renderToolRow(e.sec, e.name, e.entry, e.isBuiltin);
       },
-      update: (row, e: ToolEntry) => {
-        if (e.kind !== "row") {
-          return;
-        }
-        // Same-key updates only patch volatile fields. Enabled-state
-        // transitions go through mount() because the key changes.
-        const meta = row.querySelector(".list-row-meta");
-        if (meta !== null) {
-          meta.textContent = e.isBuiltin
-            ? ((e.entry?.["description"] as string | undefined) ?? "")
-            : ((e.entry?.["version"] as string | undefined) ?? "");
-        }
+      update: () => {
+        // All volatile state is in the key; same-key rows are static.
       },
     });
   }
 
-  private renderToolRow(
-    sec: string,
-    name: string,
-    entry: Record<string, unknown> | undefined,
-    isBuiltin: boolean,
-  ): HTMLDivElement {
-    // enabled defaults to true when the field is absent (user-authored
-    // entries). Pre-populated entries ship enabled:false.
-    const enabled = (entry?.["enabled"] as boolean | undefined) ?? true;
+  private renderSystemRow(name: string): HTMLDivElement {
+    return el(
+      "div",
+      { className: "list-row list-row-system" },
+      el("span", { className: "tool-state-dot tool-state-ok", "aria-hidden": "true" }),
+      el("span", { className: "list-row-name" }, name),
+      el("span", { className: "list-row-meta" }, "system"),
+    ) as HTMLDivElement;
+  }
 
+  private renderToolRow(t: ToolInfo): HTMLDivElement {
     const row = el(
       "div",
       { className: "list-row" },
-      el("span", { className: "list-row-name" }, name),
-      el(
-        "span",
-        { className: "list-row-meta" },
-        isBuiltin
-          ? ((entry?.["description"] as string | undefined) ?? "")
-          : this.metaText(entry, enabled),
-      ),
+      stateDot(t),
+      el("span", { className: "list-row-name", title: t.description ?? "" }, t.name),
+      el("span", { className: "list-row-meta" }, metaText(t)),
     ) as HTMLDivElement;
-
-    if (!isBuiltin && !enabled) {
+    if (!t.installed && !t.installing) {
       row.classList.add("list-row-disabled");
     }
-    if (!isBuiltin) {
-      row.appendChild(this.toolActions(sec, name, entry, enabled));
-    }
+    row.appendChild(this.toolActions(t));
     return row;
   }
 
-  /** Meta line: version + a short description hint when disabled. */
-  private metaText(entry: Record<string, unknown> | undefined, enabled: boolean): string {
-    const version = (entry?.["version"] as string | undefined) ?? "";
-    if (enabled) {
-      return version;
-    }
-    const desc = (entry?.["description"] as string | undefined) ?? "";
-    // For disabled entries the description is the useful bit; the
-    // version is implied. Truncated by CSS ellipsis.
-    return desc !== "" ? desc : version;
-  }
-
-  /**
-   * Action cluster for a tool row. Disabled entries show a single
-   * Enable button. Enabled entries show pin (auto_update toggle),
-   * edit, and delete. Builtin (base os) rows get no actions.
-   */
-  private toolActions(
-    sec: string,
-    name: string,
-    entry: Record<string, unknown> | undefined,
-    enabled: boolean,
-  ): HTMLDivElement {
+  /** Action cluster: install/retry for missing tools, update when a
+   *  newer version is known, pin toggle, delete. */
+  private toolActions(t: ToolInfo): HTMLDivElement {
     const actions = el("div", { className: "list-row-actions" }) as HTMLDivElement;
 
-    if (!enabled) {
-      const enableBtn = el(
-        "button",
-        { className: "btn-small list-row-enable", "aria-label": `Enable ${name}` },
-        "Enable",
-      ) as HTMLButtonElement;
-      enableBtn.addEventListener("click", () => {
-        // Immediate feedback: large runtimes/LSPs (Go, JRE, clangd) can
-        // take minutes, and the install output is buffered server-side,
-        // so without this the row looks inert. Disable + relabel so the
-        // user knows it's working; loadToolsList() re-renders on finish.
-        enableBtn.disabled = true;
-        enableBtn.textContent = "Installing…";
-        void this.runEnable(sec, name);
-      });
-      actions.append(enableBtn);
+    if (t.installing) {
+      actions.append(el("span", { className: "list-row-meta tool-installing" }, "installing…"));
       return actions;
     }
 
-    // Pin toggle: filled = auto_update off (pinned), outline = on.
-    const autoUpdate = (entry?.["auto_update"] as boolean | undefined) ?? true;
+    if (!t.installed) {
+      const installBtn = el(
+        "button",
+        { className: "btn-small list-row-enable", "aria-label": `Install ${t.name}` },
+        t.last_error !== undefined && t.last_error !== "" ? "Retry" : "Install",
+      ) as HTMLButtonElement;
+      installBtn.addEventListener("click", () => {
+        void this.runInstall(t.name);
+      });
+      actions.append(installBtn);
+    } else if (t.latest !== undefined && t.latest !== "") {
+      const updateBtn = el(
+        "button",
+        {
+          className: "btn-small",
+          "data-tooltip": `Update to ${t.latest}`,
+          "aria-label": `Update ${t.name} to ${t.latest}`,
+        },
+        "Update",
+      ) as HTMLButtonElement;
+      updateBtn.addEventListener("click", () => {
+        void updateTools.dispatch({ names: [t.name] });
+      });
+      actions.append(updateBtn);
+    }
+
+    const pinned = t.pin ?? false;
     const pinBtn = el(
       "button",
       {
         className: "list-row-btn list-row-pin",
-        "aria-label": autoUpdate ? `Pin ${name} version` : `Unpin ${name}`,
-        "data-tooltip": autoUpdate
-          ? "Auto-updating on container start. Click to pin this version."
-          : "Pinned — won't auto-update. Click to resume auto-updates.",
+        "aria-label": pinned ? `Unpin ${t.name}` : `Pin ${t.name} version`,
+        "data-tooltip": pinned
+          ? "Pinned — won't auto-update. Click to resume auto-updates."
+          : "Auto-updating. Click to pin this version.",
       },
-      autoUpdateIcon(autoUpdate),
+      iconEl(pinned ? ICON_PIN_FILLED : ICON_PIN),
     );
-    if (!autoUpdate) {
+    if (pinned) {
       pinBtn.classList.add("list-row-pin-active");
     }
     pinBtn.addEventListener("click", () => {
-      void this.togglePin(sec, name, !autoUpdate);
-    });
-
-    const editBtn = el(
-      "button",
-      { className: "list-row-btn", "data-tooltip": "Edit", "aria-label": `Edit ${name}` },
-      iconEl(ICON_EDIT),
-    );
-    editBtn.addEventListener("click", () => {
-      this.openToolModal(sec, name);
+      void this.togglePin(t.name, !pinned);
     });
 
     const delBtn = el(
       "button",
-      { className: "list-row-btn", "data-tooltip": "Delete", "aria-label": `Delete ${name}` },
+      { className: "list-row-btn", "data-tooltip": "Remove", "aria-label": `Remove ${t.name}` },
       iconEl(ICON_TRASH),
     );
     delBtn.addEventListener("click", () => {
-      void this.runDelete(sec, name);
+      void this.runDelete(t.name);
     });
 
-    actions.append(pinBtn, editBtn, delBtn);
+    actions.append(pinBtn, delBtn);
     return actions;
   }
 
-  /** Enable a pre-populated entry: install it + its deps with output. */
-  private async runEnable(sec: string, name: string): Promise<void> {
-    // The shared rolling-output element is module-scoped; if a prior
-    // install left output behind (or another button was clicked while
-    // this one was running), clear it so streams don't interleave.
-    // Frontend is also single-flight-ish: each row's button is
-    // disabled while its install is in-flight, but two distinct rows
-    // could race; backend's installing atomic.Bool serializes the
-    // actual subprocess, so visual interleaving is the only risk.
-    const out = new RollingOutput($.toolUpdateOutput, "git-output-modal");
-    out.clear();
-    out.append(`Enabling ${name}…`);
-    const d = await enableTool.dispatch({ section: sec, name });
-    if (d === null) {
-      out.append("Enable failed");
-    } else {
-      if (d.enabled_chain !== undefined && d.enabled_chain.length > 1) {
-        out.append(`Installing: ${d.enabled_chain.join(", ")}`);
-      }
-      out.append(d.output ?? "");
-      if (d.error !== undefined) {
-        out.append(`Error: ${d.error}`);
-      } else if (sec === "lsp") {
-        // kiro-cli scans PATH for language servers at code-intelligence
-        // init time. A server enabled mid-session isn't picked up by
-        // the running bridge — kiro-cli auto-inits a fresh bridge per
-        // new chat, so the LSP becomes active there. Tell the user
-        // plainly; we used to fire `/code init -f` into the active
-        // chat as a best-effort nudge but couldn't verify it actually
-        // re-scanned PATH for the new binary, so the honest behavior
-        // is "active in your next chat."
-        out.append(
-          "Installed. Active in any new chat (existing chats keep their current LSP set).",
-        );
-      }
-    }
+  private async runInstall(name: string): Promise<void> {
+    await installTool.dispatch({ name });
     this.loadToolsList();
   }
 
-  /** Delete with cascade-aware confirm. */
-  private async runDelete(sec: string, name: string): Promise<void> {
+  private async togglePin(name: string, pin: boolean): Promise<void> {
+    await patchTool.dispatch({ name, pin });
+    this.loadToolsList();
+  }
+
+  /** Delete with cascade-aware confirm (409 lists dependents). */
+  private async runDelete(name: string): Promise<void> {
     const ok = await confirmDialog(`Remove ${name}?`, "Remove", "destructive");
     if (!ok) {
       return;
     }
-    const d = await deleteTool.dispatch({ section: sec, name });
-    // 409 cascade: backend lists dependents that also need disabling.
+    const d = await deleteTool.dispatch({ name });
     if (d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
-      const list = d.dependents.map((dep) => dep.split(".").pop()).join(", ");
+      const list = d.dependents.join(", ");
       const force = await confirmDialog(
         `${name} is required by: ${list}. Remove all of them?`,
         "Remove all",
@@ -477,171 +417,258 @@ class ToolsManager {
       if (!force) {
         return;
       }
-      await deleteTool.dispatch({ section: sec, name, force: true });
+      await deleteTool.dispatch({ name, force: true });
     }
     this.loadToolsList();
   }
 
-  /** Flip auto_update for an entry. */
-  private async togglePin(sec: string, name: string, autoUpdate: boolean): Promise<void> {
-    await patchTool.dispatch({ section: sec, name, auto_update: autoUpdate });
-    this.loadToolsList();
-  }
+  // --- add modal (search-first) ---
 
-  private updateToolFormVisibility(): void {
-    const catVal = f.cat.value;
-    const cat: MethodKind = isMethodKind(catVal) ? catVal : "custom";
-    const schema = INSTALL_METHODS[cat];
-    toggleLabel("tool-version-label", schema.fields.version);
-    toggleLabel("tool-package-label", schema.fields.pkg);
-    toggleLabel("tool-install-label", schema.fields.install);
-    toggleLabel("tool-binaries-label", schema.fields.binaries);
-    setHintText("tool-cat-hint", schema.hints.cat);
-    setHintText("tool-version-hint", schema.hints.version);
-    setHintText("tool-package-hint", schema.hints.pkg);
-    setHintText("tool-install-hint", schema.hints.install);
-  }
-
-  private openToolModal(cat: string | null, name: string | null): void {
-    f.cat.onchange = () => {
-      this.updateToolFormVisibility();
-    };
-    if (cat !== null && name !== null) {
-      f.title.textContent = `Edit: ${name}`;
-      this.editingTool = { cat, name };
-      const entry = this.toolsData[cat]?.[name];
-      f.cat.value = cat;
-      f.cat.disabled = true;
-      f.name.value = name;
-      f.name.disabled = true;
-      f.version.value = (entry?.["version"] as string | undefined) ?? "";
-      f.install.value = (entry?.["install"] as string | undefined) ?? "";
-      f.binaries.value = ((entry?.["binaries"] as string[] | undefined) ?? []).join(", ");
-      f.pkg.value = (entry?.["package"] as string | undefined) ?? "";
-    } else {
-      f.title.textContent = "Add tool";
-      this.editingTool = null;
-      f.cat.value = "go";
-      f.cat.disabled = false;
-      f.name.value = "";
-      f.name.disabled = false;
-      f.version.value = "";
-      f.install.value = "";
-      f.binaries.value = "";
-      f.pkg.value = "";
-    }
-    this.updateToolFormVisibility();
+  private openAddModal(): void {
+    f.search.value = "";
+    f.manualForm.classList.add("hidden");
+    f.manualName.value = "";
+    f.manualVersion.value = "";
+    f.manualInstall.value = "";
+    f.manualUninstall.value = "";
+    f.manualProbe.value = "";
     openModal($.toolModal);
+    void this.renderSearch("");
+    f.search.focus();
   }
 
-  private saveToolFromModal(): void {
-    const uiCatVal = f.cat.value;
-    const uiCat: MethodKind = isMethodKind(uiCatVal) ? uiCatVal : "custom";
-    const cat = uiCat === "mcp" ? "custom" : uiCat;
-    const name = f.name.value.trim();
-    if (name === "") {
+  /** Render catalog hits (empty query = the featured starter set). */
+  private async renderSearch(query: string): Promise<void> {
+    const d = await searchTools.dispatch({ q: query.trim() });
+    const box = f.results;
+    box.replaceChildren();
+    if (d === null) {
+      box.appendChild(el("div", { className: "list-empty" }, "Catalog unavailable"));
       return;
     }
-    const { fields } = INSTALL_METHODS[uiCat];
-    const version = f.version.value.trim();
-    if (fields.version && version === "") {
+    if (d.results.length === 0) {
+      box.appendChild(
+        el(
+          "div",
+          { className: "list-empty" },
+          query.trim() === ""
+            ? "Everything featured is already installed. Search the catalog by name."
+            : `No catalog match for "${query.trim()}" — use “Custom install command” below.`,
+        ),
+      );
       return;
     }
-
-    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-    if (this.toolsData[cat] === undefined) {
-      this.toolsData[cat] = {};
+    for (const hit of d.results) {
+      box.appendChild(this.renderSearchHit(hit));
     }
-    // Merge into the existing entry instead of rebuilding it from the four
-    // visible form fields. Pre-populated entries carry fields the form never
-    // shows (enabled, auto_update, requires, update, method, package,
-    // npm_extras, shims, primary, probe, uninstall, sha256, ...); a
-    // from-scratch rebuild silently destroyed them — dependency ordering,
-    // version checks, and install methods all broke on the next run — and
-    // the corrupted manifest was then PUT back over the good copy. Start
-    // from the current entry, overwrite only what the form edits, and
-    // delete a key only when its form field is VISIBLE for this method and
-    // was cleared by the user.
-    const prior =
-      this.editingTool !== null
-        ? this.toolsData[this.editingTool.cat]?.[this.editingTool.name]
-        : this.toolsData[cat][name];
-    const entry: Record<string, unknown> = { ...(prior ?? {}) };
-    if (fields.version) {
-      entry["version"] = version; // non-empty when visible: validated above
-    }
-    const install = f.install.value.trim();
-    if (fields.install) {
-      if (install !== "") {
-        entry["install"] = install;
-      } else {
-        delete entry["install"];
-      }
-    }
-    const binaries = f.binaries.value.trim();
-    if (fields.binaries) {
-      if (binaries !== "") {
-        entry["binaries"] = binaries
-          .split(",")
-          .map((s) => s.trim())
-          .filter((s) => s !== "");
-      } else {
-        delete entry["binaries"];
-      }
-    }
-    const pkg = f.pkg.value.trim();
-    if (fields.pkg) {
-      if (pkg !== "") {
-        entry["package"] = pkg;
-      } else {
-        delete entry["package"];
-      }
-    }
-    if (uiCat === "mcp") {
-      entry["kind"] = "mcp";
-    }
-
-    if (
-      this.editingTool !== null &&
-      (this.editingTool.cat !== cat || this.editingTool.name !== name)
-    ) {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion, @typescript-eslint/no-dynamic-delete
-      delete this.toolsData[this.editingTool.cat]![this.editingTool.name];
-    }
-    this.toolsData[cat][name] = entry;
-    this.saveToolsData();
-    this.renderToolsList();
-
-    if (uiCat === "mcp" && this.editingTool === null) {
-      void seedUnconfiguredMCP(name, install);
-    }
-    closeModal($.toolModal);
   }
 
-  private saveToolsData(): void {
-    void saveTools.dispatch(this.toolsData);
+  private renderSearchHit(hit: ToolCatalogHit): HTMLElement {
+    const addBtn = el(
+      "button",
+      { className: "btn-small list-row-enable", "aria-label": `Install ${hit.name}` },
+      "Install",
+    ) as HTMLButtonElement;
+    addBtn.addEventListener("click", () => {
+      addBtn.disabled = true;
+      addBtn.textContent = "Queued…";
+      void this.submitCatalogAdd({ name: hit.name });
+    });
+    return el(
+      "div",
+      { className: "list-row tool-hit" },
+      el(
+        "div",
+        { className: "tool-hit-text" },
+        el(
+          "div",
+          { className: "tool-hit-title" },
+          el("span", { className: "list-row-name" }, hit.name),
+          sourceChip(hit.source),
+        ),
+        el("span", { className: "tool-hit-desc" }, hit.description ?? ""),
+      ),
+      addBtn,
+    );
+  }
+
+  private async submitCatalogAdd(req: CreateToolRequest): Promise<void> {
+    const d = await createTool.dispatch(req);
+    if (d !== null) {
+      closeModal($.toolModal);
+      this.loadToolsList();
+    } else {
+      void this.renderSearch(f.search.value);
+    }
+  }
+
+  private async submitManual(): Promise<void> {
+    const name = f.manualName.value.trim();
+    const version = f.manualVersion.value.trim();
+    const install = f.manualInstall.value.trim();
+    if (name === "" || version === "" || install === "") {
+      return;
+    }
+    const req: CreateToolRequest = { name, source: "manual", version, install };
+    const uninstall = f.manualUninstall.value.trim();
+    if (uninstall !== "") {
+      req.uninstall = uninstall;
+    }
+    const probe = f.manualProbe.value.trim();
+    if (probe !== "") {
+      req.probe = probe;
+    }
+    await this.submitCatalogAdd(req);
   }
 }
 
-/** Seed an MCP config entry the user can fill in later. */
-async function seedUnconfiguredMCP(name: string, install: string): Promise<void> {
-  await seedMcp.dispatch({ name, install });
+// --- pure row helpers ---
+
+function stateDot(t: ToolInfo): HTMLElement {
+  let cls = "tool-state-missing";
+  let label = "not installed";
+  if (t.installing) {
+    cls = "tool-state-busy";
+    label = "installing";
+  } else if (t.last_error !== undefined && t.last_error !== "") {
+    cls = "tool-state-error";
+    label = `failed: ${t.last_error}`;
+  } else if (t.installed) {
+    cls = "tool-state-ok";
+    label = "installed";
+  }
+  return el("span", {
+    className: `tool-state-dot ${cls}`,
+    "data-tooltip": label,
+    role: "img",
+    "aria-label": label,
+  });
 }
 
-/**
- * Pin icon reflecting auto_update state. Filled pin = pinned
- * (auto_update off); outline pin = tracking upstream (auto_update on).
- */
-function autoUpdateIcon(autoUpdate: boolean): Element {
-  return iconEl(autoUpdate ? ICON_PIN : ICON_PIN_FILLED);
+function metaText(t: ToolInfo): string {
+  const version = t.installed && t.installed_version !== undefined && t.installed_version !== ""
+    ? t.installed_version
+    : t.version;
+  if (t.latest !== undefined && t.latest !== "") {
+    return `${version} → ${t.latest}`;
+  }
+  if (!t.installed && t.last_error !== undefined && t.last_error !== "") {
+    return t.last_error;
+  }
+  return version;
 }
 
-function toggleLabel(id: string, show: boolean): void {
-  byId(id).style.display = show ? "" : "none";
+/** Short source chip text: "aqua:cli/cli" -> "github", "npm:x" -> "npm". */
+function sourceChip(source: string): HTMLElement {
+  const kind = source.split(":", 1)[0] ?? source;
+  const label = kind === "aqua" ? "binary" : kind;
+  return el("span", { className: "tool-source-chip" }, label);
 }
 
-function setHintText(id: string, text: string): void {
-  byId(id).textContent = text;
+function jobHeadline(job: ToolJob): string {
+  const names = (job.names ?? []).join(", ");
+  const what = names === "" ? job.kind : `${job.kind} ${names}`;
+  switch (job.state) {
+    case "queued":
+      return `queued: ${what}`;
+    case "running":
+      return `running: ${what}`;
+    case "done":
+      return `✓ ${what} finished`;
+    case "cancelled":
+      return `${what} cancelled`;
+    default:
+      return `✗ ${what} failed${job.error !== undefined && job.error !== "" ? `: ${job.error}` : ""}`;
+  }
+}
+
+/** Install a tool by name (creating it from the catalog if needed) and
+ *  resolve once its job reaches a terminal state. Output lines stream
+ *  into onLine. Shared by the forge-CLI and MCP-node install banners.
+ *
+ *  The SSE listeners register BEFORE the mutation is dispatched (a fast
+ *  job could otherwise finish between the 202 response and listener
+ *  registration, stranding the promise), buffering events until the
+ *  job id is known; a post-dispatch poll of the jobs endpoint covers
+ *  the remaining case of a terminal event lost to an SSE reconnect. */
+export async function installToolAndWait(
+  name: string,
+  onLine: (line: string) => void,
+): Promise<{ ok: boolean; error?: string }> {
+  const jobRef: { id: string | undefined } = { id: undefined };
+  let settled = false;
+  let settle: (r: { ok: boolean; error?: string }) => void = () => {
+    /* replaced below */
+  };
+  const result = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    settle = (r) => {
+      if (!settled) {
+        settled = true;
+        unOut();
+        unChanged();
+        resolve(r);
+      }
+    };
+  });
+  const buffered: { id: string; lines: string[] }[] = [];
+  const terminal = new Map<string, { state: string; error?: string }>();
+  const settleFromState = (state: string, error?: string): void => {
+    if (state === "done") {
+      settle({ ok: true });
+    } else if (state === "failed" || state === "cancelled") {
+      settle({ ok: false, ...(error !== undefined && error !== "" ? { error } : {}) });
+    }
+  };
+  const unOut = onSSE("tool_job_output", (_c, p) => {
+    if (jobRef.id === undefined) {
+      buffered.push({ id: p.job_id, lines: [...p.lines] });
+      return;
+    }
+    if (p.job_id !== jobRef.id) {
+      return;
+    }
+    for (const line of p.lines) {
+      onLine(line);
+    }
+  });
+  const unChanged = onSSE("tool_job_changed", (_c, p) => {
+    const job = p.job;
+    if (job === undefined) {
+      return;
+    }
+    if (jobRef.id === undefined) {
+      terminal.set(job.id, {
+        state: job.state,
+        ...(job.error !== undefined ? { error: job.error } : {}),
+      });
+      return;
+    }
+    if (job.id !== jobRef.id) {
+      return;
+    }
+    settleFromState(job.state, job.error);
+  });
+
+  const d = await ensureTool.dispatch({ name });
+  const id = d?.job?.id;
+  if (id === undefined) {
+    settle({ ok: false, error: "install request failed" });
+    return result;
+  }
+  jobRef.id = id;
+  // Drain anything that arrived before the id was known.
+  for (const b of buffered) {
+    if (b.id === id) {
+      for (const line of b.lines) {
+        onLine(line);
+      }
+    }
+  }
+  const t = terminal.get(id);
+  if (t !== undefined) {
+    settleFromState(t.state, t.error);
+  }
+  return result;
 }
 
 // Singleton instance — internal to the module.

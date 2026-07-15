@@ -269,3 +269,46 @@ func TestToken_RefreshFailureVendsStale(t *testing.T) {
 		t.Errorf("token = %q, want stale-access (best-effort vend)", tok)
 	}
 }
+
+// resolveTokenPath picks the freshest existing candidate token file, so
+// the reader follows whichever store the latest login wrote (the CLI's
+// kiro-auth-token-cli.json inside the container, the IDE's unsuffixed
+// name on a workstation). Regression guard: hard-coding the unsuffixed
+// name left production reading a nonexistent file.
+func TestResolveTokenPath(t *testing.T) {
+	t.Run("empty dir falls back to the CLI name", func(t *testing.T) {
+		dir := t.TempDir()
+		want := filepath.Join(dir, "kiro-auth-token-cli.json")
+		if got := resolveTokenPath(dir); got != want {
+			t.Errorf("resolveTokenPath = %q, want %q", got, want)
+		}
+	})
+	t.Run("single existing candidate wins regardless of name", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "kiro-auth-token.json")
+		if err := os.WriteFile(p, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := resolveTokenPath(dir); got != p {
+			t.Errorf("resolveTokenPath = %q, want %q", got, p)
+		}
+	})
+	t.Run("freshest of two wins", func(t *testing.T) {
+		dir := t.TempDir()
+		older := filepath.Join(dir, "kiro-auth-token-cli.json")
+		newer := filepath.Join(dir, "kiro-auth-token.json")
+		if err := os.WriteFile(older, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(newer, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		past := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(older, past, past); err != nil {
+			t.Fatal(err)
+		}
+		if got := resolveTokenPath(dir); got != newer {
+			t.Errorf("resolveTokenPath = %q, want %q (newer mtime)", got, newer)
+		}
+	})
+}

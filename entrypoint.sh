@@ -2,8 +2,6 @@
 
 CONFIG_DIR="/config"
 TOOLS="$CONFIG_DIR/tools"
-MANIFEST="$CONFIG_DIR/tools.json"
-LOG="/tmp/setup-tools.log"
 
 # kiro-cli is pinned via Renovate against the public install manifest at
 # https://desktop-release.q.us-east-1.amazonaws.com/index.json. Bumping
@@ -17,8 +15,10 @@ LOG="/tmp/setup-tools.log"
 KIRO_CLI_VERSION="2.12.1"
 KIRO_CLI_SHA256="410bf0d6da4c570f46f765826c2fbbafffce42c06c25e04151dfb3b954c07cfd"
 
-mkdir -p "$TOOLS/bin" "$TOOLS/go/bin" "$TOOLS/runtimes" \
-  "$TOOLS/node/bin" "$TOOLS/python/bin" "$TOOLS/lib" \
+# Tool installs (opt/, npm/, python/, go/) are owned by the in-process
+# tools engine, which creates its own subtree; bin/ is created here so
+# PATH resolution and the kiro-cli promote below never race it.
+mkdir -p "$TOOLS/bin" \
   "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
   "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
   || {
@@ -27,10 +27,31 @@ mkdir -p "$TOOLS/bin" "$TOOLS/go/bin" "$TOOLS/runtimes" \
     exit 1
   }
 
-# Seed tools.json from bundled default if not present
-if [ ! -f "$MANIFEST" ]; then
-  printf "Seeding tools.json from default\n"
-  cp /opt/vibekit/tools.json.default "$MANIFEST"
+# One-time migration from the legacy KIRO_HOME (/config/kiro). The v3
+# engine (KAS) ignores KIRO_HOME and reads $HOME/.kiro, so KIRO_HOME now
+# points at /config/home/.kiro. Carry over the two files with user value:
+# the kiro-cli settings and the custom-instructions steering doc. The
+# generated environment.md is rewritten at startup, and /config/kiro
+# sessions are dead v2-engine state (v3 sessions were always written to
+# $HOME/.kiro/sessions). Guarded on the legacy dir, so this runs once.
+if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
+  printf "Migrating legacy kiro state /config/kiro -> %s\n" "$KIRO_HOME"
+  mkdir -p "$KIRO_HOME/settings" "$KIRO_HOME/steering" "$KIRO_HOME/agents"
+  # Legacy copies are strictly newer than anything already at the
+  # destination (writes moved to /config/kiro when it became KIRO_HOME).
+  [ -f /config/kiro/settings/cli.json ] \
+    && cp -f /config/kiro/settings/cli.json "$KIRO_HOME/settings/cli.json"
+  [ -f /config/kiro/steering/custom.md ] \
+    && cp -f /config/kiro/steering/custom.md "$KIRO_HOME/steering/custom.md"
+  # User-defined agent configs, if any; keep existing destination files.
+  if [ -d /config/kiro/agents ]; then
+    cp -rn /config/kiro/agents/. "$KIRO_HOME/agents/" 2>/dev/null || true
+  fi
+  # A stale pre-migration environment.md at the destination would be
+  # loaded by kiro-cli before vibekit's first regeneration replaces it;
+  # remove it so sessions never see outdated instructions.
+  rm -f "$KIRO_HOME/steering/environment.md"
+  rm -rf /config/kiro
 fi
 
 # kiro-cli is the one tool vibekit cannot launch without; it's downloaded
@@ -162,21 +183,13 @@ if needs_kiro_cli_install; then
   fi
 fi
 
-# Run setup-tools.sh FOREGROUND on every boot. This ensures LSPs and
-# other on-demand tools are on PATH before kiro-cli spawns its first
-# bridge (kiro-cli scans PATH for language servers at code-intelligence
-# init time — if an LSP isn't present yet, it won't be detected).
-#
-# Performance: setup-tools.sh skips already-installed tools (just a
-# file-existence check per entry). The only cost on a warm boot is the
-# version-update network probes (~1s each for entries with auto_update
-# enabled). This is acceptable vs. the alternative of LSPs being
-# silently missing on the first chat after a restart.
-if [ -s "$MANIFEST" ] && jq -e '.binary + .go + .npm + .pip + .custom + .runtimes + .lsp | length > 0' "$MANIFEST" >/dev/null 2>&1; then
-  printf "Running setup-tools.sh (log: %s)\n" "$LOG"
-  bash /opt/vibekit/setup-tools.sh 2>&1 | tee "$LOG" \
-    || printf "WARNING: setup-tools.sh failed, check %s\n" "$LOG"
-fi
+# Tool installs and updates are owned by the server's in-process tools
+# engine (internal/tools): it enqueues a boot sync job right after
+# startup that installs anything missing from tools.json and applies
+# updates to unpinned tools, streaming progress to the UI over SSE.
+# Nothing blocks here — previously installed tools persist on the
+# /config volume and are on PATH immediately; a genuinely new LSP
+# becomes active in the next chat once its install job finishes.
 
 # Launch the ACP web UI server (foreground)
 # Falls back to sleep if kiro-cli isn't available yet
@@ -240,7 +253,7 @@ if command -v kiro-cli >/dev/null 2>&1; then
   exec /app/vibekit
 else
   printf "WARNING: kiro-cli not found, web UI not started\n"
-  printf "Run 'bash /opt/vibekit/setup-tools.sh' then '/app/vibekit'\n"
+  printf "Check the kiro-cli install log above, then restart the container\n"
   # Stay alive so the container doesn't restart-loop
   exec sleep infinity
 fi

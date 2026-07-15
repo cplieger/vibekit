@@ -16,6 +16,7 @@ import {
   getSessions,
   getActiveId,
   setThinking,
+  setAgentStatus,
   setCurrentMode,
   invalidateSession,
 } from "../store.js";
@@ -60,6 +61,9 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     if (s.thinking) {
       setThinking(s.id, false);
     }
+    // Agent-declared status is as untrustworthy as `thinking` after a
+    // gap: the clearing chat_status may be among the dropped events.
+    setAgentStatus(s.id, "", "");
     // A prompt queued before the outage would strand if we missed the
     // turn_ended that should have drained it: thinking is now cleared, so no
     // future turn_ended will fire for that turn. Re-drain any chat that is

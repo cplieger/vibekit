@@ -18,6 +18,7 @@ import {
   defaultUsage,
   activeSession,
   removeChat,
+  tabStatusFor,
 } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
 import { effect, el } from "@cplieger/reactive";
@@ -30,6 +31,7 @@ import {
   getActiveTabId,
   renameTab,
   setTabStatus,
+  setTabTooltip,
   setTabIcon,
   TAB_VIEWS,
 } from "./tabs.js";
@@ -377,11 +379,14 @@ export function installStoreSubscribers(): void {
     // mode icon current without needing an active-session event.
     for (const s of getSessions()) {
       if (hasTab(s.id)) {
-        // Reconcile tab name with server auto-rename.
+        // Reconcile tab name with server auto-rename / agent focus title.
         renameTab(s.id, s.name);
-        // Per-tab "thinking" activity dot, driven by the per-chat thinking
-        // signal (turn_ended also clears it explicitly in handlers/turn.ts).
-        setTabStatus(s.id, s.thinking ? "thinking" : "");
+        // Per-tab activity dot: thinking while a turn runs, amber waiting
+        // when the agent declared waiting_on_user (turn_ended re-derives
+        // via the same tabStatusFor rule in handlers/turn.ts).
+        setTabStatus(s.id, tabStatusFor(s));
+        // Agent-declared "what I'm working on" as the tab tooltip.
+        setTabTooltip(s.id, s.agent_status_text ?? "");
         // Tab icon derived from the chat's current mode, so a mode change
         // (user- or agent-initiated) or a reload shows the right glyph.
         setTabIcon(s.id, iconForMode(s.current_mode_id));

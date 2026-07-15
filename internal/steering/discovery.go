@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Doc is one classified per-repo steering markdown file. The
@@ -103,15 +105,15 @@ func writeRepoSteeringInstructions(b *strings.Builder, repos []string, workDir s
 	b.WriteString("relevant question arises or the user references them by name.\n")
 	b.WriteString("- **Custom agents**: don't read; just be aware they exist. If the user ")
 	b.WriteString("asks to switch agents, you know what's available.\n")
-	b.WriteString("- **Hooks**: don't read; kiro-cli enforces them at tool-call time. ")
-	b.WriteString("If you're about to perform an action where a hook triggers, ")
-	b.WriteString("proactively mention it. When the user describes a workflow pattern ")
-	b.WriteString("that would benefit from a hook, suggest creating one.\n")
+	b.WriteString("- **Hooks**: don't read; kiro-cli runs them automatically on their ")
+	b.WriteString("trigger events. If you're about to perform an action where a hook ")
+	b.WriteString("triggers, proactively mention it. When the user describes a workflow ")
+	b.WriteString("pattern that would benefit from a hook, suggest creating one.\n")
 	b.WriteString("- One read per session is enough; subsequent prompts within the same ")
 	b.WriteString("turn don't need to re-read what you already loaded.\n")
 	b.WriteString("- **If a doc is added or edited during this session**: the ")
 	b.WriteString("inventory above is a snapshot from when this session started and ")
-	b.WriteString("won't auto-refresh. Re-read the file via `fs_read` directly if the ")
+	b.WriteString("won't auto-refresh. Re-read the file via read_file directly if the ")
 	b.WriteString("user mentions it. A fresh chat will pick it up automatically.\n\n")
 }
 
@@ -347,14 +349,17 @@ func agentBaseName(filename string) (string, bool) {
 	}
 }
 
-// HookEntry is a hook config found in `.kiro/hooks/`.
+// HookEntry is one hook from a `.kiro/hooks/*.json` document.
 type HookEntry struct {
 	Filename string
-	Trigger  string // "preToolUse", "postToolUse", "agentSpawn", "userPromptSubmit"
-	Command  string // truncated command preview
+	Name     string // hook name from the v1 envelope
+	Trigger  string // PascalCase trigger: "SessionStart", "PreToolUse", "PostFileSave", …
+	Command  string // truncated action preview (command, or prompt for agent hooks)
 }
 
-// findRepoHooks scans `.kiro/hooks/` for JSON hook configs.
+// findRepoHooks scans `.kiro/hooks/` for JSON hook documents. Each file
+// is a v1 envelope carrying one or more hooks; every hook renders as
+// its own entry. Capped at 10 entries total.
 func findRepoHooks(repoDir string) []HookEntry {
 	dir := filepath.Join(repoDir, ".kiro", "hooks")
 	entries, err := os.ReadDir(dir)
@@ -371,27 +376,79 @@ func findRepoHooks(repoDir string) []HookEntry {
 		}
 		path := filepath.Join(dir, e.Name())
 		data, _ := readCappedFile(path, 16<<10)
-		h := parseHookJSON(data)
-		h.Filename = e.Name()
-		out = append(out, h)
-		if len(out) >= 10 {
-			break
+		for _, h := range parseHookDoc(data) {
+			h.Filename = e.Name()
+			out = append(out, h)
+			if len(out) >= 10 {
+				return out
+			}
 		}
 	}
 	return out
 }
 
-func parseHookJSON(data []byte) HookEntry {
-	var raw struct {
-		EventType string `json:"event_type"`
-		Command   string `json:"command"`
+// parseHookDoc parses a v1 hook document:
+//
+//	{"version":"v1","hooks":[{name, trigger, matcher?,
+//	  action:{type:"command"|"agent", command|prompt}, timeout?}]}
+//
+// This is the on-disk format Kiro's createHook tool and vibekit's own
+// create_hook command write (internal/command/hooks.go buildHookDoc);
+// triggers are PascalCase (SessionStart, PreToolUse, PostFileSave, …).
+// One file may carry multiple hooks; each becomes its own entry. The
+// action preview prefers command hooks' command and falls back to agent
+// hooks' prompt. Malformed JSON or an empty hooks array yields nil.
+func parseHookDoc(data []byte) []HookEntry {
+	var doc struct {
+		Hooks []struct {
+			Name    string `json:"name"`
+			Trigger string `json:"trigger"`
+			Action  struct {
+				Type    string `json:"type"`
+				Command string `json:"command"`
+				Prompt  string `json:"prompt"`
+			} `json:"action"`
+		} `json:"hooks"`
 	}
-	_ = json.Unmarshal(data, &raw)
-	cmd := raw.Command
-	if len(cmd) > 80 {
-		cmd = cmd[:77] + "..."
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil
 	}
-	return HookEntry{Trigger: raw.EventType, Command: cmd}
+	out := make([]HookEntry, 0, len(doc.Hooks))
+	for _, h := range doc.Hooks {
+		preview := h.Action.Command
+		if h.Action.Type == "agent" {
+			preview = h.Action.Prompt
+		}
+		preview = sanitizeHookField(preview)
+		if len(preview) > 80 {
+			preview = truncateUTF8(preview, 77) + "..."
+		}
+		out = append(out, HookEntry{
+			Name:    sanitizeHookField(h.Name),
+			Trigger: sanitizeHookField(h.Trigger),
+			Command: preview,
+		})
+	}
+	return out
+}
+
+// sanitizeHookField flattens control characters, strips hidden Unicode,
+// and swaps backticks for quotes. Hook files are workspace repo content
+// (attacker-controlled from vibekit's point of view, same threat model
+// as readFirstLine), and these fields are written into the steering
+// file inside code spans — a raw newline or backtick would break out of
+// the span and inject agent-visible steering lines.
+func sanitizeHookField(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '\n', '\r', '\t':
+			return ' '
+		case '`':
+			return '\''
+		}
+		return r
+	}, s)
+	return api.SanitizeUnicode(s)
 }
 
 // findMdDocsInDir scans a flat directory of `.md` files, classifying

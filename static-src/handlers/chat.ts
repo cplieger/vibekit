@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { upsertHeader, removeChat, getActiveId } from "../store.js";
+import { upsertHeader, removeChat, getActiveId, setAgentStatus } from "../store.js";
 import { closeTab, hasTab } from "../tabs.js";
 import { parseRoute, replaceRoute } from "../router.js";
 
@@ -36,6 +36,19 @@ onSSE("chat_updated", (_chatID, header) => {
     return;
   }
   upsertHeader(header);
+});
+
+// chat_status: the agent's self-declared activity (KAS focus_update via
+// update_session_information). Ephemeral by design — the store field is
+// cleared on the next prompt send (setThinking(true)) and on a transport
+// gap, and never persisted, so a stale "in_progress" can't survive a
+// restart. The chat.ts store effect projects it onto the tab (waiting dot
+// + description tooltip).
+onSSE("chat_status", (chatID, p) => {
+  if (chatID === "" || p === undefined) {
+    return;
+  }
+  setAgentStatus(chatID, p.status ?? "", p.description ?? "");
 });
 
 onSSE("chat_deleted", (_chatID, p) => {

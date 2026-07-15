@@ -1,4 +1,9 @@
-// Actions for tools.ts user-initiated mutations.
+// Actions for the tools engine (Settings -> Tools).
+//
+// Every mutation is a fast request: the server enqueues a job on its
+// single-flight queue and answers 202 with the job view; progress
+// streams over the tool_job_changed / tool_job_output SSE events. No
+// long-running requests, no extended timeouts, no retry hazards.
 // ---------------------------------------------------------------------------
 
 import {
@@ -12,35 +17,127 @@ import {
   RETRY_STANDARD,
 } from "./index.js";
 import type { ActionContext } from "./index.js";
+import type {
+  ToolJobAccepted,
+  ToolsJobsResponse,
+  ToolsList,
+  ToolsSearchResponse,
+} from "../types.js";
 
 import { MCP_API } from "./mcp.js";
 
-// Install/enable runs execute setup-tools.sh synchronously server-side —
-// a cold Rust toolchain, clangd (~160 MB), or a JRE takes MINUTES. The
-// framework's uniform 30s API timeout killed such installs mid-download
-// (the abort cancels the request context server-side), and retryNetwork
-// then re-POSTed, cancelling and restarting the run twice more (C1). So
-// these two actions run a raw fetch with a 16-minute budget (matching the
-// server's 15-minute script cap) and are never auto-retried.
-const TOOLS_RUN_TIMEOUT_MS = 16 * 60 * 1000;
+/** Fields accepted by POST /api/tools (create). Everything except the
+ *  name is optional — the server fills source/version/description from
+ *  the catalog when the name is known there. */
+export interface CreateToolRequest {
+  name: string;
+  source?: string;
+  version?: string;
+  pin?: boolean;
+  requires?: string[];
+  shims?: Record<string, string>;
+  description?: string;
+  origin?: string;
+  install?: string;
+  uninstall?: string;
+  probe?: string;
+}
 
-/** Same header apiAction sets from ctx.idempotencyKey (see git-changes.ts). */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
+export const loadTools = apiAction<void, ToolsList>({
+  name: "tools.load",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  dedupe: true,
+  request: () => ({ method: "GET", path: "/api/tools" }),
+  error: false,
+});
+
+export const createTool = apiAction<CreateToolRequest, ToolJobAccepted>({
+  name: "tools.create",
+  scope: "tools",
+  idempotencyKey: true,
+  request: (body) => ({ method: "POST", path: "/api/tools", body }),
+  error: "Couldn't add tool",
+});
+
+export const installTool = apiAction<{ name: string }, ToolJobAccepted>({
+  name: "tools.install",
+  scope: "tools",
+  idempotencyKey: true,
+  request: ({ name }) => ({
+    method: "POST",
+    path: `/api/tools/${encodeURIComponent(name)}/install`,
+    body: {},
+  }),
+  error: "Couldn't start install",
+});
+
+export const updateTools = apiAction<{ names?: string[] } | undefined, ToolJobAccepted>({
+  name: "tools.update",
+  scope: "tools",
+  idempotencyKey: true,
+  request: (body) => ({ method: "POST", path: "/api/tools/update", body: body ?? {} }),
+  error: "Couldn't start update",
+});
+
+/** PATCH fields; a version change flips the response to 202 + job. */
+export const patchTool = apiAction<
+  {
+    name: string;
+    version?: string;
+    pin?: boolean;
+    description?: string;
+    install?: string;
+    uninstall?: string;
+  },
+  ToolJobAccepted & { ok?: boolean }
+>({
+  name: "tools.patch",
+  scope: "tools",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: ({ name, ...body }) => ({
+    method: "PATCH",
+    path: `/api/tools/${encodeURIComponent(name)}`,
+    body,
+  }),
+  error: "Couldn't update tool",
+});
+
+// Delete needs the 409 has_dependents envelope, which apiAction can't
+// surface (any non-2xx throws before the caller sees the body). The
+// raw-fetch runner decodes the body on every status and only treats
+// non-409 failures as errors. Raw fetch inside an action run() is the
+// sanctioned pattern for non-standard wire contracts (see git-changes).
+export interface DeleteToolResult {
+  job?: { id: string };
+  code?: string;
+  dependents?: string[];
+  error?: string;
+}
+
+/** Same header apiAction sets from ctx.idempotencyKey. */
 const IDEMPOTENCY_HEADER = "Idempotency-Key";
+const DELETE_TIMEOUT_MS = 30_000;
 
-/** POST a long-running tools mutation with the extended timeout, decoding
- *  the JSON body regardless of status. Non-2xx → ActionError with status
- *  (409 = install already in progress, surfaced verbatim). */
-async function runToolsPost<T>(path: string, signal: AbortSignal, ctx?: ActionContext): Promise<T> {
-  const headers: Record<string, string> = {};
+async function runDelete(
+  args: { name: string; force?: boolean },
+  signal: AbortSignal,
+  ctx?: ActionContext,
+): Promise<DeleteToolResult> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (ctx?.idempotencyKey !== undefined) {
     headers[IDEMPOTENCY_HEADER] = ctx.idempotencyKey;
   }
   let res: Response;
   try {
-    res = await fetch(path, {
-      method: "POST",
+    res = await fetch(`/api/tools/${encodeURIComponent(args.name)}`, {
+      method: "DELETE",
       headers,
-      signal: withTimeout(signal, TOOLS_RUN_TIMEOUT_MS),
+      body: JSON.stringify(args.force === undefined ? {} : { force: args.force }),
+      signal: withTimeout(signal, DELETE_TIMEOUT_MS),
     });
   } catch (e) {
     throw classifyFetchError(e, signal);
@@ -48,38 +145,106 @@ async function runToolsPost<T>(path: string, signal: AbortSignal, ctx?: ActionCo
   let parsed: unknown;
   try {
     parsed = await res.json();
-  } catch (e) {
-    if (signal.aborted) {
+  } catch {
+    parsed = undefined;
+  }
+  if (res.ok || res.status === 409) {
+    return (parsed ?? {});
+  }
+  const msg = hasErrorString(parsed) ? parsed.error : `HTTP ${String(res.status)}`;
+  throw new ActionError(msg, { status: res.status });
+}
+
+export const deleteTool = defineAction<{ name: string; force?: boolean }, DeleteToolResult>({
+  name: "tools.delete",
+  scope: "tools",
+  idempotencyKey: true,
+  run: runDelete,
+  error: false, // 409 cascade is a normal flow, handled by the caller
+});
+
+// ensureTool: install-by-name for feature banners (forge CLIs, MCP's
+// node runtime). Creates the tool from the catalog; when it already
+// exists in the manifest (400), falls back to a plain (re)install.
+// error: false — the banners render their own inline progress/errors.
+async function runEnsure(
+  args: { name: string },
+  signal: AbortSignal,
+  ctx?: ActionContext,
+): Promise<ToolJobAccepted> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (ctx?.idempotencyKey !== undefined) {
+    headers[IDEMPOTENCY_HEADER] = ctx.idempotencyKey;
+  }
+  const post = async (path: string, body: unknown): Promise<Response> => {
+    try {
+      return await fetch(path, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: withTimeout(signal, DELETE_TIMEOUT_MS),
+      });
+    } catch (e) {
       throw classifyFetchError(e, signal);
     }
+  };
+  let res = await post("/api/tools", { name: args.name });
+  if (res.status === 400) {
+    res = await post(`/api/tools/${encodeURIComponent(args.name)}/install`, {});
+  }
+  let parsed: unknown;
+  try {
+    parsed = await res.json();
+  } catch {
     parsed = undefined;
   }
   if (!res.ok) {
     const msg = hasErrorString(parsed) ? parsed.error : `HTTP ${String(res.status)}`;
     throw new ActionError(msg, { status: res.status });
   }
-  return parsed as T;
+  return (parsed ?? {});
 }
 
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const installTools = defineAction<void, { output?: string; error?: string }>({
-  name: "tools.install",
+export const ensureTool = defineAction<{ name: string }, ToolJobAccepted>({
+  name: "tools.ensure",
   scope: "tools",
   idempotencyKey: true,
-  // NOT retryable: a "timeout" here means a 16-minute install budget was
-  // exhausted; re-POSTing would cancel and restart the server-side run.
-  run: (_args, signal, ctx) => runToolsPost("/api/tools/install", signal, ctx),
-  error: "Tool install failed",
+  run: runEnsure,
+  error: false,
 });
 
-export const saveTools = apiAction<Record<string, Record<string, Record<string, unknown>>>>({
-  name: "tools.save",
+export const searchTools = apiAction<{ q: string }, ToolsSearchResponse>({
+  name: "tools.search",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
+  dedupe: true,
+  request: ({ q }) => ({
+    method: "GET",
+    path: `/api/tools/search?q=${encodeURIComponent(q)}`,
+  }),
+  error: false,
+});
+
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
+export const getToolsJobs = apiAction<void, ToolsJobsResponse>({
+  name: "tools.jobs",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  dedupe: true,
+  request: () => ({ method: "GET", path: "/api/tools/jobs" }),
+  error: false,
+});
+
+export const cancelToolJob = apiAction<{ id: string }>({
+  name: "tools.cancel_job",
   scope: "tools",
   idempotencyKey: true,
-  request: (data) => ({ method: "PUT", path: "/api/tools", body: data }),
-  error: "Couldn't save tool config",
+  request: ({ id }) => ({
+    method: "POST",
+    path: `/api/tools/jobs/${encodeURIComponent(id)}/cancel`,
+    body: {},
+  }),
+  error: "Couldn't cancel job",
 });
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
@@ -89,16 +254,6 @@ export const runDiagnostics = apiAction<void, { report?: string; error?: string 
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   request: () => ({ method: "POST", path: "/api/diagnostics", body: {} }),
-  error: false,
-});
-
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const loadTools = apiAction<void, Record<string, Record<string, Record<string, unknown>>>>({
-  name: "tools.load",
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  dedupe: true,
-  request: () => ({ method: "GET", path: "/api/tools" }),
   error: false,
 });
 
@@ -125,71 +280,9 @@ export const seedMcp = apiAction<{ name: string; install?: string }>({
   error: "Couldn't create MCP entry",
 });
 
-// Enable a pre-populated entry: flips enabled=true on the named tool
-// and every transitive dep, then runs setup-tools.sh. The response
-// includes the chain that was enabled and the script's combined
-// output for the rolling-output UI.
-export const enableTool = defineAction<
-  { section: string; name: string },
-  { output?: string; error?: string; enabled_chain?: string[]; section?: string; name?: string }
->({
-  name: "tools.enable",
-  scope: "tools",
-  idempotencyKey: true,
-  // NOT retryable — see installTools: a retry cancels + restarts the
-  // in-flight setup run for the same entry (the server's inflightInstalls
-  // prior() cancel), turning one slow install into three killed ones.
-  run: ({ section, name }, signal, ctx) =>
-    runToolsPost(
-      `/api/tools/${encodeURIComponent(section)}/${encodeURIComponent(name)}/enable`,
-      signal,
-      ctx,
-    ),
-  error: "Couldn't enable tool",
-});
-
-// Delete a tool: cancels any in-flight install for the entry, runs
-// clear_tool for cleanup, sets enabled=false. Body { force: true }
-// cascades to dependents; without force the call returns 409 with
-// the dependents list so the UI can confirm.
-export const deleteTool = apiAction<
-  { section: string; name: string; force?: boolean },
-  { output?: string; error?: string; disabled?: string[]; dependents?: string[]; code?: string }
->({
-  name: "tools.delete",
-  scope: "tools",
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ section, name, force }) => ({
-    method: "DELETE",
-    path: `/api/tools/${encodeURIComponent(section)}/${encodeURIComponent(name)}`,
-    body: force === undefined ? undefined : { force },
-  }),
-  error: false, // 409 cascade is a normal flow, handle in caller
-});
-
-// Toggle the per-tool auto_update flag.
-export const patchTool = apiAction<
-  { section: string; name: string; auto_update: boolean },
-  { section?: string; name?: string; auto_update?: boolean; error?: string }
->({
-  name: "tools.patch",
-  scope: "tools",
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: ({ section, name, auto_update }) => ({
-    method: "PATCH",
-    path: `/api/tools/${encodeURIComponent(section)}/${encodeURIComponent(name)}`,
-    body: { auto_update },
-  }),
-  error: "Couldn't update tool",
-});
-
-// Probe which baked-binary names exist on PATH. Used by the MCP add
-// modal and Sources sub-tab to decide whether to show an inline
-// "Setting up <feature>..." spinner before the user can proceed.
+// Probe which well-known binary names exist on PATH. Used by the MCP
+// add modal and Sources sub-tab to decide whether to show an inline
+// "Setting up <feature>..." install banner before the user can proceed.
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 export const getToolsStatus = apiAction<void, Record<string, boolean>>({
   name: "tools.status",

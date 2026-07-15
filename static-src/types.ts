@@ -85,6 +85,16 @@ export type {
   SafetyPropertiesPayload,
   ToolCallPayload,
   ToolCallUpdatePayload,
+  ToolCatalogHit,
+  ToolInfo,
+  ToolJob,
+  ToolJobAccepted,
+  ToolJobChangedPayload,
+  ToolJobOutputPayload,
+  ToolsJobsResponse,
+  ToolsList,
+  ToolsSearchResponse,
+  SystemTool,
   TurnEndedPayload,
 } from "./wire/types.gen.js";
 
@@ -164,6 +174,14 @@ export interface Session {
   has_more: boolean;
   thinking: boolean;
   working_label: string;
+  /** Agent-declared activity status from the KAS focus_update channel
+   *  (chat_status SSE): "in_progress" | "waiting_on_user" | "completed" |
+   *  "idle". Client-only and ephemeral — cleared on the next prompt send
+   *  and on a transport gap, never persisted. */
+  agent_status?: string;
+  /** Agent-declared one-line description of what it is working on
+   *  (chat_status SSE). Shown as the chat tab's tooltip. */
+  agent_status_text?: string;
   prompt_queue?: QueuedPrompt[];
   supervised_mode?: boolean;
   trusted_this_turn?: boolean;

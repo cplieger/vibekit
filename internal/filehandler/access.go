@@ -9,7 +9,7 @@ import (
 // Directories hidden from the root listing and blocked from traversal.
 // Covers standard Debian system dirs plus vibekit's own install
 // locations (/app holds the compiled web binary, /opt/vibekit holds
-// the entrypoint scripts and tools.json.default template). Only
+// the entrypoint script and the compiled tool catalog). Only
 // mounted volumes (/workspace, /config) should remain visible at /.
 var blacklist = map[string]bool{
 	"app": true, "bin": true, "boot": true, "dev": true, "etc": true,
@@ -32,26 +32,25 @@ type sensitivePath struct {
 // state files, and — most importantly — the credential stores that back
 // vibekit's own auth, git, and MCP integrations.
 //
-// Per-user state spans two trees. kiro-cli's own state lives under
-// /config/kiro/ (KIRO_HOME). The container's HOME is /config/home/, and
-// it holds the real secrets: the AWS SSO token + OAuth client secret
-// (~/.aws/sso/cache), git SSH keys (~/.ssh), the forge PAT
-// (~/.config/gh/hosts.yml), and ~/.gitconfig. The whole /config/home/
-// tree is marked sensitive so none of it is listable, readable,
-// editable, downloadable, or deletable from the UI.
+// kiro-cli's per-user state (KIRO_HOME = $HOME/.kiro: steering,
+// sessions, settings, agents, logs) lives inside the container HOME,
+// so the /config/home/ tree block below covers all of it — including
+// the auto-generated steering/environment.md and steering/custom.md
+// (edited only through /api/steering, never the file editor).
+//
+// /config/kiro/ is the LEGACY KIRO_HOME (pre-relocation; the v3 engine
+// ignores KIRO_HOME and reads $HOME/.kiro, so KIRO_HOME moved inside
+// HOME). The entrypoint migrates and deletes it on first boot, but the
+// prefix stays blocked so the editor can't touch stragglers on a
+// volume that predates the migration.
 var sensitivePrefixes = []sensitivePath{
-	// System-level steering (base personality; must not be user-edited).
-	{Path: "/config/kiro/steering/vibekit.md", IsDir: false},
-	// Auto-regenerated at startup; edits are clobbered and misleading.
-	{Path: "/config/kiro/steering/environment.md", IsDir: false},
-	// kiro-cli agent configs, session state, settings.
-	{Path: "/config/kiro/agents/", IsDir: true},
-	{Path: "/config/kiro/sessions/", IsDir: true},
-	{Path: "/config/kiro/settings/", IsDir: true},
+	// Legacy kiro-cli state tree (migrated + removed by entrypoint).
+	{Path: "/config/kiro/", IsDir: true},
 	// Container HOME ($HOME=/config/home): AWS SSO token + OAuth secret
 	// (~/.aws/sso/cache), git SSH keys (~/.ssh), forge PAT
-	// (~/.config/gh/hosts.yml), ~/.gitconfig, and kiro-cli's ~/.local
-	// state. The whole tree is blocked.
+	// (~/.config/gh/hosts.yml), ~/.gitconfig, kiro-cli's ~/.kiro state
+	// (steering, sessions, settings, agents), and its ~/.local install
+	// tree. The whole tree is blocked.
 	{Path: "/config/home/", IsDir: true},
 	// Internal vibekit runtime state.
 	{Path: "/config/chats/", IsDir: true},

@@ -51,7 +51,10 @@ type sessionInfoUpdate struct {
 			ContextUsage    struct {
 				UsagePercentage *float64 `json:"usagePercentage"`
 			} `json:"contextUsage"`
-			Kind string `json:"kind"`
+			// Focus is the kind=="focus_update" block: the agent's
+			// self-declared title/description/status (see focus.go).
+			Focus *focusUpdate `json:"focus"`
+			Kind  string       `json:"kind"`
 			// PromptTurnSummaries is KAS's per-turn metering record,
 			// emitted as a session_info_update just before the
 			// session/prompt response returns (verified on the live
@@ -80,6 +83,12 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.Cha
 	}
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
+		return
+	}
+	// Agent focus updates (title / description / status) ride here as
+	// kind=="focus_update" frames; see focus.go for the adoption rules.
+	if f := u.Meta.Kiro.Focus; f != nil {
+		t.handleFocusUpdate(ctx, chatID, f)
 		return
 	}
 	// Compaction rides here on v3 (v2 used _kiro.dev/compaction/status).

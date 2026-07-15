@@ -540,9 +540,6 @@ func TestDefaultCLITimeouts(t *testing.T) {
 	if s := got.Settings.Seconds(); s != 3 {
 		t.Errorf("defaultCLITimeouts().Settings = %v (%.0fs), want 3s", got.Settings, s)
 	}
-	if m := got.ToolsInstall.Minutes(); m != 10 {
-		t.Errorf("defaultCLITimeouts().ToolsInstall = %v (%.0fm), want 10m", got.ToolsInstall, m)
-	}
 }
 
 // TestSyncPushPreferences_permissionFalse verifies that an explicit

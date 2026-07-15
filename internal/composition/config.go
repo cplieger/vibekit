@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cplieger/envx"
@@ -17,6 +18,12 @@ type Config struct {
 	ConfigDir string
 	CLIPath   string
 	VapidSub  string
+	// ToolsDir is the tools engine's install tree root (bin/, opt/,
+	// npm/, python/) on the persistent volume.
+	ToolsDir string
+	// ToolCatalogPath is the compiled tool catalog baked into the
+	// image (missing = degraded catalog search).
+	ToolCatalogPath string
 	// TrustedProxies is the set of reverse-proxy networks whose
 	// X-Forwarded-For header webhttp.ClientIP is allowed to trust when
 	// resolving the real client IP (access log + login/logout audit
@@ -36,13 +43,16 @@ func ConfigFromEnv() Config {
 	ac.LogoutTimeout = envx.Duration("VIBEKIT_AUTH_LOGOUT_TIMEOUT", ac.LogoutTimeout)
 	ac.WhoamiTimeout = envx.Duration("VIBEKIT_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
 
+	configDir := envx.String("KIRO_CONFIG_DIR", "/config")
 	return Config{
-		WorkDir:        envx.String("KIRO_WORK_DIR", "/workspace"),
-		ConfigDir:      envx.String("KIRO_CONFIG_DIR", "/config"),
-		CLIPath:        envx.String("KIRO_CLI_PATH", "kiro-cli"),
-		VapidSub:       envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
-		TrustedProxies: parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
-		AuthConfig:     ac,
+		WorkDir:         envx.String("KIRO_WORK_DIR", "/workspace"),
+		ConfigDir:       configDir,
+		CLIPath:         envx.String("KIRO_CLI_PATH", "kiro-cli"),
+		VapidSub:        envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
+		ToolsDir:        envx.String("VIBEKIT_TOOLS_DIR", filepath.Join(configDir, "tools")),
+		ToolCatalogPath: envx.String("VIBEKIT_TOOL_CATALOG", "/opt/vibekit/tool-catalog.json"),
+		TrustedProxies:  parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
+		AuthConfig:      ac,
 	}
 }
 

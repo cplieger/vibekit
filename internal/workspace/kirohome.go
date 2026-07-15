@@ -27,17 +27,21 @@ func SetKiroHomeResolver(fn func() string) {
 }
 
 // KiroHome returns the directory kiro-cli uses for per-user state
-// (auth.db, sessions/cli, settings, agents, steering). Resolution
-// order:
+// (sessions, settings, agents, steering, logs). Resolution order:
 //
-//  1. $KIRO_HOME if set (kiro-cli 2.3+ canonical override)
+//  1. $KIRO_HOME if set (kiro-cli 2.3+ override, honored by the Rust
+//     wrapper only)
 //  2. $HOME/.kiro otherwise
 //
-// Vibekit's entrypoint sets KIRO_HOME=/config/kiro so this resolves
-// to a sibling of /config/chats and /config/mcp.json rather than
-// being buried inside the user's HOME. Code that reads or writes
-// kiro-cli state must go through this helper so vibekit and kiro-cli
-// agree on where state lives.
+// The Dockerfile sets KIRO_HOME=/config/home/.kiro, i.e. $HOME/.kiro.
+// The two MUST stay equal: the v3 engine (KAS) never reads KIRO_HOME —
+// it resolves its home as os.homedir()/.kiro (verified against the KAS
+// 2.12 bundle: zero KIRO_HOME references; the only override is a
+// --home-dir argv the Rust wrapper never passes) — while the Rust
+// wrapper (`kiro-cli settings`, v2 paths) honors KIRO_HOME. Pointing
+// KIRO_HOME inside HOME is what makes vibekit, the wrapper, and KAS
+// agree on one directory. Code that reads or writes kiro-cli state
+// must go through this helper.
 func KiroHome() string {
 	if kiroHomeResolver != nil {
 		kiroHomeOnce.Do(func() {

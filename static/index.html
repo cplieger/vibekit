@@ -437,14 +437,20 @@
 
             <div class="page-section">
               <h3 class="section-title">Tools &amp; runtimes</h3>
-              <p class="section-hint">Language runtimes, LSP servers, and CLIs you can enable on demand. Disabled tools install on first use (or click Enable); the pin icon freezes a tool at its current version. Everything installs into the persistent volume, not the image.</p>
+              <p class="section-hint">Runtimes, language servers, and CLIs installed on demand from a catalog of ~700 tools (or your own install command). Installs run in the background and stream their output here; the pin icon freezes a tool at its current version. Everything lands on the persistent volume, not the image.</p>
               <div class="section-actions-row">
                 <div class="action-bar action-bar-inline">
-                  <button type="button" id="tool-update-btn" class="action-pill" data-tooltip="Update tools" aria-label="Update tools">
+                  <button type="button" id="tool-update-btn" class="action-pill" aria-label="Update all tools">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                    <span>Update all</span>
                   </button>
-                  <button type="button" id="tool-add-btn" class="action-pill" data-tooltip="Add tool" aria-label="Add tool">
+                  <button type="button" id="tool-add-btn" class="action-pill" aria-label="Add tool">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                    <span>Add tool</span>
+                  </button>
+                  <button type="button" id="tool-cancel-btn" class="action-pill hidden" aria-label="Cancel the running tool job">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                    <span>Cancel</span>
                   </button>
                 </div>
               </div>
@@ -925,41 +931,34 @@
       </button>
     </div>
     <div class="tool-form">
-      <label class="tool-form-label">Install method
-        <select id="tool-cat" class="tool-form-select">
-          <option value="go">Go install</option>
-          <option value="npm">npm package</option>
-          <option value="pip">pip package</option>
-          <option value="cargo">Cargo (Rust)</option>
-          <option value="apt">System package (apt)</option>
-          <option value="binary">Binary download</option>
-          <option value="runtimes">Runtime</option>
-          <option value="custom">Custom script</option>
-          <option value="mcp">MCP server</option>
-        </select>
-        <span id="tool-cat-hint" class="tool-form-hint"></span>
+      <label class="tool-form-label">Search the catalog
+        <input id="tool-search" class="tool-form-input" type="search" placeholder="ripgrep, terraform, pyright…" autocomplete="off">
+        <span class="tool-form-hint">Runtimes, language servers, and CLIs from the mise + aqua registries. Versions resolve to the latest release; the pin icon freezes them afterwards.</span>
       </label>
-      <label class="tool-form-label">Name <input id="tool-name" class="tool-form-input" type="text" placeholder="e.g. ripgrep"></label>
-      <label class="tool-form-label" id="tool-version-label">Version
-        <input id="tool-version" class="tool-form-input" type="text" placeholder="e.g. v14.1.0">
-        <span id="tool-version-hint" class="tool-form-hint"></span>
-      </label>
-      <label class="tool-form-label" id="tool-package-label">Package path
-        <input id="tool-package" class="tool-form-input" type="text" placeholder="e.g. github.com/user/tool@${VERSION}">
-        <span id="tool-package-hint" class="tool-form-hint"></span>
-      </label>
-      <label class="tool-form-label" id="tool-install-label">Install command
-        <input id="tool-install" class="tool-form-input" type="text" placeholder="e.g. curl -fsSL ... | tar -xz -C ${BIN}">
-        <span id="tool-install-hint" class="tool-form-hint"></span>
-      </label>
-      <label class="tool-form-label" id="tool-binaries-label">Binaries
-        <input id="tool-binaries" class="tool-form-input" type="text" placeholder="Comma-separated binary names">
-        <span class="tool-form-hint">Names of binaries this tool installs (for update detection).</span>
-      </label>
-      <button type="button" id="tool-modal-save" class="btn-save">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        Save
-      </button>
+      <div id="tool-search-results" class="list-container tool-search-results" role="listbox" aria-label="Catalog results"></div>
+      <button type="button" id="tool-manual-toggle" class="btn-small tool-manual-toggle" aria-expanded="false">Custom install command…</button>
+      <div id="tool-manual-form" class="tool-manual-form hidden">
+        <label class="tool-form-label">Name <input id="tool-manual-name" class="tool-form-input" type="text" placeholder="e.g. mytool"></label>
+        <label class="tool-form-label">Version
+          <input id="tool-manual-version" class="tool-form-input" type="text" placeholder="e.g. 1.2.0">
+          <span class="tool-form-hint">A label for tracking; exposed as $VERSION to the command.</span>
+        </label>
+        <label class="tool-form-label">Install command
+          <input id="tool-manual-install" class="tool-form-input" type="text" placeholder='curl -fsSL … | tar -xz -C "$BIN"'>
+          <span class="tool-form-hint">Runs under bash with $VERSION, $BIN (PATH dir), $OPT (this tool's dir), $TOOLS and ARCH_* variables. Put the binary in $BIN.</span>
+        </label>
+        <label class="tool-form-label">Uninstall command
+          <input id="tool-manual-uninstall" class="tool-form-input" type="text" placeholder="optional cleanup override">
+        </label>
+        <label class="tool-form-label">Probe binary
+          <input id="tool-manual-probe" class="tool-form-input" type="text" placeholder="defaults to the tool name">
+          <span class="tool-form-hint">The $BIN entry whose presence marks the tool installed.</span>
+        </label>
+        <button type="button" id="tool-manual-add" class="btn-save">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          Add &amp; install
+        </button>
+      </div>
     </div>
   </div>
 

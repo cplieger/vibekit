@@ -16,28 +16,22 @@ import (
 // --- Fake ACP bridge ---
 
 type fakeBridge struct {
-	notifCh   chan *api.RPCResponse
+	notifCh      chan *api.RPCResponse
+	callResults  map[string]json.RawMessage
+	callErrs     map[string]error
+	lastParams   map[string]map[string]any
+	callDeadline map[string]bool
+	chunksOnCall map[string][]string
+	// blockOn optionally makes Call block (after recording the call) until
+	// the method's channel is closed — for tests proving concurrency
+	// properties (e.g. RPC reads completing while a text turn is in flight).
+	blockOn   map[string]chan struct{}
 	sessionID string
 	modelID   string
 	calls     []string
-	// callResults optionally overrides the canned Call result per method
-	// (nil map = every method returns the default end_turn result).
-	callResults map[string]json.RawMessage
-	// lastParams captures the params of the most recent Call per method,
-	// letting tests assert on the wire params (e.g. knowledge omits sessionId).
-	lastParams map[string]map[string]any
-	// callDeadline records, per method, whether the most recent Call's
-	// context carried a deadline — lets tests assert a caller bounded the
-	// call with a timeout (the utility-read mutex-starvation fix).
-	callDeadline map[string]bool
-	// chunksOnCall optionally makes Call deliver these text chunks on
-	// notifCh (as agent_message_chunk notifs) AFTER recording the call,
-	// modelling an agent streaming its reply in RESPONSE to the prompt —
-	// so the chunks arrive after UtilityPrompt's at-start responseCh drain.
-	chunksOnCall map[string][]string
-	mu           sync.Mutex
-	stopped      bool
-	started      bool
+	mu        sync.Mutex
+	stopped   bool
+	started   bool
 }
 
 func newFakeBridge() *fakeBridge {
@@ -81,12 +75,26 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*api.
 	}
 	_, hasDeadline := ctx.Deadline()
 	b.callDeadline[method] = hasDeadline
+	if err, ok := b.callErrs[method]; ok {
+		b.mu.Unlock()
+		return nil, err
+	}
 	res := json.RawMessage(`{"stopReason":"end_turn"}`)
 	if r, ok := b.callResults[method]; ok {
 		res = r
 	}
 	chunks := b.chunksOnCall[method]
+	blocker := b.blockOn[method]
 	b.mu.Unlock()
+	// Block OUTSIDE the fake's mutex so concurrent Calls on other methods
+	// proceed (mirrors the real bridge, whose Call blocks per-request).
+	if blocker != nil {
+		select {
+		case <-blocker:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	// Deliver configured response chunks on notifCh AFTER unlocking so they
 	// arrive after the caller's Call begins (the forward goroutine moves them
 	// to responseCh). notifCh is buffered, so this doesn't block.

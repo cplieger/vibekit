@@ -591,6 +591,14 @@
   background: var(--c-yellow);
 }
 
+/* Agent declared waiting_on_user (focus_update): it asked the user
+   something and the turn ended. Amber like permission (both mean "needs
+   you"), pulsing to distinguish from the steady permission dot. */
+.tab-dot-waiting {
+  background: var(--c-yellow);
+  animation: vk-breathe 1.5s ease-in-out infinite;
+}
+
 /* Steady accent dot = unsaved changes on an editor tab. Editor tabs never
    receive setTabStatus (thinking/permission are chat-tab states), so the
    shared .tab-status-dot is exclusively the dirty indicator for them. */

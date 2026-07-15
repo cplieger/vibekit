@@ -150,7 +150,8 @@ func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx cont
 			}
 			c.Name = name
 			if prompter != nil {
-				deps.InflightGo(func() { AsyncRenameChat(deps, prompter, chatID, p.Text) })
+				placeholder := name
+				deps.InflightGo(func() { AsyncRenameChat(deps, prompter, chatID, p.Text, placeholder) })
 			}
 		}
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, &userMsg))
@@ -323,11 +324,17 @@ func IsRetryablePromptError(err error) bool {
 }
 
 // AsyncRenameChat generates a better chat title via the utility bridge.
-func AsyncRenameChat(deps Dependencies, prompter api.UtilityPrompter, chatID api.ChatID, firstPrompt string) {
+// placeholder is the truncated-first-prompt name appendUserMessage set; the
+// generated title only lands while the chat still carries it. If the name
+// changed meanwhile — the agent published a focus title via
+// update_session_information (translate/focus handling), which is richer
+// than a 2-3 word summary of the first message — the utility title is
+// discarded rather than clobbering it.
+func AsyncRenameChat(deps Dependencies, prompter api.UtilityPrompter, chatID api.ChatID, firstPrompt, placeholder string) {
 	prompt := "Give this chat a 2-3 word title (max 30 characters) based on the topic of the message below. Return ONLY the title.\n\n" + firstPrompt
 	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
 	defer cancel()
-	title, err := prompter.UtilityPrompt(ctx, prompt)
+	title, err := prompter.UtilityPrompt(ctx, prompt, api.EffortLow)
 	if err != nil || strings.TrimSpace(title) == "" {
 		return
 	}
@@ -343,7 +350,7 @@ func AsyncRenameChat(deps Dependencies, prompter api.UtilityPrompter, chatID api
 		return
 	}
 	if err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
-		if !exists {
+		if !exists || c.Name != placeholder {
 			return false
 		}
 		c.Name = title

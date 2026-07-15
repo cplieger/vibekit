@@ -36,7 +36,7 @@ const accountUsageCallTimeout = 45 * time.Second
 func (h *Hub) AccountUsage(ctx context.Context) (*api.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()
-	raw, err := h.ensureUtility().accountUsageRaw(cctx)
+	raw, err := h.ensureUtility().session.accountUsageRaw(cctx)
 	if err != nil {
 		return nil, err
 	}

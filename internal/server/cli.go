@@ -94,21 +94,19 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 // cliTimeouts holds the timeout budget for each kiro-cli subprocess
 // invocation. Named fields make the budget inspectable and tunable.
 type cliTimeouts struct {
-	Models       time.Duration
-	Version      time.Duration
-	Diagnostics  time.Duration
-	Settings     time.Duration
-	ToolsInstall time.Duration
+	Models      time.Duration
+	Version     time.Duration
+	Diagnostics time.Duration
+	Settings    time.Duration
 }
 
 // defaultCLITimeouts returns the production timeout budget.
 func defaultCLITimeouts() cliTimeouts {
 	return cliTimeouts{
-		Models:       5 * time.Second,
-		Version:      2 * time.Second,
-		Diagnostics:  20 * time.Second,
-		Settings:     3 * time.Second,
-		ToolsInstall: 10 * time.Minute,
+		Models:      5 * time.Second,
+		Version:     2 * time.Second,
+		Diagnostics: 20 * time.Second,
+		Settings:    3 * time.Second,
 	}
 }
 

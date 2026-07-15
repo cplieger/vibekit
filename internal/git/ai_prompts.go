@@ -23,6 +23,7 @@ type promptKind string
 const (
 	promptCommit promptKind = "commit"
 	promptPR     promptKind = "pr"
+	promptBranch promptKind = "branch"
 )
 
 // promptTemplates holds the AI prompt templates keyed by purpose.
@@ -50,6 +51,22 @@ STAGED DIFF:
 {{.Diff}}
 
 Respond with only the commit message:`)),
+
+	promptBranch: template.Must(template.New("branch").Parse(`Suggest a git branch name for the work in progress below. Return ONLY the branch name.
+
+RULES:
+- kebab-case, lowercase, max 40 characters
+- start with a conventional type prefix and a slash: feat/ fix/ refactor/ chore/ docs/ test/ ci/
+- describe the change, not the files (e.g. "feat/tab-status-badges", not "feat/update-tabs-ts")
+- no spaces, no special characters beyond - / .
+
+EXISTING BRANCHES (avoid collisions, match the style):
+{{.Branches}}
+
+WORK IN PROGRESS:
+{{.Context}}
+
+Respond with only the branch name:`)),
 
 	promptPR: template.Must(template.New("pr").Parse(`Generate a pull request description for the following changes. Return ONLY the description text.
 
@@ -170,4 +187,69 @@ func capSubject(subject string) string {
 		return subject[:idx] + "..."
 	}
 	return subject[:69] + "..."
+}
+
+// buildBranchPrompt constructs the AI prompt for branch-name suggestion.
+// See buildCommitPrompt for the error-handling rationale.
+func buildBranchPrompt(branches, context string) string {
+	var b strings.Builder
+	if err := promptTemplates[promptBranch].Execute(&b, map[string]any{
+		"Branches": branches,
+		"Context":  context,
+	}); err != nil {
+		slog.Warn("git: branch prompt template execute failed", "error", err)
+	}
+	return b.String()
+}
+
+// sanitizeBranchName normalizes raw model output into a safe git branch
+// name: lowercase kebab-case restricted to [a-z0-9./-], runs of anything
+// else collapsed to single dashes, dashes/dots/slashes trimmed at segment
+// edges, capped at 60 bytes. Returns "" when nothing usable remains.
+func sanitizeBranchName(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = api.StripCodeFence(s)
+	s = stripSurroundingQuotes(s)
+	// First line only: models sometimes add an explanation line.
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.ToLower(strings.TrimSpace(s))
+
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '/' || r == '.':
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == ' ' || r == '_':
+			if !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		default:
+			// drop anything exotic without emitting a dash run
+		}
+	}
+	out := cleanBranchSegments(b.String())
+	if len(out) > 60 {
+		out = strings.Trim(out[:60], "-./")
+	}
+	return out
+}
+
+// cleanBranchSegments trims junk at segment boundaries: no leading/trailing
+// separators, no empty segments, no ".." (git ref rules).
+func cleanBranchSegments(s string) string {
+	segs := strings.Split(s, "/")
+	clean := segs[:0]
+	for _, seg := range segs {
+		seg = strings.Trim(seg, "-.")
+		if seg == "" || strings.Contains(seg, "..") {
+			continue
+		}
+		clean = append(clean, seg)
+	}
+	return strings.Join(clean, "/")
 }

@@ -3,7 +3,14 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
-import { setThinking, setWorkingLabel, setTurnSummary, get, getActiveId } from "../store.js";
+import {
+  setThinking,
+  setWorkingLabel,
+  setTurnSummary,
+  get,
+  getActiveId,
+  tabStatusFor,
+} from "../store.js";
 import {
   notifyIfHidden,
   setBadge,
@@ -68,10 +75,11 @@ onSSE("working_label", (chatID, p) => {
 onSSE("turn_ended", (chatID, p) => {
   // --- Side-effects: fire unconditionally regardless of active chat or dedup ---
   setThinking(chatID, false);
-  // Clear the per-tab "thinking" activity dot for the chat whose turn ended,
-  // even when it's a background tab (its own per-chat thinking signal is not
-  // tracked by the active-session effect, so the dot would otherwise stick).
-  setTabStatus(chatID, "");
+  // Re-derive the per-tab activity dot for the chat whose turn ended, even
+  // when it's a background tab. Shares tabStatusFor with the store effect:
+  // thinking clears, but an agent-declared waiting_on_user survives turn
+  // end (that's its point — "I asked you something") as the amber dot.
+  setTabStatus(chatID, tabStatusFor(get(chatID)));
   clearLastError();
   onTurnEnded(chatID);
   refreshGitBadge();

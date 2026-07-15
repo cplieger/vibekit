@@ -50,6 +50,7 @@ const (
 	EventChatCreated           EventType = "chat_created"
 	EventChatUpdated           EventType = "chat_updated"
 	EventChatDeleted           EventType = "chat_deleted"
+	EventChatStatus            EventType = "chat_status"
 	EventCheckpointRestored    EventType = "checkpoint_restored"
 	EventCodeReferences        EventType = "code_references"
 	EventCommandsUpdated       EventType = "commands_updated"
@@ -91,6 +92,8 @@ const (
 	EventTerminalOutput        EventType = "terminal_output"
 	EventToolCall              EventType = "tool_call"
 	EventToolCallUpdate        EventType = "tool_call_update"
+	EventToolJobChanged        EventType = "tool_job_changed"
+	EventToolJobOutput         EventType = "tool_job_output"
 	EventTurnEnded             EventType = "turn_ended"
 	EventWorkingLabel          EventType = "working_label"
 )

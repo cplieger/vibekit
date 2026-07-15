@@ -99,10 +99,10 @@ type knowledgeMessageResponse struct {
 // bounded timeout. params carry the subcommand and its arguments; sessionId is
 // intentionally never set (global default store).
 func (h *Hub) knowledgeCall(ctx context.Context, params map[string]any) (json.RawMessage, error) {
-	ub := h.ensureUtility()
+	u := h.ensureUtility()
 	cctx, cancel := context.WithTimeout(ctx, knowledgeCallTimeout)
 	defer cancel()
-	return ub.knowledgeRaw(cctx, params)
+	return u.session.knowledgeRaw(cctx, params)
 }
 
 // parseKnowledgeResult decodes the raw _kiro/knowledge JSON-RPC result.

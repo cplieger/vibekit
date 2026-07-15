@@ -205,12 +205,12 @@ func TestAnswerExecuteHook(t *testing.T) {
 	t.Run("refuses when no trigger is in flight", func(t *testing.T) {
 		rb := newRespondingBridge()
 		ran := false
-		ub := &utilityBridge{runHookCommand: func(context.Context, string, int) hookRunResult {
+		us := &utilitySession{hooks: utilitySessionHooks{runHookCommand: func(context.Context, string, int) hookRunResult {
 			ran = true
 			return hookRunResult{}
-		}}
+		}}}
 		id := int64(1)
-		ub.answerExecuteHook(rb, &api.RPCResponse{ID: &id, Method: methodKiroHooksExecuteHook, Params: execParams})
+		us.answerExecuteHook(rb, &api.RPCResponse{ID: &id, Method: methodKiroHooksExecuteHook, Params: execParams})
 		if ran {
 			t.Fatal("command ran without an in-flight trigger")
 		}
@@ -224,13 +224,13 @@ func TestAnswerExecuteHook(t *testing.T) {
 
 	t.Run("runs + captures result when a trigger is in flight", func(t *testing.T) {
 		rb := newRespondingBridge()
-		ub := &utilityBridge{runHookCommand: func(_ context.Context, cmd string, _ int) hookRunResult {
+		us := &utilitySession{hooks: utilitySessionHooks{runHookCommand: func(_ context.Context, cmd string, _ int) hookRunResult {
 			return hookRunResult{Output: "ran:" + cmd, ExitCode: 0, Ran: true}
-		}}
-		ub.expectingHookExec.Store(true)
+		}}}
+		us.expectingHookExec.Store(true)
 		id := int64(2)
-		ub.answerExecuteHook(rb, &api.RPCResponse{ID: &id, Method: methodKiroHooksExecuteHook, Params: execParams})
-		if run := ub.lastHookRun.Load(); run == nil || run.Output != "ran:echo hi" {
+		us.answerExecuteHook(rb, &api.RPCResponse{ID: &id, Method: methodKiroHooksExecuteHook, Params: execParams})
+		if run := us.lastHookRun.Load(); run == nil || run.Output != "ran:echo hi" {
 			t.Fatalf("lastHookRun not captured: %+v", run)
 		}
 		rb.respMu.Lock()
