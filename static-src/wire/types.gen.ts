@@ -1039,12 +1039,12 @@ export interface ToolCatalogHit {
   name: string;
   description?: string;
   source: string;
-  featured?: boolean;
   /**
  * Version is the catalog's default pinned version, set only for
  * entries without an upstream version source (manual installs).
  */
   version?: string;
+  featured?: boolean;
 }
 
 /**
@@ -1065,19 +1065,19 @@ export interface ToolDiff {
  * joined with the engine's install state.
  */
 export interface ToolInfo {
+  shims?: Record<string, string>;
   name: string;
   source: string;
   version: string;
-  pin?: boolean;
-  requires?: string[];
-  shims?: Record<string, string>;
   description?: string;
   origin?: string;
-  installed: boolean;
   installed_version?: string;
   latest?: string;
-  installing: boolean;
   last_error?: string;
+  requires?: string[];
+  pin?: boolean;
+  installed: boolean;
+  installing: boolean;
 }
 
 /**
@@ -1088,19 +1088,19 @@ export interface ToolInfo {
 export interface ToolJob {
   id: string;
   kind: string;
-  names?: string[];
   state: string;
   error?: string;
-  /** Timestamps are Unix milliseconds. */
-  created_at: number;
-  started_at?: number;
-  ended_at?: number;
+  names?: string[];
   /**
  * OutputTail carries the job's most recent output lines; populated
  * on the jobs endpoints only (live output streams via the
  * tool_job_output SSE event).
  */
   output_tail?: string[];
+  /** Timestamps are Unix milliseconds. */
+  created_at: number;
+  started_at?: number;
+  ended_at?: number;
 }
 
 /**
@@ -1149,9 +1149,9 @@ export interface ToolsJobsResponse {
 
 /** ToolsList is the GET /api/tools response body. */
 export interface ToolsList {
+  job?: ToolJob;
   tools: ToolInfo[];
   system: SystemTool[];
-  job?: ToolJob;
 }
 
 /** ToolsSearchResponse is the GET /api/tools/search response body. */

@@ -905,10 +905,10 @@ export const decodeToolCatalogHit: Decoder<ToolCatalogHit> = (v) => {
   };
   const description = optStr(o, "description", "$.tool_catalog_hit");
   if (description !== undefined) out.description = description;
-  const featured = optBool(o, "featured", "$.tool_catalog_hit");
-  if (featured !== undefined) out.featured = featured;
   const version = optStr(o, "version", "$.tool_catalog_hit");
   if (version !== undefined) out.version = version;
+  const featured = optBool(o, "featured", "$.tool_catalog_hit");
+  if (featured !== undefined) out.featured = featured;
   return out;
 };
 
@@ -932,9 +932,6 @@ export const decodeToolInfo: Decoder<ToolInfo> = (v) => {
     installed: reqBool(o, "installed", "$.tool_info"),
     installing: reqBool(o, "installing", "$.tool_info"),
   };
-  const pin = optBool(o, "pin", "$.tool_info");
-  if (pin !== undefined) out.pin = pin;
-  if (o["requires"] !== undefined) out.requires = decodeArray(o["requires"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_info.requires");
   if (o["shims"] !== undefined) out.shims = decodeRecord(o["shims"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_info.shims");
   const description = optStr(o, "description", "$.tool_info");
   if (description !== undefined) out.description = description;
@@ -946,6 +943,9 @@ export const decodeToolInfo: Decoder<ToolInfo> = (v) => {
   if (latest !== undefined) out.latest = latest;
   const lastError = optStr(o, "last_error", "$.tool_info");
   if (lastError !== undefined) out.last_error = lastError;
+  if (o["requires"] !== undefined) out.requires = decodeArray(o["requires"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_info.requires");
+  const pin = optBool(o, "pin", "$.tool_info");
+  if (pin !== undefined) out.pin = pin;
   return out;
 };
 
@@ -957,14 +957,14 @@ export const decodeToolJob: Decoder<ToolJob> = (v) => {
     state: reqStr(o, "state", "$.tool_job"),
     created_at: reqNum(o, "created_at", "$.tool_job"),
   };
-  if (o["names"] !== undefined) out.names = decodeArray(o["names"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_job.names");
   const error = optStr(o, "error", "$.tool_job");
   if (error !== undefined) out.error = error;
+  if (o["names"] !== undefined) out.names = decodeArray(o["names"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_job.names");
+  if (o["output_tail"] !== undefined) out.output_tail = decodeArray(o["output_tail"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_job.output_tail");
   const startedAt = optNum(o, "started_at", "$.tool_job");
   if (startedAt !== undefined) out.started_at = startedAt;
   const endedAt = optNum(o, "ended_at", "$.tool_job");
   if (endedAt !== undefined) out.ended_at = endedAt;
-  if (o["output_tail"] !== undefined) out.output_tail = decodeArray(o["output_tail"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_job.output_tail");
   return out;
 };
 
