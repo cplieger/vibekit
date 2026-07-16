@@ -18,7 +18,7 @@ KIRO_CLI_SHA256="0855bab3cbed04963ce595d6105209de8c113d81f4e96d5bff160cf7410ebfb
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="6ebcc9b4b6540adb74866639ba82d70ff494367fee4c1e23fa56f36e5da5de8f"  # kiro-cli 2.12.3
+KIRO_CLI_SHA256_ARM64="6ebcc9b4b6540adb74866639ba82d70ff494367fee4c1e23fa56f36e5da5de8f" # kiro-cli 2.12.3
 
 # Tool installs (opt/, npm/, python/, go/) are owned by the in-process
 # tools engine, which creates its own subtree; bin/ is created here so
