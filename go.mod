@@ -21,7 +21,7 @@ require (
 
 require (
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/envx v1.1.0
+	github.com/cplieger/envx v1.2.0
 	golang.org/x/mod v0.38.0
 	golang.org/x/tools v0.48.0 // indirect
 )
