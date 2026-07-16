@@ -13,12 +13,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -1200,40 +1200,6 @@ func BenchmarkBridgeRespond(b *testing.B) {
 // logCapture is a slog.Handler that records emitted record messages so a
 // test can assert whether a particular log line was (or was not) produced
 // by the code under test.
-type logCapture struct {
-	msgs []string
-	mu   sync.Mutex
-}
-
-func (h *logCapture) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *logCapture) Handle(_ context.Context, r slog.Record) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.msgs = append(h.msgs, r.Message)
-	return nil
-}
-
-func (h *logCapture) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *logCapture) WithGroup(string) slog.Handler      { return h }
-
-func (h *logCapture) has(msg string) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return slices.Contains(h.msgs, msg)
-}
-
-// installCapture redirects slog to a capturing handler for the duration
-// of the test, restoring the previous default afterwards.
-func installCapture(t *testing.T) *logCapture {
-	t.Helper()
-	c := &logCapture{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(c))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return c
-}
-
 // captureWriter is an io.WriteCloser standing in for the bridge's stdin.
 // It records whether (and what) was written, and can be configured to
 // fail every Write with a sentinel error.
@@ -1356,7 +1322,7 @@ func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 	if _, err := exec.LookPath("sleep"); err != nil {
 		t.Skip("sleep binary not available")
 	}
-	c := installCapture(t)
+	c := capture.Default(t)
 
 	b := New("cli", "work")
 	cmd := exec.Command("sleep", "30")
@@ -1372,7 +1338,7 @@ func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 
 	b.Stop()
 
-	if c.has("kill kiro-cli") {
+	if c.CountExact("kill kiro-cli") > 0 {
 		t.Errorf(`Stop emitted "kill kiro-cli" error log on a successful Kill, want none`)
 	}
 }
@@ -1493,7 +1459,7 @@ func TestMatchesKeyword_SeparatorChain(t *testing.T) {
 // readLoop logs "ACP read" on a real (non-EOF) scanner error and reaps
 // the bridge.
 func TestReadLoop_LogsACPReadOnScanError(t *testing.T) {
-	c := installCapture(t)
+	c := capture.Default(t)
 	b := readLoopBridge(errReader{failErr: errors.New("read boom")})
 
 	b.readLoop()
@@ -1503,14 +1469,14 @@ func TestReadLoop_LogsACPReadOnScanError(t *testing.T) {
 		t.Fatal("readLoop did not reap bridge (done not closed)")
 	}
 
-	if !c.has("ACP read") {
+	if c.CountExact("ACP read") == 0 {
 		t.Errorf(`readLoop on a scanner error did not log "ACP read"; want it present`)
 	}
 }
 
 // readLoop logs nothing on a clean EOF.
 func TestReadLoop_NoACPReadOnCleanEOF(t *testing.T) {
-	c := installCapture(t)
+	c := capture.Default(t)
 	b := readLoopBridge(errReader{failErr: io.EOF})
 
 	b.readLoop()
@@ -1520,7 +1486,7 @@ func TestReadLoop_NoACPReadOnCleanEOF(t *testing.T) {
 		t.Fatal("readLoop did not reap bridge (done not closed)")
 	}
 
-	if c.has("ACP read") {
+	if c.CountExact("ACP read") > 0 {
 		t.Errorf(`readLoop on a clean EOF logged "ACP read"; want it absent`)
 	}
 }
@@ -1612,13 +1578,13 @@ func TestLoadSession_AppliesParsedResult(t *testing.T) {
 
 // loadSession warns and falls back when the result can't be parsed.
 func TestLoadSession_WarnsOnUnparseableResult(t *testing.T) {
-	c := installCapture(t)
+	c := capture.Default(t)
 	b := New("/nonexistent", "/work")
 	resp := &api.RPCResponse{Result: json.RawMessage(`{"sessionId":"x"`)} // truncated -> parse error
 	if err := runLoadSession(t, b, "fb-model", resp); err != nil {
 		t.Fatalf("loadSession returned error: %v", err)
 	}
-	if !c.has("session/load: unparseable result, using fallback") {
+	if c.CountExact("session/load: unparseable result, using fallback") == 0 {
 		t.Errorf("loadSession on an unparseable result did not log the fallback warn; want it present")
 	}
 }

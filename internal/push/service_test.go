@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -119,10 +120,10 @@ func TestSubscribe_HostLogging(t *testing.T) {
 			defer s.Close() // drain writeLoop before TempDir cleanup
 
 			// Install capture AFTER New so its "push: ready" line is excluded.
-			capLog := installLogCapture(t)
+			capLog := capture.Default(t)
 			s.Subscribe(api.PushSubscription{Endpoint: tt.endpoint})
 
-			rec, ok := capLog.find("push: subscribed")
+			rec, ok := findLogRec(capLog, "push: subscribed")
 			if !ok {
 				t.Fatalf("Subscribe(%q) did not emit a %q log line",
 					tt.endpoint, "push: subscribed")

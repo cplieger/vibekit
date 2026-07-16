@@ -1,6 +1,10 @@
 package checkpoint
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/cplieger/slogx/capture"
+)
 
 // TestStateApply_SnapshotAdvancesTurn pins that applySnapshot advances
 // s.turn when the event's turn exceeds the current turn: on a fresh
@@ -18,9 +22,9 @@ func TestStateApply_SnapshotAdvancesTurn(t *testing.T) {
 // while still appending the conflict.
 func TestStateApply_NoRingFullWarnBelowCap(t *testing.T) {
 	s := newState()
-	has := captureLogs(t)
+	has := capture.Default(t)
 	s.apply(&event{Kind: kindConflict, Path: "f", Tag: "1", BeforeSHA: "b", OtherChat: "o", ExpectedSHA: "e", TS: 1})
-	if has("conflict ring full") {
+	if has.Contains("conflict ring full") {
 		t.Errorf("applyConflict logged 'conflict ring full' with an empty ring; that warn must fire only at capacity")
 	}
 	if got := s.conflicts.Len(); got != 1 {

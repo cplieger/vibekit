@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 func TestRestorePreservesUnrelatedFiles(t *testing.T) {
@@ -491,14 +493,14 @@ func TestCommitRename_NoDurabilityWarnOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	has := captureLogs(t)
+	has := capture.Default(t)
 	if err := commitRename(tmp, final); err != nil {
 		t.Fatalf("commitRename(success path) = %v, want nil", err)
 	}
-	if has("parent-dir open for fsync failed") {
+	if has.Contains("parent-dir open for fsync failed") {
 		t.Errorf("commitRename success path logged 'parent-dir open for fsync failed'; the open-error warn must fire only when Open fails")
 	}
-	if has("parent-dir fsync failed") {
+	if has.Contains("parent-dir fsync failed") {
 		t.Errorf("commitRename success path logged 'parent-dir fsync failed'; the fsync-error warn must fire only when Sync fails")
 	}
 	if _, err := os.Stat(final); err != nil {
@@ -525,7 +527,7 @@ func TestRestoreLocked_CommitsAndReturnsWatermark(t *testing.T) {
 	}
 	_ = os.WriteFile(f, []byte("v1"), 0o600)
 
-	has := captureLogs(t)
+	has := capture.Default(t)
 	m.mu.Lock()
 	n, rErr := m.restoreLocked(ctx, string(tag1), false)
 	pr := m.state.pendingRestore
@@ -540,7 +542,7 @@ func TestRestoreLocked_CommitsAndReturnsWatermark(t *testing.T) {
 	if pr != "" {
 		t.Errorf("pendingRestore = %q, want cleared after a successful commit", pr)
 	}
-	if has("restore_committed append failed") {
+	if has.Contains("restore_committed append failed") {
 		t.Errorf("successful restoreLocked logged 'restore_committed append failed'; that warn must fire only on append error")
 	}
 	if got, _ := os.ReadFile(f); string(got) != "v0" {
@@ -566,7 +568,7 @@ func TestRestore_NoCommittedAppendWarnOnSuccess(t *testing.T) {
 	}
 	_ = os.WriteFile(f, []byte("v1"), 0o600)
 
-	has := captureLogs(t)
+	has := capture.Default(t)
 	mc, err := m.Restore(ctx, tag1)
 	if err != nil {
 		t.Fatalf("Restore = %v, want nil", err)
@@ -574,7 +576,7 @@ func TestRestore_NoCommittedAppendWarnOnSuccess(t *testing.T) {
 	if mc != 3 {
 		t.Errorf("Restore watermark = %d, want 3", mc)
 	}
-	if has("restore_committed append failed") {
+	if has.Contains("restore_committed append failed") {
 		t.Errorf("successful Restore logged 'restore_committed append failed'; that warn must fire only on append error")
 	}
 }
@@ -639,11 +641,11 @@ func TestCleanupStages_NoWarnOnSuccessfulRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	has := captureLogs(t)
+	has := capture.Default(t)
 	m.cleanupStages([]restoreStage{
 		{path: "f1.txt", abs: filepath.Join(work, "f1.txt"), tmp: tmp1, existed: true},
 	})
-	if has("stage cleanup failed") {
+	if has.Contains("stage cleanup failed") {
 		t.Errorf("cleanupStages logged 'stage cleanup failed' on a successful Remove; that warn must fire only when Remove fails")
 	}
 	if _, err := os.Stat(tmp1); !os.IsNotExist(err) {
@@ -660,9 +662,9 @@ func TestCleanup_NoWipeWarnOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	has := captureLogs(t)
+	has := capture.Default(t)
 	m.Cleanup(ctx)
-	if has("cleanup wipe failed") {
+	if has.Contains("cleanup wipe failed") {
 		t.Errorf("Cleanup logged 'cleanup wipe failed' on a successful wipe; that warn must fire only on wipe error")
 	}
 }

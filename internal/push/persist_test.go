@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -100,11 +101,11 @@ func TestLoadSubs_DropsDisallowedHostLogged(t *testing.T) {
 	}
 
 	s := &Service{dir: dir, subs: make(map[string]api.PushSubscription)}
-	capLog := installLogCapture(t)
+	capLog := capture.Default(t)
 
 	s.loadSubs()
 
-	rec, ok := capLog.find("push: dropping subscription with disallowed endpoint")
+	rec, ok := findLogRec(capLog, "push: dropping subscription with disallowed endpoint")
 	if !ok {
 		t.Fatalf("loadSubs did not log the disallowed-endpoint drop")
 	}
@@ -117,11 +118,11 @@ func TestLoadSubs_DropsDisallowedHostLogged(t *testing.T) {
 // generated VAPID key pair to a writable dir without emitting the
 // persist-failure warning.
 func TestLoadKeys_PersistSuccessNoWarn(t *testing.T) {
-	capLog := installLogCapture(t)
+	capLog := capture.Default(t)
 	s := New(context.Background(), t.TempDir(), testSubject)
 	defer s.Close()
 
-	if capLog.has("push: persist VAPID keys failed") {
+	if capLog.CountExact("push: persist VAPID keys failed") > 0 {
 		t.Errorf("loadKeys logged %q on a successful key write; want no warning",
 			"push: persist VAPID keys failed")
 	}
@@ -132,13 +133,13 @@ func TestLoadKeys_PersistSuccessNoWarn(t *testing.T) {
 func TestWriteSubsSnapshot_SuccessNoWarn(t *testing.T) {
 	dir := t.TempDir()
 	s := &Service{dir: dir}
-	capLog := installLogCapture(t)
+	capLog := capture.Default(t)
 
 	s.writeSubsSnapshot([]api.PushSubscription{
 		{Endpoint: "https://fcm.googleapis.com/fcm/send/snap"},
 	})
 
-	if capLog.has("push: persist subscriptions failed") {
+	if capLog.CountExact("push: persist subscriptions failed") > 0 {
 		t.Errorf("writeSubsSnapshot logged %q on a successful write; want none",
 			"push: persist subscriptions failed")
 	}
