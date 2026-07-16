@@ -8,12 +8,17 @@ TOOLS="$CONFIG_DIR/tools"
 # either literal triggers a reinstall on next container start (see the
 # version-drift check below). The in-binary auto-update is disabled so
 # what runs always matches the version baked into the image tag and the
-# SHA we verified at install time. KIRO_CLI_SHA256 is the sha256 of the
-# x86_64-linux headless zip; on aarch64 the hash is logged but not
-# enforced (Renovate tracks one arch).
+# SHA we verified at install time. KIRO_CLI_SHA256 (x86_64) and
+# KIRO_CLI_SHA256_ARM64 (aarch64) are the per-arch sha256 of the headless
+# zip, BOTH enforced at install; the kiro-cli packageRule in
+# cplieger/.github groups all three literals into one Renovate PR.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
 KIRO_CLI_VERSION="2.12.3"
 KIRO_CLI_SHA256="0855bab3cbed04963ce595d6105209de8c113d81f4e96d5bff160cf7410ebfb2"
+# The `# kiro-cli <version>` trailer is Renovate's version anchor for this
+# arch's digest lookup — do not hand-edit or drop it.
+# renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
+KIRO_CLI_SHA256_ARM64="6ebcc9b4b6540adb74866639ba82d70ff494367fee4c1e23fa56f36e5da5de8f"  # kiro-cli 2.12.3
 
 # Tool installs (opt/, npm/, python/, go/) are owned by the in-process
 # tools engine, which creates its own subtree; bin/ is created here so
@@ -93,25 +98,25 @@ install_kiro_cli() {
     return 1
   fi
 
-  # Verify SHA-256. KIRO_CLI_SHA256 is the x86_64-linux hash from the
-  # install manifest, kept in lockstep with KIRO_CLI_VERSION by Renovate.
-  # On aarch64 we log the hash for the audit trail but do not enforce.
-  local actual
+  # Verify SHA-256 per arch: KIRO_CLI_SHA256 (x86_64) / KIRO_CLI_SHA256_ARM64
+  # (aarch64), both from the install manifest and kept in lockstep with
+  # KIRO_CLI_VERSION by Renovate (one grouped PR moves all three literals).
+  local actual expected
   actual=$(sha256sum "$zip" | awk '{print $1}')
   printf "kiro-cli zip SHA-256: %s (url=%s)\n" "$actual" "$zip_url"
-  if [ "$arch" = "x86_64-linux" ]; then
-    if [ "$actual" != "$KIRO_CLI_SHA256" ]; then
-      printf "ERROR: kiro-cli SHA-256 mismatch\n" >&2
-      printf "  expected: %s\n" "$KIRO_CLI_SHA256" >&2
-      printf "  actual:   %s\n" "$actual" >&2
-      printf "  refusing install; bump KIRO_CLI_VERSION/KIRO_CLI_SHA256 together\n" >&2
-      rm -rf "$tmpdir"
-      return 1
-    fi
-    printf "kiro-cli SHA-256 verified against pinned hash\n"
-  else
-    printf "kiro-cli SHA-256 unverified on %s (no pinned hash for this arch)\n" "$arch"
+  case "$arch" in
+    x86_64-linux) expected="$KIRO_CLI_SHA256" ;;
+    aarch64-linux) expected="$KIRO_CLI_SHA256_ARM64" ;;
+  esac
+  if [ "$actual" != "$expected" ]; then
+    printf "ERROR: kiro-cli SHA-256 mismatch (%s)\n" "$arch" >&2
+    printf "  expected: %s\n" "$expected" >&2
+    printf "  actual:   %s\n" "$actual" >&2
+    printf "  refusing install; bump KIRO_CLI_VERSION and both KIRO_CLI_SHA256* literals together\n" >&2
+    rm -rf "$tmpdir"
+    return 1
   fi
+  printf "kiro-cli SHA-256 verified against pinned %s hash\n" "$arch"
 
   if ! unzip -q "$zip" -d "$tmpdir"; then
     printf "ERROR: failed to extract kiro-cli zip\n" >&2
