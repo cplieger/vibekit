@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 func TestBlobStorePutGet(t *testing.T) {
@@ -317,7 +319,7 @@ func TestBlobStore_GetAllowsExactlyContentCap(t *testing.T) {
 // a blob whose content hashes to its own name is self-consistent, so
 // Get must not emit the integrity-failure log on a clean read.
 func TestBlobStore_GetNoIntegrityWarnOnValidBlob(t *testing.T) {
-	has := captureLogs(t)
+	has := capture.Default(t)
 	ctx := context.Background()
 	b := newBlobStore(t.TempDir())
 	h, err := b.Put(ctx, []byte("valid-and-self-consistent"))
@@ -327,7 +329,7 @@ func TestBlobStore_GetNoIntegrityWarnOnValidBlob(t *testing.T) {
 	if _, err := b.Get(ctx, h); err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if has("integrity check FAILED") {
+	if has.Contains("integrity check FAILED") {
 		t.Errorf("Get(valid blob) emitted an integrity-FAILED log; the check must fire only when the content hash mismatches the name")
 	}
 }
@@ -336,9 +338,9 @@ func TestBlobStore_GetNoIntegrityWarnOnValidBlob(t *testing.T) {
 // attempting a Sync when the directory can't be opened (e.g. it does
 // not exist), so it must not emit the "dir sync failed" breadcrumb.
 func TestSyncDir_NoLogWhenOpenFails(t *testing.T) {
-	has := captureLogs(t)
+	has := capture.Default(t)
 	syncDir(filepath.Join(t.TempDir(), "definitely-does-not-exist"))
-	if has("dir sync failed") {
+	if has.Contains("dir sync failed") {
 		t.Errorf("syncDir(missing dir) emitted 'dir sync failed'; it must return before Sync when Open fails")
 	}
 }
@@ -359,9 +361,9 @@ func TestSyncDir_NoLogOnSuccess(t *testing.T) {
 		t.Skipf("directory fsync unsupported on this fs: %v", syncErr)
 	}
 
-	has := captureLogs(t)
+	has := capture.Default(t)
 	syncDir(dir)
-	if has("dir sync failed") {
+	if has.Contains("dir sync failed") {
 		t.Errorf("syncDir(valid dir, fsync ok) emitted 'dir sync failed'; it must log only when Sync errors")
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -253,9 +254,9 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		// total=4 bytes is well under the cap.
 		s := New(context.Background(), t.TempDir(), testSubject)
 		defer s.Close()
-		capLog := installLogCapture(t)
+		capLog := capture.Default(t)
 		s.Send(context.Background(), "aa", "bb", api.PushKindAgentFinished)
-		if capLog.has(warnMsg) {
+		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q for a 4-byte payload; want no warn", warnMsg)
 		}
 	})
@@ -264,10 +265,10 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		// title=10, body=4000, total=4010 — over the cap.
 		s := New(context.Background(), t.TempDir(), testSubject)
 		defer s.Close()
-		capLog := installLogCapture(t)
+		capLog := capture.Default(t)
 		s.Send(context.Background(), strings.Repeat("a", 10), strings.Repeat("b", 4000),
 			api.PushKindAgentFinished)
-		rec, ok := capLog.find(warnMsg)
+		rec, ok := findLogRec(capLog, warnMsg)
 		if !ok {
 			t.Fatalf("Send did not warn %q for a 4010-byte payload", warnMsg)
 		}
@@ -282,10 +283,10 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		// exactly pushBodyCap (3000), which is not over, so Send must not warn.
 		s := New(context.Background(), t.TempDir(), testSubject)
 		defer s.Close()
-		capLog := installLogCapture(t)
+		capLog := capture.Default(t)
 		s.Send(context.Background(), strings.Repeat("a", 978), strings.Repeat("b", 2000),
 			api.PushKindAgentFinished)
-		if capLog.has(warnMsg) {
+		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q at exactly the marshaled cap; want no warn", warnMsg)
 		}
 	})
@@ -384,20 +385,20 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
-			capLog := installLogCapture(t)
+			capLog := capture.Default(t)
 			s.Send(context.Background(), "title", "body", api.PushKindAgentFinished)
 
-			if got := capLog.has("push: unexpected status"); got != tc.wantUnexpec {
+			if got := capLog.CountExact("push: unexpected status") > 0; got != tc.wantUnexpec {
 				t.Errorf("status %d: logged unexpected-status = %v, want %v",
 					tc.status, got, tc.wantUnexpec)
 			}
 			// g.Wait always returns nil → the fan-out error is never logged.
-			if capLog.has("push: fan-out wait") {
+			if capLog.CountExact("push: fan-out wait") > 0 {
 				t.Errorf("status %d: logged %q though g.Wait() returns nil",
 					tc.status, "push: fan-out wait")
 			}
 			// A clean response body drains without error.
-			if capLog.has("push: drain response body") {
+			if capLog.CountExact("push: drain response body") > 0 {
 				t.Errorf("status %d: logged %q though the drain succeeded",
 					tc.status, "push: drain response body")
 			}

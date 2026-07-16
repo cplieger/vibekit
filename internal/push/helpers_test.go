@@ -5,7 +5,6 @@ package push
 // small builders, and an always-erroring RoundTripper.
 
 import (
-	"context"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
@@ -13,9 +12,9 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"sync"
 	"testing"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -28,68 +27,29 @@ type logRec struct {
 	level slog.Level
 }
 
-// logCapture is a slog.Handler that records every log line so a test
-// can assert on the message and attributes a code path emits. Several
-// push paths (Subscribe, loadSubs, Send) write only a local variable
-// straight to slog with no return value or exported state, so the log
-// line is the sole observable distinguishing correct from broken
+// asLogRec flattens a captured slog record into the logRec shape the
+// assertions read. Several push paths (Subscribe, loadSubs, Send) write only
+// a local variable straight to slog with no return value or exported state,
+// so the log line is the sole observable distinguishing correct from broken
 // behaviour.
-type logCapture struct {
-	recs []logRec
-	mu   sync.Mutex
-}
-
-func (c *logCapture) Enabled(context.Context, slog.Level) bool { return true }
-
-func (c *logCapture) Handle(_ context.Context, r slog.Record) error {
+func asLogRec(r slog.Record) logRec {
 	attrs := make(map[string]any)
 	r.Attrs(func(a slog.Attr) bool {
 		attrs[a.Key] = a.Value.Any()
 		return true
 	})
-	c.mu.Lock()
-	c.recs = append(c.recs, logRec{attrs: attrs, msg: r.Message, level: r.Level})
-	c.mu.Unlock()
-	return nil
+	return logRec{attrs: attrs, msg: r.Message, level: r.Level}
 }
 
-func (c *logCapture) WithAttrs([]slog.Attr) slog.Handler { return c }
-func (c *logCapture) WithGroup(string) slog.Handler      { return c }
-
-// has reports whether any captured record carries the given message.
-func (c *logCapture) has(msg string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, r := range c.recs {
-		if r.msg == msg {
-			return true
-		}
-	}
-	return false
-}
-
-// find returns the most recent captured record with the given message.
-func (c *logCapture) find(msg string) (logRec, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, r := range slices.Backward(c.recs) {
-		if r.msg == msg {
-			return r, true
+// findLogRec returns the most recent captured record with the given message.
+func findLogRec(rec *capture.Recorder, msg string) (logRec, bool) {
+	records := rec.Records()
+	for _, r := range slices.Backward(records) {
+		if r.Message == msg {
+			return asLogRec(r), true
 		}
 	}
 	return logRec{}, false
-}
-
-// installLogCapture swaps the global slog default for a capturing
-// handler (all levels) and restores it via t.Cleanup. Callers must NOT
-// use t.Parallel — the slog default is process-global.
-func installLogCapture(t *testing.T) *logCapture {
-	t.Helper()
-	c := &logCapture{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(c))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return c
 }
 
 // asInt64 normalises slog's numeric attr representation (int or int64).

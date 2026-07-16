@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -3051,71 +3052,6 @@ func truncToSize(t *testing.T, path string, size int64) {
 	}
 }
 
-// logRecord is one captured slog record (its message and attributes).
-type logRecord struct {
-	attrs map[string]slog.Value
-	msg   string
-}
-
-// capHandler is a slog.Handler that records every log record for assertion.
-type capHandler struct {
-	mu   *sync.Mutex
-	recs *[]logRecord
-}
-
-func (h capHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h capHandler) Handle(_ context.Context, r slog.Record) error {
-	rec := logRecord{msg: r.Message, attrs: make(map[string]slog.Value)}
-	r.Attrs(func(a slog.Attr) bool {
-		rec.attrs[a.Key] = a.Value
-		return true
-	})
-	h.mu.Lock()
-	*h.recs = append(*h.recs, rec)
-	h.mu.Unlock()
-	return nil
-}
-
-func (h capHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h capHandler) WithGroup(string) slog.Handler      { return h }
-
-// captureChatLogs redirects slog.Default for the test and returns a snapshot
-// accessor. Not parallel-safe; callers must not call t.Parallel().
-func captureChatLogs(t *testing.T) func() []logRecord {
-	t.Helper()
-	var mu sync.Mutex
-	recs := &[]logRecord{}
-	prev := slog.Default()
-	slog.SetDefault(slog.New(capHandler{mu: &mu, recs: recs}))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return func() []logRecord {
-		mu.Lock()
-		defer mu.Unlock()
-		out := make([]logRecord, len(*recs))
-		copy(out, *recs)
-		return out
-	}
-}
-
-func hasLogMsg(recs []logRecord, msg string) bool {
-	for _, r := range recs {
-		if r.msg == msg {
-			return true
-		}
-	}
-	return false
-}
-
-func findLog(recs []logRecord, msg string) (logRecord, bool) {
-	for _, r := range recs {
-		if r.msg == msg {
-			return r, true
-		}
-	}
-	return logRecord{}, false
-}
-
 // TestStoreError_Error pins the Error() string for every Kind, with and
 // without a Detail, so a mutated branch or a swapped detail-conditional
 // surfaces. The TooLarge and IDInUse strings are user-facing (writeChatErr
@@ -3278,7 +3214,7 @@ func TestPutPlanDraft_LimitBodyEnvelopeBoundary(t *testing.T) {
 func TestPutPlanDraft_LogsExactBodyLimit(t *testing.T) {
 	const wantLimit = int64(266240) // 256*1024 + 4096
 
-	snap := captureChatLogs(t)
+	snap := capture.Default(t)
 	s, _ := newTestStore(t)
 	id := api.ChatID("putlog")
 
@@ -3293,12 +3229,25 @@ func TestPutPlanDraft_LogsExactBodyLimit(t *testing.T) {
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413 (body must exceed the read cap)", w.Code)
 	}
-	rec, ok := findLog(snap(), "chat plan_draft: body too large")
-	if !ok {
+	if snap.CountExact("chat plan_draft: body too large") == 0 {
 		t.Fatal(`no "chat plan_draft: body too large" log record captured`)
 	}
-	lim, ok := rec.attrs["limit"]
-	if !ok {
+	var lim slog.Value
+	var hasLim bool
+	for _, r := range snap.Records() {
+		if r.Message != "chat plan_draft: body too large" {
+			continue
+		}
+		r.Attrs(func(a slog.Attr) bool {
+			if a.Key == "limit" {
+				lim, hasLim = a.Value, true
+				return false
+			}
+			return true
+		})
+		break
+	}
+	if !hasLim {
 		t.Fatal(`log record has no "limit" attribute`)
 	}
 	if lim.Kind() != slog.KindInt64 {
@@ -3313,11 +3262,11 @@ func TestPutPlanDraft_LogsExactBodyLimit(t *testing.T) {
 // so NewStore must NOT log "chat store: chmod" (that log is the chmod-error
 // branch).
 func TestNewStore_NoChmodWarnOnWritableDir(t *testing.T) {
-	snap := captureChatLogs(t)
+	snap := capture.Default(t)
 	if _, err := NewStore(t.TempDir()); err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	if hasLogMsg(snap(), "chat store: chmod") {
+	if snap.CountExact("chat store: chmod") > 0 {
 		t.Error(`NewStore logged "chat store: chmod" on a writable dir; the chmod-error branch is inverted`)
 	}
 }
@@ -3334,11 +3283,11 @@ func TestDelete_NoDraftWarnOnCleanRemoval(t *testing.T) {
 		t.Fatalf("write draft: %v", err)
 	}
 
-	snap := captureChatLogs(t)
+	snap := capture.Default(t)
 	if err := s.Delete(context.Background(), id); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if hasLogMsg(snap(), "chat delete: plan-draft removal failed") {
+	if snap.CountExact("chat delete: plan-draft removal failed") > 0 {
 		t.Error(`Delete logged "chat delete: plan-draft removal failed" on a clean draft removal; the error branch is inverted`)
 	}
 }

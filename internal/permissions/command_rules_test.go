@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/cplieger/slogx/capture"
 	"pgregory.net/rapid"
 )
 
@@ -586,13 +587,13 @@ func TestCommandRules_Migrate_LogsMigrationComplete(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "command-whitelist.json"), []byte(legacy), 0o600); err != nil {
 		t.Fatalf("write legacy whitelist: %v", err)
 	}
-	logs := captureLogs(t)
+	logs := capture.Default(t)
 	_ = NewCommandRules(dir)
 
-	if !logs.has(slog.LevelInfo, "migration complete") {
+	if !hasLog(logs, slog.LevelInfo, "migration complete") {
 		t.Error("expected Info 'migration complete' after successful legacy removal")
 	}
-	if logs.has(slog.LevelWarn, "removal failed") {
+	if hasLog(logs, slog.LevelWarn, "removal failed") {
 		t.Error("unexpected Warn 'removal failed' on successful legacy removal")
 	}
 }

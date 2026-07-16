@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cplieger/slogx/capture"
 )
 
 // newTestStore wires a Store over a temp configDir + workDir
@@ -248,9 +250,9 @@ func TestStoreAdvanceTurn_NoWarnOnSuccess(t *testing.T) {
 	work := t.TempDir()
 	s := NewStore(cfg, work, nil)
 
-	has := captureLogs(t)
+	has := capture.Default(t)
 	s.AdvanceTurn(ctx, "chat-a", 1)
-	if has("AdvanceTurn failed") {
+	if has.Contains("AdvanceTurn failed") {
 		t.Errorf("Store.AdvanceTurn logged 'AdvanceTurn failed' on success; that warn must fire only when the delegated call errors")
 	}
 }
@@ -269,9 +271,9 @@ func TestWipe_NoFailureWarnOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	has := captureLogs(t)
+	has := capture.Default(t)
 	wipe(cfg, "wp")
-	if has("checkpoint: wipe failed") {
+	if has.Contains("checkpoint: wipe failed") {
 		t.Errorf("wipe() logged 'wipe failed' on a successful wipe; that warn must fire only on wipe error")
 	}
 }
