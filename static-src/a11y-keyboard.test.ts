@@ -50,7 +50,9 @@ describe("a11y: tool-group header keyboard and aria", () => {
     const group = buildToolGroupShell();
     document.body.appendChild(group);
 
-    // Add 3 completed tool-call children (no data-start-ms)
+    // Add 3 completed tool-call children (no data-start-ms) into the body
+    // region, like the production mount path (messages-blocks mountToolCard).
+    const { groupBody } = await import("./tool-group.js");
     for (let i = 0; i < 3; i++) {
       const call = document.createElement("div");
       call.className = "tool-call";
@@ -58,7 +60,7 @@ describe("a11y: tool-group header keyboard and aria", () => {
       call.dataset["title"] = `read${i}`;
       call.dataset["filename"] = `f${i}.ts`;
       call.dataset["mcpServer"] = "";
-      group.appendChild(call);
+      groupBody(group).appendChild(call);
     }
 
     const header = group.querySelector(".tool-group-header")!;

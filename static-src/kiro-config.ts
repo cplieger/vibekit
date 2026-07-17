@@ -18,7 +18,7 @@ import { onSSE } from "./bus.js";
 import { apiGet } from "./api-client.js";
 import { $ } from "./dom.js";
 import { reconcile } from "./reconcile.js";
-import { deferSkeleton } from "./skeleton-timing.js";
+import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { el } from "@cplieger/reactive";
 
 interface KiroConfigItem {
@@ -57,14 +57,14 @@ export function loadKiroConfig(): void {
   loadKiroConfigAction.cancel();
   // 150ms show-delay so a fast load never flashes the skeleton; the skeleton
   // teardown is cancelled once the fetch settles (success or error).
-  const cancelSkeleton = deferSkeleton(() => showSkeleton($.kiroConfigList));
+  const skeleton = skeletonTiming(() => showSkeleton($.kiroConfigList));
   void loadKiroConfigAction.dispatch(undefined, {
     onSuccess: (d) => {
-      cancelSkeleton();
+      skeleton.cancel();
       render($.kiroConfigList, d.items);
     },
     onError: () => {
-      cancelSkeleton();
+      skeleton.cancel();
       $.kiroConfigList.replaceChildren(
         el("div", { className: "list-empty" }, "Failed to load config"),
       );

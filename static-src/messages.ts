@@ -144,7 +144,6 @@ let mounted = false;
 // Initialize callbacks for extracted modules.
 initToolCallbacks({
   pushBind,
-  svgTemplate,
   refreshGroupHeader,
   explainError,
 });

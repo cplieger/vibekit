@@ -128,17 +128,13 @@
 .shell-terminal {
   flex: 1;
   min-height: 0;
-  /* @cplieger/web-terminal-ui's createTerminal() builds a full-page terminal
-     (`.term { position: fixed; inset: 0 }`) plus fixed-position floating chrome
-     (connection banner, scroll-to-bottom, context menu, mobile key toolbar)
-     into this element. `contain: layout` makes #shell-terminal the containing
-     block for those fixed descendants, so the whole terminal and its chrome
-     stay inside the shell panel instead of covering the viewport; `overflow:
-     clip` keeps any chrome from spilling past the panel edges. The engine's
-     `.term` is the scroll container now, not this element. */
-  position: relative;
-  contain: layout;
-  overflow: clip;
+  /* createTerminal(root, { layout: "container" }) makes this element the
+     terminal's own styling + positioning boundary: the ui package's
+     .wt-root.wt-container carries position: relative + overflow: clip, and
+     every piece of terminal chrome (banner, scroll-to-bottom, context menu,
+     key toolbar) positions absolute against it. No containment workarounds
+     needed here. The engine's `.term` is the scroll container, not this
+     element. */
 }
 
 /* "earlier output trimmed" marker (vterm renderer inserts .term-trim-marker

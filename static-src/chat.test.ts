@@ -48,7 +48,9 @@ vi.mock("./tabs.js", () => ({
   TAB_VIEWS: { chat: "#chat-view" },
 }));
 vi.mock("./skeleton.js", () => ({ chatSkeleton: vi.fn(() => document.createElement("div")) }));
-vi.mock("./skeleton-timing.js", () => ({ deferSkeleton: vi.fn(() => () => undefined) }));
+vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+  skeletonTiming: vi.fn(() => ({ commit: vi.fn(), cancel: vi.fn() })),
+}));
 vi.mock("./picker.js", () => ({ showModelPicker: vi.fn(), hideModelPicker: vi.fn() }));
 vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),

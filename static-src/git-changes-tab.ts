@@ -753,8 +753,9 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
   top.appendChild(actions);
   li.appendChild(top);
 
-  // Inline diff drawer (hidden until clicked). Lazy-loaded.
-  const diffDrawer = el("div", { className: "git-file-diff hidden" });
+  // Inline diff drawer (collapsed until toggled). Lazy-loaded; the collapse
+  // is a disclosure region wired below (after loadDiff is defined).
+  const diffDrawer = el("div", { className: "git-file-diff" });
   li.appendChild(diffDrawer);
 
   // Bug 4: Unique key for tracking expanded state across re-renders.
@@ -795,26 +796,32 @@ function renderFileRow(r: RepoStatus, f: FileEntry): HTMLElement {
     });
   };
 
-  // Bug 4: Restore expanded state from previous render.
+  // The row is the disclosure trigger (the primitive gives it role=button,
+  // tabindex, Enter/Space, and aria-expanded — the old hidden-class click
+  // toggle was keyboard-unreachable and told AT nothing) and the drawer is
+  // the animated region (aria-hidden + inert when collapsed). The inner
+  // stage/discard buttons already stopPropagation, exactly like the repo
+  // sections' branch chip. Bug 4: expanded state restores from previous
+  // renders via `open`, and persists via onToggle.
+  createDisclosure(top, diffDrawer, {
+    open: expandedDiffPaths.has(diffKey),
+    onToggle: (open) => {
+      li.classList.toggle("expanded", open);
+      if (open) {
+        expandedDiffPaths.add(diffKey);
+        if (!loadedDiff) {
+          loadDiff();
+        }
+      } else {
+        expandedDiffPaths.delete(diffKey);
+      }
+    },
+  });
   if (expandedDiffPaths.has(diffKey)) {
-    diffDrawer.classList.remove("hidden");
+    // Initial open state is applied without an onToggle callback: mirror it.
     li.classList.add("expanded");
     loadDiff();
   }
-
-  top.addEventListener("click", () => {
-    const opening = !diffDrawer.classList.toggle("hidden");
-    li.classList.toggle("expanded", opening);
-    // Bug 4: Persist toggle state.
-    if (opening) {
-      expandedDiffPaths.add(diffKey);
-    } else {
-      expandedDiffPaths.delete(diffKey);
-    }
-    if (opening && !loadedDiff) {
-      loadDiff();
-    }
-  });
 
   return li;
 }

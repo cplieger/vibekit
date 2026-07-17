@@ -176,12 +176,14 @@
 }
 
 /* ==========================================================================
-   Confirm — ports the old .vk-confirm-dialog look. The base owns the native
-   <dialog> leave fade + backdrop; buttons reproduce .btn-small +
-   .confirm-allow / .confirm-danger.
+   Ask (boolean confirm shape) — ports the old .vk-confirm-dialog look. The
+   base owns the native <dialog> leave fade + backdrop; buttons reproduce
+   .btn-small + .confirm-allow / .confirm-danger. (vibekit has no input-ask
+   consumer yet; add .uip-ask--input / .uip-ask-form / .uip-ask-input rules
+   when one appears.)
    ========================================================================== */
 
-.uip-confirm {
+.uip-ask {
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
   border: 1px solid var(--c-border);
@@ -191,26 +193,26 @@
   box-shadow: 0 0.5rem 2rem oklch(0% 0 0deg / 50%);
 }
 
-.uip-confirm-title {
+.uip-ask-title {
   margin-block: 0 var(--sp-2);
   font-size: var(--fs-md);
   font-weight: var(--fw-semibold);
 }
 
-.uip-confirm-msg {
+.uip-ask-msg {
   margin-block-end: var(--sp-3);
   font-size: var(--fs-sm);
 }
 
-.uip-confirm-actions {
+.uip-ask-actions {
   display: flex;
   gap: var(--sp-2);
   justify-content: flex-end;
 }
 
 /* Confirm buttons reproduce .btn-small (neutral ghost). */
-.uip-confirm-ok,
-.uip-confirm-cancel {
+.uip-ask-ok,
+.uip-ask-cancel {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -234,7 +236,7 @@
 }
 
 /* Non-destructive OK = .confirm-allow (green outline). */
-.uip-confirm-ok:not(.is-destructive) {
+.uip-ask-ok:not(.is-destructive) {
   border-color: var(--c-green);
   color: var(--c-green);
 
@@ -244,7 +246,7 @@
 }
 
 /* Destructive OK = .confirm-danger (red outline). */
-.uip-confirm-ok.is-destructive {
+.uip-ask-ok.is-destructive {
   border-color: var(--c-red);
   color: var(--c-red);
 

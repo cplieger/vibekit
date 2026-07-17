@@ -133,10 +133,13 @@ async function cloneRepo(repo: Repo, deps: RepoDeps): Promise<void> {
   if (url === "") {
     throw new Error("no clone URL");
   }
-  const res = await cloneRepoAction.dispatch({ url });
-  if (res === null) {
-    throw new Error("clone failed");
+  // Typed outcome: the caller toasts this throw (error: false on the action),
+  // so carry the real failure reason instead of a synthetic "clone failed".
+  const o = await cloneRepoAction.dispatch({ url }).outcome;
+  if (o.status !== "success") {
+    throw new Error(o.status === "error" ? o.error.message : "clone cancelled");
   }
+  const res = o.value;
   if (res.error !== undefined && res.error !== "") {
     throw new Error(res.error);
   }

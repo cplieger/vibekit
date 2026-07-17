@@ -158,15 +158,22 @@ export async function fetchGitDiffSources(
   repo: string,
   ref: string,
 ): Promise<void> {
-  const result = await loadDiffAction.dispatch({ path: state.path, repo, ref });
-  if (result === null) {
+  const o = await loadDiffAction.dispatch({ path: state.path, repo, ref }).outcome;
+  if (o.status === "cancelled") {
+    // A superseded/cancelled load is not an error state for the pane.
+    return;
+  }
+  if (o.status === "error") {
     state.loaded = true;
-    state.error = "Failed to load diff";
+    // The diff pane is the primary failure surface; show the real reason
+    // alongside the framework's toast instead of a generic placeholder.
+    state.error = `Failed to load diff: ${o.error.message}`;
     if (getActiveFilePath() === state.path) {
       restoreUI(state);
     }
     return;
   }
+  const result = o.value;
   const m = state.mode.value;
   if (m.kind !== "diff") {
     return;

@@ -307,7 +307,10 @@
   color: var(--c-text-primary);
 }
 
-/* Branch switcher popover (singleton, positioned at click time) */
+/* Branch switcher popover (singleton; placement + dismissal are
+ * @cplieger/ui-primitives createPopover's — this is skin only). The z-index
+ * intentionally overrides the library's --uip-z-popover default here, as the
+ * pane-local layering this panel needs is far lower. */
 .git-branch-popover {
   z-index: 100;
   display: flex;
@@ -477,12 +480,22 @@
 }
 
 /* Inline diff drawer */
+/* The drawer is a uip-disclosure-region (animated height + aria-hidden/inert
+ * when collapsed); this rule is skin + the internal scroll. The overflow
+ * re-declaration wins the cascade over the region's overflow: hidden, so the
+ * collapsed chrome rule below restores clipping (and drops the border, which
+ * would otherwise paint at height 0). */
 .git-file-diff {
   border-block-start: 1px solid var(--c-border);
   background: var(--c-bg-primary);
   font-size: var(--fs-xs);
   max-height: 26rem;
   overflow: auto;
+}
+
+.git-file-diff[aria-hidden="true"] {
+  border-block-start: none;
+  overflow: hidden;
 }
 
 .git-file-diff-pre {

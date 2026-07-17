@@ -20,7 +20,7 @@
 
 import { el } from "@cplieger/reactive";
 import { createPopover, pointAnchor } from "@cplieger/ui-primitives/popover";
-import { wireArrowNav } from "./arrow-nav.js";
+import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 
 export interface ContextMenuItem {
   label: string;
@@ -64,7 +64,7 @@ export function showContextMenu(
   // Roving-tabindex arrow-key navigation (Up/Down/Home/End, Enter/Space to
   // activate) makes the menu fully keyboard-operable per the WAI-ARIA menu
   // pattern; complements the initial focus below.
-  wireArrowNav(menu, ".tab-context-item");
+  rovingFocus(menu, ".tab-context-item");
 
   pop.show();
 

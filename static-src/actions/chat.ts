@@ -12,6 +12,7 @@ import {
   retryNetwork,
   RETRY_STANDARD,
   transportAction,
+  IDEMPOTENCY_COMMAND_FIELD,
 } from "./index.js";
 
 import type { PendingChange, Session } from "../types.js";
@@ -398,8 +399,12 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
           attachments:
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
           // Only include the key if the framework provided one (avoids
-          // sending `idempotency_key: undefined` which serializes inconsistently).
-          ...(ctx?.idempotencyKey !== undefined ? { idempotency_key: ctx.idempotencyKey } : {}),
+          // sending `idempotency_key: undefined` which serializes
+          // inconsistently). Field name shared with transportAction's
+          // injection via the package constant.
+          ...(ctx?.idempotencyKey !== undefined
+            ? { [IDEMPOTENCY_COMMAND_FIELD]: ctx.idempotencyKey }
+            : {}),
         },
       },
       { signal, reportSendState: true }, // send-state IS the error surface

@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import type { ToolStatus } from "../types.js";
 import { isToolActive } from "../tool-schema.js";
 
@@ -35,11 +36,14 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
   const icon = el("span", { className: "subagent-icon" });
   const nameEl = el("span", { className: "subagent-name" }, name);
   const statusEl = el("span", { className: `tool-status ${status}` }, status);
+  // The chevron is purely decorative now: the HEADER is the disclosure
+  // trigger (it carries aria-expanded + activation), so a nested focusable
+  // button would be a redundant tab stop announcing a second control.
   const chevron = el("button", {
     className: "subagent-toggle",
     type: "button",
-    "aria-label": "Toggle subagent details",
-    "aria-expanded": "true",
+    "aria-hidden": "true",
+    tabindex: "-1",
   });
   const header = el(
     "div",
@@ -52,21 +56,20 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
   const body = el("div", { className: "subagent-body" });
   root.append(header, body);
 
+  // The disclosure primitive owns the header wiring (click, Enter/Space,
+  // aria-expanded/aria-controls) and the body collapse (animated height,
+  // aria-hidden + inert). vibekit keeps the root .collapsed skin class (the
+  // chevron arrow keys off it) and the user-took-over latch, both via
+  // onToggle's source.
   let userToggled = false;
-  const setCollapsed = (collapsed: boolean): void => {
-    root.classList.toggle("collapsed", collapsed);
-    chevron.setAttribute("aria-expanded", collapsed ? "false" : "true");
-  };
-  const toggle = (): void => {
-    userToggled = true;
-    setCollapsed(!root.classList.contains("collapsed"));
-  };
-  header.addEventListener("click", toggle);
-  header.addEventListener("keydown", (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggle();
-    }
+  const ctl = createDisclosure(header, body, {
+    open: true,
+    onToggle: (open, source) => {
+      root.classList.toggle("collapsed", !open);
+      if (source === "user") {
+        userToggled = true;
+      }
+    },
   });
 
   const applyIcon = (s: ToolStatus): void => {
@@ -90,7 +93,7 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
       // Auto-collapse a settled subagent so a long nested transcript doesn't
       // dominate the view — unless the user has taken control of the toggle.
       if (!userToggled && !isToolActive(s)) {
-        setCollapsed(true);
+        ctl.close();
       }
     },
     setName(n: string): void {

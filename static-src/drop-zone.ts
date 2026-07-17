@@ -4,7 +4,7 @@
 // provide the container, overlay element, and drop handler.
 // ---------------------------------------------------------------------------
 
-import { el } from "@cplieger/reactive";
+import { announce } from "@cplieger/ui-primitives/announce";
 
 /** Options for installing a drop zone on a container element. */
 export interface DropZoneOptions {
@@ -27,34 +27,23 @@ export interface DropZoneOptions {
  * cause flicker. The overlay is shown on first enter, hidden on full leave
  * or drop.
  *
- * A11y: announces drop-target activation via a lazily-created sr-only
- * aria-live region. The deprecated aria-dropeffect attribute (removed in
- * WAI-ARIA 1.2) is NOT used.
+ * A11y: announces drop-target activation through the shared
+ * @cplieger/ui-primitives announce() live region (assertive) — no per-consumer
+ * sr-only element, so multiple drop zones no longer accumulate their own
+ * regions on <body>. The old on-leave textContent clear is gone with it:
+ * clearing a live region is silent for assistive tech anyway, so the last
+ * message simply ages out of the shared region. The deprecated
+ * aria-dropeffect attribute (removed in WAI-ARIA 1.2) is NOT used.
  */
 export function installDropZone(opts: DropZoneOptions): void {
   let dragCounter = 0;
-  let liveRegion: HTMLElement | null = null;
-
-  function ensureLiveRegion(): HTMLElement {
-    if (liveRegion !== null) {
-      return liveRegion;
-    }
-    const node = el("div", {
-      className: "sr-only",
-      "aria-live": "assertive",
-      "aria-atomic": "true",
-    });
-    document.body.appendChild(node);
-    liveRegion = node;
-    return node;
-  }
 
   opts.container.addEventListener("dragenter", (e: DragEvent) => {
     e.preventDefault();
     dragCounter++;
     if (dragCounter === 1) {
       opts.overlay.classList.remove("hidden");
-      ensureLiveRegion().textContent = "Drop target active, release to upload files";
+      announce("Drop target active, release to upload files", "assertive");
     }
   });
 
@@ -64,9 +53,6 @@ export function installDropZone(opts: DropZoneOptions): void {
     if (dragCounter <= 0) {
       dragCounter = 0;
       opts.overlay.classList.add("hidden");
-      if (liveRegion !== null) {
-        liveRegion.textContent = "";
-      }
       opts.onDragLeave?.();
     }
   });
@@ -83,9 +69,6 @@ export function installDropZone(opts: DropZoneOptions): void {
     e.preventDefault();
     dragCounter = 0;
     opts.overlay.classList.add("hidden");
-    if (liveRegion !== null) {
-      liveRegion.textContent = "";
-    }
     if (e.dataTransfer !== null && e.dataTransfer.files.length > 0) {
       opts.onDrop(e.dataTransfer.files);
     }

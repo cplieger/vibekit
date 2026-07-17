@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";
+import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
 import { ICON_TRASH, ICON_EXPORT } from "./icons.js";
@@ -18,7 +19,7 @@ import { downloadChatExport } from "./chat-export.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import { deferSkeleton } from "./skeleton-timing.js";
+import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 
@@ -41,12 +42,19 @@ class HistoryController {
     const toggle = document.getElementById("history-toggle");
     const list = document.getElementById("history-list");
     if (toggle !== null && list !== null) {
-      toggle.addEventListener("click", () => {
-        const open = !list.classList.contains("hidden");
-        list.classList.toggle("hidden", open);
-        if (!open) {
-          void this.loadArchived();
-        }
+      // Trigger disclosure over the sidebar list: the primitive announces the
+      // expanded/collapsed state on the (native button) toggle and animates
+      // the region — the old hidden-class flip told AT nothing. The archived
+      // chats load lazily on each open, as before.
+      const startOpen = !list.classList.contains("hidden");
+      list.classList.remove("hidden");
+      createDisclosure(toggle, list, {
+        open: startOpen,
+        onToggle: (open) => {
+          if (open) {
+            void this.loadArchived();
+          }
+        },
       });
     }
   }
@@ -87,10 +95,10 @@ class HistoryController {
 
     // Stable skeleton (150ms show-delay) while the fetch is in flight; skipped
     // when the table already holds rows (a re-open) so it doesn't flash.
-    const cancelSkeleton = deferSkeleton(() => showTableSkeleton(container));
+    const skeleton = skeletonTiming(() => showTableSkeleton(container));
 
     const d = await loadHistory.dispatch(undefined);
-    cancelSkeleton();
+    skeleton.cancel();
     if (signal.aborted) {
       return;
     }

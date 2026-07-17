@@ -328,15 +328,10 @@ button.spec-doc:hover {
 
 /* --- Collapsible children (height 0 ↔ auto via interpolate-size) --- */
 
-.spec-node-children {
-  overflow: hidden;
-  height: auto;
-  transition: height var(--dur-standard) var(--ease-standard);
-}
-
-.spec-node.collapsed > .spec-node-children {
-  height: 0;
-}
+/* .spec-node-children is a uip-disclosure-region: overflow clipping, the
+ * height transition, and the collapsed height itself (inline style) are the
+ * primitive's — along with aria-hidden + inert on the collapsed subtree,
+ * which the old height-0 rule never provided. Only skin would live here. */
 
 /* --- Mobile: 44px hit targets --- */
 

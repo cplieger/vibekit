@@ -55,15 +55,9 @@ class SupervisedPillController {
       return;
     }
 
-    makeExpandable(this.pill, this.content, {
-      onExpand: () => {
-        this.pill?.setAttribute("aria-expanded", "true");
-      },
-      onCollapse: () => {
-        this.pill?.setAttribute("aria-expanded", "false");
-      },
-    });
-    this.pill.setAttribute("aria-expanded", "false");
+    // aria-expanded on the pill is owned by makeExpandable (createPopup
+    // underneath) — no manual mirroring here.
+    makeExpandable(this.pill, this.content);
     this.render();
 
     effect(() => {

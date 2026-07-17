@@ -3,46 +3,24 @@
 // detail card anchored to the pill's position. Only one pill can be
 // expanded at a time. Click outside, click the pill, or press Escape
 // to collapse.
+//
+// The popup lifecycle — outside-click dismissal, Escape, single-open
+// coordination, trigger ARIA (aria-expanded / aria-haspopup), and the
+// enter/leave state classes with transition-end settling — is
+// @cplieger/ui-primitives' createPopup: the non-positioning popup primitive,
+// which is exactly this pattern's shape. The card is IN-FLOW inside the pill
+// (vibekit.md mandates the expandable-pill pattern over floating popups for
+// pill-row controls), so popover's placement engine is deliberately not
+// involved. This module keeps only the pill-specific glue: the toggle
+// wiring, the .pill-expanded skin class, and the legacy hidden-class
+// normalization. Enter/exit motion stays in 15-input.css, keyed off the
+// library's is-open class on .pill-expand-content.
 // ---------------------------------------------------------------------------
 
-const activePills = new Set<HTMLElement>();
-const pillContentMap = new WeakMap<
-  HTMLElement,
-  {
-    contentEl: HTMLElement;
-    opts?: { onExpand?: () => void; onCollapse?: () => void; signal?: AbortSignal };
-  }
->();
+import { closePopupGroup, createPopup } from "@cplieger/ui-primitives/popup";
 
-// Single delegated document listeners for all pills.
-document.addEventListener("click", (e: MouseEvent) => {
-  for (const pill of activePills) {
-    if (!pill.classList.contains("pill-expanded")) {
-      continue;
-    }
-    if (pill.contains(e.target as Node)) {
-      continue;
-    }
-    const entry = pillContentMap.get(pill);
-    if (entry !== undefined) {
-      collapse(pill, entry.contentEl, entry.opts?.onCollapse);
-    }
-  }
-});
-
-document.addEventListener("keydown", (e: KeyboardEvent) => {
-  if (e.key !== "Escape") {
-    return;
-  }
-  for (const pill of [...activePills]) {
-    if (pill.classList.contains("pill-expanded")) {
-      const entry = pillContentMap.get(pill);
-      if (entry !== undefined) {
-        collapse(pill, entry.contentEl, entry.opts?.onCollapse);
-      }
-    }
-  }
-});
+/** Single-open coordination group shared by every expandable pill. */
+const PILL_GROUP = "pill-expand";
 
 export function makeExpandable(
   pill: HTMLElement,
@@ -55,102 +33,74 @@ export function makeExpandable(
   },
 ): void {
   const listenerOpts = opts?.signal !== undefined ? { signal: opts.signal } : undefined;
-  pillContentMap.set(pill, opts !== undefined ? { contentEl, opts } : { contentEl });
 
-  // Centralized ARIA for every expandable pill: the pill is a disclosure
-  // trigger for a floating popup card, so announce the collapsed/expanded
-  // state (toggled in expand()/collapse()) and advertise the popup — mirroring
-  // createPopover's trigger contract. Call sites no longer set these ad hoc.
+  // Normalize the legacy display state: consumers author the card with the
+  // `hidden` utility CLASS; the popup primitive drives the `[hidden]`
+  // ATTRIBUTE plus the is-open / is-leaving state classes.
+  contentEl.classList.remove("hidden");
+  contentEl.hidden = true;
+
+  // Collapsed ARIA present before the first toggle (createPopup writes the
+  // same attributes on show/hide).
   pill.setAttribute("aria-expanded", "false");
   pill.setAttribute("aria-haspopup", String(opts?.haspopup ?? "true"));
+
+  const popup = createPopup(contentEl, {
+    trigger: pill,
+    group: PILL_GROUP,
+    // The old document-level Escape handler let the key keep propagating to
+    // the app's global key handling; keep that contract.
+    isolateEscape: false,
+    ...(opts?.haspopup !== undefined ? { haspopup: opts.haspopup } : {}),
+    onOpen: () => {
+      pill.classList.add("pill-expanded");
+      opts?.onExpand?.();
+    },
+    onClose: () => {
+      pill.classList.remove("pill-expanded");
+      opts?.onCollapse?.();
+    },
+  });
 
   pill.addEventListener(
     "click",
     (e: MouseEvent) => {
       const target = e.target as HTMLElement;
+      // Clicks on the card's CONTENT don't toggle (buttons/inputs inside the
+      // expanded card must work); a click on the card element itself does.
       if (contentEl.contains(target) && target !== contentEl) {
         return;
       }
+      // Shield other document-level click handlers from pill toggles, exactly
+      // like the old delegated implementation did.
       e.stopPropagation();
-      togglePill(pill, contentEl, opts);
+      popup.toggle();
     },
     listenerOpts,
   );
 
-  // Keyboard: Enter/Space to toggle, Escape to collapse.
+  // Keyboard: Enter/Space to toggle, Escape (while focus is on the pill) to
+  // collapse — the popup's own document-level Escape covers the general case.
   pill.addEventListener(
     "keydown",
     (e: KeyboardEvent) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        togglePill(pill, contentEl, opts);
-      } else if (e.key === "Escape" && pill.classList.contains("pill-expanded")) {
+        popup.toggle();
+      } else if (e.key === "Escape" && popup.isOpen) {
         e.preventDefault();
-        collapse(pill, contentEl, opts?.onCollapse);
+        popup.hide();
       }
     },
     listenerOpts,
   );
-}
 
-function togglePill(
-  pill: HTMLElement,
-  contentEl: HTMLElement,
-  opts?: { onExpand?: () => void; onCollapse?: () => void },
-): void {
-  if (pill.classList.contains("pill-expanded")) {
-    collapse(pill, contentEl, opts?.onCollapse);
-  } else {
-    for (const other of activePills) {
-      const otherContent = other.querySelector<HTMLElement>(".pill-expand-content");
-      if (otherContent !== null) {
-        collapse(other, otherContent);
-      }
-    }
-    expand(pill, contentEl, opts?.onExpand);
-  }
-}
-
-function expand(pill: HTMLElement, contentEl: HTMLElement, onExpand?: () => void): void {
-  pill.classList.add("pill-expanded");
-  pill.setAttribute("aria-expanded", "true");
-  contentEl.classList.remove("hidden");
-  activePills.add(pill);
-  void contentEl.offsetHeight; // force reflow
-  contentEl.classList.add("pill-expand-visible");
-  onExpand?.();
-}
-
-// Generation counter per pill to guard against rapid toggle races.
-const collapseGen = new WeakMap<HTMLElement, number>();
-
-function collapse(pill: HTMLElement, contentEl: HTMLElement, onCollapse?: () => void): void {
-  pill.classList.remove("pill-expanded");
-  pill.setAttribute("aria-expanded", "false");
-  contentEl.classList.remove("pill-expand-visible");
-  activePills.delete(pill);
-
-  const gen = (collapseGen.get(pill) ?? 0) + 1;
-  collapseGen.set(pill, gen);
-
-  contentEl.addEventListener(
-    "transitionend",
-    () => {
-      // Only hide if this is still the latest collapse (no re-expand happened).
-      if (collapseGen.get(pill) === gen && !pill.classList.contains("pill-expanded")) {
-        contentEl.classList.add("hidden");
-      }
-    },
-    { once: true },
-  );
-  onCollapse?.();
+  // A consumer tearing down via its AbortSignal also drops the popup wiring.
+  opts?.signal?.addEventListener("abort", () => {
+    popup.dispose();
+  });
 }
 
 export function collapseAll(): void {
-  for (const pill of activePills) {
-    const contentEl = pill.querySelector<HTMLElement>(".pill-expand-content");
-    if (contentEl !== null) {
-      collapse(pill, contentEl);
-    }
-  }
+  closePopupGroup(PILL_GROUP);
 }

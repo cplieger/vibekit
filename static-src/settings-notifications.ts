@@ -16,6 +16,7 @@ import {
 } from "./notify.js";
 import { patchSettings } from "./persist.js";
 import type { AppSettings } from "./persist.js";
+import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { $ } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
@@ -60,8 +61,18 @@ export function initNotificationToggles(): void {
     notifyAC.abort();
   });
 
+  // Region-only disclosure (trigger: null) — the documented shape for a
+  // checkbox-revealed section: the checkbox's checked state conveys the
+  // collapse (no aria-expanded belongs on it), the primitive drives the
+  // animated height + aria-hidden/inert. Normalize the authored hidden class.
+  notifySubOptions.classList.remove("hidden");
+  const subCtl = createDisclosure(null, notifySubOptions, { open: notifyToggle.checked });
   const updateSub = (): void => {
-    notifySubOptions.classList.toggle("hidden", !notifyToggle.checked);
+    if (notifyToggle.checked) {
+      subCtl.open();
+    } else {
+      subCtl.close();
+    }
   };
 
   setNotifyUICallback(() => {

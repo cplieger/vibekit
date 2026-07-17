@@ -607,7 +607,7 @@
 }
 
 /* Tooltip + confirm dialog moved to @cplieger/ui-primitives — see the
-   .uip-tooltip / .uip-confirm skins in css/04-uip-skin.css (structure + motion
+   .uip-tooltip / .uip-ask skins in css/04-uip-skin.css (structure + motion
    from the vendored base stylesheet). */
 
 /* Editor gutter: agent-modified line indicator */

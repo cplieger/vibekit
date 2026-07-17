@@ -18,10 +18,10 @@ import type { ToolCall, ToolStatus, ToolDiff } from "./types.js";
 import { ensureToolCallSig, clearToolCallSig } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import type { ReconcileSpec } from "./reconcile.js";
-import { ICON_CHEVRON_UP } from "./icons.js";
+
 import { maybeCollapseGroup, formatDuration, untrackInProgress } from "./tool-group.js";
 import { isToolDone } from "./tool-schema.js";
-import { buildToolCard, insertDiffPreview } from "./tool-card.js";
+import { buildToolCard, insertDiffPreview, expandToolDetails } from "./tool-card.js";
 import { ansiToHtml } from "./ansi.js";
 import { bindLoadingState } from "./actions/index.js";
 import { addEditActions } from "./messages-actions.js";
@@ -61,21 +61,20 @@ export function disposeAllToolEffects(): void {
 let _pushBind: (key: string, unbind: () => void) => void = () => {
   /* default until init */
 };
-let _svgTemplate: (markup: string) => () => Node = () => () => document.createDocumentFragment();
 let _refreshGroupHeader: (group: HTMLElement) => void = () => {
   /* default until init */
 };
 let _explainError: (errorText: string, toolTitle: string) => Promise<string> = () =>
   Promise.resolve("");
 
+// (svgTemplate was dropped from this contract: the failed-status chevron flip
+// it fed now rides the tool-card disclosure controller's onToggle.)
 export function initToolCallbacks(cbs: {
   pushBind: (key: string, unbind: () => void) => void;
-  svgTemplate: (markup: string) => () => Node;
   refreshGroupHeader: (group: HTMLElement) => void;
   explainError: (errorText: string, toolTitle: string) => Promise<string>;
 }): void {
   _pushBind = cbs.pushBind;
-  _svgTemplate = cbs.svgTemplate;
   _refreshGroupHeader = cbs.refreshGroupHeader;
   _explainError = cbs.explainError;
 }
@@ -207,13 +206,9 @@ function applyStatusUpdate(
     }
   }
   if (status === "failed") {
-    card.querySelector(".tool-details")?.classList.remove("collapsed");
-    const b = card.querySelector(".tool-toggle");
-    if (b !== null) {
-      b.textContent = "";
-      b.appendChild(_svgTemplate(ICON_CHEVRON_UP)());
-      b.setAttribute("aria-expanded", "true");
-    }
+    // Failed tools open their details so the error output is visible without
+    // a click; the disclosure controller flips the chevron + ARIA itself.
+    expandToolDetails(card);
     if (card.querySelector(".tool-explain-btn") === null) {
       const output = card.querySelector(".tool-output")?.textContent ?? "";
       if (output.trim() !== "") {
