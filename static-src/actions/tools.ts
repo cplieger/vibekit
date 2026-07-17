@@ -15,14 +15,10 @@ import {
   withTimeout,
   retryNetwork,
   RETRY_STANDARD,
+  IDEMPOTENCY_HEADER,
 } from "./index.js";
 import type { ActionContext } from "./index.js";
-import type {
-  ToolJobAccepted,
-  ToolsJobsResponse,
-  ToolsList,
-  ToolsSearchResponse,
-} from "../types.js";
+import type { Inventory, JobResponse, JobsResponse, SearchResponse } from "../types.js";
 
 import { MCP_API } from "./mcp.js";
 
@@ -34,6 +30,8 @@ export interface CreateToolRequest {
   source?: string;
   version?: string;
   pin?: boolean;
+  /** Add as a disabled template: recorded, not installed, no job. */
+  disabled?: boolean;
   requires?: string[];
   shims?: Record<string, string>;
   description?: string;
@@ -44,7 +42,7 @@ export interface CreateToolRequest {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
-export const loadTools = apiAction<void, ToolsList>({
+export const loadTools = apiAction<void, Inventory>({
   name: "tools.load",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -53,7 +51,7 @@ export const loadTools = apiAction<void, ToolsList>({
   error: false,
 });
 
-export const createTool = apiAction<CreateToolRequest, ToolJobAccepted>({
+export const createTool = apiAction<CreateToolRequest, JobResponse>({
   name: "tools.create",
   scope: "tools",
   idempotencyKey: true,
@@ -61,7 +59,7 @@ export const createTool = apiAction<CreateToolRequest, ToolJobAccepted>({
   error: "Couldn't add tool",
 });
 
-export const installTool = apiAction<{ name: string }, ToolJobAccepted>({
+export const installTool = apiAction<{ name: string }, JobResponse>({
   name: "tools.install",
   scope: "tools",
   idempotencyKey: true,
@@ -73,7 +71,7 @@ export const installTool = apiAction<{ name: string }, ToolJobAccepted>({
   error: "Couldn't start install",
 });
 
-export const updateTools = apiAction<{ names?: string[] } | undefined, ToolJobAccepted>({
+export const updateTools = apiAction<{ names?: string[] } | undefined, JobResponse>({
   name: "tools.update",
   scope: "tools",
   idempotencyKey: true,
@@ -81,17 +79,31 @@ export const updateTools = apiAction<{ names?: string[] } | undefined, ToolJobAc
   error: "Couldn't start update",
 });
 
-/** PATCH fields; a version change flips the response to 202 + job. */
+/** PATCH result: 202 + job (null when no work was needed); a 409
+ *  has_dependents envelope (disabling a tool others require) resolves
+ *  as a success payload so the caller can run the force-confirm flow. */
+export interface PatchToolResult {
+  job?: { id: string } | null;
+  code?: string;
+  dependents?: string[];
+  error?: string;
+}
+
+/** PATCH fields. `disabled` is the enable/disable toggle: false→true
+ *  uninstalls (keeps the template; may 409 with dependents unless
+ *  force), true→false installs. A version change enqueues a reinstall. */
 export const patchTool = apiAction<
   {
     name: string;
     version?: string;
     pin?: boolean;
+    disabled?: boolean;
+    force?: boolean;
     description?: string;
     install?: string;
     uninstall?: string;
   },
-  ToolJobAccepted & { ok?: boolean }
+  PatchToolResult
 >({
   name: "tools.patch",
   scope: "tools",
@@ -103,14 +115,16 @@ export const patchTool = apiAction<
     path: `/api/tools/${encodeURIComponent(name)}`,
     body,
   }),
+  decode: (data) => data ?? {},
+  decodeError: (info) =>
+    info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
   error: "Couldn't update tool",
 });
 
-// Delete needs the 409 has_dependents envelope, which apiAction can't
-// surface (any non-2xx throws before the caller sees the body). The
-// raw-fetch runner decodes the body on every status and only treats
-// non-409 failures as errors. Raw fetch inside an action run() is the
-// sanctioned pattern for non-standard wire contracts (see git-changes).
+// Delete needs the 409 has_dependents envelope for the cascade-confirm
+// flow; apiAction's decodeError seam resolves that status as a success
+// payload (info.body carries the parsed envelope) while every other
+// failure keeps the default error mapping.
 export interface DeleteToolResult {
   job?: { id: string };
   code?: string;
@@ -118,48 +132,21 @@ export interface DeleteToolResult {
   error?: string;
 }
 
-/** Same header apiAction sets from ctx.idempotencyKey. */
-const IDEMPOTENCY_HEADER = "Idempotency-Key";
 const DELETE_TIMEOUT_MS = 30_000;
 
-async function runDelete(
-  args: { name: string; force?: boolean },
-  signal: AbortSignal,
-  ctx?: ActionContext,
-): Promise<DeleteToolResult> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (ctx?.idempotencyKey !== undefined) {
-    headers[IDEMPOTENCY_HEADER] = ctx.idempotencyKey;
-  }
-  let res: Response;
-  try {
-    res = await fetch(`/api/tools/${encodeURIComponent(args.name)}`, {
-      method: "DELETE",
-      headers,
-      body: JSON.stringify(args.force === undefined ? {} : { force: args.force }),
-      signal: withTimeout(signal, DELETE_TIMEOUT_MS),
-    });
-  } catch (e) {
-    throw classifyFetchError(e, signal);
-  }
-  let parsed: unknown;
-  try {
-    parsed = await res.json();
-  } catch {
-    parsed = undefined;
-  }
-  if (res.ok || res.status === 409) {
-    return parsed ?? {};
-  }
-  const msg = hasErrorString(parsed) ? parsed.error : `HTTP ${String(res.status)}`;
-  throw new ActionError(msg, { status: res.status });
-}
-
-export const deleteTool = defineAction<{ name: string; force?: boolean }, DeleteToolResult>({
+export const deleteTool = apiAction<{ name: string; force?: boolean }, DeleteToolResult>({
   name: "tools.delete",
   scope: "tools",
   idempotencyKey: true,
-  run: runDelete,
+  request: ({ name, force }) => ({
+    method: "DELETE",
+    path: `/api/tools/${encodeURIComponent(name)}${force === true ? "?force=1" : ""}`,
+  }),
+  // Mirror the previous runner's `parsed ?? {}` so callers never see
+  // undefined on an empty-body 2xx.
+  decode: (data) => data ?? {},
+  decodeError: (info) =>
+    info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
   error: false, // 409 cascade is a normal flow, handled by the caller
 });
 
@@ -171,15 +158,15 @@ async function runEnsure(
   args: { name: string },
   signal: AbortSignal,
   ctx?: ActionContext,
-): Promise<ToolJobAccepted> {
+): Promise<JobResponse> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (ctx?.idempotencyKey !== undefined) {
     headers[IDEMPOTENCY_HEADER] = ctx.idempotencyKey;
   }
-  const post = async (path: string, body: unknown): Promise<Response> => {
+  const send = async (method: string, path: string, body: unknown): Promise<Response> => {
     try {
       return await fetch(path, {
-        method: "POST",
+        method,
         headers,
         body: JSON.stringify(body),
         signal: withTimeout(signal, DELETE_TIMEOUT_MS),
@@ -188,9 +175,15 @@ async function runEnsure(
       throw classifyFetchError(e, signal);
     }
   };
-  let res = await post("/api/tools", { name: args.name });
+  // Create from the catalog; already-manifested names 400 -> retry as a
+  // plain install; a disabled template 409s -> enable it (PATCH), which
+  // installs.
+  let res = await send("POST", "/api/tools", { name: args.name });
   if (res.status === 400) {
-    res = await post(`/api/tools/${encodeURIComponent(args.name)}/install`, {});
+    res = await send("POST", `/api/tools/${encodeURIComponent(args.name)}/install`, {});
+  }
+  if (res.status === 409) {
+    res = await send("PATCH", `/api/tools/${encodeURIComponent(args.name)}`, { disabled: false });
   }
   let parsed: unknown;
   try {
@@ -205,7 +198,7 @@ async function runEnsure(
   return parsed ?? {};
 }
 
-export const ensureTool = defineAction<{ name: string }, ToolJobAccepted>({
+export const ensureTool = defineAction<{ name: string }, JobResponse>({
   name: "tools.ensure",
   scope: "tools",
   idempotencyKey: true,
@@ -213,7 +206,7 @@ export const ensureTool = defineAction<{ name: string }, ToolJobAccepted>({
   error: false,
 });
 
-export const searchTools = apiAction<{ q: string }, ToolsSearchResponse>({
+export const searchTools = apiAction<{ q: string }, SearchResponse>({
   name: "tools.search",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
@@ -226,7 +219,7 @@ export const searchTools = apiAction<{ q: string }, ToolsSearchResponse>({
 });
 
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
-export const getToolsJobs = apiAction<void, ToolsJobsResponse>({
+export const getToolsJobs = apiAction<void, JobsResponse>({
   name: "tools.jobs",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,

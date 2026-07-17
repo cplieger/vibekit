@@ -217,7 +217,7 @@ func (g *Generator) CustomPath() string {
 }
 
 // toolState mirrors the tools engine's per-tool machine state subset
-// this generator consumes (internal/tools.ToolStatus).
+// this generator consumes (the toolbelt engine's ToolStatus).
 type toolState struct {
 	InstalledVersion string   `json:"installed_version"`
 	Bins             []string `json:"bins,omitempty"`

@@ -7,16 +7,15 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"os/signal"
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
+	"github.com/cplieger/toolbelt"
+	"github.com/cplieger/toolbelt/httpapi"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/permissions"
-	"github.com/cplieger/vibekit/internal/tools"
 	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/singleflight"
 )
@@ -44,7 +43,7 @@ type Server struct {
 	staticFS      fs.FS
 	cliRunner     CLIRunner
 	rules         *permissions.CommandRules
-	tools         *tools.Engine
+	tools         *toolbelt.Engine
 	cliPath       string
 	configDir     string
 	workDir       string
@@ -106,7 +105,7 @@ func WithForges(r api.RouteHandler) Option { return func(s *Server) { s.forges =
 func WithRules(r *permissions.CommandRules) Option { return func(s *Server) { s.rules = r } }
 
 // WithTools sets the tools engine backing the /api/tools surface.
-func WithTools(e *tools.Engine) Option { return func(s *Server) { s.tools = e } }
+func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e } }
 
 // WithUtilityPrompt sets the utility prompter used for AI-assisted tasks (rename, commit message, etc.).
 func WithUtilityPrompt(p api.UtilityPrompter) Option {
@@ -179,16 +178,16 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/health", s.handleHealth)
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
-	mux.HandleFunc("GET /api/tools", s.handleToolsList)
-	mux.HandleFunc("POST /api/tools", s.handleToolsCreate)
+	// Tools REST surface: the toolbelt httpapi projection, mounted at
+	// the exact prefix and the subtree. /api/tools/status stays
+	// app-owned (vibekit's feature-gating PATH probes); its exact
+	// GET pattern wins over the subtree mount.
+	if s.tools != nil {
+		toolsAPI := httpapi.Handler(s.tools, "/api/tools")
+		mux.Handle("/api/tools", toolsAPI)
+		mux.Handle("/api/tools/", toolsAPI)
+	}
 	mux.HandleFunc("GET /api/tools/status", s.handleToolStatus)
-	mux.HandleFunc("GET /api/tools/search", s.handleToolsSearch)
-	mux.HandleFunc("GET /api/tools/jobs", s.handleToolsJobs)
-	mux.HandleFunc("POST /api/tools/jobs/{id}/cancel", s.handleToolsJobCancel)
-	mux.HandleFunc("POST /api/tools/update", s.handleToolsUpdate)
-	mux.HandleFunc("POST /api/tools/{name}/install", s.handleToolInstallOne)
-	mux.HandleFunc("PATCH /api/tools/{name}", s.handleToolPatch)
-	mux.HandleFunc("DELETE /api/tools/{name}", s.handleToolDelete)
 	s.git.RegisterRoutes(mux)
 	if s.gitAI != nil {
 		s.gitAI.RegisterRoutes(mux)
@@ -242,8 +241,7 @@ func (s *Server) ListenAndServe() error {
 	// with no trusted proxies it is the unspoofable socket peer; when
 	// TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
 	// resolved from a trusted X-Forwarded-For. It costs nothing on the skipped
-	// streaming paths. Requires webhttp >= v1.2.0 (WithClientIP); local build
-	// via go.work replace until released (go.mod still pins v1.1.1).
+	// streaming paths.
 	handler := webhttp.Chain(mux,
 		webhttp.Logging(
 			webhttp.WithSkipPaths("/api/events", "/api/shell/ws"),
@@ -257,7 +255,7 @@ func (s *Server) ListenAndServe() error {
 	srv.Addr = ":" + port
 
 	// Bind listener up front so port-in-use surfaces synchronously
-	// (rather than appearing in errCh after the goroutine launches).
+	// (rather than appearing after the serve goroutine launches).
 	// Bind-then-flip-ready mirrors subflux/plex-exporter so /api/health
 	// reports unready until the listener is genuinely ready to accept.
 	var lc net.ListenConfig
@@ -266,26 +264,24 @@ func (s *Server) ListenAndServe() error {
 		return err
 	}
 
-	errCh := make(chan error, 1)
-	go func() { errCh <- srv.Serve(ln) }()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
 	s.ready.Store(true)
 	slog.Info("Kiro Web UI listening", "port", port)
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
-	select {
-	case err := <-errCh:
-		s.ready.Store(false)
-		return err
-	case sig := <-sigCh:
-		slog.Info("received signal, shutting down", "signal", sig)
+	// webhttp.Run owns the serve/shutdown sequence (default 5s grace, matching
+	// the previous hand-rolled shutdown timeout). The pre-drain hook preserves
+	// vibekit's hub-before-server ordering: readiness flips, then the hub stops
+	// bridges and cancels the SSE/WebSocket streams, and only then does the
+	// HTTP drain run.
+	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(context.Context) {
+		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
 		s.hub.Shutdown()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return srv.Shutdown(ctx)
-	}
+	}))
+	s.ready.Store(false) // no-op on the signal path; covers a serve failure
+	return runErr
 }
 
 // requirePOST returns true if r.Method is POST; otherwise it writes a
