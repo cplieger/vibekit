@@ -25,7 +25,7 @@ import { $, maybeViewTransition } from "./dom.js";
 import type { SettingsTab } from "./router.js";
 import { pushRoute } from "./router.js";
 import { setSettingsTab as setTabRoute } from "./tabs.js";
-import { wireArrowNav } from "./arrow-nav.js";
+import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 
 export const TABS: readonly SettingsTab[] = [
   "general",
@@ -131,7 +131,7 @@ export function initSettingsTabs(loaders?: Partial<Record<SettingsTab, () => voi
   });
 
   // Arrow key navigation for the desktop tab bar.
-  wireArrowNav(bar, "[data-settings-tab]", { orientation: "horizontal" });
+  rovingFocus(bar, "[data-settings-tab]", { orientation: "horizontal" });
 
   // Sync pill + select + panel visibility on every tab change.
   onTabChange((tab) => {

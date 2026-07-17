@@ -18,6 +18,7 @@ import { openFile, openFileDiff } from "./editor-openers.js";
 import { lineDiff, truncateChanged, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp } from "./scroll.js";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import {
   renderInfoFor,
   formatMCPToolName,
@@ -219,7 +220,9 @@ function buildDetails(opts: BuildToolCardOpts): string {
     opts.live && opts.input !== undefined
       ? `<pre class="tool-input">${escText(JSON.stringify(opts.input, null, 2))}</pre>`
       : "";
-  return `<div class="tool-details collapsed">${inputBlock}<div class="tool-output"></div></div>`;
+  // No "collapsed" class: the disclosure controller wired in wireToggle owns
+  // the collapse state (inline height + aria-hidden/inert on the region).
+  return `<div class="tool-details">${inputBlock}<div class="tool-output"></div></div>`;
 }
 
 // --- Wiring ---
@@ -234,23 +237,38 @@ function wireFileLink(el: HTMLElement, filePath: string): void {
   });
 }
 
+// Per-card details disclosure controllers, for external expansion
+// (messages-tools.ts force-opens the details when a tool fails).
+const detailCtls = new WeakMap<HTMLElement, DisclosureController>();
+
 function wireToggle(el: HTMLElement): void {
-  el.querySelector(".tool-toggle")?.addEventListener("click", () => {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const d = el.querySelector(".tool-details")!;
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const b = el.querySelector(".tool-toggle")!;
-    if (d.classList.contains("collapsed")) {
-      d.classList.remove("collapsed");
-      b.replaceChildren(iconEl(ICON_CHEVRON_UP));
-      b.setAttribute("aria-expanded", "true");
-    } else {
-      d.classList.add("collapsed");
-      b.replaceChildren(iconEl(ICON_CHEVRON_DOWN));
-      b.setAttribute("aria-expanded", "false");
-      setUserScrolledUp(true);
-    }
+  const toggle = el.querySelector<HTMLElement>(".tool-toggle");
+  const details = el.querySelector<HTMLElement>(".tool-details");
+  if (toggle === null || details === null) {
+    return;
+  }
+  // The disclosure primitive owns aria-expanded/aria-controls, activation,
+  // and the animated height 0↔auto with aria-hidden + inert on the collapsed
+  // region (which the old class flip never set — collapsed details stayed in
+  // the accessibility tree). The chevron swap and the scroll-freeze on a
+  // user collapse stay vibekit's, via onToggle.
+  const ctl = createDisclosure(toggle, details, {
+    open: false,
+    onToggle: (open, source) => {
+      toggle.replaceChildren(iconEl(open ? ICON_CHEVRON_UP : ICON_CHEVRON_DOWN));
+      if (!open && source === "user") {
+        setUserScrolledUp(true);
+      }
+    },
   });
+  detailCtls.set(el, ctl);
+}
+
+/** Force-open a card's details (e.g. when the tool fails so the error output
+ *  is visible without a click). The chevron follows via the controller's
+ *  onToggle; a card without wired details is a no-op. */
+export function expandToolDetails(card: HTMLElement): void {
+  detailCtls.get(card)?.open();
 }
 
 function appendOutput(node: HTMLElement, output: string): void {

@@ -6,26 +6,15 @@
 // writeCmdResult): {"output": "..."} / {"ok": true} on success and
 // {"error": "<scrubbed git output>"} on failure — presence of a
 // non-empty `error` field is the failure signal, NOT the HTTP status.
-// apiAction resolves any 2xx body as success (it has no response-decode
-// seam), which used to turn every git failure into a success toast; so
-// these actions use defineAction with one shared runner (runGitPost)
-// that throws ActionError on the error envelope. The framework's error
-// toast then carries the server's scrubbed git message, the success
-// toast never fires on a failed mutation, and dispatch resolves null so
-// callers' assertOk guards fail closed.
+// decodeGitResult owns that envelope through apiAction's decode seam:
+// the error arm throws ActionError (code "git", never retried — the
+// command may have had side effects), so the framework's error toast
+// carries the server's scrubbed git message, the success toast never
+// fires on a failed mutation, and dispatch resolves null so callers'
+// assertOk guards fail closed.
 // ---------------------------------------------------------------------------
 
-import {
-  defineAction,
-  ActionError,
-  classifyFetchError,
-  hasErrorString,
-  retryNetwork,
-  withTimeout,
-  API_TIMEOUT_MS,
-  RETRY_STANDARD,
-} from "./index.js";
-import type { ActionContext } from "./index.js";
+import { apiAction, ActionError, hasErrorString, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 import { truncate } from "../strings.js";
 
@@ -41,20 +30,13 @@ interface GitRepoFilesArgs extends GitRepoArgs {
 
 /** Result envelope of every /api/git mutation. Success carries an
  *  optional `output` (git's combined output, ScrubAuth'd server-side);
- *  failure carries a non-empty `error`. runGitPost converts the error
- *  arm into a thrown ActionError, so a RESOLVED dispatch is a genuine
- *  success and `error` is never set on returned values. */
+ *  failure carries a non-empty `error`. decodeGitResult converts the
+ *  error arm into a thrown ActionError, so a RESOLVED dispatch is a
+ *  genuine success and `error` is never set on returned values. */
 export interface GitCmdResult {
   output?: string;
   error?: string;
 }
-
-// --- Shared envelope-checked POST runner ---
-
-/** Same header apiAction's executeRequest sets from ctx.idempotencyKey;
- *  the server's REST dedup middleware (internal/server/idempotency.go)
- *  keys on it to replay retried mutations instead of re-executing. */
-const IDEMPOTENCY_HEADER = "Idempotency-Key";
 
 /** Narrow a parsed success body to the fields GitCmdResult carries. */
 function liftOutput(parsed: unknown): GitCmdResult {
@@ -67,67 +49,29 @@ function liftOutput(parsed: unknown): GitCmdResult {
   return {};
 }
 
-/** POST a git mutation and decode the 200-with-error envelope.
+/** Decode the /api/git 200-with-error envelope (apiAction's decode seam).
  *
- *  Failure modes, all thrown as ActionError so the framework's error
- *  toast + registry log observe them:
- *   - transport failure / timeout / cancellation → classifyFetchError
- *     (codes "network" / "timeout" / "cancelled", retryNetwork-eligible)
- *   - genuine non-2xx → status + the body's `error` message when present
- *   - HTTP 200 + {"error": …} → the git subprocess failed; code "git"
- *     (never retried: the command may have had side effects)
- *
- *  Raw fetch is sanctioned here: action run() implementations are part
- *  of the framework's HTTP surface (see actions/files.ts precedent);
- *  apiAction can't express the envelope check. */
-export async function runGitPost(
-  path: string,
-  body: unknown,
-  signal: AbortSignal,
-  ctx?: ActionContext,
-): Promise<GitCmdResult> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (ctx?.idempotencyKey !== undefined) {
-    headers[IDEMPOTENCY_HEADER] = ctx.idempotencyKey;
-  }
-  let res: Response;
-  try {
-    res = await fetch(path, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: withTimeout(signal, API_TIMEOUT_MS),
-    });
-  } catch (e) {
-    throw classifyFetchError(e, signal);
-  }
-  let parsed: unknown;
-  try {
-    parsed = await res.json();
-  } catch (e) {
-    if (signal.aborted) {
-      throw classifyFetchError(e, signal); // aborted mid-body-read → "cancelled"
-    }
-    parsed = undefined; // non-JSON body: fall through to the status check
-  }
-  if (!res.ok) {
-    const msg = hasErrorString(parsed) ? parsed.error : `HTTP ${String(res.status)}`;
-    throw new ActionError(msg, { status: res.status });
-  }
-  if (hasErrorString(parsed) && parsed.error !== "") {
+ *  HTTP 200 + {"error": …} means the git subprocess failed; code "git"
+ *  (never retried: the command may have had side effects). Transport
+ *  failures and genuine non-2xx responses keep apiAction's default
+ *  mapping (codes "network"/"timeout"/"cancelled", retryNetwork-eligible;
+ *  status + lifted body error for non-2xx). Shared with git-branch.ts. */
+export function decodeGitResult(data: unknown): GitCmdResult {
+  if (hasErrorString(data) && data.error !== "") {
     // HTTP 200 + {"error": …}: the git subprocess failed (18-F1).
-    throw new ActionError(parsed.error, { code: "git" });
+    throw new ActionError(data.error, { code: "git" });
   }
-  return liftOutput(parsed);
+  return liftOutput(data);
 }
 
 // --- Actions ---
 
 /** Stage files (used for both "stage all" and single-file stage). */
-export const stage = defineAction<GitRepoFilesArgs, GitCmdResult>({
+export const stage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   name: "git.stage",
   scope: (args) => "git:" + args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/stage", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/stage", body: args }),
+  decode: decodeGitResult,
   error: (args, err) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
@@ -138,10 +82,11 @@ export const stage = defineAction<GitRepoFilesArgs, GitCmdResult>({
 });
 
 /** Discard files (used for both "discard all" and single-file discard). */
-export const discard = defineAction<GitRepoFilesArgs, GitCmdResult>({
+export const discard = apiAction<GitRepoFilesArgs, GitCmdResult>({
   name: "git.discard",
   scope: (args) => "git:" + args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/discard", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/discard", body: args }),
+  decode: decodeGitResult,
   error: (args, err) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
@@ -151,10 +96,11 @@ export const discard = defineAction<GitRepoFilesArgs, GitCmdResult>({
 });
 
 /** Unstage a file. */
-export const unstage = defineAction<GitRepoFilesArgs, GitCmdResult>({
+export const unstage = apiAction<GitRepoFilesArgs, GitCmdResult>({
   name: "git.unstage",
   scope: (args) => "git:" + args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/unstage", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/unstage", body: args }),
+  decode: decodeGitResult,
   error: (args, err) =>
     args.files.length === 1
       ? // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- guarded by length === 1
@@ -164,47 +110,52 @@ export const unstage = defineAction<GitRepoFilesArgs, GitCmdResult>({
   retry: RETRY_STANDARD,
 });
 
-export const pull = defineAction<GitRepoArgs, GitCmdResult>({
+export const pull = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.pull",
   scope: (args) => "git:" + args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/pull", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/pull", body: args }),
+  decode: decodeGitResult,
   success: (args) => (args.repo !== "" ? `Pulled ${args.repo}` : "Pulled"),
   error: "Pull failed",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
 
-export const push = defineAction<GitRepoArgs, GitCmdResult>({
+export const push = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.push",
   scope: (args) => "git:" + args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/push", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/push", body: args }),
+  decode: decodeGitResult,
   success: (args) => (args.repo !== "" ? `Pushed ${args.repo}` : "Pushed"),
   error: "Push failed",
   // Not retryable: a timed-out push may have succeeded server-side.
 });
 
-export const stash = defineAction<GitRepoArgs, GitCmdResult>({
+export const stash = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.stash",
   scope: (args) => "git:" + args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/stash", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/stash", body: args }),
+  decode: decodeGitResult,
   error: "Stash failed",
   idempotencyKey: true,
   // Idempotent server-side via Idempotency-Key dedup; left non-retryable for now.
 });
 
-export const stashPop = defineAction<GitRepoArgs, GitCmdResult>({
+export const stashPop = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.stash_pop",
   scope: (args) => "git:" + args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/stash-pop", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/stash-pop", body: args }),
+  decode: decodeGitResult,
   error: "Stash pop failed",
   idempotencyKey: true,
   // Idempotent server-side via Idempotency-Key dedup; left non-retryable for now.
 });
 
-export const commit = defineAction<{ repo: string; message: string }, GitCmdResult>({
+export const commit = apiAction<{ repo: string; message: string }, GitCmdResult>({
   name: "git.commit",
   scope: (args) => "git:" + args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/commit", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/commit", body: args }),
+  decode: decodeGitResult,
   success: "Committed",
   error: (args, err) => {
     const line = args.message.split("\n")[0] ?? "";
@@ -218,11 +169,12 @@ export const commit = defineAction<{ repo: string; message: string }, GitCmdResu
   // retrying would create a duplicate commit.
 });
 
-export const generateCommitMessage = defineAction<GitRepoArgs, GitCmdResult>({
+export const generateCommitMessage = apiAction<GitRepoArgs, GitCmdResult>({
   name: "git.generate_message",
   scope: (args) => "git:" + args.repo,
   dedupe: (args) => args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/commit-message", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/commit-message", body: args }),
+  decode: decodeGitResult,
   error: "Couldn't generate commit message",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,

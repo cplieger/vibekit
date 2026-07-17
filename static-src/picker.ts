@@ -13,7 +13,7 @@ import type { ModelInfo } from "./types.js";
 import { humanName } from "./strings.js";
 import { $ } from "./dom.js";
 import { getActive } from "./store.js";
-import { wireArrowNav } from "./arrow-nav.js";
+import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
 
@@ -27,6 +27,7 @@ class ModelPickerController {
   private models: ModelInfo[] = [];
   private callback: ((modelId: string) => void) | null = null;
   private currentId = "";
+  private nav: RovingFocusController | null = null;
 
   setModels(models: ModelInfo[]): void {
     this.models = models;
@@ -86,7 +87,13 @@ class ModelPickerController {
         this.syncPickerBtn(node, m, currentModelId);
       },
     });
-    wireArrowNav(grid, ".picker-btn:not(.picker-loading)", { orientation: "horizontal" });
+    // Wire once on the persistent grid (re-wiring per show() stacks keydown
+    // handlers: N arrow steps / N activations per key); refresh() restores the
+    // single Tab stop over the freshly reconciled buttons.
+    this.nav ??= rovingFocus(grid, ".picker-btn:not(.picker-loading)", {
+      orientation: "horizontal",
+    });
+    this.nav.refresh();
     picker.classList.remove("hidden");
     // Focus the active model button (or first) for keyboard users.
     const focusTarget =

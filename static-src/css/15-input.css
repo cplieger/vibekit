@@ -628,7 +628,10 @@
   z-index: 10;
 }
 
-.pill-expand-content.pill-expand-visible {
+/* is-open is the createPopup reveal state class (the popup primitive also
+ * drives [hidden] and swaps is-open → is-leaving for the exit transition
+ * back to the resting scale/opacity above). */
+.pill-expand-content.is-open {
   opacity: 1;
   transform: scale(1);
   pointer-events: auto;

@@ -24,10 +24,11 @@ import {
   type RequestOptions,
 } from "@cplieger/fetch";
 
-// API_TIMEOUT_MS and withTimeout come from @cplieger/actions (byte-identical to
-// @cplieger/fetch's own copies). Re-exported here so existing consumers (e.g.
+// API_TIMEOUT_MS and withTimeout come from @cplieger/fetch — the toolkit's
+// single timeout-composition implementation (actions dropped its duplicate
+// copies in v3). Re-exported here so existing consumers (e.g.
 // editor-openers.ts) keep importing them from "./api-client.js" unchanged.
-export { API_TIMEOUT_MS, withTimeout } from "@cplieger/actions";
+export { API_TIMEOUT_MS, withTimeout } from "@cplieger/fetch";
 
 // Re-export the local Decoder<T> type so callers don't need a second import.
 export type { Decoder } from "./validators.js";
@@ -100,16 +101,13 @@ export async function apiPost<T>(
   return collapse(await fx.apiPostRaw<T>(path, body, reqOpts({}, signal)), "POST", path);
 }
 
-/** DELETE `path`. Returns true on success, false on failure. */
+/** DELETE `path`. Returns true on success, false on failure. The response
+ *  body is deliberately never read (`ignoreBody`) — the hand-rolled core
+ *  never read DELETE bodies, so a 2xx with a non-JSON body counts as success
+ *  and only 4xx/5xx and transport failures are real failures. */
 export async function apiDelete(path: string, signal?: AbortSignal): Promise<boolean> {
-  const r = await fx.apiDeleteRaw<unknown>(path, reqOpts({}, signal));
+  const r = await fx.apiDeleteRaw<unknown>(path, reqOpts({ ignoreBody: true }, signal));
   if (r.ok) {
-    return true;
-  }
-  // The hand-rolled core never read the DELETE body, so a 2xx that carries a
-  // non-JSON body (surfaced by @cplieger/fetch as a decode error) still counts
-  // as success — only 4xx/5xx and transport failures are real failures.
-  if (r.status >= 200 && r.status < 300) {
     return true;
   }
   logApiError(r, "DELETE", path);

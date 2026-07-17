@@ -22,7 +22,7 @@ import { patchSettings } from "./persist.js";
 import type { AppSettings } from "./persist.js";
 import { maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
-import { buildChip } from "./ui-primitives.js";
+import { buildChip } from "./chip.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import {
   addRule,

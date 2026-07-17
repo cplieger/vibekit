@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { signal, subscribe } from "@cplieger/reactive";
-import { wireArrowNav } from "./arrow-nav.js";
+import { rovingFocus } from "@cplieger/ui-primitives/roving-focus";
 import { pushRoute } from "./router.js";
 import type { GitTab } from "./router.js";
 import { setGitTab as setGitTabRoute } from "./tabs.js";
@@ -82,7 +82,7 @@ export function initGitTabs(): void {
     });
   }
 
-  wireArrowNav(bar, "[data-git-tab]", { orientation: "horizontal" });
+  rovingFocus(bar, "[data-git-tab]", { orientation: "horizontal" });
 
   onGitTabChange((tab) => {
     for (const t of GIT_TABS) {

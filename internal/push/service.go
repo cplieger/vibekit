@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/ssrf/v2"
+	"github.com/cplieger/ssrf/v3"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/settings"
 	"golang.org/x/sync/singleflight"

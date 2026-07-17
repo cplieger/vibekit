@@ -7,6 +7,15 @@
 // Used by git-changes-tab.ts: each repo section's branch chip is
 // wired to openBranchSwitcher(repo, anchorEl). The popover is a
 // singleton (only one open at a time); reopening swaps the anchor.
+//
+// The floating-panel mechanics are @cplieger/ui-primitives': createPopover
+// owns anchored placement (flip + clamp, min-width matched to the chip),
+// LIVE anchor tracking on scroll/resize/visualViewport (the old hand-rolled
+// version positioned once and detached from its anchor when the git pane
+// scrolled), outside-click + Escape dismissal, aria-expanded on the anchor,
+// and focus return to the chip. rovingFocus supplies the WAI-ARIA menu
+// keyboard contract over the branch rows. This module keeps only what is
+// vibekit's: the panel content, the branches load, and the checkout actions.
 // ---------------------------------------------------------------------------
 
 import { apiGet } from "./api-client.js";
@@ -15,6 +24,8 @@ import { registerCleanup, bindLoadingState } from "./actions/index.js";
 import { withAsyncFeedback } from "./async-button.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
+import { createPopover, type PopoverController } from "@cplieger/ui-primitives/popover";
+import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 
 interface BranchEntry {
   name: string;
@@ -26,6 +37,8 @@ interface BranchesResponse {
 }
 
 let openPopover: HTMLDivElement | null = null;
+let popoverCtl: PopoverController | null = null;
+let popoverNav: RovingFocusController | null = null;
 let activeAnchor: HTMLElement | null = null;
 let branchController: AbortController | null = null;
 let popoverBindingCleanups: (() => void)[] = [];
@@ -45,7 +58,6 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   }
   closePopover();
   activeAnchor = anchorEl;
-  anchorEl.setAttribute("aria-expanded", "true");
 
   const pop = el("div", { className: "git-branch-popover", role: "menu" }) as HTMLDivElement;
   const filter = el("input", {
@@ -82,10 +94,14 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
   ) as HTMLButtonElement;
   suggestBtn.addEventListener("click", () => {
     void withAsyncFeedback(suggestBtn, async () => {
-      const res = await suggestBranchName.dispatch({ repo });
-      if (res === null) {
-        throw new Error("suggestion failed");
+      const o = await suggestBranchName.dispatch({ repo }).outcome;
+      if (o.status !== "success") {
+        // Reject so the feedback helper shows the ✗ glyph, carrying the
+        // real failure instead of a synthetic message (the framework
+        // already toasted it).
+        throw new Error(o.status === "error" ? o.error.message : "suggestion cancelled");
       }
+      const res = o.value;
       // Only fill while this popover is still the open one, and never
       // wipe a name the user already typed past the suggestion.
       if (res.output !== undefined && res.output !== "" && openPopover === pop) {
@@ -101,9 +117,25 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     suggestBtn,
   ) as HTMLFormElement;
   pop.append(filter, list, createForm);
-  document.body.appendChild(pop);
+  const ctl = createPopover(anchorEl, pop, {
+    placement: "bottom",
+    align: "start",
+    offset: 4,
+    margin: 8,
+    matchAnchorWidth: 220,
+    haspopup: "menu",
+    // Focus goes back to the chip on any close path; the library guards
+    // against a detached anchor (git tab re-rendered mid-request).
+    returnFocus: anchorEl,
+    onClose: cleanupSwitcher,
+  });
   openPopover = pop;
-  positionPopover(pop, anchorEl);
+  popoverCtl = ctl;
+  // Menu keyboard contract over the rows. Items are queried live, so rows
+  // appearing after the async load (or a filter re-render) just work;
+  // refresh() after each reconcile restores the single-Tab-stop invariant.
+  popoverNav = rovingFocus(pop, ".git-branch-popover-row");
+  ctl.show();
 
   // Load branches.
   branchController?.abort();
@@ -177,7 +209,15 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     render("");
     filter.addEventListener("input", () => {
       render(filter.value);
+      if (openPopover === pop) {
+        popoverNav?.refresh();
+      }
     });
+    if (openPopover === pop) {
+      popoverNav?.refresh();
+      // Content just grew from "Loading…" to the row list — re-clamp.
+      popoverCtl?.reposition();
+    }
     filter.focus();
   });
 
@@ -191,16 +231,20 @@ export function openBranchSwitcher(repo: string, anchorEl: HTMLElement): void {
     void doCheckout(repo, name, true);
   });
   popoverBindingCleanups.push(bindLoadingState("git.checkout_branch", createInput));
-
-  // Close on outside click + Escape + arrow nav.
-  setTimeout(() => {
-    document.addEventListener("click", outsideClickHandler);
-    document.addEventListener("keydown", escapeHandler);
-    document.addEventListener("keydown", arrowNavHandler);
-  }, 0);
 }
 
+/** Close the open switcher (if any) through the popover controller; its
+ *  onClose runs cleanupSwitcher below. Outside-click and Escape arrive here
+ *  too, via the controller's own dismissal wiring. */
 function closePopover(): void {
+  popoverCtl?.hide();
+}
+
+/** onClose cleanup: unbind loading states, abort the in-flight branches
+ *  load, and drop the panel. Focus return + aria-expanded are the popover
+ *  controller's job. Removing the panel immediately also ends the (unskinned)
+ *  leave fade — matching the old instant removal. */
+function cleanupSwitcher(): void {
   if (openPopover === null) {
     return;
   }
@@ -208,86 +252,18 @@ function closePopover(): void {
     fn();
   }
   popoverBindingCleanups = [];
+  for (const unbind of rowUnbinds.values()) {
+    unbind();
+  }
+  rowUnbinds.clear();
   branchController?.abort();
   branchController = null;
+  popoverNav?.dispose();
+  popoverNav = null;
   openPopover.remove();
   openPopover = null;
-  const savedAnchor = activeAnchor;
+  popoverCtl = null;
   activeAnchor = null;
-  document.removeEventListener("click", outsideClickHandler);
-  document.removeEventListener("keydown", escapeHandler);
-  document.removeEventListener("keydown", arrowNavHandler);
-  // Guard against focus on a detached element (anchor may have been
-  // removed from the DOM during the request, e.g. git tab re-rendered).
-  if (savedAnchor?.isConnected === true) {
-    savedAnchor.setAttribute("aria-expanded", "false");
-    savedAnchor.focus();
-  }
-}
-
-function outsideClickHandler(e: MouseEvent): void {
-  const target = e.target as HTMLElement | null;
-  if (target === null) {
-    return;
-  }
-  if (openPopover === null) {
-    return;
-  }
-  if (openPopover.contains(target)) {
-    return;
-  }
-  if (activeAnchor?.contains(target)) {
-    return;
-  }
-  closePopover();
-}
-
-function escapeHandler(e: KeyboardEvent): void {
-  if (e.key === "Escape") {
-    closePopover();
-  }
-}
-
-function arrowNavHandler(e: KeyboardEvent): void {
-  if (openPopover === null) {
-    return;
-  }
-  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") {
-    return;
-  }
-  const rows = [...openPopover.querySelectorAll<HTMLButtonElement>(".git-branch-popover-row")];
-  if (rows.length === 0) {
-    return;
-  }
-  e.preventDefault();
-  const current = rows.indexOf(document.activeElement as HTMLButtonElement);
-  let next: number;
-  if (e.key === "ArrowDown") {
-    next = current < rows.length - 1 ? current + 1 : 0;
-  } else {
-    next = current > 0 ? current - 1 : rows.length - 1;
-  }
-  rows[next]!.focus(); // eslint-disable-line @typescript-eslint/no-non-null-assertion
-}
-
-function positionPopover(pop: HTMLDivElement, anchor: HTMLElement): void {
-  const rect = anchor.getBoundingClientRect();
-  pop.style.position = "fixed";
-  pop.style.top = `${rect.bottom + 4}px`;
-  pop.style.left = `${rect.left}px`;
-  pop.style.minWidth = `${Math.max(rect.width, 220)}px`;
-  // After paint, clamp into viewport if it overflows.
-  requestAnimationFrame(() => {
-    const popRect = pop.getBoundingClientRect();
-    const overflowX = popRect.right - window.innerWidth + 8;
-    if (overflowX > 0) {
-      pop.style.left = `${rect.left - overflowX}px`;
-    }
-    // Vertical: flip above anchor if popover overflows bottom.
-    if (popRect.bottom > window.innerHeight - 8) {
-      pop.style.top = `${rect.top - popRect.height - 4}px`;
-    }
-  });
 }
 
 async function doCheckout(repo: string, branch: string, create: boolean): Promise<void> {

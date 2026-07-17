@@ -18,17 +18,13 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import type {
-  CreateTerminalOptions,
-  TerminalContext,
-  TerminalHandle,
-} from "@cplieger/web-terminal-ui";
+import type { CreateTerminalOptions, TerminalHandle } from "@cplieger/web-terminal-ui";
 import type * as Shell from "./shell.js";
 
 interface Harness {
   mod: typeof Shell;
   createTerminal: ReturnType<typeof vi.fn>;
-  render: { resetScrollback: ReturnType<typeof vi.fn>; resetScreen: ReturnType<typeof vi.fn> };
+  resetSpy: ReturnType<typeof vi.fn>;
   sendSpy: ReturnType<typeof vi.fn>;
   termFocus: ReturnType<typeof vi.fn>;
   shellBtn: HTMLButtonElement;
@@ -87,20 +83,17 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   // contains() checks behave; replaceChildren drops the previous test's DOM.
   document.body.replaceChildren(shellPanel, shellBtn);
 
-  // The kernel's sanitizing send funnel, captured by the host-bridge feature
-  // when createTerminal runs its setup.
+  // The v4 handle's host controls: send routes the sanitizing funnel, reset
+  // drops the local scrollback + screen.
   const sendSpy = vi.fn();
+  const resetSpy = vi.fn();
   const termFocus = vi.fn();
   const createTerminal = vi.fn(
-    (_root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle => {
-      const hb = (opts.features ?? []).find((f) => f.name === "vibekit-host-bridge");
-      // The host-bridge feature only reads ctx.send; a partial context suffices.
-      hb?.setup({ send: sendSpy } as unknown as TerminalContext);
-      return { focus: termFocus, destroy: vi.fn() };
+    (_root: HTMLElement, _opts: CreateTerminalOptions): TerminalHandle => {
+      return { focus: termFocus, send: sendSpy, reset: resetSpy, destroy: vi.fn() };
     },
   );
   const presetTouch = vi.fn(() => ["preset-feature"]);
-  const render = { resetScrollback: vi.fn(), resetScreen: vi.fn() };
   const scrollEl = document.createElement("div");
   const getScrollEl = vi.fn(() => scrollEl);
   let runCb: ((cmd: string) => void) | null = null;
@@ -112,8 +105,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   const load = vi.fn(() => ({ shell_h: uiStateData.shell_h ?? 0 }));
 
   vi.doMock("@cplieger/web-terminal-ui", () => ({ createTerminal }));
-  vi.doMock("@cplieger/web-terminal-ui/presets", () => ({ presetTouch }));
-  vi.doMock("@cplieger/web-terminal-engine", () => ({ render }));
+  vi.doMock("@cplieger/web-terminal-ui/presets/touch", () => ({ presetTouch }));
   vi.doMock("./messages.js", () => ({ getScrollEl }));
   vi.doMock("./code-blocks.js", () => ({ setShellRunCallback }));
   vi.doMock("./ui-state.js", () => ({ save, load }));
@@ -133,7 +125,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   return {
     mod,
     createTerminal,
-    render,
+    resetSpy,
     sendSpy,
     termFocus,
     shellBtn,
@@ -150,8 +142,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
 
 afterEach(() => {
   vi.doUnmock("@cplieger/web-terminal-ui");
-  vi.doUnmock("@cplieger/web-terminal-ui/presets");
-  vi.doUnmock("@cplieger/web-terminal-engine");
+  vi.doUnmock("@cplieger/web-terminal-ui/presets/touch");
   vi.doUnmock("./messages.js");
   vi.doUnmock("./code-blocks.js");
   vi.doUnmock("./ui-state.js");
@@ -166,7 +157,7 @@ describe("shell.ts: lazy terminal creation", () => {
     expect(h.createTerminal).not.toHaveBeenCalled();
   });
 
-  it("builds the terminal on first open with the shell WS path, theme, and host-bridge feature", async () => {
+  it("builds the terminal on first open with the shell WS path, theme, and container layout", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click();
@@ -181,9 +172,10 @@ describe("shell.ts: lazy terminal creation", () => {
     expect(opts.wsPath).toBe("/api/shell/ws");
     expect(opts.fontReady).toBeDefined();
     expect(opts.theme).toMatchObject({ "--bg": "var(--c-term-bg)", "--accent": "var(--c-accent)" });
-    // The preset features plus the vibekit host-bridge feature.
+    // The touch preset's features, embedded in container layout (the panel is
+    // the terminal's boundary; no page-level styling, no bridge feature).
     expect(opts.features).toContain("preset-feature");
-    expect(opts.features?.some((f) => f.name === "vibekit-host-bridge")).toBe(true);
+    expect(opts.layout).toBe("container");
   });
 
   it("reuses the same terminal across close/reopen (no second WebSocket)", async () => {
@@ -198,22 +190,21 @@ describe("shell.ts: lazy terminal creation", () => {
 });
 
 describe("shell.ts: host-driven actions", () => {
-  it("the Reset button clears the engine's scrollback + screen and redraws with Ctrl+L", async () => {
+  it("the Reset button clears the local display via the handle and redraws with Ctrl+L", async () => {
     const h = await setup();
     h.mod.initShellPanel();
-    h.shellBtn.click(); // open so the host-bridge captures the send funnel
+    h.shellBtn.click(); // open so the terminal (and its handle) exists
 
     h.shellClearBtn.click();
 
-    expect(h.render.resetScrollback).toHaveBeenCalledTimes(1);
-    expect(h.render.resetScreen).toHaveBeenCalledTimes(1);
+    expect(h.resetSpy).toHaveBeenCalledTimes(1);
     expect(h.sendSpy).toHaveBeenCalledWith(new Uint8Array([0x0c]));
   });
 
   it("run-in-shell types the command into the terminal through the send funnel", async () => {
     const h = await setup();
     h.mod.initShellPanel(); // registers the run callback
-    h.shellBtn.click(); // open so the send funnel is captured
+    h.shellBtn.click(); // open so the terminal (and its handle) exists
 
     const runCb = h.getRunCb();
     expect(runCb).not.toBeNull();

@@ -8,12 +8,11 @@ import { el } from "@cplieger/reactive";
 import { closeModal, RollingOutput } from "./modals.js";
 import { type Server, type KeyPair, type Transport, mcpState } from "./mcp-state.js";
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
-import { buildChip } from "./ui-primitives.js";
+import { buildChip } from "./chip.js";
 import { saveServer, searchRegistry } from "./actions/mcp.js";
 import { getToolsStatus } from "./actions/tools.js";
 import { installToolAndWait } from "./tools.js";
-import { subscribeToActions, bindLoadingState } from "./actions/index.js";
-import type { ActionErrorLike } from "./actions/index.js";
+import { bindLoadingState } from "./actions/index.js";
 import { initSearchPanel, setSwitchMode, cleanupSearch } from "./mcp-panels-search.js";
 
 // --- Add / edit modal ---
@@ -141,25 +140,20 @@ async function submitServer(
       ? bindLoadingState("mcp.save_server", saveBtn, { pendingClass: "btn-loading" })
       : undefined;
 
-  let capturedError: ActionErrorLike | undefined;
-  const unsub = subscribeToActions((inst) => {
-    if (inst.name === "mcp.save_server" && inst.status === "error") {
-      capturedError = inst.error;
-    }
-  });
-
-  const r = await saveServer.dispatch(
+  // The typed outcome carries THIS dispatch's terminal state, so a
+  // concurrent save for another server can't cross-contaminate the inline
+  // error (the previous subscribeToActions + name-filter capture could).
+  const o = await saveServer.dispatch(
     { id: session.editing.id, body },
     {
       onSettled: () => {
-        unsub();
         unbind?.();
       },
     },
-  );
+  ).outcome;
 
-  if (r === null) {
-    errEl.textContent = capturedError?.message ?? "Save failed.";
+  if (o.status !== "success") {
+    errEl.textContent = o.status === "error" ? o.error.message : "Save failed.";
     errEl.classList.remove("hidden");
     return false;
   }

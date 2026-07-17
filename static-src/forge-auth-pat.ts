@@ -141,12 +141,22 @@ async function doPATConnect(
   }
   status.textContent = "Validating…";
   status.className = "forge-card-status";
-  const res = await connectPAT.dispatch({ kind, host, token });
-  if (res === null) {
-    status.textContent = "Network error.";
+  // Typed outcome: the framework's error toast is suppressed (error: false),
+  // so this status line is the only failure surface — show the real reason
+  // (timeout vs network vs HTTP status) instead of a blanket "Network error.",
+  // and stay quiet on a cancelled dispatch.
+  const o = await connectPAT.dispatch({ kind, host, token }).outcome;
+  if (o.status === "cancelled") {
+    status.textContent = "";
+    status.className = "forge-card-status";
+    return;
+  }
+  if (o.status === "error") {
+    status.textContent = o.error.message;
     status.className = "forge-card-status err";
     return;
   }
+  const res = o.value;
   if (res.error !== undefined) {
     status.textContent = res.error;
     status.className = "forge-card-status err";

@@ -1,5 +1,7 @@
-// Shared UI builder functions. Eliminates duplicated DOM construction
-// patterns across permissions-ui.ts, mcp-panels.ts, and future modules.
+// chip.ts — removable chip/tag builder (label + optional badge + keyboard-
+// accessible remove). Eliminates duplicated DOM construction patterns across
+// permissions-ui.ts, mcp-panels.ts, and future modules. (Formerly named
+// ui-primitives.ts; renamed to stop colliding with @cplieger/ui-primitives.)
 
 import { el } from "@cplieger/reactive";
 import { ICON_CLOSE } from "./icons.js";

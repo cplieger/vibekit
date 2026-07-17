@@ -1,8 +1,8 @@
 // Actions for git branch operations: checkout, create, name suggestion.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, retryNetwork, RETRY_STANDARD } from "./index.js";
-import { runGitPost, type GitCmdResult } from "./git-changes.js";
+import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { decodeGitResult, type GitCmdResult } from "./git-changes.js";
 
 import { truncate } from "../strings.js";
 
@@ -26,6 +26,13 @@ export const checkoutBranch = apiAction<CheckoutArgs, void>({
     path: "/api/git/checkout",
     body: { repo, branch, create },
   }),
+  // /api/git/checkout replies through writeCmdResult like every git
+  // mutation, so a failed checkout arrives as HTTP 200 + {"error": …}.
+  // Without this guard the error body resolved as success and the
+  // failure toast never fired.
+  decode: (data) => {
+    decodeGitResult(data);
+  },
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: (args) => `Couldn't check out \u201c${truncate(args.branch)}\u201d`,
@@ -34,11 +41,12 @@ export const checkoutBranch = apiAction<CheckoutArgs, void>({
 /** Ask the utility agent for a branch name describing the repo's work in
  *  progress (uncommitted changes, else recent commits). The result lands
  *  in the branch-switcher's create input for the user to edit or accept. */
-export const suggestBranchName = defineAction<{ repo: string }, GitCmdResult>({
+export const suggestBranchName = apiAction<{ repo: string }, GitCmdResult>({
   name: "git.suggest_branch_name",
   scope: (args) => "git:" + args.repo,
   dedupe: (args) => args.repo,
-  run: (args, signal, ctx) => runGitPost("/api/git/branch-name", args, signal, ctx),
+  request: (args) => ({ method: "POST", path: "/api/git/branch-name", body: args }),
+  decode: decodeGitResult,
   error: "Couldn't suggest a branch name",
   retryable: retryNetwork,
   retry: RETRY_STANDARD,

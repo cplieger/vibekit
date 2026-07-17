@@ -13,11 +13,25 @@ import { el } from "@cplieger/reactive";
 import { setUserScrolledUp } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 
 /** CSS class names for tool-group collapse state machine. */
 const CLS_COLLAPSED = "tool-group-collapsed";
 const CLS_AUTO_COLLAPSED = "tool-group-auto-collapsed";
 const CLS_USER_TOGGLED = "tool-group-user-toggled";
+
+// Per-group disclosure controllers for the .tool-group-body region. The
+// collapse STATE MACHINE (user latch, auto-collapse, the CLS_* classes) stays
+// vibekit's; the region-only disclosure (trigger: null) supplies the animated
+// height 0↔auto plus aria-hidden + inert on the collapsed card region — which
+// the old display:none class flip provided only partially.
+const groupCtls = new WeakMap<HTMLElement, DisclosureController>();
+
+/** The card container inside a group shell. Cards are appended HERE, not to
+ *  the group root, so the collapse region excludes the always-visible header. */
+export function groupBody(group: HTMLElement): HTMLElement {
+  return group.querySelector<HTMLElement>(":scope > .tool-group-body") ?? group;
+}
 
 class ToolGroupTracker {
   private inProgressElements = new Set<HTMLElement>();
@@ -109,6 +123,9 @@ export function buildToolGroupShell(): HTMLDivElement {
     }
   });
   group.appendChild(header);
+  const body = el("div", { className: "tool-group-body" });
+  group.appendChild(body);
+  groupCtls.set(group, createDisclosure(null, body, { open: true }));
   return group;
 }
 
@@ -119,7 +136,9 @@ export function refreshGroupHeader(group: HTMLElement): void {
   if (header === null) {
     return;
   }
-  const calls = [...group.querySelectorAll(":scope > .tool-call")] as HTMLElement[];
+  const calls = [
+    ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
+  ] as HTMLElement[];
   const collapsed =
     group.classList.contains(CLS_COLLAPSED) || group.classList.contains(CLS_AUTO_COLLAPSED);
   const summary = summarize(calls);
@@ -286,6 +305,15 @@ function onHeaderClick(group: HTMLDivElement, _header: HTMLDivElement): void {
   }
   group.classList.toggle(CLS_COLLAPSED);
   const collapsedNow = group.classList.contains(CLS_COLLAPSED);
+  // Drive the body region's disclosure to match the class-derived state
+  // (preserving the existing model, where a click on an AUTO-collapsed group
+  // converts it to a USER collapse and it stays closed).
+  const ctl = groupCtls.get(group);
+  if (collapsedNow) {
+    ctl?.close();
+  } else {
+    ctl?.open();
+  }
   _header.setAttribute("aria-expanded", collapsedNow ? "false" : "true");
   refreshGroupHeader(group);
   if (!collapsedNow || wasAuto) {
@@ -304,7 +332,7 @@ export function maybeCollapseGroup(node: HTMLElement): void {
   if (group.classList.contains(CLS_USER_TOGGLED)) {
     return;
   }
-  const calls = group.querySelectorAll(":scope > .tool-call");
+  const calls = group.querySelectorAll(":scope > .tool-group-body > .tool-call");
   if (calls.length < 3) {
     return;
   }
@@ -314,6 +342,7 @@ export function maybeCollapseGroup(node: HTMLElement): void {
     }
   }
   group.classList.add(CLS_AUTO_COLLAPSED);
+  groupCtls.get(group)?.close();
   const header = group.querySelector<HTMLElement>(".tool-group-header");
   header?.setAttribute("aria-expanded", "false");
   refreshGroupHeader(group);

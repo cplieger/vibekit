@@ -9,7 +9,7 @@ import { getActive, getActiveId, isThinking, setModel } from "./store.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
-import { wireArrowNav } from "./arrow-nav.js";
+import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { setCurrentModel, setLastModel } from "./session-context.js";
 import { refreshPickerIfVisible, getCachedModels } from "./picker.js";
 import { refreshContextUI } from "./context-ui.js";
@@ -112,6 +112,10 @@ class ModelSwitchController {
         this.renderCondensedList();
       },
     });
+    // Roving focus is wired ONCE on the persistent list element (re-wiring per
+    // render stacks keydown handlers: N arrow steps / N activations per key).
+    // renderCondensedList() calls refresh() after each reconcile instead.
+    this.modelNav = rovingFocus(expandContent, ".pill-model-item");
     bindLoadingState("chat.switch_model", $.switchModelBtn, { pendingClass: "switching" });
     // The queued mid-turn model switch drains from the per-chat `turn_ended`
     // SSE (handlers/turn.ts → drainModelSwitchQueue), NOT the active-only
@@ -149,8 +153,10 @@ class ModelSwitchController {
         this.syncModelOption(node, m, current);
       },
     });
-    wireArrowNav(list, ".pill-model-item");
+    this.modelNav?.refresh();
   }
+
+  private modelNav: RovingFocusController | null = null;
 
   private effortRow: HTMLDivElement | null = null;
 

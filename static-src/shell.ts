@@ -12,19 +12,19 @@
 // modules. vibekit keeps only its panel chrome (the slide-up panel, the header
 // open/close/reset buttons) and its lifecycle (ui-state persistence).
 //
-// The terminal's own handle is sealed ({ focus, destroy }) — it exposes no way
-// to send bytes or clear the screen. A small host-bridge feature captures the
-// kernel's sanitizing send funnel (ctx.send) into module scope so vibekit's two
-// host-driven actions can reach the terminal: the code-block "run in shell"
-// button and the header Reset button. Reset also clears the engine renderer's
-// local scrollback + screen (the same reset the engine performs on a server
-// restart) before redrawing the prompt.
+// The terminal handle carries the host controls (ui v4): send(bytes) routes
+// through the kernel's sanitizing funnel for the code-block "run in shell"
+// button, and reset() clears the local scrollback + screen (the same reset the
+// engine performs on a server restart) for the header Reset button, which then
+// redraws the prompt with a Ctrl+L. layout: "container" makes #shell-terminal
+// the terminal's own styling/positioning boundary, so the panel needs no
+// containment workarounds and the served CSS is the component-only
+// MANIFEST.touch bundle (no page reset, no fonts, no @layer quarantine).
 // ---------------------------------------------------------------------------
 
 import { createTerminal } from "@cplieger/web-terminal-ui";
-import { presetTouch } from "@cplieger/web-terminal-ui/presets";
-import type { TerminalFeature, TerminalHandle } from "@cplieger/web-terminal-ui";
-import { render } from "@cplieger/web-terminal-engine";
+import { presetTouch } from "@cplieger/web-terminal-ui/presets/touch";
+import type { TerminalHandle } from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
@@ -58,44 +58,20 @@ const CTRL_L = new Uint8Array([0x0c]);
 
 const encoder = new TextEncoder();
 
-// The kernel's sanitizing send funnel, captured by the host-bridge feature at
-// setup. Null until the terminal is created (first panel open) and again after
-// teardown; every caller guards with `?.`.
-let bridgeSend: ((bytes: Uint8Array) => void) | null = null;
-
-// A custom feature whose only job is to hand vibekit the kernel's send funnel.
-// The sealed TerminalHandle exposes neither send nor a screen reset, so this is
-// the supported way for host code (the Reset button, run-in-shell) to drive the
-// live terminal. It mounts no chrome.
-const hostBridge: TerminalFeature = {
-  name: "vibekit-host-bridge",
-  setup(ctx) {
-    // Wrap rather than alias ctx.send so the funnel is always invoked with the
-    // kernel as its receiver (and to keep eslint's unbound-method happy).
-    bridgeSend = (bytes) => {
-      ctx.send(bytes);
-    };
-    return {
-      teardown() {
-        bridgeSend = null;
-      },
-    };
-  },
-};
-
 /** Send bytes to the PTY through the kernel's sanitizing, scroll-snapping
- *  funnel. Used by the code-block "run in shell" action. */
+ *  funnel (the v4 handle's supported host path). Used by the code-block
+ *  "run in shell" action. No-op until the terminal is created (first panel
+ *  open) and after teardown — `handle` is null then. */
 function hostSend(bytes: Uint8Array): void {
-  bridgeSend?.(bytes);
+  handle?.send(bytes);
 }
 
 /** Reset the terminal to its default (clean) state: drop the client's local
- *  scrollback + screen (the engine's own server-restart reset — a full store
- *  wipe + repaint on the shared renderer singleton), then send Ctrl+L so the
- *  shell redraws a fresh prompt into the cleared window. */
+ *  scrollback + screen (the handle's reset — the engine's own server-restart
+ *  reset), then send Ctrl+L so the shell redraws a fresh prompt into the
+ *  cleared window. */
 function hostReset(): void {
-  render.resetScrollback();
-  render.resetScreen();
+  handle?.reset();
   hostSend(CTRL_L);
 }
 
@@ -240,7 +216,8 @@ function ensureTerminal(): void {
     return;
   }
   handle = createTerminal($.shellTerminal, {
-    features: [...presetTouch(), hostBridge],
+    features: presetTouch(),
+    layout: "container",
     wsPath: SHELL_WS_PATH,
     fontReady: SHELL_FONT_READY,
     theme: SHELL_THEME,

@@ -163,8 +163,8 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
 });
 
 describe("a11y: keyboard navigation on picker grid", () => {
-  it("wireArrowNav makes items focusable via tabindex", async () => {
-    const { wireArrowNav } = await import("./arrow-nav.js");
+  it("rovingFocus makes items focusable via tabindex", async () => {
+    const { rovingFocus } = await import("@cplieger/ui-primitives/roving-focus");
     const container = document.createElement("div");
     const btn1 = document.createElement("button");
     btn1.className = "picker-btn";
@@ -175,7 +175,7 @@ describe("a11y: keyboard navigation on picker grid", () => {
     container.append(btn1, btn2);
     document.body.appendChild(container);
 
-    wireArrowNav(container, ".picker-btn", { orientation: "horizontal" });
+    rovingFocus(container, ".picker-btn", { orientation: "horizontal" });
 
     expect(btn1.getAttribute("tabindex")).toBe("0");
     expect(btn2.getAttribute("tabindex")).toBe("-1");
@@ -224,18 +224,23 @@ describe("a11y: aria-expanded on popover triggers", () => {
     }));
     vi.doMock("./editor-openers.js", () => ({ openPendingDiff: vi.fn() }));
     vi.doMock("./pill-expand.js", () => ({
+      // Mirrors the real makeExpandable's ARIA contract (owned by the
+      // createPopup-backed implementation): collapsed state pre-seeded at
+      // wire time, aria-expanded flipped on every toggle.
       makeExpandable: (
         _pill: HTMLElement,
         _content: HTMLElement,
         opts?: { onExpand?: () => void; onCollapse?: () => void },
       ) => {
+        _pill.setAttribute("aria-expanded", "false");
+        _pill.setAttribute("aria-haspopup", "true");
         _pill.addEventListener("click", () => {
-          if (_pill.classList.contains("pill-expanded")) {
-            _pill.classList.remove("pill-expanded");
-            opts?.onCollapse?.();
-          } else {
-            _pill.classList.add("pill-expanded");
+          const expanded = _pill.classList.toggle("pill-expanded");
+          _pill.setAttribute("aria-expanded", String(expanded));
+          if (expanded) {
             opts?.onExpand?.();
+          } else {
+            opts?.onCollapse?.();
           }
         });
       },
@@ -348,9 +353,9 @@ describe("a11y: confirm dialog focus management", () => {
   it("destructive variant focuses cancel button", async () => {
     const { confirm } = await import("./confirm.js");
     const p = confirm("Delete everything?", "Delete", "destructive");
-    const dialog = document.querySelector(".uip-confirm")!;
+    const dialog = document.querySelector(".uip-ask")!;
     expect(dialog).not.toBeNull();
-    const cancelBtn = dialog.querySelector<HTMLElement>(".uip-confirm-cancel")!;
+    const cancelBtn = dialog.querySelector<HTMLElement>(".uip-ask-cancel")!;
     expect(document.activeElement).toBe(cancelBtn);
     // Close the dialog to resolve the promise
     cancelBtn.click();
@@ -360,8 +365,8 @@ describe("a11y: confirm dialog focus management", () => {
   it("normal variant focuses the confirm button", async () => {
     const { confirm } = await import("./confirm.js");
     const p = confirm("Continue?", "OK", "normal");
-    const dialog = document.querySelector(".uip-confirm")!;
-    const okBtn = dialog.querySelector<HTMLElement>(".uip-confirm-ok")!;
+    const dialog = document.querySelector(".uip-ask")!;
+    const okBtn = dialog.querySelector<HTMLElement>(".uip-ask-ok")!;
     // The library focuses the primary (confirm) action for non-destructive
     // prompts; destructive prompts focus Cancel instead (see the test above).
     expect(document.activeElement).toBe(okBtn);
@@ -436,7 +441,6 @@ describe("a11y: failed tool aria-expanded", () => {
 
     initToolCallbacks({
       pushBind: noop,
-      svgTemplate: () => () => document.createElement("span"),
       refreshGroupHeader: noop,
       explainError: () => Promise.resolve(""),
     });
@@ -453,9 +457,10 @@ describe("a11y: failed tool aria-expanded", () => {
 
     const toggle = card.querySelector<HTMLElement>(".tool-toggle")!;
     const details = card.querySelector<HTMLElement>(".tool-details")!;
-    // Precondition: a live (in_progress) medium-tier card starts collapsed.
+    // Precondition: a live (in_progress) medium-tier card starts collapsed —
+    // the disclosure controller marks the region aria-hidden + inert.
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(details.classList.contains("collapsed")).toBe(true);
+    expect(details.getAttribute("aria-hidden")).toBe("true");
 
     updateToolCall(card, {
       id: "tf1",
@@ -465,9 +470,10 @@ describe("a11y: failed tool aria-expanded", () => {
       ts: 0,
     });
 
-    // The failed branch auto-expands the details AND must keep the toggle's
-    // aria-expanded in sync (mirrors wireToggle's expand path).
-    expect(details.classList.contains("collapsed")).toBe(false);
+    // The failed branch auto-expands the details (expandToolDetails → the
+    // disclosure controller), which must keep the toggle's aria-expanded and
+    // the region's aria-hidden in sync.
+    expect(details.getAttribute("aria-hidden")).toBe("false");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
     document.body.removeChild(card);

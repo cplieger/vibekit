@@ -23,6 +23,7 @@ import { $, byId } from "./dom.js";
 import { el, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
+import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { activeSession, getActive } from "./store.js";
 import { createSession } from "./chat.js";
 import { setTabIcon } from "./tabs.js";
@@ -36,6 +37,10 @@ import { BUILTIN_MODES, iconForMode, labelForMode, normalizeModeID } from "./rol
 // to seed the list before a live session reports availableModes.
 let customAgents: string[] = [];
 
+// Roving-focus controller over the mode options — wired once in
+// initRolePicker; renderOptions refreshes it after each re-render.
+let roleNav: RovingFocusController | null = null;
+
 /** Wire the prompt-bar mode pill. Call once at startup. */
 export function initRolePicker(): void {
   const pill = $.rolePill;
@@ -45,6 +50,10 @@ export function initRolePicker(): void {
       renderList(list);
     },
   });
+  // The list announces role=listbox, so it owes AT the composite-widget
+  // keyboard contract: one Tab stop + arrow keys, via roving-focus (wired
+  // once; renderOptions calls refresh() after each re-render).
+  roleNav = rovingFocus(list, ".pill-role-item");
   // Keep the pill's icon + label in sync with the active chat's mode.
   effect(() => {
     const s = activeSession.value;
@@ -83,7 +92,7 @@ function renderList(list: HTMLElement): void {
       const next = (data?.items ?? []).filter((i) => i.type === "agent").map((i) => i.name);
       if (next.join("\u0000") !== customAgents.join("\u0000")) {
         customAgents = next;
-        if (list.classList.contains("pill-expand-visible")) {
+        if (list.classList.contains("is-open")) {
           renderOptions(list);
         }
       }
@@ -118,6 +127,8 @@ function renderOptions(list: HTMLElement): void {
     }
   }
   list.replaceChildren(...items);
+  // Restore the single-Tab-stop invariant over the fresh options.
+  roleNav?.refresh();
 }
 
 function modeOption(mode: SessionMode, currentMode: string): HTMLButtonElement {

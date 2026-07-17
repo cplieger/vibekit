@@ -23,11 +23,16 @@ export {
   debouncedDispatch,
   pollAction,
   pollUntil,
-  withTimeout,
   getActionLog,
-  API_TIMEOUT_MS,
   RETRY_STANDARD,
+  IDEMPOTENCY_HEADER,
+  IDEMPOTENCY_COMMAND_FIELD,
 } from "@cplieger/actions";
+
+// Timeout composition lives in @cplieger/fetch (actions v3 stopped
+// re-exporting its former duplicate copies); re-exported here so consumer
+// imports stay unchanged.
+export { withTimeout, API_TIMEOUT_MS } from "@cplieger/fetch";
 
 export type {
   Action,
@@ -36,6 +41,7 @@ export type {
   ActionErrorLike,
   ActionInstance,
   ActionLifecycleStatus,
+  ActionOutcome,
   DispatchOptions,
   DispatchHandle,
   DebouncedDispatch,

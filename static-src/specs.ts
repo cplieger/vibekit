@@ -23,6 +23,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { $ } from "./dom.js";
 import { onSSE } from "./bus.js";
 import { reconcile } from "./reconcile.js";
@@ -119,13 +120,13 @@ export function renderTaskNode(node: SpecTaskNode, depth: number, specName: stri
 
   const row = el("div", { className: "spec-node-row", style: `--depth:${String(depth)}` });
 
+  let toggle: HTMLButtonElement | null = null;
   if (hasKids) {
-    const toggle = el("button", {
+    toggle = el("button", {
       type: "button",
       className: "spec-toggle",
-      "aria-expanded": isCollapsed ? "false" : "true",
       "aria-label": isCollapsed ? "Expand" : "Collapse",
-    });
+    }) as HTMLButtonElement;
     row.appendChild(toggle);
   } else {
     row.appendChild(el("span", { className: "spec-toggle-spacer" }));
@@ -171,12 +172,30 @@ export function renderTaskNode(node: SpecTaskNode, depth: number, specName: stri
     wrap.appendChild(det);
   }
 
-  if (hasKids) {
+  if (hasKids && toggle !== null) {
     const kids = el("div", { className: "spec-node-children" });
     for (const c of node.sub_tasks) {
       kids.appendChild(renderTaskNode(c, depth + 1, specName));
     }
     wrap.appendChild(kids);
+    // Disclosure primitive: animated height, aria-expanded/aria-controls on
+    // the toggle, and aria-hidden + inert on the collapsed subtree — the old
+    // height-0 class collapse left invisible child toggles keyboard-focusable.
+    // The per-spec collapse persistence stays in the module map via onToggle;
+    // the .collapsed skin class keeps driving the chevron rotation.
+    createDisclosure(toggle, kids, {
+      open: !isCollapsed,
+      onToggle: (open) => {
+        wrap.classList.toggle("collapsed", !open);
+        toggle.setAttribute("aria-label", open ? "Collapse" : "Expand");
+        const set = collapsedSet(specName);
+        if (open) {
+          set.delete(node.task_id);
+        } else {
+          set.add(node.task_id);
+        }
+      },
+    });
   }
 
   return wrap;
@@ -452,22 +471,9 @@ export function initSpecs(): void {
     }
     const toggle = target.closest<HTMLElement>(".spec-toggle");
     if (toggle !== null) {
-      const node = toggle.closest<HTMLElement>(".spec-node");
-      const card = toggle.closest<HTMLElement>("[data-spec]");
-      if (node === null || card === null) {
-        return;
-      }
-      const taskId = node.getAttribute("data-task-id") ?? "";
-      const specName = card.getAttribute("data-spec") ?? "";
-      const nowCollapsed = node.classList.toggle("collapsed");
-      toggle.setAttribute("aria-expanded", nowCollapsed ? "false" : "true");
-      toggle.setAttribute("aria-label", nowCollapsed ? "Expand" : "Collapse");
-      const set = collapsedSet(specName);
-      if (nowCollapsed) {
-        set.add(taskId);
-      } else {
-        set.delete(taskId);
-      }
+      // Collapse/expand is the disclosure controller's (wired per node in
+      // renderTaskNode, including the aria + persistence bookkeeping); this
+      // delegated handler must not double-handle the click.
     }
   });
 

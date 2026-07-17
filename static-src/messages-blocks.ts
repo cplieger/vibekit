@@ -43,7 +43,7 @@ import {
 } from "./fundamentals/turn-footer.js";
 import { toolSpec } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
-import { buildToolGroupShell, refreshGroupHeader } from "./tool-group.js";
+import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group.js";
 
 // Re-exported so messages.ts can inject it into messages-tools' status-flip
 // path (initToolCallbacks) — the same header renderer the block dispatcher uses.
@@ -307,7 +307,9 @@ function mountToolCard(st: MsgRender, container: HTMLElement, tc: ToolCall): voi
   const card = toolSpec.mount(tc);
   if (card instanceof HTMLElement) {
     card.setAttribute(RECONCILE_KEY, tc.id);
-    group.appendChild(card);
+    // Cards live in the group's body region (the disclosure-collapsible
+    // container), not on the group root beside the header.
+    groupBody(group).appendChild(card);
     refreshGroupHeader(group);
   }
 }

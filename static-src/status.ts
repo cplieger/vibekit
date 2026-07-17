@@ -13,6 +13,7 @@ import { humanName } from "./strings.js";
 import { fetchKiroSetting, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
 import { el } from "@cplieger/reactive";
+import { announce } from "@cplieger/ui-primitives/announce";
 import type { MeteringItem, ConnectionStatus } from "./types.js";
 
 // --- Context bar controller ---
@@ -164,28 +165,14 @@ export function refreshCompactionThreshold(): void {
   contextBar.refreshCompactionThreshold();
 }
 
-// --- Connection status live-region debounce ---
+// --- Connection status announcement debounce ---
 // Prevents rapid connecting→disconnected→connecting cycles from spamming
-// screen readers. Only announces after status is stable for 2s.
+// screen readers. Only announces after status is stable for 2s; the actual
+// announcement rides the shared @cplieger/ui-primitives announce() live
+// region (no more per-module sr-only element). announce() re-announces an
+// identical repeated message — after a flappy reconnect that resettles on the
+// same status, the repeat is the honest signal.
 let statusAnnounceTimer: ReturnType<typeof setTimeout> | undefined;
-let statusLiveEl: HTMLElement | null = null;
-
-function getStatusLiveEl(): HTMLElement {
-  if (statusLiveEl === null) {
-    statusLiveEl = document.getElementById("status-live");
-    if (statusLiveEl === null) {
-      statusLiveEl = el("span", {
-        id: "status-live",
-        role: "status",
-        "aria-live": "polite",
-        "aria-atomic": "true",
-        className: "sr-only",
-      });
-      document.body.appendChild(statusLiveEl);
-    }
-  }
-  return statusLiveEl;
-}
 
 /** Maps each ConnectionStatus to its CSS class and custom property color. */
 const STATUS_STYLES: Readonly<Record<ConnectionStatus, { cls: string | null; color: string }>> = {
@@ -205,10 +192,10 @@ export function setStatus(s: ConnectionStatus): void {
   dot.setAttribute("aria-label", `Connection: ${s}`);
   $.stWs.textContent = s;
 
-  // Debounced live-region announcement (2s stable).
+  // Debounced screen-reader announcement (2s stable).
   clearTimeout(statusAnnounceTimer);
   statusAnnounceTimer = setTimeout(() => {
-    getStatusLiveEl().textContent = `Connection ${s}`;
+    announce(`Connection ${s}`);
   }, 2000);
 }
 
