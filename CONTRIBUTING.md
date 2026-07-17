@@ -52,6 +52,12 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   `internal/server/` — feature subsystems (tool-approval policy, forge CLI
   orchestration, git handlers, MCP, web push, kiro-cli identity endpoints, HTTP
   middleware and routing).
+- The tools engine is the external
+  [`cplieger/toolbelt`](https://github.com/cplieger/toolbelt) library, wired in
+  `internal/composition` (manifest + catalog + reconciler; job events reach the
+  SSE hub through its `Config` callbacks). `/api/tools` is the library's
+  `httpapi` projection mounted under vibekit's middleware; only
+  `/api/tools/status` (feature-gating PATH probes) is app code.
 - `internal/buffer/`, `internal/settings/`, `internal/steering/`,
   `internal/workspace/`, `internal/kiroauth/`, `internal/version/`, and the
   other small packages — focused helpers.
