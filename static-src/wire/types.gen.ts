@@ -377,6 +377,16 @@ export interface GovernanceStatePayload {
   is_enterprise?: boolean;
 }
 
+/**
+ * Inventory is the full read-side snapshot: every manifest entry joined
+ * with state, the system group, and the active job.
+ */
+export interface Inventory {
+  job?: Job;
+  tools: ToolInfo[];
+  system: SystemTool[];
+}
+
 /** Issue represents a forge issue. */
 export interface Issue {
   title: string;
@@ -388,6 +398,39 @@ export interface Issue {
   number: number;
   created_at?: number;
   updated_at?: number;
+}
+
+/** Job is one queued/running/finished unit of engine work. */
+export interface Job {
+  id: string;
+  kind: string;
+  state: string;
+  error?: string;
+  names?: string[];
+  /**
+ * OutputTail carries the job's most recent output lines; populated
+ * by Jobs() snapshots only (live output streams via the
+ * Config.OnJobOutput callback).
+ */
+  output_tail?: string[];
+  /** Timestamps are Unix milliseconds. */
+  created_at: number;
+  started_at?: number;
+  ended_at?: number;
+}
+
+/** JobResponse is the 202 body of every mutating route. */
+export interface JobResponse {
+  job?: Job;
+}
+
+/**
+ * JobsResponse is the jobs route's body: the active job (with output
+ * tail) and recent history.
+ */
+export interface JobsResponse {
+  active?: Job;
+  recent: Job[];
 }
 
 /**
@@ -757,6 +800,16 @@ export interface Release {
   prerelease?: boolean;
 }
 
+/**
+ * RemoveResponse rides a 409-free DELETE alongside the job (dependents
+ * is populated on forced cascades so the client can report what else
+ * was removed).
+ */
+export interface RemoveResponse {
+  job?: Job;
+  dependents?: string[];
+}
+
 /** Repo is a remote repository accessible via the authenticated forge. */
 export interface Repo {
   owner: string;
@@ -811,6 +864,29 @@ export interface SafetyStatusPayload {
   detail?: string;
   tool_id?: string;
   blocked_properties?: string[];
+}
+
+/**
+ * SearchHit is one catalog search result. A projection of
+ * toolbelt.CatalogEntry without the embedded install definition (an
+ * implementation detail no client needs).
+ */
+export interface SearchHit {
+  name: string;
+  description?: string;
+  source: string;
+  /**
+ * Version is the catalog's default pinned version, set only for
+ * entries without an upstream version source (manual installs).
+ */
+  version?: string;
+  featured?: boolean;
+  lsp?: boolean;
+}
+
+/** SearchResponse is the search route's body. */
+export interface SearchResponse {
+  results: SearchHit[];
 }
 
 /**
@@ -979,7 +1055,7 @@ export interface SpecsResponse {
   specs: Spec[];
 }
 
-/** SystemTool is one image-baked binary surfaced read-only in the UI. */
+/** SystemTool is one image-baked binary surfaced read-only (Config.System). */
 export interface SystemTool {
   name: string;
   installed: boolean;
@@ -1034,19 +1110,6 @@ export interface ToolCallUpdatePayload {
   tool_call: ToolCall;
 }
 
-/** ToolCatalogHit is one catalog search result (GET /api/tools/search). */
-export interface ToolCatalogHit {
-  name: string;
-  description?: string;
-  source: string;
-  /**
- * Version is the catalog's default pinned version, set only for
- * entries without an upstream version source (manual installs).
- */
-  version?: string;
-  featured?: boolean;
-}
-
 /**
  * ToolDiff is a before/after text change from a write tool call. Sent
  * by kiro-cli in tool_call notifications for edit operations. Path is
@@ -1061,14 +1124,14 @@ export interface ToolDiff {
 }
 
 /**
- * ToolInfo is one tool row in GET /api/tools: the manifest entry
- * joined with the engine's install state.
+ * ToolInfo is one tool row in Inventory: the manifest entry joined with
+ * the engine's install state.
  */
 export interface ToolInfo {
   shims?: Record<string, string>;
   name: string;
-  source: string;
-  version: string;
+  source?: string;
+  version?: string;
   description?: string;
   origin?: string;
   installed_version?: string;
@@ -1076,39 +1139,14 @@ export interface ToolInfo {
   last_error?: string;
   requires?: string[];
   pin?: boolean;
+  disabled?: boolean;
+  /**
+ * Lsp marks a language-server entry (catalog knowledge); consumers
+ * use it for the no-LSP-enabled warning and UI badges.
+ */
+  lsp?: boolean;
   installed: boolean;
   installing: boolean;
-}
-
-/**
- * ToolJob is one tools-engine job: an install/uninstall/update/sync
- * run on the single-flight queue. Terminal states are done, failed,
- * and cancelled.
- */
-export interface ToolJob {
-  id: string;
-  kind: string;
-  state: string;
-  error?: string;
-  names?: string[];
-  /**
- * OutputTail carries the job's most recent output lines; populated
- * on the jobs endpoints only (live output streams via the
- * tool_job_output SSE event).
- */
-  output_tail?: string[];
-  /** Timestamps are Unix milliseconds. */
-  created_at: number;
-  started_at?: number;
-  ended_at?: number;
-}
-
-/**
- * ToolJobAccepted is the 202 response body for job-enqueuing tool
- * mutations (create, install, update, delete, version patch).
- */
-export interface ToolJobAccepted {
-  job?: ToolJob;
 }
 
 /**
@@ -1118,7 +1156,7 @@ export interface ToolJobAccepted {
  * carries no output tail; output streams via tool_job_output.
  */
 export interface ToolJobChangedPayload {
-  job?: ToolJob;
+  job?: Job;
 }
 
 /**
@@ -1139,24 +1177,6 @@ export interface ToolJobOutputPayload {
 export interface ToolLocation {
   path: string;
   line?: number;
-}
-
-/** ToolsJobsResponse is the GET /api/tools/jobs response body. */
-export interface ToolsJobsResponse {
-  active?: ToolJob;
-  recent?: ToolJob[];
-}
-
-/** ToolsList is the GET /api/tools response body. */
-export interface ToolsList {
-  job?: ToolJob;
-  tools: ToolInfo[];
-  system: SystemTool[];
-}
-
-/** ToolsSearchResponse is the GET /api/tools/search response body. */
-export interface ToolsSearchResponse {
-  results: ToolCatalogHit[];
 }
 
 /** TurnEndedPayload is the payload for type="turn_ended". */

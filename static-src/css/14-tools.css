@@ -64,7 +64,15 @@
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
 }
 
-.tool-group > .tool-call {
+/* Cards live in the body region (a uip-disclosure-region: the primitive
+ * animates its height and marks it aria-hidden + inert when collapsed). */
+.tool-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.tool-group-body > .tool-call {
   margin-inline-start: 0;
 }
 
@@ -90,13 +98,9 @@
   background: var(--c-bg-tertiary);
 }
 
-/* When collapsed (either user-toggled or auto), show only the header
-   styled like a tool-call pill. */
-.tool-group-collapsed > .tool-call,
-.tool-group-auto-collapsed > .tool-call {
-  display: none;
-}
-
+/* When collapsed (either user-toggled or auto), only the header shows —
+   the card region's height collapse is the disclosure controller's (driven
+   from tool-group.ts); these classes now style just the header pill. */
 .tool-group-collapsed > .tool-group-header,
 .tool-group-auto-collapsed > .tool-group-header {
   background: var(--c-bg-secondary);
@@ -209,19 +213,24 @@
   }
 }
 
+/* .tool-details is a uip-disclosure-region: the primitive drives the height
+ * 0↔auto (inline) and marks the collapsed region aria-hidden + inert. This
+ * rule re-declares the transition list (height AND opacity) because it wins
+ * the cascade over the library's region rule — dropping height here would
+ * kill the collapse animation. */
 .tool-details {
   border-block-start: 1px solid var(--c-border);
   padding: var(--sp-2) var(--sp-3);
   max-height: 18.75rem;
   overflow-y: auto;
-  height: auto;
   transition:
     height var(--dur-standard) var(--ease-standard),
     opacity var(--dur-standard) var(--ease-standard);
 }
 
-.tool-details.collapsed {
-  height: 0;
+/* Collapsed chrome, keyed off the attribute the disclosure controller sets:
+ * vertical padding + separator would otherwise still render at height 0. */
+.tool-details[aria-hidden="true"] {
   overflow: hidden;
   opacity: 0;
   padding-block: 0;
@@ -429,8 +438,9 @@
   transition: height var(--dur-standard) var(--ease-standard);
 }
 
-.subagent-block.collapsed .subagent-body {
-  height: 0;
+/* Collapsed chrome (the height itself is the disclosure controller's inline
+ * style; aria-hidden is the attribute it sets on the collapsed region). */
+.subagent-body[aria-hidden="true"] {
   padding-block: 0;
   border-block-start: none;
 }
@@ -1312,4 +1322,21 @@
   justify-content: flex-end;
   gap: var(--sp-2);
   margin-block-start: var(--sp-4);
+}
+
+/* Tool row enable/disable switch + template state (toolbelt) */
+.tool-toggle {
+  flex: none;
+}
+
+.tool-state-off {
+  background: var(--text-dim, #777);
+  opacity: 0.55;
+}
+
+.tool-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
 }

@@ -156,10 +156,10 @@ describe("tools.delete", () => {
     expect(d?.dependents).toEqual(["jdtls"]);
   });
 
-  it("sends force:true when cascading", async () => {
+  it("sends force as a query param when cascading", async () => {
     mockFetch.mockResolvedValue(new Response(jobBody, { status: 202 }));
     await deleteTool.dispatch({ name: "java", force: true });
-    expect(JSON.parse(mockFetch.mock.calls[0]![1].body as string).force).toBe(true);
+    expect(mockFetch.mock.calls[0]![0]).toBe("/api/tools/java?force=1");
   });
 });
 

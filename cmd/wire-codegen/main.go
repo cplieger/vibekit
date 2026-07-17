@@ -90,6 +90,7 @@ func main() {
 		wiregen.TypeRef[api.ToolCatalogHit](),
 		wiregen.TypeRef[api.ToolsSearchResponse](),
 		wiregen.TypeRef[api.ToolJobAccepted](),
+		wiregen.TypeRef[api.ToolRemoveResponse](),
 		wiregen.TypeRef[api.ToolsJobsResponse](),
 		wiregen.TypeRef[api.ToolJobChangedPayload](),
 		wiregen.TypeRef[api.ToolJobOutputPayload](),

@@ -1,83 +1,47 @@
 package api
 
-// Wire types for the tools engine (Settings -> Tools). The engine
-// lives in internal/tools; these shapes cross the HTTP/SSE boundary
-// and are wiregen-exported to the client (static-src/wire/).
+// Wire types for the tools engine (Settings -> Tools). The engine is
+// the cplieger/toolbelt library; these aliases keep the shapes in the
+// api contract hub so wiregen exports them to the client
+// (static-src/wire/) alongside the SSE payloads. The REST layer is
+// toolbelt/httpapi, mounted by internal/server; its response envelopes
+// are aliased here for the same reason.
 
-// ToolJob is one tools-engine job: an install/uninstall/update/sync
-// run on the single-flight queue. Terminal states are done, failed,
-// and cancelled.
-type ToolJob struct {
-	ID    string   `json:"id"`
-	Kind  string   `json:"kind"`
-	State string   `json:"state"`
-	Error string   `json:"error,omitempty"`
-	Names []string `json:"names,omitempty"`
-	// OutputTail carries the job's most recent output lines; populated
-	// on the jobs endpoints only (live output streams via the
-	// tool_job_output SSE event).
-	OutputTail []string `json:"output_tail,omitempty"`
-	// Timestamps are Unix milliseconds.
-	CreatedAt int64 `json:"created_at"`
-	StartedAt int64 `json:"started_at,omitempty"`
-	EndedAt   int64 `json:"ended_at,omitempty"`
-}
+import (
+	"github.com/cplieger/toolbelt"
+	"github.com/cplieger/toolbelt/httpapi"
+)
+
+// ToolJob is one tools-engine job: an install/uninstall/disable/
+// update/reconcile run on the single-flight queue. Terminal states are
+// done, failed, and cancelled.
+type ToolJob = toolbelt.Job
 
 // ToolInfo is one tool row in GET /api/tools: the manifest entry
-// joined with the engine's install state.
-type ToolInfo struct {
-	Shims            map[string]string `json:"shims,omitempty"`
-	Name             string            `json:"name"`
-	Source           string            `json:"source"`
-	Version          string            `json:"version"`
-	Description      string            `json:"description,omitempty"`
-	Origin           string            `json:"origin,omitempty"`
-	InstalledVersion string            `json:"installed_version,omitempty"`
-	Latest           string            `json:"latest,omitempty"`
-	LastError        string            `json:"last_error,omitempty"`
-	Requires         []string          `json:"requires,omitempty"`
-	Pin              bool              `json:"pin,omitempty"`
-	Installed        bool              `json:"installed"`
-	Installing       bool              `json:"installing"`
-}
+// joined with the engine's install state. Disabled marks a template
+// (recorded intent, nothing installed); Lsp marks a language server.
+type ToolInfo = toolbelt.ToolInfo
 
 // SystemTool is one image-baked binary surfaced read-only in the UI.
-type SystemTool struct {
-	Name      string `json:"name"`
-	Installed bool   `json:"installed"`
-}
+type SystemTool = toolbelt.SystemTool
 
 // ToolsList is the GET /api/tools response body.
-type ToolsList struct {
-	Job    *ToolJob     `json:"job,omitempty"`
-	Tools  []ToolInfo   `json:"tools"`
-	System []SystemTool `json:"system"`
-}
+type ToolsList = toolbelt.Inventory
 
 // ToolCatalogHit is one catalog search result (GET /api/tools/search).
-type ToolCatalogHit struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Source      string `json:"source"`
-	// Version is the catalog's default pinned version, set only for
-	// entries without an upstream version source (manual installs).
-	Version  string `json:"version,omitempty"`
-	Featured bool   `json:"featured,omitempty"`
-}
+type ToolCatalogHit = httpapi.SearchHit
 
 // ToolsSearchResponse is the GET /api/tools/search response body.
-type ToolsSearchResponse struct {
-	Results []ToolCatalogHit `json:"results"`
-}
+type ToolsSearchResponse = httpapi.SearchResponse
 
 // ToolJobAccepted is the 202 response body for job-enqueuing tool
-// mutations (create, install, update, delete, version patch).
-type ToolJobAccepted struct {
-	Job *ToolJob `json:"job"`
-}
+// mutations (add, install, update, patch). The job is null when the
+// mutation needed none (e.g. adding a disabled template).
+type ToolJobAccepted = httpapi.JobResponse
 
 // ToolsJobsResponse is the GET /api/tools/jobs response body.
-type ToolsJobsResponse struct {
-	Active *ToolJob   `json:"active,omitempty"`
-	Recent []*ToolJob `json:"recent,omitempty"`
-}
+type ToolsJobsResponse = httpapi.JobsResponse
+
+// ToolRemoveResponse is the 202 response body for DELETE
+// /api/tools/{name}; dependents is populated on forced cascades.
+type ToolRemoveResponse = httpapi.RemoveResponse

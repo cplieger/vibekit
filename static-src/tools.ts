@@ -31,8 +31,9 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
+import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import { reconcile } from "./reconcile.js";
-import type { ToolCatalogHit, ToolInfo, ToolJob, ToolsList } from "./types.js";
+import type { Inventory, Job, SearchHit, ToolInfo } from "./types.js";
 
 /** Trailing-edge debounce for the catalog search input. */
 function debounce(fn: () => void, ms: number): () => void {
@@ -91,11 +92,12 @@ const f = {
 };
 
 class ToolsManager {
-  private data: ToolsList | null = null;
+  private data: Inventory | null = null;
   private output: RollingOutput | null = null;
   /** Job id the output panel is currently following. */
   private followedJob = "";
   private unsubscribes: (() => void)[] = [];
+  private manualFormCtl: DisclosureController | null = null;
 
   /** Public hook for global cleanup: cancels in-flight tool fetch. */
   cancelLoad(): void {
@@ -146,10 +148,12 @@ class ToolsManager {
       void this.renderSearch(f.search.value);
     }, 200);
     f.search.addEventListener("input", runSearch);
-    f.manualToggle.addEventListener("click", () => {
-      const hidden = f.manualForm.classList.toggle("hidden");
-      f.manualToggle.setAttribute("aria-expanded", String(!hidden));
-    });
+    // The manual-command escape hatch is a standard trigger disclosure: the
+    // primitive owns aria-expanded/aria-controls, activation, and the
+    // animated aria-hidden/inert collapse (the old code toggled the hidden
+    // class + ARIA by hand). Normalize away the authored hidden class first.
+    f.manualForm.classList.remove("hidden");
+    this.manualFormCtl = createDisclosure(f.manualToggle, f.manualForm, { open: false });
     f.manualAdd.addEventListener("click", () => {
       void this.submitManual();
     });
@@ -166,7 +170,7 @@ class ToolsManager {
   /** Point the output panel at a job: reset on a new id, headline the
    *  terminal state, refresh the follow target, and toggle the Cancel
    *  affordance with the job's liveness. */
-  private followJob(job: ToolJob): void {
+  private followJob(job: Job): void {
     if (this.output === null) {
       return;
     }
@@ -201,7 +205,7 @@ class ToolsManager {
     });
   }
 
-  private async resumeJobOutput(job: ToolJob): Promise<void> {
+  private async resumeJobOutput(job: Job): Promise<void> {
     this.followedJob = job.id;
     const jobs = await getToolsJobs.dispatch(undefined);
     if (jobs === null || this.output === null) {
@@ -277,6 +281,7 @@ class ToolsManager {
               String(e.tool.installed),
               String(e.tool.installing),
               String(e.tool.pin ?? false),
+              String(e.tool.disabled ?? false),
               e.tool.last_error === undefined || e.tool.last_error === "" ? "ok" : "err",
             ].join(":");
         }
@@ -308,11 +313,19 @@ class ToolsManager {
   }
 
   private renderToolRow(t: ToolInfo): HTMLDivElement {
+    const name = el("span", { className: "list-row-name", title: t.description ?? "" }, t.name);
     const row = el(
       "div",
       { className: "list-row" },
       stateDot(t),
-      el("span", { className: "list-row-name", title: t.description ?? "" }, t.name),
+      t.lsp === true
+        ? el(
+            "span",
+            { className: "tool-name-wrap" },
+            name,
+            el("span", { className: "tool-source-chip" }, "LSP"),
+          )
+        : name,
       el("span", { className: "list-row-meta" }, metaText(t)),
     ) as HTMLDivElement;
     if (!t.installed && !t.installing) {
@@ -322,8 +335,9 @@ class ToolsManager {
     return row;
   }
 
-  /** Action cluster: install/retry for missing tools, update when a
-   *  newer version is known, pin toggle, delete. */
+  /** Action cluster: the enabled/disabled toggle (every row), retry
+   *  for failed installs, update when a newer version is known, pin
+   *  toggle, delete. */
   private toolActions(t: ToolInfo): HTMLDivElement {
     const actions = el("div", { className: "list-row-actions" }) as HTMLDivElement;
 
@@ -332,7 +346,8 @@ class ToolsManager {
       return actions;
     }
 
-    if (!t.installed) {
+    const disabled = t.disabled === true;
+    if (!t.installed && !disabled) {
       const installBtn = el(
         "button",
         { className: "btn-small list-row-enable", "aria-label": `Install ${t.name}` },
@@ -357,6 +372,32 @@ class ToolsManager {
       });
       actions.append(updateBtn);
     }
+
+    // The enable/disable switch: on = installed and reconciled, off =
+    // template kept, footprint uninstalled.
+    const toggleInput = el("input", {
+      type: "checkbox",
+      "aria-label": disabled
+        ? `Enable ${t.name} (installs it)`
+        : `Disable ${t.name} (uninstalls, keeps the entry)`,
+    }) as HTMLInputElement;
+    toggleInput.checked = !disabled;
+    toggleInput.addEventListener("change", () => {
+      toggleInput.disabled = true;
+      void this.toggleDisabled(t.name, !toggleInput.checked);
+    });
+    const toggle = el(
+      "label",
+      {
+        className: "toggle toggle-inline tool-toggle",
+        "data-tooltip": disabled
+          ? "Disabled template — switch on to install"
+          : "Enabled — switch off to uninstall (keeps the entry)",
+      },
+      toggleInput,
+      el("span", { className: "toggle-slider" }),
+    );
+    actions.append(toggle);
 
     const pinned = t.pin ?? false;
     const pinBtn = el(
@@ -386,7 +427,11 @@ class ToolsManager {
       void this.runDelete(t.name);
     });
 
-    actions.append(pinBtn, delBtn);
+    if (disabled) {
+      actions.append(delBtn);
+    } else {
+      actions.append(pinBtn, delBtn);
+    }
     return actions;
   }
 
@@ -397,6 +442,25 @@ class ToolsManager {
 
   private async togglePin(name: string, pin: boolean): Promise<void> {
     await patchTool.dispatch({ name, pin });
+    this.loadToolsList();
+  }
+
+  /** Flip the enabled/disabled state. Disabling a tool that enabled
+   *  entries require answers 409 with the dependents — confirm the
+   *  forced cascade like delete does. */
+  private async toggleDisabled(name: string, disabled: boolean): Promise<void> {
+    const d = await patchTool.dispatch({ name, disabled });
+    if (disabled && d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
+      const list = d.dependents.join(", ");
+      const force = await confirmDialog(
+        `${name} is required by: ${list}. Disable it anyway?`,
+        "Disable",
+        "destructive",
+      );
+      if (force) {
+        await patchTool.dispatch({ name, disabled, force: true });
+      }
+    }
     this.loadToolsList();
   }
 
@@ -426,7 +490,7 @@ class ToolsManager {
 
   private openAddModal(): void {
     f.search.value = "";
-    f.manualForm.classList.add("hidden");
+    this.manualFormCtl?.close();
     f.manualName.value = "";
     f.manualVersion.value = "";
     f.manualInstall.value = "";
@@ -463,7 +527,7 @@ class ToolsManager {
     }
   }
 
-  private renderSearchHit(hit: ToolCatalogHit): HTMLElement {
+  private renderSearchHit(hit: SearchHit): HTMLElement {
     const addBtn = el(
       "button",
       { className: "btn-small list-row-enable", "aria-label": `Install ${hit.name}` },
@@ -485,6 +549,7 @@ class ToolsManager {
           { className: "tool-hit-title" },
           el("span", { className: "list-row-name" }, hit.name),
           sourceChip(hit.source),
+          ...(hit.lsp === true ? [el("span", { className: "tool-source-chip" }, "LSP")] : []),
         ),
         el("span", { className: "tool-hit-desc" }, hit.description ?? ""),
       ),
@@ -530,6 +595,9 @@ function stateDot(t: ToolInfo): HTMLElement {
   if (t.installing) {
     cls = "tool-state-busy";
     label = "installing";
+  } else if (t.disabled === true) {
+    cls = "tool-state-off";
+    label = "disabled template — switch on to install";
   } else if (t.last_error !== undefined && t.last_error !== "") {
     cls = "tool-state-error";
     label = `failed: ${t.last_error}`;
@@ -546,10 +614,13 @@ function stateDot(t: ToolInfo): HTMLElement {
 }
 
 function metaText(t: ToolInfo): string {
+  if (t.disabled === true) {
+    return "template";
+  }
   const version =
     t.installed && t.installed_version !== undefined && t.installed_version !== ""
-      ? t.installed_version
-      : t.version;
+      ? (t.installed_version ?? "")
+      : (t.version ?? "");
   if (t.latest !== undefined && t.latest !== "") {
     return `${version} → ${t.latest}`;
   }
@@ -566,7 +637,7 @@ function sourceChip(source: string): HTMLElement {
   return el("span", { className: "tool-source-chip" }, label);
 }
 
-function jobHeadline(job: ToolJob): string {
+function jobHeadline(job: Job): string {
   const names = (job.names ?? []).join(", ");
   const what = names === "" ? job.kind : `${job.kind} ${names}`;
   switch (job.state) {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/toolbelt"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
@@ -32,7 +33,6 @@ import (
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/steering"
-	"github.com/cplieger/vibekit/internal/tools"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -42,7 +42,7 @@ type App struct {
 	Server         *server.Server
 	purgeScheduler *archive.PurgeScheduler
 	mcpPrewarm     *prewarm.Runner
-	tools          *tools.Engine
+	tools          *toolbelt.Engine
 }
 
 // Build constructs all services and wires them together. staticFS is
@@ -126,20 +126,34 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	h.SetMCPOnChange(func() { steer.Generate(h.ShutdownCtx()) })
 	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
 
-	// Tools engine: owns tools.json v2 + the install tree + the job
-	// queue; jobs stream over the hub's SSE. The boot sync job (install
-	// missing, update unpinned) runs async — already-installed tools
+	// Tools engine: the cplieger/toolbelt reconciler owns tools.json v2
+	// + the install tree + the job queue; job lifecycle/output stream
+	// over the hub's SSE via the Config callbacks. The seed plants the
+	// disabled LSP + gh templates on fresh volumes (toggled on in
+	// Settings -> Tools). Boot reconciles async — installed tools
 	// persist on the volume, so nothing blocks server start.
-	toolsEngine, err := tools.New(tools.Config{
+	toolsEngine, err := toolbelt.New(&toolbelt.Config{
 		ConfigDir:   cfg.ConfigDir,
 		ToolsDir:    cfg.ToolsDir,
 		CatalogPath: cfg.ToolCatalogPath,
-		Broadcaster: h,
+		Seed:        toolbelt.DefaultSeed(),
+		System:      []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		OnJobChanged: func(j *toolbelt.Job) {
+			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobChanged, "",
+				api.ToolJobChangedPayload{Job: j}))
+		},
+		OnJobOutput: func(jobID string, lines []string) {
+			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobOutput, "",
+				api.ToolJobOutputPayload{JobID: jobID, Lines: lines}))
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("tools engine: %w", err)
 	}
-	toolsEngine.StartBoot()
+	if _, rerr := toolsEngine.Reconcile(toolbelt.ReconcileFull); rerr != nil {
+		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
+	}
+	warnIfNoLSPEnabled(toolsEngine)
 	// Installed-tool changes matter to the agent (kiro-cli scans PATH
 	// for language servers); regenerate the steering env on each list
 	// read is overkill, but forge logins need synchronous installs:
@@ -421,4 +435,24 @@ func repoNamesFor(ctx context.Context, kind forgesPkg.Kind, host string) []strin
 		names = append(names, repos[i].FullName)
 	}
 	return names
+}
+
+// warnIfNoLSPEnabled logs the code-intelligence nudge when no
+// language-server entry is enabled: kiro-cli scans PATH for language
+// servers at session start, so a fresh box without one silently lacks
+// code intelligence. Detection uses the inventory's catalog-derived
+// Lsp marker, so any enabled LSP (seeded template or hand-added)
+// silences it.
+func warnIfNoLSPEnabled(e *toolbelt.Engine) {
+	inv, err := e.Inventory()
+	if err != nil {
+		return
+	}
+	for i := range inv.Tools {
+		if inv.Tools[i].Lsp && !inv.Tools[i].Disabled {
+			return
+		}
+	}
+	slog.Warn("no language servers enabled; kiro code intelligence will be limited",
+		"hint", "enable gopls (Go), tsc-native (TypeScript), or pyrefly (Python) in Settings -> Tools")
 }

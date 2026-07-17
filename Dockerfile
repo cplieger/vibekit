@@ -55,13 +55,18 @@ COPY . ./
 ARG MISE_REGISTRY_REF=v2026.7.7
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.538.1
+# The catalog compiler ships as a toolbelt module lane; its embedded base
+# overlays (runtimes, forge CLIs, language servers + shims) apply first,
+# catalog-overlays.json then patches vibekit-specific display copy on top.
+# renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog
+ARG TOOLBELT_TOOLCATALOG_VERSION=v1.1.0
 # hadolint ignore=DL3062
 RUN mkdir -p /tmp/registries && \
     curl -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
       | tar -xz -C /tmp/registries && \
     curl -fsSL "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" \
       | tar -xz -C /tmp/registries && \
-    go run ./cmd/toolcatalog \
+    go run "github.com/cplieger/toolbelt/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
       -mise "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/registry" \
       -aqua "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/pkgs" \
       -overlay catalog-overlays.json \
@@ -87,7 +92,7 @@ RUN mkdir -p static/vendor && \
 # tsc's bundler resolution finds the package + its types relative to
 # static-src/tsconfig.json.
 # renovate: datasource=npm depName=@cplieger/actions
-ARG CPLIEGER_ACTIONS_VERSION=2.0.13
+ARG CPLIEGER_ACTIONS_VERSION=3.1.0
 RUN mkdir -p static-src/node_modules/@cplieger/actions && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/actions/-/actions-${CPLIEGER_ACTIONS_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
@@ -96,7 +101,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
 # createFetch/requestRaw from it; resolved via the importmap at runtime
 # (/vendor/cplieger-fetch/index.js).
 # renovate: datasource=npm depName=@cplieger/fetch
-ARG CPLIEGER_FETCH_VERSION=1.1.3
+ARG CPLIEGER_FETCH_VERSION=2.1.0
 RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/fetch/-/fetch-${CPLIEGER_FETCH_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
@@ -128,7 +133,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # via the importmap at runtime (/vendor/cplieger-web-terminal-ui/index.js +
 # /presets.js), and its css/ bundle is concatenated into style.css below.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=3.5.0
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=4.0.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
@@ -223,27 +228,28 @@ RUN mapfile -t wt_ui_ts < <(find static-src/node_modules/@cplieger/web-terminal-
         --strict \
         "${wt_ui_ts[@]}"
 
-# Concatenate per-feature CSS splits into the served bundle, then append the
-# @cplieger/web-terminal-ui CSS bundle (its own css/MANIFEST order) wrapped in an
-# `@layer web-terminal-ui { ... }` block. That layer is declared FIRST in
-# static-src/css/00-header.css (lowest priority), so the UI package's standalone
-# full-page tokens/reset never clobber vibekit's design system — vibekit's
-# layered + unlayered rules win every conflict, while the terminal-specific
-# `.term` / `.wt-*` / `.term-input` classes (which vibekit has no rule for) apply.
-# Behavior: skip blank lines and #-comments, cat each listed file
-# (paths relative to each manifest's dir) into the output.
+# Concatenate the served bundle: the @cplieger/web-terminal-ui component
+# bundle FIRST, then vibekit's own CSS splits. MANIFEST.touch (ui v4) is
+# root-scoped component styles ONLY — every selector reaches through the
+# zero-specificity :where(.wt-root) scope createTerminal stamps on
+# #shell-terminal, and there are no page-level rules — so it cannot touch
+# vibekit's design system OR vibekit's own agent-terminal panes (which share
+# the .term-* class vocabulary). Library-before-consumer order is the whole
+# override mechanism: vibekit's terminal skins (.term-link colors,
+# .term-trim-marker in 21-shell-panel.css) win over the package defaults by
+# ordinary source order at equal specificity — no @layer wrapper, no
+# specificity contests. Behavior: skip blank lines and #-comments, cat each
+# listed file (paths relative to each manifest's dir) into the output.
 RUN set -eu; \
     : > static/style.css; \
     while IFS= read -r line || [ -n "$line" ]; do \
         case "$line" in ''|\#*) continue ;; esac; \
-        cat "static-src/css/${line}" >> static/style.css; \
-    done < static-src/css/MANIFEST; \
-    printf '@layer web-terminal-ui {\n' >> static/style.css; \
+        cat "static-src/node_modules/@cplieger/web-terminal-ui/css/${line}" >> static/style.css; \
+    done < static-src/node_modules/@cplieger/web-terminal-ui/css/MANIFEST.touch; \
     while IFS= read -r line || [ -n "$line" ]; do \
         case "$line" in ''|\#*) continue ;; esac; \
-        cat "static-src/node_modules/@cplieger/web-terminal-ui/css/${line}" >> static/style.css; \
-    done < static-src/node_modules/@cplieger/web-terminal-ui/css/MANIFEST; \
-    printf '}\n' >> static/style.css
+        cat "static-src/css/${line}" >> static/style.css; \
+    done < static-src/css/MANIFEST
 
 RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X vibekit/internal/version.Build=${BUILD_VERSION}" \

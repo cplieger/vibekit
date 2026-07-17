@@ -6,7 +6,7 @@
 // search-first add modal, and the SSE job-following output panel.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-import type { ToolInfo, ToolJob, ToolsList } from "./types.js";
+import type { ToolInfo, Job, Inventory } from "./types.js";
 
 const mocks = vi.hoisted(() => ({
   loadDispatch: vi.fn(),
@@ -103,13 +103,13 @@ function tool(overrides: Partial<ToolInfo> & { name: string }): ToolInfo {
   };
 }
 
-function listWith(tools: ToolInfo[], job?: ToolJob): ToolsList {
+function listWith(tools: ToolInfo[], job?: Job): Inventory {
   return { tools, system: [{ name: "git", installed: true }], ...(job ? { job } : {}) };
 }
 
-function initWith(data: ToolsList): void {
+function initWith(data: Inventory): void {
   mocks.loadDispatch.mockImplementation(
-    (_args: undefined, opts?: { onSuccess?: (d: ToolsList) => void }) => {
+    (_args: undefined, opts?: { onSuccess?: (d: Inventory) => void }) => {
       opts?.onSuccess?.(data);
       return Promise.resolve(data);
     },
@@ -320,7 +320,7 @@ describe("job following over SSE", () => {
   });
 
   it("resumes a running job's output tail on load", async () => {
-    const job: ToolJob = { id: "tj-boot", kind: "sync", state: "running", created_at: 1 };
+    const job: Job = { id: "tj-boot", kind: "sync", state: "running", created_at: 1 };
     mocks.jobsDispatch.mockResolvedValue({
       active: { ...job, output_tail: ["line1", "line2"] },
     });
