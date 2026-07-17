@@ -72,6 +72,8 @@ RUN mkdir -p /tmp/registries && \
       -overlay catalog-overlays.json \
       -refs "mise=${MISE_REGISTRY_REF},aqua=${AQUA_REGISTRY_REF}" \
       -out /tmp/tool-catalog.json && \
+    go run "github.com/cplieger/toolbelt/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+      verify -catalog /tmp/tool-catalog.json -require required-tools.txt && \
     # MIT requires the copyright + permission notice to travel with
     # copies/substantial portions; the compiled catalog embeds data
     # derived from both registries, so ship both license texts.
