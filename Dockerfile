@@ -56,23 +56,23 @@ ARG MISE_REGISTRY_REF=v2026.7.7
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.538.1
 # The catalog compiler ships as a toolbelt module lane; its embedded base
-# overlays (runtimes, forge CLIs, language servers + shims) apply first,
+# overlays (runtimes, forge CLIs, language servers) apply first,
 # catalog-overlays.json then patches vibekit-specific display copy on top.
-# renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog
-ARG TOOLBELT_TOOLCATALOG_VERSION=v1.1.3
+# renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
+ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.0
 # hadolint ignore=DL3062
 RUN mkdir -p /tmp/registries && \
     curl -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
       | tar -xz -C /tmp/registries && \
     curl -fsSL "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" \
       | tar -xz -C /tmp/registries && \
-    go run "github.com/cplieger/toolbelt/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+    go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
       -mise "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/registry" \
       -aqua "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/pkgs" \
       -overlay catalog-overlays.json \
       -refs "mise=${MISE_REGISTRY_REF},aqua=${AQUA_REGISTRY_REF}" \
       -out /tmp/tool-catalog.json && \
-    go run "github.com/cplieger/toolbelt/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
+    go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
       verify -catalog /tmp/tool-catalog.json -require required-tools.txt && \
     # MIT requires the copyright + permission notice to travel with
     # copies/substantial portions; the compiled catalog embeds data

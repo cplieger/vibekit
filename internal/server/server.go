@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/cplieger/toolbelt"
-	"github.com/cplieger/toolbelt/httpapi"
+	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/toolbelt/v2/httpapi"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/webhttp"

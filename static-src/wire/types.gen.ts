@@ -1128,7 +1128,6 @@ export interface ToolDiff {
  * the engine's install state.
  */
 export interface ToolInfo {
-  shims?: Record<string, string>;
   name: string;
   source?: string;
   version?: string;

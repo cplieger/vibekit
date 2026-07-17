@@ -13,7 +13,7 @@ require (
 	github.com/cplieger/atomicfile/v2 v2.2.0
 	github.com/cplieger/slogx v1.3.0
 	github.com/cplieger/ssrf/v3 v3.0.0
-	github.com/cplieger/toolbelt v1.0.1
+	github.com/cplieger/toolbelt/v2 v2.0.0
 	github.com/cplieger/web-terminal-engine/v2 v2.6.0
 	github.com/cplieger/webhttp v1.9.0
 	github.com/cplieger/wiregen v1.3.4
