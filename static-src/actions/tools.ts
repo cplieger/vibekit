@@ -33,7 +33,6 @@ export interface CreateToolRequest {
   /** Add as a disabled template: recorded, not installed, no job. */
   disabled?: boolean;
   requires?: string[];
-  shims?: Record<string, string>;
   description?: string;
   origin?: string;
   install?: string;

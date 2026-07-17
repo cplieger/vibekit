@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/toolbelt"
+	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
@@ -454,5 +454,5 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 		}
 	}
 	slog.Warn("no language servers enabled; kiro code intelligence will be limited",
-		"hint", "enable gopls (Go), tsc-native (TypeScript), or pyrefly (Python) in Settings -> Tools")
+		"hint", "enable gopls (Go), typescript-language-server (TypeScript), or pyright (Python) in Settings -> Tools")
 }

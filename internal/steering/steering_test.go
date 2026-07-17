@@ -117,16 +117,16 @@ func TestWriteTools_NoBinsUsesToolName(t *testing.T) {
 }
 
 func TestWriteTools_DuplicateBinsDeduped(t *testing.T) {
-	// Two tools shipping the same bin name (a shim collision) list it
-	// once — the agent cares about what's on PATH, not ownership.
+	// Two tools shipping the same bin name list it once — the agent
+	// cares about what's on PATH, not ownership.
 	data := []byte(`{"tools": {
-		"tsc-native": {"installed_version": "7.0.2", "bins": ["tsc", "typescript-language-server"]},
-		"typescript-language-server": {"installed_version": "5.3.0", "pm_bins": ["typescript-language-server"]}
+		"typescript": {"installed_version": "5.9.0", "pm_bins": ["tsc", "tsserver"]},
+		"tsc-wrapper": {"installed_version": "1.0.0", "bins": ["tsc"]}
 	}}`)
 	var b strings.Builder
 	writeTools(&b, data)
 	out := b.String()
-	if strings.Count(out, "- typescript-language-server ") != 1 {
+	if strings.Count(out, "- tsc ") != 1 {
 		t.Errorf("duplicate bin not deduped; output:\n%s", out)
 	}
 }

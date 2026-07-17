@@ -8,8 +8,8 @@ package api
 // are aliased here for the same reason.
 
 import (
-	"github.com/cplieger/toolbelt"
-	"github.com/cplieger/toolbelt/httpapi"
+	"github.com/cplieger/toolbelt/v2"
+	"github.com/cplieger/toolbelt/v2/httpapi"
 )
 
 // ToolJob is one tools-engine job: an install/uninstall/disable/

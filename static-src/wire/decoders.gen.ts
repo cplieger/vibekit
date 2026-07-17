@@ -995,7 +995,6 @@ export const decodeToolInfo: Decoder<ToolInfo> = (v) => {
     installed: reqBool(o, "installed", "$.tool_info"),
     installing: reqBool(o, "installing", "$.tool_info"),
   };
-  if (o["shims"] !== undefined) out.shims = decodeRecord(o["shims"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_info.shims");
   const source = optStr(o, "source", "$.tool_info");
   if (source !== undefined) out.source = source;
   const version = optStr(o, "version", "$.tool_info");

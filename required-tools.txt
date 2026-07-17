@@ -9,8 +9,9 @@
 #
 # seed
 gopls
-tsc-native
-pyrefly
+typescript-language-server
+typescript
+pyright
 gh
 # backend runtimes (auto-adopted dependencies)
 go
