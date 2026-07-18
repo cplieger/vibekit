@@ -54,7 +54,7 @@ COPY . ./
 # renovate: datasource=github-releases depName=jdx/mise
 ARG MISE_REGISTRY_REF=v2026.7.7
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
-ARG AQUA_REGISTRY_REF=v4.538.1
+ARG AQUA_REGISTRY_REF=v4.539.0
 # The catalog compiler ships as a toolbelt module lane; its embedded base
 # overlays (runtimes, forge CLIs, language servers) apply first,
 # catalog-overlays.json then patches vibekit-specific display copy on top.
