@@ -1,7 +1,15 @@
 // ---------------------------------------------------------------------------
 // Minimal syntax highlighter: tokenizes source code into spans.
-// No dependencies. Covers Go, TS/JS, Python, Shell, YAML, JSON, CSS, HTML,
-// Dockerfile, TOML. Language detected from file extension.
+// No dependencies. Language detected from file extension or fence alias.
+//
+// Three routing tiers (broader than the 10 keyword tables suggest):
+//   1. Dedicated keyword tables (KEYWORDS in highlight-langs.ts): Go,
+//      TS/JS, Python, Shell, YAML, JSON, CSS, HTML, Dockerfile, TOML.
+//   2. Generic tokenizer (GENERIC_KW) for every other recognized
+//      extension/alias — strings, numbers, comments, and a common
+//      keyword set still highlight.
+//   3. Escaped passthrough for unknown languages — plain text, safely
+//      HTML-escaped, never mis-tokenized.
 // ---------------------------------------------------------------------------
 
 import { escText } from "./strings.js";
@@ -51,6 +59,10 @@ interface Token {
   value: string;
 }
 
+/** Languages where a backtick opens a string (JS/TS template literals,
+ *  Go raw strings). Everywhere else a backtick is punctuation. */
+const BACKTICK_STRING_LANGS = new Set(["js", "ts", "go"]);
+
 function tokenize(code: string, lang: string): Token[] {
   const tokens: Token[] = [];
   const kw = KEYWORDS[lang] ?? GENERIC_KW;
@@ -88,8 +100,11 @@ function tokenize(code: string, lang: string): Token[] {
       continue;
     }
 
-    // Strings
-    if (cc === 34 || cc === 39 || cc === 96) {
+    // Strings. Backtick is a string delimiter only where the language
+    // actually has backtick strings (JS/TS templates, Go raw strings);
+    // treating it as one everywhere mis-tokenized languages like Python,
+    // where a stray backtick swallowed everything up to the next one.
+    if (cc === 34 || cc === 39 || (cc === 96 && BACKTICK_STRING_LANGS.has(lang))) {
       // " ' `
       let j = i + 1;
       if (cc === 96) {
@@ -125,9 +140,21 @@ function tokenize(code: string, lang: string): Token[] {
       if (cc === 48 /* 0 */ && j + 1 < len && /[xXoObB]/.test(code[j + 1]!)) {
         j += 2;
       }
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- defensive check
-      while (j < len && /[\d.a-fA-F_eE+-]/.test(code[j]!)) {
-        j++;
+      while (j < len) {
+        const ch = code[j]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+        if (/[\d.a-fA-F_eE]/.test(ch)) {
+          j++;
+          continue;
+        }
+        // `+`/`-` continue a number only as an exponent sign (1e-5);
+        // consuming them unconditionally merged arithmetic like `1-2`
+        // into a single mis-highlighted number token.
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- j > i inside the loop
+        if ((ch === "+" || ch === "-") && j > i && /[eE]/.test(code[j - 1]!)) {
+          j++;
+          continue;
+        }
+        break;
       }
       tokens.push({ type: "number", value: code.substring(i, j) });
       i = j;

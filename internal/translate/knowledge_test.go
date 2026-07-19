@@ -50,7 +50,7 @@ func knowledgeMsg(t *testing.T, m map[string]any) *api.RPCResponse {
 // Status="started" and the file count, no item count.
 func TestHandleKnowledgeIndexing_Started(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandleKnowledgeIndexing(context.Background(), api.ChatID("c1"), knowledgeMsg(t, map[string]any{
 		"sessionId": "sess-1", "name": "docs", "fileCount": 12,
@@ -69,7 +69,7 @@ func TestHandleKnowledgeIndexing_Started(t *testing.T) {
 // notification carries the wire status and, on success, the item count.
 func TestHandleKnowledgeIndexing_Completed(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandleKnowledgeIndexing(context.Background(), api.ChatID("c1"), knowledgeMsg(t, map[string]any{
 		"sessionId": "sess-1", "name": "docs", "status": "success", "itemCount": 34,
@@ -85,7 +85,7 @@ func TestHandleKnowledgeIndexing_Completed(t *testing.T) {
 // dropped (no broadcast).
 func TestHandleKnowledgeIndexing_MissingName(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandleKnowledgeIndexing(context.Background(), api.ChatID("c1"), knowledgeMsg(t, map[string]any{
 		"sessionId": "sess-1", "fileCount": 3,
@@ -100,7 +100,7 @@ func TestHandleKnowledgeIndexing_MissingName(t *testing.T) {
 // dropped without a broadcast.
 func TestHandleKnowledgeIndexing_MalformedNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandleKnowledgeIndexing(context.Background(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")}, true)
 	if n := countKnowledgeEvents(events); n != 0 {

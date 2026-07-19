@@ -1,13 +1,16 @@
 // Forge login flows.
 //
 // Two paths:
-//   - GitHub: OAuth device flow (vibekit handles the entire flow,
-//     then injects the resulting token into ~/.config/gh/hosts.yml).
+//   - GitHub: OAuth device flow (vibekit handles the entire flow, then
+//     hands the resulting token to `gh auth login --with-token`).
 //   - GitLab/Gitea/Codeberg: PAT paste (UI prompts the user for a
-//     personal access token, vibekit writes it into the CLI config).
+//     personal access token, vibekit pipes it to the CLI's own login
+//     subcommand).
 //
 // In both paths the result is the same: the CLI is fully authenticated
 // AND git operations are configured via the CLI's credential helper.
+// The CLIs discover and store the account identity themselves; vibekit
+// never supplies or persists a username.
 
 package forges
 
@@ -45,26 +48,27 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 	if result.Token == "" {
 		return PollResult{Status: result.Status, Error: result.Error}, nil
 	}
-	// Token in hand. Ensure gh is installed, inject, and refresh.
+	// Token in hand. Ensure gh is installed and log it in natively.
 	if err := EnsureCLI(ctx, KindGitHub); err != nil {
 		return PollResult{Status: statusError, Error: fmt.Sprintf("install gh: %v", err)}, nil
 	}
-	if err := InjectToken(ctx, KindGitHub, "github.com", result.Token, ""); err != nil {
-		return PollResult{Status: statusError, Error: fmt.Sprintf("inject token: %v", err)}, nil
+	if err := cliLogin(ctx, KindGitHub, "github.com", result.Token); err != nil {
+		return PollResult{Status: statusError, Error: fmt.Sprintf("store token: %v", err)}, nil
 	}
 	return PollResult{Status: stateComplete}, nil
 }
 
 // LoginPATParams describes a PAT-based login (GitLab/Gitea/Codeberg).
+// The CLIs discover the account identity from the token themselves.
 type LoginPATParams struct {
-	Kind     Kind
-	Host     string
-	Token    string
-	Username string // optional — discovered via Whoami if empty
+	Kind  Kind
+	Host  string
+	Token string
 }
 
-// LoginWithPAT performs a PAT-based login: validate, install CLI,
-// inject token, run setup-git, refresh manager state.
+// LoginWithPAT performs a PAT-based login: install the CLI, log it in
+// natively (the CLIs validate the token against the forge at login
+// time), then verify with Whoami and roll back on failure.
 func LoginWithPAT(ctx context.Context, p LoginPATParams) error {
 	if p.Token == "" {
 		return errors.New("forges: empty token")
@@ -81,28 +85,24 @@ func LoginWithPAT(ctx context.Context, p LoginPATParams) error {
 	if err := EnsureCLI(ctx, p.Kind); err != nil {
 		return fmt.Errorf("install %s: %w", p.Kind.CLI(), err)
 	}
-	if err := InjectToken(ctx, p.Kind, p.Host, p.Token, p.Username); err != nil {
-		return fmt.Errorf("inject: %w", err)
+	if err := cliLogin(ctx, p.Kind, p.Host, p.Token); err != nil {
+		return err
 	}
-	// Validate by calling whoami via the CLI.
+	// Validate end-to-end by calling whoami via the CLI.
 	provider, err := New(p.Kind, p.Host)
 	if err != nil {
 		return err
 	}
-	user, err := provider.Whoami(ctx)
-	if err != nil {
-		// Roll back the bad token.
-		_ = RemoveToken(ctx, p.Kind, p.Host)
+	if _, err := provider.Whoami(ctx); err != nil {
+		// Roll back the bad login.
+		_ = cliLogout(ctx, p.Kind, p.Host)
 		return fmt.Errorf("validate: %w", err)
-	}
-	// If username wasn't supplied, persist the discovered one.
-	if p.Username == "" && user != nil && user.Login != "" {
-		_ = InjectToken(ctx, p.Kind, p.Host, p.Token, user.Login)
 	}
 	return nil
 }
 
-// Logout disconnects a forge: removes the token from the CLI config.
+// Logout disconnects a forge: removes the credential from the CLI's
+// own store via its logout subcommand.
 func Logout(ctx context.Context, kind Kind, host string) error {
-	return RemoveToken(ctx, kind, host)
+	return cliLogout(ctx, kind, host)
 }

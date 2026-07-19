@@ -38,6 +38,11 @@ interface Hook {
   name: string;
   trigger: string;
   action_type: string; // "runCommand" | "askAgent"
+  /** "workspace" (.kiro/hooks in the workspace) or "global" (~/.kiro/hooks,
+   *  kiro-cli 2.13+ — applies in every workspace). Global rows get a scope
+   *  badge and no editor link (their file lives in the blocked HOME tree);
+   *  tolerated absent (older server) → treated as workspace. */
+  scope?: string;
   command?: string;
   prompt?: string;
   matcher?: string;
@@ -58,6 +63,10 @@ const decodeHook: Decoder<Hook> = (v) => {
     action_type: reqStr(o, "action_type", P),
     enabled: reqBool(o, "enabled", P),
   };
+  const scope = optStr(o, "scope", P);
+  if (scope !== undefined) {
+    out.scope = scope;
+  }
   const command = optStr(o, "command", P);
   if (command !== undefined) {
     out.command = command;
@@ -191,12 +200,19 @@ function rowSig(h: Hook): string {
     h.enabled ? "1" : "0",
     h.trigger,
     h.action_type,
+    h.scope ?? "",
     h.command ?? "",
     h.prompt ?? "",
     h.matcher ?? "",
     h.disabled_reason ?? "",
     outSig,
   ].join("\u00a7");
+}
+
+/** Global hooks live in ~/.kiro/hooks (kiro-cli 2.13+) and apply in every
+ *  workspace. Absent scope (older server) counts as workspace. */
+function isGlobalHook(h: Hook): boolean {
+  return h.scope === "global";
 }
 
 function fillRow(row: HTMLElement, h: Hook): void {
@@ -231,6 +247,22 @@ function hookHeader(h: Hook): HTMLElement {
   } else {
     header.appendChild(el("span", { className: "hook-badge hook-action-cmd" }, "Command"));
   }
+  if (isGlobalHook(h)) {
+    // Scope badge only for global rows — workspace is the default and a
+    // badge on every row would be noise. The tooltip carries the file path
+    // (global rows have no open-in-editor affordance; the file lives in the
+    // blocked container-HOME tree).
+    header.appendChild(
+      el(
+        "span",
+        {
+          className: "hook-badge hook-scope-global",
+          "data-tooltip": `${h.file_path ?? "~/.kiro/hooks"} — applies in every workspace`,
+        },
+        "Global",
+      ),
+    );
+  }
   if (h.matcher !== undefined && h.matcher !== "") {
     header.appendChild(
       el("span", { className: "hook-badge hook-matcher", "data-tooltip": "Matcher" }, h.matcher),
@@ -263,7 +295,10 @@ function hookControls(h: Hook): HTMLElement {
     run.innerHTML = ICON_PLAY;
     controls.appendChild(run);
   }
-  if (h.file_path !== undefined && h.file_path !== "") {
+  // Editor link for workspace hooks only: a global hook's file path is a
+  // ~-display path under the container HOME, which the file surface blocks
+  // (its path rides the Global badge tooltip instead).
+  if (h.file_path !== undefined && h.file_path !== "" && !isGlobalHook(h)) {
     const open = el("button", {
       type: "button",
       className: "list-row-btn hook-open",

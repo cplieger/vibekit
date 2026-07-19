@@ -46,7 +46,7 @@ func countSpecEvents(events *[]api.ServerEvent) int {
 // change (executionStatus + provenance ids).
 func TestHandleSpecTaskChanged(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandleSpecTaskChanged(context.Background(), api.ChatID("c1"), knowledgeMsg(t, map[string]any{
 		"sessionId":     "sess_1",
@@ -97,7 +97,7 @@ func TestHandleSpecTaskChanged_NoBroadcast(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, events := newEventCaptureDeps()
-			tr := New(deps, "/tmp")
+			tr := New(deps)
 			tr.HandleSpecTaskChanged(context.Background(), api.ChatID("c1"), tc.msg)
 			if n := countSpecEvents(events); n != 0 {
 				t.Errorf("broadcast count = %d, want 0", n)

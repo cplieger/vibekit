@@ -31,6 +31,10 @@ import {
   ICON_TAB_QUICK_SPEC,
   ICON_TAB_BUG,
   ICON_TAB_AUTONOMOUS,
+  ICON_SUBAGENT_INTROSPECT,
+  ICON_SUBAGENT_GATHERER,
+  ICON_SUBAGENT_TASK,
+  ICON_SUBAGENT_CREATOR,
 } from "./icons.js";
 import type { SessionMode } from "./types.js";
 
@@ -102,6 +106,29 @@ export function iconForMode(id: string): string {
       return ICON_TAB_PLAN;
     case "autonomous":
       return ICON_TAB_AUTONOMOUS;
+    default:
+      return ICON_TAB_AGENT;
+  }
+}
+
+/** Icon (SVG string) for a subagent, keyed by the invoke_sub_agent tool's
+ *  input name (raw id, e.g. "introspect", "context-gatherer"). Mirrors
+ *  iconForMode's convention on the SubagentBlock header: each pre-built
+ *  kiro-cli subagent gets a distinct glyph, custom/unknown subagents share
+ *  the agent hexagon. Subagents are NOT modes — the bundled set here
+ *  (kiro-cli 2.13: general-task-execution, context-gatherer,
+ *  custom-agent-creator, introspect) never appears in availableModes, so
+ *  the two lookups stay separate. */
+export function iconForSubagent(name: string): string {
+  switch (name) {
+    case "introspect":
+      return ICON_SUBAGENT_INTROSPECT;
+    case "context-gatherer":
+      return ICON_SUBAGENT_GATHERER;
+    case "general-task-execution":
+      return ICON_SUBAGENT_TASK;
+    case "custom-agent-creator":
+      return ICON_SUBAGENT_CREATOR;
     default:
       return ICON_TAB_AGENT;
   }

@@ -26,7 +26,7 @@ func TestRecoverPartials_ValidPartial(t *testing.T) {
 	if err := os.MkdirAll(chatsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	data := `{"content":"hello","reasoning":""}`
+	data := `{"content":"hello","reasoning":"","refusal":{"category":"safety","recommended_model":"m-x"}}`
 	if err := os.WriteFile(filepath.Join(chatsDir, "chat-1.partial"), []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -38,6 +38,11 @@ func TestRecoverPartials_ValidPartial(t *testing.T) {
 	}
 	if string(got[0].ChatID) != "chat-1" {
 		t.Errorf("ChatID = %q, want chat-1", got[0].ChatID)
+	}
+	// A crash between the refusal chunk and the turn commit must recover the
+	// refusal metadata onto the interrupted message (kiro-cli 2.13).
+	if r := got[0].Snapshot.Refusal; r == nil || r.Category != "safety" || r.RecommendedModel != "m-x" {
+		t.Errorf("refusal not recovered: %+v", got[0].Snapshot.Refusal)
 	}
 }
 

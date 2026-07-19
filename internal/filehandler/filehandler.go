@@ -1,7 +1,12 @@
 // Package filehandler provides HTTP endpoints for browsing, reading,
-// editing, uploading, and downloading files. Rooted at / with a
-// blacklist of system directories and a sensitive-path list for
-// internal state files.
+// editing, uploading, and downloading files. The browsable surface is
+// an ALLOW-LIST of granted roots (the /workspace and /config mounts by
+// default, plus any VIBEKIT_BROWSE_ROOTS grants), each kernel-confined
+// through its own os.Root; everything outside the grants is denied by
+// default. A sensitive-path list additionally blocks the credential
+// and state files living inside /config. The URL namespace is the
+// container-absolute path ("/workspace/...", "/config/..."), and "/"
+// lists the granted mounts.
 //
 // Defense layers are documented on paths.go. The handler is the
 // gatekeeper for everything the user can do from the browser; every
@@ -13,11 +18,11 @@
 package filehandler
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -35,25 +40,53 @@ const (
 	// Matches the 1 MiB default net/http uses via `defaultMaxMemory`
 	// and keeps concurrent uploads from stacking 50 MiB each in RAM.
 	multipartMaxMemory = 1 * 1024 * 1024
+
+	// respPath is the response-body key echoing the request path back
+	// to the client (listing and read responses).
+	respPath = "path"
 )
+
+// WriteObserver is notified synchronously just before an editor write
+// (PUT /api/file) is applied, with the resolved absolute path and the
+// incoming content. The pre-write timing lets the observer capture the
+// file's current disk content as an undo target (mirroring the agent
+// write path's snapshot-then-write ordering); if the write then fails,
+// the phantom capture is the same bounded tradeoff the agent path
+// documents on hub.recordCheckpointSnapshot. Observers must be
+// best-effort: they cannot veto or fail the save.
+type WriteObserver func(ctx context.Context, absPath string, content []byte)
 
 // Handler implements api.FileHandler.
 type Handler struct {
-	root    *os.Root
-	rootDir string
+	onWrite WriteObserver
+	mounts  []mount // sorted longest-dir-first (see openMounts)
 }
 
 var _ api.FileHandler = (*Handler)(nil)
 
-// New creates a file handler rooted at rootDir. All file operations
-// are kernel-confined to rootDir via os.OpenRoot (TOCTOU-free).
-func New(rootDir string) (*Handler, error) {
-	root, err := os.OpenRoot(rootDir)
-	if err != nil {
-		return nil, err
+// New creates a file handler whose browsable surface is exactly
+// rootDirs. Each granted directory gets its own os.Root, so every file
+// operation is kernel-confined to its mount (TOCTOU-free). A grant
+// that cannot be opened is skipped with a warning — a typo'd
+// VIBEKIT_BROWSE_ROOTS entry must not brick the UI — but zero usable
+// mounts is a hard error.
+func New(rootDirs ...string) (*Handler, error) {
+	mounts, errs := openMounts(rootDirs)
+	for _, err := range errs {
+		slog.Warn("filehandler: skipping browse root", "error", err)
 	}
-	return &Handler{root: root, rootDir: filepath.Clean(rootDir)}, nil
+	if len(mounts) == 0 {
+		return nil, fmt.Errorf("filehandler: no usable browse roots in %q", rootDirs)
+	}
+	return &Handler{mounts: mounts}, nil
 }
+
+// SetWriteObserver installs the pre-write hook fired for PUT
+// /api/file saves — the built-in editor path. Deliberately NOT fired
+// for uploads, copies, touch, or other file actions: the editor is
+// the one manual-change surface checkpoints vouch for. Call during
+// composition, before the handler serves requests.
+func (h *Handler) SetWriteObserver(fn WriteObserver) { h.onWrite = fn }
 
 // RegisterRoutes wires all /api/file* and /api/files* routes onto mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -71,18 +104,19 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 var errHandled = errors.New("handled")
 
 // resolveOrForbid is the common path-resolve prelude: returns the
-// resolved path or writes a 403 and returns "". Logs every rejection
-// at slog.Warn so traversal probes leave a breadcrumb without leaking
-// attacker input beyond the structured JSON-escaped "path" key.
-func resolveOrForbid(w http.ResponseWriter, reqPath string) string {
-	resolved, err := resolvePath(reqPath)
+// resolved location or writes a 403 and returns (loc{}, false). Logs
+// every rejection at slog.Warn so traversal probes leave a breadcrumb
+// without leaking attacker input beyond the structured JSON-escaped
+// "path" key.
+func (h *Handler) resolveOrForbid(w http.ResponseWriter, reqPath string) (loc, bool) {
+	l, err := h.resolvePath(reqPath)
 	if err != nil {
 		slog.Warn("filehandler: path rejected",
 			"path", reqPath, "reason", err.Error())
 		api.Forbidden(w, err.Error())
-		return ""
+		return loc{}, false
 	}
-	return resolved
+	return l, true
 }
 
 // --- /api/file (GET read, PUT write) ---
@@ -93,15 +127,15 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "missing path")
 		return
 	}
-	resolved := resolveOrForbid(w, reqPath)
-	if resolved == "" {
+	l, ok := h.resolveOrForbid(w, reqPath)
+	if !ok {
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		readFile(r.Context(), w, resolved, reqPath, h)
+		readFile(r.Context(), w, l, reqPath)
 	case http.MethodPut:
-		writeFile(w, r, resolved, h)
+		writeFile(w, r, l, h.onWrite)
 	default:
 		api.MethodNotAllowed(w)
 	}

@@ -7,6 +7,7 @@ import {
   setThinking,
   setWorkingLabel,
   setTurnSummary,
+  clearSnapshotSeq,
   get,
   getActiveId,
   tabStatusFor,
@@ -75,6 +76,9 @@ onSSE("working_label", (chatID, p) => {
 onSSE("turn_ended", (chatID, p) => {
   // --- Side-effects: fire unconditionally regardless of active chat or dedup ---
   setThinking(chatID, false);
+  // The turn's snapshot chunk-watermark (connect-time turn_state) is
+  // finished business once the turn ends.
+  clearSnapshotSeq(chatID);
   // Re-derive the per-tab activity dot for the chat whose turn ended, even
   // when it's a background tab. Shares tabStatusFor with the store effect:
   // thinking clears, but an agent-declared waiting_on_user survives turn

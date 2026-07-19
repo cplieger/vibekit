@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -533,15 +534,62 @@ var giteaAPIClient = &http.Client{Timeout: CmdTimeout}
 // mirroring cliexec's output cap.
 const apiMaxResponseBytes = 32 << 20 // 32 MiB
 
+// teaTokenCache holds helper-minted tokens per host, so the gap-fill
+// API paths don't spawn a `tea login helper get` subprocess per call.
+// Invalidated on a 401/403 response (doAPI re-mints once and retries)
+// — the moment a token is rotated via a fresh login, the next API call
+// self-heals.
+var teaTokenCache sync.Map // host → token string
+
+// teaHelperToken mints the API token for host through tea's own
+// git-credential-protocol interface (`tea login helper get`), the same
+// documented surface git itself authenticates through. vibekit holds
+// the token in memory only — it never persists a second copy.
+func teaHelperToken(ctx context.Context, host string) (string, error) {
+	if v, ok := teaTokenCache.Load(host); ok {
+		if tok, tokOK := v.(string); tokOK && tok != "" {
+			return tok, nil
+		}
+	}
+	stdin := "protocol=https\nhost=" + host + "\n\n"
+	out, err := runCmd(ctx, CmdTimeout, []byte(stdin), cliTea, "login", "helper", "get")
+	if err != nil {
+		return "", fmt.Errorf("forges: tea token for %q: %w", host, err)
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if pw, ok := strings.CutPrefix(line, "password="); ok && pw != "" {
+			teaTokenCache.Store(host, pw)
+			return pw, nil
+		}
+	}
+	return "", fmt.Errorf("forges: no tea token for host %q", host)
+}
+
 // doAPI performs an authenticated Gitea API request. The token is sent
 // only as an Authorization header, so it is structurally absent from
 // every error this function can return. On a non-2xx status it returns
-// the (token-free) response body plus a status-coded error.
+// the (token-free) response body plus a status-coded error. A 401/403
+// invalidates the cached token and retries once with a fresh mint, so
+// a token rotated through a re-login heals without a restart.
 func (p *giteaProvider) doAPI(ctx context.Context, method, endpoint string, body []byte) ([]byte, error) {
-	token, err := readTeaToken(p.host)
+	token, err := teaHelperToken(ctx, p.host)
 	if err != nil {
 		return nil, err
 	}
+	data, status, err := p.doAPIWith(ctx, token, method, endpoint, body)
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		teaTokenCache.Delete(p.host)
+		fresh, tokErr := teaHelperToken(ctx, p.host)
+		if tokErr != nil {
+			return data, err
+		}
+		data, _, err = p.doAPIWith(ctx, fresh, method, endpoint, body)
+	}
+	return data, err
+}
+
+// doAPIWith is doAPI's single-attempt core, bound to one token.
+func (p *giteaProvider) doAPIWith(ctx context.Context, token, method, endpoint string, body []byte) (data []byte, status int, err error) {
 	var reqBody io.Reader
 	if body != nil {
 		reqBody = bytes.NewReader(body)
@@ -549,7 +597,7 @@ func (p *giteaProvider) doAPI(ctx context.Context, method, endpoint string, body
 	//nolint:gosec // G704: the URL authority is the user's own configured forge host (constrained to logged-in forges by manager.Get); only the path varies, so this is not attacker-controlled SSRF
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("gitea api: build request: %w", err)
+		return nil, 0, fmt.Errorf("gitea api: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "token "+token)
@@ -561,18 +609,18 @@ func (p *giteaProvider) doAPI(ctx context.Context, method, endpoint string, body
 	if err != nil {
 		// The url.Error here carries the method, URL, and cause — none of
 		// which contain the token (it lived only in a request header).
-		return nil, fmt.Errorf("gitea api: %w", err)
+		return nil, 0, fmt.Errorf("gitea api: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, apiMaxResponseBytes))
+	data, err = io.ReadAll(io.LimitReader(resp.Body, apiMaxResponseBytes))
 	if err != nil {
-		return nil, fmt.Errorf("gitea api: read response: %w", err)
+		return nil, resp.StatusCode, fmt.Errorf("gitea api: read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return data, fmt.Errorf("gitea api: %s %s: status %d: %s",
+		return data, resp.StatusCode, fmt.Errorf("gitea api: %s %s: status %d: %s",
 			method, endpoint, resp.StatusCode, apiErrorSnippet(data))
 	}
-	return data, nil
+	return data, resp.StatusCode, nil
 }
 
 // apiErrorSnippet returns a short, single-line summary of a Gitea API

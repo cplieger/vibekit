@@ -18,7 +18,7 @@ export type Role = "user" | "assistant" | "event";
 
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
-export type StopReason = "end_turn" | "cancelled" | "interrupted";
+export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal";
 
 export type ToolKind = "execute" | "shell" | "read" | "search" | "fetch" | "edit" | "think" | "hook" | "write" | "delete" | "move" | "command" | "browser" | "switch_mode" | "mcp" | "other";
 
@@ -206,8 +206,8 @@ export interface CommandsUpdatedPayload {
 }
 
 /**
- * ConfiguredForge is one connected forge backend. Constructed from
- * the CLI config files.
+ * ConfiguredForge is one connected forge backend, discovered through
+ * the CLIs' own status subcommands (see discover.go).
  */
 export interface ConfiguredForge {
   id: string;
@@ -218,6 +218,24 @@ export interface ConfiguredForge {
   last_error?: string;
   last_probed?: number;
   connected: boolean;
+  /**
+ * CLIMissing marks a connection whose backing CLI binary is absent
+ * (uninstalled/disabled in Settings → Tools, or a fresh tools volume
+ * against a kept config volume) while a configuration for it still
+ * exists. The row renders as a warning with a reinstall pointer; it
+ * is never probed and cannot be disconnected until the CLI returns.
+ */
+  cli_missing?: boolean;
+}
+
+/** ConflictPayload is what the broadcaster receives per conflict. */
+export interface ConflictDetectedPayload {
+  path: string;
+  other_chat: string;
+  expected_sha: string;
+  actual_sha: string;
+  tag: string;
+  ts: number;
 }
 
 /**
@@ -547,6 +565,13 @@ export interface Message {
  * so the chip survives reload.
  */
   code_references?: CodeReference[];
+  /**
+ * Refusal marks this assistant turn as a model refusal (kiro-cli 2.13
+ * contract): the message content IS the refusal explanation, and this
+ * carries the category + recommended-model metadata the client uses to
+ * render the distinct refusal callout (chip + rewind / switch-model CTAs).
+ */
+  refusal?: RefusalInfo;
   plan?: PlanEntry[];
   /**
  * TurnCredits / TurnElapsedMs complete the turn footer summary alongside
@@ -570,10 +595,26 @@ export interface Message {
  * deltas into the right block in Message.Blocks.
  */
 export interface MessageChunkPayload {
+  /**
+ * Refusal tags this delta as the model-refusal explanation (kiro-cli
+ * 2.13 _meta.kiro.refusal on the chunk). Set on at most one chunk per
+ * turn, right before the turn ends with stop_reason "refusal"; lets the
+ * live renderer style the refusal callout without waiting for
+ * turn_ended.
+ */
+  refusal?: RefusalInfo;
   message_id: string;
   delta: string;
   agent_subtask_id?: string;
   block_index: number;
+  /**
+ * Seq is the delta's 1-based sequence number within the turn
+ * (assigned by the buffer under its lock). A client that ingested
+ * a connect-time turn_state snapshot drops chunks with
+ * seq <= the snapshot's chunk_seq watermark — they are already
+ * folded into the snapshot — instead of double-appending them.
+ */
+  seq?: number;
   is_reasoning?: boolean;
 }
 
@@ -787,6 +828,21 @@ export interface PolicyView {
 export interface PollResult {
   status: string;
   error?: string;
+}
+
+/**
+ * RefusalInfo is the structured refusal metadata KAS attaches when the model
+ * declines to continue a conversation (modelStopReason "content_filtered";
+ * kiro-cli 2.13+). It rides the refusal explanation chunk's update-level
+ * _meta.kiro.refusal and the turn ends with stopReason "refusal". The
+ * explanation text itself streams as ordinary assistant content, so only the
+ * classification fields are kept here; persisted on the assistant Message so
+ * the refusal callout survives reload. RecommendedModel, when set, names a
+ * model the service suggests switching to.
+ */
+export interface RefusalInfo {
+  category?: string;
+  recommended_model?: string;
 }
 
 /** Release represents a tagged release. */
@@ -1181,9 +1237,48 @@ export interface ToolLocation {
 /** TurnEndedPayload is the payload for type="turn_ended". */
 export interface TurnEndedPayload {
   changed_files?: Record<string, FileChange>;
+  /**
+ * Refusal accompanies stop_reason "refusal": the model declined to
+ * continue and the final assistant chunk carried this metadata
+ * (also persisted on the message; here for the live render).
+ */
+  refusal?: RefusalInfo;
   stop_reason?: StopReason;
   credits_delta?: number;
   elapsed_ms?: number;
+}
+
+/**
+ * TurnStatePayload is the payload for type="turn_state": the
+ * connect-time synthesis of a chat's in-flight turn (P6). Synthesized
+ * per busy chat in the SSE OnConnect replay — never broadcast live —
+ * so a reconnecting or freshly-loaded client renders the accumulated
+ * turn immediately instead of waiting for the next chunk or
+ * turn_ended, and learns authoritatively that the chat is busy
+ * (replacing the gap handler's eager thinking-clear guess).
+ */
+export interface TurnStatePayload {
+  /**
+ * Message is the in-flight assistant message as accumulated so
+ * far — the hub's turn mirror, byte-equivalent to what a
+ * never-disconnected client would have rendered. Omitted when the
+ * turn hasn't produced content yet (busy signal only).
+ */
+  message?: Message;
+  /**
+ * Status/Description replay the agent's last self-declared
+ * chat_status for the busy chat. Authoritative here — the turn is
+ * verifiably in flight — unlike the live event, which stays
+ * ephemeral and is cleared on gaps precisely because a bare
+ * replay could resurrect a stale "in_progress".
+ */
+  status?: string;
+  description?: string;
+  /**
+ * ChunkSeq is the sequence number of the last delta folded into
+ * Message (see MessageChunkPayload.Seq).
+ */
+  chunk_seq?: number;
 }
 
 /** Usage is a chat's last-known context and billing snapshot. */

@@ -46,30 +46,26 @@ func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	defer zw.Close()
 
 	flusher, _ := w.(http.Flusher)
-	z := &zipStream{h: h, zw: zw, flusher: flusher, ctx: r.Context()}
+	z := &zipStream{zw: zw, flusher: flusher, ctx: r.Context()}
 	for _, p := range paths {
-		if !z.add(p.rel, filepath.Base(p.abs)) {
+		if !z.add(p, filepath.Base(p.abs)) {
 			break
 		}
 	}
 }
 
-// zipPath pairs an absolute resolved path with its workspace-relative
-// form (the name os.Root operations expect).
-type zipPath struct{ abs, rel string }
-
 // resolveZipPaths resolves every requested path through the
 // path-containment guard BEFORE any bytes are written, so a rejection
 // can still surface as an HTTP 403 (headers aren't sent yet). Returns
 // ok=false once resolveOrForbid has written the rejection response.
-func (h *Handler) resolveZipPaths(w http.ResponseWriter, reqPaths []string) (paths []zipPath, ok bool) {
-	paths = make([]zipPath, 0, len(reqPaths))
+func (h *Handler) resolveZipPaths(w http.ResponseWriter, reqPaths []string) (paths []loc, ok bool) {
+	paths = make([]loc, 0, len(reqPaths))
 	for _, p := range reqPaths {
-		abs := resolveOrForbid(w, p)
-		if abs == "" {
+		l, resolved := h.resolveOrForbid(w, p)
+		if !resolved {
 			return nil, false
 		}
-		paths = append(paths, zipPath{abs: abs, rel: h.relPath(abs)})
+		paths = append(paths, l)
 	}
 	return paths, true
 }
@@ -80,7 +76,6 @@ func (h *Handler) resolveZipPaths(w http.ResponseWriter, reqPaths []string) (pat
 // control-flow flat; the size/count caps and the os.Root confinement
 // are unchanged.
 type zipStream struct {
-	h          *Handler
 	zw         *zip.Writer
 	flusher    http.Flusher
 	ctx        context.Context
@@ -98,24 +93,31 @@ func (z *zipStream) capped() bool {
 // It returns false to stop the whole stream (caps hit, context
 // cancelled, or a fatal zip-writer error) and true to continue with
 // the next sibling. An unreadable entry is skipped (logged, true).
-func (z *zipStream) add(rel, zipName string) bool {
+// Recursion stays inside l's mount by construction (children join onto
+// the parent's location), so every open goes through that mount's root.
+func (z *zipStream) add(l loc, zipName string) bool {
 	if z.capped() {
 		return false
 	}
-	f, err := z.h.root.Open(rel)
+	// Sensitive paths are hidden from listings; keep them out of
+	// archives too when a directory walk reaches one.
+	if isSensitive(l.abs) {
+		return true
+	}
+	f, err := l.m.root.Open(l.rel())
 	if err != nil {
-		slog.Warn("filehandler: zip open failed", "path", rel, "error", err)
+		slog.Warn("filehandler: zip open failed", "path", l.abs, "error", err)
 		return true // skip
 	}
 	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil {
-		slog.Warn("filehandler: zip stat failed", "path", rel, "error", err)
+		slog.Warn("filehandler: zip stat failed", "path", l.abs, "error", err)
 		return true
 	}
 	if info.IsDir() {
-		return z.addDir(f, rel, zipName)
+		return z.addDir(f, l, zipName)
 	}
 	return z.writeFile(f, zipName)
 }
@@ -123,14 +125,15 @@ func (z *zipStream) add(rel, zipName string) bool {
 // addDir recurses into every child of an open directory. A read
 // failure skips the directory (logged, true); a stop signal from any
 // child propagates as false.
-func (z *zipStream) addDir(f *os.File, rel, zipName string) bool {
+func (z *zipStream) addDir(f *os.File, l loc, zipName string) bool {
 	entries, err := f.ReadDir(-1)
 	if err != nil {
-		slog.Warn("filehandler: zip readdir failed", "path", rel, "error", err)
+		slog.Warn("filehandler: zip readdir failed", "path", l.abs, "error", err)
 		return true
 	}
 	for _, e := range entries {
-		if !z.add(filepath.Join(rel, e.Name()), filepath.Join(zipName, e.Name())) {
+		child := loc{m: l.m, abs: filepath.Join(l.abs, e.Name())}
+		if !z.add(child, filepath.Join(zipName, e.Name())) {
 			return false
 		}
 	}

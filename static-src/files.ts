@@ -127,11 +127,22 @@ export function initFileBrowser(): void {
   });
 }
 
+/** True while currentPath came from a restore (persisted ui-state or a
+ *  /files deep link) and has not yet loaded successfully. A stale
+ *  restored path — one outside the granted browse roots (e.g. saved
+ *  before the allow-list conversion, or a revoked VIBEKIT_BROWSE_ROOTS
+ *  grant) or since-deleted — auto-falls back to the root mount listing
+ *  instead of stranding the user on an error row. In-session
+ *  navigation failures keep the error row (with a Go-to-root escape)
+ *  so a transient server error isn't papered over. */
+let pendingRestore = false;
+
 /** Restore the file browser path from settings (called from restoreAll). */
 export function restoreFileBrowser(path: string): void {
   if (path !== "") {
     state.currentPath = path;
     state.history[0] = path;
+    pendingRestore = true;
   }
 }
 
@@ -168,6 +179,17 @@ function loadDir(): void {
       if (d.error === "stale") {
         return;
       }
+      // Restored path no longer loads (outside the granted roots, or
+      // deleted since): heal to the root mount listing once instead of
+      // stranding the user on an error row they never navigated to.
+      if (pendingRestore && state.currentPath !== ".") {
+        pendingRestore = false;
+        state.reset();
+        uiState.save({ fb_path: "" });
+        updateNavButtons();
+        loadDir();
+        return;
+      }
       state.entries = [];
       state.entryMap.clear();
       state.dirWritable = false;
@@ -175,6 +197,7 @@ function loadDir(): void {
       updateWriteButtons();
       return;
     }
+    pendingRestore = false;
     state.entries = d.files;
     state.entryMap.clear();
     for (const e of state.entries) {
@@ -209,7 +232,18 @@ function loadDirAsync(): Promise<void> {
 
 function showError(msg: string): void {
   $.fbList.replaceChildren();
-  $.fbList.appendChild(errorRow(msg, loadDir));
+  const row = errorRow(msg, loadDir);
+  // Anywhere but the root: offer the way back to the mount listing.
+  // Covers e.g. ".." above a nested granted root (its parent is not
+  // browsable) and a directory deleted from under the browser.
+  if (state.currentPath !== ".") {
+    const home = el("button", { type: "button", className: "btn-small" }, "Go to root");
+    home.addEventListener("click", () => {
+      navigate(".");
+    });
+    row.appendChild(home);
+  }
+  $.fbList.appendChild(row);
 }
 
 // --- Navigation ---

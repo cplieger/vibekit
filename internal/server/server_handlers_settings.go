@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"maps"
@@ -14,7 +13,6 @@ import (
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/logctl"
-	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/vibekit/internal/settings"
 )
 
@@ -203,63 +201,6 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 	s.hub.Broadcast(r.Context(), api.NewEvent(api.EventSettingsUpdated, "", api.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(patch)
 	s.syncDebugLogs(patch)
-}
-
-// handleCommandRules handles GET/POST/DELETE for the unified
-// per-command rule list.
-func (s *Server) handleCommandRules(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		api.WriteJSON(w, map[string]any{"entries": s.rules.List()})
-	case http.MethodPost:
-		s.handleCommandRulesPost(w, r)
-	case http.MethodDelete:
-		s.handleCommandRulesDelete(w, r)
-	default:
-		api.MethodNotAllowed(w)
-	}
-}
-
-func (s *Server) handleCommandRulesPost(w http.ResponseWriter, r *http.Request) {
-	api.LimitBody(w, r, api.MaxJSONBody)
-	var body struct {
-		Pattern  string               `json:"pattern"`
-		Mode     permissions.RuleMode `json:"mode"`
-		Priority int                  `json:"priority"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		api.BadRequest(w, "invalid JSON")
-		return
-	}
-	if body.Pattern == "" {
-		api.BadRequest(w, "pattern is required")
-		return
-	}
-	if body.Mode == "" {
-		body.Mode = permissions.RuleAllow
-	}
-	if err := s.rules.Add(body.Pattern, body.Mode, body.Priority); err != nil {
-		if errors.Is(err, permissions.ErrInvalidMode) {
-			api.BadRequest(w, "mode must be allow or deny")
-			return
-		}
-		api.InternalError(w, err)
-		return
-	}
-	api.Ok(w)
-}
-
-func (s *Server) handleCommandRulesDelete(w http.ResponseWriter, r *http.Request) {
-	pattern := r.URL.Query().Get("pattern")
-	if pattern == "" {
-		api.BadRequest(w, "pattern query param is required")
-		return
-	}
-	if err := s.rules.Remove(pattern); err != nil {
-		api.InternalError(w, err)
-		return
-	}
-	api.Ok(w)
 }
 
 // syncPushPreferences reads notification preference toggles from the settings

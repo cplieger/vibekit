@@ -42,6 +42,10 @@ const (
 	StopReasonEndTurn     StopReason = "end_turn"
 	StopReasonCancelled   StopReason = "cancelled"
 	StopReasonInterrupted StopReason = "interrupted"
+	// StopReasonRefusal is kiro-cli 2.13+'s core ACP stop reason for a model
+	// refusal (content_filtered): the refusal explanation streamed as the last
+	// assistant chunk, tagged with _meta.kiro.refusal (api.RefusalInfo).
+	StopReasonRefusal StopReason = "refusal"
 )
 
 // SSE event type constants. Using these instead of bare string literals
@@ -95,6 +99,7 @@ const (
 	EventToolJobChanged        EventType = "tool_job_changed"
 	EventToolJobOutput         EventType = "tool_job_output"
 	EventTurnEnded             EventType = "turn_ended"
+	EventTurnState             EventType = "turn_state"
 	EventWorkingLabel          EventType = "working_label"
 )
 

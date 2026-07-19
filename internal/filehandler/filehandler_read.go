@@ -21,17 +21,17 @@ const (
 
 // --- /api/file (GET read) + /api/file/download ---
 
-func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath string, h *Handler) {
+func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string) {
 	// Open+Stat(fd)+LimitReader eliminates the TOCTOU between a
 	// separate os.Stat size check and os.ReadFile: the size guard
 	// and the read operate on the same file descriptor.
-	f, err := h.root.Open(h.relPath(resolved))
+	f, err := l.m.root.Open(l.rel())
 	if err != nil {
 		if os.IsNotExist(err) {
 			api.NotFound(w, "not found")
 			return
 		}
-		slog.Warn("filehandler: open failed", "path", resolved, "error", err)
+		slog.Warn("filehandler: open failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
@@ -39,7 +39,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath stri
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		slog.Warn("filehandler: stat failed", "path", resolved, "error", err)
+		slog.Warn("filehandler: stat failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
@@ -58,7 +58,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath stri
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
 	if err != nil {
-		slog.Warn("filehandler: read failed", "path", resolved, "error", err)
+		slog.Warn("filehandler: read failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
@@ -73,7 +73,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, resolved, reqPath stri
 			api.ErrorJSON("binary file"))
 		return
 	}
-	api.WriteJSON(w, map[string]string{"content": string(data), "path": reqPath})
+	api.WriteJSON(w, map[string]string{"content": string(data), respPath: reqPath})
 }
 
 // looksBinary reports whether the file's first binarySniffN bytes contain
@@ -101,23 +101,24 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "missing path")
 		return
 	}
-	resolved := resolveOrForbid(w, reqPath)
-	if resolved == "" {
+	l, ok := h.resolveOrForbid(w, reqPath)
+	if !ok {
 		return
 	}
-	// Open through the os.Root (kernel-confined) rather than serving the
-	// absolute path with http.ServeFile. ServeFile re-opens by path and
-	// follows symlinks at serve time, which reintroduces the check-to-serve
-	// TOCTOU that resolvePath's EvalSymlinks otherwise closes: a symlink
-	// swapped in after resolution could point outside the root. Every other
-	// read/write goes through h.root; download now does too.
-	f, err := h.root.Open(h.relPath(resolved))
+	// Open through the mount's os.Root (kernel-confined) rather than
+	// serving the absolute path with http.ServeFile. ServeFile re-opens by
+	// path and follows symlinks at serve time, which reintroduces the
+	// check-to-serve TOCTOU that resolvePath's EvalSymlinks otherwise
+	// closes: a symlink swapped in after resolution could point outside
+	// the mount. Every other read/write goes through the root; download
+	// does too.
+	f, err := l.m.root.Open(l.rel())
 	if err != nil {
 		if os.IsNotExist(err) {
 			api.NotFound(w, "not found")
 			return
 		}
-		slog.Warn("filehandler: download open failed", "path", resolved, "error", err)
+		slog.Warn("filehandler: download open failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
@@ -125,7 +126,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		slog.Warn("filehandler: download stat failed", "path", resolved, "error", err)
+		slog.Warn("filehandler: download stat failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
@@ -139,7 +140,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 			api.ErrorJSON("file too large to download"))
 		return
 	}
-	name := filepath.Base(resolved)
+	name := filepath.Base(l.abs)
 	ct := mime.TypeByExtension(filepath.Ext(name))
 	if ct == "" {
 		ct = "application/octet-stream"
@@ -149,6 +150,6 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// Debug (not Info): the resolved path can name a workspace file and
 	// this line ships to Loki. http.ServeContent serves from the already-
 	// open, confined fd (handles Range requests + conditional headers too).
-	slog.Debug("filehandler: download", "path", resolved, "size", info.Size())
+	slog.Debug("filehandler: download", "path", l.abs, "size", info.Size())
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }

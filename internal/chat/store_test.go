@@ -3388,3 +3388,133 @@ func TestArchive_StampsArchivedAt(t *testing.T) {
 		t.Errorf("ArchivedAt = %d, want within [%d, %d]", c.ArchivedAt, before, after)
 	}
 }
+
+// --- Rewind-family transitions (P7) ---------------------------------
+
+// seedFamily creates a parent chat with n rewind children and returns
+// the child ids.
+func seedFamily(t *testing.T, s *Store, parentID api.ChatID, n int) []api.ChatID {
+	t.Helper()
+	mustCreate := func(id api.ChatID, mutate func(c *api.Chat)) {
+		t.Helper()
+		if err := s.Mutate(context.Background(), id, func(c *api.Chat, exists bool) bool {
+			if exists {
+				t.Fatalf("chat %s already exists", id)
+			}
+			mutate(c)
+			return true
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	mustCreate(parentID, func(c *api.Chat) { c.Name = "parent" })
+	children := make([]api.ChatID, 0, n)
+	for i := range n {
+		id := api.ChatID(string(parentID) + "-child-" + string(rune('a'+i)))
+		mustCreate(id, func(c *api.Chat) {
+			c.Name = "rewind"
+			c.ParentChatID = parentID
+			c.RewindFromTurn = 2
+		})
+		children = append(children, id)
+	}
+	return children
+}
+
+// TestDeleteFamily_ChildrenFirstThenParent pins the transition's
+// ordering contract (children before parent — no crash window leaves a
+// child referencing a deleted parent), the prepare hook's per-record
+// invocation in the same order, and the all-gone end state.
+func TestDeleteFamily_ChildrenFirstThenParent(t *testing.T) {
+	s, b := newTestStore(t)
+	children := seedFamily(t, s, "fam1", 2)
+	b.reset()
+
+	var prepared []api.ChatID
+	failed, err := s.DeleteFamily(context.Background(), "fam1", func(id api.ChatID) {
+		prepared = append(prepared, id)
+	})
+	if err != nil {
+		t.Fatalf("DeleteFamily: %v", err)
+	}
+	if len(failed) != 0 {
+		t.Errorf("failed children = %v, want none", failed)
+	}
+
+	// prepare ran for every record, parent LAST.
+	if len(prepared) != 3 || prepared[2] != "fam1" {
+		t.Errorf("prepare order = %v, want both children then fam1", prepared)
+	}
+
+	// Everything is gone.
+	for _, id := range append(children, "fam1") {
+		if _, ok := s.Get(context.Background(), id); ok {
+			t.Errorf("chat %s survived DeleteFamily", id)
+		}
+	}
+
+	// The broadcast stream shows children deleted BEFORE the parent —
+	// the observable proxy for the crash-ordering contract.
+	var deletedOrder []api.ChatID
+	for _, evt := range b.snapshot() {
+		if evt.Type == api.EventChatDeleted {
+			deletedOrder = append(deletedOrder, evt.ChatID)
+		}
+	}
+	if len(deletedOrder) != 3 || deletedOrder[len(deletedOrder)-1] != "fam1" {
+		t.Errorf("chat_deleted order = %v, want parent fam1 last", deletedOrder)
+	}
+}
+
+// TestDeleteFamily_NoChildren degenerates to a plain delete.
+func TestDeleteFamily_NoChildren(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedFamily(t, s, "solo", 0)
+	failed, err := s.DeleteFamily(context.Background(), "solo", nil)
+	if err != nil || len(failed) != 0 {
+		t.Fatalf("DeleteFamily(solo) = (%v, %v), want clean", failed, err)
+	}
+	if _, ok := s.Get(context.Background(), "solo"); ok {
+		t.Error("solo chat survived")
+	}
+}
+
+// TestPromoteRewind_ClearsLinkage pins the happy path: linkage cleared
+// and persisted, former parent id returned, parent record untouched
+// (its deletion is the caller's step).
+func TestPromoteRewind_ClearsLinkage(t *testing.T) {
+	s, _ := newTestStore(t)
+	children := seedFamily(t, s, "prom1", 1)
+
+	parentID, err := s.PromoteRewind(context.Background(), children[0])
+	if err != nil {
+		t.Fatalf("PromoteRewind: %v", err)
+	}
+	if parentID != "prom1" {
+		t.Errorf("parentID = %s, want prom1", parentID)
+	}
+	child, ok := s.Get(context.Background(), children[0])
+	if !ok {
+		t.Fatal("promoted chat vanished")
+	}
+	if child.ParentChatID != "" || child.RewindFromTurn != 0 {
+		t.Errorf("linkage not cleared: parent=%q turn=%d", child.ParentChatID, child.RewindFromTurn)
+	}
+	if _, ok := s.Get(context.Background(), "prom1"); !ok {
+		t.Error("parent record deleted by PromoteRewind; deletion belongs to the caller")
+	}
+}
+
+// TestPromoteRewind_Errors pins the sentinel contract: missing chat →
+// ErrChatNotFound, non-rewind chat → ErrNotRewind, linkage untouched.
+func TestPromoteRewind_Errors(t *testing.T) {
+	s, _ := newTestStore(t)
+	seedFamily(t, s, "plain", 0)
+
+	if _, err := s.PromoteRewind(context.Background(), "ghost"); !errors.Is(err, api.ErrChatNotFound) {
+		t.Errorf("missing chat: err = %v, want ErrChatNotFound", err)
+	}
+	if _, err := s.PromoteRewind(context.Background(), "plain"); !errors.Is(err, api.ErrNotRewind) {
+		t.Errorf("non-rewind chat: err = %v, want ErrNotRewind", err)
+	}
+}

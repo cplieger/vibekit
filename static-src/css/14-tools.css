@@ -380,8 +380,13 @@
   background: color-mix(in srgb, var(--c-accent) 8%, transparent);
 }
 
+/* Identity glyph: an SVG per known bundled subagent (roles.ts
+   iconForSubagent), hexagon fallback for custom ones. Accent-tinted to read
+   as part of the header identity next to .subagent-name. */
 .subagent-icon {
-  font-size: var(--fs-lg);
+  display: inline-flex;
+  align-items: center;
+  color: var(--c-accent);
   line-height: 1;
   flex-shrink: 0;
 }

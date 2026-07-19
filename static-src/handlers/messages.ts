@@ -13,6 +13,9 @@ import {
   appendChunk,
   upsertToolCall,
   setCodeReferences,
+  setThinking,
+  setAgentStatus,
+  setSnapshotSeq,
 } from "../store.js";
 import { markGitDirty } from "../git.js";
 import { isRepoMutatingKind } from "../tool-schema.js";
@@ -52,7 +55,32 @@ onSSE("message_chunk", (chatID, p) => {
     p.is_reasoning ?? false,
     p.block_index,
     p.agent_subtask_id ?? "",
+    p.seq ?? 0,
+    p.refusal,
   );
+});
+
+// turn_state: connect-time synthesis of an in-flight turn (never
+// broadcast live). The server emits one per BUSY chat in the SSE
+// connect replay: an authoritative busy signal (replacing the gap
+// handler's eager thinking-clear guess for chats that are genuinely
+// mid-turn), the accumulated assistant message so the streaming
+// transcript isn't blank until the next chunk, and the agent's last
+// self-declared status for the turn. The chunk_seq watermark makes
+// chunks that raced the snapshot idempotent (see appendChunk).
+onSSE("turn_state", (chatID, p) => {
+  if (p === undefined || chatID === "") {
+    return;
+  }
+  setThinking(chatID, true);
+  const msg = p.message;
+  if (msg !== undefined && msg.id !== "") {
+    setSnapshotSeq(chatID, msg.id, p.chunk_seq ?? 0);
+    upsertMessage(chatID, msg);
+  }
+  if (p.status !== undefined && p.status !== "") {
+    setAgentStatus(chatID, p.status, p.description ?? "");
+  }
 });
 
 onSSE("message_updated", (chatID, m) => {

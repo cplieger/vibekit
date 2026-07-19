@@ -290,6 +290,21 @@
     flex-shrink: 0;
   }
 
+  /* Ring fill + compaction tick animate via stylesheet rules, NOT inline
+   * style attributes: those two inline transitions were a genuine
+   * style-src 'unsafe-inline' dependency (independent of the terminal
+   * renderer) documented in internal/server/security.go's CSP comment —
+   * with them gone the served markup carries zero style attributes. */
+  & [id="context-ring-fill"] {
+    transition:
+      stroke-dashoffset 0.4s,
+      stroke 0.4s;
+  }
+
+  & [id="context-ring-tick"] {
+    transition: transform 0.3s;
+  }
+
   & [id="context-label"] {
     font-family: var(--font-mono);
     font-size: 0.625rem;

@@ -19,12 +19,30 @@ func TestSelectIdleBridges(t *testing.T) {
 		"past":      {lastActiveAt: now.Add(-idle - time.Second)},
 		"deep":      {lastActiveAt: now.Add(-24 * time.Hour)},
 		"never":     {}, // zero lastActiveAt: skipped
+		// A long-running turn: lastActiveAt was stamped at prompt START
+		// and is far past the cutoff, but the bridge is mid-prompt and
+		// must never be culled out from under its in-flight Call.
+		"long_turn": {lastActiveAt: now.Add(-2 * time.Hour), state: bridgePrompting},
 	}
 	got := selectIdleBridges(now, idle, bridges)
 	slices.Sort(got)
 	want := []api.ChatID{"deep", "past"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("selectIdleBridges = %v, want %v", got, want)
+	}
+}
+
+func TestReleaseAfterPromptStampsLastActive(t *testing.T) {
+	sb := &sharedBridge{state: bridgePrompting, lastActiveAt: time.Now().Add(-2 * time.Hour)}
+	before := time.Now()
+	sb.releaseAfterPrompt()
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
+	if sb.state != bridgeIdle {
+		t.Errorf("state = %v, want idle", sb.state)
+	}
+	if sb.lastActiveAt.Before(before) {
+		t.Errorf("lastActiveAt not refreshed on release: %v (turn-length staleness would cull the bridge on the next tick)", sb.lastActiveAt)
 	}
 }
 

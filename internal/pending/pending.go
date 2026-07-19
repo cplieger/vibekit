@@ -119,10 +119,12 @@ var (
 	// to the agent as a tool failure; the agent should wait for
 	// existing ops to resolve before retrying.
 	ErrTooManyPending = errors.New("pending: too many pending changes")
-	// ErrMergeNotApplicable is returned by ResolveWithText when
-	// the op kind is not KindEdit. Merged text only makes sense
-	// for edit-kind ops; accepting a delete or create with a
-	// merged body would result in the wrong file contents.
+	// ErrMergeNotApplicable is returned by ResolveWithText when the op
+	// kind is KindDelete. Merged text applies to edits AND creates (a
+	// create's proposed content can be partially accepted hunk by hunk,
+	// including down to an empty result); accepting a delete with a
+	// merged body would resurrect content the delete was meant to
+	// remove. See resolve.go for the enforced contract.
 	ErrMergeNotApplicable = errors.New("pending: merged_text not applicable to delete ops")
 )
 

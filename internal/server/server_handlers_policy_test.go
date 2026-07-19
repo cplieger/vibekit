@@ -217,3 +217,124 @@ func TestPolicyExplainRequiresTarget(t *testing.T) {
 		t.Errorf("status = %d, want 400 (no capability/tool_id)", rec.Code)
 	}
 }
+
+// --- op=update: in-place effect editing ---
+
+func TestPolicyRuleUpdate(t *testing.T) {
+	seed := func(t *testing.T) (s *Server, wp string) {
+		t.Helper()
+		home := t.TempDir()
+		work := t.TempDir()
+		t.Setenv("HOME", home)
+		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
+		if err := policyfile.Save(context.Background(), wp, &policyfile.File{
+			Rules: []policyfile.Rule{
+				{Capability: "shell", Effect: "ask", Match: []string{"rm *"}},
+				{Capability: "fs_read", Effect: "allow", Match: []string{"src/**"}},
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return &Server{workDir: work}, wp
+	}
+
+	t.Run("narrowing_update_needs_no_confirm", func(t *testing.T) {
+		s, wp := seed(t)
+		rec := postRules(t, s, policyRuleBody{
+			Op: "update", Scope: "workspace", Capability: "shell",
+			Effect: "ask", NewEffect: "deny", Match: []string{"rm *"},
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+		}
+		f, _ := policyfile.Load(wp)
+		if len(f.Rules) != 2 || f.Rules[0].Effect != "deny" {
+			t.Errorf("rules = %+v, want shell rule updated in place at index 0", f.Rules)
+		}
+	})
+
+	t.Run("widening_update_requires_confirm", func(t *testing.T) {
+		s, wp := seed(t)
+		rec := postRules(t, s, policyRuleBody{
+			Op: "update", Scope: "workspace", Capability: "shell",
+			Effect: "ask", NewEffect: "allow", Match: []string{"rm *"},
+		})
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409 (widening needs confirm)", rec.Code)
+		}
+		if f, _ := policyfile.Load(wp); f.Rules[0].Effect != "ask" {
+			t.Error("rule widened without confirm")
+		}
+
+		rec = postRules(t, s, policyRuleBody{
+			Op: "update", Scope: "workspace", Capability: "shell",
+			Effect: "ask", NewEffect: "allow", Match: []string{"rm *"}, Confirm: true,
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("confirmed widening status = %d, want 200", rec.Code)
+		}
+		if f, _ := policyfile.Load(wp); f.Rules[0].Effect != "allow" {
+			t.Error("confirmed widening did not apply")
+		}
+	})
+
+	t.Run("replay_when_target_already_exists_is_ok", func(t *testing.T) {
+		s, wp := seed(t)
+		body := policyRuleBody{
+			Op: "update", Scope: "workspace", Capability: "shell",
+			Effect: "ask", NewEffect: "deny", Match: []string{"rm *"},
+		}
+		if rec := postRules(t, s, body); rec.Code != http.StatusOK {
+			t.Fatalf("first update = %d", rec.Code)
+		}
+		// Retry with the same body: old rule is gone, target exists → 200.
+		if rec := postRules(t, s, body); rec.Code != http.StatusOK {
+			t.Fatalf("replayed update = %d, want 200 (idempotent)", rec.Code)
+		}
+		f, _ := policyfile.Load(wp)
+		if len(f.Rules) != 2 {
+			t.Errorf("replay duplicated rules: %+v", f.Rules)
+		}
+	})
+
+	t.Run("missing_rule_is_404", func(t *testing.T) {
+		s, _ := seed(t)
+		rec := postRules(t, s, policyRuleBody{
+			Op: "update", Scope: "workspace", Capability: "shell",
+			Effect: "ask", NewEffect: "deny", Match: []string{"never-added *"},
+		})
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("invalid_new_effect_is_400", func(t *testing.T) {
+		s, _ := seed(t)
+		rec := postRules(t, s, policyRuleBody{
+			Op: "update", Scope: "workspace", Capability: "shell",
+			Effect: "ask", NewEffect: "frobnicate", Match: []string{"rm *"},
+		})
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("status = %d, want 400", rec.Code)
+		}
+	})
+}
+
+func TestPolicyExplainShellRequiresResource(t *testing.T) {
+	// KAS has no command-independent shell decision; the handler refuses
+	// the simulation up front with a clear reason instead of forwarding a
+	// request that can only fail (and used to surface as a misleading
+	// "unavailable" error).
+	f := &fakePolicy{explain: &api.PolicyExplainResult{Capability: "shell", Effect: "ask"}}
+	s := &Server{policy: f}
+	b, _ := json.Marshal(api.PolicyExplainRequest{Capability: "shell", Resource: "   "})
+	req := httptest.NewRequest(http.MethodPost, "/api/permissions/explain", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	s.handlePolicyExplain(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 (shell needs a resource)", rec.Code)
+	}
+	if len(f.explainReqs) != 0 {
+		t.Errorf("explain forwarded despite missing resource: %+v", f.explainReqs)
+	}
+}

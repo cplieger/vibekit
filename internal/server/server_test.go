@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -321,11 +323,24 @@ func TestSpaHandler(t *testing.T) {
 			wantBody: "<html>root</html>",
 		},
 		{
-			name: "sets cache-control header",
+			// HTML (and the SPA fallback) is never cached: fresh HTML on
+			// every load is what makes a new release's script graph take
+			// effect immediately (assets revalidate via ETag instead).
+			name: "html gets no-store",
 			fs: fstest.MapFS{
 				"index.html": {Data: []byte("<html></html>")},
 			},
 			path:       "/",
+			wantCode:   http.StatusOK,
+			wantHeader: "no-store",
+		},
+		{
+			name: "asset gets revalidation policy",
+			fs: fstest.MapFS{
+				"index.html": {Data: []byte("<html></html>")},
+				"app.js":     {Data: []byte("console.log(1)")},
+			},
+			path:       "/app.js",
 			wantCode:   http.StatusOK,
 			wantHeader: "no-cache",
 		},
@@ -497,6 +512,53 @@ func TestHandleHealth_returns_ok(t *testing.T) {
 	}
 	if got["status"] != "ok" {
 		t.Errorf("status = %q, want ok", got["status"])
+	}
+}
+
+// TestHandleHealth_DegradedWhenCLIMissing pins the degraded-not-dead
+// start (P5): the server is up (ready=true) but kiro-cli is absent, so
+// health must report 503 "kiro-cli unavailable" — the signal `docker
+// ps`, monitoring, and the client's degraded banner all key off.
+func TestHandleHealth_DegradedWhenCLIMissing(t *testing.T) {
+	s := &Server{cliPath: filepath.Join(t.TempDir(), "kiro-cli")} // never installed
+	s.ready.Store(true)
+
+	rec := httptest.NewRecorder()
+	s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
+	}
+	if got["status"] != "unready" || got["reason"] != "kiro-cli unavailable" {
+		t.Errorf("body = %v, want unready/kiro-cli unavailable", got)
+	}
+}
+
+// TestHandleHealth_OKWhenCLIPresent covers both executableAvailable
+// modes: a slashed path to a real executable, and a bare name resolved
+// via $PATH. Recovery is per-probe (no restart needed), so the same
+// server flips ok once the binary appears.
+func TestHandleHealth_OKWhenCLIPresent(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "kiro-cli")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, cliPath := range map[string]string{"slashed_path": bin, "bare_name_on_path": "sh"} {
+		t.Run(name, func(t *testing.T) {
+			s := &Server{cliPath: cliPath}
+			s.ready.Store(true)
+			rec := httptest.NewRecorder()
+			s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+			if rec.Code != http.StatusOK {
+				t.Errorf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+			}
+		})
 	}
 }
 

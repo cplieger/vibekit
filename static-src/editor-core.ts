@@ -104,6 +104,7 @@ export function initEditor(): void {
       }
     }
   });
+  let conflictReparseQueued = false;
   $.editorContent.addEventListener("input", () => {
     const state = fileStates.get(getActiveFilePath());
     if (state === undefined) {
@@ -111,13 +112,25 @@ export function initEditor(): void {
     }
     state.current.value = $.editorContent.value;
     updateGutter(state.current.value);
-    if (state.mode.value.kind === "conflict") {
-      state.mode.value = {
-        kind: "conflict",
-        conflict: parseConflicts(state.current.value),
-        editing: true,
-      };
-      renderConflictOverlay(state);
+    if (state.mode.value.kind === "conflict" && !conflictReparseQueued) {
+      // Debounce the O(lines) re-parse + overlay rebuild to one animation
+      // frame: running it synchronously on EVERY keystroke janked typing
+      // in large conflicted files on slow devices. The frame callback
+      // re-resolves the active state (tab may have switched meanwhile).
+      conflictReparseQueued = true;
+      requestAnimationFrame(() => {
+        conflictReparseQueued = false;
+        const st = fileStates.get(getActiveFilePath());
+        if (st?.mode.value.kind !== "conflict") {
+          return;
+        }
+        st.mode.value = {
+          kind: "conflict",
+          conflict: parseConflicts(st.current.value),
+          editing: true,
+        };
+        renderConflictOverlay(st);
+      });
     }
   });
   $.editorContent.addEventListener("scroll", () => {

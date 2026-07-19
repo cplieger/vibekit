@@ -30,6 +30,24 @@ vi.mock("./confirm.js", () => ({
   confirm: vi.fn(() => Promise.resolve(true)),
 }));
 
+// The add-pane tests click [data-forge-add], which runs gateAddPaneOnCLI →
+// getToolsStatus.dispatch(). That action fetches directly through the actions
+// framework (bypassing the mocked api-client), so without this mock the probe
+// issues a real happy-dom fetch that is still in flight at window teardown —
+// the "DOMException [AbortError]" teardown noise. Report every CLI installed:
+// no network, and no install banner in the pane (the DOM the tests assert).
+vi.mock("./actions/tools.js", async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
+  const orig = await importOriginal<typeof import("./actions/tools.js")>();
+  return {
+    ...orig,
+    getToolsStatus: {
+      ...orig.getToolsStatus,
+      dispatch: vi.fn(() => Promise.resolve({ gh: true, glab: true, tea: true })),
+    },
+  };
+});
+
 import { renderForgesPanel } from "./forge-auth.js";
 import { apiGetTyped, apiPost } from "./api-client.js";
 import { confirm as confirmDialog } from "./confirm.js";
@@ -230,6 +248,64 @@ describe("forge-auth: 4-section layout", () => {
     const row = panel().querySelector<HTMLElement>(".forge-account-row")!;
     expect(row.classList.contains("forge-account-row-error")).toBe(true);
     expect(row.querySelector(".forge-account-error")?.textContent).toBe("token expired");
+  });
+
+  it("cli_missing row: warning class, static label (no skeleton), no actions, reinstall pointer", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [
+        {
+          // Kind-level row as the server emits it when the gh binary is
+          // gone but ~/.config/gh/hosts.yml survives: no host, no
+          // username, never connected.
+          id: "github:cli-missing",
+          kind: "github",
+          host: "",
+          connected: false,
+          cli_missing: true,
+          last_error: "gh CLI is not installed — reinstall it in Settings → Tools",
+        },
+      ],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    const row = panel().querySelector<HTMLElement>(".forge-account-row")!;
+    expect(row.classList.contains("forge-account-row-missing")).toBe(true);
+    // Identity renders a terminal label, not the loading shimmer.
+    const primary = row.querySelector<HTMLElement>(".forge-account-primary")!;
+    expect(primary.textContent).toBe("Saved connection");
+    expect(primary.classList.contains("skeleton")).toBe(false);
+    // The reinstall pointer rides the standard error line.
+    expect(row.querySelector(".forge-account-error")?.textContent).toContain("Settings → Tools");
+    // No Manage link, no Sign out: both act through the absent CLI.
+    expect(row.querySelector(".forge-account-manage")).toBeNull();
+    const signOut = [...row.querySelectorAll<HTMLButtonElement>("button")].find(
+      (b) => b.textContent === "Sign out",
+    );
+    expect(signOut).toBeUndefined();
+  });
+
+  it("cli_missing row is never probed on page open", async () => {
+    mockedApiGet.mockResolvedValueOnce({
+      forges: [
+        {
+          id: "gitea:cli-missing",
+          kind: "gitea",
+          host: "",
+          connected: false,
+          cli_missing: true,
+          last_error: "tea CLI is not installed",
+        },
+      ],
+      kinds: ["github", "gitlab", "codeberg", "gitea"],
+    });
+    await renderForgesPanel();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const probeCalls = mockedApiPost.mock.calls.filter(
+      ([path]) => typeof path === "string" && path.includes("/probe"),
+    );
+    expect(probeCalls.length).toBe(0);
   });
 
   it("renders a list error message when /api/forges fails", async () => {

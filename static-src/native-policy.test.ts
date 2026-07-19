@@ -38,8 +38,6 @@ vi.mock("./actions/index.js", () => ({
   bindLoadingState: vi.fn(() => vi.fn()),
 }));
 vi.mock("./actions/permissions.js", () => ({
-  addRule: { dispatch: vi.fn() },
-  removeRule: { dispatch: vi.fn() },
   editNativeRule: { name: "permissions.edit_native_rule", dispatch: mocks.editDispatch },
   explainPolicy: { name: "permissions.explain", dispatch: mocks.explainDispatch },
 }));
@@ -125,6 +123,7 @@ beforeEach(() => {
   document.body.appendChild(selectWith("native-rule-capability", [])); // filled by controller
   document.body.appendChild(selectWith("native-rule-effect", ["ask", "allow", "deny"], "ask"));
   document.body.appendChild(el<HTMLInputElement>("input", "native-rule-match"));
+  document.body.appendChild(el<HTMLInputElement>("input", "native-rule-exclude"));
   document.body.appendChild(el<HTMLButtonElement>("button", "native-rule-add"));
   document.body.appendChild(selectWith("native-explain-capability", []));
   document.body.appendChild(el<HTMLInputElement>("input", "native-explain-resource"));
@@ -185,6 +184,7 @@ describe("native policy editor", () => {
 
     byId<HTMLSelectElement>("native-rule-capability").value = "fs_write";
     byId<HTMLInputElement>("native-rule-match").value = "src/** , dist/**";
+    byId<HTMLInputElement>("native-rule-exclude").value = "**/secrets/** , **/.git/**";
     byId<HTMLButtonElement>("native-rule-add").click();
     await flush();
 
@@ -196,11 +196,108 @@ describe("native policy editor", () => {
       capability: "fs_write",
       effect: "ask", // conservative default carried from the select
       match: ["src/**", "dist/**"],
+      exclude: ["**/secrets/**", "**/.git/**"],
     });
-    // match input cleared + refocused (repeat entry) + refetched on success.
+    // both glob inputs cleared, match refocused (repeat entry), refetched.
     expect(byId<HTMLInputElement>("native-rule-match").value).toBe("");
+    expect(byId<HTMLInputElement>("native-rule-exclude").value).toBe("");
     expect(document.activeElement).toBe(byId<HTMLInputElement>("native-rule-match"));
     expect(mocks.apiGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders an effect select on writable rows and a static badge on read-only rows", async () => {
+    initAndLoad();
+    await flush();
+
+    const rows = policyRows();
+    const kiroRow = rows.find(
+      (r) => r.querySelector(".native-rule-cap")?.textContent === "fs_write",
+    );
+    expect(kiroRow?.querySelector("select.native-rule-effect")).toBeNull();
+    expect(kiroRow?.querySelector("span.native-rule-effect")?.textContent).toBe("deny");
+
+    const userRow = rows.find((r) => r.querySelector(".native-rule-cap")?.textContent === "shell");
+    const sel = userRow?.querySelector<HTMLSelectElement>("select.native-rule-effect");
+    expect(sel).not.toBeNull();
+    expect(sel?.value).toBe("allow");
+  });
+
+  it("dispatches op=update on a narrowing effect change (no confirm)", async () => {
+    initAndLoad();
+    await flush();
+
+    // workspace fs_read rule: ask → deny narrows; no confirm dialog.
+    const row = policyRows().find(
+      (r) => r.querySelector(".native-rule-cap")?.textContent === "fs_read",
+    );
+    const sel = row?.querySelector<HTMLSelectElement>("select.native-rule-effect");
+    expect(sel).not.toBeNull();
+    sel!.value = "deny";
+    sel!.dispatchEvent(new Event("change"));
+    await flush();
+
+    expect(mocks.confirm).not.toHaveBeenCalled();
+    expect(mocks.editDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.editDispatch.mock.calls[0]?.[0]).toMatchObject({
+      op: "update",
+      scope: "workspace",
+      capability: "fs_read",
+      effect: "ask",
+      new_effect: "deny",
+      match: ["src/**"],
+      confirm: false,
+    });
+    // Success → refetch.
+    expect(mocks.apiGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires confirmation for a widening effect change and reverts on cancel", async () => {
+    mocks.confirm.mockResolvedValue(false);
+    initAndLoad();
+    await flush();
+
+    // workspace fs_read rule: ask → allow widens.
+    const row = policyRows().find(
+      (r) => r.querySelector(".native-rule-cap")?.textContent === "fs_read",
+    );
+    const sel = row?.querySelector<HTMLSelectElement>("select.native-rule-effect");
+    sel!.value = "allow";
+    sel!.dispatchEvent(new Event("change"));
+    await flush();
+
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(mocks.editDispatch).not.toHaveBeenCalled();
+    expect(sel!.value).toBe("ask"); // reverted
+
+    // Confirmed → dispatches with confirm=true.
+    mocks.confirm.mockResolvedValue(true);
+    sel!.value = "allow";
+    sel!.dispatchEvent(new Event("change"));
+    await flush();
+    expect(mocks.editDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.editDispatch.mock.calls[0]?.[0]).toMatchObject({
+      op: "update",
+      new_effect: "allow",
+      confirm: true,
+    });
+  });
+
+  it("pre-flights a shell explain without a resource instead of dispatching", async () => {
+    initAndLoad();
+    await flush();
+
+    const capSel = byId<HTMLSelectElement>("native-explain-capability");
+    const opt = document.createElement("option");
+    opt.value = "shell";
+    opt.textContent = "shell";
+    capSel.appendChild(opt);
+    capSel.value = "shell";
+    byId<HTMLInputElement>("native-explain-resource").value = "   ";
+    byId<HTMLButtonElement>("native-explain-run").click();
+    await flush();
+
+    expect(mocks.explainDispatch).not.toHaveBeenCalled();
+    expect(byId("native-explain-result").textContent).toContain("Enter a command");
   });
 
   it("removes a non-deny rule directly (no confirm)", async () => {

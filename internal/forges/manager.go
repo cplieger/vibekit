@@ -6,17 +6,20 @@ package forges
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"path/filepath"
+	"log/slog"
+	"os/exec"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/cplieger/vibekit/internal/forges/cliexec"
 	"golang.org/x/sync/singleflight"
 )
 
-// ConfiguredForge is one connected forge backend. Constructed from
-// the CLI config files.
+// ConfiguredForge is one connected forge backend, discovered through
+// the CLIs' own status subcommands (see discover.go).
 type ConfiguredForge struct {
 	ID         string `json:"id"`
 	Kind       Kind   `json:"kind"`
@@ -26,6 +29,12 @@ type ConfiguredForge struct {
 	LastError  string `json:"last_error,omitempty"`
 	LastProbed int64  `json:"last_probed,omitempty"`
 	Connected  bool   `json:"connected"`
+	// CLIMissing marks a connection whose backing CLI binary is absent
+	// (uninstalled/disabled in Settings → Tools, or a fresh tools volume
+	// against a kept config volume) while a configuration for it still
+	// exists. The row renders as a warning with a reinstall pointer; it
+	// is never probed and cannot be disconnected until the CLI returns.
+	CLIMissing bool `json:"cli_missing,omitempty"`
 }
 
 // Manager owns the list of configured forges.
@@ -97,96 +106,146 @@ func (m *Manager) Get(id string) *ConfiguredForge {
 	return &cp
 }
 
-// Refresh re-reads all CLI config files and rebuilds the forge list.
+// Refresh re-queries every CLI's own status output and rebuilds the
+// forge list. Presence-only: gh's network-tested per-account "state"
+// is deliberately not consulted (Probe is the sole network path), and
+// gh's own connection test fails fast offline, so the subprocess cost
+// per stale TTL stays bounded by CmdTimeout in the worst case.
 func (m *Manager) Refresh(ctx context.Context) error {
-	root, err := configHome()
-	if err != nil {
-		return err
-	}
 	out := make(map[string]*ConfiguredForge)
 
-	addGHForges(filepath.Join(root, "gh", "hosts.yml"), out)
+	addGHForges(ctx, out)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	addGLabForges(filepath.Join(root, "glab-cli", "config.yml"), out)
+	addGLabForges(out)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	addTeaForges(filepath.Join(root, "tea", "config.yml"), out)
+	addTeaForges(ctx, out)
 
 	m.mergeForges(out)
 	return nil
 }
 
-// addGHForges reads gh's hosts.yml and adds each authenticated host to out.
-// A read error leaves out unchanged (gh simply isn't configured).
-func addGHForges(path string, out map[string]*ConfiguredForge) {
-	hosts, err := loadGHHosts(path)
+// addGHForges queries `gh auth status --json hosts` and adds each known
+// account to out. A missing gh binary with a surviving configuration
+// yields a cli_missing row instead; any other failure logs and leaves
+// gh unconfigured for this refresh.
+func addGHForges(ctx context.Context, out map[string]*ConfiguredForge) {
+	hosts, err := ghAuthHosts(ctx)
 	if err != nil {
+		if errors.Is(err, cliexec.ErrNotInstalled) {
+			addCLIMissingRow(KindGitHub, out)
+		} else {
+			slog.Warn("forges: gh discovery failed", "error", err)
+		}
 		return
 	}
-	for host, entry := range hosts {
-		if entry.OAuthToken == "" {
-			continue
-		}
+	for host, login := range hosts {
 		id := MakeID(KindGitHub, host)
 		out[id] = &ConfiguredForge{
 			ID:        id,
 			Kind:      KindGitHub,
 			Host:      host,
-			Username:  entry.User,
+			Username:  login,
 			Connected: true,
 		}
 	}
 }
 
-// addGLabForges reads glab's config.yml and adds each authenticated host to out.
-func addGLabForges(path string, out map[string]*ConfiguredForge) {
+// addGLabForges reads glab's config.yml (read-only — glab ships no JSON
+// status output) and adds each authenticated host to out. When the glab
+// binary itself is absent, the rows demote to cli_missing: the
+// configuration is real, but nothing can act on it.
+func addGLabForges(out map[string]*ConfiguredForge) {
+	path := cliConfigPath(KindGitLab)
+	if path == "" {
+		return
+	}
 	cfg, err := loadGLabConfig(path)
 	if err != nil {
 		return
 	}
+	_, lookErr := exec.LookPath("glab")
+	cliMissing := lookErr != nil
 	for host, entry := range cfg.Hosts {
 		if entry.Token == "" {
 			continue
 		}
 		id := MakeID(KindGitLab, host)
-		out[id] = &ConfiguredForge{
+		f := &ConfiguredForge{
 			ID:        id,
 			Kind:      KindGitLab,
 			Host:      host,
 			Username:  entry.User,
+			Connected: !cliMissing,
+		}
+		if cliMissing {
+			f.CLIMissing = true
+			f.LastError = cliMissingError("glab")
+		}
+		out[id] = f
+	}
+}
+
+// addTeaForges queries `tea logins list -o json` and adds each login to
+// out, classifying a codeberg.org login as Codeberg and the rest as
+// Gitea. A missing tea binary with a surviving configuration yields a
+// cli_missing row.
+func addTeaForges(ctx context.Context, out map[string]*ConfiguredForge) {
+	logins, err := teaLogins(ctx)
+	if err != nil {
+		if errors.Is(err, cliexec.ErrNotInstalled) {
+			addCLIMissingRow(KindGitea, out)
+		} else {
+			slog.Warn("forges: tea discovery failed", "error", err)
+		}
+		return
+	}
+	for _, login := range logins {
+		host := login.host()
+		if host == "" {
+			host = login.Name
+		}
+		if host == "" {
+			continue
+		}
+		kind := KindGitea
+		if host == KindCodeberg.DefaultHost() {
+			kind = KindCodeberg
+		}
+		id := MakeID(kind, host)
+		out[id] = &ConfiguredForge{
+			ID:        id,
+			Kind:      kind,
+			Host:      host,
+			Username:  login.User,
 			Connected: true,
 		}
 	}
 }
 
-// addTeaForges reads tea's config.yml and adds each authenticated login to
-// out, classifying a codeberg.org login as Codeberg and the rest as Gitea.
-func addTeaForges(path string, out map[string]*ConfiguredForge) {
-	cfg, err := loadTeaConfig(path)
-	if err != nil {
+// addCLIMissingRow adds the "configured but the CLI binary is missing"
+// warning row for a kind — only when a configuration actually exists on
+// disk (stat-only probe; no config parsing), so a never-connected forge
+// stays absent from the list.
+func addCLIMissingRow(kind Kind, out map[string]*ConfiguredForge) {
+	if !cliConfigExists(kind) {
 		return
 	}
-	for _, login := range cfg.Logins {
-		if login.Token == "" {
-			continue
-		}
-		kind := KindGitea
-		if login.Name == KindCodeberg.DefaultHost() ||
-			login.URL == "https://"+KindCodeberg.DefaultHost() {
-			kind = KindCodeberg
-		}
-		id := MakeID(kind, login.Name)
-		out[id] = &ConfiguredForge{
-			ID:        id,
-			Kind:      kind,
-			Host:      login.Name,
-			Username:  login.User,
-			Connected: true,
-		}
+	id := string(kind) + ":cli-missing"
+	out[id] = &ConfiguredForge{
+		ID:         id,
+		Kind:       kind,
+		CLIMissing: true,
+		LastError:  cliMissingError(kind.CLI()),
 	}
+}
+
+// cliMissingError is the user-facing explanation on a cli_missing row.
+func cliMissingError(cli string) string {
+	return cli + " CLI is not installed — reinstall it in Settings → Tools to restore this connection"
 }
 
 // mergeForges swaps in the freshly-read forge set, preserving Email +

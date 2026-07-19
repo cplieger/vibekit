@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { sendPromptTo } from "./chat-commands.js";
+import { newMessageID } from "./transport.js";
 import { takeAttachments, addAttachment, type AttachedFile } from "./attachments.js";
 import {
   get,
@@ -60,17 +61,25 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
     return "failed";
   }
   const attachments = takeAttachments();
+  // One message id per user submit, minted HERE so the queue entry and
+  // every (re-)send share it: the server appends by id idempotently, so
+  // a 409'd first attempt (which already persisted the bubble) and the
+  // later drain can never render the prompt twice.
+  const messageID = newMessageID();
 
   // Something already queued → queue behind it; the drain sends in order.
   if (queueLength(chatID) > 0) {
-    enqueuePrompt(chatID, text, attachments);
+    enqueuePrompt(chatID, text, messageID, attachments);
     maybeDrainIfIdle(chatID);
     return "queued";
   }
 
-  const result = await sendPromptTo(chatID, text, attachments.length > 0 ? { attachments } : {});
+  const result = await sendPromptTo(chatID, text, {
+    messageID,
+    ...(attachments.length > 0 ? { attachments } : {}),
+  });
   if (result === "queued") {
-    enqueuePrompt(chatID, text, attachments);
+    enqueuePrompt(chatID, text, messageID, attachments);
     maybeDrainIfIdle(chatID);
   } else if (result === "failed") {
     restoreAttachmentsToInput(attachments);
@@ -104,6 +113,7 @@ export function drainNext(chatID: string): void {
   draining.add(chatID);
   const model = get(chatID)?.model;
   void sendPromptTo(chatID, next.text, {
+    messageID: next.messageId,
     ...(model !== undefined && model !== "" ? { model } : {}),
     ...(next.attachments.length > 0 ? { attachments: next.attachments } : {}),
   })

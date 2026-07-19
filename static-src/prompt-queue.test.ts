@@ -126,7 +126,7 @@ describe("submitPrompt", () => {
   it("queues behind an existing entry instead of racing ahead (FIFO)", async () => {
     resetStore("c1");
     setThinking("c1", true);
-    enqueuePrompt("c1", "first");
+    enqueuePrompt("c1", "first", "m-test");
     const r = await submitPrompt("c1", "second");
     await flush();
     expect(r).toBe("queued");
@@ -156,6 +156,9 @@ describe("submitPrompt", () => {
     expect(peekPrompt("c1")).toEqual({
       text: "look at this",
       attachments: [{ path: "img.png", name: "img.png" }],
+      // Minted by submitPrompt so the drain re-sends under the SAME id
+      // (server-side append-by-id idempotency absorbs the retry).
+      messageId: expect.any(String) as unknown as string,
     });
   });
 
@@ -170,7 +173,7 @@ describe("submitPrompt", () => {
 describe("drainNext", () => {
   it("removes the entry only after the server accepts it (sent)", async () => {
     resetStore("c1");
-    enqueuePrompt("c1", "queued prompt");
+    enqueuePrompt("c1", "queued prompt", "m-test");
     mockSendPromptTo.mockResolvedValueOnce("sent");
     drainNext("c1");
     await flush();
@@ -180,7 +183,7 @@ describe("drainNext", () => {
 
   it("#3 keeps the entry + surfaces a banner when the re-send fails (never lost)", async () => {
     resetStore("c1");
-    enqueuePrompt("c1", "important");
+    enqueuePrompt("c1", "important", "m-test");
     mockSendPromptTo.mockResolvedValueOnce("failed");
     drainNext("c1");
     await flush();
@@ -197,7 +200,7 @@ describe("drainNext", () => {
 
   it("#3 keeps the entry (no duplicate) when the re-send 409s again", async () => {
     resetStore("c1");
-    enqueuePrompt("c1", "retry me");
+    enqueuePrompt("c1", "retry me", "m-test");
     mockSendPromptTo.mockResolvedValueOnce("queued");
     drainNext("c1");
     await flush();
@@ -208,11 +211,12 @@ describe("drainNext", () => {
 
   it("forwards the current session model + the entry's attachments", async () => {
     resetStore("c1");
-    enqueuePrompt("c1", "text", [{ path: "f.ts", name: "f.ts" }]);
+    enqueuePrompt("c1", "text", "m-test", [{ path: "f.ts", name: "f.ts" }]);
     mockSendPromptTo.mockResolvedValueOnce("sent");
     drainNext("c1");
     await flush();
     expect(mockSendPromptTo).toHaveBeenCalledWith("c1", "text", {
+      messageID: "m-test",
       model: "claude",
       attachments: [{ path: "f.ts", name: "f.ts" }],
     });
@@ -227,7 +231,7 @@ describe("drainNext", () => {
 
   it("guards against a concurrent second drain before the first send resolves", async () => {
     resetStore("c1");
-    enqueuePrompt("c1", "once");
+    enqueuePrompt("c1", "once", "m-test");
     mockSendPromptTo.mockResolvedValue("sent");
     drainNext("c1");
     drainNext("c1"); // second call while the first is in flight → guarded
@@ -237,8 +241,8 @@ describe("drainNext", () => {
 
   it("#1 drains FIFO across successive turn ends (one prompt per turn)", async () => {
     resetStore("c1");
-    enqueuePrompt("c1", "P1");
-    enqueuePrompt("c1", "P2");
+    enqueuePrompt("c1", "P1", "m-test");
+    enqueuePrompt("c1", "P2", "m-test");
     mockSendPromptTo.mockResolvedValue("sent");
 
     drainNext("c1"); // first turn_ended
@@ -258,7 +262,7 @@ describe("maybeDrainIfIdle", () => {
   it("drains when the chat is idle with a pending queue", async () => {
     resetStore("c1");
     setThinking("c1", false);
-    enqueuePrompt("c1", "go");
+    enqueuePrompt("c1", "go", "m-test");
     mockSendPromptTo.mockResolvedValueOnce("sent");
     maybeDrainIfIdle("c1");
     await flush();
@@ -269,7 +273,7 @@ describe("maybeDrainIfIdle", () => {
   it("does nothing while a turn is in flight (thinking)", async () => {
     resetStore("c1");
     setThinking("c1", true);
-    enqueuePrompt("c1", "wait");
+    enqueuePrompt("c1", "wait", "m-test");
     maybeDrainIfIdle("c1");
     await flush();
     expect(mockSendPromptTo).not.toHaveBeenCalled();
@@ -288,17 +292,21 @@ describe("maybeDrainIfIdle", () => {
 describe("cancelQueuedPrompt", () => {
   it("removes and returns the entry at the given index", () => {
     resetStore("c1");
-    enqueuePrompt("c1", "a");
-    enqueuePrompt("c1", "b", [{ path: "x.ts", name: "x.ts" }]);
-    enqueuePrompt("c1", "c");
+    enqueuePrompt("c1", "a", "m-test");
+    enqueuePrompt("c1", "b", "m-test", [{ path: "x.ts", name: "x.ts" }]);
+    enqueuePrompt("c1", "c", "m-test");
     const removed = cancelQueuedPrompt("c1", 1);
-    expect(removed).toEqual({ text: "b", attachments: [{ path: "x.ts", name: "x.ts" }] });
+    expect(removed).toEqual({
+      text: "b",
+      attachments: [{ path: "x.ts", name: "x.ts" }],
+      messageId: "m-test",
+    });
     expect(get("c1")?.prompt_queue?.map((e) => e.text)).toEqual(["a", "c"]);
   });
 
   it("returns undefined for an out-of-range index", () => {
     resetStore("c1");
-    enqueuePrompt("c1", "a");
+    enqueuePrompt("c1", "a", "m-test");
     expect(cancelQueuedPrompt("c1", 9)).toBeUndefined();
     expect(queueLength("c1")).toBe(1);
   });

@@ -526,6 +526,7 @@ function accountsForKind(kind: ForgeKind): ConfiguredForge[] {
  *  (li already in DOM, may have stale children). */
 function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
   li.classList.toggle("forge-account-row-error", !a.connected);
+  li.classList.toggle("forge-account-row-missing", a.cli_missing === true);
 
   // Top row: identity + actions.
   const newTop = renderAccountTopRow(a);
@@ -551,11 +552,17 @@ function paintAccountRow(li: HTMLElement, a: ConfiguredForge): void {
 }
 
 function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
+  const cliMissing = a.cli_missing === true;
   const primary = el("span", { className: "forge-account-primary" });
   const hasEmail = a.email !== undefined && a.email !== "";
   const hasUsername = a.username !== undefined && a.username !== "";
   if (hasEmail || hasUsername) {
     primary.textContent = hasEmail ? a.email! : a.username!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  } else if (cliMissing) {
+    // Terminal state, not a loading one: the CLI that could resolve
+    // the identity is uninstalled (kind-level cli_missing rows carry
+    // no username). A skeleton here would shimmer forever.
+    primary.textContent = "Saved connection";
   } else {
     // No identity data yet (this is the first paint right after a
     // PAT submit / OAuth complete; the background probe hasn't
@@ -582,6 +589,13 @@ function renderAccountTopRow(a: ConfiguredForge): HTMLElement {
   }
 
   const actions = el("div", { className: "forge-account-actions" });
+  if (cliMissing) {
+    // No Manage / Sign out: both act through the CLI that is absent.
+    // The last_error line (rendered above) carries the reinstall
+    // pointer; the row becomes actionable again once the CLI returns
+    // and discovery promotes it back to a live account.
+    return el("div", { className: "forge-account-row-top" }, id, actions);
+  }
 
   const manageURL = manageAccountURL(a.kind, a.host);
   if (manageURL !== "") {

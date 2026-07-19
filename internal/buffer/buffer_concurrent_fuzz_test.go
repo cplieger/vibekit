@@ -43,12 +43,12 @@ func FuzzBufferConcurrentBlockAppend(f *testing.F) {
 				for _, op := range chunk {
 					switch op % 3 {
 					case 0:
-						idx := buf.AppendTextDelta("t", "")
+						idx, _ := buf.AppendTextDelta("t", "")
 						if idx < 0 {
 							t.Errorf("AppendTextDelta returned negative index: %d", idx)
 						}
 					case 1:
-						idx := buf.AppendThinkingDelta("r", "")
+						idx, _ := buf.AppendThinkingDelta("r", "")
 						if idx < 0 {
 							t.Errorf("AppendThinkingDelta returned negative index: %d", idx)
 						}

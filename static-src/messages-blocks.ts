@@ -49,6 +49,7 @@ import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group
 // path (initToolCallbacks) — the same header renderer the block dispatcher uses.
 export { refreshGroupHeader };
 import { humanName } from "./strings.js";
+import { iconForSubagent } from "./roles.js";
 
 // ---------------------------------------------------------------------------
 // Callbacks injected by messages.ts (kept there so avatar markup + the
@@ -334,9 +335,10 @@ function mountTodo(msgId: string, container: HTMLElement, tc: ToolCall): void {
   });
 }
 
-/** Wire the subagent invocation tool's status/name onto its block header. */
+/** Wire the subagent invocation tool's status/name/icon onto its block header. */
 function bindSubagent(msgId: string, sa: SubagentView, tc: ToolCall): void {
   sa.setName(subagentLabel(tc));
+  sa.setIcon(iconForSubagent(subagentName(tc)));
   sa.setStatus(tc.status);
   const sig = ensureToolCallSig(tc.id, tc);
   let last = tc;
@@ -351,6 +353,7 @@ function bindSubagent(msgId: string, sa: SubagentView, tc: ToolCall): void {
     const label = subagentLabel(next);
     if (label !== subagentLabel(last)) {
       sa.setName(label);
+      sa.setIcon(iconForSubagent(subagentName(next)));
     }
     last = next;
   });
@@ -453,17 +456,28 @@ function subagentLabel(tc: ToolCall): string {
       return name;
     }
   }
-  const input = tc.input;
-  if (input !== undefined && input !== null && typeof input === "object") {
-    const nm = (input as Record<string, unknown>)["name"];
-    if (typeof nm === "string" && nm !== "") {
-      return humanName(nm);
-    }
+  const nm = subagentName(tc);
+  if (nm !== "") {
+    return humanName(nm);
   }
   if (title !== "" && title !== "invokeSubAgent" && title !== "invoke_sub_agent") {
     return title;
   }
   return "Subagent";
+}
+
+/** The raw subagent id from the invocation tool's input (e.g. "introspect",
+ *  "context-gatherer"), or "" when the input carries none. Keys the header
+ *  icon (roles.ts iconForSubagent); subagentLabel humanizes the same value. */
+function subagentName(tc: ToolCall): string {
+  const input = tc.input;
+  if (input !== undefined && input !== null && typeof input === "object") {
+    const nm = (input as Record<string, unknown>)["name"];
+    if (typeof nm === "string") {
+      return nm;
+    }
+  }
+  return "";
 }
 
 /** kiro-cli's todo tracker surfaces as a `todo_list` tool call. Match the tool

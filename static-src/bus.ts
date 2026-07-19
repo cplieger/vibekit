@@ -17,11 +17,13 @@ import { createBus } from "@cplieger/reactive";
 import type {
   ServerEvent,
   ChatHeader,
+  ConflictDetectedPayload,
   Message,
   MessageChunkPayload,
   ToolCallPayload,
   ToolCallUpdatePayload,
   TurnEndedPayload,
+  TurnStatePayload,
   PermissionNeeded,
   ErrorPayload,
   ConnectedPayload,
@@ -68,6 +70,7 @@ export interface SSEPayloads {
   readonly tool_call: ToolCallPayload;
   readonly tool_call_update: ToolCallUpdatePayload;
   readonly turn_ended: TurnEndedPayload;
+  readonly turn_state: TurnStatePayload;
   readonly permission_needed: PermissionNeeded;
   readonly permissions_changed: PermissionsChangedPayload;
   readonly policy_error: PolicyErrorPayload;
@@ -105,14 +108,7 @@ export interface SSEPayloads {
     readonly signal?: string;
   };
   readonly checkpoint_restored: { readonly tag: string; readonly message_count: number };
-  readonly conflict_detected: {
-    readonly path: string;
-    readonly other_chat: string;
-    readonly expected_sha: string;
-    readonly actual_sha: string;
-    readonly tag: string;
-    readonly ts: number;
-  };
+  readonly conflict_detected: ConflictDetectedPayload;
   readonly forges_changed: undefined;
   readonly hooks_changed: undefined;
   readonly tool_job_changed: ToolJobChangedPayload;

@@ -12,7 +12,7 @@ import { openDialog } from "@cplieger/ui-primitives/dialog";
 import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
 import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
-import { addWhitelistEntry } from "./permissions-ui.js";
+import { editNativeRule } from "./actions/permissions.js";
 
 const approvalEl = $.toolApproval;
 
@@ -131,8 +131,20 @@ function formatInputPreview(input: unknown): string {
   return text;
 }
 
-/** Build the "Always allow..." expansion for shell commands. Returns null
- *  if the command can't be decomposed into useful presets. */
+/** Characters that make a command's full-string pattern meaningless to the
+ *  native policy engine: it evaluates tree-sitter-split SUBCOMMANDS, so a
+ *  pattern spanning shell operators can never match; `?` is a glob there
+ *  (broader than intended) and `\` is rewritten to `/`. */
+const UNREPRESENTABLE_RE = /[;&|`$><\\"'?\n\r]/;
+
+/** Build the "Always allow..." expansion for shell commands: each preset
+ *  persists a workspace-scope native allow rule (the same permissions.yaml
+ *  the Settings → Permissions editor writes; KAS hot-reloads it), then
+ *  approves the pending request. Mirrors the IDE's trust patterns — base
+ *  command, base + flags, exact — skipping a leading `sudo`. Returns null
+ *  when nothing useful can be offered (no allow option, or the command
+ *  contains shell structure the engine evaluates per-subcommand, where a
+ *  full-string pattern could never match). */
 function buildAlwaysAllowRow(
   command: string,
   options: PermissionOption[],
@@ -143,28 +155,61 @@ function buildAlwaysAllowRow(
     return null;
   }
 
-  const parts = command.trim().split(/\s+/);
-  if (parts.length === 0) {
+  const trimmed = command.trim();
+  if (UNREPRESENTABLE_RE.test(trimmed)) {
     return null;
   }
-  const base = parts[0] ?? "";
+  const parts = trimmed.split(/\s+/);
+  // Mirror the IDE: derive patterns from the real command, not the sudo
+  // wrapper (a `sudo *` allow would be far broader than intended).
+  const baseIdx = parts[0] === "sudo" && parts.length > 1 ? 1 : 0;
+  const base = parts[baseIdx] ?? "";
   if (base === "") {
     return null;
   }
+  const effective = parts.slice(baseIdx);
 
-  // Build preset patterns: base command, base + flags, exact, wildcard.
-  const presets: string[] = [];
-  presets.push(`${base} *`);
-  if (parts.length > 1) {
-    // "base flags *" if there are flags before the last arg.
-    const withFlags = parts.slice(0, -1).join(" ") + " *";
+  // Preset patterns: base, base + flags, exact.
+  const presets: string[] = [`${base} *`];
+  if (effective.length > 1) {
+    const withFlags = effective.slice(0, -1).join(" ") + " *";
     if (withFlags !== `${base} *`) {
       presets.push(withFlags);
     }
-    presets.push(command.trim());
+    presets.push(effective.join(" "));
   }
 
   const body = el("div", { className: "always-allow-body" });
+
+  // Persist the allow rule, then approve. The approval WAITS for the rule
+  // write: guard_resource makes the server refuse when an explicit ask rule
+  // covers this command (the allow would be shadowed), and a failed write
+  // leaves the dialog open — the user can still Allow once. Buttons disable
+  // while the write is in flight so a double-click can't double-fire.
+  const persistThenApprove = async (pattern: string): Promise<void> => {
+    const buttons = body.querySelectorAll("button");
+    for (const b of buttons) {
+      b.disabled = true;
+    }
+    const res = await editNativeRule.dispatch({
+      op: "add",
+      scope: "workspace",
+      capability: "shell",
+      effect: "allow",
+      match: [pattern],
+      guard_resource: trimmed,
+    });
+    if (res === null || res.error !== undefined) {
+      // Write failed (or was refused): the action's toast explains why.
+      // Leave the permission pending; re-enable for another choice.
+      for (const b of buttons) {
+        b.disabled = false;
+      }
+      return;
+    }
+    onSelect(allowOpt.option_id);
+    hidePermission();
+  };
 
   for (const pattern of presets) {
     const row = el(
@@ -173,9 +218,7 @@ function buildAlwaysAllowRow(
       el("code", null, pattern),
     );
     row.addEventListener("click", () => {
-      void addWhitelistEntry(pattern);
-      onSelect(allowOpt.option_id);
-      hidePermission();
+      void persistThenApprove(pattern);
     });
     body.appendChild(row);
   }
@@ -193,9 +236,7 @@ function buildAlwaysAllowRow(
     if (val === "") {
       return;
     }
-    void addWhitelistEntry(val);
-    onSelect(allowOpt.option_id);
-    hidePermission();
+    void persistThenApprove(val);
   });
   body.appendChild(el("div", { className: "always-allow-custom" }, input, addBtn));
 

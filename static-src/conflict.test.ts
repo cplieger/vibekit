@@ -60,7 +60,7 @@ describe("parseConflicts", () => {
       },
     },
     {
-      name: "diff3 base section kept in ours",
+      name: "diff3 base section excluded from ours",
       input: [
         "<<<<<<< HEAD",
         "ours",
@@ -73,9 +73,31 @@ describe("parseConflicts", () => {
       ].join("\n"),
       expectedHunkCount: 1,
       check(f) {
-        // base section is part of oursLines (between <<<<<<< and =======)
-        expect(f.hunks[0]!.oursLines).toEqual(["ours", "||||||| base", "base content"]);
+        // The base section (ancestor content) belongs to NO side: ours
+        // stops at the ||||||| marker so a resolution can never splice
+        // the marker line or ancestor lines into the file.
+        expect(f.hunks[0]!.oursLines).toEqual(["ours"]);
         expect(f.hunks[0]!.theirsLines).toEqual(["theirs"]);
+      },
+    },
+    {
+      name: "diff3 labeled base marker excluded, multi-line base",
+      input: [
+        "<<<<<<< HEAD",
+        "mine 1",
+        "mine 2",
+        "||||||| merged common ancestors",
+        "old 1",
+        "old 2",
+        "=======",
+        "theirs 1",
+        ">>>>>>> feature/x",
+        "",
+      ].join("\n"),
+      expectedHunkCount: 1,
+      check(f) {
+        expect(f.hunks[0]!.oursLines).toEqual(["mine 1", "mine 2"]);
+        expect(f.hunks[0]!.theirsLines).toEqual(["theirs 1"]);
       },
     },
     {

@@ -39,12 +39,25 @@ export function stats(lines: DiffLine[]): DiffStats {
   return s;
 }
 
-/** Split on \n, keeping empty trailing line if text ended with \n. */
+/** Split on \n, keeping empty trailing line if text ended with \n.
+ *  CRLF content is normalized by stripping the trailing \r from each
+ *  line: consumers own the rejoin EOL (buildPartialMergeText joins with
+ *  detectEOL(original)), so lines carrying \r would double the CR on
+ *  reconstruction — and the \r is invisible-but-real in rendered diffs. */
 function splitLines(s: string): string[] {
   if (s === "") {
     return [];
   }
-  return s.split("\n");
+  const lines = s.split("\n");
+  if (s.includes("\r")) {
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i]!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      if (l.endsWith("\r")) {
+        lines[i] = l.slice(0, -1);
+      }
+    }
+  }
+  return lines;
 }
 
 /**
@@ -52,6 +65,16 @@ function splitLines(s: string): string[] {
  * 4M cells ≈ 32MB for the dense table — safe for browser tabs.
  */
 const SPACE_THRESHOLD = 4_000_000;
+
+/**
+ * Time budget for the exact algorithms, in m×n cells. SPACE_THRESHOLD
+ * only bounds memory — both LCS and Hirschberg are O(mn) TIME on the
+ * main thread, and the 2 MiB server file cap admits inputs far past
+ * the "<10k lines" header comment. Inputs whose (prefix/suffix-trimmed)
+ * middle exceeds this fall back to a coarse but valid del-all/add-all
+ * edit script instead of freezing the tab. ~25M cells ≈ tens of ms.
+ */
+const TIME_BUDGET_CELLS = 25_000_000;
 
 /** Dense LCS table, bottom-up. O(mn) space — used only for small inputs. */
 function lcsTable(a: string[], b: string[]): number[][] {
@@ -214,35 +237,109 @@ export function lineDiff(
   const aNorm = opts.ignoreWhitespace === true ? a.map(normalize) : a;
   const bNorm = opts.ignoreWhitespace === true ? b.map(normalize) : b;
 
-  // Use linear-space Hirschberg for large inputs to avoid OOM.
-  if (aNorm.length * bNorm.length > SPACE_THRESHOLD) {
-    return hirschbergDiff(aNorm, 0, aNorm.length, bNorm, 0, bNorm.length, a, b, 0, 0);
+  // Common prefix/suffix trim (compared on normalized lines): real edits
+  // cluster, so this collapses most of the m×n area before any exact
+  // algorithm runs, and bounds the budget check below to the genuinely
+  // differing middle.
+  let p = 0;
+  const maxTrim = Math.min(a.length, b.length);
+  while (p < maxTrim && aNorm[p] === bNorm[p]) {
+    p++;
+  }
+  let s = 0;
+  while (s < maxTrim - p && aNorm[a.length - 1 - s] === bNorm[b.length - 1 - s]) {
+    s++;
   }
 
-  const t = lcsTable(aNorm, bNorm);
+  const out: DiffLine[] = [];
+  for (let k = 0; k < p; k++) {
+    out.push({ kind: "ctx", oldNo: k + 1, newNo: k + 1, text: a[k]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  }
+  out.push(...diffMiddle(a, b, aNorm, bNorm, p, s));
+  for (let k = 0; k < s; k++) {
+    const ai = a.length - s + k;
+    const bi = b.length - s + k;
+    out.push({ kind: "ctx", oldNo: ai + 1, newNo: bi + 1, text: a[ai]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  }
+  return out;
+}
+
+/** Diff the trimmed middle a[p..len-s) vs b[p..len-s), picking the exact
+ *  algorithm by size — or the bounded del-all/add-all fallback when even
+ *  the trimmed middle would blow the main-thread time budget. */
+function diffMiddle(
+  a: string[],
+  b: string[],
+  aNorm: string[],
+  bNorm: string[],
+  p: number,
+  s: number,
+): DiffLine[] {
+  const aHi = a.length - s;
+  const bHi = b.length - s;
+  const m = aHi - p;
+  const n = bHi - p;
+  if (m === 0 && n === 0) {
+    return [];
+  }
+
+  // Time-budget fallback: a coarse but valid edit script (delete the
+  // whole old middle, add the whole new middle). Reconstruction
+  // consumers (buildPartialMergeText) hold for any valid script; the
+  // cost is hunk granularity, which is the honest trade at this size.
+  if (m * n > TIME_BUDGET_CELLS) {
+    const out: DiffLine[] = [];
+    for (let i = p; i < aHi; i++) {
+      out.push({ kind: "del", oldNo: i + 1, newNo: 0, text: a[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    }
+    for (let j = p; j < bHi; j++) {
+      out.push({ kind: "add", oldNo: 0, newNo: j + 1, text: b[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    }
+    return out;
+  }
+
+  // Use linear-space Hirschberg for large inputs to avoid OOM.
+  if (m * n > SPACE_THRESHOLD) {
+    return hirschbergDiff(
+      aNorm.slice(p, aHi),
+      0,
+      m,
+      bNorm.slice(p, bHi),
+      0,
+      n,
+      a.slice(p, aHi),
+      b.slice(p, bHi),
+      p,
+      p,
+    );
+  }
+
+  const aNormMid = aNorm.slice(p, aHi);
+  const bNormMid = bNorm.slice(p, bHi);
+  const t = lcsTable(aNormMid, bNormMid);
   const out: DiffLine[] = [];
 
   let i = 0;
   let j = 0;
-  while (i < a.length && j < b.length) {
-    if (aNorm[i] === bNorm[j]) {
-      out.push({ kind: "ctx", oldNo: i + 1, newNo: j + 1, text: a[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  while (i < m && j < n) {
+    if (aNormMid[i] === bNormMid[j]) {
+      out.push({ kind: "ctx", oldNo: p + i + 1, newNo: p + j + 1, text: a[p + i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       i++;
       j++;
     } else if ((t[i + 1]?.[j] ?? 0) >= (t[i]?.[j + 1] ?? 0)) {
-      out.push({ kind: "del", oldNo: i + 1, newNo: 0, text: a[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      out.push({ kind: "del", oldNo: p + i + 1, newNo: 0, text: a[p + i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       i++;
     } else {
-      out.push({ kind: "add", oldNo: 0, newNo: j + 1, text: b[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+      out.push({ kind: "add", oldNo: 0, newNo: p + j + 1, text: b[p + j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
       j++;
     }
   }
-  while (i < a.length) {
-    out.push({ kind: "del", oldNo: i + 1, newNo: 0, text: a[i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  while (i < m) {
+    out.push({ kind: "del", oldNo: p + i + 1, newNo: 0, text: a[p + i]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     i++;
   }
-  while (j < b.length) {
-    out.push({ kind: "add", oldNo: 0, newNo: j + 1, text: b[j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
+  while (j < n) {
+    out.push({ kind: "add", oldNo: 0, newNo: p + j + 1, text: b[p + j]! }); // eslint-disable-line @typescript-eslint/no-non-null-assertion
     j++;
   }
   return out;

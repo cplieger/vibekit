@@ -216,3 +216,59 @@ func TestSignatureOrderIndependent(t *testing.T) {
 		t.Error("signature must be order-independent for match globs")
 	}
 }
+
+// --- ReplaceEffect (in-place effect editing) ---
+
+func TestReplaceEffect(t *testing.T) {
+	base := func() *File {
+		return &File{Rules: []Rule{
+			{Capability: "fs_write", Effect: "deny", Match: []string{"**/.git/**"}},
+			{Capability: "shell", Effect: "ask", Match: []string{"rm *"}},
+			{Capability: "web_fetch", Effect: "allow"},
+		}}
+	}
+
+	t.Run("changes_effect_in_place_preserving_position", func(t *testing.T) {
+		f := base()
+		old := Rule{Capability: "shell", Effect: "ask", Match: []string{"rm *"}}
+		if !f.ReplaceEffect(&old, "deny") {
+			t.Fatal("ReplaceEffect = false, want true")
+		}
+		if len(f.Rules) != 3 {
+			t.Fatalf("rules = %d, want 3 (in-place, not remove+append)", len(f.Rules))
+		}
+		if f.Rules[1].Effect != "deny" || f.Rules[1].Match[0] != "rm *" {
+			t.Errorf("rules[1] = %+v, want the shell rule updated at index 1", f.Rules[1])
+		}
+	})
+
+	t.Run("absent_rule_returns_false", func(t *testing.T) {
+		f := base()
+		old := Rule{Capability: "shell", Effect: "allow", Match: []string{"rm *"}}
+		if f.ReplaceEffect(&old, "deny") {
+			t.Error("ReplaceEffect on absent rule = true, want false")
+		}
+	})
+
+	t.Run("same_effect_is_noop", func(t *testing.T) {
+		f := base()
+		old := Rule{Capability: "web_fetch", Effect: "allow"}
+		if f.ReplaceEffect(&old, "allow") {
+			t.Error("ReplaceEffect to same effect = true, want false")
+		}
+	})
+
+	t.Run("collapses_into_existing_duplicate", func(t *testing.T) {
+		f := &File{Rules: []Rule{
+			{Capability: "shell", Effect: "ask", Match: []string{"rm *"}},
+			{Capability: "shell", Effect: "deny", Match: []string{"rm *"}},
+		}}
+		old := Rule{Capability: "shell", Effect: "ask", Match: []string{"rm *"}}
+		if !f.ReplaceEffect(&old, "deny") {
+			t.Fatal("ReplaceEffect = false, want true (old removed, duplicate kept)")
+		}
+		if len(f.Rules) != 1 || f.Rules[0].Effect != "deny" {
+			t.Errorf("rules = %+v, want single deny rule (no duplicate)", f.Rules)
+		}
+	})
+}

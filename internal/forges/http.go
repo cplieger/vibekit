@@ -219,8 +219,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		return
 	}
 	var body struct {
-		Token    string `json:"token"`
-		Username string `json:"username"`
+		Token string `json:"token"`
 	}
 	api.LimitBody(w, r, api.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -228,10 +227,9 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		return
 	}
 	if err := LoginWithPAT(r.Context(), LoginPATParams{
-		Kind:     kind,
-		Host:     host,
-		Token:    body.Token,
-		Username: body.Username,
+		Kind:  kind,
+		Host:  host,
+		Token: body.Token,
 	}); err != nil {
 		// Return the validation failure as a 2xx {error} envelope (vibekit
 		// convention): the client's apiPost/action layer collapses any non-2xx

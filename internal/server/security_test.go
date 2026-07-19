@@ -115,62 +115,27 @@ func BenchmarkSecurityMiddleware(b *testing.B) {
 	})
 }
 
-// TestImportMapHashToken: extracts the inline importmap from the real
-// embedded HTML and confirms the produced sha256 token matches a manual
-// recomputation. This guards the parsing + hashing logic, not any
-// hardcoded literal.
-func TestImportMapHashToken(t *testing.T) {
-	html, err := os.ReadFile(filepath.Join("..", "..", "static", "index.html"))
-	if err != nil {
-		t.Fatalf("read static/index.html: %v", err)
-	}
-	got, err := importMapHashToken(html)
-	if err != nil {
-		t.Fatalf("importMapHashToken: %v", err)
-	}
-	// Manual recomputation as a sanity check: the function does what
-	// the docstring says, against the real file.
-	re := regexp.MustCompile(`(?s)<script type="importmap">(.*?)</script>`)
-	m := re.FindSubmatch(html)
-	if m == nil {
-		t.Fatal("no importmap block in test fixture")
-	}
-	sum := sha256.Sum256(m[1])
-	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-	if got != want {
-		t.Errorf("importMapHashToken = %q, want %q", got, want)
-	}
-}
-
-// TestImportMapHashToken_Missing: index.html without an importmap block
-// returns an error rather than a misleading empty hash.
-func TestImportMapHashToken_Missing(t *testing.T) {
-	if _, err := importMapHashToken([]byte("<html><body>no importmap here</body></html>")); err == nil {
-		t.Error("expected error for HTML with no importmap, got nil")
-	}
-}
-
 // TestBuildCSPPolicy: against a synthetic FS, the produced CSP contains
-// the expected sha256 tokens derived from BOTH inline <head> scripts (the
-// importmap and the anti-FOUC theme-init). Covers the whole startup path
-// used by ListenAndServe.
+// the expected sha256 token derived from the page's one inline <head>
+// script (the anti-FOUC theme-init; the importmap died with the
+// pre-bundler pipeline). Covers the whole startup path used by
+// ListenAndServe. The importmap-free fixture also pins the new
+// contract: HTML with no importmap builds a valid policy.
 func TestBuildCSPPolicy(t *testing.T) {
-	importMap := `{"imports":{"x":"/y.mjs"}}`
 	themeInit := `(function(){document.documentElement.setAttribute("data-theme","dark");})();`
-	html := []byte(`<html><script type="importmap">` + importMap + `</script>` +
-		`<script data-theme-init>` + themeInit + `</script></html>`)
+	html := []byte(`<html>` +
+		`<script data-theme-init>` + themeInit + `</script>` +
+		`<script type="module" src="/app.js"></script></html>`)
 	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
 
 	policy, err := buildCSPPolicy(staticFS)
 	if err != nil {
 		t.Fatalf("buildCSPPolicy: %v", err)
 	}
-	for _, body := range []string{importMap, themeInit} {
-		sum := sha256.Sum256([]byte(body))
-		want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-		if !strings.Contains(policy, want) {
-			t.Errorf("policy missing computed hash.\n  policy: %s\n  want token: %s", policy, want)
-		}
+	sum := sha256.Sum256([]byte(themeInit))
+	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
+	if !strings.Contains(policy, want) {
+		t.Errorf("policy missing computed hash.\n  policy: %s\n  want token: %s", policy, want)
 	}
 }
 

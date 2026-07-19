@@ -703,13 +703,12 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 				t.Fatalf("%s: want result response, got error %v", tc.method, rb.response.err)
 			}
 			if tc.cancelled {
-				m, ok := rb.response.result.(map[string]any)
+				o, ok := rb.response.result.(*api.PermissionOutcome)
 				if !ok {
-					t.Fatalf("%s: result type %T, want map", tc.method, rb.response.result)
+					t.Fatalf("%s: result type %T, want *api.PermissionOutcome", tc.method, rb.response.result)
 				}
-				outcome, ok := m["outcome"].(map[string]any)
-				if !ok || outcome["outcome"] != "cancelled" {
-					t.Fatalf("%s: result = %v, want outcome.outcome=cancelled", tc.method, m)
+				if o.Outcome.Outcome != "cancelled" {
+					t.Fatalf("%s: result = %+v, want outcome.outcome=cancelled", tc.method, o)
 				}
 			}
 		})

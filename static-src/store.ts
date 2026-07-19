@@ -22,6 +22,7 @@ import type {
   Usage,
   ToolCall,
   CodeReference,
+  RefusalInfo,
   FileChange,
   PendingChange,
   QueuedPrompt,
@@ -215,7 +216,12 @@ export function queueLength(id: string): number {
 }
 
 /** Append a prompt (text + its attachments) to the back of the queue. */
-export function enqueuePrompt(id: string, text: string, attachments?: readonly unknown[]): void {
+export function enqueuePrompt(
+  id: string,
+  text: string,
+  messageId: string,
+  attachments?: readonly unknown[],
+): void {
   const s = get(id);
   if (s === undefined) {
     return;
@@ -223,6 +229,7 @@ export function enqueuePrompt(id: string, text: string, attachments?: readonly u
   const entry: QueuedPrompt = {
     text,
     attachments: attachments !== undefined ? [...attachments] : [],
+    messageId,
   };
   const queue = [...(s.prompt_queue ?? []), entry];
   sessions.update(id, (cur) => ({ ...cur, prompt_queue: queue }));
@@ -475,6 +482,9 @@ function mergeMessage(existing: Message, incoming: Message): Message {
   if (incoming.code_references !== undefined && incoming.code_references.length > 0) {
     merged.code_references = incoming.code_references;
   }
+  if (incoming.refusal !== undefined) {
+    merged.refusal = incoming.refusal;
+  }
   if (nonEmptyStr(incoming.checkpoint_tag)) {
     merged.checkpoint_tag = incoming.checkpoint_tag;
   }
@@ -655,6 +665,24 @@ export function setTrustedThisTurn(chatID: string, trusted: boolean): void {
   sessions.update(chatID, (cur) => ({ ...cur, trusted_this_turn: trusted }));
 }
 
+/** Per-chat chunk-sequence watermark from a connect-time turn_state
+ *  snapshot: chunks with seq <= the watermark are already folded into
+ *  the snapshot message and must be dropped, not re-appended. One
+ *  in-flight turn per chat, so the map is keyed by chat id; entries
+ *  clear on turn_ended (handlers/turn.ts) and are naturally superseded
+ *  when a new turn's message id stops matching. */
+const snapshotSeqs = new Map<string, { messageID: string; seq: number }>();
+
+/** Record a turn_state snapshot's chunk watermark for a chat. */
+export function setSnapshotSeq(chatID: string, messageID: string, seq: number): void {
+  snapshotSeqs.set(chatID, { messageID, seq });
+}
+
+/** Drop the chunk watermark (turn finished or chat removed). */
+export function clearSnapshotSeq(chatID: string): void {
+  snapshotSeqs.delete(chatID);
+}
+
 export function appendChunk(
   chatID: string,
   messageID: string,
@@ -662,9 +690,17 @@ export function appendChunk(
   isReasoning: boolean,
   blockIndex: number,
   subtaskID: string,
+  seq = 0,
+  refusal?: RefusalInfo,
 ): void {
   const s = get(chatID);
   if (s === undefined) {
+    return;
+  }
+  // Snapshot dedup: a chunk the connect-time turn_state already folded
+  // in (raced the snapshot on the server side) must not double-append.
+  const wm = snapshotSeqs.get(chatID);
+  if (wm?.messageID === messageID && seq > 0 && seq <= wm.seq) {
     return;
   }
   const mi = getMsgIndex(chatID, s.messages);
@@ -678,6 +714,14 @@ export function appendChunk(
     s.message_count = Math.max(s.message_count, s.messages.length);
     mi.set(messageID, newIdx);
     isNew = true;
+  }
+  let refusalStamped = false;
+  if (refusal !== undefined && msg.refusal === undefined) {
+    // Model refusal (kiro-cli 2.13): the tagged chunk marks the whole turn.
+    // Stamped once; forces a full repaint below so the message-level refusal
+    // callout mounts (per-block signals only carry text deltas).
+    msg.refusal = refusal;
+    refusalStamped = true;
   }
   if (isReasoning) {
     msg.reasoning = (msg.reasoning ?? "") + delta;
@@ -713,6 +757,11 @@ export function appendChunk(
   if (isNew) {
     scheduleMessages();
     return;
+  }
+  if (refusalStamped) {
+    // Message-level state changed (not just a block's text): run the keyed
+    // reconcile so the refusal callout mounts on the streaming message.
+    scheduleMessages();
   }
   // Fire the per-block signal (fine-grained — only the block at blockIndex
   // re-renders) before the legacy per-message signal.

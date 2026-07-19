@@ -79,6 +79,7 @@ import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
 import { initPromptInput } from "./prompt-input.js";
 import { initQueuedPrompts } from "./queued-prompts.js";
+import { initRuntimeHealth } from "./runtime-health.js";
 // commands-menu stripped — slash commands replaced by dedicated UI buttons
 import { refreshContextUI } from "./context-ui.js";
 import { registerAllSSEDecoders } from "./wire/registry.gen.js";
@@ -360,6 +361,10 @@ async function checkAuthAndStart(): Promise<void> {
 
   dismissLoadingScreen();
   initPostAuth();
+
+  // Degraded-runtime probe (kiro-cli missing → app-global banner);
+  // re-checks on every transport gap so recovery self-heals.
+  initRuntimeHealth();
 
   // Pre-conversation catalog so the picker has content before the
   // first chat's session/new lands. Fire-and-forget; session-sourced

@@ -53,26 +53,28 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	d.RespondOK(w, cmd.RequestID)
 }
 
-// CmdDeleteChat removes a chat and cascades to rewind children.
+// CmdDeleteChat removes a chat and cascades to rewind children via the
+// store's DeleteFamily transition (children first, parent last, per-
+// record side-effect teardown through the prepare hook). The response
+// is truthful on partial failure: surviving children are reported
+// instead of the old unconditional OK, and a failed parent delete is a
+// 500 (its children are already gone at that point — retrying deletes
+// the parent alone).
 func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	// Delete any rewind children (chats whose parent_chat_id points here).
-	childChats := d.Chat().ChatStore().ChildrenOf(ctx, cmd.ChatID)
-
-	d.Chat().CleanupChatState(ctx, cmd.ChatID)
-	if err := d.Chat().ChatStore().Delete(ctx, cmd.ChatID); err != nil {
+	failedChildren, err := d.Chat().ChatStore().DeleteFamily(ctx, cmd.ChatID, func(id api.ChatID) {
+		d.Chat().CleanupChatState(ctx, id)
+	})
+	if err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	for _, childID := range childChats {
-		d.Chat().CleanupChatState(ctx, childID)
-		if err := d.Chat().ChatStore().Delete(ctx, childID); err != nil {
-			slog.Error("delete chat: cascade child",
-				"parent", cmd.ChatID, "child", childID, keyError, err)
-		}
+	slog.Info("chat deleted", "chat_id", cmd.ChatID, "failed_children", len(failedChildren))
+	if len(failedChildren) > 0 {
+		d.Respond(w, cmd.RequestID, responseWith(map[string]any{
+			"failed_children": failedChildren,
+		}))
+		return
 	}
-
-	slog.Info("chat deleted", "chat_id", cmd.ChatID, "cascade_children", len(childChats))
 	d.RespondOK(w, cmd.RequestID)
 }
 

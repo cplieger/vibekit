@@ -63,7 +63,7 @@ describe("send-state precedence", () => {
     setActive(id);
     // Make every lower-priority condition true at once.
     setThinking(id, true);
-    enqueuePrompt(id, "hi");
+    enqueuePrompt(id, "hi", "m-test");
     setLastError("boom");
     setSSEStatus("disconnected");
     flushSync();
@@ -119,7 +119,7 @@ describe("send-state disconnected override", () => {
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    enqueuePrompt(id, "hi");
+    enqueuePrompt(id, "hi", "m-test");
     flushSync();
     expect(lastPushed()).toEqual({ kind: "queued" });
 

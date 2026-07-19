@@ -95,11 +95,12 @@ describe("a11y: missing labels", () => {
 });
 
 describe("a11y: permissions rule-form labels (static markup)", () => {
-  // The four Permissions-panel adders (Active policy, Test a decision,
-  // Command rules, Agent ignore) were reworked from unlabeled chip rows into
-  // labeled .rule-form grids (audit C7). Guard the real markup: every
-  // control sits inside a <label> that carries a visible .rf-label, and the
-  // submit affordance is a labeled button, not an icon-only pill.
+  // The Permissions-panel adders (Active policy, Test a decision, Agent
+  // ignore — the legacy Command-rules adder was removed with the P8 Cedar
+  // migration) were reworked from unlabeled chip rows into labeled
+  // .rule-form grids (audit C7). Guard the real markup: every control sits
+  // inside a <label> that carries a visible .rf-label, and the submit
+  // affordance is a labeled button, not an icon-only pill.
   it("every rule-form control has a visible label and a labeled submit button", async () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, join } = await import("node:path");
@@ -119,7 +120,7 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
 
     const forms = Array.from(doc.querySelectorAll<HTMLElement>(".rule-form"));
     const kinds = forms.map((f) => f.getAttribute("data-rule-form"));
-    expect(kinds.sort()).toEqual(["command", "explain", "ignore", "policy"]);
+    expect(kinds.sort()).toEqual(["explain", "ignore", "policy"]);
 
     for (const form of forms) {
       // Grouped + named for assistive tech.
@@ -146,14 +147,11 @@ describe("a11y: permissions rule-form labels (static markup)", () => {
       "native-rule-capability",
       "native-rule-effect",
       "native-rule-match",
+      "native-rule-exclude",
       "native-rule-add",
       "native-explain-capability",
       "native-explain-resource",
       "native-explain-run",
-      "command-rules-mode",
-      "command-rules-priority",
-      "command-rules-input",
-      "command-rules-add",
       "agent-ignore-input",
       "agent-ignore-add",
     ]) {
@@ -275,10 +273,10 @@ describe("a11y: aria-expanded on popover triggers", () => {
 describe("a11y: tool-card aria-expanded on toggle", () => {
   it("tool-toggle button starts with aria-expanded=false and aria-label", async () => {
     vi.resetModules();
-    vi.mock("./scroll.js", () =>
+    vi.doMock("./scroll.js", () =>
       import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
     );
-    vi.mock("./editor-openers.js", () => ({
+    vi.doMock("./editor-openers.js", () => ({
       openFile: () => {
         /* noop */
       },
@@ -286,7 +284,7 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
         /* noop */
       },
     }));
-    vi.mock("./tool-group.js", () => ({
+    vi.doMock("./tool-group.js", () => ({
       trackInProgress: () => {
         /* noop */
       },
@@ -310,10 +308,10 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
 
   it("tool-toggle aria-expanded toggles on click", async () => {
     vi.resetModules();
-    vi.mock("./scroll.js", () =>
+    vi.doMock("./scroll.js", () =>
       import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
     );
-    vi.mock("./editor-openers.js", () => ({
+    vi.doMock("./editor-openers.js", () => ({
       openFile: () => {
         /* noop */
       },
@@ -321,7 +319,7 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
         /* noop */
       },
     }));
-    vi.mock("./tool-group.js", () => ({
+    vi.doMock("./tool-group.js", () => ({
       trackInProgress: () => {
         /* noop */
       },

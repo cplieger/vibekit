@@ -3,6 +3,7 @@ package composition
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,7 +21,9 @@ import (
 //
 // Log: the error propagates through Build() → main() → slog.Error +
 // os.Exit(1). No slog.Warn here — a failed validation is fatal, not
-// a degraded-mode situation.
+// a degraded-mode situation. (The one degraded-mode check, kiro-cli
+// presence, deliberately lives OUTSIDE this function: see
+// warnIfCLIMissing.)
 func validateConfig(cfg *Config) error {
 	var errs []error
 
@@ -37,13 +40,23 @@ func validateConfig(cfg *Config) error {
 		errs = append(errs, fmt.Errorf("KIRO_WORK_DIR=%q: not a directory", cfg.WorkDir))
 	}
 
-	// cliPath must be an executable file (downloaded by entrypoint
-	// before exec-ing vibekit; if missing, every prompt will fail).
-	if err := checkExecutable(cfg.CLIPath, "KIRO_CLI_PATH"); err != nil {
-		errs = append(errs, err)
-	}
-
 	return errors.Join(errs...)
+}
+
+// warnIfCLIMissing is the degraded-start posture (P5, mirroring
+// web-terminal-kiro): a missing kiro-cli must NOT abort boot. The
+// entrypoint downloads the binary before exec-ing vibekit, but a
+// first-boot network failure legitimately leaves it absent — killing
+// the server then would erase the UI, diagnostics, and health signal
+// together (the old `sleep infinity` dead end). The server starts,
+// /api/health reports "kiro-cli unavailable" per probe, the client
+// shows a degraded banner, and a container restart retries the
+// install. Bridge spawns fail loudly in the meantime.
+func warnIfCLIMissing(cfg *Config) {
+	if err := checkExecutable(cfg.CLIPath, "KIRO_CLI_PATH"); err != nil {
+		slog.Warn("starting degraded: kiro-cli unavailable — chats cannot start until it is installed; restart the container to retry the install",
+			"error", err)
+	}
 }
 
 // checkDirWritable verifies dir exists, is a directory, and is

@@ -12,17 +12,6 @@ type PermissionOutcomeInner struct {
 	OptionID string `json:"optionId,omitempty"`
 }
 
-// FindAllowOnce returns the option_id of the first "allow_once" option,
-// or "" if none exists.
-func FindAllowOnce(options []PermissionOption) string {
-	for _, opt := range options {
-		if opt.Kind == PermissionKindAllowOnce || opt.OptionID == PermissionKindAllowOnce {
-			return opt.OptionID
-		}
-	}
-	return ""
-}
-
 // PermissionOutcomeSelected builds the ACP permission-outcome response
 // for a selected option. Single source of truth for the wire shape.
 func PermissionOutcomeSelected(optionID string) *PermissionOutcome {

@@ -36,7 +36,7 @@ func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	var cached *api.GovernanceStatePayload
 	deps.onSetGovernance = func(g api.GovernanceStatePayload) { cp := g; cached = &cp }
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandleGovernanceState(context.Background(), api.ChatID("c1"),
 		govMsg(t, "sess-parent", map[string]any{"isEnterprise": false}))
@@ -84,7 +84,7 @@ func TestHandleGovernanceState_SubagentSkipped(t *testing.T) {
 	cached := false
 	deps.onSetGovernance = func(api.GovernanceStatePayload) { cached = true }
 	deps.parent = "sess-parent"
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandleGovernanceState(context.Background(), api.ChatID("c1"),
 		govMsg(t, "sess-subagent", nil))
@@ -99,7 +99,7 @@ func TestHandleGovernanceState_Malformed(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	cached := false
 	deps.onSetGovernance = func(api.GovernanceStatePayload) { cached = true }
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandleGovernanceState(context.Background(), "c1", &api.RPCResponse{Params: []byte("{")})
 

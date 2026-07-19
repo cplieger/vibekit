@@ -29,6 +29,7 @@ import {
   addPendingChange,
 } from "../store.js";
 import { send as transportSend } from "../transport.js";
+import { clearLastError } from "../send-state.js";
 
 // --- chat.delete ---
 // The tab-close path in the "no retention" mode (retention = 0): closing a
@@ -371,6 +372,30 @@ interface SendPromptArgs {
   attachments?: readonly unknown[];
 }
 
+/** How long a dead prompt POST waits for the user-message SSE echo
+ *  before conceding failure. Covers the race where the connection died
+ *  as the server accepted: the echo is usually already ingested (the
+ *  turn has been streaming for the whole POST lifetime); the wait only
+ *  matters when death and accept were near-simultaneous. */
+const PROMPT_ECHO_GRACE_MS = 2000;
+
+/** True when the server's message_appended echo for the given user
+ *  message id is in the store — proof the prompt was accepted AND that
+ *  SSE is delivering, which outranks a dead POST connection. */
+function promptEchoArrived(chatID: string, messageID: string): boolean {
+  const s = get(chatID);
+  return s?.messages.some((m) => m.id === messageID) ?? false;
+}
+
+/** Check for the prompt echo, allowing one grace window. */
+async function promptEchoed(chatID: string, messageID: string): Promise<boolean> {
+  if (promptEchoArrived(chatID, messageID)) {
+    return true;
+  }
+  await new Promise((resolve) => setTimeout(resolve, PROMPT_ECHO_GRACE_MS));
+  return promptEchoArrived(chatID, messageID);
+}
+
 export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chatID: string }>({
   name: "chat.send_prompt",
   scope: ({ chatID }) => `chat:${chatID}`,
@@ -418,6 +443,18 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
       // send is what lets the drain path re-send a queued prompt without
       // double-enqueuing it (peek → send → remove-on-sent lives in the queue).
       return "queued";
+    }
+    // Dead POST, live SSE (P9 residue): the prompt POST is the one
+    // long-lived connection that can't carry a keepalive, so it can
+    // die (proxy reset, network flap, 15-min timeout) while the turn
+    // it started runs on fine. The POST result is NOT authoritative —
+    // completion is SSE-anchored. If the server's message_appended
+    // echo for OUR message id is in the store (now, or within a short
+    // grace window for the race where the POST died right at accept),
+    // the send succeeded: report "sent" instead of a false failure.
+    if (r.status === 0 && r.code !== "cancelled" && (await promptEchoed(chatID, messageID))) {
+      clearLastError(); // transport already painted the blocked state
+      return "sent";
     }
     throw new ActionError(r.error ?? "send failed", {
       status: r.status,

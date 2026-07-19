@@ -3,6 +3,8 @@ package api
 import (
 	"regexp"
 	"strings"
+
+	"github.com/cplieger/runesafe"
 )
 
 // --- Terminal helpers ---
@@ -51,24 +53,23 @@ func SanitizeUnicode(s string) string {
 
 // isHiddenUnicode reports whether r is an invisible Unicode codepoint
 // used for prompt injection: TAG characters, zero-width spaces/joiners,
-// bidi controls, format controls, and soft hyphens.
+// bidi controls, format controls, and soft hyphens. The bidi set delegates
+// to runesafe.IsBidiControl (the exact unicode.Bidi_Control set), which
+// also covers U+061C ARABIC LETTER MARK — a gap in the previous hand-rolled
+// ranges, which had drifted from the full Bidi_Control set.
 func isHiddenUnicode(r rune) bool {
 	if r >= 0xE0000 && r <= 0xE007F {
 		return true // TAG characters
 	}
+	if runesafe.IsBidiControl(r) {
+		return true // bidi marks/embeddings/overrides/isolates (Trojan Source)
+	}
 	switch r {
 	case 0x00AD, // soft hyphen
 		0x200B, 0x200C, 0x200D, // zero-width space/non-joiner/joiner
-		0x200E, 0x200F, // LTR/RTL marks
 		0xFEFF,                                 // BOM / zero-width no-break space
 		0x2060, 0x2061, 0x2062, 0x2063, 0x2064: // word joiner + invisible math
 		return true
-	}
-	if r >= 0x202A && r <= 0x202E {
-		return true // bidi embedding/override
-	}
-	if r >= 0x2066 && r <= 0x2069 {
-		return true // bidi isolate
 	}
 	return false
 }

@@ -335,3 +335,38 @@ func (f *File) Remove(r *Rule) bool {
 	}
 	return false
 }
+
+// ReplaceEffect changes the effect of the rule matching old (by Signature)
+// IN PLACE, preserving its position in the file — one atomic mutation, so
+// an in-place edit can never half-apply the way a client-side remove+add
+// could. When the resulting rule would duplicate an existing one, the old
+// rule is removed instead (the duplicate already expresses the target
+// state). Returns true if the file changed: false means the old rule is
+// absent or the effect is already effect.
+func (f *File) ReplaceEffect(old *Rule, effect string) bool {
+	sig := Signature(old)
+	idx := -1
+	for i := range f.Rules {
+		if Signature(&f.Rules[i]) == sig {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	next := f.Rules[idx]
+	next.Effect = effect
+	nextSig := Signature(&next)
+	if nextSig == sig {
+		return false // same effect — nothing to change
+	}
+	for i := range f.Rules {
+		if i != idx && Signature(&f.Rules[i]) == nextSig {
+			f.Rules = append(f.Rules[:idx], f.Rules[idx+1:]...)
+			return true
+		}
+	}
+	f.Rules[idx].Effect = effect
+	return true
+}

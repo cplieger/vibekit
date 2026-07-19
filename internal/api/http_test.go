@@ -252,6 +252,7 @@ func TestIsHiddenUnicode_classifies_every_branch(t *testing.T) {
 		{"invisible times", 0x2062, true},
 		{"invisible separator", 0x2063, true},
 		{"invisible plus", 0x2064, true},
+		{"bidi ALM singleton", 0x061C, true},
 		{"bidi embedding lower", 0x202A, true},
 		{"bidi embedding mid", 0x202C, true},
 		{"bidi embedding upper", 0x202E, true},

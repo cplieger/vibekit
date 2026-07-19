@@ -42,11 +42,23 @@ type Buffer struct {
 	MessageID      string
 	Content        strings.Builder
 	Reasoning      strings.Builder
+	// Refusal marks the in-flight turn as a model refusal (kiro-cli 2.13):
+	// set once from the refusal explanation chunk's _meta.kiro.refusal,
+	// persisted onto the final assistant message at turn end. Guarded by mu.
+	Refusal        *api.RefusalInfo
 	ToolCalls      []api.ToolCall
 	Blocks         []api.Block
 	CodeReferences []api.CodeReference
-	mu             sync.Mutex
-	Started        bool
+	// chunkSeq counts text/thinking deltas this turn (1-based). Each
+	// broadcast chunk carries its value (MessageChunkPayload.Seq) so
+	// the connect-time turn_state snapshot can carry a watermark and
+	// clients can drop deltas the snapshot already folded in. Guarded
+	// by mu like the blocks it counts; read only via the Append*Delta
+	// return values (the hub's turn mirror, not this buffer, is the
+	// cross-goroutine snapshot surface).
+	chunkSeq int64
+	mu       sync.Mutex
+	Started  bool
 }
 
 // AppendCodeReferences merges refs into the turn's licensed-code
@@ -78,25 +90,41 @@ func (buf *Buffer) AppendCodeReferences(refs []api.CodeReference) []api.CodeRefe
 	return out
 }
 
+// SetRefusal records the turn's model-refusal metadata (first write wins —
+// KAS emits at most one refusal chunk per turn, so a duplicate is a replay
+// and keeps the original).
+func (buf *Buffer) SetRefusal(r *api.RefusalInfo) {
+	if r == nil {
+		return
+	}
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	if buf.Refusal == nil {
+		buf.Refusal = r
+	}
+}
+
 // AppendTextDelta extends the last text block with a delta, or starts
 // a new text block if the trailing block isn't text. Returns the index
 // of the (possibly new) text block — broadcast on
 // MessageChunkPayload.BlockIndex so the client knows which block the
-// delta belongs to.
+// delta belongs to — and the delta's sequence number (broadcast as
+// MessageChunkPayload.Seq; see the chunkSeq field).
 //
 // subtaskID attributes the block to the agent that produced it ("" =
 // top-level agent). A trailing text block is only extended when it
 // belongs to the SAME subtask; a differing subtask starts a new block
 // so a subagent's text never merges into the parent's trailing block.
-func (buf *Buffer) AppendTextDelta(delta, subtaskID string) int {
+func (buf *Buffer) AppendTextDelta(delta, subtaskID string) (idx int, seq int64) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
+	buf.chunkSeq++
 	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockText && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
 		buf.Blocks[n-1].Text += delta
-		return n - 1
+		return n - 1, buf.chunkSeq
 	}
 	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockText, Text: delta, AgentSubtaskID: subtaskID})
-	return len(buf.Blocks) - 1
+	return len(buf.Blocks) - 1, buf.chunkSeq
 }
 
 // AppendThinkingDelta is the BlockThinking analogue of AppendTextDelta.
@@ -105,15 +133,16 @@ func (buf *Buffer) AppendTextDelta(delta, subtaskID string) int {
 // subagent's reasoning starts its own block rather than merging into
 // the parent's trailing thinking block. subtaskID attributes the block
 // to the producing agent ("" = top-level).
-func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) int {
+func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) (idx int, seq int64) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
+	buf.chunkSeq++
 	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockThinking && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
 		buf.Blocks[n-1].Thinking += delta
-		return n - 1
+		return n - 1, buf.chunkSeq
 	}
 	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockThinking, Thinking: delta, AgentSubtaskID: subtaskID})
-	return len(buf.Blocks) - 1
+	return len(buf.Blocks) - 1, buf.chunkSeq
 }
 
 // AppendToolUseBlock records a new tool_use block referencing the
@@ -207,6 +236,7 @@ func (buf *Buffer) WritePartial(ctx context.Context) {
 		ToolCalls:      buf.ToolCalls,
 		Blocks:         buf.Blocks,
 		CodeReferences: buf.CodeReferences,
+		Refusal:        buf.Refusal,
 		Ts:             time.Now().UnixMilli(),
 	})
 }

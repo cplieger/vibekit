@@ -162,8 +162,7 @@
                   <circle cx="10" cy="10" r="8" fill="none" stroke="var(--c-border)" stroke-width="2.5"/>
                   <circle id="context-ring-fill" cx="10" cy="10" r="8" fill="none" stroke="var(--c-green)"
                     stroke-width="2.5" stroke-dasharray="50.27" stroke-dashoffset="50.27"
-                    stroke-linecap="round" transform="rotate(-90 10 10)"
-                    style="transition: stroke-dashoffset 0.4s, stroke 0.4s"/>
+                    stroke-linecap="round" transform="rotate(-90 10 10)"/>
                   <!-- Compaction threshold tick: a short radial line at
                        (100 - context_buffer)% of the ring so users can
                        see where auto-compaction will fire. Positioned
@@ -171,8 +170,7 @@
                   <line id="context-ring-tick" x1="10" y1="1" x2="10" y2="3"
                     stroke="var(--c-yellow)" stroke-width="1.5"
                     stroke-linecap="round"
-                    transform="rotate(0 10 10)"
-                    style="transition: transform 0.3s"/>
+                    transform="rotate(0 10 10)"/>
                 </svg>
                 <span id="context-label">0%</span>
                 <span class="pill-expand-content pill-context-content hidden">
@@ -463,9 +461,9 @@
             </div>
           </div>
 
-          <!-- Permissions: active (Cedar) policy + supervised mode + shell command policy -->
+          <!-- Permissions: active (Cedar) policy + supervised mode + agent ignore files -->
           <div class="settings-panel hidden" data-settings-panel="permissions">
-            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces. The layers under it (supervised mode, shell command policy) are vibekit's own complementary controls. Defaults here apply to new conversations; the Supervised pill next to the chat prompt toggles the per-chat review gate.</p>
+            <p class="settings-panel-intro">The <strong>Active policy</strong> below is the live permission policy kiro-cli actually enforces — including shell commands. The layers under it (supervised mode, agent ignore files) are vibekit's own complementary controls. Defaults here apply to new conversations; the Supervised pill next to the chat prompt toggles the per-chat review gate.</p>
 
             <div class="page-section">
               <h3 class="section-title">Active policy</h3>
@@ -499,9 +497,13 @@
                   <span class="rf-label">Match globs <span class="rf-optional">(optional)</span></span>
                   <input id="native-rule-match" class="rf-input rf-mono" type="text" placeholder="src/**, docs/**…">
                 </label>
+                <label class="rf-field rf-grow">
+                  <span class="rf-label">Exclude globs <span class="rf-optional">(optional)</span></span>
+                  <input id="native-rule-exclude" class="rf-input rf-mono" type="text" placeholder="**/secrets/**…">
+                </label>
                 <button id="native-rule-add" class="btn rf-submit" type="button">Add rule</button>
               </div>
-              <p class="section-hint">Leave match empty to apply to the whole capability. Workspace paths are workspace-relative (e.g. <code>src/**</code>); user paths are absolute (e.g. <code>/home/you/project/**</code>).</p>
+              <p class="section-hint">Leave match empty to apply to the whole capability. Workspace paths are workspace-relative (e.g. <code>src/**</code>); user paths are absolute (e.g. <code>/home/you/project/**</code>). Exclusions carve holes out of this rule's match — the way to let a specific allow win over a broader ask.</p>
 
               <details id="native-policy-explain-box">
                 <summary class="section-subtitle native-explain-summary">Test a decision (why?)</summary>
@@ -531,57 +533,8 @@
             </div>
 
             <div class="page-section">
-              <h3 class="section-title">Shell command policy</h3>
-              <p class="section-hint">Controls how shell commands (execute_bash, executePwsh) are handled. Read-only commands like ls, cat, git status always auto-approve in safe mode.</p>
-              <div class="perm-mode-row">
-                <label class="perm-mode">
-                  <input type="radio" name="shell-policy" value="no_commands" id="shell-policy-no-commands">
-                  <span>Block all commands</span>
-                  <span class="section-hint">Reject every shell command. The agent cannot run anything.</span>
-                </label>
-                <label class="perm-mode">
-                  <input type="radio" name="shell-policy" value="safe_commands" id="shell-policy-safe-commands" checked>
-                  <span>Safe commands only</span>
-                  <span class="section-hint">Auto-approve read-only commands; prompt for anything else. Add exceptions below.</span>
-                </label>
-                <label class="perm-mode">
-                  <input type="radio" name="shell-policy" value="all_commands" id="shell-policy-all-commands">
-                  <span>Allow all commands</span>
-                  <span class="section-hint">Auto-approve every shell command. No prompts.</span>
-                </label>
-              </div>
-              <div id="command-rules-section">
-                <h4 class="section-subtitle">Command rules</h4>
-                <p class="section-hint">Per-command overrides. <strong>Allow</strong> auto-approves the pattern under Safe mode (ignored in Allow all / No commands). <strong>Deny</strong> forces a prompt regardless of policy — safety net for destructive one-shots. * is a wildcard.</p>
-                <div id="command-rules-chips" class="chip-list"></div>
-                <div class="rule-form" data-rule-form="command" role="group" aria-label="Add a command rule">
-                  <label class="rf-field">
-                    <span class="rf-label">Mode</span>
-                    <select id="command-rules-mode" class="rf-select">
-                      <option value="allow">Allow</option>
-                      <option value="deny">Deny</option>
-                    </select>
-                  </label>
-                  <label class="rf-field">
-                    <span class="rf-label" title="Higher priority overrides lower-priority rules">Priority</span>
-                    <select id="command-rules-priority" class="rf-select">
-                      <option value="0">Normal</option>
-                      <option value="1">High</option>
-                      <option value="2">Override</option>
-                    </select>
-                  </label>
-                  <label class="rf-field rf-grow">
-                    <span class="rf-label">Pattern</span>
-                    <input id="command-rules-input" class="rf-input rf-mono" type="text" placeholder="e.g. npm * or *filter-repo*">
-                  </label>
-                  <button id="command-rules-add" class="btn rf-submit" type="button">Add rule</button>
-                </div>
-                <p id="command-rules-empty-hint" class="section-hint hidden">
-                  No rules. Add an allow pattern to auto-approve under Safe mode, or a deny pattern to force a prompt even under Allow all.
-                </p>
-              </div>
               <div id="agent-ignore-section">
-                <h4 class="section-subtitle">Agent ignore files</h4>
+                <h3 class="section-title">Agent ignore files</h3>
                 <p class="section-hint">Paths to gitignore-style files. The agent cannot <em>read</em> files matching these patterns (writes are still allowed, same as git). Good for keeping decrypted secrets (<code>.env.dec</code>), build artifacts, and other gitignored files out of the agent's context window. Relative entries resolve against the workspace root.</p>
                 <div id="agent-ignore-chips" class="chip-list"></div>
                 <div class="rule-form" data-rule-form="ignore" role="group" aria-label="Add an agent ignore file">
@@ -629,7 +582,7 @@
 
             <div class="page-section" id="hooks-section">
               <h3 class="section-title">Hooks</h3>
-              <p class="section-hint">Workspace automations in <code>.kiro/hooks/</code>. Toggle to enable or disable a hook; <strong>Run now</strong> runs a command hook and shows its output. Agent hooks run their prompt in a chat. Hook status messages in chat are controlled by the <code>hooks.showStatus</code> toggle in <strong>General</strong>.</p>
+              <p class="section-hint">Automations from the workspace's <code>.kiro/hooks/</code> and the global <code>~/.kiro/hooks/</code> (marked <em>Global</em>; they apply in every workspace). Toggle to enable or disable a hook; <strong>Run now</strong> runs a command hook and shows its output. Agent hooks run their prompt in a chat. Hook status messages in chat are controlled by the <code>hooks.showStatus</code> toggle in <strong>General</strong>.</p>
               <div id="hooks-list" class="list-container"><div class="list-empty">No hooks yet.</div></div>
             </div>
           </div>
@@ -1138,35 +1091,6 @@
     </div>
   </div>
 
-  <script type="importmap">
-    {
-      "imports": {
-        "ansi_up": "/vendor/ansi_up.js",
-        "@cplieger/actions": "/vendor/cplieger-actions/index.js",
-        "@cplieger/fetch": "/vendor/cplieger-fetch/index.js",
-        "@cplieger/reactive": "/vendor/cplieger-reactive/index.js",
-        "@cplieger/web-terminal-engine": "/vendor/cplieger-web-terminal-engine/index.js",
-        "@cplieger/web-terminal-ui": "/vendor/cplieger-web-terminal-ui/index.js",
-        "@cplieger/web-terminal-ui/presets": "/vendor/cplieger-web-terminal-ui/presets.js",
-        "@cplieger/web-terminal-ui/presets/touch": "/vendor/cplieger-web-terminal-ui/presets/touch.js",
-        "@cplieger/ui-primitives/toast": "/vendor/cplieger-ui-primitives/toast/index.js",
-        "@cplieger/ui-primitives/tooltip": "/vendor/cplieger-ui-primitives/tooltip.js",
-        "@cplieger/ui-primitives/confirm": "/vendor/cplieger-ui-primitives/confirm.js",
-        "@cplieger/ui-primitives/ask": "/vendor/cplieger-ui-primitives/ask.js",
-        "@cplieger/ui-primitives/popover": "/vendor/cplieger-ui-primitives/popover.js",
-        "@cplieger/ui-primitives/popup": "/vendor/cplieger-ui-primitives/popup.js",
-        "@cplieger/ui-primitives/focus-trap": "/vendor/cplieger-ui-primitives/focus-trap.js",
-        "@cplieger/ui-primitives/roving-focus": "/vendor/cplieger-ui-primitives/roving-focus.js",
-        "@cplieger/ui-primitives/skeleton": "/vendor/cplieger-ui-primitives/skeleton.js",
-        "@cplieger/ui-primitives/modal": "/vendor/cplieger-ui-primitives/modal.js",
-        "@cplieger/ui-primitives/dialog": "/vendor/cplieger-ui-primitives/dialog.js",
-        "@cplieger/ui-primitives/disclosure": "/vendor/cplieger-ui-primitives/disclosure.js",
-        "@cplieger/ui-primitives/theme": "/vendor/cplieger-ui-primitives/theme.js",
-        "@cplieger/ui-primitives/view-transition": "/vendor/cplieger-ui-primitives/view-transition.js",
-        "@cplieger/ui-primitives/announce": "/vendor/cplieger-ui-primitives/announce.js"
-      }
-    }
-  </script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

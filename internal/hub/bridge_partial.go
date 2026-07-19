@@ -69,6 +69,7 @@ func (h *Hub) RecoverPartials() {
 			ToolCalls:      recoveredToolCalls(r.Snapshot.ToolCalls),
 			Blocks:         r.Snapshot.Blocks,
 			CodeReferences: r.Snapshot.CodeReferences,
+			Refusal:        r.Snapshot.Refusal,
 		}
 		if err := h.chatStore.AppendMessage(ctx, r.ChatID, &msg); err != nil {
 			slog.Warn("partial recovery: append failed", "chat_id", r.ChatID, "error", err)

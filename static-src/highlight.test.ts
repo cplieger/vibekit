@@ -178,6 +178,38 @@ describe("tokenize per language", () => {
 // Edge cases
 // ---------------------------------------------------------------------------
 describe("edge cases", () => {
+  it("python: backtick is not a string delimiter", () => {
+    // Regression: a stray backtick used to open a "string" that swallowed
+    // everything up to the next backtick, mis-highlighting whole blocks.
+    const html = highlightByLang("x = 1  # a `word` in a comment\ny = 2", "py");
+    const spans = extractSpans(html);
+    expect(spans.filter((s) => s.type === "string")).toEqual([]);
+    // The line after the backtick still tokenizes normally.
+    expect(spans.some((s) => s.type === "number" && s.value === "2")).toBe(true);
+  });
+
+  it("go: backtick raw string still highlights", () => {
+    const html = highlightByLang("s := `raw`", "go");
+    const spans = extractSpans(html);
+    expect(spans.some((s) => s.type === "string" && s.value === "`raw`")).toBe(true);
+  });
+
+  it("arithmetic: 1-2 is two number tokens, not one", () => {
+    // Regression: the number loop consumed +/- unconditionally, merging
+    // `1-2` into a single "number" token.
+    const html = highlightByLang("1-2", "go");
+    const spans = extractSpans(html);
+    const numbers = spans.filter((s) => s.type === "number").map((s) => s.value);
+    expect(numbers).toEqual(["1", "2"]);
+  });
+
+  it("exponent signs still bind to the number", () => {
+    const html = highlightByLang("x = 1e-5 + 2E+3", "go");
+    const spans = extractSpans(html);
+    const numbers = spans.filter((s) => s.type === "number").map((s) => s.value);
+    expect(numbers).toEqual(["1e-5", "2E+3"]);
+  });
+
   it("empty input returns empty string", () => {
     expect(highlightByLang("", "go")).toBe("");
   });

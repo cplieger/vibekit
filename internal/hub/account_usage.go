@@ -23,9 +23,10 @@ import (
 )
 
 // accountUsageCallTimeout bounds one _kiro/account/getUsage round-trip.
-// The call holds the single utility mutex across bridge.Call, so without a
-// deadline a wedged getUsage would starve every other utility read (chat
-// auto-rename, explain-error, commit-msg, permissions/list). Matches the
+// The leased utility session issues Calls OUTSIDE its lifecycle mutex
+// (see utility_session.go's concurrent-call model), so this deadline is
+// not about lock starvation — it keeps a wedged getUsage RPC from
+// pinning its caller and the session lease indefinitely. Matches the
 // 45s the knowledge/spec sibling reads use.
 const accountUsageCallTimeout = 45 * time.Second
 

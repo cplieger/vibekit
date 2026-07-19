@@ -1,16 +1,14 @@
 // MCP runtime registry.
 //
-// KIRO-CLI 2.0.1 tui.js:886710603bed3fb6 — payload shapes pinned.
-//
 // Tracks which configured MCP servers kiro-cli has reported as
-// initialised or failed. Populated by translateACPEvent when it sees
-// _kiro.dev/mcp/server_initialized, _kiro.dev/mcp/oauth_request, or
-// _kiro.dev/mcp/server_init_failure notifications; cleared on bridge
-// exit.
+// initialised or failed. Populated from the v3 `_kiro/mcp/status`
+// notification (see internal/translate's MCP handling — the v2
+// `_kiro.dev/mcp/*` notifications named here previously were removed
+// with the v2 wire); cleared on bridge exit.
 //
-// Per-server tool lists are NOT stored here — kiro-cli doesn't include
-// them in server_initialized. Tools are advertised via
-// _kiro.dev/commands/available and consumed by translate_commands.go.
+// Per-server tool lists are NOT stored here — they arrive with the v3
+// slash-command/tool catalog (available_commands_update), not the MCP
+// status stream.
 //
 // The registry is:
 //

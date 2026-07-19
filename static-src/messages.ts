@@ -46,6 +46,7 @@ import { disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
 import { buildEvent, updateEvent, buildSystemFallback } from "./messages-events.js";
 import { attachTurnActions, initTurnActionCallbacks } from "./messages-turn-actions.js";
 import { syncCodeReferences } from "./code-refs.js";
+import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 
 // ---------------------------------------------------------------------------
 // Public re-exports
@@ -149,6 +150,13 @@ initToolCallbacks({
 });
 initTurnActionCallbacks({ svgTemplate });
 initBlockRenderer({ pushStreamingEffect, makeRow });
+// The refusal callout's Rewind CTA reuses the standard rewind flow (confirm →
+// branch → open the new tab). Injected — refusal.ts can't import messages.ts.
+setRefusalRewindHandler((m) => {
+  void handleRewindClick(m).catch((e: unknown) => {
+    console.warn("refusal rewind failed", e);
+  });
+});
 
 /** Mount the chat view. Idempotent. Called once at app boot from app.ts.
  *  Subscribes to store.version and reconciles the message list on every
@@ -320,10 +328,12 @@ const messageSpec: ReconcileSpec<Message> = {
   key: (m) => m.id,
   mount: (m) => {
     const node = buildMessage(m);
-    // Licensed-code attribution footnote. One call site here + in update()
-    // covers mount + update, keyed off m.code_references.
+    // Licensed-code attribution footnote + model-refusal callout. One call
+    // site here + in update() covers mount + update, keyed off
+    // m.code_references / m.refusal.
     if (m.role === "assistant") {
       syncCodeReferences(node, m);
+      syncRefusal(node, m);
     }
     // Only animate genuinely-new appended messages; chat-switch replay
     // and pagination prepends mount silently. See paint() for how
@@ -355,6 +365,7 @@ const messageSpec: ReconcileSpec<Message> = {
     updateMessage(el, m);
     if (m.role === "assistant") {
       syncCodeReferences(el, m);
+      syncRefusal(el, m);
     }
   },
   onRemove: (_el, key) => {

@@ -3,11 +3,11 @@ package buffer
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -19,9 +19,15 @@ const writeThrottleInterval = 500 * time.Millisecond
 // WritingPartial is the active-state handle for the crash-recovery
 // partial file. It is only obtainable via OpenPartial, making it
 // impossible to call Write on an idle or disabled writer at compile time.
+//
+// Each flush replaces the file atomically (temp → fsync → rename via
+// atomicfile) instead of truncate-and-rewrite on one inode: a crash
+// mid-rewrite previously left truncated JSON that RecoverPartialSnapshot
+// dropped as unrecoverable, silently losing the crash-recovery copy of
+// the in-flight turn.
 type WritingPartial struct {
 	lastWrite time.Time
-	file      *os.File
+	path      string
 	disabled  bool
 }
 
@@ -40,18 +46,13 @@ func (wp *WritingPartial) Write(ctx context.Context, snap *PartialSnapshot) {
 		slog.Warn("partial snapshot write failed; "+
 			"further partial updates disabled for this turn",
 			"message_id", snap.MessageID, "error", err)
-		_ = wp.file.Close()
-		wp.file = nil
 		wp.disabled = true
 	}
 }
 
-// CloseAndRemove closes the fd and removes the file at path.
+// CloseAndRemove removes the file at path. (No fd is held between
+// flushes — each Write is an atomic replacement.)
 func (wp *WritingPartial) CloseAndRemove(ctx context.Context, path string) {
-	if wp.file != nil {
-		wp.file.Close()
-		wp.file = nil
-	}
 	if path != "" {
 		if err := ctx.Err(); err != nil {
 			return
@@ -60,46 +61,44 @@ func (wp *WritingPartial) CloseAndRemove(ctx context.Context, path string) {
 	}
 }
 
-func (wp *WritingPartial) writeOnce(_ context.Context, snap *PartialSnapshot) error {
+func (wp *WritingPartial) writeOnce(ctx context.Context, snap *PartialSnapshot) error {
 	data, err := json.Marshal(snap)
 	if err != nil {
 		return err
 	}
-	if _, err := wp.file.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	if err := wp.file.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := wp.file.Write(data); err != nil {
+	if _, err := atomicfile.WriteFile(ctx, wp.path, data, atomicfile.WithMode(0o600)); err != nil {
 		return err
 	}
 	wp.lastWrite = time.Now()
-	return wp.file.Sync()
+	return nil
 }
 
-// OpenPartial transitions from idle to writing by opening the partial
-// file. Returns nil if the file cannot be opened or the context is
-// cancelled — callers check for nil to detect degraded mode.
+// OpenPartial transitions from idle to writing for the partial file at
+// path. Returns nil if path is empty or the context is cancelled —
+// callers check for nil to detect degraded mode. The file itself is
+// created by the first flush (atomically); an open failure surfaces
+// there and disables further writes for the turn.
 func OpenPartial(ctx context.Context, path string) *WritingPartial {
 	if err := ctx.Err(); err != nil {
 		slog.Warn("partial: open skipped (context cancelled)", "path", path, "error", err)
 		return nil
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		slog.Warn("partial: open failed", "path", path, "error", err)
+	if path == "" {
 		return nil
 	}
-	return &WritingPartial{file: f}
+	return &WritingPartial{path: path}
 }
 
 // PartialSnapshot is the JSON shape written to .partial files.
 type PartialSnapshot struct {
-	MessageID string         `json:"message_id"`
-	Content   string         `json:"content"`
-	Reasoning string         `json:"reasoning,omitempty"`
-	ToolCalls []api.ToolCall `json:"tool_calls,omitempty"`
+	// Refusal preserves the model-refusal metadata (kiro-cli 2.13) so a
+	// crash between the refusal chunk and the turn commit still recovers
+	// the refusal callout onto the interrupted assistant message.
+	Refusal   *api.RefusalInfo `json:"refusal,omitempty"`
+	MessageID string           `json:"message_id"`
+	Content   string           `json:"content"`
+	Reasoning string           `json:"reasoning,omitempty"`
+	ToolCalls []api.ToolCall   `json:"tool_calls,omitempty"`
 	// Blocks mirrors Buffer.Blocks so a crash mid-turn preserves the
 	// chronological order. Without this, recovery would reconstruct
 	// the message from Content+ToolCalls only and fall back to the

@@ -22,7 +22,6 @@ const (
 	KeyNotificationsEnabled = "notifications_enabled"
 	KeyNotifyAgentFinished  = "notify_agent_finished"
 	KeyNotifyPermission     = "notify_permission"
-	KeyShellPolicy          = "shell_policy"
 	KeySupervisedDefault    = "supervised_default"
 )
 
@@ -104,7 +103,6 @@ var KnownKeys = map[string]struct{}{
 	KeyNotificationsEnabled: {},
 	KeyNotifyAgentFinished:  {},
 	KeyNotifyPermission:     {},
-	KeyShellPolicy:          {},
 	KeySupervisedDefault:    {},
 }
 

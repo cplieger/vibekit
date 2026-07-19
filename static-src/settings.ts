@@ -18,12 +18,7 @@ import type { AppSettings } from "./persist.js";
 import * as uiState from "./ui-state.js";
 import { initThemeToggle } from "./theme.js";
 import { initSettingsTabs } from "./settings-tabs.js";
-import {
-  initPermissionsUI,
-  initShellPolicyUI,
-  initNativePolicyUI,
-  loadNativePolicy,
-} from "./permissions-ui.js";
+import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { initHooks, loadHooks } from "./hooks.js";
@@ -121,7 +116,6 @@ export function restoreAll(s: AppSettings): void {
   // createTheme controller — it reads the ui-state blob and applies the
   // resolved theme on construction. No separate apply is needed here.
   initPermissionsUI(s);
-  initShellPolicyUI(s);
   initNativePolicyUI();
   initDebugLogsToggle(s);
   initChatRetention(s);

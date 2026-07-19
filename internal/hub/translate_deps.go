@@ -10,7 +10,6 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -88,11 +87,6 @@ func (h *Hub) PendingPermsRemove(requestID int64) {
 // NotifyPush sends a push notification.
 func (h *Hub) NotifyPush(ctx context.Context, body string, kind api.PushKind) {
 	h.coord.NotifyPush(ctx, body, kind)
-}
-
-// PermissionRules returns the shell command rules.
-func (h *Hub) PermissionRules() *permissions.CommandRules {
-	return h.perm.rules
 }
 
 // BufferStore returns the buffer store for streaming handlers.

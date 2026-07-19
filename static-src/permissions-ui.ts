@@ -5,17 +5,14 @@
 //
 //   - PermissionsUIController — vibekit's own complementary controls,
 //     each wired to its settings.json field and re-rendered on change:
-//       * shell_policy        no_commands | safe_commands | all_commands
 //       * supervised_default  boolean
 //       * agent_ignore_files  string[]
-//     (plus the command-rule list, served from /api/permissions/commands).
 //   - NativePolicyController — the native (Cedar) policy VIEW + editor,
 //     the real tool-call authorization surface on v3.
 //
-// The old imperative "tool approval" mode (trust-all | trust-list |
-// prompt, backed by the kiro-cli --trust-all-tools / --trust-tools spawn
-// flags) was removed in 2026-07: those flags are inert on v3 (KAS's Cedar
-// engine ignores them) and fed nothing else. Cedar is the approval surface.
+// Cedar is the sole tool-call authorization surface on v3: there is no
+// client-side shell classifier, no trust modes, and no per-command rule
+// list — the permission dialog's "Always allow" persists a native rule.
 // ---------------------------------------------------------------------------
 
 import { patchSettings } from "./persist.js";
@@ -24,13 +21,7 @@ import { maybeEl } from "./dom.js";
 import { apiGet } from "./api-client.js";
 import { buildChip } from "./chip.js";
 import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import {
-  addRule,
-  removeRule,
-  editNativeRule,
-  explainPolicy,
-  type CommandRule,
-} from "./actions/permissions.js";
+import { editNativeRule, explainPolicy } from "./actions/permissions.js";
 import { reconcile } from "./reconcile.js";
 import { onSSE } from "./bus.js";
 import { confirm } from "./confirm.js";
@@ -41,20 +32,12 @@ import { el } from "@cplieger/reactive";
 // PermissionsUIController — encapsulates all module-level state.
 // ---------------------------------------------------------------------------
 
-type ShellPolicy = "no_commands" | "safe_commands" | "all_commands";
-type RuleMode = "allow" | "deny";
-
 class PermissionsUIController {
-  private currentShellPolicy: ShellPolicy = "safe_commands";
-  private commandRules: CommandRule[] = [];
   private ignoreFiles: string[] = [];
-  private rulesController: AbortController | null = null;
 
   initPermissions(initial: AppSettings): void {
-    // Supervised-mode default for new chats. (The old trust-all /
-    // trust-list / prompt "tool approval" radios were removed — Cedar,
-    // rendered by NativePolicyController below, is the approval surface
-    // on v3.)
+    // Supervised-mode default for new chats. (Tool-call approval itself is
+    // the native Cedar policy, rendered by NativePolicyController below.)
     const supCheckbox = maybeEl<HTMLInputElement>("supervised-default-checkbox");
     if (supCheckbox !== null) {
       supCheckbox.checked = initial.supervised_default === true;
@@ -62,170 +45,7 @@ class PermissionsUIController {
         void patchSettings({ supervised_default: supCheckbox.checked });
       });
     }
-  }
-
-  initShellPolicy(initial: AppSettings): void {
-    this.currentShellPolicy = initial.shell_policy ?? "safe_commands";
-
-    for (const p of ["no_commands", "safe_commands", "all_commands"] as ShellPolicy[]) {
-      const id = `shell-policy-${p}`;
-      const radio = maybeEl<HTMLInputElement>(id);
-      if (radio === null) {
-        continue;
-      }
-      radio.checked = this.currentShellPolicy === p;
-      radio.addEventListener("change", () => {
-        if (!radio.checked) {
-          return;
-        }
-        this.currentShellPolicy = p;
-        void patchSettings({ shell_policy: p });
-      });
-    }
-
-    const input = maybeEl<HTMLInputElement>("command-rules-input");
-    const addBtn = maybeEl("command-rules-add");
-    const modeSel = maybeEl<HTMLSelectElement>("command-rules-mode");
-    const prioSel = maybeEl<HTMLSelectElement>("command-rules-priority");
-    if (input !== null && addBtn !== null) {
-      const submit = (): void => {
-        const val = input.value.trim();
-        if (val === "") {
-          return;
-        }
-        const mode = modeSel?.value === "deny" ? "deny" : "allow";
-        const priority = parseInt(prioSel?.value ?? "0", 10) || 0;
-        void this.addRule(val, mode, priority);
-        input.value = "";
-        // Refocus for repeat entry (adding several rules in a row is the
-        // common flow; without this every add costs a pointer round-trip).
-        input.focus();
-      };
-      addBtn.addEventListener("click", submit);
-      input.addEventListener("keydown", (e: KeyboardEvent) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          submit();
-        }
-      });
-      registerCleanup(bindLoadingState("permissions.add_rule", addBtn as HTMLButtonElement));
-      registerCleanup(
-        bindLoadingState("permissions.remove_rule", addBtn as HTMLButtonElement, {
-          preserveDisabled: true,
-        }),
-      );
-    }
-
-    void this.loadRules();
     this.initAgentIgnoreUI(initial);
-  }
-
-  async addWhitelistEntry(pattern: string): Promise<void> {
-    await this.addRule(pattern, "allow", 0);
-  }
-
-  // --- Private: command rules ---
-
-  /** Public: aborts any in-flight rules load. Wired to global cleanup
-   *  so beforeunload doesn't leak the fetch handle. */
-  cancelRulesLoad(): void {
-    this.rulesController?.abort();
-    this.rulesController = null;
-  }
-
-  private async loadRules(): Promise<void> {
-    this.rulesController?.abort();
-    this.rulesController = new AbortController();
-    const { signal } = this.rulesController;
-    const data = await apiGet<{ entries: CommandRule[] }>("/api/permissions/commands", signal);
-    if (signal.aborted) {
-      return;
-    }
-    if (data === null) {
-      return;
-    }
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-    this.commandRules = data.entries ?? [];
-    this.renderRuleChips();
-  }
-
-  private renderRuleChips(): void {
-    const container = maybeEl("command-rules-chips");
-    const hint = maybeEl("command-rules-empty-hint");
-    if (hint !== null) {
-      hint.classList.toggle("hidden", this.commandRules.length > 0);
-    }
-    if (container === null) {
-      return;
-    }
-    // Composite key (pattern:mode:priority) so a mode flip or priority change
-    // re-mounts the chip fresh — rebuilding its badge text, the
-    // `chip-rule-<mode>` class, AND the `.chip-mode` click closure together.
-    // A key-by-pattern, mount-only reconcile would reuse the stale node and
-    // leave all three pointing at the previous render. The empty state is a
-    // sibling element (command-rules-empty-hint), toggled above, so this
-    // container holds only chips — no replaceChildren/reconcile mixing.
-    reconcile(container, this.commandRules, {
-      key: (entry) => `${entry.pattern}:${entry.mode}:${String(entry.priority)}`,
-      mount: (entry) => {
-        const modeLabel = entry.mode === "deny" ? "Deny" : "Allow";
-        const prioLabel = entry.priority > 0 ? ` P${String(entry.priority)}` : "";
-        const chip = buildChip({
-          label: entry.pattern,
-          code: true,
-          badge: { text: modeLabel + prioLabel, className: "chip-mode" },
-          chipClass: `chip mono chip-rule-${entry.mode}`,
-          onRemove: () => {
-            void this.removeRule(entry.pattern);
-          },
-        });
-        chip.dataset["pattern"] = entry.pattern;
-        // Click the mode label to flip allow↔deny in place. The closure
-        // captures THIS render's entry, and the composite key guarantees a
-        // fresh mount on every flip, so the toggle direction stays correct.
-        const modeEl = chip.querySelector<HTMLElement>(".chip-mode");
-        if (modeEl !== null) {
-          modeEl.addEventListener("click", (e) => {
-            e.stopPropagation();
-            const next: RuleMode = entry.mode === "allow" ? "deny" : "allow";
-            void this.addRule(entry.pattern, next, entry.priority);
-          });
-        }
-        return chip;
-      },
-    });
-  }
-
-  private setRules = (rules: CommandRule[]): void => {
-    this.commandRules = rules;
-    this.renderRuleChips();
-  };
-
-  private async removeRule(pattern: string): Promise<void> {
-    if (!this.commandRules.some((e) => e.pattern === pattern)) {
-      return;
-    }
-    await removeRule.dispatch({
-      pattern,
-      rules: this.commandRules,
-      setRules: this.setRules,
-      getCurrentRules: () => this.commandRules,
-    });
-  }
-
-  private async addRule(pattern: string, mode: RuleMode, priority = 0): Promise<void> {
-    const clean = pattern.trim();
-    if (clean === "") {
-      return;
-    }
-    await addRule.dispatch({
-      pattern: clean,
-      mode,
-      priority,
-      rules: this.commandRules,
-      setRules: this.setRules,
-      getCurrentRules: () => this.commandRules,
-    });
   }
 
   // --- Private: agent ignore files ---
@@ -251,7 +71,7 @@ class PermissionsUIController {
       this.ignoreFiles.push(val);
       void patchSettings({ agent_ignore_files: this.ignoreFiles });
       input.value = "";
-      // Refocus for repeat entry, same as the command-rules adder.
+      // Refocus for repeat entry (adding several files in a row).
       input.focus();
       this.renderIgnoreChips();
     };
@@ -296,9 +116,6 @@ class PermissionsUIController {
 
 // Singleton instance — internal to the module.
 const controller = new PermissionsUIController();
-registerCleanup(() => {
-  controller.cancelRulesLoad();
-});
 
 // ---------------------------------------------------------------------------
 // NativePolicyController — the native (Cedar) policy VIEW + conservative
@@ -469,7 +286,11 @@ class NativePolicyController {
 
   private ruleRow(r: PolicyRule): HTMLElement {
     const row = el("div", { className: `native-rule native-rule-${r.effect}` });
-    row.append(el("span", { className: `native-rule-effect eff-${r.effect}` }, r.effect));
+    if (this.writable.has(r.scope)) {
+      row.append(this.effectSelect(r));
+    } else {
+      row.append(el("span", { className: `native-rule-effect eff-${r.effect}` }, r.effect));
+    }
     row.append(el("span", { className: "native-rule-cap mono" }, r.capability));
     const globs = [
       ...(r.match ?? []).map((m) => "+" + m),
@@ -495,18 +316,88 @@ class NativePolicyController {
     return row;
   }
 
+  /** Build the in-place effect editor for a writable rule: a select styled
+   *  as the effect badge. A widening change (deny→ask, deny→allow,
+   *  ask→allow) grants the agent more than it had, so it is confirmed
+   *  first — same guardrail as removing a deny. The select reverts on
+   *  cancel or a failed write; a successful write refetches the view. */
+  private effectSelect(r: PolicyRule): HTMLSelectElement {
+    const sel = el("select", {
+      className: `native-rule-effect eff-${r.effect}`,
+    }) as HTMLSelectElement;
+    for (const eff of ["allow", "ask", "deny"]) {
+      const opt = el("option", { value: eff }, eff) as HTMLOptionElement;
+      opt.value = eff;
+      opt.selected = eff === r.effect;
+      sel.append(opt);
+    }
+    sel.setAttribute("aria-label", `Effect for the ${r.capability} rule`);
+    sel.setAttribute("title", "Change this rule's effect");
+    sel.addEventListener("change", () => {
+      void this.updateEffect(r, sel);
+    });
+    return sel;
+  }
+
+  private async updateEffect(r: PolicyRule, sel: HTMLSelectElement): Promise<void> {
+    const next = sel.value;
+    if (next === r.effect) {
+      return;
+    }
+    const RANK: Record<string, number> = { deny: 2, ask: 1, allow: 0 };
+    let confirmFlag = false;
+    if ((RANK[next] ?? 0) < (RANK[r.effect] ?? 0)) {
+      const ok = await confirm(
+        `Change this "${r.capability}" rule from ${r.effect} to ${next}? That WIDENS what the agent is allowed to do.`,
+        "Widen rule",
+      );
+      if (!ok) {
+        sel.value = r.effect;
+        return;
+      }
+      confirmFlag = true;
+    }
+    const res = await editNativeRule.dispatch({
+      op: "update",
+      scope: r.scope as "user" | "workspace",
+      capability: r.capability,
+      effect: r.effect,
+      new_effect: next,
+      match: r.match ?? [],
+      exclude: r.exclude ?? [],
+      confirm: confirmFlag,
+    });
+    if (res !== null && res.error === undefined) {
+      void this.load();
+    } else {
+      sel.value = r.effect;
+    }
+  }
+
   private async addRule(): Promise<void> {
     const scope = (maybeEl<HTMLSelectElement>("native-rule-scope")?.value ?? "workspace") as
       "user" | "workspace";
     const capability = maybeEl<HTMLSelectElement>("native-rule-capability")?.value ?? "";
     const effect = maybeEl<HTMLSelectElement>("native-rule-effect")?.value ?? "ask";
     const match = splitGlobs(maybeEl<HTMLInputElement>("native-rule-match")?.value ?? "");
+    const exclude = splitGlobs(maybeEl<HTMLInputElement>("native-rule-exclude")?.value ?? "");
     if (capability === "") {
       return;
     }
-    const res = await editNativeRule.dispatch({ op: "add", scope, capability, effect, match });
+    const res = await editNativeRule.dispatch({
+      op: "add",
+      scope,
+      capability,
+      effect,
+      match,
+      exclude,
+    });
     if (res !== null && res.error === undefined) {
       const mi = maybeEl<HTMLInputElement>("native-rule-match");
+      const xi = maybeEl<HTMLInputElement>("native-rule-exclude");
+      if (xi !== null) {
+        xi.value = "";
+      }
       if (mi !== null) {
         mi.value = "";
         // Refocus for repeat entry (adding several rules in a row).
@@ -550,9 +441,15 @@ class NativePolicyController {
     if (capability === "" || out === null) {
       return;
     }
+    // Shell decisions are always resource-scoped (there is no
+    // command-independent shell decision to simulate).
+    if (capability === "shell" && resource === "") {
+      out.textContent = "Enter a command to test the shell capability.";
+      return;
+    }
     const res = await explainPolicy.dispatch({ capability, resource });
     if (res === null) {
-      out.textContent = "Could not evaluate (no active session).";
+      out.textContent = "Could not evaluate — check that a chat session is active.";
       return;
     }
     const parts = [`Effect: ${res.effect}`];
@@ -582,9 +479,6 @@ const nativePolicy = new NativePolicyController();
 export function initPermissionsUI(initial: AppSettings): void {
   controller.initPermissions(initial);
 }
-export function initShellPolicyUI(initial: AppSettings): void {
-  controller.initShellPolicy(initial);
-}
 
 /** Initialise the native Cedar policy view + editor: wires the add-rule /
  *  explain controls and the permissions_changed SSE refetch. Does NOT fetch
@@ -599,10 +493,4 @@ export function initNativePolicyUI(): void {
  *  panel. Safe to call repeatedly (in-flight loads are aborted). */
 export function loadNativePolicy(): void {
   nativePolicy.refresh();
-}
-
-/** Thin alias kept for permission.ts: "approve and trust this
- *  command for the future" maps to adding an allow rule. */
-export async function addWhitelistEntry(pattern: string): Promise<void> {
-  await controller.addWhitelistEntry(pattern);
 }

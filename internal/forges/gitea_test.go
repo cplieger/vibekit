@@ -12,14 +12,14 @@ import (
 // an error string, the token-leak regression has returned.
 const leakTestToken = "gitea-pat-SUPERSECRET-do-not-leak-abc123"
 
-// newGiteaWithToken points a gitea provider at host and seeds tea's
-// config with a token for that host, so doAPI can read it.
+// newGiteaWithToken points a gitea provider at host and stubs the tea
+// CLI so `tea login helper get` mints leakTestToken for it — the same
+// credential-helper path production uses (no config file is read).
 func newGiteaWithToken(t *testing.T, host string) *giteaProvider {
 	t.Helper()
-	setConfigHomeTemp(t)
-	if err := writeTeaConfig(host, leakTestToken, "alice"); err != nil {
-		t.Fatalf("seed tea config: %v", err)
-	}
+	dir := stubPath(t)
+	stubCLI(t, dir, "tea", `printf 'username=alice\npassword=`+leakTestToken+`\n'`)
+	t.Cleanup(func() { teaTokenCache.Delete(host) })
 	return newGitea(KindGitea, host)
 }
 

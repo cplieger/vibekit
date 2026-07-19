@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -85,24 +86,40 @@ func TestHookCappedBuffer(t *testing.T) {
 	}
 }
 
-func TestHookRelPath(t *testing.T) {
+func TestHookScopeAndPath(t *testing.T) {
 	work := t.TempDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("home dir: %v", err)
+	}
 	h := &Hub{lifecycle: &lifecyclePlane{workDir: work}}
 	tests := []struct {
-		name string
-		abs  string
-		want string
+		name      string
+		abs       string
+		wantScope string
+		wantPath  string
 	}{
-		{"under workdir", filepath.Join(work, ".kiro", "hooks", "g.json"), ".kiro/hooks/g.json"},
-		{"empty", "", ""},
-		{"outside", "/etc/passwd", "/etc/passwd"},
+		{"under workdir", filepath.Join(work, ".kiro", "hooks", "g.json"), hookScopeWorkspace, ".kiro/hooks/g.json"},
+		{"empty", "", hookScopeWorkspace, ""},
+		// kiro-cli 2.13 global hooks: $HOME/.kiro/hooks → global scope with a
+		// ~-display path (no editor link; the HOME tree is editor-blocked).
+		{"global under home", filepath.Join(home, ".kiro", "hooks", "g.json"), hookScopeGlobal, "~/.kiro/hooks/g.json"},
+		{"outside both", "/etc/passwd", hookScopeGlobal, "/etc/passwd"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := h.hookRelPath(tt.abs); got != tt.want {
-				t.Errorf("hookRelPath(%q): got %q want %q", tt.abs, got, tt.want)
+			scope, path := h.hookScopeAndPath(tt.abs)
+			if scope != tt.wantScope || path != tt.wantPath {
+				t.Errorf("hookScopeAndPath(%q): got (%q, %q) want (%q, %q)",
+					tt.abs, scope, path, tt.wantScope, tt.wantPath)
 			}
 		})
+	}
+}
+
+func TestHookScopeRankOrdersWorkspaceFirst(t *testing.T) {
+	if hookScopeRank(hookScopeWorkspace) >= hookScopeRank(hookScopeGlobal) {
+		t.Error("workspace hooks must sort before global hooks")
 	}
 }
 
@@ -129,8 +146,28 @@ func TestToHookInfo(t *testing.T) {
 	if cmd.FilePath != ".kiro/hooks/greet.json" {
 		t.Errorf("file path not workspace-relative: %q", cmd.FilePath)
 	}
+	if cmd.Scope != hookScopeWorkspace {
+		t.Errorf("workspace hook scope: got %q", cmd.Scope)
+	}
 	if decoded, _ := decodeHookID(cmd.ID); decoded != fp+"#hook-0" {
 		t.Errorf("id not the encoded KAS id: decoded %q", decoded)
+	}
+
+	// kiro-cli 2.13 global hook (~/.kiro/hooks): global scope + ~-display path.
+	if home, err := os.UserHomeDir(); err == nil {
+		gfp := filepath.Join(home, ".kiro", "hooks", "global.json")
+		global := h.toHookInfo(&kasHook{
+			ID:     gfp + "#hook-0",
+			Name:   "global",
+			Action: kasHookAction{Type: actionRunCommand, Command: "true"},
+			Meta:   kasHookMeta{Trigger: "SessionStart", FilePath: gfp, Enabled: true},
+		})
+		if global.Scope != hookScopeGlobal {
+			t.Errorf("global hook scope: got %q", global.Scope)
+		}
+		if global.FilePath != "~/.kiro/hooks/global.json" {
+			t.Errorf("global hook display path: got %q", global.FilePath)
+		}
 	}
 
 	agent := h.toHookInfo(&kasHook{

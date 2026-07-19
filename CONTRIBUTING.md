@@ -184,13 +184,26 @@ volume and exposes the UI on port `9847`.
 ### Frontend assets
 
 The browser bundle is **produced during the Docker build, not committed**. The
-builder stage runs `tsc` (the TS7 native compiler) over
-`static-src/tsconfig.build.json` and `tsconfig.sw.json` to compile TypeScript
-into `static/`, then concatenates the
-per-feature CSS splits listed in `static-src/css/MANIFEST` into
-`static/style.css`. The compiled outputs (`static/*.js`, `static/vendor/`,
-`static/style.css`, and the mirrored subdirectories) are gitignored; only the
-hand-written assets in `static/` are committed.
+builder stage runs `tsc` (the TS7 native compiler) with `--noEmit` as the type
+gate over `static-src/tsconfig.build.json` and `tsconfig.sw.json`, then runs
+`go run ./cmd/bundle` — esbuild via its Go API (no Node, no bundler binary) —
+which bundles `static-src/app.ts` into `static/app.js` plus hashed lazy chunks
+under `static/chunks/` (the dynamic `import()` sites), bundles `sw.ts` into
+`static/sw.js`, concatenates the CSS manifests
+(`@cplieger/web-terminal-ui`'s `MANIFEST.touch`, then `static-src/css/MANIFEST`)
+into `static/style.css`, and writes precompressed `.gz` siblings the server
+hands to gzip-accepting clients. The `@cplieger/*` library sources and
+`ansi_up` are bundled in, so nothing is served from `/vendor/` and the page
+carries no importmap. All bundle outputs are gitignored; only the hand-written
+assets in `static/` are committed.
+
+To produce a servable `static/` locally (for `go build` + a local run), use
+the same two steps from the repo root after `npm install` in `static-src/`:
+
+```sh
+cd static-src && npm run typecheck -- --noEmit && cd ..
+go run ./cmd/bundle
+```
 
 To iterate on `static-src/` locally, work through the package scripts (run from
 `static-src/`). `tsc` (the TypeScript 7 native compiler) comes from the

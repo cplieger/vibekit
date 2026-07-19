@@ -21,18 +21,26 @@ import (
 )
 
 // cspTemplate is the CSP applied to every response, with a single %s
-// placeholder for the space-joined sha256 hashes of the two inline <head>
-// scripts: the ES-module importmap and the anti-FOUC theme-init IIFE
-// (@cplieger/ui-primitives' themeInitSnippetFromJSON output, marked with
-// data-theme-init). Both hashes are computed at Server construction from the
-// embedded index.html, so edits to either block "just work" without anyone
-// hand-updating a constant — and script-src stays locked to 'self' + those
-// exact hashes (never 'unsafe-inline').
+// placeholder for the sha256 hash of the page's one inline <head> script:
+// the anti-FOUC theme-init IIFE (@cplieger/ui-primitives'
+// themeInitSnippetFromJSON output, marked with data-theme-init). The hash is
+// computed at Server construction from the embedded index.html, so edits to
+// the block "just work" without anyone hand-updating a constant — and
+// script-src stays locked to 'self' + that exact hash (never
+// 'unsafe-inline').
 //
 // Other directives, briefly:
 //
-//	style-src 'unsafe-inline'  inline styles for editor highlighting,
-//	                           context-bar fills, terminal rendering
+//	style-src 'unsafe-inline'  kept for CSSOM-adjacent styling paths (editor
+//	                           highlighting, context-ring fills, terminal
+//	                           rendering). NOTE (2026-07): the served markup
+//	                           now carries ZERO style attributes (the two
+//	                           context-ring SVG transitions moved to
+//	                           style.css) and the client writes styles only
+//	                           via element.style property assignment, which
+//	                           style-src does not govern — so this relaxation
+//	                           is likely droppable after a live pass over the
+//	                           editor + terminal under a 'self'-only policy.
 //	img-src 'self' data:        Seti UI file-type icons (data URIs)
 //	connect-src 'self'          HTTP + WebSocket to the same origin
 //	                           (the shell PTY is at /api/shell/ws)
@@ -47,15 +55,14 @@ const cspTemplate = "default-src 'self'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'"
 
-// importMapRe extracts everything between the inline importmap script's
-// opening and closing tags. DOTALL so the JSON body can be multi-line.
-var importMapRe = regexp.MustCompile(`(?s)<script type="importmap">(.*?)</script>`)
-
 // themeInitRe extracts the inline anti-FOUC theme-init script (the one marked
 // with the data-theme-init attribute). Its body is the verbatim output of
 // @cplieger/ui-primitives' themeInitSnippetFromJSON("vibekit.ui-state",
 // "theme"); hashing it lets script-src stay 'self' + specific hashes without
-// 'unsafe-inline'. DOTALL for symmetry with importMapRe.
+// 'unsafe-inline'. DOTALL so the body may span lines. (The former inline
+// importmap — the second hashed block — is gone: the client is bundled by
+// cmd/bundle now, so bare specifiers are resolved at build time and the page
+// carries a single inline script.)
 var themeInitRe = regexp.MustCompile(`(?s)<script data-theme-init>(.*?)</script>`)
 
 // inlineHashToken returns a CSP-quoted sha256 token for the inline <script>
@@ -70,11 +77,6 @@ func inlineHashToken(html []byte, re *regexp.Regexp, what string) (string, error
 	}
 	sum := sha256.Sum256(m[1])
 	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'", nil
-}
-
-// importMapHashToken returns the CSP token for the inline importmap block.
-func importMapHashToken(html []byte) (string, error) {
-	return inlineHashToken(html, importMapRe, `<script type="importmap">`)
 }
 
 // themeInitHashToken returns the CSP token for the inline anti-FOUC theme-init
@@ -97,16 +99,12 @@ func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: read index.html: %w", err)
 	}
-	importMapHash, err := importMapHashToken(html)
-	if err != nil {
-		return "", fmt.Errorf("buildCSPPolicy: %w", err)
-	}
 	themeInitHash, err := themeInitHashToken(html)
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: %w", err)
 	}
-	// script-src 'self' <importmap-hash> <theme-init-hash>
-	return fmt.Sprintf(cspTemplate, importMapHash+" "+themeInitHash), nil
+	// script-src 'self' <theme-init-hash>
+	return fmt.Sprintf(cspTemplate, themeInitHash), nil
 }
 
 // fallbackCSPPolicy assembles a CSP without an importmap hash — used

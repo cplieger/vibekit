@@ -118,6 +118,17 @@ describe("lineDiff", () => {
       new: "hello",
       expected: [{ kind: "ctx", oldNo: 1, newNo: 1, text: "hello" }],
     },
+    {
+      name: "CRLF input: \\r stripped from line text (EOL owned by consumers)",
+      old: "a\r\nold\r\nc",
+      new: "a\r\nnew\r\nc",
+      expected: [
+        { kind: "ctx", oldNo: 1, newNo: 1, text: "a" },
+        { kind: "del", oldNo: 2, newNo: 0, text: "old" },
+        { kind: "add", oldNo: 0, newNo: 2, text: "new" },
+        { kind: "ctx", oldNo: 3, newNo: 3, text: "c" },
+      ],
+    },
   ];
 
   for (const tc of cases) {
@@ -126,6 +137,39 @@ describe("lineDiff", () => {
       expect(result).toEqual(tc.expected);
     });
   }
+
+  it("falls back to a coarse but valid script past the time budget", () => {
+    // 5100×5100 = 26M cells > TIME_BUDGET_CELLS (25M); every line differs
+    // so prefix/suffix trimming removes nothing.
+    const n = 5100;
+    const oldText = Array.from({ length: n }, (_, i) => `left ${String(i)}`).join("\n");
+    const newText = Array.from({ length: n }, (_, i) => `right ${String(i)}`).join("\n");
+    const result = lineDiff(oldText, newText);
+    const s = stats(result);
+    // The fallback is still a VALID edit script: old = dels + ctx,
+    // new = adds + ctx, and replaying ctx+add reproduces the new text.
+    expect(s.dels + s.ctx).toBe(n);
+    expect(s.adds + s.ctx).toBe(n);
+    const reconstructed = result.filter((l) => l.kind !== "del").map((l) => l.text);
+    expect(reconstructed).toEqual(newText.split("\n"));
+  });
+
+  it("bounded time: shared prefix/suffix keeps huge similar files on the exact path", () => {
+    // Two 100k-line files differing in one middle line: the trim reduces
+    // the exact-diff middle to 1×1, so this must produce a minimal script
+    // (no coarse fallback) and return quickly.
+    const n = 100_000;
+    const lines = Array.from({ length: n }, (_, i) => `line ${String(i)}`);
+    const oldText = lines.join("\n");
+    const changed = [...lines];
+    changed[n / 2] = "CHANGED";
+    const newText = changed.join("\n");
+    const result = lineDiff(oldText, newText);
+    const s = stats(result);
+    expect(s.dels).toBe(1);
+    expect(s.adds).toBe(1);
+    expect(s.ctx).toBe(n - 1);
+  });
 });
 
 describe("truncateChanged", () => {

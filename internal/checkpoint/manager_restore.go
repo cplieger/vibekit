@@ -184,6 +184,11 @@ func (m *Manager) CheckoutFile(ctx context.Context, tag Tag, relPath string) err
 		_ = os.Remove(tmp)
 		return fmt.Errorf("checkout: fsync stage %s: %w", relPath, sErr)
 	}
+	if mErr := tmpFile.Chmod(restoreMode(abs)); mErr != nil {
+		tmpFile.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("checkout: chmod stage %s: %w", relPath, mErr)
+	}
 	if cErr := tmpFile.Close(); cErr != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("checkout: close stage %s: %w", relPath, cErr)
@@ -379,11 +384,30 @@ func (m *Manager) stageOneBlob(ctx context.Context, plan restorePlan) (string, e
 		_ = os.Remove(tmpFile.Name())
 		return "", fmt.Errorf("restore: fsync stage %s: %w", plan.path, sErr)
 	}
+	if mErr := tmpFile.Chmod(restoreMode(plan.abs)); mErr != nil {
+		tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("restore: chmod stage %s: %w", plan.path, mErr)
+	}
 	if cErr := tmpFile.Close(); cErr != nil {
 		_ = os.Remove(tmpFile.Name())
 		return "", fmt.Errorf("restore: close stage %s: %w", plan.path, cErr)
 	}
 	return tmpFile.Name(), nil
+}
+
+// restoreMode returns the permission bits a staged restore file should
+// carry into the rename: the current target's bits when a regular file
+// exists there (preserving an executable's 0o755 or a secret's 0o600 —
+// os.CreateTemp stages at 0o600, which would otherwise clobber them),
+// falling back to 0o644 (the fs-write path's new-file default) when the
+// target is absent. Historical modes are not captured in the event log,
+// so the pre-delete mode of a since-removed file is unknowable here.
+func restoreMode(abs string) os.FileMode {
+	if info, err := os.Lstat(abs); err == nil && info.Mode().IsRegular() {
+		return info.Mode().Perm()
+	}
+	return 0o644
 }
 
 // applyStagesLocked executes phase 2 of Restore. Callers hold m.mu.

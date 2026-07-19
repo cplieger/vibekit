@@ -37,6 +37,7 @@ export type {
   Message,
   Block,
   CodeReference,
+  RefusalInfo,
   MeteringItem,
   PendingChange,
   PermissionOption,
@@ -92,11 +93,13 @@ export type {
   RemoveResponse,
   SearchHit,
   SearchResponse,
+  ConflictDetectedPayload,
   ToolInfo,
   ToolJobChangedPayload,
   ToolJobOutputPayload,
   SystemTool,
   TurnEndedPayload,
+  TurnStatePayload,
 } from "./wire/types.gen.js";
 
 // PermissionNeeded is the legacy alias used at call sites that predate
@@ -157,6 +160,12 @@ export interface PendingTrustClearedPayload {
 export interface QueuedPrompt {
   text: string;
   attachments: unknown[];
+  /** The client-generated user-message id this prompt was FIRST sent
+   *  under. The drain re-sends with the SAME id so the server's
+   *  append-by-id idempotency absorbs the retry — a 409'd first attempt
+   *  already persisted (and rendered) the user bubble, and a fresh id on
+   *  the drain would append it a second time. */
+  messageId: string;
 }
 
 // --- Local session state (client-only projection of server chat) ---

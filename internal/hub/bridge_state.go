@@ -65,10 +65,14 @@ func (sb *sharedBridge) tryAcquireForPrompt() bool {
 	return true
 }
 
-// releaseAfterPrompt transitions from prompting back to idle.
+// releaseAfterPrompt transitions from prompting back to idle. It also
+// stamps lastActiveAt: the previous stamp was taken at prompt START, so
+// without this a bridge finishing a turn longer than the idle timeout
+// would be culled on the very next tick despite having just been active.
 func (sb *sharedBridge) releaseAfterPrompt() {
 	sb.mu.Lock()
 	sb.state = bridgeIdle
+	sb.lastActiveAt = time.Now()
 	sb.mu.Unlock()
 }
 

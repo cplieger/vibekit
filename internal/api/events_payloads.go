@@ -12,9 +12,13 @@ import (
 // TurnEndedPayload is the payload for type="turn_ended".
 type TurnEndedPayload struct {
 	ChangedFiles map[string]*FileChange `json:"changed_files,omitempty"`
-	StopReason   StopReason             `json:"stop_reason,omitempty"`
-	CreditsDelta float64                `json:"credits_delta,omitempty"`
-	ElapsedMs    float64                `json:"elapsed_ms,omitempty"`
+	// Refusal accompanies stop_reason "refusal": the model declined to
+	// continue and the final assistant chunk carried this metadata
+	// (also persisted on the message; here for the live render).
+	Refusal      *RefusalInfo `json:"refusal,omitempty"`
+	StopReason   StopReason   `json:"stop_reason,omitempty"`
+	CreditsDelta float64      `json:"credits_delta,omitempty"`
+	ElapsedMs    float64      `json:"elapsed_ms,omitempty"`
 }
 
 // FileChange tracks per-file change stats during a turn.
@@ -53,10 +57,6 @@ type PermissionOption struct {
 	Kind     string `json:"kind"`
 }
 
-// PermissionKindAllowOnce is the wire value kiro-cli sends in
-// PermissionOption.Kind to identify the "allow once" choice.
-const PermissionKindAllowOnce = "allow_once"
-
 // MessageChunkPayload is the payload for type="message_chunk" (assistant
 // streaming deltas). IsReasoning distinguishes reasoning deltas from
 // regular content deltas — both flow through the same SSE event but
@@ -67,11 +67,48 @@ const PermissionKindAllowOnce = "allow_once"
 // next text chunk to a new index. Clients use this to accumulate
 // deltas into the right block in Message.Blocks.
 type MessageChunkPayload struct {
-	MessageID      string `json:"message_id"`
-	Delta          string `json:"delta"`
-	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
-	BlockIndex     int    `json:"block_index"`
-	IsReasoning    bool   `json:"is_reasoning,omitempty"`
+	// Refusal tags this delta as the model-refusal explanation (kiro-cli
+	// 2.13 _meta.kiro.refusal on the chunk). Set on at most one chunk per
+	// turn, right before the turn ends with stop_reason "refusal"; lets the
+	// live renderer style the refusal callout without waiting for
+	// turn_ended.
+	Refusal        *RefusalInfo `json:"refusal,omitempty"`
+	MessageID      string       `json:"message_id"`
+	Delta          string       `json:"delta"`
+	AgentSubtaskID string       `json:"agent_subtask_id,omitempty"`
+	BlockIndex     int          `json:"block_index"`
+	// Seq is the delta's 1-based sequence number within the turn
+	// (assigned by the buffer under its lock). A client that ingested
+	// a connect-time turn_state snapshot drops chunks with
+	// seq <= the snapshot's chunk_seq watermark — they are already
+	// folded into the snapshot — instead of double-appending them.
+	Seq         int64 `json:"seq,omitempty"`
+	IsReasoning bool  `json:"is_reasoning,omitempty"`
+}
+
+// TurnStatePayload is the payload for type="turn_state": the
+// connect-time synthesis of a chat's in-flight turn (P6). Synthesized
+// per busy chat in the SSE OnConnect replay — never broadcast live —
+// so a reconnecting or freshly-loaded client renders the accumulated
+// turn immediately instead of waiting for the next chunk or
+// turn_ended, and learns authoritatively that the chat is busy
+// (replacing the gap handler's eager thinking-clear guess).
+type TurnStatePayload struct {
+	// Message is the in-flight assistant message as accumulated so
+	// far — the hub's turn mirror, byte-equivalent to what a
+	// never-disconnected client would have rendered. Omitted when the
+	// turn hasn't produced content yet (busy signal only).
+	Message *Message `json:"message,omitempty"`
+	// Status/Description replay the agent's last self-declared
+	// chat_status for the busy chat. Authoritative here — the turn is
+	// verifiably in flight — unlike the live event, which stays
+	// ephemeral and is cleared on gaps precisely because a bare
+	// replay could resurrect a stale "in_progress".
+	Status      string `json:"status,omitempty"`
+	Description string `json:"description,omitempty"`
+	// ChunkSeq is the sequence number of the last delta folded into
+	// Message (see MessageChunkPayload.Seq).
+	ChunkSeq int64 `json:"chunk_seq,omitempty"`
 }
 
 // CheckpointRestoredPayload is the payload for type="checkpoint_restored".

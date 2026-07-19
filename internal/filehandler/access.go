@@ -1,23 +1,17 @@
 package filehandler
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-)
+import "strings"
 
-// Directories hidden from the root listing and blocked from traversal.
-// Covers standard Debian system dirs plus vibekit's own install
-// locations (/app holds the compiled web binary, /opt/vibekit holds
-// the entrypoint script and the compiled tool catalog). Only
-// mounted volumes (/workspace, /config) should remain visible at /.
-var blacklist = map[string]bool{
-	"app": true, "bin": true, "boot": true, "dev": true, "etc": true,
-	"lib": true, "lib64": true, "media": true, "opt": true,
-	"proc": true, "root": true, "run": true, "sbin": true,
-	"srv": true, "sys": true, "tmp": true, "usr": true,
-	"var": true,
-}
+// Access model: an ALLOW-LIST of granted roots (mounts) plus the
+// sensitive-path deny-list below.
+//
+// The old model was the inverse — the handler was rooted at the
+// container root with a blacklist of system directories, which was
+// fail-open: every new path outside the enumerated list was browsable
+// by default. Mount matching lives in paths.go (resolvePath); this
+// file keeps the second layer, the sensitive-path list, which is still
+// a deny-list by necessity: the sensitive entries live INSIDE the
+// granted /config mount, and an os.Root cannot enforce sub-path denial.
 
 // sensitivePath describes a single blocked path entry with explicit
 // match semantics: IsDir=true means "directory prefix" (blocks all
@@ -103,19 +97,4 @@ func isProtectedDir(resolved string) bool {
 		}
 	}
 	return false
-}
-
-// enforceAccess runs the blacklist + sensitive-path check on an
-// already-canonicalised absolute path. Shared by the lexical
-// (resolvePath) and real-path (resolveRealPath) checks so they enforce
-// identical policy — any drift would create a symlink-based bypass.
-func enforceAccess(resolved string) error {
-	top := strings.SplitN(strings.TrimPrefix(resolved, "/"), "/", 2)[0]
-	if blacklist[top] {
-		return fmt.Errorf("access denied: /%s", top)
-	}
-	if isSensitive(resolved) {
-		return errors.New("access denied: protected path")
-	}
-	return nil
 }
