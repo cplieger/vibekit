@@ -6,11 +6,15 @@
 //
 // Rewritten in TypeScript with one substantive change: `add_text` appends
 // text via the renderer's callback instead of the fixed `appendChild(text
-// node)` form, so callers can wrap newly-appended text in an animated
-// span without patching the parser. That's the whole point of porting
-// it — our renderer wraps each new text chunk in `<span data-vk-chunk-enter>`
-// so CSS can fade it in as it mounts. The parser is append-only, so old
-// content stays stable across flushes.
+// node)` form, so our renderer wraps each new text chunk in
+// `<span data-vk-chunk-enter>` and CSS fades it in as it mounts. (The
+// upstream 0.2.15 Renderer interface could have been adapted to do the
+// same; the per-write callback alone would not justify a port.) The
+// standing justification for carrying this fork in-tree is unilateral
+// fixability — parser bugs get fixed here under this repo's invariant
+// tests without waiting on an upstream release — at the cost of manually
+// tracking upstream fixes. The parser is append-only, so old content
+// stays stable across flushes.
 //
 // Behaviour matches the reference implementation: paragraphs, headings
 // (1-6), blockquotes, ordered/unordered/task lists, code blocks/fences/

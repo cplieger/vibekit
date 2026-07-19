@@ -45,14 +45,14 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   // Whole-store reconcile:
   //   1. Clear the local `thinking` flag on every chat. We lost the
   //      turn_ended/error events that would normally clear it, so the
-  //      send button would otherwise stay "busy" forever. The server
-  //      is the source of truth — if a turn is genuinely still in
-  //      flight, the next SSE event (or a prompt 409) will flip it
-  //      back. Clearing eagerly is safe because the UI only reads
-  //      `thinking` to lock input; a false negative (clearing while
-  //      actually busy) causes at worst a user-visible momentary
-  //      "idle" that corrects on the next event, which is much less
-  //      bad than a permanently wedged send button.
+  //      send button would otherwise stay "busy" forever. This is the
+  //      safe DEFAULT for chats the server says nothing about; the
+  //      chats that ARE genuinely mid-turn get an authoritative
+  //      turn_state event in the same connect replay (synthesized
+  //      per busy chat, handlers/messages.ts), which re-sets thinking
+  //      and restores the streaming transcript — so the old
+  //      "false-idle until the next event" window collapses to the
+  //      same replay burst.
   //   2. Reload the header list so name / usage / mode changes we
   //      missed during the outage reconcile.
   //   3. If a chat is active, reload its messages from scratch so
@@ -96,10 +96,13 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   }
 });
 
-// commands_updated: no longer consumed — slash command UI stripped.
-// The SSE event still fires from the server (kiro-cli sends
-// _kiro.dev/commands/available on every session) but the client
-// are kept for now (zero-cost; removed in a follow-up cleanup).
+// commands_updated: decoded but currently UNCONSUMED. The server still
+// broadcasts the per-session slash-command catalog (v3
+// available_commands_update, filtered of browser-incompatible entries)
+// and the wire decoder stays registered (wire/registry.gen.ts), but no
+// client feature reads it today — typed slash commands like /compact
+// ride the ordinary prompt envelope and kiro-cli parses them natively.
+// A future type-ahead popover would subscribe here.
 
 // compaction_started is advisory. The `thinking` flag is already true
 // at this point (set by the prompt send), and the completed state is

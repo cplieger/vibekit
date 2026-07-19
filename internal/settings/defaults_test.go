@@ -27,7 +27,7 @@ func TestWarnUnknownKeys(t *testing.T) {
 	}{
 		{
 			name: "all known returns nil",
-			keys: []string{"debug_logs", "shell_policy", "supervised_default"},
+			keys: []string{"debug_logs", "chat_retention_days", "supervised_default"},
 			want: nil,
 		},
 		{
@@ -72,7 +72,6 @@ func TestKnownKeys_CoversFrontendSettings(t *testing.T) {
 		"notifications_enabled",
 		"notify_agent_finished",
 		"notify_permission",
-		"shell_policy",
 		"agent_ignore_files",
 		"debug_logs",
 		"supervised_default",
@@ -138,7 +137,7 @@ func TestWarnUnknownKeys_LogsOnlyWhenUnknownPresent(t *testing.T) {
 
 	t.Run("all_known_no_warn", func(t *testing.T) {
 		buf := captureSlog(t)
-		got := WarnUnknownKeys([]string{KeyShellPolicy, KeyDebugLogs}, "test-src")
+		got := WarnUnknownKeys([]string{KeySupervisedDefault, KeyDebugLogs}, "test-src")
 		if len(got) != 0 {
 			t.Errorf("WarnUnknownKeys(all known) = %v, want empty", got)
 		}

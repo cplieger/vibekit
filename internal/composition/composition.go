@@ -61,6 +61,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
+	warnIfCLIMissing(cfg)
 
 	logctl.Install(ctx, cfg.ConfigDir)
 
@@ -168,10 +169,15 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	gitHandler := git.NewHandler(cfg.WorkDir)
 	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
-	fileHandler, err := filehandler.New("/")
+	fileHandler, err := filehandler.New(cfg.BrowseRoots...)
 	if err != nil {
 		return nil, err
 	}
+	// Built-in editor saves fold into the owning chat's checkpoint
+	// timeline (pre-write capture; see hub.CaptureEditorSave). Only
+	// the editor's PUT /api/file path is captured — uploads, copies,
+	// and shell writes stay outside the checkpoint contract.
+	fileHandler.SetWriteObserver(h.CaptureEditorSave)
 	authHandler := auth.NewHandler(cfg.CLIPath,
 		auth.WithConfig(cfg.AuthConfig),
 		auth.WithTrustedProxies(cfg.TrustedProxies))
@@ -240,7 +246,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithMCPRegistry(mcpRegistry),
 		server.WithForges(forgesHTTP),
 		server.WithTools(toolsEngine),
-		server.WithRules(h.Rules()),
 		server.WithUtilityPrompt(h),
 		server.WithAccountUsage(h),
 		server.WithPolicy(h),

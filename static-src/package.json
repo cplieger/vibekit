@@ -8,8 +8,8 @@
     "typecheck": "tsc -project tsconfig.json",
     "typecheck:tests": "tsc -project tsconfig.test.json",
     "lint:eslint": "eslint .",
-    "lint:prettier": "prettier --check ../..",
-    "lint:fix": "eslint . --fix && prettier --write ../..",
+    "lint:prettier": "prettier --check .",
+    "lint:fix": "eslint . --fix && prettier --write .",
     "lint:knip": "knip"
   },
   "devDependencies": {
@@ -38,7 +38,8 @@
     "@cplieger/reactive": "1.2.5",
     "@cplieger/ui-primitives": "3.0.0",
     "@cplieger/web-terminal-engine": "2.8.0",
-    "@cplieger/web-terminal-ui": "4.0.0"
+    "@cplieger/web-terminal-ui": "4.0.0",
+    "ansi_up": "6.0.6"
   },
   "overrides": {
     "typed-rest-client": {

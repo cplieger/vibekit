@@ -40,8 +40,11 @@ type PollResult struct {
 // githubOAuthClientID is the OAuth app ID for GitHub device flow.
 const githubOAuthClientID = "178c6fc778ccc68e1d6a"
 
-// scopes requested for GitHub OAuth.
-const githubOAuthScopes = "repo,read:org,gist,workflow"
+// scopes requested for GitHub OAuth: repo ops + org listing (gh's own
+// login minimum) plus workflow so pushes touching .github/workflows
+// aren't rejected. No gist — vibekit has no gist feature (the old list
+// was inherited from gh's own client, which has `gh gist`).
+const githubOAuthScopes = "repo,read:org,workflow"
 
 // oauthHTTPClient is the shared HTTP client for OAuth requests.
 var oauthHTTPClient = &http.Client{Timeout: 30 * time.Second}

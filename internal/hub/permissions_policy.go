@@ -43,6 +43,15 @@ const policyCallTimeout = 45 * time.Second
 // it; chat bridges deliberately don't (see hooks.go). It issues no agent tool
 // calls, so no hook ever auto-fires here — the only executeHook it answers is a
 // user-initiated "Run now" trigger, gated on expectingHookExec.
+//
+// NOTE the deliberate cycle this lazy in-package constructor resolves:
+// the utilitySessionHooks callbacks below (runHookCommand,
+// broadcastHooksChanged, cacheGovernanceFromUtility) point back INTO the
+// hub's service surfaces, while those same services lease the utility
+// runtime through this method — a bidirectional edge, not a forward-only
+// seam. Any extraction of the utility runtime into its own package must
+// take the hook/governance owners WITH it (or inject them forward-only
+// from composition), not split them across a package boundary.
 func (h *Hub) ensureUtility() *utilityRuntime {
 	h.bridge.utilityOnce.Do(func() {
 		h.bridge.utility = newUtilityRuntime(

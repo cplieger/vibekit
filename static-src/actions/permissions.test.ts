@@ -1,5 +1,9 @@
 // @vitest-environment happy-dom
-// Tests for addRule and removeRule optimistic + rollback.
+// Tests for the native policy actions (editNativeRule / explainPolicy):
+// request wire shape — including the guard_resource pre-flight field the
+// permission dialog's "Always allow" sends — and failure propagation (a
+// guard refusal must surface as a failed dispatch so the caller does NOT
+// approve the pending permission).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -14,16 +18,9 @@ vi.mock("../api-client.js", () => ({
   withTimeout: (signal: AbortSignal | undefined) => signal ?? new AbortController().signal,
 }));
 
-import { addRule, removeRule, type CommandRule } from "./permissions.js";
+import { editNativeRule, explainPolicy } from "./permissions.js";
 
 const mockFetch = vi.fn();
-
-function makeRules(): CommandRule[] {
-  return [
-    { pattern: "npm *", mode: "allow", priority: 1, created_at: 1000 },
-    { pattern: "rm -rf *", mode: "deny", priority: 2, created_at: 1001 },
-  ];
-}
 
 beforeEach(() => {
   resetActionFramework();
@@ -31,110 +28,78 @@ beforeEach(() => {
   vi.stubGlobal("fetch", mockFetch);
 });
 
-describe("addRule optimistic + rollback", () => {
-  it("adds new rule optimistically", async () => {
-    let rules = makeRules();
-    const setRules = vi.fn((next: CommandRule[]) => {
-      rules = next;
-    });
+function requestBody(): Record<string, unknown> {
+  const init = mockFetch.mock.calls[0]?.[1] as RequestInit | undefined;
+  return JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+}
+
+describe("editNativeRule wire shape", () => {
+  it("POSTs the rule to /api/permissions/rules", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await addRule.dispatch({
-      pattern: "git *",
-      mode: "allow",
-      priority: 3,
-      rules,
-      setRules,
-      getCurrentRules: () => rules,
+    const res = await editNativeRule.dispatch({
+      op: "add",
+      scope: "workspace",
+      capability: "fs_write",
+      effect: "ask",
+      match: ["src/**"],
     });
-    // setRules called with array containing the new rule
-    expect(setRules).toHaveBeenCalled();
-    const optimisticCall = setRules.mock.calls[0]![0];
-    expect(optimisticCall.some((r) => r.pattern === "git *")).toBe(true);
+    expect(res).not.toBeNull();
+    expect(String(mockFetch.mock.calls[0]?.[0])).toContain("/api/permissions/rules");
+    expect(requestBody()).toMatchObject({
+      op: "add",
+      scope: "workspace",
+      capability: "fs_write",
+      effect: "ask",
+      match: ["src/**"],
+    });
   });
 
-  it("rolls back new rule on failure", async () => {
-    let rules = makeRules();
-    const setRules = vi.fn((next: CommandRule[]) => {
-      rules = next;
-    });
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await addRule.dispatch({
-      pattern: "git *",
-      mode: "allow",
-      priority: 3,
-      rules,
-      setRules,
-      getCurrentRules: () => rules,
-    });
-    // Last setRules call is the rollback — filters out the new pattern
-    const lastCall = setRules.mock.calls[setRules.mock.calls.length - 1]![0];
-    expect(lastCall.some((r) => r.pattern === "git *")).toBe(false);
-  });
-
-  it("updates existing rule optimistically", async () => {
-    let rules = makeRules();
-    const setRules = vi.fn((next: CommandRule[]) => {
-      rules = next;
-    });
+  it("carries guard_resource for the always-allow pre-flight", async () => {
     mockFetch.mockResolvedValue(new Response("{}", { status: 200 }));
-    await addRule.dispatch({
-      pattern: "npm *",
-      mode: "deny",
-      priority: 5,
-      rules,
-      setRules,
-      getCurrentRules: () => rules,
+    await editNativeRule.dispatch({
+      op: "add",
+      scope: "workspace",
+      capability: "shell",
+      effect: "allow",
+      match: ["npm *"],
+      guard_resource: "npm install",
     });
-    const optimisticCall = setRules.mock.calls[0]![0];
-    const updated = optimisticCall.find((r) => r.pattern === "npm *");
-    expect(updated?.mode).toBe("deny");
-    expect(updated?.priority).toBe(5);
+    expect(requestBody()).toMatchObject({
+      effect: "allow",
+      match: ["npm *"],
+      guard_resource: "npm install",
+    });
   });
 
-  it("rolls back updated rule on failure (restores original)", async () => {
-    let rules = makeRules();
-    const original = makeRules();
-    const setRules = vi.fn((next: CommandRule[]) => {
-      rules = next;
+  it("fails the dispatch when the server refuses the guarded write (409)", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "an explicit ask rule covers this command" }), {
+        status: 409,
+      }),
+    );
+    const res = await editNativeRule.dispatch({
+      op: "add",
+      scope: "workspace",
+      capability: "shell",
+      effect: "allow",
+      match: ["rm *"],
+      guard_resource: "rm -rf x",
     });
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await addRule.dispatch({
-      pattern: "npm *",
-      mode: "deny",
-      priority: 5,
-      rules,
-      setRules,
-      getCurrentRules: () => rules,
-    });
-    // Rollback should restore the previous version of "npm *"
-    const lastCall = setRules.mock.calls[setRules.mock.calls.length - 1]![0];
-    const restored = lastCall.find((r) => r.pattern === "npm *");
-    expect(restored?.mode).toBe(original[0]!.mode);
-    expect(restored?.priority).toBe(original[0]!.priority);
+    // Callers treat null as "not written": the permission stays pending.
+    expect(res).toBeNull();
   });
 });
 
-describe("removeRule optimistic + rollback", () => {
-  it("removes rule optimistically", async () => {
-    let rules = makeRules();
-    const setRules = vi.fn((next: CommandRule[]) => {
-      rules = next;
-    });
-    mockFetch.mockResolvedValue(new Response("", { status: 204 }));
-    await removeRule.dispatch({ pattern: "npm *", rules, setRules, getCurrentRules: () => rules });
-    const optimisticCall = setRules.mock.calls[0]![0];
-    expect(optimisticCall.some((r) => r.pattern === "npm *")).toBe(false);
-  });
-
-  it("reinserts rule on failure", async () => {
-    let rules = makeRules();
-    const setRules = vi.fn((next: CommandRule[]) => {
-      rules = next;
-    });
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "fail" }), { status: 500 }));
-    await removeRule.dispatch({ pattern: "npm *", rules, setRules, getCurrentRules: () => rules });
-    // Rollback re-adds previousRule to current rules
-    const lastCall = setRules.mock.calls[setRules.mock.calls.length - 1]![0];
-    expect(lastCall.some((r) => r.pattern === "npm *")).toBe(true);
+describe("explainPolicy wire shape", () => {
+  it("POSTs the simulation request to /api/permissions/explain", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ capability: "shell", effect: "ask", is_explicit_ask: true }), {
+        status: 200,
+      }),
+    );
+    const res = await explainPolicy.dispatch({ capability: "shell", resource: "rm -rf /" });
+    expect(String(mockFetch.mock.calls[0]?.[0])).toContain("/api/permissions/explain");
+    expect(requestBody()).toMatchObject({ capability: "shell", resource: "rm -rf /" });
+    expect(res).toMatchObject({ effect: "ask" });
   });
 });

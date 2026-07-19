@@ -51,16 +51,14 @@ type MCPRecorder interface {
 // Translator holds stateful translate logic extracted from Hub.
 // It delegates Hub access through Deps.
 type Translator struct {
-	deps      Deps
-	newMsgID  func() string
-	configDir string
+	deps     Deps
+	newMsgID func() string
 }
 
 // New constructs a Translator with the given Hub dependency surface.
-func New(deps Deps, configDir string, opts ...Option) *Translator {
+func New(deps Deps, opts ...Option) *Translator {
 	t := &Translator{
-		deps:      deps,
-		configDir: configDir,
+		deps: deps,
 	}
 	for _, o := range opts {
 		o(t)

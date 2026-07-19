@@ -167,17 +167,14 @@ func (s *Service) push(ctx context.Context, sub api.PushSubscription, payload []
 		return 0, err
 	}
 
-	// Fast path: when the service context is still active (common case),
-	// use the caller's ctx directly — avoids 3 allocations (context +
-	// cancel + AfterFunc) per subscriber per push.
-	reqCtx := ctx
-	var mergeCleanup func()
-	if s.ctx.Err() != nil {
-		reqCtx, mergeCleanup = mergeCtx(ctx, s.ctx)
-	}
-	if mergeCleanup != nil {
-		defer mergeCleanup()
-	}
+	// Derive the request context from BOTH the caller's ctx and the
+	// service lifecycle, unconditionally. The previous fast path merged
+	// only when s.ctx was ALREADY canceled, so a send started while
+	// healthy never observed a later Service.Close and ran until the
+	// client timeout. Three small allocations per subscriber per push is
+	// noise at push frequency.
+	reqCtx, mergeCleanup := mergeCtx(ctx, s.ctx)
+	defer mergeCleanup()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, sub.Endpoint, bytes.NewReader(body))
 	if err != nil {

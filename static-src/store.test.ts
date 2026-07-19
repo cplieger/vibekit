@@ -427,7 +427,7 @@ describe("Store queue operations (property-based)", () => {
         (items) => {
           resetStore("chat-1");
           for (const text of items) {
-            enqueuePrompt("chat-1", text);
+            enqueuePrompt("chat-1", text, "m-test");
           }
           expect(queueLength("chat-1")).toBe(items.length);
           const dequeued: string[] = [];
@@ -462,7 +462,7 @@ describe("Store queue operations (property-based)", () => {
         (items) => {
           resetStore("chat-1");
           for (const text of items) {
-            enqueuePrompt("chat-1", text);
+            enqueuePrompt("chat-1", text, "m-test");
           }
           if (items.length > 0) {
             expect(peekPrompt("chat-1")?.text).toBe(items[0]);
@@ -487,32 +487,45 @@ describe("Store queue attachments (inlined with text)", () => {
   it("dequeue/peek return the attachments that were enqueued with the text", () => {
     resetStore("chat-1");
     const att = [{ path: "a.ts" }, { path: "b.ts" }];
-    enqueuePrompt("chat-1", "hello", att);
-    expect(peekPrompt("chat-1")).toEqual({ text: "hello", attachments: att });
+    enqueuePrompt("chat-1", "hello", "m-test", att);
+    const want = { text: "hello", attachments: att, messageId: "m-test" };
+    expect(peekPrompt("chat-1")).toEqual(want);
     // Peek does not consume.
-    expect(peekPrompt("chat-1")).toEqual({ text: "hello", attachments: att });
-    expect(dequeuePrompt("chat-1")).toEqual({ text: "hello", attachments: att });
+    expect(peekPrompt("chat-1")).toEqual(want);
+    expect(dequeuePrompt("chat-1")).toEqual(want);
   });
 
   it("attachments stay aligned to their own prompt across a multi-entry queue", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "first", [{ path: "x.ts" }]);
-    enqueuePrompt("chat-1", "second", [{ path: "y.ts" }]);
+    enqueuePrompt("chat-1", "first", "m-test", [{ path: "x.ts" }]);
+    enqueuePrompt("chat-1", "second", "m-test", [{ path: "y.ts" }]);
     // Text and attachments travel together — no positional drift possible.
-    expect(dequeuePrompt("chat-1")).toEqual({ text: "first", attachments: [{ path: "x.ts" }] });
-    expect(dequeuePrompt("chat-1")).toEqual({ text: "second", attachments: [{ path: "y.ts" }] });
+    expect(dequeuePrompt("chat-1")).toEqual({
+      text: "first",
+      attachments: [{ path: "x.ts" }],
+      messageId: "m-test",
+    });
+    expect(dequeuePrompt("chat-1")).toEqual({
+      text: "second",
+      attachments: [{ path: "y.ts" }],
+      messageId: "m-test",
+    });
   });
 
   it("enqueue without attachments stores an empty array (never undefined)", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "no files");
-    expect(dequeuePrompt("chat-1")).toEqual({ text: "no files", attachments: [] });
+    enqueuePrompt("chat-1", "no files", "m-test");
+    expect(dequeuePrompt("chat-1")).toEqual({
+      text: "no files",
+      attachments: [],
+      messageId: "m-test",
+    });
   });
 
   it("enqueue copies the attachments array (later caller mutation does not leak in)", () => {
     resetStore("chat-1");
     const att = [{ path: "a.ts" }];
-    enqueuePrompt("chat-1", "hello", att);
+    enqueuePrompt("chat-1", "hello", "m-test", att);
     att.push({ path: "sneaky.ts" });
     expect(peekPrompt("chat-1")?.attachments).toEqual([{ path: "a.ts" }]);
   });
@@ -521,10 +534,14 @@ describe("Store queue attachments (inlined with text)", () => {
 describe("Store removeQueuedAt (UI cancel affordance)", () => {
   it("removes and returns the entry at the given index", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "a");
-    enqueuePrompt("chat-1", "b");
-    enqueuePrompt("chat-1", "c");
-    expect(removeQueuedAt("chat-1", 1)).toEqual({ text: "b", attachments: [] });
+    enqueuePrompt("chat-1", "a", "m-test");
+    enqueuePrompt("chat-1", "b", "m-test");
+    enqueuePrompt("chat-1", "c", "m-test");
+    expect(removeQueuedAt("chat-1", 1)).toEqual({
+      text: "b",
+      attachments: [],
+      messageId: "m-test",
+    });
     expect(dequeuePrompt("chat-1")?.text).toBe("a");
     expect(dequeuePrompt("chat-1")?.text).toBe("c");
     expect(dequeuePrompt("chat-1")).toBeUndefined();
@@ -532,14 +549,14 @@ describe("Store removeQueuedAt (UI cancel affordance)", () => {
 
   it("clears prompt_queue when the last entry is removed", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "only");
+    enqueuePrompt("chat-1", "only", "m-test");
     expect(removeQueuedAt("chat-1", 0)?.text).toBe("only");
     expect(get("chat-1")?.prompt_queue).toBeUndefined();
   });
 
   it("returns undefined for an out-of-range index or unknown chat", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "a");
+    enqueuePrompt("chat-1", "a", "m-test");
     expect(removeQueuedAt("chat-1", 5)).toBeUndefined();
     expect(removeQueuedAt("chat-1", -1)).toBeUndefined();
     expect(removeQueuedAt("nonexistent", 0)).toBeUndefined();
@@ -674,5 +691,54 @@ describe("per-tool signal", () => {
     expect(a).toBe(b);
     expect(a.value.status).toBe("pending");
     clearToolCallSig("t-id");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Connect-time turn_state snapshot: chunk-seq watermark gating
+// ---------------------------------------------------------------------------
+
+import { setSnapshotSeq, clearSnapshotSeq } from "./store.js";
+
+describe("appendChunk snapshot-seq gating", () => {
+  it("drops chunks at or below the watermark, applies those above", () => {
+    resetStore("chat-ws");
+    // Snapshot said: message m-snap already contains deltas 1..3.
+    setSnapshotSeq("chat-ws", "m-snap", 3);
+
+    appendChunk("chat-ws", "m-snap", "dup-1 ", false, 0, "", 2); // folded in → drop
+    appendChunk("chat-ws", "m-snap", "dup-2 ", false, 0, "", 3); // boundary → drop
+    appendChunk("chat-ws", "m-snap", "fresh", false, 0, "", 4); // new → apply
+
+    const msg = get("chat-ws")!.messages.find((m) => m.id === "m-snap");
+    expect(msg?.content).toBe("fresh");
+    clearSnapshotSeq("chat-ws");
+  });
+
+  it("seq 0 (pre-seq server or unrelated turn) always applies", () => {
+    resetStore("chat-ws0");
+    setSnapshotSeq("chat-ws0", "m-snap", 5);
+    appendChunk("chat-ws0", "m-snap", "legacy", false, 0, "", 0);
+    const msg = get("chat-ws0")!.messages.find((m) => m.id === "m-snap");
+    expect(msg?.content).toBe("legacy");
+    clearSnapshotSeq("chat-ws0");
+  });
+
+  it("a different message id ignores the watermark (fresh turn)", () => {
+    resetStore("chat-wsx");
+    setSnapshotSeq("chat-wsx", "m-old", 99);
+    appendChunk("chat-wsx", "m-new", "next turn", false, 0, "", 1);
+    const msg = get("chat-wsx")!.messages.find((m) => m.id === "m-new");
+    expect(msg?.content).toBe("next turn");
+    clearSnapshotSeq("chat-wsx");
+  });
+
+  it("clearSnapshotSeq lifts the gate", () => {
+    resetStore("chat-wsc");
+    setSnapshotSeq("chat-wsc", "m-snap", 10);
+    clearSnapshotSeq("chat-wsc");
+    appendChunk("chat-wsc", "m-snap", "after clear", false, 0, "", 1);
+    const msg = get("chat-wsc")!.messages.find((m) => m.id === "m-snap");
+    expect(msg?.content).toBe("after clear");
   });
 });

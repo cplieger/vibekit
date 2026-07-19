@@ -22,7 +22,7 @@ func countEvents(events *[]api.ServerEvent, typ api.EventType) int {
 // status — the signal the client refetches GET /api/permissions on.
 func TestHandlePolicyChanged(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandlePolicyChanged(context.Background(), api.ChatID("c1"), &api.RPCResponse{
 		Params: mustJSON(t, map[string]any{"sessionId": "sess-1", "status": "success"}),
@@ -49,7 +49,7 @@ func TestHandlePolicyChanged(t *testing.T) {
 // one policy_error event carrying the error list.
 func TestHandlePolicyError(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	tr.HandlePolicyError(context.Background(), api.ChatID("c1"), &api.RPCResponse{
 		Params: mustJSON(t, map[string]any{
@@ -78,7 +78,7 @@ func TestHandlePolicyError(t *testing.T) {
 // without a broadcast.
 func TestHandlePolicyMalformedNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 	tr.HandlePolicyChanged(context.Background(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")})
 	tr.HandlePolicyError(context.Background(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")})
 	if len(*events) != 0 {

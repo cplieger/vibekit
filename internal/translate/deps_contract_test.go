@@ -125,10 +125,6 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		}
 	})
 
-	t.Run("PermissionRules_returns_without_panic", func(t *testing.T) {
-		_ = d.PermissionRules()
-	})
-
 	t.Run("OpenPartialFile_does_not_panic", func(t *testing.T) {
 		d.OpenPartialFile(ctx, "chat-1", nil)
 	})

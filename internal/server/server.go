@@ -7,7 +7,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -15,7 +18,6 @@ import (
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/toolbelt/v2/httpapi"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/singleflight"
 )
@@ -42,7 +44,6 @@ type Server struct {
 	mcpRegistry   api.RouteHandler
 	staticFS      fs.FS
 	cliRunner     CLIRunner
-	rules         *permissions.CommandRules
 	tools         *toolbelt.Engine
 	cliPath       string
 	configDir     string
@@ -100,9 +101,6 @@ func WithMCPRegistry(r api.RouteHandler) Option { return func(s *Server) { s.mcp
 
 // WithForges sets the route handler for forge (GitHub/GitLab/Gitea) HTTP endpoints.
 func WithForges(r api.RouteHandler) Option { return func(s *Server) { s.forges = r } }
-
-// WithRules sets the command rules store for per-command allow/deny evaluation.
-func WithRules(r *permissions.CommandRules) Option { return func(s *Server) { s.rules = r } }
 
 // WithTools sets the tools engine backing the /api/tools surface.
 func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e } }
@@ -201,7 +199,6 @@ func (s *Server) ListenAndServe() error {
 	if s.forges != nil {
 		s.forges.RegisterRoutes(mux)
 	}
-	mux.HandleFunc("/api/permissions/commands", s.handleCommandRules)
 	mux.HandleFunc("GET /api/permissions", s.handlePolicyView)
 	mux.HandleFunc("/api/permissions/explain", s.handlePolicyExplain)
 	mux.HandleFunc("/api/permissions/rules", s.handlePolicyRules)
@@ -302,14 +299,44 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 // canonical JSON envelope shared across the cplieger Go apps
 // (vibekit, web-terminal-kiro, subflux, registry-stats, plex-exporter): 200 with
 // {"status":"ok"} when the listener is bound and serving; 503 with
-// {"status":"unready",...} during startup or graceful shutdown drain.
+// {"status":"unready",...} during startup or graceful shutdown drain —
+// or when kiro-cli is unavailable (the degraded-not-dead start: the
+// entrypoint boots the server even when the first-boot install failed,
+// and this probe is how the failure surfaces to `docker ps` and
+// monitoring). The kiro-cli probe is a cheap LookPath/stat — never a
+// subprocess spawn — and re-evaluates per request, so recovering the
+// binary heals the health signal without a restart. This is a
+// READINESS signal: under `restart: unless-stopped` nothing restarts
+// on the unhealthy state, so there is no restart loop; if ever run
+// under Swarm/k8s, wire it to a readinessProbe, not a livenessProbe.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	if !s.ready.Load() {
+	unready := func(reason string) {
 		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
 			"status": "unready",
-			"reason": "starting up or shutting down",
+			"reason": reason,
 		})
+	}
+	if !s.ready.Load() {
+		unready("starting up or shutting down")
+		return
+	}
+	if s.cliPath != "" && !executableAvailable(s.cliPath) {
+		unready("kiro-cli unavailable")
 		return
 	}
 	api.WriteJSON(w, map[string]string{"status": "ok"})
+}
+
+// executableAvailable reports whether path resolves to an existing
+// executable, matching what os/exec does when the bridge spawns the
+// kiro-cli subprocess: bare names walk $PATH via LookPath, slashed
+// paths are stat'd directly (exec bit checked). Mirrors composition's
+// boot-time checkExecutable, which logs the degraded-start warning.
+func executableAvailable(path string) bool {
+	if !strings.ContainsRune(path, '/') {
+		_, err := exec.LookPath(path)
+		return err == nil
+	}
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }

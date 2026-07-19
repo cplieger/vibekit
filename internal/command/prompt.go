@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -131,6 +132,15 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
 	supervisedDefault := permissions.SupervisedDefault(ctx, deps.ConfigDir())
 	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+		// Idempotent by message id (the documented invariant): if this id
+		// is already in the store — e.g. a 409-queued prompt whose first
+		// attempt persisted the user message before the busy check, now
+		// re-sent by the client's prompt queue — skip the append AND the
+		// broadcast so no duplicate user bubble renders. The prompt itself
+		// still proceeds (Mutate returns nil on a false mutator).
+		if hasMessageID(c, p.MessageID) {
+			return false
+		}
 		if !exists {
 			c.Name = api.DefaultChatName
 			c.Model = p.Model
@@ -158,6 +168,18 @@ func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx cont
 		return true
 	})
 	return err
+}
+
+// hasMessageID reports whether the chat already contains a message with
+// the given id. Scans backwards — a retried prompt's original append is
+// almost always the most recent message.
+func hasMessageID(c *api.Chat, id string) bool {
+	for i := range slices.Backward(c.Messages) {
+		if c.Messages[i].ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // turnContext derives the context an in-flight turn runs under. It

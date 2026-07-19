@@ -284,6 +284,67 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID api.ChatID, c *api
 	s.broadcast.Broadcast(ctx, api.NewEvent(evt, chatID, s.header(ctx, c)))
 }
 
+// DeleteFamily removes a chat and its rewind children as one named
+// transition (see api.ChatStore for the contract). Ordering is the
+// point: children go FIRST, so no crash window ever leaves a child
+// whose ParentChatID references a deleted parent — an interruption
+// mid-family leaves whole, listed, deletable chats and a parent that
+// still lists its survivors. The child set is re-derived here (not
+// passed in) so the scan and the deletion happen as close together as
+// per-chat locking allows; ChildrenOf remains advisory, so a child
+// created concurrently with the delete can still slip through — it
+// stays listed and deletable, which is the documented failure grade.
+func (s *Store) DeleteFamily(ctx context.Context, parentID api.ChatID, prepare func(api.ChatID)) (failedChildren []api.ChatID, err error) {
+	for _, childID := range s.ChildrenOf(ctx, parentID) {
+		if prepare != nil {
+			prepare(childID)
+		}
+		if delErr := s.Delete(ctx, childID); delErr != nil {
+			slog.Error("chat delete_family: child survived",
+				"parent", parentID, "child", childID, "error", delErr)
+			failedChildren = append(failedChildren, childID)
+		}
+	}
+	if prepare != nil {
+		prepare(parentID)
+	}
+	if delErr := s.Delete(ctx, parentID); delErr != nil {
+		return failedChildren, delErr
+	}
+	return failedChildren, nil
+}
+
+// PromoteRewind clears a rewind chat's parent linkage as one checked,
+// per-chat-locked transition (see api.ChatStore for the contract). The
+// validation and the clear run inside a single Mutate closure, so a
+// concurrent mutation of the same chat cannot slip between a read and
+// the write (the old command-level Get→Mutate pair could).
+func (s *Store) PromoteRewind(ctx context.Context, childID api.ChatID) (api.ChatID, error) {
+	var parentID api.ChatID
+	var opErr error
+	err := s.Mutate(ctx, childID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			opErr = api.ErrChatNotFound
+			return false
+		}
+		if c.ParentChatID == "" {
+			opErr = api.ErrNotRewind
+			return false
+		}
+		parentID = c.ParentChatID
+		c.ParentChatID = ""
+		c.RewindFromTurn = 0
+		return true
+	})
+	if opErr != nil {
+		return "", opErr
+	}
+	if err != nil {
+		return "", err
+	}
+	return parentID, nil
+}
+
 // Delete removes the chat file and broadcasts chat_deleted. No-op if the
 // chat does not exist. This is the only function that removes chat data.
 // After the file is gone we mark the id tombstoned so any in-flight

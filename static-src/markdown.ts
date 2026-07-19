@@ -30,8 +30,10 @@ import { domRenderer } from "./smd-renderer.js";
 import { linkifyPaths } from "./linkify.js";
 import { decorateCodeBlocks } from "./code-blocks.js";
 
-/** Markdown re-parse throttle while streaming. 200ms is the sweet
- *  spot from vibekit-ui.md (Vercel ai-chatbot pattern). */
+/** Incremental-write flush throttle while streaming: buffered deltas are
+ *  fed to the append-only streaming parser at most once per interval.
+ *  Nothing re-parses — previously rendered DOM stays untouched. 200ms is
+ *  the sweet spot from vibekit-ui.md (Vercel ai-chatbot pattern). */
 const FLUSH_INTERVAL_MS = 200;
 
 /** Maximum bytes parsed per task slice. Tuned so a single slice

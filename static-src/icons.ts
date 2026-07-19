@@ -250,6 +250,39 @@ export const ICON_TAB_AGENT = svg(
   14,
   '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><circle cx="12" cy="12" r="2.5"/>',
 );
+// --- Subagent header icons (SubagentBlock in the chat transcript) ---
+// One distinct glyph per bundled kiro-cli subagent, mirroring the mode
+// picker's distinct-glyph-per-builtin convention; unknown/custom subagents
+// fall back to ICON_TAB_AGENT (the shared hexagon). Mapping: roles.ts
+// iconForSubagent.
+//
+// Introspect (Lucide "book-open") — answers questions about Kiro from the
+// official docs.
+export const ICON_SUBAGENT_INTROSPECT = svg(
+  14,
+  '<path d="M12 7v14"/><path d="M3 18a1 1 0 01-1-1V4a1 1 0 011-1h5a4 4 0 014 4 4 4 0 014-4h5a1 1 0 011 1v13a1 1 0 01-1 1h-6a3 3 0 00-3 3 3 3 0 00-3-3z"/>',
+);
+// Context gatherer (Lucide "search") — explores the codebase read-only.
+export const ICON_SUBAGENT_GATHERER = svg(
+  14,
+  '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+);
+// General task execution (Lucide "wrench") — does delegated work.
+export const ICON_SUBAGENT_TASK = svg(
+  14,
+  '<path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>',
+);
+// Custom agent creator (hexagon module + plus) — builds new agents; keeps
+// the agent-hexagon design language with a create affordance.
+export const ICON_SUBAGENT_CREATOR = svg(
+  14,
+  '<path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/><path d="M12 9v6M9 12h6"/>',
+);
+// Model-refusal callout icon (Lucide "octagon-alert").
+export const ICON_REFUSAL = svg(
+  14,
+  '<path d="M12 16h.01"/><path d="M12 8v4"/><path d="M15.312 2a2 2 0 011.414.586l4.688 4.688A2 2 0 0122 8.688v6.624a2 2 0 01-.586 1.414l-4.688 4.688a2 2 0 01-1.414.586H8.688a2 2 0 01-1.414-.586l-4.688-4.688A2 2 0 012 15.312V8.688a2 2 0 01.586-1.414l4.688-4.688A2 2 0 018.688 2z"/>',
+);
 // Quick Spec mode icon (Lucide "file-check") — a single doc with a check,
 // distinct from Spec's multi-item checklist: the fast one-pass spec flow.
 export const ICON_TAB_QUICK_SPEC = svg(

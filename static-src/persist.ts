@@ -22,7 +22,6 @@ export interface AppSettings {
    *  the agent makes stages for user review before hitting disk.
    *  Per-chat toggle is on the chat prompt row (Supervised pill). */
   supervised_default?: boolean;
-  shell_policy?: "no_commands" | "safe_commands" | "all_commands";
   model_effort?: { last_model: string; effort: EffortLevel };
   /** Chat retention, owned end to end by vibekit (kiro-cli's own
    *  cleanup.periodDays is pinned to 0/never). Encoding: -1 = forever

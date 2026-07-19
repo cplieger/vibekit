@@ -378,9 +378,11 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	stopReason := extractStopReason(resp)
 
 	var changedFiles map[string]*api.FileChange
+	var refusal *api.RefusalInfo
 
 	if buf, ok := bc.TakeBuffer(chatID); ok && buf.Started {
 		changedFiles = buf.ChangedFiles
+		refusal = buf.Refusal
 		if stopReason == stopReasonCancelled {
 			changed := buf.MarkCancelledToolsFailed()
 			for i := range changed {
@@ -405,6 +407,10 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			// attributions so the chip survives reload (the streamed
 			// assistant turn is never re-broadcast as message_appended).
 			CodeReferences: buf.CodeReferences,
+			// Refusal metadata (kiro-cli 2.13): stamped from the refusal
+			// explanation chunk; persisting it here is what makes the
+			// refusal callout survive reload.
+			Refusal: buf.Refusal,
 			// Turn summary (credits · elapsed · files changed) — persisted on
 			// the message so the turn footer survives reload. The same values
 			// ride the turn_ended SSE for the live render; omitempty drops the
@@ -413,16 +419,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			TurnElapsedMs: elapsedMs,
 			ChangedFiles:  changedFiles,
 		}
-		// Persist the finalized turn BEFORE deleting the .partial. A crash
-		// in this window would otherwise lose a COMPLETED turn (the
-		// .partial gone, the chat file never committed). RecoverPartials is
-		// idempotent — it skips the append when the MessageID is already
-		// committed — so a crash AFTER this commit / BEFORE the delete
-		// below can't double-append on the next boot.
-		if err := bc.chatStore.AppendMessage(ctx, chatID, &msg); err != nil {
-			slog.Error("persist assistant turn", "chat_id", chatID, "error", err)
-		}
-		closeAndRemovePartial(ctx, chatID, buf)
+		bc.persistTurnOrKeepPartial(ctx, chatID, &msg, buf, closeAndRemovePartial)
 	}
 
 	if stopReason == stopReasonCancelled {
@@ -440,6 +437,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	if _, stillExists := bc.chatStore.Get(ctx, chatID); stillExists {
 		bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{
 			StopReason:   stopReason,
+			Refusal:      refusal,
 			CreditsDelta: creditsDelta,
 			ElapsedMs:    elapsedMs,
 			ChangedFiles: changedFiles,
@@ -455,6 +453,24 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	if stopReason != stopReasonCancelled {
 		bc.NotifyPush(ctx, "Agent finished", api.PushKindAgentFinished)
 	}
+}
+
+// persistTurnOrKeepPartial persists the finalized turn BEFORE deleting
+// the .partial. A crash in this window would otherwise lose a COMPLETED
+// turn (the .partial gone, the chat file never committed).
+// RecoverPartials is idempotent — it skips the append when the MessageID
+// is already committed — so a crash AFTER this commit / BEFORE the
+// delete can't double-append on the next boot. On a FAILED append the
+// .partial is deliberately kept: it now holds the only durable copy of
+// the turn, and boot recovery re-imports it as an interrupted assistant
+// message — deleting it here would discard the turn entirely.
+func (bc *BridgeCoordinator) persistTurnOrKeepPartial(ctx context.Context, chatID api.ChatID, msg *api.Message, buf *buffer.Buffer, closeAndRemovePartial func(context.Context, api.ChatID, *buffer.Buffer)) {
+	if err := bc.chatStore.AppendMessage(ctx, chatID, msg); err != nil {
+		slog.Error("persist assistant turn; keeping .partial for boot recovery",
+			"chat_id", chatID, "error", err)
+		return
+	}
+	closeAndRemovePartial(ctx, chatID, buf)
 }
 
 // TryFastModelSwitch attempts an in-session model swap via

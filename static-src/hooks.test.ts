@@ -51,6 +51,7 @@ interface HookLike {
   name: string;
   trigger: string;
   action_type: string;
+  scope?: string;
   command?: string;
   prompt?: string;
   matcher?: string;
@@ -147,6 +148,31 @@ describe("loadHooks render", () => {
     const row = list().querySelector(".hook-row") as HTMLElement;
     expect(row.classList.contains("hook-off")).toBe(true);
     expect((row.querySelector(".hook-toggle") as HTMLInputElement).checked).toBe(false);
+  });
+
+  it("renders a global hook (kiro-cli 2.13) with the Global badge and no open button", async () => {
+    mockGet.mockResolvedValue({
+      hooks: [cmdHook({ scope: "global", file_path: "~/.kiro/hooks/greet.json" })],
+    });
+    loadHooks();
+    await flush();
+    const row = list().querySelector(".hook-row") as HTMLElement;
+    const badge = row.querySelector(".hook-scope-global");
+    expect(badge).not.toBeNull();
+    expect(badge?.textContent).toBe("Global");
+    // The path rides the badge tooltip; the file lives in the blocked HOME
+    // tree so there is no open-in-editor affordance.
+    expect(badge?.getAttribute("data-tooltip")).toContain("~/.kiro/hooks/greet.json");
+    expect(row.querySelector(".hook-open")).toBeNull();
+  });
+
+  it("workspace rows carry no scope badge and keep the open button", async () => {
+    mockGet.mockResolvedValue({ hooks: [cmdHook({ scope: "workspace" })] });
+    loadHooks();
+    await flush();
+    const row = list().querySelector(".hook-row") as HTMLElement;
+    expect(row.querySelector(".hook-scope-global")).toBeNull();
+    expect(row.querySelector(".hook-open")).not.toBeNull();
   });
 
   it("shows the empty state for no hooks", async () => {

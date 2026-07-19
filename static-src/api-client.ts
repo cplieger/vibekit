@@ -125,6 +125,12 @@ interface ApiResult<T> {
   status: number;
   data: T | null;
   error: string;
+  /** Parsed JSON body of a FAILED response, when the server sent one
+   *  (e.g. /api/health's 503 `{"status":"unready","reason":...}`,
+   *  which carries its detail outside the standard "error" key).
+   *  Undefined on success and on non-JSON/empty error bodies.
+   *  Server-controlled content — same trust level as `error`. */
+  body?: unknown;
 }
 
 /** GET `path`, validate the response with `decoder`, return the typed value or
@@ -164,6 +170,21 @@ export async function apiPutOrError<T>(
   }
   logApiError(r, "PUT", path);
   return { ok: false, status: r.status, data: null, error: r.error };
+}
+
+/** GET variant that surfaces error details instead of collapsing every
+ *  failure to null. Use when a non-2xx body is itself meaningful —
+ *  /api/health's 503 envelope is the canonical consumer (the degraded
+ *  runtime banner needs the `reason` field). On failure, `body` carries
+ *  the parsed error JSON when the server sent one. */
+export async function apiGetOrError<T>(path: string, signal?: AbortSignal): Promise<ApiResult<T>> {
+  const r = await fx.apiGetRaw<T>(path, reqOpts({}, signal));
+  if (r.ok) {
+    return { ok: true, status: r.status, data: r.data ?? null, error: "" };
+  }
+  // No logApiError: the canonical consumer polls health where a 503 is
+  // an EXPECTED state, not a fault worth a console audit line.
+  return { ok: false, status: r.status, data: null, error: r.error, body: r.body };
 }
 
 // --- CancellableSlot: reusable abort-controller lifecycle helper ---

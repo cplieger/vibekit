@@ -2,10 +2,14 @@ package filehandler
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -29,21 +33,23 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	if reqPath == "" || reqPath == "." {
 		reqPath = "/"
 	}
-	// resolvePath("/") returns ("/", nil): filepath.Clean("//") is
-	// "/", the top segment splits to "" which is not in the
-	// blacklist, and "/" never matches isSensitive. No special case
-	// needed.
-	resolved := resolveOrForbid(w, reqPath)
-	if resolved == "" {
+	// "/" is not a real directory in the allow-list model — it is the
+	// synthetic listing of the granted mounts.
+	if filepath.Clean("/"+reqPath) == "/" {
+		h.listMounts(w)
 		return
 	}
-	f, err := h.root.Open(h.relPath(resolved))
+	l, ok := h.resolveOrForbid(w, reqPath)
+	if !ok {
+		return
+	}
+	f, err := l.m.root.Open(l.rel())
 	if err != nil {
 		if os.IsNotExist(err) {
 			api.NotFound(w, "not found")
 			return
 		}
-		slog.Warn("filehandler: readdir failed", "path", resolved, "error", err)
+		slog.Warn("filehandler: readdir failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
@@ -51,32 +57,52 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	entries, err := f.ReadDir(-1)
 	f.Close()
 	if err != nil {
-		slog.Warn("filehandler: readdir failed", "path", resolved, "error", err)
+		slog.Warn("filehandler: readdir failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
 	}
-	files := listEntries(r.Context(), entries, resolved)
+	files := listEntries(r.Context(), entries, l.abs)
 	api.WriteJSON(w, map[string]any{
-		"path":     reqPath,
+		respPath:   reqPath,
 		"files":    files,
-		"writable": isWritable(resolved),
+		"writable": h.isWritable(l),
 	})
 }
 
-// listEntries filters DirEntries: at root, blacklisted dirs + dotfiles
-// are hidden; sensitive paths are hidden everywhere.
+// listMounts writes the synthetic root listing: one directory entry
+// per granted mount (a nested grant like /data/media renders as the
+// slash-joined name "data/media"). The root itself is never writable —
+// mounts are boot-time configuration, not filesystem entries.
+func (h *Handler) listMounts(w http.ResponseWriter) {
+	files := make([]fileEntry, 0, len(h.mounts))
+	for i := range h.mounts {
+		m := &h.mounts[i]
+		e := fileEntry{Name: m.name, IsDir: true, Mode: os.ModeDir.String()}
+		if info, err := m.root.Stat("."); err == nil {
+			e.Mode = info.Mode().String()
+			e.ModTime = info.ModTime().UnixMilli()
+		}
+		files = append(files, e)
+	}
+	// mounts are sorted longest-first for prefix matching; the UI wants
+	// them alphabetical.
+	slices.SortFunc(files, func(a, b fileEntry) int { return strings.Compare(a.Name, b.Name) })
+	api.WriteJSON(w, map[string]any{
+		respPath:   "/",
+		"files":    files,
+		"writable": false,
+	})
+}
+
+// listEntries filters DirEntries: sensitive paths are hidden.
 func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []fileEntry {
-	isRoot := resolved == "/"
 	files := make([]fileEntry, 0, len(entries))
 	for _, e := range entries {
 		if err := ctx.Err(); err != nil {
 			break
 		}
 		name := e.Name()
-		if isRoot && (blacklist[name] || name[0] == '.') {
-			continue
-		}
 		if isSensitive(filepath.Join(resolved, name)) {
 			continue
 		}
@@ -103,21 +129,31 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 }
 
 // isWritable probes write access by creating and removing a
-// zero-byte temp file. Failures are logged at Debug (probe couldn't
-// even create a file — not actionable) or Warn (probe file leaked —
-// operator may want to sweep). The probe prefix is named so a future
-// startup sweeper can scan for ".vibekit-probe-*" leftovers.
-func isWritable(dir string) bool {
-	f, err := os.CreateTemp(dir, ".vibekit-probe-*")
+// zero-byte probe file THROUGH the mount's kernel-confined root
+// handle, so the same os.Root confinement that gates every other file
+// operation also applies to the probe. O_EXCL plus a random suffix
+// keeps concurrent probes collision-free. Failures are logged at
+// Debug (probe couldn't even create a file — not actionable) or Warn
+// (probe file leaked — operator may want to sweep). The probe prefix
+// is named so a future startup sweeper can scan for ".vibekit-probe-*"
+// leftovers.
+func (h *Handler) isWritable(l loc) bool {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		// crypto/rand cannot fail on supported platforms; treat an
+		// impossible failure as "unknown", i.e. not writable.
+		return false
+	}
+	rel := l.relOf(filepath.Join(l.abs, fmt.Sprintf(".vibekit-probe-%x", suffix)))
+	f, err := l.m.root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return false
 	}
-	name := f.Name()
 	if closeErr := f.Close(); closeErr != nil {
-		slog.Debug("filehandler: probe close failed", "path", name, "error", closeErr)
+		slog.Debug("filehandler: probe close failed", "path", rel, "error", closeErr)
 	}
-	if rmErr := os.Remove(name); rmErr != nil { //nolint:gosec // G703: path validated against workspace root
-		slog.Warn("filehandler: probe cleanup failed", "path", name, "error", rmErr)
+	if rmErr := l.m.root.Remove(rel); rmErr != nil {
+		slog.Warn("filehandler: probe cleanup failed", "path", rel, "error", rmErr)
 	}
 	return true
 }

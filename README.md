@@ -94,11 +94,12 @@ Vibekit is a full workspace in the browser, not just a chat box. Everything belo
 - Pull requests: list, create (with an AI-written description), merge, and close.
 - Connect forge accounts via OAuth device flow or a token (driven by the `gh` / `glab` / `tea` CLIs).
 
-**Safety nets** around every agent change:
+**Safety nets** around the agent's file edits:
 
-- Checkpoints: content-addressed per-file snapshots, independent of git — restore everything or undo a single file, with cross-chat conflict detection and click-to-diff.
-- Supervised mode: stage every agent write for per-hunk accept/reject/merge before it touches disk; grant trust for the rest of a turn when you're confident.
-- Permissions: a Cedar policy editor (allow/deny/ask per capability, with path scoping), shell-command tiers, and a "test a decision" explainer.
+- Checkpoints: content-addressed per-file snapshots, independent of git — restore a turn's file edits or undo a single file, with cross-chat conflict detection and click-to-diff.
+- Supervised mode: stage every agent file write for per-hunk accept/reject/merge before it touches disk; grant trust for the rest of a turn when you're confident.
+- Permissions: a Cedar policy editor (allow/deny/ask per capability, with path scoping) and a "test a decision" explainer — one policy governs every tool call, shell commands included.
+- Scope: checkpoints and supervised staging cover the agent's file-write channel. Changes made through shell commands or terminals (the agent's or yours) are approved via permissions but not snapshotted or staged — use git for those.
 
 **MCP** server management:
 
@@ -130,7 +131,7 @@ The image ships working defaults; most setups only choose the volumes and how to
 - **Port:** `9847` (HTTP + SSE + the shell WebSocket).
 - **Volumes:** `/config` persists chats, kiro-cli auth/state, installed tools, and settings; `/workspace` is your repositories.
 - **User:** the compose above runs as `1000:1000` (see the first-boot ownership note). Run as root (`user: "0:0"`) to skip managing host ownership.
-- **Health:** `GET /api/health` reports healthy once the server is up.
+- **Health:** `GET /api/health` reports healthy once the server is up. If the first-boot kiro-cli download failed, the web UI still starts (files, git, settings, and the shell all work) but health reports `503 kiro-cli unavailable`, the UI shows a banner, and chats can't run — restart the container to retry the install.
 
 ### Behind a reverse proxy (`TRUSTED_PROXIES`)
 
@@ -145,6 +146,17 @@ The access log and the login/logout audit logs record a `client_ip`. How that ad
   ```
 
 `X-Forwarded-For` is honored **only** when the connecting peer falls inside `TRUSTED_PROXIES`; otherwise the header is ignored and the socket peer is logged. List every proxy hop between the client and vibekit. This is spoof-safe by default: an empty, unset, or misconfigured value falls back to the unspoofable socket peer rather than trusting a client-supplied header.
+
+### Extra browse roots (`VIBEKIT_BROWSE_ROOTS`)
+
+The file browser sees exactly the granted roots — `/workspace` and `/config` by default — and nothing else in the container. Anything outside the grants (system directories, the image's own install tree, paths that don't exist yet) is denied by default rather than hidden by an enumerated block-list. To browse additional mounts, grant them explicitly with a colon-separated list of absolute paths:
+
+```yaml
+environment:
+  VIBEKIT_BROWSE_ROOTS: "/tmp:/data"
+```
+
+Each grant must exist in the container (mount it via `volumes:` first); a malformed or missing entry is logged and skipped, never fatal. Credential and internal state files under `/config` (SSH keys, cloud tokens, chat store, MCP config) stay blocked regardless of grants.
 
 ## How it fits together
 

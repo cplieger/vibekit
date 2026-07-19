@@ -77,10 +77,15 @@ func TestOnChatArchiving_TearsDownStateWithoutReapingCheckpoints(t *testing.T) {
 		t.Fatal("bridge not created")
 	}
 
-	// An open .partial recovery file (a mid-turn archive would otherwise
+	// An on-disk .partial recovery file (a mid-turn archive would otherwise
 	// leave it for RecoverPartials to resurrect as a ghost active chat).
+	// The writer creates the file on the first flush (atomic replacement),
+	// not at open, so write one snapshot to materialize it.
 	buf := h.bridge.assistantBufs.GetOrInit("c1")
 	h.openPartialFile(ctx, "c1", buf)
+	buf.MessageID = "m1"
+	buf.Content.WriteString("streaming…")
+	buf.WritePartial(ctx)
 	partialPath := filepath.Join(cfg, "chats", "c1.partial")
 	if _, err := os.Stat(partialPath); err != nil {
 		t.Fatalf("partial file not created: %v", err)

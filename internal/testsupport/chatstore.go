@@ -43,6 +43,16 @@ func (NopChatStore) Mutate(context.Context, api.ChatID, func(*api.Chat, bool) bo
 // Delete is a no-op; implements api.ChatStore.
 func (NopChatStore) Delete(context.Context, api.ChatID) error { return nil }
 
+// DeleteFamily is a no-op; implements api.ChatStore.
+func (NopChatStore) DeleteFamily(context.Context, api.ChatID, func(api.ChatID)) ([]api.ChatID, error) {
+	return nil, nil
+}
+
+// PromoteRewind returns ErrChatNotFound; implements api.ChatStore.
+func (NopChatStore) PromoteRewind(context.Context, api.ChatID) (api.ChatID, error) {
+	return "", api.ErrChatNotFound
+}
+
 // Archive is a no-op; implements api.ChatStore.
 func (NopChatStore) Archive(context.Context, api.ChatID) error { return nil }
 
@@ -182,6 +192,49 @@ func (s *RecordingChatStore) Delete(_ context.Context, id api.ChatID) error {
 		s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_deleted", ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
 	return nil
+}
+
+// DeleteFamily removes children first, then the parent, mirroring the
+// real store's ordering contract; implements api.ChatStore.
+func (s *RecordingChatStore) DeleteFamily(ctx context.Context, parentID api.ChatID, prepare func(api.ChatID)) ([]api.ChatID, error) {
+	for _, childID := range s.ChildrenOf(ctx, parentID) {
+		if prepare != nil {
+			prepare(childID)
+		}
+		_ = s.Delete(ctx, childID)
+	}
+	if prepare != nil {
+		prepare(parentID)
+	}
+	return nil, s.Delete(ctx, parentID)
+}
+
+// PromoteRewind clears the rewind linkage under one Mutate, mirroring
+// the real store's contract; implements api.ChatStore.
+func (s *RecordingChatStore) PromoteRewind(ctx context.Context, childID api.ChatID) (api.ChatID, error) {
+	var parentID api.ChatID
+	var opErr error
+	err := s.Mutate(ctx, childID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			opErr = api.ErrChatNotFound
+			return false
+		}
+		if c.ParentChatID == "" {
+			opErr = api.ErrNotRewind
+			return false
+		}
+		parentID = c.ParentChatID
+		c.ParentChatID = ""
+		c.RewindFromTurn = 0
+		return true
+	})
+	if opErr != nil {
+		return "", opErr
+	}
+	if err != nil {
+		return "", err
+	}
+	return parentID, nil
 }
 
 // Archive removes the chat; delegates to Delete for test simplicity.

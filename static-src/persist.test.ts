@@ -140,18 +140,18 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("skips PATCH when the value matches the seeded server state (page-reload bootstrap case)", async () => {
-    initSettingsTracking({ shell_policy: "safe_commands", last_model: "claude" });
-    // Simulate the bootstrap fire from onSelectionChange: same shell_policy
-    // value the server already has.
-    patchSettings({ shell_policy: "safe_commands" });
+    initSettingsTracking({ supervised_default: false, last_model: "claude" });
+    // Simulate the bootstrap fire from onSelectionChange: same
+    // supervised_default value the server already has.
+    patchSettings({ supervised_default: false });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("PATCHes only the changed key when bootstrap and a real change overlap", async () => {
-    initSettingsTracking({ shell_policy: "safe_commands", last_model: "claude" });
-    // shell_policy unchanged, last_model changed.
-    patchSettings({ shell_policy: "safe_commands" });
+    initSettingsTracking({ supervised_default: false, last_model: "claude" });
+    // supervised_default unchanged, last_model changed.
+    patchSettings({ supervised_default: false });
     patchSettings({ last_model: "gemini" });
     await vi.advanceTimersByTimeAsync(350);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -198,9 +198,9 @@ describe("patchSettings no-op dedup", () => {
   });
 
   it("does not fire showSaving when every key in the patch is filtered", async () => {
-    initSettingsTracking({ shell_policy: "safe_commands" });
+    initSettingsTracking({ supervised_default: true });
     const { showSaving } = await import("./save-indicator.js");
-    patchSettings({ shell_policy: "safe_commands" });
+    patchSettings({ supervised_default: true });
     await vi.advanceTimersByTimeAsync(350);
     expect(showSaving).not.toHaveBeenCalled();
   });

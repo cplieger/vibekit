@@ -42,12 +42,40 @@ export function load(): UIState {
     if (raw === null) {
       return empty();
     }
-    const d = JSON.parse(raw) as Partial<UIState>;
-    const e = empty();
-    return { ...e, ...d };
+    return sanitize(JSON.parse(raw));
   } catch {
     return empty();
   }
+}
+
+/** Validate the parsed localStorage value field by field instead of
+ *  shallow-spreading it: stale or hand-edited data (a string where an
+ *  array is expected, a non-finite shell height) previously flowed
+ *  straight into tab restore and the shell sizing math. Any invalid
+ *  field falls back to its default; valid siblings are kept. */
+function sanitize(d: unknown): UIState {
+  const e = empty();
+  if (typeof d !== "object" || d === null) {
+    return e;
+  }
+  const o = d as Record<string, unknown>;
+  return {
+    tab_order: strArray(o["tab_order"]) ?? e.tab_order,
+    active_view: typeof o["active_view"] === "string" ? o["active_view"] : e.active_view,
+    shell_open: typeof o["shell_open"] === "boolean" ? o["shell_open"] : e.shell_open,
+    shell_h:
+      typeof o["shell_h"] === "number" && Number.isFinite(o["shell_h"]) && o["shell_h"] >= 0
+        ? o["shell_h"]
+        : e.shell_h,
+    editor_files: strArray(o["editor_files"]) ?? e.editor_files,
+    fb_path: typeof o["fb_path"] === "string" ? o["fb_path"] : e.fb_path,
+    theme: o["theme"] === "dark" || o["theme"] === "light" ? o["theme"] : null,
+    dismissed_banners: strArray(o["dismissed_banners"]) ?? e.dismissed_banners,
+  };
+}
+
+function strArray(v: unknown): string[] | undefined {
+  return Array.isArray(v) && v.every((x) => typeof x === "string") ? v : undefined;
 }
 
 export function save(patch: Partial<UIState>): void {

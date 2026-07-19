@@ -23,6 +23,7 @@
 
 import { el } from "@cplieger/reactive";
 import { onSSE } from "./bus.js";
+import type { ConflictDetectedPayload } from "./wire/types.gen.js";
 import { escText } from "./strings.js";
 import { ICON_WARN_12 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -33,16 +34,9 @@ import { bindLoadingState } from "./actions/index.js";
 /** Cleanup functions for conflict chip loading-state bindings. */
 const chipUnbindMap = new WeakMap<HTMLElement, () => void>();
 
-/** One conflict record. Shape matches the server-side
- *  `ConflictPayload` Go struct 1:1. */
-export interface Conflict {
-  readonly path: string;
-  readonly other_chat: string;
-  readonly expected_sha: string;
-  readonly actual_sha: string;
-  readonly tag: string;
-  readonly ts: number;
-}
+/** One conflict record: the generated wire payload (server-side
+ *  `ConflictPayload` Go struct, single source of truth). */
+export type Conflict = ConflictDetectedPayload;
 
 // Two-level registry: chatID → (path → Conflict). Only the LATEST
 // conflict per (chat, path) is retained because the UI shows a single
@@ -128,29 +122,15 @@ export function _registrySize(chatID: string): number {
 
 // Wire the SSE path.
 onSSE("conflict_detected", (chatID, payload) => {
-  // Server sends the full Conflict shape. We don't trust blindly —
-  // drop if the payload is missing required fields.
-  const c = payload as Partial<Conflict>;
-  if (typeof c.path !== "string" || c.path === "") {
+  // The generated wire decoder (registry.gen.ts, run by the transport)
+  // validated the payload shape before dispatch — a malformed frame is
+  // dropped there and never reaches this handler. Keep only the semantic
+  // guard a shape check can't express: a conflict must name a file.
+  const c = payload;
+  if (c.path === "") {
     return;
   }
-  if (typeof c.other_chat !== "string") {
-    return;
-  }
-  if (typeof c.expected_sha !== "string") {
-    return;
-  }
-  if (typeof c.actual_sha !== "string") {
-    return;
-  }
-  remember(chatID, {
-    path: c.path,
-    other_chat: c.other_chat,
-    expected_sha: c.expected_sha,
-    actual_sha: c.actual_sha,
-    tag: typeof c.tag === "string" ? c.tag : "",
-    ts: typeof c.ts === "number" ? c.ts : Date.now(),
-  });
+  remember(chatID, c);
   // Ask the transcript to re-decorate any tool card pointing at
   // this path. messages.ts exposes a light refresh hook that
   // traverses [data-filename] nodes; we import it lazily so this
@@ -158,9 +138,7 @@ onSSE("conflict_detected", (chatID, payload) => {
   // registry is used (e.g. from tests).
   void import("./messages-shared.js")
     .then((m) => {
-      if (c.path !== undefined) {
-        m.refreshConflictBadges(chatID, c.path);
-      }
+      m.refreshConflictBadges(chatID, c.path);
     })
     .catch((e: unknown) => {
       console.warn("[conflicts] badge refresh failed", e);

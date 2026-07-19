@@ -57,10 +57,27 @@ type ACPToolCallContentBlock struct {
 // hooks.showStatus setting is off; the contents are opaque here.
 type ACPKiroMeta struct {
 	Kiro struct {
+		// Refusal is present only on the agent_message_chunk carrying a
+		// model-refusal explanation (kiro-cli 2.13+, modelStopReason
+		// "content_filtered"). KAS calls it a progressive-enhancement
+		// marker: plain clients render the text, capable clients key off
+		// it for a distinct refusal affordance. The turn then ends with
+		// core stopReason "refusal".
+		Refusal        *ACPRefusalMeta `json:"refusal"`
 		Kind           string          `json:"kind"`
 		AgentSubtaskID string          `json:"agentSubtaskId"`
 		HookAsk        json.RawMessage `json:"hookAsk,omitempty"`
 	} `json:"kiro"`
+}
+
+// ACPRefusalMeta is the _meta.kiro.refusal block on a refusal explanation
+// chunk. Explanation duplicates the chunk text (KAS falls back to a canned
+// message when absent), so only Category / RecommendedModel flow into the
+// domain api.RefusalInfo.
+type ACPRefusalMeta struct {
+	Category         string `json:"category"`
+	Explanation      string `json:"explanation"`
+	RecommendedModel string `json:"recommendedModel"`
 }
 
 // ACPToolCallWire is the wire shape for tool_call session updates.

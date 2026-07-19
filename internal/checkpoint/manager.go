@@ -120,12 +120,16 @@ func newManager(id, workDir string, log *eventLog, deps *managerDeps) *Manager {
 // Callers must hold m.mu.
 // INVARIANT: returns with m.mu held.
 func (m *Manager) ensureLoaded(ctx context.Context) error {
-	// Fast path: already loaded.
+	// Fast path: already loaded. Still re-check the restore journal: an
+	// in-process failed phase-2 restore leaves state.pendingRestore set,
+	// and returning early here would let subsequent checkpoint ops run
+	// against a half-restored workspace until a restart. The recovery
+	// call is a no-op field check when no restore is pending.
 	if res := m.loadResult.Load(); res != nil {
 		if res.err != nil {
 			return res.err
 		}
-		return nil
+		return m.recoverPendingRestoreLocked(ctx)
 	}
 
 	// Slow path: release m.mu, perform replay via singleflight so
@@ -201,6 +205,16 @@ func (m *Manager) recoverPendingRestoreLocked(ctx context.Context) error {
 		return recErr
 	}
 	return nil
+}
+
+// load forces the event-log replay (ensureLoaded) without performing
+// any other operation, so the shared cross-chat index picks up this
+// chat's events. Used by Store.warmIndex on the first ownership
+// lookup; harmless on an already-loaded Manager (fast path).
+func (m *Manager) load(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.ensureLoaded(ctx)
 }
 
 // loadAndValidateTag performs the common three-step prelude shared by

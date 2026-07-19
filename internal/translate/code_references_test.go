@@ -60,7 +60,7 @@ func codeRefMsg(t *testing.T, sessionID string, refs []map[string]any) *api.RPCR
 // full list.
 func TestHandleCodeReferences_HappyPath(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 	chatID := api.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
@@ -88,7 +88,7 @@ func TestHandleCodeReferences_HappyPath(t *testing.T) {
 // only such entries produces no broadcast and no accumulation.
 func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 	chatID := api.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
@@ -109,7 +109,7 @@ func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 // the (freshly GetOrInit'd) buffer so it can't contaminate the next turn.
 func TestHandleCodeReferences_NoTurnInFlight(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 	chatID := api.ChatID("c1")
 	// No startedBuf: buffer is absent / not started.
 
@@ -133,7 +133,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 	t.Run("SubagentCopySkipped", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
-		tr := New(deps, "/tmp")
+		tr := New(deps)
 		chatID := api.ChatID("c1")
 		startedBuf(deps, chatID, "m-1")
 
@@ -147,7 +147,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 	t.Run("ParentCopyProcessed", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
-		tr := New(deps, "/tmp")
+		tr := New(deps)
 		chatID := api.ChatID("c1")
 		startedBuf(deps, chatID, "m-1")
 
@@ -165,7 +165,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 // again) accumulates once; the second broadcast still carries a single entry.
 func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 	chatID := api.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
@@ -193,7 +193,7 @@ func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 // dropped without a broadcast (defensive decode).
 func TestHandleCodeReferences_MalformedParamsNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 	chatID := api.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 

@@ -68,8 +68,8 @@ sw.addEventListener("notificationclick", ((event: NotificationEvent) => {
 sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEvent) => {
   const old = event.oldSubscription;
   event.waitUntil(
-    sw.registration.pushManager
-      .subscribe(old !== null ? old.options : { userVisibleOnly: true })
+    resolveSubscribeOptions(old)
+      .then((opts) => sw.registration.pushManager.subscribe(opts))
       .then((newSub: PushSubscription) =>
         fetch("/api/push/subscribe", {
           method: "POST",
@@ -82,3 +82,45 @@ sw.addEventListener("pushsubscriptionchange", ((event: PushSubscriptionChangeEve
       }),
   );
 }) as EventListener);
+
+/** Subscription options for a pushsubscriptionchange recovery. When the
+ *  browser supplies the old subscription, reuse its options verbatim.
+ *  When it does NOT (the exact case this event exists for — an expired
+ *  subscription can arrive with oldSubscription === null), a bare
+ *  `{userVisibleOnly:true}` subscribe fails on VAPID-enforcing push
+ *  services, so recovery previously broke precisely when it was needed:
+ *  fetch the server's VAPID public key and subscribe with it. */
+async function resolveSubscribeOptions(
+  old: PushSubscription | null,
+): Promise<PushSubscriptionOptionsInit> {
+  if (old !== null) {
+    return old.options;
+  }
+  const r = await fetch("/api/push/vapid-key");
+  if (!r.ok) {
+    throw new Error(`vapid-key fetch failed: HTTP ${String(r.status)}`);
+  }
+  const d = (await r.json()) as { publicKey?: string };
+  if (typeof d.publicKey !== "string" || d.publicKey === "") {
+    throw new Error("no VAPID public key available for re-subscribe");
+  }
+  return { userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(d.publicKey) };
+}
+
+/** Base64url → Uint8Array for the VAPID applicationServerKey. Local copy
+ *  of push-util.ts's helper: the service worker compiles standalone
+ *  (tsconfig.sw.json includes only sw.ts) and registers as a classic
+ *  script, so it cannot import modules. */
+function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  // Explicit ArrayBuffer backing so the result satisfies BufferSource
+  // under TS's generic TypedArray types (applicationServerKey rejects
+  // Uint8Array<ArrayBufferLike>).
+  const arr = new Uint8Array(new ArrayBuffer(raw.length));
+  for (let i = 0; i < raw.length; i++) {
+    arr[i] = raw.charCodeAt(i);
+  }
+  return arr;
+}

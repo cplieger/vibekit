@@ -88,6 +88,23 @@ function add(text: string, newNo = 0): DiffLine {
 }
 
 describe("buildPartialMergeText", () => {
+  it("CRLF content: all-reject reproduces the old text byte-for-byte", () => {
+    // Regression fixture for the CR-doubling bug: splitLines used to leave
+    // \r attached to each line while the rejoin appended detectEOL's \r\n,
+    // so every CRLF file reconstructed with doubled carriage returns.
+    const oldContent = "alpha\r\nold\r\nomega";
+    const newContent = "alpha\r\nnew\r\nomega";
+    const state = freshState("crlf.ts");
+    state.loaded = true;
+    state.original.value = oldContent;
+    state.mode.value = {
+      kind: "diff",
+      diffSource: { oldContent, newContent, oldLabel: "old", newLabel: "new", fromGit: false },
+    };
+    expect(buildPartialMergeText(state, new Map([[0, "reject" as const]]))).toBe(oldContent);
+    expect(buildPartialMergeText(state, new Map([[0, "accept" as const]]))).toBe(newContent);
+  });
+
   it("single hunk accept → uses new lines", () => {
     const diff: DiffLine[] = [ctx("line1"), del("old"), add("new"), ctx("line3")];
     const decisions = new Map([[0, "accept" as const]]);

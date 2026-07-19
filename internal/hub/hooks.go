@@ -53,8 +53,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -133,12 +135,22 @@ type kasHookResult struct {
 // hookInfo is one hook in the GET /api/hooks response. ID is a URL-safe opaque
 // handle (base64url of the KAS "<absPath>#hook-N" id) the client echoes back to
 // the enabled / trigger endpoints; the raw KAS id (with its '/' and '#') is not
-// path-safe. FilePath is workspace-relative for the client's editor link.
+// path-safe.
+//
+// Scope is "workspace" (the hook file lives under the workspace) or "global"
+// (kiro-cli 2.13+: $HOME/.kiro/hooks/*.json, loaded in every workspace — the
+// wire carries no scope field, so it is derived from _meta.filePath). FilePath
+// is workspace-relative for workspace hooks (the client's editor link target);
+// for global hooks it is a ~-prefixed DISPLAY path only — the global dir lives
+// under the container HOME, which the file-editor surface deny-lists
+// (internal/filehandler sensitive paths), so the client renders it without an
+// open affordance.
 type hookInfo struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
 	Trigger        string `json:"trigger"`
 	ActionType     string `json:"action_type"` // runCommand | askAgent
+	Scope          string `json:"scope"`       // workspace | global
 	Command        string `json:"command,omitempty"`
 	Prompt         string `json:"prompt,omitempty"`
 	Matcher        string `json:"matcher,omitempty"`
@@ -147,6 +159,12 @@ type hookInfo struct {
 	Timeout        int    `json:"timeout,omitempty"`
 	Enabled        bool   `json:"enabled"`
 }
+
+// Hook scopes for hookInfo.Scope.
+const (
+	hookScopeWorkspace = "workspace"
+	hookScopeGlobal    = "global"
+)
 
 type hooksListResponse struct {
 	Hooks []hookInfo `json:"hooks"`
@@ -177,17 +195,25 @@ func decodeHookID(encoded string) (string, error) {
 	return string(b), nil
 }
 
-// hookRelPath renders a KAS absolute hook filePath as workspace-relative for
-// the client's editor link; falls back to the absolute path if it escapes the
-// workspace (shouldn't happen for .kiro/hooks entries).
-func (h *Hub) hookRelPath(abs string) string {
+// hookScopeAndPath classifies a KAS absolute hook filePath and renders its
+// client-facing path. Workspace hooks → workspace-relative (the editor link
+// target). Anything outside the workspace is a global hook (kiro-cli 2.13:
+// $HOME/.kiro/hooks) → a ~-prefixed display path when it resolves under HOME,
+// the absolute path otherwise (display only either way; the client renders no
+// open affordance for global rows).
+func (h *Hub) hookScopeAndPath(abs string) (scope, path string) {
 	if abs == "" {
-		return ""
+		return hookScopeWorkspace, ""
 	}
 	if rel, err := filepath.Rel(h.lifecycle.workDir, abs); err == nil && !strings.HasPrefix(rel, "..") {
-		return filepath.ToSlash(rel)
+		return hookScopeWorkspace, filepath.ToSlash(rel)
 	}
-	return abs
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if rel, err := filepath.Rel(home, abs); err == nil && !strings.HasPrefix(rel, "..") {
+			return hookScopeGlobal, "~/" + filepath.ToSlash(rel)
+		}
+	}
+	return hookScopeGlobal, abs
 }
 
 // hooksListRaw ensures the utility bridge and issues _kiro/hooks/list for the
@@ -215,13 +241,15 @@ func (h *Hub) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 
 // toHookInfo flattens a KAS hook into the client-facing shape.
 func (h *Hub) toHookInfo(k *kasHook) hookInfo {
+	scope, path := h.hookScopeAndPath(k.Meta.FilePath)
 	info := hookInfo{
 		ID:             encodeHookID(k.ID),
 		Name:           k.Name,
 		Trigger:        k.Meta.Trigger,
 		ActionType:     k.Action.Type,
+		Scope:          scope,
 		Matcher:        k.Meta.Matcher,
-		FilePath:       h.hookRelPath(k.Meta.FilePath),
+		FilePath:       path,
 		DisabledReason: k.Meta.DisabledReason,
 		Enabled:        k.Meta.Enabled,
 	}
@@ -249,7 +277,20 @@ func (h *Hub) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	for i := range hooks {
 		out = append(out, h.toHookInfo(&hooks[i]))
 	}
+	// Workspace hooks before global ones (stable within each group) so the
+	// dashboard's canonical order matches the scope grouping on every device.
+	slices.SortStableFunc(out, func(a, b hookInfo) int {
+		return hookScopeRank(a.Scope) - hookScopeRank(b.Scope)
+	})
 	api.WriteJSON(w, hooksListResponse{Hooks: out})
+}
+
+// hookScopeRank orders hook scopes for the dashboard: workspace first.
+func hookScopeRank(scope string) int {
+	if scope == hookScopeGlobal {
+		return 1
+	}
+	return 0
 }
 
 type hookEnabledReq struct {

@@ -41,15 +41,23 @@ interface BannerEntry {
 
 const banners = createCollection<BannerEntry>((e) => bannerKey(e.chatID, e.code));
 
-// Visible banners = those for the active chat. Tracks the collection structure
-// + activeSession (so a chat switch re-renders) and stays shallow-equal so a
-// no-op recompute doesn't reconcile.
+/** Sentinel chatID for app-global banners: visible on EVERY chat (and
+ *  on the empty no-chat state), used for conditions that aren't scoped
+ *  to one conversation — e.g. the degraded-runtime banner when
+ *  kiro-cli is unavailable. Global banners clear via
+ *  `clearBannerCodes(GLOBAL_BANNER, [...])`, never by chat switches. */
+export const GLOBAL_BANNER = "*";
+
+// Visible banners = those for the active chat, plus app-global ones.
+// Tracks the collection structure + activeSession (so a chat switch
+// re-renders) and stays shallow-equal so a no-op recompute doesn't
+// reconcile.
 const visibleIds = computed<readonly string[]>(
   () => {
     const activeID = activeSession.value?.id ?? "";
     return banners
       .items()
-      .filter((e) => e.chatID === activeID)
+      .filter((e) => e.chatID === activeID || e.chatID === GLOBAL_BANNER)
       .map((e) => bannerKey(e.chatID, e.code));
   },
   { equals: (a, b) => a.length === b.length && a.every((x, i) => x === b[i]) },

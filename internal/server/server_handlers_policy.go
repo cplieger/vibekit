@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/policyfile"
@@ -105,6 +106,13 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "capability or tool_id required")
 		return
 	}
+	// KAS requires a resource for the shell capability (there is no
+	// command-independent shell decision). Refuse it here with a clear
+	// reason instead of forwarding a request that can only fail.
+	if req.Capability == capShell && strings.TrimSpace(req.Resource) == "" {
+		api.BadRequest(w, "the shell capability needs a resource (the command) to evaluate")
+		return
+	}
 	res, err := s.policy.PolicyExplain(r.Context(), req)
 	if err != nil {
 		slog.Warn("policy explain failed", "error", err)
@@ -115,17 +123,36 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 }
 
 // policyRuleBody is the POST /api/permissions/rules request. op is
-// "add" | "remove". For add, an empty effect defaults to "ask"
-// (conservative). For remove, effect is required and removing a "deny"
-// requires confirm=true.
+// "add" | "remove" | "update". For add, an empty effect defaults to "ask"
+// (conservative). For remove and update, the rule fields identify the
+// EXISTING rule (effect required); removing a "deny", like any update
+// that widens access, requires confirm=true. update changes the rule's
+// effect to new_effect in place. guard_resource (optional, add+allow
+// only) is a concrete resource the caller wants the rule to take effect
+// for — e.g. the command behind a permission dialog's "Always allow":
+// when an explicit ask rule already covers it, the allow would be
+// silently shadowed (ask > allow), so the write is refused instead.
 type policyRuleBody struct {
-	Op         string   `json:"op"`
-	Scope      string   `json:"scope"`
-	Capability string   `json:"capability"`
-	Effect     string   `json:"effect"`
-	Match      []string `json:"match"`
-	Exclude    []string `json:"exclude"`
-	Confirm    bool     `json:"confirm"`
+	Op            string   `json:"op"`
+	Scope         string   `json:"scope"`
+	Capability    string   `json:"capability"`
+	Effect        string   `json:"effect"`
+	NewEffect     string   `json:"new_effect"`
+	GuardResource string   `json:"guard_resource"`
+	Match         []string `json:"match"`
+	Exclude       []string `json:"exclude"`
+	Confirm       bool     `json:"confirm"`
+}
+
+// capShell is the capability whose decisions are always resource-scoped.
+const capShell = "shell"
+
+// effectRank orders effects by strictness for the widening gate: moving a
+// rule to a lower rank grants the agent more than it had.
+var effectRank = map[string]int{
+	policyfile.EffectDeny:  2,
+	policyfile.EffectAsk:   1,
+	policyfile.EffectAllow: 0,
 }
 
 // handlePolicyRules serves POST /api/permissions/rules (op=add|remove).
@@ -158,8 +185,10 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		s.policyRuleAdd(w, r, &body, path)
 	case "remove":
 		s.policyRuleRemove(w, r, &body, path)
+	case "update":
+		s.policyRuleUpdate(w, r, &body, path)
 	default:
-		api.BadRequest(w, "op must be add or remove")
+		api.BadRequest(w, "op must be add, remove, or update")
 	}
 }
 
@@ -176,6 +205,10 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 	})
 	if err != nil {
 		api.BadRequest(w, err.Error())
+		return
+	}
+	if rule.Effect == policyfile.EffectAllow && body.GuardResource != "" &&
+		!s.guardAllowRule(w, r, &rule, body.GuardResource) {
 		return
 	}
 	f, err := policyfile.Load(path)
@@ -199,6 +232,37 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 	}
 	slog.Info("policy rule added", "scope", body.Scope, "capability", rule.Capability, "effect", rule.Effect)
 	api.Ok(w)
+}
+
+// guardAllowRule pre-flights an allow-rule write against the LIVE policy
+// via explain (a pure simulation): when an explicit ask rule already
+// covers the guard resource, KAS would shadow the new allow (ask > allow),
+// so the write is refused with a clear reason instead of persisting a
+// rule that changes nothing. Fails CLOSED — if the decision cannot be
+// verified, the rule is not written (the caller's fallback is allow-once).
+// Returns true when the write may proceed; otherwise the response has
+// been written.
+func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *policyfile.Rule, resource string) bool {
+	if s.policy == nil {
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			api.ErrorJSON("cannot verify the rule against the live policy; rule not written"))
+		return false
+	}
+	res, err := s.policy.PolicyExplain(r.Context(), api.PolicyExplainRequest{
+		Capability: rule.Capability, Resource: resource,
+	})
+	if err != nil {
+		slog.Warn("policy rule add: guard explain failed", "error", err)
+		api.WriteJSONStatus(w, http.StatusBadGateway,
+			api.ErrorJSON("cannot verify the rule against the live policy; rule not written"))
+		return false
+	}
+	if res.IsExplicitAsk {
+		api.WriteJSONStatus(w, http.StatusConflict,
+			api.ErrorJSON("an explicit ask rule covers this command; the new allow rule would be shadowed and was not written"))
+		return false
+	}
+	return true
 }
 
 func (s *Server) policyRuleRemove(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
@@ -236,5 +300,59 @@ func (s *Server) policyRuleRemove(w http.ResponseWriter, r *http.Request, body *
 		return
 	}
 	slog.Info("policy rule removed", "scope", body.Scope, "capability", rule.Capability, "effect", rule.Effect)
+	api.Ok(w)
+}
+
+// policyRuleUpdate changes an existing rule's effect in place (op=update):
+// the body's rule fields identify the current rule, new_effect is the
+// target. One atomic file write — never a client-side remove+add that
+// could half-apply. A widening change (deny→ask, deny→allow, ask→allow)
+// grants the agent more than it had, so it requires confirm=true, same as
+// removing a deny.
+func (s *Server) policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
+	if !policyfile.ValidEffect(body.Effect) {
+		api.BadRequest(w, "effect required to identify the rule")
+		return
+	}
+	if !policyfile.ValidEffect(body.NewEffect) {
+		api.BadRequest(w, "new_effect must be allow, deny, or ask")
+		return
+	}
+	if effectRank[body.NewEffect] < effectRank[body.Effect] && !body.Confirm {
+		api.WriteJSONStatus(w, http.StatusConflict,
+			api.ErrorJSON("changing "+body.Effect+" to "+body.NewEffect+" widens access; resend with confirm=true"))
+		return
+	}
+	rule, err := policyfile.SanitizeRule(&policyfile.Rule{
+		Capability: body.Capability, Effect: body.Effect,
+		Match: body.Match, Exclude: body.Exclude,
+	})
+	if err != nil {
+		api.BadRequest(w, err.Error())
+		return
+	}
+	f, err := policyfile.Load(path)
+	if err != nil {
+		api.WriteJSONStatus(w, http.StatusConflict,
+			api.ErrorJSON("existing policy file could not be parsed; edit it manually"))
+		return
+	}
+	if !f.ReplaceEffect(&rule, body.NewEffect) {
+		// Idempotent replay: the target state may already be on disk.
+		target := rule
+		target.Effect = body.NewEffect
+		if f.Has(&target) {
+			api.Ok(w)
+			return
+		}
+		api.NotFound(w, "rule not found; refresh the policy view")
+		return
+	}
+	if err := policyfile.Save(r.Context(), path, f); err != nil {
+		api.InternalError(w, err)
+		return
+	}
+	slog.Info("policy rule updated", "scope", body.Scope,
+		"capability", rule.Capability, "effect", body.Effect, "new_effect", body.NewEffect)
 	api.Ok(w)
 }

@@ -1,22 +1,31 @@
 // Package forges integrates remote git forges (GitHub, GitLab, Gitea/Codeberg)
 // by orchestrating their first-party CLI tools (gh, glab, tea).
 //
-// Design: the CLI tools own all the hard parts — auth (including OAuth
-// device flow, token refresh), credential helpers for git, API
-// pagination, error mapping. vibekit owns the UX and the unified API
-// surface that the agent and the web UI both consume.
+// Design: the CLI tools own API pagination, error mapping, the git
+// credential helpers, AND their own credential stores — vibekit talks
+// to each store exclusively through the CLI's documented subcommands
+// (login/logout/status; see auth.go and discover.go) and never reads
+// or writes another program's config file. The one documented
+// exception is glab's read-only discovery parser (glab_config.go),
+// kept only because glab ships no machine-readable status output.
+// vibekit owns the UX, the unified API surface that the agent and the
+// web UI both consume, and the GitHub OAuth device flow
+// (oauth/device_flow.go — see login.go for the split). No token-refresh
+// path exists on either side: PATs and device-flow tokens are used
+// until they expire or are disconnected.
 //
-// There is no encrypted credential store. The CLIs persist tokens
-// in their own config files (~/.config/gh/hosts.yml, etc.). The
-// container is single-user; file permissions are sufficient.
+// There is no encrypted credential store. The CLIs persist tokens in
+// their own stores under the persistent /config volume. The container
+// is single-user; file permissions are sufficient.
 package forges
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cplieger/vibekit/internal/forges/cliexec"
 )
 
 // Kind identifies a forge backend.
@@ -31,11 +40,12 @@ const (
 )
 
 // kindMetaEntry holds the per-kind metadata used by the lookup methods.
+// Login and Logout are the CLI-native auth verbs (see auth.go); the
+// read verb (discovery) lives in discover.go.
 type kindMetaEntry struct {
 	NewProvider func(Kind, string) ForgeOps
-	Inject      func(ctx context.Context, host, token, username string) error
-	Remove      func(host string) error
-	SetupGit    func(ctx context.Context, host string) error
+	Login       func(ctx context.Context, host, token string) error
+	Logout      func(ctx context.Context, host string) error
 	CLI         string
 	DefaultHost string
 	Title       string
@@ -50,38 +60,26 @@ func init() {
 		KindGitHub: {
 			CLI: "gh", DefaultHost: "github.com", Title: "GitHub",
 			NewProvider: func(_ Kind, host string) ForgeOps { return newGitHub(host) },
-			Inject: func(_ context.Context, host, token, username string) error {
-				return writeGHHosts(host, token, username)
-			},
-			Remove:   removeGHHost,
-			SetupGit: setupGitGH,
+			Login:       loginGH,
+			Logout:      logoutGH,
 		},
 		KindGitLab: {
 			CLI: "glab", DefaultHost: "gitlab.com", Title: "GitLab",
 			NewProvider: func(_ Kind, host string) ForgeOps { return newGitLab(host) },
-			Inject: func(_ context.Context, host, token, username string) error {
-				return writeGLabConfig(host, token, username)
-			},
-			Remove:   removeGLabHost,
-			SetupGit: setupGitGLab,
+			Login:       loginGLab,
+			Logout:      logoutGLab,
 		},
 		KindCodeberg: {
 			CLI: cliTea, DefaultHost: "codeberg.org", Title: "Codeberg",
 			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
-			Inject: func(_ context.Context, host, token, username string) error {
-				return writeTeaConfig(host, token, username)
-			},
-			Remove:   removeTeaHost,
-			SetupGit: setupGitTea,
+			Login:       loginTea,
+			Logout:      logoutTea,
 		},
 		KindGitea: {
 			CLI: "tea", DefaultHost: "", Title: "Gitea",
 			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
-			Inject: func(_ context.Context, host, token, username string) error {
-				return writeTeaConfig(host, token, username)
-			},
-			Remove:   removeTeaHost,
-			SetupGit: setupGitTea,
+			Login:       loginTea,
+			Logout:      logoutTea,
 		},
 	}
 }
@@ -309,12 +307,15 @@ const ListTimeout = 60 * time.Second
 // cliTea is the gitea/forgejo CLI binary name.
 const cliTea = "tea"
 
-// ErrNotInstalled signals the backing CLI is not on PATH.
-var ErrNotInstalled = errors.New("forges: CLI not installed")
+// ErrNotInstalled signals the backing CLI is not on PATH. Aliased to
+// the cliexec sentinel (which runCmd actually returns) — the package
+// previously declared a SEPARATE errors.New with the same message, so
+// every errors.Is against this symbol silently never matched.
+var ErrNotInstalled = cliexec.ErrNotInstalled
 
 // ErrNotLoggedIn signals the CLI is installed but no auth is configured
-// for this host.
-var ErrNotLoggedIn = errors.New("forges: not logged in")
+// for this host. Aliased for the same reason as ErrNotInstalled.
+var ErrNotLoggedIn = cliexec.ErrNotLoggedIn
 
 // ParseRepo splits a "owner/name" string. Returns an error if the
 // format is invalid. Both parts must be non-empty.

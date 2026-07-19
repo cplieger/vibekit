@@ -166,6 +166,20 @@ func (idx *crossChatIndex) check(chatID, path, currentSHA string) (crossChatObs,
 	return existing, true
 }
 
+// ownerOf returns the chat that most recently wrote path — the owner
+// of the path's checkpoint lineage — or ("", false) when no chat
+// tracks it. Used by the editor-save capture to route a manual save
+// into the one timeline whose restores and undos consult this path.
+func (idx *crossChatIndex) ownerOf(path string) (string, bool) {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	obs, ok := idx.entries[path]
+	if !ok {
+		return "", false
+	}
+	return obs.chatID, true
+}
+
 // forgetChat evicts every entry owned by chatID. Called from
 // Store.Cleanup so a deleted chat's entries don't linger and
 // generate false-positive conflicts if a new chat later re-uses

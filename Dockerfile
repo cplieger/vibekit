@@ -82,17 +82,20 @@ RUN mkdir -p /tmp/registries && \
     cp "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.aqua-registry && \
     rm -rf /tmp/registries
 
-# Fetch ansi_up (the only vendor JS dependency now that xterm.js is gone).
-RUN mkdir -p static/vendor && \
+# Fetch ansi_up (the only third-party JS dependency now that xterm.js is
+# gone). Extracted as a full package into static-src/node_modules/ so the
+# bundler resolves the bare `ansi_up` specifier like the @cplieger/* libs;
+# it is bundled into app.js, not served standalone.
+RUN mkdir -p static-src/node_modules/ansi_up && \
     curl -fsSL "https://registry.npmjs.org/ansi_up/-/ansi_up-${ANSI_UP_VERSION}.tgz" \
-      | tar -xz -C static/vendor --strip-components=1 package/ansi_up.js
+      | tar -xz -C static-src/node_modules/ansi_up --strip-components=1
 
 # Fetch @cplieger/actions TS source from npm registry. The lib publishes
 # TS only (no precompiled JS) — same pattern as @cplieger/reactive and
 # @cplieger/web-terminal-engine, matching how local TS files in static-src/ are
 # treated. Extracted to static-src/node_modules/@cplieger/actions/ so
-# tsc's bundler resolution finds the package + its types relative to
-# static-src/tsconfig.json.
+# tsc's typecheck and esbuild's bundle resolution find the package + its
+# types relative to static-src/tsconfig.json.
 # renovate: datasource=npm depName=@cplieger/actions
 ARG CPLIEGER_ACTIONS_VERSION=3.1.0
 RUN mkdir -p static-src/node_modules/@cplieger/actions && \
@@ -100,8 +103,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/actions && \
       | tar -xz -C static-src/node_modules/@cplieger/actions --strip-components=1
 
 # Fetch @cplieger/fetch TS source (same TS-only pattern). api-client.ts imports
-# createFetch/requestRaw from it; resolved via the importmap at runtime
-# (/vendor/cplieger-fetch/index.js).
+# createFetch/requestRaw from it; bundled into app.js by cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/fetch
 ARG CPLIEGER_FETCH_VERSION=2.1.0
 RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
@@ -109,8 +111,8 @@ RUN mkdir -p static-src/node_modules/@cplieger/fetch && \
       | tar -xz -C static-src/node_modules/@cplieger/fetch --strip-components=1
 
 # Fetch @cplieger/reactive TS source (same TS-only pattern). @cplieger/actions
-# imports it, and the app imports it directly; both resolve it via the
-# importmap at runtime (/vendor/cplieger-reactive/index.js).
+# imports it, and the app imports it directly; bundled into app.js by
+# cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/reactive
 ARG CPLIEGER_REACTIVE_VERSION=1.2.5
 RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
@@ -119,8 +121,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 
 # Fetch @cplieger/web-terminal-engine TS source (same TS-only pattern). shell.ts
 # imports `render` from it (the reset primitives), and it is the peer the UI
-# package builds on; resolved via the importmap at runtime
-# (/vendor/cplieger-web-terminal-engine/index.js).
+# package builds on; bundled into app.js by cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
 ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=2.8.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
@@ -130,10 +131,10 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # Fetch @cplieger/web-terminal-ui TS source (same TS-only pattern). shell.ts
 # imports createTerminal + presetTouch from it; it is the reference touch-first
 # terminal UI built on the engine (a peer dependency). Extracted side by side
-# under static-src/node_modules/@cplieger so tsc's bundler resolution finds the
-# engine when compiling the UI's `@cplieger/web-terminal-engine` import. Resolved
-# via the importmap at runtime (/vendor/cplieger-web-terminal-ui/index.js +
-# /presets.js), and its css/ bundle is concatenated into style.css below.
+# under static-src/node_modules/@cplieger so resolution finds the engine when
+# compiling the UI's `@cplieger/web-terminal-engine` import. Bundled into
+# app.js by cmd/bundle; its css/ bundle (MANIFEST.touch) is concatenated into
+# style.css by the same tool.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
 ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=4.0.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
@@ -142,116 +143,45 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
 
 # Fetch @cplieger/ui-primitives TS source (same TS-only pattern). The app's
 # headless UI modules (toast, tooltip, confirm, popover, focus-trap, theme,
-# view-transition, announce) import its per-primitive subpaths; resolved via
-# the importmap at runtime (/vendor/cplieger-ui-primitives/...). Its base
-# stylesheet (css/ui-primitives.css) is concatenated into static/style.css by
-# the CSS-bundle step below (via a MANIFEST entry), then skinned by
-# static-src/css/04-uip-skin.css.
+# view-transition, announce) import its per-primitive subpaths; bundled into
+# app.js by cmd/bundle. Its base stylesheet (css/ui-primitives.css) is
+# concatenated into static/style.css by cmd/bundle (via a MANIFEST entry),
+# then skinned by static-src/css/04-uip-skin.css.
 #
 # The theme adoption (static-src/theme.ts's createTheme storage adapter + the
 # index.html themeInitSnippetFromJSON anti-FOUC snippet) needs
 # @cplieger/ui-primitives >= 2.1.0, which ships the createTheme storage-adapter
-# API. This ARG and static-src/package.json's @cplieger/ui-primitives pin both
-# track 2.1.0.
+# API. This ARG and static-src/package.json's @cplieger/ui-primitives pin
+# track the same exact version.
 # renovate: datasource=npm depName=@cplieger/ui-primitives
 ARG CPLIEGER_UI_PRIMITIVES_VERSION=3.0.0
 RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
 
-# Compile TypeScript then build Go (static files embedded via go:embed).
-# BUILD_VERSION is stamped into internal/version.Build via -ldflags so the
-# running binary can report what tag it was built from. Defaults to "dev"
-# for local test builds; CI sets it to the date-sha tag.
+# Build the browser client, then the Go server (static files embedded via
+# go:embed). BUILD_VERSION is stamped into internal/version.Build via
+# -ldflags so the running binary can report what tag it was built from.
+# Defaults to "dev" for local test builds; CI sets it to the date-sha tag.
 #
-# Step 1: tsc --project compiles app TS (build + service-worker configs).
-# Step 2: compile @cplieger/actions's TS source into static/vendor/cplieger-actions/
-# so the browser can fetch the lib's compiled JS via the importmap entry.
-# The lib uses internal relative imports (./registry.js, ./api.js, etc.)
-# which are preserved as relative paths in the emit and resolve naturally
-# within /vendor/cplieger-actions/ at runtime.
+# Step 1: tsc --noEmit is the TYPE gate over the app + service-worker
+# configs (esbuild transpiles without typechecking, so tsc keeps failing
+# the build on type errors exactly as before).
+# Step 2: cmd/bundle (esbuild via its Go API — a Go library, no Node, no
+# npm) bundles static-src/app.ts into /app.js + hashed lazy chunks under
+# /chunks/ (the dynamic import() sites), bundles sw.ts into /sw.js,
+# assembles static/style.css from the two CSS manifests
+# (@cplieger/web-terminal-ui's MANIFEST.touch first — library-before-
+# consumer source order is the override mechanism — then
+# static-src/css/MANIFEST), and writes precompressed .gz siblings the
+# server hands to gzip-accepting clients. The @cplieger/* library sources
+# fetched above are bundled in at build time, so nothing is served from
+# /vendor/ and the page needs no importmap.
 ARG BUILD_VERSION=dev
-RUN mapfile -t wt_ui_ts < <(find static-src/node_modules/@cplieger/web-terminal-ui/src -name '*.ts') && \
-    /tmp/package/lib/tsc --project static-src/tsconfig.build.json && \
-    /tmp/package/lib/tsc --project static-src/tsconfig.sw.json && \
-    /tmp/package/lib/tsc \
-        --module ESNext \
-        --target ESNext \
-        --moduleResolution bundler \
-        --outDir static/vendor/cplieger-reactive \
-        --rootDir static-src/node_modules/@cplieger/reactive/src \
-        --skipLibCheck \
-        --strict \
-        static-src/node_modules/@cplieger/reactive/src/*.ts && \
-    /tmp/package/lib/tsc \
-        --module ESNext \
-        --target ESNext \
-        --moduleResolution bundler \
-        --outDir static/vendor/cplieger-actions \
-        --rootDir static-src/node_modules/@cplieger/actions/src \
-        --skipLibCheck \
-        --strict \
-        static-src/node_modules/@cplieger/actions/src/*.ts && \
-    /tmp/package/lib/tsc \
-        --module ESNext \
-        --target ESNext \
-        --moduleResolution bundler \
-        --outDir static/vendor/cplieger-web-terminal-engine \
-        --rootDir static-src/node_modules/@cplieger/web-terminal-engine/src \
-        --skipLibCheck \
-        --strict \
-        static-src/node_modules/@cplieger/web-terminal-engine/src/*.ts && \
-    /tmp/package/lib/tsc \
-        --module ESNext \
-        --target ESNext \
-        --moduleResolution bundler \
-        --outDir static/vendor/cplieger-ui-primitives \
-        --rootDir static-src/node_modules/@cplieger/ui-primitives/src \
-        --skipLibCheck \
-        --strict \
-        static-src/node_modules/@cplieger/ui-primitives/src/*.ts \
-        static-src/node_modules/@cplieger/ui-primitives/src/toast/*.ts && \
-    /tmp/package/lib/tsc \
-        --module ESNext \
-        --target ESNext \
-        --moduleResolution bundler \
-        --outDir static/vendor/cplieger-fetch \
-        --rootDir static-src/node_modules/@cplieger/fetch/src \
-        --skipLibCheck \
-        --strict \
-        static-src/node_modules/@cplieger/fetch/src/*.ts && \
-    /tmp/package/lib/tsc \
-        --module ESNext \
-        --target ESNext \
-        --moduleResolution bundler \
-        --outDir static/vendor/cplieger-web-terminal-ui \
-        --rootDir static-src/node_modules/@cplieger/web-terminal-ui/src \
-        --skipLibCheck \
-        --strict \
-        "${wt_ui_ts[@]}"
-
-# Concatenate the served bundle: the @cplieger/web-terminal-ui component
-# bundle FIRST, then vibekit's own CSS splits. MANIFEST.touch (ui v4) is
-# root-scoped component styles ONLY — every selector reaches through the
-# zero-specificity :where(.wt-root) scope createTerminal stamps on
-# #shell-terminal, and there are no page-level rules — so it cannot touch
-# vibekit's design system OR vibekit's own agent-terminal panes (which share
-# the .term-* class vocabulary). Library-before-consumer order is the whole
-# override mechanism: vibekit's terminal skins (.term-link colors,
-# .term-trim-marker in 21-shell-panel.css) win over the package defaults by
-# ordinary source order at equal specificity — no @layer wrapper, no
-# specificity contests. Behavior: skip blank lines and #-comments, cat each
-# listed file (paths relative to each manifest's dir) into the output.
-RUN set -eu; \
-    : > static/style.css; \
-    while IFS= read -r line || [ -n "$line" ]; do \
-        case "$line" in ''|\#*) continue ;; esac; \
-        cat "static-src/node_modules/@cplieger/web-terminal-ui/css/${line}" >> static/style.css; \
-    done < static-src/node_modules/@cplieger/web-terminal-ui/css/MANIFEST.touch; \
-    while IFS= read -r line || [ -n "$line" ]; do \
-        case "$line" in ''|\#*) continue ;; esac; \
-        cat "static-src/css/${line}" >> static/style.css; \
-    done < static-src/css/MANIFEST
+# hadolint ignore=DL3062
+RUN /tmp/package/lib/tsc --project static-src/tsconfig.build.json --noEmit && \
+    /tmp/package/lib/tsc --project static-src/tsconfig.sw.json --noEmit && \
+    go run ./cmd/bundle
 
 RUN CGO_ENABLED=0 go build \
     -ldflags="-s -w -X vibekit/internal/version.Build=${BUILD_VERSION}" \
@@ -266,14 +196,16 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Baked-in dependencies — the minimal stable runtime surface that
 # vibekit and kiro-cli rely on. Everything else (Node, Python, Go,
 # Java, Rust, all LSPs, all forge CLIs) is installed on demand by the
-# in-process tools engine (internal/tools) into the persistent
-# /config/tools/ volume, discovered through the compiled catalog.
+# in-process tools engine (the cplieger/toolbelt library, wired in
+# internal/composition) into the persistent /config/tools/ volume,
+# discovered through the compiled catalog.
 #
 # What's here and why:
 #   - ca-certificates: HTTPS trust for every download
 #   - curl: entrypoint kiro-cli download + manual install commands
-#   - git: vibekit's gitexec, checkpoint system, file history,
-#          forge integrations
+#   - git: vibekit's gitexec, file history, forge integrations
+#          (the checkpoint system does NOT use git — it is a
+#          content-addressed blob/event store)
 #   - openssh-client: git over ssh, gh ssh
 #   - unzip: kiro-cli installer (it's a zip) + zip-format tools
 #   - xz-utils: Node/shellcheck tarball extract (.tar.xz)
@@ -351,6 +283,10 @@ COPY --from=builder /tmp/catalog-licenses/ /opt/vibekit/licenses/
 WORKDIR /workspace
 EXPOSE 9847
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=60s \
+# start-period=300s: a fresh-volume first boot downloads and verifies
+# kiro-cli (~large zip) BEFORE the server binds, so a slow registry or
+# link can legitimately take minutes. 60s marked such containers
+# unhealthy while the install was still progressing normally.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
     CMD curl -sf http://127.0.0.1:9847/api/health || exit 1
 ENTRYPOINT ["/opt/vibekit/entrypoint.sh"]

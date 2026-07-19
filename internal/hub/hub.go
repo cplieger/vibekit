@@ -1,10 +1,18 @@
-// Package hub coordinates SSE connections, ACP bridge lifecycle, and
-// POST /api/command dispatch.
+// Package hub coordinates the server's per-chat runtime: SSE fan-out,
+// ACP bridge lifecycle, and POST /api/command dispatch — plus the
+// service surfaces that ride the shared utility bridge (knowledge,
+// specs, hooks, governance, account usage, policy), checkpoint HTTP,
+// agent terminals, the browser PTY shell shim, and the MCP runtime
+// registry.
 //
-// This file defines Hub and its top-level wiring. Command dispatch lives in
-// command.go, SSE transport in sse.go, bridge lifecycle in bridge_lifecycle.go,
-// and shell handlers in shell.go (PTY + WebSocket). Per-method ACP translation
-// sits in translate*.go.
+// This file defines Hub and its top-level wiring. Command dispatch is
+// hosted via internal/command (adapters in command_deps.go), ACP
+// translation via internal/translate (adapters in translate_deps.go),
+// SSE transport in sse.go, bridge lifecycle in bridge_lifecycle.go and
+// bridge_coord.go, the shell shim in shell.go, agent terminals in
+// agent_terminal.go, utility-bridge services in knowledge.go / spec.go /
+// hooks.go / governance.go / account_usage.go / permissions_policy.go,
+// and checkpoint HTTP in checkpoint_http.go.
 package hub
 
 import (
@@ -23,7 +31,6 @@ import (
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/pending"
-	"github.com/cplieger/vibekit/internal/permissions"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/webhttp/sse"
 )
@@ -74,11 +81,13 @@ type ssePlane struct {
 	hub          *sse.Hub
 	idempotency  *dedup.Cache
 	pendingPerms *pendingPermsTracker
+	// turnMirror replicates each chat's in-flight turn from the emit
+	// stream for the connect-time turn_state replay (see turn_mirror.go).
+	turnMirror *turnMirror
 }
 
 // permPlane groups Hub fields related to permissions and supervision.
 type permPlane struct {
-	rules      *permissions.CommandRules
 	pending    *pending.Store
 	supervised *supervisedState
 	ignore     *ignore.Matcher
@@ -168,6 +177,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 			hub:          sseHub,
 			idempotency:  dedup.New(dedup.DefaultTTL, dedup.DefaultMaxEntries, dedup.DefaultMaxResult),
 			pendingPerms: newPendingPermsTracker(),
+			turnMirror:   newTurnMirror(),
 		},
 		perm: &permPlane{
 			pending: pending.New(),
@@ -182,7 +192,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	for _, o := range opts {
 		o(h)
 	}
-	h.translator = translate.New(h, h.lifecycle.configDir)
+	h.translator = translate.New(h)
 	h.dispatcher = command.New(h, command.WithPrompter(h))
 	h.registerCommandHandlers()
 	h.initDispatch()
@@ -196,7 +206,6 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		Store:     h.bridge.assistantBufs,
 	}
 	if lc.configDir != "" {
-		h.perm.rules = permissions.NewCommandRules(lc.configDir)
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
 		h.checkpoints = checkpoint.NewStore(lc.configDir, workDir, func(chatID string, p *checkpoint.ConflictPayload) {
 			h.broadcastConflict(api.ChatID(chatID), p)
@@ -214,13 +223,11 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.Effor
 	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
 }
 
-// Rules returns the shared CommandRules instance so callers outside
-// the hub (e.g. the HTTP server) can read and mutate the same rule
-// set the hub uses for shell-policy evaluation.
-func (h *Hub) Rules() *permissions.CommandRules { return h.perm.rules }
-
-// CleanupCheckpoints removes the shadow git repository for a chat.
-// Safe to call even if the checkpoint store is nil (no configDir).
+// CleanupCheckpoints removes a chat's checkpoint event log (the
+// content-addressed blob store is GC'd separately — there is no git
+// repository involved; see internal/checkpoint/events.go "Why JSONL
+// instead of git"). Safe to call even if the checkpoint store is nil
+// (no configDir).
 func (h *Hub) CleanupCheckpoints(ctx context.Context, chatID api.ChatID) {
 	if h.checkpoints != nil {
 		h.checkpoints.Cleanup(ctx, chatID)

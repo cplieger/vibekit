@@ -8,6 +8,7 @@ package checkpoint
 import (
 	"context"
 	"log/slog"
+	"os"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -33,6 +34,7 @@ type Store struct {
 	configDir string
 	workDir   string
 	mu        sync.Mutex
+	warmOnce  sync.Once
 }
 
 // Compile-time interface assertion.
@@ -136,6 +138,43 @@ func (s *Store) Conflicts(ctx context.Context, chatID api.ChatID) ([]ConflictPay
 // logic lives in Manager).
 func (s *Store) ReadBlob(ctx context.Context, chatID api.ChatID, sha string) ([]byte, error) {
 	return s.get(string(chatID)).ReadBlob(ctx, sha)
+}
+
+// OwnerOf returns the chat whose agent most recently wrote relPath —
+// the owner of the path's checkpoint lineage — or ok=false when no
+// chat tracks it. The editor-save capture uses this to route a manual
+// save into the one timeline whose restores and undos consult the
+// path. The first call warms the cross-chat index from disk: managers
+// load lazily, so a cold process would otherwise report "no owner"
+// for everything until chats happened to be accessed.
+func (s *Store) OwnerOf(ctx context.Context, relPath string) (api.ChatID, bool) {
+	s.warmOnce.Do(func() { s.warmIndex(ctx) })
+	id, ok := s.index.ownerOf(relPath)
+	return api.ChatID(id), ok
+}
+
+// warmIndex loads every chat manager found on disk so each event log
+// populates the shared cross-chat index. Per-chat failures are logged
+// and skipped (a corrupt log costs that one chat's ownership data,
+// nothing else). Replaying every chat is milliseconds of work (see
+// the crossChatIndex package doc); runs once per process.
+func (s *Store) warmIndex(ctx context.Context) {
+	entries, err := os.ReadDir(chatsRoot(s.configDir))
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("checkpoint: index warm scan failed", "error", err)
+		}
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if lerr := s.get(e.Name()).load(ctx); lerr != nil {
+			slog.Warn("checkpoint: index warm load failed",
+				"chat_id", e.Name(), "error", lerr)
+		}
+	}
 }
 
 // Cleanup removes chatID's event log + parent dir and evicts the

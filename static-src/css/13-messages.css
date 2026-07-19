@@ -878,3 +878,80 @@
   color: var(--c-text-primary);
   background: var(--c-bg-tertiary);
 }
+
+/* Model-refusal callout (kiro-cli 2.13 refusal contract). The refusal
+ * explanation renders as ordinary assistant text; this callout under the turn
+ * is the distinct affordance: octagon glyph + title + category chip, and the
+ * recovery actions (Rewind / Switch to the recommended model). Red-tinted but
+ * quiet — informational, not an app error. */
+.refusal-callout {
+  max-width: var(--content-max-w);
+  margin: var(--sp-2) auto 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid color-mix(in srgb, var(--c-red) 35%, var(--c-border));
+  border-left: 3px solid var(--c-red);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-red) 6%, transparent);
+  font-size: var(--fs-sm);
+}
+
+.refusal-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  color: var(--c-red);
+}
+
+.refusal-header svg {
+  flex-shrink: 0;
+}
+
+.refusal-title {
+  font-weight: var(--fw-medium);
+}
+
+.refusal-chip {
+  padding: 0 0.4rem;
+  border-radius: var(--r-sm, 4px);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: nowrap;
+  color: var(--c-red);
+  background: color-mix(in srgb, var(--c-red) 14%, transparent);
+}
+
+.refusal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+
+.refusal-btn {
+  padding: var(--sp-1) var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition:
+    color var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+}
+
+.refusal-btn:hover:not(:disabled) {
+  color: var(--c-text-primary);
+  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
+}
+
+.refusal-btn:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+.refusal-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

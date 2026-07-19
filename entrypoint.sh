@@ -184,7 +184,8 @@ needs_kiro_cli_install() {
 
 if needs_kiro_cli_install; then
   if ! install_kiro_cli; then
-    printf "WARNING: kiro-cli install failed\n"
+    printf "WARNING: kiro-cli install failed; the web UI starts anyway but chats cannot run until kiro-cli is present (degraded start)\n"
+    printf "Check the install log above, then restart the container to retry the install\n"
   fi
 fi
 
@@ -196,18 +197,25 @@ fi
 # /config volume and are on PATH immediately; a genuinely new LSP
 # becomes active in the next chat once its install job finishes.
 
-# Launch the ACP web UI server (foreground)
-# Falls back to sleep if kiro-cli isn't available yet
+# Seed kiro-cli settings when the binary is present, then launch the
+# web UI server (foreground) UNCONDITIONALLY — degraded-not-dead, the
+# same posture as web-terminal-kiro. A first-boot install failure used
+# to dead-end in `exec sleep infinity`: a live container with no
+# server, a forever-failing HEALTHCHECK, and no diagnostics page. Now
+# the server always comes up; /api/health reports "kiro-cli
+# unavailable" (503) and the UI shows a degraded banner until a
+# container restart retries the install.
 if command -v kiro-cli >/dev/null 2>&1; then
   # Enable the experimental kiro-cli features we surface in the UI.
   # Defaults: on for features vibekit renders natively, off for the
   # duplicate-of-vibekit and telemetry toggles:
   #
   #   chat.enableCheckpoint       — off. vibekit has its own
-  #     shadow-git checkpoint system (internal/checkpoint/) wired
-  #     into the Restore buttons, diff endpoint, and per-file Undo.
-  #     Leaving kiro-cli's parallel system on doubled the shadow-git
-  #     disk cost with no user-visible benefit.
+  #     content-addressed checkpoint store (internal/checkpoint/ —
+  #     JSONL event log + blob store, no git) wired into the Restore
+  #     buttons, diff endpoint, and per-file Undo. Leaving kiro-cli's
+  #     parallel system on doubled the checkpoint disk cost with no
+  #     user-visible benefit.
   #   telemetry.enabled           — off. self-hosted tool shouldn't
   #     phone home without the user opting in. Users can flip it on
   #     from Settings → General if they want to share usage data.
@@ -227,10 +235,15 @@ if command -v kiro-cli >/dev/null 2>&1; then
   # Settings writes are idempotent so running this on every boot
   # keeps new containers consistent without requiring the user to
   # discover the toggles first.
+  # Seed failures are logged (not fatal): a silently failed write leaves
+  # the Settings UI toggle showing a state the CLI doesn't have until
+  # the next boot, which is exactly the drift the seeding exists to
+  # prevent.
   for flag in chat.enableTodoList chat.enableKnowledge \
     chat.enableSubagent chat.enablePromptHints \
     hooks.showStatus; do
-    kiro-cli settings "$flag" true >/dev/null 2>&1 || true
+    kiro-cli settings "$flag" true >/dev/null 2>&1 \
+      || printf 'WARNING: failed to seed kiro-cli setting %s=true\n' "$flag"
   done
   #   chat.disableInheritingDefaultResources — off, matching kiro-cli's
   #     default. Custom agents inherit default steering/skills/AGENTS.md
@@ -238,7 +251,8 @@ if command -v kiro-cli >/dev/null 2>&1; then
   #     UI toggle reflects reality instead of the unset->on fallback.
   for flag in chat.enableCheckpoint telemetry.enabled toolSearch.enabled \
     chat.disableInheritingDefaultResources; do
-    kiro-cli settings "$flag" false >/dev/null 2>&1 || true
+    kiro-cli settings "$flag" false >/dev/null 2>&1 \
+      || printf 'WARNING: failed to seed kiro-cli setting %s=false\n' "$flag"
   done
   # Disable in-binary auto-update: KIRO_CLI_VERSION above is the
   # source of truth, kept current by Renovate against the public
@@ -246,7 +260,8 @@ if command -v kiro-cli >/dev/null 2>&1; then
   # would invalidate the pinned SHA, break image-tag reproducibility,
   # and bypass the version-drift reinstall path. Bumps land via
   # Renovate PR → image rebuild → restart picks them up.
-  kiro-cli settings "app.disableAutoupdates" true >/dev/null 2>&1 || true
+  kiro-cli settings "app.disableAutoupdates" true >/dev/null 2>&1 \
+    || printf 'WARNING: failed to seed kiro-cli setting app.disableAutoupdates=true\n'
   # Pin kiro-cli's own conversation/session cleanup OFF (0 = never purge).
   # vibekit owns chat retention end to end: it purges its own archived chats
   # and reaps KAS session state on delete + a periodic orphan sweep. Letting
@@ -254,11 +269,12 @@ if command -v kiro-cli >/dev/null 2>&1; then
   # two systems fighting — and could delete a session out from under a chat
   # vibekit still keeps. Retention lives in Settings → General (vibekit's
   # config.json chat_retention_days), NOT this key.
-  kiro-cli settings cleanup.periodDays 0 >/dev/null 2>&1 || true
-  exec /app/vibekit
+  kiro-cli settings cleanup.periodDays 0 >/dev/null 2>&1 \
+    || printf 'WARNING: failed to seed kiro-cli setting cleanup.periodDays=0\n'
 else
-  printf "WARNING: kiro-cli not found, web UI not started\n"
-  printf "Check the kiro-cli install log above, then restart the container\n"
-  # Stay alive so the container doesn't restart-loop
-  exec sleep infinity
+  printf "WARNING: kiro-cli not found — starting the web UI in degraded mode\n"
+  printf "Chats cannot run until kiro-cli installs; check the install log above, then restart the container\n"
+  # Settings seeding is skipped this boot; the restart that recovers
+  # kiro-cli re-runs this block, so no drift persists.
 fi
+exec /app/vibekit

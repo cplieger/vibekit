@@ -11,7 +11,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-func writeFile(w http.ResponseWriter, r *http.Request, resolved string, h *Handler) {
+func writeFile(w http.ResponseWriter, r *http.Request, l loc, observer WriteObserver) {
 	api.LimitBody(w, r, maxFileSize)
 	var body struct {
 		Content string `json:"content"`
@@ -19,7 +19,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, resolved string, h *Handl
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filehandler: write body too large",
-				"path", resolved, "limit", maxFileSize, "error", maxErr)
+				"path", l.abs, "limit", maxFileSize, "error", maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				api.ErrorJSON(errFileTooLarge))
 			return
@@ -30,7 +30,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, resolved string, h *Handl
 	// Pre-stat so the user sees a clean 400 for "can't write onto a
 	// directory" rather than a generic 500 with the raw EISDIR text
 	// (which would leak the resolved filesystem path).
-	if info, err := h.root.Stat(h.relPath(resolved)); err == nil && info.IsDir() {
+	if info, err := l.m.root.Stat(l.rel()); err == nil && info.IsDir() {
 		api.BadRequest(w, "path is a directory")
 		return
 	}
@@ -39,16 +39,23 @@ func writeFile(w http.ResponseWriter, r *http.Request, resolved string, h *Handl
 	// log label for operator diagnosis. Collapses three parallel 5-line
 	// blocks into three 1-line calls.
 	fail := func(stage string, err error) {
-		slog.Warn("filehandler: "+stage, "path", resolved, "error", err)
+		slog.Warn("filehandler: "+stage, "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON("write failed"))
+	}
+	// Editor-save checkpoint capture fires BEFORE the write lands so
+	// the pre-save content is still on disk to snapshot as the undo
+	// target (see WriteObserver's contract for the ordering rationale
+	// and the failed-write phantom tradeoff).
+	if observer != nil {
+		observer(r.Context(), l.abs, []byte(body.Content))
 	}
 	// O_NOFOLLOW on the write prevents a dangling symlink planted
 	// between resolvePath's EvalSymlinks and this open from steering
 	// the write into a sensitive path. Matches actionTouch and the
 	// copy/upload destinations; closes the same bypass path the
 	// package-doc "Defense layers" section commits us to block.
-	f, err := h.root.OpenFile(h.relPath(resolved),
+	f, err := l.m.root.OpenFile(l.rel(),
 		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644)
 	if err != nil {
 		fail("write open failed", err)
@@ -63,6 +70,6 @@ func writeFile(w http.ResponseWriter, r *http.Request, resolved string, h *Handl
 		fail("write close failed", err)
 		return
 	}
-	slog.Info("filehandler: file written", "path", resolved, "bytes", len(body.Content))
+	slog.Info("filehandler: file written", "path", l.abs, "bytes", len(body.Content))
 	api.Ok(w)
 }

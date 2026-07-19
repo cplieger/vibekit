@@ -179,7 +179,15 @@ type ConnState =
   | { phase: "idle" }
   | { phase: "connecting"; source: EventSource }
   | { phase: "connected"; source: EventSource }
-  | { phase: "reconnecting"; timer: ReturnType<typeof setTimeout>; backoffMs: number };
+  | { phase: "reconnecting"; timer: ReturnType<typeof setTimeout> };
+
+/** How long a connection must stay open before the reconnect backoff
+ *  ramp resets. Resetting on mere `onopen` (or on the first message —
+ *  the server writes the `connected` handshake immediately) would let a
+ *  connect→drop loop hammer the server at the 500ms base forever; the
+ *  documented 500ms→30s ramp only works if short-lived connections
+ *  carry the previous backoff forward. */
+const BACKOFF_STABLE_RESET_MS = 30_000;
 
 class TransportController {
   private onMsg: MsgHandler = () => {
@@ -191,6 +199,22 @@ class TransportController {
 
   private conn: ConnState = { phase: "idle" };
   private lastSeenEventID = 0;
+  /** lastSeenEventID snapshotted at the moment the CURRENT EventSource
+   *  was opened — the cursor gap detection compares against. onmessage
+   *  advances lastSeenEventID before handleConnected runs (the
+   *  `connected` handshake frame itself carries `id: head`), so
+   *  comparing the live cursor against floor/head could never detect a
+   *  wrapped ring; only this pre-connect snapshot can. */
+  private cursorAtConnect = 0;
+  /** Date.now() at the current connection's onopen; 0 while unopened.
+   *  Cleared on every connect attempt so stability is measured on the
+   *  CURRENT connection, never a predecessor. */
+  private openedAt = 0;
+  /** The last computed reconnect backoff, carried in its own field:
+   *  onerror fires from connecting/connected (never from reconnecting),
+   *  so reading the previous backoff out of the conn state — the old
+   *  design — restarted the ramp at 500ms on every cycle. */
+  private lastBackoffMs = 0;
   private hiddenSince: number | null = null;
 
   private readonly inflight = new Set<AbortController>();
@@ -215,7 +239,7 @@ class TransportController {
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && this.sseIsDead()) {
-        this.scheduleReconnect({ delay: 0, backoffMs: 0 });
+        this.scheduleReconnect({ delay: 0 });
       }
       // Hidden-abort logic
       if (document.visibilityState === "hidden") {
@@ -232,7 +256,7 @@ class TransportController {
     });
     window.addEventListener("pageshow", (e: PageTransitionEvent) => {
       if (e.persisted || this.sseIsDead()) {
-        this.scheduleReconnect({ delay: 0, backoffMs: 0 });
+        this.scheduleReconnect({ delay: 0 });
       }
     });
   }
@@ -266,9 +290,12 @@ class TransportController {
   private connectSSE(): void {
     this.teardown();
     this.onStatus("connecting");
+    this.cursorAtConnect = this.lastSeenEventID;
+    this.openedAt = 0;
     const source = new EventSource("/api/events");
     this.conn = { phase: "connecting", source };
     source.onopen = (): void => {
+      this.openedAt = Date.now();
       this.conn = { phase: "connected", source };
       this.onStatus("connected");
     };
@@ -317,19 +344,24 @@ class TransportController {
     };
   }
 
-  private nextBackoff(): { delay: number; backoffMs: number } {
-    const prev = this.conn.phase === "reconnecting" ? this.conn.backoffMs : 0;
-    return computeBackoff(prev);
+  private nextBackoff(): { delay: number } {
+    // Reset the ramp only after the current connection stayed open for a
+    // stable interval; a connection that opened and quickly died carries
+    // the previous backoff forward so the ramp actually escalates.
+    const stable = this.openedAt !== 0 && Date.now() - this.openedAt >= BACKOFF_STABLE_RESET_MS;
+    const bo = computeBackoff(stable ? 0 : this.lastBackoffMs);
+    this.lastBackoffMs = bo.backoffMs;
+    return { delay: bo.delay };
   }
 
-  private scheduleReconnect(info: { delay: number; backoffMs: number }): void {
+  private scheduleReconnect(info: { delay: number }): void {
     if (this.conn.phase === "reconnecting") {
       clearTimeout(this.conn.timer);
     }
     const timer = setTimeout(() => {
       this.connectSSE();
     }, info.delay);
-    this.conn = { phase: "reconnecting", timer, backoffMs: info.backoffMs };
+    this.conn = { phase: "reconnecting", timer };
   }
 
   private handleConnected(evt: ServerEvent): void {
@@ -337,13 +369,27 @@ class TransportController {
     if (p === undefined) {
       return;
     }
-    if (this.lastSeenEventID === 0) {
+    const cursor = this.cursorAtConnect;
+    if (cursor === 0) {
+      // First connection of this page load: nothing to have missed.
       return;
     }
-    const gap = p.floor === 0 || this.lastSeenEventID < p.floor;
+    // Three gap classes, all judged against the PRE-connect cursor:
+    //  - floor === 0: the server restarted with an empty ring; anything
+    //    we saw before is gone.
+    //  - cursor < floor: the ring wrapped past our cursor during the
+    //    outage — events were evicted unseen.
+    //  - head < cursor: the server restarted and re-seeded ids below our
+    //    cursor (ids are per-process); without this arm the stale high
+    //    cursor also suppresses onmessage cursor advancement until the
+    //    new process catches up.
+    const gap = p.floor === 0 || cursor < p.floor || p.head < cursor;
     if (gap) {
-      const info: GapInfo = { lastSeen: this.lastSeenEventID, floor: p.floor, head: p.head };
+      const info: GapInfo = { lastSeen: cursor, floor: p.floor, head: p.head };
       emitBus(BUS_TRANSPORT_GAP, info);
+      // Re-align with the new server's id space so future comparisons
+      // (and the next reconnect's snapshot) start from server truth.
+      this.lastSeenEventID = p.head;
     }
   }
 

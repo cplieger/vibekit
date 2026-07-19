@@ -32,7 +32,7 @@ func configModelUpdate(t *testing.T, current string, choices []map[string]any) [
 // multiplier nor effort) decodes as HasEffort=false.
 func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	tr := New(deps, "/tmp")
+	tr := New(deps)
 
 	raw := configModelUpdate(t, "model-a", []map[string]any{
 		{"value": "model-a", "name": "Model A", "_meta": map[string]any{"kiro": map[string]any{"hasEffort": true, "rateMultiplier": 1.0}}},

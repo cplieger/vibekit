@@ -213,6 +213,19 @@ type CodeReference struct {
 	URL         string `json:"url,omitempty"`
 }
 
+// RefusalInfo is the structured refusal metadata KAS attaches when the model
+// declines to continue a conversation (modelStopReason "content_filtered";
+// kiro-cli 2.13+). It rides the refusal explanation chunk's update-level
+// _meta.kiro.refusal and the turn ends with stopReason "refusal". The
+// explanation text itself streams as ordinary assistant content, so only the
+// classification fields are kept here; persisted on the assistant Message so
+// the refusal callout survives reload. RecommendedModel, when set, names a
+// model the service suggests switching to.
+type RefusalInfo struct {
+	Category         string `json:"category,omitempty"`
+	RecommendedModel string `json:"recommended_model,omitempty"`
+}
+
 // PlanStatus is the lifecycle state of a plan entry.
 type PlanStatus string
 
@@ -269,7 +282,12 @@ type Message struct {
 	// carries no span, so it annotates the whole assistant turn. Persisted here
 	// so the chip survives reload.
 	CodeReferences []CodeReference `json:"code_references,omitempty"`
-	Plan           []PlanEntry     `json:"plan,omitempty"`
+	// Refusal marks this assistant turn as a model refusal (kiro-cli 2.13
+	// contract): the message content IS the refusal explanation, and this
+	// carries the category + recommended-model metadata the client uses to
+	// render the distinct refusal callout (chip + rewind / switch-model CTAs).
+	Refusal *RefusalInfo `json:"refusal,omitempty"`
+	Plan    []PlanEntry  `json:"plan,omitempty"`
 	// TurnCredits / TurnElapsedMs complete the turn footer summary alongside
 	// ChangedFiles (above). The values also ride the turn_ended SSE for the
 	// live render; omitempty drops the zero cases (a read-only turn has none).

@@ -12,19 +12,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 )
 
-// For tests, temporarily remove "tmp" from the blacklist so we can use t.TempDir().
-func init() {
-	delete(blacklist, "tmp")
-}
-
 func testDir(t *testing.T) (h *Handler, dir, prefix string) {
 	t.Helper()
-	dir = t.TempDir() // e.g. /tmp/TestXxx123
+	dir = t.TempDir() // e.g. /tmp/TestXxx123 — the handler's single granted mount
 	var err error
 	h, err = New(dir)
 	if err != nil {
@@ -33,6 +29,30 @@ func testDir(t *testing.T) (h *Handler, dir, prefix string) {
 	// prefix is the request path relative to /
 	prefix = strings.TrimPrefix(dir, "/")
 	return h, dir, prefix
+}
+
+// testHandlerAt builds a handler whose single mount claims policyDir
+// (e.g. "/config") while its os.Root is backed by a throwaway temp
+// dir. Lexical-layer tests exercise the REAL sensitive prefixes
+// without touching (or requiring) the actual policy path on the host;
+// no filesystem op ever reaches the backing dir in these tests.
+func testHandlerAt(t *testing.T, policyDir string) *Handler {
+	t.Helper()
+	backing, err := os.OpenRoot(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Handler{mounts: []mount{{
+		root: backing,
+		dir:  policyDir,
+		name: strings.TrimPrefix(policyDir, "/"),
+	}}}
+}
+
+// locAt builds a loc for abs inside the handler's first (only) mount,
+// for tests that call action funcs directly, bypassing resolvePath.
+func locAt(h *Handler, abs string) loc {
+	return loc{m: &h.mounts[0], abs: abs}
 }
 
 func getReq(t *testing.T, h *Handler, path string) *httptest.ResponseRecorder {
@@ -97,85 +117,92 @@ func multipartUpload(t *testing.T, targetDir string, files map[string][]byte) *h
 
 // --- resolvePath tests ---
 
-func TestResolvePath_Blacklisted(t *testing.T) {
-	for _, dir := range []string{"etc/passwd", "proc/1/status", "var/log/syslog"} {
-		_, err := resolvePath(dir)
+func TestResolvePath_OutsideRoots(t *testing.T) {
+	h, _, _ := testDir(t)
+	for _, dir := range []string{"etc/passwd", "proc/1/status", "var/log/syslog", "workspace2/x"} {
+		_, err := h.resolvePath(dir)
 		if err == nil {
-			t.Errorf("expected error for blacklisted path %q", dir)
+			t.Errorf("expected error for ungranted path %q", dir)
 		}
 	}
 }
 
 func TestResolvePath_Allowed(t *testing.T) {
-	got, err := resolvePath("workspace/myrepo/file.go")
+	h, dir, prefix := testDir(t)
+	got, err := h.resolvePath(prefix + "/myrepo/file.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// workspace doesn't exist so EvalSymlinks returns ENOENT on the
+	// myrepo doesn't exist so EvalSymlinks returns ENOENT on the
 	// leaf; we fall through to the lexical form.
-	if got != "/workspace/myrepo/file.go" {
-		t.Errorf("got %q, want /workspace/myrepo/file.go", got)
+	if want := dir + "/myrepo/file.go"; got.abs != want {
+		t.Errorf("got %q, want %q", got.abs, want)
+	}
+	if got.m == nil || got.m.dir != dir {
+		t.Errorf("loc mount = %+v, want mount at %q", got.m, dir)
+	}
+	if want := "myrepo/file.go"; got.rel() != want {
+		t.Errorf("rel() = %q, want %q", got.rel(), want)
 	}
 }
 
-func TestResolvePath_Root(t *testing.T) {
-	got, err := resolvePath("/")
-	if err != nil {
-		t.Fatalf("resolvePath(\"/\") error: %v", err)
-	}
-	if got != "/" {
-		t.Errorf("got %q, want /", got)
+// "/" is not resolvable — it is the synthetic mount listing, handled
+// before resolvePath in handleFiles. Every other route 403s on it.
+func TestResolvePath_Root_Denied(t *testing.T) {
+	h, _, _ := testDir(t)
+	if _, err := h.resolvePath("/"); err == nil {
+		t.Fatal("resolvePath(\"/\") = nil error, want denial (no mount is /)")
 	}
 }
 
-func TestResolvePath_TraversalIntoBlacklisted(t *testing.T) {
-	_, err := resolvePath("workspace/../../etc/passwd")
+func TestResolvePath_TraversalOutOfMount(t *testing.T) {
+	h, _, prefix := testDir(t)
+	_, err := h.resolvePath(prefix + "/../../etc/passwd")
 	if err == nil {
-		t.Error("expected error for traversal into blacklisted dir")
+		t.Error("expected error for traversal out of the granted mount")
 	}
 }
 
 // Normalisation: resolvePath cleans common noisy input forms.
 func TestResolvePath_Normalisation(t *testing.T) {
+	h, dir, prefix := testDir(t)
 	tests := []struct {
 		in   string
-		want string
+		want string // relative to the mount dir
 	}{
-		{"workspace/myrepo", "/workspace/myrepo"},
-		{"workspace//myrepo", "/workspace/myrepo"},
-		{"workspace/./myrepo", "/workspace/myrepo"},
-		{"workspace/myrepo/", "/workspace/myrepo"},
-		{"workspace/a/../b", "/workspace/b"},
-		{"/workspace/a", "/workspace/a"},
+		{prefix + "/myrepo", "/myrepo"},
+		{prefix + "//myrepo", "/myrepo"},
+		{prefix + "/./myrepo", "/myrepo"},
+		{prefix + "/myrepo/", "/myrepo"},
+		{prefix + "/a/../b", "/b"},
+		{"/" + prefix + "/a", "/a"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {
-			got, err := resolvePath(tc.in)
+			got, err := h.resolvePath(tc.in)
 			if err != nil {
 				t.Fatalf("resolvePath(%q) error: %v", tc.in, err)
 			}
-			if got != tc.want {
-				t.Errorf("resolvePath(%q) = %q, want %q", tc.in, got, tc.want)
+			if want := dir + tc.want; got.abs != want {
+				t.Errorf("resolvePath(%q) = %q, want %q", tc.in, got.abs, want)
 			}
 		})
 	}
 }
 
-// S1 regression: a symlink planted inside an allowed directory must
-// not grant access to a blacklisted target.
-func TestResolvePath_SymlinkToBlacklistedRejected(t *testing.T) {
-	dir := t.TempDir()
-	prefix := strings.TrimPrefix(dir, "/")
+// S1 regression: a symlink planted inside a granted mount must not
+// grant access to an out-of-mount target.
+func TestResolvePath_SymlinkOutOfMountRejected(t *testing.T) {
+	h, dir, prefix := testDir(t)
 
 	link := filepath.Join(dir, "evil-link")
 	if err := os.Symlink("/etc", link); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	// Lexical form is /tmp/.../evil-link which passes the lexical
-	// blacklist (top segment = "tmp" which we removed for tests).
-	// EvalSymlinks resolves to /etc, which must trip the blacklist.
-	_, err := resolvePath(prefix + "/evil-link")
+	// Lexical form is <mount>/evil-link which passes the mount match.
+	// EvalSymlinks resolves to /etc, which is outside every grant.
+	_, err := h.resolvePath(prefix + "/evil-link")
 	if err == nil {
 		t.Errorf("resolvePath via symlink to /etc returned nil error; expected rejection")
 	}
@@ -188,9 +215,7 @@ func TestResolvePath_SymlinkToBlacklistedRejected(t *testing.T) {
 // name onto it. EvalSymlinks must resolve the link to the real
 // sensitive path and the enforceAccess re-check must 403.
 func TestReadFile_SymlinkToSensitive_Blocked(t *testing.T) {
-	h, _ := New("/")
-	dir := t.TempDir()
-	prefix := strings.TrimPrefix(dir, "/")
+	h, dir, prefix := testDir(t)
 
 	secret := filepath.Join(dir, "secret.json")
 	if err := os.WriteFile(secret, []byte("top"), 0o644); err != nil {
@@ -218,9 +243,7 @@ func TestReadFile_SymlinkToSensitive_Blocked(t *testing.T) {
 // workspace is refused at resolve time (not absorbed by O_NOFOLLOW on
 // the wrong side of the check).
 func TestWriteFile_SymlinkedParent_Blocked(t *testing.T) {
-	h, _ := New("/")
-	dir := t.TempDir()
-	prefix := strings.TrimPrefix(dir, "/")
+	h, dir, prefix := testDir(t)
 
 	link := filepath.Join(dir, "evil-parent")
 	if err := os.Symlink("/etc", link); err != nil {
@@ -347,8 +370,8 @@ func TestReadWriteFile(t *testing.T) {
 	}
 }
 
-func TestReadFile_Blacklisted(t *testing.T) {
-	h, _ := New("/")
+func TestReadFile_OutsideRoots(t *testing.T) {
+	h, _, _ := testDir(t)
 	rec := getReq(t, h, "/api/file?path=etc/passwd")
 	if rec.Code != 403 {
 		t.Errorf("status = %d, want 403", rec.Code)
@@ -367,7 +390,7 @@ func TestReadFile_Binary(t *testing.T) {
 }
 
 func TestReadFile_MissingPath(t *testing.T) {
-	h, _ := New("/")
+	h, _, _ := testDir(t)
 	rec := getReq(t, h, "/api/file")
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -444,22 +467,39 @@ func TestFile_MethodNotAllowed(t *testing.T) {
 
 // --- Directory listing tests ---
 
-func TestListFiles_Root(t *testing.T) {
-	h, _ := New("/")
+// The root listing is synthetic: exactly the granted mounts, sorted by
+// name, never writable. Nothing else on the host filesystem leaks in.
+func TestListFiles_Root_ListsMounts(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	h, err := New(dirB, dirA) // deliberately unsorted
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := getReq(t, h, "/api/files?path=.")
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
-	var resp struct{ Files []fileEntry }
+	var resp struct {
+		Path     string `json:"path"`
+		Files    []fileEntry
+		Writable bool
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	for _, f := range resp.Files {
-		if blacklist[f.Name] {
-			t.Errorf("blacklisted dir %q in root listing", f.Name)
-		}
-		if strings.HasPrefix(f.Name, ".") {
-			t.Errorf("dotfile %q leaked into root listing", f.Name)
+	if resp.Writable {
+		t.Error("synthetic root must not be writable")
+	}
+	wantNames := []string{strings.TrimPrefix(dirA, "/"), strings.TrimPrefix(dirB, "/")}
+	sort.Strings(wantNames)
+	if len(resp.Files) != 2 {
+		t.Fatalf("files = %+v, want exactly the 2 mounts", resp.Files)
+	}
+	for i, want := range wantNames {
+		f := resp.Files[i]
+		if f.Name != want || !f.IsDir {
+			t.Errorf("files[%d] = %+v, want dir %q", i, f, want)
 		}
 	}
 }
@@ -493,7 +533,7 @@ func TestListFiles_Subdir(t *testing.T) {
 }
 
 func TestListFiles_EmptyPath_TreatedAsRoot(t *testing.T) {
-	h, _ := New("/")
+	h, _, _ := testDir(t)
 	rec := getReq(t, h, "/api/files?path=")
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
@@ -518,7 +558,7 @@ func TestListFiles_NotFound(t *testing.T) {
 }
 
 func TestListFiles_MethodNotAllowed(t *testing.T) {
-	h, _ := New("/")
+	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	req := httptest.NewRequest(http.MethodPost, "/api/files?path=.", nil)
@@ -593,33 +633,77 @@ func TestAction_SecurityRejections(t *testing.T) {
 
 	cases := []secCase{
 		{
+			// "/" is not a mount; every action on it dies at resolve.
 			name:       "delete/root",
 			action:     "delete",
 			pathSuffix: "/",
 		},
 		{
-			name:       "delete/top_level_segment",
+			// Ungranted top-level segments are outside the allow-list.
+			name:       "delete/ungranted_segment",
 			action:     "delete",
-			pathSuffix: "workspace",
+			pathSuffix: "workspace2",
 		},
 		{
-			// Symmetric with delete/top_level_segment: refuse mkdir of
-			// `/foo` so the UI can't create entries it can't undo.
-			name:       "mkdir/top_level_segment",
+			name:       "mkdir/ungranted_segment",
 			action:     "mkdir",
 			pathSuffix: "newdir",
 		},
 		{
-			// Same symmetry guard for touch.
-			name:       "touch/top_level_segment",
+			name:       "touch/ungranted_segment",
 			action:     "touch",
 			pathSuffix: "new.txt",
 		},
 		{
-			name:             "delete/protected_dir",
+			// The granted root itself is boot-time configuration: no
+			// action may delete, shadow, or recreate it.
+			name:             "delete/mount_point",
 			action:           "delete",
-			pathSuffix:       "config/chats",
-			wantBodyContains: "",
+			useTempDir:       true,
+			pathSuffix:       ".",
+			wantBodyContains: "granted root",
+		},
+		{
+			name:             "mkdir/mount_point",
+			action:           "mkdir",
+			useTempDir:       true,
+			pathSuffix:       ".",
+			wantBodyContains: "granted root",
+		},
+		{
+			name:             "touch/mount_point",
+			action:           "touch",
+			useTempDir:       true,
+			pathSuffix:       ".",
+			wantBodyContains: "granted root",
+		},
+		{
+			name:             "rename/mount_point",
+			action:           "rename",
+			useTempDir:       true,
+			pathSuffix:       ".",
+			renameName:       "stolen",
+			wantBodyContains: "granted root",
+		},
+		{
+			name:             "move/mount_point",
+			action:           "move",
+			useTempDir:       true,
+			pathSuffix:       ".",
+			dest:             "stolen",
+			wantBodyContains: "granted root",
+		},
+		{
+			// isProtectedDir on delete: the container of a sensitive
+			// tree is not deletable even though isSensitive only
+			// matches its contents.
+			name:              "delete/protected_dir",
+			action:            "delete",
+			useTempDir:        true,
+			pathSuffix:        "chats",
+			sensitivePrefix:   "chats/", // directory prefix
+			setupDir:          "chats",
+			checkSourceExists: "chats",
 		},
 		{
 			name:              "rename/sensitive_dest",
@@ -727,14 +811,9 @@ func TestAction_SecurityRejections(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var h *Handler
-			var dir, prefix string
-
-			if tc.useTempDir {
-				h, dir, prefix = testDir(t)
-			} else {
-				h, _ = New("/")
-			}
+			// Every case runs against a temp-dir mount; useTempDir=false
+			// cases simply target paths outside it (absolute suffixes).
+			h, dir, prefix := testDir(t)
 
 			// Inject sensitive prefix if specified.
 			if tc.sensitivePrefix != "" && tc.useTempDir {
@@ -861,8 +940,8 @@ func TestAction_Rename_InvalidNames(t *testing.T) {
 	}
 }
 
-func TestAction_Blacklisted(t *testing.T) {
-	h, _ := New("/")
+func TestAction_OutsideRoots(t *testing.T) {
+	h, _, _ := testDir(t)
 	rec := postReq(t, h, "/api/files/action", `{"action":"touch","path":"etc/evil.txt"}`)
 	if rec.Code != 403 {
 		t.Errorf("status = %d, want 403", rec.Code)
@@ -878,7 +957,7 @@ func TestAction_UnknownAction(t *testing.T) {
 }
 
 func TestAction_MethodNotAllowed(t *testing.T) {
-	h, _ := New("/")
+	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	req := httptest.NewRequest(http.MethodGet, "/api/files/action", nil)
@@ -890,7 +969,7 @@ func TestAction_MethodNotAllowed(t *testing.T) {
 }
 
 func TestAction_InvalidJSON(t *testing.T) {
-	h, _ := New("/")
+	h, _, _ := testDir(t)
 	rec := postReq(t, h, "/api/files/action", `not json at all`)
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)
@@ -909,7 +988,7 @@ func TestAction_Copy_MissingDest(t *testing.T) {
 	}
 }
 
-func TestAction_Copy_DestBlacklisted(t *testing.T) {
+func TestAction_Copy_DestOutsideRoots(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
@@ -1314,8 +1393,8 @@ func TestHandleUpload_NoFiles(t *testing.T) {
 	}
 }
 
-func TestHandleUpload_BlacklistedDir(t *testing.T) {
-	h, _ := New("/")
+func TestHandleUpload_OutsideRootsDir(t *testing.T) {
+	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	req := multipartUpload(t, "etc", map[string][]byte{"x.txt": []byte("x")})
@@ -1398,9 +1477,7 @@ func TestHandleUpload_RefusesSensitiveFilename(t *testing.T) {
 // sensitive target. ELOOP surfaces as a 500 "write failed" — the
 // important post-condition is the sensitive target is not created.
 func TestWriteFile_DanglingSymlinkToSensitive_Blocked(t *testing.T) {
-	h, _ := New("/")
-	dir := t.TempDir()
-	prefix := strings.TrimPrefix(dir, "/")
+	h, dir, prefix := testDir(t)
 
 	target := filepath.Join(dir, "protected.json")
 	orig := sensitivePrefixes
@@ -1427,7 +1504,7 @@ func TestWriteFile_DanglingSymlinkToSensitive_Blocked(t *testing.T) {
 }
 
 func TestHandleUpload_MethodNotAllowed(t *testing.T) {
-	h, _ := New("/")
+	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	req := httptest.NewRequest(http.MethodGet, "/api/file/upload", nil)
@@ -1439,7 +1516,7 @@ func TestHandleUpload_MethodNotAllowed(t *testing.T) {
 }
 
 func TestHandleUpload_InvalidMultipart(t *testing.T) {
-	h, _ := New("/")
+	h, _, _ := testDir(t)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 	req := httptest.NewRequest(http.MethodPost, "/api/file/upload",
@@ -1477,15 +1554,14 @@ func TestHandleUpload_TooLargeReturns413(t *testing.T) {
 // sensitive and actionCopy's dest-guard is the only line between the
 // attacker and the protected file.
 // Q1 (S1 deeper): a symlinked ancestor + two-or-more nonexistent
-// trailing components must not bypass the blacklist. The earlier S1
+// trailing components must not bypass the allow-list. The earlier S1
 // tests only pinned the single-missing-leaf case where
 // EvalSymlinks(parent) resolves the symlink itself. With two missing
 // components (evil/newdir/sub where newdir doesn't exist in /etc),
 // EvalSymlinks(parent)=EvalSymlinks(.../evil/newdir) returns ENOENT
 // internally — only the ancestor walk surfaces the symlink crossing.
 func TestResolvePath_SymlinkAncestorWithDeepMissingLeaf_Rejected(t *testing.T) {
-	dir := t.TempDir()
-	prefix := strings.TrimPrefix(dir, "/")
+	h, dir, prefix := testDir(t)
 
 	link := filepath.Join(dir, "evil")
 	if err := os.Symlink("/etc", link); err != nil {
@@ -1493,11 +1569,11 @@ func TestResolvePath_SymlinkAncestorWithDeepMissingLeaf_Rejected(t *testing.T) {
 	}
 
 	// `newdir/sub` do not exist either in the temp dir or in /etc.
-	// Pre-fix: resolveRealPath returned the lexical form, enforceAccess
-	// saw top="tmp" (removed from blacklist for tests), request passed.
-	// Post-fix: the ancestor walk resolves `evil` to `/etc`, recomposes
-	// `/etc/newdir/sub`, enforceAccess sees top="etc", rejects.
-	_, err := resolvePath(prefix + "/evil/newdir/sub")
+	// Pre-fix: resolveRealPath returned the lexical form, which stays
+	// inside the granted mount, and the request passed. Post-fix: the
+	// ancestor walk resolves `evil` to `/etc`, recomposes
+	// `/etc/newdir/sub`, and enforce rejects it as outside every mount.
+	_, err := h.resolvePath(prefix + "/evil/newdir/sub")
 	if err == nil {
 		t.Errorf("resolvePath through symlinked ancestor + deep missing leaf returned nil error; expected rejection")
 	}
@@ -1676,7 +1752,7 @@ func TestWriteUploads_ContextCancelled_AbortsEarly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	uploaded, _, wErr := h.writeUploads(ctx, dir, files)
+	uploaded, _, wErr := writeUploads(ctx, locAt(h, dir), files)
 	if wErr == nil {
 		t.Fatal("expected error from cancelled context")
 	}
@@ -1760,6 +1836,10 @@ func BenchmarkResolvePath(b *testing.B) {
 	// Create a temp dir with a nested structure for the deep-path case.
 	dir := b.TempDir()
 	prefix := strings.TrimPrefix(dir, "/")
+	h, err := New(dir)
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	// Create a nested directory for the deep path case.
 	deep := filepath.Join(dir, "a", "b", "c", "d")
@@ -1779,7 +1859,7 @@ func BenchmarkResolvePath(b *testing.B) {
 		path string
 	}{
 		{"allowed_path", prefix + "/a/b/c/d"},
-		{"blacklisted_path", "etc/passwd"},
+		{"outside_roots_path", "etc/passwd"},
 		{"deep_nested_path", prefix + "/a/b/c/d/../../../b/c/d"},
 		{"symlink_path", prefix + "/linked/c/d"},
 	}
@@ -1788,7 +1868,7 @@ func BenchmarkResolvePath(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				resolvePath(tc.path)
+				h.resolvePath(tc.path)
 			}
 		})
 	}
@@ -1797,23 +1877,38 @@ func BenchmarkResolvePath(b *testing.B) {
 // --- Fuzz target for resolvePath (security-critical path resolution) ---
 
 func FuzzResolvePath(f *testing.F) {
+	// Two mounts: a real temp dir (filesystem-backed resolution) and a
+	// policy-level "/config" mount so the sensitive-prefix seeds
+	// exercise the sensitive layer rather than dying at mount match.
+	dir := f.TempDir()
+	backing, err := os.OpenRoot(f.TempDir())
+	if err != nil {
+		f.Fatal(err)
+	}
+	h, err := New(dir)
+	if err != nil {
+		f.Fatal(err)
+	}
+	h.mounts = append(h.mounts, mount{root: backing, dir: "/config", name: "config"})
+	prefix := strings.TrimPrefix(dir, "/")
+
 	// Seed corpus: known attack shapes and edge cases.
 	seeds := []string{
-		"workspace/myrepo/file.go",
+		prefix + "/myrepo/file.go",
 		"../../../etc/passwd",
-		"workspace/../../etc/shadow",
+		prefix + "/../../etc/shadow",
 		"etc/passwd",
 		"proc/1/status",
 		"var/log/syslog",
 		"/",
 		".",
 		"..",
-		"workspace/./../../etc/passwd",
-		"workspace/%2e%2e/etc/passwd",
-		"workspace/\x00/etc/passwd",
-		"workspace/symlink/../../../etc",
+		prefix + "/./../../etc/passwd",
+		prefix + "/%2e%2e/etc/passwd",
+		prefix + "/\x00/etc/passwd",
+		prefix + "/symlink/../../../etc",
 		strings.Repeat("../", 50) + "etc/passwd",
-		"workspace/a/b/c/../../../../etc/passwd",
+		prefix + "/a/b/c/../../../../etc/passwd",
 		"config/home/.kiro/steering/vibekit.md",
 		"config/chats/deep/nested.json",
 		"config/push-subs.json",
@@ -1823,7 +1918,7 @@ func FuzzResolvePath(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		result, err := resolvePath(input)
+		result, err := h.resolvePath(input)
 		if err != nil {
 			// Rejected path — that's fine, security working as intended.
 			return
@@ -1831,24 +1926,26 @@ func FuzzResolvePath(f *testing.F) {
 
 		// Assertion 1: no panic (implicit — reaching here means no panic).
 
-		// Assertion 2: result is always an absolute clean path.
-		if !filepath.IsAbs(result) {
-			t.Errorf("resolvePath(%q) = %q is not absolute", input, result)
+		// Assertion 2: the result is always an absolute clean path.
+		if !filepath.IsAbs(result.abs) {
+			t.Errorf("resolvePath(%q) = %q is not absolute", input, result.abs)
 		}
-		if cleaned := filepath.Clean(result); cleaned != result {
-			t.Errorf("resolvePath(%q) = %q is not clean (Clean = %q)", input, result, cleaned)
-		}
-
-		// Assertion 3: if err == nil, result must not start with any
-		// blacklisted prefix.
-		top := strings.SplitN(strings.TrimPrefix(result, "/"), "/", 2)[0]
-		if blacklist[top] {
-			t.Errorf("resolvePath(%q) = %q starts with blacklisted segment %q", input, result, top)
+		if cleaned := filepath.Clean(result.abs); cleaned != result.abs {
+			t.Errorf("resolvePath(%q) = %q is not clean (Clean = %q)", input, result.abs, cleaned)
 		}
 
-		// Assertion 4: result must not be a sensitive path.
-		if isSensitive(result) {
-			t.Errorf("resolvePath(%q) = %q is a sensitive path", input, result)
+		// Assertion 3 (allow-list invariant): the result lies inside a
+		// granted mount, and the returned mount is that owner.
+		owner := h.mountFor(result.abs)
+		if owner == nil {
+			t.Errorf("resolvePath(%q) = %q is outside every granted mount", input, result.abs)
+		} else if result.m != owner {
+			t.Errorf("resolvePath(%q) returned mount %q, want owner %q", input, result.m.dir, owner.dir)
+		}
+
+		// Assertion 4: the result is never a sensitive path.
+		if isSensitive(result.abs) {
+			t.Errorf("resolvePath(%q) = %q is a sensitive path", input, result.abs)
 		}
 	})
 }
@@ -1946,7 +2043,10 @@ func BenchmarkFileAction_Copy(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			h, _ := New("/")
+			h, err := New(dir)
+			if err != nil {
+				b.Fatal(err)
+			}
 			mux := http.NewServeMux()
 			h.RegisterRoutes(mux)
 
@@ -2009,17 +2109,17 @@ func (s *discardStatusRecorder) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// actionMkdir's depth guard rejects only paths with fewer than two
-// segments, so "/a/b" (exactly two slashes) is allowed and created.
-func TestAction_Mkdir_BoundaryAtTwoSegments(t *testing.T) {
+// actionMkdir creates any path inside a mount; only the mount point
+// itself is refused (the mount boundary replaced the old depth guard).
+func TestAction_Mkdir_InsideMount(t *testing.T) {
 	h, dir, _ := testDir(t)
-	resolved := "/a/b" // count("/a/b") == 2
-	err := actionMkdir(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	l := locAt(h, filepath.Join(dir, "a", "b"))
+	err := actionMkdir(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err != nil {
-		t.Fatalf("actionMkdir(%q) = %v, want nil (a 2-segment path must be allowed to mkdir)", resolved, err)
+		t.Fatalf("actionMkdir(%q) = %v, want nil (paths inside a mount must be creatable)", l.abs, err)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "a", "b")); statErr != nil {
-		t.Errorf("actionMkdir(%q): expected dir created at <root>/a/b, stat err: %v", resolved, statErr)
+		t.Errorf("actionMkdir(%q): expected dir created at <mount>/a/b, stat err: %v", l.abs, statErr)
 	}
 }
 
@@ -2030,30 +2130,30 @@ func TestAction_Mkdir_PropagatesError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "afile"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	resolved := "/afile/sub" // relPath "afile/sub"; "afile" is a file -> MkdirAll ENOTDIR
-	err := actionMkdir(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	l := locAt(h, filepath.Join(dir, "afile", "sub")) // "afile" is a file -> MkdirAll ENOTDIR
+	err := actionMkdir(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
-		t.Fatalf("actionMkdir(%q) = nil, want non-nil (MkdirAll under a regular file must error)", resolved)
+		t.Fatalf("actionMkdir(%q) = nil, want non-nil (MkdirAll under a regular file must error)", l.abs)
 	}
 	if errors.Is(err, errHandled) {
-		t.Fatalf("actionMkdir(%q) returned errHandled; expected the raw MkdirAll error", resolved)
+		t.Fatalf("actionMkdir(%q) returned errHandled; expected the raw MkdirAll error", l.abs)
 	}
 }
 
-// actionTouch shares the mkdir depth boundary: "/x/y" (two slashes) is
-// allowed and the file is created under an existing parent.
-func TestAction_Touch_BoundaryAtTwoSegments(t *testing.T) {
+// actionTouch creates a file anywhere inside the mount with an
+// existing parent.
+func TestAction_Touch_InsideMount(t *testing.T) {
 	h, dir, _ := testDir(t)
 	if err := os.Mkdir(filepath.Join(dir, "x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	resolved := "/x/y" // count == 2; parent "x" exists so OpenFile can create
-	err := actionTouch(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	l := locAt(h, filepath.Join(dir, "x", "y"))
+	err := actionTouch(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err != nil {
-		t.Fatalf("actionTouch(%q) = %v, want nil (a 2-segment path must be allowed to touch)", resolved, err)
+		t.Fatalf("actionTouch(%q) = %v, want nil (paths inside a mount must be touchable)", l.abs, err)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "x", "y")); statErr != nil {
-		t.Errorf("actionTouch(%q): expected file created at <root>/x/y, stat err: %v", resolved, statErr)
+		t.Errorf("actionTouch(%q): expected file created at <mount>/x/y, stat err: %v", l.abs, statErr)
 	}
 }
 
@@ -2064,30 +2164,30 @@ func TestAction_Touch_PropagatesOpenError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "pfile"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	resolved := "/pfile/child" // parent "pfile" is a file -> OpenFile ENOTDIR
-	err := actionTouch(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	l := locAt(h, filepath.Join(dir, "pfile", "child")) // parent is a file -> OpenFile ENOTDIR
+	err := actionTouch(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
-		t.Fatalf("actionTouch(%q) = nil, want non-nil (OpenFile under a regular file must error)", resolved)
+		t.Fatalf("actionTouch(%q) = nil, want non-nil (OpenFile under a regular file must error)", l.abs)
 	}
 	if errors.Is(err, errHandled) {
-		t.Fatalf("actionTouch(%q) returned errHandled; expected the raw OpenFile error", resolved)
+		t.Fatalf("actionTouch(%q) returned errHandled; expected the raw OpenFile error", l.abs)
 	}
 }
 
-// actionDelete allows a 2-segment path ("/p/q") and removes the target;
-// the depth guard rejects only fewer-than-two-segment paths.
-func TestAction_Delete_BoundaryAtTwoSegments(t *testing.T) {
+// actionDelete removes anything inside the mount; only the mount point
+// itself is refused.
+func TestAction_Delete_InsideMount(t *testing.T) {
 	h, dir, _ := testDir(t)
 	if err := os.MkdirAll(filepath.Join(dir, "p", "q"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	resolved := "/p/q" // segments == 2
-	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	l := locAt(h, filepath.Join(dir, "p", "q"))
+	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err != nil {
-		t.Fatalf("actionDelete(%q) = %v, want nil (a 2-segment path must be deletable)", resolved, err)
+		t.Fatalf("actionDelete(%q) = %v, want nil (paths inside a mount must be deletable)", l.abs, err)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "p", "q")); !os.IsNotExist(statErr) {
-		t.Errorf("actionDelete(%q): expected <root>/p/q removed, stat err = %v", resolved, statErr)
+		t.Errorf("actionDelete(%q): expected <mount>/p/q removed, stat err = %v", l.abs, statErr)
 	}
 }
 
@@ -2098,13 +2198,13 @@ func TestAction_Delete_PropagatesRemoveError(t *testing.T) {
 	if err := os.Symlink("/etc", filepath.Join(dir, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	resolved := filepath.Join(dir, "escape", "leaf") // traverses an escaping symlink
-	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{}, resolved, h)
+	l := locAt(h, filepath.Join(dir, "escape", "leaf")) // traverses an escaping symlink
+	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
-		t.Fatalf("actionDelete(%q) = nil, want non-nil (RemoveAll through an escaping symlink must error)", resolved)
+		t.Fatalf("actionDelete(%q) = nil, want non-nil (RemoveAll through an escaping symlink must error)", l.abs)
 	}
 	if errors.Is(err, errHandled) {
-		t.Fatalf("actionDelete(%q) returned errHandled; expected the raw RemoveAll error", resolved)
+		t.Fatalf("actionDelete(%q) returned errHandled; expected the raw RemoveAll error", l.abs)
 	}
 }
 
@@ -2112,11 +2212,11 @@ func TestAction_Delete_PropagatesRemoveError(t *testing.T) {
 // past every guard rather than returning errHandled.
 func TestAction_Rename_PropagatesError(t *testing.T) {
 	h, dir, _ := testDir(t)
-	resolved := filepath.Join(dir, "ghost.txt") // source does not exist
+	l := locAt(h, filepath.Join(dir, "ghost.txt")) // source does not exist
 	err := actionRename(context.Background(), httptest.NewRecorder(),
-		fileAction{Name: "renamed.txt"}, resolved, h)
+		fileAction{Name: "renamed.txt"}, l, h)
 	if err == nil {
-		t.Fatalf("actionRename(%q -> renamed.txt) = nil, want non-nil (renaming a missing source must error)", resolved)
+		t.Fatalf("actionRename(%q -> renamed.txt) = nil, want non-nil (renaming a missing source must error)", l.abs)
 	}
 	if errors.Is(err, errHandled) {
 		t.Fatalf("actionRename returned errHandled; expected the raw Rename error (a guard fired before Rename)")
@@ -2127,11 +2227,11 @@ func TestAction_Rename_PropagatesError(t *testing.T) {
 // shape as rename.
 func TestAction_Move_PropagatesError(t *testing.T) {
 	h, dir, _ := testDir(t)
-	resolved := filepath.Join(dir, "ghost.txt") // source does not exist
+	l := locAt(h, filepath.Join(dir, "ghost.txt")) // source does not exist
 	err := actionMove(context.Background(), httptest.NewRecorder(),
-		fileAction{Dest: filepath.Join(dir, "moved.txt")}, resolved, h)
+		fileAction{Dest: filepath.Join(dir, "moved.txt")}, l, h)
 	if err == nil {
-		t.Fatalf("actionMove(%q) = nil, want non-nil (moving a missing source must error)", resolved)
+		t.Fatalf("actionMove(%q) = nil, want non-nil (moving a missing source must error)", l.abs)
 	}
 	if errors.Is(err, errHandled) {
 		t.Fatalf("actionMove returned errHandled; expected the raw Rename error")
@@ -2148,17 +2248,17 @@ func TestStreamCopy_AtExactCap(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "in"), src, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	srcPath := filepath.Join(dir, "in")
-	destPath := filepath.Join(dir, "out")
+	srcLoc := locAt(h, filepath.Join(dir, "in"))
+	destLoc := locAt(h, filepath.Join(dir, "out"))
 
-	n, err := streamCopy(context.Background(), srcPath, destPath, int64(len(src)), h)
+	n, err := streamCopy(context.Background(), srcLoc, destLoc, int64(len(src)))
 	if err != nil {
 		t.Fatalf("streamCopy(size == cap) error = %v, want nil (a file exactly at the cap is not oversize)", err)
 	}
 	if n != int64(len(src)) {
 		t.Fatalf("streamCopy(size == cap) n = %d, want %d (the full file must be copied)", n, len(src))
 	}
-	got, readErr := os.ReadFile(destPath)
+	got, readErr := os.ReadFile(destLoc.abs)
 	if readErr != nil {
 		t.Fatalf("reading copied dest: %v", readErr)
 	}
@@ -2181,35 +2281,41 @@ func TestStreamCopy_PropagatesRenameError(t *testing.T) {
 		t.Fatal(err)
 	}
 	n, err := streamCopy(context.Background(),
-		filepath.Join(dir, "src"), filepath.Join(dir, "destdir"), maxCopySize, h)
+		locAt(h, filepath.Join(dir, "src")), locAt(h, filepath.Join(dir, "destdir")), maxCopySize)
 	if err == nil {
 		t.Fatalf("streamCopy(dest is a non-empty dir) = (n=%d, nil), want non-nil error (rename over a directory must fail)", n)
 	}
 }
 
-// listEntries at root keeps visible files and filters dotfiles.
-func TestListEntries_FiltersDotfilesAtRoot(t *testing.T) {
+// listEntries keeps dotfiles (the synthetic mount listing replaced the
+// old real-root special case) and hides sensitive paths.
+func TestListEntries_KeepsDotfiles_HidesSensitive(t *testing.T) {
 	tmp := t.TempDir()
-	if err := os.WriteFile(filepath.Join(tmp, "visible.txt"), []byte("v"), 0o644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"visible.txt", ".hidden", "secret.json"} {
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.WriteFile(filepath.Join(tmp, ".hidden"), []byte("h"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	orig := sensitivePrefixes
+	t.Cleanup(func() { sensitivePrefixes = orig })
+	sensitivePrefixes = append([]sensitivePath{
+		{Path: filepath.Join(tmp, "secret.json"), IsDir: false},
+	}, orig...)
+
 	entries, err := os.ReadDir(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := listEntries(context.Background(), entries, "/")
+	got := listEntries(context.Background(), entries, tmp)
 	names := map[string]bool{}
 	for _, f := range got {
 		names[f.Name] = true
 	}
-	if !names["visible.txt"] {
-		t.Errorf("listEntries at root dropped %q; non-dotfiles must be kept", "visible.txt")
+	if !names["visible.txt"] || !names[".hidden"] {
+		t.Errorf("listEntries dropped a visible entry: %v", names)
 	}
-	if names[".hidden"] {
-		t.Errorf("listEntries at root kept %q; dotfiles must be filtered", ".hidden")
+	if names["secret.json"] {
+		t.Errorf("listEntries leaked the sensitive entry: %v", names)
 	}
 }
 
@@ -2275,8 +2381,8 @@ func TestWriteOneUpload_PropagatesError(t *testing.T) {
 		t.Fatal("no multipart file parsed")
 	}
 	h, dir, _ := testDir(t)
-	dest := filepath.Join(dir, "missing-dir", "x.txt") // parent does not exist
-	n, err := h.writeOneUpload(context.Background(), dest, fhs[0])
+	dest := locAt(h, filepath.Join(dir, "missing-dir", "x.txt")) // parent does not exist
+	n, err := writeOneUpload(context.Background(), dest, fhs[0])
 	if err == nil {
 		t.Fatalf("writeOneUpload(dest with missing parent) = (n=%d, nil), want non-nil error", n)
 	}
@@ -2352,8 +2458,10 @@ func TestHandleDownloadZip_Rejects(t *testing.T) {
 // MCP env/header/oauth secrets in cleartext. A prior audit found these
 // browsable/readable/downloadable because sensitivePrefixes omitted them.
 // Pins that every access path (isSensitive predicate, resolvePath, HTTP
-// read, HTTP download) now refuses them. The checks fire on the lexical
-// enforceAccess pass, so no such file needs to exist on the test host.
+// read, HTTP download) now refuses them. The handler mounts "/config"
+// at the POLICY level (temp-dir backed), so the rejection exercises
+// the sensitive layer — not the mount match — and fires on the lexical
+// enforce pass; no such file needs to exist on the test host.
 func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 	credPaths := []string{
 		"config/home/.aws/sso/cache/kiro-auth-token.json",    // live SSO bearer + refresh token
@@ -2363,16 +2471,16 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 		"config/home/.gitconfig",                             // git identity / credential config
 		"config/mcp.json",                                    // MCP secrets, cleartext
 	}
-	h, _ := New("/")
+	h := testHandlerAt(t, "/config")
 	for _, p := range credPaths {
 		t.Run(p, func(t *testing.T) {
 			abs := filepath.Clean("/" + p)
-			// isSensitive is the predicate enforceAccess relies on.
+			// isSensitive is the predicate enforce relies on.
 			if !isSensitive(abs) {
 				t.Errorf("isSensitive(%q) = false, want true (credential store must be protected)", abs)
 			}
 			// resolvePath gates every read/write/download/action.
-			if _, err := resolvePath(p); err == nil {
+			if _, err := h.resolvePath(p); err == nil {
 				t.Errorf("resolvePath(%q) = nil error, want rejection", p)
 			}
 			// GET read must 403.

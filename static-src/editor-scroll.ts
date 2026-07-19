@@ -40,31 +40,22 @@ export function flashEditorLine(line: number): void {
   }, 1200);
 }
 
-let cachedLineHeight: number | null = null;
-let cachedPaddingTop: number | null = null;
+// Metrics are re-read per call, deliberately uncached: line jumps are
+// rare (link click / deep link), and a module-global cache captured at
+// first use mis-placed every later jump after a zoom or font-size
+// change (there was no invalidation path).
 
 function getLineHeight(): number {
-  if (cachedLineHeight !== null) {
-    return cachedLineHeight;
-  }
   const style = getComputedStyle($.editorCode);
   const lh = parseFloat(style.lineHeight);
   if (Number.isFinite(lh) && lh > 0) {
-    cachedLineHeight = lh;
     return lh;
   }
   const fs = parseFloat(style.fontSize);
-  const val = Number.isFinite(fs) && fs > 0 ? fs * 1.5 : 18;
-  cachedLineHeight = val;
-  return val;
+  return Number.isFinite(fs) && fs > 0 ? fs * 1.5 : 18;
 }
 
 function getPaddingTop(): number {
-  if (cachedPaddingTop !== null) {
-    return cachedPaddingTop;
-  }
   const pad = parseFloat(getComputedStyle($.editorHighlight).paddingTop);
-  const val = Number.isFinite(pad) && pad >= 0 ? pad : 0;
-  cachedPaddingTop = val;
-  return val;
+  return Number.isFinite(pad) && pad >= 0 ? pad : 0;
 }

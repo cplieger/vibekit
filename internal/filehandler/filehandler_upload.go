@@ -46,8 +46,8 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if dir == "" {
 		dir = "workspace"
 	}
-	resolvedDir := resolveOrForbid(w, dir)
-	if resolvedDir == "" {
+	dirLoc, ok := h.resolveOrForbid(w, dir)
+	if !ok {
 		return
 	}
 	// Upload-target-directory gate. The package-doc "Defense layers"
@@ -57,13 +57,13 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// / vapid-keys.json) inside the sensitive container. isSensitive on
 	// the final per-file path (in writeUploads below) is the second
 	// layer; this gate is the first.
-	if isProtectedDir(resolvedDir) {
-		slog.Warn("filehandler: upload blocked on protected dir", "dir", resolvedDir)
+	if isProtectedDir(dirLoc.abs) {
+		slog.Warn("filehandler: upload blocked on protected dir", "dir", dirLoc.abs)
 		api.Forbidden(w, "upload target is protected")
 		return
 	}
-	if err := h.root.MkdirAll(h.relPath(resolvedDir), 0o755); err != nil {
-		slog.Warn("filehandler: upload mkdir failed", "path", resolvedDir, "error", err)
+	if err := dirLoc.m.root.MkdirAll(dirLoc.rel(), 0o755); err != nil {
+		slog.Warn("filehandler: upload mkdir failed", "path", dirLoc.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON("upload failed"))
 		return
@@ -73,20 +73,20 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "no files")
 		return
 	}
-	uploaded, totalBytes, err := h.writeUploads(r.Context(), resolvedDir, formFiles)
+	uploaded, totalBytes, err := writeUploads(r.Context(), dirLoc, formFiles)
 	if err != nil {
 		if errors.Is(err, errInvalidFilename) {
 			api.BadRequest(w, err.Error())
 			return
 		}
 		slog.Warn("filehandler: upload write failed",
-			"dir", resolvedDir, "uploaded", len(uploaded), "error", err)
+			"dir", dirLoc.abs, "uploaded", len(uploaded), "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON("upload failed"))
 		return
 	}
 	slog.Info("filehandler: upload",
-		"dir", resolvedDir, "count", len(uploaded), "bytes", totalBytes)
+		"dir", dirLoc.abs, "count", len(uploaded), "bytes", totalBytes)
 	api.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
 }
 
@@ -95,13 +95,14 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 // produce a confusing `uploaded: []` subset response.
 var errInvalidFilename = errors.New("invalid filename")
 
-// writeUploads copies each multipart file into targetDir atomically
-// via write-temp-then-rename, returning the list of filenames written
-// plus total bytes for observability. On error, the partial temp file
-// is removed; files written earlier in the batch remain on disk (the
-// HTTP response conveys an error anyway). The context lets a client
-// disconnect abort the remaining files in a batch upload.
-func (h *Handler) writeUploads(ctx context.Context, targetDir string, files []*multipart.FileHeader) (uploaded []string, total int64, err error) {
+// writeUploads copies each multipart file into the target directory
+// atomically via write-temp-then-rename, returning the list of
+// filenames written plus total bytes for observability. On error, the
+// partial temp file is removed; files written earlier in the batch
+// remain on disk (the HTTP response conveys an error anyway). The
+// context lets a client disconnect abort the remaining files in a
+// batch upload.
+func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader) (uploaded []string, total int64, err error) {
 	uploaded = make([]string, 0, len(files))
 	for _, fh := range files {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -110,14 +111,14 @@ func (h *Handler) writeUploads(ctx context.Context, targetDir string, files []*m
 		name := filepath.Base(fh.Filename)
 		if name == "" || name == "." || name == ".." {
 			slog.Warn("filehandler: upload rejected: invalid filename",
-				"raw_name", fh.Filename, "base", name, "target_dir", targetDir)
+				"raw_name", fh.Filename, "base", name, "target_dir", dirLoc.abs)
 			return uploaded, total, fmt.Errorf("%w: %q", errInvalidFilename, fh.Filename)
 		}
-		dest := filepath.Join(targetDir, name)
+		dest := filepath.Join(dirLoc.abs, name)
 		// Per-file sensitive-path gate. isProtectedDir on the target
 		// directory (in handleUpload) catches container-level drops;
 		// this check blocks file-level overwrites of sensitive exact-
-		// match entries like /config/push-subs.json when targetDir
+		// match entries like /config/push-subs.json when the target
 		// is a non-sensitive parent that enclosures the sensitive
 		// file. Mirrors the rename-destination check in actionRename.
 		if isSensitive(dest) {
@@ -125,7 +126,7 @@ func (h *Handler) writeUploads(ctx context.Context, targetDir string, files []*m
 				"raw_name", fh.Filename, "dest", dest)
 			return uploaded, total, fmt.Errorf("%w: %q (protected)", errInvalidFilename, fh.Filename)
 		}
-		n, wErr := h.writeOneUpload(ctx, dest, fh)
+		n, wErr := writeOneUpload(ctx, loc{m: dirLoc.m, abs: dest}, fh)
 		if wErr != nil {
 			return uploaded, total, wErr
 		}
@@ -153,7 +154,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (h *Handler) writeOneUpload(ctx context.Context, dest string, fh *multipart.FileHeader) (n int64, err error) {
+func writeOneUpload(ctx context.Context, dest loc, fh *multipart.FileHeader) (n int64, err error) {
 	src, err := fh.Open()
 	if err != nil {
 		return 0, err
@@ -163,13 +164,14 @@ func (h *Handler) writeOneUpload(ctx context.Context, dest string, fh *multipart
 	// Cap the per-file copy (one malformed part can't blow past the global
 	// multipart budget) and abort at the next chunk boundary on context cancel.
 	cr := &countingReader{r: &ctxReader{ctx: ctx, r: io.LimitReader(src, maxUploadSize)}}
-	// WriteReaderInRoot stages a temp inside h.root, fsyncs it, renames over the
-	// root-relative dest, then fsyncs the parent dir — the durability step the
-	// old hand-rolled path omitted — while keeping the write kernel-confined to
-	// the root like the rest of this handler (a symlink planted in the tree
-	// cannot redirect it outside). It refuses a symlink dest and removes the
-	// temp on any error, so dest is never left a partial write.
-	if _, werr := atomicfile.WriteReaderInRoot(ctx, h.root, h.relPath(dest), cr, atomicfile.WithMode(0o600)); werr != nil {
+	// WriteReaderInRoot stages a temp inside the mount's root, fsyncs it,
+	// renames over the root-relative dest, then fsyncs the parent dir — the
+	// durability step the old hand-rolled path omitted — while keeping the
+	// write kernel-confined to the mount like the rest of this handler (a
+	// symlink planted in the tree cannot redirect it outside). It refuses a
+	// symlink dest and removes the temp on any error, so dest is never left
+	// a partial write.
+	if _, werr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr, atomicfile.WithMode(0o600)); werr != nil {
 		return cr.n, werr
 	}
 	return cr.n, nil

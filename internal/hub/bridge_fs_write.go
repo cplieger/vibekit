@@ -56,10 +56,6 @@ func (h *Hub) respondFSWrite(ctx context.Context, chatID api.ChatID, msg *api.RP
 		h.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		h.respondFSError(ctx, chatID, msg, err)
-		return
-	}
 
 	// Supervised gate. When the chat is in supervised mode (and per-turn
 	// trust is not set) the write is staged and this call blocks until
@@ -72,6 +68,14 @@ func (h *Hub) respondFSWrite(ctx context.Context, chatID api.ChatID, msg *api.RP
 		return
 	}
 	p.Content = content
+
+	// Create parent directories only AFTER the gate: a rejected staged
+	// create must be side-effect-free, and MkdirAll before the gate left
+	// freshly created empty parent directories behind on reject.
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		h.respondFSError(ctx, chatID, msg, err)
+		return
+	}
 
 	// Record the checkpoint BEFORE the write lands so beforeSHA captures
 	// the pre-write content (Restore and per-file Undo both depend on

@@ -283,6 +283,20 @@
   background: color-mix(in srgb, var(--c-danger, #e66666) 5%, var(--c-bg-secondary));
 }
 
+/* CLI-missing variant: the stored connection is intact but its CLI
+ * binary is gone (uninstalled in Settings → Tools, or a fresh tools
+ * volume). Amber, not red — "tool absent", not "auth broken". Both
+ * classes are present (cli_missing rows are never connected), so this
+ * must win over the error tint. */
+.forge-account-row-error.forge-account-row-missing {
+  border-color: color-mix(in srgb, var(--c-warning, #e6c074) 50%, var(--c-border));
+  background: color-mix(in srgb, var(--c-warning, #e6c074) 6%, var(--c-bg-secondary));
+}
+
+.forge-account-row-missing .forge-account-error {
+  color: color-mix(in srgb, var(--c-warning, #e6c074) 85%, var(--c-text-primary));
+}
+
 /* Per-account collapsible repo list. The summary line shows
  * "X repos, Y cloned locally" with a chevron that rotates on open. */
 .forge-account-repos {
@@ -1614,6 +1628,20 @@ dd.governance-off {
   text-align: center;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+/* Writable rows render the effect badge as a <select> (in-place effect
+ * editing); keep it visually identical to the read-only span badge. */
+select.native-rule-effect {
+  appearance: none;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+select.native-rule-effect:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
 }
 .eff-allow {
   color: #10894b;

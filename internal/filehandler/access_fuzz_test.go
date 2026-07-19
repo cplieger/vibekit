@@ -5,19 +5,22 @@ import (
 	"testing"
 )
 
-// FuzzEnforceAccess pins the access-control contract across arbitrary
-// paths: enforceAccess must deny exactly the paths the policy blocks —
-// a blacklisted top-level segment or a sensitive path — and allow
-// everything else. The oracle reuses the real isSensitive function and
-// the blacklist table (the policy source of truth), so the property
-// catches a broken composition (wrong combine, inverted check, missing
-// isSensitive call, mis-extracted top segment) rather than restating a
-// single copied expression.
-func FuzzEnforceAccess(f *testing.F) {
+// FuzzEnforce pins the access-control contract across arbitrary paths:
+// enforce must deny exactly the paths the policy blocks — anything
+// outside the granted mounts (allow-list, deny-by-default) or a
+// sensitive path — and allow everything else. The oracle reuses the
+// real mountFor and isSensitive functions (the policy sources of
+// truth), so the property catches a broken composition (wrong combine,
+// inverted check, missing isSensitive call, wrong prefix match) rather
+// than restating a single copied expression.
+func FuzzEnforce(f *testing.F) {
 	f.Add("/workspace/file.txt")
+	f.Add("/workspace")
 	f.Add("/etc/passwd")
 	f.Add("/config/chats/a.json")
 	f.Add("/config/kiro/steering/vibekit.md")
+	f.Add("/config")
+	f.Add("/configextra/x") // prefix of a mount name, NOT inside it
 	f.Add("/../etc/shadow")
 	f.Add("/app/../workspace")
 	f.Add("/\x00etc")
@@ -25,20 +28,31 @@ func FuzzEnforceAccess(f *testing.F) {
 	f.Add("")
 	f.Add("/")
 
-	f.Fuzz(func(t *testing.T, path string) {
-		err := enforceAccess(path)
+	// Policy-level mounts (never touched by enforce, which is purely
+	// lexical): the standard container pair.
+	h := &Handler{mounts: []mount{
+		{dir: "/workspace", name: "workspace"},
+		{dir: "/config", name: "config"},
+	}}
 
-		top := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
-		blocked := blacklist[top] || isSensitive(path)
+	f.Fuzz(func(t *testing.T, path string) {
+		m, err := h.enforce(path)
+
+		granted := h.mountFor(path) != nil
+		blocked := !granted || isSensitive(path)
 
 		// Security invariant: anything the policy blocks must be denied.
 		if blocked && err == nil {
-			t.Fatalf("enforceAccess(%q) = nil, want denial (top=%q blacklisted=%v sensitive=%v)",
-				path, top, blacklist[top], isSensitive(path))
+			t.Fatalf("enforce(%q) = nil, want denial (granted=%v sensitive=%v)",
+				path, granted, isSensitive(path))
 		}
 		// No-over-block invariant: a denial must be backed by the policy.
 		if !blocked && err != nil {
-			t.Fatalf("enforceAccess(%q) = %v, want allow (neither blacklisted nor sensitive)", path, err)
+			t.Fatalf("enforce(%q) = %v, want allow (granted and not sensitive)", path, err)
+		}
+		// The returned mount is the owning mount.
+		if err == nil && m != h.mountFor(path) {
+			t.Fatalf("enforce(%q) returned mount %v, want %v", path, m, h.mountFor(path))
 		}
 	})
 }

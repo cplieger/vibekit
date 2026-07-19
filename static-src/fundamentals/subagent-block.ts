@@ -6,15 +6,21 @@
 // the SAME block dispatcher as the main transcript — so a subagent shows real
 // tool cards, diffs, reasoning, and nested subagents, not a text preview.
 //
-// Pure view: header (spinner/🤖 + name + status + collapse) + a body the
-// caller fills. Mirrors the IDE, which shows a subagent as a collapsible
-// section that stays open while active and collapses when it completes.
+// Pure view: header (spinner/agent-glyph + name + status + collapse) + a
+// body the caller fills. Mirrors the IDE, which shows a subagent as a
+// collapsible section that stays open while active and collapses when it
+// completes. The glyph defaults to the shared agent hexagon; the caller
+// swaps in a per-known-subagent icon via setIcon (roles.ts iconForSubagent),
+// so pre-built subagents (introspect, context-gatherer, …) get distinct
+// icons like the mode picker's builtins do.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import type { ToolStatus } from "../types.js";
 import { isToolActive } from "../tool-schema.js";
+import { iconEl } from "../icon-el.js";
+import { ICON_TAB_AGENT } from "../icons.js";
 
 /** A mounted subagent block plus its imperative handle. */
 export interface SubagentView {
@@ -26,6 +32,9 @@ export interface SubagentView {
   setStatus(status: ToolStatus): void;
   /** Update the subagent's display name. */
   setName(name: string): void;
+  /** Swap the identity glyph (SVG string; roles.ts iconForSubagent). The
+   *  spinner still owns the slot while the subagent is active. */
+  setIcon(svg: string): void;
 }
 
 /** Build a subagent block. Open while active; auto-collapses once settled
@@ -72,13 +81,15 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
     },
   });
 
+  let iconSvg = ICON_TAB_AGENT;
+  let lastStatus = status;
   const applyIcon = (s: ToolStatus): void => {
     if (isToolActive(s)) {
       icon.classList.add("subagent-spinner");
-      icon.textContent = "";
+      icon.replaceChildren();
     } else {
       icon.classList.remove("subagent-spinner");
-      icon.textContent = "\u{1F916}"; // 🤖
+      icon.replaceChildren(iconEl(iconSvg));
     }
   };
   applyIcon(status);
@@ -87,6 +98,7 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
     root,
     body,
     setStatus(s: ToolStatus): void {
+      lastStatus = s;
       statusEl.textContent = s;
       statusEl.className = `tool-status ${s}`;
       applyIcon(s);
@@ -98,6 +110,13 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
     },
     setName(n: string): void {
       nameEl.textContent = n;
+    },
+    setIcon(svg: string): void {
+      if (svg === iconSvg) {
+        return;
+      }
+      iconSvg = svg;
+      applyIcon(lastStatus);
     },
   };
 }

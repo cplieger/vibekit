@@ -326,7 +326,6 @@
   color: var(--c-yellow);
 }
 
-[id="command-rules-empty-hint"],
 [id="agent-ignore-empty-hint"] {
   color: var(--c-yellow);
 }

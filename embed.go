@@ -3,10 +3,10 @@ package main
 import "embed"
 
 // staticFS holds the compiled web UI (static-src/ → static/, populated
-// by tsc at build time). Isolated in its own file so editors and
-// linters scanning main.go don't block on the //go:embed directive
-// (which requires the static/ directory to exist) during a cold
-// clone before `make static` has run. Consumed via
+// by `go run ./cmd/bundle` at build time). Isolated in its own file so
+// editors and linters scanning main.go don't block on the //go:embed
+// directive (which requires the static/ directory to exist) during a
+// cold clone before the bundle has run. Consumed via
 // fs.Sub(staticFS, "static") in main.go.
 
 //go:embed static

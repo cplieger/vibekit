@@ -128,45 +128,43 @@ func forkMessageID(messages []api.Message, turnIndex int) string {
 	return ""
 }
 
-// CmdPromoteRewindChat promotes a rewind chat to replace its parent.
-// Deletes the parent chat and clears the rewind's parent_chat_id so
-// it becomes a top-level chat.
+// CmdPromoteRewindChat promotes a rewind chat to replace its parent
+// via the store's PromoteRewind transition (validated + cleared under
+// one per-chat lock), then deletes the parent. The transition's order
+// is crash-safe: an interruption between the clear and the parent
+// delete leaves a promoted top-level chat plus a surviving parent
+// (benign — the user can delete it) rather than a chat whose
+// ParentChatID references a deleted parent. A failed clear aborts the
+// promote with an error instead of reporting success while the
+// relationship is intact.
 func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
 
-	chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
-	if !ok {
+	parentID, err := deps.ChatStore().PromoteRewind(ctx, cmd.ChatID)
+	switch {
+	case errors.Is(err, api.ErrChatNotFound):
 		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
-	}
-	if chat.ParentChatID == "" {
-		d.RespondErr(w, http.StatusBadRequest,
-			errNotRewindChat)
+	case errors.Is(err, api.ErrNotRewind):
+		d.RespondErr(w, http.StatusBadRequest, errNotRewindChat)
+		return
+	case err != nil:
+		slog.Error("promote rewind: clear parent link", "rewind", cmd.ChatID, keyError, err)
+		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	parentID := chat.ParentChatID
-
-	// Delete the parent.
+	// Delete the parent. A failure here is benign-but-visible: the
+	// promote already took effect (the chat is top-level), so respond OK
+	// and log — the surviving parent stays listed and can be deleted
+	// manually.
 	deps.CleanupChatState(ctx, parentID)
 	if err := deps.ChatStore().Delete(ctx, parentID); err != nil {
 		slog.Error("promote rewind: delete parent", "parent", parentID, keyError, err)
-		// Continue — the promote still succeeds even if parent cleanup
-		// partially fails (orphaned files are cleaned by GC).
 	}
-
-	// Clear parent_chat_id on self.
-	_ = deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		c.ParentChatID = ""
-		c.RewindFromTurn = 0
-		return true
-	})
 
 	slog.Info("rewind promoted", "rewind", cmd.ChatID, "deleted_parent", parentID)
 	d.Respond(w, cmd.RequestID, responseWith(nil))

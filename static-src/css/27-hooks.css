@@ -55,6 +55,15 @@
   background: var(--c-bg-primary);
 }
 
+/* Global-scope badge (kiro-cli 2.13 ~/.kiro/hooks): quietly distinct from the
+   trigger/action pills — outlined instead of filled, since it describes where
+   the hook lives rather than what it does. */
+.hook-scope-global {
+  color: var(--c-text-secondary);
+  border: 1px solid var(--c-border);
+  background: transparent;
+}
+
 .hook-action-agent {
   color: var(--c-purple, var(--c-accent));
   background: color-mix(in srgb, var(--c-purple, var(--c-accent)) 14%, transparent);

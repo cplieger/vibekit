@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/permissions"
 )
 
 // permOptionWire decodes one inbound permission option. ACP sends the id
@@ -57,12 +56,9 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 		options[i] = api.PermissionOption{OptionID: o.OptionID, Name: o.Name, Kind: o.Kind}
 	}
 
-	// Shell safety tier: auto-approve or auto-reject shell commands.
-	if req.ToolCall.Kind == api.ToolKindExecute && subSessionID == "" && t.configDir != "" {
-		if t.tryShellPolicy(ctx, chatID, reqID, req.ToolCall.Title, options) {
-			return
-		}
-	}
+	// No secondary shell classifier: kiro-cli's native Cedar policy
+	// already auto-resolved everything it could — a request that
+	// reaches vibekit is a genuine ask and always surfaces to the user.
 
 	evt := api.NewEvent(api.EventPermissionNeeded, chatID, api.PermissionNeededPayload{
 		RequestID:    reqID,
@@ -76,26 +72,4 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 	t.deps.PendingPermsAdd(reqID, evt)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID, api.WorkingLabelPayload{Label: api.WorkingLabelApproval}))
 	t.deps.NotifyPush(ctx, "Permission needed", api.PushKindPermission)
-}
-
-// tryShellPolicy evaluates the shell safety tier and auto-approves or
-// auto-rejects shell commands. Returns true if the permission was handled.
-func (t *Translator) tryShellPolicy(ctx context.Context, chatID api.ChatID, reqID int64, command string, options []api.PermissionOption) bool {
-	shellResult := permissions.EvaluateShellCommand(ctx, t.configDir, command, t.deps.PermissionRules())
-	optionID := FindAllowOnce(options)
-	decision := permissions.AutoDecideShell(shellResult.Decision, optionID != "")
-	switch decision {
-	case permissions.DecisionAllow:
-		if err := t.deps.BridgeRespond(ctx, chatID, reqID, PermissionOutcomeSelected(optionID), nil); err == nil {
-			slog.Info("shell policy auto-approved", "chat_id", chatID, "command", command)
-			return true
-		}
-	case permissions.DecisionDeny:
-		if err := t.deps.BridgeRespond(ctx, chatID, reqID, PermissionOutcomeCancelled(), nil); err != nil {
-			slog.Error("shell policy deny: respond failed", "chat_id", chatID, "error", err)
-		}
-		slog.Info("shell policy denied", "chat_id", chatID, "command", command)
-		return true
-	}
-	return false
 }

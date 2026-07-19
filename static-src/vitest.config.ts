@@ -12,8 +12,8 @@ const actionsInternals = resolve(__dirname, "node_modules/@cplieger/actions/dist
 export default defineConfig({
   resolve: {
     alias: [
-      // ansi_up is loaded via importmap in the browser; for vitest we
-      // point at a stub that exports a no-op AnsiUp (tests don't need
+      // ansi_up is bundled into app.js in the browser build; for vitest
+      // we point at a stub that exports a no-op AnsiUp (tests don't need
       // real ANSI rendering, just DOM structure).
       { find: "ansi_up", replacement: "./test-stubs/ansi_up.ts" },
       // Allow deep imports into @cplieger/actions internals for test reset

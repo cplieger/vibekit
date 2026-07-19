@@ -79,3 +79,23 @@ func TestCheckDirWritable(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateConfig_MissingCLIIsNotFatal pins the degraded-start
+// posture (P5): a missing kiro-cli must not abort boot. The entrypoint
+// starts the server even when the first-boot install failed; the
+// failure surfaces through /api/health ("kiro-cli unavailable") and
+// the boot-time warnIfCLIMissing warning, never through a fatal
+// validation error that would erase the UI and diagnostics together.
+func TestValidateConfig_MissingCLIIsNotFatal(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &Config{
+		ConfigDir: dir,
+		WorkDir:   dir,
+		CLIPath:   filepath.Join(dir, "definitely-not-installed"),
+	}
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("validateConfig with missing CLI = %v, want nil (degraded, not fatal)", err)
+	}
+	// The warn path must not panic on the same config.
+	warnIfCLIMissing(cfg)
+}

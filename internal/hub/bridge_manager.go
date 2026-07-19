@@ -141,14 +141,23 @@ func (bm *bridgeManager) closeAndStop(ids []api.ChatID) []culledBridge {
 }
 
 // selectIdleBridges returns the ids whose sharedBridge.lastActiveAt
-// is non-zero and strictly before now-idleTimeout. Pure function; no
-// hub state, no I/O, extracted so the cutoff boundary can be tested
-// without driving a real ticker.
+// is non-zero and strictly before now-idleTimeout. A bridge in the
+// bridgePrompting state is never selected: lastActiveAt is stamped at
+// prompt START (and again at release), so a legitimately long turn —
+// the Call doc says one "can legitimately run for hours" — would
+// otherwise be culled mid-turn once it outlives the timeout. Pure
+// function apart from the per-bridge mutex; no hub state, no I/O,
+// extracted so the cutoff boundary can be tested without driving a
+// real ticker.
 func selectIdleBridges(now time.Time, idleTimeout time.Duration, bridges map[api.ChatID]*sharedBridge) []api.ChatID {
 	cutoff := now.Add(-idleTimeout)
 	var out []api.ChatID
 	for id, sb := range bridges {
-		if !sb.lastActiveAt.IsZero() && sb.lastActiveAt.Before(cutoff) {
+		sb.mu.Lock()
+		idle := sb.state != bridgePrompting &&
+			!sb.lastActiveAt.IsZero() && sb.lastActiveAt.Before(cutoff)
+		sb.mu.Unlock()
+		if idle {
 			out = append(out, id)
 		}
 	}
@@ -163,6 +172,26 @@ func (bm *bridgeManager) selectIdle(timeout time.Duration) []api.ChatID {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	return selectIdleBridges(time.Now(), timeout, bm.bridges)
+}
+
+// promptingChatIDs returns the chats whose bridge currently holds the
+// prompt slot (state == bridgePrompting) — i.e. exactly the chats a
+// new prompt would 409 on, which is the authoritative "busy" set the
+// connect-time turn_state replay synthesizes from. Same locking shape
+// as selectIdleBridges: bm.mu for the map, per-bridge mu for state.
+func (bm *bridgeManager) promptingChatIDs() []api.ChatID {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	var out []api.ChatID
+	for id, sb := range bm.bridges {
+		sb.mu.Lock()
+		prompting := sb.state == bridgePrompting
+		sb.mu.Unlock()
+		if prompting {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // count returns the number of active bridges.

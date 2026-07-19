@@ -396,9 +396,7 @@ func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCRe
 	case msg.Method == api.MethodRequestPermission:
 		// Deny: cancelled outcome, the ACP shape for "the user said no".
 		slog.Warn("utility bridge: denying tool permission request (text-only session)")
-		_ = bridge.Respond(ctx, *msg.ID, map[string]any{
-			"outcome": map[string]any{"outcome": "cancelled"},
-		}, nil)
+		_ = bridge.Respond(ctx, *msg.ID, api.PermissionOutcomeCancelled(), nil)
 	case msg.Method == api.MethodFSRead || msg.Method == api.MethodFSWrite ||
 		strings.HasPrefix(msg.Method, methodTermPrefix):
 		slog.Warn("utility bridge: refusing tool request (text-only session)", "method", msg.Method)

@@ -63,6 +63,24 @@ type ChatStore interface {
 	Mutate(ctx context.Context, id ChatID, mutate func(c *Chat, exists bool) bool) error
 	// Delete removes the chat file and broadcasts chat_deleted.
 	Delete(ctx context.Context, id ChatID) error
+	// DeleteFamily removes a chat and its rewind children as one named
+	// transition with explicit ordering and truthful results: children
+	// are deleted FIRST (no crash window leaves a child referencing a
+	// deleted parent), the parent LAST. prepare (optional) runs before
+	// each record's deletion so the caller can tear down per-chat side
+	// effects (bridge, terminals, .partial) in the same order. Children
+	// whose deletion failed are returned — still listed, still
+	// deletable; a parent failure is the returned error (its children
+	// are already gone at that point).
+	DeleteFamily(ctx context.Context, parentID ChatID, prepare func(ChatID)) (failedChildren []ChatID, err error)
+	// PromoteRewind clears a rewind chat's parent linkage (ParentChatID
+	// + RewindFromTurn) as a single checked, per-chat-locked transition,
+	// returning the former parent id for the caller to clean up and
+	// delete. Errors: ErrChatNotFound when the chat does not exist,
+	// ErrNotRewind when it has no parent; on ANY error the linkage is
+	// untouched — a promote never reports success while the
+	// relationship is still intact.
+	PromoteRewind(ctx context.Context, childID ChatID) (parentID ChatID, err error)
 	// Archive moves a chat to the archive directory instead of deleting.
 	Archive(ctx context.Context, id ChatID) error
 	// ListArchived returns headers for all archived chats.
@@ -188,8 +206,10 @@ type ACPBridge interface {
 	// deprecated/internal entries filtered out. Zero fallback: if
 	// kiro-cli returns nothing, the slice is empty.
 	Models() []SessionModel
-	// SetModel performs an in-session model swap via session/set_model.
-	// ctx enables caller-driven cancellation of the RPC call.
+	// SetModel performs an in-session model swap via
+	// session/set_config_option (configId "model") — v3 has no
+	// session/set_model. ctx enables caller-driven cancellation of the
+	// RPC call.
 	SetModel(ctx context.Context, modelID string) error
 	// NotifCh yields incoming ACP notifications. Closes when the
 	// subprocess exits.
@@ -307,6 +327,11 @@ type PendingStore interface {
 // constructing a real checkpoint.Store with filesystem state.
 type CheckpointService interface {
 	Snapshot(ctx context.Context, chatID ChatID, relPath string, newContent []byte, messageCount int) (checkpoint.Tag, error)
+	// OwnerOf returns the chat whose agent most recently wrote relPath
+	// (the owner of the path's checkpoint lineage), or ok=false when no
+	// chat tracks the path. Warms the cross-chat index from disk on
+	// first use so a cold process answers correctly.
+	OwnerOf(ctx context.Context, relPath string) (ChatID, bool)
 	Restore(ctx context.Context, chatID ChatID, tag checkpoint.Tag) (int, error)
 	RestorePreview(ctx context.Context, chatID ChatID, tag checkpoint.Tag) ([]string, error)
 	CheckoutFile(ctx context.Context, chatID ChatID, tag checkpoint.Tag, relPath string) error

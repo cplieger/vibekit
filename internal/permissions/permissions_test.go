@@ -64,42 +64,18 @@ func TestSupervisedDefault(t *testing.T) {
 	}
 }
 
-// --- Settings-reader fail-modes (shell + supervised) ---
-//
-// Both surviving config.json readers fail CLOSED. (The former Args /
-// permission_mode reader — which failed OPEN to --trust-all-tools — was
-// removed in 2026-07 with the dead trust-mode surface; kiro-cli's native
-// Cedar policy now owns tool-call authorization on v3.)
-
-func TestSettingsReaders_NonENOENTReadErrorHonoursFailMode(t *testing.T) {
+func TestSupervisedDefault_NonENOENTReadErrorFailsClosed(t *testing.T) {
 	// Regression: when config.json exists but cannot be read (here
 	// simulated by making it a directory, which returns EISDIR — a
-	// non-ENOENT error), every reader must land on its documented
-	// fail-mode. Both fail CLOSED:
-	//   readShellPolicy     → safe_commands
-	//   SupervisedDefault   → false
-	// A regression that flipped either CLOSED branch to OPEN would
-	// silently grant shell auto-approval or disable the Supervised gate.
+	// non-ENOENT error), SupervisedDefault must land on its documented
+	// fail-CLOSED default, false. A regression that flipped the branch
+	// to fail-open would silently gate every write on approval.
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "config.json"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-
-	// readShellPolicy via EvaluateShellCommand: fail CLOSED to
-	// safe_commands. `ls` auto-approves under safe_commands;
-	// `rm -rf /` prompts. The pair proves we landed on Safe, not
-	// All (which would allow rm) nor None (which would deny ls).
-	r := NewCommandRules(dir)
-	if d := EvaluateShellCommand(context.Background(), dir, "ls", r); d.Decision != "allow" {
-		t.Errorf("EvaluateShellCommand(ls) with dir-as-settings = %q, want \"allow\" (safe_commands fail-closed)", d.Decision)
-	}
-	if d := EvaluateShellCommand(context.Background(), dir, "rm -rf /", r); d.Decision != "ask" {
-		t.Errorf("EvaluateShellCommand(rm -rf /) with dir-as-settings = %q, want \"ask\" (safe_commands fail-closed)", d.Decision)
-	}
-
-	// SupervisedDefault: fail CLOSED to false.
 	if SupervisedDefault(context.Background(), dir) {
-		t.Error("SupervisedDefault(context.Background(), dir-as-settings) = true, want false (fail-closed)")
+		t.Error("SupervisedDefault(dir-as-settings) = true, want false (fail-closed)")
 	}
 }
 
@@ -116,8 +92,7 @@ func TestReadSettingsBytes_EmptyConfigDirReturnsNil(t *testing.T) {
 	if data != nil {
 		t.Errorf("cfgsettings.ReadBytes(\"\") data = %v, want nil", data)
 	}
-	// SupervisedDefault and readShellPolicy inherit the short-circuit;
-	// pin the supervised fallback.
+	// SupervisedDefault inherits the short-circuit; pin the fallback.
 	if SupervisedDefault(context.Background(), "") {
 		t.Error("SupervisedDefault(context.Background(), \"\") = true, want false")
 	}

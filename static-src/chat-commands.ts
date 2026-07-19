@@ -45,6 +45,10 @@ import {
 export interface SendPromptOpts {
   model?: string;
   attachments?: readonly unknown[];
+  /** Reuse a specific user-message id instead of minting a fresh one.
+   *  The prompt queue passes the id the prompt was FIRST sent under so
+   *  a drained re-send is idempotent server-side (no duplicate bubble). */
+  messageID?: string;
 }
 
 /** Post a prompt to a chat once. Low-level "send" primitive: it dispatches the
@@ -62,7 +66,7 @@ export async function sendPromptTo(
   const result = await sendPromptAction.dispatch({
     chatID,
     text,
-    messageID: newMessageID(),
+    messageID: opts.messageID ?? newMessageID(),
     model: opts.model ?? getCurrentModel(),
     activeFile: getActiveFilePath(),
     openFiles: getOpenFilePaths(),

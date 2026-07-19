@@ -14,7 +14,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/permissions"
 )
 
 // Compile-time assertion: Deps satisfies ChatStoreDeps (not embedded).
@@ -35,7 +34,10 @@ type StreamingAccess interface {
 }
 
 // PermissionAccess provides the methods needed by permission_handler.go
-// for permission request handling, auto-approval, and push notifications.
+// for permission request handling and push notifications. Shell-command
+// authorization is owned by kiro-cli's native Cedar policy: any
+// session/request_permission that reaches vibekit is a genuine ask, so
+// there is no auto-approval surface here.
 type PermissionAccess interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error
@@ -44,7 +46,6 @@ type PermissionAccess interface {
 	ParentACPSession(chatID api.ChatID) string
 	PendingPermsAdd(requestID int64, evt api.ServerEvent)
 	PendingPermsRemove(requestID int64)
-	PermissionRules() *permissions.CommandRules
 }
 
 // BridgeComm provides bridge communication methods needed by compact.go

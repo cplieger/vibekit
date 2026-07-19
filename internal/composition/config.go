@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/envx"
 	"github.com/cplieger/vibekit/internal/auth"
+	"github.com/cplieger/vibekit/internal/filehandler"
 	"github.com/cplieger/webhttp"
 )
 
@@ -31,7 +32,13 @@ type Config struct {
 	// trust nothing = log the unspoofable socket peer (the spoof-safe
 	// default for a directly-exposed deployment).
 	TrustedProxies []*net.IPNet
-	AuthConfig     auth.Config
+	// BrowseRoots is the file browser's allow-list: the granted
+	// directories the /api/file* surface can see. Always WorkDir +
+	// ConfigDir, plus any extra grants from VIBEKIT_BROWSE_ROOTS
+	// (colon-separated absolute paths, e.g. "/tmp:/data"). Everything
+	// outside the grants is denied by default.
+	BrowseRoots []string
+	AuthConfig  auth.Config
 }
 
 // ConfigFromEnv reads configuration from environment variables with
@@ -44,16 +51,35 @@ func ConfigFromEnv() Config {
 	ac.WhoamiTimeout = envx.Duration("VIBEKIT_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
 
 	configDir := envx.String("KIRO_CONFIG_DIR", "/config")
+	workDir := envx.String("KIRO_WORK_DIR", "/workspace")
 	return Config{
-		WorkDir:         envx.String("KIRO_WORK_DIR", "/workspace"),
+		WorkDir:         workDir,
 		ConfigDir:       configDir,
 		CLIPath:         envx.String("KIRO_CLI_PATH", "kiro-cli"),
 		VapidSub:        envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
 		ToolsDir:        envx.String("VIBEKIT_TOOLS_DIR", filepath.Join(configDir, "tools")),
 		ToolCatalogPath: envx.String("VIBEKIT_TOOL_CATALOG", "/opt/vibekit/tool-catalog.json"),
 		TrustedProxies:  parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
+		BrowseRoots:     browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
 		AuthConfig:      ac,
 	}
+}
+
+// browseRoots assembles the file browser's allow-list: the two
+// standard mounts plus any extra VIBEKIT_BROWSE_ROOTS grants. Like
+// parseTrustedProxies this is the LENIENT parser: malformed entries
+// are logged and skipped rather than aborting startup — a typo in the
+// deployment config must not take the whole UI down, and the two
+// standard mounts always survive.
+func browseRoots(workDir, configDir, raw string) []string {
+	extra, invalid := filehandler.ParseBrowseRoots(raw)
+	if len(invalid) > 0 {
+		slog.Warn("config: ignoring malformed VIBEKIT_BROWSE_ROOTS entries (want absolute paths, colon-separated)",
+			"entries", invalid)
+	}
+	roots := make([]string, 0, 2+len(extra))
+	roots = append(roots, workDir, configDir)
+	return append(roots, extra...)
 }
 
 // parseTrustedProxies parses a comma-separated list of trusted
