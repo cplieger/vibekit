@@ -59,7 +59,7 @@ ARG AQUA_REGISTRY_REF=v4.539.0
 # overlays (runtimes, forge CLIs, language servers) apply first,
 # catalog-overlays.json then patches vibekit-specific display copy on top.
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
-ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.5
+ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.6
 # hadolint ignore=DL3062
 RUN mkdir -p /tmp/registries && \
     curl -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
