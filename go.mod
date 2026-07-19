@@ -16,7 +16,7 @@ require (
 	github.com/cplieger/toolbelt/v2 v2.0.0
 	github.com/cplieger/web-terminal-engine/v2 v2.6.0
 	github.com/cplieger/webhttp v1.9.0
-	github.com/cplieger/wiregen v1.3.4
+	github.com/cplieger/wiregen/v2 v2.0.0
 	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v3 v3.0.1
 	pgregory.net/rapid v1.3.0

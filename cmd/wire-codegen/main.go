@@ -14,7 +14,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/forges"
-	"github.com/cplieger/wiregen"
+	"github.com/cplieger/wiregen/v2"
 )
 
 func main() {
