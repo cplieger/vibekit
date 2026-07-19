@@ -18,8 +18,7 @@
     "conflict.ts",
     "highlight.ts",
     "keys.ts",
-    "platform.ts",
-    "arrow-nav.ts"
+    "platform.ts"
   ],
   "mutator": {
     "excludedMutations": ["StringLiteral"]
