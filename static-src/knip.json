@@ -2,7 +2,7 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": ["app.ts", "sw.ts", "**/*.test.ts", "**/*.fuzz.test.ts", "**/*.property.test.ts"],
   "project": ["**/*.ts", "!**/*.d.ts", "!node_modules/**"],
-  "ignore": ["wire/*.gen.ts", "vitest.stryker.config.ts"],
+  "ignore": ["wire/*.gen.ts", "vitest.stryker.config.ts", "test-stubs/ansi_up.ts"],
   "paths": {
     "ansi_up": ["./test-stubs/ansi_up.ts"]
   },
