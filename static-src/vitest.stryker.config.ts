@@ -18,6 +18,10 @@ export default {
   ...base,
   test: {
     ...base.test,
-    testTimeout: 30_000,
+    // 90s: the Hirschberg large-input properties (2001x2001-line diffs,
+    // 3 fast-check runs) tipped over the previous 30s cap once diff.ts +
+    // the instrumentation overhead grew (weekly-stryker 2026-07-18 dry-run
+    // interrupt). Normal vitest runs keep the base cap.
+    testTimeout: 90_000,
   },
 };

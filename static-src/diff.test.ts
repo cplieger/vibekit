@@ -378,6 +378,12 @@ describe("lineDiff property-based invariants", () => {
     )
     .map((lines) => lines.join("\n"));
 
+  // The two large-input properties override the global 10s fast-check
+  // interrupt: under Stryker's instrumentation a single 2001x2001-line run
+  // takes ~5s+, so 3 runs tripped interruptAfterTimeLimit and (via
+  // markInterruptAsFailure) failed the mutation dry run. 60s keeps the
+  // hang-safety bound without penalizing instrumented runs; the vitest
+  // per-test cap in vitest.stryker.config.ts sits above it.
   it("Hirschberg path: invariants 1-3 hold for large inputs", () => {
     fc.assert(
       fc.property(largeText, largeText, (a, b) => {
@@ -387,7 +393,7 @@ describe("lineDiff property-based invariants", () => {
         expect(s.dels + s.ctx).toBe(countLines(a));
         expect(reconstructNew(d)).toBe(b);
       }),
-      { numRuns: 3 },
+      { numRuns: 3, interruptAfterTimeLimit: 60_000 },
     ); // fewer runs due to cost
   });
 
@@ -399,7 +405,7 @@ describe("lineDiff property-based invariants", () => {
           expect(l.kind).toBe("ctx");
         }
       }),
-      { numRuns: 3 },
+      { numRuns: 3, interruptAfterTimeLimit: 60_000 },
     );
   });
 });
