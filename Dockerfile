@@ -52,7 +52,7 @@ COPY . ./
 # read-only JSON the tools engine loads; both refs are Renovate-pinned
 # so catalog updates arrive as ordinary dependency PRs.
 # renovate: datasource=github-releases depName=jdx/mise
-ARG MISE_REGISTRY_REF=v2026.7.7
+ARG MISE_REGISTRY_REF=v2026.7.11
 # renovate: datasource=github-releases depName=aquaproj/aqua-registry
 ARG AQUA_REGISTRY_REF=v4.539.0
 # The catalog compiler ships as a toolbelt module lane; its embedded base
