@@ -12,8 +12,8 @@ require (
 
 require (
 	github.com/cplieger/atomicfile/v2 v2.3.0
-	github.com/cplieger/envx/yamlenv v1.2.0 // release-gated: needs the yamlenv CheckSingleDocument release
-	github.com/cplieger/jsonx v1.2.0 // release-gated: needs the jsonx/bounded release
+	github.com/cplieger/envx/yamlenv v1.2.0
+	github.com/cplieger/jsonx v1.2.0
 	github.com/cplieger/runesafe v1.1.1
 	github.com/cplieger/slogx v1.4.0
 	github.com/cplieger/ssrf/v3 v3.0.0
