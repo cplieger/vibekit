@@ -22,6 +22,7 @@ import { FindEngine, formatCount } from "./find-in-chat.js";
 function root(html: string): HTMLElement {
   const d = document.createElement("div");
   d.innerHTML = html;
+  document.body.replaceChildren(d);
   return d;
 }
 
