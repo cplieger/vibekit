@@ -195,8 +195,11 @@ func (s *Service) stampArchivedAt(ctx context.Context, chatID api.ChatID, srcPat
 	if err != nil {
 		return err
 	}
+	// WithMaxBytes mirrors the readCappedFile bound: never persist a chat
+	// file the archive's own read path would refuse to load.
 	_, err = atomicfile.WriteFile(ctx, srcPath, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
+		atomicfile.WithMaxBytes(maxChatFileBytes))
 	return err
 }
 
@@ -350,8 +353,11 @@ func (s *Service) UpdateArchivedSummary(ctx context.Context, chatID api.ChatID, 
 	if err != nil {
 		return err
 	}
+	// WithMaxBytes mirrors the readCappedFile bound: never persist a chat
+	// file the archive's own read path would refuse to load.
 	_, err = atomicfile.WriteFile(ctx, path, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
+		atomicfile.WithMaxBytes(maxChatFileBytes))
 	return err
 }
 

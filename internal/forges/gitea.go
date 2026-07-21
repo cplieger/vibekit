@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cplieger/runesafe"
 )
 
 // giteaProvider implements ForgeOps via the tea CLI. Used for both
@@ -626,19 +628,18 @@ func (p *giteaProvider) doAPIWith(ctx context.Context, token, method, endpoint s
 // apiErrorSnippet returns a short, single-line summary of a Gitea API
 // error body for an error message. It is derived purely from the
 // server's response, so it never contains the request's auth token.
+// Both paths are sanitized and byte-capped (rune-boundary safe) via
+// runesafe, so an upstream-controlled body cannot forge log records,
+// carry terminal escapes, or balloon the error string.
 func apiErrorSnippet(body []byte) string {
+	const maxLen = 256
 	var e struct {
 		Message string `json:"message"`
 	}
 	if json.Unmarshal(body, &e) == nil && e.Message != "" {
-		return trimSpace(e.Message)
+		return runesafe.SanitizeSingleLineBounded(trimSpace(e.Message), maxLen)
 	}
-	const maxLen = 256
-	s := trimSpace(string(body))
-	if len(s) > maxLen {
-		s = s[:maxLen]
-	}
-	return s
+	return runesafe.SanitizeSingleLineBounded(trimSpace(string(body)), maxLen)
 }
 
 // apiGet performs an authenticated GET against the Gitea API.

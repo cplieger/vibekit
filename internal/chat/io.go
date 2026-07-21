@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cplieger/jsonx/bounded"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -90,21 +91,25 @@ func readChatHeader(path, label string) (*api.ChatHeader, error) {
 }
 
 // countJSONArrayElements counts top-level elements in a JSON array without
-// fully parsing them. Returns 0 for nil/empty/invalid input.
+// materializing them: each element is token-skipped via jsonx/bounded, so
+// counting never allocates per-element buffers. Returns 0 for
+// nil/empty/invalid input (count-so-far when an element mid-array is
+// malformed).
+//
+// NOTE: internal/chat/archive/helpers.go carries an aligned copy (archive
+// cannot import chat, and exporting a generic JSON utility from archive
+// just for this would warp its surface); keep the two in sync.
 func countJSONArrayElements(raw json.RawMessage) int {
 	if len(raw) == 0 {
 		return 0
 	}
-	// Use json.Decoder to skip over each element efficiently.
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	tok, err := dec.Token() // opening '['
-	if err != nil || tok != json.Delim('[') {
+	dec := bounded.NewDecoder(bytes.NewReader(raw), 0)
+	if ok, err := dec.Open('['); err != nil || !ok {
 		return 0
 	}
 	count := 0
 	for dec.More() {
-		var skip json.RawMessage
-		if err := dec.Decode(&skip); err != nil {
+		if err := dec.Skip(); err != nil {
 			break
 		}
 		count++

@@ -45,7 +45,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v2"
-	"gopkg.in/yaml.v3"
+	"github.com/cplieger/envx/yamlenv"
+	"go.yaml.in/yaml/v3"
 )
 
 // filename is the policy file vibekit writes. Always .yaml (first in KAS's
@@ -197,6 +198,13 @@ func Load(path string) (*File, error) {
 	if strings.TrimSpace(string(data)) == "" {
 		return &File{Rules: []Rule{}}, nil
 	}
+	// Reject a multi-document file loudly: yaml.Unmarshal reads only the
+	// first document, so everything below a stray "---" would half-load
+	// here and then be silently dropped by the next Save — silent rule
+	// loss in a security policy file.
+	if err := yamlenv.CheckSingleDocument(data); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", filename, err)
+	}
 	var f File
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", filename, err)
@@ -219,8 +227,11 @@ func Save(ctx context.Context, path string, f *File) error {
 	if err != nil {
 		return err
 	}
+	// WithMaxBytes mirrors Load's size guard: Save can never persist a
+	// policy file its own Load would reject as oversize.
 	_, err = atomicfile.WriteFile(ctx, path, data,
-		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700))
+		atomicfile.WithMode(0o600), atomicfile.WithMkdirMode(0o700),
+		atomicfile.WithMaxBytes(maxPolicyFileSize))
 	return err
 }
 
