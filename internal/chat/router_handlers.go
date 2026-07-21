@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -13,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires GET /api/chats (list), GET /api/chats/{id}
@@ -305,13 +305,12 @@ func (rt *Router) putPlanDraft(w http.ResponseWriter, r *http.Request, chatID ap
 		api.BadRequest(w, "expected "+api.MIMETypeJSON)
 		return
 	}
-	api.LimitBody(w, r, maxPlanDraftBytes+4096) // + json envelope overhead
 	var body struct {
 		Content string `json:"content"`
 	}
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&body); err != nil {
+	// DecodeJSONInto owns the cap (+ json envelope overhead) and the
+	// trailing-data rejection; the 413-vs-400 mapping stays here.
+	if err := webhttp.DecodeJSONInto(w, r, &body, maxPlanDraftBytes+4096); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("chat plan_draft: body too large",
 				"chat_id", chatID, "limit", maxPlanDraftBytes+4096, "error", maxErr)
@@ -319,11 +318,11 @@ func (rt *Router) putPlanDraft(w http.ResponseWriter, r *http.Request, chatID ap
 				api.ErrorJSON("request body too large"))
 			return
 		}
+		if errors.Is(err, webhttp.ErrTrailingData) {
+			api.BadRequest(w, "unexpected trailing data")
+			return
+		}
 		api.BadRequest(w, "invalid json")
-		return
-	}
-	if dec.More() {
-		api.BadRequest(w, "unexpected trailing data")
 		return
 	}
 	err := rt.store.SetPlanDraft(r.Context(), chatID, body.Content)

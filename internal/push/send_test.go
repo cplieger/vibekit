@@ -268,12 +268,12 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		capLog := capture.Default(t)
 		s.Send(context.Background(), strings.Repeat("a", 10), strings.Repeat("b", 4000),
 			api.PushKindAgentFinished)
-		rec, ok := findLogRec(capLog, warnMsg)
+		got, ok := capLog.AttrValue(warnMsg, "bytes")
 		if !ok {
 			t.Fatalf("Send did not warn %q for a 4010-byte payload", warnMsg)
 		}
-		if got, ok := asInt64(rec.attrs["bytes"]); !ok || got != 4010 {
-			t.Errorf("truncation warn bytes = %v, want 4010", rec.attrs["bytes"])
+		if got != "4010" {
+			t.Errorf("truncation warn bytes = %v, want 4010", got)
 		}
 	})
 

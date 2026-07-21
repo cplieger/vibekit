@@ -31,6 +31,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/cplieger/runesafe"
 )
 
 // RefreshLeeway matches KAS's TOKEN_REFRESH_LEEWAY (~180s): a token
@@ -275,7 +277,7 @@ func (r *Reader) refreshLocked(ctx context.Context, tf *tokenFile) (*tokenFile, 
 	// Cap the response body defensively.
 	body := readAllCapped(resp.Body, 1<<20)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sso-oidc token endpoint: HTTP %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, fmt.Errorf("sso-oidc token endpoint: HTTP %d: %s", resp.StatusCode, runesafe.SanitizeSingleLineBounded(string(body), 200))
 	}
 	var out struct {
 		AccessToken  string `json:"accessToken"`
@@ -462,11 +464,4 @@ func readAllCapped(r interface{ Read([]byte) (int, error) }, limit int) []byte {
 		}
 	}
 	return buf
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n]
 }

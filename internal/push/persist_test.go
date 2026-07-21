@@ -105,11 +105,11 @@ func TestLoadSubs_DropsDisallowedHostLogged(t *testing.T) {
 
 	s.loadSubs()
 
-	rec, ok := findLogRec(capLog, "push: dropping subscription with disallowed endpoint")
+	got, ok := capLog.AttrValue("push: dropping subscription with disallowed endpoint", "host")
 	if !ok {
 		t.Fatalf("loadSubs did not log the disallowed-endpoint drop")
 	}
-	if got := rec.attrs["host"]; got != "evil.example.com" {
+	if got != "evil.example.com" {
 		t.Errorf("dropped-endpoint host = %v, want %q", got, "evil.example.com")
 	}
 }

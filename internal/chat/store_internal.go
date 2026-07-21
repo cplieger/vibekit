@@ -131,7 +131,10 @@ func (s *Store) save(chat *api.Chat) error {
 	if err != nil {
 		return err
 	}
+	// WithMaxBytes mirrors the readCappedFile bound: never persist a chat
+	// file the store's own read path would refuse to load.
 	_, err = atomicfile.WriteFile(context.Background(), path, data,
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
+		atomicfile.WithMaxBytes(maxChatFileBytes))
 	return err
 }

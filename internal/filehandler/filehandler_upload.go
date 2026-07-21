@@ -75,19 +75,35 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	uploaded, totalBytes, err := writeUploads(r.Context(), dirLoc, formFiles)
 	if err != nil {
-		if errors.Is(err, errInvalidFilename) {
-			api.BadRequest(w, err.Error())
-			return
-		}
-		slog.Warn("filehandler: upload write failed",
-			"dir", dirLoc.abs, "uploaded", len(uploaded), "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("upload failed"))
+		respondUploadError(w, dirLoc.abs, len(uploaded), err)
 		return
 	}
 	slog.Info("filehandler: upload",
 		"dir", dirLoc.abs, "count", len(uploaded), "bytes", totalBytes)
 	api.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
+}
+
+// respondUploadError maps a writeUploads failure to its HTTP response: an
+// invalid filename is the client's fault (400); a single file crossing the
+// per-file cap is rejected loudly with a 413 (matching the whole-body
+// MaxBytesReader split in handleUpload), never silently truncated; anything
+// else is a 500.
+func respondUploadError(w http.ResponseWriter, dir string, uploaded int, err error) {
+	if errors.Is(err, errInvalidFilename) {
+		api.BadRequest(w, err.Error())
+		return
+	}
+	if errors.Is(err, atomicfile.ErrFileTooLarge) {
+		slog.Warn("filehandler: upload too large",
+			"limit", maxUploadSize, "error", err)
+		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			api.ErrorJSON("upload too large"))
+		return
+	}
+	slog.Warn("filehandler: upload write failed",
+		"dir", dir, "uploaded", uploaded, "error", err)
+	api.WriteJSONStatus(w, http.StatusInternalServerError,
+		api.ErrorJSON("upload failed"))
 }
 
 // errInvalidFilename is surfaced as a 400 to the client. Raised on
@@ -161,9 +177,11 @@ func writeOneUpload(ctx context.Context, dest loc, fh *multipart.FileHeader) (n 
 	}
 	defer func() { _ = src.Close() }()
 
-	// Cap the per-file copy (one malformed part can't blow past the global
-	// multipart budget) and abort at the next chunk boundary on context cancel.
-	cr := &countingReader{r: &ctxReader{ctx: ctx, r: io.LimitReader(src, maxUploadSize)}}
+	// Abort at the next chunk boundary on context cancel. The per-file size
+	// cap is enforced by WithMaxBytes below, which REJECTS an over-cap file
+	// (atomicfile.ErrFileTooLarge, mapped to a 413 in handleUpload) — the
+	// old io.LimitReader here silently truncated it instead.
+	cr := &countingReader{r: &ctxReader{ctx: ctx, r: src}}
 	// WriteReaderInRoot stages a temp inside the mount's root, fsyncs it,
 	// renames over the root-relative dest, then fsyncs the parent dir — the
 	// durability step the old hand-rolled path omitted — while keeping the
@@ -171,7 +189,8 @@ func writeOneUpload(ctx context.Context, dest loc, fh *multipart.FileHeader) (n 
 	// symlink planted in the tree cannot redirect it outside). It refuses a
 	// symlink dest and removes the temp on any error, so dest is never left
 	// a partial write.
-	if _, werr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr, atomicfile.WithMode(0o600)); werr != nil {
+	if _, werr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
+		atomicfile.WithMode(0o600), atomicfile.WithMaxBytes(maxUploadSize)); werr != nil {
 		return cr.n, werr
 	}
 	return cr.n, nil

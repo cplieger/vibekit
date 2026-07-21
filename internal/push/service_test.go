@@ -123,12 +123,12 @@ func TestSubscribe_HostLogging(t *testing.T) {
 			capLog := capture.Default(t)
 			s.Subscribe(api.PushSubscription{Endpoint: tt.endpoint})
 
-			rec, ok := findLogRec(capLog, "push: subscribed")
+			got, ok := capLog.AttrValue("push: subscribed", "host")
 			if !ok {
 				t.Fatalf("Subscribe(%q) did not emit a %q log line",
 					tt.endpoint, "push: subscribed")
 			}
-			if got := rec.attrs["host"]; got != tt.wantHost {
+			if got != tt.wantHost {
 				t.Errorf("Subscribe(%q) logged host = %v, want %q",
 					tt.endpoint, got, tt.wantHost)
 			}

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/api"
 	"golang.org/x/sync/errgroup"
 )
@@ -276,14 +277,31 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// capMultiline sanitizes s for emission while keeping CR/LF (notification
+// bodies are legitimately multi-line) and caps it at n bytes on a rune
+// boundary, appending "..." when it shortened — the multi-line sibling of
+// runesafe.SanitizeSingleLineBounded.
+func capMultiline(s string, n int) string {
+	s = runesafe.Sanitize(s)
+	if len(s) <= n {
+		return s
+	}
+	return runesafe.CapBytes(s, n) + "..."
+}
+
 // fitToCap trims the body — then, only if an empty body still overflows, the
 // title — until the marshaled pushPayload is at most pushBodyCap bytes, and
 // reports whether anything was trimmed. Sizing against the marshaled form
 // (JSON envelope + escaping included) is what keeps the encoded payload under
 // the vendor's record limit; push() rejects anything larger, so without this
-// an oversize notification is dropped rather than delivered truncated. The
-// loop terminates: each iteration strictly shortens the field being trimmed,
-// and an empty title+body marshals well under the cap.
+// an oversize notification is dropped rather than delivered truncated.
+// Trimming goes through runesafe so the byte cap never splits a multi-byte
+// rune: the title through the single-line preset, the body through the
+// CR/LF-keeping capMultiline composition. The loop terminates: each
+// iteration strictly shortens the field being trimmed (a sanitized-then-
+// capped field is at most len(field)-over bytes, and a within-cap sanitized
+// field is at most len(field)-over-3), and an empty title+body marshals
+// well under the cap.
 func fitToCap(title, body string) (fitTitle, fitBody string, truncated bool) {
 	if marshaledLen(title, body) <= pushBodyCap {
 		return title, body, false
@@ -292,11 +310,11 @@ func fitToCap(title, body string) (fitTitle, fitBody string, truncated bool) {
 		over := marshaledLen(title, body) - pushBodyCap
 		switch {
 		case len(body) > over+len("..."):
-			body = truncate(body, len(body)-over-len("..."))
+			body = capMultiline(body, len(body)-over-len("..."))
 		case body != "":
 			body = "" // too small to absorb the overflow; drop it
 		case len(title) > over+len("..."):
-			title = truncate(title, len(title)-over-len("..."))
+			title = runesafe.SanitizeSingleLineBounded(title, len(title)-over-len("..."))
 		default:
 			title = "" // pathological: cap below the JSON envelope size
 		}

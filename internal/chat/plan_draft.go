@@ -91,8 +91,13 @@ func (s *Store) SetPlanDraft(ctx context.Context, chatID api.ChatID, content str
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	// The len(content) pre-check above stays: it produces the typed
+	// *StoreError{ErrKindTooLarge} the HTTP layer maps to a specific 413.
+	// WithMaxBytes enforces the same bound inside the write itself, so no
+	// future caller can bypass the cap.
 	_, err := atomicfile.WriteFile(ctx, draftPath, []byte(content),
-		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode))
+		atomicfile.WithMode(fileMode), atomicfile.WithMkdirMode(dirMode),
+		atomicfile.WithMaxBytes(maxPlanDraftBytes))
 	return err
 }
 

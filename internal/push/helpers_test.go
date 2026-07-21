@@ -1,68 +1,27 @@
 package push
 
-// Shared test infrastructure for the push package: a slog capture
-// handler (the only observable for the host/log assertions), a few
-// small builders, and an always-erroring RoundTripper.
+// Shared test infrastructure for the push package: a few small builders
+// and an always-erroring RoundTripper. Log assertions ride slogx/capture
+// directly (see the note above errRoundTripper).
 
 import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"log/slog"
 	"net/http"
-	"slices"
 	"testing"
 
-	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
 const testSubject = "mailto:test@example.com"
 
-// logRec is one captured slog record (message + flattened attrs + level).
-type logRec struct {
-	attrs map[string]any
-	msg   string
-	level slog.Level
-}
-
-// asLogRec flattens a captured slog record into the logRec shape the
-// assertions read. Several push paths (Subscribe, loadSubs, Send) write only
-// a local variable straight to slog with no return value or exported state,
+// Log-line assertions go through slogx/capture's attr helpers (AttrValue /
+// HasAttr): several push paths (Subscribe, loadSubs, Send) write only a
+// local variable straight to slog with no return value or exported state,
 // so the log line is the sole observable distinguishing correct from broken
 // behaviour.
-func asLogRec(r slog.Record) logRec {
-	attrs := make(map[string]any)
-	r.Attrs(func(a slog.Attr) bool {
-		attrs[a.Key] = a.Value.Any()
-		return true
-	})
-	return logRec{attrs: attrs, msg: r.Message, level: r.Level}
-}
-
-// findLogRec returns the most recent captured record with the given message.
-func findLogRec(rec *capture.Recorder, msg string) (logRec, bool) {
-	records := rec.Records()
-	for _, r := range slices.Backward(records) {
-		if r.Message == msg {
-			return asLogRec(r), true
-		}
-	}
-	return logRec{}, false
-}
-
-// asInt64 normalises slog's numeric attr representation (int or int64).
-func asInt64(v any) (int64, bool) {
-	switch n := v.(type) {
-	case int64:
-		return n, true
-	case int:
-		return int64(n), true
-	default:
-		return 0, false
-	}
-}
 
 // errRoundTripper always fails, so push() can reach its post-encryption
 // HTTP body-assembly code without any real network.

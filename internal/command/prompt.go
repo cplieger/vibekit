@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/permissions"
@@ -365,9 +366,10 @@ func AsyncRenameChat(deps Dependencies, prompter api.UtilityPrompter, chatID api
 		(title[0] == '\'' && title[len(title)-1] == '\'')) {
 		title = title[1 : len(title)-1]
 	}
-	if len(title) > 30 {
-		title = title[:27] + "..."
-	}
+	// Sanitize + cap on a rune boundary: the title is model output headed
+	// for logs and the chat header UI, and a byte-index cut could split a
+	// multi-byte rune.
+	title = runesafe.SanitizeSingleLineBounded(title, 27)
 	if title == "" {
 		return
 	}
