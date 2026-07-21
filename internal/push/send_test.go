@@ -1,8 +1,9 @@
 package push
 
-// Tests for send.go: truncate, the Send preflight/debounce/preference
-// gates, status-driven pruning, and the per-subscriber push() path
-// (size guard, RFC 8291 body assembly, ctx merge, result logging).
+// Tests for send.go: the endpoint log-attr bounding, the Send
+// preflight/debounce/preference gates, status-driven pruning, and the
+// per-subscriber push() path (size guard, RFC 8291 body assembly, ctx
+// merge, result logging).
 
 import (
 	"context"
@@ -17,22 +18,37 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-func TestTruncate(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-		n    int
-	}{
-		{in: "short", n: 10, want: "short"},
-		{in: "exactly10!", n: 10, want: "exactly10!"},
-		{in: "this is longer than ten", n: 10, want: "this is lo..."},
-		{in: "", n: 5, want: ""},
+// TestSendFailureLogBoundsEndpoint pins the endpoint log-attr contract at
+// the send-failed site: the client-supplied subscription URL is untrusted,
+// so the logged attribute rides runesafe.SanitizeSingleLineBounded — a long
+// endpoint is capped at 60 bytes plus the "..." marker, and hostile control
+// runes never reach the log stream raw.
+func TestSendFailureLogBoundsEndpoint(t *testing.T) {
+	rec := capture.Default(t)
+	dir := t.TempDir()
+	s := New(context.Background(), dir, "mailto:test@example.com")
+	defer s.Close() // wait for writeLoop to drain before TempDir cleanup
+
+	// The control bytes make the endpoint an invalid request URL, so the
+	// send fails deterministically without any network I/O and logs the
+	// bounded endpoint attribute on the send-failed warn line.
+	hostile := "https://evil.example/\x1b]0;pwned\x07/" + strings.Repeat("x", 100)
+	s.Subscribe(pushSubscriptionWithValidKeys(t, hostile))
+
+	s.Send(context.Background(), "t", "b", api.PushKindAgentFinished)
+
+	got, ok := rec.AttrValue("push: send failed", "endpoint")
+	if !ok {
+		t.Fatalf("no endpoint attr on the send-failed warn; logs = %q", rec.Messages())
 	}
-	for _, tt := range tests {
-		got := truncate(tt.in, tt.n)
-		if got != tt.want {
-			t.Errorf("truncate(%q, %d) = %q, want %q", tt.in, tt.n, got, tt.want)
-		}
+	if len(got) > 60+len("...") {
+		t.Errorf("endpoint attr = %d bytes, want <= 63 (cap + marker)", len(got))
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Errorf("endpoint attr %q does not end in the truncation marker", got)
+	}
+	if strings.ContainsAny(got, "\x1b\x07") {
+		t.Errorf("endpoint attr %q carries raw control bytes; sanitization missing", got)
 	}
 }
 

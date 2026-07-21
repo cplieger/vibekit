@@ -72,21 +72,21 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType api.P
 			code, err := s.push(ctx, sub, payload)
 			if err != nil {
 				slog.Warn("push: send failed",
-					"endpoint", truncate(sub.Endpoint, 60),
+					"endpoint", runesafe.SanitizeSingleLineBounded(sub.Endpoint, 60),
 					"code", code,
 					"error", err)
 				return nil // best-effort: log and continue
 			}
 			if code == http.StatusGone || code == http.StatusNotFound {
 				slog.Info("push: subscription invalidated",
-					"endpoint", truncate(sub.Endpoint, 60),
+					"endpoint", runesafe.SanitizeSingleLineBounded(sub.Endpoint, 60),
 					"code", code)
 				mu.Lock()
 				stale = append(stale, sub.Endpoint)
 				mu.Unlock()
 			} else if code >= 400 {
 				slog.Warn("push: unexpected status",
-					"endpoint", truncate(sub.Endpoint, 60),
+					"endpoint", runesafe.SanitizeSingleLineBounded(sub.Endpoint, 60),
 					"code", code)
 			}
 			return nil // best-effort: never fail the group
@@ -268,13 +268,6 @@ func encryptPayload(sub api.PushSubscription, payload []byte) ([]byte, error) {
 	body = append(body, ephPubBytes...)
 	body = append(body, ciphertext...)
 	return body, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "..."
 }
 
 // capMultiline sanitizes s for emission while keeping CR/LF (notification
