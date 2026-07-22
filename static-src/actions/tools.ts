@@ -18,7 +18,7 @@ import {
   IDEMPOTENCY_HEADER,
 } from "./index.js";
 import type { ActionContext } from "./index.js";
-import type { Inventory, JobResponse, JobsResponse, SearchResponse } from "../types.js";
+import type { CatalogInfo, Inventory, JobResponse, JobsResponse, SearchResponse } from "../types.js";
 
 import { MCP_API } from "./mcp.js";
 
@@ -225,6 +225,27 @@ export const getToolsJobs = apiAction<void, JobsResponse>({
   dedupe: true,
   request: () => ({ method: "GET", path: "/api/tools/jobs" }),
   error: false,
+});
+
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
+export const getCatalogInfo = apiAction<void, CatalogInfo>({
+  name: "tools.catalog_info",
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  dedupe: true,
+  request: () => ({ method: "GET", path: "/api/tools/catalog" }),
+  error: false,
+});
+
+/** Enqueue a catalog refresh: fetch the published catalog, verify it,
+ *  swap it in. 202 like every other tools mutation; progress streams
+ *  over the shared job SSE. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
+export const refreshCatalog = apiAction<void, JobResponse>({
+  name: "tools.refresh_catalog",
+  scope: "tools",
+  request: () => ({ method: "POST", path: "/api/tools/catalog/refresh" }),
+  error: "Couldn't refresh the tool catalog",
 });
 
 export const cancelToolJob = apiAction<{ id: string }>({

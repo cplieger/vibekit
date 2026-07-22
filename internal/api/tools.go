@@ -45,3 +45,8 @@ type ToolsJobsResponse = httpapi.JobsResponse
 // ToolRemoveResponse is the 202 response body for DELETE
 // /api/tools/{name}; dependents is populated on forced cascades.
 type ToolRemoveResponse = httpapi.RemoveResponse
+
+// ToolCatalogInfo is the GET /api/tools/catalog response body: the
+// live catalog's provenance and freshness (refs, generation timestamp,
+// source, last refresh outcome, schedule state).
+type ToolCatalogInfo = toolbelt.CatalogInfo

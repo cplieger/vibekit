@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   deleteDispatch: vi.fn(),
   searchDispatch: vi.fn(),
   jobsDispatch: vi.fn(),
+  catalogInfoDispatch: vi.fn(),
+  refreshCatalogDispatch: vi.fn(),
   ensureDispatch: vi.fn(),
   openModal: vi.fn(),
   closeModal: vi.fn(),
@@ -53,6 +55,8 @@ vi.mock("./actions/tools.js", () => ({
   deleteTool: { dispatch: mocks.deleteDispatch },
   searchTools: { dispatch: mocks.searchDispatch },
   getToolsJobs: { dispatch: mocks.jobsDispatch },
+  getCatalogInfo: { dispatch: mocks.catalogInfoDispatch },
+  refreshCatalog: { dispatch: mocks.refreshCatalogDispatch },
   ensureTool: { dispatch: mocks.ensureDispatch },
 }));
 vi.mock("./bus.js", () => ({
@@ -78,6 +82,8 @@ function mountToolsDOM(): void {
   add("button", "tool-add-btn");
   add("button", "tool-update-btn");
   add("button", "tool-cancel-btn");
+  add("button", "tool-catalog-refresh-btn");
+  add("p", "tool-catalog-meta").classList.add("hidden");
   add("div", "tool-update-output");
   add("div", "tools-list");
   add("div", "tool-modal");
@@ -329,5 +335,50 @@ describe("job following over SSE", () => {
     expect(mocks.jobsDispatch).toHaveBeenCalled();
     expect(mocks.rollingAppend).toHaveBeenCalledWith("line1");
     expect(mocks.rollingAppend).toHaveBeenCalledWith("line2");
+  });
+});
+
+describe("catalog refresh UI", () => {
+  it("clicking Refresh catalog dispatches tools.refresh_catalog and a live job disables the button", () => {
+    mountToolsDOM();
+    initTools();
+    const btn = byId<HTMLButtonElement>("tool-catalog-refresh-btn");
+    btn.click();
+    expect(mocks.refreshCatalogDispatch).toHaveBeenCalledTimes(1);
+
+    const sse = mocks.sseHandlers.get("tool_job_changed");
+    expect(sse).toBeDefined();
+    sse?.("", { job: { id: "tj-1", kind: "catalog-refresh", state: "running", created_at: 1 } });
+    expect(btn.disabled).toBe(true);
+    sse?.("", { job: { id: "tj-1", kind: "catalog-refresh", state: "done", created_at: 1 } });
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("renders the freshness line with catalog age and the failure suffix", async () => {
+    mountToolsDOM();
+    initTools();
+    mocks.catalogInfoDispatch.mockImplementation(
+      (_arg: unknown, opts?: { onSuccess?: (info: unknown) => void }) => {
+        opts?.onSuccess?.({
+          entries: 716,
+          refs: { mise: "v2026.7.11", aqua: "v4.541.0" },
+          generated: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+          source: "remote",
+          fetched_at: Date.now() - 60 * 1000,
+          last_error: "fetch catalog: boom",
+          scheduled: true,
+        });
+        return Promise.resolve(null);
+      },
+    );
+    loadToolsList();
+    await Promise.resolve();
+    const meta = byId<HTMLParagraphElement>("tool-catalog-meta");
+    expect(meta.classList.contains("hidden")).toBe(false);
+    expect(meta.textContent).toContain("716 tools");
+    expect(meta.textContent).toContain("aqua v4.541.0 + mise v2026.7.11");
+    expect(meta.textContent).toContain("compiled 3 h ago");
+    expect(meta.textContent).toContain("checked 1 min ago");
+    expect(meta.textContent).toContain("last refresh failed");
   });
 });
