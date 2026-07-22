@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/scheduler/v3"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/auth"
@@ -441,11 +440,9 @@ func repoNamesFor(ctx context.Context, kind forgesPkg.Kind, host string) []strin
 // keep-last-good absorbs an unreachable publisher.
 func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 	catalogRefresh := &toolbelt.CatalogRefresh{
-		URL:     cfg.ToolCatalogURL,
-		Require: cfg.ToolCatalogRequire,
-	}
-	if cfg.ToolCatalogRefresh.Mode == scheduler.ModeBuiltin {
-		catalogRefresh.Interval = cfg.ToolCatalogRefresh.Interval
+		URL:      cfg.ToolCatalogURL,
+		Require:  cfg.ToolCatalogRequire,
+		Interval: cfg.ToolCatalogRefresh,
 	}
 	toolsEngine, err := toolbelt.New(&toolbelt.Config{
 		ConfigDir:       cfg.ConfigDir,
