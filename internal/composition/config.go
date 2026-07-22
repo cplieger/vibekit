@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/envx"
-	"github.com/cplieger/scheduler/v3"
+	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/filehandler"
 	"github.com/cplieger/webhttp"
@@ -53,9 +53,10 @@ type Config struct {
 	// (colon-separated absolute paths, e.g. "/tmp:/data"). Everything
 	// outside the grants is denied by default.
 	BrowseRoots []string
-	// ToolCatalogRefresh is the parsed refresh schedule (default 24h;
-	// "off"/"0" disables the loop, keeping the manual UI/API refresh).
-	ToolCatalogRefresh scheduler.Schedule
+	// ToolCatalogRefresh is the engine refresh cadence under toolbelt's
+	// canonical policy (default 24h; zero = schedule disabled, keeping
+	// the manual UI/API refresh).
+	ToolCatalogRefresh time.Duration
 	AuthConfig         auth.Config
 }
 
@@ -77,14 +78,9 @@ func ConfigFromEnv() Config {
 		VapidSub:        envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
 		ToolsDir:        envx.String("VIBEKIT_TOOLS_DIR", filepath.Join(configDir, "tools")),
 		ToolCatalogPath: envx.String("VIBEKIT_TOOL_CATALOG", "/opt/vibekit/tool-catalog.json"),
-		ToolCatalogURL: envx.String("VIBEKIT_TOOL_CATALOG_URL",
-			"https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json"),
-		ToolCatalogRefresh: scheduler.ParseInterval(
-			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH", ""), 24*time.Hour,
-			scheduler.WithName("VIBEKIT_TOOL_CATALOG_REFRESH"),
-			// Guard interval typos: a sub-hour cadence would hammer the
-			// publisher for a daily artifact (clamped with a warning).
-			scheduler.WithBounds(time.Hour, 30*24*time.Hour)),
+		ToolCatalogURL:  envx.String("VIBEKIT_TOOL_CATALOG_URL", toolbelt.DefaultCatalogURL),
+		ToolCatalogRefresh: toolbelt.ParseCatalogRefresh(
+			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH", ""), "VIBEKIT_TOOL_CATALOG_REFRESH"),
 		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),
 		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
 		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
