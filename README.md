@@ -158,6 +158,29 @@ environment:
 
 Each grant must exist in the container (mount it via `volumes:` first); a malformed or missing entry is logged and skipped, never fatal. Credential and internal state files under `/config` (SSH keys, cloud tokens, chat store, MCP config) stay blocked regardless of grants.
 
+### Environment variable reference
+
+Every knob, including the ones detailed above. A malformed duration value logs a warning and falls back to its default.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TRUSTED_PROXIES` | _(unset)_ | Reverse-proxy CIDRs whose `X-Forwarded-For` resolves `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy-trusted_proxies). |
+| `VIBEKIT_BROWSE_ROOTS` | _(unset)_ | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). |
+| `KIRO_WORK_DIR` | `/workspace` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. |
+| `KIRO_CONFIG_DIR` | `/config` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. |
+| `KIRO_CLI_PATH` | `kiro-cli` | Path to the kiro-cli binary (resolved via `PATH` when bare). When missing the server still starts degraded: the UI works, health reports `503 kiro-cli unavailable`, chats can't run. |
+| `KIRO_HOME` | `$HOME/.kiro` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). |
+| `VIBEKIT_TOOLS_DIR` | `<KIRO_CONFIG_DIR>/tools` | Tools engine install tree (`bin/`, `opt/`, `npm/`, `python/`) on the persistent volume. |
+| `VIBEKIT_TOOL_CATALOG` | `/opt/vibekit/tool-catalog.json` | Image-baked tool catalog used at first boot and when offline, until a successfully fetched catalog replaces it. |
+| `VIBEKIT_TOOL_CATALOG_URL` | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact | Where catalog refreshes fetch from. Point it at a fork or mirror to decouple from the default publisher. |
+| `VIBEKIT_TOOL_CATALOG_REFRESH` | `24h` | Catalog refresh cadence (Go duration, clamped to 1h-30d); `off` or `0` disables the schedule while the manual Refresh button and API stay available. |
+| `VIBEKIT_TOOL_CATALOG_OVERLAY` | `/opt/vibekit/catalog-overlays.json` | Image-internal: display-patch overlay re-applied to every loaded catalog. An explicitly set path that does not resolve logs a warning and overlays are skipped. |
+| `VAPID_SUBJECT` | `mailto:vibekit@noreply.invalid` | Contact URI embedded in the Web Push (VAPID) keys used for chat notifications. |
+| `VIBEKIT_AUTH_LOGIN_URL_TIMEOUT` | `10s` | How long to wait for `kiro-cli login` to print the sign-in URL. |
+| `VIBEKIT_AUTH_LOGIN_PROCESS_CAP` | `16m` | Hard cap on a whole login attempt, device-flow confirmation included. |
+| `VIBEKIT_AUTH_LOGOUT_TIMEOUT` | `10s` | Timeout for `kiro-cli logout`. |
+| `VIBEKIT_AUTH_WHOAMI_TIMEOUT` | `5s` | Timeout for the `kiro-cli whoami` sign-in status probe. |
+
 ## How it fits together
 
 ```text
