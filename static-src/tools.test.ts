@@ -364,6 +364,7 @@ describe("catalog refresh UI", () => {
           refs: { mise: "v2026.7.11", aqua: "v4.541.0" },
           generated: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
           source: "remote",
+          url: "https://example.invalid/tool-catalog.json",
           fetched_at: Date.now() - 60 * 1000,
           last_error: "fetch catalog: boom",
           scheduled: true,
@@ -379,6 +380,27 @@ describe("catalog refresh UI", () => {
     expect(meta.textContent).toContain("aqua v4.541.0 + mise v2026.7.11");
     expect(meta.textContent).toContain("compiled 3 h ago");
     expect(meta.textContent).toContain("checked 1 min ago");
+    expect(meta.textContent).toContain("auto-refresh on");
     expect(meta.textContent).toContain("last refresh failed");
+  });
+
+  it("shows auto-refresh off when the schedule is disabled", async () => {
+    mountToolsDOM();
+    initTools();
+    mocks.catalogInfoDispatch.mockImplementation(
+      (_arg: unknown, opts?: { onSuccess?: (info: unknown) => void }) => {
+        opts?.onSuccess?.({
+          entries: 716,
+          source: "baked",
+          url: "https://example.invalid/tool-catalog.json",
+          scheduled: false,
+        });
+        return Promise.resolve(null);
+      },
+    );
+    loadToolsList();
+    await Promise.resolve();
+    const meta = byId<HTMLParagraphElement>("tool-catalog-meta");
+    expect(meta.textContent).toContain("auto-refresh off");
   });
 });

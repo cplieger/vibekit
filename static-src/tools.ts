@@ -624,9 +624,10 @@ class ToolsManager {
 
 // --- pure row helpers ---
 
-/** Build the catalog meta line's content: "702 tools · mise v2026.7.11 +
- *  aqua v4.541.0 · refreshed 2 h ago" with an amber error suffix when the
- *  last refresh failed (the current catalog still stands — keep-last-good). */
+/** Build the catalog meta line's content: "702 tools · aqua v4.541.0 +
+ *  mise v2026.7.11 · compiled 2 h ago · checked 1 min ago · auto-refresh
+ *  on" with an amber error suffix when the last refresh failed (the
+ *  current catalog still stands — keep-last-good). */
 function catalogMetaParts(info: CatalogInfo): (string | HTMLElement)[] {
   const bits: string[] = [`${String(info.entries)} tools`];
   const refs = Object.entries(info.refs ?? {})
@@ -649,6 +650,12 @@ function catalogMetaParts(info: CatalogInfo): (string | HTMLElement)[] {
     bits.push("from the image (not refreshed yet)");
   } else if (info.source === "cached") {
     bits.push("from the last refresh (previous run)");
+  }
+  // Surface the engine's schedule state so "off" deployments can tell
+  // why the catalog ages (only the Refresh button updates it). Skipped
+  // when no refresh source is configured — neither mode could fetch.
+  if (info.url !== undefined && info.url !== "") {
+    bits.push(`auto-refresh ${info.scheduled ? "on" : "off"}`);
   }
   const parts: (string | HTMLElement)[] = [`Catalog: ${bits.join(" · ")}`];
   if (info.last_error !== undefined && info.last_error !== "") {
