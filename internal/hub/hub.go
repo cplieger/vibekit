@@ -120,6 +120,11 @@ type Hub struct {
 	agentTerms         *agentTerminals
 	hookStatus         *hookStatusCache
 	governance         *governanceCache
+
+	// Code-intelligence activation inputs + in-flight guard (code_intel.go).
+	ciGate func() bool
+	ciPath string
+	ciBusy atomic.Bool
 }
 
 // Option configures optional Hub parameters.

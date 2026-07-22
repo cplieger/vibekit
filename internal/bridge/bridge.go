@@ -186,7 +186,20 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// to ever surface (translate/safety.go); on an enterprise account with the
 	// flag on, enforce mode can block infra-as-code writes remotely. Distinct
 	// from vibekit's own Supervised write-gate (vibekit-supervised.md).
-	kiroMeta := map[string]any{"openExternalUrl": true, "infrastructureSafety": true}
+	// _meta.kiro.settings.codeIntelligence opts every session into KAS's
+	// native code tool (tree-sitter symbol navigation always; LSP-backed
+	// rename/references/diagnostics once the workspace is initialized —
+	// hub/code_intel.go). This is the client-owned settings channel KAS
+	// reads into clientMeta (the sqlite chat.enableCodeIntelligence
+	// setting does NOT apply to acp mode); lab-verified against 2.13.0.
+	// Costs nothing when unused: with no lsp.json and no servers on
+	// PATH the LSP operations degrade gracefully and tree-sitter still
+	// works.
+	kiroMeta := map[string]any{
+		"openExternalUrl":      true,
+		"infrastructureSafety": true,
+		"settings":             map[string]any{"codeIntelligence": map[string]any{"enabled": true}},
+	}
 	if b.enableHooks {
 		kiroMeta["hooks"] = map[string]any{"enabled": true, "v2": true}
 	}

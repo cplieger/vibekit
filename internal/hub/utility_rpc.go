@@ -52,6 +52,31 @@ func scopedParams(extra map[string]any) func(api.ACPBridge) map[string]any {
 	return func(bridge api.ACPBridge) map[string]any { return utilitySessionParams(bridge, extra) }
 }
 
+// codeIntelligenceInit issues _kiro/codeIntelligence subcommand=init on
+// the utility session: KAS detects the workspace's languages, writes
+// .kiro/settings/lsp.json (idempotent — an existing config is left
+// untouched), and starts the detected languages' servers in ITS process.
+// The file is the durable output; chat sessions read it and ensure their
+// own server processes on demand. Returns KAS's human-readable message.
+func (us *utilitySession) codeIntelligenceInit(ctx context.Context) (string, error) {
+	raw, err := us.rawCall(ctx, "code intelligence init", methodKiroCodeIntel,
+		scopedParams(map[string]any{"subcommand": "init"}))
+	if err != nil {
+		return "", err
+	}
+	var out struct {
+		Message string `json:"message"`
+		Success bool   `json:"success"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("code intelligence init: decode: %w", err)
+	}
+	if !out.Success {
+		return "", fmt.Errorf("code intelligence init: %s", out.Message)
+	}
+	return out.Message, nil
+}
+
 // accountUsageRaw issues the account-level _kiro/account/getUsage request
 // and returns the raw JSON-RPC result. getUsage is a bare C→A request that
 // needs no model or tools — just a live acp session with valid auth (the

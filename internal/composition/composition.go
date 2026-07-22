@@ -455,6 +455,14 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 		OnJobChanged: func(j *toolbelt.Job) {
 			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobChanged, "",
 				api.ToolJobChangedPayload{Job: j}))
+			// A finished install/reconcile may have just produced the
+			// first enabled language server: activate workspace code
+			// intelligence (idempotent; no-op while lsp.json exists or
+			// no lsp tool is enabled+installed). Async — job callbacks
+			// must not block (fired under the queue lock).
+			if j != nil && j.State == toolbelt.JobDone {
+				go h.EnsureCodeIntelligence(context.Background())
+			}
 		},
 		OnJobOutput: func(jobID string, lines []string) {
 			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobOutput, "",
@@ -470,6 +478,24 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 	if _, rerr := toolsEngine.RefreshCatalog(); rerr != nil {
 		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
 	}
+	// Code-intelligence activation (hub/code_intel.go): the gate scans
+	// the live inventory for an enabled+installed language server, and
+	// the boot fire covers the volume that already has servers but no
+	// lsp.json (first deploy of this feature, or a deleted config).
+	// Later fires ride the job callback above.
+	h.SetCodeIntelligence(filepath.Join(cfg.WorkDir, ".kiro", "settings", "lsp.json"), func() bool {
+		inv, ierr := toolsEngine.Inventory()
+		if ierr != nil {
+			return false
+		}
+		for i := range inv.Tools {
+			if inv.Tools[i].Lsp && !inv.Tools[i].Disabled && inv.Tools[i].Installed {
+				return true
+			}
+		}
+		return false
+	})
+	go h.EnsureCodeIntelligence(context.Background())
 	return toolsEngine, nil
 }
 
