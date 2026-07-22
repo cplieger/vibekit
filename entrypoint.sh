@@ -13,12 +13,12 @@ TOOLS="$CONFIG_DIR/tools"
 # zip, BOTH enforced at install; the kiro-cli packageRule in
 # cplieger/.github groups all three literals into one Renovate PR.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.13.1"
-KIRO_CLI_SHA256="49d712558cc930d3570387ce468887ca0b510ba8b5f08e2f3c7a7a55d44e677f"
+KIRO_CLI_VERSION="2.14.0"
+KIRO_CLI_SHA256="3a9686793c27c740a7acff4f14a9035558ea8df8b66657ba7f8854f7c3db0f8f"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="768d811597db5f5f23aa56e48e4af4625d2b78cf638f935d4df3a0fe80a51a9d" # kiro-cli 2.13.1
+KIRO_CLI_SHA256_ARM64="12adce1d5a286d9de7e2086b6a95ffaaef9f4631705048233764d667b1859f50" # kiro-cli 2.14.0
 
 # Tool installs (opt/, npm/, python/, go/) are owned by the in-process
 # tools engine, which creates its own subtree; bin/ is created here so
