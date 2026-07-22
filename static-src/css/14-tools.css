@@ -1345,3 +1345,13 @@
   gap: 0.4rem;
   min-width: 0;
 }
+
+/* Catalog freshness line under the Tools action bar. The error suffix
+   marks a failed refresh whose last good catalog still stands. */
+#tool-catalog-meta {
+  margin: 0.35rem 0 0;
+}
+
+.catalog-meta-error {
+  color: var(--warning, #d9a03f);
+}

@@ -132,6 +132,47 @@ export interface Block {
   agent_subtask_id?: string;
 }
 
+/**
+ * CatalogInfo reports the live catalog's provenance and freshness (the
+ * Engine.CatalogInfo return and the httpapi GET catalog body).
+ */
+export interface CatalogInfo {
+  /**
+ * Refs are the upstream registry refs the catalog was compiled
+ * from; Generated its compile timestamp (RFC 3339 UTC). Both are
+ * informational pass-throughs of the catalog document.
+ */
+  refs?: Record<string, string>;
+  generated?: string;
+  /**
+ * Source is where the live catalog came from: baked (the image
+ * file), cached (the refresh cache, reloaded at boot), remote
+ * (fetched this process lifetime), or none (degraded, no catalog).
+ */
+  source: string;
+  /**
+ * URL is the configured refresh source (empty when refresh is not
+ * configured).
+ */
+  url?: string;
+  /**
+ * LastError is the most recent refresh failure ("" after a
+ * successful refresh).
+ */
+  last_error?: string;
+  entries: number;
+  /**
+ * FetchedAt is the last successful refresh (Unix milliseconds; 0
+ * before the first).
+ */
+  fetched_at?: number;
+  /**
+ * Scheduled reports whether the engine-owned background refresh
+ * loop is running.
+ */
+  scheduled: boolean;
+}
+
 /** ChatDeletedPayload is the payload for type="chat_deleted". */
 export interface ChatDeletedPayload {
   id: string;

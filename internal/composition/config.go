@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cplieger/envx"
+	"github.com/cplieger/scheduler/v3"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/filehandler"
 	"github.com/cplieger/webhttp"
@@ -23,8 +25,21 @@ type Config struct {
 	// npm/, python/) on the persistent volume.
 	ToolsDir string
 	// ToolCatalogPath is the compiled tool catalog baked into the
-	// image (missing = degraded catalog search).
+	// image (missing = degraded catalog search). With the runtime
+	// refresh below it is only the first-boot/offline fallback.
 	ToolCatalogPath string
+	// ToolCatalogURL is the published catalog the engine refreshes
+	// from at boot and on the ToolCatalogRefresh schedule.
+	ToolCatalogURL string
+	// ToolCatalogOverlays are display-patch overlay files the engine
+	// re-applies to every loaded catalog (the vibekit UI copy for
+	// Sources/MCP tool rows). Missing files are dropped at wiring time
+	// (bare `go run` outside the image).
+	ToolCatalogOverlays []string
+	// ToolCatalogRequire lists the tool names a fetched catalog must
+	// resolve before it replaces the current one — the embedded
+	// required-tools.txt, injected by main.
+	ToolCatalogRequire []string
 	// TrustedProxies is the set of reverse-proxy networks whose
 	// X-Forwarded-For header webhttp.ClientIP is allowed to trust when
 	// resolving the real client IP (access log + login/logout audit
@@ -38,7 +53,10 @@ type Config struct {
 	// (colon-separated absolute paths, e.g. "/tmp:/data"). Everything
 	// outside the grants is denied by default.
 	BrowseRoots []string
-	AuthConfig  auth.Config
+	// ToolCatalogRefresh is the parsed refresh schedule (default 24h;
+	// "off"/"0" disables the loop, keeping the manual UI/API refresh).
+	ToolCatalogRefresh scheduler.Schedule
+	AuthConfig         auth.Config
 }
 
 // ConfigFromEnv reads configuration from environment variables with
@@ -59,10 +77,44 @@ func ConfigFromEnv() Config {
 		VapidSub:        envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
 		ToolsDir:        envx.String("VIBEKIT_TOOLS_DIR", filepath.Join(configDir, "tools")),
 		ToolCatalogPath: envx.String("VIBEKIT_TOOL_CATALOG", "/opt/vibekit/tool-catalog.json"),
-		TrustedProxies:  parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
-		BrowseRoots:     browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
-		AuthConfig:      ac,
+		ToolCatalogURL: envx.String("VIBEKIT_TOOL_CATALOG_URL",
+			"https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json"),
+		ToolCatalogRefresh: scheduler.ParseInterval(
+			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH", ""), 24*time.Hour,
+			scheduler.WithName("VIBEKIT_TOOL_CATALOG_REFRESH"),
+			// Guard interval typos: a sub-hour cadence would hammer the
+			// publisher for a daily artifact (clamped with a warning).
+			scheduler.WithBounds(time.Hour, 30*24*time.Hour)),
+		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),
+		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
+		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
+		AuthConfig:          ac,
 	}
+}
+
+// defaultCatalogOverlay is the image path of vibekit's display-patch
+// overlay file (shipped by the Dockerfile beside the binary).
+const defaultCatalogOverlay = "/opt/vibekit/catalog-overlays.json"
+
+// overlayFiles resolves the catalog-overlay list. The DEFAULT image
+// path missing is expected outside the container (bare `go run`), so it
+// is dropped silently; an EXPLICITLY configured path that does not
+// resolve is an operator mistake and warns loudly instead of silently
+// running overlay-less.
+func overlayFiles(explicit string) []string {
+	path := explicit
+	if path == "" {
+		path = defaultCatalogOverlay
+	}
+	path = filepath.Clean(path)
+	if _, err := os.Stat(path); err != nil {
+		if explicit != "" {
+			slog.Warn("config: VIBEKIT_TOOL_CATALOG_OVERLAY does not resolve; running without catalog overlays",
+				"path", path, "error", err)
+		}
+		return nil
+	}
+	return []string{path}
 }
 
 // browseRoots assembles the file browser's allow-list: the two

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/scheduler/v3"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/auth"
@@ -133,26 +134,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// disabled LSP + gh templates on fresh volumes (toggled on in
 	// Settings -> Tools). Boot reconciles async — installed tools
 	// persist on the volume, so nothing blocks server start.
-	toolsEngine, err := toolbelt.New(&toolbelt.Config{
-		ConfigDir:   cfg.ConfigDir,
-		ToolsDir:    cfg.ToolsDir,
-		CatalogPath: cfg.ToolCatalogPath,
-		Seed:        toolbelt.DefaultSeed(),
-		System:      []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
-		OnJobChanged: func(j *toolbelt.Job) {
-			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobChanged, "",
-				api.ToolJobChangedPayload{Job: j}))
-		},
-		OnJobOutput: func(jobID string, lines []string) {
-			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobOutput, "",
-				api.ToolJobOutputPayload{JobID: jobID, Lines: lines}))
-		},
-	})
+	toolsEngine, err := buildToolsEngine(cfg, h)
 	if err != nil {
-		return nil, fmt.Errorf("tools engine: %w", err)
-	}
-	if _, rerr := toolsEngine.Reconcile(toolbelt.ReconcileFull); rerr != nil {
-		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
+		return nil, err
 	}
 	warnIfNoLSPEnabled(toolsEngine)
 	// Installed-tool changes matter to the agent (kiro-cli scans PATH
@@ -448,6 +432,50 @@ func repoNamesFor(ctx context.Context, kind forgesPkg.Kind, host string) []strin
 // code intelligence. Detection uses the inventory's catalog-derived
 // Lsp marker, so any enabled LSP (seeded template or hand-added)
 // silences it.
+// buildToolsEngine constructs the shared toolbelt engine with vibekit's
+// SSE adapters and enqueues the boot jobs: the full reconcile first,
+// then the boot catalog fetch (the engine's schedule has no
+// fire-on-start; an immediate enqueue inside New would land ahead of
+// boot-critical work on the single-flight queue). Failures to enqueue
+// are logged, not fatal: installed tools persist on the volume and
+// keep-last-good absorbs an unreachable publisher.
+func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
+	catalogRefresh := &toolbelt.CatalogRefresh{
+		URL:     cfg.ToolCatalogURL,
+		Require: cfg.ToolCatalogRequire,
+	}
+	if cfg.ToolCatalogRefresh.Mode == scheduler.ModeBuiltin {
+		catalogRefresh.Interval = cfg.ToolCatalogRefresh.Interval
+	}
+	toolsEngine, err := toolbelt.New(&toolbelt.Config{
+		ConfigDir:       cfg.ConfigDir,
+		ToolsDir:        cfg.ToolsDir,
+		CatalogPath:     cfg.ToolCatalogPath,
+		Refresh:         catalogRefresh,
+		CatalogOverlays: cfg.ToolCatalogOverlays,
+		Seed:            toolbelt.DefaultSeed(),
+		System:          []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		OnJobChanged: func(j *toolbelt.Job) {
+			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobChanged, "",
+				api.ToolJobChangedPayload{Job: j}))
+		},
+		OnJobOutput: func(jobID string, lines []string) {
+			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobOutput, "",
+				api.ToolJobOutputPayload{JobID: jobID, Lines: lines}))
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tools engine: %w", err)
+	}
+	if _, rerr := toolsEngine.Reconcile(toolbelt.ReconcileFull); rerr != nil {
+		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
+	}
+	if _, rerr := toolsEngine.RefreshCatalog(); rerr != nil {
+		slog.Warn("tools: boot catalog refresh not enqueued", "error", rerr)
+	}
+	return toolsEngine, nil
+}
+
 func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 	inv, err := e.Inventory()
 	if err != nil {

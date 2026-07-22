@@ -23,6 +23,8 @@ import {
   deleteTool,
   searchTools,
   getToolsJobs,
+  getCatalogInfo,
+  refreshCatalog,
   ensureTool,
   cancelToolJob,
 } from "./actions/tools.js";
@@ -33,7 +35,7 @@ import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import { reconcile } from "./reconcile.js";
-import type { Inventory, Job, SearchHit, ToolInfo } from "./types.js";
+import type { CatalogInfo, Inventory, Job, SearchHit, ToolInfo } from "./types.js";
 
 /** Trailing-edge debounce for the catalog search input. */
 function debounce(fn: () => void, ms: number): () => void {
@@ -58,6 +60,12 @@ type ListEntry =
 const f = {
   get cancel(): HTMLButtonElement {
     return byId("tool-cancel-btn");
+  },
+  get catalogRefresh(): HTMLButtonElement {
+    return byId("tool-catalog-refresh-btn");
+  },
+  get catalogMeta(): HTMLParagraphElement {
+    return byId("tool-catalog-meta");
   },
   get search(): HTMLInputElement {
     return byId("tool-search");
@@ -114,6 +122,10 @@ class ToolsManager {
       void updateTools.dispatch(undefined);
     });
     bindLoadingState("tools.update", $.toolUpdateBtn);
+    f.catalogRefresh.addEventListener("click", () => {
+      void refreshCatalog.dispatch(undefined);
+    });
+    bindLoadingState("tools.refresh_catalog", f.catalogRefresh);
     f.cancel.addEventListener("click", () => {
       if (this.followedJob !== "") {
         void cancelToolJob.dispatch({ id: this.followedJob });
@@ -131,7 +143,15 @@ class ToolsManager {
           return;
         }
         this.followJob(job);
+        // loadToolsList refetches the catalog meta line too, so a
+        // settling catalog-refresh job needs no extra fetch here.
         this.loadToolsList();
+        if (job.kind === "catalog-refresh") {
+          // One catalog refresh at a time: the queue would happily
+          // accept a duplicate, so disable the button while one is
+          // queued or running.
+          f.catalogRefresh.disabled = job.state === "queued" || job.state === "running";
+        }
       }),
       onSSE("tool_job_output", (_chat, payload) => {
         if (payload.job_id !== this.followedJob || this.output === null) {
@@ -188,6 +208,7 @@ class ToolsManager {
   }
 
   loadToolsList(): void {
+    this.loadCatalogMeta();
     void loadTools.dispatch(undefined, {
       onSuccess: (d) => {
         this.data = d;
@@ -220,6 +241,20 @@ class ToolsManager {
     for (const line of active.output_tail ?? []) {
       this.output.append(line);
     }
+  }
+
+  /** Render the catalog freshness line: entry count, registry refs,
+   *  where the live catalog came from, and the last refresh error. */
+  private loadCatalogMeta(): void {
+    void getCatalogInfo.dispatch(undefined, {
+      onSuccess: (info) => {
+        f.catalogMeta.replaceChildren(...catalogMetaParts(info));
+        f.catalogMeta.classList.remove("hidden");
+      },
+      onError: () => {
+        f.catalogMeta.classList.add("hidden");
+      },
+    });
   }
 
   // --- list rendering ---
@@ -588,6 +623,57 @@ class ToolsManager {
 }
 
 // --- pure row helpers ---
+
+/** Build the catalog meta line's content: "702 tools · mise v2026.7.11 +
+ *  aqua v4.541.0 · refreshed 2 h ago" with an amber error suffix when the
+ *  last refresh failed (the current catalog still stands — keep-last-good). */
+function catalogMetaParts(info: CatalogInfo): (string | HTMLElement)[] {
+  const bits: string[] = [`${String(info.entries)} tools`];
+  const refs = Object.entries(info.refs ?? {})
+    .map(([name, ref]) => `${name} ${ref}`)
+    .sort()
+    .join(" + ");
+  if (refs !== "") {
+    bits.push(refs);
+  }
+  // The catalog's own age (its compile stamp) is the freshness that
+  // matters; the fetch time only says when we last checked. A stale
+  // artifact fetched a minute ago is still stale.
+  const generatedMs = info.generated !== undefined ? Date.parse(info.generated) : Number.NaN;
+  if (!Number.isNaN(generatedMs)) {
+    bits.push(`compiled ${relativeTime(generatedMs)}`);
+  }
+  if (info.fetched_at !== undefined && info.fetched_at > 0) {
+    bits.push(`checked ${relativeTime(info.fetched_at)}`);
+  } else if (info.source === "baked") {
+    bits.push("from the image (not refreshed yet)");
+  } else if (info.source === "cached") {
+    bits.push("from the last refresh (previous run)");
+  }
+  const parts: (string | HTMLElement)[] = [`Catalog: ${bits.join(" · ")}`];
+  if (info.last_error !== undefined && info.last_error !== "") {
+    parts.push(
+      el("span", { className: "catalog-meta-error" }, ` · last refresh failed (kept current catalog)`),
+    );
+  }
+  return parts;
+}
+
+/** Coarse relative-time formatter for the catalog meta line. */
+function relativeTime(unixMs: number): string {
+  const mins = Math.max(0, Math.round((Date.now() - unixMs) / 60000));
+  if (mins < 1) {
+    return "just now";
+  }
+  if (mins < 60) {
+    return `${String(mins)} min ago`;
+  }
+  const hours = Math.round(mins / 60);
+  if (hours < 48) {
+    return `${String(hours)} h ago`;
+  }
+  return `${String(Math.round(hours / 24))} d ago`;
+}
 
 function stateDot(t: ToolInfo): HTMLElement {
   let cls = "tool-state-missing";

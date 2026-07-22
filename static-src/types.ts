@@ -86,6 +86,7 @@ export type {
   SafetyPropertiesPayload,
   ToolCallPayload,
   ToolCallUpdatePayload,
+  CatalogInfo,
   Inventory,
   Job,
   JobResponse,

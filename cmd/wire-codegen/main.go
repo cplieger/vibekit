@@ -103,6 +103,7 @@ func main() {
 		wiregen.TypeRef[api.ToolJobAccepted](),
 		wiregen.TypeRef[api.ToolRemoveResponse](),
 		wiregen.TypeRef[api.ToolsJobsResponse](),
+		wiregen.TypeRef[api.ToolCatalogInfo](),
 		wiregen.TypeRef[api.ToolJobChangedPayload](),
 		wiregen.TypeRef[api.ToolJobOutputPayload](),
 		wiregen.TypeRef[forges.ConfiguredForge](),

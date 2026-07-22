@@ -45,42 +45,26 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
 
-# Compile the tool catalog: the mise registry (name -> install source,
-# descriptions; MIT) joined with the aqua registry (binary asset
-# templates + checksums; MIT) and vibekit's catalog-overlays.json
-# (featured set, LSP shims, manual entries). The result is a single
-# read-only JSON the tools engine loads; both refs are Renovate-pinned
-# so catalog updates arrive as ordinary dependency PRs.
-# renovate: datasource=github-releases depName=jdx/mise
-ARG MISE_REGISTRY_REF=v2026.7.11
-# renovate: datasource=github-releases depName=aquaproj/aqua-registry
-ARG AQUA_REGISTRY_REF=v4.541.0
-# The catalog compiler ships as a toolbelt module lane; its embedded base
-# overlays (runtimes, forge CLIs, language servers) apply first,
-# catalog-overlays.json then patches vibekit-specific display copy on top.
+# Bake the published tool catalog as the first-boot/offline fallback.
+# The catalog (~700 tools joined from the mise + aqua registries by
+# cplieger/tool-catalog's daily publisher; both registries' MIT license
+# texts travel INSIDE the JSON) is DATA on a daily upstream cadence —
+# the runtime engine refreshes it at boot and on a schedule
+# (VIBEKIT_TOOL_CATALOG_REFRESH), so this baked copy only serves a
+# container that has never reached the publisher. vibekit's
+# catalog-overlays.json (display-copy patches) is no longer compiled in:
+# the engine re-applies it to EVERY loaded catalog (baked, cached,
+# fetched), so it ships beside the binary instead. The verify pass
+# re-gates whatever the fetch returned: every required-tools.txt name
+# must resolve for linux amd64+arm64 or the build fails, and the
+# runtime refresh re-runs the same check before every swap.
+ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/cmd/toolcatalog/v2
-ARG TOOLBELT_TOOLCATALOG_VERSION=v2.0.8
+ARG TOOLBELT_TOOLCATALOG_VERSION=v2.1.0
 # hadolint ignore=DL3062
-RUN mkdir -p /tmp/registries && \
-    curl -fsSL "https://codeload.github.com/jdx/mise/tar.gz/refs/tags/${MISE_REGISTRY_REF}" \
-      | tar -xz -C /tmp/registries && \
-    curl -fsSL "https://codeload.github.com/aquaproj/aqua-registry/tar.gz/refs/tags/${AQUA_REGISTRY_REF}" \
-      | tar -xz -C /tmp/registries && \
+RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
     go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
-      -mise "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/registry" \
-      -aqua "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/pkgs" \
-      -overlay catalog-overlays.json \
-      -refs "mise=${MISE_REGISTRY_REF},aqua=${AQUA_REGISTRY_REF}" \
-      -out /tmp/tool-catalog.json && \
-    go run "github.com/cplieger/toolbelt/cmd/toolcatalog/v2@${TOOLBELT_TOOLCATALOG_VERSION}" \
-      verify -catalog /tmp/tool-catalog.json -require required-tools.txt && \
-    # MIT requires the copyright + permission notice to travel with
-    # copies/substantial portions; the compiled catalog embeds data
-    # derived from both registries, so ship both license texts.
-    mkdir -p /tmp/catalog-licenses && \
-    cp "/tmp/registries/mise-${MISE_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.mise && \
-    cp "/tmp/registries/aqua-registry-${AQUA_REGISTRY_REF#v}/LICENSE" /tmp/catalog-licenses/LICENSE.aqua-registry && \
-    rm -rf /tmp/registries
+      verify -catalog /tmp/tool-catalog.json -require required-tools.txt
 
 # Fetch ansi_up (the only third-party JS dependency now that xterm.js is
 # gone). Extracted as a full package into static-src/node_modules/ so the
@@ -276,9 +260,7 @@ COPY --from=builder /app /app
 # hides /opt, so users never see these.
 COPY --chmod=755 entrypoint.sh /opt/vibekit/entrypoint.sh
 COPY --from=builder /tmp/tool-catalog.json /opt/vibekit/tool-catalog.json
-# Upstream registry license texts (MIT) for the data compiled into the
-# catalog — the notice must accompany substantial portions.
-COPY --from=builder /tmp/catalog-licenses/ /opt/vibekit/licenses/
+COPY catalog-overlays.json /opt/vibekit/catalog-overlays.json
 
 WORKDIR /workspace
 EXPOSE 9847
