@@ -18,7 +18,13 @@ import {
   IDEMPOTENCY_HEADER,
 } from "./index.js";
 import type { ActionContext } from "./index.js";
-import type { CatalogInfo, Inventory, JobResponse, JobsResponse, SearchResponse } from "../types.js";
+import type {
+  CatalogInfo,
+  Inventory,
+  JobResponse,
+  JobsResponse,
+  SearchResponse,
+} from "../types.js";
 
 import { MCP_API } from "./mcp.js";
 

@@ -653,7 +653,11 @@ function catalogMetaParts(info: CatalogInfo): (string | HTMLElement)[] {
   const parts: (string | HTMLElement)[] = [`Catalog: ${bits.join(" · ")}`];
   if (info.last_error !== undefined && info.last_error !== "") {
     parts.push(
-      el("span", { className: "catalog-meta-error" }, ` · last refresh failed (kept current catalog)`),
+      el(
+        "span",
+        { className: "catalog-meta-error" },
+        ` · last refresh failed (kept current catalog)`,
+      ),
     );
   }
   return parts;
