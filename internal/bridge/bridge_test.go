@@ -1666,6 +1666,9 @@ done
 		if !strings.Contains(got, `"openExternalUrl":true`) || !strings.Contains(got, `"infrastructureSafety":true`) {
 			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
 		}
+		if !strings.Contains(got, `"settings":{"codeIntelligence":{"enabled":true}}`) {
+			t.Errorf("initialize missing the code-intelligence settings opt-in; got: %s", got)
+		}
 	})
 
 	t.Run("disabled omits the hooks opt-in", func(t *testing.T) {
