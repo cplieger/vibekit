@@ -3,7 +3,7 @@
 # or an enable-time error in Settings -> Tools). Two groups:
 #
 # 1. The shipped seed templates (toolbelt.DefaultSeed): the disabled
-#    LSP trio + gh that first-boot manifests carry.
+#    LSP quartet + gh that first-boot manifests carry.
 # 2. The backend runtimes the engine auto-adopts as dependencies
 #    (go: installs need go, npm: needs node, python tools need uv).
 #
@@ -12,6 +12,7 @@ gopls
 typescript-language-server
 typescript
 pyright
+rust-analyzer
 gh
 # backend runtimes (auto-adopted dependencies)
 go
