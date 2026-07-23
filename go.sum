@@ -20,10 +20,10 @@ github.com/cplieger/ssrf/v3 v3.0.0 h1:wIrJ6rDkuMvsNqGQ1J25iTnn/xFxLD2fEwOsdiwNrY
 github.com/cplieger/ssrf/v3 v3.0.0/go.mod h1:887QK6H7IDoYavU5I/0K/0rFRX29bTfP9SeS1x75tls=
 github.com/cplieger/toolbelt/v2 v2.2.3 h1:QihmOxAzxAyAISMvkh5InBeDJ2iwUzO44m824uAvUgY=
 github.com/cplieger/toolbelt/v2 v2.2.3/go.mod h1:hnbRxw29jz7d/stkH7FswbSqSlQOezOi/3nUjAYR9P4=
-github.com/cplieger/web-terminal-engine/v3 v3.0.3 h1:GUKbh3/93mfR2nDKnMobK5PCvpqA+QpcjRuQJKZAnxg=
-github.com/cplieger/web-terminal-engine/v3 v3.0.3/go.mod h1:+XYRhXaLBh5Yi9MP6nOK77lF8ZpXexuo/eDBUGuvXqM=
-github.com/cplieger/webhttp v1.12.0 h1:NccCkTMZJ7tQ88ozOKe+qFe1pWUyQb/PjEnywB7E8zY=
-github.com/cplieger/webhttp v1.12.0/go.mod h1:RYtweYFUohqE5DIOt06Ypr0j9VHXjxSPBLIG3vM0H44=
+github.com/cplieger/web-terminal-engine/v3 v3.0.4 h1:gSi+TXjp5OPd4deAK3aXpqgCfveuzr8aKe+XK4i/U/k=
+github.com/cplieger/web-terminal-engine/v3 v3.0.4/go.mod h1:dPy4me+rBOvthCYvUvuSKIhoV4TqgT7qxeL/lQe93Mk=
+github.com/cplieger/webhttp v1.12.1 h1:3T8krEkjiBM4dYspLyMNpsohbS5XL0NrCyAn7Kx32gM=
+github.com/cplieger/webhttp v1.12.1/go.mod h1:RYtweYFUohqE5DIOt06Ypr0j9VHXjxSPBLIG3vM0H44=
 github.com/cplieger/wiregen/v2 v2.0.0 h1:tu9O0DIwi8zemRdg9VZp/Z2BtF66nLJU8CRc6RLz8Sc=
 github.com/cplieger/wiregen/v2 v2.0.0/go.mod h1:h+9oHSsaetH+bHXQtHysBPn/nVHOW4J6JzKXkGpQaBQ=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
