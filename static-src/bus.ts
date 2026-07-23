@@ -38,6 +38,7 @@ import type {
   PendingTrustEnabledPayload,
   PendingTrustClearedPayload,
   ElicitationNeededPayload,
+  UserInputNeededPayload,
   OpenExternalURLPayload,
   CodeReferencesPayload,
   KnowledgeIndexingPayload,
@@ -75,6 +76,7 @@ export interface SSEPayloads {
   readonly permissions_changed: PermissionsChangedPayload;
   readonly policy_error: PolicyErrorPayload;
   readonly elicitation_needed: ElicitationNeededPayload;
+  readonly user_input_needed: UserInputNeededPayload;
   readonly error: ErrorPayload;
   readonly settings_updated: undefined;
   readonly mcp_config_changed: undefined;

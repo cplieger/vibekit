@@ -114,6 +114,9 @@ class Elements {
   get elicitationDialog(): HTMLDialogElement {
     return byId("elicitation-dialog");
   }
+  get userInputDialog(): HTMLDialogElement {
+    return byId("user-input-dialog");
+  }
   get contextIndicator(): HTMLButtonElement {
     return byId("context-indicator");
   }

@@ -36,6 +36,21 @@ const (
 	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
 
+// Agent user-input method name. On v3 (KAS, 2.14+) the agent's user_input
+// tool (structured questions: plan-mode clarifications, spec gates) is
+// forwarded to us as the extension request _kiro/userInput (a JSON-RPC
+// request with an id, delivered like _kiro/mcp/elicitation) carrying
+// {sessionId, toolCallId, question, options[{title, description,
+// recommended, subOptionsLabel, subOptions[]}]}. We surface a question
+// dialog and reply {action:"answered", answer:"<text>"} on the request id;
+// any other action makes KAS advance to the next phase. Gated by the
+// initialize capability _meta.kiro.userInput:true — without it KAS
+// flattens the question into a session/request_permission and SKIPS
+// free-form (no-options) questions entirely.
+const (
+	MethodKiroUserInput = "_kiro/userInput"
+)
+
 // Session-level ACP method name for prompts.
 const (
 	MethodPrompt = "session/prompt"

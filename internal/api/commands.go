@@ -21,6 +21,7 @@ const (
 	CmdSwitchModel              CommandType = "switch_model"
 	CmdPermissionResponse       CommandType = "permission_response"
 	CmdElicitationResponse      CommandType = "elicitation_response"
+	CmdUserInputResponse        CommandType = "user_input_response"
 	CmdRestoreCheckpoint        CommandType = "restore_checkpoint"
 	CmdUndoEdit                 CommandType = "undo_edit"
 	CmdRewindChat               CommandType = "rewind_chat"
@@ -116,6 +117,28 @@ type ElicitationResponseCommand struct {
 	Action    string          `json:"action"`
 	Content   json.RawMessage `json:"content,omitempty"`
 	RequestID int64           `json:"request_id"`
+}
+
+// UserInputActionAnswered and UserInputActionDismissed are the accepted
+// actions for type="user_input_response". "answered" carries the user's
+// answer text; "dismissed" (dialog closed / question skipped) makes the
+// agent advance to its next phase — KAS treats anything non-answered that
+// way, so no other action values exist.
+const (
+	UserInputActionAnswered  = "answered"
+	UserInputActionDismissed = "dismissed"
+)
+
+// UserInputResponseCommand is the payload for type="user_input_response".
+// RequestID echoes the value from the user_input_needed event. Answer is
+// the user's answer TEXT (kiro-cli's contract is a plain string the model
+// reads): a clicked option sends its title; an option with sub-options
+// sends "Title [Sub1, Sub2]" (the TUI's format); free-form sends the typed
+// text. Required (non-empty) when Action is "answered".
+type UserInputResponseCommand struct {
+	Action    string `json:"action"`
+	Answer    string `json:"answer,omitempty"`
+	RequestID int64  `json:"request_id"`
 }
 
 // RewindChatCommand is the payload for type="rewind_chat".

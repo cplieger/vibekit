@@ -7,7 +7,8 @@
 // local mutations.
 // ---------------------------------------------------------------------------
 
-import type { ServerEvent, ModelInfo } from "./types.js";
+import type { ServerEvent, ModelInfo, SessionMode, SessionModel } from "./types.js";
+import { setCatalogModes } from "./roles.js";
 import {
   MODEL_CONTEXT_SIZES,
   parseContextSize,
@@ -538,17 +539,36 @@ function onLoginSuccess(): void {
 }
 
 async function fetchModelsFromREST(): Promise<void> {
-  // Pre-conversation catalog: `kiro-cli chat --list-models --format
-  // json`, surfaced via /api/models. Populates the picker before any
-  // chat session has spawned so users never see an empty list on
-  // first load. Once a session/new response lands, the per-session
-  // path below overwrites with the authoritative catalog for that
-  // chat.
-  const d = await apiGet<{ models: ModelInfo[] }>("/api/models");
-  if (d?.models === undefined || d.models.length === 0) {
+  // Pre-conversation catalog: kiro-cli 2.14's session-less
+  // _kiro/config/template, surfaced via /api/config-template on the
+  // utility bridge. One fetch seeds BOTH pickers before any chat
+  // session has spawned: the model list (so users never see an empty
+  // picker on first load) and the role picker's mode base (bundled
+  // modes + the user's global ~/.kiro/agents — richer than the static
+  // BUILTIN_MODES fallback; workspace agents still merge in from
+  // /api/workspace/kiro-config inside the role picker). Once a
+  // session/new response lands, the per-session path below overwrites
+  // with the authoritative catalog for that chat.
+  const d = await apiGet<{ modes: SessionMode[]; models: SessionModel[]; default_model?: string }>(
+    "/api/config-template",
+  );
+  if (d === null) {
     return;
   }
-  populatePickerModels(d.models, "");
+  if (d.modes.length > 0) {
+    setCatalogModes(d.modes);
+  }
+  if (d.models.length > 0) {
+    const mapped: ModelInfo[] = d.models.map((m) => ({
+      model_id: m.id,
+      model_name: m.name,
+      ...(m.description === undefined || m.description === ""
+        ? {}
+        : { description: m.description }),
+      rate_multiplier: m.rate_multiplier ?? 1,
+    }));
+    populatePickerModels(mapped, "");
+  }
 }
 
 function fetchModelsFromSession(): void {

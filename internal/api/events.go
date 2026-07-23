@@ -63,6 +63,7 @@ const (
 	EventConnected             EventType = "connected"
 	EventError                 EventType = "error"
 	EventElicitationNeeded     EventType = "elicitation_needed"
+	EventUserInputNeeded       EventType = "user_input_needed"
 	EventMCPConfigChanged      EventType = "mcp_config_changed"
 	EventMCPConnected          EventType = "mcp_connected"
 	EventMCPDisconnected       EventType = "mcp_disconnected"

@@ -19,7 +19,6 @@ import (
 	"github.com/cplieger/toolbelt/v2/httpapi"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/webhttp"
-	"golang.org/x/sync/singleflight"
 )
 
 const port = "9847"
@@ -34,7 +33,6 @@ type Server struct {
 	files         api.FileHandler
 	auth          api.AuthHandler
 	push          api.PushService
-	modelsSF      singleflight.Group
 	mcpStatus     api.RouteHandler
 	utilityPrompt api.UtilityPrompter
 	accountUsage  api.AccountUsageProvider
@@ -181,7 +179,6 @@ func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.Handle("/", spaHandler(s.staticFS))
 	s.hub.RegisterRoutes(mux)
-	mux.HandleFunc("/api/models", s.handleModels)
 	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/diagnostics", s.handleDiagnostics)
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)

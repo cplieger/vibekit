@@ -63,6 +63,9 @@ export type {
   CommandsUpdatedPayload,
   ConnectedPayload,
   ElicitationNeededPayload,
+  UserInputNeededPayload,
+  UserInputOption,
+  UserInputSubOption,
   ElicitationPropertySchema,
   ElicitationRequestSchema,
   ErrorPayload,
@@ -124,9 +127,10 @@ export interface ServerEvent {
   payload?: unknown;
 }
 
-/** Catalogue entry returned by GET /api/models. Distinct from the
- *  per-session SessionModel that arrives over the bridge — the REST
- *  endpoint exists for the prelaunch model picker. */
+/** Prelaunch model-picker entry, mapped from GET /api/config-template's
+ *  SessionModel list (kiro-cli 2.14 _kiro/config/template). Distinct from
+ *  the per-session SessionModel that arrives over the bridge — this shape
+ *  exists for the picker cache before any session spawns. */
 export interface ModelInfo {
   model_name: string;
   model_id: string;

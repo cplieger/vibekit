@@ -21,13 +21,14 @@ import {
 } from "../notify.js";
 import { showPermissionDialog } from "../permission.js";
 import { showElicitationDialog } from "../elicitation.js";
+import { showUserInputDialog } from "../user-input.js";
 import { drainNext } from "../prompt-queue.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
-import { respondPermission, respondElicitation } from "../actions/chat.js";
+import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES } from "./error-routing.js";
 export { ERROR_ROUTES };
 export { wireCheckpointRestore } from "./checkpoint-restore.js";
@@ -170,6 +171,22 @@ onSSE("elicitation_needed", (chatID, p) => {
     void respondElicitation.dispatch(
       content !== undefined
         ? { chatID, requestID: p.request_id, action, content }
+        : { chatID, requestID: p.request_id, action },
+    );
+  });
+});
+
+onSSE("user_input_needed", (chatID, p) => {
+  if (isPermissionNeededEnabled()) {
+    notifyAndBadge(NOTIFY_TITLE, "The agent has a question");
+  }
+  if (chatID !== getActiveId()) {
+    return;
+  }
+  showUserInputDialog(p, (action, answer) => {
+    void respondUserInput.dispatch(
+      action === "answered" && answer !== undefined
+        ? { chatID, requestID: p.request_id, action, answer }
         : { chatID, requestID: p.request_id, action },
     );
   });

@@ -1342,6 +1342,42 @@ export interface User {
 }
 
 /**
+ * UserInputNeededPayload is the payload for type="user_input_needed": the
+ * agent asked a structured question and awaits an answer. An empty Options
+ * slice means a free-form question (the client renders a text field).
+ * RequestID is the JSON-RPC id the user_input_response command echoes back.
+ */
+export interface UserInputNeededPayload {
+  question: string;
+  tool_call_id?: string;
+  sub_session_id?: string;
+  options?: UserInputOption[];
+  request_id: number;
+}
+
+/**
+ * UserInputOption is one selectable answer for a user-input question.
+ * Recommended marks the option the agent suggests (rendered as a badge).
+ */
+export interface UserInputOption {
+  title: string;
+  description?: string;
+  sub_options_label?: string;
+  sub_options?: UserInputSubOption[];
+  recommended?: boolean;
+}
+
+/**
+ * UserInputSubOption is one second-level choice under a UserInputOption.
+ * Sub-options render as a pre-checked multi-select (the TUI's behavior);
+ * the selected titles fold into the answer text as "Parent [Sub1, Sub2]".
+ */
+export interface UserInputSubOption {
+  title: string;
+  description?: string;
+}
+
+/**
  * WhoamiResponse is the typed response from /api/whoami; see the block
  * comment above for the full field semantics and security rationale.
  */

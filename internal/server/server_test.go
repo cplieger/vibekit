@@ -590,9 +590,6 @@ func TestHandleHealth_unready(t *testing.T) {
 // duration) is caught.
 func TestDefaultCLITimeouts(t *testing.T) {
 	got := defaultCLITimeouts()
-	if s := got.Models.Seconds(); s != 5 {
-		t.Errorf("defaultCLITimeouts().Models = %v (%.0fs), want 5s", got.Models, s)
-	}
 	if s := got.Version.Seconds(); s != 2 {
 		t.Errorf("defaultCLITimeouts().Version = %v (%.0fs), want 2s", got.Version, s)
 	}

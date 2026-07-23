@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,61 +11,10 @@ import (
 	"github.com/cplieger/vibekit/internal/version"
 )
 
-func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Models)
-	defer cancel()
-
-	type modelsResult struct {
-		filtered []map[string]any
-	}
-
-	v, err, _ := s.modelsSF.Do(jsonKeyModels, func() (any, error) {
-		out, runErr := s.cliRunner.Run(ctx, "chat", "--list-models", "--format", "json")
-		if runErr != nil {
-			return nil, runErr
-		}
-		var raw struct {
-			Models []struct {
-				ModelID             string  `json:"model_id"`
-				Name                string  `json:"model_name"`
-				Description         string  `json:"description"`
-				RateMultiplier      float64 `json:"rate_multiplier"`
-				ContextWindowTokens int     `json:"context_window_tokens"`
-			} `json:"models"`
-		}
-		if jErr := json.Unmarshal(out, &raw); jErr != nil {
-			return nil, jErr
-		}
-		filtered := make([]map[string]any, 0, len(raw.Models))
-		for _, m := range raw.Models {
-			if api.TagExcluded(m.Description, api.HiddenTags) {
-				continue
-			}
-			filtered = append(filtered, map[string]any{
-				"model_id":              m.ModelID,
-				"model_name":            m.Name,
-				"description":           m.Description,
-				"rate_multiplier":       m.RateMultiplier,
-				"context_window_tokens": m.ContextWindowTokens,
-			})
-		}
-		return &modelsResult{filtered: filtered}, nil
-	})
-
-	if err != nil {
-		slog.Warn("list-models failed", "error", err)
-		api.WriteJSON(w, map[string]any{jsonKeyModels: []any{}})
-		return
-	}
-	result, ok := v.(*modelsResult)
-	if !ok {
-		slog.Error("list-models: singleflight returned unexpected type",
-			"type", fmt.Sprintf("%T", v))
-		api.WriteJSON(w, map[string]any{jsonKeyModels: []any{}})
-		return
-	}
-	api.WriteJSON(w, map[string]any{jsonKeyModels: result.filtered})
-}
+// The former handleModels (`kiro-cli chat --list-models` shell-out behind
+// GET /api/models) was replaced by the hub's GET /api/config-template,
+// which serves the same catalog — plus the mode list — from kiro-cli
+// 2.14's session-less _kiro/config/template over the utility bridge.
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {

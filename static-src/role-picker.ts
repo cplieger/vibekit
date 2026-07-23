@@ -30,7 +30,7 @@ import { setTabIcon } from "./tabs.js";
 import { setMode } from "./actions/chat.js";
 import { apiGet } from "./api-client.js";
 import type { SessionMode } from "./types.js";
-import { BUILTIN_MODES, iconForMode, labelForMode, normalizeModeID } from "./roles.js";
+import { catalogBaseModes, iconForMode, labelForMode, normalizeModeID } from "./roles.js";
 
 // Cache of workspace custom-agent names; refreshed on each expand so the
 // list renders instantly from cache, then folds in any changes. Only used
@@ -74,13 +74,22 @@ function currentModes(): SessionMode[] {
   if (live.length > 0) {
     return [...live];
   }
-  const custom: SessionMode[] = customAgents.map((name) => ({
-    id: name,
-    name,
-    description: "Custom agent from your workspace .kiro/agents/ folder.",
-    source: "workspace",
-  }));
-  return [...BUILTIN_MODES, ...custom];
+  // Base: the fetched config-template catalog (bundled + global agents)
+  // or the static bundled list before/without it. Workspace agents come
+  // from the kiro-config scan; dedup by id in case a workspace agent
+  // shadows a global one of the same name (matching KAS's last-write-wins
+  // where the workspace definition is what a session would load).
+  const base = catalogBaseModes();
+  const baseIDs = new Set(base.map((m) => m.id));
+  const custom: SessionMode[] = customAgents
+    .filter((name) => !baseIDs.has(name))
+    .map((name) => ({
+      id: name,
+      name,
+      description: "Custom agent from your workspace .kiro/agents/ folder.",
+      source: "workspace",
+    }));
+  return [...base, ...custom];
 }
 
 function renderList(list: HTMLElement): void {
