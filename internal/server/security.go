@@ -1,4 +1,5 @@
-// Package server — security middleware: CSP headers and stdlib CSRF protection.
+// Package server — security middleware: CSP headers, the ALLOWED_HOSTS
+// anti-DNS-rebinding gate, and stdlib CSRF protection.
 //
 // Applied once at the top of the mux in ListenAndServe. CSP is a
 // defense-in-depth layer: if the markdown renderer ever leaks an XSS
@@ -117,7 +118,8 @@ func fallbackCSPPolicy() string {
 }
 
 // securityMiddleware sets the response security-header baseline via
-// webhttp.SecurityHeaders and wraps the handler with
+// webhttp.SecurityHeaders, applies the ALLOWED_HOSTS exact-match Host
+// allowlist (webhttp.HostPolicy), and wraps the handler with
 // http.NewCrossOriginProtection (Go 1.25+ stdlib) for CSRF, a concern
 // webhttp does not ship so it stays app-side. SecurityHeaders sets
 // X-Content-Type-Options: nosniff, X-Frame-Options: DENY (aligned with
@@ -125,14 +127,19 @@ func fallbackCSPPolicy() string {
 // existing same-origin, and the dynamic CSP passed through WithCSP. The
 // CSRF protection allows GET/HEAD/OPTIONS unconditionally and rejects
 // state-changing cross-origin requests with 403 Forbidden via the
-// stdlib's default deny handler. Because SecurityHeaders wraps the CSRF
-// handler from the outside, the baseline headers are set on every
-// response (including the 403) so the deny path stays consistent with
-// the rest of the surface.
-func securityMiddleware(cspPolicy string, next http.Handler) http.Handler {
+// stdlib's default deny handler.
+//
+// Layering, outermost first: SecurityHeaders -> host allowlist -> CSRF.
+// The host gate sits BEFORE the CSRF check because a DNS-rebinding request
+// makes Origin and Host agree, so the origin comparison alone cannot reject
+// it (CWE-346) — the exact-Host check is what breaks that chain — and
+// INSIDE SecurityHeaders so its 403, like the CSRF 403, still carries the
+// baseline headers. A nil or inactive policy collapses to a pass-through
+// per the library's off-contract.
+func securityMiddleware(cspPolicy string, hostPolicy *webhttp.HostPolicy, next http.Handler) http.Handler {
 	csrf := http.NewCrossOriginProtection()
 	return webhttp.SecurityHeaders(
 		webhttp.WithCSP(cspPolicy),
 		webhttp.WithReferrerPolicy("same-origin"),
-	)(csrf.Handler(next))
+	)(hostPolicy.Middleware()(csrf.Handler(next)))
 }
