@@ -47,6 +47,12 @@ type Config struct {
 	// trust nothing = log the unspoofable socket peer (the spoof-safe
 	// default for a directly-exposed deployment).
 	TrustedProxies []*net.IPNet
+	// HostPolicy is the exact-match Host allowlist parsed once from
+	// ALLOWED_HOSTS at startup (webhttp.HostPolicy) — the anti-DNS-rebinding
+	// gate the security middleware applies before the CSRF check. Unset or
+	// blank = an inactive policy = any Host accepted (backward compatible;
+	// the server warns at listen time).
+	HostPolicy *webhttp.HostPolicy
 	// BrowseRoots is the file browser's allow-list: the granted
 	// directories the /api/file* surface can see. Always WorkDir +
 	// ConfigDir, plus any extra grants from VIBEKIT_BROWSE_ROOTS
@@ -83,6 +89,7 @@ func ConfigFromEnv() Config {
 			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH", ""), "VIBEKIT_TOOL_CATALOG_REFRESH"),
 		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),
 		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
+		HostPolicy:          parseAllowedHosts(os.Getenv("ALLOWED_HOSTS")),
 		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
 		AuthConfig:          ac,
 	}
@@ -154,4 +161,42 @@ func parseTrustedProxies(raw string) []*net.IPNet {
 			"entries", invalid)
 	}
 	return nets
+}
+
+// parseAllowedHosts parses the comma-separated ALLOWED_HOSTS list of exact
+// hostnames / IPs vibekit answers for into a webhttp.HostPolicy — the shared
+// exact-match Host allowlist that closes the DNS-rebinding hole the CSRF
+// check alone leaves open (a rebinding attack makes Origin and Host AGREE,
+// so http.CrossOriginProtection admits it; only an exact-Host check breaks
+// that chain, CWE-346 — and vibekit's HTTP surface is otherwise
+// unauthenticated, with a PTY at /api/shell/ws). The library owns the
+// mechanism (webhttp.CanonicalHost canonicalization, X-Forwarded-Host
+// ignored, the loopback peer+Host carve-out that keeps the image's own
+// healthcheck working under any allowlist); this parser owns the app policy:
+// the carve-out is enabled, the 403 names ALLOWED_HOSTS, and — like
+// parseTrustedProxies above — it is the LENIENT caller: malformed entries
+// (a pasted URL, a lone ":8080") are logged and dropped per ParseHostList's
+// drop-and-report contract, never aborting startup.
+//
+// An unset or all-blank var yields an INACTIVE policy — "any Host accepted",
+// the backward-compatible default; the server warns at listen time. Any
+// non-blank entry engages the gate, so an all-invalid list yields an active
+// EMPTY policy: deny-all except the loopback carve-out, failing closed
+// rather than silently unprotected — warned here by name, since every
+// browser request would otherwise 403 with no hint why.
+func parseAllowedHosts(raw string) *webhttp.HostPolicy {
+	policy, invalid := webhttp.ParseHostList(strings.Split(raw, ","),
+		webhttp.WithLoopbackExempt(),
+		webhttp.WithHostAllowlistError("",
+			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
+	if len(invalid) > 0 {
+		slog.Warn("config: dropping malformed ALLOWED_HOSTS entries; they cannot match any browser-sent Host",
+			"entries", invalid,
+			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,vibekit.example.com")
+	}
+	if policy.Active() && policy.Size() == 0 {
+		slog.Warn("config: ALLOWED_HOSTS has no usable entries; rejecting every non-loopback request (fail closed)",
+			"hint", "fix the entries listed in the preceding warning to restore browser access")
+	}
+	return policy
 }

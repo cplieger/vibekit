@@ -70,6 +70,74 @@ func containsIP(nets []*net.IPNet, ipStr string) bool {
 	return false
 }
 
+// TestParseAllowedHosts pins the ALLOWED_HOSTS parser (the config-layer
+// wrapper over webhttp.ParseHostList): unset/blank yields an INACTIVE policy
+// (any Host accepted, the backward-compatible default), a valid list becomes
+// an active canonicalized exact-match gate with the loopback carve-out, a
+// malformed entry is dropped (drop-and-report) while the valid subset is
+// kept, and an all-invalid list yields an ACTIVE EMPTY policy — deny-all,
+// fail closed, never silently unprotected.
+func TestParseAllowedHosts(t *testing.T) {
+	allows := func(t *testing.T, policy *webhttp.HostPolicy, host, remoteAddr string) bool {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/x", nil)
+		if remoteAddr != "" {
+			req.RemoteAddr = remoteAddr
+		}
+		return policy.Allows(req)
+	}
+
+	t.Run("empty yields an inactive policy (any Host accepted)", func(t *testing.T) {
+		policy := parseAllowedHosts("")
+		if policy.Active() {
+			t.Error("parseAllowedHosts(\"\") is active; want the permissive backward-compatible default")
+		}
+		if !allows(t, policy, "anything.example:8080", "") {
+			t.Error("inactive policy rejected a request")
+		}
+	})
+
+	t.Run("valid list gates exactly, with the loopback carve-out", func(t *testing.T) {
+		policy := parseAllowedHosts("localhost, Vibekit.Example.COM.")
+		if !policy.Active() || policy.Size() != 2 {
+			t.Fatalf("policy active=%v size=%d, want active with 2 entries", policy.Active(), policy.Size())
+		}
+		for _, c := range []struct {
+			host, peer string
+			want       bool
+		}{
+			{"VIBEKIT.example.com:8080", "192.168.1.50:44444", true}, // case + port canonicalize
+			{"attacker.evil:8080", "192.168.1.50:44444", false},
+			{"127.0.0.1:8080", "127.0.0.1:54321", true},     // healthcheck shape rides the carve-out
+			{"127.0.0.1:8080", "192.168.1.50:44444", false}, // forged loopback Host from remote peer
+		} {
+			if got := allows(t, policy, c.host, c.peer); got != c.want {
+				t.Errorf("Allows(Host %q, peer %s) = %v, want %v", c.host, c.peer, got, c.want)
+			}
+		}
+	})
+
+	t.Run("malformed entry dropped, valid subset kept", func(t *testing.T) {
+		policy := parseAllowedHosts("http://vibekit.example.com, localhost")
+		if got := policy.Size(); got != 1 {
+			t.Fatalf("policy size = %d, want 1 (the URL-shaped entry dropped, the valid one kept)", got)
+		}
+		if !allows(t, policy, "localhost:8080", "192.168.1.50:44444") {
+			t.Error("valid entry localhost missing from the allowlist")
+		}
+	})
+
+	t.Run("all-invalid fails closed (active empty)", func(t *testing.T) {
+		policy := parseAllowedHosts(":8080")
+		if !policy.Active() || policy.Size() != 0 {
+			t.Fatalf("policy active=%v size=%d, want an active empty policy (fail closed, never fall open)", policy.Active(), policy.Size())
+		}
+		if allows(t, policy, "vibekit.example.com:8080", "192.168.1.50:44444") {
+			t.Error("non-loopback request admitted by an active empty policy; all-invalid configuration must deny-all")
+		}
+	})
+}
+
 // TestParseTrustedProxies pins the CIDR/IP list parser: an empty or
 // whitespace-only value yields nil (the unconfigured, spoof-safe
 // socket-peer default), valid CIDRs and bare IPs parse to matching

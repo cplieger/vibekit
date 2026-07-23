@@ -237,6 +237,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithWorkDir(cfg.WorkDir),
 		server.WithTrustedProxies(cfg.TrustedProxies),
+		server.WithHostPolicy(cfg.HostPolicy),
 	)
 
 	return &App{

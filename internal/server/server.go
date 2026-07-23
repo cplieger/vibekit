@@ -53,9 +53,14 @@ type Server struct {
 	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
 	// log the unspoofable socket peer.
 	trustedProxies []*net.IPNet
-	acctUsage      acctUsageCache
-	cliTimeouts    cliTimeouts
-	settingsMu     sync.Mutex
+	// hostPolicy is the ALLOWED_HOSTS exact-match Host allowlist the
+	// security middleware applies before the CSRF check (anti-DNS-rebinding;
+	// see internal/composition parseAllowedHosts). Nil/inactive = any Host
+	// accepted.
+	hostPolicy  *webhttp.HostPolicy
+	acctUsage   acctUsageCache
+	cliTimeouts cliTimeouts
+	settingsMu  sync.Mutex
 	// ready flips to true once the listener binds and srv.Serve is
 	// running; flips back to false on shutdown signal so /api/health
 	// reports unready during drain. Same semantic across the cplieger
@@ -149,6 +154,14 @@ func WithWorkDir(d string) Option { return func(s *Server) { s.workDir = d } }
 // spoof-safe default for a directly-exposed deployment).
 func WithTrustedProxies(trusted []*net.IPNet) Option {
 	return func(s *Server) { s.trustedProxies = trusted }
+}
+
+// WithHostPolicy sets the exact-match Host allowlist (parsed from
+// ALLOWED_HOSTS) that the security middleware applies before the CSRF
+// check — the anti-DNS-rebinding gate. A nil or inactive policy is a
+// pass-through (any Host accepted, the backward-compatible default).
+func WithHostPolicy(p *webhttp.HostPolicy) Option {
+	return func(s *Server) { s.hostPolicy = p }
 }
 
 // New constructs a Server with the given options applied.
@@ -245,7 +258,7 @@ func (s *Server) ListenAndServe() error {
 			webhttp.WithClientIP(s.trustedProxies...),
 		),
 		webhttp.Recoverer(),
-		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, next) },
+		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
 		idem.middleware,
 	)
 	srv := webhttp.NewServer(handler)
@@ -266,6 +279,14 @@ func (s *Server) ListenAndServe() error {
 
 	s.ready.Store(true)
 	slog.Info("Kiro Web UI listening", "port", port)
+	// DNS rebinding rides the victim's BROWSER, so it reaches even a
+	// loopback/private bind, and vibekit's HTTP surface (a PTY shell
+	// included) carries no auth of its own — the exact-Host allowlist is
+	// the gate that closes it (see internal/composition parseAllowedHosts).
+	if !s.hostPolicy.Active() {
+		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
+			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
+	}
 
 	// webhttp.Run owns the serve/shutdown sequence (default 5s grace, matching
 	// the previous hand-rolled shutdown timeout). The pre-drain hook preserves

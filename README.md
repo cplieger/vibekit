@@ -147,6 +147,12 @@ The access log and the login/logout audit logs record a `client_ip`. How that ad
 
 `X-Forwarded-For` is honored **only** when the connecting peer falls inside `TRUSTED_PROXIES`; otherwise the header is ignored and the socket peer is logged. List every proxy hop between the client and vibekit. This is spoof-safe by default: an empty, unset, or misconfigured value falls back to the unspoofable socket peer rather than trusting a client-supplied header.
 
+### Host allowlist (`ALLOWED_HOSTS`)
+
+Set `ALLOWED_HOSTS` to the exact hostnames/IPs you browse vibekit at (comma-separated, e.g. `ALLOWED_HOSTS: "localhost,192.168.1.5,vibekit.example.com"`); a request with any other `Host` header is rejected with 403.
+
+This blocks **DNS rebinding**: an attacker's page makes its own hostname resolve to your vibekit address, and because `Origin` and `Host` then agree, same-origin checks pass — through your own browser, even against a loopback- or LAN-bound deployment. An exact-`Host` allowlist breaks that chain. Requests made from the container itself (loopback socket peer with a loopback `Host`) are always admitted, so the image's healthcheck keeps working under any allowlist. Unset accepts every `Host` (and logs a startup warning); set it for any long-running deployment.
+
 ### Extra browse roots (`VIBEKIT_BROWSE_ROOTS`)
 
 The file browser sees exactly the granted roots — `/workspace` and `/config` by default — and nothing else in the container. Anything outside the grants (system directories, the image's own install tree, paths that don't exist yet) is denied by default rather than hidden by an enumerated block-list. To browse additional mounts, grant them explicitly with a colon-separated list of absolute paths:
@@ -165,6 +171,7 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `TRUSTED_PROXIES` | _(unset)_ | Reverse-proxy CIDRs whose `X-Forwarded-For` resolves `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy-trusted_proxies). |
+| `ALLOWED_HOSTS` | _(unset)_ | Exact hostnames/IPs vibekit answers for; anything else is rejected (anti-DNS-rebinding). See [Host allowlist](#host-allowlist-allowed_hosts). |
 | `VIBEKIT_BROWSE_ROOTS` | _(unset)_ | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). |
 | `KIRO_WORK_DIR` | `/workspace` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. |
 | `KIRO_CONFIG_DIR` | `/config` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. |
