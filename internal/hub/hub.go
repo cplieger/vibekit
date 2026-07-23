@@ -369,6 +369,8 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	h.registerSpecRoutes(mux)
 	h.registerHooksRoutes(mux)
 	h.registerGovernanceRoutes(mux)
+	// Pre-session mode + model catalog (kiro-cli 2.14 _kiro/config/template).
+	mux.HandleFunc("GET /api/config-template", h.handleConfigTemplate)
 }
 
 // Shutdown drains in-flight prompts and closes all bridges.

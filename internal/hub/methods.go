@@ -83,6 +83,7 @@ const (
 // probe (see kiro-cli-research.md "v3 _kiro/* wire surface").
 const (
 	methodKiroKnowledge                  = "_kiro/knowledge"                   // C→A request: {subcommand, ...} → {success, entries?/message?}
+	methodKiroConfigTemplate             = "_kiro/config/template"             // C→A request (2.14+): {} → {modes:{availableModes,currentModeId}, configOptions[]} — session-less catalog
 	methodKiroKnowledgeIndexingStarted   = "_kiro/knowledge/indexingStarted"   // A→C notification: {sessionId, name, fileCount}
 	methodKiroKnowledgeIndexingCompleted = "_kiro/knowledge/indexingCompleted" // A→C notification: {sessionId, name, status, itemCount?}
 )

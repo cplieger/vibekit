@@ -48,7 +48,7 @@ const DEFAULT_MODE_ID = "vibe";
  *  authoritative — it carries the same bundled modes PLUS workspace custom
  *  agents. ids/names/descriptions mirror kiro-cli v3's session/new
  *  modes.availableModes. */
-export const BUILTIN_MODES: readonly SessionMode[] = [
+const BUILTIN_MODES: readonly SessionMode[] = [
   { id: "vibe", name: "Default", description: "General coding assistance", source: "bundled" },
   { id: "spec", name: "Spec", description: "Structured feature development", source: "bundled" },
   {
@@ -77,6 +77,25 @@ export const BUILTIN_MODES: readonly SessionMode[] = [
     source: "bundled",
   },
 ];
+
+/** Server-fetched pre-session mode catalog (kiro-cli 2.14
+ *  /api/config-template): the bundled modes + bundled agents + the user's
+ *  global ~/.kiro/agents, with real names/descriptions/source tags.
+ *  Replaces BUILTIN_MODES as the picker's base once fetched; BUILTIN_MODES
+ *  stays the offline/pre-fetch fallback. Workspace agents are NOT in the
+ *  template (it is built session-less with no workspace paths) — the role
+ *  picker merges those from /api/workspace/kiro-config. */
+let catalogModes: readonly SessionMode[] | null = null;
+
+export function setCatalogModes(modes: readonly SessionMode[]): void {
+  catalogModes = modes;
+}
+
+/** The pre-session mode base: the fetched catalog when available, else the
+ *  static bundled list. */
+export function catalogBaseModes(): readonly SessionMode[] {
+  return catalogModes ?? BUILTIN_MODES;
+}
 
 /** Normalize an empty / legacy mode id to the canonical default. Maps the
  *  v2 default-agent ids onto the default so mixed-engine state resolves to

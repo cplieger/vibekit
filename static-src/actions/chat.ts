@@ -533,6 +533,28 @@ export const respondElicitation = transportAction<{
   error: "Couldn't send elicitation response",
 });
 
+export const respondUserInput = transportAction<{
+  chatID: string;
+  requestID: number;
+  action: "answered" | "dismissed";
+  answer?: string;
+}>({
+  name: "chat.respond_user_input",
+  scope: ({ chatID, requestID }) => `user-input:${chatID}:${String(requestID)}`,
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  command: ({ chatID, requestID, action, answer }) => ({
+    type: "user_input_response",
+    chat_id: chatID,
+    payload:
+      action === "answered" && answer !== undefined
+        ? { request_id: requestID, action, answer }
+        : { request_id: requestID, action },
+  }),
+  error: "Couldn't send your answer",
+});
+
 // --- chat.restore_checkpoint ---
 
 export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({

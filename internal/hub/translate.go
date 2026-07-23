@@ -53,6 +53,10 @@ func (h *Hub) initDispatch() {
 		api.MethodRequestPermission: h.translator.HandlePermissionRequest,
 		// _kiro/mcp/elicitation (a request with an id). Routed here by method.
 		api.MethodElicitationCreate: h.translator.HandleElicitationCreate,
+		// _kiro/userInput (a request with an id, 2.14+): the agent's
+		// structured question — gated on the _meta.kiro.userInput
+		// initialize capability declared in bridge.go.
+		api.MethodKiroUserInput: h.translator.HandleUserInput,
 		// v3 (KAS) _kiro/* notifications.
 		methodV3RateLimit:            h.translator.HandleRateLimit,
 		methodV3CustomAgentNotFound:  h.translator.HandleAgentNotFound,

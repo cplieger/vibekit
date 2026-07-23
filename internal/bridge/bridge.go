@@ -195,9 +195,18 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// Costs nothing when unused: with no lsp.json and no servers on
 	// PATH the LSP operations degrade gracefully and tree-sitter still
 	// works.
+	// _meta.kiro.userInput opts into KAS's _kiro/userInput request (2.14+):
+	// the agent's structured questions (plan-mode clarifications, spec
+	// gates) arrive as answerable A→C requests with full option metadata
+	// (descriptions, recommended, sub-options) instead of being flattened
+	// into permission prompts — and free-form questions are SURFACED
+	// instead of silently skipped (without the capability KAS advances
+	// past them). Handled by translate/user_input.go; answered via the
+	// user_input_response command.
 	kiroMeta := map[string]any{
 		"openExternalUrl":      true,
 		"infrastructureSafety": true,
+		"userInput":            true,
 		"settings":             map[string]any{"codeIntelligence": map[string]any{"enabled": true}},
 	}
 	if b.enableHooks {

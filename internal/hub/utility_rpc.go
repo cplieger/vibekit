@@ -123,6 +123,15 @@ func (us *utilitySession) hooksRaw(ctx context.Context, method string, params ma
 	return us.rawCall(ctx, fmt.Sprintf("hooks call %s", method), method, callerParams(params))
 }
 
+// configTemplateRaw issues the session-less _kiro/config/template request
+// (kiro-cli 2.14+) and returns the raw JSON-RPC result. No sessionId: the
+// template is answerable by any agent from its own registries; the model
+// list it reads is populated by the governance refresh our utility
+// session's own session/new already triggered.
+func (us *utilitySession) configTemplateRaw(ctx context.Context) (json.RawMessage, error) {
+	return us.rawCall(ctx, "config template call", methodKiroConfigTemplate, callerParams(nil))
+}
+
 // triggerRunCommandHook triggers a runCommand hook and returns the captured
 // command output. It sets expectingHookExec around the triggerHook Call so
 // the executeHook callback (which fires DURING the Call, handled by the
