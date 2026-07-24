@@ -37,8 +37,8 @@
     "@cplieger/fetch": "2.1.0",
     "@cplieger/reactive": "1.2.5",
     "@cplieger/ui-primitives": "3.0.0",
-    "@cplieger/web-terminal-engine": "3.0.6",
-    "@cplieger/web-terminal-ui": "4.5.1",
+    "@cplieger/web-terminal-engine": "3.0.7",
+    "@cplieger/web-terminal-ui": "4.5.2",
     "ansi_up": "6.0.6"
   },
   "overrides": {
