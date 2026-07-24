@@ -1,8 +1,8 @@
 // Command bundle builds vibekit's browser client: it bundles the TypeScript
 // entrypoints with esbuild (a Go library — no Node, no npm, per the fleet's
-// no-Node-in-the-builder doctrine), assembles the CSS bundle from the
-// manifest files, and writes precompressed .gz siblings for every emitted
-// text asset.
+// no-Node-in-the-builder doctrine) and assembles the CSS bundle from the
+// manifest files. Compression is the server's job (webhttp.StaticHandler
+// serves gzip variants); the bundler emits plain artifacts only.
 //
 // It replaces the previous tsc-emit pipeline (per-module JS served over an
 // importmap: ~260 uncached module fetches per page load) with three cacheable

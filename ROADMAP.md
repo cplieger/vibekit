@@ -9,9 +9,9 @@ for this repository.
 
 - **Testing.** Broaden coverage of the chat/streaming pipeline, checkpoints,
   subagent rendering, and MCP integration; raise confidence before a stable
-  release. (Vibekit already has a large Go + property/fuzz suite; this is about
-  closing remaining gaps surfaced below.)
-- **UI.** Continued refinement of the client surfaces — editor/diff/conflict
+  release. (Vibekit already has an extensive Go + property/fuzz suite; the
+  work is closing the remaining gaps.)
+- **UI.** Continued refinement of the client surfaces: editor/diff/conflict
   modes, the permissions and MCP panels, the git views, and the streaming
   render path.
 - **UX.** Interaction polish: animation/easing vocabulary consistency,
@@ -20,7 +20,7 @@ for this repository.
 
 ## Ongoing
 
-- Incorporate fixes from the weekly central fuzzing and
+- Incorporate fixes from the weekly fuzzing and
   [gremlins](https://gremlins.dev/) mutation-testing runs.
 - Dependency and base-image currency via Renovate; security findings
   (CodeQL / Trivy / Scorecard) addressed as they arise.
