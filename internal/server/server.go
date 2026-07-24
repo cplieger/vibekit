@@ -252,6 +252,12 @@ func (s *Server) ListenAndServe() error {
 	handler := webhttp.Chain(mux,
 		webhttp.Logging(
 			webhttp.WithSkipPaths("/api/events", "/api/shell/ws"),
+			// /api/health is probed every 30s (Docker HEALTHCHECK curl +
+			// Gatus). The fleet-standard ProbeLogLevel keeps healthy probes
+			// at Debug (out of the shipped stream) and surfaces a failing
+			// probe at Warn/Error — previously every probe logged at Info
+			// (~5,760 noise lines/day) while carrying no failure emphasis.
+			webhttp.ProbeLogLevel("/api/health"),
 			webhttp.WithClientIP(s.trustedProxies...),
 		),
 		webhttp.Recoverer(),
