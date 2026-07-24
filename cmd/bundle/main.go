@@ -17,7 +17,6 @@
 package main
 
 import (
-	"compress/gzip"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -51,10 +50,7 @@ func run() error {
 	if err := bundleServiceWorker(); err != nil {
 		return err
 	}
-	if err := buildCSS(); err != nil {
-		return err
-	}
-	return gzipOutputs()
+	return buildCSS()
 }
 
 // cleanOutputs removes previous build artifacts from static/ so stale
@@ -179,48 +175,4 @@ func buildCSS() error {
 		}
 	}
 	return os.WriteFile(filepath.Join(outDir, "style.css"), []byte(out.String()), 0o600)
-}
-
-// gzipOutputs writes a maximum-compression .gz sibling for every emitted
-// .js/.css/.map file (recursively, so chunks/ is covered). The server
-// serves the sibling to Accept-Encoding: gzip clients; a bundle this size
-// compresses ~3-4x, and precompressing at build beats per-request
-// compression on every axis (CPU, latency, simplicity).
-func gzipOutputs() error {
-	return filepath.WalkDir(outDir, func(p string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		if !strings.HasSuffix(p, ".js") && !strings.HasSuffix(p, ".css") && !strings.HasSuffix(p, ".map") {
-			return nil
-		}
-		return gzipFile(p)
-	})
-}
-
-// gzipFile writes a BestCompression .gz sibling next to p.
-func gzipFile(p string) error {
-	data, err := os.ReadFile(p)
-	if err != nil {
-		return err
-	}
-	f, err := os.Create(p + ".gz")
-	if err != nil {
-		return err
-	}
-	zw, err := gzip.NewWriterLevel(f, gzip.BestCompression)
-	if err != nil {
-		f.Close()
-		return err
-	}
-	if _, err := zw.Write(data); err != nil {
-		zw.Close()
-		f.Close()
-		return err
-	}
-	if err := zw.Close(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
 }

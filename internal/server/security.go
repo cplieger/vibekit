@@ -10,13 +10,10 @@
 package server
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
-	"regexp"
 
 	"github.com/cplieger/webhttp"
 )
@@ -56,42 +53,18 @@ const cspTemplate = "default-src 'self'; " +
 	"base-uri 'self'; " +
 	"form-action 'self'"
 
-// themeInitRe extracts the inline anti-FOUC theme-init script (the one marked
-// with the data-theme-init attribute). Its body is the verbatim output of
-// @cplieger/ui-primitives' themeInitSnippetFromJSON("vibekit.ui-state",
-// "theme"); hashing it lets script-src stay 'self' + specific hashes without
-// 'unsafe-inline'. DOTALL so the body may span lines. (The former inline
-// importmap — the second hashed block — is gone: the client is bundled by
-// cmd/bundle now, so bare specifiers are resolved at build time and the page
-// carries a single inline script.)
-var themeInitRe = regexp.MustCompile(`(?s)<script data-theme-init>(.*?)</script>`)
-
-// inlineHashToken returns a CSP-quoted sha256 token for the inline <script>
-// body matched by re (which must capture the script's text content in group 1).
-// Caller hands the result straight into cspTemplate. Returns an error if the
-// block is missing, so startup fails loudly rather than serving a CSP that
-// would silently block a required inline script.
-func inlineHashToken(html []byte, re *regexp.Regexp, what string) (string, error) {
-	m := re.FindSubmatch(html)
-	if m == nil {
-		return "", fmt.Errorf("no %s block in index.html", what)
-	}
-	sum := sha256.Sum256(m[1])
-	return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'", nil
-}
-
-// themeInitHashToken returns the CSP token for the inline anti-FOUC theme-init
-// block.
-func themeInitHashToken(html []byte) (string, error) {
-	return inlineHashToken(html, themeInitRe, `<script data-theme-init>`)
-}
-
-// buildCSPPolicy reads index.html from staticFS, hashes both inline <head>
-// scripts (the importmap and the anti-FOUC theme-init), and assembles the full
-// CSP string. Called once at Server construction. If anything goes wrong (file
-// missing, either regex miss), we return an error so startup fails loudly
-// rather than serve a CSP that would block the import-map (breaking ES module
-// loading) or the theme-init (flashing the wrong theme).
+// buildCSPPolicy reads index.html from staticFS, hashes its inline <head>
+// script via webhttp.InlineScriptHashes (byte-precise and quote-aware — the
+// exact bytes a browser hashes for a script-src token), and assembles the
+// full CSP string. Called once at Server construction.
+//
+// The page carries exactly ONE inline script today (the anti-FOUC theme-init
+// marked data-theme-init); the exactly-one assertion preserves the old
+// targeted extraction's strictness: zero hashes means the required block is
+// missing (a build defect — startup fails rather than serving a CSP that
+// would block it), and more than one means an unreviewed inline script was
+// added (update this check consciously instead of silently granting it CSP
+// allowance).
 func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	if staticFS == nil {
 		return "", errors.New("buildCSPPolicy: nil staticFS")
@@ -100,12 +73,12 @@ func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("buildCSPPolicy: read index.html: %w", err)
 	}
-	themeInitHash, err := themeInitHashToken(html)
-	if err != nil {
-		return "", fmt.Errorf("buildCSPPolicy: %w", err)
+	hashes := webhttp.InlineScriptHashes(html)
+	if len(hashes) != 1 {
+		return "", fmt.Errorf("buildCSPPolicy: expected exactly one inline script in index.html, found %d (a new inline script must be reviewed and this check updated)", len(hashes))
 	}
 	// script-src 'self' <theme-init-hash>
-	return fmt.Sprintf(cspTemplate, themeInitHash), nil
+	return fmt.Sprintf(cspTemplate, hashes[0]), nil
 }
 
 // fallbackCSPPolicy assembles a CSP without an importmap hash — used
