@@ -227,46 +227,54 @@ func TestBuildCSPPolicy(t *testing.T) {
 	}
 }
 
-// TestBuildCSPPolicy_MissingThemeInit: index.html with an importmap but no
-// theme-init block fails construction — a required inline script would
-// otherwise be blocked by the CSP at runtime.
-func TestBuildCSPPolicy_MissingThemeInit(t *testing.T) {
-	html := []byte(`<html><script type="importmap">{"imports":{}}</script></html>`)
+// TestBuildCSPPolicy_NoInlineScript: index.html with no inline script at all
+// fails construction — the required theme-init block is missing, and a CSP
+// built anyway would block it at runtime.
+func TestBuildCSPPolicy_NoInlineScript(t *testing.T) {
+	html := []byte(`<html><script type="module" src="/app.js"></script></html>`)
 	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
 	if _, err := buildCSPPolicy(staticFS); err == nil {
-		t.Error("expected error when theme-init block is missing, got nil")
+		t.Error("expected error when the page carries no inline script, got nil")
 	}
 }
 
-// TestThemeInitHashToken: extracts the inline theme-init script from the real
-// embedded HTML and confirms the produced sha256 token matches a manual
-// recomputation. Guards the parsing + hashing logic, not any hardcoded literal.
-func TestThemeInitHashToken(t *testing.T) {
+// TestBuildCSPPolicy_MultipleInlineScripts: a second inline script fails
+// construction. The page carries exactly one inline script by contract; a
+// new one must be consciously reviewed (and the exactly-one check updated)
+// rather than silently granted CSP allowance.
+func TestBuildCSPPolicy_MultipleInlineScripts(t *testing.T) {
+	html := []byte(`<html>` +
+		`<script data-theme-init>(function(){})();</script>` +
+		`<script>console.log("unreviewed")</script></html>`)
+	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
+	if _, err := buildCSPPolicy(staticFS); err == nil {
+		t.Error("expected error when the page carries two inline scripts, got nil")
+	}
+}
+
+// TestBuildCSPPolicy_RealEmbeddedHTML: builds the policy from the real
+// committed index.html and verifies the token against an independent
+// recomputation (regex extraction + manual sha256), guarding the library
+// delegation end-to-end rather than any hardcoded literal.
+func TestBuildCSPPolicy_RealEmbeddedHTML(t *testing.T) {
 	html, err := os.ReadFile(filepath.Join("..", "..", "static", "index.html"))
 	if err != nil {
 		t.Fatalf("read static/index.html: %v", err)
 	}
-	got, err := themeInitHashToken(html)
+	staticFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: html}}
+	policy, err := buildCSPPolicy(staticFS)
 	if err != nil {
-		t.Fatalf("themeInitHashToken: %v", err)
+		t.Fatalf("buildCSPPolicy over the real index.html: %v", err)
 	}
 	re := regexp.MustCompile(`(?s)<script data-theme-init>(.*?)</script>`)
 	m := re.FindSubmatch(html)
 	if m == nil {
-		t.Fatal("no theme-init block in test fixture")
+		t.Fatal("no theme-init block in static/index.html")
 	}
 	sum := sha256.Sum256(m[1])
 	want := "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
-	if got != want {
-		t.Errorf("themeInitHashToken = %q, want %q", got, want)
-	}
-}
-
-// TestThemeInitHashToken_Missing: HTML without a theme-init block returns an
-// error rather than a misleading empty hash.
-func TestThemeInitHashToken_Missing(t *testing.T) {
-	if _, err := themeInitHashToken([]byte("<html><body>no theme init here</body></html>")); err == nil {
-		t.Error("expected error for HTML with no theme-init block, got nil")
+	if !strings.Contains(policy, want) {
+		t.Errorf("policy missing the theme-init hash.\n  policy: %s\n  want token: %s", policy, want)
 	}
 }
 

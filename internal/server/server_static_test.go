@@ -5,23 +5,10 @@ import (
 	"compress/gzip"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
-
-// gzipBytes compresses b for precompressed-sibling fixtures.
-func gzipBytes(t *testing.T, b []byte) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(b); err != nil {
-		t.Fatalf("gzip fixture: %v", err)
-	}
-	if err := zw.Close(); err != nil {
-		t.Fatalf("gzip fixture close: %v", err)
-	}
-	return buf.Bytes()
-}
 
 // Assets carry a startup-computed strong ETag, and a matching
 // If-None-Match revalidation gets its 304 from net/http.
@@ -53,16 +40,17 @@ func TestSpaHandler_assetETagRevalidation(t *testing.T) {
 	}
 }
 
-// A gzip-accepting client gets the precompressed sibling's bytes with
-// Content-Encoding: gzip and the ORIGINAL extension's Content-Type; a
+// A gzip-accepting client gets the construction-time gzip representation
+// with Content-Encoding: gzip and the ORIGINAL extension's Content-Type; a
 // client without gzip support gets the identity bytes. The two
-// representations carry distinct ETags.
-func TestSpaHandler_precompressedSibling(t *testing.T) {
-	plain := []byte("console.log('precompressed sibling fixture')")
+// representations carry distinct ETags. (There are no precompressed .gz
+// siblings anymore — webhttp.StaticHandler compresses the original bytes at
+// construction.)
+func TestSpaHandler_gzipVariant(t *testing.T) {
+	plain := []byte(strings.Repeat("console.log('gzip variant fixture');\n", 40))
 	fsys := fstest.MapFS{
 		"index.html": {Data: []byte("<html></html>")},
 		"app.js":     {Data: plain},
-		"app.js.gz":  {Data: gzipBytes(t, plain)},
 	}
 	h := spaHandler(fsys)
 
@@ -107,25 +95,43 @@ func TestSpaHandler_precompressedSibling(t *testing.T) {
 	}
 }
 
-// Direct requests for .gz siblings are not served as assets: the sibling
-// is a transport optimization, not an addressable resource — the path
-// falls through to the SPA fallback like any other unknown route.
-func TestSpaHandler_gzSiblingNotAddressable(t *testing.T) {
-	plain := []byte("console.log(1)")
+// Any path that is not a real embedded file — client routes, deleted
+// assets — falls back to the SPA entrypoint with always-fresh HTML.
+func TestSpaHandler_unknownPathFallsBackToIndex(t *testing.T) {
 	fsys := fstest.MapFS{
 		"index.html": {Data: []byte("<html>fallback</html>")},
-		"app.js":     {Data: plain},
-		"app.js.gz":  {Data: gzipBytes(t, plain)},
+		"app.js":     {Data: []byte("console.log(1)")},
 	}
 	h := spaHandler(fsys)
 
-	req := httptest.NewRequest(http.MethodGet, "/app.js.gz", nil)
+	for _, path := range []string{"/chat/abc123", "/missing.js", "/"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if !bytes.Contains(rec.Body.Bytes(), []byte("fallback")) {
+			t.Errorf("%s: want the SPA fallback body, got %q", path, rec.Body.String())
+		}
+		if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s: Cache-Control = %q, want no-store", path, got)
+		}
+	}
+}
+
+// index.html requested directly is HTML, so it takes the no-store branch
+// (never the asset ETag policy), keeping releases immediate.
+func TestSpaHandler_indexHTMLIsNoStore(t *testing.T) {
+	fsys := fstest.MapFS{
+		"index.html": {Data: []byte("<html>fresh</html>")},
+	}
+	h := spaHandler(fsys)
+
+	req := httptest.NewRequest(http.MethodGet, "/index.html", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if !bytes.Contains(rec.Body.Bytes(), []byte("fallback")) {
-		t.Errorf("direct .gz request should hit the SPA fallback, got %q", rec.Body.String())
-	}
 	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
-		t.Errorf("fallback Cache-Control = %q, want no-store", got)
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("ETag"); got != "" {
+		t.Errorf("index.html carries ETag %q, want none (no-store HTML)", got)
 	}
 }
