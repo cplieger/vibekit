@@ -29,27 +29,27 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 
 ### Server (repo root)
 
-- `main.go` / `embed.go` — composition root: load config, construct the store,
-  hub, bridge, and push service, register HTTP routes, embed the compiled
-  static assets. Wiring only.
-- `internal/api/` — interface contracts (`ChatStore`, `Hub`, `ACPBridge`,
+- `main.go` / `embed.go`: the composition root. Load config, construct the
+  store, hub, bridge, and push service, register HTTP routes, embed the
+  compiled static assets. Wiring only.
+- `internal/api/`: interface contracts (`ChatStore`, `Hub`, `ACPBridge`,
   `PushService`) plus the domain types (chat, message, tool call, plan, usage).
   Every other package depends only on this one. Includes `httputil.go` response
-  helpers — use them, never hand-craft JSON.
-- `internal/chat/` — persistence: one JSON file per chat, written atomically.
+  helpers; use them, never hand-craft JSON.
+- `internal/chat/`: persistence, one JSON file per chat, written atomically.
   `Mutate` is the only write path.
-- `internal/hub/` — command dispatch, SSE broadcast, ACP-to-domain event
+- `internal/hub/`: command dispatch, SSE broadcast, ACP-to-domain event
   translation, bridge buffer aggregation, and the global PTY shell.
-- `internal/bridge/` — `kiro-cli acp` subprocess lifecycle, capability
+- `internal/bridge/`: `kiro-cli acp` subprocess lifecycle, capability
   handshake, and the filesystem read/write handlers.
-- `internal/translate/` — ACP notification handlers that turn raw `kiro-cli`
+- `internal/translate/`: ACP notification handlers that turn raw `kiro-cli`
   events into vibekit domain events.
-- `internal/command/` — handlers for each `POST /api/command` type.
-- `internal/checkpoint/` — content-addressed file-snapshot store with a
+- `internal/command/`: handlers for each `POST /api/command` type.
+- `internal/checkpoint/`: content-addressed file-snapshot store with a
   two-phase atomic restore.
 - `internal/permissions/`, `internal/forges/`, `internal/git/`,
   `internal/mcp/`, `internal/push/`, `internal/auth/`,
-  `internal/server/` — feature subsystems (tool-approval policy, forge CLI
+  `internal/server/`: feature subsystems (tool-approval policy, forge CLI
   orchestration, git handlers, MCP, web push, kiro-cli identity endpoints, HTTP
   middleware and routing).
 - The tools engine is the external
@@ -60,27 +60,27 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   `/api/tools/status` (feature-gating PATH probes) is app code.
 - `internal/buffer/`, `internal/settings/`, `internal/steering/`,
   `internal/workspace/`, `internal/kiroauth/`, `internal/version/`, and the
-  other small packages — focused helpers.
+  other small packages: focused helpers.
 
 Server dependencies flow one direction: composition root → hub → API contracts
 → feature packages. No reverse imports.
 
 ### Client (`static-src/`, compiled to `static/`)
 
-- `app.ts` — the composition root. It is the only module that imports and wires
+- `app.ts`: the composition root. It is the only module that imports and wires
   everything; nothing imports from it.
-- `transport.ts`, `sw.ts`, `upload.ts`, `api-client.ts` — the only modules
+- `transport.ts`, `sw.ts`, `upload.ts`, `api-client.ts`: the only modules
   allowed to call `fetch()` directly. Everything else goes through
   `api-client.ts` (`apiGet` / `apiPost` / `apiDelete` and typed variants).
-- `store.ts` (+ `store-load.ts`, `store-signals.ts`) — the chat-state singleton,
+- `store.ts` (+ `store-load.ts`, `store-signals.ts`): the chat-state singleton,
   a projection of server state.
-- `bus.ts` — cross-module event bus that breaks import cycles.
-- `dom.ts` — shared DOM registry; `$(id)` is the lookup for any element touched
+- `bus.ts`: cross-module event bus that breaks import cycles.
+- `dom.ts`: shared DOM registry; `$(id)` is the lookup for any element touched
   by more than one module.
 - `messages.ts` and its `messages-*.ts` siblings, `tool-card.ts`,
-  `reconcile.ts`, `smd-parser.ts` / `smd-renderer.ts` — the message-rendering
+  `reconcile.ts`, `smd-parser.ts` / `smd-renderer.ts`: the message-rendering
   pipeline.
-- `actions/` — vibekit's action definitions plus `boot.ts` wiring; the framework
+- `actions/`: vibekit's action definitions plus `boot.ts` wiring; the framework
   itself is the published `@cplieger/actions` package.
 
 For deeper client structure (tabs, editor/diff/conflict modes, shell, forges,
@@ -99,7 +99,7 @@ These rules exist because breaking them caused real bugs. Preserve them.
   (Action-level optimistic UI for local affordances is fine; inventing canonical
   chat state on the client is not.)
 - **One JSON file per chat. No second store.** The directory listing is the
-  index — there is no `index.json`, `sessions.json`, or migration layer. If
+  index; there is no `index.json`, `sessions.json`, or migration layer. If
   state drifts, the answer is always "read the chat file."
 - **Only `cmdDeleteChat` deletes a chat file.** Bridge exits, model switches,
   and restarts never delete. A live bridge always implies a live chat record.
@@ -176,8 +176,8 @@ go build ./...        # compile everything
 go run .              # run the server (needs kiro-cli on PATH to do useful work)
 ```
 
-The full application — Go server, kiro-cli download, and the on-demand tool
-chain — is designed to run in the container. The image is built from the
+The full application (Go server, kiro-cli download, and the on-demand tool
+chain) is designed to run in the container. The image is built from the
 multi-stage `Dockerfile`, and `compose.yaml` wires up the persistent `/config`
 volume and exposes the UI on port `9847`.
 
@@ -186,16 +186,16 @@ volume and exposes the UI on port `9847`.
 The browser bundle is **produced during the Docker build, not committed**. The
 builder stage runs `tsc` (the TS7 native compiler) with `--noEmit` as the type
 gate over `static-src/tsconfig.build.json` and `tsconfig.sw.json`, then runs
-`go run ./cmd/bundle` — esbuild via its Go API (no Node, no bundler binary) —
+`go run ./cmd/bundle` (esbuild via its Go API; no Node, no bundler binary),
 which bundles `static-src/app.ts` into `static/app.js` plus hashed lazy chunks
 under `static/chunks/` (the dynamic `import()` sites), bundles `sw.ts` into
-`static/sw.js`, concatenates the CSS manifests
+`static/sw.js`, and concatenates the CSS manifests
 (`@cplieger/web-terminal-ui`'s `MANIFEST.touch`, then `static-src/css/MANIFEST`)
-into `static/style.css`, and writes precompressed `.gz` siblings the server
-hands to gzip-accepting clients. The `@cplieger/*` library sources and
-`ansi_up` are bundled in, so nothing is served from `/vendor/` and the page
-carries no importmap. All bundle outputs are gitignored; only the hand-written
-assets in `static/` are committed.
+into `static/style.css`. Serving compression is the server's job: it gzips
+assets at startup, so the bundle writes no precompressed `.gz` siblings. The
+`@cplieger/*` library sources and `ansi_up` are bundled in, so nothing is
+served from `/vendor/` and the page carries no importmap. All bundle outputs
+are gitignored; only the hand-written assets in `static/` are committed.
 
 To produce a servable `static/` locally (for `go build` + a local run), use
 the same two steps from the repo root after `npm install` in `static-src/`:
@@ -257,8 +257,8 @@ npx stryker run            # mutation testing (slow; config in stryker.config.js
 
 Mutation runs use their own vitest config (`vitest.stryker.config.ts`, a
 raised test-timeout overlay on `vitest.config.ts`). Keep it free of bare
-imports and out of the browser build: CI's import-map coverage check and
-`tsconfig.build.json` both only exempt `vitest*.config.ts` shapes.
+imports and out of the browser build: `tsconfig.build.json` only exempts
+`vitest*.config.ts` shapes.
 
 CSS is linted with stylelint (`.stylelintrc.json`) and HTML with html-validate
 (`.htmlvalidate.json`); both ship as devDependencies and run in CI. Invoke them
@@ -267,7 +267,7 @@ markup. `npm run lint:fix` applies eslint `--fix` plus prettier `--write`.
 
 ## Testing conventions
 
-Tests live beside the code they cover — standard for both ecosystems:
+Tests live beside the code they cover, standard for both ecosystems:
 
 - **Go**: `foo.go` → `foo_test.go` in the same package. Property-based tests use
   `pgregory.net/rapid`. Run the race detector (`go test -race ./...`) on changes
@@ -296,7 +296,7 @@ git-cliff parses them to generate release notes and drive the version bump (see
 | `chore(deps):`                                                   | Dependencies (releases) |
 
 The project is pre-1.0, so it stays within `0.x`: features bump the patch level
-and breaking changes bump the minor — no automatic `1.0`.
+and breaking changes bump the minor; there is no automatic `1.0`.
 
 Feature work goes on a dedicated branch named after the change (for example
 `feat/actions` or `style/git-empty-states`). Changes land via a pull request
@@ -308,5 +308,5 @@ above, and let CI (`.github/workflows/ci.yaml`) confirm the full battery.
 By participating you agree to abide by the organization
 [Code of Conduct](https://github.com/cplieger/.github/blob/main/CODE_OF_CONDUCT.md).
 Report security vulnerabilities through the
-[security policy](https://github.com/cplieger/.github/blob/main/SECURITY.md) —
+[security policy](https://github.com/cplieger/.github/blob/main/SECURITY.md),
 never in a public issue.

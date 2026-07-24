@@ -1,4 +1,4 @@
-# Security assurance case — vibekit
+# Security assurance case: vibekit
 
 This extends the shared
 [default assurance case](https://github.com/cplieger/.github/blob/main/assurance-case.md)
@@ -9,9 +9,9 @@ lists the hardening in progress.
 ## What this is
 
 A self-hosted web front-end that drives a kiro-cli coding agent over ACP, with
-chat persistence, a subagent crew, MCP integration, and push notifications. By
+chat persistence, subagents, MCP integration, and push notifications. By
 design it can run an agent that executes commands and edits files, so its
-**intended capability is powerful** — the security model is about who may reach
+**intended capability is powerful**; the security model is about who may reach
 it and keeping per-chat data isolated, not about sandboxing the agent.
 
 ## Security model
@@ -26,7 +26,7 @@ can reach vibekit."
 
 | Threat                                                    | Mitigation                                                                                         | Evidence                                   |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| Cross-chat data access (one chat reading another's blobs) | chat-scoped blob access — `ReadBlob` returns 404 if the chat's event log doesn't reference the SHA | checkpoint/blob tests                      |
+| Cross-chat data access (one chat reading another's blobs) | chat-scoped blob access: `ReadBlob` returns 404 if the chat's event log doesn't reference the SHA  | checkpoint/blob tests                      |
 | MCP secret mishandling                                    | structured secret round-trip in the MCP layer; secrets not logged                                  | `internal/mcp`, mcp tests                  |
 | Push-notification crypto errors                           | push payload crypto exercised under fuzz                                                           | `internal/push/crypto/crypto_fuzz_test.go` |
 | Malformed ACP / wire input                                | hardened decoders; large Go + property/fuzz suite (400+ test files, 150+ fuzz targets)             | weekly fuzz + gremlins                     |
