@@ -18,8 +18,8 @@ require (
 	github.com/cplieger/runesafe v1.2.1
 	github.com/cplieger/slogx v1.4.0
 	github.com/cplieger/ssrf/v3 v3.0.0
-	github.com/cplieger/toolbelt/v2 v2.2.4
-	github.com/cplieger/web-terminal-engine/v3 v3.0.6
+	github.com/cplieger/toolbelt/v2 v2.2.5
+	github.com/cplieger/web-terminal-engine/v3 v3.0.7
 	github.com/cplieger/webhttp v1.13.0
 	github.com/cplieger/wiregen/v2 v2.0.0
 	github.com/evanw/esbuild v0.28.1
