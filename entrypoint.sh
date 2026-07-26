@@ -164,6 +164,54 @@ install_kiro_cli() {
   mv -f "$HOME/.local/bin/kiro-cli-term" "$TOOLS/bin/kiro-cli-term" 2>/dev/null || true
 }
 
+# Reclaim superseded kiro-cli agent-server runtimes. Each version unpacks its own
+# ~240 MB tree under <data-dir>/kas/<version>-<hash>/ (plus a sibling .lock) on
+# its FIRST bridge launch -- after this entrypoint has exec'd the server -- and
+# nothing ever removes the old ones, so the store gains a full tree per Renovate
+# bump and never shrinks (six trees / 1.4 GB found on a borgcube volume, 2026-07).
+# install_kiro_cli above cleans only what IT writes, which is why this was missed:
+# the tree is written later, by the binary it promoted. Distinct from the KAS
+# SESSION state vibekit already reaps (per-chat records, see the cleanup.periodDays
+# note below) -- same acronym, different object, and the session reaper never
+# touches these trees. The toolbelt engine applies exactly this
+# keep-current-drop-the-rest rule to its own versioned opt/<tool>/<version>/ trees
+# (pruneOldVersions in install.go), so this extends it to the one install outside
+# the engine's custody: kiro-cli, unmanageable by the engine because licensing
+# forbids baking it into the image.
+#
+# Data-dir resolution mirrors kiro-cli's own (XDG_DATA_HOME, else
+# $HOME/.local/share, as internal/kiroauth documents): pruning a directory the CLI
+# does not use would be a silent no-op, the one failure mode a hygiene step must
+# not have. Warn, never fail the boot -- degraded-not-dead, the same posture as the
+# install itself.
+prune_superseded_kas_runtimes() {
+  local data_home kas_dir entry name
+  data_home="${XDG_DATA_HOME:-}"
+  if [ -z "$data_home" ]; then
+    [ -n "${HOME:-}" ] || return 0
+    data_home="$HOME/.local/share"
+  fi
+  kas_dir="$data_home/kiro-cli/kas"
+  [ -d "$kas_dir" ] || return 0
+  for entry in "$kas_dir"/*; do
+    # An empty store leaves the glob unexpanded.
+    [ -e "$entry" ] || continue
+    name="${entry##*/}"
+    # One pattern covers the tree and its sibling .lock (both carry the
+    # <version>-<hash> stem); quoting keeps a version string from being read as a
+    # glob. Anything not on the pin is a superseded version.
+    case "$name" in
+      "$KIRO_CLI_VERSION"-*) continue ;;
+    esac
+    if rm -rf "$entry"; then
+      printf "Pruned superseded kiro-cli agent runtime: %s (pin %s)\n" "$name" "$KIRO_CLI_VERSION"
+    else
+      printf "WARNING: failed to prune superseded kiro-cli agent runtime %s\n" "$name" >&2
+    fi
+  done
+  return 0
+}
+
 # Reinstall when either the binary is missing or the on-disk version
 # drifts from KIRO_CLI_VERSION. The binary lives on the persistent
 # /config volume, so a freshly bumped image needs this drift check to
@@ -181,6 +229,12 @@ needs_kiro_cli_install() {
   fi
   return 1
 }
+
+# Runs on EVERY boot and deliberately BEFORE the install: on a bump boot the pin
+# already names the NEW version while only the OLD tree is on disk, so the old tree
+# goes first and peak usage stays at one tree instead of two. A boot that installs
+# nothing prunes nothing.
+prune_superseded_kas_runtimes
 
 if needs_kiro_cli_install; then
   if ! install_kiro_cli; then
