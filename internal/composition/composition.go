@@ -275,16 +275,29 @@ func (a *App) Shutdown() {
 
 // sweepStaleTemps removes orphan temp files left by SIGKILL between
 // CreateTemp and Rename. Files younger than 1 hour are spared.
+//
+// configDir is swept with WithRecursive, which removes the maintenance hazard in the
+// previous shape: it enumerated configDir, configDir/chats and configDir/chats/<archive>
+// by hand, so every new location that writes atomically had to be added to that list or
+// its orphans were never reaped — and there are eleven such locations under configDir
+// today, including checkpoints/blobs, which the list never covered. Widening the sweep is
+// safe by construction: only atomicfile's own ".atomicfile-<digits>.tmp" shape is ever a
+// candidate, so a caller-owned file is never touched.
+//
+// workDir is swept flat on purpose. It is the user's working tree, which can be an
+// arbitrarily large checkout; descending it on every startup would walk the whole repo to
+// find temps that only ever land at its top level.
 func sweepStaleTemps(configDir, workDir string) {
 	const tempMaxAge = time.Hour
-	for _, dir := range []string{
-		configDir,
-		filepath.Join(configDir, "chats"),
-		filepath.Join(configDir, "chats", archive.Subdir),
-		workDir,
+	for _, sweep := range []struct {
+		dir  string
+		opts []atomicfile.Option
+	}{
+		{configDir, []atomicfile.Option{atomicfile.WithRecursive()}},
+		{workDir, nil},
 	} {
-		if _, err := atomicfile.CleanupStaleTemps(dir, tempMaxAge); err != nil {
-			slog.Debug("stale temp cleanup failed", "dir", dir, "error", err)
+		if _, err := atomicfile.CleanupStaleTemps(sweep.dir, tempMaxAge, sweep.opts...); err != nil {
+			slog.Debug("stale temp cleanup failed", "dir", sweep.dir, "error", err)
 		}
 	}
 }

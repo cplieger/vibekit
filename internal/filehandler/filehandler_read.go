@@ -3,14 +3,16 @@ package filehandler
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
+	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 
+	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -22,50 +24,15 @@ const (
 // --- /api/file (GET read) + /api/file/download ---
 
 func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string) {
-	// Open+Stat(fd)+LimitReader eliminates the TOCTOU between a
-	// separate os.Stat size check and os.ReadFile: the size guard
-	// and the read operate on the same file descriptor.
-	f, err := l.m.root.Open(l.rel())
+	// atomicfile.ReadBoundedInRoot owns the confined bounded read: it opens through the
+	// root, stats the OPEN HANDLE (so the size guard and the read cannot refer to
+	// different files), requires a regular file, and opens non-blocking so a FIFO under a
+	// granted root cannot wedge the handler. Hand-rolling that sequence here duplicated
+	// three non-obvious details the library already guarantees on the write side, and one
+	// of them getting it wrong is a confinement bypass.
+	data, err := atomicfile.ReadBoundedInRoot(ctx, l.m.root, l.rel(), maxFileSize)
 	if err != nil {
-		if os.IsNotExist(err) {
-			api.NotFound(w, "not found")
-			return
-		}
-		slog.Warn("filehandler: open failed", "path", l.abs, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON(errReadFailed))
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		slog.Warn("filehandler: stat failed", "path", l.abs, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON(errReadFailed))
-		return
-	}
-	if info.IsDir() {
-		api.BadRequest(w, "path is a directory")
-		return
-	}
-	if info.Size() > maxFileSize {
-		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-			api.ErrorJSON(errFileTooLarge))
-		return
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
-	if err != nil {
-		slog.Warn("filehandler: read failed", "path", l.abs, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON(errReadFailed))
-		return
-	}
-	if int64(len(data)) > maxFileSize {
-		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-			api.ErrorJSON(errFileTooLarge))
+		readFileError(w, l, err)
 		return
 	}
 	if looksBinary(data) {
@@ -152,4 +119,32 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	// open, confined fd (handles Range requests + conditional headers too).
 	slog.Debug("filehandler: download", "path", l.abs, "size", info.Size())
 	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// readFileError maps a confined-read failure onto the HTTP status the client needs.
+//
+// The mapping is why this is a switch rather than one 500: a missing file and an
+// unreadable one are different answers to the caller, and a client cannot retry
+// intelligently if both arrive as "internal error". atomicfile's sentinels make each case
+// distinguishable without inspecting error text.
+//
+// ErrNotRegular covers a directory, FIFO, device node or socket. The previous code
+// answered "path is a directory" for the directory case specifically; the message is now
+// mode-agnostic because the library does not report WHICH non-regular type it refused,
+// and inventing a guess would be worse than a truthful general answer. A cancelled
+// request is silent — the client is gone.
+func readFileError(w http.ResponseWriter, l loc, err error) {
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return
+	case errors.Is(err, fs.ErrNotExist):
+		api.NotFound(w, "not found")
+	case errors.Is(err, atomicfile.ErrNotRegular):
+		api.BadRequest(w, "not a regular file")
+	case errors.Is(err, atomicfile.ErrFileTooLarge):
+		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, api.ErrorJSON(errFileTooLarge))
+	default:
+		slog.Warn("filehandler: read failed", "path", l.abs, "error", err)
+		api.WriteJSONStatus(w, http.StatusInternalServerError, api.ErrorJSON(errReadFailed))
+	}
 }
