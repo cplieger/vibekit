@@ -12,15 +12,15 @@ require (
 )
 
 require (
-	github.com/cplieger/atomicfile/v2 v2.3.0
+	github.com/cplieger/atomicfile/v2 v2.4.0
 	github.com/cplieger/envx/yamlenv v1.2.0
-	github.com/cplieger/jsonx v1.2.0
+	github.com/cplieger/jsonx v1.3.0
 	github.com/cplieger/runesafe v1.2.1
 	github.com/cplieger/slogx v1.4.0
 	github.com/cplieger/ssrf/v3 v3.0.0
 	github.com/cplieger/toolbelt/v2 v2.2.6
-	github.com/cplieger/web-terminal-engine/v3 v3.1.0
-	github.com/cplieger/webhttp v1.15.0
+	github.com/cplieger/web-terminal-engine/v3 v3.2.0
+	github.com/cplieger/webhttp v1.16.0
 	github.com/cplieger/wiregen/v2 v2.0.0
 	github.com/evanw/esbuild v0.28.1
 	go.yaml.in/yaml/v3 v3.0.4
@@ -30,7 +30,7 @@ require (
 
 require (
 	github.com/coder/websocket v1.8.15 // indirect
-	github.com/cplieger/envx v1.2.2
+	github.com/cplieger/envx v1.3.0
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 )
