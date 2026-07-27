@@ -64,7 +64,37 @@ fi
 # so users can't accidentally remove it). Pinned via KIRO_CLI_VERSION /
 # KIRO_CLI_SHA256 above; Renovate keeps both in lockstep with the public
 # install manifest.
-install_kiro_cli() {
+# 0 when the path is a REGULAR, non-symlink, executable file that survives on its
+# own. `-f`/`-x` both FOLLOW symlinks, so a link into the install staging tree would
+# pass either test, be promoted as a link, and then dangle the moment the staging
+# cleanup runs -- after this script logged a successful install.
+is_self_contained_executable() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ -x "$1" ] && [ ! -L "$1" ]
+}
+
+# Print the version a kiro-cli binary reports, under a hard deadline. Without the
+# timeout a wedged binary (one that traps or ignores TERM) hangs the boot forever
+# with no diagnostic; --kill-after gives it a second-stage SIGKILL. Callers treat an
+# empty answer as a mismatch.
+kiro_cli_version() {
+  local out rc
+  out=$(timeout --signal=TERM --kill-after=5s 10s "$1" --version 2>/dev/null)
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # 124/137 = the 10s deadline (TERM, then the --kill-after SIGKILL fallback).
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+      printf "WARNING: kiro-cli --version exceeded its 10s deadline and was terminated (%s, rc=%d)\n" "$1" "$rc" >&2
+    else
+      printf "WARNING: kiro-cli --version failed (%s, rc=%d)\n" "$1" "$rc" >&2
+    fi
+    return "$rc"
+  fi
+  printf '%s\n' "$out" | awk 'NR==1{print $NF; exit}'
+}
+
+# Note the `(` rather than `{`: the body runs in a subshell so the EXIT trap below is
+# the single cleanup owner for every temp resource, on every return path.
+install_kiro_cli() (
   printf "Installing kiro-cli %s\n" "$KIRO_CLI_VERSION"
   printf "  kiro-cli is proprietary AWS Content; by installing you accept\n"
   printf "  the AWS Customer Agreement. License: https://kiro.dev/license/\n"
@@ -73,7 +103,7 @@ install_kiro_cli() {
   # https://kiro.dev/docs/cli/installation/ ("With a zip file"). We pin
   # the version (not /latest/) so a given image tag is reproducible and
   # verify the sha256 before running install.sh.
-  local arch zip_url tmpdir zip
+  local arch zip_url tmpdir='' zip install_log='' stage=''
   case "$(uname -m)" in
     x86_64) arch="x86_64-linux" ;;
     aarch64) arch="aarch64-linux" ;;
@@ -85,16 +115,37 @@ install_kiro_cli() {
   zip_url="https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${arch}.zip"
 
   tmpdir=$(mktemp -d) || return 1
+  # Private staging HOME for the upstream installer. install.sh writes its
+  # dispatchers into $HOME/.local/bin, which is BOTH on the image PATH (see the
+  # Dockerfile's ENV PATH) and on the persistent /config volume -- so installing
+  # with the real HOME exposed an UNVERIFIED candidate to bare-name resolution
+  # (`docker exec ... kiro-cli`) for the whole download-and-validate window, and left
+  # it reachable for the container lifetime whenever a later step failed. Staging
+  # under $TOOLS keeps the candidate off PATH entirely and on the same filesystem as
+  # $TOOLS/bin, so promotion stays a rename rather than a copy.
+  stage=$(mktemp -d "$TOOLS/.kiro-cli-stage.XXXXXX") || {
+    rm -rf "$tmpdir"
+    return 1
+  }
+  trap 'rm -rf "$tmpdir" "$stage"; [ -z "$install_log" ] || rm -f "$install_log"' EXIT
   zip="$tmpdir/kirocli.zip"
 
-  if ! curl --proto '=https' --tlsv1.2 -fsSL "$zip_url" -o "$zip"; then
+  # The zip is ~528 MB, so a flat --max-time would be a BANDWIDTH FLOOR rather than a
+  # hang guard. Stall detection expresses the real condition: abort only when
+  # throughput stays under --speed-limit for --speed-time consecutive seconds, with
+  # --max-time as an absolute per-attempt backstop and --retry-max-time capping the
+  # retry envelope. Before this the download carried NO timeouts at all, so a hung
+  # connection blocked boot indefinitely with nothing in the log. --proto-redir pins
+  # redirects to https too; --proto alone only constrains the initial request.
+  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL \
+    --connect-timeout 20 --speed-limit 4096 --speed-time 60 \
+    --max-time 3600 --retry 3 --retry-delay 5 --retry-max-time 5400 \
+    "$zip_url" -o "$zip"; then
     printf "ERROR: failed to download kiro-cli zip from %s\n" "$zip_url" >&2
-    rm -rf "$tmpdir"
     return 1
   fi
   if [ ! -s "$zip" ]; then
     printf "ERROR: kiro-cli zip is empty (partial download?)\n" >&2
-    rm -rf "$tmpdir"
     return 1
   fi
 
@@ -113,56 +164,70 @@ install_kiro_cli() {
     printf "  expected: %s\n" "$expected" >&2
     printf "  actual:   %s\n" "$actual" >&2
     printf "  refusing install; bump KIRO_CLI_VERSION and both KIRO_CLI_SHA256* literals together\n" >&2
-    rm -rf "$tmpdir"
     return 1
   fi
   printf "kiro-cli SHA-256 verified against pinned %s hash\n" "$arch"
 
   if ! unzip -q "$zip" -d "$tmpdir"; then
     printf "ERROR: failed to extract kiro-cli zip\n" >&2
-    rm -rf "$tmpdir"
     return 1
   fi
 
-  # Run upstream install.sh. Don't gate on its exit code — the kiro-cli
-  # installer touches shell profiles and other side surfaces that
-  # legitimately fail in our minimal root container; what matters is
-  # whether the binary it drops at $HOME/.local/bin/kiro-cli reports
-  # the version we pinned. Capture install.sh output to a tempfile so
-  # we can surface it on failure.
-  local install_log install_rc
-  install_log=$(mktemp)
-  "$tmpdir/kirocli/install.sh" --no-confirm </dev/null >"$install_log" 2>&1
+  # Run upstream install.sh against the PRIVATE staging HOME. Don't gate on its
+  # exit code — the kiro-cli installer touches shell profiles and other side
+  # surfaces that legitimately fail in our minimal root container; what matters is
+  # whether the binary it drops at $stage/.local/bin/kiro-cli reports the version we
+  # pinned. Capture install.sh output to a tempfile so we can surface it on failure.
+  local install_rc staged="$stage/.local/bin/kiro-cli"
+  install_log=$(mktemp) || return 1
+  HOME="$stage" "$tmpdir/kirocli/install.sh" --no-confirm </dev/null >"$install_log" 2>&1
   install_rc=$?
-  rm -rf "$tmpdir"
 
-  if [ ! -f "$HOME/.local/bin/kiro-cli" ]; then
-    printf "ERROR: install.sh did not produce %s/.local/bin/kiro-cli (rc=%d)\n" \
-      "$HOME" "$install_rc" >&2
+  if ! is_self_contained_executable "$staged"; then
+    printf "ERROR: install.sh did not produce a self-contained executable kiro-cli binary at %s (absent, not executable, or a symlink whose target dies with the staging cleanup) (rc=%d)\n" \
+      "$staged" "$install_rc" >&2
     printf "install.sh output:\n" >&2
     cat "$install_log" >&2
-    rm -f "$install_log"
     return 1
   fi
   local installed
-  installed=$("$HOME/.local/bin/kiro-cli" --version 2>/dev/null | awk '{print $NF}')
+  installed=$(kiro_cli_version "$staged")
   if [ "$installed" != "$KIRO_CLI_VERSION" ]; then
     printf "ERROR: installed binary reports version %s, wanted %s (install.sh rc=%d)\n" \
       "${installed:-unknown}" "$KIRO_CLI_VERSION" "$install_rc" >&2
     printf "install.sh output:\n" >&2
     cat "$install_log" >&2
-    rm -f "$install_log"
     return 1
   fi
-  rm -f "$install_log"
 
-  # Promote to the canonical $TOOLS/bin/ location so PATH ordering
-  # (which puts /config/tools/bin first) and any in-process
-  # absolute-path references resolve to the freshly installed binary.
-  mv -f "$HOME/.local/bin/kiro-cli" "$TOOLS/bin/kiro-cli" || return 1
-  mv -f "$HOME/.local/bin/kiro-cli-chat" "$TOOLS/bin/kiro-cli-chat" 2>/dev/null || true
-  mv -f "$HOME/.local/bin/kiro-cli-term" "$TOOLS/bin/kiro-cli-term" 2>/dev/null || true
-}
+  # Promote to the canonical $TOOLS/bin/ location so PATH ordering (which puts
+  # /config/tools/bin first) and any in-process absolute-path references resolve to
+  # the freshly installed binary. $TOOLS/bin/kiro-cli is the COMMIT POINT, so it goes
+  # last: a failure part-way leaves the previous install intact and the next boot's
+  # drift check retries, rather than half-swapping the dispatcher set.
+  #
+  # The sidecars are what `kiro-cli chat` dispatches to. vibekit launches
+  # `kiro-cli acp`, which the main binary serves directly, so a missing sidecar does
+  # NOT break vibekit -- hence warn rather than fail. But it must not be SILENT
+  # either: the previous `2>/dev/null || true` discarded both the diagnostic and the
+  # status, so an upstream rename of the dispatcher set would have gone unnoticed.
+  local sidecar src
+  for sidecar in kiro-cli-chat kiro-cli-term; do
+    src="$stage/.local/bin/$sidecar"
+    if [ ! -e "$src" ]; then
+      printf "WARNING: install.sh produced no %s sidecar dispatcher (upstream dispatcher set changed?)\n" "$sidecar" >&2
+    elif ! is_self_contained_executable "$src"; then
+      printf "WARNING: install.sh produced an invalid %s sidecar dispatcher; skipping promotion\n" "$sidecar" >&2
+    elif ! mv -f "$src" "$TOOLS/bin/$sidecar"; then
+      printf "WARNING: failed to promote the %s sidecar dispatcher to %s\n" "$sidecar" "$TOOLS/bin/$sidecar" >&2
+    fi
+  done
+  if ! mv -f "$staged" "$TOOLS/bin/kiro-cli"; then
+    printf "ERROR: failed to promote kiro-cli binary to %s\n" "$TOOLS/bin/kiro-cli" >&2
+    return 1
+  fi
+  printf "kiro-cli %s installed and promoted to %s\n" "$KIRO_CLI_VERSION" "$TOOLS/bin/kiro-cli"
+)
 
 # Reclaim superseded kiro-cli agent-server runtimes. Each version unpacks its own
 # ~240 MB tree under <data-dir>/kas/<version>-<hash>/ (plus a sibling .lock) on
@@ -185,7 +250,7 @@ install_kiro_cli() {
 # not have. Warn, never fail the boot -- degraded-not-dead, the same posture as the
 # install itself.
 prune_superseded_kas_runtimes() {
-  local data_home kas_dir entry name
+  local data_home kas_dir kas_real entry name
   data_home="${XDG_DATA_HOME:-}"
   if [ -z "$data_home" ]; then
     [ -n "${HOME:-}" ] || return 0
@@ -193,6 +258,24 @@ prune_superseded_kas_runtimes() {
   fi
   kas_dir="$data_home/kiro-cli/kas"
   [ -d "$kas_dir" ] || return 0
+  # `-d` FOLLOWS symlinks and the rm below runs as root, so a `kiro-cli` or `kas`
+  # symlink planted on a volume that once permitted foreign writes would redirect
+  # this sweep at an arbitrary tree and delete every entry that does not match the
+  # pin. Prove the store is a real directory resolving where it is named, or skip
+  # the prune (warn, never fail: disk hygiene must not brick boot).
+  if [ -L "$data_home/kiro-cli" ] || [ -L "$kas_dir" ]; then
+    printf "WARNING: kiro-cli data dir or its kas store is a symlink; refusing to prune through it (%s)\n" "$kas_dir" >&2
+    return 0
+  fi
+  kas_real=$(realpath "$kas_dir" 2>/dev/null) || kas_real=""
+  case "$kas_real" in
+    "$data_home"/kiro-cli/kas) ;;
+    *)
+      printf "WARNING: kiro-cli kas store does not resolve inside the data dir; refusing to prune (%s -> %s)\n" \
+        "$kas_dir" "${kas_real:-unknown}" >&2
+      return 0
+      ;;
+  esac
   for entry in "$kas_dir"/*; do
     # An empty store leaves the glob unexpanded.
     [ -e "$entry" ] || continue
@@ -203,6 +286,18 @@ prune_superseded_kas_runtimes() {
     case "$name" in
       "$KIRO_CLI_VERSION"-*) continue ;;
     esac
+    # Only VERSION-KEYED entries are superseded runtimes. kas/ is kiro-cli's
+    # directory, not ours, so an entry with no leading numeric version component is
+    # something this pruner has never seen (a store-wide lock, an unpack scratch
+    # dir, an index) -- and deleting another program's unrecognized state on every
+    # boot is a worse failure than leaving a few MB behind. Both layouts observed
+    # today (the <version>-<hash> tree and its .lock sibling) match, so this is a
+    # no-op against the current CLI; log the skip so a layout change is visible
+    # instead of silent.
+    if [[ ! "$name" =~ ^[0-9]+\.[0-9]+\.[0-9]+- ]]; then
+      printf "Leaving unrecognized (non version-keyed) entry in the kiro-cli agent runtime store: %s\n" "$name"
+      continue
+    fi
     if rm -rf "$entry"; then
       printf "Pruned superseded kiro-cli agent runtime: %s (pin %s)\n" "$name" "$KIRO_CLI_VERSION"
     else
@@ -221,7 +316,9 @@ needs_kiro_cli_install() {
     return 0
   fi
   local current
-  current=$("$TOOLS/bin/kiro-cli" --version 2>/dev/null | awk '{print $NF}')
+  # Bounded probe: an unbounded `--version` here hangs the boot on a wedged binary,
+  # and this call runs on EVERY boot, not just install boots.
+  current=$(kiro_cli_version "$TOOLS/bin/kiro-cli")
   if [ "$current" != "$KIRO_CLI_VERSION" ]; then
     printf "kiro-cli version drift: installed=%s pinned=%s; reinstalling\n" \
       "${current:-unknown}" "$KIRO_CLI_VERSION"
@@ -241,6 +338,24 @@ if needs_kiro_cli_install; then
     printf "WARNING: kiro-cli install failed; the web UI starts anyway but chats cannot run until kiro-cli is present (degraded start)\n"
     printf "Check the install log above, then restart the container to retry the install\n"
   fi
+fi
+
+# One-time cleanup of the residue the staging change leaves behind. Installs used to
+# run with the real HOME, so EARLIER images dropped their dispatchers in
+# $HOME/.local/bin -- which is on the image PATH and on the persistent /config volume.
+# The installer no longer writes there, but nothing removes what is already on an
+# inherited volume, so a bare-name `kiro-cli` could keep resolving to an old, unpinned
+# copy for the container's lifetime. $TOOLS/bin leads PATH, so this is hygiene rather
+# than an active shadow whenever the canonical binary is present: warn, never fail.
+# `rm -rf` on an unmatched glob is already a silent no-op returning 0, so a non-zero
+# status here is a real failure (an immutable attribute, EPERM) worth surfacing.
+if ! rm -rf "$HOME/.local/bin"/kiro-cli*; then
+  printf "WARNING: failed to remove legacy kiro-cli residue from %s/.local/bin; an unpinned copy may stay resolvable by bare name\n" "$HOME" >&2
+fi
+# Same argument for the installer's own scratch: an EXIT trap cleans the stage on
+# every ordinary path, so anything left here is SIGKILL residue occupying /config.
+if ! rm -rf "$TOOLS"/.kiro-cli-stage.*; then
+  printf "WARNING: failed to remove orphaned kiro-cli staging directories from %s\n" "$TOOLS" >&2
 fi
 
 # Tool installs and updates are owned by the server's in-process tools
