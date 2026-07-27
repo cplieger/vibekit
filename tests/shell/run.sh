@@ -10,6 +10,30 @@
 # skipped the whole suite silently and still reported CI green). The bit is set
 # anyway, for anyone running it directly.
 #
+# WHAT THIS REPO'S SUITE COVERS. This file is repo-owned (lib.sh and
+# harness_test.sh beside it are synced from cplieger/ci), so the per-repo scope
+# rationale lives here.
+#
+# entrypoint.sh
+# IS vibekit's boot path — it creates /config, prunes the superseded kiro-cli
+# agent-runtime trees, decides whether the installed kiro-cli still matches the
+# pin, downloads and promotes a new one, seeds settings, then execs the server.
+# Its most consequential branches are the ones that REFUSE: a root `rm -rf`
+# aimed at a symlinked or unconfirmable agent-runtime store, a promotion
+# candidate that is a symlink into staging, a binary whose reported version
+# drifted from KIRO_CLI_VERSION, a /config that cannot be created. A healthy
+# image never takes any of them, so tests/image-smoke.sh — which boots the
+# assembled image and waits for its HEALTHCHECK — structurally cannot reach
+# them: it can only prove the paths a working container walks.
+#
+# The refusals also need asserting DIRECTLY rather than through an exit code,
+# for two reasons specific to this file. First, the boot runs without `set -e`
+# and without `set -u`, so a guard that stops firing degrades silently instead
+# of aborting. Second, hygiene here is warn-never-fatal by invariant (a dev-box
+# container must stay repairable from inside), so every one of the prune guards
+# returns 0 whether it refused or deleted — the outcome a test can see is the
+# on-disk tree and the warning line, never the status.
+#
 # Each *_test.sh is a separate process, so one test's stubs, traps and shell
 # options cannot leak into another's. All of them run even when an early one
 # fails: a boot path's tests are cheap, and a maintainer wants the whole picture

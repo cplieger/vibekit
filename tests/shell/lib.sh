@@ -1,33 +1,25 @@
 #!/usr/bin/env bash
-# Shared harness for the entrypoint.sh unit tests.
+# Shared harness for a repo's shell unit tests — CANONICAL COPY in cplieger/ci
+# (configs/shell/lib.sh), synced to each adopting repo's tests/shell/lib.sh
+# by scripts/classify-repos.py (a repo enrolls by committing a tests/shell/run.sh,
+# which is also what the shell-ci hook looks for). DO NOT edit the synced copy in
+# an app repo — change it here and let the sync land it.
 #
-# WHY THESE TESTS EXIST, and why they are not the image smoke test: entrypoint.sh
-# IS vibekit's boot path — it creates /config, prunes the superseded kiro-cli
-# agent-runtime trees, decides whether the installed kiro-cli still matches the
-# pin, downloads and promotes a new one, seeds settings, then execs the server.
-# Its most consequential branches are the ones that REFUSE: a root `rm -rf`
-# aimed at a symlinked or unconfirmable agent-runtime store, a promotion
-# candidate that is a symlink into staging, a binary whose reported version
-# drifted from KIRO_CLI_VERSION, a /config that cannot be created. A healthy
-# image never takes any of them, so tests/image-smoke.sh — which boots the
-# assembled image and waits for its HEALTHCHECK — structurally cannot reach
-# them: it can only prove the paths a working container walks.
+# WHY THESE SUITES EXIST, generically: an image smoke test proves the assembled
+# image boots, so it can only ever walk the paths a HEALTHY container takes. The
+# branches that matter most are the ones that fail CLOSED — a refusal, a guard, a
+# fallback — and a healthy image never reaches them. These suites assert what
+# happens when it should NOT work. Each repo's own rationale (which of its shell
+# files are covered, and what its existing tests already own) belongs in its
+# repo-owned tests/shell/run.sh header, not here.
 #
-# The refusals also need asserting DIRECTLY rather than through an exit code,
-# for two reasons specific to this file. First, the boot runs without `set -e`
-# and without `set -u`, so a guard that stops firing degrades silently instead
-# of aborting. Second, hygiene here is warn-never-fatal by invariant (a dev-box
-# container must stay repairable from inside), so every one of the prune guards
-# returns 0 whether it refused or deleted — the outcome a test can see is the
-# on-disk tree and the warning line, never the status.
-#
-# HOW: each test extracts one function verbatim from the shipped entrypoint.sh
-# and runs it against temp directories, with the few external commands it touches
-# stubbed. Nothing is reimplemented here — an assertion that passed against a
-# paraphrase would prove nothing about what ships. The functions under test
-# already take their inputs as arguments or as plain (non-readonly) environment
-# globals, which is what makes this possible without a container or a writable
-# /config.
+# HOW: each test EXTRACTS one function verbatim out of the shipped shell and runs
+# it against temp directories, stubbing only what spawns a process or touches the
+# host. Nothing is reimplemented — an assertion against a paraphrase proves nothing
+# about what ships. That requires the function under test to take its inputs as
+# arguments or environment rather than hardcoding paths; where it does not, the
+# honest answer is to leave it uncovered rather than to restructure shipped
+# behaviour for the test's benefit.
 #
 # Sourced by every tests/shell/*_test.sh via the runner; not executable itself.
 
