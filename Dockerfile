@@ -259,7 +259,26 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # GOROOT is intentionally absent: the go bin symlink resolves into its
 # versioned dist tree under opt/go/ and the toolchain derives GOROOT
 # from its own resolved location.
-ENV PATH="/config/tools/bin:/config/tools/npm/bin:/config/tools/python/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+#
+# tools/bin is the engine's SINGLE PATH dir, and the npm/ and python/ trees are
+# install roots behind it, not PATH entries: toolbelt's linkPMBins symlinks every
+# npm and uv-installed binary into tools/bin, installGo runs with GOBIN=tools/bin,
+# installCargo writes there via --root, and installManual asserts its probe landed
+# there ("install command finished but %s is not in the bin dir"). So npm/bin and
+# python/bin were redundant on PATH — every binary they hold is already reachable one
+# directory earlier. They were also real exposure: they sit ahead of /usr/bin, the
+# entrypoint never creates or repairs them, and a binary planted while such a tree
+# was group/other-writable is executed by root. Removing them removes that path
+# rather than policing it (see vibekit.md invariant 6). Inherited pre-v2 volumes are
+# the one regressing case — a binary in npm/bin with no tools/bin symlink stops
+# resolving; it surfaces immediately as "command not found", and the remedy is to
+# symlink it into tools/bin.
+# tools/go/bin STAYS: it is GOPATH/bin (see ENV GOPATH below), where a hand-run
+# `go install` lands when the engine's GOBIN is not in play. Its residual exposure is
+# accepted rather than hardened — deleting a user's own go-installed tools is the
+# productivity harm invariant 6 forbids, and the threat presupposes an actor who
+# already holds /config/home/.ssh and the auth tokens.
+ENV PATH="/config/tools/bin:/config/tools/go/bin:/config/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ENV GOPATH="/config/tools/go"
 ENV GOBIN="/config/tools/bin"
 ENV HOME="/config/home"
