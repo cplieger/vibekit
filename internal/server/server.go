@@ -319,6 +319,23 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return api.DecodeBody(w, r, v, "bad request")
 }
 
+// healthBody is handleHealth's response envelope. A struct, not a map, and that
+// is the point: webhttp.ReadinessHandler fixes its key order with a struct, while
+// this handler built a map and encoding/json sorts map keys — so the "canonical
+// envelope shared across the cplieger Go apps" claimed below was emitting
+// {"reason":…,"status":…} here and {"status":…,"reason":…} from the library that
+// owns it. Matching the library byte-for-byte is what makes the claim true.
+//
+// This handler cannot simply BE webhttp.ReadinessHandler: its verdict is
+// composite (a second reason for an unavailable kiro-cli) while the library's
+// ReadinessChecker is Ready() bool. Extending the library to absorb a composite
+// verdict was considered and rejected as a wide public surface for a six-line
+// envelope; matching the wire shape is the cheap half that removes the drift.
+type healthBody struct {
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
+
 // handleHealth returns the liveness+readiness status. Emits the
 // canonical JSON envelope shared across the cplieger Go apps
 // (vibekit, web-terminal-kiro, subflux, registry-stats, plex-exporter): 200 with
@@ -334,10 +351,18 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 // on the unhealthy state, so there is no restart loop; if ever run
 // under Swarm/k8s, wire it to a readinessProbe, not a livenessProbe.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	// A readiness verdict must never be cached. Under RFC 9111 a 200 carrying no
+	// explicit freshness is heuristically cacheable, and this answer is never
+	// valid a moment later: a cached "ok" outliving the readiness it reported
+	// keeps traffic arriving at an instance that has begun draining, defeating the
+	// gate exactly when it matters. The unready direction is safe by accident (503
+	// is not heuristically cacheable). webhttp.ReadinessHandler now sets the same
+	// header, so every app in the fleet answers this the same way.
+	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, map[string]string{
-			"status": "unready",
-			"reason": reason,
+		api.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+			Status: "unready",
+			Reason: reason,
 		})
 	}
 	if !s.ready.Load() {
@@ -348,7 +373,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		unready("kiro-cli unavailable")
 		return
 	}
-	api.WriteJSON(w, map[string]string{"status": "ok"})
+	api.WriteJSON(w, healthBody{Status: "ok"})
 }
 
 // executableAvailable reports whether path resolves to an existing
