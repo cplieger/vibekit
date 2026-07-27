@@ -31,7 +31,8 @@ Signing in from the UI authenticates **kiro-cli to AWS** (the agent's identity);
 services:
   vibekit:
     image: ghcr.io/cplieger/vibekit:latest
-    user: "1000:1000" # match your host user
+    # Override with PUID/PGID in .env; defaults to 1000:1000.
+    user: "${PUID:-1000}:${PGID:-1000}"  # match your host user
     ports:
       - "9847:9847"
     volumes:
@@ -40,11 +41,11 @@ services:
     restart: unless-stopped
 ```
 
-Before the first start, create and own the bind-mount directories, since the container runs as `user: "1000:1000"`. The entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create required directories`:
+Before the first start, create and own the bind-mount directories. The container runs as the UID from `user:` (1000 unless you set `PUID`/`PGID`), and the entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create required directories`:
 
 ```bash
 mkdir -p /opt/appdata/vibekit/config /opt/appdata/vibekit/workspace
-chown -R 1000:1000 /opt/appdata/vibekit
+chown -R "${PUID:-1000}:${PGID:-1000}" /opt/appdata/vibekit
 ```
 
 To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
