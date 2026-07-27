@@ -200,6 +200,18 @@ install_kiro_cli() (
     return 1
   fi
 
+  # Enforce the pin BEFORE promotion, through the STAGED binary but against the real
+  # persisted HOME (no HOME override here). app.disableAutoupdates is the one setting
+  # the integrity story depends on: with auto-update live the binary can replace
+  # itself, invalidating the sha verified above and the image-tag reproducibility the
+  # pin exists to provide. It was previously seeded after promotion, best-effort, so a
+  # failure left a self-replacing binary in place with only a warning. Refuse to
+  # promote a candidate whose self-replacement could not be turned off.
+  if ! timeout --signal=TERM --kill-after=5s 10s "$staged" settings app.disableAutoupdates true >/dev/null 2>&1; then
+    printf "ERROR: failed to disable kiro-cli auto-update; refusing to promote a binary that may replace itself and invalidate the pinned digest (%s)\n" "$staged" >&2
+    return 1
+  fi
+
   # Promote to the canonical $TOOLS/bin/ location so PATH ordering (which puts
   # /config/tools/bin first) and any in-process absolute-path references resolve to
   # the freshly installed binary. $TOOLS/bin/kiro-cli is the COMMIT POINT, so it goes
@@ -366,6 +378,23 @@ fi
 # /config volume and are on PATH immediately; a genuinely new LSP
 # becomes active in the next chat once its install job finishes.
 
+# Apply one kiro-cli settings call under a hard deadline. Every one of these spawns
+# the CLI, so an unbounded call hangs the boot forever on a binary that traps or
+# ignores TERM -- and the very first call in the block below would do it, with no
+# diagnostic. Warn and carry on: these are seeded preferences, not correctness gates
+# (the one that IS load-bearing, app.disableAutoupdates, is additionally asserted
+# before promotion in install_kiro_cli, which refuses to promote without it).
+kiro_setting() {
+  local rc
+  timeout --signal=TERM --kill-after=5s 10s kiro-cli settings "$1" "$2" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # 124/137 = the 10s deadline (TERM, then the --kill-after SIGKILL fallback).
+    printf "WARNING: failed to seed kiro-cli setting %s=%s (rc=%d)\n" "$1" "$2" "$rc" >&2
+  fi
+  return "$rc"
+}
+
 # Seed kiro-cli settings when the binary is present, then launch the
 # web UI server (foreground) UNCONDITIONALLY — degraded-not-dead, the
 # same posture as web-terminal-kiro. A first-boot install failure used
@@ -411,8 +440,7 @@ if command -v kiro-cli >/dev/null 2>&1; then
   for flag in chat.enableTodoList chat.enableKnowledge \
     chat.enableSubagent chat.enablePromptHints \
     hooks.showStatus; do
-    kiro-cli settings "$flag" true >/dev/null 2>&1 \
-      || printf 'WARNING: failed to seed kiro-cli setting %s=true\n' "$flag"
+    kiro_setting "$flag" true || true
   done
   #   chat.disableInheritingDefaultResources — off, matching kiro-cli's
   #     default. Custom agents inherit default steering/skills/AGENTS.md
@@ -420,8 +448,7 @@ if command -v kiro-cli >/dev/null 2>&1; then
   #     UI toggle reflects reality instead of the unset->on fallback.
   for flag in chat.enableCheckpoint telemetry.enabled toolSearch.enabled \
     chat.disableInheritingDefaultResources; do
-    kiro-cli settings "$flag" false >/dev/null 2>&1 \
-      || printf 'WARNING: failed to seed kiro-cli setting %s=false\n' "$flag"
+    kiro_setting "$flag" false || true
   done
   # Disable in-binary auto-update: KIRO_CLI_VERSION above is the
   # source of truth, kept current by Renovate against the public
@@ -429,8 +456,7 @@ if command -v kiro-cli >/dev/null 2>&1; then
   # would invalidate the pinned SHA, break image-tag reproducibility,
   # and bypass the version-drift reinstall path. Bumps land via
   # Renovate PR → image rebuild → restart picks them up.
-  kiro-cli settings "app.disableAutoupdates" true >/dev/null 2>&1 \
-    || printf 'WARNING: failed to seed kiro-cli setting app.disableAutoupdates=true\n'
+  kiro_setting app.disableAutoupdates true || true
   # Pin kiro-cli's own conversation/session cleanup OFF (0 = never purge).
   # vibekit owns chat retention end to end: it purges its own archived chats
   # and reaps KAS session state on delete + a periodic orphan sweep. Letting
@@ -438,8 +464,7 @@ if command -v kiro-cli >/dev/null 2>&1; then
   # two systems fighting — and could delete a session out from under a chat
   # vibekit still keeps. Retention lives in Settings → General (vibekit's
   # config.json chat_retention_days), NOT this key.
-  kiro-cli settings cleanup.periodDays 0 >/dev/null 2>&1 \
-    || printf 'WARNING: failed to seed kiro-cli setting cleanup.periodDays=0\n'
+  kiro_setting cleanup.periodDays 0 || true
 else
   printf "WARNING: kiro-cli not found — starting the web UI in degraded mode\n"
   printf "Chats cannot run until kiro-cli installs; check the install log above, then restart the container\n"
