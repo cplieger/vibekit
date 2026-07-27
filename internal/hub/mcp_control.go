@@ -163,7 +163,7 @@ type mcpReconnectReq struct {
 // targeted; 0 when no chat is live).
 func (h *Hub) handleMCPReconnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var body mcpReconnectReq
@@ -188,7 +188,7 @@ type mcpGetPromptReq struct {
 // the raw MCP prompt result ({messages:[...]}).
 func (h *Hub) handleMCPGetPrompt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var body mcpGetPromptReq
@@ -220,7 +220,7 @@ type mcpGetResourceReq struct {
 // resource result ({contents:[...]}).
 func (h *Hub) handleMCPGetResource(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var body mcpGetResourceReq

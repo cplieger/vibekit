@@ -18,7 +18,7 @@ import (
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	payload := map[string]string{"vibekit": version.Build}
@@ -98,6 +98,6 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		api.Ok(w)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }

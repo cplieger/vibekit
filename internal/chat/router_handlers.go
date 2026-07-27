@@ -26,7 +26,7 @@ func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 // handleList returns all chat headers.
 func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	headers := rt.store.List(r.Context())
@@ -67,7 +67,7 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 // /api/chats/{id} request.
 func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(api.ChatID(id)) {
@@ -139,7 +139,7 @@ const (
 // served by falling back to the archive directory (the History view).
 func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(chatID) {
@@ -251,7 +251,7 @@ func sanitizeFilenamePart(s string) string {
 // handleArchive moves a chat to the archive directory.
 func (rt *Router) handleArchive(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	if !chatIDPattern(chatID) {
@@ -281,7 +281,7 @@ func (rt *Router) handlePlanDraft(w http.ResponseWriter, r *http.Request, chatID
 	case http.MethodDelete:
 		rt.deletePlanDraftHTTP(w, r, chatID)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodDelete)
 	}
 }
 

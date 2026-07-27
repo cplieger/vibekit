@@ -44,7 +44,7 @@ var fileActions = map[string]actionFunc{
 
 func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	api.LimitBody(w, r, api.MaxJSONBody)

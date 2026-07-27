@@ -18,7 +18,7 @@ import (
 
 func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)

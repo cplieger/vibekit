@@ -40,7 +40,7 @@ type kiroConfigItem struct {
 
 func (s *Server) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	items := s.collectKiroConfig(r.Context())

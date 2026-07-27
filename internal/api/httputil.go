@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/cplieger/webhttp"
 )
@@ -112,8 +113,50 @@ func Conflict(w http.ResponseWriter, msg string) {
 	WriteJSONStatus(w, http.StatusConflict, webhttp.ErrorResponse{Error: msg})
 }
 
-// MethodNotAllowed writes a 405 with a standard message.
-func MethodNotAllowed(w http.ResponseWriter) {
+// headerAllow is the response-header name RFC 9110 §10.2.1 reserves for the
+// set of methods a resource supports.
+const headerAllow = "Allow"
+
+// setAllow sets the Allow header to the comma-separated list of methods the
+// addressed resource supports (RFC 9110 §10.2.1). Method tokens are
+// case-sensitive (RFC 9110 §9.1), so they are emitted verbatim rather than
+// normalised; empty arguments are dropped because §5.6.1.1 forbids empty
+// list elements. The separator is ", " — the same rendering net/http's own
+// ServeMux uses for the method-pattern routes, so every Allow vibekit emits
+// looks alike. Must be called before the status is committed.
+func setAllow(w http.ResponseWriter, method string, more ...string) {
+	methods := make([]string, 0, 1+len(more))
+	if method != "" {
+		methods = append(methods, method)
+	}
+	for _, m := range more {
+		if m != "" {
+			methods = append(methods, m)
+		}
+	}
+	if len(methods) == 0 {
+		return
+	}
+	w.Header().Set(headerAllow, strings.Join(methods, ", "))
+}
+
+// MethodNotAllowed writes a 405 with a standard message plus the Allow
+// header RFC 9110 §15.5.6 requires an origin server to send on every 405.
+//
+// The method list is PER-RESOURCE: pass exactly the methods the addressed
+// resource dispatches, read off its own routing and switch — never a
+// blanket constant. An Allow that over-promises is worse than no Allow at
+// all, because a client that trusts it retries a method that 405s again.
+// At least one method is mandatory at the call site by construction: a
+// resource that permits nothing is a 404, not a 405.
+//
+// HEAD is deliberately NOT implied by GET. vibekit's JSON handlers compare
+// r.Method for equality and its API routes are registered as plain paths,
+// so net/http's ServeMux does no method matching and a HEAD request reaches
+// the handler and lands here — listing HEAD would advertise a method that
+// also 405s.
+func MethodNotAllowed(w http.ResponseWriter, method string, more ...string) {
+	setAllow(w, method, more...)
 	WriteJSONStatus(w, http.StatusMethodNotAllowed, webhttp.ErrorResponse{Error: "method not allowed"})
 }
 
@@ -174,10 +217,11 @@ func (lw *LimitedWriter) Write(p []byte) (int, error) {
 // decodeBody/decodePostBody patterns into a single import.
 
 // RequireMethod returns true if r.Method matches method; otherwise it
-// writes a 405 response and returns false.
+// writes a 405 response — with Allow set to that single method, which is
+// by construction the resource's whole permitted set — and returns false.
 func RequireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 	if r.Method != method {
-		MethodNotAllowed(w)
+		MethodNotAllowed(w, method)
 		return false
 	}
 	return true

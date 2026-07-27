@@ -98,7 +98,7 @@ func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
 // handleForgesList returns all configured forges.
 func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	forges := h.manager.List(r.Context())
@@ -111,7 +111,7 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	if err := h.manager.Refresh(r.Context()); err != nil {
@@ -144,7 +144,7 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			h.handleDisconnect(w, r, id)
 		default:
-			api.MethodNotAllowed(w)
+			api.MethodNotAllowed(w, http.MethodGet, http.MethodDelete)
 		}
 		return
 	}
@@ -179,7 +179,7 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 
 func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.probeTimeout)
@@ -205,7 +205,7 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 // kind+host are derived from id.
 func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, sub string) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	op, _, _ := splitFirst(sub)

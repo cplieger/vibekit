@@ -18,7 +18,7 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 	// rest is "" → list repos. Otherwise it's "owner/name[/sub...]".
 	if rest == "" {
 		if r.Method != http.MethodGet {
-			api.MethodNotAllowed(w)
+			api.MethodNotAllowed(w, http.MethodGet)
 			return
 		}
 		repos, err := provider.ListRepos(r.Context())
@@ -95,7 +95,7 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 		}
 		api.WriteJSON(w, pr)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -110,7 +110,7 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p F
 	switch op {
 	case "merge":
 		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w)
+			api.MethodNotAllowed(w, http.MethodPost)
 			return
 		}
 		method := MergeMethod(r.URL.Query().Get(fieldMethod))
@@ -121,7 +121,7 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p F
 		api.Ok(w)
 	case stateClose:
 		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w)
+			api.MethodNotAllowed(w, http.MethodPost)
 			return
 		}
 		if err := p.ClosePR(r.Context(), repo, number); err != nil {
@@ -168,7 +168,7 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 		}
 		api.WriteJSON(w, issue)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -182,7 +182,7 @@ func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, 
 	}
 	if op == stateClose {
 		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w)
+			api.MethodNotAllowed(w, http.MethodPost)
 			return
 		}
 		if err := p.CloseIssue(r.Context(), repo, number); err != nil {
@@ -197,7 +197,7 @@ func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, 
 
 func (h *HTTPHandler) handleChecks(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	ref := r.URL.Query().Get("ref")
@@ -236,13 +236,13 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p F
 		}
 		api.WriteJSON(w, release)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
 func (h *HTTPHandler) handleLabels(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	labels, err := p.ListLabels(r.Context(), repo)
