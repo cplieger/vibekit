@@ -148,7 +148,7 @@ func TestNamedResponseHelpers(t *testing.T) {
 		},
 		{
 			name:     "MethodNotAllowed",
-			call:     func(w http.ResponseWriter) { MethodNotAllowed(w) },
+			call:     func(w http.ResponseWriter) { MethodNotAllowed(w, http.MethodPost) },
 			wantCode: http.StatusMethodNotAllowed,
 			wantBody: `{"error":"method not allowed"}`,
 		},

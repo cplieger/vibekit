@@ -38,7 +38,7 @@ func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 		}
 		api.WriteJSON(w, created)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -67,7 +67,7 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		s.deleteOne(w, r, id)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodDelete)
 	}
 }
 

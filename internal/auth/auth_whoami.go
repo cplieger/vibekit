@@ -46,7 +46,7 @@ type WhoamiResponse struct {
 // can't pin the HTTP handler indefinitely.
 func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.WhoamiTimeout)

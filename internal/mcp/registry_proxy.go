@@ -111,7 +111,7 @@ func (p *RegistryProxy) RegisterRoutes(mux *http.ServeMux) {
 
 func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))

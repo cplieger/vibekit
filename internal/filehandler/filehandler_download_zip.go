@@ -19,7 +19,7 @@ const (
 
 func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var req struct {

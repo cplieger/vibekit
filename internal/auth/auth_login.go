@@ -124,7 +124,7 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 // would otherwise pin two AWS device codes for 16 minutes each.
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	// Audit trail: record every /api/login POST so operators can

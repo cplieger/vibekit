@@ -26,7 +26,7 @@ import (
 // the flow.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	// Audit trail: record every /api/logout POST. See handleLogin

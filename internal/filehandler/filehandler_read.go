@@ -60,7 +60,7 @@ func looksBinary(data []byte) bool {
 
 func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	reqPath := r.URL.Query().Get("path")

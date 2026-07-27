@@ -137,6 +137,6 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		writeFile(w, r, l, h.onWrite)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }

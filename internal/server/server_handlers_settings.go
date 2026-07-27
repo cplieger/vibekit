@@ -24,7 +24,7 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		handleSteeringPut(w, r, path)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }
 
@@ -90,7 +90,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut, http.MethodPatch:
 		s.handleSettingsWrite(w, r, path)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch)
 	}
 }
 

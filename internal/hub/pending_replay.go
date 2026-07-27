@@ -50,7 +50,7 @@ func (h *Hub) listChatIDsWithPending() []api.ChatID {
 // envelope so they pass the request_id idempotency cache.
 func (h *Hub) handlePendingChange(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	id := r.URL.Path[len("/api/pending-changes/"):]

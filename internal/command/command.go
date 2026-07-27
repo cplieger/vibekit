@@ -138,7 +138,7 @@ func (d *Dispatcher) RequireChatID(w http.ResponseWriter, cmd *api.ClientCommand
 // ServeHTTP is the POST /api/command HTTP handler.
 func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	if d.deps.Draining() {

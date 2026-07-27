@@ -55,7 +55,7 @@ var checkpointRoutes = map[string]func(*Hub, http.ResponseWriter, *http.Request,
 // colliding silently.
 func (h *Hub) handleCheckpoint(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if h.checkpoints == nil {

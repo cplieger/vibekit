@@ -9,7 +9,7 @@ import (
 
 func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	resp, err := StartGitHubDeviceFlow(r.Context())
@@ -22,7 +22,7 @@ func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Req
 
 func (h *HTTPHandler) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var body struct {

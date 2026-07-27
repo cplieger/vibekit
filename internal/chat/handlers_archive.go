@@ -38,7 +38,7 @@ func (rt *Router) handleArchivedChats(w http.ResponseWriter, r *http.Request) {
 		}
 		api.Ok(w)
 	default:
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -46,7 +46,7 @@ func (rt *Router) handleArchivedChats(w http.ResponseWriter, r *http.Request) {
 // permanently remove a single archived chat.
 func (rt *Router) handleArchivedChatAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodDelete)
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/chats/archived/")

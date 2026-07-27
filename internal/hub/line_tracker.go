@@ -17,7 +17,7 @@ import (
 // GET /api/file-changes?chat_id=<id>&path=<path>.
 func (h *Hub) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w)
+		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	chatID := r.URL.Query().Get("chat_id")

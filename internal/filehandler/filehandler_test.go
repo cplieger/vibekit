@@ -2443,11 +2443,38 @@ func TestHandleDownloadZip_StreamsFilesAndDirs(t *testing.T) {
 func TestHandleDownloadZip_Rejects(t *testing.T) {
 	h, _, _ := testDir(t)
 
-	if rec := getReq(t, h, "/api/files/download"); rec.Code != http.StatusMethodNotAllowed {
+	rec := getReq(t, h, "/api/files/download")
+	if rec.Code != http.StatusMethodNotAllowed {
 		t.Errorf("GET status = %d, want 405", rec.Code)
+	}
+	// RFC 9110 §15.5.6: a 405 must name the resource's permitted methods.
+	if got := rec.Header().Get("Allow"); got != "POST" {
+		t.Errorf("Allow = %q, want %q", got, "POST")
 	}
 	if rec := postReq(t, h, "/api/files/download", `{"paths":[]}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("empty paths status = %d, want 400", rec.Code)
+	}
+}
+
+// handleFile serves one resource under two methods, so its 405 must list
+// both. Routes are registered as plain paths (no ServeMux method patterns),
+// which is why an unsupported method reaches the handler at all. The path
+// must resolve inside the granted mount: the resolve prelude runs before the
+// method switch, so an unresolvable path yields 403 and never reaches 405.
+func TestHandleFile_RejectionListsEveryPermittedMethod(t *testing.T) {
+	h, _, prefix := testDir(t)
+
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	req := httptest.NewRequest(http.MethodDelete, "/api/file?path="+prefix+"/f.txt", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("DELETE status = %d, want 405", rec.Code)
+	}
+	if got := rec.Header().Get("Allow"); got != "GET, PUT" {
+		t.Errorf("Allow = %q, want %q", got, "GET, PUT")
 	}
 }
 
