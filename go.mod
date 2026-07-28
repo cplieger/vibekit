@@ -20,7 +20,7 @@ require (
 	github.com/cplieger/ssrf/v3 v3.0.0
 	github.com/cplieger/toolbelt/v2 v2.2.12
 	github.com/cplieger/web-terminal-engine/v3 v3.2.1
-	github.com/cplieger/webhttp v1.18.1
+	github.com/cplieger/webhttp v1.19.0
 	github.com/cplieger/wiregen/v2 v2.0.0
 	github.com/evanw/esbuild v0.28.1
 	go.yaml.in/yaml/v3 v3.0.5
