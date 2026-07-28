@@ -97,7 +97,12 @@ var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 // subprocess is still alive still gets 409.
 type Handler struct {
 	loginSem chan struct{}
-	cliPath  string
+	// cliPath resolves the kiro-cli binary at CALL time. It is a function
+	// because the install manager selects the active version after the listener
+	// binds and can switch it later, so a path captured at construction would
+	// pin whoami/login/logout to whatever was installed first — and on a first
+	// boot that is nothing at all.
+	cliPath func() string
 	// trusted is the reverse-proxy network set passed to
 	// webhttp.ClientIP when recording the client IP in the login/logout
 	// audit logs. Nil (unconfigured) = log the unspoofable socket peer.
@@ -126,9 +131,10 @@ func WithTrustedProxies(trusted []*net.IPNet) Option {
 	return func(h *Handler) { h.trusted = trusted }
 }
 
-// NewHandler returns an auth handler that shells out to the kiro-cli
-// binary at cliPath for whoami / login / logout operations.
-func NewHandler(cliPath string, opts ...Option) *Handler {
+// NewHandler returns an auth handler that shells out to the kiro-cli binary
+// cliPath resolves to for whoami / login / logout operations. The resolver is
+// consulted per call, never cached (see Handler.cliPath).
+func NewHandler(cliPath func() string, opts ...Option) *Handler {
 	h := &Handler{cliPath: cliPath, loginSem: make(chan struct{}, 1), cfg: DefaultConfig}
 	for _, o := range opts {
 		o(h)

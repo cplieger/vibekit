@@ -565,7 +565,7 @@ func TestHandleWhoami_Success(t *testing.T) {
 	skipIfNotUnix(t)
 
 	cli := writeFakeCLI(t, `{"account_type":"BuilderId","email":"u@example.com"}`, 0)
-	h := NewHandler(cli)
+	h := NewHandler(fixedPath(cli))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
 	rr := httptest.NewRecorder()
@@ -593,7 +593,7 @@ func TestHandleWhoami_CLIFails(t *testing.T) {
 	skipIfNotUnix(t)
 
 	cli := writeFakeCLI(t, "", 1)
-	h := NewHandler(cli)
+	h := NewHandler(fixedPath(cli))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
 	rr := httptest.NewRecorder()
@@ -615,7 +615,7 @@ func TestHandleWhoami_MalformedJSON(t *testing.T) {
 	skipIfNotUnix(t)
 
 	cli := writeFakeCLI(t, "not-json-garbage", 0)
-	h := NewHandler(cli)
+	h := NewHandler(fixedPath(cli))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
 	rr := httptest.NewRecorder()
@@ -631,7 +631,7 @@ func TestHandleWhoami_MalformedJSON(t *testing.T) {
 }
 
 func TestHandleWhoami_RejectsNonGET(t *testing.T) {
-	h := NewHandler("/does-not-exist")
+	h := NewHandler(fixedPath("/does-not-exist"))
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			req := httptest.NewRequest(method, "/api/whoami", nil)
@@ -649,7 +649,7 @@ func TestHandleWhoami_RejectsNonGET(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandleLogin_RejectsNonPOST(t *testing.T) {
-	h := NewHandler("/does-not-exist-will-not-be-called")
+	h := NewHandler(fixedPath("/does-not-exist-will-not-be-called"))
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		t.Run(method, func(t *testing.T) {
 			req := httptest.NewRequest(method, "/api/login", nil)
@@ -667,7 +667,7 @@ func TestHandleLogin_SuccessWithProviderAndRegion(t *testing.T) {
 	cli := writeFakeCLI(t,
 		"Code: WXYZ-9999\nOpen this URL: https://idp.example.com/auth\n",
 		0)
-	h := NewHandler(cli)
+	h := NewHandler(fixedPath(cli))
 
 	body := `{"provider":"https://view.awsapps.com/start","region":"us-east-1"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
@@ -695,7 +695,7 @@ func TestHandleLogin_SuccessWithEmptyProviderAndRegion(t *testing.T) {
 	skipIfNotUnix(t)
 	cli := writeFakeCLI(t,
 		"Open this URL: https://builder.example.com/\n", 0)
-	h := NewHandler(cli)
+	h := NewHandler(fixedPath(cli))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{}`))
@@ -719,7 +719,7 @@ func TestHandleLogin_SuccessWithEmptyProviderAndRegion(t *testing.T) {
 }
 
 func TestHandleLogin_MalformedBody(t *testing.T) {
-	h := NewHandler("/does-not-exist")
+	h := NewHandler(fixedPath("/does-not-exist"))
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{invalid json`))
 	req.Header.Set("Content-Type", "application/json")
@@ -732,7 +732,7 @@ func TestHandleLogin_MalformedBody(t *testing.T) {
 }
 
 func TestHandleLogin_InvalidProvider(t *testing.T) {
-	h := NewHandler("/does-not-exist")
+	h := NewHandler(fixedPath("/does-not-exist"))
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{"provider":"http://evil.com"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -745,7 +745,7 @@ func TestHandleLogin_InvalidProvider(t *testing.T) {
 }
 
 func TestHandleLogin_InvalidRegion(t *testing.T) {
-	h := NewHandler("/does-not-exist")
+	h := NewHandler(fixedPath("/does-not-exist"))
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{"region":"--help"}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -760,7 +760,7 @@ func TestHandleLogin_InvalidRegion(t *testing.T) {
 func TestHandleLogin_TimesOutWhenCLIProducesNoURL(t *testing.T) {
 	skipIfNotUnix(t)
 	path := writeFakeCLIScript(t, "sleep 10\n")
-	h := NewHandler(path, WithConfig(Config{
+	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: 50 * time.Millisecond,
 		LoginProcessCap: DefaultConfig.LoginProcessCap,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
@@ -791,7 +791,7 @@ func TestHandleLogin_TimesOutWhenCLIProducesNoURL(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestHandleLogout_RejectsNonPOST(t *testing.T) {
-	h := NewHandler("/does-not-exist-will-not-be-called")
+	h := NewHandler(fixedPath("/does-not-exist-will-not-be-called"))
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		t.Run(method, func(t *testing.T) {
 			req := httptest.NewRequest(method, "/api/logout", nil)
@@ -808,7 +808,7 @@ func TestHandleLogout_Success(t *testing.T) {
 	skipIfNotUnix(t)
 
 	cli := writeFakeCLI(t, "\x1b[32mLogged out\x1b[0m\n", 0)
-	h := NewHandler(cli)
+	h := NewHandler(fixedPath(cli))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
 	rr := httptest.NewRecorder()
@@ -840,7 +840,7 @@ func TestHandleLogout_Success(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestRegisterRoutes_WiresAllEndpoints(t *testing.T) {
-	h := NewHandler("/bin/false")
+	h := NewHandler(fixedPath("/bin/false"))
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux)
 
@@ -900,12 +900,12 @@ func TestKillLoginProcess_AlreadyExited(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewHandler(t *testing.T) {
-	h := NewHandler("/bin/true")
+	h := NewHandler(fixedPath("/bin/true"))
 	if h == nil {
 		t.Fatal("NewHandler returned nil")
 	}
-	if h.cliPath != "/bin/true" {
-		t.Errorf("cliPath = %q, want %q", h.cliPath, "/bin/true")
+	if h.cliPath() != "/bin/true" {
+		t.Errorf("cliPath = %q, want %q", h.cliPath(), "/bin/true")
 	}
 }
 
@@ -1002,7 +1002,7 @@ func TestHandleWhoami_TimesOutWhenCLIHangs(t *testing.T) {
 	skipIfNotUnix(t)
 
 	path := writeFakeCLIScript(t, "sleep 10\n")
-	h := NewHandler(path, WithConfig(Config{
+	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
 		LoginProcessCap: DefaultConfig.LoginProcessCap,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
@@ -1040,7 +1040,7 @@ func TestHandleWhoami_BinaryMissingFailsSoft(t *testing.T) {
 	// the dedicated "binary not found" log branch and still
 	// surface as the generic fail-soft "whoami unavailable"
 	// sentinel so the UI renders "not logged in" regardless.
-	h := NewHandler(filepath.Join(t.TempDir(), "no-such-kiro-cli"))
+	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/whoami", nil)
 	rr := httptest.NewRecorder()
@@ -1075,7 +1075,7 @@ func TestHandleLogout_TimesOut(t *testing.T) {
 	skipIfNotUnix(t)
 
 	path := writeFakeCLIScript(t, "sleep 10\n")
-	h := NewHandler(path, WithConfig(Config{
+	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
 		LoginProcessCap: DefaultConfig.LoginProcessCap,
 		LogoutTimeout:   50 * time.Millisecond,
@@ -1102,7 +1102,7 @@ func TestHandleLogout_TimesOut(t *testing.T) {
 func TestHandleLogout_BinaryMissing(t *testing.T) {
 	// Path that doesn't exist and isn't on PATH — triggers
 	// exec.ErrNotFound from cmd.Run.
-	h := NewHandler(filepath.Join(t.TempDir(), "no-such-kiro-cli"))
+	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
 	rr := httptest.NewRecorder()
@@ -1127,7 +1127,7 @@ func TestHandleLogout_CLIFailsReturnsGenericSentinel(t *testing.T) {
 	skipIfNotUnix(t)
 
 	cli := writeFakeCLI(t, "auth error: no session\n", 2)
-	h := NewHandler(cli)
+	h := NewHandler(fixedPath(cli))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
 	rr := httptest.NewRecorder()
@@ -1164,7 +1164,7 @@ func TestHandleLogout_CLIFailsReturnsGenericSentinel(t *testing.T) {
 func TestHandleLogin_BinaryMissingReturns503(t *testing.T) {
 	// Path that doesn't exist and isn't on PATH — triggers
 	// exec.ErrNotFound from cmd.Start.
-	h := NewHandler(filepath.Join(t.TempDir(), "no-such-kiro-cli"))
+	h := NewHandler(fixedPath(filepath.Join(t.TempDir(), "no-such-kiro-cli")))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{}`))
@@ -1192,7 +1192,7 @@ func TestHandleLogin_BinaryMissingReturns503(t *testing.T) {
 }
 
 func TestHandleLogin_BodyTooLargeReturns413(t *testing.T) {
-	h := NewHandler("/does-not-exist")
+	h := NewHandler(fixedPath("/does-not-exist"))
 	big := strings.Repeat("a", int(api.MaxJSONBody)+1024)
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{"provider":"`+big+`"}`))
@@ -1221,7 +1221,7 @@ func TestHandleLogin_ConcurrentAttemptReturns409(t *testing.T) {
 	// Shrink URL timeout so the first handler returns fast; we
 	// care about the 409 on the second attempt, not the timeout
 	// details of the first.
-	h := NewHandler(path, WithConfig(Config{
+	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: 100 * time.Millisecond,
 		LoginProcessCap: DefaultConfig.LoginProcessCap,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
@@ -1273,7 +1273,7 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 	// Shrink LoginProcessCap so the test doesn't hold the
 	// subprocess for 16 minutes. The sleep is 30s; a 500ms hard
 	// cap forces the reap goroutine to SIGKILL long before.
-	h := NewHandler(path, WithConfig(Config{
+	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
 		LoginProcessCap: 500 * time.Millisecond,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
@@ -1685,4 +1685,11 @@ func TestKillLoginProcess_ReapedLogsNoOp(t *testing.T) {
 		t.Errorf("expected debug log %q for reaped process; logs=%v",
 			"login: kill group no-op (already reaped)", recs)
 	}
+}
+
+// fixedPath adapts a static path to the resolver NewHandler takes. Production
+// passes the install manager's CLIPath, which changes when the active version
+// does; a test wants one fixed binary for the whole case.
+func fixedPath(p string) func() string {
+	return func() string { return p }
 }

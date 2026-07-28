@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // newEventCaptureDeps returns a baseDeps that captures broadcast events into
@@ -311,5 +310,3 @@ func eventTypes(events []api.ServerEvent) []string {
 	}
 	return types
 }
-
-var _ = buffer.NewStore // keep import

@@ -19,8 +19,14 @@ import (
 type Config struct {
 	WorkDir   string
 	ConfigDir string
-	CLIPath   string
 	VapidSub  string
+	// KiroCLIVersion and the two digests are the Renovate-pinned literals
+	// entrypoint.sh declares and exports. They are the manager's whole input:
+	// no version means no managed install (bare `go run`), and a malformed
+	// digest fails manager construction rather than a 528 MB download.
+	KiroCLIVersion     string
+	KiroCLISHA256      string
+	KiroCLISHA256ARM64 string
 	// ToolsDir is the tools engine's install tree root (bin/, opt/,
 	// npm/, python/) on the persistent volume.
 	ToolsDir string
@@ -78,13 +84,16 @@ func ConfigFromEnv() Config {
 	configDir := envx.String("KIRO_CONFIG_DIR", "/config")
 	workDir := envx.String("KIRO_WORK_DIR", "/workspace")
 	return Config{
-		WorkDir:         workDir,
-		ConfigDir:       configDir,
-		CLIPath:         envx.String("KIRO_CLI_PATH", "kiro-cli"),
-		VapidSub:        envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
-		ToolsDir:        envx.String("VIBEKIT_TOOLS_DIR", filepath.Join(configDir, "tools")),
-		ToolCatalogPath: envx.String("VIBEKIT_TOOL_CATALOG", "/opt/vibekit/tool-catalog.json"),
-		ToolCatalogURL:  envx.String("VIBEKIT_TOOL_CATALOG_URL", toolbelt.DefaultCatalogURL),
+		WorkDir:   workDir,
+		ConfigDir: configDir,
+		// The pins the entrypoint exports. Unset outside the container.
+		KiroCLIVersion:     envx.String("KIRO_CLI_VERSION", ""),
+		KiroCLISHA256:      envx.String("KIRO_CLI_SHA256", ""),
+		KiroCLISHA256ARM64: envx.String("KIRO_CLI_SHA256_ARM64", ""),
+		VapidSub:           envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
+		ToolsDir:           envx.String("VIBEKIT_TOOLS_DIR", filepath.Join(configDir, "tools")),
+		ToolCatalogPath:    envx.String("VIBEKIT_TOOL_CATALOG", "/opt/vibekit/tool-catalog.json"),
+		ToolCatalogURL:     envx.String("VIBEKIT_TOOL_CATALOG_URL", toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh: toolbelt.ParseCatalogRefresh(
 			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH", ""), "VIBEKIT_TOOL_CATALOG_REFRESH"),
 		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),

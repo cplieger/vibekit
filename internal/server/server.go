@@ -7,10 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
 	"os/signal"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -43,9 +40,18 @@ type Server struct {
 	staticFS      fs.FS
 	cliRunner     CLIRunner
 	tools         *toolbelt.Engine
-	cliPath       string
-	configDir     string
-	workDir       string
+	// kiroReady is the kiro-cli install manager's readiness verdict plus its
+	// reason, consulted per /api/health probe so a recovery becomes visible
+	// without a restart. Nil = this server does not own the install, which
+	// happens only outside the container (a bare `go run` with no pins), and
+	// readiness stays pure-listener. Every container boot wires it.
+	kiroReady func() (bool, string)
+	// kiroRescan re-derives the active kiro-cli version from what is on disk,
+	// downloading nothing. It backs the loopback repair hook; nil when there is
+	// no manager, and then the route is not mounted at all.
+	kiroRescan func(context.Context) (bool, error)
+	configDir  string
+	workDir    string
 	// trustedProxies is the reverse-proxy network set passed to
 	// webhttp.WithClientIP so the access log's client_ip resolves the
 	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
@@ -132,12 +138,27 @@ func WithStaticFS(staticFS fs.FS) Option {
 	return func(s *Server) { s.staticFS = staticFS }
 }
 
-// WithCLIPath sets the path to the kiro-cli binary used for CLI sub-operations.
-func WithCLIPath(p string) Option {
-	return func(s *Server) {
-		s.cliPath = p
-		s.cliRunner = &execCLIRunner{cliPath: p}
-	}
+// WithCLIPath sets the RESOLVER for the kiro-cli binary used by the CLI
+// sub-operations (/api/version, /api/diagnostics, /api/kiro-settings).
+//
+// A resolver rather than a string because the install manager selects the
+// active version AFTER the listener binds and can switch it later: a path
+// captured at construction would pin every shell-out to whatever was installed
+// first, which on a first boot is nothing at all.
+func WithCLIPath(resolve func() string) Option {
+	return func(s *Server) { s.cliRunner = &execCLIRunner{cliPath: resolve} }
+}
+
+// WithKiroReady sets the kiro-cli readiness verdict /api/health reports. Unset
+// leaves the health probe reflecting only that the listener is up.
+func WithKiroReady(ready func() (bool, string)) Option {
+	return func(s *Server) { s.kiroReady = ready }
+}
+
+// WithKiroRescan sets the disk-rescan hook the loopback repair route exposes.
+// Unset leaves the route unmounted.
+func WithKiroRescan(rescan func(context.Context) (bool, error)) Option {
+	return func(s *Server) { s.kiroRescan = rescan }
 }
 
 // WithConfigDir sets the configuration directory path used for chat files and settings.
@@ -184,6 +205,12 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("/api/kiro-settings", s.handleKiroSettings)
 	s.chats.RegisterRoutes(mux)
 	mux.HandleFunc("/api/health", s.handleHealth)
+	// The kiro-cli repair hook exists only when this server owns the install
+	// (see WithKiroRescan): with no pins in the environment there is nothing to
+	// rescan, so the route is absent rather than answering a misleading 503.
+	if s.kiroRescan != nil {
+		mux.Handle("POST "+kiroRescanPath, loopbackOnly(http.HandlerFunc(s.handleKiroRescan)))
+	}
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
 	// Tools REST surface: the toolbelt httpapi projection, mounted at
@@ -319,8 +346,10 @@ func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
 	return api.DecodeBody(w, r, v, "bad request")
 }
 
-// healthBody is handleHealth's response envelope. A struct, not a map, and that
-// is the point: webhttp.ReadinessHandler fixes its key order with a struct, while
+// healthBody is the readiness envelope handleHealth and the kiro-cli repair
+// hook (handleKiroRescan) both answer with, so an operator reads the same shape
+// from either surface. A struct, not a map, and that is the point:
+// webhttp.ReadinessHandler fixes its key order with a struct, while
 // this handler built a map and encoding/json sorts map keys — so the "canonical
 // envelope shared across the cplieger Go apps" claimed below was emitting
 // {"reason":…,"status":…} here and {"status":…,"reason":…} from the library that
@@ -341,13 +370,18 @@ type healthBody struct {
 // (vibekit, web-terminal-kiro, subflux, registry-stats, plex-exporter): 200 with
 // {"status":"ok"} when the listener is bound and serving; 503 with
 // {"status":"unready",...} during startup or graceful shutdown drain —
-// or when kiro-cli is unavailable (the degraded-not-dead start: the
-// entrypoint boots the server even when the first-boot install failed,
-// and this probe is how the failure surfaces to `docker ps` and
-// monitoring). The kiro-cli probe is a cheap LookPath/stat — never a
-// subprocess spawn — and re-evaluates per request, so recovering the
-// binary heals the health signal without a restart. This is a
-// READINESS signal: under `restart: unless-stopped` nothing restarts
+// or when kiro-cli is unavailable, which is how a failed or still-running
+// install surfaces to `docker ps`, monitoring and the client's degraded banner.
+//
+// The kiro-cli verdict is the install manager's (internal/kirocli): it is
+// VERSION-AWARE, where the check this replaced only asked whether SOMETHING
+// named kiro-cli was on PATH — so a binary drifted from the pin, or one whose
+// auto-update could not be switched off, now reads unready instead of healthy.
+// Reading it is a lock-and-two-field-read, never a subprocess spawn, and it
+// re-evaluates per request, so an install completing (or an in-container repair
+// plus a rescan) heals the signal with no restart.
+//
+// This is a READINESS signal: under `restart: unless-stopped` nothing restarts
 // on the unhealthy state, so there is no restart loop; if ever run
 // under Swarm/k8s, wire it to a readinessProbe, not a livenessProbe.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -369,23 +403,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		unready("starting up or shutting down")
 		return
 	}
-	if s.cliPath != "" && !executableAvailable(s.cliPath) {
-		unready("kiro-cli unavailable")
-		return
+	if s.kiroReady != nil {
+		if ok, reason := s.kiroReady(); !ok {
+			unready(reason)
+			return
+		}
 	}
 	api.WriteJSON(w, healthBody{Status: "ok"})
-}
-
-// executableAvailable reports whether path resolves to an existing
-// executable, matching what os/exec does when the bridge spawns the
-// kiro-cli subprocess: bare names walk $PATH via LookPath, slashed
-// paths are stat'd directly (exec bit checked). Mirrors composition's
-// boot-time checkExecutable, which logs the degraded-start warning.
-func executableAvailable(path string) bool {
-	if !strings.ContainsRune(path, '/') {
-		_, err := exec.LookPath(path)
-		return err == nil
-	}
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }

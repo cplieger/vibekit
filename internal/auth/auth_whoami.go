@@ -51,11 +51,11 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.WhoamiTimeout)
 	defer cancel()
-	// h.cliPath is operator-controlled (resolved at server start from
-	// the bundled binary path), never user input — no G204 risk. The
+	// h.cliPath resolves the install manager's active version (see
+	// Handler.cliPath), never user input — no G204 risk. The
 	// repo-wide gosec G204 exclusion already suppresses the warning;
 	// no //nolint needed.
-	cmd := exec.CommandContext(ctx, h.cliPath, "whoami", "--format", "json") //nolint:gosec // G204: binary path from config
+	cmd := exec.CommandContext(ctx, h.cliPath(), "whoami", "--format", "json") //nolint:gosec // G204: binary path from config
 	var stderr bytes.Buffer
 	var stdoutBuf bytes.Buffer
 	// Bounded stderr capture so a runaway or hostile kiro-cli can't
@@ -87,7 +87,7 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 			// level=error alerter. The fail-soft "whoami
 			// unavailable" sentinel still reaches the client.
 			slog.Warn("whoami: kiro-cli binary not found",
-				"cli_path", h.cliPath)
+				"cli_path", h.cliPath())
 		default:
 			// Log full details server-side; don't leak raw CLI
 			// output to the client (it can contain filesystem

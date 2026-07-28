@@ -58,16 +58,6 @@ func WithPrompter(p api.UtilityPrompter) Option {
 	return func(d *Dispatcher) { d.prompter = p }
 }
 
-// WithBridge is a documentation-only option indicating the Dispatcher
-// uses BridgeAccess from its Dependencies. Reserved for future use
-// where bridge access may be injected independently.
-func WithBridge(_ BridgeAccess) Option { return func(*Dispatcher) {} }
-
-// WithChat is a documentation-only option indicating the Dispatcher
-// uses ChatAccess from its Dependencies. Reserved for future use
-// where chat access may be injected independently.
-func WithChat(_ ChatAccess) Option { return func(*Dispatcher) {} }
-
 // New constructs a Dispatcher with the given dependencies.
 func New(deps Dependencies, opts ...Option) *Dispatcher {
 	d := &Dispatcher{

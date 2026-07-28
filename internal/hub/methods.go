@@ -1,12 +1,7 @@
 package hub
 
-import "github.com/cplieger/vibekit/internal/api"
-
 // ACP method name constants. Centralised so a protocol rename is a
 // single-line change with compile-time verification of all consumers.
-
-// Compile-time assertion that api method constants are accessible.
-var _ = api.MethodPrompt
 
 // v3 (KAS) extension notification method names (_kiro/* namespace).
 // Several map onto shared domain handlers (rate_limit, customAgent

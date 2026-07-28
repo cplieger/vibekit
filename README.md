@@ -50,7 +50,7 @@ chown -R "${PUID:-1000}:${PGID:-1000}" /opt/appdata/vibekit
 
 To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
 
-Open <http://localhost:9847>. `kiro-cli` is downloaded and pinned on first boot (it is not redistributed in the image, per the AWS Customer Agreement). On first launch, sign in to `kiro-cli` and start chatting.
+Open <http://localhost:9847>. The UI comes up right away; `kiro-cli` is downloaded and verified in the background on first boot (it is not redistributed in the image, per the AWS Customer Agreement). Until that finishes, health reports `503` and chats say so; files, git, settings and the shell already work. Then sign in to `kiro-cli` and start chatting.
 
 ## Capabilities
 
@@ -132,7 +132,7 @@ The image ships working defaults; most setups only choose the volumes and how to
 - **Port:** `9847` (HTTP + SSE + the shell WebSocket).
 - **Volumes:** `/config` persists chats, kiro-cli auth/state, installed tools, and settings; `/workspace` is your repositories.
 - **User:** the compose above runs as `1000:1000` (see the first-boot ownership note). Run as root (`user: "0:0"`) to skip managing host ownership.
-- **Health:** `GET /api/health` reports healthy once the server is up. If the first-boot kiro-cli download failed, the web UI still starts (files, git, settings, and the shell all work) but health reports `503 kiro-cli unavailable`, the UI shows a banner, and chats can't run; restart the container to retry the install.
+- **Health:** `GET /api/health` reports healthy once the server is up **and** the pinned `kiro-cli` is installed, runnable at that exact version, and has its auto-update switched off. Anything short of that answers `503` with the reason: `kiro-cli installing` during the first-boot download, `kiro-cli install retrying` between attempts, `kiro-cli unavailable` once they are exhausted, `kiro-cli required settings not enforced` when the pin could not be enforced. The web UI still starts in every one of those states (files, git, settings and the shell all work) and shows a banner; only chats wait. The install retries itself with backoff, so a failed download usually needs no action. To fix one by hand, repair `/config/tools/kiro-cli-versions` inside the container and run `curl -X POST localhost:9847/api/kiro-cli/rescan` (loopback only) to pick it up without a restart.
 
 ### Behind a reverse proxy (`TRUSTED_PROXIES`)
 
@@ -176,7 +176,6 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 | `VIBEKIT_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). | _(unset)_ |
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
-| `KIRO_CLI_PATH` | Path to the kiro-cli binary (resolved via `PATH` when bare). When missing the server still starts degraded: the UI works, health reports `503 kiro-cli unavailable`, chats can't run. | `kiro-cli` |
 | `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
 | `VIBEKIT_TOOLS_DIR` | Tools engine install tree (`bin/`, `opt/`, `npm/`, `python/`) on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
 | `VIBEKIT_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a successfully fetched catalog replaces it. | `/opt/vibekit/tool-catalog.json` |
@@ -199,6 +198,12 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 ## kiro-cli
 
 `kiro-cli` is downloaded and pinned on first boot rather than baked into the image (the AWS Customer Agreement governs redistribution, so you accept it by booting the container). Upgrades arrive by pulling a newer image tag; there is no in-place self-update.
+
+The server owns that install. It fetches the pinned archive, checks its SHA-256 against the digest for your architecture, and unpacks it into its own directory under `/config/tools/kiro-cli-versions/<version>/`, published by a single rename once every file is on disk. An interrupted install leaves a directory with no completion marker, which the next boot deletes instead of trusting. Each boot also re-probes the binary it is about to use and requires it to report the pinned version, so a replaced or half-restored install is rejected rather than run.
+
+One previous version is kept. If a new version turns out to be broken, the predecessor is still on the volume; anything older is pruned after the switch, along with the superseded agent-runtime trees that would otherwise grow by ~240 MB per version.
+
+`docker exec <container> kiro-cli --version` keeps working: `/config/tools/bin/kiro-cli` is maintained as a symlink to the active version. It is a convenience for you, not part of the install; vibekit itself always runs the absolute versioned path.
 
 ## Related projects
 

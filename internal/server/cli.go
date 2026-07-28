@@ -42,19 +42,25 @@ type CLIRunner interface {
 	RunStdoutCapped(ctx context.Context, limit int, args ...string) (out []byte, truncated bool, err error)
 }
 
-// execCLIRunner is the production CLIRunner that shells out to cliPath.
+// execCLIRunner is the production CLIRunner that shells out to the kiro-cli
+// binary cliPath resolves to.
+//
+// The path is a FUNCTION, not a string: the install manager selects the active
+// version after the listener binds and can switch it later, so a value captured
+// at construction would pin every shell-out to whatever was installed first —
+// and on a first boot that is the empty string.
 type execCLIRunner struct {
-	cliPath string
+	cliPath func() string
 }
 
 func (r *execCLIRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
-	return exec.CommandContext(ctx, r.cliPath, args...).CombinedOutput() //nolint:gosec // G204: binary path from config
+	return exec.CommandContext(ctx, r.cliPath(), args...).CombinedOutput() //nolint:gosec // G204: binary path from the install manager, never user input
 }
 
 func (r *execCLIRunner) RunStdoutCapped(ctx context.Context, limit int, args ...string) (out []byte, truncated bool, err error) {
 	stdout := &cappedBuffer{limit: limit}
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, r.cliPath, args...) //nolint:gosec // G204: binary path from config
+	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	cmd.Stdout = stdout
 	cmd.Stderr = &api.LimitedWriter{W: &stderr, N: cliStderrCap}
 	err = cmd.Run()

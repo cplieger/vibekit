@@ -6,13 +6,12 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/kirocli"
 )
 
 func TestSyncPushPreferences(t *testing.T) {
@@ -555,51 +554,85 @@ func TestHandleHealth_returns_ok(t *testing.T) {
 	}
 }
 
-// TestHandleHealth_DegradedWhenCLIMissing pins the degraded-not-dead
-// start (P5): the server is up (ready=true) but kiro-cli is absent, so
-// health must report 503 "kiro-cli unavailable" — the signal `docker
-// ps`, monitoring, and the client's degraded banner all key off.
-func TestHandleHealth_DegradedWhenCLIMissing(t *testing.T) {
-	s := &Server{cliPath: filepath.Join(t.TempDir(), "kiro-cli")} // never installed
-	s.ready.Store(true)
-
-	rec := httptest.NewRecorder()
-	s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want 503", rec.Code)
-	}
-	var got map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
-	}
-	if got["status"] != "unready" || got["reason"] != "kiro-cli unavailable" {
-		t.Errorf("body = %v, want unready/kiro-cli unavailable", got)
-	}
-}
-
-// TestHandleHealth_OKWhenCLIPresent covers both executableAvailable
-// modes: a slashed path to a real executable, and a bare name resolved
-// via $PATH. Recovery is per-probe (no restart needed), so the same
-// server flips ok once the binary appears.
-func TestHandleHealth_OKWhenCLIPresent(t *testing.T) {
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "kiro-cli")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	for name, cliPath := range map[string]string{"slashed_path": bin, "bare_name_on_path": "sh"} {
-		t.Run(name, func(t *testing.T) {
-			s := &Server{cliPath: cliPath}
+// TestHandleHealth_DegradedWhenKiroUnready pins the degraded-not-dead start
+// (invariant 6): the server is up (ready=true) but the install manager has no
+// usable kiro-cli, so health must report 503 with the MANAGER'S OWN reason — the
+// signal `docker ps`, monitoring and the client's degraded banner all key off.
+//
+// Each reason is a distinct operator situation, and carrying them verbatim is
+// what the version-aware gate buys over the existence check it replaced: that
+// one could only ever say "unavailable", and said "ok" for a binary drifted from
+// the pin or one whose auto-update could not be switched off.
+func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
+	for _, reason := range []string{
+		kirocli.ReasonInstalling,
+		kirocli.ReasonRetrying,
+		kirocli.ReasonUnavailable,
+		kirocli.ReasonSettings,
+	} {
+		t.Run(reason, func(t *testing.T) {
+			s := &Server{kiroReady: func() (bool, string) { return false, reason }}
 			s.ready.Store(true)
+
 			rec := httptest.NewRecorder()
 			s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
-			if rec.Code != http.StatusOK {
-				t.Errorf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", rec.Code)
+			}
+			var got map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
+			}
+			if got["status"] != "unready" || got["reason"] != reason {
+				t.Errorf("body = %v, want unready/%q", got, reason)
 			}
 		})
 	}
+}
+
+// TestHandleHealth_OKWhenKiroReady covers the two shapes that answer 200: a
+// manager reporting ready, and no manager at all (a bare `go run` with no pins,
+// where readiness stays pure-listener). The verdict is read per
+// probe, so an install completing flips the same server to ok with no restart —
+// asserted by flipping the verdict between two probes.
+func TestHandleHealth_OKWhenKiroReady(t *testing.T) {
+	t.Run("manager reports ready", func(t *testing.T) {
+		s := &Server{kiroReady: func() (bool, string) { return true, "" }}
+		s.ready.Store(true)
+		rec := httptest.NewRecorder()
+		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("no manager leaves readiness pure-listener", func(t *testing.T) {
+		s := &Server{}
+		s.ready.Store(true)
+		rec := httptest.NewRecorder()
+		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("recovery is visible on the next probe", func(t *testing.T) {
+		ready := false
+		s := &Server{kiroReady: func() (bool, string) { return ready, kirocli.ReasonInstalling }}
+		s.ready.Store(true)
+		rec := httptest.NewRecorder()
+		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want 503 while installing", rec.Code)
+		}
+		ready = true
+		rec = httptest.NewRecorder()
+		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200 once the install completed; body=%s", rec.Code, rec.Body.String())
+		}
+	})
 }
 
 func TestHandleHealth_unready(t *testing.T) {

@@ -304,10 +304,14 @@ COPY catalog-overlays.json /opt/vibekit/catalog-overlays.json
 WORKDIR /workspace
 EXPOSE 9847
 
-# start-period=300s: a fresh-volume first boot downloads and verifies
-# kiro-cli (~large zip) BEFORE the server binds, so a slow registry or
-# link can legitimately take minutes. 60s marked such containers
-# unhealthy while the install was still progressing normally.
+# start-period=300s: a fresh-volume first boot downloads and verifies kiro-cli
+# (~528 MB zip), so a slow registry or link can legitimately take minutes. The
+# budget is unchanged by the install moving into the server: the listener now
+# binds first and /api/health answers 503 "kiro-cli installing" for that same
+# window, where before there was nothing listening at all. Either way the
+# container is not healthy until the pinned version is installed and runnable, so
+# the start period still has to cover the download. 60s marked such containers
+# unhealthy while the install was progressing normally.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
     CMD curl -sf http://127.0.0.1:9847/api/health || exit 1
 ENTRYPOINT ["/opt/vibekit/entrypoint.sh"]

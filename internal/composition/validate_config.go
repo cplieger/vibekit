@@ -3,11 +3,8 @@ package composition
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 )
 
 // validateConfig performs fail-fast checks on the configuration so
@@ -21,9 +18,13 @@ import (
 //
 // Log: the error propagates through Build() → main() → slog.Error +
 // os.Exit(1). No slog.Warn here — a failed validation is fatal, not
-// a degraded-mode situation. (The one degraded-mode check, kiro-cli
-// presence, deliberately lives OUTSIDE this function: see
-// warnIfCLIMissing.)
+// a degraded-mode situation.
+//
+// kiro-cli is deliberately NOT checked. It is the install manager's binary and
+// the install is still running when this executes on a first boot, so probing
+// for it would warn on every healthy cold start. The manager owns that
+// reporting: it logs each attempt, and /api/health carries the verdict with its
+// phase in the reason until a version is active.
 func validateConfig(cfg *Config) error {
 	var errs []error
 
@@ -41,22 +42,6 @@ func validateConfig(cfg *Config) error {
 	}
 
 	return errors.Join(errs...)
-}
-
-// warnIfCLIMissing is the degraded-start posture (P5, mirroring
-// web-terminal-kiro): a missing kiro-cli must NOT abort boot. The
-// entrypoint downloads the binary before exec-ing vibekit, but a
-// first-boot network failure legitimately leaves it absent — killing
-// the server then would erase the UI, diagnostics, and health signal
-// together (the old `sleep infinity` dead end). The server starts,
-// /api/health reports "kiro-cli unavailable" per probe, the client
-// shows a degraded banner, and a container restart retries the
-// install. Bridge spawns fail loudly in the meantime.
-func warnIfCLIMissing(cfg *Config) {
-	if err := checkExecutable(cfg.CLIPath, "KIRO_CLI_PATH"); err != nil {
-		slog.Warn("starting degraded: kiro-cli unavailable — chats cannot start until it is installed; restart the container to retry the install",
-			"error", err)
-	}
 }
 
 // checkDirWritable verifies dir exists, is a directory, and is
@@ -80,32 +65,5 @@ func checkDirWritable(dir, envVar string) error {
 	f.Close()
 	os.Remove(name)
 	_ = os.Remove(probe) // clean up any stale probe from a prior crash
-	return nil
-}
-
-// checkExecutable verifies path resolves to an existing executable.
-// Two modes:
-//   - Bare name (no slash): looked up via exec.LookPath, which walks
-//     $PATH and tests the executable bit. Matches what os/exec does
-//     when Bridge spawns the kiro-cli subprocess.
-//   - Path with slash (absolute or relative): stat'd directly so a
-//     misspelled path or stripped exec bit is caught.
-func checkExecutable(path, envVar string) error {
-	if !strings.ContainsRune(path, '/') {
-		if _, err := exec.LookPath(path); err != nil {
-			return fmt.Errorf("%s=%q: not found on $PATH: %w", envVar, path, err)
-		}
-		return nil
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("%s=%q: %w", envVar, path, err)
-	}
-	if info.IsDir() {
-		return fmt.Errorf("%s=%q: is a directory, expected executable file", envVar, path)
-	}
-	if info.Mode()&0o111 == 0 {
-		return fmt.Errorf("%s=%q: file exists but is not executable (mode %s)", envVar, path, info.Mode())
-	}
 	return nil
 }

@@ -65,23 +65,48 @@ type Bridge struct {
 	cliPath      string
 	currentMode  string
 	agentEngine  string
-	nextID       atomic.Int64
-	enableHooks  bool
-	stopOnce     sync.Once
-	mu           sync.Mutex
-	writeMu      sync.Mutex
-	pendingMu    sync.Mutex
+	// extraEnv is appended to the inherited environment of the kiro-cli
+	// process this bridge starts. The install manager's active version
+	// directory leads PATH through it, so `kiro-cli` resolves any sibling it
+	// needs out of the same verified install rather than through whatever else
+	// $TOOLS/bin holds. Empty leaves the environment fully inherited.
+	extraEnv    []string
+	nextID      atomic.Int64
+	enableHooks bool
+	stopOnce    sync.Once
+	mu          sync.Mutex
+	writeMu     sync.Mutex
+	pendingMu   sync.Mutex
 }
 
-// New returns a fresh bridge. Call Start before any other method.
-func New(cliPath, workDir string) *Bridge {
-	return &Bridge{
+// Option configures a Bridge at construction time.
+type Option func(*Bridge)
+
+// WithEnv appends extra environment variables to the kiro-cli process this
+// bridge starts, on top of the inherited environment. Used to put the install
+// manager's active version directory first on PATH.
+func WithEnv(env []string) Option {
+	return func(b *Bridge) { b.extraEnv = env }
+}
+
+// New returns a fresh bridge that runs the kiro-cli binary at cliPath. Call
+// Start before any other method.
+//
+// cliPath is resolved by the CALLER, once per bridge, which is what makes a
+// version switch reach the next chat: the bridge is the long-lived consumer
+// here, and one is constructed per chat rather than once per process.
+func New(cliPath, workDir string, opts ...Option) *Bridge {
+	b := &Bridge{
 		cliPath: cliPath,
 		workDir: workDir,
 		pending: make(map[int64]chan *api.RPCResponse),
 		notifCh: make(chan *api.RPCResponse, 256),
 		done:    make(chan struct{}),
 	}
+	for _, o := range opts {
+		o(b)
+	}
+	return b
 }
 
 // SessionID returns the bridge's ACP session id. Safe to call from

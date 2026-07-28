@@ -10,10 +10,14 @@
 # smoke test can never show the abort works — and if it silently stopped aborting,
 # the boot would carry on into an install that writes nowhere.
 #
-# Every directory in the list is load-bearing: $TOOLS/bin is the PATH entry and the
-# kiro-cli promotion target, $HOME/.local/share/kiro-cli is the parent of the agent
-# runtime store the pruner resolves, $HOME/.ssh and $KIRO_HOME hold the state that
-# has to survive container recreation.
+# Every directory in the list is load-bearing: $TOOLS/bin is the PATH entry,
+# $TOOLS/kiro-cli-versions is the version-addressed install root the SERVER writes
+# into -- a SIBLING of the toolbelt engine's opt/ tree rather than a child, so the
+# engine's per-tool prune can never reach it -- (so this branch is also what proves
+# that tree writable before the install runs),
+# $HOME/.local/share/kiro-cli is the parent of the agent runtime store the pruner
+# resolves, and $HOME/.ssh and $KIRO_HOME hold the state that has to survive
+# container recreation.
 # Lint directives for this whole file, each against a stated guarantee rather than
 # an assumption:
 #   SC2015 - the assertion form `[ cond ] && ok "..." || no "..."` cannot mis-fire,
@@ -57,13 +61,32 @@ ROOT="$WORK/ok"
 ) >"$WORK/out.log" 2>&1
 rc=$?
 missing=""
-for d in tools/bin home/.local/share/kiro-cli home/.ssh home/.kiro \
+for d in tools/bin tools/kiro-cli-versions home/.local/share/kiro-cli home/.ssh home/.kiro \
   home/.cache/go-build home/.docker/cli-plugins; do
   [ -d "$ROOT/$d" ] || missing="$missing $d"
 done
 [ "$rc" -eq 0 ] && [ -z "$missing" ] \
-  && ok "the boot creates all six required directories and continues" \
+  && ok "the boot creates all seven required directories and continues" \
   || no "required directories" "rc=$rc missing:$missing"
+
+# The install root gets its own assertion rather than riding the list above,
+# because it is the only entry the SERVER writes into: the manager creates
+# $TOOLS/kiro-cli-versions/<version>/ under it and would have to MkdirAll the parents
+# itself if this line ever dropped it. A missing parent there is not visible in the
+# boot log -- the install just fails on the first attempt of a fresh volume, inside
+# the server -- so the failure mode is worth naming here.
+[ -d "$ROOT/tools/kiro-cli-versions" ] \
+  && ok "the kiro-cli version-install root exists before the server can write into it" \
+  || no "kiro-cli install root" "$ROOT/tools/kiro-cli-versions was not created by the boot's mkdir"
+
+# The install root must be a SIBLING of the toolbelt engine's trees, never inside
+# one: the engine deletes every version directory under opt/<tool> that is not the
+# version it just installed, and it accepts any tool name from a hand-editable
+# manifest, so an entry named `kiro-cli` would have taken the active install and its
+# retained predecessor with it.
+[ ! -e "$ROOT/tools/opt/kiro-cli" ] \
+  && ok "the boot creates no kiro-cli tree under the toolbelt engine's opt/, so the engine's prune cannot reach the install" \
+  || no "install root under opt/" "$ROOT/tools/opt/kiro-cli exists again; the engine's per-tool prune deletes every non-current version directory under opt/<tool>"
 
 # --- 2. a directory it cannot create aborts the boot -----------------------------
 # Root cannot be denied a mkdir under a directory it owns, so the failure this branch

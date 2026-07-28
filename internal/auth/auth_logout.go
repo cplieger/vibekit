@@ -38,7 +38,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		"user_agent", r.Header.Get("User-Agent"))
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.LogoutTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, h.cliPath, "logout") //nolint:gosec // G204: binary path from config
+	cmd := exec.CommandContext(ctx, h.cliPath(), "logout") //nolint:gosec // G204: binary path from config
 	// Put the logout subprocess in its own process group so the
 	// timeout branch can reap the whole tree (bun + Node helper
 	// children) via killLoginProcess. CommandContext's default
@@ -77,7 +77,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 			return
 		case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
 			slog.Error("logout: kiro-cli binary not found",
-				"cli_path", h.cliPath)
+				"cli_path", h.cliPath())
 			result["error"] = "logout unavailable"
 			api.WriteJSONStatus(w, http.StatusServiceUnavailable, result)
 			return

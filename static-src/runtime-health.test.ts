@@ -44,6 +44,31 @@ describe("runtime-health: degraded banner reconciliation", () => {
     expect(mockedClear).not.toHaveBeenCalled();
   });
 
+  // The reasons are a LIFECYCLE, and a first boot spends minutes in the first
+  // one. Matching a single literal would leave that window with no banner while
+  // every chat fails, which is the regression this table exists to prevent.
+  it.each([
+    ["kiro-cli installing", "info", "downloading"],
+    ["kiro-cli install retrying", "info", "retried"],
+    ["kiro-cli required settings not enforced", "error", "auto-update"],
+    ["kiro-cli some future state", "error", "not installed"],
+  ])("banners the %s state", async (reason, wantLevel, wantText) => {
+    mockedGet.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      data: null,
+      error: "HTTP 503",
+      body: { status: "unready", reason },
+    });
+    await checkRuntimeHealth();
+    expect(mockedShow).toHaveBeenCalledTimes(1);
+    const [, , message, level, dismissible] = mockedShow.mock.calls[0]!;
+    expect(message).toContain(wantText);
+    expect(level).toBe(wantLevel);
+    expect(dismissible).toBe(false);
+    expect(mockedClear).not.toHaveBeenCalled();
+  });
+
   it("clears the banner when health is ok", async () => {
     mockedGet.mockResolvedValueOnce({
       ok: true,
