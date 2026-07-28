@@ -54,7 +54,7 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 			payload := strings.Repeat("x", sz.size)
 			resp := api.RPCResponse{
 				JSONRPC: jsonRPCVersion,
-				ID:      ptrInt64(42),
+				ID:      new(int64(42)),
 				Result:  json.RawMessage(`"` + payload + `"`),
 			}
 			line, err := json.Marshal(resp)
@@ -85,6 +85,3 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 		})
 	}
 }
-
-//go:fix inline
-func ptrInt64(v int64) *int64 { return new(v) }

@@ -172,13 +172,13 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// device-code TTL + 1m grace. The select below separately
 	// bounds the URL-discovery phase at LoginURLTimeout.
 	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginProcessCap)
-	cmd := exec.CommandContext(ctx, h.cliPath, buildLoginArgs(provider, region)...) //nolint:gosec // G204: binary path from config
+	cmd := exec.CommandContext(ctx, h.cliPath(), buildLoginArgs(provider, region)...) //nolint:gosec // G204: binary path from config
 	setLoginProcAttr(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
 		slog.Error("login: stdout pipe failed",
-			"error", err, "cli_path", h.cliPath)
+			"error", err, "cli_path", h.cliPath())
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON("login unavailable"))
 		return
@@ -191,7 +191,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	cmd.Stderr = &limitedWriter{W: &stderrBuf, N: stderrCap}
 	if err := cmd.Start(); err != nil {
 		cancel()
-		status := classifyLoginStartErr(err, h.cliPath)
+		status := classifyLoginStartErr(err, h.cliPath())
 		api.WriteJSONStatus(w, status, api.ErrorJSON("login unavailable"))
 		return
 	}

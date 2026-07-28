@@ -41,7 +41,18 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 - `internal/hub/`: command dispatch, SSE broadcast, ACP-to-domain event
   translation, bridge buffer aggregation, and the global PTY shell.
 - `internal/bridge/`: `kiro-cli acp` subprocess lifecycle, capability
-  handshake, and the filesystem read/write handlers.
+  handshake, and the filesystem read/write handlers. The binary it runs is
+  resolved once per bridge, from the install manager, so a version switch reaches
+  the next chat instead of being frozen at boot.
+- `internal/kirocli/`: the kiro-cli install manager. Downloads the pinned
+  archive, verifies its per-arch SHA-256, installs into
+  `<tools dir>/kiro-cli-versions/<version>/` behind a `.complete` sentinel written
+  last, selects the active version (re-probing `--version` before trusting any
+  directory), reasserts the settings the pin depends on, keeps exactly one
+  predecessor, and purges the layout the shell installer used to promote into
+  `$TOOLS/bin`. Nothing in it exits the process: every failure degrades readiness
+  instead, so the UI and the `docker exec` repair path survive a broken install.
+  `entrypoint.sh` supplies only the three Renovate-pinned literals.
 - `internal/translate/`: ACP notification handlers that turn raw `kiro-cli`
   events into vibekit domain events.
 - `internal/command/`: handlers for each `POST /api/command` type.
@@ -176,6 +187,44 @@ go build ./...        # compile everything
 go run .              # run the server (needs kiro-cli on PATH to do useful work)
 ```
 
+`go run .` installs nothing: with no `KIRO_CLI_VERSION` in the environment the
+manager stands down, kiro-cli is resolved by bare name, and `/api/health` reports
+only that the listener is up. The install runs when the entrypoint exports the
+pins, so a first boot in the container answers `503` with a phase in its reason
+while the archive downloads, then flips to healthy on its own.
+
+#### Exercising the managed install without a 528 MB download
+
+No env var points vibekit at a binary you picked; the install manager is the only
+thing that resolves kiro-cli's path. What the manager does do is adopt a version
+directory that is already complete on disk, downloading nothing, and that's the
+seam to use locally and in tests. Populate it yourself:
+
+```text
+$VIBEKIT_TOOLS_DIR/kiro-cli-versions/<version>/
+├── kiro-cli      # executable; must answer `--version` with <version>
+└── .complete     # the sentinel; written LAST, contains <version>
+```
+
+```sh
+export VIBEKIT_TOOLS_DIR=/tmp/vibekit-tools KIRO_CLI_VERSION=2.14.2
+V="$VIBEKIT_TOOLS_DIR/kiro-cli-versions/$KIRO_CLI_VERSION"
+mkdir -p "$V"
+cp /path/to/kiro-cli "$V/"
+printf '%s\n' "$KIRO_CLI_VERSION" >"$V/.complete"
+go run .
+```
+
+Only the main dispatcher is required here, because `kiro-cli acp` is served by it;
+`kiro-cli-chat` and `kiro-cli-term` are optional and merely warn when absent. Both
+digest variables stay unset, since nothing is fetched to verify. `.complete` is
+what makes the directory a selection candidate, and the two per-boot gates still
+run against whatever you put there: `kiro-cli --version` must print the
+directory's own name, and `app.disableAutoupdates=true` must be assertable
+through `kiro-cli settings` or readiness is withheld. A shell script answering
+both is enough for a wiring check;
+`internal/composition/kirocli_test.go` builds exactly that fake dispatcher.
+
 The full application (Go server, kiro-cli download, and the on-demand tool
 chain) is designed to run in the container. The image is built from the
 multi-stage `Dockerfile`, and `compose.yaml` wires up the persistent `/config`
@@ -242,6 +291,23 @@ golangci-lint fmt          # apply gofumpt + gci formatting
 
 `golangci-lint run` reports unformatted files as issues, so the lint step also
 enforces formatting; `golangci-lint fmt` is the fixer.
+
+### Boot path
+
+```sh
+bash tests/shell/run.sh    # entrypoint.sh unit tests
+shellcheck -S warning entrypoint.sh
+shfmt -i 2 -ci -bn -d entrypoint.sh
+```
+
+The suite runs the real functions out of `entrypoint.sh` against temp
+directories, covering the branches a booting image never takes: a `/config` it
+cannot create, the agent-runtime pruner's refusals, and the pins the Go install
+manager reads. Add a case by extracting the function and confirming the new
+assertion fails against a mutated `/tmp` copy
+(`ENTRYPOINT=/tmp/mut.sh bash tests/shell/<x>_test.sh`), never by editing
+`entrypoint.sh` in place. `lib.sh` and `harness_test.sh` are synced from
+`cplieger/ci`; change them there.
 
 ### Frontend (from `static-src/`)
 

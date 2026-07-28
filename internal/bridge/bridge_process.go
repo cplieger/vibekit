@@ -121,6 +121,14 @@ func (b *Bridge) startProcess(engine, model, effort string) error {
 	if !validIdent(model) {
 		return fmt.Errorf("invalid model identifier: %q", model)
 	}
+	if b.cliPath == "" {
+		// The install manager has no active version: either the first-boot
+		// install is still running or it failed with nothing on the volume to
+		// fall back to. Say so, because this message is what the client shows
+		// instead of a bare spawn failure -- /api/health carries the same
+		// verdict with the phase in its reason.
+		return errors.New("kiro-cli is not available yet: the pinned version is still installing or its install failed (see /api/health)")
+	}
 	args := buildACPArgs(engine, model, effort)
 	// Lifecycle is owned by Stop(), not by a context. The
 	// lifecycleCtx is a belt-and-braces kill signal: if the hub
@@ -130,7 +138,13 @@ func (b *Bridge) startProcess(engine, model, effort string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	b.cmd = exec.CommandContext(ctx, b.cliPath, args...) //nolint:gosec // G204: binary path from config
+	b.cmd = exec.CommandContext(ctx, b.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
+	if len(b.extraEnv) > 0 {
+		// Appended LAST, so the active version directory wins PATH resolution
+		// over anything the inherited environment puts ahead of it. A nil Env
+		// (no overlay configured) keeps the plain inherited environment.
+		b.cmd.Env = append(os.Environ(), b.extraEnv...)
+	}
 	// Belt-and-braces graceful shutdown when lifecycleCtx is canceled.
 	// Default CommandContext behavior is immediate SIGKILL; Cancel + WaitDelay
 	// (Go 1.20+) escalate to SIGKILL only after a 5s SIGTERM grace period,

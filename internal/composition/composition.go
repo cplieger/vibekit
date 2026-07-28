@@ -43,6 +43,9 @@ type App struct {
 	purgeScheduler *archive.PurgeScheduler
 	mcpPrewarm     *prewarm.Runner
 	tools          *toolbelt.Engine
+	// stopKiro cancels the background kiro-cli install, so a shutdown during a
+	// first-boot download or a retry backoff does not wait it out.
+	stopKiro func()
 }
 
 // Build constructs all services and wires them together. staticFS is
@@ -61,7 +64,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err := validateConfig(cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
-	warnIfCLIMissing(cfg)
+
+	// kiro-cli is installed and selected by the manager startKiroCLI builds: the
+	// bridge's argv and environment, the auth shell-outs, the CLI runner and the
+	// /api/health verdict all come from it, so a version switch reaches the next
+	// bridge instead of being frozen at boot. The install runs in the background
+	// -- the listener binds first and only readiness waits.
+	kiro := startKiroCLI(ctx, cfg)
 
 	logctl.Install(ctx, cfg.ConfigDir)
 
@@ -82,8 +91,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
+	// One bridge per chat, so the resolution happens per SPAWN: the bridge is
+	// this app's long-lived kiro-cli consumer, and resolving once per process
+	// would pin every chat to whatever was installed first.
 	bridgeFactory := func() api.ACPBridge {
-		return bridge.New(cfg.CLIPath, cfg.WorkDir)
+		return bridge.New(kiro.cliPath(), cfg.WorkDir, bridge.WithEnv(kiro.env()))
 	}
 
 	mcpStore, err := mcpPkg.New(ctx, cfg.ConfigDir, nil)
@@ -161,7 +173,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// the editor's PUT /api/file path is captured — uploads, copies,
 	// and shell writes stay outside the checkpoint contract.
 	fileHandler.SetWriteObserver(h.CaptureEditorSave)
-	authHandler := auth.NewHandler(cfg.CLIPath,
+	authHandler := auth.NewHandler(kiro.cliPath,
 		auth.WithConfig(cfg.AuthConfig),
 		auth.WithTrustedProxies(cfg.TrustedProxies))
 	forgesHTTP := forgesPkg.NewHTTPHandler(forgesManager, h)
@@ -233,7 +245,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithAccountUsage(h),
 		server.WithPolicy(h),
 		server.WithStaticFS(static),
-		server.WithCLIPath(cfg.CLIPath),
+		server.WithCLIPath(kiro.cliPath),
+		server.WithKiroReady(kiro.ready),
+		server.WithKiroRescan(kiro.rescan),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithWorkDir(cfg.WorkDir),
 		server.WithTrustedProxies(cfg.TrustedProxies),
@@ -246,6 +260,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		purgeScheduler: purgeScheduler,
 		mcpPrewarm:     mcpPrewarm,
 		tools:          toolsEngine,
+		stopKiro:       kiro.stop,
 	}, nil
 }
 
@@ -267,6 +282,7 @@ func (a *App) Run() error {
 
 // Shutdown stops background services in reverse order.
 func (a *App) Shutdown() {
+	a.stopKiro()
 	a.purgeScheduler.Stop()
 	a.mcpPrewarm.Stop()
 	a.tools.Close()

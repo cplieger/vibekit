@@ -482,10 +482,6 @@ func TestExtractToolCallID_ChatUnique(t *testing.T) {
 	}
 }
 
-// Appease the unused-import check for sync when future tests need it;
-// keeping the variable alive avoids toolchain noise during iteration.
-var _ = sync.Mutex{}
-
 // TestReadStagedOld_ExactCapBoundary reads a file of exactly fsReadCap
 // bytes successfully (the guard is a strict `>`); a file one byte over
 // the cap now stages BLIND (empty OldText + truncated=true, no error) —

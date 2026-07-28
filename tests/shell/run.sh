@@ -14,17 +14,25 @@
 # harness_test.sh beside it are synced from cplieger/ci), so the per-repo scope
 # rationale lives here.
 #
-# entrypoint.sh
-# IS vibekit's boot path — it creates /config, prunes the superseded kiro-cli
-# agent-runtime trees, decides whether the installed kiro-cli still matches the
-# pin, downloads and promotes a new one, seeds settings, then execs the server.
-# Its most consequential branches are the ones that REFUSE: a root `rm -rf`
-# aimed at a symlinked or unconfirmable agent-runtime store, a promotion
-# candidate that is a symlink into staging, a binary whose reported version
-# drifted from KIRO_CLI_VERSION, a /config that cannot be created. A healthy
-# image never takes any of them, so tests/image-smoke.sh — which boots the
-# assembled image and waits for its HEALTHCHECK — structurally cannot reach
-# them: it can only prove the paths a working container walks.
+# entrypoint.sh IS vibekit's boot path, and it is now a SHORT one: it declares the
+# Renovate-pinned kiro-cli literals and exports them, creates and proves /config,
+# prunes the superseded kiro-cli agent-runtime trees, sweeps the legacy $HOME
+# residue, and execs the server. The INSTALL is no longer here — the Go server owns
+# it (internal/kirocli), so the download, the digest verification, the version
+# selection and the settings reassertion are Go tests, and the shell tests that
+# drove `install_kiro_cli` and its promotion sequence were deleted with it rather
+# than left asserting against code that no longer ships.
+#
+# What remains here is what the entrypoint still does, and its most consequential
+# branches are the ones that REFUSE or that cross the boundary INTO the server: a
+# root `rm -rf` aimed at a symlinked or unconfirmable agent-runtime store, a
+# /config that cannot be created, and the pins-plus-install-root contract the
+# server reads (pins_export_test.sh). A healthy image never takes the refusals, so
+# tests/image-smoke.sh — which boots the assembled image and waits for its
+# HEALTHCHECK — structurally cannot reach them: it can only prove the paths a
+# working container walks. And the boundary test covers what a smoke test cannot
+# SEE: a dropped export leaves a container that boots, reports healthy, and
+# installs nothing.
 #
 # The refusals also need asserting DIRECTLY rather than through an exit code,
 # for two reasons specific to this file. First, the boot runs without `set -e`

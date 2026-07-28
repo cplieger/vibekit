@@ -13,6 +13,10 @@ func FuzzExportFilename(f *testing.F) {
 	f.Add(strings.Repeat("x", 200), "c1")
 	f.Add("\x00\x1f\x7f", "c1")
 	f.Add("", "")
+	// Promoted from the orphaned testdata/fuzz/FuzzSafeExportName corpus,
+	// deleted with that pre-rename target name: an id carrying a forbidden
+	// quote character.
+	f.Add("", "\"")
 
 	const forbidden = "/\\:*?<>|\""
 

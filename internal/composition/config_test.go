@@ -11,7 +11,7 @@ import (
 )
 
 func TestConfigFromEnv_Defaults(t *testing.T) {
-	// Unset all relevant env vars (they shouldn't be set in test env).
+	t.Setenv("KIRO_CLI_VERSION", "")
 	cfg := ConfigFromEnv()
 
 	if cfg.WorkDir == "" {
@@ -20,8 +20,8 @@ func TestConfigFromEnv_Defaults(t *testing.T) {
 	if cfg.ConfigDir == "" {
 		t.Error("ConfigDir is empty, want default")
 	}
-	if cfg.CLIPath == "" {
-		t.Error("CLIPath is empty, want default")
+	if cfg.KiroCLIVersion != "" {
+		t.Errorf("KiroCLIVersion = %q, want empty outside the container", cfg.KiroCLIVersion)
 	}
 	if cfg.AuthConfig.LoginURLTimeout <= 0 {
 		t.Error("LoginURLTimeout is zero/negative, want positive default")
@@ -40,7 +40,9 @@ func TestConfigFromEnv_Defaults(t *testing.T) {
 func TestConfigFromEnv_Overrides(t *testing.T) {
 	t.Setenv("KIRO_WORK_DIR", "/custom/work")
 	t.Setenv("KIRO_CONFIG_DIR", "/custom/config")
-	t.Setenv("KIRO_CLI_PATH", "/usr/bin/custom-cli")
+	t.Setenv("KIRO_CLI_VERSION", "9.9.9")
+	t.Setenv("KIRO_CLI_SHA256", "abc")
+	t.Setenv("KIRO_CLI_SHA256_ARM64", "def")
 	t.Setenv("VIBEKIT_AUTH_LOGIN_URL_TIMEOUT", "10s")
 
 	cfg := ConfigFromEnv()
@@ -51,8 +53,9 @@ func TestConfigFromEnv_Overrides(t *testing.T) {
 	if cfg.ConfigDir != "/custom/config" {
 		t.Errorf("ConfigDir = %q, want /custom/config", cfg.ConfigDir)
 	}
-	if cfg.CLIPath != "/usr/bin/custom-cli" {
-		t.Errorf("CLIPath = %q, want /usr/bin/custom-cli", cfg.CLIPath)
+	if cfg.KiroCLIVersion != "9.9.9" || cfg.KiroCLISHA256 != "abc" || cfg.KiroCLISHA256ARM64 != "def" {
+		t.Errorf("pins = %q/%q/%q, want the three exported literals verbatim",
+			cfg.KiroCLIVersion, cfg.KiroCLISHA256, cfg.KiroCLISHA256ARM64)
 	}
 	if cfg.AuthConfig.LoginURLTimeout != 10*time.Second {
 		t.Errorf("LoginURLTimeout = %v, want 10s", cfg.AuthConfig.LoginURLTimeout)
