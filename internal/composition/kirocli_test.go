@@ -4,11 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/kirocli"
+	"github.com/cplieger/pinstall"
 )
 
 // TestStartKiroCLIShapes pins the runtimes startKiroCLI can return for a
@@ -24,10 +25,10 @@ func TestStartKiroCLIShapes(t *testing.T) {
 	tests := map[string]struct {
 		cfg       Config
 		wantPath  string
-		wantGate  bool   // a readiness verdict is published at all
-		wantReady bool   // and what it says
-		reason    string // its reason when not ready
-		rescan    bool   // the repair hook is wired
+		wantGate  bool            // a readiness verdict is published at all
+		wantReady bool            // and what it says
+		reason    pinstall.Reason // its reason when not ready
+		rescan    bool            // the repair hook is wired
 	}{
 		"no pins resolves the bare name and installs nothing": {
 			cfg:      Config{ToolsDir: t.TempDir()},
@@ -41,7 +42,7 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			cfg:      Config{KiroCLIVersion: "2.14.2", KiroCLISHA256: "not-a-digest", ToolsDir: t.TempDir()},
 			wantPath: "",
 			wantGate: true,
-			reason:   kirocli.ReasonUnavailable,
+			reason:   pinstall.ReasonUnavailable,
 		},
 	}
 	for name, tc := range tests {
@@ -68,7 +69,7 @@ func TestStartKiroCLIShapes(t *testing.T) {
 			if tc.wantGate {
 				ready, reason := kiro.ready()
 				if ready != tc.wantReady || reason != tc.reason {
-					t.Errorf("ready() = (%v, %q), want (%v, %q)", ready, reason, tc.wantReady, tc.reason)
+					t.Errorf("ready() = (%v, %s), want (%v, %s)", ready, reason, tc.wantReady, tc.reason)
 				}
 			}
 			if (kiro.rescan != nil) != tc.rescan {
@@ -127,7 +128,7 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	}
 	// Activation happens in the background, so poll rather than sleep.
 	deadline := time.Now().Add(20 * time.Second)
-	var reason string
+	var reason pinstall.Reason
 	for {
 		ok, why := kiro.ready()
 		if ok {
@@ -135,7 +136,7 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 		}
 		reason = why
 		if time.Now().After(deadline) {
-			t.Fatalf("no version became active within the deadline; last readiness reason %q", reason)
+			t.Fatalf("no version became active within the deadline; last readiness reason %s", reason)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -174,29 +175,36 @@ func TestKiroPathEnvLeadsWithTheVersionDirectory(t *testing.T) {
 }
 
 // TestKiroSettingsLeavesTheIntegrityGateToTheManager pins the one rule this list
-// must obey: app.disableAutoupdates is NOT in it. The manager adds that setting
-// itself as REQUIRED (it is what stops the binary replacing itself and
-// invalidating the verified digest), so listing it here as a best-effort
-// preference would be the one way to configure the integrity gate away.
+// must obey: app.disableAutoupdates is NOT in it. kirocli.Release() declares that
+// assertion Mandatory, so pinstall forces it Required and merges it in on top of
+// whatever this list carries (it is what stops the binary replacing itself and
+// invalidating the verified digest). Listing it here would be the one way a
+// deployment could try to restate the integrity gate as a best-effort preference.
+//
+// It also pins that every entry speaks kiro-cli's own settings grammar. The
+// library takes a full argv and knows nothing about how kiro-cli is configured,
+// so a hand-built Assertion with the wrong verb would be accepted here and only
+// fail at runtime, as a warn, on a container nobody is watching.
 func TestKiroSettingsLeavesTheIntegrityGateToTheManager(t *testing.T) {
 	settings := kiroSettings()
 	if len(settings) == 0 {
 		t.Fatal("no kiro-cli settings configured; the Settings UI would misreport every toggle until a second boot")
 	}
 	seen := map[string]bool{}
-	for _, s := range settings {
-		if s.Key == "app.disableAutoupdates" {
-			t.Error("app.disableAutoupdates is listed as a best-effort setting; the manager owns it as Required")
+	for _, a := range settings {
+		if a.Name == "app.disableAutoupdates" {
+			t.Error("app.disableAutoupdates is listed as a best-effort assertion; the release profile owns it as Mandatory")
 		}
-		if s.Value == "" {
-			t.Errorf("setting %q has an empty value", s.Key)
+		if seen[a.Name] {
+			t.Errorf("setting %q is listed twice", a.Name)
 		}
-		if seen[s.Key] {
-			t.Errorf("setting %q is listed twice", s.Key)
+		seen[a.Name] = true
+		if a.Required {
+			t.Errorf("setting %q is marked Required; only the profile's own mandatory assertion may gate readiness", a.Name)
 		}
-		seen[s.Key] = true
-		if s.Required {
-			t.Errorf("setting %q is marked Required; only the manager's own integrity setting may gate readiness", s.Key)
+		want := []string{"settings", a.Name}
+		if len(a.Args) != 3 || !slices.Equal(a.Args[:2], want) || a.Args[2] == "" {
+			t.Errorf("setting %q has argv %v, want %v plus a non-empty value", a.Name, a.Args, want)
 		}
 	}
 }

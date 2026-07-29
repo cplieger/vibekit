@@ -4,9 +4,32 @@ import (
 	"context"
 	"log/slog"
 	"os"
-	"strconv"
 
-	"github.com/cplieger/vibekit/internal/kirocli"
+	"github.com/cplieger/pinstall"
+	"github.com/cplieger/pinstall/kirocli"
+)
+
+// The layout facts vibekit brings to the install: where the convenience symlink
+// goes, and what its own SHELL-era installer left on the volume.
+const (
+	// kiroLinkDir is the directory under the tools dir holding the
+	// non-authoritative `docker exec … kiro-cli` convenience symlink. It is
+	// co-owned by the toolbelt engine, which publishes bin/<tool> symlinks of
+	// its own — which is why the legacy sweep below names its targets instead of
+	// scanning it.
+	kiroLinkDir = "bin"
+	// legacyStagePrefix prefixed the shell installer's staging trees directly
+	// under the tools dir. The managed staging trees live under the install root
+	// instead, so anything matching this is an orphan its EXIT trap missed on a
+	// SIGKILL. It ends in a dot so it cannot match the install root or the
+	// marker below.
+	legacyStagePrefix = ".kiro-cli-stage."
+	// legacyPurgeMarker records on the volume that the one-time migration sweep
+	// completed, so it runs ONCE rather than walking the co-owned bin directory
+	// on every boot. Dot-prefixed and directly under the tools dir, where the
+	// toolbelt engine never looks (it enumerates only bin/, opt/, npm/ and
+	// python/).
+	legacyPurgeMarker = ".kiro-cli-legacy-purged"
 )
 
 // kiroRuntime is the running kiro-cli subsystem the rest of the wiring consumes.
@@ -21,10 +44,12 @@ type kiroRuntime struct {
 	// env is the environment overlay for a spawned kiro-cli, or nil when there
 	// is nothing to add.
 	env func() []string
-	// ready is the /api/health verdict plus its reason, or nil when this app
-	// does not own the install (a bare `go run` with no pins) and readiness
-	// stays pure-listener.
-	ready func() (bool, string)
+	// ready is the /api/health verdict plus the library's TYPED reason, or nil
+	// when this app does not own the install (a bare `go run` with no pins) and
+	// readiness stays pure-listener. The wording an operator and the browser
+	// banner read is vibekit's own, applied at the HTTP boundary
+	// (internal/server's kiroReasonText).
+	ready func() (bool, pinstall.Reason)
 	// rescan re-derives the active version from disk without downloading, or nil
 	// when there is no manager. It backs the loopback repair hook.
 	rescan func(context.Context) (bool, error)
@@ -40,7 +65,7 @@ type kiroRuntime struct {
 // shape is unreachable there.
 func unmanagedKiroRuntime() kiroRuntime {
 	return kiroRuntime{
-		cliPath: func() string { return "kiro-cli" },
+		cliPath: func() string { return kirocli.Name },
 		// Non-nil on purpose: cliPath, env and stop are called unconditionally
 		// (the bridge factory calls env() on every spawn), so only ready and
 		// rescan may be nil, and their nil-ness is what MEANS "no manager".
@@ -59,7 +84,7 @@ func unavailableKiroRuntime() kiroRuntime {
 	return kiroRuntime{
 		cliPath: func() string { return "" },
 		env:     func() []string { return nil },
-		ready:   func() (bool, string) { return false, kirocli.ReasonUnavailable },
+		ready:   func() (bool, pinstall.Reason) { return false, pinstall.ReasonUnavailable },
 		stop:    func() {},
 	}
 }
@@ -83,17 +108,7 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 			"hint", "expected outside the container (bare `go run`); in the image entrypoint.sh exports KIRO_CLI_VERSION and both digests")
 		return unmanagedKiroRuntime()
 	}
-	mgr, err := kirocli.New(&kirocli.Config{
-		Version:     cfg.KiroCLIVersion,
-		SHA256:      cfg.KiroCLISHA256,
-		SHA256ARM64: cfg.KiroCLISHA256ARM64,
-		ToolsDir:    cfg.ToolsDir,
-		// vibekit's required set is the main dispatcher alone (kirocli's default):
-		// `kiro-cli acp` is served by it and no Go path here invokes `chat`, so
-		// both sidecars are installed when present and only warn when absent.
-		Optional: []string{"kiro-cli-chat", "kiro-cli-term"},
-		Settings: kiroSettings(),
-	})
+	mgr, err := pinstall.New(kiroInstallConfig(cfg))
 	if err != nil {
 		slog.Error("kiro-cli install manager could not be built from the exported pins; no version can be installed, so chats stay unavailable",
 			"error", err,
@@ -108,12 +123,78 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 		_ = mgr.EnsureWithRetry(ensureCtx)
 	}()
 	return kiroRuntime{
-		cliPath: mgr.CLIPath,
+		cliPath: mgr.Path,
 		env:     func() []string { return kiroPathEnv(mgr.PathEntry()) },
-		// Ready, not Phase, is the authority: Phase only explains a "no".
-		ready:  mgr.Ready,
-		rescan: mgr.Rescan,
-		stop:   cancel,
+		ready:   mgr.Ready,
+		rescan:  mgr.Rescan,
+		stop:    cancel,
+	}
+}
+
+// kiroInstallConfig is vibekit's whole deployment of the kiro-cli release: the
+// pins from the entrypoint, the tools tree, and the local policy. The release
+// PROFILE — the archive URL, the arch tokens, the in-archive installer, the probe
+// argv, the licence notice and the mandatory auto-update assertion — is
+// kirocli.Release()'s, shared with every other consumer of the same upstream.
+//
+// It is a function rather than an inline literal so the namespace test can build
+// a manager from the EXACT configuration production runs (see
+// kirocli_namespace_test.go): the collision it guards is a property of these
+// values, not of a copy of them.
+func kiroInstallConfig(cfg *Config) *pinstall.Config {
+	return &pinstall.Config{
+		Release: kirocli.Release(),
+		Version: cfg.KiroCLIVersion,
+		// Both pins travel, whatever this container runs on; the library
+		// validates the digest for the resolved GOARCH and ignores the other.
+		Digests: map[string]string{
+			"amd64": cfg.KiroCLISHA256,
+			"arm64": cfg.KiroCLISHA256ARM64,
+		},
+		Root:    cfg.ToolsDir,
+		LinkDir: kiroLinkDir,
+		// Require is deliberately UNSET, and that is not an omission: the
+		// library always requires the release's primary artifact, and for
+		// vibekit that IS the whole required set. `kiro-cli acp` — the only
+		// invocation a chat bridge makes — is served by the main dispatcher, and
+		// no Go path here invokes `chat`, so a version directory with no sidecar
+		// is a COMPLETE install for this app. web-terminal-kiro requires the
+		// chat sidecar because `kiro-cli chat` IS its product; do not copy that
+		// set here without a Go caller that needs it.
+		Optional: []string{kirocli.Name + "-chat", kirocli.Name + "-term"},
+		Assert:   kiroSettings(),
+		Purge:    kiroLegacyPurge(),
+		// Untrusted is deliberately left unset: it records that the install root
+		// was found writable by others, and vibekit has no hardening pass
+		// (web-terminal-kiro's secure_tools_dir) that could make that
+		// observation. Claiming it here would be a guard with no producer, which
+		// reports every boot as clean while looking like a check;
+		// tests/shell/pins_export_test.sh asserts neither side claims it.
+	}
+}
+
+// kiroLegacyPurge describes the layout VIBEKIT's shell installer left on the
+// tools volume, which is caller data: the residue is a fact about this app's
+// history, not about the kiro-cli release. It is the promoted dispatchers in
+// $TOOLS/bin and the orphan staging trees, and nothing else.
+//
+// There is no journal, no `.prev` backup, no `.absent` tombstone and no
+// install/readiness marker in the list, and that is not an omission either:
+// vibekit never wrote them. Its promotion was single-commit-point by design (the
+// main binary renamed LAST, the drift check keyed on its version), so the
+// in-place transaction web-terminal-kiro needed — and the artifacts it left on a
+// volume — never existed here. Do not copy that app's larger list back.
+//
+// The dispatcher names come from the library profile rather than a local slice:
+// they are the set a shell-era kiro-cli installer promoted, which is release
+// knowledge. Naming three targets is also what makes the sweep safe in a
+// directory the toolbelt engine co-owns — a `kiro-cli*` prefix sweep deleted
+// every match, including another owner's live symlink.
+func kiroLegacyPurge() *pinstall.Purge {
+	return &pinstall.Purge{
+		Names:       kirocli.ShellEraDispatchers(),
+		StagePrefix: legacyStagePrefix,
+		Marker:      legacyPurgeMarker,
 	}
 }
 
@@ -134,41 +215,36 @@ func kiroPathEnv(entry string) []string {
 	return []string{"PATH=" + entry + string(os.PathListSeparator) + os.Getenv("PATH")}
 }
 
-// kiroSettings is vibekit's kiro-cli settings set, applied against the active
-// binary on every boot. These are the ten calls entrypoint.sh used to make after
-// the install; they moved here with the installer, because the shell block was
-// gated on the binary already being present and that gate is false on every
-// first boot once the install runs after exec.
+// kiroSettings is vibekit's kiro-cli settings set, re-asserted against the
+// active binary on every boot. These are the ten calls entrypoint.sh used to
+// make after the install; they moved here with the installer, because the shell
+// block was gated on the binary already being present and that gate is false on
+// every first boot once the install runs after exec.
 //
-// app.disableAutoupdates is deliberately NOT in this list: the manager adds it
-// itself as REQUIRED, so no caller can configure the integrity gate away. Every
-// setting here is best-effort — a failure warns and readiness is unaffected.
-// Rationale for each value is in the Settings docs (Settings -> General surfaces
-// the same keys through /api/kiro-settings).
-func kiroSettings() []kirocli.Setting {
-	return []kirocli.Setting{
+// app.disableAutoupdates is deliberately NOT in this list: kirocli.Release()
+// declares it Mandatory, so the library forces it Required and merges it in
+// whatever a deployment passes — the integrity gate cannot be weakened, reworded
+// or dropped from here. Every assertion here is best-effort: a failure warns and
+// readiness is unaffected. Rationale for each value is in the Settings docs
+// (Settings → General surfaces the same keys through /api/kiro-settings).
+func kiroSettings() []pinstall.Assertion {
+	return []pinstall.Assertion{
 		// Features vibekit renders natively.
-		boolSetting("chat.enableTodoList", true),
-		boolSetting("chat.enableKnowledge", true),
-		boolSetting("chat.enableSubagent", true),
-		boolSetting("chat.enablePromptHints", true),
-		boolSetting("hooks.showStatus", true),
+		kirocli.Setting("chat.enableTodoList", true),
+		kirocli.Setting("chat.enableKnowledge", true),
+		kirocli.Setting("chat.enableSubagent", true),
+		kirocli.Setting("chat.enablePromptHints", true),
+		kirocli.Setting("hooks.showStatus", true),
 		// Off: duplicates of vibekit's own systems, telemetry, and the two
 		// toggles seeded only so the Settings UI reflects reality instead of an
 		// unset-means-on fallback.
-		boolSetting("chat.enableCheckpoint", false),
-		boolSetting("telemetry.enabled", false),
-		boolSetting("toolSearch.enabled", false),
-		boolSetting("chat.disableInheritingDefaultResources", false),
+		kirocli.Setting("chat.enableCheckpoint", false),
+		kirocli.Setting("telemetry.enabled", false),
+		kirocli.Setting("toolSearch.enabled", false),
+		kirocli.Setting("chat.disableInheritingDefaultResources", false),
 		// vibekit owns chat retention end to end (its own chat_retention_days),
-		// so kiro-cli's competing purge is pinned off: 0 = never.
-		{Key: "cleanup.periodDays", Value: "0"},
+		// so kiro-cli's competing purge is pinned off: 0 = never. Raw because
+		// the value is not a boolean.
+		kirocli.SettingRaw("cleanup.periodDays", "0"),
 	}
-}
-
-// boolSetting is one boolean kiro-cli setting. The settings CLI takes its value
-// as a string, so keeping the app's intent as a Go bool lets the compiler catch
-// a typo the CLI would silently accept as "not true".
-func boolSetting(key string, on bool) kirocli.Setting {
-	return kirocli.Setting{Key: key, Value: strconv.FormatBool(on)}
 }

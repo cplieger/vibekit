@@ -5,8 +5,8 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/cplieger/pinstall"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/kirocli"
 	"github.com/cplieger/webhttp"
 )
 
@@ -15,6 +15,51 @@ import (
 // which is the half of the healing posture bounded retries cannot cover (a
 // restored version directory arrives after the retries are exhausted).
 const kiroRescanPath = "/api/kiro-cli/rescan"
+
+// The readiness reasons vibekit puts on the wire, one per operator situation.
+//
+// The install manager reports a TYPED reason (pinstall.Reason) that names only
+// the distinction — "installing", "unavailable" — because the wording a consumer
+// shows its own users is the consumer's. These four literals ARE that wording,
+// and they are a published contract in two directions: an operator reads them
+// from `docker inspect` / a monitor, and static-src/runtime-health.ts
+// PREFIX-MATCHES them (on "kiro-cli") to pick its banner copy, keyed on each
+// literal in full. Renaming one here silently degrades that banner to its
+// terminal fallback, so kiroReasonText is the single place they are produced and
+// TestKiroReasonTextIsTheClientContract pins the exact strings.
+const (
+	reasonInstalling = "kiro-cli installing"
+	reasonRetrying   = "kiro-cli install retrying"
+	// reasonUnavailable is also the fallback for a rescan with no verdict to
+	// read, and for a reason a future library version adds: a state we cannot
+	// name still blocks chats, and the terminal wording says so.
+	reasonUnavailable = "kiro-cli unavailable"
+	// reasonSettings is pinstall.ReasonAssertion in vibekit's terms. The only
+	// REQUIRED assertion here is the profile's mandatory app.disableAutoupdates
+	// (every setting kiroSettings passes is best-effort), so a withheld verdict
+	// means exactly that the binary may replace itself and invalidate the
+	// verified digest.
+	reasonSettings = "kiro-cli required settings not enforced"
+)
+
+// kiroReasonText renders the install manager's typed reason as the reason
+// /api/health and the repair hook serve. ReasonReady maps to "", which the
+// health envelope omits.
+func kiroReasonText(why pinstall.Reason) string {
+	switch why {
+	case pinstall.ReasonReady:
+		return ""
+	case pinstall.ReasonInstalling:
+		return reasonInstalling
+	case pinstall.ReasonRetrying:
+		return reasonRetrying
+	case pinstall.ReasonUnavailable:
+		return reasonUnavailable
+	case pinstall.ReasonAssertion:
+		return reasonSettings
+	}
+	return reasonUnavailable
+}
 
 // handleKiroRescan re-derives the active kiro-cli version from what is on disk
 // right now — downloading nothing — and reports the resulting readiness. 200
@@ -34,10 +79,10 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 	// at Warn or Error, so this reports the VERDICT rather than the error text:
 	// err can name a filesystem path, and this response is not the place to
 	// widen what a caller learns about the volume.
-	reason := kirocli.ReasonUnavailable
+	reason := reasonUnavailable
 	if s.kiroReady != nil {
-		if _, why := s.kiroReady(); why != "" {
-			reason = why
+		if _, why := s.kiroReady(); why != pinstall.ReasonReady {
+			reason = kiroReasonText(why)
 		}
 	}
 	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", err)
