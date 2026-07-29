@@ -8,6 +8,13 @@
 // module surfaces those states as an app-global banner: the page works (files,
 // git, settings, shell), only chats wait.
 //
+// Those four literals are the contract, and they have exactly one producer:
+// `kiroReasonText` in internal/server/kirocli.go, which renders the install
+// library's typed reason into vibekit's own wording. A rename there degrades
+// every named state below to FALLBACK and nothing else notices, so
+// TestKiroReasonTextIsTheClientContract pins the strings on the Go side —
+// change them in both places or neither.
+//
 // Matching is by PREFIX, not by one literal. The reasons are a lifecycle, and a
 // first boot legitimately spends minutes in `installing` — an equality check
 // against a single reason would leave that window with no banner at all, so a
@@ -26,7 +33,11 @@ import type { BannerLevel } from "./types.js";
 
 const CODE = "runtime_degraded";
 
-/** The reason prefix every kiro-cli readiness verdict shares. */
+/**
+ * The reason prefix every kiro-cli readiness verdict shares. It is what
+ * separates a kiro-cli verdict from the server's own startup/shutdown 503
+ * (`starting up or shutting down`), which must NOT raise this banner.
+ */
 const KIRO_REASON_PREFIX = "kiro-cli";
 
 interface RuntimeState {

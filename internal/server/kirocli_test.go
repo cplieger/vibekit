@@ -9,38 +9,75 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/kirocli"
+	"github.com/cplieger/pinstall"
 )
+
+// TestKiroReasonTextIsTheClientContract pins the four reason literals
+// /api/health puts on the wire. They are not internal wording: the browser
+// banner (static-src/runtime-health.ts) prefix-matches "kiro-cli" to decide the
+// verdict is a kiro-cli one AT ALL, then keys its per-state copy on each literal
+// in full — so a rename here degrades every named state to the terminal
+// "install failed and its retries are exhausted" copy, silently and only in the
+// browser. Change a string here and change STATES there in the same commit.
+//
+// It also pins the mapping's totality: a reason this build cannot name (a value
+// a future pinstall adds) must still read as blocking, not as ready.
+func TestKiroReasonTextIsTheClientContract(t *testing.T) {
+	tests := map[pinstall.Reason]string{
+		pinstall.ReasonReady:       "",
+		pinstall.ReasonInstalling:  "kiro-cli installing",
+		pinstall.ReasonRetrying:    "kiro-cli install retrying",
+		pinstall.ReasonUnavailable: "kiro-cli unavailable",
+		pinstall.ReasonAssertion:   "kiro-cli required settings not enforced",
+	}
+	for why, want := range tests {
+		if got := kiroReasonText(why); got != want {
+			t.Errorf("kiroReasonText(%s) = %q, want %q (runtime-health.ts keys its banner copy on this literal)", why, got, want)
+		}
+	}
+	unknown := pinstall.Reason(200)
+	if got := kiroReasonText(unknown); got != reasonUnavailable {
+		t.Errorf("kiroReasonText(unknown) = %q, want %q: an unnameable state still blocks chats", got, reasonUnavailable)
+	}
+	for why, want := range tests {
+		if why == pinstall.ReasonReady {
+			continue
+		}
+		if !strings.HasPrefix(want, "kiro-cli") {
+			t.Errorf("reason %q does not carry the kiro-cli prefix the client matches on", want)
+		}
+	}
+}
 
 // TestHandleKiroRescanReportsTheResultingReadiness pins the repair hook's two
 // answers. It exists so an operator who fixes an install inside the container
 // learns whether it took WITHOUT polling /api/health, and so a failed rescan
-// reports the manager's own reason rather than the error text, which can name a
+// reports the manager's own verdict rather than the error text, which can name a
 // path on the volume.
 func TestHandleKiroRescanReportsTheResultingReadiness(t *testing.T) {
 	tests := map[string]struct {
 		ok         bool
 		rescanErr  error
-		ready      func() (bool, string)
+		ready      func() (bool, pinstall.Reason)
 		wantStatus int
 		wantBody   string
 	}{
 		"a successful rescan reports ok": {
 			ok:         true,
-			ready:      func() (bool, string) { return true, "" },
+			ready:      func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady },
 			wantStatus: http.StatusOK,
 			wantBody:   `{"status":"ok"}`,
 		},
 		"a failed rescan carries the manager's reason": {
-			rescanErr:  kirocli.ErrNoVersion,
-			ready:      func() (bool, string) { return false, kirocli.ReasonSettings },
+			rescanErr:  pinstall.ErrNoVersion,
+			ready:      func() (bool, pinstall.Reason) { return false, pinstall.ReasonAssertion },
 			wantStatus: http.StatusServiceUnavailable,
-			wantBody:   `{"status":"unready","reason":"` + kirocli.ReasonSettings + `"}`,
+			wantBody:   `{"status":"unready","reason":"` + reasonSettings + `"}`,
 		},
 		"with no readiness verdict it falls back to unavailable": {
 			rescanErr:  errors.New("/config/tools/kiro-cli-versions/2.14.2: permission denied"),
 			wantStatus: http.StatusServiceUnavailable,
-			wantBody:   `{"status":"unready","reason":"` + kirocli.ReasonUnavailable + `"}`,
+			wantBody:   `{"status":"unready","reason":"` + reasonUnavailable + `"}`,
 		},
 	}
 	for name, tc := range tests {
@@ -72,7 +109,7 @@ func TestHandleKiroRescanReportsTheResultingReadiness(t *testing.T) {
 func TestHandleKiroRescanNeverLeaksTheErrorText(t *testing.T) {
 	const secretish = "/config/home/.aws/sso/cache/token.json"
 	s := &Server{
-		kiroReady:  func() (bool, string) { return false, kirocli.ReasonUnavailable },
+		kiroReady:  func() (bool, pinstall.Reason) { return false, pinstall.ReasonUnavailable },
 		kiroRescan: func(context.Context) (bool, error) { return false, errors.New("cannot read " + secretish) },
 	}
 	rec := httptest.NewRecorder()

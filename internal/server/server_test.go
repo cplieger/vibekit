@@ -10,8 +10,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/cplieger/pinstall"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/kirocli"
 )
 
 func TestSyncPushPreferences(t *testing.T) {
@@ -556,22 +556,23 @@ func TestHandleHealth_returns_ok(t *testing.T) {
 
 // TestHandleHealth_DegradedWhenKiroUnready pins the degraded-not-dead start
 // (invariant 6): the server is up (ready=true) but the install manager has no
-// usable kiro-cli, so health must report 503 with the MANAGER'S OWN reason — the
-// signal `docker ps`, monitoring and the client's degraded banner all key off.
+// usable kiro-cli, so health must report 503 with the reason this app publishes
+// for the manager's verdict — the signal `docker ps`, monitoring and the client's
+// degraded banner all key off.
 //
-// Each reason is a distinct operator situation, and carrying them verbatim is
+// Each reason is a distinct operator situation, and carrying them separately is
 // what the version-aware gate buys over the existence check it replaced: that
 // one could only ever say "unavailable", and said "ok" for a binary drifted from
 // the pin or one whose auto-update could not be switched off.
 func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
-	for _, reason := range []string{
-		kirocli.ReasonInstalling,
-		kirocli.ReasonRetrying,
-		kirocli.ReasonUnavailable,
-		kirocli.ReasonSettings,
+	for why, want := range map[pinstall.Reason]string{
+		pinstall.ReasonInstalling:  reasonInstalling,
+		pinstall.ReasonRetrying:    reasonRetrying,
+		pinstall.ReasonUnavailable: reasonUnavailable,
+		pinstall.ReasonAssertion:   reasonSettings,
 	} {
-		t.Run(reason, func(t *testing.T) {
-			s := &Server{kiroReady: func() (bool, string) { return false, reason }}
+		t.Run(want, func(t *testing.T) {
+			s := &Server{kiroReady: func() (bool, pinstall.Reason) { return false, why }}
 			s.ready.Store(true)
 
 			rec := httptest.NewRecorder()
@@ -584,8 +585,8 @@ func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatalf("body not JSON: %v; body=%s", err, rec.Body.String())
 			}
-			if got["status"] != "unready" || got["reason"] != reason {
-				t.Errorf("body = %v, want unready/%q", got, reason)
+			if got["status"] != "unready" || got["reason"] != want {
+				t.Errorf("body = %v, want unready/%q", got, want)
 			}
 		})
 	}
@@ -598,7 +599,7 @@ func TestHandleHealth_DegradedWhenKiroUnready(t *testing.T) {
 // asserted by flipping the verdict between two probes.
 func TestHandleHealth_OKWhenKiroReady(t *testing.T) {
 	t.Run("manager reports ready", func(t *testing.T) {
-		s := &Server{kiroReady: func() (bool, string) { return true, "" }}
+		s := &Server{kiroReady: func() (bool, pinstall.Reason) { return true, pinstall.ReasonReady }}
 		s.ready.Store(true)
 		rec := httptest.NewRecorder()
 		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
@@ -619,7 +620,7 @@ func TestHandleHealth_OKWhenKiroReady(t *testing.T) {
 
 	t.Run("recovery is visible on the next probe", func(t *testing.T) {
 		ready := false
-		s := &Server{kiroReady: func() (bool, string) { return ready, kirocli.ReasonInstalling }}
+		s := &Server{kiroReady: func() (bool, pinstall.Reason) { return ready, pinstall.ReasonInstalling }}
 		s.ready.Store(true)
 		rec := httptest.NewRecorder()
 		s.handleHealth(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))

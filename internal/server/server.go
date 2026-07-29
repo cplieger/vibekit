@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
+	"github.com/cplieger/pinstall"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/toolbelt/v2/httpapi"
 	"github.com/cplieger/vibekit/internal/api"
@@ -41,11 +42,12 @@ type Server struct {
 	cliRunner     CLIRunner
 	tools         *toolbelt.Engine
 	// kiroReady is the kiro-cli install manager's readiness verdict plus its
-	// reason, consulted per /api/health probe so a recovery becomes visible
-	// without a restart. Nil = this server does not own the install, which
-	// happens only outside the container (a bare `go run` with no pins), and
-	// readiness stays pure-listener. Every container boot wires it.
-	kiroReady func() (bool, string)
+	// TYPED reason, consulted per /api/health probe so a recovery becomes
+	// visible without a restart. Nil = this server does not own the install,
+	// which happens only outside the container (a bare `go run` with no pins),
+	// and readiness stays pure-listener. Every container boot wires it. The
+	// wording served on the wire is this package's (kiroReasonText).
+	kiroReady func() (bool, pinstall.Reason)
 	// kiroRescan re-derives the active kiro-cli version from what is on disk,
 	// downloading nothing. It backs the loopback repair hook; nil when there is
 	// no manager, and then the route is not mounted at all.
@@ -150,8 +152,9 @@ func WithCLIPath(resolve func() string) Option {
 }
 
 // WithKiroReady sets the kiro-cli readiness verdict /api/health reports. Unset
-// leaves the health probe reflecting only that the listener is up.
-func WithKiroReady(ready func() (bool, string)) Option {
+// leaves the health probe reflecting only that the listener is up. The reason is
+// the install manager's typed one; this package owns the wording it serves.
+func WithKiroReady(ready func() (bool, pinstall.Reason)) Option {
 	return func(s *Server) { s.kiroReady = ready }
 }
 
@@ -373,13 +376,15 @@ type healthBody struct {
 // or when kiro-cli is unavailable, which is how a failed or still-running
 // install surfaces to `docker ps`, monitoring and the client's degraded banner.
 //
-// The kiro-cli verdict is the install manager's (internal/kirocli): it is
-// VERSION-AWARE, where the check this replaced only asked whether SOMETHING
-// named kiro-cli was on PATH — so a binary drifted from the pin, or one whose
-// auto-update could not be switched off, now reads unready instead of healthy.
-// Reading it is a lock-and-two-field-read, never a subprocess spawn, and it
-// re-evaluates per request, so an install completing (or an in-container repair
-// plus a rescan) heals the signal with no restart.
+// The kiro-cli verdict is the install manager's (github.com/cplieger/pinstall,
+// wired in internal/composition): it is VERSION-AWARE, where the check this
+// replaced only asked whether SOMETHING named kiro-cli was on PATH — so a binary
+// drifted from the pin, or one whose auto-update could not be switched off, now
+// reads unready instead of healthy. Reading it is a lock-and-two-field-read,
+// never a subprocess spawn, and it re-evaluates per request, so an install
+// completing (or an in-container repair plus a rescan) heals the signal with no
+// restart. The library reports a typed reason; the wording below the fold is
+// kiroReasonText's (internal/server/kirocli.go).
 //
 // This is a READINESS signal: under `restart: unless-stopped` nothing restarts
 // on the unhealthy state, so there is no restart loop; if ever run
@@ -404,8 +409,8 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	if s.kiroReady != nil {
-		if ok, reason := s.kiroReady(); !ok {
-			unready(reason)
+		if ok, why := s.kiroReady(); !ok {
+			unready(kiroReasonText(why))
 			return
 		}
 	}

@@ -209,6 +209,7 @@ One previous version is kept. If a new version turns out to be broken, the prede
 
 - [web-terminal-kiro](https://github.com/cplieger/web-terminal-kiro): the sister app, a raw browser terminal that drives kiro-cli's own TUI instead of this chat-first UI.
 - [web-terminal-engine](https://github.com/cplieger/web-terminal-engine): the terminal engine (Go PTY/VT + TypeScript renderer) behind vibekit's shell.
+- [pinstall](https://github.com/cplieger/pinstall): the digest-pinned install library that downloads, verifies and activates the `kiro-cli` release described above.
 - [actions](https://github.com/cplieger/actions): the client-side action framework vibekit's UI is built on.
 
 ## Contributing

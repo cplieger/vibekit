@@ -6,7 +6,8 @@ TOOLS="$CONFIG_DIR/tools"
 # kiro-cli is pinned via Renovate against the public install manifest at
 # https://desktop-release.q.us-east-1.amazonaws.com/index.json. These three
 # literals are the ONLY kiro-cli knowledge left in this script: the server
-# installs from them (internal/kirocli), so bumping one and rebuilding the image
+# installs from them (the cplieger/pinstall library, wired in
+# internal/composition/kirocli.go), so bumping one and rebuilding the image
 # makes the next boot download, verify and activate that version. The in-binary
 # auto-update is disabled so what runs always matches the version baked into the
 # image tag and the digest verified at install time. KIRO_CLI_SHA256 (x86_64) and
