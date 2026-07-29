@@ -44,7 +44,7 @@ func newHubWithMCPConfig(cfg api.MCPConfig) *Hub {
 		opts = append(opts, WithMCPConfig(cfg))
 	}
 	h := New("/tmp/work", factory, cs, opts...)
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 	return h
 }
 

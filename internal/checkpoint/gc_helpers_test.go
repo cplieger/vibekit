@@ -22,7 +22,7 @@ func runBlobGC(ctx context.Context, configDir string) (removed, scanned int, err
 	coord := checkpointgc.NewCoordinator(configDir, blobsRoot(configDir), chatsRoot(configDir), FileEvents, 1*time.Hour, &mu, func() map[string]checkpointgc.BlobRefer {
 		return nil
 	})
-	return coord.RunOnceWithCounts(ctx)
+	return coord.RunOnce(ctx)
 }
 
 // BenchmarkCollectReferencedBlobs measures GC reference-collection
@@ -54,7 +54,7 @@ func BenchmarkCollectReferencedBlobs(b *testing.B) {
 				coord := checkpointgc.NewCoordinator(cfg, blobsRoot(cfg), chatsRoot(cfg), FileEvents, 1*time.Hour, &mu, func() map[string]checkpointgc.BlobRefer {
 					return nil
 				})
-				_, _, _ = coord.RunOnceWithCounts(ctx)
+				_, _, _ = coord.RunOnce(ctx)
 			}
 		})
 	}

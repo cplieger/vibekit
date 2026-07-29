@@ -12,10 +12,6 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// FileStatus is a typed string for diff result statuses. Re-exported
-// from the types sub-package for backward compatibility.
-type FileStatus = chktypes.FileStatus
-
 // FileAdded and the following constants re-export the FileStatus values from the types sub-package for backward compatibility.
 const (
 	FileAdded    = chktypes.FileAdded

@@ -48,7 +48,7 @@ const summaryTimeout = 30 * time.Second
 // the feature must never block archiving.
 //
 // Model selection is delegated to the shared utility bridge, which
-// uses CheapestModel() from the models service (see
+// uses cheapestModel() from the models service (see
 // utility_bridge.go). No separate bridge or model pick here.
 func (h *Hub) summarizeOnArchive(ctx context.Context, chatID api.ChatID) {
 	if len(h.Models()) == 0 {

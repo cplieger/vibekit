@@ -12,6 +12,19 @@ import (
 	"github.com/cplieger/slogx/capture"
 )
 
+// blobOnDisk reports whether a blob for hash is on disk. Derives the
+// path exactly as the production readers do (blobStore.pathFor), so an
+// unrepresentable hash reports false without a stat.
+func blobOnDisk(t *testing.T, b *blobStore, hash string) bool {
+	t.Helper()
+	p := b.pathFor(hash)
+	if p == "" {
+		return false
+	}
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 func TestBlobStorePutGet(t *testing.T) {
 	b := newBlobStore(t.TempDir())
 	data := []byte("hello, checkpoint")
@@ -49,8 +62,8 @@ func TestBlobStoreDedup(t *testing.T) {
 	if h1 != h2 {
 		t.Errorf("dedup: hashes differ %q vs %q", h1, h2)
 	}
-	if !b.Exists(h1) {
-		t.Errorf("Exists after Put = false")
+	if !blobOnDisk(t, b, h1) {
+		t.Errorf("blob missing on disk after Put")
 	}
 }
 
@@ -78,8 +91,8 @@ func TestBlobStoreNotFound(t *testing.T) {
 	if _, err := b.Get(context.Background(), "d19e8be9c55b21bd6c9e93bcaf0f1a2e3f0c4a0b1d2e3f4a5b6c7d8e9f0a1b2c3"); err != ErrBlobNotFound {
 		t.Errorf("Get missing = %v, want ErrBlobNotFound", err)
 	}
-	if b.Exists("not-a-hash") {
-		t.Errorf("Exists(bogus) = true, want false")
+	if blobOnDisk(t, b, "not-a-hash") {
+		t.Errorf("bogus hash reported on disk, want false")
 	}
 }
 
@@ -111,7 +124,7 @@ func TestBlobStoreInvalidHash(t *testing.T) {
 	// Empty or 1-2 char hashes are impossible in practice (SHA-256
 	// is always 64 hex chars) but defensive handling matters because
 	// a corrupted events.jsonl could feed garbage in. pathFor must
-	// reject; Get must return ErrBlobNotFound; Exists must be false.
+	// reject and Get must return ErrBlobNotFound, so no path is derived.
 	b := newBlobStore(t.TempDir())
 	if p := b.pathFor(""); p != "" {
 		t.Errorf("pathFor empty = %q, want empty", p)
@@ -119,8 +132,8 @@ func TestBlobStoreInvalidHash(t *testing.T) {
 	if _, err := b.Get(context.Background(), ""); err != ErrBlobNotFound {
 		t.Errorf("Get empty hash = %v, want ErrBlobNotFound", err)
 	}
-	if b.Exists("ab") {
-		t.Errorf("Exists(short) = true, want false")
+	if blobOnDisk(t, b, "ab") {
+		t.Errorf("short hash reported on disk, want false")
 	}
 }
 

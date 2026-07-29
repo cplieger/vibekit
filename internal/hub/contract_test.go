@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
@@ -120,10 +119,11 @@ func TestFakeBridge_Contract(t *testing.T) {
 	})
 }
 
-// TestFakeBridge_SharedContract runs the exported ACPBridgeContractTest
-// from the bridge package against fakeBridge to detect pre-Start drift.
+// TestFakeBridge_SharedContract runs the shared
+// ACPBridgePreStartContractTest from testsupport against fakeBridge to
+// detect pre-Start drift.
 func TestFakeBridge_SharedContract(t *testing.T) {
-	bridge.ACPBridgeContractTest(t, func() api.ACPBridge {
+	testsupport.ACPBridgePreStartContractTest(t, func() api.ACPBridge {
 		return newFakeBridge()
 	})
 }

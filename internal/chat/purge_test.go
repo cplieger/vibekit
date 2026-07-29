@@ -274,23 +274,6 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 	}
 }
 
-func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
-	s, _ := newTestStore(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	p := NewPurgeScheduler(ctx, s, func() time.Duration { return 24 * time.Hour })
-	p.Start()
-
-	cancel()
-	// The done channel should close promptly.
-	timer := time.NewTimer(2 * time.Second)
-	defer timer.Stop()
-	select {
-	case <-p.Done():
-	case <-timer.C:
-		t.Fatal("scheduler goroutine did not exit after context cancellation")
-	}
-}
-
 // --- Property-based test for PurgeScheduler timing invariants ---
 
 func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
@@ -416,7 +399,7 @@ func TestPurgeArchived_AgesFromArchivedAtNotMtime(t *testing.T) {
 	gonePath := filepath.Join(s.dir, "archive", "gone.json")
 	ageArchivedChat(t, s, "gone", 72*time.Hour)
 
-	s.PurgeArchived(ctx, 24*time.Hour)
+	s.archiveSvc().Purge(ctx, 24*time.Hour)
 
 	if _, err := os.Stat(keepPath); err != nil {
 		t.Errorf("old-but-just-archived chat purged from stale mtime (ArchivedAt is fresh): %v", err)

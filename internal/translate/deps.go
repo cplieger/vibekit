@@ -27,7 +27,6 @@ type LineRecorder interface {
 type Deps interface {
 	StreamingAccess
 	PermissionAccess
-	BridgeComm
 	// MCPRecorder returns the MCP state recorder sub-interface.
 	MCPRecorder() MCPRecorder
 	// SetGovernance caches the latest account/workspace governance state so
@@ -72,8 +71,10 @@ func New(deps Deps, opts ...Option) *Translator {
 // Option configures a Translator.
 type Option func(*Translator)
 
-// WithIDGenerator overrides the default message ID generator (for tests).
-func WithIDGenerator(fn func() string) Option {
+// withIDGenerator overrides the default message ID generator. Unexported:
+// the only caller is this package's own tests, which need deterministic
+// message IDs; production always takes the ids.NewMessageID default.
+func withIDGenerator(fn func() string) Option {
 	return func(t *Translator) { t.newMsgID = fn }
 }
 

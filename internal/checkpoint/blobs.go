@@ -205,17 +205,6 @@ func (b *blobStore) Get(ctx context.Context, hash string) ([]byte, error) {
 	return data, nil
 }
 
-// Exists reports whether a blob for hash is on disk. Cheap — one
-// stat call, no content read.
-func (b *blobStore) Exists(hash string) bool {
-	p := b.pathFor(hash)
-	if p == "" {
-		return false
-	}
-	_, err := os.Stat(p)
-	return err == nil
-}
-
 // pathFor returns the on-disk path where hash would be stored. Does
 // not check existence. Validates hash as 64-char lowercase hex before
 // joining. Defense-in-depth against CWE-22 (path traversal).

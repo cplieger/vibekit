@@ -24,7 +24,7 @@ func newEventCaptureDeps() (*baseDeps, *[]api.ServerEvent) {
 
 func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// First chunk: should create message + emit chunk
@@ -60,7 +60,7 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 
 func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// Start a streaming turn first (tool calls require an active buffer)
@@ -91,7 +91,7 @@ func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 
 func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// Start turn + add tool call
@@ -226,7 +226,7 @@ func (*captureMCPRecorder) SetKnownTools(context.Context, string, []string)   {}
 
 func TestSequence_AvailableCommands_BroadcastsUpdate(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c1")
 
 	// v3 available_commands_update session/update sub-kind.
@@ -250,7 +250,7 @@ func TestSequence_AvailableCommands_BroadcastsUpdate(t *testing.T) {
 
 func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := api.ChatID("c-reason")
 
 	// Send a reasoning chunk (isReasoning=true)

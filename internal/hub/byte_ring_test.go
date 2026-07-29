@@ -6,7 +6,7 @@ package hub
 import "testing"
 
 // After more writes than the capacity, the ring keeps only the newest
-// bytes, reports Truncated, and Len stays at capacity.
+// bytes, reports Truncated, and holds exactly capacity bytes.
 func TestByteRing_WrapBehaviour(t *testing.T) {
 	r := newByteRing(4)
 	r.Write([]byte("ab")) // partial fill, pos=2
@@ -18,7 +18,7 @@ func TestByteRing_WrapBehaviour(t *testing.T) {
 	if !r.Truncated() {
 		t.Errorf("byteRing.Truncated() = false, want true after wrap")
 	}
-	if got := r.Len(); got != 4 {
-		t.Errorf("byteRing.Len() = %d, want 4", got)
+	if got := len(r.Bytes()); got != 4 {
+		t.Errorf("byteRing stored bytes = %d, want 4", got)
 	}
 }

@@ -2,7 +2,6 @@ package gitexec
 
 import (
 	"context"
-	"errors"
 	"testing"
 )
 
@@ -40,6 +39,14 @@ func TestScrubAuth(t *testing.T) {
 		// Combined patterns
 		{name: "userinfo_and_query", in: "https://user:pw@host.com/r?token=s", want: "https://host.com/r?token=[REDACTED]"},
 
+		// Embedded in surrounding text — the shape every caller actually
+		// passes (git stderr / an error message, not a bare URL).
+		{
+			name: "userinfo_inside_message",
+			in:   "failed: https://user:pass@host.com/repo.git",
+			want: "failed: https://host.com/repo.git",
+		},
+
 		// Idempotency
 		{name: "already_scrubbed", in: "https://github.com/repo.git", want: "https://github.com/repo.git"},
 	}
@@ -53,27 +60,6 @@ func TestScrubAuth(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestScrubAuthErr(t *testing.T) {
-	t.Parallel()
-
-	t.Run("nil_error", func(t *testing.T) {
-		t.Parallel()
-		if got := ScrubAuthErr(nil); got != "" {
-			t.Errorf("ScrubAuthErr(nil) = %q, want empty", got)
-		}
-	})
-
-	t.Run("error_with_credentials", func(t *testing.T) {
-		t.Parallel()
-		err := errors.New("failed: https://user:pass@host.com/repo.git")
-		got := ScrubAuthErr(err)
-		want := "failed: https://host.com/repo.git"
-		if got != want {
-			t.Errorf("ScrubAuthErr(%v)\n got: %q\nwant: %q", err, got, want)
-		}
-	})
 }
 
 func TestCmd(t *testing.T) {

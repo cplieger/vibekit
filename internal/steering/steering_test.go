@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // ---------------------------------------------------------------------------
@@ -241,7 +240,6 @@ func TestWriteForges_PerProviderFields(t *testing.T) {
 func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
@@ -300,7 +298,6 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 func TestGenerate_NoMCPSnapshotOmitsSection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
@@ -320,7 +317,6 @@ func TestGenerate_NoMCPSnapshotOmitsSection(t *testing.T) {
 func TestGenerate_EmptyMCPSnapshotOmitsSection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
@@ -369,7 +365,6 @@ func TestGenerate_RendersForgeSection(t *testing.T) {
 func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
@@ -427,7 +422,6 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 	workDir := t.TempDir()
 	configDir := t.TempDir()
 
@@ -470,7 +464,6 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 func TestCustomPath_UsesHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 	g := New("/some/work", "/some/config")
 	got := g.CustomPath()
 	want := filepath.Join(home, ".kiro", "steering", "custom.md")
@@ -484,7 +477,6 @@ func TestCustomPath_HomeUnsetFallback(t *testing.T) {
 	t.Setenv("KIRO_HOME", "")
 	os.Unsetenv("HOME")
 	os.Unsetenv("KIRO_HOME")
-	workspace.SetKiroHomeForTest(t, ".kiro")
 	g := New("/some/work", "/some/config")
 	// With both KIRO_HOME and HOME unset, KiroHome() falls back to a
 	// relative ".kiro" — same fallback kiro-cli uses internally so the

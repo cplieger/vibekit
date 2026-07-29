@@ -64,7 +64,7 @@ func newTestStore(t *testing.T) (*Store, *fakeBroadcaster) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	b := &fakeBroadcaster{}
-	s.SetBroadcaster(b)
+	WithBroadcaster(b)(s)
 	return s, b
 }
 
@@ -2112,7 +2112,7 @@ func TestPurgeArchived_RemovesAgedOutEntries(t *testing.T) {
 	oldPath := filepath.Join(s.dir, "archive", "old.json")
 	ageArchivedChat(t, s, "old", 48*time.Hour)
 
-	s.PurgeArchived(context.Background(), 24*time.Hour)
+	s.archiveSvc().Purge(context.Background(), 24*time.Hour)
 
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
 		t.Errorf("aged-out entry survived purge: stat err = %v", err)
@@ -2135,7 +2135,7 @@ func TestPurgeArchived_AlsoRemovesPlanDraft(t *testing.T) {
 	archiveDir := filepath.Join(s.dir, "archive")
 	ageArchivedChat(t, s, "c1", 48*time.Hour)
 
-	s.PurgeArchived(context.Background(), 24*time.Hour)
+	s.archiveSvc().Purge(context.Background(), 24*time.Hour)
 
 	if _, err := os.Stat(filepath.Join(archiveDir, "c1.plan.md")); !os.IsNotExist(err) {
 		t.Errorf("orphan plan-draft left after purge: stat err = %v", err)
@@ -2154,7 +2154,7 @@ func TestPurgeArchived_InvokesOnPurgeCallback(t *testing.T) {
 	_ = s.Archive(context.Background(), "c1")
 	ageArchivedChat(t, s, "c1", 48*time.Hour)
 
-	s.PurgeArchived(context.Background(), 24*time.Hour)
+	s.archiveSvc().Purge(context.Background(), 24*time.Hour)
 
 	if got := called.Load(); got != 1 {
 		t.Errorf("onPurge called %d times, want 1", got)
@@ -2172,7 +2172,7 @@ func TestPurgeArchived_KeepsRecentEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s.PurgeArchived(context.Background(), 24*time.Hour)
+	s.archiveSvc().Purge(context.Background(), 24*time.Hour)
 
 	if _, err := os.Stat(filepath.Join(s.dir, "archive", "c1.json")); err != nil {
 		t.Errorf("recent entry was wrongly purged: %v", err)

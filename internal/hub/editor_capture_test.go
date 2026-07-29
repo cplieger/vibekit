@@ -62,7 +62,7 @@ func newCaptureHub(t *testing.T, spy *captureSpy) (*Hub, *fakeChatStore, string)
 	work := t.TempDir()
 	cs := newFakeChatStore()
 	h := New(work, func() api.ACPBridge { return newFakeBridge() }, cs)
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 	h.checkpoints = spy
 	return h, cs, work
 }

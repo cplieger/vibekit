@@ -67,7 +67,7 @@ func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) boo
 	// the only possible broadcast is then the message_chunk on process.
 	buf.Started = true
 	buf.MessageID = "cap-mid"
-	tr := New(deps, WithIDGenerator(func() string { return "cap-mid" }))
+	tr := New(deps, withIDGenerator(func() string { return "cap-mid" }))
 	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": api.ContentTypeText, "text": text},
 	}), false)
@@ -112,7 +112,7 @@ func TestHandlePlan_UnmarshalGuard(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(context.Background(), api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if rec.appendCalls != 1 {
 			t.Errorf("valid plan JSON: AppendMessage calls = %d, want 1", rec.appendCalls)
@@ -122,7 +122,7 @@ func TestHandlePlan_UnmarshalGuard(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(context.Background(), api.ChatID("c1"), json.RawMessage(`{`))
 		if rec.appendCalls != 0 {
 			t.Errorf("invalid plan JSON: AppendMessage calls = %d, want 0", rec.appendCalls)
@@ -141,7 +141,7 @@ func TestHandlePlan_LogsOnlyOnAppendError(t *testing.T) {
 		rec := &recStore{appendErr: errBoom}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(context.Background(), api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if !strings.Contains(logbuf.String(), "persist plan") {
 			t.Errorf("AppendMessage error not logged; log=%q, want it to contain %q", logbuf.String(), "persist plan")
@@ -154,7 +154,7 @@ func TestHandlePlan_LogsOnlyOnAppendError(t *testing.T) {
 		rec := &recStore{} // appendErr nil, mutateErr nil
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(context.Background(), api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if strings.Contains(logbuf.String(), "persist plan") {
 			t.Errorf("unexpected error log on AppendMessage success; log=%q", logbuf.String())
@@ -178,7 +178,7 @@ func TestHandleModeUpdate_CurrentModeIDPersistsAndBroadcasts(t *testing.T) {
 	// Pre-create the chat so HandleModeUpdate's Mutate sees exists=true.
 	_ = store.Mutate(context.Background(), chatID, func(_ *api.Chat, _ bool) bool { return true })
 
-	tr := New(deps, WithIDGenerator(func() string { return "id" }))
+	tr := New(deps, withIDGenerator(func() string { return "id" }))
 	tr.HandleModeUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
 		"currentModeId": "plan",
 	}))
@@ -220,7 +220,7 @@ func TestHandlePlan_ContextErrGuard(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandlePlan(context.Background(), api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
 		if rec.mutateCalls != 1 {
 			t.Errorf("active ctx: Mutate calls = %d, want 1", rec.mutateCalls)
@@ -230,7 +230,7 @@ func TestHandlePlan_ContextErrGuard(t *testing.T) {
 		rec := &recStore{}
 		deps := newBaseDeps()
 		deps.store = rec
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		tr.HandlePlan(ctx, api.ChatID("c1"), json.RawMessage(`{"entries":[]}`))
@@ -256,7 +256,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 	t.Run("tagged text chunk stamps buffer and rides the chunk event", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		chatID := api.ChatID("rf1")
-		tr := New(deps, WithIDGenerator(func() string { return "m1" }))
+		tr := New(deps, withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{
 				"category":         "safety",
@@ -289,7 +289,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 	t.Run("first refusal wins", func(t *testing.T) {
 		deps, _ := newEventCaptureDeps()
 		chatID := api.ChatID("rf2")
-		tr := New(deps, WithIDGenerator(func() string { return "m1" }))
+		tr := New(deps, withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{"category": "first"},
 		})), false)
@@ -305,7 +305,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 	t.Run("reasoning chunk cannot mark the turn", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		chatID := api.ChatID("rf3")
-		tr := New(deps, WithIDGenerator(func() string { return "m1" }))
+		tr := New(deps, withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, newChunk(map[string]any{
 			"refusal": map[string]any{"category": "safety"},
 		})), true)
@@ -322,7 +322,7 @@ func TestHandleAssistantChunk_RefusalMeta(t *testing.T) {
 	t.Run("untagged chunk stays clean", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		chatID := api.ChatID("rf4")
-		tr := New(deps, WithIDGenerator(func() string { return "m1" }))
+		tr := New(deps, withIDGenerator(func() string { return "m1" }))
 		tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, newChunk(nil)), false)
 		if buf := deps.bufStore.Get(chatID); buf != nil && buf.Refusal != nil {
 			t.Error("untagged chunk must not stamp refusal")

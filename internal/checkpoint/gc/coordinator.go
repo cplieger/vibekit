@@ -78,7 +78,7 @@ func (gc *Coordinator) Start(ctx context.Context) {
 	slog.Info("checkpoint: started background tasks",
 		"interval", gc.interval)
 
-	gc.runOnceInternal(ctx)
+	_, _, _ = gc.RunOnce(ctx)
 
 	gc.done.Add(1)
 	go gc.loop(ctx, stop)
@@ -112,43 +112,32 @@ func (gc *Coordinator) loop(ctx context.Context, stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
-			gc.runOnceInternal(ctx)
+			_, _, _ = gc.RunOnce(ctx)
 		}
 	}
 }
 
-// RunOnce runs one GC sweep. Exported for test access.
-func (gc *Coordinator) RunOnce(ctx context.Context) {
-	gc.runOnceInternal(ctx)
-}
-
-// RunOnceWithCounts runs one GC sweep and returns the counts.
-// Used by tests that need to verify exact removal counts.
-func (gc *Coordinator) RunOnceWithCounts(ctx context.Context) (removed, scanned int, err error) {
-	cached := gc.cached()
-	referenced, err := gc.collectReferencedBlobs(ctx, cached)
-	if err != nil {
-		return 0, 0, err
-	}
-	removed, scanned, err = gc.sweepBlobs(ctx, referenced)
-	return removed, scanned, err
-}
-
-func (gc *Coordinator) runOnceInternal(ctx context.Context) {
+// RunOnce runs one GC sweep — collect the referenced set, then sweep the
+// blob tree — logging the outcome and returning the counts. This is the
+// whole sweep: Start runs it once immediately and the ticker loop runs it
+// per interval. The counts are returned rather than only logged so the
+// checkpoint package's integration tests can assert what a sweep did
+// (removed/scanned) instead of re-driving the two phases themselves.
+func (gc *Coordinator) RunOnce(ctx context.Context) (removed, scanned int, err error) {
 	start := time.Now()
 	slog.Info("checkpoint: blob GC started")
 
 	cached := gc.cached()
-	referenced, err := gc.collectReferencedBlobs(ctx, cached)
-	if err != nil {
+	referenced, collectErr := gc.collectReferencedBlobs(ctx, cached)
+	if collectErr != nil {
 		if ctx.Err() != nil {
 			slog.Info("checkpoint: blob GC cancelled during collection",
 				"duration", time.Since(start))
-			return
+			return 0, 0, collectErr
 		}
 		slog.Warn("checkpoint: blob GC failed during collection",
-			"error", err, "duration", time.Since(start))
-		return
+			"error", collectErr, "duration", time.Since(start))
+		return 0, 0, collectErr
 	}
 
 	removed, scanned, sweepErr := gc.sweepBlobs(ctx, referenced)
@@ -159,16 +148,17 @@ func (gc *Coordinator) runOnceInternal(ctx context.Context) {
 			slog.Info("checkpoint: blob GC cancelled during sweep",
 				"duration", dur, "removed", removed,
 				"scanned", scanned)
-			return
+			return removed, scanned, sweepErr
 		}
 		slog.Warn("checkpoint: blob GC failed",
 			"error", sweepErr, "duration", dur,
 			"removed", removed, "scanned", scanned)
-		return
+		return removed, scanned, sweepErr
 	}
 	slog.Info("checkpoint: blob GC finished",
 		"removed", removed, "scanned", scanned,
 		"duration", dur)
+	return removed, scanned, nil
 }
 
 func (gc *Coordinator) sweepBlobs(ctx context.Context, referenced map[string]struct{}) (removed, scanned int, err error) {

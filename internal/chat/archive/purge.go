@@ -212,9 +212,6 @@ func (p *PurgeScheduler) Stop() {
 	}
 }
 
-// Done returns a channel that is closed when the scheduler goroutine exits.
-func (p *PurgeScheduler) Done() <-chan struct{} { return p.done }
-
 // Trigger requests a purge evaluation. Safe to call from any goroutine;
 // concurrent calls collapse into a single pending evaluation.
 func (p *PurgeScheduler) Trigger() {

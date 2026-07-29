@@ -9,7 +9,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -25,24 +24,6 @@ func (h *Hub) ParentACPSession(chatID api.ChatID) string {
 
 // WorkDir returns the workspace root directory.
 func (h *Hub) WorkDir() string { return h.lifecycle.workDir }
-
-// BridgeNotify sends a notification to the bridge for the given chat.
-func (h *Hub) BridgeNotify(ctx context.Context, chatID api.ChatID, method string, params map[string]any) error {
-	sb := h.bridge.mgr.get(chatID)
-	if sb == nil {
-		return nil
-	}
-	return sb.bridge.Notify(ctx, method, command.SessionParams(sb, params))
-}
-
-// BridgeRespond sends a response to the bridge for the given chat.
-func (h *Hub) BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error {
-	sb := h.bridge.mgr.get(chatID)
-	if sb == nil {
-		return nil
-	}
-	return sb.bridge.Respond(ctx, requestID, result, err)
-}
 
 // MCPRecorder returns the Hub's MCP state recorder.
 func (h *Hub) MCPRecorder() translate.MCPRecorder {
@@ -77,11 +58,6 @@ func (r *hubMCPRecorder) SetKnownTools(ctx context.Context, name string, tools [
 // PendingPermsAdd tracks a pending permission event for SSE replay.
 func (h *Hub) PendingPermsAdd(requestID int64, evt api.ServerEvent) {
 	h.sse.pendingPerms.Add(requestID, evt)
-}
-
-// PendingPermsRemove removes a pending permission by request ID.
-func (h *Hub) PendingPermsRemove(requestID int64) {
-	h.sse.pendingPerms.Remove(requestID)
 }
 
 // NotifyPush sends a push notification.

@@ -36,11 +36,6 @@ func cheapestModel(_ context.Context, catalog []api.SessionModel) string {
 	return bestID
 }
 
-// CheapestModel is the exported alias retained for backward
-// compatibility with existing call sites. New code should use
-// cheapestModel directly within the hub package.
-var CheapestModel = cheapestModel
-
 // excludedTags are the bracketed markers that disqualify a model from
 // ambient-task selection.
 var excludedTags = func() []string {

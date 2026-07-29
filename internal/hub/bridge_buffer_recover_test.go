@@ -27,7 +27,7 @@ func newHubWithConfigDir(t *testing.T, cfg string) (*Hub, *fakeChatStore) {
 	cs := newFakeChatStore()
 	factory := func() api.ACPBridge { return newFakeBridge() }
 	h := New(t.TempDir(), factory, cs, WithConfigDir(cfg))
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	return h, cs
 }

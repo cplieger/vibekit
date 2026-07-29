@@ -59,15 +59,6 @@ const (
 	FileDeleted  FileStatus = "D"
 )
 
-// Valid reports whether s is one of the three known diff statuses.
-func (s FileStatus) Valid() bool {
-	switch s {
-	case FileAdded, FileModified, FileDeleted:
-		return true
-	}
-	return false
-}
-
 // FileChange is one entry returned by Diff.
 type FileChange struct {
 	Status       FileStatus `json:"status"`

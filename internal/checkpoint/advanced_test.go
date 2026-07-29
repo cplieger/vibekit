@@ -536,7 +536,7 @@ func TestStoreSnapshotDuringGC(t *testing.T) {
 	// Run GC sweeps in parallel with snapshots.
 	for range 3 {
 		wg.Go(func() {
-			s.gc.RunOnce(context.Background())
+			_, _, _ = s.gc.RunOnce(context.Background())
 		})
 	}
 	wg.Wait()
@@ -751,10 +751,10 @@ func TestBlobGCRespectsContextCancellation(t *testing.T) {
 	}
 	// Orphan survives the cancelled sweep — next live sweep will
 	// reap it.
-	if !blobs.Exists(orphanHash) {
+	if !blobOnDisk(t, blobs, orphanHash) {
 		t.Error("cancelled sweep removed orphan; ctx gate didn't hold")
 	}
-	if !blobs.Exists(refHash) {
+	if !blobOnDisk(t, blobs, refHash) {
 		t.Error("cancelled sweep removed referenced blob (should be impossible, but ctx gate + guard both failed)")
 	}
 }
@@ -842,7 +842,7 @@ func TestBlobGCAbortsWhenChatLogUnreadable(t *testing.T) {
 	// The orphan blob (which nothing references, so a normal sweep
 	// would delete it) must survive because the sweep aborted
 	// before entering the delete phase.
-	if !blobs.Exists(orphanHash) {
+	if !blobOnDisk(t, blobs, orphanHash) {
 		t.Error("aborted GC removed orphan blob; referenced-set abort contract violated")
 	}
 }

@@ -84,14 +84,6 @@ func ScrubAuth(s string) string {
 	return s
 }
 
-// ScrubAuthErr is a convenience wrapper for error values.
-func ScrubAuthErr(err error) string {
-	if err == nil {
-		return ""
-	}
-	return ScrubAuth(err.Error())
-}
-
 // --- Hardened subprocess execution ---
 
 // allowedSubcommands lists git subcommands that may be invoked through

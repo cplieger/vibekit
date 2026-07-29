@@ -29,7 +29,6 @@ import (
 // giteaProvider implements ForgeOps via the tea CLI. Used for both
 // KindGitea and KindCodeberg (Codeberg is Gitea-compatible).
 type giteaProvider struct {
-	kind Kind
 	host string
 }
 
@@ -37,11 +36,8 @@ func newGitea(kind Kind, host string) *giteaProvider {
 	if host == "" {
 		host = kind.DefaultHost()
 	}
-	return &giteaProvider{kind: kind, host: host}
+	return &giteaProvider{host: host}
 }
-
-func (p *giteaProvider) Kind() Kind   { return p.kind }
-func (p *giteaProvider) Host() string { return p.host }
 
 // loginName returns the tea login alias that maps to this host.
 // We use the host itself as the login name when injecting tokens,
@@ -257,7 +253,7 @@ func (p *giteaProvider) viewPR(ctx context.Context, repo string, number int) (*P
 }
 
 func (p *giteaProvider) MergePR(ctx context.Context, repo string, number int, method MergeMethod) error {
-	style := "merge"
+	style := string(MergeCommit)
 	switch method {
 	case MergeSquash:
 		style = string(MergeSquash)

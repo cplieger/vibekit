@@ -28,9 +28,7 @@ func CmdResolvePendingChange(d *Dispatcher, ctx context.Context, w http.Response
 		d.RespondErr(w, http.StatusBadRequest, errResolveMissingID)
 		return
 	}
-	switch p.Action {
-	case api.PendingActionAccept, api.PendingActionReject:
-	default:
+	if !p.Action.Valid() {
 		d.RespondErr(w, http.StatusBadRequest, errResolveBadAction)
 		return
 	}
@@ -75,9 +73,7 @@ func CmdResolveAllPendingChanges(d *Dispatcher, ctx context.Context, w http.Resp
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	switch p.Action {
-	case api.PendingActionAccept, api.PendingActionReject:
-	default:
+	if !p.Action.Valid() {
 		d.RespondErr(w, http.StatusBadRequest, errResolveBadAction)
 		return
 	}
