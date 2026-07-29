@@ -6,8 +6,9 @@ import (
 )
 
 // FuzzByteRingWrite exercises the circular buffer with multiple writes
-// and verifies invariants: Len never exceeds capacity, Bytes never
-// panics, and String is valid UTF-8 when all input is valid UTF-8.
+// and verifies invariants: the stored byte count never exceeds capacity,
+// Bytes never panics, and String is valid UTF-8 when all input is valid
+// UTF-8.
 func FuzzByteRingWrite(f *testing.F) {
 	f.Add([]byte("hello"), []byte(" world"), 8)
 	f.Add([]byte("abc"), []byte("defghij"), 4)
@@ -22,11 +23,11 @@ func FuzzByteRingWrite(f *testing.F) {
 		r.Write(a)
 		r.Write(b)
 
-		if r.Len() > cap {
-			t.Errorf("Len %d exceeds capacity %d", r.Len(), cap)
+		stored := r.Bytes()
+		if len(stored) > cap {
+			t.Errorf("ring holds %d bytes, exceeds capacity %d", len(stored), cap)
 		}
 
-		_ = r.Bytes()
 		s := r.String()
 
 		// String must be valid UTF-8 when all input was valid UTF-8.

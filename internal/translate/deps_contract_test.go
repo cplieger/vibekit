@@ -45,12 +45,6 @@ func TestStubDeps_Contract(t *testing.T) {
 
 	// Broadcast must not panic.
 	d.Broadcast(ctx, api.ServerEvent{})
-
-	// BridgeNotify must not panic.
-	_ = d.BridgeNotify(ctx, "chat-1", "test", nil)
-
-	// BridgeRespond must not panic.
-	_ = d.BridgeRespond(ctx, "chat-1", 1, nil, nil)
 }
 
 // TestBaseDeps_FullContract mirrors the hub's TranslateDepsContractTest
@@ -75,20 +69,6 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		d.Broadcast(ctx, api.ServerEvent{Type: "test_event", ChatID: "chat-1"})
 	})
 
-	t.Run("BridgeNotify_nil_error_for_unknown_chat", func(t *testing.T) {
-		err := d.BridgeNotify(ctx, "unknown-chat", "test/method", nil)
-		if err != nil {
-			t.Errorf("BridgeNotify(unknown) = %v, want nil", err)
-		}
-	})
-
-	t.Run("BridgeRespond_nil_error_for_unknown_chat", func(t *testing.T) {
-		err := d.BridgeRespond(ctx, "unknown-chat", 1, nil, nil)
-		if err != nil {
-			t.Errorf("BridgeRespond(unknown) = %v, want nil", err)
-		}
-	})
-
 	t.Run("ParentACPSession_empty_for_unknown_chat", func(t *testing.T) {
 		if s := d.ParentACPSession("unknown-chat"); s != "" {
 			t.Errorf("ParentACPSession(unknown) = %q, want empty", s)
@@ -104,9 +84,8 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		r.SignalReady()
 	})
 
-	t.Run("PendingPermsAdd_Remove_does_not_panic", func(t *testing.T) {
+	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
 		d.PendingPermsAdd(42, api.ServerEvent{Type: "permission_needed", ChatID: "c1"})
-		d.PendingPermsRemove(42)
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {

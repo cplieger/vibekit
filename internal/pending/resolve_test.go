@@ -56,7 +56,7 @@ func TestResolve_ChatIDMismatch(t *testing.T) {
 		t.Fatalf("ResolveWithText with mismatched chat: got %v, want ErrUnknown", err)
 	}
 	// The op must survive the mismatched attempts.
-	if got := s.CountForChat("owner"); got != 1 {
+	if got := countForChat(s, "owner"); got != 1 {
 		t.Fatalf("op count after mismatched resolves = %d, want 1 (untouched)", got)
 	}
 	// The rightful owner still resolves it.
@@ -94,11 +94,11 @@ func TestRejectAllForChat(t *testing.T) {
 	if len(snaps) != 3 {
 		t.Fatalf("RejectAllForChat returned %d snapshots, want 3", len(snaps))
 	}
-	if s.CountForChat("c-1") != 0 {
-		t.Fatalf("c-1 count after flush = %d, want 0", s.CountForChat("c-1"))
+	if countForChat(s, "c-1") != 0 {
+		t.Fatalf("c-1 count after flush = %d, want 0", countForChat(s, "c-1"))
 	}
-	if s.CountForChat("c-2") != 1 {
-		t.Fatalf("c-2 count after flush = %d, want 1 (untouched)", s.CountForChat("c-2"))
+	if countForChat(s, "c-2") != 1 {
+		t.Fatalf("c-2 count after flush = %d, want 1 (untouched)", countForChat(s, "c-2"))
 	}
 	for i, w := range waiters {
 		select {
@@ -143,11 +143,11 @@ func TestAcceptAllForChat(t *testing.T) {
 	if len(snaps) != 3 {
 		t.Fatalf("AcceptAllForChat returned %d snapshots, want 3", len(snaps))
 	}
-	if s.CountForChat("c-1") != 0 {
-		t.Fatalf("c-1 count after accept-all = %d, want 0", s.CountForChat("c-1"))
+	if countForChat(s, "c-1") != 0 {
+		t.Fatalf("c-1 count after accept-all = %d, want 0", countForChat(s, "c-1"))
 	}
-	if s.CountForChat("c-2") != 1 {
-		t.Fatalf("c-2 count after accept-all = %d, want 1 (untouched)", s.CountForChat("c-2"))
+	if countForChat(s, "c-2") != 1 {
+		t.Fatalf("c-2 count after accept-all = %d, want 1 (untouched)", countForChat(s, "c-2"))
 	}
 	for i, w := range waiters {
 		select {
@@ -373,8 +373,8 @@ func TestResolveWithText(t *testing.T) {
 				t.Fatal("waiter blocked after ResolveWithText")
 			}
 
-			if s.CountForChat("c-1") != 0 {
-				t.Errorf("CountForChat after resolve = %d, want 0", s.CountForChat("c-1"))
+			if countForChat(s, "c-1") != 0 {
+				t.Errorf("per-chat index after resolve = %d, want 0", countForChat(s, "c-1"))
 			}
 		})
 	}
@@ -494,7 +494,7 @@ func TestRejectAllForChat_NoMergedTextLeak(t *testing.T) {
 	if res2.MergedText != "" {
 		t.Errorf("tc-2: Resolution.MergedText = %q, want empty", res2.MergedText)
 	}
-	if got := s.CountForChat("c-1"); got != 0 {
-		t.Errorf("CountForChat after flush = %d, want 0", got)
+	if got := countForChat(s, "c-1"); got != 0 {
+		t.Errorf("per-chat index after flush = %d, want 0", got)
 	}
 }

@@ -27,8 +27,8 @@ func TestForward_BridgeExitFlushesPending(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Add: %v", err)
 	}
-	if h.perm.pending.CountForChat("c1") != 1 {
-		t.Fatalf("precondition: op not staged; count=%d", h.perm.pending.CountForChat("c1"))
+	if len(h.perm.pending.ListForChat("c1")) != 1 {
+		t.Fatalf("precondition: op not staged; count=%d", len(h.perm.pending.ListForChat("c1")))
 	}
 
 	// Simulate bridge exit: closing notifCh makes Forward's range return,
@@ -36,7 +36,7 @@ func TestForward_BridgeExitFlushesPending(t *testing.T) {
 	br.Stop()
 	h.coord.Forward("c1", br)
 
-	if got := h.perm.pending.CountForChat("c1"); got != 0 {
+	if got := len(h.perm.pending.ListForChat("c1")); got != 0 {
 		t.Fatalf("pending count after bridge exit = %d, want 0 (flushed)", got)
 	}
 	select {

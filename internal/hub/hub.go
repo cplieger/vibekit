@@ -309,11 +309,6 @@ func (h *Hub) StopCheckpointBackgroundTasks() {
 	h.checkpoints.Stop()
 }
 
-// MCPConfig returns the MCP configuration store.
-func (h *Hub) MCPConfig() api.MCPConfig {
-	return h.mcpConfig
-}
-
 // MCPRegistry returns the in-memory registry of currently-connected MCP
 // servers as an api.RouteHandler (the only surface main.go needs — the
 // registry registers its own HTTP routes). Exposing the concrete type

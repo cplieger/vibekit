@@ -3,7 +3,20 @@ package pending
 import (
 	"context"
 	"testing"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
+
+// countForChat reports the size of the store's per-chat index. Reads the
+// index directly under the store's own lock — the same observation the
+// production readers make, and deliberately NOT len(ListForChat(id)),
+// which filters by s.ops membership and would hide a byChat entry that
+// outlived its op.
+func countForChat(s *Store, chatID api.ChatID) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.byChat[chatID])
+}
 
 // TestListForChat_Ordering preserves insertion order.
 func TestListForChat_Ordering(t *testing.T) {

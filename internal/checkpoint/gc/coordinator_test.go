@@ -109,7 +109,7 @@ func TestCollectReferencedBlobs_MergesCachedAndUncached(t *testing.T) {
 	}
 }
 
-func TestRunOnceWithCounts_EmptyBlobDir(t *testing.T) {
+func TestRunOnce_EmptyBlobDir(t *testing.T) {
 	t.Parallel()
 	blobsDir := filepath.Join(t.TempDir(), "nonexistent")
 	chatsDir := t.TempDir()
@@ -119,7 +119,7 @@ func TestRunOnceWithCounts_EmptyBlobDir(t *testing.T) {
 		chatsDir: chatsDir,
 		cached:   func() map[string]BlobRefer { return nil },
 	}
-	removed, scanned, err := gc.RunOnceWithCounts(context.Background())
+	removed, scanned, err := gc.RunOnce(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestCoordinator_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancelled
 
-	gc.RunOnce(ctx)
+	_, _, _ = gc.RunOnce(ctx)
 	// Blob should survive because context was cancelled.
 	assertBlobExists(t, blobsDir, hash)
 }
@@ -290,21 +290,21 @@ func TestCoordinator_Start_CreatesStopChannelWhenNil(t *testing.T) {
 	}
 }
 
-// RunOnceWithCounts must surface a collection error and report zero counts,
+// RunOnce must surface a collection error and report zero counts,
 // not silently treat the failed collection as a successful empty sweep.
-func TestRunOnceWithCounts_PropagatesCollectError(t *testing.T) {
+func TestRunOnce_PropagatesCollectError(t *testing.T) {
 	t.Parallel()
 	gc := &Coordinator{
 		chatsDir: writeNonDirFile(t, "x"), // a file → ReadDir ENOTDIR → collect error
 		blobsDir: t.TempDir(),
 		cached:   func() map[string]BlobRefer { return nil },
 	}
-	removed, scanned, err := gc.RunOnceWithCounts(context.Background())
+	removed, scanned, err := gc.RunOnce(context.Background())
 	if err == nil {
-		t.Errorf("RunOnceWithCounts() with unreadable chatsDir: err = nil, want non-nil")
+		t.Errorf("RunOnce() with unreadable chatsDir: err = nil, want non-nil")
 	}
 	if removed != 0 || scanned != 0 {
-		t.Errorf("RunOnceWithCounts() on collect error = (removed=%d, scanned=%d), want (0, 0)", removed, scanned)
+		t.Errorf("RunOnce() on collect error = (removed=%d, scanned=%d), want (0, 0)", removed, scanned)
 	}
 }
 
@@ -321,7 +321,7 @@ func TestRunOnce_SkipsSweepOnCollectError(t *testing.T) {
 		blobsDir: blobsDir,
 		cached:   func() map[string]BlobRefer { return nil },
 	}
-	gc.RunOnce(context.Background())
+	_, _, _ = gc.RunOnce(context.Background())
 	assertBlobExists(t, blobsDir, hash)
 }
 
@@ -334,7 +334,7 @@ func TestRunOnce_LogsFailedOnSweepError(t *testing.T) {
 		cached:   func() map[string]BlobRefer { return nil },
 	}
 	out := captureSlog(t, func() {
-		gc.RunOnce(context.Background())
+		_, _, _ = gc.RunOnce(context.Background())
 	})
 	if !strings.Contains(out, "blob GC failed") {
 		t.Errorf("runOnce on sweep error: log = %q, want it to contain %q", out, "blob GC failed")
@@ -356,7 +356,7 @@ func TestRunOnce_LogsCancelledOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancelled: sweepBlobs returns ctx error at the first fanout entry
 	out := captureSlog(t, func() {
-		gc.RunOnce(ctx)
+		_, _, _ = gc.RunOnce(ctx)
 	})
 	if !strings.Contains(out, "cancelled during sweep") {
 		t.Errorf("runOnce on cancelled sweep: log = %q, want it to contain %q", out, "cancelled during sweep")

@@ -34,13 +34,6 @@ import (
 type ChatStore interface {
 	RouteHandler
 
-	// Wiring
-
-	// SetBroadcaster wires the SSE broadcaster the store uses to emit
-	// chat_created / chat_updated / chat_deleted / message_* events.
-	// Called once after construction to break the init cycle with the hub.
-	SetBroadcaster(b Broadcaster)
-
 	// Reads
 
 	// Get returns the full chat at id, or false if it does not exist.

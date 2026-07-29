@@ -1,4 +1,4 @@
-package bridge
+package testsupport
 
 import (
 	"testing"
@@ -6,15 +6,19 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// ACPBridgeContractTest verifies behavioral contracts that any
+// ACPBridgePreStartContractTest verifies behavioral contracts that any
 // api.ACPBridge implementation must satisfy without a real kiro-cli
 // subprocess. Run this against both the real Bridge and test fakes to
 // catch drift at the lifecycle level.
 //
 // Assertions are limited to properties that hold universally (before
 // Start is called), so fakes that pre-populate SessionID/ModelID for
-// convenience are not penalized.
-func ACPBridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
+// convenience are not penalized. The post-Start smoke variant is
+// ACPBridgeContractTest.
+//
+// It lives here rather than in internal/bridge so no production package
+// has to import "testing".
+func ACPBridgePreStartContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 	t.Helper()
 
 	t.Run("NotifCh_non_nil", func(t *testing.T) {

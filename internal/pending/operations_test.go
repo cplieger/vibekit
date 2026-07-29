@@ -39,8 +39,8 @@ func TestAdd_BasicAcceptFlow(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("waiter blocked after resolve")
 	}
-	if s.CountForChat("c-1") != 0 {
-		t.Errorf("CountForChat after resolve = %d, want 0", s.CountForChat("c-1"))
+	if countForChat(s, "c-1") != 0 {
+		t.Errorf("per-chat index after resolve = %d, want 0", countForChat(s, "c-1"))
 	}
 }
 
@@ -244,8 +244,8 @@ func TestAdd_ContextCancellation(t *testing.T) {
 	if res.MergedText != "" {
 		t.Errorf("Resolution.MergedText = %q, want empty", res.MergedText)
 	}
-	if s.CountForChat("c-1") != 0 {
-		t.Errorf("CountForChat after ctx cancel = %d, want 0", s.CountForChat("c-1"))
+	if countForChat(s, "c-1") != 0 {
+		t.Errorf("per-chat index after ctx cancel = %d, want 0", countForChat(s, "c-1"))
 	}
 }
 

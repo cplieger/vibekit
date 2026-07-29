@@ -106,7 +106,7 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 // CompactionWatermark is set to that message's id — with no failure surface.
 func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps, WithIDGenerator(func() string { return "evt-1" }))
+	tr := New(deps, withIDGenerator(func() string { return "evt-1" }))
 
 	tr.HandleSessionInfoUpdate(context.Background(), "c1", summarizationInfo(t, "success", "history summary"), "")
 

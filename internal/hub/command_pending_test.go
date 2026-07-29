@@ -121,11 +121,11 @@ func TestCmdResolveAllPendingChanges_Reject(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if h.perm.pending.CountForChat("c1") != 0 {
-		t.Errorf("c1 still has %d pending", h.perm.pending.CountForChat("c1"))
+	if len(h.perm.pending.ListForChat("c1")) != 0 {
+		t.Errorf("c1 still has %d pending", len(h.perm.pending.ListForChat("c1")))
 	}
-	if h.perm.pending.CountForChat("c2") != 1 {
-		t.Errorf("c2 flushed unexpectedly: count=%d", h.perm.pending.CountForChat("c2"))
+	if len(h.perm.pending.ListForChat("c2")) != 1 {
+		t.Errorf("c2 flushed unexpectedly: count=%d", len(h.perm.pending.ListForChat("c2")))
 	}
 }
 

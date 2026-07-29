@@ -11,7 +11,7 @@ import (
 // FuzzStoreInvariants exercises random sequences of Add/Resolve/RejectAllForChat
 // operations and asserts structural invariants after each step:
 //
-//  1. CountForChat monotonically decreases after each Resolve/RejectAllForChat.
+//  1. the per-chat index monotonically shrinks after each Resolve/RejectAllForChat.
 //  2. ListForChat preserves insertion order.
 //  3. Resolve is idempotent (second call returns ErrUnknown).
 //  4. RejectAllForChat on an empty chat returns nil.
@@ -84,16 +84,16 @@ func FuzzStoreInvariants(f *testing.F) {
 				idx := int(b/5) % len(pending)
 				p := pending[idx]
 
-				countBefore := s.CountForChat(p.chatID)
+				countBefore := countForChat(s, p.chatID)
 				_, err := s.Resolve(context.Background(), p.chatID, p.toolCallID, ActionAccept)
 				if err != nil {
 					t.Fatalf("Resolve(%q, accept): %v", p.toolCallID, err)
 				}
 
 				// Invariant 1: count decreases after resolve.
-				countAfter := s.CountForChat(p.chatID)
+				countAfter := countForChat(s, p.chatID)
 				if countAfter > countBefore {
-					t.Fatalf("CountForChat increased after Resolve: %d -> %d", countBefore, countAfter)
+					t.Fatalf("per-chat index grew after Resolve: %d -> %d", countBefore, countAfter)
 				}
 
 				// Invariant 5: waiter unblocked.
@@ -118,16 +118,16 @@ func FuzzStoreInvariants(f *testing.F) {
 				idx := int(b/5) % len(pending)
 				p := pending[idx]
 
-				countBefore := s.CountForChat(p.chatID)
+				countBefore := countForChat(s, p.chatID)
 				_, err := s.Resolve(context.Background(), p.chatID, p.toolCallID, ActionReject)
 				if err != nil {
 					t.Fatalf("Resolve(%q, reject): %v", p.toolCallID, err)
 				}
 
 				// Invariant 1: count decreases.
-				countAfter := s.CountForChat(p.chatID)
+				countAfter := countForChat(s, p.chatID)
 				if countAfter > countBefore {
-					t.Fatalf("CountForChat increased after Resolve: %d -> %d", countBefore, countAfter)
+					t.Fatalf("per-chat index grew after Resolve: %d -> %d", countBefore, countAfter)
 				}
 
 				// Invariant 5: waiter unblocked.
@@ -148,13 +148,13 @@ func FuzzStoreInvariants(f *testing.F) {
 			case 3: // RejectAllForChat (pick a chat)
 				chatID := chatIDs[int(b/5)%len(chatIDs)]
 
-				countBefore := s.CountForChat(chatID)
+				countBefore := countForChat(s, chatID)
 				snaps := s.RejectAllForChat(chatID)
 
 				// Invariant 1: count goes to zero.
-				countAfter := s.CountForChat(chatID)
+				countAfter := countForChat(s, chatID)
 				if countAfter != 0 {
-					t.Fatalf("CountForChat(%q) after RejectAllForChat = %d, want 0", chatID, countAfter)
+					t.Fatalf("per-chat index for %q after RejectAllForChat = %d, want 0", chatID, countAfter)
 				}
 
 				// Invariant 4: empty chat returns nil.

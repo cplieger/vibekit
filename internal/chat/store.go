@@ -143,10 +143,6 @@ func WithOnPurge(fn func(chatID api.ChatID)) StoreOption {
 	return func(s *Store) { s.onPurge = fn }
 }
 
-// SetBroadcaster implements api.ChatStore. Prefer WithBroadcaster at
-// construction time; this exists for interface satisfaction and test fakes.
-func (s *Store) SetBroadcaster(b api.Broadcaster) { s.broadcast = b }
-
 // --- Path helpers ---
 
 // chatIDPattern reports whether id is a valid chat identifier. Delegates

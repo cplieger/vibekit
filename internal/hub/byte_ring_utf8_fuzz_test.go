@@ -21,8 +21,8 @@ func FuzzByteRing_String_UTF8(f *testing.F) {
 		if !utf8.ValidString(s) {
 			t.Fatalf("String() not valid UTF-8 for cap=%d data=%x result=%x", cap, data, s)
 		}
-		if len(s) > r.Len() {
-			t.Fatalf("String() longer than Len(): %d > %d", len(s), r.Len())
+		if len(s) > len(r.Bytes()) {
+			t.Fatalf("String() longer than the ring's stored bytes: %d > %d", len(s), len(r.Bytes()))
 		}
 	})
 }

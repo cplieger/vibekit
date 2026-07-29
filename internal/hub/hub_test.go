@@ -64,7 +64,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	hb := newHangingBridge()
 	factory := func() api.ACPBridge { return hb }
 	h := New("/tmp/work", factory, cs)
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 

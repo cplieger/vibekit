@@ -30,14 +30,6 @@ func (s *Store) Get(toolCallID string) (api.PendingChange, bool) {
 	return op.Snapshot(), true
 }
 
-// CountForChat returns the number of pending ops for the chat.
-// Cheap O(1) read used by tests; not part of the hot path.
-func (s *Store) CountForChat(chatID api.ChatID) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.byChat[chatID])
-}
-
 // ChatIDs returns the set of chat IDs that currently have at least one
 // pending op. O(1) bounded by pending ops (not total chats). Used by
 // the hub's replay path to avoid scanning the entire chat directory.

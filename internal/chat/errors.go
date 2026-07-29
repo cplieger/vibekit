@@ -60,17 +60,6 @@ func (e *StoreError) Error() string {
 	}
 }
 
-// Is supports errors.Is matching between *StoreError values.
-// Two store errors are considered equal when their Kinds match;
-// Detail is ignored. This lets tests assert on Kind without
-// constructing an identical-Detail comparator.
-func (e *StoreError) Is(target error) bool {
-	if other, ok := target.(*StoreError); ok {
-		return e.Kind == other.Kind
-	}
-	return false
-}
-
 // errInvalidChatID returns the canonical error for a malformed chat ID.
 // Single source of truth for the error message format.
 func errInvalidChatID(id api.ChatID) error {

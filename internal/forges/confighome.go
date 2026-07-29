@@ -13,34 +13,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 )
-
-// configHomeOverride lets tests redirect the per-CLI config paths
-// to a temp dir. Empty (the default) means use $XDG_CONFIG_HOME
-// or ~/.config.
-var (
-	configHomeMu       sync.RWMutex
-	configHomeOverride string
-)
-
-// SetConfigHome overrides the config root for tests. Pass "" to
-// reset to the default.
-func SetConfigHome(p string) {
-	configHomeMu.Lock()
-	configHomeOverride = p
-	configHomeMu.Unlock()
-}
 
 // configHome returns the directory the CLIs read configs from.
 // Defaults to $XDG_CONFIG_HOME or $HOME/.config.
 func configHome() (string, error) {
-	configHomeMu.RLock()
-	override := configHomeOverride
-	configHomeMu.RUnlock()
-	if override != "" {
-		return override, nil
-	}
 	if x := os.Getenv("XDG_CONFIG_HOME"); x != "" {
 		return x, nil
 	}

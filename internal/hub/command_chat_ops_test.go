@@ -51,7 +51,7 @@ func newTestHubWithConfig(t *testing.T) (*Hub, *fakeChatStore, *spyCheckpoints, 
 	br := newFakeBridge()
 	factory := func() api.ACPBridge { return br }
 	h := New(t.TempDir(), factory, cs, WithConfigDir(cfg))
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	spy := &spyCheckpoints{}
 	h.checkpoints = spy

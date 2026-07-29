@@ -48,7 +48,6 @@ type kindMetaEntry struct {
 	Logout      func(ctx context.Context, host string) error
 	CLI         string
 	DefaultHost string
-	Title       string
 }
 
 // kindMeta is the single source of truth for forge kind properties.
@@ -58,25 +57,25 @@ var kindMeta map[Kind]kindMetaEntry
 func init() {
 	kindMeta = map[Kind]kindMetaEntry{
 		KindGitHub: {
-			CLI: "gh", DefaultHost: "github.com", Title: "GitHub",
+			CLI: "gh", DefaultHost: "github.com",
 			NewProvider: func(_ Kind, host string) ForgeOps { return newGitHub(host) },
 			Login:       loginGH,
 			Logout:      logoutGH,
 		},
 		KindGitLab: {
-			CLI: "glab", DefaultHost: "gitlab.com", Title: "GitLab",
+			CLI: "glab", DefaultHost: "gitlab.com",
 			NewProvider: func(_ Kind, host string) ForgeOps { return newGitLab(host) },
 			Login:       loginGLab,
 			Logout:      logoutGLab,
 		},
 		KindCodeberg: {
-			CLI: cliTea, DefaultHost: "codeberg.org", Title: "Codeberg",
+			CLI: cliTea, DefaultHost: "codeberg.org",
 			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
 			Login:       loginTea,
 			Logout:      logoutTea,
 		},
 		KindGitea: {
-			CLI: "tea", DefaultHost: "", Title: "Gitea",
+			CLI: "tea", DefaultHost: "",
 			NewProvider: func(k Kind, host string) ForgeOps { return newGitea(k, host) },
 			Login:       loginTea,
 			Logout:      logoutTea,
@@ -99,14 +98,6 @@ func (k Kind) CLI() string {
 // no default exists (self-hosted Gitea/Forgejo).
 func (k Kind) DefaultHost() string {
 	return kindMeta[k].DefaultHost
-}
-
-// Title returns the human-readable display name for the kind.
-func (k Kind) Title() string {
-	if m, ok := kindMeta[k]; ok {
-		return m.Title
-	}
-	return string(k)
 }
 
 // AllKinds returns every supported forge kind. Stable ordering for
@@ -247,13 +238,12 @@ const (
 // Methods take a context for cancellation and a host for routing
 // (each Provider instance is bound to one host but methods accept
 // it explicitly so multi-host instances are possible later).
+//
+// Identity (kind + host) deliberately does NOT live here: callers reach a
+// provider through Manager.Provider(id), which resolves the persisted
+// ConfiguredForge record first, so they already hold both fields. Adding
+// identity accessors back would duplicate that record on an ephemeral value.
 type ForgeOps interface {
-	// Kind returns the backend kind (github/gitlab/gitea).
-	Kind() Kind
-
-	// Host returns the forge hostname this provider is bound to.
-	Host() string
-
 	// Whoami returns the authenticated account, or an error if not
 	// logged in (or the CLI is not installed).
 	Whoami(ctx context.Context) (*User, error)

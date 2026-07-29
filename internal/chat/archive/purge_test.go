@@ -212,7 +212,7 @@ func TestPurgeScheduler_ZeroRetentionSkipsPurge(t *testing.T) {
 }
 
 // TestPurgeScheduler_StopClosesDone verifies Stop drains the scheduler
-// goroutine (Done closes) and is safe to call more than once.
+// goroutine (its done channel closes) and is safe to call more than once.
 func TestPurgeScheduler_StopClosesDone(t *testing.T) {
 	svc, _, _ := newArchiveTestService(t)
 	sched := NewPurgeScheduler(context.Background(), svc,
@@ -221,12 +221,33 @@ func TestPurgeScheduler_StopClosesDone(t *testing.T) {
 	sched.Stop()
 
 	select {
-	case <-sched.Done():
+	case <-sched.done:
 	default:
-		t.Error("Done() not closed after Stop()")
+		t.Error("done channel not closed after Stop()")
 	}
 
 	sched.Stop() // idempotent: must not panic
+}
+
+// TestPurgeScheduler_ContextCancellationStopsLoop pins the loop's OTHER
+// exit path: cancelling the context the scheduler was built with must
+// drain the goroutine without any Stop() call (Stop closes stopCh, which
+// is a different select arm — asserting through it would pass even if the
+// ctx arm were gone).
+func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
+	svc, _, _ := newArchiveTestService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	sched := NewPurgeScheduler(ctx, svc, func() time.Duration { return 24 * time.Hour })
+	sched.Start()
+
+	cancel()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-sched.done:
+	case <-timer.C:
+		t.Fatal("scheduler goroutine did not exit after context cancellation")
+	}
 }
 
 // TestPurgeScheduler_TriggerAfterStopIsNoop verifies Trigger is a safe

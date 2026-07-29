@@ -83,6 +83,3 @@ func (d *Dispatcher) Checkpoint() CheckpointAccess { return d.deps }
 
 // Supervised returns the SupervisedAccess subset of dependencies.
 func (d *Dispatcher) Supervised() SupervisedAccess { return d.deps }
-
-// Infra returns the InfraDeps subset of dependencies.
-func (d *Dispatcher) Infra() InfraDeps { return d.deps }

@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat/archive"
@@ -72,8 +71,5 @@ func (s *Store) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 	return s.archiveSvc().DeleteArchived(ctx, chatID)
 }
 
-// PurgeArchived deletes archived chats older than maxAge.
-// Delegates to the archive sub-package.
-func (s *Store) PurgeArchived(ctx context.Context, maxAge time.Duration) {
-	s.archiveSvc().Purge(ctx, maxAge)
-}
+// Purging archived chats is driven by the PurgeScheduler
+// (archive_purge.go), which calls archive.Service.Purge directly.

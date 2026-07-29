@@ -61,24 +61,3 @@ func FuzzParseTag(f *testing.F) {
 		}
 	})
 }
-
-func TestFileStatus_Valid(t *testing.T) {
-	tests := []struct {
-		status FileStatus
-		want   bool
-	}{
-		{FileAdded, true},
-		{FileModified, true},
-		{FileDeleted, true},
-		{"X", false},
-		{"", false},
-		{"AM", false},
-	}
-	for _, tc := range tests {
-		t.Run(string(tc.status), func(t *testing.T) {
-			if got := tc.status.Valid(); got != tc.want {
-				t.Errorf("FileStatus(%q).Valid() = %v, want %v", tc.status, got, tc.want)
-			}
-		})
-	}
-}

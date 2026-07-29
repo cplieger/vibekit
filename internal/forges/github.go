@@ -28,9 +28,6 @@ func newGitHub(host string) *githubProvider {
 	return &githubProvider{host: host}
 }
 
-func (p *githubProvider) Kind() Kind   { return KindGitHub }
-func (p *githubProvider) Host() string { return p.host }
-
 // withHost is a pass-through that's kept as a single seam for any
 // future per-host flag plumbing. The actual host targeting happens
 // via envHost (GH_HOST environment variable) — gh's --hostname flag

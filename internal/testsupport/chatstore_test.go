@@ -74,7 +74,6 @@ func TestNopChatStore_Contract(t *testing.T) {
 	t.Run("no_panic_on_rapid_calls", func(t *testing.T) {
 		// Exercise all methods in sequence to verify no panics.
 		s.RegisterRoutes(nil)
-		s.SetBroadcaster(nil)
 		_, _ = s.Get(context.Background(), "x")
 		_ = s.List(context.Background())
 		_ = s.BuildHistory(context.Background(), "x")

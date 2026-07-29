@@ -39,9 +39,6 @@ func (c ChatID) String() string { return string(c) }
 // invalid-state propagation a compile-time-visible decision.
 type SessionID string
 
-// Valid reports whether the session id passes path-safety validation.
-func (s SessionID) Valid() bool { return ValidSessionID(string(s)) }
-
 // String implements fmt.Stringer for logging convenience.
 func (s SessionID) String() string { return string(s) }
 
@@ -49,10 +46,6 @@ func (s SessionID) String() string { return string(s) }
 // validated via ValidIdent before assignment; the type makes
 // invalid-state propagation a compile-time-visible decision.
 type ModelID string
-
-// Valid reports whether the model id passes identifier validation.
-// Empty is valid (the field is optional).
-func (m ModelID) Valid() bool { return ValidIdent(string(m)) }
 
 // String implements fmt.Stringer for logging convenience.
 func (m ModelID) String() string { return string(m) }

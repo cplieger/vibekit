@@ -46,7 +46,7 @@ func hubWithWorkDir(t *testing.T) (*Hub, *fakeChatStore, string) {
 	workDir := t.TempDir()
 	factory := func() api.ACPBridge { return newFakeBridge() }
 	h := New(workDir, factory, cs)
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	return h, cs, workDir
 }
@@ -68,12 +68,12 @@ func waitStaged(t *testing.T, h *Hub, chatID api.ChatID) string {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if h.perm.pending.CountForChat(chatID) == 1 {
+		if len(h.perm.pending.ListForChat(chatID)) == 1 {
 			return h.perm.pending.ListForChat(chatID)[0].ToolCallID
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("op not staged for %s within 2s; count=%d", chatID, h.perm.pending.CountForChat(chatID))
+	t.Fatalf("op not staged for %s within 2s; count=%d", chatID, len(h.perm.pending.ListForChat(chatID)))
 	return ""
 }
 
@@ -174,8 +174,8 @@ func TestFSWrite_NotSupervisedWritesImmediately(t *testing.T) {
 	if string(data) != "immediate" {
 		t.Fatalf("content=%q, want %q", string(data), "immediate")
 	}
-	if h.perm.pending.CountForChat("c1") != 0 {
-		t.Fatalf("op staged for non-Supervised chat: count=%d", h.perm.pending.CountForChat("c1"))
+	if len(h.perm.pending.ListForChat("c1")) != 0 {
+		t.Fatalf("op staged for non-Supervised chat: count=%d", len(h.perm.pending.ListForChat("c1")))
 	}
 }
 
@@ -199,7 +199,7 @@ func TestFSWrite_SupervisedPathBusy(t *testing.T) {
 
 	// Give the second enough time to have reached Add and failed.
 	time.Sleep(100 * time.Millisecond)
-	if got := h.perm.pending.CountForChat("c1"); got != 1 {
+	if got := len(h.perm.pending.ListForChat("c1")); got != 1 {
 		t.Fatalf("path-busy Add incorrectly staged; count=%d", got)
 	}
 
@@ -387,9 +387,9 @@ func TestFSWrite_PerTurnTrustBypassesStaging(t *testing.T) {
 	if string(data) != "zoom" {
 		t.Fatalf("content=%q, want zoom", string(data))
 	}
-	if h.perm.pending.CountForChat("c1") != 0 {
+	if len(h.perm.pending.ListForChat("c1")) != 0 {
 		t.Fatalf("op staged despite per-turn trust: count=%d",
-			h.perm.pending.CountForChat("c1"))
+			len(h.perm.pending.ListForChat("c1")))
 	}
 }
 
