@@ -31,10 +31,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/cplieger/pathinside"
 	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 	"golang.org/x/sync/singleflight"
 )
@@ -247,6 +247,16 @@ func (m *Manager) loadAndValidateTag(ctx context.Context, tag string) error {
 //     root and callers would try to read/write/rename the workspace
 //     itself at the next disk op.
 //
+// The escape half is pathinside.RelEscapes, which is separator-precise:
+// a name whose first segment merely BEGINS with two dots ("..extras")
+// is a name, not a traversal. The rel=="." equality rejection stays
+// HERE rather than moving into the library call, because pathinside's
+// containment predicates deliberately treat the root as inside (a tree
+// includes its own root) and this function must EXCLUDE it — reason (2)
+// above. pathinside.Inside would therefore be the wrong function at
+// this site; the library's own doc prescribes the explicit equality
+// test a root-excluding caller composes on top of RelEscapes.
+//
 // NOTE: this function does NOT evaluate symlinks. Callers that
 // perform destructive filesystem operations (write, rename, remove)
 // must defend against agent-planted symlink escapes separately —
@@ -262,7 +272,7 @@ func (m *Manager) absPath(relPath string) (string, error) {
 	}
 	clean := filepath.Clean(filepath.Join(m.workDir, relPath))
 	rel, err := filepath.Rel(m.workDir, clean)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || rel == "." || pathinside.RelEscapes(rel) {
 		return "", fmt.Errorf("%w: %q", ErrPathEscape, relPath)
 	}
 	return clean, nil

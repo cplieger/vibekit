@@ -11,8 +11,8 @@ package hub
 import (
 	"context"
 	"log/slog"
-	"strings"
 
+	"github.com/cplieger/pathinside"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -41,12 +41,22 @@ import (
 //
 // Failures are logged, never surfaced: the checkpoint exists to serve
 // the user, not to gate their save.
+//
+// The boundary test is pathinside.RelEscapes on the workspace-relative
+// name, which is separator-precise, so a file whose first segment merely
+// BEGINS with two dots ("..extras/movie.mkv") is captured rather than
+// silently skipped. RelPath returns a forward-slash-normalised value and
+// RelEscapes cleans before testing, so the separator question is settled
+// inside the library on either platform. The rel=="." rejection stays
+// here on purpose: pathinside's containment predicates count the root as
+// inside, and this site must EXCLUDE it — a save whose relative name is
+// the work tree itself has no file lineage to snapshot.
 func (h *Hub) CaptureEditorSave(ctx context.Context, absPath string, content []byte) {
 	if h.checkpoints == nil {
 		return
 	}
 	rel, err := workspace.RelPath(h.lifecycle.workDir, absPath)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+	if err != nil || rel == "." || pathinside.RelEscapes(rel) {
 		return // outside the work tree (or the root itself): not checkpoint territory
 	}
 	owner, ok := h.checkpoints.OwnerOf(ctx, rel)
