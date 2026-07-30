@@ -12,6 +12,20 @@ import "strings"
 // file keeps the second layer, the sensitive-path list, which is still
 // a deny-list by necessity: the sensitive entries live INSIDE the
 // granted /config mount, and an os.Root cannot enforce sub-path denial.
+//
+// The prefix tests below are deliberately NOT pathinside calls, and the
+// reason is the deny-list inversion. pathinside's containment predicates
+// count the root as inside, while isSensitive must EXCLUDE the listed
+// directory itself so isProtectedDir can answer for it separately under a
+// different rule (see its doc). isProtectedDir is not a containment test
+// at all: it asks in BOTH directions — does the candidate enclose a
+// sensitive path, or does a sensitive path enclose it — which no single
+// pathinside function expresses. The entries also carry their own
+// trailing separator, so the sibling-lookalike failure that motivates the
+// library ("/config/homework" against "/config/home/") does not arise
+// here. Containment in this package IS pathinside: the mount lookup uses
+// Inside (paths.go mountFor), backed by one os.Root per mount for the
+// kernel-enforced half.
 
 // sensitivePath describes a single blocked path entry with explicit
 // match semantics: IsDir=true means "directory prefix" (blocks all

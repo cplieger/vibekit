@@ -1288,3 +1288,95 @@ func TestReferencedBlobs_ReturnsRefsWhenLoaded(t *testing.T) {
 		t.Errorf("ReferencedBlobs() returned %d SHAs, want 2 (beforeSHA + afterSHA)", len(refs))
 	}
 }
+
+// TestAbsPathContainment pins the containment contract absPath enforces
+// through pathinside.RelEscapes, one case per property the rule owns.
+//
+// The two accept cases are the reason the escape test is a library call
+// and not a leading-".." string prefix: a first segment that merely
+// BEGINS with two dots is a legal directory name, and a checkpoint
+// recorded against it must keep resolving. A prefix-string spelling
+// refuses both and loses real files.
+func TestAbsPathContainment(t *testing.T) {
+	work := t.TempDir()
+	m := newManager("containment", work, nil, &managerDeps{blobs: nil, index: nil})
+
+	cases := []struct {
+		name    string
+		relPath string
+		wantAbs string // "" means ErrPathEscape
+	}{
+		// Traversal, in every spelling that reaches the same place.
+		{"bare parent", "..", ""},
+		{"parent then name", "../etc/passwd", ""},
+		{"traversal buried mid-path", "a/../../etc/passwd", ""},
+		{"traversal back to a same-named sibling", "../" + filepath.Base(work), ""},
+
+		// Absolute input, where a workspace-relative name is expected.
+		// Refused by the IsAbs gate ahead of the Rel test, because Clean
+		// clamps "/.." at the filesystem root and Join would re-attach
+		// the unclamped traversal to a relative base.
+		{"absolute path", "/etc/passwd", ""},
+		{"absolute root", "/", ""},
+		{"absolute with traversal", "/../etc/passwd", ""},
+
+		// The work tree root itself. absPath must EXCLUDE it: callers go
+		// on to read, write, rename and remove through the result, and an
+		// empty relPath must not resolve to the workspace directory.
+		// pathinside counts a root as inside its own tree, so this
+		// refusal is the caller's explicit rel=="." test, not the
+		// library's.
+		{"empty string", "", ""},
+		{"dot", ".", ""},
+		{"dot-slash", "./", ""},
+		{"name then back to root", "a/..", ""},
+
+		// Ordinary names that merely start with or contain two dots.
+		{"leading-dots directory name", "..extras/movie.mkv", filepath.Join(work, "..extras/movie.mkv")},
+		{"three dots", ".../x", filepath.Join(work, ".../x")},
+		{"dots inside a name", "key..v2.json", filepath.Join(work, "key..v2.json")},
+		{"plain nested path", "a/b/c.go", filepath.Join(work, "a/b/c.go")},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			abs, err := m.absPath(tc.relPath)
+			if tc.wantAbs == "" {
+				if !errors.Is(err, ErrPathEscape) {
+					t.Fatalf("absPath(%q) = (%q, %v), want ErrPathEscape", tc.relPath, abs, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("absPath(%q) error = %v, want nil", tc.relPath, err)
+			}
+			if abs != tc.wantAbs {
+				t.Errorf("absPath(%q) = %q, want %q", tc.relPath, abs, tc.wantAbs)
+			}
+		})
+	}
+}
+
+// TestAbsPathIsLexicalOnly pins that absPath resolves no symlinks, which
+// is unchanged by the pathinside adoption: every function in that package
+// compares names. A symlink inside the workspace pointing out of it is
+// still lexically contained and still accepted here, so the destructive
+// callers keep owning that defence (os.CreateTemp's random suffix today;
+// os.Root for the residual MkdirAll gap). Pinned so a future reader does
+// not mistake the library call for symlink enforcement.
+func TestAbsPathIsLexicalOnly(t *testing.T) {
+	work := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(work, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	m := newManager("lexical", work, nil, &managerDeps{blobs: nil, index: nil})
+
+	abs, err := m.absPath("link/escaped.txt")
+	if err != nil {
+		t.Fatalf("absPath through an in-tree symlink error = %v, want nil (lexical contract)", err)
+	}
+	if want := filepath.Join(work, "link/escaped.txt"); abs != want {
+		t.Errorf("absPath = %q, want %q", abs, want)
+	}
+}

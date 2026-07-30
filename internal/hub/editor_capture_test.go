@@ -99,6 +99,15 @@ func TestCaptureEditorSave_SkipsUnownedAndOutsidePaths(t *testing.T) {
 		{"outside work tree", true, func(string) string { return "/config/home/settings.json" }},
 		{"work tree root itself", true, func(work string) string { return work }},
 		{"no owning chat", false, func(work string) string { return filepath.Join(work, "f.go") }},
+		// Traversal out of the work tree. RelPath yields ".." and
+		// "../escape.go" respectively; pathinside.RelEscapes refuses both.
+		{"parent of the work tree", true, func(work string) string { return filepath.Dir(work) }},
+		{"sibling of the work tree", true, func(work string) string { return filepath.Join(filepath.Dir(work), "escape.go") }},
+		// A sibling directory whose name merely EXTENDS the work tree's.
+		// filepath.Rel reaches it by leaving the tree ("../<base>-evil/f.go"),
+		// which is what makes it an escape — the case a plain
+		// strings.HasPrefix(abs, workDir) containment test would accept.
+		{"work-tree-lookalike sibling", true, func(work string) string { return filepath.Join(work+"-evil", "f.go") }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -112,9 +121,34 @@ func TestCaptureEditorSave_SkipsUnownedAndOutsidePaths(t *testing.T) {
 	}
 }
 
+// TestCaptureEditorSave_CapturesDottedNames is the other half of the
+// boundary contract: the escape test is separator-precise, so a save
+// under a directory whose name merely BEGINS with two dots is inside the
+// work tree and gets captured. A leading-".." string prefix test would
+// drop these saves silently — no error, no checkpoint, no undo target.
+func TestCaptureEditorSave_CapturesDottedNames(t *testing.T) {
+	for _, rel := range []string{"..extras/movie.mkv", ".../f.go", "key..v2/f.go", "a/..b/f.go"} {
+		t.Run(rel, func(t *testing.T) {
+			spy := &captureSpy{owner: "c1", hasOwner: true}
+			h, _, work := newCaptureHub(t, spy)
+			h.CaptureEditorSave(context.Background(), filepath.Join(work, filepath.FromSlash(rel)), []byte("x"))
+			got := spy.taken()
+			if len(got) != 1 {
+				t.Fatalf("snapshots = %d, want 1", len(got))
+			}
+			if got[0].relPath != rel {
+				t.Errorf("relPath = %q, want %q", got[0].relPath, rel)
+			}
+		})
+	}
+}
+
 // The boundary guard rejects the work-tree root ("."), parent escapes
 // ("..", "../x"), and RelPath errors before any owner lookup — the
 // spy's owner answer is irrelevant for those shapes by construction.
+// An absolute path outside the tree reaches the same refusal through
+// RelPath's "../..." result; a path RelPath cannot compare at all
+// (relative against the absolute workDir) is refused by its error.
 
 func TestCaptureEditorSave_NilCheckpointsAndSnapshotFailure(t *testing.T) {
 	// Nil checkpoints: must be a silent no-op.
