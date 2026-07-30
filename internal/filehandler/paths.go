@@ -29,6 +29,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/cplieger/pathinside"
 )
 
 // mount is one granted browse root: a cleaned absolute directory plus
@@ -77,10 +79,17 @@ var errOutsideRoots = errors.New("access denied: outside granted roots")
 // mountFor returns the granted mount owning the cleaned absolute path,
 // or nil. Mounts are sorted longest-first, so a nested grant wins over
 // its ancestor.
+//
+// pathinside.Inside is the containment rule: root itself IS inside (a
+// request for the mount directory resolves to its own mount), and the
+// separator-precise test is what keeps a sibling grant-lookalike
+// ("/workspace-evil" against the "/workspace" grant) out. mount.dir is
+// clean, absolute and never "/" by construction (openMounts), and clean
+// is cleaned by resolvePath, so no normalisation is lost here.
 func (h *Handler) mountFor(clean string) *mount {
 	for i := range h.mounts {
 		m := &h.mounts[i]
-		if clean == m.dir || strings.HasPrefix(clean, m.dir+"/") {
+		if pathinside.Inside(m.dir, clean) {
 			return m
 		}
 	}

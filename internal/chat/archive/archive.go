@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/pathinside"
 	"github.com/cplieger/vibekit/internal/api"
 	"golang.org/x/sync/singleflight"
 )
@@ -114,6 +115,65 @@ func (s *Service) archivePathFor(chatID api.ChatID) (string, error) {
 	return filepath.Join(s.store.Dir(), Subdir, string(chatID)+chatFileSuffix), nil
 }
 
+// confineStore opens a kernel-confined os.Root on the chat store
+// directory and translates absolute paths into the root-relative names
+// os.Root's methods take. Used by the two operations that MUTATE the
+// archive tree (RestoreArchived's rename, DeleteArchived's remove); the
+// caller closes the returned root.
+//
+// Why a confined handle on top of the lexical pathinside.Inside gates
+// those callers already run: the two answer different questions and both
+// apply here. Inside is a NAME test and says nothing about what a path
+// RESOLVES to, so a symlinked INTERMEDIATE component — most plausibly
+// <storeDir>/archive itself, which anything able to write /config can
+// plant — redirects an ambient os.Rename/os.Remove clean out of the
+// tree while reading as contained. A lexical check also cannot close the
+// window between itself and the syscall: the path can be repointed in
+// between. os.Root re-resolves every component against a pinned
+// directory handle and refuses to traverse a symlink that leaves the
+// root, so the check and the operation can no longer disagree. Keeping
+// both is what pathinside's own doc comment prescribes: the cheap
+// lexical gate first, the confined handle for the operation. (The final
+// component needs neither — rename and remove act on the link, not its
+// target — so the exposure closed here is strictly the ancestors.)
+//
+// The root is opened on store.Dir() rather than on the archive dir
+// because a restore renames ACROSS the two and os.Root.Rename cannot
+// cross handles; store.Dir() is their nearest common ancestor, so one
+// handle covers both sides.
+//
+// A symlinked store dir keeps working. os.OpenRoot resolves the root
+// path itself with ordinary path resolution, so <configDir>/chats — or
+// configDir above it — may be a symlink onto another filesystem and the
+// confinement simply applies to the resolved tree (vibekit invariant 6:
+// the operator reshapes /config). What is newly refused is a symlink
+// BELOW the store dir whose target leaves that tree, and — a Go
+// os.Root rule worth knowing — a symlink with an ABSOLUTE target even
+// when it points back inside; a relative in-tree symlink
+// (archive -> real-archive) is still followed.
+//
+// Opened per operation instead of cached on the Service, deliberately:
+// restore and delete are user-triggered and rare, while a cached handle
+// would keep pointing at a directory the operator pruned or replaced,
+// and a broken state must be able to heal itself (invariant 6 again).
+// Re-resolving picks up the repair on the next call.
+func (s *Service) confineStore(absPaths ...string) (*os.Root, []string, error) {
+	dir := s.store.Dir()
+	names := make([]string, len(absPaths))
+	for i, abs := range absPaths {
+		rel, err := filepath.Rel(dir, abs)
+		if err != nil || pathinside.RelEscapes(rel) {
+			return nil, nil, fmt.Errorf("path %q escapes store dir %q", abs, dir)
+		}
+		names[i] = rel
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("confine chat store dir %q: %w", dir, err)
+	}
+	return root, names, nil
+}
+
 // Archive moves a chat from the active directory to the archive
 // subdirectory. Takes the per-chat mutex so a concurrent Mutate /
 // AppendMessage can't race the rename. Broadcasts chat_deleted so all
@@ -153,6 +213,15 @@ func (s *Service) Archive(ctx context.Context, chatID api.ChatID) error {
 		m.Unlock()
 		return err
 	}
+	// SEAM: this move is still AMBIENT, while RestoreArchived and
+	// DeleteArchived below run their syscalls through a confined os.Root
+	// (see confineStore). Deliberate, not an oversight: the two confined
+	// operations are the ones a lexical-only guard was covering, whereas
+	// confining the rest of the chat store is a store-wide decision that
+	// has not been taken — the core store's removes, plan_draft.go,
+	// purge.go's remove and every atomicfile write are ambient too, so
+	// singling this one out would only move the inconsistency. Anything
+	// new added here should reach for confineStore rather than os.Rename.
 	dstPath := filepath.Join(archiveDir, string(chatID)+chatFileSuffix)
 	if err := os.Rename(srcPath, dstPath); err != nil { //#nosec G703 -- paths built from validated chat ID
 		m.Unlock()
@@ -270,20 +339,38 @@ func (s *Service) RestoreArchived(ctx context.Context, chatID api.ChatID) error 
 	// paths stay within the expected parent directories before any
 	// FS mutation. The containment check is what CodeQL recognises
 	// as a sanitiser.
+	//
+	// pathinside.Inside is that check: it cleans both sides itself
+	// (so the hand-rolled trailing-separator prefix strings are gone)
+	// and is separator-precise, so a sibling directory whose name
+	// merely extends the archive dir's cannot read as containment.
+	// Root-equality is unreachable here — both paths are a Join of the
+	// directory with a validated non-empty chat id plus a suffix.
 	cleanSrc := filepath.Clean(srcPath)
 	cleanDst := filepath.Clean(dstPath)
-	cleanArchiveDir := filepath.Clean(archiveDir) + string(filepath.Separator)
-	cleanStoreDir := filepath.Clean(s.store.Dir()) + string(filepath.Separator)
-	if !strings.HasPrefix(cleanSrc, cleanArchiveDir) {
+	if !pathinside.Inside(archiveDir, cleanSrc) {
 		m.Unlock()
 		return fmt.Errorf("src path %q escapes archive dir %q", srcPath, archiveDir)
 	}
-	if !strings.HasPrefix(cleanDst, cleanStoreDir) {
+	if !pathinside.Inside(s.store.Dir(), cleanDst) {
 		m.Unlock()
 		return fmt.Errorf("dst path %q escapes store dir %q", dstPath, s.store.Dir())
 	}
-	// Collision guard: refuse to overwrite an active chat file.
-	if _, err := os.Stat(cleanDst); err == nil {
+	// Kernel-confined access for the mutating syscalls below: the lexical
+	// gates above answer the NAME question, this answers the ACCESS one
+	// (see confineStore for why both run).
+	root, names, err := s.confineStore(cleanSrc, cleanDst)
+	if err != nil {
+		m.Unlock()
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	srcRel, dstRel := names[0], names[1]
+	// Collision guard: refuse to overwrite an active chat file. Stats
+	// through the same handle as the rename, so a destination NAME that is
+	// itself a symlink out of the store reads as an escape error instead
+	// of as a free slot the rename would then silently replace.
+	if _, err := root.Stat(dstRel); err == nil {
 		m.Unlock()
 		slog.Warn("chat restore: refused, id is in use", "chat_id", chatID)
 		return &IDInUseError{ID: string(chatID)}
@@ -291,16 +378,16 @@ func (s *Service) RestoreArchived(ctx context.Context, chatID api.ChatID) error 
 		m.Unlock()
 		return err
 	}
-	if err := os.Rename(cleanSrc, cleanDst); err != nil {
+	if err := root.Rename(srcRel, dstRel); err != nil {
 		m.Unlock()
-		return err
+		return fmt.Errorf("confined restore rename in chat store %q: %w", s.store.Dir(), err)
 	}
-	// Also restore the plan draft if it exists. Derive paths via
-	// suffix swap on the already-validated cleanSrc/cleanDst so the
-	// new paths inherit the containment proof.
-	draftSrc := strings.TrimSuffix(cleanSrc, chatFileSuffix) + planDraftSuffix
-	draftDst := strings.TrimSuffix(cleanDst, chatFileSuffix) + planDraftSuffix
-	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) { //#nosec G703 -- paths built from validated chat ID
+	// Also restore the plan draft if it exists. Derive names via a suffix
+	// swap on the already-validated srcRel/dstRel so the new names
+	// inherit both the containment proof and the confinement.
+	draftSrcRel := strings.TrimSuffix(srcRel, chatFileSuffix) + planDraftSuffix
+	draftDstRel := strings.TrimSuffix(dstRel, chatFileSuffix) + planDraftSuffix
+	if err := root.Rename(draftSrcRel, draftDstRel); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("chat restore: plan-draft move failed",
 			"chat_id", chatID, "error", err)
 	}
@@ -380,26 +467,39 @@ func (s *Service) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 	// track that guard across the function-return boundary. Resolve
 	// chatPath to its absolute, cleaned form and verify it's still
 	// under the archive directory before any FS mutation. The
-	// containment check is what CodeQL recognises as a sanitiser.
+	// containment check is what CodeQL recognises as a sanitiser —
+	// pathinside.Inside, the same separator-precise containment rule
+	// RestoreArchived uses.
 	archiveDir := s.archivePath()
 	cleanChatPath := filepath.Clean(chatPath)
-	cleanArchiveDir := filepath.Clean(archiveDir) + string(filepath.Separator)
-	if !strings.HasPrefix(cleanChatPath, cleanArchiveDir) {
+	if !pathinside.Inside(archiveDir, cleanChatPath) {
 		return fmt.Errorf("chat path %q escapes archive dir %q", chatPath, archiveDir)
 	}
-	if err := ctx.Err(); err != nil {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	// The lexical gate above answers the NAME question; the confined
+	// handle answers the ACCESS one (see confineStore). Both syscalls
+	// below run through it, so a symlinked intermediate component — the
+	// archive dir itself, most plausibly — can no longer redirect this
+	// remove out of the store, and the check can no longer disagree with
+	// the syscall that follows it.
+	root, names, err := s.confineStore(cleanChatPath)
+	if err != nil {
 		return err
 	}
+	defer func() { _ = root.Close() }()
+	chatRel := names[0]
 	m := s.store.Lock(chatID)
 	m.Lock()
-	if err := os.Remove(cleanChatPath); err != nil {
+	if err := root.Remove(chatRel); err != nil {
 		m.Unlock()
-		return err
+		return fmt.Errorf("confined delete of archived chat in store %q: %w", s.store.Dir(), err)
 	}
-	// draftPath shares the directory of cleanChatPath; suffix swap
-	// keeps it inside the same already-verified directory.
-	draftPath := strings.TrimSuffix(cleanChatPath, chatFileSuffix) + planDraftSuffix
-	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	// draftRel shares the directory of chatRel; the suffix swap keeps it
+	// inside the same already-verified, confined directory.
+	draftRel := strings.TrimSuffix(chatRel, chatFileSuffix) + planDraftSuffix
+	if err := root.Remove(draftRel); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("chat delete_archived: remove plan-draft",
 			"chat_id", chatID, "error", err)
 	}

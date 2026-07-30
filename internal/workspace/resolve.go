@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/cplieger/pathinside"
 )
 
 // ResolveInsideAbs is like ResolveInside but accepts an already-absolute
@@ -46,13 +47,17 @@ func ResolveInsideAbs(absWork, p string) (string, error) {
 
 // AssertInside returns nil iff target is equal to root or contained
 // beneath it. Relies on filepath.Rel: a relative path that starts
-// with ".." signals escape.
+// with ".." signals escape, which pathinside.RelEscapes decides
+// separator-precisely (so a name that merely BEGINS with two dots,
+// like "..extras", is a name and not a traversal). A pair Rel cannot
+// compare returns its error verbatim rather than the escape message,
+// because "not comparable" is not "escaped".
 func AssertInside(target, root string) error {
 	rel, err := filepath.Rel(root, target)
 	if err != nil {
 		return err
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if pathinside.RelEscapes(rel) {
 		return errors.New("path escapes workspace")
 	}
 	return nil

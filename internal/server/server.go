@@ -266,7 +266,7 @@ func (s *Server) ListenAndServe() error {
 	defer idem.stop()
 
 	// Middleware, outermost first: request-id access logging (webhttp.Logging,
-	// skipping the long-lived SSE/WebSocket streams so they don't log a single
+	// skipping the long-lived SSE stream so it doesn't log a single
 	// open-forever line), then panic recovery, then the security layer (dynamic
 	// CSP + stdlib CSRF), then the REST idempotency-dedup, then the mux.
 	// webhttp.NewServer's defaults match the former hand-rolled server exactly
@@ -281,7 +281,19 @@ func (s *Server) ListenAndServe() error {
 	// streaming paths.
 	handler := webhttp.Chain(mux,
 		webhttp.Logging(
-			webhttp.WithSkipPaths("/api/events", "/api/shell/ws"),
+			webhttp.WithSkipPaths("/api/events"),
+			// The shell PTY at /api/shell/ws is silenced by RESPONSE, not by
+			// path: WithSkipUpgrades drops the record only when the response
+			// actually left HTTP framing (a recorded 101 — what the terminal
+			// engine's coder/websocket handshake does — or a bare hijack), so
+			// the open-forever line is gone while every handshake REFUSAL on
+			// the same path keeps its status, duration, request id and
+			// client_ip: the engine's 426 for a non-upgrade probe, the 400 for
+			// a malformed Sec-WebSocket-Key, the 403 from the host/CSRF layer,
+			// the 401 from auth. Those are exactly the lines read when a
+			// browser cannot attach a shell, and the path skip this replaced
+			// deleted them along with the noise.
+			webhttp.WithSkipUpgrades(),
 			// /api/health is probed every 30s (Docker HEALTHCHECK curl +
 			// Gatus). The fleet-standard ProbeLogLevel keeps healthy probes
 			// at Debug (out of the shipped stream) and surfaces a failing

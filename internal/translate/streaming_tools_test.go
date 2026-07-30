@@ -417,6 +417,12 @@ func TestRelPath(t *testing.T) {
 		{name: "StripsRootPrefix", workDir: "/work", abs: "/work/sub/file.go", want: "sub/file.go"},
 		{name: "OutsideWorkDirReturnsAbs", workDir: "/work", abs: "/elsewhere/x.go", want: "/elsewhere/x.go"},
 		{name: "EmptyWorkDirReturnsAbs", workDir: "", abs: "/a/b.go", want: "/a/b.go"},
+		// A first component that merely BEGINS with two dots is a directory
+		// name, not a traversal: the escape test is separator-precise
+		// (pathinside.RelEscapes), so this stays relative instead of leaking
+		// the absolute path to the client.
+		{name: "DotDotPrefixedDirIsRelative", workDir: "/work", abs: "/work/..drafts/x.go", want: "..drafts/x.go"},
+		{name: "ParentEscapeReturnsAbs", workDir: "/work", abs: "/x.go", want: "/x.go"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

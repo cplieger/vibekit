@@ -39,6 +39,8 @@ func TestRepoDir(t *testing.T) {
 		{"parent traversal rejected", "..", workDir},
 		{"nested parent traversal rejected", "foo/../../etc", workDir},
 		{"any parent segment rejected", "child/../sibling", workDir},
+		{"adjacent dots in a name are a name", "foo..bar", filepath.Join(workDir, "foo..bar")},
+		{"leading double dots in a name are a name", "..drafts", filepath.Join(workDir, "..drafts")},
 		{"absolute unix path rejected", "/etc/passwd", workDir},
 		{"normal subdir joined", "project", filepath.Join(workDir, "project")},
 		{"nested subdir joined", "a/b/c", filepath.Join(workDir, filepath.Clean("a/b/c"))},
@@ -2738,6 +2740,42 @@ func TestSanitizeRepoPaths_CountBoundary(t *testing.T) {
 	}
 	if _, err := sanitizeRepoPaths(make([]string, maxRepoPaths+1)); err == nil {
 		t.Errorf("expected an error for maxRepoPaths+1 paths")
+	}
+}
+
+// validateFilePath's traversal rule is COMPONENT-precise
+// (pathinside.HasDotDot), not a ".." substring search. This test pins
+// the behaviour change that came with adopting it: a name that merely
+// contains two adjacent dots is a name, and is accepted, while every
+// real `..` component is still refused.
+func TestValidateFilePath_DotDotIsAComponentNotASubstring(t *testing.T) {
+	accepted := []string{
+		"v1..v2.txt",     // the shape the old strings.Contains refused
+		"a..b/main.go",   // two adjacent dots mid-name, in a directory
+		"..extras/x.mkv", // first component merely BEGINS with two dots
+		"...",            // a legal directory name
+		"a/./b",          // unclean but not traversing: canonicality is not tested
+	}
+	for _, p := range accepted {
+		t.Run("accept/"+p, func(t *testing.T) {
+			if !validateFilePath(p) {
+				t.Errorf("validateFilePath(%q) = false, want true (no `..` component)", p)
+			}
+		})
+	}
+	refused := []string{
+		"..",             // the component alone
+		"../x",           // leading traversal
+		"a/../b",         // buried traversal: RelEscapes would CLEAN this to "b"
+		"a/..",           // trailing traversal
+		"a/../../etc/pw", // multi-level
+	}
+	for _, p := range refused {
+		t.Run("refuse/"+p, func(t *testing.T) {
+			if validateFilePath(p) {
+				t.Errorf("validateFilePath(%q) = true, want false (`..` component)", p)
+			}
+		})
 	}
 }
 

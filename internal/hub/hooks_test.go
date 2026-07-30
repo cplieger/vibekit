@@ -101,6 +101,10 @@ func TestHookScopeAndPath(t *testing.T) {
 	}{
 		{"under workdir", filepath.Join(work, ".kiro", "hooks", "g.json"), hookScopeWorkspace, ".kiro/hooks/g.json"},
 		{"empty", "", hookScopeWorkspace, ""},
+		// A workspace directory whose name merely BEGINS with two dots is a
+		// name, not a traversal (pathinside.RelEscapes is separator-precise),
+		// so its hooks stay workspace-scoped with a relative editor target.
+		{"dotdot-prefixed dir under workdir", filepath.Join(work, "..drafts", "g.kiro.hook"), hookScopeWorkspace, "..drafts/g.kiro.hook"},
 		// kiro-cli 2.13 global hooks: $HOME/.kiro/hooks → global scope with a
 		// ~-display path (no editor link; the HOME tree is editor-blocked).
 		{"global under home", filepath.Join(home, ".kiro", "hooks", "g.json"), hookScopeGlobal, "~/.kiro/hooks/g.json"},

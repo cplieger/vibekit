@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/pathinside"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 )
@@ -162,7 +163,14 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 	}
 }
 
-// relPath strips the workspace root prefix from an absolute path.
+// relPath strips the workspace root prefix from an absolute path. A path that
+// is not under the workspace is returned unchanged.
+//
+// The escape test is pathinside.RelEscapes on the rel this function already
+// computes for its result, not a leading-".." string prefix: the
+// separator-precise rule keeps a file under a workspace directory whose name
+// merely BEGINS with two dots ("..drafts/main.go") relative, where the string
+// test leaked the absolute path to the client.
 func (t *Translator) relPath(abs string) string {
 	workDir := t.deps.WorkDir()
 	if workDir == "" {
@@ -171,7 +179,7 @@ func (t *Translator) relPath(abs string) string {
 	clean := filepath.Clean(abs)
 	root := filepath.Clean(workDir)
 	rel, err := filepath.Rel(root, clean)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || pathinside.RelEscapes(rel) {
 		return abs
 	}
 	return filepath.ToSlash(rel)
