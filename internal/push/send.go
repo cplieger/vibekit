@@ -270,17 +270,10 @@ func encryptPayload(sub api.PushSubscription, payload []byte) ([]byte, error) {
 	return body, nil
 }
 
-// capMultiline sanitizes s for emission while keeping CR/LF (notification
-// bodies are legitimately multi-line) and caps it at n bytes on a rune
-// boundary, appending "..." when it shortened — the multi-line sibling of
-// runesafe.SanitizeSingleLineBounded.
-func capMultiline(s string, n int) string {
-	s = runesafe.Sanitize(s)
-	if len(s) <= n {
-		return s
-	}
-	return runesafe.CapBytes(s, n) + "..."
-}
+// pushTruncMarker marks a trimmed title or body. runesafe's Capped pair charges
+// it INSIDE the byte cap, so a trimmed field's total — marker included — never
+// exceeds the budget fitToCap hands it.
+const pushTruncMarker = "..."
 
 // fitToCap trims the body — then, only if an empty body still overflows, the
 // title — until the marshaled pushPayload is at most pushBodyCap bytes, and
@@ -288,13 +281,20 @@ func capMultiline(s string, n int) string {
 // (JSON envelope + escaping included) is what keeps the encoded payload under
 // the vendor's record limit; push() rejects anything larger, so without this
 // an oversize notification is dropped rather than delivered truncated.
-// Trimming goes through runesafe so the byte cap never splits a multi-byte
-// rune: the title through the single-line preset, the body through the
-// CR/LF-keeping capMultiline composition. The loop terminates: each
-// iteration strictly shortens the field being trimmed (a sanitized-then-
-// capped field is at most len(field)-over bytes, and a within-cap sanitized
-// field is at most len(field)-over-3), and an empty title+body marshals
-// well under the cap.
+//
+// Trimming goes through runesafe's Capped pair so the byte cap never splits a
+// multi-byte rune and the marker is charged inside that cap: the title under
+// the single-line policy, the body under the CR/LF-keeping one (notification
+// bodies are legitimately multi-line, which is why the body cannot take the
+// single-line preset). A marker inside the cap is what makes the arithmetic
+// here the overflow and nothing else — len(field)-over is a true total, with no
+// marker width to subtract at the call site to compensate for a marker landing
+// outside the cap, and no byte of the vendor's budget left unused per trim.
+//
+// The loop terminates: whenever it runs, over >= 1 and the field being trimmed
+// is asked for a cap strictly below its current length, and the Capped pair
+// never returns more than the cap it was given — so that field strictly
+// shrinks, and an empty title+body marshals well under the cap.
 func fitToCap(title, body string) (fitTitle, fitBody string, truncated bool) {
 	if marshaledLen(title, body) <= pushBodyCap {
 		return title, body, false
@@ -302,12 +302,12 @@ func fitToCap(title, body string) (fitTitle, fitBody string, truncated bool) {
 	for marshaledLen(title, body) > pushBodyCap {
 		over := marshaledLen(title, body) - pushBodyCap
 		switch {
-		case len(body) > over+len("..."):
-			body = capMultiline(body, len(body)-over-len("..."))
+		case len(body) > over:
+			body, _ = runesafe.SanitizeCapped(body, len(body)-over, pushTruncMarker)
 		case body != "":
 			body = "" // too small to absorb the overflow; drop it
-		case len(title) > over+len("..."):
-			title = runesafe.SanitizeSingleLineBounded(title, len(title)-over-len("..."))
+		case len(title) > over:
+			title, _ = runesafe.SanitizeSingleLineCapped(title, len(title)-over, pushTruncMarker)
 		default:
 			title = "" // pathological: cap below the JSON envelope size
 		}

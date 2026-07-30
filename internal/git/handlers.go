@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cplieger/pathinside"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/singleflight"
@@ -65,19 +66,26 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // --- helpers ---
 
 // resolveRepoDir resolves a client-supplied repo name against a workDir,
-// rejecting attempts to escape the workspace root via `..` or
-// absolute paths. Falls back to workDir for empty / "." / invalid
+// rejecting attempts to escape the workspace root via a `..` component or
+// an absolute path. Falls back to workDir for empty / "." / invalid
 // inputs so the workspace root is the default "repo".
+//
+// The traversal test is pathinside.HasDotDot: the name is judged AS
+// WRITTEN, before it is joined onto anything, which is the syntactic-
+// hygiene axis rather than the containment one (there is no root to
+// compare against yet). It is component-precise, so a directory whose
+// NAME merely contains two adjacent dots ("foo..bar") now resolves as
+// the repo it is instead of silently falling back to workDir.
 func resolveRepoDir(workDir, repo string) string {
-	if repo == "" || repo == "." || strings.Contains(repo, "..") || filepath.IsAbs(repo) {
+	if repo == "" || repo == "." || pathinside.HasDotDot(repo) || filepath.IsAbs(repo) {
 		return workDir
 	}
 	return filepath.Join(workDir, filepath.Clean(repo))
 }
 
 // repoDir resolves a client-supplied repo name against h.workDir,
-// rejecting attempts to escape the workspace root via `..` or
-// absolute paths. Falls back to workDir for empty / "." / invalid
+// rejecting attempts to escape the workspace root via a `..` component
+// or an absolute path. Falls back to workDir for empty / "." / invalid
 // inputs so the workspace root is the default "repo".
 //
 // Symlinks inside workDir are NOT resolved: users may symlink a real
@@ -85,11 +93,13 @@ func resolveRepoDir(workDir, repo string) string {
 // symlink name. Git itself doesn't follow symlinks into .git/, so
 // this is safe for the read operations this package performs. Write
 // operations in the hub's fs bridge resolve symlinks via EvalSymlinks
-// — that path has stricter requirements.
+// — that path has stricter requirements. The check is therefore
+// deliberately LEXICAL-ONLY: an os.Root here would refuse the
+// symlinked repos that are a feature of this surface.
 //
-// The `..` check is lexical and will reject legitimate directory
-// names containing ".." (e.g. "foo..bar"). Accepted tradeoff; such
-// names are vanishingly rare.
+// The `..` check is component-precise (pathinside.HasDotDot), so the
+// old over-refusal of legitimate directory names containing ".."
+// (e.g. "foo..bar") is gone; a real `..` segment is still rejected.
 func (h *Handler) repoDir(repo string) string {
 	return resolveRepoDir(h.workDir, repo)
 }

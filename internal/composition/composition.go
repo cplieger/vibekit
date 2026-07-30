@@ -61,7 +61,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, fmt.Errorf("another vibekit instance is running on %s: %w", cfg.ConfigDir, err)
 	}
 
-	if err := validateConfig(cfg); err != nil {
+	if err := validateConfig(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
 
