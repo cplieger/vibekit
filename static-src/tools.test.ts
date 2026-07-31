@@ -68,6 +68,8 @@ vi.mock("./bus.js", () => ({
 
 import { initTools, loadToolsList } from "./tools.js";
 import { byId } from "./dom.js";
+import { KEY_ATTR } from "./reconcile.js";
+import { join, split } from "@cplieger/keyenc";
 
 // --- DOM fixture -------------------------------------------------------------
 
@@ -402,5 +404,65 @@ describe("catalog refresh UI", () => {
     await Promise.resolve();
     const meta = byId<HTMLParagraphElement>("tool-catalog-meta");
     expect(meta.textContent).toContain("auto-refresh off");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Reconcile list keys (keyenc `join`).
+//
+// This list was ALREADY injective before the adoption: a tool name is
+// validated colon-free and unique server-side, so the `tool:<name>:` prefix
+// could not be forged. The keys are joined for uniformity with the app's other
+// composite keys, and these tests pin the encoding so a future loosening of
+// any component can't reintroduce ambiguity. Had a collision been possible the
+// effect would be a REMOUNT of the earlier duplicate on every pass (dropped
+// focus, restarted animation), never a dropped row.
+// ---------------------------------------------------------------------------
+
+describe("tools list keys", () => {
+  function keyFor(name: string): string {
+    return rowFor(name)?.getAttribute(KEY_ATTR) ?? "";
+  }
+
+  it("emits verbatim components for ordinary tool rows", () => {
+    initWith(listWith([tool({ name: "gh", latest: "2.97.0", pin: true })]));
+    // Nine components: marker, name, version, latest, installed, installing,
+    // pin, disabled, error-state.
+    expect(keyFor("gh")).toBe("tool:gh:1.0.0:2.97.0:true:false:true:false:ok");
+    expect(split(keyFor("gh"))).toHaveLength(9);
+  });
+
+  it("keys the label and system branches in their own namespaces", () => {
+    initWith(listWith([tool({ name: "gh" })]));
+    expect(keyFor("git")).toBe("sys:git");
+    const label = document.querySelector<HTMLElement>("#tools-list .list-group-label");
+    expect(label?.getAttribute(KEY_ATTR)).toBe(join("label", "built into the image"));
+  });
+
+  it("escapes a component that carries the separator instead of shifting the split", () => {
+    // A colon in a version string would have added a component under the old
+    // array-join; escaped, the key still splits into exactly nine.
+    initWith(listWith([tool({ name: "odd", version: "1.0:beta" })]));
+    const key = keyFor("odd");
+    expect(key).toContain("1.0\\:beta");
+    expect(split(key)).toEqual([
+      "tool",
+      "odd",
+      "1.0:beta",
+      "",
+      "true",
+      "false",
+      "false",
+      "false",
+      "ok",
+    ]);
+  });
+
+  it("keeps a missing optional field distinct from a name that mimics it", () => {
+    // Two rows whose OLD keys ("tool:a:1.0.0:..." shapes) are distinguished
+    // only because each component boundary is now unforgeable.
+    initWith(listWith([tool({ name: "a", version: "1.0.0:2.0.0" }), tool({ name: "b" })]));
+    expect(keyFor("a")).not.toBe(keyFor("b"));
+    expect(split(keyFor("a"))[2]).toBe("1.0.0:2.0.0");
   });
 });

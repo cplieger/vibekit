@@ -33,6 +33,7 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { onSSE } from "./bus.js";
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import { reconcile } from "./reconcile.js";
 import type { CatalogInfo, Inventory, Job, SearchHit, ToolInfo } from "./types.js";
@@ -298,27 +299,40 @@ class ToolsManager {
     }
 
     reconcile(container, flat, {
+      // Every branch builds its key with keyenc `join` so the three key
+      // families stay in one namespace no component can cross into. This
+      // list was ALREADY injective before the change: a tool name is
+      // validated colon-free and unique server-side, so the `tool:<name>:`
+      // prefix could not be forged, and the label/system branches carry
+      // literals and system names. The adoption is for uniformity with the
+      // other composite keys, not a fix. Had a collision been possible, the
+      // effect would be a REMOUNT, not a lost row: reconcile walks backwards,
+      // so the earlier duplicate is re-mounted on every pass (dropped focus,
+      // restarted animation).
       key: (e: ListEntry) => {
         switch (e.kind) {
           case "label":
-            return `label:${e.label}`;
+            return join("label", e.label);
           case "system":
-            return `sys:${e.name}`;
+            return join("sys", e.name);
           case "tool":
             // State fields participate in the key so any transition
             // (installing spinner, error, new version) remounts the
             // row — reconcile's update path only patches text.
-            return [
+            return join(
               "tool",
               e.tool.name,
-              e.tool.version,
+              // `?? ""` where the old array form relied on Array.join
+              // coercing an absent optional field to "". Same bytes; the
+              // typed signature just makes the coercion explicit.
+              e.tool.version ?? "",
               e.tool.latest ?? "",
               String(e.tool.installed),
               String(e.tool.installing),
               String(e.tool.pin ?? false),
               String(e.tool.disabled ?? false),
               e.tool.last_error === undefined || e.tool.last_error === "" ? "ok" : "err",
-            ].join(":");
+            );
         }
       },
       mount: (e: ListEntry) => {

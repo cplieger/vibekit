@@ -29,6 +29,7 @@ import { getActionLog as recentLog } from "./index.js";
 import * as toast from "../toast.js";
 import { send as transportSend } from "../transport.js";
 import { submitPrompt } from "../prompt-queue.js";
+import { join } from "@cplieger/keyenc";
 
 const mockFetch = vi.fn();
 const mockSend = vi.mocked(transportSend);
@@ -120,5 +121,72 @@ describe("plan.run", () => {
     const r = await runPlan.dispatch({ chatID: "c1", content: "plan" });
     expect(r).toBeNull();
     expect(recentLog()[0]?.error?.code).toBe("send_failed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Composite idempotency keys (keyenc `join`).
+//
+// Consumption, verified against the server rather than assumed:
+//   - undo_edit is a transportAction, so its key IS forwarded, as the
+//     `idempotency_key` field of the /api/command envelope. Go's
+//     api.ClientCommand declares no such field and command dedup keys on
+//     `request_id`, so nothing reads it today.
+//   - plan.run is a plain defineAction whose run() ignores the third `ctx`
+//     argument, so its key is computed by the framework and discarded.
+// Neither key can therefore cause a live collision; both are joined so they
+// are correct if either path ever starts honouring them.
+// ---------------------------------------------------------------------------
+
+describe("messages.undo_edit idempotency key", () => {
+  async function keyFor(tag: string, filePath: string): Promise<string> {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { undoEdit } = await import("./messages.js");
+    await undoEdit.dispatch({ chatID: "c1", tag, filePath });
+    const cmd = mockSend.mock.calls[0]![0] as Record<string, unknown>;
+    mockSend.mockReset();
+    resetActionFramework();
+    return String(cmd["idempotency_key"] ?? "");
+  }
+
+  it("forwards the key on the command envelope", async () => {
+    // Pins the field name the framework uses, so the claim above stays checkable
+    // against the Go struct.
+    expect(await keyFor("t1", "src/utils/helper.ts")).toBe(
+      "messages.undo_edit:t1:src/utils/helper.ts",
+    );
+  });
+
+  it("distinguishes a tag/path pair the old template collapsed", async () => {
+    // ":" is legal in a filesystem path, so `${tag}:${filePath}` let the path
+    // absorb the tag boundary.
+    const oldKey = (tag: string, p: string): string => `messages.undo_edit:${tag}:${p}`;
+    expect(oldKey("t1", "a:b.ts")).toBe(oldKey("t1:a", "b.ts"));
+
+    expect(await keyFor("t1", "a:b.ts")).not.toBe(await keyFor("t1:a", "b.ts"));
+  });
+});
+
+describe("plan.run idempotency key", () => {
+  it("is computed but never reaches the wire", async () => {
+    // The send goes through submitPrompt, which carries no idempotency key —
+    // documenting that this key has no consumer today.
+    mockSubmitPrompt.mockResolvedValue("sent");
+    const { runPlan } = await import("./messages.js");
+    await runPlan.dispatch({ chatID: "c1", content: "Step 1" });
+    expect(mockSubmitPrompt).toHaveBeenCalledTimes(1);
+    expect(mockSubmitPrompt.mock.calls[0]).toHaveLength(2);
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
+  it("joins chat id and content so the content cannot forge the boundary", async () => {
+    // The key is unreachable from the wire, so assert the encoding directly
+    // against the same library call the action makes.
+    const chatID = "c1";
+    const content = ":forged\nplan";
+    expect(join("plan.run", chatID, content.slice(0, 40))).not.toBe(
+      `plan.run:${chatID}:${content.slice(0, 40)}`,
+    );
+    expect(join("plan.run", chatID, content.slice(0, 40))).toBe("plan.run:c1:\\:forged\nplan");
   });
 });

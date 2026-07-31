@@ -12,6 +12,7 @@ import {
 } from "./index.js";
 
 import { submitPrompt } from "../prompt-queue.js";
+import { join as joinKey } from "@cplieger/keyenc";
 
 /** Copy text to clipboard with success/error toast. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
@@ -48,7 +49,16 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
   name: "messages.undo_edit",
   networkMode: "always",
   scope: (args) => "chat:" + args.chatID,
-  idempotencyKey: (args) => `messages.undo_edit:${args.tag}:${args.filePath}`,
+  // Joined as components: `filePath` is a filesystem path, where ":" is legal,
+  // so the old `messages.undo_edit:${tag}:${filePath}` template was forgeable
+  // in principle. It was NOT a live bug, and the comment should not imply one:
+  // `transportAction` forwards this key into the /api/command envelope as
+  // `idempotency_key`, but Go's `api.ClientCommand` declares no such field
+  // (encoding/json drops it) and command-path dedup keys on `request_id`
+  // instead — so nothing reads this key today. Fixed for correctness and so
+  // the key is already sound if the server ever starts honouring the field.
+  // Byte-identical for a colon-free tag and path, which is the common case.
+  idempotencyKey: (args) => joinKey("messages.undo_edit", args.tag, args.filePath),
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   command: ({ chatID, tag, filePath }) => ({
@@ -71,7 +81,15 @@ export const undoEdit = transportAction<{ chatID: string; tag: string; filePath:
 export const runPlan = defineAction<{ chatID: string; content: string }, "sent" | "queued">({
   name: "plan.run",
   scope: (args) => "chat:" + args.chatID,
-  idempotencyKey: (args) => `plan.run:${args.chatID}:${args.content.slice(0, 40)}`,
+  // Joined as components because `content` is arbitrary prompt text, so ":"
+  // is reachable and the old template let a plan's own text forge the field
+  // boundary. Consequence today: NONE. This action is a plain `defineAction`
+  // whose `run` takes only (args, signal) and never reads the third `ctx`
+  // argument, so the framework computes this key and discards it; the actual
+  // send goes through `submitPrompt` -> the prompt queue -> a `prompt`
+  // envelope carrying its own generated `request_id`. The key is kept and
+  // fixed rather than deleted so it is correct if `run` ever forwards it.
+  idempotencyKey: (args) => joinKey("plan.run", args.chatID, args.content.slice(0, 40)),
   retryable: (err) => err.code === "send_failed" || retryNetwork(err),
   run: async ({ chatID, content }, signal) => {
     if (signal.aborted) {

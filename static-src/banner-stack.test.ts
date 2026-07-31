@@ -122,6 +122,78 @@ describe("banner-stack: active-chat scoping", () => {
   });
 });
 
+describe("banner-stack: composite key (keyenc)", () => {
+  it("keeps the pre-adoption key bytes, so no persisted dismissal is lost", async () => {
+    // The dismissal set is PERSISTED in localStorage under dismissed_banners.
+    // A chat id is [A-Za-z0-9_-] (api.ValidChatID) and a code is a call-site
+    // literal, so keyenc emits both verbatim and the key is byte-identical to
+    // the old `${chatID}:${code}` template. Asserted through the public API: a
+    // dismissal recorded in the OLD format must still suppress its banner.
+    const { container, mod, flush } = await setup();
+    dismissed = ["c-1750000000000-ab12cd:rate_limit"];
+
+    activeSig.value = { id: "c-1750000000000-ab12cd" };
+    mod.ensureBound();
+    mod.showBanner("c-1750000000000-ab12cd", "rate_limit", "slow down", "warning", true);
+    flush();
+
+    expect(container.querySelectorAll(".banner")).toHaveLength(0);
+  });
+
+  it("does not let one field's content forge the other's boundary", async () => {
+    // Both fields are colon-free today; this pins the property the join adds,
+    // so a future loosening of either field can't silently collide two
+    // banners into one collection slot. Under the old template ("a:b" + "c")
+    // and ("a" + "b:c") were the same key.
+    const { container, mod, flush } = await setup();
+
+    activeSig.value = { id: "a:b" };
+    mod.ensureBound();
+    mod.showBanner("a:b", "c", "first", "error", false);
+    flush();
+    expect(container.querySelectorAll(".banner")).toHaveLength(1);
+
+    // Same forged key under the old scheme, different chat: must not be seen
+    // as the same entry, and must not show on chat "a:b".
+    mod.showBanner("a", "b:c", "second", "error", false);
+    flush();
+    expect(container.querySelectorAll(".banner")).toHaveLength(1);
+    expect(container.textContent).toContain("first");
+
+    activeSig.value = { id: "a" };
+    flush();
+    expect(container.textContent).toContain("second");
+  });
+
+  it("clearBannersForChat prefix scan: chat \u201cabc\u201d does not clear chat \u201cabcd\u201d", async () => {
+    // clearBannersForChat keeps a `${chatID}:` prefix scan (keyenc exports no
+    // prefix primitive). The trailing ":" is what bounds it — this is the
+    // regression test named in that function's comment.
+    const { container, mod, flush } = await setup();
+
+    activeSig.value = { id: "abc" };
+    mod.ensureBound();
+    mod.showBanner("abc", "x", "short", "error", true);
+    mod.showBanner("abcd", "x", "long", "error", true);
+    flush();
+    expect(container.textContent).toContain("short");
+
+    // Persist both dismissals so the localStorage half of the scan is covered.
+    dismissed = ["abc:x", "abcd:x"];
+
+    mod.clearBannersForChat("abc");
+    flush();
+
+    // Only chat abc's persisted dismissal was pruned.
+    expect(dismissed).toEqual(["abcd:x"]);
+
+    // And the sibling chat's in-memory banner survived the sweep.
+    activeSig.value = { id: "abcd" };
+    flush();
+    expect(container.textContent).toContain("long");
+  });
+});
+
 describe("banner-stack: single live region", () => {
   it("marks only the stack container as a live region; banners are not separately live", async () => {
     const { container, mod, flush } = await setup();
