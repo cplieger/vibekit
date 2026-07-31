@@ -172,9 +172,12 @@ describe("shell.ts: lazy terminal creation", () => {
     expect(opts.wsPath).toBe("/api/shell/ws");
     expect(opts.fontReady).toBeDefined();
     expect(opts.theme).toMatchObject({ "--bg": "var(--c-term-bg)", "--accent": "var(--c-accent)" });
-    // The touch preset's features, embedded in container layout (the panel is
-    // the terminal's boundary; no page-level styling, no bridge feature).
-    expect(opts.features).toContain("preset-feature");
+    // The touch preset, handed over UNCALLED (ui v5's lazy `features`), so a
+    // throwing preset fails inside createTerminal rather than at this call
+    // site. Embedded in container layout (the panel is the terminal's
+    // boundary; no page-level styling, no bridge feature).
+    expect(typeof opts.features).toBe("function");
+    expect(opts.features?.()).toContain("preset-feature");
     expect(opts.layout).toBe("container");
   });
 
