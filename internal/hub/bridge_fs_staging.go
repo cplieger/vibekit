@@ -14,11 +14,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync/atomic"
 
+	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/pending"
 	"github.com/cplieger/vibekit/internal/workspace"
@@ -28,30 +29,78 @@ import (
 // extractToolCallID when both toolCallId and msg.ID are absent.
 var fallbackSeq atomic.Int64
 
+// Components of the pending-store key built by extractToolCallID.
+// pendingKeyPrefix keeps the key recognisable in logs; the three source
+// tags name WHICH of the function's three branches produced the trailing
+// id, which is what makes the branches disjoint (see extractToolCallID).
+const (
+	pendingKeyPrefix       = "fs"
+	pendingSourceToolCall  = "tool"
+	pendingSourceMessageID = "msg"
+	pendingSourceFallback  = "fallback"
+)
+
 // extractToolCallID derives the pending-store key for an
 // fs/write_text_file request. The key is CHAT-UNIQUE: the store is a
 // single process-wide map shared by every chat, and on v3 the natural
 // per-request value (msg.ID) is only monotonic PER BRIDGE, so two
 // concurrent supervised chats would otherwise collide (both "fs-7") —
 // leaking one chat's staged diff into the other and cross-resolving to
-// disk. Prefixing with chatID makes the key globally unique.
+// disk. Including chatID makes the key globally unique.
 //
 // v3's fs/write_text_file carries no toolCallId (the params branch is
-// dead on the v3-only wire), but it is prefixed too so the key is
-// chat-unique regardless of source. The id is opaque to the client
+// dead on the v3-only wire), but chatID is included there too so the key
+// is chat-unique regardless of source. The id is opaque to the client
 // (the tool card correlates the pending row by path), so it is echoed
 // back unchanged on resolve. The returned id is always non-empty.
+//
+// # Why keyenc rather than a '-' join
+//
+// TWO fields can carry the old '-' separator, so the old
+// fmt.Sprintf("fs-%s-%s", …) form was ambiguous in two independent ways:
+//
+//   - chatID: api.ValidChatID permits [a-zA-Z0-9_-], so '-' is a legal
+//     chat-id character. ("a-b", "c") and ("a", "b-c") both spelled
+//     "fs-a-b-c".
+//   - p.ToolCallID: an opaque agent-supplied string with no validated
+//     alphabet at all.
+//
+// The three branches also OVERLAPPED as an encoding, and not only through
+// the agent-supplied field. On the live v3 wire (no toolCallId, so only the
+// msg.ID and fallback branches fire) chat "x-fallback" with msg.ID 1 and
+// chat "x" on its first fallback both spelled "fs-x-fallback-1", and
+// api.ValidChatID permits both names. Nothing stopped an agent-supplied
+// toolCallId from spelling either shape, either. keyenc.Join escapes each
+// component before joining, and the per-branch source tag ("tool" / "msg" /
+// "fallback") is its own component, so the branches are now disjoint by
+// construction rather than by hoping the three id spaces never overlap.
+//
+// Consequence of a collision, concretely: the pending store is keyed on
+// this string, so two distinct staged writes sharing one key mean the
+// second Add is refused or shadows the first, the pending_change_added
+// broadcast carries the wrong snapshot, and resolve_pending_change
+// applies ONE user's accept/reject to the OTHER chat's staged write —
+// the agent's proposed content lands on disk in a chat whose user never
+// approved it. That is the cross-chat diff leak the chatID prefix was
+// added to prevent, reachable through a '-' in the chat id.
+//
+// The key's bytes differ from the pre-keyenc form (the separator is ':'
+// and the source tag is new). Nothing persists it: the pending store is
+// an in-memory map, and clients echo back whatever key they were handed
+// within the life of one staged write.
 func extractToolCallID(chatID api.ChatID, msg *api.RPCResponse) string {
 	var p struct {
 		ToolCallID string `json:"toolCallId"`
 	}
 	if err := json.Unmarshal(msg.Params, &p); err == nil && p.ToolCallID != "" {
-		return fmt.Sprintf("fs-%s-%s", chatID, p.ToolCallID)
+		return keyenc.Join(pendingKeyPrefix, string(chatID), pendingSourceToolCall, p.ToolCallID)
 	}
 	if msg.ID != nil {
-		return fmt.Sprintf("fs-%s-%d", chatID, *msg.ID)
+		return keyenc.Join(pendingKeyPrefix, string(chatID), pendingSourceMessageID,
+			strconv.FormatInt(*msg.ID, 10))
 	}
-	return fmt.Sprintf("fs-%s-fallback-%d", chatID, fallbackSeq.Add(1))
+	return keyenc.Join(pendingKeyPrefix, string(chatID), pendingSourceFallback,
+		strconv.FormatInt(fallbackSeq.Add(1), 10))
 }
 
 // stageFSWrite stages a write in the pending store and blocks until

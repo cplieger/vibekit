@@ -33,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/api"
 	"golang.org/x/sync/singleflight"
 )
@@ -188,13 +189,41 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 // upstream fetches respect client disconnection and server shutdown.
 // Follower goroutines still respect their own context cancellation.
 func (p *RegistryProxy) fetchSearch(ctx context.Context, q string, limit int) (body []byte, cached bool, err error) {
-	key := fmt.Sprintf("%s|%d", q, limit)
+	key := searchCacheKey(q, limit)
 
 	return p.cache.GetOrFetch(ctx, key, func() ([]byte, error) {
 		fetchCtx, fetchCancel := context.WithTimeout(ctx, registryTimeout)
 		defer fetchCancel()
 		return p.doFetch(fetchCtx, q, limit)
 	})
+}
+
+// searchCacheKey composes the upstream-response cache key over the search
+// query and the clamped result limit.
+//
+// `q` is the ONLY field that can carry a separator: it is untrusted HTTP query
+// input, filtered for control characters and length (maxSearchQueryLen) but
+// not for ':' or '\'. `limit` is a clamped decimal in [1, maxSearchLimit] and
+// can never contain either. The pre-keyenc "%s|%d" form was in fact still
+// injective for exactly that reason — the one separator-bearing field sat
+// FIRST and the trailing field was a digit run, so the final '|' always marked
+// the boundary. That is an accident of field order, not a property of the key:
+// appending a third component, or moving `limit` ahead of `q`, would have made
+// two distinct searches share one cache entry, and neither edit looks like it
+// touches key encoding. keyenc.Join escapes each component, so the encoding
+// stays injective under any such edit.
+//
+// Consequence of a collision, concretely: one browser's search for a crafted
+// query would be served the cached upstream body of a DIFFERENT query for up
+// to registryCacheTTL, so the MCP add-server list offers servers that do not
+// match what the user typed — and, since the entry is shared, poisons that
+// result for every other client until it expires.
+//
+// The key's bytes changed (':' rather than '|', plus escaping when the query
+// contains ':' or '\'). Nothing persists it: registryCache is an in-memory map
+// with a 60s TTL, rebuilt from scratch on every process start.
+func searchCacheKey(q string, limit int) string {
+	return keyenc.Join(q, strconv.Itoa(limit))
 }
 
 // doFetch issues the upstream GET. Factored out of fetchSearch so the
