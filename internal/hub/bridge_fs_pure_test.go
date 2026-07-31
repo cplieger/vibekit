@@ -65,8 +65,10 @@ func TestExtractToolCallID(t *testing.T) {
 	id7 := int64(7)
 	id3 := int64(3)
 
-	// Every key is chat-prefixed (fs-<chatID>-...) so two chats sharing a
-	// per-bridge msg.ID can't collide in the process-wide store.
+	// Every key carries the chat id as its own component (fs:<chatID>:…) so
+	// two chats sharing a per-bridge msg.ID can't collide in the
+	// process-wide store, and a per-branch source tag so the three id
+	// spaces can't overlap either.
 	const chatID api.ChatID = "c1"
 
 	cases := []struct {
@@ -76,29 +78,29 @@ func TestExtractToolCallID(t *testing.T) {
 		wantPrefix string
 	}{
 		{
-			name: "prefers param field (chat-prefixed)",
+			name: "prefers param field (chat-scoped, tool-tagged)",
 			msg:  &api.RPCResponse{ID: &id99, Params: mustJSON(t, map[string]any{"toolCallId": "from-param"})},
-			want: "fs-c1-from-param",
+			want: "fs:c1:tool:from-param",
 		},
 		{
 			name: "falls back to RPC ID",
 			msg:  &api.RPCResponse{ID: &id7, Params: mustJSON(t, map[string]any{})},
-			want: "fs-c1-7",
+			want: "fs:c1:msg:7",
 		},
 		{
 			name: "falls back to RPC ID when param blank",
 			msg:  &api.RPCResponse{ID: &id7, Params: mustJSON(t, map[string]any{"toolCallId": ""})},
-			want: "fs-c1-7",
+			want: "fs:c1:msg:7",
 		},
 		{
 			name:       "sequence fallback when no ID available",
 			msg:        &api.RPCResponse{ID: nil, Params: mustJSON(t, map[string]any{})},
-			wantPrefix: "fs-c1-fallback-",
+			wantPrefix: "fs:c1:fallback:",
 		},
 		{
 			name: "malformed params still returns non-empty",
 			msg:  &api.RPCResponse{ID: &id3, Params: json.RawMessage(`not-json`)},
-			want: "fs-c1-3",
+			want: "fs:c1:msg:3",
 		},
 	}
 	for _, tc := range cases {

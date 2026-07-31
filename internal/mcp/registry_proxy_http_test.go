@@ -577,7 +577,7 @@ func TestRegistryProxy_fetchSearch_triggersEvictAtCap(t *testing.T) {
 			got, maxCacheEntries)
 	}
 	// The new entry must be present under the composed key.
-	if _, ok := p.cache.entries["new-key|7"]; !ok {
+	if _, ok := p.cache.entries[searchCacheKey("new-key", 7)]; !ok {
 		t.Error("new entry missing from cache after at-cap insert")
 	}
 	// The oldest seed (seed00) should have been the one evicted.
