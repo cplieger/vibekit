@@ -387,6 +387,8 @@ export const decodeJob: Decoder<Job> = (v) => {
   const error = o["error"] === null ? undefined : optStr(o, "error", "$.job");
   if (error !== undefined) out.error = error;
   if (o["names"] !== undefined && o["names"] !== null) out.names = decodeArray(o["names"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.job.names");
+  const cancelCause = o["cancel_cause"] === null ? undefined : optStr(o, "cancel_cause", "$.job");
+  if (cancelCause !== undefined) out.cancel_cause = cancelCause;
   if (o["output_tail"] !== undefined && o["output_tail"] !== null) out.output_tail = decodeArray(o["output_tail"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.job.output_tail");
   const startedAt = o["started_at"] === null ? undefined : optNum(o, "started_at", "$.job");
   if (startedAt !== undefined) out.started_at = startedAt;

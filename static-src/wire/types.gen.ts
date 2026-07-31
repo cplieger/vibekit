@@ -467,6 +467,13 @@ export interface Job {
   error?: string;
   names?: string[];
   /**
+ * CancelCause names who cancelled the job (State JobCancelled only).
+ * Additive on the wire: omitted whenever the cause is unknown, so a
+ * consumer that ignores the field sees exactly the payload it saw
+ * before — JobCancelled keeps its meaning and value.
+ */
+  cancel_cause?: string;
+  /**
  * OutputTail carries the job's most recent output lines; populated
  * by Jobs() snapshots only (live output streams via the
  * Config.OnJobOutput callback).
