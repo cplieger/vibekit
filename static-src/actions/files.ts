@@ -15,6 +15,15 @@ import {
 
 import { joinPath } from "../files-shared.js";
 import { uploadFiles } from "../upload.js";
+// Aliased: `joinPath` above joins PATH segments, `joinKey` joins KEY
+// components. Every idempotency/dedupe key in this file is built with the
+// latter so no field's content can forge a component boundary.
+//
+// These keys leave the client as an `Idempotency-Key` HTTP header, which
+// vibekit's Go middleware (internal/server/idempotency.go) treats as an
+// OPAQUE string — it never parses or builds one — so byte parity with a
+// Go-side key is not required here, only consistency within this client.
+import { join as joinKey } from "@cplieger/keyenc";
 
 const API_FILES_ACTION = "/api/files/action";
 const API_FILES_DOWNLOAD = "/api/files/download";
@@ -36,7 +45,7 @@ export const createFile = apiAction<CreateArgs>({
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
   retryable: retryNetwork,
-  idempotencyKey: (args) => `files.create:${args.dir}/${args.name}`,
+  idempotencyKey: (args) => joinKey("files.create", args.dir, args.name),
   request: (args) => ({
     method: "POST",
     path: API_FILES_ACTION,
@@ -52,7 +61,7 @@ export const createFolder = apiAction<CreateArgs>({
   scope: (args) => "dir:" + args.dir,
   retry: RETRY_STANDARD,
   retryable: retryNetwork,
-  idempotencyKey: (args) => `files.create_folder:${args.dir}/${args.name}`,
+  idempotencyKey: (args) => joinKey("files.create_folder", args.dir, args.name),
   request: (args) => ({
     method: "POST",
     path: API_FILES_ACTION,
@@ -66,7 +75,15 @@ export const createFolder = apiAction<CreateArgs>({
 export const renameFile = apiAction<{ dir: string; original: string; newName: string }>({
   name: "files.rename",
   scope: (args) => "file:" + args.dir + "/" + args.original,
-  idempotencyKey: (args) => `files.rename:${args.dir}/${args.original}->${args.newName}`,
+  // The one key in this file that was reachably BROKEN. The old form was
+  // `files.rename:${dir}/${original}->${newName}`, and "->" is a legal
+  // filename sequence: renaming "a" to "b->c" and renaming "a->b" to "c" in
+  // the same directory both produced `files.rename:<dir>/a->b->c`. The Go
+  // idempotency middleware then replayed the first cached 200 for the second
+  // rename, so the second rename SILENTLY NEVER HAPPENED for the 5-minute
+  // cache TTL — the UI showed success and the file was untouched. Joining the
+  // three fields as components removes the ambiguity entirely.
+  idempotencyKey: (args) => joinKey("files.rename", args.dir, args.original, args.newName),
   request: ({ dir, original, newName }) => ({
     method: "POST",
     path: API_FILES_ACTION,
@@ -89,7 +106,13 @@ interface DeleteArgs {
 export const deleteFilesBatch = defineAction<DeleteArgs, void>({
   name: "files.delete",
   scope: (args) => "dir:" + args.dir,
-  dedupe: (args) => `files.delete:${args.names.slice().sort().join(",")}`,
+  // Nested join, per keyenc's composition rule: the sorted filename LIST gets
+  // its own `joinKey`, and that single result becomes ONE component of the
+  // outer key. A "," -joined list could not distinguish the batch ["a,b"] from
+  // the batch ["a","b"], so two different delete requests collapsed into one
+  // dedupe key and the second dispatch was folded into the first's in-flight
+  // promise. Sorting still runs first, so key equality stays order-insensitive.
+  dedupe: (args) => joinKey("files.delete", joinKey(...args.names.slice().sort())),
   // Batch delete must NOT retry: a timeout/network error may mean some
   // items were already deleted server-side. Retrying would re-attempt
   // those deletions, causing 404s or deleting newly-created files with

@@ -225,3 +225,58 @@ describe("SSE refetch", () => {
     expect(mockGet).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Row signature (keyenc `join`).
+//
+// The signature only gates whether a row's children are rebuilt — row identity
+// is `kb:${name}`, so a collision leaves a STALE ROW, not a missing or wrong
+// one. `items_display` and `path` are adjacent free-form fields (a path may
+// contain "|"), which is what made the old "|"-joined template forgeable.
+// ---------------------------------------------------------------------------
+
+describe("loadKnowledge row signature", () => {
+  /** The signature expression as it was before the keyenc adoption. */
+  function oldSig(c: {
+    indexing?: boolean;
+    item_count: number;
+    items_display?: string;
+    path?: string;
+  }): string {
+    return `${c.indexing === true ? "1" : "0"}|${String(c.item_count)}|${c.items_display ?? ""}|${c.path ?? ""}`;
+  }
+
+  async function sigFor(items_display: string, path: string): Promise<string> {
+    mockGet.mockResolvedValue({
+      contexts: [{ name: "kb", id: "i", item_count: 3, items_display, path }],
+    });
+    loadKnowledge();
+    await flush();
+    return list().querySelector(".knowledge-row")?.getAttribute("data-sig") ?? "";
+  }
+
+  it("distinguishes two states the old '|'-joined signature collapsed", async () => {
+    // Both fields are free-form and ADJACENT, so a "|" inside items_display
+    // could impersonate the boundary before `path`.
+    const a = { item_count: 3, items_display: "42%|eta", path: "docs" };
+    const b = { item_count: 3, items_display: "42%", path: "eta|docs" };
+    // Precondition: the pre-adoption expression really did collapse these.
+    expect(oldSig(a)).toBe(oldSig(b));
+
+    // The row key is the same for both loads ("kb:kb"), so the second load
+    // reuses the row and rewrites data-sig only if the signature changed.
+    const sigA = await sigFor(a.items_display, a.path);
+    const sigB = await sigFor(b.items_display, b.path);
+    expect(sigA).not.toBe(sigB);
+  });
+
+  it("emits verbatim components for ordinary input", async () => {
+    // No reserved character in any field, so each component is emitted as-is
+    // and the signature is just the four fields separated by ":".
+    expect(await sigFor("42%", "internal/api")).toBe("0:3:42%:internal/api");
+  });
+
+  it("escapes a reserved character instead of emitting a bare separator", async () => {
+    expect(await sigFor("a:b", "")).toBe("0:3:a\\:b:");
+  });
+});

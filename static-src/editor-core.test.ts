@@ -8,6 +8,7 @@ import {
   setActiveFilePath,
   getDirtyEditorPaths,
   activeDirty,
+  makePendingPath,
 } from "./editor-types.js";
 
 describe("isPlanDraftPath", () => {
@@ -41,13 +42,94 @@ describe("isPendingPath", () => {
 describe("parsePendingPath", () => {
   it.each([
     { input: "pending:chat1:tool1", expected: { chatID: "chat1", toolCallID: "tool1" } },
-    { input: "pending:chat1", expected: { chatID: "chat1", toolCallID: "" } },
+    // Exactly-two-components rule (keyenc adoption): a path carrying fewer or
+    // more components is not a key makePendingPath produced, so it degrades to
+    // the empty pair — the same result callers already get for an unrecognized
+    // path. "pending:chat1" used to yield chatID "chat1"; "pending:a:b:c" used
+    // to yield toolCallID "b:c" because the old parser took it as
+    // rest-of-string. Both now fail to parse (see parsePendingPath's doc
+    // comment: a legacy persisted path with a ":" in its toolCallID loads an
+    // empty tab once, and is re-encoded escaped from now on).
+    { input: "pending:chat1", expected: { chatID: "", toolCallID: "" } },
     { input: "pending:", expected: { chatID: "", toolCallID: "" } },
-    { input: "pending:a:b:c", expected: { chatID: "a", toolCallID: "b:c" } },
+    { input: "pending:a:b:c", expected: { chatID: "", toolCallID: "" } },
     { input: "src/file.ts", expected: { chatID: "", toolCallID: "" } },
     { input: "", expected: { chatID: "", toolCallID: "" } },
   ])("parsePendingPath($input)", ({ input, expected }) => {
     expect(parsePendingPath(input)).toEqual(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makePendingPath / parsePendingPath under keyenc.
+//
+// These keys are PERSISTED: `persistOpenFiles` writes every open editor path
+// into localStorage via `uiState.save({editor_files})`, so the encoding must
+// stay byte-stable for ordinary ids or a reload drops the user's open tabs.
+// ---------------------------------------------------------------------------
+
+describe("makePendingPath (keyenc byte-identity)", () => {
+  it.each([
+    { chatID: "c-1750000000000-ab12cd", toolCallID: "tooluse_abc123" },
+    { chatID: "chat1", toolCallID: "tool1" },
+    { chatID: "c_1-2", toolCallID: "tc-42" },
+  ])(
+    "emits the pre-adoption bytes for colon-free ids ($chatID, $toolCallID)",
+    ({ chatID, toolCallID }) => {
+      // The exact string the old template produced. keyenc emits a component
+      // containing neither ":" nor "\\" verbatim, so already-persisted
+      // editor_files entries still parse after the adoption.
+      expect(makePendingPath(chatID, toolCallID)).toBe(`pending:${chatID}:${toolCallID}`);
+    },
+  );
+
+  it("round-trips ids that the old encoding could not represent", () => {
+    // A ":" in the toolCallID used to shift the split: the old parser took
+    // rest-of-string, so ("a:b", "c") and ("a", "b:c") were indistinguishable.
+    const forged = makePendingPath("a:b", "c");
+    const other = makePendingPath("a", "b:c");
+    expect(forged).not.toBe(other);
+    expect(parsePendingPath(forged)).toEqual({ chatID: "a:b", toolCallID: "c" });
+    expect(parsePendingPath(other)).toEqual({ chatID: "a", toolCallID: "b:c" });
+  });
+
+  it("round-trips a backslash, the other reserved character", () => {
+    const p = makePendingPath("c\\1", "tc:2");
+    expect(parsePendingPath(p)).toEqual({ chatID: "c\\1", toolCallID: "tc:2" });
+  });
+
+  it("stays parseable for every path it produces", () => {
+    for (const [chatID, toolCallID] of [
+      ["", ""],
+      ["a", ""],
+      ["", "b"],
+      [":", ":"],
+      ["\\", "\\"],
+      ["a:b\\c", "d\\e:f"],
+    ] as const) {
+      const p = makePendingPath(chatID, toolCallID);
+      expect(isPendingPath(p)).toBe(true);
+      expect(parsePendingPath(p)).toEqual({ chatID, toolCallID });
+    }
+  });
+});
+
+describe("parsePendingPath (total, never throws)", () => {
+  it.each([
+    // A dangling escape and an escape before an ordinary character are both
+    // outside keyenc's accepted language — `split` throws MalformedKeyError,
+    // which the parser catches and reports as "not a pending path".
+    "pending:a\\",
+    "pending:a\\b",
+    // A hashed identity throws HashedKeyError; same total degradation.
+    `pending:sha256:${"0".repeat(64)}`,
+    // Structurally valid keys with the wrong component count.
+    "pending:a:b:c",
+    "pending:onlyone",
+    "pending:",
+  ])("returns the empty pair for %p instead of throwing", (path) => {
+    expect(() => parsePendingPath(path)).not.toThrow();
+    expect(parsePendingPath(path)).toEqual({ chatID: "", toolCallID: "" });
   });
 });
 

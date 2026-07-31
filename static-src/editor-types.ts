@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/reactive";
+import { join, split, HashedKeyError, MalformedKeyError } from "@cplieger/keyenc";
 import { lineDiff, type DiffLine } from "./diff.js";
 import { countHunks } from "./diff-pane.js";
 import type { ConflictFile } from "./conflict.js";
@@ -39,21 +40,55 @@ export function makePlanDraftPath(chatID: string): string {
   return PLAN_DRAFT_PREFIX + chatID;
 }
 
-/** Construct a pending-change virtual path from chat + tool-call IDs. */
+/** Construct a pending-change virtual path from chat + tool-call IDs.
+ *
+ *  The two ids are joined with keyenc so a tool-call id carrying a ":" cannot
+ *  shift the split. Byte-identical to the old `pending:${chatID}:${toolCallID}`
+ *  template for any id containing neither ":" nor "\\" (keyenc emits such a
+ *  component verbatim), which is what lets already-persisted paths keep
+ *  parsing — these keys are persisted per-device in localStorage through
+ *  `persistOpenFiles` -> `uiState.save({editor_files})`. The prefix stays
+ *  OUTSIDE the join so `isPendingPath` keeps working even in the (unreachable
+ *  in practice) case where keyenc reduces the pair to a hashed identity. */
 export function makePendingPath(chatID: string, toolCallID: string): string {
-  return `${PENDING_PREFIX}${chatID}:${toolCallID}`;
+  return PENDING_PREFIX + join(chatID, toolCallID);
 }
 
+/** Recover the chat + tool-call ids from a pending-change path.
+ *
+ *  TOTAL, like the parser it replaces: a non-pending path, an unparseable
+ *  key, or the wrong component count all return the empty pair, and every
+ *  caller already treats an empty id as "not a pending change"
+ *  (`editor-pending.ts`, `editor-core.ts`). keyenc's `split` throws on a
+ *  hashed identity and on a key it did not produce, so both are caught here
+ *  rather than escaping to callers.
+ *
+ *  BEHAVIOUR CHANGE (the only one): the old parser took `toolCallID` as
+ *  rest-of-string, so `pending:a:b:c` parsed as chatID "a" / toolCallID "b:c".
+ *  Requiring exactly two components means a LEGACY persisted path whose
+ *  toolCallID contained a ":" now fails to parse once — that editor tab loads
+ *  empty and can be closed. No data loss (a pending change lives server-side;
+ *  the path is only a routing key) and no recurrence, because
+ *  `makePendingPath` escapes such an id from now on. */
 export function parsePendingPath(path: string): { chatID: string; toolCallID: string } {
+  const none = { chatID: "", toolCallID: "" };
   if (!isPendingPath(path)) {
-    return { chatID: "", toolCallID: "" };
+    return none;
   }
-  const rest = path.slice(PENDING_PREFIX.length);
-  const split = rest.indexOf(":");
-  if (split === -1) {
-    return { chatID: rest, toolCallID: "" };
+  let parts: string[];
+  try {
+    parts = split(path.slice(PENDING_PREFIX.length));
+  } catch (e) {
+    if (e instanceof HashedKeyError || e instanceof MalformedKeyError) {
+      return none;
+    }
+    throw e;
   }
-  return { chatID: rest.slice(0, split), toolCallID: rest.slice(split + 1) };
+  const [chatID, toolCallID, ...extra] = parts;
+  if (chatID === undefined || toolCallID === undefined || extra.length > 0) {
+    return none;
+  }
+  return { chatID, toolCallID };
 }
 
 export function routeForPath(path: string): {

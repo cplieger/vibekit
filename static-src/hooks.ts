@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { join } from "@cplieger/keyenc";
 import { onSSE } from "./bus.js";
 import { byId } from "./dom.js";
 import { reconcile } from "./reconcile.js";
@@ -192,11 +193,22 @@ function mountRow(h: Hook): HTMLElement {
 
 /** Content signature — includes the transient run output so a fresh run
  *  re-renders the row (and a stable row keeps DOM identity across refetches,
- *  preserving toggle focus). */
+ *  preserving toggle focus).
+ *
+ *  Both levels use keyenc `join`. The fields are arbitrary text (`command`,
+ *  `prompt`, `matcher` come from the hook file; `output` is captured process
+ *  output), so the old "\u00a7"/"|" separators were only unlikely, not
+ *  reserved — a hook whose command contained one could produce the same
+ *  signature as a genuinely different hook state. The nested run-output
+ *  signature is composed the way keyenc composes: it gets its own `join`, and
+ *  that single result becomes ONE component of the outer join, so its
+ *  contents cannot reach the outer field boundaries. Consequence of a
+ *  collision was a STALE ROW (row identity is `hook:${id}`, see renderList),
+ *  not a wrong or dropped row. */
 function rowSig(h: Hook): string {
   const out = runOutputs.get(h.id);
-  const outSig = out ? `${out.ran ? "1" : "0"}|${String(out.exit_code)}|${out.output}` : "";
-  return [
+  const outSig = out ? join(out.ran ? "1" : "0", String(out.exit_code), out.output) : "";
+  return join(
     h.enabled ? "1" : "0",
     h.trigger,
     h.action_type,
@@ -206,7 +218,7 @@ function rowSig(h: Hook): string {
     h.matcher ?? "",
     h.disabled_reason ?? "",
     outSig,
-  ].join("\u00a7");
+  );
 }
 
 /** Global hooks live in ~/.kiro/hooks (kiro-cli 2.13+) and apply in every
