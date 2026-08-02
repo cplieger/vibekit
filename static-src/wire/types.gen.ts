@@ -191,7 +191,6 @@ export interface ChatHeader {
   current_mode_id?: string;
   id: string;
   compaction_watermark?: string;
-  summary?: string;
   available_models?: SessionModel[];
   available_modes?: SessionMode[];
   /**

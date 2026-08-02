@@ -134,8 +134,6 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
   if (currentModeId !== undefined) out.current_mode_id = currentModeId;
   const compactionWatermark = o["compaction_watermark"] === null ? undefined : optStr(o, "compaction_watermark", "$.chat_header");
   if (compactionWatermark !== undefined) out.compaction_watermark = compactionWatermark;
-  const summary = o["summary"] === null ? undefined : optStr(o, "summary", "$.chat_header");
-  if (summary !== undefined) out.summary = summary;
   if (o["available_models"] !== undefined && o["available_models"] !== null) out.available_models = decodeArray(o["available_models"], decodeSessionModel, "$.chat_header.available_models");
   if (o["available_modes"] !== undefined && o["available_modes"] !== null) out.available_modes = decodeArray(o["available_modes"], decodeSessionMode, "$.chat_header.available_modes");
   if (o["prior_acp_session_ids"] !== undefined && o["prior_acp_session_ids"] !== null) out.prior_acp_session_ids = decodeArray(o["prior_acp_session_ids"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.chat_header.prior_acp_session_ids");
