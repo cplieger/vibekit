@@ -20,7 +20,6 @@ import {
   routeForPath,
   freshState,
   pendingDiffSource,
-  gitDiffSource,
   registerCloseFile,
   makePendingPath,
 } from "./editor-types.js";
@@ -67,17 +66,6 @@ export function openFileDiff(
         fromGit: false,
       },
     },
-  });
-}
-
-export function openFileGitDiff(path: string, ref = "HEAD", repo = ""): void {
-  open(path, {
-    mode: {
-      kind: "diff",
-      diffSource: gitDiffSource(ref, "", ""),
-    },
-    repo,
-    ref,
   });
 }
 

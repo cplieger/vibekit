@@ -2,13 +2,7 @@
 // Actions: messages, plan, clipboard (ui.copy_clipboard).
 // ---------------------------------------------------------------------------
 
-import {
-  defineAction,
-  apiAction,
-  ActionError,
-  retryNetwork,
-  RETRY_STANDARD,
-} from "./index.js";
+import { defineAction, apiAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 /** Copy text to clipboard with success/error toast. */
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
@@ -39,5 +33,3 @@ export const explainError = apiAction<{ errorText: string; context: string }, { 
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
 });
-
-
