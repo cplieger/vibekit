@@ -324,6 +324,13 @@ func (bc *BridgeCoordinator) GetBridge(chatID api.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
 
+// HasLiveBridge reports whether a chat currently has a bridge, i.e. whether it
+// is in active use. Retention's exemption reads this: a chat with a live bridge
+// is open work and is never purged, however old (see archive.WithLiveChats).
+func (h *Hub) HasLiveBridge(chatID api.ChatID) bool {
+	return h.bridge.mgr.get(chatID) != nil
+}
+
 // CloseBridge stops a bridge and removes it from the map.
 func (bc *BridgeCoordinator) CloseBridge(chatID api.ChatID) {
 	bc.bridge.mgr.close(chatID)

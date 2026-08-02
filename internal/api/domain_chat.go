@@ -391,7 +391,6 @@ type Chat struct {
 	CurrentModeID       string         `json:"current_mode_id,omitempty"`
 	ParentChatID        ChatID         `json:"parent_chat_id,omitempty"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
-	Summary             string         `json:"summary,omitempty"`
 	ID                  string         `json:"id"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
 	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
@@ -411,16 +410,9 @@ type Chat struct {
 	Usage              Usage    `json:"usage"`
 	CreatedAt          int64    `json:"created_at"`
 	UpdatedAt          int64    `json:"updated_at"`
-	// ArchivedAt is the unix-milli timestamp recorded when the chat was
-	// moved to the archive dir. Purge ages from this, NOT the file mtime:
-	// a skipped/failed post-archive summary write leaves mtime at the
-	// chat's last-activity time, which would purge an old-but-just-archived
-	// chat almost immediately. Zero for active chats and for legacy archives
-	// written before this field existed (purge falls back to mtime then).
-	ArchivedAt     int64 `json:"archived_at,omitempty"`
-	RewindFromTurn int   `json:"rewind_from_turn,omitempty"`
-	MessageCount   int   `json:"message_count"`
-	SupervisedMode bool  `json:"supervised_mode,omitempty"`
+	RewindFromTurn     int      `json:"rewind_from_turn,omitempty"`
+	MessageCount       int      `json:"message_count"`
+	SupervisedMode     bool     `json:"supervised_mode,omitempty"`
 }
 
 // SessionChain returns every KAS session id this chat has run on, current
@@ -482,7 +474,6 @@ func (c *Chat) Header() ChatHeader {
 		SupervisedMode:      c.SupervisedMode,
 		ParentChatID:        c.ParentChatID,
 		CompactionWatermark: c.CompactionWatermark,
-		Summary:             c.Summary,
 	}
 }
 
@@ -497,7 +488,6 @@ type ChatHeader struct {
 	CurrentModeID       string         `json:"current_mode_id,omitempty"`
 	ID                  string         `json:"id"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
-	Summary             string         `json:"summary,omitempty"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
 	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
 	// PriorACPSessionIDs mirrors Chat's. Carried on the header because the

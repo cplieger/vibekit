@@ -61,6 +61,7 @@ type Store struct {
 	preArchive  func(chatID api.ChatID)
 	onArchive   func(chatID api.ChatID)
 	onPurge     func(chatID api.ChatID, sessionChain []string)
+	isLive      func(chatID api.ChatID) bool
 	tombstone   map[api.ChatID]time.Time
 	archive     *archive.Service
 	locks       sync.Map
@@ -127,6 +128,12 @@ func WithPreArchive(fn func(chatID api.ChatID)) StoreOption {
 // WithOnArchive registers a callback fired after a chat is archived.
 func WithOnArchive(fn func(chatID api.ChatID)) StoreOption {
 	return func(s *Store) { s.onArchive = fn }
+}
+
+// WithLiveChats registers the live-chat predicate purging exempts. See
+// archive.WithLiveChats.
+func WithLiveChats(fn func(chatID api.ChatID) bool) StoreOption {
+	return func(s *Store) { s.isLive = fn }
 }
 
 // WithOnPurge registers a callback fired after an archived chat is purged.

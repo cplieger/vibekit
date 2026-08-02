@@ -1,9 +1,7 @@
 package chat
 
 import (
-	"errors"
 	"fmt"
-	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -74,19 +72,3 @@ func errInvalidChatID(id api.ChatID) error {
 // missing or tombstoned chats. Single source of truth so all
 // not-found responses use the same string.
 const errMsgChatNotFound = "chat not found"
-
-// writeChatErr maps a StoreError to the appropriate HTTP response.
-func writeChatErr(w http.ResponseWriter, err error) {
-	if ce, ok := errors.AsType[*StoreError](err); ok {
-		switch ce.Kind {
-		case ErrKindNotFound, ErrKindTombstoned:
-			api.NotFound(w, errMsgChatNotFound)
-		case ErrKindIDInUse:
-			api.Conflict(w, ce.Error())
-		default:
-			api.InternalError(w, err)
-		}
-		return
-	}
-	api.InternalError(w, err)
-}

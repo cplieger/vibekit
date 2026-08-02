@@ -40,9 +40,13 @@ type listResult struct {
 	complete bool
 }
 
-// ReferencedSessionIDs returns every ACP session id still referenced by a
-// chat vibekit keeps — both active and archived — and reports whether that
-// set is COMPLETE.
+// ReferencedSessionIDs returns every ACP session id still referenced by a chat
+// vibekit keeps, and reports whether that set is COMPLETE.
+//
+// One list, because chats no longer move: there is no archive directory to
+// union in. That collapse is the point — the old two-list form ANDed two
+// completeness flags, so an unreadable file in either location suppressed the
+// whole sweep.
 //
 // It backs the orphan session sweep (internal/kirosession): any on-disk KAS
 // session not in this set is treated as reapable, which makes an incomplete
@@ -61,16 +65,13 @@ type listResult struct {
 // no sessions to keep, and treating it as one would wedge the sweep forever.
 func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struct{}, complete bool) {
 	refs = make(map[string]struct{})
-	active, activeOK := s.listWithCompleteness(ctx)
-	archived, archivedOK := s.listArchivedWithCompleteness(ctx)
-	for _, set := range [][]api.ChatHeader{active, archived} {
-		for i := range set {
-			for _, id := range set[i].SessionChain() {
-				refs[id] = struct{}{}
-			}
+	headers, complete := s.listWithCompleteness(ctx)
+	for i := range headers {
+		for _, id := range headers[i].SessionChain() {
+			refs[id] = struct{}{}
 		}
 	}
-	return refs, activeOK && archivedOK
+	return refs, complete
 }
 
 // listWithCompleteness is List plus the read-completeness flag the sweep

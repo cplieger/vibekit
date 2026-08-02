@@ -52,8 +52,6 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 	switch sub {
 	case "export":
 		rt.handleExport(w, r, cid)
-	case "archive":
-		rt.handleArchive(w, r, cid)
 	default:
 		api.NotFound(w, "unknown chat sub-resource")
 	}
@@ -131,8 +129,7 @@ const (
 // handleExport serves GET /api/chats/{id}/export?format=md|json, rendering
 // the persisted chat to a downloadable Markdown transcript (the default) or
 // the raw chat JSON. The chat store is the source of truth, so no live ACP
-// bridge is involved — any chat exports, including archived ones, which are
-// served by falling back to the archive directory (the History view).
+// bridge is involved.
 func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
 	if r.Method != http.MethodGet {
 		api.MethodNotAllowed(w, http.MethodGet)
@@ -181,17 +178,10 @@ func parseExportFormat(v string) (exportFormat, bool) {
 	}
 }
 
-// loadForExport returns the chat for chatID, checking the active store first
-// and falling back to the archive directory so archived chats (surfaced in
-// the History view) export too. No live bridge is required either way.
+// loadForExport returns the chat for chatID. One lookup: chats never move, so
+// there is no second location to fall back to.
 func (rt *Router) loadForExport(ctx context.Context, chatID api.ChatID) (*api.Chat, bool) {
-	if c, ok := rt.store.Get(ctx, chatID); ok {
-		return c, true
-	}
-	if c, err := rt.store.LoadArchived(ctx, chatID); err == nil {
-		return c, true
-	}
-	return nil, false
+	return rt.store.Get(ctx, chatID)
 }
 
 // dispositionAttachment builds a safe Content-Disposition header value
@@ -242,23 +232,4 @@ func sanitizeFilenamePart(s string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
-}
-
-// handleArchive moves a chat to the archive directory.
-func (rt *Router) handleArchive(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
-		return
-	}
-	if err := rt.store.Archive(r.Context(), chatID); err != nil {
-		slog.Error("chat archive failed", "chat_id", chatID, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("archive failed"))
-		return
-	}
-	api.Ok(w)
 }

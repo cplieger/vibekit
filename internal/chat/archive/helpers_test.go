@@ -77,18 +77,6 @@ func (f *fakeStore) ClearTombstone(chatID api.ChatID) {
 
 func (f *fakeStore) Broadcast() api.Broadcaster { return f.bc }
 
-func (f *fakeStore) markedDeleted() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return idsToSortedStrings(f.markedDel)
-}
-
-func (f *fakeStore) clearedTombstones() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return idsToSortedStrings(f.clearedTomb)
-}
-
 // purgeRecorder collects chat IDs passed to an onPurge / onArchive
 // callback. Safe for concurrent use (Purge runs callbacks from worker
 // goroutines).
@@ -96,13 +84,6 @@ type purgeRecorder struct {
 	mu     sync.Mutex
 	ids    []api.ChatID
 	chains map[api.ChatID][]string
-}
-
-// record satisfies the one-arg WithOnArchive callback.
-func (r *purgeRecorder) record(id api.ChatID) {
-	r.mu.Lock()
-	r.ids = append(r.ids, id)
-	r.mu.Unlock()
 }
 
 // recordPurge satisfies WithOnPurge, keeping the session chain the purge
@@ -144,16 +125,18 @@ func idsToSortedStrings(ids []api.ChatID) []string {
 func newArchiveTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, string) {
 	t.Helper()
 	dir := t.TempDir()
-	archiveDir := filepath.Join(dir, Subdir)
-	if err := os.MkdirAll(archiveDir, 0o700); err != nil {
-		t.Fatalf("mkdir archive dir: %v", err)
-	}
 	store := newFakeStore(dir)
-	return New(store, opts...), store, archiveDir
+	// Chats no longer move, so the purge scans the MAIN chat directory. The
+	// third return is that directory; tests seed into it directly.
+	return New(store, opts...), store, dir
 }
 
-// writeArchivedChat writes an archived chat file aged `age` in the past
-// and returns its path. age=0 means "now".
+// writeArchivedChat writes a chat file whose MTIME is `age` in the past and
+// returns its path. age=0 means "now".
+//
+// It writes no UpdatedAt, so purgeReferenceTime falls through to the mtime —
+// which is what makes these age assertions readable. The UpdatedAt path has its
+// own test.
 func writeArchivedChat(t *testing.T, archiveDir, id string, age time.Duration) string {
 	t.Helper()
 	p := filepath.Join(archiveDir, id+".json")
@@ -181,42 +164,4 @@ func exists(t *testing.T, path string) bool {
 	}
 	t.Fatalf("stat %s: %v", path, err)
 	return false
-}
-
-// recordingBroadcaster is an api.Broadcaster that records every event it
-// receives so a test can assert which SSE events a Service operation
-// emitted. Safe for concurrent use.
-type recordingBroadcaster struct {
-	mu     sync.Mutex
-	events []api.ServerEvent
-}
-
-func (b *recordingBroadcaster) Broadcast(_ context.Context, evt api.ServerEvent) {
-	b.mu.Lock()
-	b.events = append(b.events, evt)
-	b.mu.Unlock()
-}
-
-// hasType reports whether an event of type t was recorded.
-func (b *recordingBroadcaster) hasType(t api.EventType) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for i := range b.events {
-		if b.events[i].Type == t {
-			return true
-		}
-	}
-	return false
-}
-
-// recordedTypes returns the recorded event types in receipt order (for
-// failure messages).
-func (b *recordingBroadcaster) recordedTypes() []api.EventType {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	out := make([]api.EventType, len(b.events))
-	for i := range b.events {
-		out[i] = b.events[i].Type
-	}
-	return out
 }

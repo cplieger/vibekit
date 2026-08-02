@@ -53,24 +53,6 @@ func (NopChatStore) PromoteRewind(context.Context, api.ChatID) (api.ChatID, erro
 	return "", api.ErrChatNotFound
 }
 
-// Archive is a no-op; implements api.ChatStore.
-func (NopChatStore) Archive(context.Context, api.ChatID) error { return nil }
-
-// ListArchived returns nil; implements api.ChatStore.
-func (NopChatStore) ListArchived(context.Context) []api.ChatHeader { return nil }
-
-// RestoreArchived is a no-op; implements api.ChatStore.
-func (NopChatStore) RestoreArchived(context.Context, api.ChatID) error { return nil }
-
-// UpdateArchivedSummary is a no-op; implements api.ChatStore.
-func (NopChatStore) UpdateArchivedSummary(context.Context, api.ChatID, string) error { return nil }
-
-// LoadArchived returns (nil, nil); implements api.ChatStore.
-func (NopChatStore) LoadArchived(context.Context, api.ChatID) (*api.Chat, error) { return nil, nil }
-
-// DeleteArchived is a no-op; implements api.ChatStore.
-func (NopChatStore) DeleteArchived(context.Context, api.ChatID) error { return nil }
-
 // AppendMessage is a no-op; implements api.ChatStore.
 func (NopChatStore) AppendMessage(context.Context, api.ChatID, *api.Message) error { return nil }
 
@@ -236,30 +218,6 @@ func (s *RecordingChatStore) PromoteRewind(ctx context.Context, childID api.Chat
 	}
 	return parentID, nil
 }
-
-// Archive removes the chat; delegates to Delete for test simplicity.
-func (s *RecordingChatStore) Archive(_ context.Context, id api.ChatID) error {
-	return s.Delete(context.Background(), id)
-}
-
-// ListArchived returns nil; implements api.ChatStore.
-func (s *RecordingChatStore) ListArchived(_ context.Context) []api.ChatHeader { return nil }
-
-// RestoreArchived is a no-op; implements api.ChatStore.
-func (s *RecordingChatStore) RestoreArchived(_ context.Context, _ api.ChatID) error { return nil }
-
-// UpdateArchivedSummary is a no-op; implements api.ChatStore.
-func (s *RecordingChatStore) UpdateArchivedSummary(_ context.Context, _ api.ChatID, _ string) error {
-	return nil
-}
-
-// LoadArchived returns (nil, nil); implements api.ChatStore.
-func (s *RecordingChatStore) LoadArchived(_ context.Context, _ api.ChatID) (*api.Chat, error) {
-	return nil, nil
-}
-
-// DeleteArchived is a no-op; implements api.ChatStore.
-func (s *RecordingChatStore) DeleteArchived(_ context.Context, _ api.ChatID) error { return nil }
 
 // AppendMessage appends a message to the stored chat and broadcasts message_appended.
 func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID api.ChatID, msg *api.Message) error {

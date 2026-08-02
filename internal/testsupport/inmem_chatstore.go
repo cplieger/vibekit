@@ -165,30 +165,6 @@ func (s *InMemoryChatStore) PromoteRewind(ctx context.Context, childID api.ChatI
 	return parentID, nil
 }
 
-// Archive removes the chat; delegates to Delete for test simplicity.
-func (s *InMemoryChatStore) Archive(_ context.Context, id api.ChatID) error {
-	return s.Delete(context.Background(), id)
-}
-
-// ListArchived returns nil; implements api.ChatStore.
-func (s *InMemoryChatStore) ListArchived(_ context.Context) []api.ChatHeader { return nil }
-
-// RestoreArchived is a no-op; implements api.ChatStore.
-func (s *InMemoryChatStore) RestoreArchived(_ context.Context, _ api.ChatID) error { return nil }
-
-// UpdateArchivedSummary is a no-op; implements api.ChatStore.
-func (s *InMemoryChatStore) UpdateArchivedSummary(_ context.Context, _ api.ChatID, _ string) error {
-	return nil
-}
-
-// LoadArchived returns (nil, nil); implements api.ChatStore.
-func (s *InMemoryChatStore) LoadArchived(_ context.Context, _ api.ChatID) (*api.Chat, error) {
-	return nil, nil
-}
-
-// DeleteArchived is a no-op; implements api.ChatStore.
-func (s *InMemoryChatStore) DeleteArchived(_ context.Context, _ api.ChatID) error { return nil }
-
 // AppendMessage appends a message to the stored chat and broadcasts message_appended.
 func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID api.ChatID, msg *api.Message) error {
 	return s.Mutate(context.Background(), chatID, func(c *api.Chat, exists bool) bool {

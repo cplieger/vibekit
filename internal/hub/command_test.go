@@ -566,28 +566,6 @@ func TestCreateHook_RejectsOversizeField(t *testing.T) {
 	}
 }
 
-// --- Truncate helper ---
-
-func TestTruncateRunes(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-		n    int
-	}{
-		{"short", "short", 10},
-		{"hello world", "hello", 5},
-		{"", "", 5},
-		{"abc", "abc", 3},
-		{"abcd", "abc", 3},
-	}
-	for _, tt := range tests {
-		got := truncateRunes(tt.in, tt.n)
-		if got != tt.want {
-			t.Errorf("truncateRunes(%q, %d) = %q, want %q", tt.in, tt.n, got, tt.want)
-		}
-	}
-}
-
 // --- IsEmptyTurn ---
 
 func TestIsEmptyTurn(t *testing.T) {

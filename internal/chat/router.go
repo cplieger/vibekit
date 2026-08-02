@@ -19,10 +19,8 @@ func NewRouter(s *Store) *Router {
 }
 
 // Register wires GET /api/chats (list), GET /api/chats/{id}
-// (one chat with paginated messages), and the archived-chat routes.
+// (one chat with paginated messages).
 func (rt *Router) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/chats", rt.handleList)
-	mux.HandleFunc("/api/chats/archived", rt.handleArchivedChats)
-	mux.HandleFunc("/api/chats/archived/", rt.handleArchivedChatAction)
 	mux.HandleFunc("/api/chats/", rt.handleOne)
 }

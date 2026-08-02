@@ -240,7 +240,7 @@ func TestOldestArchiveMTime(t *testing.T) {
 
 	t.Run("empty dir returns false", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := os.MkdirAll(filepath.Join(dir, Subdir), 0o700); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
 		if _, ok := OldestArchiveMTime(context.Background(), dir); ok {
@@ -250,7 +250,7 @@ func TestOldestArchiveMTime(t *testing.T) {
 
 	t.Run("returns mtime of oldest chat file", func(t *testing.T) {
 		dir := t.TempDir()
-		archiveDir := filepath.Join(dir, Subdir)
+		archiveDir := dir
 		if err := os.MkdirAll(archiveDir, 0o700); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
@@ -273,7 +273,7 @@ func TestOldestArchiveMTime(t *testing.T) {
 
 	t.Run("ignores non-chat files and dirs", func(t *testing.T) {
 		dir := t.TempDir()
-		archiveDir := filepath.Join(dir, Subdir)
+		archiveDir := dir
 		if err := os.MkdirAll(archiveDir, 0o700); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
@@ -303,7 +303,7 @@ func TestOldestArchiveMTime(t *testing.T) {
 
 	t.Run("cancelled context returns false", func(t *testing.T) {
 		dir := t.TempDir()
-		archiveDir := filepath.Join(dir, Subdir)
+		archiveDir := dir
 		if err := os.MkdirAll(archiveDir, 0o700); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
@@ -431,7 +431,7 @@ func TestPurgeScheduler_NextWaitFloorsAtMinWait(t *testing.T) {
 
 	wait, ok := sched.nextWait(1 * time.Hour)
 	if !ok {
-		t.Fatal("nextWait ok = false, want true for a non-empty archive")
+		t.Fatal("nextWait ok = false, want true for a non-empty chat dir")
 	}
 	if wait != 5*time.Second {
 		t.Errorf("nextWait floored to %v, want 5s: a deadline in the past must clamp to minWait, not 0", wait)
@@ -449,14 +449,18 @@ func TestPurgeScheduler_NextWaitFloorsAtMinWait(t *testing.T) {
 // the sweep the primary retention mechanism instead of a residue collector.
 func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 	var rec purgeRecorder
-	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
+	svc, store, archiveDir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
 
-	// An archived chat that ran on two sessions before being archived.
+	// A chat that ran on two sessions before falling out of the window.
 	chatPath := writeArchivedChat(t, archiveDir, "chained", 48*time.Hour)
-	body := `{"id":"chained","name":"C","acp_session_id":"sess_new",` +
-		`"prior_acp_session_ids":["sess_old"],"messages":[]}`
-	if err := os.WriteFile(chatPath, []byte(body), 0o600); err != nil {
-		t.Fatalf("rewrite archived chat: %v", err)
+	// purgeReferenceTime reads the chat through the STORE now (chats no longer
+	// live in a separate directory the archive package parses itself), so the
+	// chain has to come from the fake's Load.
+	store.loadResult = &api.Chat{
+		ID:                 "chained",
+		Name:               "C",
+		ACPSessionID:       "sess_new",
+		PriorACPSessionIDs: []string{"sess_old"},
 	}
 	old := time.Now().Add(-48 * time.Hour)
 	if err := os.Chtimes(chatPath, old, old); err != nil {
@@ -472,5 +476,54 @@ func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 	want := []string{"sess_old", "sess_new"}
 	if !slices.Equal(got, want) {
 		t.Errorf("onPurge received chain %v, want %v — the purge cannot reap what it was not told about", got, want)
+	}
+}
+
+// TestPurge_NeverPurgesALiveChat pins the hard rule that makes purging the main
+// chat directory safe at all.
+//
+// Chats no longer move to an archive directory, so the purge now scans the same
+// directory live chats live in. Age alone is therefore NOT sufficient grounds to
+// delete: a conversation someone has had open for weeks is older than any
+// retention window, and deleting it out from under its own tab is never what a
+// retention setting meant. The exemption is the only thing separating "abandoned
+// work" from "work in progress".
+func TestPurge_NeverPurgesALiveChat(t *testing.T) {
+	var rec purgeRecorder
+	live := map[api.ChatID]bool{"open": true}
+	svc, _, dir := newArchiveTestService(t,
+		WithOnPurge(rec.recordPurge),
+		WithLiveChats(func(id api.ChatID) bool { return live[id] }),
+	)
+
+	// Both are far past the window; only one is in use.
+	openPath := writeArchivedChat(t, dir, "open", 72*time.Hour)
+	abandonedPath := writeArchivedChat(t, dir, "abandoned", 72*time.Hour)
+
+	svc.Purge(context.Background(), 24*time.Hour)
+
+	if !exists(t, openPath) {
+		t.Error("a LIVE chat was purged for being old — retention deleted work in progress")
+	}
+	if exists(t, abandonedPath) {
+		t.Error("an abandoned chat past the window survived")
+	}
+	if got := rec.sorted(); !slices.Equal(got, []string{"abandoned"}) {
+		t.Errorf("onPurge fired for %v, want [abandoned]", got)
+	}
+}
+
+// TestPurge_WithoutTheLivePredicateStillPurges guards the wiring's fail mode.
+// isLive is injected, so a construction path that forgets it must degrade to
+// age-only purging rather than panicking on a nil call.
+func TestPurge_WithoutTheLivePredicateStillPurges(t *testing.T) {
+	var rec purgeRecorder
+	svc, _, dir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
+	p := writeArchivedChat(t, dir, "old", 72*time.Hour)
+
+	svc.Purge(context.Background(), 24*time.Hour)
+
+	if exists(t, p) {
+		t.Error("purge did nothing with no live predicate wired")
 	}
 }

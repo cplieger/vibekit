@@ -203,23 +203,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return time.Duration(days) * 24 * time.Hour
 	}
 	purgeScheduler := chat.NewPurgeScheduler(ctx, chatStore, retention)
-	// Pre-archive teardown MUST run before the chat file moves so archiving
-	// routes through the same bridge/in-memory teardown a delete performs
-	// (minus the file removal + checkpoint reap) — no orphaned live bridge,
-	// no stranded in-flight turn. See hub.OnChatArchiving.
-	chat.WithPreArchive(func(id api.ChatID) {
-		h.OnChatArchiving(id)
-	})(chatStore)
-	chat.WithOnArchive(func(id api.ChatID) {
-		h.OnChatArchived(id)
-		purgeScheduler.Trigger()
-	})(chatStore)
-	// A purge reaps every KAS session directory in the chat's chain. Reaping
-	// here rather than leaving it to the hourly orphan sweep matters because
-	// DefaultChatRetentionDays is 1, so nearly every session directory would
-	// otherwise become an orphan within a day and the sweep — the destructive
-	// leg, whose keep-list is derived by reading every chat file — would be the
-	// primary retention mechanism.
+	// Retention must never delete a chat someone is using. Chats no longer
+	// move to an archive directory, so the purge scans the SAME directory live
+	// chats live in — this predicate is what keeps an old-but-open conversation
+	// out of it.
+	chat.WithLiveChats(h.HasLiveBridge)(chatStore)
 	chat.WithOnPurge(func(_ api.ChatID, sessionChain []string) {
 		for _, id := range sessionChain {
 			sessionReaper.Reap(id)

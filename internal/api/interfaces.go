@@ -77,18 +77,6 @@ type ChatStore interface {
 	// untouched — a promote never reports success while the
 	// relationship is still intact.
 	PromoteRewind(ctx context.Context, childID ChatID) (parentID ChatID, err error)
-	// Archive moves a chat to the archive directory instead of deleting.
-	Archive(ctx context.Context, id ChatID) error
-	// ListArchived returns headers for all archived chats.
-	ListArchived(ctx context.Context) []ChatHeader
-	// RestoreArchived moves a chat from the archive back to active.
-	RestoreArchived(ctx context.Context, id ChatID) error
-	// UpdateArchivedSummary rewrites an archived chat's Summary field.
-	UpdateArchivedSummary(ctx context.Context, id ChatID, summary string) error
-	// LoadArchived returns the parsed archived chat.
-	LoadArchived(ctx context.Context, id ChatID) (*Chat, error)
-	// DeleteArchived permanently removes a single archived chat.
-	DeleteArchived(ctx context.Context, id ChatID) error
 	// AppendMessage appends msg to the chat's messages.
 	AppendMessage(ctx context.Context, chatID ChatID, msg *Message) error
 	// UpdateMessage mutates one message in place (by ID).

@@ -233,46 +233,6 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.Effor
 	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
 }
 
-// OnChatArchiving is the pre-archive hook wired to chat.WithPreArchive.
-// It runs the SAME in-memory teardown a delete performs — flush the
-// in-flight turn (CloseBridge), kill agent terminals, clear pending perms
-// + supervised trust, drop the assistant buffer — EXCEPT it does not remove
-// the chat file (Archive moves it) and does not reap checkpoints (archive
-// is reversible; checkpoints are reaped only at purge / hard delete).
-//
-// It MUST run before the chat file is moved to the archive dir so that:
-//   - a live bridge can't outlive its chat record (invariant #3),
-//   - archiving mid-turn can't strand the in-flight turn (the moved file +
-//     tombstone would make Store.Mutate refuse the persist), and
-//   - no in-flight turn is stranded, to be resurrected later as a
-//     ghost active chat after a restart.
-func (h *Hub) OnChatArchiving(chatID api.ChatID) {
-	ctx, cancel := h.hubContext()
-	defer cancel()
-	h.cleanupChatState(ctx, chatID, false)
-}
-
-// OnChatArchived is the post-archive callback wired to chat.WithOnArchive.
-// The in-memory teardown (including the line tracker) already ran in
-// OnChatArchiving before the file moved; checkpoints are deliberately NOT
-// reaped here (archive is reversible — a restored chat keeps its
-// file-restore/undo history; only purge / hard delete reap them). All that
-// remains is kicking off the async summary under the hub's inflight
-// WaitGroup so Shutdown can drain it. Skipped entirely when the hub is
-// already draining: no point spawning new work that's about to race teardown.
-func (h *Hub) OnChatArchived(chatID api.ChatID) {
-	if h.lifecycle.draining.Load() {
-		return
-	}
-	// Derive a fresh done-aware context for the summary goroutine
-	// (cancelled by h.lifecycle.done).
-	sumCtx, sumCancel := h.hubContext()
-	h.lifecycle.inflight.Go(func() {
-		defer sumCancel()
-		h.summarizeOnArchive(sumCtx, chatID)
-	})
-}
-
 // MCPConfig returns the MCP configuration store.
 func (h *Hub) MCPConfig() api.MCPConfig {
 	return h.mcpConfig

@@ -31,9 +31,14 @@ const (
 	purgeErr                         // stat/remove failed
 )
 
-// Purge deletes archived chats older than maxAge.
+// Purge deletes chats whose last activity is older than maxAge.
+//
+// It scans the MAIN chat directory, because chats no longer move: "archived" is
+// computed from a chat's age against the retention window rather than stored as
+// a state. So the same directory holds live and expired chats, and the age test
+// plus the live-chat exemption are what separate them.
 func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
-	archiveDir := s.archivePath()
+	archiveDir := s.store.Dir()
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -94,6 +99,14 @@ func collectPurgeEntries(entries []os.DirEntry, archiveDir string) []purgeEntry 
 // mtime is older than cutoff. Holds the per-chat mutex across the
 // stat+remove so a concurrent restore/mutate can't race the delete.
 func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
+	// A chat someone is USING is never purged, regardless of age. This is a
+	// hard rule, not a heuristic: a chat open in a tab with a live bridge is
+	// active work, and retention is about abandoned work. Without it, a
+	// long-running conversation older than the window would be deleted out
+	// from under its own tab.
+	if s.isLive != nil && s.isLive(api.ChatID(entry.name)) {
+		return purgeKept
+	}
 	m := s.store.Lock(api.ChatID(entry.name))
 	m.Lock()
 	info, err := os.Stat(entry.path)
@@ -133,25 +146,27 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 // purgeReferenceTime returns the time a purge decision ages from, plus the
 // chat's session chain.
 //
-// The reference time is the chat's explicit ArchivedAt stamp when present,
-// else the file mtime (legacy archives written before the stamp existed, an
-// unreadable file, or the rare crash between the stamp write and the rename).
+// The reference time is the chat's own UpdatedAt — its last activity — falling
+// back to the file mtime when the chat cannot be read. UpdatedAt rather than
+// mtime because mtime moves for reasons that are not activity (a metadata
+// rewrite, a settings-driven field change), and a purge that ages from those
+// would keep resetting its own clock.
 //
 // The chain rides along because this is the ONE place that already loads the
-// archived chat, and the purge needs it: `onPurge` fires after
-// os.Remove(entry.path), so by then the file is gone and the session ids are
-// unreadable. Widening this read costs no extra I/O and needs no second hook.
-// Caller holds the per-chat mutex.
+// chat, and the purge needs it: `onPurge` fires after os.Remove(entry.path), so
+// by then the file is gone and the session ids are unreadable. Widening this
+// read costs no extra I/O and needs no second hook. Caller holds the per-chat
+// mutex.
 func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string) {
-	c, err := s.loadArchived(api.ChatID(entry.name))
+	c, err := s.store.Load(api.ChatID(entry.name))
 	if err != nil {
 		return mtime, nil
 	}
 	chain := c.SessionChain()
-	if c.ArchivedAt <= 0 {
+	if c.UpdatedAt <= 0 {
 		return mtime, chain
 	}
-	return time.UnixMilli(c.ArchivedAt), chain
+	return time.UnixMilli(c.UpdatedAt), chain
 }
 
 // logPurgeResult emits the end-of-pass summary at Warn when any entry
@@ -296,14 +311,17 @@ func (p *PurgeScheduler) nextWait(retention time.Duration) (time.Duration, bool)
 	return max(time.Until(deadline), minWait), true
 }
 
-// OldestArchiveMTime returns the mtime of the oldest file in the
-// archive directory and true, or the zero time and false if the
-// directory is empty or unreadable.
+// OldestArchiveMTime returns the mtime of the oldest chat file and true, or the
+// zero time and false if the directory is empty or unreadable.
+//
+// Only a wake-up heuristic for the scheduler, never a purge decision: purgeOne
+// ages from the chat's UpdatedAt and exempts live chats. Waking too early costs
+// one no-op pass.
 func OldestArchiveMTime(ctx context.Context, storeDir string) (time.Time, bool) {
 	if ctx.Err() != nil {
 		return time.Time{}, false
 	}
-	archiveDir := filepath.Join(storeDir, Subdir)
+	archiveDir := storeDir
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {

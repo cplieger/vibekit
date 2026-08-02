@@ -54,9 +54,6 @@ func FuzzChatHeaderConsistency(f *testing.F) {
 		if header.CompactionWatermark != chat.CompactionWatermark {
 			t.Fatalf("CompactionWatermark mismatch")
 		}
-		if header.Summary != chat.Summary {
-			t.Fatalf("Summary mismatch")
-		}
 
 		// Invariant 2: MessageCount must reflect the actual Messages slice length.
 		if header.MessageCount != len(chat.Messages) {
