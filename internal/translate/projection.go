@@ -66,6 +66,22 @@ type replayInfoMeta struct {
 	} `json:"_meta"`
 }
 
+// replayTS converts KAS's RFC3339-with-milliseconds timestamp to the epoch
+// millis api.Message carries. A missing or unparseable value yields 0, which
+// callers replace with their own fallback — never with time.Now() at the top
+// level, because stamping replayed history with the load's clock is the bug
+// this function exists to avoid.
+func replayTS(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
 // replayChunk decodes a replayed user/agent/thought message chunk.
 type replayChunk struct {
 	Content struct {
@@ -84,6 +100,15 @@ type Projection struct {
 	buf   *buffer.Buffer
 
 	userText string
+	// userID is the wire identity of the user message being accumulated,
+	// taken from the FIRST chunk of it (its timestamp is userTs, below with
+	// the other scalars — govet fieldalignment wants the pointer-bearing
+	// fields unbroken).
+	userID string
+	// turnID is the open assistant turn's id, adopted from the first content
+	// frame inside the turn. turn_start itself carries none (measured: it
+	// carries only turnStart/kind/replay).
+	turnID string
 	// Watermark is the id of the compaction event this replay produced, for
 	// the caller to stamp on Chat.CompactionWatermark. Empty when the
 	// session was never compacted.
@@ -91,6 +116,7 @@ type Projection struct {
 
 	messages []api.Message
 
+	userTs    int64
 	turnStart int64
 	// compactAt is the index in messages where a summarization_separator
 	// landed, or -1. The summary_message that follows collapses onto it.
@@ -143,6 +169,13 @@ func (p *Projection) ingestUserText(raw json.RawMessage) {
 	if json.Unmarshal(raw, &c) != nil {
 		return
 	}
+	if !p.userPending {
+		// First chunk of this user message owns its identity. KAS echoes back
+		// the messageId vibekit sent on session/prompt, so this is the id the
+		// chat record already knows the message by.
+		p.userID = c.Meta.Kiro.MessageID
+		p.userTs = replayTS(c.Meta.Kiro.Timestamp)
+	}
 	p.userText += c.Content.Text
 	p.userPending = true
 }
@@ -153,6 +186,7 @@ func (p *Projection) ingestAgentText(raw json.RawMessage, thinking bool) {
 		return
 	}
 	p.ensureTurn()
+	p.adoptTurnIdentity(c.Meta.Kiro.MessageID, c.Meta.Kiro.Timestamp)
 	sub := c.Meta.Kiro.AgentSubtaskID
 	if thinking {
 		p.buf.AppendThinkingDelta(c.Content.Text, sub)
@@ -169,6 +203,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 		return
 	}
 	p.ensureTurn()
+	p.adoptTurnIdentity(tc.Meta.Kiro.MessageID, tc.Meta.Kiro.Timestamp)
 	call := api.ToolCall{
 		ID:             tc.ToolCallID,
 		Title:          tc.Title,
@@ -177,7 +212,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 		Input:          tc.RawInput,
 		AgentSubtaskID: tc.Meta.Kiro.AgentSubtaskID,
 		Locations:      tc.Locations,
-		Ts:             p.turnStart,
+		Ts:             p.frameTS(tc.Meta.Kiro.Timestamp),
 	}
 	p.buf.ToolCalls = append(p.buf.ToolCalls, call)
 	if p.buf.ToolCallIndex == nil {
@@ -251,6 +286,25 @@ func (p *Projection) ingestInfo(raw json.RawMessage) {
 // The originals are KEPT, matching live behaviour: vibekit's model is a
 // watermark, not a deletion. The separator's position is what the watermark
 // means, which is why compactAt is recorded rather than the messages dropped.
+//
+// KNOWN DISAGREEMENT with the design doc (§16.3), recorded rather than
+// silently resolved. §16.3 says to "collapse that segment to the summary" and
+// its risk table wants a fixture asserting pre-summary turns are ABSENT. This
+// keeps them, for three reasons measured in this codebase:
+//
+//  1. The LIVE path keeps them. translate/compact.go's
+//     handleCompactionCompleted appends the summary as an EventCompacted
+//     message and sets CompactionWatermark; it deletes nothing. Collapsing on
+//     replay would make a chat's transcript change shape across a container
+//     restart — and §16.3 itself asks for all three compaction shapes to
+//     "fold onto one domain event", which collapse-on-replay-only is not.
+//  2. It would break the context bar. static-src/context-ui.ts derives
+//     summarizedCount by counting messages up to the watermark; with the
+//     pre-summary messages gone that count is the constant 1.
+//  3. Collapse remains available downstream at zero cost. The watermark marks
+//     the boundary, so hiding the segment is a render decision the client can
+//     take later — whereas dropping it here throws away data no consumer can
+//     recover.
 func (p *Projection) applySummary(sum *struct {
 	Content string `json:"content"`
 },
@@ -258,16 +312,24 @@ func (p *Projection) applySummary(sum *struct {
 	if sum == nil || p.compactAt < 0 {
 		return
 	}
+	// Insert at the separator's position so a later turn replayed after a
+	// compaction still sorts after the boundary.
+	at := min(p.compactAt, len(p.messages))
+	// The summary_message frame carries no timestamp of its own (measured),
+	// so it inherits the last message of the segment it summarises. That keeps
+	// the event ordered where it belongs instead of at the load's wall clock,
+	// which would sort every replayed compaction to the end of the transcript.
+	ts := int64(0)
+	if at > 0 {
+		ts = p.messages[at-1].Ts
+	}
 	evt := api.Message{
 		ID:        p.newID(),
 		Role:      api.RoleEvent,
 		EventKind: api.EventCompacted,
 		Content:   sum.Content,
-		Ts:        time.Now().UnixMilli(),
+		Ts:        ts,
 	}
-	// Insert at the separator's position so a later turn replayed after a
-	// compaction still sorts after the boundary.
-	at := min(p.compactAt, len(p.messages))
 	p.messages = append(p.messages[:at], append([]api.Message{evt}, p.messages[at:]...)...)
 	p.Watermark = evt.ID
 	p.compactAt = -1
@@ -283,7 +345,25 @@ func (p *Projection) ensureTurn() {
 func (p *Projection) openTurn() {
 	p.buf = &buffer.Buffer{}
 	p.turnOpen = true
-	p.turnStart = time.Now().UnixMilli()
+	p.turnID = ""
+	p.turnStart = 0
+}
+
+// adoptTurnIdentity gives the open turn the id and timestamp of the first
+// content frame inside it. `turn_start` carries neither (measured: only
+// turnStart/kind/replay), so the bracket cannot supply them.
+//
+// KAS records one message per say/tool rather than one per turn, so a turn
+// with several say blocks offers several ids; taking the first makes the
+// projected id a deterministic function of the replay, which is what
+// idempotence across repeated loads requires.
+func (p *Projection) adoptTurnIdentity(messageID, timestamp string) {
+	if p.turnID == "" {
+		p.turnID = messageID
+	}
+	if p.turnStart == 0 {
+		p.turnStart = replayTS(timestamp)
+	}
 }
 
 // closeTurn assembles the open turn's buffer into one assistant message.
@@ -303,7 +383,7 @@ func (p *Projection) closeTurn() {
 		return
 	}
 	p.messages = append(p.messages, api.Message{
-		ID:        p.newID(),
+		ID:        p.idOr(p.turnID),
 		Role:      api.RoleAssistant,
 		Content:   b.Content.String(),
 		Reasoning: b.Reasoning.String(),
@@ -313,22 +393,43 @@ func (p *Projection) closeTurn() {
 	})
 }
 
+// idOr prefers the wire's own message id and falls back to a generated one.
+// The fallback exists for frames that carry no messageId at all rather than as
+// the normal path: a generated id makes the projection non-deterministic
+// across loads, so it is the degraded case, not the default.
+func (p *Projection) idOr(wireID string) string {
+	if wireID != "" {
+		return wireID
+	}
+	return p.newID()
+}
+
+// frameTS is a frame's own timestamp, falling back to the turn's start when
+// the frame carries none.
+func (p *Projection) frameTS(timestamp string) int64 {
+	if ts := replayTS(timestamp); ts != 0 {
+		return ts
+	}
+	return p.turnStart
+}
+
 // flushUser emits the accumulated user-message text as one user message.
 func (p *Projection) flushUser() {
 	if !p.userPending {
 		return
 	}
 	text := p.userText
-	p.userText = ""
+	id, ts := p.userID, p.userTs
+	p.userText, p.userID, p.userTs = "", "", 0
 	p.userPending = false
 	if text == "" {
 		return
 	}
 	p.messages = append(p.messages, api.Message{
-		ID:      p.newID(),
+		ID:      p.idOr(id),
 		Role:    api.RoleUser,
 		Content: text,
-		Ts:      time.Now().UnixMilli(),
+		Ts:      ts,
 	})
 }
 

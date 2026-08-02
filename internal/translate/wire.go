@@ -78,7 +78,22 @@ type ACPKiroMeta struct {
 		Checkpoint     *ACPCheckpointMeta `json:"checkpoint"`
 		Kind           string             `json:"kind"`
 		AgentSubtaskID string             `json:"agentSubtaskId"`
-		HookAsk        json.RawMessage    `json:"hookAsk,omitempty"`
+		// MessageID and Timestamp are KAS's own identity for the message
+		// record a frame belongs to. Measured on the v3 wire (probe 23,
+		// kiro-cli 2.16.0): present on user_message_chunk (a bare uuid —
+		// vibekit's OWN prompt messageId when vibekit sent one),
+		// agent_message_chunk (`<uuid>-say`), tool_call (`<id>-call`) and
+		// tool_call_update (`<id>-result`). Timestamp is RFC3339 with
+		// milliseconds.
+		//
+		// The replay projection depends on both: without MessageID it
+		// fabricates ids, so the same session projects differently on every
+		// load and nothing can address a message; without Timestamp every
+		// replayed turn is stamped with the load's wall clock and a resumed
+		// transcript claims all its history happened just now.
+		MessageID string          `json:"messageId"`
+		Timestamp string          `json:"timestamp"`
+		HookAsk   json.RawMessage `json:"hookAsk,omitempty"`
 	} `json:"kiro"`
 }
 

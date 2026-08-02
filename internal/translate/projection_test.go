@@ -324,3 +324,166 @@ func dumpMessages(ms []api.Message) string {
 	}
 	return b.String()
 }
+
+// probe23Turn is one turn of the probe-23 capture (kiro-cli 2.16.0,
+// 2026-08-01) with its REAL messageId and timestamp values: a user message, a
+// bracketed turn whose first content frame is a tool call, then agent text.
+//
+// The ids are the measured shapes — a bare uuid for the user message,
+// `<toolCallId>-call` / `-result` for the tool pair, `<uuid>-say` for agent
+// text — because the projection's identity rules key on which frame arrives
+// first, and a synthetic id would not exercise that.
+func probe23Turn(t *testing.T) [][2]any {
+	t.Helper()
+	f := func(kind api.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+		k, raw := replayFrame(t, kind, text, sub, extra)
+		return [2]any{k, raw}
+	}
+	toolCall := mustJSON(t, map[string]any{
+		"sessionUpdate": string(api.ACPUpdateToolCall),
+		"toolCallId":    "tooluse_bNV19vGaS2y5nx7WcVCyFx",
+		"title":         "Write File",
+		"kind":          "edit",
+		"status":        "in_progress",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"replay":    true,
+			"messageId": "tooluse_bNV19vGaS2y5nx7WcVCyFx-call",
+			"timestamp": "2026-08-01T00:33:15.522Z",
+		}},
+	})
+	return [][2]any{
+		f(replayUserChunkKind, "Create probe23.txt containing MANGO, then say done.", "", map[string]any{
+			"messageId": "ca4b4050-d45b-44d9-8a99-f72e79cc2767",
+			"timestamp": "2026-08-01T00:33:12.051Z",
+		}),
+		f(api.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+		{api.ACPUpdateToolCall, toolCall},
+		f(api.ACPUpdateAgentChunk, "Done.", "", map[string]any{
+			"messageId": "2f5d57c4-152e-4825-8dcf-fda9668b4693-say",
+			"timestamp": "2026-08-01T00:33:17.880Z",
+		}),
+		f(api.ACPUpdateSessionInfo, "", "turn_end", nil),
+	}
+}
+
+// TestProjection_AdoptsWireIdentity pins that the projection takes its message
+// ids and timestamps FROM THE WIRE rather than inventing them.
+//
+// Both halves are load-bearing. A fabricated id makes the projection
+// non-deterministic, so the same stored session projects differently on every
+// load and task 12's "resume addresses a message id" has nothing to address.
+// A wall-clock timestamp makes a resumed transcript claim all of its history
+// happened at the moment of the resume.
+func TestProjection_AdoptsWireIdentity(t *testing.T) {
+	p := NewProjection(seqIDs())
+	ingestAll(p, probe23Turn(t))
+	got := p.Messages()
+
+	if len(got) != 2 {
+		t.Fatalf("got %d messages, want 2 (user + assistant turn)", len(got))
+	}
+
+	// The user message keeps the id KAS echoed back — which for a real prompt
+	// is the id vibekit itself generated and sent on session/prompt.
+	if got[0].ID != "ca4b4050-d45b-44d9-8a99-f72e79cc2767" {
+		t.Errorf("user id = %q, want the wire's messageId", got[0].ID)
+	}
+	if got[0].Ts != 1785544392051 {
+		t.Errorf("user ts = %d, want 1785544392051 (2026-08-01T00:33:12.051Z)", got[0].Ts)
+	}
+
+	// The assistant turn adopts its FIRST content frame's identity. Here that
+	// is the tool call, not the later agent text.
+	if got[1].ID != "tooluse_bNV19vGaS2y5nx7WcVCyFx-call" {
+		t.Errorf("assistant id = %q, want the first in-turn frame's messageId", got[1].ID)
+	}
+	if got[1].Ts != 1785544395522 {
+		t.Errorf("assistant ts = %d, want 1785544395522 (the tool call's timestamp)", got[1].Ts)
+	}
+
+	// No id may come from the generator on this input: every content frame
+	// carried one. seqIDs() hands out "m1", "m2", ... so a generated id is
+	// recognisable.
+	for i, m := range got {
+		if strings.HasPrefix(m.ID, "m") && len(m.ID) <= 3 {
+			t.Errorf("message %d id = %q: generated despite the wire carrying one", i, m.ID)
+		}
+	}
+}
+
+// TestProjection_IsDeterministicAcrossLoads is the property the wire ids buy:
+// projecting the same stored session twice yields byte-identical identity.
+//
+// This is what makes the projection safe to swap into a chat record. A second
+// resume must not renumber the transcript, or every reconnecting client sees a
+// wholly new set of messages and the client store's upsert-by-id merge (see
+// vibekit.md "ingestMessage") duplicates the entire history.
+func TestProjection_IsDeterministicAcrossLoads(t *testing.T) {
+	// The two loads get DISTINGUISHABLE generators on purpose. Production's
+	// generator is time+random based, so a fabricated id differs between
+	// loads; two fresh seqIDs() would both hand out "m1" and hide exactly the
+	// defect this test exists to catch.
+	prefixIDs := func(p string) func() string {
+		n := 0
+		return func() string {
+			n++
+			return fmt.Sprintf("%s%d", p, n)
+		}
+	}
+
+	first := NewProjection(prefixIDs("load1-"))
+	ingestAll(first, probe23Turn(t))
+	a := first.Messages()
+
+	second := NewProjection(prefixIDs("load2-"))
+	ingestAll(second, probe23Turn(t))
+	b := second.Messages()
+
+	if len(a) != len(b) {
+		t.Fatalf("load 1 produced %d messages, load 2 produced %d", len(a), len(b))
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID {
+			t.Errorf("message %d: id %q on load 1, %q on load 2", i, a[i].ID, b[i].ID)
+		}
+		if a[i].Ts != b[i].Ts {
+			t.Errorf("message %d: ts %d on load 1, %d on load 2", i, a[i].Ts, b[i].Ts)
+		}
+	}
+}
+
+// TestProjection_CompactionEventSortsWithItsSegment pins that the compaction
+// event inherits the timestamp of the last message it summarises.
+//
+// The summary_message frame carries no timestamp (measured), so the obvious
+// implementation stamps time.Now() — which sorts a replayed compaction to
+// "now" and puts it after turns that actually followed it.
+func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
+	p := NewProjection(seqIDs())
+	ingestAll(p, probe23Turn(t))
+	ingestAll(p, [][2]any{
+		func() [2]any {
+			k, raw := replayFrame(t, api.ACPUpdateSessionInfo, "", "summarization_separator",
+				map[string]any{"summarizationSeparator": true})
+			return [2]any{k, raw}
+		}(),
+		func() [2]any {
+			k, raw := replayFrame(t, api.ACPUpdateSessionInfo, "", "summary_message",
+				map[string]any{"summaryMessage": map[string]any{"content": "## Goal\nMANGO."}})
+			return [2]any{k, raw}
+		}(),
+	})
+	got := p.Messages()
+
+	last := got[len(got)-1]
+	if last.EventKind != api.EventCompacted {
+		t.Fatalf("last message event kind = %q, want %q", last.EventKind, api.EventCompacted)
+	}
+	// The assistant turn it follows is stamped 1785544395522.
+	if last.Ts != 1785544395522 {
+		t.Errorf("compaction event ts = %d, want 1785544395522 (its segment's last message)", last.Ts)
+	}
+	if p.Watermark != last.ID {
+		t.Errorf("watermark = %q, want the compaction event's id %q", p.Watermark, last.ID)
+	}
+}
