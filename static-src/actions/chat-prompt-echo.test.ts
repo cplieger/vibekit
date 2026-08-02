@@ -50,8 +50,6 @@ const args = {
   text: "hello",
   messageID: "m-echo-1",
   model: "model-1",
-  activeFile: "",
-  openFiles: [] as string[],
 };
 
 beforeEach(() => {

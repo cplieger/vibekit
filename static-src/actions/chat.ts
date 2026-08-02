@@ -367,8 +367,6 @@ interface SendPromptArgs {
   text: string;
   messageID: string;
   model: string;
-  activeFile: string;
-  openFiles: readonly string[];
   attachments?: readonly unknown[];
 }
 
@@ -410,7 +408,7 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
     }
   },
   run: async (args, signal, ctx) => {
-    const { chatID, text, messageID, model, activeFile, openFiles, attachments } = args;
+    const { chatID, text, messageID, model, attachments } = args;
     const r = await transportSend(
       {
         type: "prompt",
@@ -419,8 +417,6 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
           text,
           message_id: messageID,
           model,
-          active_file: activeFile,
-          open_files: openFiles,
           attachments:
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
           // Only include the key if the framework provided one (avoids

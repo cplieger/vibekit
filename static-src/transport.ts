@@ -73,8 +73,6 @@ export type TypedCommand =
         message_id?: string;
         request_id?: string;
         model?: string;
-        active_file?: string;
-        open_files?: readonly string[];
       };
     }
   | { type: "cancel"; chat_id: string }

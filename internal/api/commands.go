@@ -54,15 +54,11 @@ type ClientCommand struct {
 // set enforced by the hub's validMessageID check (128-byte cap, no
 // control chars). Model is optional; if non-empty it must match
 // validIdent (ASCII alphanumerics plus `_.-`, 1-128 bytes).
-// ActiveFile and OpenFiles are forwarded to kiro-cli as _meta.kiro
-// metadata; they do not reach a filesystem sink directly in vibekit.
 // Attachments are resolved via resolveInsideWorkDir before read.
 type PromptCommand struct {
 	Text        string       `json:"text"`
 	MessageID   string       `json:"message_id"` // client-generated ULID
 	Model       string       `json:"model,omitempty"`
-	ActiveFile  string       `json:"active_file,omitempty"` // editor active file path
-	OpenFiles   []string     `json:"open_files,omitempty"`  // all open editor tabs
 	Attachments []Attachment `json:"attachments,omitempty"` // files attached via pill row
 }
 

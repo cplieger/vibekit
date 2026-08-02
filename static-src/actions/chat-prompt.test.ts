@@ -50,8 +50,6 @@ describe("sendPrompt — 409 queued path", () => {
       text: "hello",
       messageID: "m1",
       model: "model-1",
-      activeFile: "",
-      openFiles: [],
     });
     expect(result).toBe("queued");
     // The action stays a pure send so the drain path can re-send a queued
@@ -66,8 +64,6 @@ describe("sendPrompt — 409 queued path", () => {
       text: "hi",
       messageID: "m2",
       model: "model-1",
-      activeFile: "",
-      openFiles: [],
     });
     expect(setThinking).toHaveBeenCalledWith("c1", true);
   });

@@ -34,7 +34,6 @@
 
 import { newMessageID } from "./transport.js";
 import { getCurrentModel } from "./session-context.js";
-import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
 import {
   switchModel as switchModelAction,
   resolvePendingChange as resolvePendingChangeAction,
@@ -68,8 +67,6 @@ export async function sendPromptTo(
     text,
     messageID: opts.messageID ?? newMessageID(),
     model: opts.model ?? getCurrentModel(),
-    activeFile: getActiveFilePath(),
-    openFiles: getOpenFilePaths(),
     ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
   });
   return result ?? "failed";

@@ -174,10 +174,6 @@ class EditorState {
     return s ? s.dirty.value : false;
   }
 
-  getOpenFilePaths(): string[] {
-    return [...this.files.keys()];
-  }
-
   getDirtyPaths(): string[] {
     const out: string[] = [];
     for (const [, state] of this.files) {
@@ -252,9 +248,6 @@ export function freshState(path: string): FileState {
 }
 export function getActiveFilePath(): string {
   return editorState.getActivePath();
-}
-export function getOpenFilePaths(): string[] {
-  return editorState.getOpenFilePaths();
 }
 export function getDirtyEditorPaths(): string[] {
   return editorState.getDirtyPaths();

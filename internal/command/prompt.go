@@ -309,16 +309,6 @@ func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api
 	if p.MessageID != "" {
 		params["messageId"] = p.MessageID
 	}
-	kiroMeta := map[string]any{}
-	if p.ActiveFile != "" {
-		kiroMeta["activeFile"] = p.ActiveFile
-	}
-	if len(p.OpenFiles) > 0 {
-		kiroMeta["openFiles"] = p.OpenFiles
-	}
-	if len(kiroMeta) > 0 {
-		params["_meta"] = map[string]any{"kiro": kiroMeta}
-	}
 	return params
 }
 
