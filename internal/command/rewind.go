@@ -2,9 +2,8 @@ package command
 
 // Rewind lifecycle commands: fork from a historical turn, promote a
 // rewind to replace its parent, or discard a rewind and return to the
-// parent. Replaces the old tangent system (fork/merge/discard) with a
-// simpler model: no parent freeze, no merge — just branch + promote
-// or discard.
+// parent. The parent is never frozen and there is no merge step — a
+// branch is either promoted or discarded.
 
 import (
 	"context"
@@ -22,8 +21,7 @@ import (
 // to fork the ACP session at the given turn index, then persists a
 // new vibekit chat with truncated history and `parent_chat_id` set.
 //
-// Unlike the old tangent system, the parent is NOT frozen — both
-// chats continue independently.
+// The parent is NOT frozen — both chats continue independently.
 func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
@@ -63,9 +61,20 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		// sessionId. The id space is populated by forwarding the user
 		// message id on session/prompt (see BuildPromptParams); KAS only
 		// knows the ids vibekit supplied, i.e. user turns.
+		//
+		// createdReason (kiro-cli 2.16+) labels the child session in KAS's
+		// own metadata/roster: human | rewind | subagent | tangent. Stamping
+		// "rewind" makes vibekit's branches self-describing to anything
+		// reading that roster (KAS's session list, a future run board)
+		// instead of looking like a plain user-created session. Ignored by
+		// older engines, and unlike "tangent" it does NOT set titleSetByUser
+		// — so the agent's own title derivation still applies to the branch.
 		resp, err := bridge.Call(ctx, api.MethodSessionFork, SessionParams(bridge, map[string]any{
-			"cwd":   deps.WorkDir(),
-			"_meta": map[string]any{"kiro": map[string]any{"messageId": forkMessageID(parent.Messages, p.TurnIndex)}},
+			"cwd": deps.WorkDir(),
+			"_meta": map[string]any{"kiro": map[string]any{
+				"messageId":     forkMessageID(parent.Messages, p.TurnIndex),
+				"createdReason": api.CreatedReasonRewind,
+			}},
 		}))
 		if err == nil && resp != nil && resp.Result != nil {
 			var result struct {
@@ -171,7 +180,7 @@ func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 }
 
 // CmdDiscardRewindChat discards a rewind chat and returns to the parent.
-// Deletes the rewind chat; the parent is unaffected (it was never frozen).
+// Deletes the rewind chat; the parent is unaffected.
 func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {

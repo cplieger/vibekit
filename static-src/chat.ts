@@ -324,7 +324,7 @@ export function attachPathToActiveChat(path: string): void {
 }
 
 /** Restore an archived chat. Opens a tab and activates it after the
- *  sidebar store catches up, matching the tangent-fork pattern — the
+ *  sidebar store catches up, matching the rewind-fork pattern — the
  *  server broadcasts chat_created, but the SSE handler only updates
  *  the store (a generic chat_created is also emitted to every other
  *  connected client, none of which should auto-open tabs). The

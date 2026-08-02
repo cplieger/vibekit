@@ -102,6 +102,13 @@ func fallbackCSPPolicy() string {
 // state-changing cross-origin requests with 403 Forbidden via the
 // stdlib's default deny handler.
 //
+// That GET exemption has a consequence worth naming, because this layer reads
+// as if it covers everything: a WebSocket handshake is a GET, so the shell PTY
+// at /api/shell/ws is NOT guarded here. Its cross-origin gate is the terminal
+// engine's — coder/websocket's same-origin default beneath terminal.Handler —
+// and nothing in this file substitutes for it. Widening it is an engine-side
+// origin policy, never a change here.
+//
 // Layering, outermost first: SecurityHeaders -> host allowlist -> CSRF.
 // The host gate sits BEFORE the CSRF check because a DNS-rebinding request
 // makes Origin and Host agree, so the origin comparison alone cannot reject

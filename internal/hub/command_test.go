@@ -383,8 +383,6 @@ func TestIsRetryablePromptError_TypedRPCError(t *testing.T) {
 	}
 }
 
-// --- Tangent commands ---
-
 // --- Create hook ---
 
 func TestCreateHook_RequiresNameAndEventType(t *testing.T) {
@@ -718,11 +716,6 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 	}
 }
 
-// TestPrompt_ShellInterception_FrozenChatRejects pins the
-// tangent-safety invariant: `!cmd` typed into a parent that has an
-// active tangent must 409 (frozen), otherwise the shell output
-// would mutate the frozen snapshot the tangent is supposed to
-// preserve for merge.
 func TestShellCappedBuffer(t *testing.T) {
 	var b command.ShellCappedBuffer
 	// First write lands fully.
@@ -754,11 +747,8 @@ func TestShellCappedBuffer(t *testing.T) {
 	}
 }
 
-// --- cmdPrompt busy / frozen ---
+// --- cmdPrompt busy ---
 
-// TestPrompt_FrozenChatReturns409 pins the invariant that a frozen
-// parent chat rejects prompts with 409, not 500 or silent-append.
-// Client-side tangent UX depends on this status.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })

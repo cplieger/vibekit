@@ -36,6 +36,17 @@ const (
 	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
 
+// Session createdReason values (kiro-cli 2.16+). KAS records why a session
+// exists in its own session metadata — `human | rewind | subagent | tangent`
+// — and a fork supplies it via _meta.kiro.createdReason on session/fork.
+// vibekit stamps Rewind on its branch forks (command/rewind.go) so they are
+// self-describing in KAS's roster; the other values are set by KAS itself
+// (tangent is the TUI's named-side-conversation feature, which vibekit does
+// not surface — its chat tabs already cover that model).
+const (
+	CreatedReasonRewind = "rewind"
+)
+
 // Agent user-input method name. On v3 (KAS, 2.14+) the agent's user_input
 // tool (structured questions: plan-mode clarifications, spec gates) is
 // forwarded to us as the extension request _kiro/userInput (a JSON-RPC

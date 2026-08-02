@@ -85,10 +85,10 @@ func TestChatHeader_zero_value_chat_produces_empty_header(t *testing.T) {
 	}
 }
 
-func TestChatHeader_copies_boolean_and_tangent_fields(t *testing.T) {
+func TestChatHeader_copies_boolean_and_rewind_fields(t *testing.T) {
 	c := &Chat{
-		ID:             "tangent-1",
-		Name:           "Side conversation",
+		ID:             "rewind-1",
+		Name:           "Rewind branch",
 		ParentChatID:   "parent-1",
 		SupervisedMode: true,
 	}

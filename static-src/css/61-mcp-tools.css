@@ -438,24 +438,6 @@
   border-color: var(--c-text-tertiary);
 }
 
-/* Frozen chat state (tangent active on parent) */
-[id="prompt-form"].frozen {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-[id="prompt-form"].frozen::after {
-  content: "Paused (tangent active)";
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-}
-
 /* Prompt suggestions: follow-up pills below the turn summary */
 .prompt-suggestions {
   display: flex;

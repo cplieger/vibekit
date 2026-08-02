@@ -78,7 +78,7 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   void loadList().then(() => {
     // Reconcile tabs: close any chat/plan tab whose session no longer
     // exists on the server. During a gap the server may have deleted
-    // chats (user action on another device, retention cleanup, tangent
+    // chats (user action on another device, retention cleanup, rewind
     // discard) and we missed the chat_deleted SSE.
     const sessionIDs = new Set(getSessions().map((s) => s.id));
     // Walk open tabs via the tabs module (avoids DOM scraping).

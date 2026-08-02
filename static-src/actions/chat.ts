@@ -1,4 +1,4 @@
-// Actions for chat lifecycle: delete, archive, restore, discard tangent,
+// Actions for chat lifecycle: delete, archive, restore, discard rewind,
 // load history, delete archived, cancel, switch model, set mode, send prompt,
 // resolve pending change, resolve all pending, permission response,
 // elicitation response, restore checkpoint, set supervised, trust pending,
