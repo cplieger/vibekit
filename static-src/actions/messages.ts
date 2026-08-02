@@ -8,7 +8,6 @@ import {
   ActionError,
   retryNetwork,
   RETRY_STANDARD,
-  transportAction,
 } from "./index.js";
 
 /** Copy text to clipboard with success/error toast. */
@@ -41,20 +40,4 @@ export const explainError = apiAction<{ errorText: string; context: string }, { 
   retry: RETRY_STANDARD,
 });
 
-/** Undo a single file edit via checkpoint restore. */
-export const undoEdit = transportAction<{ chatID: string; tag: string; filePath: string }>({
-  name: "messages.undo_edit",
-  networkMode: "always",
-  scope: (args) => "chat:" + args.chatID,
-  idempotencyKey: (args) => `messages.undo_edit:${args.tag}:${args.filePath}`,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  command: ({ chatID, tag, filePath }) => ({
-    type: "undo_edit",
-    chat_id: chatID,
-    payload: { tag, file_path: filePath },
-  }),
-  success: (args) =>
-    `Undone edit to \u201c${args.filePath.split("/").pop() ?? args.filePath}\u201d`,
-  error: "Undo failed — the checkpoint may have expired",
-});
+

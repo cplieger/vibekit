@@ -18,7 +18,6 @@ func RegisterDefaults(d *Dispatcher) {
 	d.Register(api.CmdElicitationResponse, wrap(d, CmdElicitationResponse))
 	d.Register(api.CmdUserInputResponse, wrap(d, CmdUserInputResponse))
 	d.Register(api.CmdRestoreCheckpoint, wrap(d, CmdRestoreCheckpoint))
-	d.Register(api.CmdUndoEdit, wrap(d, CmdUndoEdit))
 	d.Register(api.CmdRewindChat, wrap(d, CmdRewindChat))
 	d.Register(api.CmdPromoteRewindChat, wrap(d, CmdPromoteRewindChat))
 	d.Register(api.CmdDiscardRewindChat, wrap(d, CmdDiscardRewindChat))

@@ -20,7 +20,6 @@ vi.mock("./tool-card.js", () => ({
   buildToolCard: vi.fn(() => document.createElement("div")),
   insertDiffPreview: vi.fn(),
 }));
-vi.mock("./messages-actions.js", () => ({ addEditActions: vi.fn() }));
 
 import { applyOutputUpdate } from "./messages-tools.js";
 

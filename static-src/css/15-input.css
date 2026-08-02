@@ -531,8 +531,8 @@
 }
 
 /* --- Tool-card pending-action row ---
- * Mirrors .tool-edit-actions visually but lives on tool cards whose
- * writes are staged for Supervised-mode approval. Accept button uses
+ * Lives on tool cards whose writes are staged for Supervised-mode
+ * approval. Accept button uses
  * .primary for the typed-decision CTA; the diff + reject stay neutral. */
 .tool-pending-actions {
   display: flex;

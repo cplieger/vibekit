@@ -170,38 +170,6 @@ func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	}))
 }
 
-// CmdUndoEdit restores a single file to its contents at the given tag.
-func CmdUndoEdit(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	if d.Checkpoint().Checkpoints() == nil {
-		api.BadRequest(w, "checkpoints not available")
-		return
-	}
-	var p struct {
-		Tag      string `json:"tag"`
-		FilePath string `json:"file_path"`
-	}
-	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.Tag == "" || p.FilePath == "" {
-		api.BadRequest(w, "tag and file_path are required")
-		return
-	}
-	parsedTag, err := chktypes.ParseTag(p.Tag)
-	if err != nil {
-		api.BadRequest(w, "invalid tag format")
-		return
-	}
-	release, ok := d.guardIdleBridge(w, cmd.ChatID)
-	if !ok {
-		return
-	}
-	defer release()
-	if err := d.Checkpoint().Checkpoints().CheckoutFile(ctx, cmd.ChatID, parsedTag, p.FilePath); err != nil {
-		respondCheckpointErr(w, err)
-		return
-	}
-	slog.Info("undo edit", "chat_id", cmd.ChatID, "tag", p.Tag, "file", p.FilePath)
-	d.RespondOK(w, cmd.RequestID)
-}
-
 // guardIdleBridge rejects a checkpoint mutation with 409 when a turn is
 // in flight on the chat's bridge, and otherwise acquires the prompt lock
 // so the mutation can't race a concurrently-starting prompt. Restore and

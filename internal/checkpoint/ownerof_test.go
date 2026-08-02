@@ -90,47 +90,6 @@ func TestOwnerOf_WarmsFromDisk(t *testing.T) {
 	}
 }
 
-// TestEditorSaveCapture_UndoRestoresPreSaveContent is the P13
-// edit→immediate-undo story at the store level: an agent write is
-// followed by a manual editor save captured through the same Snapshot
-// primitive (pre-write ordering), and checking out the save's tag
-// reverts the file to its pre-save (agent-written) content.
-func TestEditorSaveCapture_UndoRestoresPreSaveContent(t *testing.T) {
-	s, work := newTestStore(t)
-	ctx := context.Background()
-	abs := filepath.Join(work, "f.go")
-
-	// Agent turn: snapshot then write, as bridge_fs_write does.
-	s.AdvanceTurn(ctx, "A", 0)
-	if _, err := s.Snapshot(ctx, "A", "f.go", []byte("agent v1"), 1); err != nil {
-		t.Fatalf("agent snapshot: %v", err)
-	}
-	mustWrite(t, work, "f.go", "agent v1")
-
-	// Manual editor save: capture (pre-write) then write.
-	owner, ok := s.OwnerOf(ctx, "f.go")
-	if !ok || owner != "A" {
-		t.Fatalf("OwnerOf = (%q, %v), want (A, true)", owner, ok)
-	}
-	saveTag, err := s.Snapshot(ctx, owner, "f.go", []byte("manual v2"), 1)
-	if err != nil {
-		t.Fatalf("capture snapshot: %v", err)
-	}
-	mustWrite(t, work, "f.go", "manual v2")
-
-	// Undo the manual edit: checkout the save's tag → pre-save content.
-	if err := s.CheckoutFile(ctx, "A", saveTag, "f.go"); err != nil {
-		t.Fatalf("CheckoutFile(%s): %v", saveTag, err)
-	}
-	got, err := os.ReadFile(abs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "agent v1" {
-		t.Errorf("after undo, content = %q, want %q", got, "agent v1")
-	}
-}
-
 // TestEditorSaveCapture_NextAgentWriteSeesNoConflict: the captured
 // save updates the cross-chat index, so ANOTHER chat's next write to
 // the same file sees the manual content as the expected disk state —

@@ -191,7 +191,7 @@ func (b *blobStore) Get(ctx context.Context, hash string) ([]byte, error) {
 	// Integrity check: the filename IS the SHA-256 of the content. A
 	// mismatch means the blob is corrupted (bitrot, truncated write, bad
 	// sector). FAIL CLOSED — returning the corrupt bytes would let Restore /
-	// CheckoutFile overwrite a good working-tree file with garbage. The
+	// Restore overwrite a good working-tree file with garbage. The
 	// two-phase journaled restore stages every file before committing, so
 	// this error aborts the restore cleanly and leaves the workspace
 	// untouched (far better than silent data corruption); the HTTP blob

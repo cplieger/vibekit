@@ -85,7 +85,7 @@ func TestStore_RestoreAndRestorePreview(t *testing.T) {
 	}
 }
 
-func TestStore_CheckoutFileAndOldestTag(t *testing.T) {
+func TestStore_OldestTag(t *testing.T) {
 	ctx := context.Background()
 	s, work := newTestStore(t)
 	p := filepath.Join(work, "f.txt")
@@ -106,13 +106,6 @@ func TestStore_CheckoutFileAndOldestTag(t *testing.T) {
 
 	if got := s.OldestTag(context.Background(), "c"); got != tag {
 		t.Errorf("OldestTag = %q, want %q", got, tag)
-	}
-	if err := s.CheckoutFile(ctx, "c", tag, "f.txt"); err != nil {
-		t.Fatalf("CheckoutFile err = %v, want nil", err)
-	}
-	got, _ := os.ReadFile(p)
-	if string(got) != "a" {
-		t.Errorf("file after CheckoutFile = %q, want a", got)
 	}
 }
 

@@ -46,7 +46,6 @@ type CommandType =
   | "permission_response"
   | "elicitation_response"
   | "restore_checkpoint"
-  | "undo_edit"
   | "set_effort"
   | "set_mode"
   | "promote_rewind_chat"
@@ -103,7 +102,6 @@ export type TypedCommand =
       payload: { request_id: number; action: string; content?: Record<string, unknown> };
     }
   | { type: "restore_checkpoint"; chat_id: string; payload: { tag: string } }
-  | { type: "undo_edit"; chat_id: string; payload: { tag: string; file_path: string } }
   | { type: "set_effort"; chat_id: string; request_id: string; payload: { level: string } }
   | { type: "set_mode"; chat_id: string; payload: { mode_id: string } }
   | { type: "promote_rewind_chat"; chat_id: string; request_id: string }

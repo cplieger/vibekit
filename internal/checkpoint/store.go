@@ -110,12 +110,6 @@ func (s *Store) Restore(ctx context.Context, chatID api.ChatID, tag Tag) (int, e
 	return s.get(string(chatID)).Restore(ctx, tag)
 }
 
-// CheckoutFile reverts a single file to its content at `tag`
-// (pass-through — logic lives in Manager).
-func (s *Store) CheckoutFile(ctx context.Context, chatID api.ChatID, tag Tag, relPath string) error {
-	return s.get(string(chatID)).CheckoutFile(ctx, tag, relPath)
-}
-
 // OldestTag returns the earliest available tag for chatID, or ""
 // (pass-through — logic lives in Manager).
 func (s *Store) OldestTag(ctx context.Context, chatID api.ChatID) Tag {

@@ -14,19 +14,12 @@ vi.mock("../api-client.js", () => ({
   apiGet: vi.fn(),
   apiPost: vi.fn(),
 }));
-vi.mock("../transport.js", async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
-  const orig = await importOriginal<typeof import("../transport.js")>();
-  return { ...orig, send: vi.fn() };
-});
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { getActionLog as recentLog } from "./index.js";
 import * as toast from "../toast.js";
-import { send as transportSend } from "../transport.js";
 
 const mockFetch = vi.fn();
-const mockSend = vi.mocked(transportSend);
 
 beforeEach(() => {
   resetActionFramework();
@@ -73,22 +66,5 @@ describe("messages.explain_error", () => {
     const body = JSON.parse(opts.body as string);
     expect(body.error).toBe("TypeError: x is not a function");
     expect(body.context).toBe("tool call");
-  });
-});
-
-describe("messages.undo_edit", () => {
-  it("sends undo_edit via transport and toasts success with filename", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { undoEdit } = await import("./messages.js");
-    await undoEdit.dispatch({ chatID: "c1", tag: "t1", filePath: "src/utils/helper.ts" });
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "undo_edit",
-        chat_id: "c1",
-        payload: expect.objectContaining({ tag: "t1", file_path: "src/utils/helper.ts" }),
-      }),
-      expect.anything(),
-    );
-    expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("helper.ts"));
   });
 });

@@ -339,7 +339,6 @@ type CheckpointService interface {
 	OwnerOf(ctx context.Context, relPath string) (ChatID, bool)
 	Restore(ctx context.Context, chatID ChatID, tag checkpoint.Tag) (int, error)
 	RestorePreview(ctx context.Context, chatID ChatID, tag checkpoint.Tag) ([]string, error)
-	CheckoutFile(ctx context.Context, chatID ChatID, tag checkpoint.Tag, relPath string) error
 	Diff(ctx context.Context, chatID ChatID, from, to checkpoint.Tag) ([]checkpoint.FileChange, error)
 	Conflicts(ctx context.Context, chatID ChatID) ([]checkpoint.ConflictPayload, error)
 	ReadBlob(ctx context.Context, chatID ChatID, sha string) ([]byte, error)

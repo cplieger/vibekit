@@ -22,9 +22,7 @@ vi.mock("./tool-card.js", () => ({
 }));
 vi.mock("./api-client.js", () => ({ apiPost: vi.fn() }));
 vi.mock("./messages-actions.js", () => ({
-  addEditActions: vi.fn(),
   initMessageActions: vi.fn(),
-  refreshConflictBadges: vi.fn(),
 }));
 vi.mock("./store.js", () => ({
   getActiveId: () => "test-chat",

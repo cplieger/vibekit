@@ -250,7 +250,7 @@ func formatSize(n int) string {
 // references a matching SHA.
 //
 // Distinct from TestRestore_RefusesToFollowSymlinkAtStagingPath
-// (manager_test.go) which guards the Restore/CheckoutFile WRITE
+// (manager_test.go) which guards the Restore WRITE
 // pipeline. This one guards the blob READ pipeline — a different
 // threat model (chat B probing chat A's content via guessed
 // SHAs), a different code path (blobStore.Get vs os.Rename).

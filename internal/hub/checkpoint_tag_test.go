@@ -149,31 +149,6 @@ func TestCmdRestoreCheckpoint_InFlightTurnIs409(t *testing.T) {
 	}
 }
 
-// TestCmdUndoEdit_InFlightTurnIs409 is the per-file-undo counterpart of
-// the restore busy-guard.
-func TestCmdUndoEdit_InFlightTurnIs409(t *testing.T) {
-	h, _, _ := newCheckpointHub(t)
-	ctx := context.Background()
-	if err := h.chatStore.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
-		t.Fatalf("create chat: %v", err)
-	}
-	sb, err := h.coord.GetOrCreateBridge(ctx, "c1", "")
-	if err != nil {
-		t.Fatalf("bridge: %v", err)
-	}
-	if !sb.TryAcquireForPrompt() {
-		t.Fatal("could not simulate in-flight turn (acquire prompt lock)")
-	}
-
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "undo_edit", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"tag":"1","file_path":"f.go"}`),
-	})
-	if rec.Code != http.StatusConflict {
-		t.Errorf("status = %d, want 409; body=%q", rec.Code, rec.Body.String())
-	}
-}
-
 // TestCmdRestoreCheckpoint_UnknownTagIs404 pins the Bug-3 fix: an unknown
 // tag now maps to 404, not 500. With no bridge for the chat the busy-guard
 // is skipped, so the request reaches Restore and surfaces ErrTagNotFound.
@@ -182,19 +157,6 @@ func TestCmdRestoreCheckpoint_UnknownTagIs404(t *testing.T) {
 	rec := postCmd(t, h, api.ClientCommand{
 		Type: "restore_checkpoint", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"tag":"42"}`),
-	})
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404; body=%q", rec.Code, rec.Body.String())
-	}
-}
-
-// TestCmdUndoEdit_UnknownTagIs404 is the per-file-undo counterpart of the
-// unknown-tag 404 mapping.
-func TestCmdUndoEdit_UnknownTagIs404(t *testing.T) {
-	h, _, _ := newCheckpointHub(t)
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "undo_edit", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"tag":"42","file_path":"f.go"}`),
 	})
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404; body=%q", rec.Code, rec.Body.String())

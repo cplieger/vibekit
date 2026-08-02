@@ -440,7 +440,6 @@ describe("a11y: failed tool aria-expanded", () => {
       maybeCollapseGroup: noop,
       formatDuration: (ms: number) => String(ms),
     }));
-    vi.doMock("./messages-actions.js", () => ({ addEditActions: noop }));
     vi.doMock("./actions/index.js", () => ({ bindLoadingState: () => () => undefined }));
 
     const { buildToolCard } = await import("./tool-card.js");

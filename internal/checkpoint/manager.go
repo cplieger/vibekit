@@ -56,7 +56,7 @@ var ErrTransient = errors.New("transient checkpoint error")
 type ConflictBroadcaster func(chatID string, payload *ConflictPayload)
 
 // RestoreStageSuffix is the temp-file pattern used by both
-// CheckoutFile and stageRestoreLocked for two-phase atomic writes.
+// stageRestoreLocked for two-phase atomic writes.
 // Single constant so cleanup tooling or tests that glob for orphaned
 // staging files can reference it instead of hardcoding the pattern.
 const RestoreStageSuffix = ".vibekit-restore-*"
@@ -218,7 +218,7 @@ func (m *Manager) load(ctx context.Context) error {
 }
 
 // loadAndValidateTag performs the common three-step prelude shared by
-// RestorePreview, Restore, CheckoutFile, and Diff: ensure the event
+// RestorePreview, Restore, and Diff: ensure the event
 // log is loaded, check for context cancellation, and verify the tag
 // exists. Callers must hold m.mu.
 func (m *Manager) loadAndValidateTag(ctx context.Context, tag string) error {

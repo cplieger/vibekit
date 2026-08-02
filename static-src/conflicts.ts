@@ -27,7 +27,6 @@ import type { ConflictDetectedPayload } from "./wire/types.gen.js";
 import { escText } from "./strings.js";
 import { ICON_WARN_12 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { registerConflictChipRenderer } from "./messages-shared.js";
 import { openConflictDiff as openConflictDiffAction, loadConflicts } from "./actions/conflicts.js";
 import { bindLoadingState } from "./actions/index.js";
 
@@ -131,18 +130,9 @@ onSSE("conflict_detected", (chatID, payload) => {
     return;
   }
   remember(chatID, c);
-  // Ask the transcript to re-decorate any tool card pointing at
-  // this path. messages.ts exposes a light refresh hook that
-  // traverses [data-filename] nodes; we import it lazily so this
-  // module stays free of direct DOM dependencies when only the
-  // registry is used (e.g. from tests).
-  void import("./messages-shared.js")
-    .then((m) => {
-      m.refreshConflictBadges(chatID, c.path);
-    })
-    .catch((e: unknown) => {
-      console.warn("[conflicts] badge refresh failed", e);
-    });
+  // Nothing re-decorates the transcript any more: the tool-card action row
+  // that hosted the chip went with per-file undo, so the registry is the
+  // only live consumer of a drift event until the chip finds a new home.
 });
 
 /** Fetch every past conflict for a chat and populate the registry.
@@ -198,9 +188,6 @@ export function renderConflictChip(row: HTMLElement, chatID: string, path: strin
   chip.dataset["other"] = c.other_chat;
   chip.setAttribute("aria-label", `Conflict with chat ${c.other_chat} on ${escText(path)}`);
 }
-
-// Register with messages-shared so it can render chips without importing conflicts.ts.
-registerConflictChipRenderer(renderConflictChip);
 
 /** Open the editor in diff mode comparing the blob the other chat
  *  left against the blob this chat saw. Dispatches through the action

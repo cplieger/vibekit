@@ -589,9 +589,9 @@ export interface Message {
  * CheckpointTag is the REAL checkpoint tag the server allocated for
  * this turn (set only on the user message that started a turn whose
  * agent produced at least one file snapshot). It is the turn-canonical
- * tag ("N", never "N.K") the client passes verbatim to restore_checkpoint
- * / undo_edit. Empty when the turn produced no snapshot; persisted so it
- * survives reload.
+ * tag ("N", never "N.K") the client passes verbatim to
+ * restore_checkpoint. Empty when the turn produced no snapshot;
+ * persisted so it survives reload.
  */
   checkpoint_tag?: string;
   event_kind?: EventKind;

@@ -24,7 +24,6 @@ import { isToolDone } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview, expandToolDetails } from "./tool-card.js";
 import { ansiToHtml } from "./ansi.js";
 import { bindLoadingState } from "./actions/index.js";
-import { addEditActions } from "./messages-actions.js";
 
 // ---------------------------------------------------------------------------
 // Module state (tool-specific)
@@ -200,9 +199,6 @@ function applyStatusUpdate(
     const group = card.closest(".tool-group");
     if (group !== null) {
       _refreshGroupHeader(group as HTMLElement);
-    }
-    if (status === "completed" && card.dataset["kind"] === "edit") {
-      addEditActions(card);
     }
   }
   if (status === "failed") {

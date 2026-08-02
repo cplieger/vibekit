@@ -1,4 +1,4 @@
-// Restore path: RestorePreview, Restore, CheckoutFile, Cleanup, and
+// Restore path: RestorePreview, Restore, Cleanup, and
 // the two-phase journal logic (restoreLocked, stageRestoreLocked,
 // applyStagesLocked, logRestoreStarted/Committed). These methods
 // share the Manager struct and its mutex but don't call the snapshot
@@ -8,7 +8,6 @@ package checkpoint
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -127,77 +126,6 @@ func (m *Manager) Restore(ctx context.Context, tag Tag) (int, error) {
 			"chat_id", m.chatID, "tag", tag, "error", err)
 	}
 	return msgCount, nil
-}
-
-// CheckoutFile reverts a single file to its content at `tag`. Used
-// by the per-file Undo button on tool-call cards. Does not touch
-// other files, does not truncate the transcript. Two-phase (stage
-// + rename) so a crash mid-write can't leave a corrupt file.
-func (m *Manager) CheckoutFile(ctx context.Context, tag Tag, relPath string) error {
-	if relPath == "" {
-		return errors.New("checkout: empty path")
-	}
-	// Phase 0: snapshot state under lock.
-	m.mu.Lock()
-	if err := m.loadAndValidateTag(ctx, string(tag)); err != nil {
-		m.mu.Unlock()
-		return err
-	}
-	sha, existed := m.state.contentAtOrBeforeTag(relPath, string(tag))
-	abs, err := m.absPath(relPath)
-	if err != nil {
-		m.mu.Unlock()
-		return err
-	}
-	m.mu.Unlock()
-
-	// Phase 1: blob I/O without the lock.
-	if !existed {
-		if rmErr := os.Remove(abs); rmErr != nil && !os.IsNotExist(rmErr) {
-			return fmt.Errorf("checkout: remove %s: %w", relPath, rmErr)
-		}
-		return nil
-	}
-	data, err := m.blobs.Get(ctx, sha)
-	if err != nil {
-		return fmt.Errorf("checkout: get blob %s: %w", sha, err)
-	}
-	parentDir := filepath.Dir(abs)
-	if mkErr := os.MkdirAll(parentDir, 0o755); mkErr != nil {
-		return fmt.Errorf("checkout: mkdir: %w", mkErr)
-	}
-	// Random-suffix tmp via os.CreateTemp closes the symlink-TOCTOU
-	// that a deterministic ".vibekit-restore" sibling would open
-	// (see restoreLocked for the full rationale).
-	tmpFile, tErr := os.CreateTemp(parentDir, filepath.Base(abs)+RestoreStageSuffix)
-	if tErr != nil {
-		return fmt.Errorf("checkout: create temp for %s: %w", relPath, tErr)
-	}
-	tmp := tmpFile.Name()
-	if _, wErr := tmpFile.Write(data); wErr != nil {
-		tmpFile.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("checkout: stage %s: %w", relPath, wErr)
-	}
-	if sErr := tmpFile.Sync(); sErr != nil {
-		tmpFile.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("checkout: fsync stage %s: %w", relPath, sErr)
-	}
-	if mErr := tmpFile.Chmod(restoreMode(abs)); mErr != nil {
-		tmpFile.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("checkout: chmod stage %s: %w", relPath, mErr)
-	}
-	if cErr := tmpFile.Close(); cErr != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("checkout: close stage %s: %w", relPath, cErr)
-	}
-	if rnErr := commitRename(tmp, abs); rnErr != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("checkout: commit %s: %w", relPath, rnErr)
-	}
-	return nil
 }
 
 // Cleanup removes this chat's event log + parent directory and

@@ -1,15 +1,21 @@
 // ---------------------------------------------------------------------------
-// Edit-specific tool card actions: undo, diff, conflict badges, pending
-// accept/reject. Extracted from messages.ts for single-reason-to-change.
+// Pending accept/reject actions for a tool card whose write is staged under
+// Supervised mode. Extracted from messages.ts for single-reason-to-change.
+//
+// The completed-edit action row (`addEditActions`: Undo, View diff, and the
+// conflict-chip mount) was deleted with per-file undo. Restoring a single
+// file is KAS's job now, reached in-chat through rewind, and the row's other
+// two parts had already lost their reason to exist: a changed filename is
+// itself the link to its diff, and the cross-chat conflict index that fed
+// the chip is gone.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { ICON_UNDO, ICON_DIFF, ICON_CHECK, ICON_X } from "./icons.js";
+import { ICON_DIFF, ICON_CHECK, ICON_X } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { getActiveId } from "./store.js";
-import { openFileGitDiff, openPendingDiff } from "./editor-openers.js";
+import { openPendingDiff } from "./editor-openers.js";
 import { onBus, BUS_PENDING_ADDED, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
-import { undoEdit } from "./actions/messages.js";
 import { resolvePendingChange } from "./actions/chat.js";
 import { bindLoadingState } from "./actions/index.js";
 
@@ -22,89 +28,6 @@ export function clearActionBindings(): void {
     fn();
   }
   actionBindUnbinds.length = 0;
-}
-
-/** Add "Undo" and "Diff" action buttons to a completed edit tool card. */
-export function addEditActions(card: HTMLDivElement): void {
-  if (card.querySelector(".tool-edit-actions") !== null) {
-    return;
-  }
-  const filePath = card.dataset["filePath"] ?? "";
-  if (filePath === "") {
-    return;
-  }
-
-  const row = el("div", { className: "tool-edit-actions" });
-
-  const undoBtn = el(
-    "button",
-    {
-      type: "button",
-      className: "turn-action-btn",
-      "data-tooltip": "Undo this edit",
-      "aria-label": "Undo this edit",
-    },
-    iconEl(ICON_UNDO),
-  ) as HTMLButtonElement;
-  actionBindUnbinds.push(bindLoadingState("messages.undo_edit", undoBtn));
-  undoBtn.addEventListener("click", () => {
-    const chatID = getActiveId();
-    if (chatID === "") {
-      return;
-    }
-    let tag = "";
-    const group = card.closest(".tool-group");
-    let sibling: Element | null = (group ?? card).previousElementSibling;
-    while (sibling !== null) {
-      const btn = sibling.querySelector<HTMLElement>(".checkpoint-restore");
-      if (btn !== null) {
-        tag = btn.dataset["tag"] ?? "";
-        break;
-      }
-      sibling = sibling.previousElementSibling;
-    }
-    if (tag === "") {
-      return;
-    }
-    void undoEdit.dispatch(
-      { chatID, tag, filePath },
-      {
-        onSuccess: () => {
-          undoBtn.classList.add("copied");
-          setTimeout(() => {
-            undoBtn.classList.remove("copied");
-          }, 1500);
-        },
-      },
-    );
-  });
-
-  const diffBtn = el(
-    "button",
-    {
-      type: "button",
-      className: "turn-action-btn",
-      "data-tooltip": "View diff",
-      "aria-label": "View diff",
-    },
-    iconEl(ICON_DIFF),
-  );
-  diffBtn.addEventListener("click", () => {
-    openFileGitDiff(filePath);
-  });
-
-  row.append(undoBtn, diffBtn);
-  card.appendChild(row);
-  void import("./conflicts.js")
-    .then((m) => {
-      const chatID = getActiveId();
-      if (chatID !== "") {
-        m.renderConflictChip(row, chatID, filePath);
-      }
-    })
-    .catch(() => {
-      /* noop */
-    });
 }
 
 /** Add Accept / Reject / Diff buttons to a tool card whose write is

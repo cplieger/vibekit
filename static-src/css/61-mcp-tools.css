@@ -321,19 +321,9 @@
   color: var(--c-green);
 }
 
-/* Edit tool card actions (undo + diff). Thin row at the bottom of
- * completed edit tool cards, matching the turn-actions row style. */
-.tool-edit-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.125rem;
-  padding: var(--sp-1) 0 0;
-  border-block-start: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
-  margin-block-start: var(--sp-1);
-}
-
-/* Cross-chat conflict chip. Sits inside .tool-edit-actions after
- * the Undo/Diff buttons; advisory UI that signals another chat
+/* Cross-chat conflict chip. Currently has no mount point — the tool-card
+ * action row that hosted it went with per-file undo; advisory UI that
+ * signals another chat
  * has edited this file. Amber border+fill to distinguish from
  * error (red) without being alarming. Click opens the editor in
  * diff mode comparing the two versions. */

@@ -905,7 +905,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 	}
 }
 
-// --- cmdRestoreCheckpoint / cmdUndoEdit ---
+// --- cmdRestoreCheckpoint ---
 
 // TestCmdRestoreCheckpoint_NoCheckpointsWired pins the short-circuit
 // when the Hub was built without a checkpoint.Store.
@@ -929,37 +929,6 @@ func TestCmdRestoreCheckpoint_MissingTagIs400(t *testing.T) {
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
-// TestCmdUndoEdit_NoCheckpointsWired returns 400 without checkpoints.
-func TestCmdUndoEdit_NoCheckpointsWired(t *testing.T) {
-	h, _, _ := newTestHub()
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "undo_edit", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"tag":"1","file_path":"f.go"}`),
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
-// TestCmdUndoEdit_MissingFieldsIs400 pins required-field validation.
-func TestCmdUndoEdit_MissingFieldsIs400(t *testing.T) {
-	h, _, _ := newCheckpointHub(t)
-	cases := []string{
-		`{}`,
-		`{"tag":"1"}`,
-		`{"file_path":"f.go"}`,
-	}
-	for _, body := range cases {
-		rec := postCmd(t, h, api.ClientCommand{
-			Type: "undo_edit", RequestID: "r", ChatID: "c1",
-			Payload: json.RawMessage(body),
-		})
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("payload=%q status=%d, want 400", body, rec.Code)
-		}
 	}
 }
 

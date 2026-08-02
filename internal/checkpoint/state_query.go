@@ -68,7 +68,7 @@ func (s *state) contentAtTag(path, tag string) (string, bool) {
 // contentAtOrBeforeTag finds the content SHA for `path` at `tag` if an
 // exact snapshot exists there, otherwise falls back to the afterSHA of
 // the nearest snapshot BEFORE `tag`. This is the correct lookup for Diff
-// and CheckoutFile: a file that wasn't snapshotted at exactly `tag` still
+// a file that wasn't snapshotted at exactly `tag` still
 // has a known state from its most recent prior snapshot's afterSHA.
 //
 // Returns ("", false) if the file has no snapshot at or before `tag`.
