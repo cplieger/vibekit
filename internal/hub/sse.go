@@ -11,14 +11,26 @@ import (
 )
 
 // emit is the single path for broadcasting an event to SSE clients. It
-// folds the event into the turn mirror (the connect-time turn_state
-// source — apply-before-publish is what keeps a connect snapshot >=
-// the ring content a new client just replayed), then marshals once and
-// hands it to the shared sse hub, which assigns the monotonic ID,
-// appends to the replay ring, and fans out to subscribed clients
+// records a chat_status before publishing (apply-before-publish is what keeps a
+// connect snapshot >= the ring content a new client just replayed), then
+// marshals once and hands it to the shared sse hub, which assigns the monotonic
+// ID, appends to the replay ring, and fans out to subscribed clients
 // (topic = chat ID; events with an empty ChatID are global).
+//
+// It used to fold EVERY event into a turn mirror that rebuilt the in-flight
+// assistant message in parallel with buffer.Buffer. That replica is gone: the
+// buffer already holds the turn and now snapshots it (buffer.Buffer.Snapshot),
+// so the only thing left to record here is the status, which lives on no
+// message and in no replay.
 func (h *Hub) emit(evt api.ServerEvent) {
-	h.sse.turnMirror.Apply(evt)
+	switch evt.Type {
+	case api.EventChatStatus:
+		if p, ok := evt.Payload.(api.ChatStatusPayload); ok {
+			h.sse.chatStatus.Set(evt.ChatID, p)
+		}
+	case api.EventTurnEnded:
+		h.sse.chatStatus.Clear(evt.ChatID)
+	}
 	data, err := json.Marshal(evt)
 	if err != nil {
 		slog.Error("emit marshal", "type", evt.Type, "error", err)
@@ -122,20 +134,33 @@ func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter 
 }
 
 // replayTurnState emits one synthesized turn_state event per busy chat
-// (bridge holding the prompt slot). The mirror snapshot may be absent
-// for a turn that hasn't produced content yet — the event still goes
-// out as a bare busy signal (the client sets thinking without touching
-// messages). Gating on the prompting state (not mirror presence) is
-// what keeps a stale mirror entry from ever resurrecting a finished
-// turn: an idle chat is never replayed.
+// (bridge holding the prompt slot). The snapshot may be absent for a turn that
+// hasn't produced content yet — the event still goes out as a bare busy signal
+// (the client sets thinking without touching messages). Gating on the prompting
+// state, not on snapshot presence, is what keeps a finished turn from ever being
+// resurrected: an idle chat is never replayed.
+//
+// The in-flight message comes straight from the chat's assistant buffer, which
+// is the same object the live stream and the turn-end persist read. There is no
+// separate replica to drift from it.
 func (h *Hub) replayTurnState(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
 	for _, id := range h.bridge.mgr.promptingChatIDs() {
 		if chatFilter != "" && id != chatFilter {
 			continue
 		}
-		// A missing mirror entry (turn accepted, nothing streamed yet)
-		// still emits: the zero payload is the bare busy signal.
-		payload, _ := h.sse.turnMirror.Snapshot(id)
+		status := h.sse.chatStatus.Get(id)
+		payload := api.TurnStatePayload{
+			Status:      status.Status,
+			Description: status.Description,
+		}
+		if buf := h.bridge.assistantBufs.Get(id); buf != nil {
+			if msg, seq, ok := buf.Snapshot(); ok {
+				payload.Message = &msg
+				payload.ChunkSeq = seq
+			} else {
+				payload.ChunkSeq = seq
+			}
+		}
 		if err := writeFn(api.NewEvent(api.EventTurnState, id, payload)); err != nil {
 			return err
 		}

@@ -80,9 +80,11 @@ type ssePlane struct {
 	hub          *sse.Hub
 	idempotency  *dedup.Cache
 	pendingPerms *pendingPermsTracker
-	// turnMirror replicates each chat's in-flight turn from the emit
-	// stream for the connect-time turn_state replay (see turn_mirror.go).
-	turnMirror *turnMirror
+	// chatStatus holds each chat's last self-declared status, the one
+	// turn_state input that lives on no message and in no replay
+	// (chat_status.go). The in-flight MESSAGE comes from the assistant
+	// buffer, not from a replica.
+	chatStatus *chatStatusCache
 }
 
 // permPlane groups Hub fields related to permissions and supervision.
@@ -189,7 +191,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 			hub:          sseHub,
 			idempotency:  dedup.New(dedup.DefaultTTL, dedup.DefaultMaxEntries, dedup.DefaultMaxResult),
 			pendingPerms: newPendingPermsTracker(),
-			turnMirror:   newTurnMirror(),
+			chatStatus:   newChatStatusCache(),
 		},
 		perm: &permPlane{
 			pending: pending.New(),
