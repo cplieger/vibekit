@@ -21,12 +21,6 @@ vi.mock("./tool-card.js", () => ({
   insertDiffPreview: vi.fn(),
 }));
 vi.mock("./api-client.js", () => ({ apiPost: vi.fn() }));
-vi.mock("./plan-actions.js", () => ({
-  planToMarkdown: vi.fn(() => ""),
-  writePlanDraft: vi.fn(),
-  runPlan: vi.fn(),
-}));
-vi.mock("./editor-openers.js", () => ({ openPlanDraftPath: vi.fn() }));
 vi.mock("./messages-actions.js", () => ({
   addEditActions: vi.fn(),
   initMessageActions: vi.fn(),

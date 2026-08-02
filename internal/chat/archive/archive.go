@@ -28,10 +28,9 @@ import (
 const Subdir = "archive"
 
 const (
-	chatFileSuffix  = ".json"
-	planDraftSuffix = ".plan.md"
-	dirMode         = 0o700
-	fileMode        = 0o600
+	chatFileSuffix = ".json"
+	dirMode        = 0o700
+	fileMode       = 0o600
 )
 
 // maxChatFileBytes caps the size of a single chat file loaded by the
@@ -157,13 +156,6 @@ func (s *Service) Archive(ctx context.Context, chatID api.ChatID) error {
 	if err := os.Rename(srcPath, dstPath); err != nil { //#nosec G703 -- paths built from validated chat ID
 		m.Unlock()
 		return err
-	}
-	// Also archive the plan draft if it exists.
-	draftSrc := filepath.Join(s.store.Dir(), string(chatID)+planDraftSuffix)
-	draftDst := filepath.Join(archiveDir, string(chatID)+planDraftSuffix)
-	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) { //#nosec G703 -- paths built from validated chat ID
-		slog.Warn("chat archive: plan-draft move failed",
-			"chat_id", chatID, "error", err)
 	}
 	s.store.MarkDeleted(chatID)
 	m.Unlock()
@@ -295,15 +287,6 @@ func (s *Service) RestoreArchived(ctx context.Context, chatID api.ChatID) error 
 		m.Unlock()
 		return err
 	}
-	// Also restore the plan draft if it exists. Derive paths via
-	// suffix swap on the already-validated cleanSrc/cleanDst so the
-	// new paths inherit the containment proof.
-	draftSrc := strings.TrimSuffix(cleanSrc, chatFileSuffix) + planDraftSuffix
-	draftDst := strings.TrimSuffix(cleanDst, chatFileSuffix) + planDraftSuffix
-	if err := os.Rename(draftSrc, draftDst); err != nil && !errors.Is(err, os.ErrNotExist) { //#nosec G703 -- paths built from validated chat ID
-		slog.Warn("chat restore: plan-draft move failed",
-			"chat_id", chatID, "error", err)
-	}
 	s.store.ClearTombstone(chatID)
 	c, loadErr := s.store.Load(chatID)
 	m.Unlock()
@@ -361,13 +344,12 @@ func (s *Service) UpdateArchivedSummary(ctx context.Context, chatID api.ChatID, 
 	return err
 }
 
-// DeleteArchived permanently removes a single archived chat file and its
-// plan draft. Fires onPurge so checkpoint data is cleaned up.
+// DeleteArchived permanently removes a single archived chat file.
+// Fires onPurge so checkpoint data is cleaned up.
 func (s *Service) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 	// Validate up-front so CodeQL's path-injection analysis sees the
-	// guard at the entry point. archivePathFor below also validates,
-	// but the second filepath.Join (for the plan-draft path) is not
-	// proven-safe by the analyzer without an explicit check here.
+	// guard at the entry point. archivePathFor below also validates, but
+	// the analyzer does not track that guard across the return boundary.
 	if !api.ValidChatID(string(chatID)) {
 		return fmt.Errorf("invalid chat id: %q", chatID)
 	}
@@ -395,13 +377,6 @@ func (s *Service) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 	if err := os.Remove(cleanChatPath); err != nil {
 		m.Unlock()
 		return err
-	}
-	// draftPath shares the directory of cleanChatPath; suffix swap
-	// keeps it inside the same already-verified directory.
-	draftPath := strings.TrimSuffix(cleanChatPath, chatFileSuffix) + planDraftSuffix
-	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("chat delete_archived: remove plan-draft",
-			"chat_id", chatID, "error", err)
 	}
 	m.Unlock()
 	if s.onPurge != nil {

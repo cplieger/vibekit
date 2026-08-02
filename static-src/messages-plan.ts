@@ -6,9 +6,6 @@
 
 import type { PlanEntry } from "./types.js";
 import { reconcile, type ReconcileSpec } from "./reconcile.js";
-import { getActiveId } from "./store.js";
-import { planToMarkdown, writePlanDraft, runPlan } from "./plan-actions.js";
-import { openPlanDraftPath } from "./editor-openers.js";
 import { el } from "@cplieger/reactive";
 
 // ---------------------------------------------------------------------------
@@ -26,51 +23,11 @@ export function planElement(entries: readonly PlanEntry[]): HTMLDivElement {
   card.appendChild(list);
   reconcilePlanEntries(list, entries);
 
-  const actions = el("div", { className: "plan-actions" });
-  const editBtn = el(
-    "button",
-    {
-      className: "plan-edit-btn btn-small",
-      title: "Open this plan in the editor to tweak it before sending it to the agent",
-    },
-    "Edit",
-  );
-  const runBtn = el(
-    "button",
-    {
-      className: "plan-run-btn btn-small",
-      title: "Send this plan to the agent to implement (switches out of Plan mode if needed)",
-    },
-    "Run this plan",
-  );
-  actions.append(editBtn, runBtn);
-  card.appendChild(actions);
-
-  card.dataset["plan"] = JSON.stringify(entries);
-  const latestMd = (): string => {
-    const stored = card.dataset["plan"];
-    if (stored === undefined) {
-      return planToMarkdown([...entries]);
-    }
-    try {
-      return planToMarkdown(JSON.parse(stored) as PlanEntry[]);
-    } catch {
-      return planToMarkdown([...entries]);
-    }
-  };
-  editBtn.addEventListener("click", () => {
-    void editPlanAction(getActiveId(), latestMd());
-  });
-  runBtn.addEventListener("click", () => {
-    void runPlan(getActiveId(), latestMd());
-  });
-
   return card;
 }
 
 /** Update an existing plan element's entries in place. */
 export function updatePlanElement(el: HTMLDivElement, entries: readonly PlanEntry[]): void {
-  el.dataset["plan"] = JSON.stringify(entries);
   const list = el.querySelector<HTMLDivElement>(":scope > .plan-entries");
   if (list !== null) {
     reconcilePlanEntries(list, entries);
@@ -106,19 +63,4 @@ function updatePlanRow(row: HTMLDivElement, e: PlanEntry): void {
     ...(e.priority === "high" ? [" ", el("span", { className: "plan-hi" }, "[high]")] : []),
   );
   row.dataset["status"] = e.status;
-}
-
-// ---------------------------------------------------------------------------
-// Internal
-// ---------------------------------------------------------------------------
-
-async function editPlanAction(chatID: string, content: string): Promise<void> {
-  if (chatID === "") {
-    return;
-  }
-  const ok = await writePlanDraft(chatID, content);
-  if (!ok) {
-    return;
-  }
-  openPlanDraftPath(chatID);
 }

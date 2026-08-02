@@ -13,7 +13,7 @@
 //
 // This module is a *leaf* from the dependency-graph standpoint: it imports
 // only store, session-context, and transport. Callers higher in
-// the tree (chat.ts, plan-actions.ts) layer domain behaviour on top.
+// the tree (chat.ts, prompt-queue.ts) layer domain behaviour on top.
 //
 // Terminology: "switch model" kills the ACP session, starts a fresh one
 // with the chosen model, and primes it with the transcript. kiro-cli

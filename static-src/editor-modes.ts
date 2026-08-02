@@ -8,13 +8,11 @@ import { renderDiffModeUI } from "./editor-diff.js";
 import { renderConflictModeUI } from "./editor-conflict.js";
 import { renderEditModeUI, showReadMode } from "./editor-ui.js";
 import type { FileState } from "./editor-types.js";
-import { isPlanDraftPath, isPendingPath } from "./editor-types.js";
+import { isPendingPath } from "./editor-types.js";
 
 // --- restoreUI (dispatches to mode-specific renderers) ---
 
 export function restoreUI(state: FileState): void {
-  $.editorSendPlanBtn.classList.toggle("hidden", !isPlanDraftPath(state.path));
-
   const pending = isPendingPath(state.path);
   $.editorPendingAcceptBtn.classList.toggle("hidden", !pending);
   $.editorPendingRejectBtn.classList.toggle("hidden", !pending);

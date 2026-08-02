@@ -11,7 +11,6 @@ import type { ConflictFile } from "./conflict.js";
 
 // --- Virtual path routing ---
 
-const PLAN_DRAFT_PREFIX = "plan-draft:";
 const PENDING_PREFIX = "pending:";
 
 // --- Diff label constants ---
@@ -22,21 +21,8 @@ const DIFF_LABEL_WORKING_TREE = "working tree";
 
 // --- Pure predicates ---
 
-export function isPlanDraftPath(path: string): boolean {
-  return path.startsWith(PLAN_DRAFT_PREFIX);
-}
-
-export function planDraftChatID(path: string): string {
-  return isPlanDraftPath(path) ? path.slice(PLAN_DRAFT_PREFIX.length) : "";
-}
-
 export function isPendingPath(path: string): boolean {
   return path.startsWith(PENDING_PREFIX);
-}
-
-/** Construct a plan-draft virtual path from a chat ID. */
-export function makePlanDraftPath(chatID: string): string {
-  return PLAN_DRAFT_PREFIX + chatID;
 }
 
 /** Construct a pending-change virtual path from chat + tool-call IDs. */
@@ -61,11 +47,6 @@ export function routeForPath(path: string): {
   writeURL: string;
   displayPath: string;
 } {
-  if (isPlanDraftPath(path)) {
-    const id = planDraftChatID(path);
-    const url = `/api/chats/${encodeURIComponent(id)}/plan-draft`;
-    return { readURL: url, writeURL: url, displayPath: `plan draft · ${id.slice(0, 12)}` };
-  }
   if (isPendingPath(path)) {
     const { toolCallID } = parsePendingPath(path);
     const url = `/api/pending-changes/${encodeURIComponent(toolCallID)}`;

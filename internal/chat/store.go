@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -36,10 +35,9 @@ var _ archive.StoreAccess = (*Store)(nil)
 // fileMode is the on-disk mode for chat files. The parent dir uses 0o700
 // because chat content may contain secrets the user pasted into prompts.
 const (
-	fileMode        = 0o600
-	dirMode         = 0o700
-	chatFileSuffix  = ".json"
-	planDraftSuffix = ".plan.md"
+	fileMode       = 0o600
+	dirMode        = 0o700
+	chatFileSuffix = ".json"
 )
 
 // maxChatFileBytes caps the size of a single chat file loaded by `load`.
@@ -368,20 +366,6 @@ func (s *Store) Delete(ctx context.Context, chatID api.ChatID) error {
 	}
 	rmErr := os.Remove(path)
 	missing := errors.Is(rmErr, os.ErrNotExist)
-	// Best-effort cleanup of any plan draft for this chat. ENOENT is the
-	// common case (most chats have no draft); anything else is logged so
-	// orphan drafts surface in monitoring rather than silently outliving
-	// the chat they belonged to (e.g. if the volume remounts read-only
-	// between the chat remove and the draft remove). Inline the path
-	// join: pathFor already accepted chatID, so planDraftPathFor would
-	// re-run the same chatIDPattern validation and rebuild the same
-	// filepath.Join — wasted work. Matches the inline-join pattern
-	// already used in SetPlanDraft.
-	draftPath := filepath.Join(s.dir, string(chatID)+planDraftSuffix)
-	if rmDraftErr := os.Remove(draftPath); rmDraftErr != nil && !errors.Is(rmDraftErr, os.ErrNotExist) {
-		slog.Warn("chat delete: plan-draft removal failed",
-			"chat_id", chatID, "error", rmDraftErr)
-	}
 	if !missing {
 		// Mark tombstone while we still hold the per-chat lock so any
 		// racing Mutate attempt has to queue behind us and will then

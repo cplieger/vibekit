@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from "vitest";
 import { effect } from "@cplieger/reactive";
-import { isPlanDraftPath, isPendingPath, parsePendingPath, routeForPath } from "./editor-core.js";
+import { isPendingPath, parsePendingPath, routeForPath } from "./editor-core.js";
 import {
   freshState,
   fileStates,
@@ -10,26 +10,11 @@ import {
   activeDirty,
 } from "./editor-types.js";
 
-describe("isPlanDraftPath", () => {
-  it.each([
-    { input: "plan-draft:abc123", expected: true },
-    { input: "plan-draft:", expected: true },
-    { input: "plan-draft:with:colons", expected: true },
-    { input: "pending:abc", expected: false },
-    { input: "src/main.ts", expected: false },
-    { input: "", expected: false },
-    { input: "plan-draftx:abc", expected: false },
-  ])("isPlanDraftPath($input) === $expected", ({ input, expected }) => {
-    expect(isPlanDraftPath(input)).toBe(expected);
-  });
-});
-
 describe("isPendingPath", () => {
   it.each([
     { input: "pending:chat1:tool1", expected: true },
     { input: "pending:", expected: true },
     { input: "pending:abc", expected: true },
-    { input: "plan-draft:abc", expected: false },
     { input: "src/file.ts", expected: false },
     { input: "", expected: false },
     { input: "pendingx:abc", expected: false },
@@ -52,13 +37,6 @@ describe("parsePendingPath", () => {
 });
 
 describe("routeForPath", () => {
-  it("routes plan-draft paths", () => {
-    const r = routeForPath("plan-draft:abc123def456");
-    expect(r.readURL).toBe("/api/chats/abc123def456/plan-draft");
-    expect(r.writeURL).toBe("/api/chats/abc123def456/plan-draft");
-    expect(r.displayPath).toBe("plan draft · abc123def456");
-  });
-
   it("routes pending paths", () => {
     const r = routeForPath("pending:chat1:tool42");
     expect(r.readURL).toBe("/api/pending-changes/tool42");

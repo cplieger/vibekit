@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -728,7 +727,7 @@ func TestHandleOne_RejectsUnknownSubResource(t *testing.T) {
 	// With sub-resource routing, /api/chats/a/b treats "b" as a sub-
 	// resource name. Unknown sub-resources return 404. Historically this
 	// was a 400 "slash in id" — the new behaviour is correct because
-	// plan-draft is a valid sub-resource.
+	// export and archive are valid sub-resources.
 	s, _ := newTestStore(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/a/b", nil)
 	rec := httptest.NewRecorder()
@@ -772,287 +771,6 @@ func TestStoreSurvivesReopen(t *testing.T) {
 }
 
 // --- Plan drafts ---
-
-func TestPlanDraft_RoundTrip(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "# Plan\n- [ ] step 1\n"); err != nil {
-		t.Fatalf("set: %v", err)
-	}
-	got, err := s.GetPlanDraft(context.Background(), "c1")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got != "# Plan\n- [ ] step 1\n" {
-		t.Errorf("got = %q", got)
-	}
-}
-
-func TestPlanDraft_GetMissingReturnsEmpty(t *testing.T) {
-	s, _ := newTestStore(t)
-	got, err := s.GetPlanDraft(context.Background(), "c-never-had-draft")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got != "" {
-		t.Errorf("expected empty content for missing draft, got %q", got)
-	}
-}
-
-func TestPlanDraft_SetRejectsNonexistentChat(t *testing.T) {
-	// Adversarial: a client could otherwise write 256KB plan drafts
-	// keyed by arbitrary chat ids to pollute the chats directory with
-	// orphan files. SetPlanDraft now refuses unless the chat exists.
-	s, _ := newTestStore(t)
-	err := s.SetPlanDraft(context.Background(), "c-ghost", "# orphan")
-	if err == nil {
-		t.Fatal("expected error when writing draft for nonexistent chat")
-	}
-}
-
-func TestPlanDraft_SetRejectsTombstonedChat(t *testing.T) {
-	// Delete-during-edit race: chat existed when the editor opened
-	// but was deleted from another tab before the draft PUT landed.
-	// Tombstone prevents the draft from being resurrected next to
-	// the now-missing chat file.
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(context.Background(), "c1")
-	err := s.SetPlanDraft(context.Background(), "c1", "# stale")
-	if err == nil {
-		t.Fatal("expected error when writing draft for tombstoned chat")
-	}
-}
-
-func TestPlanDraft_DeleteRemovesFile(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "# p"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.DeletePlanDraft(context.Background(), "c1"); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	got, _ := s.GetPlanDraft(context.Background(), "c1")
-	if got != "" {
-		t.Errorf("after delete, got = %q", got)
-	}
-}
-
-func TestPlanDraft_OverCapRejected(t *testing.T) {
-	s, _ := newTestStore(t)
-	big := make([]byte, maxPlanDraftBytes+1)
-	for i := range big {
-		big[i] = 'x'
-	}
-	err := s.SetPlanDraft(context.Background(), "c1", string(big))
-	if err == nil {
-		t.Fatalf("expected size cap to reject overlarge draft")
-	}
-	// Pin the Kind: the handler discriminates 413 from 500 via
-	// errors.As(err, *StoreError) + switch on Kind, not
-	// string-prefix sniffing. A future rename of the formatted
-	// message must still match.
-	var ce *StoreError
-	if !errors.As(err, &ce) || ce.Kind != ErrKindTooLarge {
-		t.Errorf("err = %v, want *StoreError{Kind: ErrKindTooLarge}", err)
-	}
-}
-
-func TestPlanDraft_InvalidChatIDRejected(t *testing.T) {
-	s, _ := newTestStore(t)
-	assertRejectsBadChatIDs(t, func(id api.ChatID) error {
-		return s.SetPlanDraft(context.Background(), id, "x")
-	})
-}
-
-func TestPlanDraft_DeletedWithChat(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "# plan"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Delete(context.Background(), "c1"); err != nil {
-		t.Fatal(err)
-	}
-	// Draft should be cleaned up alongside the chat file.
-	draftPath, _ := s.planDraftPathFor("c1")
-	if _, err := os.Stat(draftPath); !os.IsNotExist(err) {
-		t.Errorf("plan draft not cleaned up after Delete: %v", err)
-	}
-}
-
-func TestHandlePlanDraft_GETMissingReturnsEmpty(t *testing.T) {
-	s, _ := newTestStore(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/plan-draft", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("code = %d", rec.Code)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `"content":""`) {
-		t.Errorf("body = %q, want empty content", body)
-	}
-}
-
-func TestHandlePlanDraft_PUTThenGET(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	req := httptest.NewRequest(http.MethodPut, "/api/chats/c1/plan-draft",
-		strings.NewReader(`{"content":"# Plan\n- [ ] a\n"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PUT code = %d, body = %s", rec.Code, rec.Body.String())
-	}
-
-	req = httptest.NewRequest(http.MethodGet, "/api/chats/c1/plan-draft", nil)
-	rec = httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET code = %d", rec.Code)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "# Plan") {
-		t.Errorf("GET body missing content: %q", body)
-	}
-}
-
-func TestHandlePlanDraft_PUTRejectedWithoutChat(t *testing.T) {
-	// Adversarial: client POSTs a plan-draft for a chat id it invented.
-	// Must be rejected to prevent orphan files in the chats directory.
-	s, _ := newTestStore(t)
-	req := httptest.NewRequest(http.MethodPut, "/api/chats/c-orphan/plan-draft",
-		strings.NewReader(`{"content":"# hacker plan"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("code = %d, want 404", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "chat not found") {
-		t.Errorf("body = %q, want 'chat not found' sentinel", rec.Body.String())
-	}
-}
-
-func TestHandlePlanDraft_PUTRejectedWhenTombstoned(t *testing.T) {
-	// Tombstone variant of the orphan-rejection test: chat existed but
-	// was deleted while the editor was open. Kind=ErrKindTombstoned
-	// must also map to 404 so the client sees a uniform "chat not
-	// found" signal.
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(context.Background(), "c1")
-	req := httptest.NewRequest(http.MethodPut, "/api/chats/c1/plan-draft",
-		strings.NewReader(`{"content":"# stale"}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("code = %d, want 404", rec.Code)
-	}
-}
-
-func TestHandlePlanDraft_DELETE(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "x"); err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodDelete, "/api/chats/c1/plan-draft", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("DELETE code = %d", rec.Code)
-	}
-	got, _ := s.GetPlanDraft(context.Background(), "c1")
-	if got != "" {
-		t.Errorf("after DELETE, draft still present: %q", got)
-	}
-}
-
-func TestHandlePlanDraft_PUTRejections(t *testing.T) {
-	cases := []struct {
-		name             string
-		body             string
-		contentType      string
-		wantBodyContains string
-		wantCode         int
-		needsChat        bool
-	}{
-		{
-			name:        "invalid json",
-			needsChat:   false,
-			body:        `{not json`,
-			contentType: "application/json",
-			wantCode:    http.StatusBadRequest,
-		},
-		{
-			name:             "trailing json objects",
-			needsChat:        true,
-			body:             `{"content":"first"}{"content":"second"}`,
-			contentType:      "application/json",
-			wantCode:         http.StatusBadRequest,
-			wantBodyContains: "trailing data",
-		},
-		{
-			name:             "content over maxPlanDraftBytes",
-			needsChat:        true,
-			body:             `{"content":"` + strings.Repeat("x", maxPlanDraftBytes+1) + `"}`,
-			contentType:      "application/json",
-			wantCode:         http.StatusRequestEntityTooLarge,
-			wantBodyContains: "too large",
-		},
-		{
-			name:             "body over MaxBytesReader limit",
-			needsChat:        true,
-			body:             `{"content":"` + strings.Repeat("x", maxPlanDraftBytes+8192) + `"}`,
-			contentType:      "application/json",
-			wantCode:         http.StatusRequestEntityTooLarge,
-			wantBodyContains: "request body too large",
-		},
-		{
-			name:        "unexpected content-type",
-			needsChat:   true,
-			body:        `{"content":"x"}`,
-			contentType: "text/plain",
-			wantCode:    http.StatusBadRequest,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			s, _ := newTestStore(t)
-			if tc.needsChat {
-				_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-			}
-			req := httptest.NewRequest(http.MethodPut, "/api/chats/c1/plan-draft",
-				strings.NewReader(tc.body))
-			if tc.contentType != "" {
-				req.Header.Set("Content-Type", tc.contentType)
-			}
-			rec := httptest.NewRecorder()
-			NewRouter(s).handleOne(rec, req)
-			if rec.Code != tc.wantCode {
-				t.Errorf("code = %d, want %d", rec.Code, tc.wantCode)
-			}
-			if tc.wantBodyContains != "" && !strings.Contains(rec.Body.String(), tc.wantBodyContains) {
-				t.Errorf("body = %q, want substring %q", rec.Body.String(), tc.wantBodyContains)
-			}
-		})
-	}
-}
-
-func TestHandlePlanDraft_MethodNotAllowed(t *testing.T) {
-	s, _ := newTestStore(t)
-	req := httptest.NewRequest(http.MethodPatch, "/api/chats/c1/plan-draft", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("code = %d, want 405", rec.Code)
-	}
-}
 
 // --- Extended HTTP handler coverage ---
 
@@ -1502,53 +1220,12 @@ func TestUpdateMessage_NoOpOnMissingChat(t *testing.T) {
 	}
 }
 
-// --- Plan-draft getters/deleters reject invalid chat IDs ---
-
-func TestGetPlanDraft_InvalidChatIDRejected(t *testing.T) {
-	// Defence-in-depth: even if the handler's chatIDPattern check is
-	// ever bypassed, the store-level guard must reject a traversal id
-	// before it reaches os.ReadFile on an arbitrary filesystem path.
-	s, _ := newTestStore(t)
-	assertRejectsBadChatIDs(t, func(id api.ChatID) error {
-		_, err := s.GetPlanDraft(context.Background(), id)
-		return err
-	})
-}
-
-func TestDeletePlanDraft_InvalidChatIDRejected(t *testing.T) {
-	// Same guard on the delete side — reject before touching the FS.
-	s, _ := newTestStore(t)
-	assertRejectsBadChatIDs(t, func(id api.ChatID) error {
-		return s.DeletePlanDraft(context.Background(), id)
-	})
-}
-
-// --- handlePlanDraft adversarial paths ---
-
-func TestHandlePlanDraft_InvalidChatIDRejected(t *testing.T) {
-	// The sub-route handler re-validates the chat id defensively,
-	// even though handleOne's Cut-and-route step is upstream. A
-	// refactor that changes handleOne's routing must not silently
-	// let a traversal id through to SetPlanDraft / ReadFile.
-	// Note: the URL parser rejects literal ".." in the path segment
-	// before it reaches chatIDPattern, so we use a syntactically
-	// valid but pattern-failing id (contains '.').
-	s, _ := newTestStore(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/chats/bad.id/plan-draft", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400 (invalid chat id)", rec.Code)
-	}
-}
-
 // --- handleOne pre-validation of chat id ---
 
 func TestHandleOne_RejectsInvalidChatID(t *testing.T) {
 	// The chat id pre-validation ensures malformed ids (bot probes,
 	// typos) return 400 without emitting an slog.Error from load's
-	// pathFor rejection. Matches the defensive check in handlePlanDraft.
-	// We stick to ids that httptest.NewRequest accepts literally —
+	// pathFor rejection. We stick to ids that httptest.NewRequest accepts literally —
 	// characters like ' ' or '%00' fail at URL parsing before reaching
 	// the handler.
 	s, _ := newTestStore(t)
@@ -1594,150 +1271,9 @@ func TestDelete_RejectsBadChatID(t *testing.T) {
 	}
 }
 
-func TestGetPlanDraft_RejectsOversizeFile(t *testing.T) {
-	// 256 KiB cap is a resource-exhaustion control: a draft file
-	// planted out-of-band (e.g. via volume mount) must not OOM
-	// the process when handlePlanDraft GET reads it. Sparse-file
-	// via os.Truncate avoids writing 256 KiB of real bytes.
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	draftPath, err := s.planDraftPathFor("c1")
-	if err != nil {
-		t.Fatalf("planDraftPathFor: %v", err)
-	}
-	f, err := os.Create(draftPath)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	_ = f.Close()
-	// One byte over the cap so the branch strictly triggers.
-	if err := os.Truncate(draftPath, int64(maxPlanDraftBytes)+1); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-	_, err = s.GetPlanDraft(context.Background(), "c1")
-	if err == nil {
-		t.Fatal("GetPlanDraft(oversize) = nil error, want size-cap error")
-	}
-	if !strings.Contains(err.Error(), "too large") {
-		t.Errorf("err = %q, want mention of 'too large'", err.Error())
-	}
-}
-
-func TestHandlePlanDraft_GETReturnsGenericSentinelOnReadFailure(t *testing.T) {
-	// When GetPlanDraft returns an error (e.g. oversize file
-	// planted out-of-band), the handler must log the raw error via
-	// slog.Error and return a 500 with a generic "read failed"
-	// sentinel. Mirrors api.ServeJSONFile's path-leak-avoidance
-	// discipline; regressing this would leak filesystem paths to
-	// HTTP clients.
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	draftPath, err := s.planDraftPathFor("c1")
-	if err != nil {
-		t.Fatalf("planDraftPathFor: %v", err)
-	}
-	f, err := os.Create(draftPath)
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	_ = f.Close()
-	if err := os.Truncate(draftPath, int64(maxPlanDraftBytes)+1); err != nil {
-		t.Fatalf("truncate: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/plan-draft", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("code = %d, want 500", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "read failed") {
-		t.Errorf("body = %q, want 'read failed' sentinel", rec.Body.String())
-	}
-	// Path-leak defence: the full disk path of the draft file
-	// must not appear in the response body — the whole point of
-	// the sentinel is to hide it.
-	if strings.Contains(rec.Body.String(), draftPath) {
-		t.Errorf("response leaked draft path: %q", rec.Body.String())
-	}
-	// Size-cap message is also internal — must not be echoed.
-	if strings.Contains(rec.Body.String(), "plan draft") &&
-		strings.Contains(rec.Body.String(), "too large") {
-		t.Errorf("response leaked store-level error: %q", rec.Body.String())
-	}
-}
-
-func TestDeletePlanDraft_SurfacesNonENOENTRemoveError(t *testing.T) {
-	skipIfRoot(t)
-	// DeletePlanDraft must propagate non-ENOENT remove errors so
-	// handlePlanDraft's DELETE branch can log + return a 500
-	// "delete failed" sentinel. A silent-swallow refactor would
-	// turn orphan-draft IO failures into false-success responses.
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "# p"); err != nil {
-		t.Fatal(err)
-	}
-	// Readonly parent dir → os.Remove(draft) fails with EACCES.
-	if err := os.Chmod(s.dir, 0o500); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	// Restore before t.TempDir() cleanup runs.
-	t.Cleanup(func() { _ = os.Chmod(s.dir, 0o700) })
-
-	err := s.DeletePlanDraft(context.Background(), "c1")
-	if err == nil {
-		t.Fatal("DeletePlanDraft on readonly dir = nil error, want EACCES")
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		t.Errorf("err = %v, unexpectedly ENOENT (file should still exist)", err)
-	}
-}
-
-func TestHandlePlanDraft_DELETEReturnsGenericSentinelOnFailure(t *testing.T) {
-	skipIfRoot(t)
-	// The handler's DELETE branch must log raw error via slog.Error
-	// and return 500 {"error":"delete failed"} — no OS-level path
-	// or errno strings allowed in the response body. Mirrors the
-	// read-failed / save-failed path-leak-avoidance discipline
-	// established in api.ServeJSONFile and reiterated at GET
-	// (see TestHandlePlanDraft_GETReturnsGenericSentinelOnReadFailure).
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "# p"); err != nil {
-		t.Fatal(err)
-	}
-	draftPath, _ := s.planDraftPathFor("c1")
-	if err := os.Chmod(s.dir, 0o500); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(s.dir, 0o700) })
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/chats/c1/plan-draft", nil)
-	rec := httptest.NewRecorder()
-	NewRouter(s).handleOne(rec, req)
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("code = %d, want 500", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "delete failed") {
-		t.Errorf("body = %q, want 'delete failed' sentinel", rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), draftPath) {
-		t.Errorf("response leaked draft path: %q", rec.Body.String())
-	}
-	// OS-level errno strings (EACCES/permission denied) are the
-	// other half of the path-leak surface — must also be hidden.
-	if strings.Contains(rec.Body.String(), "permission denied") {
-		t.Errorf("response leaked OS errno string: %q", rec.Body.String())
-	}
-}
-
 func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 	skipIfRoot(t)
-	// Parallel to TestDeletePlanDraft_SurfacesNonENOENTRemoveError,
-	// but on the chat file itself. Delete must return the rmErr
+	// Delete must return the rmErr
 	// verbatim when it's neither ENOENT nor nil so upstream handlers
 	// can distinguish "chat gone" (no-op) from "filesystem broken"
 	// (surface to operator).
@@ -1810,29 +1346,6 @@ func TestArchive_InvokesOnArchiveCallback(t *testing.T) {
 	}
 	if got, _ := gotID.Load().(api.ChatID); got != "c1" {
 		t.Errorf("onArchive id = %q, want %q", got, "c1")
-	}
-}
-
-func TestArchive_AlsoMovesPlanDraft(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "# plan"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := s.Archive(context.Background(), "c1"); err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
-
-	// Draft should follow the chat into the archive directory so
-	// RestoreArchived can bring both back together.
-	activeDraft := filepath.Join(s.dir, "c1.plan.md")
-	if _, err := os.Stat(activeDraft); !os.IsNotExist(err) {
-		t.Errorf("plan-draft still in active dir after Archive: %v", err)
-	}
-	archivedDraft := filepath.Join(s.dir, "archive", "c1.plan.md")
-	if _, err := os.Stat(archivedDraft); err != nil {
-		t.Errorf("plan-draft not moved to archive: %v", err)
 	}
 }
 
@@ -1965,12 +1478,9 @@ func TestListArchived_SkipsOversizeFiles(t *testing.T) {
 	}
 }
 
-func TestRestoreArchived_RoundTripsChatAndDraft(t *testing.T) {
+func TestRestoreArchived_RoundTripsChat(t *testing.T) {
 	s, _ := newTestStore(t)
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "# plan"); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.Archive(context.Background(), "c1"); err != nil {
 		t.Fatal(err)
 	}
@@ -1985,13 +1495,6 @@ func TestRestoreArchived_RoundTripsChatAndDraft(t *testing.T) {
 	}
 	if got.Name != "A" {
 		t.Errorf("name = %q, want A", got.Name)
-	}
-	draft, err := s.GetPlanDraft(context.Background(), "c1")
-	if err != nil {
-		t.Fatalf("GetPlanDraft: %v", err)
-	}
-	if draft != "# plan" {
-		t.Errorf("draft = %q, want %q", draft, "# plan")
 	}
 }
 
@@ -2120,25 +1623,6 @@ func TestPurgeArchived_RemovesAgedOutEntries(t *testing.T) {
 	newPath := filepath.Join(s.dir, "archive", "new.json")
 	if _, err := os.Stat(newPath); err != nil {
 		t.Errorf("fresh entry removed by purge: %v", err)
-	}
-}
-
-func TestPurgeArchived_AlsoRemovesPlanDraft(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if err := s.SetPlanDraft(context.Background(), "c1", "# plan"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Archive(context.Background(), "c1"); err != nil {
-		t.Fatal(err)
-	}
-	archiveDir := filepath.Join(s.dir, "archive")
-	ageArchivedChat(t, s, "c1", 48*time.Hour)
-
-	s.PurgeArchived(context.Background(), 24*time.Hour)
-
-	if _, err := os.Stat(filepath.Join(archiveDir, "c1.plan.md")); !os.IsNotExist(err) {
-		t.Errorf("orphan plan-draft left after purge: stat err = %v", err)
 	}
 }
 
@@ -3066,8 +2550,6 @@ func TestStoreError_Error(t *testing.T) {
 		{&StoreError{Kind: ErrKindNotFound}, "not found no detail", "chat not found"},
 		{&StoreError{Kind: ErrKindTombstoned, Detail: "c1"}, "tombstoned with detail", "chat recently deleted: c1"},
 		{&StoreError{Kind: ErrKindTombstoned}, "tombstoned no detail", "chat recently deleted"},
-		{&StoreError{Kind: ErrKindTooLarge, Detail: "5 bytes"}, "too large with detail", "plan draft too large: 5 bytes"},
-		{&StoreError{Kind: ErrKindTooLarge}, "too large no detail", "plan draft too large"},
 		{&StoreError{Kind: ErrKindIDInUse, Detail: "c1"}, "id in use with detail", "chat id in use: c1"},
 		{&StoreError{Kind: ErrKindIDInUse}, "id in use no detail", "chat id in use"},
 		{&StoreError{Kind: ErrorKind(0)}, "unknown kind falls through", "chat store error"},
@@ -3094,57 +2576,6 @@ func TestReadCappedFile_ExactMaxBoundary(t *testing.T) {
 	}
 	if int64(len(data)) != maxChatFileBytes {
 		t.Errorf("readCappedFile len = %d, want %d", len(data), int64(maxChatFileBytes))
-	}
-}
-
-// TestGetPlanDraft_ExactMaxBoundary: a draft of exactly maxPlanDraftBytes
-// reads back in full with no error (the cap is `size > max`, not `>=`).
-func TestGetPlanDraft_ExactMaxBoundary(t *testing.T) {
-	s, _ := newTestStore(t)
-	id := api.ChatID("getmax")
-	draftPath := filepath.Join(s.Dir(), string(id)+planDraftSuffix)
-	truncToSize(t, draftPath, maxPlanDraftBytes)
-
-	got, err := s.GetPlanDraft(context.Background(), id)
-	if err != nil {
-		t.Fatalf("GetPlanDraft(exactly maxPlanDraftBytes) error = %v, want nil", err)
-	}
-	if len(got) != maxPlanDraftBytes {
-		t.Errorf("GetPlanDraft len = %d, want %d", len(got), maxPlanDraftBytes)
-	}
-}
-
-// TestSetPlanDraft_ExactMaxAccepted: content of exactly maxPlanDraftBytes
-// must be accepted (the cap is `len > max`, not `>=`).
-func TestSetPlanDraft_ExactMaxAccepted(t *testing.T) {
-	s, _ := newTestStore(t)
-	id := api.ChatID("setmax")
-	mustCreateChat(t, s, id)
-
-	content := strings.Repeat("a", maxPlanDraftBytes)
-	if err := s.SetPlanDraft(context.Background(), id, content); err != nil {
-		t.Fatalf("SetPlanDraft(len==maxPlanDraftBytes) error = %v, want nil (boundary must be accepted)", err)
-	}
-}
-
-// TestDeletePlanDraft_PropagatesNonEmptyDirRemoveError: a non-ENOENT
-// os.Remove error must propagate. A non-empty directory at the draft path
-// makes os.Remove fail with ENOTEMPTY — a root-safe injection (unlike the
-// EACCES variant in TestDeletePlanDraft_SurfacesNonENOENTRemoveError, which
-// skips under root).
-func TestDeletePlanDraft_PropagatesNonEmptyDirRemoveError(t *testing.T) {
-	s, _ := newTestStore(t)
-	id := api.ChatID("deldir")
-	draftPath := filepath.Join(s.Dir(), string(id)+planDraftSuffix)
-	if err := os.Mkdir(draftPath, 0o755); err != nil {
-		t.Fatalf("mkdir draft-as-dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(draftPath, "child"), []byte("x"), 0o600); err != nil {
-		t.Fatalf("write child: %v", err)
-	}
-
-	if err := s.DeletePlanDraft(context.Background(), id); err == nil {
-		t.Fatal("DeletePlanDraft returned nil; want non-nil for a non-empty-dir remove error")
 	}
 }
 
@@ -3186,78 +2617,6 @@ func TestHandleOne_LimitUpperBoundaryHonored(t *testing.T) {
 	}
 }
 
-// TestPutPlanDraft_LimitBodyEnvelopeBoundary: a body that fits the
-// maxPlanDraftBytes+4096 LimitBody cap (and whose content is under the
-// SetPlanDraft cap) must save and return 200 — pins the +4096 JSON-envelope
-// allowance.
-func TestPutPlanDraft_LimitBodyEnvelopeBoundary(t *testing.T) {
-	s, _ := newTestStore(t)
-	id := api.ChatID("putenv")
-	mustCreateChat(t, s, id)
-
-	content := strings.Repeat("a", 260000)
-	body := `{"content":"` + content + `"}` // 260014 bytes total
-	rt := NewRouter(s)
-	req := httptest.NewRequest(http.MethodPut, "/api/chats/"+string(id)+"/plan-draft", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	rt.handlePlanDraft(w, req, id)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 (a %d-byte body must fit the max+4096 cap)", w.Code, len(body))
-	}
-}
-
-// TestPutPlanDraft_LogsExactBodyLimit: an oversized body trips the
-// "body too large" warn whose logged "limit" attribute must be exactly
-// maxPlanDraftBytes+4096 (266240), pinning the +4096 in the log call.
-func TestPutPlanDraft_LogsExactBodyLimit(t *testing.T) {
-	const wantLimit = int64(266240) // 256*1024 + 4096
-
-	snap := capture.Default(t)
-	s, _ := newTestStore(t)
-	id := api.ChatID("putlog")
-
-	content := strings.Repeat("a", 270000)
-	body := `{"content":"` + content + `"}` // 270014 bytes, exceeds the cap
-	rt := NewRouter(s)
-	req := httptest.NewRequest(http.MethodPut, "/api/chats/"+string(id)+"/plan-draft", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	rt.handlePlanDraft(w, req, id)
-
-	if w.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d, want 413 (body must exceed the read cap)", w.Code)
-	}
-	if snap.CountExact("chat plan_draft: body too large") == 0 {
-		t.Fatal(`no "chat plan_draft: body too large" log record captured`)
-	}
-	var lim slog.Value
-	var hasLim bool
-	for _, r := range snap.Records() {
-		if r.Message != "chat plan_draft: body too large" {
-			continue
-		}
-		r.Attrs(func(a slog.Attr) bool {
-			if a.Key == "limit" {
-				lim, hasLim = a.Value, true
-				return false
-			}
-			return true
-		})
-		break
-	}
-	if !hasLim {
-		t.Fatal(`log record has no "limit" attribute`)
-	}
-	if lim.Kind() != slog.KindInt64 {
-		t.Fatalf("limit attr kind = %v, want Int64", lim.Kind())
-	}
-	if lim.Int64() != wantLimit {
-		t.Errorf("logged limit = %d, want %d", lim.Int64(), wantLimit)
-	}
-}
-
 // TestNewStore_NoChmodWarnOnWritableDir: on a writable dir chmod succeeds,
 // so NewStore must NOT log "chat store: chmod" (that log is the chmod-error
 // branch).
@@ -3268,27 +2627,6 @@ func TestNewStore_NoChmodWarnOnWritableDir(t *testing.T) {
 	}
 	if snap.CountExact("chat store: chmod") > 0 {
 		t.Error(`NewStore logged "chat store: chmod" on a writable dir; the chmod-error branch is inverted`)
-	}
-}
-
-// TestDelete_NoDraftWarnOnCleanRemoval: when the draft removal succeeds,
-// Delete must NOT log "chat delete: plan-draft removal failed" (that log is
-// the removal-error branch).
-func TestDelete_NoDraftWarnOnCleanRemoval(t *testing.T) {
-	s, _ := newTestStore(t)
-	id := api.ChatID("delclean")
-	mustCreateChat(t, s, id)
-	draftPath := filepath.Join(s.Dir(), string(id)+planDraftSuffix)
-	if err := os.WriteFile(draftPath, []byte("draft body"), 0o600); err != nil {
-		t.Fatalf("write draft: %v", err)
-	}
-
-	snap := capture.Default(t)
-	if err := s.Delete(context.Background(), id); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
-	if snap.CountExact("chat delete: plan-draft removal failed") > 0 {
-		t.Error(`Delete logged "chat delete: plan-draft removal failed" on a clean draft removal; the error branch is inverted`)
 	}
 }
 

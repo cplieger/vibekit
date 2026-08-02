@@ -313,9 +313,6 @@ class Elements {
   get editorConflictOverlay(): HTMLDivElement {
     return byId("editor-conflict-overlay");
   }
-  get editorSendPlanBtn(): HTMLButtonElement {
-    return byId("editor-send-plan-btn");
-  }
   get editorPendingAcceptBtn(): HTMLButtonElement {
     return byId("editor-pending-accept-btn");
   }

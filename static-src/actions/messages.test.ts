@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for actions/messages.ts: copyClipboard, explainError, undoEdit, runPlan.
+// Tests for actions/messages.ts: copyClipboard, explainError, undoEdit.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -20,19 +20,13 @@ vi.mock("../transport.js", async (importOriginal) => {
   return { ...orig, send: vi.fn() };
 });
 
-vi.mock("../prompt-queue.js", () => ({
-  submitPrompt: vi.fn(),
-}));
-
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { getActionLog as recentLog } from "./index.js";
 import * as toast from "../toast.js";
 import { send as transportSend } from "../transport.js";
-import { submitPrompt } from "../prompt-queue.js";
 
 const mockFetch = vi.fn();
 const mockSend = vi.mocked(transportSend);
-const mockSubmitPrompt = vi.mocked(submitPrompt);
 
 beforeEach(() => {
   resetActionFramework();
@@ -96,29 +90,5 @@ describe("messages.undo_edit", () => {
       expect.anything(),
     );
     expect(toast.success).toHaveBeenCalledWith(expect.stringContaining("helper.ts"));
-  });
-});
-
-describe("plan.run", () => {
-  it("sends plan content via submitPrompt (queue-aware)", async () => {
-    mockSubmitPrompt.mockResolvedValue("sent");
-    const { runPlan } = await import("./messages.js");
-    await runPlan.dispatch({ chatID: "c1", content: "Step 1\nStep 2" });
-    expect(mockSubmitPrompt).toHaveBeenCalledWith("c1", expect.stringContaining("Step 1"));
-  });
-
-  it("treats a queued plan handoff as success (drains later)", async () => {
-    mockSubmitPrompt.mockResolvedValue("queued");
-    const { runPlan } = await import("./messages.js");
-    const r = await runPlan.dispatch({ chatID: "c1", content: "plan" });
-    expect(r).not.toBeNull();
-  });
-
-  it("records error when submitPrompt returns 'failed'", async () => {
-    mockSubmitPrompt.mockResolvedValue("failed");
-    const { runPlan } = await import("./messages.js");
-    const r = await runPlan.dispatch({ chatID: "c1", content: "plan" });
-    expect(r).toBeNull();
-    expect(recentLog()[0]?.error?.code).toBe("send_failed");
   });
 });

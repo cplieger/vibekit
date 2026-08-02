@@ -10,7 +10,7 @@ import { getActiveId } from "./store.js";
 import { fetchAgentLines as fetchAgentLinesAction } from "./actions/editor.js";
 import { scrollToEditorLine, flashEditorLine } from "./editor-scroll.js";
 import type { FileState } from "./editor-types.js";
-import { getActiveFilePath, isPlanDraftPath, fileStates } from "./editor-types.js";
+import { getActiveFilePath, fileStates } from "./editor-types.js";
 
 // --- Pending line jump state (shared with openers) ---
 
@@ -135,9 +135,8 @@ export function renderHighlight(content: string, path: string): void {
 
 export function renderEditModeUI(state: FileState): void {
   $.editorEditBtn.disabled = false;
-  const isPlanDraft = isPlanDraftPath(state.path);
   const isModified = state.current.value !== state.original.value;
-  $.editorDiffBtn.classList.toggle("hidden", isPlanDraft || !isModified);
+  $.editorDiffBtn.classList.toggle("hidden", !isModified);
   $.editorDiffBtn.setAttribute("data-tooltip", "View diff vs saved");
   $.editorDiffBtn.setAttribute("aria-label", "View diff vs saved");
   const m = state.mode.value;

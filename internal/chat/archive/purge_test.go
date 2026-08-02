@@ -34,27 +34,6 @@ func TestPurge_RetentionCutoff(t *testing.T) {
 	}
 }
 
-// TestPurge_RemovesPlanDraft verifies the companion plan-draft file is
-// removed alongside a purged chat.
-func TestPurge_RemovesPlanDraft(t *testing.T) {
-	svc, _, archiveDir := newArchiveTestService(t)
-
-	chatPath := writeArchivedChat(t, archiveDir, "withdraft", 48*time.Hour)
-	draftPath := filepath.Join(archiveDir, "withdraft"+planDraftSuffix)
-	if err := os.WriteFile(draftPath, []byte("# plan"), 0o600); err != nil {
-		t.Fatalf("write plan draft: %v", err)
-	}
-
-	svc.Purge(context.Background(), 24*time.Hour)
-
-	if exists(t, chatPath) {
-		t.Errorf("purged chat file survived: %s", chatPath)
-	}
-	if exists(t, draftPath) {
-		t.Errorf("plan draft survived purge: %s", draftPath)
-	}
-}
-
 // TestPurge_SkipsNonChatFiles verifies Purge only touches files that are
 // valid chat .json files: non-.json files, files with invalid chat ids,
 // and subdirectories are left untouched even when old.

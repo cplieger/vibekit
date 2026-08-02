@@ -120,7 +120,6 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 		slog.Warn("chat purge_archived: remove", "chat_id", entry.name, "error", err)
 		return purgeErr
 	}
-	removePurgedPlanDraft(entry)
 	m.Unlock()
 	if s.onPurge != nil {
 		s.onPurge(api.ChatID(entry.name))
@@ -139,16 +138,6 @@ func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) time.Tim
 		return mtime
 	}
 	return time.UnixMilli(c.ArchivedAt)
-}
-
-// removePurgedPlanDraft removes the companion plan-draft of a purged
-// chat. A missing draft is the normal case and not an error.
-func removePurgedPlanDraft(entry purgeEntry) {
-	draftPath := strings.TrimSuffix(entry.path, chatFileSuffix) + planDraftSuffix
-	if err := os.Remove(draftPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("chat purge_archived: remove plan-draft",
-			"chat_id", entry.name, "error", err)
-	}
 }
 
 // logPurgeResult emits the end-of-pass summary at Warn when any entry

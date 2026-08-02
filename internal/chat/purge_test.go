@@ -69,8 +69,8 @@ func TestOldestArchiveMTime(t *testing.T) {
 				if err := os.MkdirAll(subDir, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				md := filepath.Join(archiveDir, "chat.plan.md")
-				if err := os.WriteFile(md, []byte("# plan"), 0o600); err != nil {
+				md := filepath.Join(archiveDir, "chat.notes.md")
+				if err := os.WriteFile(md, []byte("# notes"), 0o600); err != nil {
 					t.Fatal(err)
 				}
 				mdTime := time.Now().Add(-48 * time.Hour)

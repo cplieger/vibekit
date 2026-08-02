@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -12,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires GET /api/chats (list), GET /api/chats/{id}
@@ -52,8 +50,6 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 // the addressed sub-resource.
 func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid api.ChatID, sub string) {
 	switch sub {
-	case "plan-draft":
-		rt.handlePlanDraft(w, r, cid)
 	case "export":
 		rt.handleExport(w, r, cid)
 	case "archive":
@@ -264,90 +260,5 @@ func (rt *Router) handleArchive(w http.ResponseWriter, r *http.Request, chatID a
 			api.ErrorJSON("archive failed"))
 		return
 	}
-	api.Ok(w)
-}
-
-// handlePlanDraft dispatches GET/PUT/DELETE for the plan-draft sub-resource.
-func (rt *Router) handlePlanDraft(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		rt.getPlanDraft(w, r, chatID)
-	case http.MethodPut:
-		rt.putPlanDraft(w, r, chatID)
-	case http.MethodDelete:
-		rt.deletePlanDraftHTTP(w, r, chatID)
-	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodDelete)
-	}
-}
-
-// getPlanDraft serves GET for the plan-draft sub-resource.
-func (rt *Router) getPlanDraft(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	content, err := rt.store.GetPlanDraft(r.Context(), chatID)
-	if err != nil {
-		slog.Error("chat plan_draft: read failed", "chat_id", chatID, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("read failed"))
-		return
-	}
-	api.WriteJSON(w, map[string]string{"content": content})
-}
-
-// putPlanDraft serves PUT for the plan-draft sub-resource.
-func (rt *Router) putPlanDraft(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, api.MIMETypeJSON) {
-		slog.Warn("chat plan_draft: unexpected content-type",
-			"chat_id", chatID, "content_type", ct)
-		api.BadRequest(w, "expected "+api.MIMETypeJSON)
-		return
-	}
-	var body struct {
-		Content string `json:"content"`
-	}
-	// DecodeJSONInto owns the cap (+ json envelope overhead) and the
-	// trailing-data rejection; the 413-vs-400 mapping stays here.
-	if err := webhttp.DecodeJSONInto(w, r, &body, maxPlanDraftBytes+4096); err != nil {
-		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			slog.Warn("chat plan_draft: body too large",
-				"chat_id", chatID, "limit", maxPlanDraftBytes+4096, "error", maxErr)
-			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				api.ErrorJSON("request body too large"))
-			return
-		}
-		if errors.Is(err, webhttp.ErrTrailingData) {
-			api.BadRequest(w, "unexpected trailing data")
-			return
-		}
-		api.BadRequest(w, "invalid json")
-		return
-	}
-	err := rt.store.SetPlanDraft(r.Context(), chatID, body.Content)
-	if err != nil {
-		if _, ok := errors.AsType[*StoreError](err); ok {
-			writeChatErr(w, err)
-		} else {
-			slog.Error("chat plan_draft: save failed", "chat_id", chatID, "error", err)
-			api.WriteJSONStatus(w, http.StatusInternalServerError,
-				api.ErrorJSON("save failed"))
-		}
-		return
-	}
-	slog.Info("chat plan_draft: saved", "chat_id", chatID, "size_bytes", len(body.Content))
-	api.Ok(w)
-}
-
-// deletePlanDraftHTTP serves DELETE for the plan-draft sub-resource.
-func (rt *Router) deletePlanDraftHTTP(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if err := rt.store.DeletePlanDraft(r.Context(), chatID); err != nil {
-		slog.Error("chat plan_draft: delete failed", "chat_id", chatID, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("delete failed"))
-		return
-	}
-	slog.Debug("chat plan_draft: delete http", "chat_id", chatID)
 	api.Ok(w)
 }

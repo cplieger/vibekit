@@ -18,7 +18,7 @@ import { $ } from "./dom.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { openEditorView } from "./tabs.js";
 import { parseConflicts } from "./conflict.js";
-import { saveFile as saveFileAction, sendPlan as sendPlanAction } from "./actions/editor.js";
+import { saveFile as saveFileAction } from "./actions/editor.js";
 import { bindLoadingState, isPending } from "./actions/index.js";
 import { onBus, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
 import {
@@ -44,7 +44,6 @@ import {
   isPendingPath,
   parsePendingPath,
   makePendingPath,
-  planDraftChatID,
   unsavedDiffSource,
   gitDiffSource,
 } from "./editor-types.js";
@@ -56,7 +55,6 @@ import type { FileState } from "./editor-types.js";
 export {
   isPendingPath,
   parsePendingPath,
-  isPlanDraftPath,
   routeForPath,
   getDirtyEditorPaths,
 } from "./editor-types.js";
@@ -67,12 +65,6 @@ export function initEditor(): void {
   $.editorCancelBtn.addEventListener("click", confirmStopEditing);
   $.editorSaveBtn.addEventListener("click", saveFile);
   $.editorDiffBtn.addEventListener("click", toggleDiffMode);
-  $.editorSendPlanBtn.addEventListener("click", () => {
-    void sendActivePlan();
-  });
-
-  // Registry-driven loading state for the send-plan button.
-  bindLoadingState("editor.send_plan", $.editorSendPlanBtn);
   $.editorPendingAcceptBtn.addEventListener("click", () => {
     void resolveActivePending("accept");
   });
@@ -307,33 +299,4 @@ function saveFile(): void {
       },
     },
   );
-}
-
-// --- Plan handoff ---
-
-async function sendActivePlan(): Promise<void> {
-  const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) {
-    return;
-  }
-  const chatID = planDraftChatID(state.path);
-  if (chatID === "") {
-    return;
-  }
-  const content = state.current.value; // capture before await
-  const result = await sendPlanAction.dispatch({ chatID, content });
-  if (result === null) {
-    // The failure already surfaced exactly once — the draft/size banner
-    // (writePlanDraft) or the shared "Failed to send plan" toast (plan.run).
-    // Deliberately no inline editor error on top: one surface per failure.
-    return;
-  }
-  state.original.value = content; // buffer now matches the saved draft
-  if (result === "sent") {
-    // The draft was deleted on send; close its editor tab so it doesn't
-    // linger pointing at a now-gone draft (reopening would show an empty file).
-    closeEditorFile(state.path);
-  }
-  // "queued": keep the tab + draft — the prompt drains from the queue and the
-  // draft stays the durable copy until then.
 }

@@ -18,8 +18,6 @@ const (
 	ErrKindNotFound ErrorKind = iota + 1
 	// ErrKindTombstoned means the target chat was recently deleted.
 	ErrKindTombstoned
-	// ErrKindTooLarge means the plan draft exceeded maxPlanDraftBytes.
-	ErrKindTooLarge
 	// ErrKindIDInUse means the target chat ID is already used by an
 	// active (non-archived) chat.
 	ErrKindIDInUse
@@ -45,11 +43,6 @@ func (e *StoreError) Error() string {
 			return "chat recently deleted: " + e.Detail
 		}
 		return "chat recently deleted"
-	case ErrKindTooLarge:
-		if e.Detail != "" {
-			return "plan draft too large: " + e.Detail
-		}
-		return "plan draft too large"
 	case ErrKindIDInUse:
 		if e.Detail != "" {
 			return "chat id in use: " + e.Detail
@@ -88,9 +81,6 @@ func writeChatErr(w http.ResponseWriter, err error) {
 		switch ce.Kind {
 		case ErrKindNotFound, ErrKindTombstoned:
 			api.NotFound(w, errMsgChatNotFound)
-		case ErrKindTooLarge:
-			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				api.ErrorJSON(ce.Error()))
 		case ErrKindIDInUse:
 			api.Conflict(w, ce.Error())
 		default:

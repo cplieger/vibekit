@@ -22,7 +22,6 @@ import {
   pendingDiffSource,
   gitDiffSource,
   registerCloseFile,
-  makePlanDraftPath,
   makePendingPath,
 } from "./editor-types.js";
 import {
@@ -80,12 +79,6 @@ export function openFileGitDiff(path: string, ref = "HEAD", repo = ""): void {
     repo,
     ref,
   });
-}
-
-export function openPlanDraftPath(chatID: string): void {
-  const path = makePlanDraftPath(chatID);
-  fileStates.delete(path);
-  open(path, { mode: { kind: "edit", editing: false } });
 }
 
 export function openPendingDiff(chatID: string, toolCallID: string): void {

@@ -1,14 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, it, expect, vi } from "vitest";
-
-// Plain-function mocks (mockReset/clearMocks strip vi.fn implementations).
-vi.mock("./store.js", () => ({ getActiveId: () => "" }));
-vi.mock("./plan-actions.js", () => ({
-  planToMarkdown: () => "",
-  writePlanDraft: () => Promise.resolve(),
-  runPlan: () => Promise.resolve(),
-}));
-vi.mock("./editor-openers.js", () => ({ openPlanDraftPath: () => undefined }));
+import { describe, it, expect } from "vitest";
 
 import { buildPlanRow } from "./messages-plan.js";
 import type { PlanEntry } from "./types.js";
