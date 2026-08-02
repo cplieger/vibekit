@@ -36,8 +36,10 @@ package hub
 // transcript to adopt.
 
 import (
+	"cmp"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -131,16 +133,51 @@ func (h *Hub) SettleReplayProjection(chatID api.ChatID, buffered int, force bool
 		"watermark", lp.proj.Watermark,
 		"forced", force)
 
-	// STAGED, NOT SWAPPED while onProjection is nil. The projection is not yet
-	// the chat's transcript: vibekit still persists its own, and adopting both
-	// would double-represent the last turn (the replay carries it AND the
-	// .partial recovers it). The swap arrives by filling this sink in the same
-	// change that deletes that durability stack; until then the routing and the
-	// barrier are exercised for real and a decoding regression is visible in the
-	// log before it can reach a transcript.
 	if h.onProjection != nil {
 		h.onProjection(chatID, msgs, lp.proj.Watermark)
 	}
+}
+
+// swapProjectedTranscript makes a settled replay the chat's transcript, merged
+// with what a replay cannot speak for (see mergeProjection).
+//
+// It runs on the Forward goroutine, so it must not hold projMu — the store
+// mutation below can block, and a replay frame arriving meanwhile needs that
+// lock. SettleReplayProjection releases it before calling this.
+//
+// No broadcast. A load happens on bridge spawn, which a client triggers by
+// prompting or opening the chat, and the client fetches messages on
+// activation — so the swapped transcript is what the next fetch returns.
+// Connected clients that are looking at a stale copy of a chat they did not
+// touch will not see the correction until they refetch, which is the same
+// window the gap/refetch path already covers.
+func (h *Hub) swapProjectedTranscript(chatID api.ChatID, msgs []api.Message, watermark string) {
+	var before, after int
+	err := h.chatStore.Mutate(h.lifecycle.shutdownCtx, chatID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		before = len(c.Messages)
+		merged := mergeProjection(c.Messages, msgs)
+		after = len(merged)
+		sameWatermark := watermark == "" || watermark == c.CompactionWatermark
+		if after == before && sameWatermark {
+			return false
+		}
+		c.Messages = merged
+		if watermark != "" {
+			c.CompactionWatermark = watermark
+		}
+		return true
+	})
+	if err != nil {
+		slog.Error("replay projection: swap failed", "chat_id", chatID, "error", err)
+		return
+	}
+	// Logged at info with both counts because a SHRINK is the signal worth
+	// seeing: it means the replay covered turns the record no longer holds.
+	slog.Info("replay projection: transcript swapped",
+		"chat_id", chatID, "was", before, "now", after, "projected", len(msgs))
 }
 
 // projectionState is the Hub state behind the calls above. Embedded rather than
@@ -155,4 +192,69 @@ type projectionState struct {
 	// mutation and a replay frame deadlock against each other.
 	onProjection func(chatID api.ChatID, msgs []api.Message, watermark string)
 	projMu       sync.Mutex
+}
+
+// mergeProjection decides the transcript to persist after a replay: the
+// projection's messages, plus the ones vibekit holds that a replay cannot
+// speak for.
+//
+// A blind replace is wrong in two directions, and each needs a different rule
+// because message identity differs by role:
+//
+//   - USER and ASSISTANT messages inside the projection's window are the
+//     wire's. Note that only the user half has matching ids — KAS echoes back
+//     the messageId vibekit sent on session/prompt, while an assistant turn
+//     carries KAS's own `<uuid>-say`. So a merge keyed on assistant ids would
+//     keep every existing turn AND add the projected one, duplicating the whole
+//     transcript. The projection supersedes them wholesale instead.
+//   - EVENT messages are not on the replay wire at all. cancelled,
+//     model_switched, interrupted and compaction_failed are vibekit's own
+//     record of what happened to a turn, so a replace would silently drop every
+//     badge on every resume. They are preserved wherever they sit.
+//
+// Anything newer than the projection's last message is preserved regardless of
+// role. That is the un-replayed tail: KAS's log is NOT fsynced (no fsync calls
+// in the 2.16.0 bundle, and appendMessagesQuietly swallows a failed persist), so
+// a turn vibekit durably holds can legitimately be absent from a replay. Losing
+// it to a resume would make the projection strictly worse than the stack it
+// replaces.
+//
+// Ordering is by timestamp, which the projection can only be trusted to produce
+// because it takes `_meta.kiro.timestamp` from the wire.
+func mergeProjection(existing, projected []api.Message) []api.Message {
+	if len(projected) == 0 {
+		// Nothing was projected — an empty session, or a decode that produced
+		// nothing. Either way the existing record is the better answer.
+		return existing
+	}
+
+	newest := int64(0)
+	projectedIDs := make(map[string]struct{}, len(projected))
+	for i := range projected {
+		projectedIDs[projected[i].ID] = struct{}{}
+		if projected[i].Ts > newest {
+			newest = projected[i].Ts
+		}
+	}
+
+	out := make([]api.Message, 0, len(projected)+len(existing))
+	out = append(out, projected...)
+	// Indexed rather than ranged by value: api.Message is 216 bytes, which
+	// gocritic's rangeValCopy flags.
+	for i := range existing {
+		if _, dup := projectedIDs[existing[i].ID]; dup {
+			continue
+		}
+		if existing[i].Role == api.RoleEvent || existing[i].Ts > newest {
+			out = append(out, existing[i])
+		}
+	}
+
+	// Stable sort so same-timestamp messages keep the order they were added,
+	// which puts a projected message ahead of a preserved one at the same
+	// instant — the projected copy is the more complete of the two.
+	slices.SortStableFunc(out, func(a, b api.Message) int {
+		return cmp.Compare(a.Ts, b.Ts)
+	})
+	return out
 }

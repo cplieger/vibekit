@@ -209,6 +209,10 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	h.registerCommandHandlers()
 	h.initDispatch()
 	h.mcpRegistry = newMCPRegistry(h)
+	// A settled session/load replay becomes the chat's transcript. Assigned
+	// here (not in the struct literal) because it is a method value on the
+	// fully-built Hub; see load_projection.go.
+	h.onProjection = h.swapProjectedTranscript
 	h.coord = newBridgeCoordinator(h)
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()

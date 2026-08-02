@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -245,4 +246,100 @@ func (h *Hub) hasProjection(chatID api.ChatID) bool {
 	defer h.projMu.Unlock()
 	_, ok := h.projections[chatID]
 	return ok
+}
+
+// TestMergeProjection covers the rule that lets the replay become the
+// transcript without losing what a replay cannot speak for.
+func TestMergeProjection(t *testing.T) {
+	msg := func(id string, role api.Role, ts int64, content string) api.Message {
+		return api.Message{ID: id, Role: role, Ts: ts, Content: content}
+	}
+	event := func(id string, ts int64, kind api.EventKind) api.Message {
+		return api.Message{ID: id, Role: api.RoleEvent, EventKind: kind, Ts: ts}
+	}
+	ids := func(ms []api.Message) []string {
+		out := make([]string, 0, len(ms))
+		for _, m := range ms {
+			out = append(out, m.ID)
+		}
+		return out
+	}
+
+	t.Run("an empty projection never clobbers the record", func(t *testing.T) {
+		existing := []api.Message{msg("u1", api.RoleUser, 100, "hi")}
+		got := mergeProjection(existing, nil)
+		if len(got) != 1 || got[0].ID != "u1" {
+			t.Errorf("got %v, want the existing record preserved", ids(got))
+		}
+	})
+
+	t.Run("assistant turns are superseded, not duplicated", func(t *testing.T) {
+		// The tell: vibekit's assistant id and the wire's never match, so a
+		// merge keyed on ids would keep both copies of every turn.
+		existing := []api.Message{
+			msg("u1", api.RoleUser, 100, "hi"),
+			msg("m-vibekit-generated", api.RoleAssistant, 200, "hello"),
+		}
+		projected := []api.Message{
+			msg("u1", api.RoleUser, 100, "hi"),
+			msg("abc-say", api.RoleAssistant, 200, "hello"),
+		}
+		got := mergeProjection(existing, projected)
+		if len(got) != 2 {
+			t.Errorf("got %d messages %v, want 2: the assistant turn was duplicated", len(got), ids(got))
+		}
+		for _, m := range got {
+			if m.ID == "m-vibekit-generated" {
+				t.Error("the superseded assistant message survived")
+			}
+		}
+	})
+
+	t.Run("event messages survive, since the wire has none", func(t *testing.T) {
+		existing := []api.Message{
+			msg("u1", api.RoleUser, 100, "hi"),
+			event("e1", 150, api.EventModelSwitched),
+			msg("m-old", api.RoleAssistant, 200, "hello"),
+			event("e2", 250, api.EventCancelled),
+		}
+		projected := []api.Message{
+			msg("u1", api.RoleUser, 100, "hi"),
+			msg("abc-say", api.RoleAssistant, 200, "hello"),
+		}
+		got := mergeProjection(existing, projected)
+		want := []string{"u1", "e1", "abc-say", "e2"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v (events preserved in timestamp order)", ids(got), want)
+		}
+	})
+
+	t.Run("the un-replayed tail survives", func(t *testing.T) {
+		// KAS's log is not fsynced, so a turn vibekit durably holds can be
+		// missing from the replay. Dropping it would make the projection worse
+		// than the durability stack it replaces.
+		existing := []api.Message{
+			msg("u1", api.RoleUser, 100, "hi"),
+			msg("m-old", api.RoleAssistant, 200, "hello"),
+			msg("u2", api.RoleUser, 300, "and this"),
+			msg("m-tail", api.RoleAssistant, 400, "recovered mid-turn"),
+		}
+		projected := []api.Message{
+			msg("u1", api.RoleUser, 100, "hi"),
+			msg("abc-say", api.RoleAssistant, 200, "hello"),
+		}
+		got := mergeProjection(existing, projected)
+		want := []string{"u1", "abc-say", "u2", "m-tail"}
+		if !slices.Equal(ids(got), want) {
+			t.Errorf("got %v, want %v (everything after the projection's window kept)", ids(got), want)
+		}
+	})
+
+	t.Run("a projected message wins a timestamp tie", func(t *testing.T) {
+		existing := []api.Message{event("e1", 200, api.EventCancelled)}
+		projected := []api.Message{msg("abc-say", api.RoleAssistant, 200, "hello")}
+		got := mergeProjection(existing, projected)
+		if len(got) != 2 || got[0].ID != "abc-say" {
+			t.Errorf("got %v, want the projected message first at an equal timestamp", ids(got))
+		}
+	})
 }
