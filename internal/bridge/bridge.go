@@ -243,10 +243,24 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// instead of silently skipped (without the capability KAS advances
 	// past them). Handled by translate/user_input.go; answered via the
 	// user_input_response command.
+	// _meta.kiro.backgroundProcesses opts into KAS's background-process tools
+	// (control_bash_process, list_processes, get_process_output). KAS serves
+	// them from its own ACPBackgroundProcessManager over standard
+	// terminal/create + terminal/output, which vibekit already implements
+	// (hub/agent_terminal.go) — so the capability is the whole integration:
+	// without it the agent has no way to run a dev server or a watcher
+	// without blocking its turn on a foreground command.
+	// _meta.kiro.knowledge gates getKnowledgeListing into the system prompt,
+	// i.e. it tells the agent WHICH knowledge bases are indexed (four lines
+	// per base, undefined when none). vibekit ships the knowledge UI and
+	// seeds chat.enableKnowledge, so the index exists and /knowledge works —
+	// the agent just could not see what was in it.
 	kiroMeta := map[string]any{
 		"openExternalUrl":      true,
 		"infrastructureSafety": true,
 		"userInput":            true,
+		"backgroundProcesses":  true,
+		"knowledge":            true,
 		"settings":             map[string]any{"codeIntelligence": map[string]any{"enabled": true}},
 	}
 	if b.enableHooks {

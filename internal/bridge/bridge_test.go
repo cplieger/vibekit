@@ -1671,6 +1671,19 @@ done
 		if !strings.Contains(got, `"settings":{"codeIntelligence":{"enabled":true}}`) {
 			t.Errorf("initialize missing the code-intelligence settings opt-in; got: %s", got)
 		}
+		// Both flags are read by KAS with a strict `=== true` against the TOP
+		// level of _meta.kiro, and both fail SILENTLY when absent: without
+		// backgroundProcesses the agent simply has no control_bash_process /
+		// list_processes / get_process_output tool (probed: it answers "no such
+		// tool" instead of erroring), and without knowledge the system prompt
+		// carries no knowledge-base listing. Nesting either one or dropping it
+		// costs the capability with nothing in any log to say so.
+		if !strings.Contains(got, `"backgroundProcesses":true`) {
+			t.Errorf("initialize missing the background-process opt-in; got: %s", got)
+		}
+		if !strings.Contains(got, `"knowledge":true`) {
+			t.Errorf("initialize missing the knowledge opt-in; got: %s", got)
+		}
 	})
 
 	t.Run("disabled omits the hooks opt-in", func(t *testing.T) {
