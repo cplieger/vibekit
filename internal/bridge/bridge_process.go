@@ -150,9 +150,26 @@ func (b *Bridge) startProcess(engine, model, effort string) error {
 	// (Go 1.20+) escalate to SIGKILL only after a 5s SIGTERM grace period,
 	// giving kiro-cli a chance to flush its own state. Stop() (called for
 	// normal teardown) still uses Process.Kill directly so chat-switch and
-	// cull-idle remain instantaneous; this path only fires if Stop races
-	// or panics during hub shutdown.
-	b.cmd.Cancel = func() error { return b.cmd.Process.Signal(syscall.SIGTERM) }
+	// tab-close teardown remain instantaneous; this path only fires if Stop
+	// races or panics during hub shutdown.
+	//
+	// Closing stdin FIRST is what makes the grace period mean anything, and it
+	// is the whole reason Stop() reclaims the tree. vibekit spawns
+	// `kiro-cli acp` on pipes and the head passes its stdio down, so the tree
+	// (kiro-cli -> kiro-cli-chat -> node, ~300 MB) shares one session with no
+	// setsid() and closing our write end delivers EOF to the entire chain. A
+	// bare head SIGTERM does not: WaitDelay's SIGKILL escalation targets the
+	// head only, so the children keep running with nobody holding their stdin.
+	// Measured on kiro-cli 2.16.0: signal-without-close leaked 2/2 trials at
+	// ~250 MB each, while close-then-signal leaked 0/2. Signal errors are
+	// returned; a Close error is not, because a second Close is the expected
+	// case when Stop() already ran.
+	b.cmd.Cancel = func() error {
+		if b.stdin != nil {
+			_ = b.stdin.Close()
+		}
+		return b.cmd.Process.Signal(syscall.SIGTERM)
+	}
 	b.cmd.WaitDelay = 5 * time.Second
 	stdin, err := b.cmd.StdinPipe()
 	if err != nil {

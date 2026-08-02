@@ -5,7 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -472,4 +478,101 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 			t.Errorf("valid UTF-8 input %x reassembled from broadcasts as %x (chunkSize=%d) — a rune was split across the read boundary", data, got, chunkSize)
 		}
 	})
+}
+
+// --- R2: process-group teardown for agent terminals ---
+
+// TestOwnsProcessGroup pins the guard that keeps the group-kill form off
+// vibekit's own process group.
+//
+// Without Setpgid a child inherits vibekit's group, so `Kill(-pgid, sig)` would
+// signal vibekit itself. This comparison is the only thing preventing that, and
+// it cannot be pinned by actually signalling a non-leader (the signal would land
+// on the test binary), which is why the decision is a pure function.
+func TestOwnsProcessGroup(t *testing.T) {
+	cases := []struct {
+		name string
+		pid  int
+		pgid int
+		want bool
+	}{
+		{name: "own leader: Setpgid took, group is the command's tree", pid: 4242, pgid: 4242, want: true},
+		{name: "inherited group: Setpgid absent, group is vibekit's", pid: 4242, pgid: 17, want: false},
+		{name: "inherited group where vibekit is the leader", pid: 4242, pgid: 1, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ownsProcessGroup(tc.pid, tc.pgid); got != tc.want {
+				t.Errorf("ownsProcessGroup(%d, %d) = %v, want %v", tc.pid, tc.pgid, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestKillGroup_ReapsTheWholeTree is the R2 regression: a head-only kill strands
+// an agent terminal's children.
+//
+// Agent terminals are the agent's own commands, so they are routinely trees, and
+// unlike the bridge there is no stdin-EOF channel to reclaim them. The bait is
+// the shape any build tool produces — a shell with children that outlive it —
+// and the assertion is on the GRANDCHILD, because that is what survived the
+// measured head-only kill (2 spawned, 2 survived).
+func TestKillGroup_ReapsTheWholeTree(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child.pid")
+	// The shell writes its child's pid, then blocks. Killing the group must take
+	// the child too; killing the head alone leaves it running.
+	script := "sleep 300 & echo $! > " + pidFile + "; wait"
+	cmd := exec.Command("sh", "-c", script) // #nosec G204 -- fixed test script
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start bait: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = killGroup(cmd.Process, syscall.SIGKILL)
+		_, _ = cmd.Process.Wait()
+	})
+
+	childPID := waitForPIDFile(t, pidFile)
+	if !processAlive(childPID) {
+		t.Fatalf("bait child %d not alive before the kill; the test proves nothing", childPID)
+	}
+
+	if err := killGroup(cmd.Process, syscall.SIGKILL); err != nil {
+		t.Fatalf("killGroup: %v", err)
+	}
+	_, _ = cmd.Process.Wait() // reap the head so its exit doesn't race the poll
+
+	deadline := time.Now().Add(3 * time.Second)
+	for processAlive(childPID) {
+		if time.Now().After(deadline) {
+			t.Fatalf("grandchild %d survived killGroup; the group form is not reaching the tree", childPID)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// waitForPIDFile polls for the bait script's pid file and returns the pid.
+func waitForPIDFile(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		b, err := os.ReadFile(path) // #nosec G304 -- t.TempDir path
+		if err == nil {
+			if pid, cErr := strconv.Atoi(strings.TrimSpace(string(b))); cErr == nil && pid > 0 {
+				return pid
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bait never wrote its child pid to %s", path)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// processAlive reports whether pid exists, using the null signal (delivers
+// nothing, only checks permission). A zombie still answers alive, which is why
+// callers reap the head before polling its children.
+func processAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
 }

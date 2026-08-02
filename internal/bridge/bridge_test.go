@@ -13,8 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1735,5 +1737,90 @@ func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
 				t.Errorf("SessionTitle() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// --- R1: the bridge's Cancel must close stdin, not just signal the head ---
+
+// TestCancelClosesStdinSoTheTreeSeesEOF is the R1 regression.
+//
+// vibekit runs `kiro-cli acp` on pipes and the head passes its stdio down, so
+// the tree (kiro-cli -> kiro-cli-chat -> node, ~300 MB) stays in ONE session
+// with no setsid(). Closing vibekit's write end therefore delivers EOF to the
+// whole chain, and that — not the signal — is what reclaims it: WaitDelay's
+// SIGKILL escalation targets the head only. Measured on kiro-cli 2.16.0,
+// signal-without-close leaked 2/2 trials at ~250 MB each while
+// close-then-signal leaked 0/2.
+//
+// The bait isolates the close from the signal: the head IGNORES SIGTERM, so the
+// grandchild can only be reclaimed by stdin reaching EOF. If Cancel goes back to
+// a bare Signal(SIGTERM), the grandchild survives and this fails.
+func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "grandchild.pid")
+	// The head IGNORES SIGTERM and blocks forever. Its child reads vibekit's
+	// stdin pipe, and `head -c 1` returns the moment that pipe closes with no
+	// data. So the grandchild's death proves an EOF reached the TREE, and
+	// nothing else can cause it inside the deadline: WaitDelay's 5s SIGKILL
+	// escalation is past it, and Wait — which would close the pipes itself — is
+	// not called until Stop.
+	//
+	// `exec 3<&0` is required, not decoration: POSIX redirects an asynchronous
+	// command's stdin from /dev/null when job control is off, so a plain
+	// `head &` would read EOF instantly and the test would pass vacuously
+	// (observed). fd 3 carries the real pipe past that rule.
+	script := "#!/bin/sh\ntrap '' TERM\nexec 3<&0\nhead -c 1 <&3 >/dev/null &\n" +
+		"echo $! > " + pidFile + "\nwhile :; do sleep 0.05; done\n"
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write bait script: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	b := New(scriptPath, dir)
+	// Start's ACP handshake never completes (the bait speaks no ACP), so drive
+	// the spawn directly — this test is about teardown, not the handshake.
+	// lifecycleCtx is what CommandContext binds to, which is the path Cancel
+	// fires from.
+	b.lifecycleCtx = ctx
+	if err := b.startProcess("", "model", ""); err != nil {
+		t.Fatalf("startProcess: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		b.Stop()
+	})
+
+	grandchild := waitForBridgePID(t, pidFile)
+	if syscall.Kill(grandchild, 0) != nil {
+		t.Fatalf("bait grandchild %d not alive before cancel; the test proves nothing", grandchild)
+	}
+
+	cancel() // fires cmd.Cancel
+
+	deadline := time.Now().Add(3 * time.Second)
+	for syscall.Kill(grandchild, 0) == nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("grandchild %d survived ctx cancel; Cancel signalled the head without closing stdin, so the tree never saw EOF", grandchild)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// waitForBridgePID polls for the bait script's pid file and returns the pid.
+func waitForBridgePID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		raw, err := os.ReadFile(path) // #nosec G304 -- t.TempDir path
+		if err == nil {
+			if pid, cErr := strconv.Atoi(strings.TrimSpace(string(raw))); cErr == nil && pid > 0 {
+				return pid
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bait never wrote its grandchild pid to %s", path)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
