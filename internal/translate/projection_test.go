@@ -616,3 +616,62 @@ func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
 		t.Errorf("summarizedCount would be %d, want 10 (all messages up to and including the watermark)", summarized)
 	}
 }
+
+// TestProjection_WorkflowProgressIsNotUserProse pins that a workflow-progress
+// row does not become a user bubble.
+//
+// KAS's persistWorkflowEvent (2.16.0 bundle) writes a run's progress onto the
+// LAUNCHING chat's transcript as `{type: "user", source: "steer", content:
+// JSON.stringify({method, ...payload})}` with id `wf-progress-<uuid>` and
+// `_meta.kiro.notification.kind: "workflow-progress"`. It therefore replays as
+// a user_message_chunk whose content is a JSON blob — rendered as prose it puts
+// raw JSON in the transcript attributed to the user.
+//
+// Both discriminators are covered because only one is verified to reach the
+// wire: messageId is measured on every content frame, while the nested
+// notification block's survival through KAS's replay mapping is not.
+func TestProjection_WorkflowProgressIsNotUserProse(t *testing.T) {
+	blob := `{"method":"workflow/nodeCompleted","workflowId":"wf-1"}`
+
+	cases := map[string]map[string]any{
+		"by id prefix": {
+			"messageId": "wf-progress-3f2b1a04-0000-4000-8000-000000000000",
+			"timestamp": "2026-08-02T20:01:00.000Z",
+		},
+		"by notification kind": {
+			"messageId":    "some-other-id",
+			"timestamp":    "2026-08-02T20:01:00.000Z",
+			"notification": map[string]any{"kind": "workflow-progress", "workflowId": "wf-1"},
+		},
+	}
+
+	for name, meta := range cases {
+		t.Run(name, func(t *testing.T) {
+			p := NewProjection(seqIDs())
+			k, raw := replayFrame(t, replayUserChunkKind, blob, "", meta)
+			p.Ingest(k, raw)
+			// A real prompt after it, so the test cannot pass merely because
+			// the projection produced nothing at all.
+			k2, raw2 := replayFrame(t, replayUserChunkKind, "a real question", "", map[string]any{
+				"messageId": "m-real",
+				"timestamp": "2026-08-02T20:02:00.000Z",
+			})
+			p.Ingest(k2, raw2)
+
+			got := p.Messages()
+			if len(got) != 1 {
+				var contents []string
+				for _, m := range got {
+					contents = append(contents, m.Content)
+				}
+				t.Fatalf("got %d messages %q, want 1 (the real prompt only)", len(got), contents)
+			}
+			if got[0].Content != "a real question" {
+				t.Errorf("content = %q, want the real prompt", got[0].Content)
+			}
+			if strings.Contains(got[0].Content, "workflowId") {
+				t.Error("the workflow JSON leaked into a user message")
+			}
+		})
+	}
+}

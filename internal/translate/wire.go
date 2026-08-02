@@ -91,9 +91,18 @@ type ACPKiroMeta struct {
 		// load and nothing can address a message; without Timestamp every
 		// replayed turn is stamped with the load's wall clock and a resumed
 		// transcript claims all its history happened just now.
-		MessageID string          `json:"messageId"`
-		Timestamp string          `json:"timestamp"`
-		HookAsk   json.RawMessage `json:"hookAsk,omitempty"`
+		MessageID string `json:"messageId"`
+		Timestamp string `json:"timestamp"`
+		// Notification tags a row KAS wrote onto a chat's transcript on
+		// something else's behalf. kind "workflow-progress" is a workflow
+		// step's progress persisted onto the LAUNCHING chat, which arrives as
+		// a user_message_chunk carrying JSON — see isWorkflowProgress.
+		Notification struct {
+			Kind       string `json:"kind"`
+			WorkflowID string `json:"workflowId"`
+			EventType  string `json:"eventType"`
+		} `json:"notification"`
+		HookAsk json.RawMessage `json:"hookAsk,omitempty"`
 	} `json:"kiro"`
 }
 

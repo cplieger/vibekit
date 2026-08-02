@@ -46,6 +46,7 @@ package translate
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -88,6 +89,38 @@ type replayChunk struct {
 		Text string `json:"text"`
 	} `json:"content"`
 	Meta ACPKiroMeta `json:"_meta"`
+}
+
+// workflowProgressIDPrefix is the id KAS gives a workflow-progress row it
+// writes onto the LAUNCHING chat's transcript.
+//
+// Read out of the 2.16.0 bundle's persistWorkflowEvent, which appends
+//
+//	id:      `wf-progress-${randomUUID()}`
+//	payload: {type: "user", source: "steer",
+//	          content: JSON.stringify({method, ...payload}),
+//	          _meta: {kiro: {notification: {kind: "workflow-progress", …}}}}
+//
+// So it replays as a user_message_chunk whose content is a JSON blob, and
+// rendering it as user prose would put raw JSON in the transcript claiming the
+// user typed it.
+const workflowProgressIDPrefix = "wf-progress-"
+
+// workflowProgressKind is the semantic discriminator on the same row.
+const workflowProgressKind = "workflow-progress"
+
+// isWorkflowProgress reports whether a replayed user chunk is really a workflow
+// progress row.
+//
+// BOTH discriminators are checked on purpose. The id prefix is the reliable one
+// — `_meta.kiro.messageId` is measured to reach the wire on every content frame
+// — whereas whether the nested `notification` block survives KAS's replay
+// mapping is NOT verified here (no workflow was available to probe). Checking
+// the semantic field too means this starts working the moment it does survive,
+// without waiting for a second discovery.
+func isWorkflowProgress(m *ACPKiroMeta) bool {
+	return strings.HasPrefix(m.Kiro.MessageID, workflowProgressIDPrefix) ||
+		m.Kiro.Notification.Kind == workflowProgressKind
 }
 
 // Projection accumulates a replayed transcript. Not safe for concurrent use;
@@ -167,6 +200,12 @@ const replayUserChunkKind api.ACPUpdateKind = "user_message_chunk"
 func (p *Projection) ingestUserText(raw json.RawMessage) {
 	var c replayChunk
 	if json.Unmarshal(raw, &c) != nil {
+		return
+	}
+	// A workflow-progress row rides this same frame type. It is machine state
+	// for the run card, not something the user said, so it must not become a
+	// user bubble full of JSON.
+	if isWorkflowProgress(&c.Meta) {
 		return
 	}
 	if !p.userPending {
