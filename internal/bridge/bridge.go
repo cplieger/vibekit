@@ -64,6 +64,7 @@ type Bridge struct {
 	workDir      string
 	cliPath      string
 	currentMode  string
+	sessionTitle string
 	agentEngine  string
 	// extraEnv is appended to the inherited environment of the kiro-cli
 	// process this bridge starts. The install manager's active version
@@ -131,6 +132,20 @@ func (b *Bridge) CurrentMode() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.currentMode
+}
+
+// SessionTitle returns KAS's own title for the live session, taken from the
+// session/new or session/load result's flat `_meta.title`. On creation this is
+// always the literal "New Session" placeholder; on load it is the real stored
+// title. Empty when no session result has been applied.
+//
+// This is NOT the authoritative chat name. The caller adopts it only while the
+// chat is still default-named (bridge_coord.go), and an agent-authored
+// focus_update title outranks it — see translate/focus.go.
+func (b *Bridge) SessionTitle() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessionTitle
 }
 
 // Modes returns the available session modes as declared by the agent

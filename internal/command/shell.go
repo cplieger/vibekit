@@ -49,8 +49,8 @@ func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
 // appendShellUserMessage persists the user's "!cmd" message and, on the
 // chat's first message, derives an initial chat name from the command text.
 // Returns whether the message was persisted (false when the chat record
-// doesn't exist) and whether an async rename should be triggered.
-func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.ChatID, msg *api.Message, text string) (persisted bool, placeholder string, err error) {
+// doesn't exist).
+func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.ChatID, msg *api.Message, text string) (persisted bool, err error) {
 	err = deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			c.Name = api.DefaultChatName
@@ -62,13 +62,12 @@ func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.C
 				name += ellipsis
 			}
 			c.Name = name
-			placeholder = name
 		}
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, msg))
 		persisted = true
 		return true
 	})
-	return persisted, placeholder, err
+	return persisted, err
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
@@ -105,7 +104,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		ID: p.MessageID, Role: api.RoleUser, Ts: time.Now().UnixMilli(),
 		Content: p.Text,
 	}
-	persisted, placeholder, err := appendShellUserMessage(ctx, deps, cmd.ChatID, &userMsg, p.Text)
+	persisted, err := appendShellUserMessage(ctx, deps, cmd.ChatID, &userMsg, p.Text)
 	if err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
@@ -113,11 +112,6 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	if !persisted {
 		d.RespondErr(w, http.StatusConflict, ErrChatNotFound)
 		return
-	}
-	if placeholder != "" {
-		if prompter := d.Prompter(); prompter != nil {
-			deps.InflightGo(func() { AsyncRenameChat(deps, prompter, cmd.ChatID, p.Text, placeholder) })
-		}
 	}
 
 	slog.Info("shell interception", "chat_id", cmd.ChatID, "cmd_len", len(shellCmd))

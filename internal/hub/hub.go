@@ -198,7 +198,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		o(h)
 	}
 	h.translator = translate.New(h)
-	h.dispatcher = command.New(h, command.WithPrompter(h))
+	h.dispatcher = command.New(h)
 	h.registerCommandHandlers()
 	h.initDispatch()
 	h.mcpRegistry = newMCPRegistry(h)

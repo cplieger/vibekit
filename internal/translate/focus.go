@@ -9,19 +9,25 @@ package translate
 //
 //   - The model calling its update_session_information tool mid-turn.
 //     Titles are short and IDE-grade ("Photo organizer CLI setup"), often
-//     with a description and a status. These are worth adopting: richer
-//     than vibekit's one-shot utility title, refreshed when the chat's
-//     focus shifts, and paid for by tokens the main turn already spends.
+//     with a description and a status. These are worth adopting: they are
+//     refreshed when the chat's focus shifts and paid for by tokens the
+//     main turn already spends. This is the TOP of the naming precedence.
 //   - KAS's first-prompt title derivation: a dumb trim+truncate of the
 //     raw prompt text (80 chars, "..." ellipsis), emitted title-only.
-//     These must NOT clobber vibekit's own titles — the utility bridge's
-//     2-3 word summary is strictly better. titleIsPromptDerived filters
-//     them by shape: a derived title is the prompt text itself, or its
-//     "..."-suffixed truncation, and on a freshly primed session it is a
-//     truncation of the priming preamble.
+//     These must NOT clobber the agent-authored title above, and they add
+//     nothing over the identical label the first prompt already set
+//     locally. titleIsPromptDerived filters them by shape: a derived
+//     title is the prompt text itself, or its "..."-suffixed truncation,
+//     and on a freshly primed session it is a truncation of the priming
+//     preamble.
 //
-// Titles land on the chat record (Mutate broadcasts chat_updated, the
-// same path the utility auto-rename uses). Status + description broadcast
+// Both arrive on the SAME channel, which is why the filter exists rather
+// than a source check. Full precedence: agent focus title > local
+// first-prompt label > KAS's stored session title (adoptKASTitle in
+// hub/bridge_coord.go, which only ever names an unnamed chat).
+//
+// Titles land on the chat record (Mutate broadcasts chat_updated).
+// Status + description broadcast
 // as an ephemeral chat_status SSE — deliberately unpersisted, so a server
 // restart or reconnect gap resets tabs to neutral instead of replaying a
 // stale "in_progress".

@@ -55,9 +55,20 @@ type sessionConfigChoice struct {
 	} `json:"_meta"`
 }
 
+// sessionCreated is the session/new and session/load result.
+//
+// _meta is KAS's session-metadata object spread verbatim onto the result —
+// FLAT, not under `_meta.kiro` (probed 2026-08-02 against both verbs). Only
+// `title` is decoded: session/new always carries the literal "New Session"
+// placeholder, while session/load hands back the real stored title, which is
+// the case worth adopting. session/load's result carries no `sessionId`, which
+// is why loadSession sets it from its own argument.
 type sessionCreated struct {
-	Modes         *sessionModes         `json:"modes"`
-	SessionID     string                `json:"sessionId"`
+	Modes     *sessionModes `json:"modes"`
+	SessionID string        `json:"sessionId"`
+	Meta      struct {
+		Title string `json:"title"`
+	} `json:"_meta"`
 	ConfigOptions []sessionConfigOption `json:"configOptions"`
 }
 
@@ -167,6 +178,7 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 		}
 		b.modes.Store(&modes)
 	}
+	b.sessionTitle = r.Meta.Title
 	b.applyModelConfigOptionLocked(r.ConfigOptions)
 	if b.modelID == "" {
 		b.modelID = api.ModelID(fallbackModel)

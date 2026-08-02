@@ -217,6 +217,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		}
 		return false
 	}
+	title := sb.bridge.SessionTitle()
 	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 		if !ex {
 			return false
@@ -224,6 +225,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		c.CurrentModeID = sb.bridge.CurrentMode()
 		c.AvailableModes = sb.bridge.Modes()
 		c.AvailableModels = sb.bridge.Models()
+		adoptKASTitle(c, title)
 		return true
 	}); mErr != nil {
 		slog.Error("refresh session metadata", "chat_id", chatID, "error", mErr)
@@ -235,12 +237,36 @@ func (bc *BridgeCoordinator) tryLoadSession(
 
 // persistNewSessionMetadata stores the ACP session id, model, and session-
 // level metadata into the chat after a fresh session/new call.
+// kasDefaultSessionTitle is KAS's own placeholder title, spread onto every
+// session/new result's _meta (DEFAULT_SESSION_TITLE in the KAS bundle). It
+// carries no information, so adopting it would swap vibekit's placeholder for
+// a worse one AND make the chat non-default-named, which then rejects the real
+// title that arrives later. Probed 2026-08-02: session/new always returns it.
+const kasDefaultSessionTitle = "New Session"
+
+// adoptKASTitle names a chat from KAS's own session title, but only while the
+// chat has no name of its own and only when the title is real.
+//
+// Precedence on chat naming is: agent-authored focus_update title > local
+// first-prompt label > KAS's session title. So this fires for a chat vibekit
+// never named — in practice a session/load whose stored title KAS still has and
+// vibekit lost. It deliberately never overwrites: `titleIsPromptDerived`
+// (translate/focus.go) implements the top of that ordering on the focus channel,
+// and this implements the bottom.
+func adoptKASTitle(c *api.Chat, title string) {
+	if title == "" || title == kasDefaultSessionTitle || c.Name != api.DefaultChatName {
+		return
+	}
+	c.Name = title
+}
+
 func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID api.ChatID, bridge api.ACPBridge) {
 	newSessionID := bridge.SessionID()
 	newModelID := bridge.ModelID()
 	currentMode := bridge.CurrentMode()
 	modes := bridge.Modes()
 	models := bridge.Models()
+	title := bridge.SessionTitle()
 	if err := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 		if !ex {
 			return false
@@ -252,6 +278,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 		c.CurrentModeID = currentMode
 		c.AvailableModes = modes
 		c.AvailableModels = models
+		adoptKASTitle(c, title)
 		return true
 	}); err != nil {
 		slog.Error("persist new session metadata",

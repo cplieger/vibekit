@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/permissions"
@@ -129,7 +128,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
+func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
 	supervisedDefault := permissions.SupervisedDefault(ctx, deps.ConfigDir())
 	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		// Idempotent by message id (the documented invariant): if this id
@@ -159,10 +158,6 @@ func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx cont
 				name += ellipsis
 			}
 			c.Name = name
-			if prompter != nil {
-				placeholder := name
-				deps.InflightGo(func() { AsyncRenameChat(deps, prompter, chatID, p.Text, placeholder) })
-			}
 		}
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, &userMsg))
 		return true
@@ -227,8 +222,9 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		return
 	}
 
-	// 1. Ensure the chat exists, append the user message, auto-rename.
-	if err := appendUserMessage(deps, d.Prompter(), ctx, cmd.ChatID, &p); err != nil {
+	// 1. Ensure the chat exists and append the user message, naming the chat
+	// from its first prompt.
+	if err := appendUserMessage(deps, ctx, cmd.ChatID, &p); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -332,43 +328,4 @@ func IsRetryablePromptError(err error) bool {
 		return false
 	}
 	return false
-}
-
-// AsyncRenameChat generates a better chat title via the utility bridge.
-// placeholder is the truncated-first-prompt name appendUserMessage set; the
-// generated title only lands while the chat still carries it. If the name
-// changed meanwhile — the agent published a focus title via
-// update_session_information (translate/focus handling), which is richer
-// than a 2-3 word summary of the first message — the utility title is
-// discarded rather than clobbering it.
-func AsyncRenameChat(deps Dependencies, prompter api.UtilityPrompter, chatID api.ChatID, firstPrompt, placeholder string) {
-	prompt := "Give this chat a 2-3 word title (max 30 characters) based on the topic of the message below. Return ONLY the title.\n\n" + firstPrompt
-	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
-	defer cancel()
-	title, err := prompter.UtilityPrompt(ctx, prompt, api.EffortLow)
-	if err != nil || strings.TrimSpace(title) == "" {
-		return
-	}
-	title = strings.TrimSpace(title)
-	if len(title) >= 2 && ((title[0] == '"' && title[len(title)-1] == '"') ||
-		(title[0] == '\'' && title[len(title)-1] == '\'')) {
-		title = title[1 : len(title)-1]
-	}
-	// Sanitize + cap on a rune boundary: the title is model output headed
-	// for logs and the chat header UI, and a byte-index cut could split a
-	// multi-byte rune.
-	title = runesafe.SanitizeSingleLineBounded(title, 27)
-	if title == "" {
-		return
-	}
-	if err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
-		if !exists || c.Name != placeholder {
-			return false
-		}
-		c.Name = title
-		return true
-	}); err != nil {
-		slog.Error("auto-rename chat", "chat_id", chatID, keyError, err)
-	}
-	slog.Info("chat auto-renamed", "chat_id", chatID, "title", title)
 }

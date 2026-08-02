@@ -265,3 +265,61 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 		t.Errorf("unexpected append-event error log on success: %s", got)
 	}
 }
+
+// --- adoptKASTitle: the bottom of the chat-naming precedence ---
+
+// TestAdoptKASTitle pins all four arms of the guard. Every refusal here is a
+// bug that compiles cleanly: adopting KAS's "New Session" placeholder makes the
+// chat non-default-named, which then rejects the real title that arrives later
+// and leaves the chat reading "New Session" forever; adopting over an existing
+// name clobbers either the user's first-prompt label or the agent's
+// focus_update title, both of which outrank this channel.
+func TestAdoptKASTitle(t *testing.T) {
+	cases := []struct {
+		name  string
+		start string
+		title string
+		want  string
+	}{
+		{
+			name:  "adopts a real title onto a default-named chat",
+			start: api.DefaultChatName,
+			title: "Vibekit conversational surface",
+			want:  "Vibekit conversational surface",
+		},
+		{
+			name:  "refuses KAS's own placeholder",
+			start: api.DefaultChatName,
+			title: kasDefaultSessionTitle,
+			want:  api.DefaultChatName,
+		},
+		{
+			name:  "refuses an empty title",
+			start: api.DefaultChatName,
+			title: "",
+			want:  api.DefaultChatName,
+		},
+		{
+			name:  "never overwrites a first-prompt label",
+			start: "fix the reaper so it stops eating live sessions",
+			title: "Reaper fix",
+			want:  "fix the reaper so it stops eating live sessions",
+		},
+		{
+			name:  "never overwrites an agent-authored focus title",
+			start: "Reaper live-session exemption",
+			title: kasDefaultSessionTitle,
+			want:  "Reaper live-session exemption",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &api.Chat{Name: tc.start}
+			adoptKASTitle(c, tc.title)
+			if c.Name != tc.want {
+				t.Errorf("adoptKASTitle(%q, %q) left name %q, want %q",
+					tc.start, tc.title, c.Name, tc.want)
+			}
+		})
+	}
+}

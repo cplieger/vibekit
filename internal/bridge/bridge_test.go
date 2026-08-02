@@ -1681,3 +1681,59 @@ done
 		}
 	})
 }
+
+// --- _meta.title: the wire shape KAS actually sends ---
+
+// TestApplySessionResult_TakesFlatMetaTitle pins that the session title is read
+// from a FLAT `_meta.title`, not from `_meta.kiro.title`.
+//
+// Every other `_meta` vibekit decodes on this wire is nested under `kiro`
+// (sessionConfigChoice's rateMultiplier, the prompt metadata), so `_meta.kiro`
+// is the shape a reader expects — and moving the tag there compiles cleanly and
+// silently yields "". Probed 2026-08-02 against a live kiro-cli: session/new and
+// session/load both spread KAS's session-metadata object directly onto `_meta`,
+// so `title` sits at its top level alongside `id`, `agentMode` and
+// `workspacePaths`. The second case is the trap.
+func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "flat _meta.title is adopted",
+			body: `{"sessionId":"s1","_meta":{"id":"s1","title":"Reaper live-session exemption","agentMode":"vibe"}}`,
+			want: "Reaper live-session exemption",
+		},
+		{
+			name: "nested _meta.kiro.title is NOT the wire shape",
+			body: `{"sessionId":"s1","_meta":{"kiro":{"title":"wrong nesting"}}}`,
+			want: "",
+		},
+		{
+			name: "session/new placeholder arrives verbatim for the caller to reject",
+			body: `{"sessionId":"s1","_meta":{"title":"New Session"}}`,
+			want: "New Session",
+		},
+		{
+			name: "absent _meta leaves the title empty",
+			body: `{"sessionId":"s1"}`,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r sessionCreated
+			if err := json.Unmarshal([]byte(tc.body), &r); err != nil {
+				t.Fatalf("unmarshal session result: %v", err)
+			}
+			b := &Bridge{}
+			b.mu.Lock()
+			b.applySessionResultLocked(r, "")
+			b.mu.Unlock()
+			if got := b.SessionTitle(); got != tc.want {
+				t.Errorf("SessionTitle() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -25,13 +25,14 @@ type fakeBridge struct {
 	// blockOn optionally makes Call block (after recording the call) until
 	// the method's channel is closed — for tests proving concurrency
 	// properties (e.g. RPC reads completing while a text turn is in flight).
-	blockOn   map[string]chan struct{}
-	sessionID string
-	modelID   string
-	calls     []string
-	mu        sync.Mutex
-	stopped   bool
-	started   bool
+	blockOn      map[string]chan struct{}
+	sessionID    string
+	modelID      string
+	sessionTitle string
+	calls        []string
+	mu           sync.Mutex
+	stopped      bool
+	started      bool
 }
 
 func newFakeBridge() *fakeBridge {
@@ -139,7 +140,16 @@ func (b *fakeBridge) ModelID() api.ModelID {
 	return api.ModelID(b.modelID)
 }
 
-func (b *fakeBridge) CurrentMode() string        { return "" }
+func (b *fakeBridge) CurrentMode() string { return "" }
+
+// SessionTitle reports KAS's own session title. The fake returns the value
+// tests set on it so the bridge_coord adoption guard can be exercised.
+func (b *fakeBridge) SessionTitle() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessionTitle
+}
+
 func (b *fakeBridge) Modes() []api.SessionMode   { return nil }
 func (b *fakeBridge) Models() []api.SessionModel { return nil }
 

@@ -105,11 +105,6 @@ func (h *Hub) InflightDone() {
 	h.lifecycle.inflight.Done()
 }
 
-// InflightGo runs fn under the inflight WaitGroup.
-func (h *Hub) InflightGo(fn func()) {
-	h.lifecycle.inflight.Go(fn)
-}
-
 // CleanupChatState tears down all in-memory state for a chat that is being
 // permanently deleted (the delete / promote / discard paths), reaping the
 // chat's checkpoints too. The archive path uses OnChatArchiving, which runs

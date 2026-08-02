@@ -44,7 +44,6 @@ func (d *benchDeps) ConfigDir() string                                          
 func (d *benchDeps) ShutdownCtx() context.Context                                     { return context.Background() }
 func (d *benchDeps) InflightAdd(int)                                                  {}
 func (d *benchDeps) InflightDone()                                                    {}
-func (d *benchDeps) InflightGo(func())                                                {}
 func (d *benchDeps) CleanupChatState(context.Context, api.ChatID)                     {}
 func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool              { return true }
 func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)                      { return "", nil }
@@ -95,7 +94,6 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.AdvanceCheckpointTurn(context.Background(), "x")
 	d.InflightAdd(1)
 	d.InflightDone()
-	d.InflightGo(func() {})
 	d.CleanupChatState(context.Background(), "x")
 	d.PrimeIfNeeded(context.Background(), "x", nil)
 }
@@ -157,7 +155,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.AdvanceCheckpointTurn(context.Background(), "x")
 		d.InflightAdd(1)
 		d.InflightDone()
-		d.InflightGo(func() {})
 		d.CleanupChatState(context.Background(), "x")
 		d.PrimeIfNeeded(context.Background(), "x", nil)
 		if d.IsEmptyTurn(nil, "x") {

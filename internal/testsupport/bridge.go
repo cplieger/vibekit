@@ -35,6 +35,9 @@ func (*NopACPBridge) ModelID() api.ModelID { return "" }
 // CurrentMode returns an empty mode string; implements api.ACPBridge.
 func (*NopACPBridge) CurrentMode() string { return "" }
 
+// SessionTitle returns an empty title; implements api.ACPBridge.
+func (*NopACPBridge) SessionTitle() string { return "" }
+
 // Modes returns nil; implements api.ACPBridge.
 func (*NopACPBridge) Modes() []api.SessionMode { return nil }
 

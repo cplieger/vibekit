@@ -114,7 +114,8 @@ func WithForges(r api.RouteHandler) Option { return func(s *Server) { s.forges =
 // WithTools sets the tools engine backing the /api/tools surface.
 func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e } }
 
-// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks (rename, commit message, etc.).
+// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks
+// (error explanations, commit messages, PR descriptions, conflict resolution).
 func WithUtilityPrompt(p api.UtilityPrompter) Option {
 	return func(s *Server) { s.utilityPrompt = p }
 }

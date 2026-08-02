@@ -197,6 +197,12 @@ type ACPBridge interface {
 	// CurrentMode returns the currently-active session mode id (empty
 	// if the agent doesn't expose modes).
 	CurrentMode() string
+	// SessionTitle returns KAS's own title for the session, from the
+	// session/new or session/load result's flat _meta.title. Creation
+	// always yields the literal "New Session"; load yields the real
+	// stored title. Advisory — the caller adopts it only for a chat that
+	// is still default-named.
+	SessionTitle() string
 	// Modes returns the set of session modes the running agent
 	// supports. Empty for agents that don't expose modes.
 	Modes() []SessionMode
@@ -277,8 +283,9 @@ type PushService interface {
 // UtilityPrompter is the narrow interface for AI-backed prompt
 // generation (error explanations, conflict resolution, commit messages).
 // Declared here so both the server and git packages share a single
-// typed contract. effort is the per-task reasoning-effort level: cheap
-// tasks (titles, summaries, error explanations) pass EffortLow, tasks
+// typed contract. It is NOT used for chat titles — those come from KAS
+// (see translate/focus.go). effort is the per-task reasoning-effort
+// level: cheap tasks (summaries, error explanations) pass EffortLow, tasks
 // that read a diff or merge code (commit messages, PR descriptions,
 // conflict resolution) pass EffortMedium; "" keeps the session's current
 // level. Best-effort — a model with no effort config ignores it.
