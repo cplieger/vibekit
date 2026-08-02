@@ -57,7 +57,6 @@ import { initTaskListPill } from "./task-list.js";
 import { initAwaySummary } from "./away-summary.js";
 import { initAgentTerminals } from "./agent-terminal.js";
 import { initTooltips } from "./tooltip.js";
-import { initHistory } from "./history.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { handleFindHotkey } from "./find-in-chat.js";
@@ -196,7 +195,6 @@ function init(): void {
   initAwaySummary();
   initAgentTerminals();
   initTooltips();
-  initHistory();
   // initGovernance() moved to initPostAuth(): its /api/governance snapshot
   // (and settings.ts's version/git-badge fetches) shouldn't fire on the
   // login screen (B2).
@@ -723,6 +721,17 @@ function applyRoute(route: Route): void {
       void import("./history.js")
         .then(({ showHistoryView }) => {
           showHistoryView();
+        })
+        .catch(() => {
+          /* noop */
+        });
+      break;
+    case "run":
+      void import("./run-view.js")
+        .then(({ openRunView }) => {
+          // Deep link: the run's name is not in the URL, so the tab is titled
+          // by id until the fetch supplies the real name.
+          openRunView(route.id, route.id);
         })
         .catch(() => {
           /* noop */

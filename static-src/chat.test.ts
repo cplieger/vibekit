@@ -67,7 +67,6 @@ vi.mock("./retention.js", () => ({ isRetentionEnabled: vi.fn(() => false) }));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_ACTIVATE_CHAT: "activate-chat" }));
 vi.mock("./actions/chat.js", () => ({
   deleteChat: { dispatch: vi.fn() },
-  archiveChat: { dispatch: vi.fn() },
   restoreChat: { dispatch: vi.fn() },
   setMode: { dispatch: setModeDispatch },
 }));
@@ -76,7 +75,7 @@ import { createPlannerSession, openChatTab } from "./chat.js";
 import { openTab } from "./tabs.js";
 import { get, removeChat } from "./store.js";
 import { isRetentionEnabled } from "./retention.js";
-import { deleteChat, archiveChat } from "./actions/chat.js";
+import { deleteChat } from "./actions/chat.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -105,11 +104,14 @@ describe("openChatTab onClose retention gate", () => {
     return spec.onClose ?? ((): void => undefined);
   }
 
-  it("archives a non-empty chat on close when retention is ENABLED (N>0)", () => {
+  it("persists nothing on close when retention is ENABLED (N>0)", () => {
+    // There is no archive step any more: "archived" is computed from the
+    // chat's age against the retention window, so closing a tab is purely a
+    // local affair. The chat file stays exactly as it was.
     vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(true);
-    captureOnClose("c-archive")();
-    expect(archiveChat.dispatch).toHaveBeenCalledWith("c-archive");
+    captureOnClose("c-closed")();
+    expect(removeChat).toHaveBeenCalledWith("c-closed");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
   });
 
@@ -119,7 +121,6 @@ describe("openChatTab onClose retention gate", () => {
     captureOnClose("c-ephemeral")();
     // 0 = ephemeral: closing loses the chat by design (not a data-loss bug).
     expect(deleteChat.dispatch).toHaveBeenCalledWith("c-ephemeral");
-    expect(archiveChat.dispatch).not.toHaveBeenCalled();
   });
 
   it("removes a zero-message chat locally regardless of retention (never persisted)", () => {
@@ -128,6 +129,5 @@ describe("openChatTab onClose retention gate", () => {
     captureOnClose("c-empty")();
     expect(removeChat).toHaveBeenCalledWith("c-empty");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
-    expect(archiveChat.dispatch).not.toHaveBeenCalled();
   });
 });

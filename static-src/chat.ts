@@ -6,6 +6,7 @@
 // actions to server commands and renders the active session.
 // ---------------------------------------------------------------------------
 
+import type { ResumableSessionRow } from "./types.js";
 import {
   getActiveId,
   getActive,
@@ -48,12 +49,7 @@ import { iconForMode } from "./roles.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { isRetentionEnabled } from "./retention.js";
-import {
-  archiveChat as archiveChatAction,
-  deleteChat as deleteChatAction,
-  restoreChat,
-  setMode,
-} from "./actions/chat.js";
+import { deleteChat as deleteChatAction, resumeSession, setMode } from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
@@ -87,15 +83,18 @@ export function openChatTab(id: string, name: string, opts?: { activate?: boolea
         activateChatView(id);
       },
       onClose: () => {
-        // Retention > 0: archive so the chat appears in History (the server
-        // purges it after N days). Retention = 0 (OFF): delete permanently —
-        // this is intentional "no retention" mode: 0 is the least-retention end
-        // of the scale (ephemeral chats, lost on close, History button hidden),
-        // NOT "keep forever" — higher N = more retention. Zero-message chats
-        // were never persisted server-side, so just drop them locally.
+        // There is no archive step any more: a closed chat is just a chat that
+        // stopped being in a tab, and "archived" is computed from its age
+        // against the retention window. So closing a tab persists nothing.
+        //
+        // Retention = 0 is the one case that still acts: it means NO retention
+        // (ephemeral chats, lost on close), which is the least-retention end of
+        // the scale — not "keep forever". Higher N = more retention.
+        // Zero-message chats were never persisted server-side, so they are
+        // dropped locally either way.
         const s = get(id);
         if (isRetentionEnabled()) {
-          archiveChat(id);
+          removeChat(id);
         } else if (s?.message_count === 0) {
           removeChat(id);
         } else {
@@ -105,25 +104,6 @@ export function openChatTab(id: string, name: string, opts?: { activate?: boolea
     },
     opts,
   );
-}
-
-/** Archive a chat (move to archive dir). Used on tab close instead of
- *  delete so the chat appears in History for the retention window.
- *  Zero-message chats (freshly created, never used) are removed locally
- *  without hitting the server — the server has no persisted session to
- *  archive and would 500. */
-function archiveChat(id: string): void {
-  const s = get(id);
-  if (s === undefined) {
-    return;
-  }
-  if (s.message_count === 0) {
-    removeChat(id);
-    return;
-  }
-  void archiveChatAction.dispatch(id);
-  // Optimistic: store is updated immediately by the action's optimistic().
-  // SSE chat_deleted will fire later but removeChat is a no-op (already gone).
 }
 
 /** Permanently delete a chat (retention = 0, non-empty) on tab close — the
@@ -314,30 +294,41 @@ export function attachPathToActiveChat(path: string): void {
   $.promptInput.focus();
 }
 
-/** Restore an archived chat. Opens a tab and activates it after the
- *  sidebar store catches up, matching the rewind-fork pattern — the
- *  server broadcasts chat_created, but the SSE handler only updates
- *  the store (a generic chat_created is also emitted to every other
- *  connected client, none of which should auto-open tabs). The
- *  restoring client explicitly opens + activates so the user lands
- *  on the conversation they just resurrected instead of having to
- *  find it in the sidebar. */
-export function restoreArchivedChat(id: string): void {
-  void restoreChat.dispatch(id, {
-    onSuccess: (d) => {
-      if (!d.ok) {
-        return;
-      }
-      void loadList().then(() => {
-        const s = get(id);
-        if (s === undefined) {
-          return;
-        }
-        openChatTab(s.id, s.name);
-        activateChatView(s.id);
-      });
+/** Open a session the previous-session picker listed.
+ *
+ *  Two paths, and the difference is whether vibekit already knows the session:
+ *
+ *    - `chat_id` set: a chat already owns it (possibly as a RETIRED id in its
+ *      chain), so this is just opening that chat. Adopting it again would
+ *      create a second chat pointing at one session.
+ *    - no `chat_id`: the session is KAS's alone — started from the TUI, or its
+ *      chat was deleted while retention kept the session. Adopt it as a new
+ *      chat bound to that session id; the transcript then arrives from the
+ *      session/load replay, so nothing is copied here.
+ *
+ *  The adopting client opens and activates the tab itself: the server
+ *  broadcasts a generic chat_created to every client, and none of the others
+ *  should auto-open a tab. Same shape restoreArchivedChat used. */
+export function openPreviousSession(row: ResumableSessionRow): void {
+  if (row.chat_id !== undefined && row.chat_id !== "") {
+    const existing = get(row.chat_id);
+    openChatTab(row.chat_id, existing?.name ?? row.title);
+    activateChatView(row.chat_id);
+    return;
+  }
+  const chatID = `c-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
+  void resumeSession.dispatch(
+    { chatID, sessionID: row.session_id, name: row.title },
+    {
+      onSuccess: () => {
+        void loadList().then(() => {
+          const s = get(chatID);
+          openChatTab(chatID, s?.name ?? row.title);
+          activateChatView(chatID);
+        });
+      },
     },
-  });
+  );
 }
 
 /** Create a new chat pre-set to the "plan" workflow mode — the share-target

@@ -1,185 +1,148 @@
 // @vitest-environment happy-dom
-// ---------------------------------------------------------------------------
-// Tests for history.ts: the full-page archived-chats table. The chat/tabs/
-// export/confirm modules and the load/delete actions are mocked so the wiring
-// (confirm-before-delete, keyboard restore, error-retry, loading skeleton) is
-// deterministic against happy-dom.
-// ---------------------------------------------------------------------------
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
+const dispatch = vi.fn();
+const openPreviousSession = vi.fn();
+const openRunView = vi.fn();
 
-const h = vi.hoisted(() => ({
-  mockConfirm: vi.fn(),
-  mockRestore: vi.fn(),
-  mockDownload: vi.fn(),
-  mockDeleteDispatch: vi.fn(),
-  mockLoadDispatch: vi.fn(),
-  mockLoadCancel: vi.fn(),
+vi.mock("./actions/chat.js", () => ({
+  loadSessions: { dispatch, cancel: vi.fn() },
 }));
-
-vi.mock("./chat.js", () => ({
-  restoreArchivedChat: (...a: unknown[]) => h.mockRestore(...a),
+vi.mock("./actions/index.js", () => ({
+  registerCleanup: vi.fn(),
 }));
+vi.mock("./chat.js", () => ({ openPreviousSession }));
+vi.mock("./run-view.js", () => ({ openRunView }));
 vi.mock("./tabs.js", () => ({
   toggleHistoryView: (onShow: () => void) => {
     onShow();
   },
 }));
-vi.mock("./chat-export.js", () => ({
-  downloadChatExport: (...a: unknown[]) => h.mockDownload(...a),
-}));
-vi.mock("./confirm.js", () => ({
-  confirm: (...a: unknown[]) => h.mockConfirm(...a),
-}));
-vi.mock("./actions/chat.js", () => ({
-  deleteArchivedChat: { dispatch: (...a: unknown[]) => h.mockDeleteDispatch(...a) },
-  loadHistory: {
-    dispatch: (...a: unknown[]) => h.mockLoadDispatch(...a),
-    cancel: () => h.mockLoadCancel(),
-  },
-}));
-vi.mock("./actions/index.js", () => ({
-  registerCleanup: vi.fn(),
-  bindLoadingState: vi.fn(() => vi.fn()),
-}));
-vi.mock("./api-client.js", () => ({
-  apiGet: vi.fn(() => Promise.resolve(null)),
+vi.mock("@cplieger/ui-primitives/skeleton", () => ({
+  skeletonTiming: () => ({ cancel: vi.fn() }),
 }));
 
-const { showHistoryView } = await import("./history.js");
+const chatRow = {
+  session_id: "sess_chat",
+  title: "A conversation",
+  status: "idle",
+  description: "reading files",
+  updated_at: 3000,
+};
+const ownedRow = {
+  session_id: "sess_owned",
+  title: "Already open",
+  status: "idle",
+  chat_id: "c-existing",
+  updated_at: 2000,
+};
+const failedRow = {
+  session_id: "sess_failed",
+  title: "Went wrong",
+  status: "failed",
+  updated_at: 1000,
+};
+const runRow = {
+  workflow_id: "wf_1",
+  name: "feature-pipeline",
+  status: "completed",
+  updated_at: 2500,
+};
 
-async function flush(): Promise<void> {
-  for (let i = 0; i < 6; i++) {
-    await Promise.resolve();
-  }
+async function render(payload: unknown): Promise<HTMLElement> {
+  document.body.innerHTML = `<div id="history-table"></div>`;
+  dispatch.mockResolvedValue(payload);
+  const { showHistoryView } = await import("./history.js");
+  showHistoryView();
+  await vi.waitFor(() => {
+    if (document.querySelectorAll("#history-table [data-key]").length === 0) {
+      throw new Error("not rendered");
+    }
+  });
+  return document.getElementById("history-table")!;
 }
 
-function table(): HTMLElement {
-  const t = document.getElementById("history-table");
-  if (t === null) {
-    throw new Error("missing #history-table");
-  }
-  return t;
-}
-
-function seedDom(): void {
-  document.body.innerHTML = `
-    <div id="history-table" class="list-container">
-      <div class="list-empty">No archived chats.</div>
-    </div>`;
-}
-
-function chat(id: string, name: string): { id: string; name: string; updated_at: number } {
-  return { id, name, updated_at: 1_700_000_000_000 };
-}
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  seedDom();
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-describe("history table", () => {
-  it("renders archived chats with keyboard-operable restore titles", async () => {
-    h.mockLoadDispatch.mockResolvedValue({ chats: [chat("c1", "First"), chat("c2", "Second")] });
-    showHistoryView();
-    await flush();
-
-    expect(table().querySelectorAll("[data-chat-id]").length).toBe(2);
-    const title = table().querySelector<HTMLElement>('[data-action="restore"]');
-    expect(title?.getAttribute("role")).toBe("button");
-    expect(title?.getAttribute("tabindex")).toBe("0");
-    expect(title?.getAttribute("aria-label")).toBe("Restore First");
+describe("history: previous chats and runs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
   });
 
-  it("restores a chat when Enter is pressed on the title", async () => {
-    h.mockLoadDispatch.mockResolvedValue({ chats: [chat("c1", "First")] });
-    showHistoryView();
-    await flush();
-
-    const title = table().querySelector<HTMLElement>('[data-action="restore"]');
-    title?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    await flush();
-    expect(h.mockRestore).toHaveBeenCalledWith("c1");
+  it("merges chats and runs into ONE list, newest first", async () => {
+    const c = await render({ sessions: [chatRow, failedRow], runs: [runRow] });
+    const keys = [...c.querySelectorAll("[data-key]")].map((r) => r.getAttribute("data-key"));
+    // Interleaved by recency rather than segregated by kind: 3000, 2500, 1000.
+    expect(keys).toEqual(["s:sess_chat", "r:wf_1", "s:sess_failed"]);
   });
 
-  it("does not delete when the confirm is dismissed", async () => {
-    h.mockLoadDispatch.mockResolvedValue({ chats: [chat("c1", "First")] });
-    h.mockConfirm.mockResolvedValue(false);
-    showHistoryView();
-    await flush();
-
-    table().querySelector<HTMLButtonElement>('[data-action="delete"]')?.click();
-    await flush();
-
-    expect(h.mockConfirm).toHaveBeenCalled();
-    expect(h.mockDeleteDispatch).not.toHaveBeenCalled();
-    expect(table().querySelector('[data-chat-id="c1"]')).not.toBeNull();
+  it("labels which rows are runs", async () => {
+    const c = await render({ sessions: [chatRow], runs: [runRow] });
+    const run = c.querySelector('[data-key="r:wf_1"]')!;
+    const chat = c.querySelector('[data-key="s:sess_chat"]')!;
+    expect(run.querySelector(".history-kind")?.textContent).toBe("Run");
+    expect(chat.querySelector(".history-kind")?.textContent).toBe("Chat");
   });
 
-  it("deletes permanently once the destructive confirm is accepted", async () => {
-    h.mockLoadDispatch.mockResolvedValue({ chats: [chat("c1", "First")] });
-    h.mockConfirm.mockResolvedValue(true);
-    showHistoryView();
-    await flush();
-
-    table().querySelector<HTMLButtonElement>('[data-action="delete"]')?.click();
-    await flush();
-
-    expect(h.mockConfirm).toHaveBeenCalledWith(
-      expect.stringContaining("permanently"),
-      "Delete",
-      "destructive",
+  it("hides an idle status but shows a real one", async () => {
+    // KAS reports `idle` for every settled session, so showing it would put a
+    // meaningless badge on nearly every row. `failed` is worth surfacing.
+    const c = await render({ sessions: [chatRow, failedRow], runs: [] });
+    expect(c.querySelector('[data-key="s:sess_chat"] .history-status')).toBeNull();
+    expect(c.querySelector('[data-key="s:sess_failed"] .history-status')?.textContent).toBe(
+      "failed",
     );
-    expect(h.mockDeleteDispatch).toHaveBeenCalledWith("c1");
-    expect(table().querySelector('[data-chat-id="c1"]')).toBeNull();
   });
 
-  it("exports without deleting the row", async () => {
-    h.mockLoadDispatch.mockResolvedValue({ chats: [chat("c1", "First")] });
-    showHistoryView();
-    await flush();
-
-    table().querySelector<HTMLButtonElement>('[data-action="export"]')?.click();
-    await flush();
-    expect(h.mockDownload).toHaveBeenCalledWith("c1", "First", "md");
-    expect(table().querySelector('[data-chat-id="c1"]')).not.toBeNull();
-  });
-
-  it("offers a Retry on load failure and re-fetches on click", async () => {
-    h.mockLoadDispatch
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ chats: [chat("c1", "First")] });
-    showHistoryView();
-    await flush();
-
-    expect(table().querySelector(".history-error")).not.toBeNull();
-    table().querySelector<HTMLButtonElement>(".history-error button")?.click();
-    await flush();
-
-    expect(table().querySelector(".history-error")).toBeNull();
-    expect(table().querySelectorAll("[data-chat-id]").length).toBe(1);
-  });
-
-  it("shows a loading skeleton after the show-delay, then clears it", async () => {
-    vi.useFakeTimers();
-    let resolve: (v: unknown) => void = () => {
-      /* replaced below */
-    };
-    h.mockLoadDispatch.mockReturnValue(
-      new Promise((r) => {
-        resolve = r;
-      }),
+  it("opens an already-owned session as its existing chat", async () => {
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    (c.querySelector('[data-key="s:sess_owned"]') as HTMLElement).click();
+    expect(openPreviousSession).toHaveBeenCalledWith(
+      expect.objectContaining({ chat_id: "c-existing" }),
     );
-    showHistoryView();
-    await vi.advanceTimersByTimeAsync(160); // past the 150ms show-delay
-    expect(table().querySelector(".history-skeleton")).not.toBeNull();
+    expect(openRunView).not.toHaveBeenCalled();
+  });
 
-    resolve({ chats: [] });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(table().querySelector(".history-skeleton")).toBeNull();
+  it("routes a run to the read-only run view, never to a chat", async () => {
+    const c = await render({ sessions: [chatRow], runs: [runRow] });
+    (c.querySelector('[data-key="r:wf_1"]') as HTMLElement).click();
+    expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline");
+    expect(openPreviousSession).not.toHaveBeenCalled();
+  });
+
+  it("offers a Retry on load failure instead of an empty state", async () => {
+    document.body.innerHTML = `<div id="history-table"></div>`;
+    dispatch.mockResolvedValue(null);
+    const { showHistoryView } = await import("./history.js");
+    showHistoryView();
+    await vi.waitFor(() => {
+      if (document.querySelector(".history-error") === null) {
+        throw new Error("no error state");
+      }
+    });
+    const c = document.getElementById("history-table")!;
+    expect(c.querySelector(".list-empty")?.textContent).not.toContain("No previous sessions");
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
+    (c.querySelector("button") as HTMLElement).click();
+    await vi.waitFor(() => {
+      if (c.querySelector("[data-key]") === null) {
+        throw new Error("retry did not re-fetch");
+      }
+    });
+  });
+
+  it("says so when the workspace has nothing", async () => {
+    document.body.innerHTML = `<div id="history-table"></div>`;
+    dispatch.mockResolvedValue({ sessions: [], runs: [] });
+    const { showHistoryView } = await import("./history.js");
+    showHistoryView();
+    await vi.waitFor(() => {
+      const t = document.getElementById("history-table")?.textContent ?? "";
+      if (!t.includes("No previous sessions")) {
+        throw new Error("no empty state");
+      }
+    });
+    const c = document.getElementById("history-table")!;
+    expect(c.querySelectorAll("[data-key]")).toHaveLength(0);
+    expect(c.textContent).toContain("No previous sessions in this workspace.");
   });
 });

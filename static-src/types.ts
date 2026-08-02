@@ -197,3 +197,30 @@ export interface Session {
   parent_chat_id?: string;
   compaction_watermark?: string;
 }
+
+/** One resumable KAS session, from GET /api/sessions. Mirrors
+ *  api.ResumableSession. */
+export interface ResumableSessionRow {
+  session_id: string;
+  title: string;
+  agent_mode?: string;
+  status?: string;
+  description?: string;
+  /** Set when a vibekit chat already owns this session, so opening it is just
+   *  opening that chat rather than adopting it. */
+  chat_id?: string;
+  updated_at: number;
+  created_at?: number;
+}
+
+/** One previous workflow run, from GET /api/sessions. Mirrors
+ *  api.WorkflowRun. */
+export interface WorkflowRunRow {
+  workflow_id: string;
+  name: string;
+  status?: string;
+  parent_chat_id?: string;
+  updated_at: number;
+  created_at?: number;
+  started_at?: number;
+}

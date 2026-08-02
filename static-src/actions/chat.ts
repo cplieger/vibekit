@@ -1,8 +1,7 @@
-// Actions for chat lifecycle: delete, archive, restore, discard rewind,
-// load history, delete archived, cancel, switch model, set mode, send prompt,
+// Actions for chat lifecycle: delete, discard rewind, list previous sessions,
+// resume a previous session, cancel, switch model, set mode, send prompt,
 // resolve pending change, resolve all pending, permission response,
-// elicitation response, restore checkpoint, set supervised, trust pending,
-// clear pending trust.
+// elicitation response, set supervised, trust pending, clear pending trust.
 // ---------------------------------------------------------------------------
 
 import {
@@ -15,7 +14,7 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
 } from "./index.js";
 
-import type { PendingChange, Session } from "../types.js";
+import type { PendingChange, ResumableSessionRow, Session, WorkflowRunRow } from "../types.js";
 import {
   get,
   setThinking,
@@ -64,37 +63,6 @@ export const deleteChat = transportAction<string, { session: Session; atIndex: n
     }
   },
   error: "Couldn't delete chat",
-});
-
-// --- chat.archive ---
-
-export const archiveChat = apiAction<string, unknown, { session: Session; atIndex: number }>({
-  name: "chat.archive",
-  scope: (id) => `chat:${id}`,
-  dedupe: true,
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: (id) => ({
-    method: "POST",
-    path: `/api/chats/${encodeURIComponent(id)}/archive`,
-  }),
-  optimistic: (id) => {
-    const session = get(id);
-    if (session === undefined) {
-      return undefined;
-    }
-    const atIndex = indexOfSession(id);
-    removeChat(id);
-    return { session, atIndex };
-  },
-  rollback: (_id, op) => {
-    if (op !== undefined) {
-      reinsertSession(op.session, op.atIndex);
-    }
-  },
-  success: false,
-  error: "Couldn't archive chat",
 });
 
 // --- chat.set_supervised ---
@@ -225,48 +193,37 @@ export const setMode = transportAction<{ chatID: string; modeID: string }, { pre
 
 // --- chat.restore ---
 
-export const restoreChat = apiAction<string, { ok: boolean }>({
-  name: "chat.restore",
-  scope: (id) => `chat:${id}`,
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: (id) => ({
-    method: "POST",
-    path: "/api/chats/archived",
-    body: { id },
-  }),
-  error: "Couldn't restore chat",
-});
-
-// --- chat.delete_archived ---
-// No auto-retry and no manual Retry button: DELETE is destructive. If the
-// first attempt succeeds but the response times out, a retry would hit 404
-// and surface a misleading error toast.
-
-export const deleteArchivedChat = apiAction<string>({
-  name: "chat.delete_archived",
-  scope: (id) => `chat:${id}`,
-  request: (id) => ({
-    method: "DELETE",
-    path: `/api/chats/archived/${encodeURIComponent(id)}`,
-  }),
-  error: "Couldn't delete chat",
-});
-
-// --- chat.load_history ---
-
-export const loadHistory = apiAction<
-  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
+export const loadSessions = apiAction<
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
   void,
-  { chats: { id: string; name: string; summary?: string; updated_at: number }[] }
+  { sessions: ResumableSessionRow[]; runs: WorkflowRunRow[] }
 >({
-  name: "chat.load_history",
+  name: "chat.load_sessions",
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: () => ({ method: "GET", path: "/api/chats/archived" }),
-  error: "Couldn't load chat history",
+  request: () => ({ method: "GET", path: "/api/sessions" }),
+  error: "Couldn't load previous sessions",
+});
+
+// --- chat.resume_session ---
+// Adopts a KAS session the picker listed as a NEW chat. The server creates the
+// chat already bound to the session id; the transcript arrives from the
+// session/load replay, so nothing is copied client-side.
+
+export const resumeSession = transportAction<
+  { chatID: string; sessionID: string; name: string },
+  { ok: boolean }
+>({
+  name: "chat.resume_session",
+  command: ({ chatID, sessionID, name }) => ({
+    type: "resume_session",
+    chat_id: chatID,
+    payload: { session_id: sessionID, name },
+  }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: "Couldn't resume that session",
 });
 
 // --- chat.cancel_turn ---

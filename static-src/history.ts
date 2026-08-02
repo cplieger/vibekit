@@ -1,68 +1,85 @@
 // ---------------------------------------------------------------------------
-// Chat history: sidebar popover listing archived chats, plus a full-page
-// History table opened from the toolbar (#history-btn). Restoring a chat
-// loads its messages into a new tab. Deletion is permanent (server-side) and
-// is guarded by a destructive confirm dialog.
+// History: previous chats and previous workflow runs, both sourced from KAS.
 //
-// Uses loadHistory / deleteArchivedChat from actions/chat.ts
-// for the table view, and raw apiGet for the lightweight sidebar fetch
-// (no toast on failure — sidebar is background UI).
+// This replaces a list of vibekit's OWN archived chat files. vibekit no longer
+// archives anything — KAS owns the session inventory and the transcript, so
+// this page is a picker over `GET /api/sessions` and opening a row is a
+// `session/load`, which the replay projection turns into the transcript.
+//
+// It is the adoption of kiro-cli's own `--resume-picker` ("Interactively select
+// a conversation to resume from this directory"), with a UI instead of an ANSI
+// list. Two rules the server's provenance notes explain in full and this file
+// depends on:
+//
+//   - A CHAT row already owned by a vibekit chat carries `chat_id`, so opening
+//     it is just opening that chat. Without one it is adopted first, via
+//     `resume_session`.
+//   - A RUN row is not a session. Workflow runs come from a separate verb
+//     because session/list's workflow rows are per-STEP (76 rows for one loop),
+//     so a run opens the read-only run view rather than a chat.
 // ---------------------------------------------------------------------------
 
-import { apiGet } from "./api-client.js";
-import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
-import { restoreArchivedChat } from "./chat.js";
 import { toggleHistoryView } from "./tabs.js";
-import { ICON_TRASH, ICON_EXPORT } from "./icons.js";
-import { iconEl } from "./icon-el.js";
-import { downloadChatExport } from "./chat-export.js";
-import { confirm as confirmDialog } from "./confirm.js";
-import { deleteArchivedChat, loadHistory } from "./actions/chat.js";
-import { registerCleanup, bindLoadingState } from "./actions/index.js";
-import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
+import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
+import { loadSessions } from "./actions/chat.js";
+import { registerCleanup } from "./actions/index.js";
+import { openPreviousSession } from "./chat.js";
+import { openRunView } from "./run-view.js";
+import type { ResumableSessionRow, WorkflowRunRow } from "./types.js";
 
-interface ArchivedHeader {
-  id: string;
-  name: string;
-  summary?: string;
-  updated_at: number;
+/** A chat row and a run row share the list, so they share a shape. */
+interface HistoryRow {
+  /** Reconcile key. Prefixed per kind so a session and a run can never collide. */
+  key: string;
+  kind: "chat" | "run";
+  title: string;
+  updatedAt: number;
+  /** Secondary line: the agent's focus for a chat, the status for a run. */
+  detail: string;
+  status: string;
+  session?: ResumableSessionRow;
+  run?: WorkflowRunRow;
+}
+
+function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): HistoryRow[] {
+  const rows: HistoryRow[] = [];
+  for (const s of sessions) {
+    rows.push({
+      key: `s:${s.session_id}`,
+      kind: "chat",
+      title: s.title === "" ? "Untitled session" : s.title,
+      updatedAt: s.updated_at,
+      detail: s.description ?? "",
+      status: s.status ?? "",
+      session: s,
+    });
+  }
+  for (const r of runs) {
+    rows.push({
+      key: `r:${r.workflow_id}`,
+      kind: "run",
+      title: r.name === "" ? "Untitled run" : r.name,
+      updatedAt: r.updated_at,
+      detail: "",
+      status: r.status ?? "",
+      run: r,
+    });
+  }
+  // One list, newest first — chats and runs interleaved by recency rather than
+  // segregated, because "what was I doing" does not care which kind it was.
+  rows.sort((a, b) => b.updatedAt - a.updatedAt);
+  return rows;
 }
 
 class HistoryController {
-  private tableAbortController: AbortController | null = null;
-  private archivedController: AbortController | null = null;
-  /** Per-row delete-button bindings keyed by chat id. Cleared per row
-   *  via reconcile's onRemove hook so loadHistoryTable doesn't accrue
-   *  dangling subscriptions across re-renders. */
-  private rowUnbinds = new Map<string, () => void>();
-
-  init(): void {
-    const toggle = document.getElementById("history-toggle");
-    const list = document.getElementById("history-list");
-    if (toggle !== null && list !== null) {
-      // Trigger disclosure over the sidebar list: the primitive announces the
-      // expanded/collapsed state on the (native button) toggle and animates
-      // the region — the old hidden-class flip told AT nothing. The archived
-      // chats load lazily on each open, as before.
-      const startOpen = !list.classList.contains("hidden");
-      list.classList.remove("hidden");
-      createDisclosure(toggle, list, {
-        open: startOpen,
-        onToggle: (open) => {
-          if (open) {
-            void this.loadArchived();
-          }
-        },
-      });
-    }
-  }
+  private abort: AbortController | null = null;
 
   showView(): void {
     toggleHistoryView(
       () => {
-        void this.loadHistoryTable();
+        void this.load();
       },
       () => {
         this.teardown();
@@ -71,332 +88,144 @@ class HistoryController {
   }
 
   teardown(): void {
-    loadHistory.cancel();
-    this.tableAbortController?.abort();
-    this.tableAbortController = null;
-    this.archivedController?.abort();
-    this.archivedController = null;
-    for (const u of this.rowUnbinds.values()) {
-      u();
-    }
-    this.rowUnbinds.clear();
+    loadSessions.cancel();
+    this.abort?.abort();
+    this.abort = null;
   }
 
-  async loadHistoryTable(): Promise<void> {
+  async load(): Promise<void> {
     const container = document.getElementById("history-table");
     if (container === null) {
       return;
     }
+    loadSessions.cancel();
+    this.abort?.abort();
+    this.abort = new AbortController();
+    const { signal } = this.abort;
 
-    loadHistory.cancel();
-    this.tableAbortController?.abort();
-    this.tableAbortController = new AbortController();
-    const { signal } = this.tableAbortController;
-
-    // Stable skeleton (150ms show-delay) while the fetch is in flight; skipped
-    // when the table already holds rows (a re-open) so it doesn't flash.
-    const skeleton = skeletonTiming(() => showTableSkeleton(container));
-
-    const d = await loadHistory.dispatch(undefined);
+    const skeleton = skeletonTiming(() => showSkeleton(container));
+    const d = await loadSessions.dispatch(undefined);
     skeleton.cancel();
     if (signal.aborted) {
       return;
     }
-    // Error: don't paint a misleading empty state — offer a retry (no dead end).
+    // Don't paint a misleading empty state on failure — offer a retry.
     if (d === null) {
-      this.flushRowUnbinds();
-      container.replaceChildren(this.buildErrorState());
+      container.replaceChildren(this.buildError());
       return;
     }
-    const chats = d.chats ?? []; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 
-    // Drop any non-keyed sibling (skeleton / empty / error placeholder) before reconcile.
+    const rows = toRows(d.sessions ?? [], d.runs ?? []); // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+    // Drop any non-keyed sibling (skeleton / empty / error) before reconcile.
     for (const child of [...container.children]) {
       if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
         child.remove();
       }
     }
-
-    if (chats.length === 0) {
-      this.flushRowUnbinds();
-      container.replaceChildren();
-      container.appendChild(el("div", { className: "list-empty" }, "No archived chats."));
+    if (rows.length === 0) {
+      container.replaceChildren(
+        el("div", { className: "list-empty" }, "No previous sessions in this workspace."),
+      );
       return;
     }
+    reconcile(container, rows, { key: (r) => r.key, mount: (r) => buildRow(r) });
 
-    reconcile(container, chats, {
-      key: (c) => c.id,
-      mount: (c) => this.buildHistoryTableRow(c),
-      onRemove: (_, key) => {
-        const u = this.rowUnbinds.get(key);
-        if (u !== undefined) {
-          u();
-          this.rowUnbinds.delete(key);
-        }
-      },
-    });
-
-    // Bug 1: Use signal-bound listeners so they're automatically removed on the
-    // next loadHistoryTable call (which aborts tableAbortController).
+    // One delegated listener per load, signal-bound so the previous one is
+    // dropped rather than stacking across re-opens.
     container.addEventListener(
       "click",
       (e) => {
-        this.handleRowAction(container, e.target as HTMLElement);
-      },
-      { signal },
-    );
-    // Restore is a non-native activation target (a role="button" title block),
-    // so translate Enter/Space into the same click path for keyboard users.
-    container.addEventListener(
-      "keydown",
-      (e) => {
-        if (e.key !== "Enter" && e.key !== " ") {
+        const rowEl = (e.target as HTMLElement).closest<HTMLElement>("[data-key]");
+        if (rowEl === null) {
           return;
         }
-        const restore = (e.target as HTMLElement).closest<HTMLElement>('[data-action="restore"]');
-        if (restore === null) {
-          return;
+        const row = rows.find((r) => r.key === rowEl.getAttribute("data-key"));
+        if (row !== undefined) {
+          openRow(row);
         }
-        e.preventDefault();
-        restore.click();
       },
       { signal },
     );
   }
 
-  /** Dispatch a click on a `[data-action]` control to its handler. */
-  private handleRowAction(container: HTMLElement, targetEl: HTMLElement): void {
-    const target = targetEl.closest<HTMLElement>("[data-action]");
-    if (target === null) {
-      return;
-    }
-    const row = target.closest<HTMLElement>("[data-chat-id]");
-    if (row === null) {
-      return;
-    }
-    const chatId = row.getAttribute("data-chat-id")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-    const action = target.getAttribute("data-action");
-    if (action === "restore") {
-      // Optimistic-remove the row to prevent double-click dispatches.
-      row.remove();
-      this.dropRowUnbind(chatId);
-      restoreArchivedChat(chatId);
-    } else if (action === "delete") {
-      // Destructive + permanent: confirm before removing (no optimistic remove
-      // until the user has agreed).
-      void this.confirmAndDelete(container, row, chatId);
-    } else if (action === "export") {
-      // Non-destructive: keep the row. The server export path falls back
-      // to the archive dir, so archived chats export without restoring.
-      const name = row.querySelector<HTMLElement>(".list-row-name")?.textContent ?? "";
-      downloadChatExport(chatId, name, "md");
-    }
-  }
-
-  /** Confirm, then permanently delete an archived chat. */
-  private async confirmAndDelete(
-    container: HTMLElement,
-    row: HTMLElement,
-    chatId: string,
-  ): Promise<void> {
-    const name = row.querySelector<HTMLElement>(".list-row-name")?.textContent ?? "this chat";
-    const ok = await confirmDialog(
-      `Delete "${name}" permanently? This can't be undone.`,
-      "Delete",
-      "destructive",
-    );
-    if (!ok) {
-      return;
-    }
-    row.remove();
-    this.dropRowUnbind(chatId);
-    if (container.querySelector("[data-chat-id]") === null) {
-      container.appendChild(el("div", { className: "list-empty" }, "No archived chats."));
-    }
-    void deleteArchivedChat.dispatch(chatId);
-  }
-
-  private dropRowUnbind(chatId: string): void {
-    const u = this.rowUnbinds.get(chatId);
-    if (u !== undefined) {
-      u();
-      this.rowUnbinds.delete(chatId);
-    }
-  }
-
-  /** Error placeholder with a Retry button so a failed load isn't a dead end. */
-  private buildErrorState(): HTMLElement {
+  private buildError(): HTMLElement {
     const retry = el("button", { type: "button", className: "btn-small" }, "Retry");
     retry.addEventListener("click", () => {
-      void this.loadHistoryTable();
+      void this.load();
     });
     return el(
       "div",
       { className: "list-empty history-error" },
-      el("span", {}, "Couldn't load history. Check your connection and try again."),
+      el("span", {}, "Couldn't load previous sessions. Check your connection and try again."),
       retry,
-    );
-  }
-
-  private buildHistoryTableRow(chat: {
-    id: string;
-    name: string;
-    summary?: string;
-    updated_at: number;
-  }): HTMLElement {
-    const row = el("div", {
-      className: "list-row history-table-row",
-      "data-chat-entry": "",
-      "data-chat-id": chat.id,
-    });
-
-    const nameWrap = el(
-      "div",
-      {
-        className: "list-row-title",
-        role: "button",
-        tabindex: "0",
-        "aria-label": `Restore ${chat.name}`,
-        "data-action": "restore",
-      },
-      el("span", { className: "list-row-name" }, chat.name),
-      chat.summary !== undefined && chat.summary !== ""
-        ? el("span", { className: "list-row-summary" }, chat.summary)
-        : null,
-    );
-
-    const date = el(
-      "span",
-      { className: "list-row-meta" },
-      new Date(chat.updated_at).toLocaleString(),
-    );
-
-    const exportBtn = el(
-      "button",
-      {
-        type: "button",
-        className: "btn-small icon-only",
-        "data-tooltip": "Export as Markdown",
-        "aria-label": `Export ${chat.name}`,
-        "data-action": "export",
-      },
-      iconEl(ICON_EXPORT),
-    ) as HTMLButtonElement;
-
-    const delBtn = el(
-      "button",
-      {
-        type: "button",
-        className: "btn-small btn-danger icon-only",
-        "data-tooltip": "Delete permanently",
-        "aria-label": `Delete ${chat.name}`,
-        "data-action": "delete",
-      },
-      iconEl(ICON_TRASH),
-    ) as HTMLButtonElement;
-
-    row.append(nameWrap, date, exportBtn, delBtn);
-    this.rowUnbinds.set(chat.id, bindLoadingState("chat.delete_archived", delBtn));
-    return row;
-  }
-
-  private flushRowUnbinds(): void {
-    for (const u of this.rowUnbinds.values()) {
-      u();
-    }
-    this.rowUnbinds.clear();
-  }
-
-  async loadArchived(): Promise<void> {
-    const list = document.getElementById("history-list");
-    const count = document.getElementById("history-count");
-    const section = document.getElementById("sidebar-history");
-    if (list === null) {
-      return;
-    }
-
-    this.archivedController?.abort();
-    this.archivedController = new AbortController();
-    const { signal } = this.archivedController;
-
-    // Intentional: uses raw apiGet instead of an action because this is a
-    // sidebar background fetch — no toast desired on failure (POLICY: LOG ONLY).
-    const d = await apiGet<{ chats: ArchivedHeader[] }>("/api/chats/archived", signal);
-    if (signal.aborted) {
-      return;
-    }
-    const chats = d?.chats ?? [];
-
-    if (section !== null) {
-      section.classList.toggle("hidden", chats.length === 0);
-    }
-    if (count !== null) {
-      count.textContent = String(chats.length);
-      count.classList.toggle("hidden", chats.length === 0);
-    }
-
-    // Drop non-keyed empty-state placeholder before reconcile.
-    for (const child of [...list.children]) {
-      if ((child as HTMLElement).getAttribute("data-reconcile-key") === null) {
-        child.remove();
-      }
-    }
-
-    if (chats.length === 0) {
-      list.replaceChildren();
-      const hint = el("p", { className: "text-muted text-sm" }, "No archived chats.");
-      hint.style.padding = "var(--sp-2) var(--sp-3)";
-      list.appendChild(hint);
-      return;
-    }
-
-    reconcile(list, chats, {
-      key: (c) => c.id,
-      mount: (c) => buildArchivedSidebarRow(c),
-    });
-
-    // Bug 1: Use signal-bound listener so it's removed on next loadArchived call.
-    list.addEventListener(
-      "click",
-      (e) => {
-        const target = (e.target as HTMLElement).closest<HTMLElement>("[data-action]");
-        if (target === null) {
-          return;
-        }
-        const row = target.closest<HTMLElement>("[data-chat-id]");
-        if (row === null) {
-          return;
-        }
-        const chatId = row.getAttribute("data-chat-id")!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-        if (target.getAttribute("data-action") === "restore") {
-          // Optimistic-remove row to prevent double-click.
-          row.remove();
-          restoreArchivedChat(chatId);
-        }
-      },
-      { signal },
     );
   }
 }
 
-/** Skeleton rows for the full-page history table (matches .history-table-row
- *  dimensions). Skipped when the table already holds rows so a re-open doesn't
- *  flash placeholders. Returns a teardown that removes the skeleton. */
-function showTableSkeleton(container: HTMLElement): () => void {
-  if (container.querySelector("[data-chat-id]") !== null) {
+/** Open a history row: a chat resumes, a run opens its read-only review. */
+function openRow(row: HistoryRow): void {
+  if (row.kind === "run" && row.run !== undefined) {
+    openRunView(row.run.workflow_id, row.title);
+    return;
+  }
+  if (row.session !== undefined) {
+    openPreviousSession(row.session);
+  }
+}
+
+function buildRow(row: HistoryRow): HTMLElement {
+  const isRun = row.kind === "run";
+  const kindChip = el(
+    "span",
+    { className: `history-kind ${isRun ? "history-kind-run" : "history-kind-chat"}` },
+    isRun ? "Run" : "Chat",
+  );
+  const title = el(
+    "div",
+    { className: "list-row-title" },
+    el("span", { className: "list-row-name" }, row.title),
+    row.detail !== "" ? el("span", { className: "list-row-summary" }, row.detail) : null,
+  );
+  // A status is shown only when it says something. KAS reports `idle` for every
+  // settled session, which is noise; `failed` and `waiting_on_user` are not.
+  const showStatus = row.status !== "" && row.status !== "idle";
+  return el(
+    "div",
+    {
+      className: "list-row history-table-row",
+      role: "button",
+      tabindex: "0",
+      "data-key": row.key,
+      "aria-label": `Open ${row.title}`,
+    },
+    kindChip,
+    title,
+    showStatus ? el("span", { className: "history-status" }, row.status.replace(/_/g, " ")) : null,
+    el(
+      "span",
+      { className: "list-row-meta" },
+      row.updatedAt > 0 ? new Date(row.updatedAt).toLocaleString() : "",
+    ),
+  );
+}
+
+/** Skeleton rows while the fetch is in flight; skipped when already populated
+ *  so a re-open doesn't flash placeholders. */
+function showSkeleton(container: HTMLElement): () => void {
+  if (container.querySelector("[data-key]") !== null) {
     return () => {
-      /* already populated — nothing shown */
+      /* already populated */
     };
   }
   const wrap = el("div", { className: "history-skeleton", "aria-hidden": "true" });
   for (let i = 0; i < 4; i++) {
-    const row = el("div", { className: "list-row history-table-row history-skel-row" });
+    const rowEl = el("div", { className: "list-row history-table-row history-skel-row" });
     const title = el("div", { className: "list-row-title" });
-    title.appendChild(skelBar("history-skel-name", "60%"));
-    title.appendChild(skelBar("history-skel-summary", "42%"));
-    row.appendChild(title);
-    row.appendChild(skelBar("history-skel-date", "8rem"));
-    wrap.appendChild(row);
+    title.appendChild(skelBar("history-skel-name", "55%"));
+    title.appendChild(skelBar("history-skel-summary", "38%"));
+    rowEl.appendChild(title);
+    rowEl.appendChild(skelBar("history-skel-date", "8rem"));
+    wrap.appendChild(rowEl);
   }
   container.replaceChildren(wrap);
   return () => {
@@ -410,39 +239,11 @@ function skelBar(className: string, width: string): HTMLElement {
   return bar;
 }
 
-function buildArchivedSidebarRow(chat: ArchivedHeader): HTMLElement {
-  return el(
-    "div",
-    { className: "history-row", "data-chat-id": chat.id },
-    el(
-      "div",
-      { className: "history-name-wrap" },
-      el("span", { className: "history-name" }, chat.name),
-      chat.summary !== undefined && chat.summary !== ""
-        ? el("span", { className: "history-summary" }, chat.summary)
-        : null,
-    ),
-    el(
-      "button",
-      {
-        type: "button",
-        className: "history-restore",
-        "aria-label": `Restore ${chat.name}`,
-        "data-action": "restore",
-      },
-      "Restore",
-    ),
-  );
-}
-
 const historyCtrl = new HistoryController();
 registerCleanup(() => {
   historyCtrl.teardown();
 });
 
-export function initHistory(): void {
-  historyCtrl.init();
-}
 export function showHistoryView(): void {
   historyCtrl.showView();
 }

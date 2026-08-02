@@ -813,10 +813,17 @@
       <div id="history-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">History</h2>
-          <p class="section-hint">Chats auto-archive when you close the tab. They stay here for the retention window (Settings → General). Click to reopen; × to delete permanently.</p>
+          <p class="section-hint">Previous chats and workflow runs in this workspace, newest first. Click a chat to reopen it, or a run to review what it did.</p>
           <div id="history-table" class="list-container">
-            <div class="list-empty">No archived chats.</div>
+            <div class="list-empty">No previous sessions in this workspace.</div>
           </div>
+        </div>
+      </div>
+      <div id="run-view" class="hidden" data-tab-view>
+        <div class="page-content">
+          <h2 class="page-title">Workflow run</h2>
+          <p class="section-hint">A finished run, read-only. Closing this tab closes nothing else.</p>
+          <div id="run-body" class="list-container"></div>
         </div>
       </div>
 

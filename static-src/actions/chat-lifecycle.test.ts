@@ -19,7 +19,6 @@ vi.mock("../api-client.js", () => ({
 import { send as transportSend } from "../transport.js";
 import { setSessions, get, setActive } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { getActionLog as recentLog } from "./index.js";
 import type { Session } from "../types.js";
 
 const mockSend = vi.mocked(transportSend);
@@ -111,57 +110,46 @@ describe("chat.cancel_turn", () => {
   });
 });
 
-describe("chat.restore", () => {
-  it("POSTs to /api/chats/archived with id", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    const { restoreChat } = await import("./chat.js");
-    const r = await restoreChat.dispatch("archived-1");
-    expect(r).toEqual({ ok: true });
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/chats/archived");
-    expect(opts.method).toBe("POST");
-    expect(JSON.parse(opts.body as string)).toEqual({ id: "archived-1" });
-  });
-});
-
-describe("chat.delete_archived", () => {
-  it("DELETEs /api/chats/archived/:id", async () => {
-    mockFetch.mockResolvedValue(new Response("", { status: 204 }));
-    const { deleteArchivedChat } = await import("./chat.js");
-    await deleteArchivedChat.dispatch("old-chat");
-    const [url, opts] = mockFetch.mock.calls[0]!;
-    expect(url).toBe("/api/chats/archived/old-chat");
-    expect(opts.method).toBe("DELETE");
-  });
-
-  it("is not retryable", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({ error: "gone" }), { status: 404 }));
-    const { deleteArchivedChat } = await import("./chat.js");
-    await deleteArchivedChat.dispatch("x");
-    expect(recentLog()[0]?.status).toBe("error");
-  });
-});
-
-describe("chat.load_history", () => {
-  it("GETs /api/chats/archived and dedupes", async () => {
+describe("chat.load_sessions", () => {
+  it("GETs /api/sessions and dedupes concurrent calls", async () => {
     vi.useFakeTimers();
     mockFetch.mockImplementation(
       () =>
         new Promise((r) =>
           setTimeout(() => {
-            r(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
+            r(new Response(JSON.stringify({ sessions: [], runs: [] }), { status: 200 }));
           }, 50),
         ),
     );
-    const { loadHistory } = await import("./chat.js");
-    const p1 = loadHistory.dispatch(undefined);
-    const p2 = loadHistory.dispatch(undefined);
+    const { loadSessions } = await import("./chat.js");
+    const p1 = loadSessions.dispatch(undefined);
+    const p2 = loadSessions.dispatch(undefined);
     await vi.advanceTimersByTimeAsync(50);
     const [r1, r2] = await Promise.all([p1, p2]);
-    expect(r1).toEqual({ chats: [] });
+    expect(r1).toEqual({ sessions: [], runs: [] });
     expect(r1).toEqual(r2);
     expect(mockFetch).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+});
+
+describe("chat.resume_session", () => {
+  it("sends resume_session with the session id and title", async () => {
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+    const { resumeSession } = await import("./chat.js");
+    await resumeSession.dispatch({
+      chatID: "c-new",
+      sessionID: "sess_abc-123",
+      name: "Earlier work",
+    });
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "resume_session",
+        chat_id: "c-new",
+        payload: { session_id: "sess_abc-123", name: "Earlier work" },
+      }),
+      expect.anything(),
+    );
   });
 });
 

@@ -8,7 +8,8 @@
 //   /git/{tab}                    git panel sub-tab (prs | sources; changes omits the segment)
 //   /files[/{path}]               file browser at path (omit for workspace root)
 //   /file/{path}                  file editor for a specific file, with optional #L<line>
-//   /history                      archived chats (full-page view)
+//   /history                      previous chats + workflow runs (full-page view)
+//   /run/{workflowId}             read-only review of one previous run
 //   /settings                     Settings (General tab)
 //   /settings/tools               Settings → Tools
 //   /settings/permissions         Settings → Permissions
@@ -54,12 +55,18 @@ interface RouteFile {
 interface RouteHistory {
   kind: "history";
 }
+/** A read-only review of one previous workflow run. */
+interface RouteRun {
+  kind: "run";
+  id: string;
+}
 interface RouteSettings {
   kind: "settings";
   tab: SettingsTab;
 }
 
-export type Route = RouteChat | RouteGit | RouteFiles | RouteFile | RouteHistory | RouteSettings;
+export type Route =
+  RouteChat | RouteGit | RouteFiles | RouteFile | RouteHistory | RouteRun | RouteSettings;
 
 // --- Parse current URL into a Route ---
 
@@ -86,6 +93,14 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
 
     case "history":
       return { kind: "history" };
+
+    case "run": {
+      const id = safeDecode(segments[1] ?? "");
+      if (id !== "") {
+        return { kind: "run", id };
+      }
+      break;
+    }
 
     case "settings":
       return { kind: "settings", tab: parseSettingsTab(segments[1]) };
@@ -174,6 +189,8 @@ export function buildPath(route: Route): string {
       return route.tab === "changes" ? "/git" : `/git/${route.tab}`;
     case "history":
       return "/history";
+    case "run":
+      return `/run/${encodeURIComponent(route.id)}`;
     case "files":
       return route.path === "." || route.path === ""
         ? "/files"

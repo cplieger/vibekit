@@ -17,6 +17,7 @@ import {
   ICON_TAB_SETTINGS,
   ICON_TAB_GIT,
   ICON_TAB_FILES,
+  ICON_TAB_RUN,
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
 } from "./icons.js";
@@ -45,6 +46,7 @@ export const TAB_VIEWS = {
   files: "#files-view",
   editor: "#editor-view",
   history: "#history-view",
+  run: "#run-view",
 } as const;
 
 type TabKind = keyof typeof TAB_VIEWS;
@@ -82,6 +84,7 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   files: ICON_TAB_FILES,
   editor: ICON_TAB_EDITOR,
   history: ICON_TAB_HISTORY,
+  run: ICON_TAB_RUN,
 };
 
 // --- Store ---
@@ -820,6 +823,20 @@ export function toggleHistoryView(onShow: () => void, onClose?: () => void): voi
     route: { kind: "history" },
     onShow,
     onClose,
+  });
+}
+
+/** Open (or focus) the read-only review tab for one previous workflow run.
+ *  Not a singleton: several runs can be reviewed side by side, keyed by id.
+ *  Closing it closes nothing else — a finished run has nothing to kill. */
+export function openRunTab(workflowID: string, name: string, onShow: () => void): void {
+  openTab({
+    id: `run:${workflowID}`,
+    name,
+    kind: "run",
+    view: TAB_VIEWS.run,
+    route: { kind: "run", id: workflowID },
+    onShow,
   });
 }
 
