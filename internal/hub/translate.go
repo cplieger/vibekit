@@ -194,6 +194,33 @@ func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *a
 		subSessionID = env.Params.SessionID
 	}
 
+	// A REPLAYED frame is stored history, not something happening now, and
+	// must not reach the live handlers. KAS replays a session's whole
+	// transcript on `session/load` — which vibekit calls on every
+	// container-restart resume and every model-switch fallback — as ordinary
+	// session/update notifications tagged `_meta.kiro.replay`.
+	//
+	// Measured against kiro-cli 2.16.0: a load of a one-turn session returns
+	// 9 frames, 6 of them replay-tagged. Ungated, the replayed
+	// agent_message_chunk runs ensureTurnStarted and opens a PHANTOM turn —
+	// a fresh message id whose `message_created` + `message_chunk` events go
+	// out to every connected client, re-streaming history as though the agent
+	// were typing it. There is no `session/prompt` response to end that turn,
+	// so it never flushes to the chat file, but the `.partial` writer does
+	// snapshot it, which puts RecoverPartials in a position to resurrect the
+	// duplicate as a real message on the following restart.
+	//
+	// Dropping is correct rather than merely safe: vibekit persists its own
+	// transcript, so the history in a replay is already on disk. The
+	// projection that will CONSUME these frames (turn brackets, compaction
+	// collapse, staged-and-swapped atomically) hooks in right here — this is
+	// its seam, and until it exists "drop" is the honest behaviour.
+	if base.Meta.Kiro.Replay {
+		slog.Debug("session/update: dropping replayed frame",
+			"chat_id", chatID, "kind", base.Kind)
+		return
+	}
+
 	// Sub-kinds without a handler fall through silently. user_message_chunk
 	// is intentionally one of them: vibekit persists user messages itself
 	// (cmdPrompt echoes the bubble via message_appended before the turn

@@ -151,9 +151,28 @@ type ACPSessionUpdateEnvelope struct {
 	Update    json.RawMessage `json:"update"`
 }
 
-// ACPSessionUpdateBase extracts the sessionUpdate kind discriminator.
+// ACPSessionUpdateBase extracts the two discriminators every session/update
+// dispatch needs: the sessionUpdate kind, and whether the frame is a REPLAY
+// of stored history rather than something happening now.
+//
+// KAS replays a session's whole transcript as ordinary session/update
+// notifications in response to `session/load` (bounded only when the caller
+// asks, via `_meta.kiro.replayLimit`), tagging each replayed frame
+// `_meta.kiro.replay: true`. Note the nesting: the flag is on the **update**
+// object, not on `params` — reading it off params yields false for every
+// frame, which looks exactly like a wire that never sets it.
+//
+// Live frames leave it absent. Catalog frames that arrive during a load
+// (`available_commands_update`, `config_option_update`) are deliberately NOT
+// tagged: they carry the session's CURRENT state, not its history, so they
+// must keep reaching the live handlers.
 type ACPSessionUpdateBase struct {
 	Kind api.ACPUpdateKind `json:"sessionUpdate"`
+	Meta struct {
+		Kiro struct {
+			Replay bool `json:"replay"`
+		} `json:"kiro"`
+	} `json:"_meta"`
 }
 
 // JSON field name constants — the wire protocol uses these strings
