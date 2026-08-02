@@ -196,19 +196,3 @@ describe("chat.respond_permission", () => {
     );
   });
 });
-
-describe("chat.restore_checkpoint", () => {
-  it("sends restore_checkpoint with tag", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { restoreCheckpoint } = await import("./chat.js");
-    await restoreCheckpoint.dispatch({ chatID: "c1", tag: "cp-abc" });
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "restore_checkpoint",
-        chat_id: "c1",
-        payload: expect.objectContaining({ tag: "cp-abc" }),
-      }),
-      expect.anything(),
-    );
-  });
-});

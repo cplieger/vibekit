@@ -34,13 +34,6 @@ type ChatAccess interface {
 	CleanupChatState(ctx context.Context, chatID api.ChatID)
 }
 
-// CheckpointAccess provides checkpoint operations needed by prompt,
-// restore, and undo handlers.
-type CheckpointAccess interface {
-	Checkpoints() api.CheckpointService
-	AdvanceCheckpointTurn(ctx context.Context, chatID api.ChatID)
-}
-
 // SupervisedAccess provides supervised-mode and pending-permission
 // operations needed by pending/trust handlers.
 type SupervisedAccess interface {
@@ -76,9 +69,6 @@ func (d *Dispatcher) Bridge() BridgeAccess { return d.deps }
 
 // Chat returns the ChatAccess subset of dependencies.
 func (d *Dispatcher) Chat() ChatAccess { return d.deps }
-
-// Checkpoint returns the CheckpointAccess subset of dependencies.
-func (d *Dispatcher) Checkpoint() CheckpointAccess { return d.deps }
 
 // Supervised returns the SupervisedAccess subset of dependencies.
 func (d *Dispatcher) Supervised() SupervisedAccess { return d.deps }

@@ -75,16 +75,6 @@ func (h *Hub) RemovePendingPerm(requestID int64) {
 	h.sse.pendingPerms.Remove(requestID)
 }
 
-// Checkpoints returns the checkpoint service, or nil if unavailable.
-func (h *Hub) Checkpoints() api.CheckpointService {
-	return h.checkpoints
-}
-
-// AdvanceCheckpointTurn bumps the checkpoint turn counter.
-func (h *Hub) AdvanceCheckpointTurn(ctx context.Context, chatID api.ChatID) {
-	h.advanceCheckpointTurn(ctx, chatID)
-}
-
 // ConfigDir returns the configuration directory.
 func (h *Hub) ConfigDir() string {
 	return h.lifecycle.configDir

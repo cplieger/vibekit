@@ -92,7 +92,6 @@ import "./handlers/turn.js";
 import "./handlers/system.js";
 import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
-import { wireCheckpointRestore } from "./handlers/turn.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
@@ -103,7 +102,6 @@ import { error as toastError } from "./toast.js";
 // without the user having to first open the chat that triggered
 // them. The module is small; the side-effect import is worth the
 // immediacy.
-import "./conflicts.js";
 
 function dismissLoadingScreen(): void {
   document.getElementById("app-loading")?.remove();
@@ -374,7 +372,6 @@ async function checkAuthAndStart(): Promise<void> {
 
   const skel = chatSkeleton();
   $.messages.appendChild(skel);
-  wireCheckpointRestore($.messages);
 
   suppressPush(true);
   // If share-target intends to create a session (e.g. ?agent=planner),

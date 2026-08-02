@@ -13,16 +13,12 @@
 // Atomic file I/O (SaveBytes, bounded reads) lives in the external
 // cplieger/atomicfile package, not here.
 //
-// Implementation packages import api, never the reverse. Domain types
-// Tag, FileChange, and ConflictPayload live in checkpoint/types (a
-// leaf package with zero internal dependencies).
+// Implementation packages import api, never the reverse.
 package api
 
 import (
 	"context"
 	"net/http"
-
-	checkpoint "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // --- Persistence ---
@@ -323,28 +319,4 @@ type PendingStore interface {
 	// as unknown, so a resolve command carrying a mismatched chat_id can
 	// never settle another chat's op.
 	Resolve(ctx context.Context, chatID ChatID, toolCallID string, action PendingAction) (PendingChange, error)
-}
-
-// --- Checkpoints ---
-
-// CheckpointService is the consumer-side interface for the checkpoint
-// subsystem. Enables stub/mock injection in hub tests without
-// constructing a real checkpoint.Store with filesystem state.
-type CheckpointService interface {
-	Snapshot(ctx context.Context, chatID ChatID, relPath string, newContent []byte, messageCount int) (checkpoint.Tag, error)
-	// OwnerOf returns the chat whose agent most recently wrote relPath
-	// (the owner of the path's checkpoint lineage), or ok=false when no
-	// chat tracks the path. Warms the cross-chat index from disk on
-	// first use so a cold process answers correctly.
-	OwnerOf(ctx context.Context, relPath string) (ChatID, bool)
-	Restore(ctx context.Context, chatID ChatID, tag checkpoint.Tag) (int, error)
-	RestorePreview(ctx context.Context, chatID ChatID, tag checkpoint.Tag) ([]string, error)
-	Diff(ctx context.Context, chatID ChatID, from, to checkpoint.Tag) ([]checkpoint.FileChange, error)
-	Conflicts(ctx context.Context, chatID ChatID) ([]checkpoint.ConflictPayload, error)
-	ReadBlob(ctx context.Context, chatID ChatID, sha string) ([]byte, error)
-	OldestTag(ctx context.Context, chatID ChatID) checkpoint.Tag
-	AdvanceTurn(ctx context.Context, chatID ChatID, messageCount int)
-	Cleanup(ctx context.Context, chatID ChatID)
-	StartBackgroundTasks(ctx context.Context)
-	Stop()
 }

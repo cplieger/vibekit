@@ -60,11 +60,6 @@ func main() {
 		wiregen.TypeRef[api.PendingChangeResolvedPayload](),
 		wiregen.TypeRef[api.PendingChangesClearedPayload](),
 		wiregen.TypeRef[api.ChatDeletedPayload](),
-		// api.ConflictDetectedPayload is an alias of
-		// checkpoint/types.ConflictPayload, so TypeRef resolves to the
-		// underlying name; the TS override below restores the event-payload
-		// naming convention.
-		wiregen.TypeRef[api.ConflictDetectedPayload](),
 		wiregen.TypeRef[api.ToolCallPayload](),
 		wiregen.TypeRef[api.ToolCallUpdatePayload](),
 		wiregen.TypeRef[api.CommandsUpdatedPayload](),
@@ -132,12 +127,6 @@ func main() {
 		"Kind": "ForgeKind", // forges.Kind → ForgeKind in TS
 	}
 
-	r.TSNameOverride = map[string]string{
-		// checkpoint/types.ConflictPayload arrives via the api alias; name
-		// the TS interface after the SSE event it rides.
-		"ConflictPayload": "ConflictDetectedPayload",
-	}
-
 	// MCPOAuthPayload's acronym cluster (MCP+OAuth) can't be split
 	// unambiguously, so its snake_case path is given explicitly.
 	r.PathNameOverride = map[string]string{
@@ -153,7 +142,6 @@ func main() {
 		{EventType: "chat_updated", TypeName: "ChatHeader"},
 		{EventType: "code_references", TypeName: "CodeReferencesPayload"},
 		{EventType: "commands_updated", TypeName: "CommandsUpdatedPayload"},
-		{EventType: "conflict_detected", TypeName: "ConflictPayload"},
 		{EventType: "connected", TypeName: "ConnectedPayload"},
 		{EventType: "elicitation_needed", TypeName: "ElicitationNeededPayload"},
 		{EventType: "user_input_needed", TypeName: "UserInputNeededPayload"},

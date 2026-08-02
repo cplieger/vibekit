@@ -114,7 +114,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs))
 	chat.WithBroadcaster(h)(chatStore)
 	h.RecoverPartials()
-	h.StartCheckpointBackgroundTasks()
 
 	mcpRegistry := mcpPkg.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(ctx, mcpStore)
@@ -168,11 +167,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Built-in editor saves fold into the owning chat's checkpoint
-	// timeline (pre-write capture; see hub.CaptureEditorSave). Only
-	// the editor's PUT /api/file path is captured — uploads, copies,
-	// and shell writes stay outside the checkpoint contract.
-	fileHandler.SetWriteObserver(h.CaptureEditorSave)
 	authHandler := auth.NewHandler(kiro.cliPath,
 		auth.WithConfig(cfg.AuthConfig),
 		auth.WithTrustedProxies(cfg.TrustedProxies))
@@ -221,19 +215,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		h.OnChatArchived(id)
 		purgeScheduler.Trigger()
 	})(chatStore)
-	// A purge reaps EVERYTHING the chat owned: vibekit's checkpoints and every
-	// KAS session directory in its chain. Reaping here rather than leaving it
-	// to the hourly orphan sweep matters because DefaultChatRetentionDays is 1,
-	// so nearly every session directory would otherwise become an orphan within
-	// a day and the sweep — the destructive leg, whose keep-list is derived by
-	// reading every chat file — would be the primary retention mechanism.
-	chat.WithOnPurge(func(chatID api.ChatID, sessionChain []string) {
-		h.CleanupCheckpoints(ctx, chatID)
+	// A purge reaps every KAS session directory in the chat's chain. Reaping
+	// here rather than leaving it to the hourly orphan sweep matters because
+	// DefaultChatRetentionDays is 1, so nearly every session directory would
+	// otherwise become an orphan within a day and the sweep — the destructive
+	// leg, whose keep-list is derived by reading every chat file — would be the
+	// primary retention mechanism.
+	chat.WithOnPurge(func(_ api.ChatID, sessionChain []string) {
 		for _, id := range sessionChain {
 			sessionReaper.Reap(id)
 		}
 	})(chatStore)
-	chat.WithOldestCheckpointFn(h.CheckpointOldestTag)(chatStore)
 	purgeScheduler.Start()
 
 	srv := server.New(

@@ -56,18 +56,17 @@ const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
 // Mutate refuse to create for a recently-deleted id — late writes
 // become no-ops instead of undead resurrections.
 type Store struct {
-	broadcast        api.Broadcaster
-	listSF           singleflight.Group
-	preArchive       func(chatID api.ChatID)
-	onArchive        func(chatID api.ChatID)
-	onPurge          func(chatID api.ChatID, sessionChain []string)
-	oldestCheckpoint func(ctx context.Context, chatID api.ChatID) string
-	tombstone        map[api.ChatID]time.Time
-	archive          *archive.Service
-	locks            sync.Map
-	dir              string
-	archiveOnce      sync.Once
-	tombMu           sync.Mutex
+	broadcast   api.Broadcaster
+	listSF      singleflight.Group
+	preArchive  func(chatID api.ChatID)
+	onArchive   func(chatID api.ChatID)
+	onPurge     func(chatID api.ChatID, sessionChain []string)
+	tombstone   map[api.ChatID]time.Time
+	archive     *archive.Service
+	locks       sync.Map
+	dir         string
+	archiveOnce sync.Once
+	tombMu      sync.Mutex
 }
 
 // tombstoneTTL is how long a deleted chat id blocks re-creation via
@@ -128,12 +127,6 @@ func WithPreArchive(fn func(chatID api.ChatID)) StoreOption {
 // WithOnArchive registers a callback fired after a chat is archived.
 func WithOnArchive(fn func(chatID api.ChatID)) StoreOption {
 	return func(s *Store) { s.onArchive = fn }
-}
-
-// WithOldestCheckpointFn wires the lookup used to populate
-// ChatHeader.OldestCheckpointTag.
-func WithOldestCheckpointFn(fn func(ctx context.Context, chatID api.ChatID) string) StoreOption {
-	return func(s *Store) { s.oldestCheckpoint = fn }
 }
 
 // WithOnPurge registers a callback fired after an archived chat is purged.

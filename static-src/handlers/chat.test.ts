@@ -28,7 +28,6 @@ vi.mock("../bus.js", () => createBusMock());
 
 // chat_deleted fires fire-and-forget dynamic imports; stub them so they
 // resolve to no-ops instead of pulling in real DOM-touching modules.
-vi.mock("../conflicts.js", () => ({ clearConflicts: vi.fn() }));
 vi.mock("../banner-stack.js", () => ({ clearBannersForChat: vi.fn() }));
 
 // Import after mocks so chat.ts registers its handlers against the bus mock.

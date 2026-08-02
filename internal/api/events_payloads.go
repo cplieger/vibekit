@@ -1,9 +1,5 @@
 package api
 
-import (
-	checkpoint "github.com/cplieger/vibekit/internal/checkpoint/types"
-)
-
 // Per-event payload structs for SSE events. The envelope types and
 // event-type constants live in events.go; this file contains only the
 // payload shapes that change when new events are added or existing
@@ -109,14 +105,6 @@ type TurnStatePayload struct {
 	// ChunkSeq is the sequence number of the last delta folded into
 	// Message (see MessageChunkPayload.Seq).
 	ChunkSeq int64 `json:"chunk_seq,omitempty"`
-}
-
-// CheckpointRestoredPayload is the payload for type="checkpoint_restored".
-// Replaces the ad-hoc map[string]any so the wire shape is discoverable
-// via IDE completion and typos in key names become compile errors.
-type CheckpointRestoredPayload struct {
-	Tag          string `json:"tag"`
-	MessageCount int    `json:"message_count"`
 }
 
 // ErrorCode identifies an SSE error event class. Using a typed string
@@ -361,10 +349,6 @@ type ModeChangedPayload struct {
 	ModeID string `json:"mode_id"`
 }
 
-// ConflictDetectedPayload is the payload for type="conflict_detected".
-// Type alias to checkpoint/types.ConflictPayload — single source of truth.
-type ConflictDetectedPayload = checkpoint.ConflictPayload
-
 // ChatDeletedPayload is the payload for type="chat_deleted".
 type ChatDeletedPayload struct {
 	ID string `json:"id"`
@@ -431,19 +415,4 @@ type ToolJobOutputPayload struct {
 // SettingsUpdatedPayload is the payload for type="settings_updated".
 type SettingsUpdatedPayload struct{}
 
-// --- HTTP response types for checkpoint and MCP endpoints ---
-
-// CheckpointDiffResponse is the typed response for the checkpoint diff endpoint.
-type CheckpointDiffResponse struct {
-	Files []checkpoint.FileChange `json:"files"`
-}
-
-// CheckpointRestorePreviewResponse is the typed response for restore-preview.
-type CheckpointRestorePreviewResponse struct {
-	Files []string `json:"files"`
-}
-
-// CheckpointConflictsResponse is the typed response for the conflicts endpoint.
-type CheckpointConflictsResponse struct {
-	Conflicts []checkpoint.ConflictPayload `json:"conflicts"`
-}
+// --- HTTP response types for MCP endpoints ---

@@ -52,12 +52,7 @@ import type { FileState } from "./editor-types.js";
 // --- Re-exports for backward compatibility ---
 // Consumers that import from editor-core.ts continue to work.
 
-export {
-  isPendingPath,
-  parsePendingPath,
-  routeForPath,
-  getDirtyEditorPaths,
-} from "./editor-types.js";
+export { isPendingPath, parsePendingPath, routeForPath } from "./editor-types.js";
 export type { FileState } from "./editor-types.js";
 
 export function initEditor(): void {

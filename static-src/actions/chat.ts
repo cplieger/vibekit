@@ -550,20 +550,3 @@ export const respondUserInput = transportAction<{
   }),
   error: "Couldn't send your answer",
 });
-
-// --- chat.restore_checkpoint ---
-
-export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({
-  name: "chat.restore_checkpoint",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  dedupe: true,
-  idempotencyKey: true,
-  command: ({ chatID, tag }) => ({
-    type: "restore_checkpoint",
-    chat_id: chatID,
-    payload: { tag },
-  }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  error: "Couldn't restore checkpoint",
-});

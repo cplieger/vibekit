@@ -270,25 +270,6 @@ export function removeQueuedAt(id: string, index: number): QueuedPrompt | undefi
   return removed;
 }
 
-// --- Index helpers ---
-function clearMsgIndex(sessionID: string): void {
-  msgIndex.delete(sessionID);
-}
-
-/** Invalidate a background session's cache so the next switch refetches. */
-export function invalidateSession(chatID: string): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  // Messages cleared in place (messages live on the session object; the
-  // messages renderer reacts to messagesVersion, not the session signal).
-  s.messages = [];
-  s.has_more = false;
-  clearMsgIndex(chatID);
-  emitMessages();
-}
-
 /** Rebuild the message index for a session. Exported for store-load.ts. */
 export function rebuildMsgIndex(sessionID: string, messages: Message[]): void {
   const idx = new Map<string, number>();
@@ -337,11 +318,6 @@ export function upsertHeader(h: ChatHeader): void {
       } else {
         delete next.compaction_watermark;
       }
-      if (h.oldest_checkpoint_tag !== undefined) {
-        next.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
-      } else {
-        delete next.oldest_checkpoint_tag;
-      }
       if (h.parent_chat_id !== undefined) {
         next.parent_chat_id = h.parent_chat_id;
       } else {
@@ -371,9 +347,6 @@ export function upsertHeader(h: ChatHeader): void {
   };
   if (h.compaction_watermark !== undefined) {
     s.compaction_watermark = h.compaction_watermark;
-  }
-  if (h.oldest_checkpoint_tag !== undefined) {
-    s.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
   }
   // New sessions go to the front of the list (matches the previous unshift).
   sessions.prepend([s]);
@@ -484,9 +457,6 @@ function mergeMessage(existing: Message, incoming: Message): Message {
   }
   if (incoming.refusal !== undefined) {
     merged.refusal = incoming.refusal;
-  }
-  if (nonEmptyStr(incoming.checkpoint_tag)) {
-    merged.checkpoint_tag = incoming.checkpoint_tag;
   }
   if (incoming.event_kind !== undefined) {
     merged.event_kind = incoming.event_kind;

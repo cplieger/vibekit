@@ -321,53 +321,9 @@
   color: var(--c-green);
 }
 
-/* Cross-chat conflict chip. Currently has no mount point — the tool-card
- * action row that hosted it went with per-file undo; advisory UI that
- * signals another chat
- * has edited this file. Amber border+fill to distinguish from
- * error (red) without being alarming. Click opens the editor in
- * diff mode comparing the two versions. */
-.conflict-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-inline-start: auto;
-  padding: 0.125rem var(--sp-2);
-  font-size: var(--fs-xs);
-  color: var(--c-yellow);
-  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--c-yellow) 50%, var(--c-border));
-  border-radius: var(--r);
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-micro);
-}
-
-.conflict-chip:hover {
-  background: color-mix(in srgb, var(--c-yellow) 20%, transparent);
-}
-
-.conflict-chip:focus-visible {
-  outline: 2px solid var(--c-yellow);
-  outline-offset: 2px;
-}
-
-.conflict-chip svg {
-  flex-shrink: 0;
-}
-
-.conflict-chip-label {
-  line-height: 1;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .conflict-chip {
-    transition: none;
-  }
-}
-
-/* Checkpoint line: a row with "Checkpoint" label on the left, a
- * dashed line filling the middle, and a Restore button at the right.
- * The label sits inline with the line instead of floating above it. */
+/* Turn separator: a dashed rule filling the row with the Rewind button
+ * at its right. Was the "Checkpoint … Restore" row until restore became
+ * KAS's job; Rewind is the one operation now. */
 .checkpoint-line {
   display: flex;
   align-items: center;
@@ -381,31 +337,6 @@
   flex: 1 1 0;
   border-top: 1px dashed var(--c-border);
   min-width: var(--sp-4);
-}
-
-.checkpoint-label {
-  flex-shrink: 0;
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.checkpoint-restore {
-  order: 1;
-  flex-shrink: 0;
-  font-size: var(--fs-xs);
-  color: var(--c-accent);
-  background: none;
-  border: 1px solid var(--c-accent);
-  border-radius: 4px;
-  padding: 2px var(--sp-2);
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-micro);
-}
-
-.checkpoint-restore:hover {
-  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
 }
 
 .checkpoint-rewind {

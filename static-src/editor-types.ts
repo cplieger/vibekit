@@ -155,16 +155,6 @@ class EditorState {
     return s ? s.dirty.value : false;
   }
 
-  getDirtyPaths(): string[] {
-    const out: string[] = [];
-    for (const [, state] of this.files) {
-      if (state.loaded && state.dirty.value) {
-        out.push(state.path);
-      }
-    }
-    return out;
-  }
-
   freshState(path: string): FileState {
     // Reactive inputs: `mode`, `current`, `original`. Everything else is a
     // computed derived from them, so it auto-invalidates with no manual
@@ -229,9 +219,6 @@ export function freshState(path: string): FileState {
 }
 export function getActiveFilePath(): string {
   return editorState.getActivePath();
-}
-export function getDirtyEditorPaths(): string[] {
-  return editorState.getDirtyPaths();
 }
 
 // --- Late-bound closeEditorFile (set by editor-openers.ts at init) ---

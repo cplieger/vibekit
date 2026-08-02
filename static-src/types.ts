@@ -91,7 +91,6 @@ export type {
   RemoveResponse,
   SearchHit,
   SearchResponse,
-  ConflictDetectedPayload,
   ToolInfo,
   ToolJobChangedPayload,
   ToolJobOutputPayload,
@@ -197,5 +196,4 @@ export interface Session {
   pending_changes: PendingChange[];
   parent_chat_id?: string;
   compaction_watermark?: string;
-  oldest_checkpoint_tag?: string;
 }

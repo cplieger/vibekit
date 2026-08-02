@@ -12,14 +12,7 @@
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
-import {
-  getSessions,
-  getActiveId,
-  setThinking,
-  setAgentStatus,
-  setCurrentMode,
-  invalidateSession,
-} from "../store.js";
+import { getSessions, getActiveId, setThinking, setAgentStatus, setCurrentMode } from "../store.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { maybeDrainIfIdle } from "../prompt-queue.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
@@ -126,26 +119,4 @@ onSSE("mode_changed", (chatID, p) => {
     return;
   }
   setCurrentMode(chatID, p.mode_id);
-});
-
-// checkpoint_restored arrives after the server rolls the workspace back
-// and truncates the chat transcript to match. The server's own chat_updated
-// broadcast fires first and updates the header (message_count,
-// oldest_checkpoint_tag); we follow up by reloading messages so the DOM drops
-// stale checkpoint lines referring to truncated turns.
-onSSE("checkpoint_restored", (chatID, _payload) => {
-  if (chatID === "") {
-    return;
-  }
-  if (getActiveId() === chatID) {
-    // Refetch-then-swap: loadMessages replaces the message array wholesale,
-    // rebuilds the index, and emits ONCE — the keyed reconcile then trims the
-    // rolled-back tail in a single render. Do NOT pre-clear messages here: the
-    // old empties-then-refetches sequence painted an empty transcript for the
-    // whole network round-trip (the flashing bug the render rewrite fixed).
-    void loadMessages(chatID);
-  } else {
-    // Background chat: just invalidate the cache so the next switch refetches.
-    invalidateSession(chatID);
-  }
 });

@@ -51,8 +51,7 @@ func boundedParallel[T any](ctx context.Context, items []T, maxWorkers int, fn f
 // (bounded at 8 workers) and returns the successfully-read headers.
 // `label` is used as both the readChatHeader diagnostic prefix and
 // the slog warn message; callers pass "chat" for the active list and
-// "archived chat" for the archive list. The oldestCheckpoint hook, if
-// non-nil, is called per-chat to enrich OldestCheckpointTag.
+// "archived chat" for the archive list.
 //
 // This replaces two near-identical worker-pool blocks in archive.go
 // (ListArchived) and store_list.go (List). Workers read from a shared
@@ -63,7 +62,6 @@ func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
 	label string,
-	oldestCheckpoint func(context.Context, api.ChatID) string,
 ) (headersOut []api.ChatHeader, complete bool) {
 	if len(valid) == 0 {
 		return nil, true
@@ -91,9 +89,6 @@ func readHeadersParallel(
 				results[idx] = result{lost: true}
 			}
 			return
-		}
-		if oldestCheckpoint != nil {
-			h.OldestCheckpointTag = oldestCheckpoint(ctx, api.ChatID(ce.id))
 		}
 		results[idx] = result{header: *h, ok: true}
 	})

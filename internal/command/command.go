@@ -27,7 +27,6 @@ type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCom
 type Dependencies interface {
 	BridgeAccess
 	ChatAccess
-	CheckpointAccess
 	SupervisedAccess
 	InfraDeps
 	Draining() bool

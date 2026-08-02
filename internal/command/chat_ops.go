@@ -1,17 +1,14 @@
 package command
 
-// Chat CRUD commands: create, delete, cancel, permission forwarding,
-// checkpoint restore, and undo.
+// Chat CRUD commands: create, delete, cancel, and permission forwarding.
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
-	chktypes "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // CmdCreateChat creates a new chat with the given metadata.
@@ -112,94 +109,4 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 	d.Supervised().RemovePendingPerm(p.RequestID)
 	d.RespondOK(w, cmd.RequestID)
-}
-
-// CmdRestoreCheckpoint rolls the workspace back to the given tag.
-func CmdRestoreCheckpoint(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	if d.Checkpoint().Checkpoints() == nil {
-		api.BadRequest(w, "checkpoints not available")
-		return
-	}
-	var p struct {
-		Tag string `json:"tag"`
-	}
-	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.Tag == "" {
-		api.BadRequest(w, "tag is required")
-		return
-	}
-	parsedTag, err := chktypes.ParseTag(p.Tag)
-	if err != nil {
-		api.BadRequest(w, "invalid tag format")
-		return
-	}
-	release, ok := d.guardIdleBridge(w, cmd.ChatID)
-	if !ok {
-		return
-	}
-	defer release()
-	messageCount, err := d.Checkpoint().Checkpoints().Restore(ctx, cmd.ChatID, parsedTag)
-	if err != nil {
-		respondCheckpointErr(w, err)
-		return
-	}
-	mutErr := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
-		if !exists {
-			return false
-		}
-		if messageCount < 0 {
-			messageCount = 0
-		}
-		if messageCount > len(c.Messages) {
-			messageCount = len(c.Messages)
-		}
-		c.Messages = c.Messages[:messageCount]
-		return true
-	})
-	if mutErr != nil {
-		api.InternalError(w, mutErr)
-		return
-	}
-	d.Chat().Broadcast(ctx, api.NewEvent(api.EventCheckpointRestored, cmd.ChatID, api.CheckpointRestoredPayload{
-		Tag:          p.Tag,
-		MessageCount: messageCount,
-	}))
-	slog.Info("checkpoint restored", "chat_id", cmd.ChatID, "tag", p.Tag, "messages", messageCount)
-	d.Respond(w, cmd.RequestID, responseWith(map[string]any{
-		"tag":           p.Tag,
-		"message_count": messageCount,
-	}))
-}
-
-// guardIdleBridge rejects a checkpoint mutation with 409 when a turn is
-// in flight on the chat's bridge, and otherwise acquires the prompt lock
-// so the mutation can't race a concurrently-starting prompt. Restore and
-// per-file undo both write the workspace + truncate the transcript, so
-// they must not interleave with the agent's writes / the assistant-buffer
-// flush at turn_ended (mirrors CmdPrompt's TryAcquireForPrompt guard).
-//
-// Returns (release, true) when the caller may proceed — release MUST be
-// deferred — or (nil, false) when a 409 was already written and the
-// caller must return. With no bridge there is no turn to race, so it
-// proceeds with a no-op release.
-func (d *Dispatcher) guardIdleBridge(w http.ResponseWriter, chatID api.ChatID) (func(), bool) {
-	sb := d.Bridge().GetBridge(chatID)
-	if sb == nil {
-		return func() {}, true
-	}
-	if !sb.TryAcquireForPrompt() {
-		d.RespondErr(w, http.StatusConflict, errBusy)
-		return nil, false
-	}
-	return sb.ReleaseAfterPrompt, true
-}
-
-// respondCheckpointErr maps a checkpoint operation error to HTTP status:
-// an unknown tag is a 404 (matching the GET checkpoint handlers), any
-// other failure is a 500.
-func respondCheckpointErr(w http.ResponseWriter, err error) {
-	if errors.Is(err, chktypes.ErrTagNotFound) {
-		api.NotFound(w, "tag not found")
-		return
-	}
-	api.InternalError(w, err)
 }

@@ -65,14 +65,6 @@ onSSE("chat_deleted", (_chatID, p) => {
     closeTab(p.id, { skipOnClose: true });
   }
   removeChat(p.id);
-  void import("../conflicts.js").then(
-    (m) => {
-      m.clearConflicts(p.id);
-    },
-    (e: unknown) => {
-      console.warn("[handlers/chat] clearConflicts import failed", e);
-    },
-  );
   // Drop any banners for the deleted chat — otherwise their
   // BannerEntry objects + dismissed_banners localStorage entries
   // accumulate over a long session.

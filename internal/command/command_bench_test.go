@@ -37,8 +37,6 @@ func (d *benchDeps) ChatInSupervisedMode(context.Context, api.ChatID) bool      
 func (d *benchDeps) FlushPendingForChat(context.Context, api.ChatID, api.ClearReason) {}
 func (d *benchDeps) ClearPendingPermsForChat(api.ChatID)                              {}
 func (d *benchDeps) RemovePendingPerm(int64)                                          {}
-func (d *benchDeps) Checkpoints() api.CheckpointService                               { return nil }
-func (d *benchDeps) AdvanceCheckpointTurn(context.Context, api.ChatID)                {}
 func (d *benchDeps) WorkDir() string                                                  { return "/tmp" }
 func (d *benchDeps) ConfigDir() string                                                { return "/tmp" }
 func (d *benchDeps) ShutdownCtx() context.Context                                     { return context.Background() }
@@ -91,7 +89,6 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.FlushPendingForChat(context.Background(), "x", "")
 	d.ClearPendingPermsForChat("x")
 	d.RemovePendingPerm(0)
-	d.AdvanceCheckpointTurn(context.Background(), "x")
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.CleanupChatState(context.Background(), "x")
@@ -135,9 +132,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		if d.GetBridge("any") != nil {
 			t.Error("GetBridge expected nil for bench stub")
 		}
-		if d.Checkpoints() != nil {
-			t.Error("Checkpoints expected nil for bench stub")
-		}
 	})
 
 	// --- No-panic on zero-value calls ---
@@ -152,7 +146,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.FlushPendingForChat(context.Background(), "x", "")
 		d.ClearPendingPermsForChat("x")
 		d.RemovePendingPerm(0)
-		d.AdvanceCheckpointTurn(context.Background(), "x")
 		d.InflightAdd(1)
 		d.InflightDone()
 		d.CleanupChatState(context.Background(), "x")

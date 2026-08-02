@@ -17,7 +17,6 @@ import { createBus } from "@cplieger/reactive";
 import type {
   ServerEvent,
   ChatHeader,
-  ConflictDetectedPayload,
   Message,
   MessageChunkPayload,
   ToolCallPayload,
@@ -107,8 +106,6 @@ export interface SSEPayloads {
     readonly exit_code?: number;
     readonly signal?: string;
   };
-  readonly checkpoint_restored: { readonly tag: string; readonly message_count: number };
-  readonly conflict_detected: ConflictDetectedPayload;
   readonly forges_changed: undefined;
   readonly hooks_changed: undefined;
   readonly tool_job_changed: ToolJobChangedPayload;

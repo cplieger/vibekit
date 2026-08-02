@@ -905,33 +905,6 @@ func TestBuildPromptBlocks(t *testing.T) {
 	}
 }
 
-// --- cmdRestoreCheckpoint ---
-
-// TestCmdRestoreCheckpoint_NoCheckpointsWired pins the short-circuit
-// when the Hub was built without a checkpoint.Store.
-func TestCmdRestoreCheckpoint_NoCheckpointsWired(t *testing.T) {
-	h, _, _ := newTestHub()
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "restore_checkpoint", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"tag":"1"}`),
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
-// TestCmdRestoreCheckpoint_MissingTagIs400 pins the empty-tag guard.
-func TestCmdRestoreCheckpoint_MissingTagIs400(t *testing.T) {
-	h, _, _ := newCheckpointHub(t)
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "restore_checkpoint", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{}`),
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
 // --- Idempotency cache ---
 
 // TestCommand_RejectsInvalidRequestID pins the same safe-char class

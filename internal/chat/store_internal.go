@@ -13,12 +13,8 @@ import (
 
 // --- Unexported Store methods ---
 
-func (s *Store) header(ctx context.Context, c *api.Chat) api.ChatHeader {
-	h := c.Header()
-	if s.oldestCheckpoint != nil {
-		h.OldestCheckpointTag = s.oldestCheckpoint(ctx, api.ChatID(c.ID))
-	}
-	return h
+func (s *Store) header(_ context.Context, c *api.Chat) api.ChatHeader {
+	return c.Header()
 }
 
 // lock returns the per-chat mutex for chatID, creating it lazily. Entries
@@ -63,11 +59,6 @@ func (s *Store) ClearTombstone(chatID api.ChatID) {
 
 // Broadcast returns the broadcaster (may be nil).
 func (s *Store) Broadcast() api.Broadcaster { return s.broadcast }
-
-// OldestCheckpoint returns the checkpoint lookup function (may be nil).
-func (s *Store) OldestCheckpoint() func(ctx context.Context, chatID api.ChatID) string {
-	return s.oldestCheckpoint
-}
 
 // markDeleted records that chatID was just deleted. Mutate calls for
 // the same id within tombstoneTTL will refuse to auto-create.

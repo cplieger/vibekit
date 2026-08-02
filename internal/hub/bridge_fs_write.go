@@ -9,15 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"syscall"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // respondFSWrite handles fs/write_text_file. Request params:
@@ -76,12 +72,6 @@ func (h *Hub) respondFSWrite(ctx context.Context, chatID api.ChatID, msg *api.RP
 		h.respondFSError(ctx, chatID, msg, err)
 		return
 	}
-
-	// Record the checkpoint BEFORE the write lands so beforeSHA captures
-	// the pre-write content (Restore and per-file Undo both depend on
-	// it). See recordCheckpointSnapshot for the full rationale and the
-	// phantom-snapshot tradeoff on a failed write.
-	h.recordCheckpointSnapshot(ctx, chatID, abs, []byte(p.Content))
 
 	// Preserve the existing file's permission bits so the agent can't
 	// silently demote a 0o755 script or promote a 0o600 secret to 0o644.
@@ -150,93 +140,9 @@ func (h *Hub) applySupervisedWriteGate(ctx context.Context, chatID api.ChatID, m
 	return true, content
 }
 
-// recordCheckpointSnapshot records a pre-write checkpoint snapshot for
-// chatID's write to abs so Restore and per-file Undo can roll the file
-// back. No-op when checkpoints are disabled.
+// chatInSupervisedMode reports whether chatID has the supervised
+// write-gate enabled.
 //
-// The snapshot is taken BEFORE the write lands so Snapshot reads the
-// pre-write content as beforeSHA; taking it after would pin
-// beforeSHA == afterSHA and turn every Restore into a silent no-op.
-//
-// Tradeoff: if the subsequent os.WriteFile fails, a phantom snapshot
-// whose afterSHA never landed has already been appended. The cross-chat
-// index records that afterSHA and the next chat snapshotting this path
-// may see a false-positive drift conflict; any later successful write on
-// the same path overwrites the index entry, so the false positive is
-// bounded — a broken Restore would be permanent, the worse failure mode.
-//
-// Snapshot is per-file (not per-workspace), so it only touches files
-// THIS chat's agent has written. Failures are logged and the write still
-// proceeds: a missed snapshot only costs undo for that one operation,
-// never data.
-func (h *Hub) recordCheckpointSnapshot(ctx context.Context, chatID api.ChatID, abs string, content []byte) {
-	if h.checkpoints == nil {
-		return
-	}
-	// workspace.RelPath normalizes separators to forward slashes so the
-	// stored path is portable.
-	rel, relErr := workspace.RelPath(h.lifecycle.workDir, abs)
-	if relErr != nil {
-		return
-	}
-	messageCount := h.currentMessageCount(ctx, chatID)
-	tag, err := h.checkpoints.Snapshot(ctx, chatID, rel, content, messageCount)
-	if err != nil {
-		slog.Warn("checkpoint snapshot failed", "chat_id", chatID, "path", rel, "error", err)
-		return
-	}
-	// Surface the server-allocated tag onto the wire so the client can
-	// drive Restore from the REAL tag rather than recomputing it from a
-	// 0-based turn index. See stampTurnCheckpointTag.
-	h.stampTurnCheckpointTag(ctx, chatID, string(tag))
-}
-
-// stampTurnCheckpointTag records the server-allocated checkpoint tag on
-// the message that started the current turn, so the client can drive
-// Restore/undo from the REAL per-turn tag instead of recomputing it from
-// a 0-based turn index (which was off-by-one against the 1-based
-// allocateTag and could not represent no-snapshot turns).
-//
-// Only the turn-canonical tag ("N", produced by the FIRST snapshot of a
-// turn) is stamped; per-tool tags within the turn ("N.1", "N.2", …) are
-// ignored so the field always holds the tag that reverts the WHOLE turn.
-// allocateTag emits "N" exactly once per turn (the first snapshot), so
-// this fires at most once per turn even under concurrent writes. The
-// turn's prompt is the most recent user message — the assistant turn is
-// still buffered in-memory (not yet persisted) when the agent's first
-// write lands, so scanning back for the last user message reliably
-// targets this turn. UpdateMessage persists the change and broadcasts
-// message_updated so live clients and reloads agree.
-func (h *Hub) stampTurnCheckpointTag(ctx context.Context, chatID api.ChatID, tag string) {
-	if tag == "" || strings.Contains(tag, ".") {
-		return
-	}
-	c, ok := h.chatStore.Get(ctx, chatID)
-	if !ok {
-		return
-	}
-	var userMsgID string
-	for i := range slices.Backward(c.Messages) {
-		if c.Messages[i].Role == api.RoleUser {
-			userMsgID = c.Messages[i].ID
-			break
-		}
-	}
-	if userMsgID == "" {
-		return
-	}
-	if err := h.chatStore.UpdateMessage(ctx, chatID, userMsgID, func(m *api.Message) {
-		// Set-once: the first snapshot of the turn wins, so a later
-		// (never-canonical) tag can't clobber it.
-		if m.CheckpointTag == "" {
-			m.CheckpointTag = tag
-		}
-	}); err != nil {
-		slog.Warn("checkpoint tag stamp failed", "chat_id", chatID, "tag", tag, "error", err)
-	}
-}
-
-// chatInSupervisedMode reports whether the chat has SupervisedMode=true.
 // Returns false on any lookup error (missing chat, store unavailable)
 // so failures default to the permissive, pre-feature behaviour.
 func (h *Hub) chatInSupervisedMode(ctx context.Context, chatID api.ChatID) bool {

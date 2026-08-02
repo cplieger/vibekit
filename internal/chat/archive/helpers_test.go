@@ -77,8 +77,6 @@ func (f *fakeStore) ClearTombstone(chatID api.ChatID) {
 
 func (f *fakeStore) Broadcast() api.Broadcaster { return f.bc }
 
-func (f *fakeStore) OldestCheckpoint() func(context.Context, api.ChatID) string { return nil }
-
 func (f *fakeStore) markedDeleted() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

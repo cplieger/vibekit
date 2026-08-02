@@ -31,7 +31,6 @@ import { showBanner, onTurnEnded } from "../banner-stack.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES } from "./error-routing.js";
 export { ERROR_ROUTES };
-export { wireCheckpointRestore } from "./checkpoint-restore.js";
 
 /** Notify the user and set the badge if the page is hidden. */
 function notifyAndBadge(title: string, body: string): void {
@@ -246,5 +245,3 @@ onSSE("error", (chatID, p) => {
       route.surface satisfies never;
   }
 });
-
-// --- Checkpoint restore (extracted to handlers/checkpoint-restore.ts) ---

@@ -71,7 +71,6 @@ func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
 	label string,
-	oldestCheckpoint func(context.Context, api.ChatID) string,
 ) (headersOut []api.ChatHeader, complete bool) {
 	if len(valid) == 0 {
 		return nil, true
@@ -93,9 +92,6 @@ func readHeadersParallel(
 				results[idx] = result{lost: true}
 			}
 			return
-		}
-		if oldestCheckpoint != nil {
-			h.OldestCheckpointTag = oldestCheckpoint(ctx, api.ChatID(ce.id))
 		}
 		results[idx] = result{header: *h, ok: true}
 	})

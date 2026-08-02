@@ -116,7 +116,6 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	}
 	sb2.SetPrompting()
 	defer sb2.ReleaseAfterPrompt()
-	deps.AdvanceCheckpointTurn(ctx, chatID)
 	params[api.KeySessionID] = sb2.SessionID()
 	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
@@ -231,8 +230,6 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	deps.AdvanceCheckpointTurn(ctx, cmd.ChatID)
 
 	// 2. Ensure the bridge exists and serialize per-chat prompts. The turn
 	// runs under a context detached from the prompt POST's r.Context()

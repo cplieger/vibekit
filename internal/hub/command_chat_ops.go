@@ -31,9 +31,6 @@ func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID, reapDurab
 	h.lifecycle.mu.Unlock()
 	h.closeAndRemovePartial(ctx, chatID, buf)
 	if reapDurable {
-		if h.checkpoints != nil {
-			h.checkpoints.Cleanup(ctx, chatID)
-		}
 		h.reapChatSession(ctx, chatID)
 	}
 	h.lines.Clear(chatID)

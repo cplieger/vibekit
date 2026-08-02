@@ -2,13 +2,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { effect } from "@cplieger/reactive";
 import { isPendingPath, parsePendingPath, routeForPath } from "./editor-core.js";
-import {
-  freshState,
-  fileStates,
-  setActiveFilePath,
-  getDirtyEditorPaths,
-  activeDirty,
-} from "./editor-types.js";
+import { freshState, fileStates, setActiveFilePath, activeDirty } from "./editor-types.js";
 
 describe("isPendingPath", () => {
   it.each([
@@ -234,31 +228,6 @@ describe("activeDirty (reactive, tab-switch aware)", () => {
 
     state.original.value = "typed"; // save
     expect(activeDirty.value).toBe(false);
-  });
-});
-
-describe("getDirtyEditorPaths", () => {
-  beforeEach(() => {
-    fileStates.clear();
-    setActiveFilePath("");
-  });
-
-  it("returns only loaded files whose current differs from original", () => {
-    const loadedDirty = freshState("a.ts");
-    loadedDirty.loaded = true;
-    loadedDirty.current.value = "changed";
-    fileStates.set("a.ts", loadedDirty);
-
-    const loadedClean = freshState("b.ts");
-    loadedClean.loaded = true;
-    fileStates.set("b.ts", loadedClean);
-
-    // Dirty but not loaded → excluded.
-    const unloadedDirty = freshState("c.ts");
-    unloadedDirty.current.value = "changed";
-    fileStates.set("c.ts", unloadedDirty);
-
-    expect(getDirtyEditorPaths()).toEqual(["a.ts"]);
   });
 });
 

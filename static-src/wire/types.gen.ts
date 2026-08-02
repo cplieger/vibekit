@@ -191,7 +191,6 @@ export interface ChatHeader {
   current_mode_id?: string;
   id: string;
   compaction_watermark?: string;
-  oldest_checkpoint_tag?: string;
   summary?: string;
   available_models?: SessionModel[];
   available_modes?: SessionMode[];
@@ -273,16 +272,6 @@ export interface ConfiguredForge {
  * is never probed and cannot be disconnected until the CLI returns.
  */
   cli_missing?: boolean;
-}
-
-/** ConflictPayload is what the broadcaster receives per conflict. */
-export interface ConflictDetectedPayload {
-  path: string;
-  other_chat: string;
-  expected_sha: string;
-  actual_sha: string;
-  tag: string;
-  ts: number;
 }
 
 /**
@@ -585,15 +574,6 @@ export interface Message {
  * invariant holds; rendered above the content bubble in the UI.
  */
   reasoning?: string;
-  /**
- * CheckpointTag is the REAL checkpoint tag the server allocated for
- * this turn (set only on the user message that started a turn whose
- * agent produced at least one file snapshot). It is the turn-canonical
- * tag ("N", never "N.K") the client passes verbatim to
- * restore_checkpoint. Empty when the turn produced no snapshot;
- * persisted so it survives reload.
- */
-  checkpoint_tag?: string;
   event_kind?: EventKind;
   id: string;
   tool_calls?: ToolCall[];

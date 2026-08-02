@@ -414,30 +414,11 @@ function updateMessage(el: HTMLElement, m: Message): void {
 function buildUser(m: Message): HTMLElement {
   const wrap = el("div", { className: "msg-wrap msg-wrap-user" });
 
-  // Checkpoint / rewind affordances above the bubble. The server stamps the
-  // REAL per-turn checkpoint tag on the user message (m.checkpoint_tag), set
-  // only on turns whose agent wrote at least one file — so Restore renders
-  // only when that tag is non-empty (no more off-by-one recompute from a
-  // 0-based turn index). Rewind is decoupled from checkpoint existence:
-  // branching a new chat is independent of file snapshots, so it is offered
-  // on EVERY user turn (a read-only / Q&A turn can still be branched from).
-  const cp = m.checkpoint_tag ?? "";
+  // Rewind affordance above the bubble, offered on EVERY user turn: it is
+  // independent of whether the agent wrote a file, so a read-only Q&A turn
+  // can still be rewound from. The separate turn-level Restore button is
+  // gone — restoring files is KAS's job now and rewind is the one operation.
   const line = el("div", { className: "checkpoint-line" });
-  if (cp !== "") {
-    const label = el("span", { className: "checkpoint-label" }, "Checkpoint");
-    const restoreBtn = el(
-      "button",
-      {
-        className: "checkpoint-restore",
-        type: "button",
-        "data-tag": cp,
-        title: "Restore files to this point",
-        "aria-label": `Restore to checkpoint ${cp}`,
-      },
-      "Restore",
-    );
-    line.append(label, restoreBtn);
-  }
   const rewindBtn = el(
     "button",
     {

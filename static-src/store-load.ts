@@ -103,9 +103,6 @@ export async function loadList(): Promise<boolean> {
         trusted_this_turn: existing.trusted_this_turn,
       }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
-      ...(h.oldest_checkpoint_tag !== undefined && {
-        oldest_checkpoint_tag: h.oldest_checkpoint_tag,
-      }),
     };
     next.push(session);
   }

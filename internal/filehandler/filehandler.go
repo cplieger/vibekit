@@ -18,7 +18,6 @@
 package filehandler
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -46,20 +45,9 @@ const (
 	respPath = "path"
 )
 
-// WriteObserver is notified synchronously just before an editor write
-// (PUT /api/file) is applied, with the resolved absolute path and the
-// incoming content. The pre-write timing lets the observer capture the
-// file's current disk content as an undo target (mirroring the agent
-// write path's snapshot-then-write ordering); if the write then fails,
-// the phantom capture is the same bounded tradeoff the agent path
-// documents on hub.recordCheckpointSnapshot. Observers must be
-// best-effort: they cannot veto or fail the save.
-type WriteObserver func(ctx context.Context, absPath string, content []byte)
-
 // Handler implements api.FileHandler.
 type Handler struct {
-	onWrite WriteObserver
-	mounts  []mount // sorted longest-dir-first (see openMounts)
+	mounts []mount // sorted longest-dir-first (see openMounts)
 }
 
 var _ api.FileHandler = (*Handler)(nil)
@@ -80,13 +68,6 @@ func New(rootDirs ...string) (*Handler, error) {
 	}
 	return &Handler{mounts: mounts}, nil
 }
-
-// SetWriteObserver installs the pre-write hook fired for PUT
-// /api/file saves — the built-in editor path. Deliberately NOT fired
-// for uploads, copies, touch, or other file actions: the editor is
-// the one manual-change surface checkpoints vouch for. Call during
-// composition, before the handler serves requests.
-func (h *Handler) SetWriteObserver(fn WriteObserver) { h.onWrite = fn }
 
 // RegisterRoutes wires all /api/file* and /api/files* routes onto mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -135,7 +116,7 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		readFile(r.Context(), w, l, reqPath)
 	case http.MethodPut:
-		writeFile(w, r, l, h.onWrite)
+		writeFile(w, r, l)
 	default:
 		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}

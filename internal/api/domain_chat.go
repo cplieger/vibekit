@@ -297,17 +297,10 @@ type Message struct {
 	// extended-thinking models emit it as a parallel stream alongside
 	// Content. Persisted on the same message so the one-message-per-turn
 	// invariant holds; rendered above the content bubble in the UI.
-	Reasoning string `json:"reasoning,omitempty"`
-	// CheckpointTag is the REAL checkpoint tag the server allocated for
-	// this turn (set only on the user message that started a turn whose
-	// agent produced at least one file snapshot). It is the turn-canonical
-	// tag ("N", never "N.K") the client passes verbatim to
-	// restore_checkpoint. Empty when the turn produced no snapshot;
-	// persisted so it survives reload.
-	CheckpointTag string     `json:"checkpoint_tag,omitempty"`
-	EventKind     EventKind  `json:"event_kind,omitempty"`
-	ID            string     `json:"id"`
-	ToolCalls     []ToolCall `json:"tool_calls,omitempty"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	EventKind EventKind  `json:"event_kind,omitempty"`
+	ID        string     `json:"id"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// Blocks is the chronologically-ordered content array — text / tool_use /
 	// thinking blocks in the order the agent emitted them, each stamped with an
 	// agent_subtask_id (empty for the parent agent, set for a subagent). It is
@@ -399,7 +392,6 @@ type Chat struct {
 	ParentChatID        ChatID         `json:"parent_chat_id,omitempty"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
 	Summary             string         `json:"summary,omitempty"`
-	OldestCheckpointTag string         `json:"oldest_checkpoint_tag,omitempty"`
 	ID                  string         `json:"id"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
 	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
@@ -490,7 +482,6 @@ func (c *Chat) Header() ChatHeader {
 		SupervisedMode:      c.SupervisedMode,
 		ParentChatID:        c.ParentChatID,
 		CompactionWatermark: c.CompactionWatermark,
-		OldestCheckpointTag: c.OldestCheckpointTag,
 		Summary:             c.Summary,
 	}
 }
@@ -506,7 +497,6 @@ type ChatHeader struct {
 	CurrentModeID       string         `json:"current_mode_id,omitempty"`
 	ID                  string         `json:"id"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
-	OldestCheckpointTag string         `json:"oldest_checkpoint_tag,omitempty"`
 	Summary             string         `json:"summary,omitempty"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
 	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`

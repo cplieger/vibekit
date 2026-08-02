@@ -22,7 +22,6 @@ const (
 	CmdPermissionResponse       CommandType = "permission_response"
 	CmdElicitationResponse      CommandType = "elicitation_response"
 	CmdUserInputResponse        CommandType = "user_input_response"
-	CmdRestoreCheckpoint        CommandType = "restore_checkpoint"
 	CmdRewindChat               CommandType = "rewind_chat"
 	CmdPromoteRewindChat        CommandType = "promote_rewind_chat"
 	CmdDiscardRewindChat        CommandType = "discard_rewind_chat"

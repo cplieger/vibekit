@@ -56,8 +56,6 @@ type StoreAccess interface {
 	ClearTombstone(chatID api.ChatID)
 	// Broadcast returns the broadcaster (may be nil).
 	Broadcast() api.Broadcaster
-	// OldestCheckpoint returns the checkpoint lookup function (may be nil).
-	OldestCheckpoint() func(ctx context.Context, chatID api.ChatID) string
 }
 
 // Service implements the archive lifecycle operations.
@@ -262,7 +260,7 @@ func (s *Service) listArchivedOnce(ctx context.Context) ([]api.ChatHeader, bool)
 		return []api.ChatHeader{}, true
 	}
 
-	headers, complete := readHeadersParallel(ctx, valid, "archived chat", s.store.OldestCheckpoint())
+	headers, complete := readHeadersParallel(ctx, valid, "archived chat")
 	sort.Slice(headers, func(i, j int) bool {
 		return headers[i].UpdatedAt > headers[j].UpdatedAt
 	})

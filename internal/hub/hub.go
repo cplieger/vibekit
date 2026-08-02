@@ -25,7 +25,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/checkpoint"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/dedup"
 	"github.com/cplieger/vibekit/internal/ignore"
@@ -113,7 +112,6 @@ type Hub struct {
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
-	checkpoints        api.CheckpointService
 	sessionReaper      *kirosession.Reaper
 	sessionRefs        func(context.Context) (map[string]struct{}, bool)
 	lines              *buffer.LineTracker
@@ -216,9 +214,6 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	}
 	if lc.configDir != "" {
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
-		h.checkpoints = checkpoint.NewStore(lc.configDir, workDir, func(chatID string, p *checkpoint.ConflictPayload) {
-			h.broadcastConflict(api.ChatID(chatID), p)
-		})
 	}
 	go h.cleanIdempotency()
 	go h.cullIdleUtilityBridge()
@@ -230,17 +225,6 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 // api.UtilityPrompter. The runtime is lazily constructed on first call.
 func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error) {
 	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
-}
-
-// CleanupCheckpoints removes a chat's checkpoint event log (the
-// content-addressed blob store is GC'd separately — there is no git
-// repository involved; see internal/checkpoint/events.go "Why JSONL
-// instead of git"). Safe to call even if the checkpoint store is nil
-// (no configDir).
-func (h *Hub) CleanupCheckpoints(ctx context.Context, chatID api.ChatID) {
-	if h.checkpoints != nil {
-		h.checkpoints.Cleanup(ctx, chatID)
-	}
 }
 
 // OnChatArchiving is the pre-archive hook wired to chat.WithPreArchive.
@@ -281,36 +265,6 @@ func (h *Hub) OnChatArchived(chatID api.ChatID) {
 		defer sumCancel()
 		h.summarizeOnArchive(sumCtx, chatID)
 	})
-}
-
-// CheckpointOldestTag returns the earliest available checkpoint tag
-// for chatID, or "" when none exist. The chat store reads this when
-// building ChatHeader so the client can decide which turns still have
-// working Restore buttons.
-func (h *Hub) CheckpointOldestTag(ctx context.Context, chatID api.ChatID) string {
-	if h.checkpoints == nil {
-		return ""
-	}
-	return string(h.checkpoints.OldestTag(ctx, chatID))
-}
-
-// StartCheckpointBackgroundTasks kicks off the blob GC ticker and
-// runs the initial sweep. Called from main.go after Hub construction
-// so tests can opt out.
-func (h *Hub) StartCheckpointBackgroundTasks() {
-	if h.checkpoints == nil {
-		return
-	}
-	h.checkpoints.StartBackgroundTasks(h.lifecycle.shutdownCtx)
-}
-
-// StopCheckpointBackgroundTasks halts the blob GC goroutine. Called
-// from Hub.Shutdown.
-func (h *Hub) StopCheckpointBackgroundTasks() {
-	if h.checkpoints == nil {
-		return
-	}
-	h.checkpoints.Stop()
 }
 
 // MCPConfig returns the MCP configuration store.
@@ -368,7 +322,6 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/shell/ws", h.handleShellWS)
 	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
 	mux.HandleFunc("/api/pending-changes/", h.handlePendingChange)
-	h.registerCheckpointRoutes(mux)
 	h.registerKnowledgeRoutes(mux)
 	h.registerHooksRoutes(mux)
 	h.registerGovernanceRoutes(mux)
@@ -442,9 +395,6 @@ func (h *Hub) Shutdown() {
 	// 3. Stop utility bridge.
 	h.stopUtilityBridge()
 
-	// 4. Stop checkpoint background tasks (blob GC ticker).
-	h.StopCheckpointBackgroundTasks()
-
 	// 4b. Kill all agent terminal subprocesses.
 	h.agentTerms.drainAll()
 
@@ -492,15 +442,6 @@ func (h *Hub) Draining() bool {
 // allocation child context.
 func (h *Hub) hubContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(h.lifecycle.shutdownCtx)
-}
-
-// broadcastConflict fans a cross-chat drift event out to SSE
-// subscribers. Wired into checkpoint.NewStore; every call is the
-// result of a Snapshot detecting drift, so we just wrap the
-// payload into a ServerEvent. Since api.ConflictDetectedPayload is
-// a type alias for checkpoint.ConflictPayload, no field copy needed.
-func (h *Hub) broadcastConflict(chatID api.ChatID, p *checkpoint.ConflictPayload) {
-	h.Broadcast(h.lifecycle.shutdownCtx, api.NewEvent(api.EventConflictDetected, chatID, *p))
 }
 
 // parentACPSession returns the ACP session id of the running bridge
