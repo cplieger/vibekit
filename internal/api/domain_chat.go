@@ -516,3 +516,26 @@ type ChatHeader struct {
 func (h *ChatHeader) SessionChain() []string {
 	return sessionChain(h.ACPSessionID, h.PriorACPSessionIDs)
 }
+
+// ResumableSession is one stored KAS session offered by the previous-session
+// picker (GET /api/sessions). Adopts kiro-cli's own `--resume-picker`
+// capability: KAS owns the inventory and the transcript, so vibekit carries no
+// archive of its own. See hub/session_list.go for the wire provenance.
+//
+// Field order is fieldalignment's, not the JSON's.
+type ResumableSession struct {
+	SessionID string `json:"session_id"`
+	Title     string `json:"title"`
+	AgentMode string `json:"agent_mode,omitempty"`
+	// Status is KAS's own session status: idle | failed | waiting_on_user.
+	Status string `json:"status,omitempty"`
+	// Description is the agent's self-declared focus for that session, present
+	// on a minority of rows (88 of 399 measured).
+	Description string `json:"description,omitempty"`
+	// ChatID names the vibekit chat that already owns this session, empty when
+	// no chat does. A claimed session is one the user can simply open, so the
+	// picker offers it differently rather than duplicating the chat.
+	ChatID    string `json:"chat_id,omitempty"`
+	UpdatedAt int64  `json:"updated_at"`
+	CreatedAt int64  `json:"created_at,omitempty"`
+}

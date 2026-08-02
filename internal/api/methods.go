@@ -13,6 +13,10 @@ const (
 	MethodInitialize  = "initialize"
 	MethodSessionNew  = "session/new"
 	MethodSessionLoad = "session/load"
+	// MethodSessionList enumerates stored sessions. Scope it with {cwd} —
+	// unscoped it returns every session on the box (measured: 399 rows across
+	// 55 directories, against 2 for one workspace). `limit` is IGNORED.
+	MethodSessionList = "session/list"
 	MethodSetMode     = "session/set_mode"
 	MethodSessionFork = "session/fork"
 	MethodCancel      = "session/cancel"
