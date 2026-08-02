@@ -112,9 +112,61 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.Cha
 		pct = u.Meta.Kiro.UsagePercentage
 	}
 	if pct == nil {
-		return // this session_info_update carries no context-usage percentage
+		// No recognised sub-block and no usage percentage. Most sub-kinds
+		// legitimately land here, but an UNKNOWN one is worth a line — see
+		// logUnconsumedInfoKind.
+		t.logUnconsumedInfoKind(chatID, u.Meta.Kiro.Kind)
+		return
 	}
 	t.persistUsage(ctx, chatID, *pct, 0, -1) // no size/credits on this channel
+}
+
+// knownSessionInfoKinds is every `_meta.kiro.kind` value KAS is known to
+// multiplex through session_info_update, enumerated from all 30
+// buildSessionInfoUpdate call sites plus the two that reach the wire via
+// SessionInfoEmitter.send (`steering_injected`, `repositories_update`) and
+// so are invisible to a call-site census.
+//
+// This set exists to tell "a sub-kind vibekit deliberately ignores" apart
+// from "a sub-kind KAS added since this was written". Membership implies
+// nothing about whether vibekit consumes the kind — most of these are
+// ignored on purpose.
+var knownSessionInfoKinds = map[string]struct{}{
+	"turn_start": {}, "turn_end": {}, "turn_completion": {},
+	"context_usage": {}, "summarization_separator": {}, "summary_message": {},
+	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
+	"user_message_id_assigned": {}, "focus_update": {}, "display_error": {},
+	"pending_interaction": {}, "interaction_resolved": {}, "recap": {},
+	"steering_inclusion": {}, "steering_queued": {}, "steering_cleared": {},
+	"queued": {}, "hook_update": {}, "steering_injected": {}, "repositories_update": {},
+}
+
+// logUnconsumedInfoKind reports a session_info_update that reached the end of
+// the dispatch cascade without being consumed.
+//
+// session_info_update is a CARRIER, not a message type: it multiplexes 22+
+// sub-kinds under `_meta.kiro.kind`, and the cascade above dispatches on
+// which sub-BLOCK is present (focus / summarization / promptTurnSummaries /
+// contextUsage) rather than on the kind string. That is deliberate — those
+// four are proven against the live wire, and keying them off kind values
+// instead would be a guess — but it means everything else falls through
+// here silently.
+//
+// A kind absent from knownSessionInfoKinds is logged at Warn because it is
+// most likely a KAS addition vibekit has not looked at yet, and the whole
+// failure mode of a multiplexed carrier is that new payloads vanish without
+// a trace. A known-but-ignored kind logs at Debug: expected, not news.
+func (t *Translator) logUnconsumedInfoKind(chatID api.ChatID, kind string) {
+	if kind == "" {
+		return
+	}
+	if _, known := knownSessionInfoKinds[kind]; known {
+		slog.Debug("session_info_update: known kind carries nothing vibekit consumes",
+			"chat_id", chatID, "kind", kind)
+		return
+	}
+	slog.Warn("session_info_update: UNKNOWN kind, dropped — KAS may have added a sub-kind",
+		"chat_id", chatID, "kind", kind)
 }
 
 // handleV3Summarization maps the v3 summarization sub-states onto the
