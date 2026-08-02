@@ -487,3 +487,132 @@ func TestProjection_CompactionEventSortsWithItsSegment(t *testing.T) {
 		t.Errorf("watermark = %q, want the compaction event's id %q", p.Watermark, last.ID)
 	}
 }
+
+// TestProjection_TwiceCompactedKeepsEveryTurn is the "twice-compacted" fixture
+// the design's risk table asked for, asserting the OPPOSITE of what that table
+// specified — and the measurement is why.
+//
+// Probe (kiro-cli 2.16.0, 2026-08-02): a session of four turns compacted after
+// turn 2 and again after turn 4 replays 28 frames — all four original turns in
+// full, plus TWO separator/summary pairs at positions 13/14 and 27/28. The
+// separators carry `{summarizationSeparator: true, kind, replay}` and nothing
+// else; explicit checks for `effectiveFromMessageId`, `truncatedMessageCount`,
+// `visibleFrom` and `hidden` all came back absent from every frame on the wire.
+// On disk the tombstones DO carry both fields, and the second one's
+// effectiveFromMessageId points at the FIRST SUMMARY
+// (`summary_0745abfe-...`) — the segments NEST, each summary subsuming the one
+// before it.
+//
+// That is what rules collapse out. Applied positionally twice, separator 1
+// replaces turns 1-2 with summary 1 and separator 2 replaces
+// [summary 1 + turns 3-4] with summary 2, so the whole transcript becomes one
+// summary paragraph. Compaction fires automatically at 80% context, so a
+// long-lived chat would collapse to a single blob on EVERY resume — deleting
+// the content transcript search and the timeline rail exist to navigate, which
+// the design's own risk table classes as "a data-loss bug, not a polish item".
+// And the wire cannot even do it faithfully: with no id and no count, position
+// is all there is.
+func TestProjection_TwiceCompactedKeepsEveryTurn(t *testing.T) {
+	f := func(kind api.ACPUpdateKind, text, sub string, extra map[string]any) [2]any {
+		k, raw := replayFrame(t, kind, text, sub, extra)
+		return [2]any{k, raw}
+	}
+	turn := func(prompt, reply string, n int) [][2]any {
+		return [][2]any{
+			f(replayUserChunkKind, prompt, "", map[string]any{
+				"messageId": fmt.Sprintf("user-%d", n),
+				"timestamp": fmt.Sprintf("2026-08-02T20:0%d:00.000Z", n),
+			}),
+			f(api.ACPUpdateSessionInfo, "", "turn_start", map[string]any{"turnStart": true}),
+			f(api.ACPUpdateAgentChunk, reply, "", map[string]any{
+				"messageId": fmt.Sprintf("agent-%d-say", n),
+				"timestamp": fmt.Sprintf("2026-08-02T20:0%d:30.000Z", n),
+			}),
+			f(api.ACPUpdateSessionInfo, "", "turn_end", nil),
+		}
+	}
+	compaction := func(summary string) [][2]any {
+		return [][2]any{
+			f(api.ACPUpdateSessionInfo, "", "summarization_separator",
+				map[string]any{"summarizationSeparator": true}),
+			f(api.ACPUpdateSessionInfo, "", "summary_message",
+				map[string]any{"summaryMessage": map[string]any{"content": summary}}),
+		}
+	}
+
+	p := NewProjection(seqIDs())
+	for _, batch := range [][][2]any{
+		turn("Reply with exactly: ONE", "ONE", 1),
+		turn("Reply with exactly: TWO", "TWO", 2),
+		compaction("## Goal\nReplied ONE and TWO."),
+		turn("Reply with exactly: THREE", "THREE", 3),
+		turn("Reply with exactly: FOUR", "FOUR", 4),
+		compaction("## Goal\nReplied ONE, TWO, THREE, FOUR."),
+	} {
+		ingestAll(p, batch)
+	}
+	got := p.Messages()
+
+	// 4 turns x (user + assistant) + 2 compaction events.
+	if len(got) != 10 {
+		var shape []string
+		for _, m := range got {
+			shape = append(shape, fmt.Sprintf("%s/%s", m.Role, m.EventKind))
+		}
+		t.Fatalf("got %d messages, want 10 (4 user + 4 assistant + 2 compaction): %v",
+			len(got), shape)
+	}
+
+	// EVERY original turn survives both compactions. This is the assertion the
+	// design's risk table inverted.
+	for _, wantText := range []string{"ONE", "TWO", "THREE", "FOUR"} {
+		found := false
+		for _, m := range got {
+			if m.Role == api.RoleAssistant && m.Content == wantText {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("assistant turn %q is absent: a compaction collapsed it", wantText)
+		}
+	}
+
+	// Both compaction events are present, in order, at their separators.
+	var events []int
+	for i, m := range got {
+		if m.EventKind == api.EventCompacted {
+			events = append(events, i)
+		}
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d compaction events at %v, want 2", len(events), events)
+	}
+	if events[0] != 4 {
+		t.Errorf("first compaction event at index %d, want 4 (after turns 1-2)", events[0])
+	}
+	if events[1] != 9 {
+		t.Errorf("second compaction event at index %d, want 9 (after turns 3-4)", events[1])
+	}
+
+	// The watermark tracks the LATEST compaction, so context-ui.ts's
+	// summarizedCount counts everything summarised so far rather than only the
+	// first segment.
+	if p.Watermark != got[events[1]].ID {
+		t.Errorf("watermark = %q, want the SECOND compaction event's id %q",
+			p.Watermark, got[events[1]].ID)
+	}
+
+	// And the count that motivated keeping them is non-degenerate: 9 messages
+	// precede the watermark. Under collapse it would be 1.
+	summarized := 0
+	for _, m := range got {
+		summarized++
+		if m.ID == p.Watermark {
+			break
+		}
+	}
+	if summarized != 10 {
+		t.Errorf("summarizedCount would be %d, want 10 (all messages up to and including the watermark)", summarized)
+	}
+}
