@@ -15,6 +15,7 @@ type CommandType string
 // hub/command.go's registerCommandHandlers dispatch map.
 const (
 	CmdCreateChat               CommandType = "create_chat"
+	CmdResumeSession            CommandType = "resume_session"
 	CmdPrompt                   CommandType = "prompt"
 	CmdCancel                   CommandType = "cancel"
 	CmdDeleteChat               CommandType = "delete_chat"
@@ -77,6 +78,18 @@ type Attachment struct {
 type CreateChatCommand struct {
 	Name  string `json:"name,omitempty"`
 	Model string `json:"model,omitempty"`
+}
+
+// ResumeSessionCommand is the payload for type="resume_session": adopt a KAS
+// session the previous-session picker listed (GET /api/sessions) as a new
+// chat. The chat is created already bound to SessionID, so the next bridge
+// takes the session/load path and the replay projection supplies the
+// transcript — vibekit copies no messages.
+type ResumeSessionCommand struct {
+	// SessionID is the KAS session to adopt. Validated with ValidSessionID.
+	SessionID string `json:"session_id"`
+	// Name seeds the chat title, normally the session title KAS reported.
+	Name string `json:"name,omitempty"`
 }
 
 // SwitchModelCommand is the payload for type="switch_model". Ends the

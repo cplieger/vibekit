@@ -11,6 +11,7 @@ import (
 // handlers. Called once from Hub construction.
 func RegisterDefaults(d *Dispatcher) {
 	d.Register(api.CmdCreateChat, wrap(d, CmdCreateChat))
+	d.Register(api.CmdResumeSession, wrap(d, CmdResumeSession))
 	d.Register(api.CmdPrompt, wrap(d, CmdPrompt))
 	d.Register(api.CmdCancel, wrap(d, CmdCancel))
 	d.Register(api.CmdDeleteChat, wrap(d, CmdDeleteChat))
