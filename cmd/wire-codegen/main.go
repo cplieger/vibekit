@@ -31,6 +31,7 @@ func main() {
 	r.Types = []wiregen.WireType{
 		wiregen.TypeRef[api.ToolLocation](),
 		wiregen.TypeRef[api.ToolDiff](),
+		wiregen.TypeRef[api.ToolCheckpoint](),
 		wiregen.TypeRef[api.ToolCall](),
 		wiregen.TypeRef[api.PlanEntry](),
 		wiregen.TypeRef[api.Block](),

@@ -63,11 +63,32 @@ type ACPKiroMeta struct {
 		// marker: plain clients render the text, capable clients key off
 		// it for a distinct refusal affordance. The turn then ends with
 		// core stopReason "refusal".
-		Refusal        *ACPRefusalMeta `json:"refusal"`
-		Kind           string          `json:"kind"`
-		AgentSubtaskID string          `json:"agentSubtaskId"`
-		HookAsk        json.RawMessage `json:"hookAsk,omitempty"`
+		Refusal *ACPRefusalMeta `json:"refusal"`
+		// Checkpoint is KAS's snapshot mapping for a file-writing tool
+		// call. Probed 2026-08-02 (kiro-cli 2.16.0): it arrives ONLY on
+		// the tool_call_update whose status is "completed" — the initial
+		// tool_call and every in_progress/pending update carry none, which
+		// is why the value is folded in on update rather than set once.
+		//
+		// A sibling _meta.kiro.preview on that same frame repeats these
+		// URIs AND carries originalContent/modifiedContent in full. That
+		// is deliberately NOT decoded: persisting whole file bodies per
+		// tool call would bloat every chat file, and the snapshot URIs
+		// address the same bytes on demand.
+		Checkpoint     *ACPCheckpointMeta `json:"checkpoint"`
+		Kind           string             `json:"kind"`
+		AgentSubtaskID string             `json:"agentSubtaskId"`
+		HookAsk        json.RawMessage    `json:"hookAsk,omitempty"`
 	} `json:"kiro"`
+}
+
+// ACPCheckpointMeta is the _meta.kiro.checkpoint object on a completed
+// file-writing tool_call_update. Every field is independently optional —
+// see api.ToolCheckpoint for the create-has-no-pre-image case.
+type ACPCheckpointMeta struct {
+	Original string `json:"original"`
+	Modified string `json:"modified"`
+	Local    string `json:"local"`
 }
 
 // ACPRefusalMeta is the _meta.kiro.refusal block on a refusal explanation

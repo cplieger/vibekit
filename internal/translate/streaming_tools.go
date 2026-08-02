@@ -160,6 +160,34 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 	if tc.AgentSubtaskID == "" && tu.Meta.Kiro.AgentSubtaskID != "" {
 		tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
 	}
+	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
+}
+
+// mergeCheckpoint folds a tool_call_update's _meta.kiro.checkpoint into the
+// buffered tool call, field by field so that a frame omitting a key cannot
+// erase one an earlier frame supplied.
+//
+// Per-field rather than wholesale because the key set genuinely varies
+// between frames for the same tool call: KAS sends {modified, local} for a
+// file creation and adds `original` only when there was a pre-image, so
+// replacing the struct would be correct today and lossy the moment a second
+// frame arrives with a narrower set.
+func mergeCheckpoint(tc *api.ToolCall, in *ACPCheckpointMeta) {
+	if in == nil || (in.Original == "" && in.Modified == "" && in.Local == "") {
+		return
+	}
+	if tc.Checkpoint == nil {
+		tc.Checkpoint = &api.ToolCheckpoint{}
+	}
+	if in.Original != "" {
+		tc.Checkpoint.Original = in.Original
+	}
+	if in.Modified != "" {
+		tc.Checkpoint.Modified = in.Modified
+	}
+	if in.Local != "" {
+		tc.Checkpoint.Local = in.Local
+	}
 }
 
 // relPath strips the workspace root prefix from an absolute path.

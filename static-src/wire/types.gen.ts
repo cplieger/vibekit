@@ -1065,6 +1065,14 @@ export interface ToolCall {
  * (which carry the same id) so the client can render them nested.
  */
   agent_subtask_id?: string;
+  /**
+ * Checkpoint is KAS's snapshot mapping for a tool call that wrote a
+ * file, taken from _meta.kiro.checkpoint. Nil for every tool call that
+ * touched no file — which is most of them. Placed ahead of the slices
+ * below to keep govet fieldalignment happy: a trailing pointer would
+ * extend the GC scan region past a slice's non-pointer len/cap words.
+ */
+  checkpoint?: ToolCheckpoint;
   input?: unknown;
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
@@ -1088,6 +1096,38 @@ export interface ToolCallPayload {
 export interface ToolCallUpdatePayload {
   message_id: string;
   tool_call: ToolCall;
+}
+
+/**
+ * ToolCheckpoint is KAS's pre/post-image mapping for one file write,
+ * persisted verbatim so a diff is a snapshot read plus a file read with no
+ * derivation. vibekit captures no snapshots of its own; KAS does it
+ * unconditionally and hands the addresses over on the wire.
+ * //
+ * Original and Modified are `kiro-snapshot-v2://<sessionId>:<snapshotId>/?originalPath=<relpath>`
+ * URIs — opaque handles, NOT filesystem paths, deliberately stored
+ * unparsed. Local is a `file://` URI for the live file.
+ * //
+ * **All three fields are independently optional and a consumer must
+ * tolerate any subset** (probed 2026-08-02, kiro-cli 2.16.0): a file
+ * CREATE has no pre-image, so it arrives as {Modified, Local} with Original
+ * empty, while overwriting an existing file yields all three. Code that
+ * treats this as a fixed triplet breaks on the first file the agent
+ * creates.
+ * //
+ * Granularity is per-file-write, not per-turn, and a multi-file tool
+ * (semantic_rename) carries no per-file mapping at all — KAS's
+ * checkpoint.fileChanges has zero occurrences in the corpus — so
+ * multi-file attribution is not recoverable from this field and must not
+ * be inferred from it.
+ */
+export interface ToolCheckpoint {
+  /** Original is the pre-image snapshot URI. Empty on a file creation. */
+  original?: string;
+  /** Modified is the post-image snapshot URI. */
+  modified?: string;
+  /** Local is the `file://` URI of the live file on disk. */
+  local?: string;
 }
 
 /**

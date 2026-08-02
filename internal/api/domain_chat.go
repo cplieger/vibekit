@@ -171,12 +171,48 @@ type ToolCall struct {
 	// _meta.kiro.kind=="agent-subtask"; this id links the subagent card
 	// to its nested agent_message_chunk / agent_thought_chunk deltas
 	// (which carry the same id) so the client can render them nested.
-	AgentSubtaskID string          `json:"agent_subtask_id,omitempty"`
-	Input          json.RawMessage `json:"input,omitempty"`
-	Locations      []ToolLocation  `json:"locations,omitempty"`
-	Diffs          []ToolDiff      `json:"diffs,omitempty"`
-	DurationMs     int             `json:"duration_ms,omitempty"`
-	Ts             int64           `json:"ts"`
+	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
+	// Checkpoint is KAS's snapshot mapping for a tool call that wrote a
+	// file, taken from _meta.kiro.checkpoint. Nil for every tool call that
+	// touched no file — which is most of them. Placed ahead of the slices
+	// below to keep govet fieldalignment happy: a trailing pointer would
+	// extend the GC scan region past a slice's non-pointer len/cap words.
+	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Locations  []ToolLocation  `json:"locations,omitempty"`
+	Diffs      []ToolDiff      `json:"diffs,omitempty"`
+	DurationMs int             `json:"duration_ms,omitempty"`
+	Ts         int64           `json:"ts"`
+}
+
+// ToolCheckpoint is KAS's pre/post-image mapping for one file write,
+// persisted verbatim so a diff is a snapshot read plus a file read with no
+// derivation. vibekit captures no snapshots of its own; KAS does it
+// unconditionally and hands the addresses over on the wire.
+//
+// Original and Modified are `kiro-snapshot-v2://<sessionId>:<snapshotId>/?originalPath=<relpath>`
+// URIs — opaque handles, NOT filesystem paths, deliberately stored
+// unparsed. Local is a `file://` URI for the live file.
+//
+// **All three fields are independently optional and a consumer must
+// tolerate any subset** (probed 2026-08-02, kiro-cli 2.16.0): a file
+// CREATE has no pre-image, so it arrives as {Modified, Local} with Original
+// empty, while overwriting an existing file yields all three. Code that
+// treats this as a fixed triplet breaks on the first file the agent
+// creates.
+//
+// Granularity is per-file-write, not per-turn, and a multi-file tool
+// (semantic_rename) carries no per-file mapping at all — KAS's
+// checkpoint.fileChanges has zero occurrences in the corpus — so
+// multi-file attribution is not recoverable from this field and must not
+// be inferred from it.
+type ToolCheckpoint struct {
+	// Original is the pre-image snapshot URI. Empty on a file creation.
+	Original string `json:"original,omitempty"`
+	// Modified is the post-image snapshot URI.
+	Modified string `json:"modified,omitempty"`
+	// Local is the `file://` URI of the live file on disk.
+	Local string `json:"local,omitempty"`
 }
 
 // ToolLocation is a file path (and optional line) the agent is working
