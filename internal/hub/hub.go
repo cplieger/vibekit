@@ -175,7 +175,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		lifecycle: lc,
 		bridge: &bridgePlane{
 			factory:       factory,
-			mgr:           newBridgeManager(factory, &lc.inflight),
+			mgr:           newBridgeManager(factory),
 			assistantBufs: buffer.NewStore(),
 		},
 		sse: &ssePlane{
@@ -217,7 +217,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		})
 	}
 	go h.cleanIdempotency()
-	go h.cullIdleBridges()
+	go h.cullIdleUtilityBridge()
 	go h.sweepSessionsLoop()
 	return h
 }
@@ -451,6 +451,9 @@ func (h *Hub) Shutdown() {
 	slog.Info("hub shutdown complete")
 }
 
+// bridgeIdleTimeout bounds how long the tab-less utility session may sit
+// idle before it is stopped. It does NOT apply to chat bridges — those are
+// owned by their tab (see cullIdleUtilityBridge).
 const bridgeIdleTimeout = 30 * time.Minute
 
 // --- Broadcast ---
@@ -582,7 +585,7 @@ func (h *Hub) utilityLiveSessionID() string {
 // stopUtilityBridge stops the utility session if it exists.
 //
 // The h.bridge.utility field read + nil is guarded by h.lifecycle.mu so it
-// serialises with cullIdleBridgesOnce, which reads the same field under
+// serialises with cullIdleUtilityBridgeOnce, which reads the same field under
 // that lock (snapshot-and-release). Only called from Shutdown, where
 // inflight.Wait() has already returned, so no in-flight turn or RPC holds
 // a lease on the session being stopped.
@@ -597,12 +600,16 @@ func (h *Hub) stopUtilityBridge() {
 	u.session.Stop()
 }
 
-// cullIdleBridges stops bridges that have been idle for longer than
-// bridgeIdleTimeout. Runs every 60 seconds. The next prompt on a
-// culled chat will create a fresh bridge via getOrCreateBridge (which
-// already handles session/load for existing ACP sessions). Exits on
-// Shutdown via h.lifecycle.done so a late tick can't race bridge teardown.
-func (h *Hub) cullIdleBridges() {
+// cullIdleUtilityBridge stops the utility session once it has been idle
+// for longer than bridgeIdleTimeout. Runs every 60 seconds. Exits on
+// Shutdown via h.lifecycle.done so a late tick can't race teardown.
+//
+// CHAT bridges are deliberately NOT swept. A chat open in a tab owns its
+// process for as long as the tab is open: nothing auto-kills the process,
+// its turn, or its runs, and closing the tab kills all of it. The utility
+// session is the one bridge with no tab to own it — it is a pool of one-shot
+// text generators — so an idle timer is the right bound there and only there.
+func (h *Hub) cullIdleUtilityBridge() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -610,33 +617,19 @@ func (h *Hub) cullIdleBridges() {
 		case <-h.lifecycle.done:
 			return
 		case <-ticker.C:
-			h.cullIdleBridgesOnce()
+			h.cullIdleUtilityBridgeOnce()
 		}
 	}
 }
 
-// cullIdleBridgesOnce runs one sweep of the cull logic: chat bridges
-// first (delete-and-Stop in one pass), then the utility bridge under
-// its own mutex. Exported via lowercase to keep the hot path testable
-// without driving a real ticker.
-func (h *Hub) cullIdleBridgesOnce() {
-	count := h.bridge.mgr.count()
-	timeout := bridgeIdleTimeout
-	if count > 5 {
-		adaptive := max(bridgeIdleTimeout/time.Duration(count), 5*time.Minute)
-		timeout = adaptive
-	}
-	toClose := h.bridge.mgr.selectIdle(timeout)
-	for _, c := range h.bridge.mgr.closeAndStop(toClose) {
-		slog.Info("culled idle bridge", "chat_id", c.chatID,
-			"idle_since", c.sb.lastActiveAt.UTC().Format(time.RFC3339))
-	}
-	// Utility session: stopIfIdle owns the victim-capture dance (the
-	// session mutex is short-held, so this never waits behind an
-	// in-flight text turn; acquire bumps lastActiveAt at turn start, so a
-	// live turn is trivially "recently active"). h.bridge.utility itself
-	// is read under h.lifecycle.mu (snapshot-and-release) so a concurrent
-	// stopUtilityBridge clearing the field can't tear the pointer read.
+// cullIdleUtilityBridgeOnce runs one utility-session sweep. stopIfIdle owns
+// the victim-capture dance (the session mutex is short-held, so this never
+// waits behind an in-flight text turn; acquire bumps lastActiveAt at turn
+// start, so a live turn is trivially "recently active"). h.bridge.utility
+// itself is read under h.lifecycle.mu (snapshot-and-release) so a concurrent
+// stopUtilityBridge clearing the field can't tear the pointer read. Lowercase
+// rather than inlined so the sweep is testable without driving a real ticker.
+func (h *Hub) cullIdleUtilityBridgeOnce() {
 	h.lifecycle.mu.Lock()
 	u := h.bridge.utility
 	h.lifecycle.mu.Unlock()

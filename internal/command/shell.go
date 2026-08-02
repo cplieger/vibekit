@@ -95,7 +95,6 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 			return
 		}
 		defer sb.ReleaseAfterPrompt()
-		sb.SetLastActive()
 	}
 
 	deps.InflightAdd(1)

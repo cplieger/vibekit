@@ -13,7 +13,7 @@ import (
 // catches any missed synchronization on the bridges map.
 func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	factory := func() api.ACPBridge { return newNoopBridge() }
-	bm := newBridgeManager(factory, &sync.WaitGroup{})
+	bm := newBridgeManager(factory)
 
 	const N = 100
 	var wg sync.WaitGroup
@@ -52,13 +52,12 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	wg.Wait()
 }
 
-// TestBridgeManager_CloseAndStopConcurrentDrain verifies that
-// closeAndStop and drain don't interfere when run concurrently
-// (e.g. idle culling racing with Shutdown).
-func TestBridgeManager_CloseAndStopConcurrentDrain(t *testing.T) {
+// TestBridgeManager_CloseConcurrentDrain verifies that per-chat close
+// and drain don't interfere when run concurrently (e.g. a tab close
+// racing with Shutdown).
+func TestBridgeManager_CloseConcurrentDrain(t *testing.T) {
 	factory := func() api.ACPBridge { return newNoopBridge() }
-	var inflight sync.WaitGroup
-	bm := newBridgeManager(factory, &inflight)
+	bm := newBridgeManager(factory)
 
 	// Seed bridges.
 	for i := range 20 {
@@ -69,8 +68,9 @@ func TestBridgeManager_CloseAndStopConcurrentDrain(t *testing.T) {
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		ids := []api.ChatID{"drain-A", "drain-B", "drain-C"}
-		bm.closeAndStop(ids)
+		for _, id := range []api.ChatID{"drain-A", "drain-B", "drain-C"} {
+			bm.close(id)
+		}
 	})
 
 	wg.Go(func() {
@@ -78,5 +78,4 @@ func TestBridgeManager_CloseAndStopConcurrentDrain(t *testing.T) {
 	})
 
 	wg.Wait()
-	inflight.Wait()
 }

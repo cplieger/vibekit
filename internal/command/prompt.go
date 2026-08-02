@@ -112,7 +112,6 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 		}))
 		return resp
 	}
-	sb2.SetLastActive()
 	sb2.SetPrompting()
 	defer sb2.ReleaseAfterPrompt()
 	deps.AdvanceCheckpointTurn(ctx, chatID)
@@ -254,7 +253,6 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		return
 	}
 	defer sb.ReleaseAfterPrompt()
-	sb.SetLastActive()
 
 	deps.InflightAdd(1)
 	defer deps.InflightDone()

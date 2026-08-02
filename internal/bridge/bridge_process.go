@@ -61,8 +61,8 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 
 // Stop kills the subprocess and closes NotifCh. Safe to call multiple
 // times; subsequent calls are no-ops. Multiple call sites (hub.Shutdown,
-// cullIdleBridges, session/load recovery) can race to stop the same
-// bridge; the sync.Once gate prevents a double-close panic on b.done.
+// tab close, model switch, session/load recovery) can race to stop the
+// same bridge; the sync.Once gate prevents a double-close panic on b.done.
 // Reaps the process via cmd.Wait so the OS releases its process entry
 // immediately (no <defunct> accumulation across chat lifecycle churn).
 func (b *Bridge) Stop() {

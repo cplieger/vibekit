@@ -117,8 +117,6 @@ type CommandBridge interface {
 	TryAcquireForPrompt() bool
 	// ReleaseAfterPrompt releases the prompt lock.
 	ReleaseAfterPrompt()
-	// SetLastActive updates the last-active timestamp.
-	SetLastActive()
 	// SetPrompting sets the bridge state to prompting (for recovery).
 	SetPrompting()
 	// IsPrimed reports whether the bridge has been primed.

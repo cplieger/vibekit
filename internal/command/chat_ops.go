@@ -222,7 +222,6 @@ func (d *Dispatcher) guardIdleBridge(w http.ResponseWriter, chatID api.ChatID) (
 		d.RespondErr(w, http.StatusConflict, errBusy)
 		return nil, false
 	}
-	sb.SetLastActive()
 	return sb.ReleaseAfterPrompt, true
 }
 
