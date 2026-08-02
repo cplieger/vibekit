@@ -221,8 +221,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		h.OnChatArchived(id)
 		purgeScheduler.Trigger()
 	})(chatStore)
-	chat.WithOnPurge(func(chatID api.ChatID) {
+	// A purge reaps EVERYTHING the chat owned: vibekit's checkpoints and every
+	// KAS session directory in its chain. Reaping here rather than leaving it
+	// to the hourly orphan sweep matters because DefaultChatRetentionDays is 1,
+	// so nearly every session directory would otherwise become an orphan within
+	// a day and the sweep — the destructive leg, whose keep-list is derived by
+	// reading every chat file — would be the primary retention mechanism.
+	chat.WithOnPurge(func(chatID api.ChatID, sessionChain []string) {
 		h.CleanupCheckpoints(ctx, chatID)
+		for _, id := range sessionChain {
+			sessionReaper.Reap(id)
+		}
 	})(chatStore)
 	chat.WithOldestCheckpointFn(h.CheckpointOldestTag)(chatStore)
 	purgeScheduler.Start()

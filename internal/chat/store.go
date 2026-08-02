@@ -60,7 +60,7 @@ type Store struct {
 	listSF           singleflight.Group
 	preArchive       func(chatID api.ChatID)
 	onArchive        func(chatID api.ChatID)
-	onPurge          func(chatID api.ChatID)
+	onPurge          func(chatID api.ChatID, sessionChain []string)
 	oldestCheckpoint func(ctx context.Context, chatID api.ChatID) string
 	tombstone        map[api.ChatID]time.Time
 	archive          *archive.Service
@@ -137,7 +137,9 @@ func WithOldestCheckpointFn(fn func(ctx context.Context, chatID api.ChatID) stri
 }
 
 // WithOnPurge registers a callback fired after an archived chat is purged.
-func WithOnPurge(fn func(chatID api.ChatID)) StoreOption {
+// sessionChain carries every KAS session the chat ran on, captured before the
+// chat file was removed, so the purge can reap its own session directories.
+func WithOnPurge(fn func(chatID api.ChatID, sessionChain []string)) StoreOption {
 	return func(s *Store) { s.onPurge = fn }
 }
 

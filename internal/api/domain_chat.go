@@ -6,6 +6,7 @@ package api
 
 import (
 	"encoding/json"
+	"slices"
 )
 
 // Role identifies the speaker of a message.
@@ -368,9 +369,20 @@ type Chat struct {
 	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
 	Messages            []Message      `json:"messages"`
 	CurrentPlan         []PlanEntry    `json:"current_plan,omitempty"`
-	Usage               Usage          `json:"usage"`
-	CreatedAt           int64          `json:"created_at"`
-	UpdatedAt           int64          `json:"updated_at"`
+	// PriorACPSessionIDs are the KAS sessions this chat USED to run on,
+	// oldest first. ACPSessionID is only the current one, and a chat
+	// routinely changes session: a failed session/load blanks it, a model
+	// switch fallback recreates it. Each of those sessions still holds that
+	// period's transcript and pre-images on disk, so retention has to key on
+	// the whole CHAIN — a chat's data is its vibekit file plus every session
+	// directory in its chain, and they live and die together.
+	//
+	// Never trimmed: an entry here is a directory the reaper must spare, so
+	// dropping one deletes history. Maintained by RecordSession.
+	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
+	Usage              Usage    `json:"usage"`
+	CreatedAt          int64    `json:"created_at"`
+	UpdatedAt          int64    `json:"updated_at"`
 	// ArchivedAt is the unix-milli timestamp recorded when the chat was
 	// moved to the archive dir. Purge ages from this, NOT the file mtime:
 	// a skipped/failed post-archive summary write leaves mtime at the
@@ -383,6 +395,46 @@ type Chat struct {
 	SupervisedMode bool  `json:"supervised_mode,omitempty"`
 }
 
+// SessionChain returns every KAS session id this chat has run on, current
+// one last. This is the reaper's keep-set for the chat: any session
+// directory in it holds part of the chat's history.
+func (c *Chat) SessionChain() []string {
+	return sessionChain(c.ACPSessionID, c.PriorACPSessionIDs)
+}
+
+// sessionChain composes the current session id and the retired ones into the
+// chat's full chain. Shared by Chat and ChatHeader so the two views cannot
+// disagree about what a chat's retention set is.
+func sessionChain(current string, prior []string) []string {
+	if current == "" {
+		return prior
+	}
+	chain := make([]string, 0, len(prior)+1)
+	chain = append(chain, prior...)
+	return append(chain, current)
+}
+
+// RecordSession points the chat at session id, retiring whatever it was on
+// into the chain first. Pass "" to detach from the current session without
+// forgetting it (a failed session/load), which is the case that used to lose
+// the id outright.
+//
+// Idempotent: re-recording the current id, or an id already in the chain, is
+// a no-op, so a caller does not have to check first.
+func (c *Chat) RecordSession(id string) {
+	if c.ACPSessionID == id {
+		return
+	}
+	if c.ACPSessionID != "" && !slices.Contains(c.PriorACPSessionIDs, c.ACPSessionID) {
+		c.PriorACPSessionIDs = append(c.PriorACPSessionIDs, c.ACPSessionID)
+	}
+	c.ACPSessionID = id
+	// A revisited id lives in exactly one place: the current field.
+	if id != "" {
+		c.PriorACPSessionIDs = slices.DeleteFunc(c.PriorACPSessionIDs, func(s string) bool { return s == id })
+	}
+}
+
 // Header returns the chat's metadata without messages. Used for list
 // endpoints and SSE broadcasts when messages are not needed.
 func (c *Chat) Header() ChatHeader {
@@ -391,6 +443,7 @@ func (c *Chat) Header() ChatHeader {
 		Name:                c.Name,
 		Model:               c.Model,
 		ACPSessionID:        c.ACPSessionID,
+		PriorACPSessionIDs:  c.PriorACPSessionIDs,
 		CurrentModeID:       c.CurrentModeID,
 		AvailableModes:      c.AvailableModes,
 		AvailableModels:     c.AvailableModels,
@@ -421,9 +474,19 @@ type ChatHeader struct {
 	Summary             string         `json:"summary,omitempty"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
 	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
-	Usage               Usage          `json:"usage"`
-	CreatedAt           int64          `json:"created_at"`
-	UpdatedAt           int64          `json:"updated_at"`
-	MessageCount        int            `json:"message_count"`
-	SupervisedMode      bool           `json:"supervised_mode,omitempty"`
+	// PriorACPSessionIDs mirrors Chat's. Carried on the header because the
+	// retention sweep derives its keep-list from header reads rather than
+	// loading every chat in full.
+	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
+	Usage              Usage    `json:"usage"`
+	CreatedAt          int64    `json:"created_at"`
+	UpdatedAt          int64    `json:"updated_at"`
+	MessageCount       int      `json:"message_count"`
+	SupervisedMode     bool     `json:"supervised_mode,omitempty"`
+}
+
+// SessionChain returns every KAS session id the chat has run on, current one
+// last. Same set as Chat.SessionChain.
+func (h *ChatHeader) SessionChain() []string {
+	return sessionChain(h.ACPSessionID, h.PriorACPSessionIDs)
 }

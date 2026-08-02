@@ -89,7 +89,10 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 		if !ex {
 			return false
 		}
-		c.ACPSessionID = ""
+		// Detach, don't forget: the abandoned session still holds this chat's
+		// earlier transcript on disk, and it must stay in the chain or the
+		// reaper sweeps it as an orphan.
+		c.RecordSession("")
 		return true
 	}); err != nil {
 		slog.Error("empty turn: clear session ID", "chat_id", chatID, keyError, err)

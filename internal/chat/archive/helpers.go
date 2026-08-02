@@ -59,20 +59,28 @@ func boundedParallel[T any](ctx context.Context, items []T, maxWorkers int, fn f
 }
 
 // readHeadersParallel reads chat headers for each entry concurrently
-// (bounded at 8 workers) and returns the successfully-read headers.
+// (bounded at 8 workers) and returns the successfully-read headers plus
+// whether it read every chat that exists.
+//
+// `complete` is false only when a chat file that EXISTS could not be read. A
+// chat that vanished mid-scan (ENOENT, a concurrent delete) leaves the scan
+// complete: it genuinely has nothing left to account for. The flag matters to
+// callers deriving a retention keep-list, where a silently-dropped chat means
+// deleting its data.
 func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
 	label string,
 	oldestCheckpoint func(context.Context, api.ChatID) string,
-) []api.ChatHeader {
+) (headersOut []api.ChatHeader, complete bool) {
 	if len(valid) == 0 {
-		return nil
+		return nil, true
 	}
 	const maxWorkers = 8
 	type result struct {
 		header api.ChatHeader
 		ok     bool
+		lost   bool // exists but unreadable
 	}
 	results := make([]result, len(valid))
 
@@ -82,6 +90,7 @@ func readHeadersParallel(
 			if !errors.Is(err, os.ErrNotExist) {
 				slog.Warn("chat "+label+": skipping unreadable file",
 					"chat_id", ce.id, "error", err)
+				results[idx] = result{lost: true}
 			}
 			return
 		}
@@ -92,12 +101,16 @@ func readHeadersParallel(
 	})
 
 	headers := make([]api.ChatHeader, 0, len(valid))
+	complete = true
 	for i := range results {
-		if results[i].ok {
+		switch {
+		case results[i].ok:
 			headers = append(headers, results[i].header)
+		case results[i].lost:
+			complete = false
 		}
 	}
-	return headers
+	return headers, complete
 }
 
 // readCappedFile reads a file at path, enforcing the maxChatFileBytes size cap.

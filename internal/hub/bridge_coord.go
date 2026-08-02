@@ -210,7 +210,11 @@ func (bc *BridgeCoordinator) tryLoadSession(
 			if !ex {
 				return false
 			}
-			c.ACPSessionID = ""
+			// Detach from the stale session but KEEP it in the chain: its
+			// directory still holds that period's transcript and pre-images,
+			// and blanking the id outright made the reaper sweep it as an
+			// orphan — vibekit deleting its own history.
+			c.RecordSession("")
 			return true
 		}); mErr != nil {
 			slog.Error("clear stale acp_session_id", "chat_id", chatID, "error", mErr)
@@ -271,7 +275,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 		if !ex {
 			return false
 		}
-		c.ACPSessionID = string(newSessionID)
+		c.RecordSession(string(newSessionID))
 		if newModelID != "" {
 			c.Model = string(newModelID)
 		}

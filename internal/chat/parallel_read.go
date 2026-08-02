@@ -64,23 +64,31 @@ func readHeadersParallel(
 	valid []chatEntry,
 	label string,
 	oldestCheckpoint func(context.Context, api.ChatID) string,
-) []api.ChatHeader {
+) (headersOut []api.ChatHeader, complete bool) {
 	if len(valid) == 0 {
-		return nil
+		return nil, true
 	}
 	const maxWorkers = 8
 	type result struct {
 		header api.ChatHeader
 		ok     bool
+		// lost marks a chat that EXISTS but could not be read. Distinct from
+		// !ok, which also covers a chat that vanished mid-scan.
+		lost bool
 	}
 	results := make([]result, len(valid))
 
 	boundedParallel(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
 		h, err := readChatHeader(ce.path, label+" "+ce.id)
 		if err != nil {
+			// ENOENT is a concurrent delete: the chat is genuinely gone, so
+			// dropping it is correct and the scan is still complete. Anything
+			// else means a chat that exists is missing from the result, which
+			// callers deriving a keep-list from it must not treat as authority.
 			if !errors.Is(err, os.ErrNotExist) {
 				slog.Warn("chat "+label+": skipping unreadable file",
 					"chat_id", ce.id, "error", err)
+				results[idx] = result{lost: true}
 			}
 			return
 		}
@@ -91,10 +99,14 @@ func readHeadersParallel(
 	})
 
 	headers := make([]api.ChatHeader, 0, len(valid))
+	complete = true
 	for i := range results {
-		if results[i].ok {
+		switch {
+		case results[i].ok:
 			headers = append(headers, results[i].header)
+		case results[i].lost:
+			complete = false
 		}
 	}
-	return headers
+	return headers, complete
 }

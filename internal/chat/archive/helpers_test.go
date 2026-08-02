@@ -95,14 +95,35 @@ func (f *fakeStore) clearedTombstones() []string {
 // callback. Safe for concurrent use (Purge runs callbacks from worker
 // goroutines).
 type purgeRecorder struct {
-	mu  sync.Mutex
-	ids []api.ChatID
+	mu     sync.Mutex
+	ids    []api.ChatID
+	chains map[api.ChatID][]string
 }
 
+// record satisfies the one-arg WithOnArchive callback.
 func (r *purgeRecorder) record(id api.ChatID) {
 	r.mu.Lock()
 	r.ids = append(r.ids, id)
 	r.mu.Unlock()
+}
+
+// recordPurge satisfies WithOnPurge, keeping the session chain the purge
+// handed over so tests can assert the chat's sessions were offered for reaping.
+func (r *purgeRecorder) recordPurge(id api.ChatID, sessionChain []string) {
+	r.mu.Lock()
+	r.ids = append(r.ids, id)
+	if r.chains == nil {
+		r.chains = map[api.ChatID][]string{}
+	}
+	r.chains[id] = sessionChain
+	r.mu.Unlock()
+}
+
+// chainFor returns the session chain recorded for a purged chat.
+func (r *purgeRecorder) chainFor(id api.ChatID) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.chains[id]
 }
 
 func (r *purgeRecorder) sorted() []string {

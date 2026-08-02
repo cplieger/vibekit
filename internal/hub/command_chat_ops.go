@@ -40,18 +40,25 @@ func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID, reapDurab
 }
 
 // reapChatSession removes the chat's on-disk kiro-cli/KAS session state on
-// permanent delete. cleanupChatState runs before the chat file is removed,
-// so acp_session_id is still readable. No-op when the reaper is unwired
+// permanent delete. cleanupChatState runs before the chat file is removed, so
+// the session chain is still readable. No-op when the reaper is unwired
 // (tests), the chat is already gone, or it never started a session.
+//
+// Reaps the whole CHAIN, not just the current session: a chat that changed
+// session (failed session/load, model-switch fallback) has state under every
+// id it ever held, and leaving the retired ones behind makes them orphans the
+// hourly sweep has to find later.
 func (h *Hub) reapChatSession(ctx context.Context, chatID api.ChatID) {
 	if h.sessionReaper == nil {
 		return
 	}
 	c, ok := h.chatStore.Get(ctx, chatID)
-	if !ok || c.ACPSessionID == "" {
+	if !ok {
 		return
 	}
-	h.sessionReaper.Reap(c.ACPSessionID)
+	for _, id := range c.SessionChain() {
+		h.sessionReaper.Reap(id)
+	}
 }
 
 // clearPendingPermsForChat drops every unresolved permission_needed

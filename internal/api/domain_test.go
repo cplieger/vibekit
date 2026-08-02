@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -138,5 +139,110 @@ func TestRPCError_implements_error_interface(t *testing.T) {
 	}
 	if re.Message != "method not found" {
 		t.Errorf("unwrapped Message = %q, want %q", re.Message, "method not found")
+	}
+}
+
+// --- The session chain: what retention is allowed to delete ---
+
+// TestRecordSession pins the chain bookkeeping. Every case here is a way to
+// LOSE a session id, and a lost id is a session directory the reaper then
+// deletes as an orphan — taking that period's transcript and pre-images with
+// it. The old code assigned ACPSessionID directly, which is exactly case 2.
+func TestRecordSession(t *testing.T) {
+	cases := []struct {
+		name      string
+		start     Chat
+		record    string
+		wantCur   string
+		wantPrior []string
+	}{
+		{
+			name:      "first session",
+			record:    "sess_a",
+			wantCur:   "sess_a",
+			wantPrior: nil,
+		},
+		{
+			name:      "detaching keeps the old id in the chain",
+			start:     Chat{ACPSessionID: "sess_a"},
+			record:    "",
+			wantCur:   "",
+			wantPrior: []string{"sess_a"},
+		},
+		{
+			name:      "switching retires the old id",
+			start:     Chat{ACPSessionID: "sess_a"},
+			record:    "sess_b",
+			wantCur:   "sess_b",
+			wantPrior: []string{"sess_a"},
+		},
+		{
+			name:      "re-attaching after a detach does not duplicate",
+			start:     Chat{PriorACPSessionIDs: []string{"sess_a"}},
+			record:    "sess_a",
+			wantCur:   "sess_a",
+			wantPrior: []string{},
+		},
+		{
+			name:      "recording the current id is a no-op",
+			start:     Chat{ACPSessionID: "sess_a", PriorACPSessionIDs: []string{"sess_0"}},
+			record:    "sess_a",
+			wantCur:   "sess_a",
+			wantPrior: []string{"sess_0"},
+		},
+		{
+			name:      "a third session keeps both predecessors, oldest first",
+			start:     Chat{ACPSessionID: "sess_b", PriorACPSessionIDs: []string{"sess_a"}},
+			record:    "sess_c",
+			wantCur:   "sess_c",
+			wantPrior: []string{"sess_a", "sess_b"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := tc.start
+			c.RecordSession(tc.record)
+			if c.ACPSessionID != tc.wantCur {
+				t.Errorf("ACPSessionID = %q, want %q", c.ACPSessionID, tc.wantCur)
+			}
+			if !slices.Equal(c.PriorACPSessionIDs, tc.wantPrior) {
+				t.Errorf("PriorACPSessionIDs = %v, want %v", c.PriorACPSessionIDs, tc.wantPrior)
+			}
+		})
+	}
+}
+
+// TestSessionChain pins that the chain is the full keep-set and that Chat and
+// ChatHeader agree on it — the sweep reads headers while the delete path reads
+// chats, so a disagreement means one of them reaps what the other keeps.
+func TestSessionChain(t *testing.T) {
+	cases := []struct {
+		name string
+		chat Chat
+		want []string
+	}{
+		{name: "no sessions", chat: Chat{}, want: nil},
+		{name: "current only", chat: Chat{ACPSessionID: "sess_a"}, want: []string{"sess_a"}},
+		{
+			name: "detached chat still claims its past",
+			chat: Chat{PriorACPSessionIDs: []string{"sess_a"}},
+			want: []string{"sess_a"},
+		},
+		{
+			name: "current last",
+			chat: Chat{ACPSessionID: "sess_c", PriorACPSessionIDs: []string{"sess_a", "sess_b"}},
+			want: []string{"sess_a", "sess_b", "sess_c"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.chat.SessionChain(); !slices.Equal(got, tc.want) {
+				t.Errorf("Chat.SessionChain() = %v, want %v", got, tc.want)
+			}
+			h := tc.chat.Header()
+			if got := h.SessionChain(); !slices.Equal(got, tc.want) {
+				t.Errorf("ChatHeader.SessionChain() = %v, want %v (Header dropped the chain)", got, tc.want)
+			}
+		})
 	}
 }

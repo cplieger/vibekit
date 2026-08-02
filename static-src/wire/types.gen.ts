@@ -195,6 +195,12 @@ export interface ChatHeader {
   summary?: string;
   available_models?: SessionModel[];
   available_modes?: SessionMode[];
+  /**
+ * PriorACPSessionIDs mirrors Chat's. Carried on the header because the
+ * retention sweep derives its keep-list from header reads rather than
+ * loading every chat in full.
+ */
+  prior_acp_session_ids?: string[];
   usage: Usage;
   created_at: number;
   updated_at: number;

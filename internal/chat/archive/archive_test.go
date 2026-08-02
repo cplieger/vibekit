@@ -111,7 +111,7 @@ func TestRestoreArchived_RejectsInvalidChatID(t *testing.T) {
 // removes the archived chat and fires onPurge.
 func TestDeleteArchived_RemovesFile(t *testing.T) {
 	var rec purgeRecorder
-	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.record))
+	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
 
 	chatPath := writeArchivedChat(t, archiveDir, "chatD", 0)
 

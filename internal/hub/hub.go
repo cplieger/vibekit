@@ -115,7 +115,7 @@ type Hub struct {
 	translator         *translate.Translator
 	checkpoints        api.CheckpointService
 	sessionReaper      *kirosession.Reaper
-	sessionRefs        func(context.Context) map[string]struct{}
+	sessionRefs        func(context.Context) (map[string]struct{}, bool)
 	lines              *buffer.LineTracker
 	agentTerms         *agentTerminals
 	hookStatus         *hookStatusCache
@@ -153,7 +153,11 @@ func WithMCPConfig(c api.MCPConfig) Option {
 // chat delete (via cleanupChatState) and via a periodic orphan sweep that
 // spares any session id refs reports as still referenced by a live or
 // archived chat. Unset in tests → session reaping is a no-op.
-func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) map[string]struct{}) Option {
+//
+// refs returns (set, complete). A false `complete` means the keep-list could
+// not be fully determined, and the sweep is SKIPPED rather than run against a
+// partial one — see sweepSessionsOnce.
+func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[string]struct{}, bool)) Option {
 	return func(h *Hub) {
 		h.sessionReaper = r
 		h.sessionRefs = refs
@@ -549,23 +553,54 @@ func (h *Hub) sweepSessionsLoop() {
 	}
 }
 
-// sweepSessionsOnce runs one orphan-session sweep against a fresh referenced
-// set (every active + archived chat's acp_session_id), plus the live utility
-// bridge's session — it is referenced by no chat, and without the exemption
-// the sweep would delete its on-disk KAS state from under the live
-// subprocess once it idles past the reaper's age guard (10 min guard vs the
-// 30 min utility cull leaves a window every hourly sweep can land in).
+// sweepSessionsOnce runs one orphan-session sweep. The keep-list is
+//
+//	every session in every active + archived chat's CHAIN  ∪  every LIVE session
+//
+// and both halves are needed for the same reason: age is not evidence that a
+// session is disposable.
+//
+// The live half used to be one ad-hoc exemption for the utility bridge, whose
+// own comment named the failure mode — without it the sweep deletes on-disk
+// KAS state from under a live subprocess once it ages past the 10-minute
+// guard, because that guard is a create-race cushion and not a liveness test.
+// Any bridge holding a session that no chat references hits the same bug, so
+// the exemption is now general rather than a special case beside a gap.
+//
+// A sweep is SKIPPED entirely when the keep-list is incomplete. Sweeping with
+// a partial list deletes the sessions of whatever chat could not be read; not
+// sweeping only postpones reclaiming disk until the next hour.
 func (h *Hub) sweepSessionsOnce() {
 	ctx, cancel := h.hubContext()
 	defer cancel()
-	refs := h.sessionRefs(ctx)
-	if id := h.utilityLiveSessionID(); id != "" {
-		if refs == nil {
-			refs = map[string]struct{}{}
-		}
+	refs, complete := h.sessionRefs(ctx)
+	if !complete {
+		slog.Warn("kirosession: skipping orphan sweep, keep-list incomplete (a chat file could not be read)")
+		return
+	}
+	if refs == nil {
+		refs = map[string]struct{}{}
+	}
+	for _, id := range h.liveSessionIDs() {
 		refs[id] = struct{}{}
 	}
 	h.sessionReaper.Sweep(refs)
+}
+
+// liveSessionIDs returns the ACP session id of every bridge vibekit currently
+// holds: each chat bridge plus the utility session. These are exempt from the
+// sweep at any age — a live subprocess is using the directory.
+func (h *Hub) liveSessionIDs() []string {
+	var ids []string
+	for _, sb := range h.bridge.mgr.all() {
+		if id := string(sb.bridge.SessionID()); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if id := h.utilityLiveSessionID(); id != "" {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // utilityLiveSessionID snapshots the utility runtime pointer under

@@ -1630,7 +1630,7 @@ func TestPurgeArchived_InvokesOnPurgeCallback(t *testing.T) {
 	s, _ := newTestStore(t)
 	var called atomic.Int32
 	var gotID atomic.Value
-	WithOnPurge(func(id api.ChatID) {
+	WithOnPurge(func(id api.ChatID, _ []string) {
 		called.Add(1)
 		gotID.Store(id)
 	})(s)
@@ -2854,5 +2854,118 @@ func TestPromoteRewind_Errors(t *testing.T) {
 	}
 	if _, err := s.PromoteRewind(context.Background(), "plain"); !errors.Is(err, api.ErrNotRewind) {
 		t.Errorf("non-rewind chat: err = %v, want ErrNotRewind", err)
+	}
+}
+
+// --- ReferencedSessionIDs: the reaper's keep-list (hard invariant 8) ---
+
+// TestReferencedSessionIDs_CoversTheWholeChain pins that a chat which changed
+// session keeps ALL of its sessions in the keep-list.
+//
+// This is not a hypothetical: a failed session/load and a model-switch fallback
+// both retire the current session and start another, and each retired session
+// directory still holds that period's transcript and pre-images. Returning only
+// the current id — which is what the store did before the chain existed — makes
+// the next orphan sweep delete the chat's own history.
+func TestReferencedSessionIDs_CoversTheWholeChain(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+
+	// An active chat that has been through three sessions.
+	_ = s.Mutate(ctx, "active", func(c *api.Chat, _ bool) bool {
+		c.Name = "A"
+		c.RecordSession("sess_a1")
+		c.RecordSession("sess_a2")
+		c.RecordSession("sess_a3")
+		return true
+	})
+	// An archived chat with two, the current one detached (a failed load).
+	_ = s.Mutate(ctx, "archived", func(c *api.Chat, _ bool) bool {
+		c.Name = "B"
+		c.RecordSession("sess_b1")
+		c.RecordSession("")
+		return true
+	})
+	if err := s.Archive(ctx, "archived"); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	refs, complete := s.ReferencedSessionIDs(ctx)
+	if !complete {
+		t.Error("complete = false on a healthy store; the sweep would never run")
+	}
+	for _, want := range []string{"sess_a1", "sess_a2", "sess_a3", "sess_b1"} {
+		if _, ok := refs[want]; !ok {
+			t.Errorf("%s missing from the keep-list; its session directory would be reaped as an orphan", want)
+		}
+	}
+	if len(refs) != 4 {
+		t.Errorf("keep-list = %v, want exactly the four chain ids", refs)
+	}
+}
+
+// TestReferencedSessionIDs_FailsClosedOnUnreadableChat pins the doubt-retains
+// half of invariant 8.
+//
+// An unreadable chat file used to be logged and skipped, which silently dropped
+// its sessions from the keep-list and had the next hourly sweep delete them. The
+// answer must instead report itself INCOMPLETE so the caller declines to sweep:
+// postponing reclamation costs an hour of disk, sweeping on a partial list costs
+// a user's history.
+func TestReferencedSessionIDs_FailsClosedOnUnreadableChat(t *testing.T) {
+	skipIfRoot(t)
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+
+	_ = s.Mutate(ctx, "readable", func(c *api.Chat, _ bool) bool {
+		c.Name = "A"
+		c.RecordSession("sess_ok")
+		return true
+	})
+	_ = s.Mutate(ctx, "unreadable", func(c *api.Chat, _ bool) bool {
+		c.Name = "B"
+		c.RecordSession("sess_hidden")
+		return true
+	})
+	hidden := filepath.Join(s.Dir(), "unreadable.json")
+	if err := os.Chmod(hidden, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hidden, 0o600) })
+
+	refs, complete := s.ReferencedSessionIDs(ctx)
+	if complete {
+		t.Error("complete = true while a chat file that exists could not be read; the sweep would delete its sessions")
+	}
+	// The readable chat's session is still reported — the flag is the signal,
+	// not an empty set.
+	if _, ok := refs["sess_ok"]; !ok {
+		t.Error("readable chat's session missing from the partial keep-list")
+	}
+}
+
+// TestReferencedSessionIDs_CompleteWhenAChatVanishesMidScan pins the other
+// direction: a chat deleted between the directory read and the header read is
+// NOT a failure. Treating ENOENT as doubt would wedge the sweep permanently on
+// a busy store, and the vanished chat genuinely has nothing left to keep.
+func TestReferencedSessionIDs_CompleteWhenAChatVanishesMidScan(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+	_ = s.Mutate(ctx, "gone", func(c *api.Chat, _ bool) bool {
+		c.Name = "A"
+		c.RecordSession("sess_gone")
+		return true
+	})
+	// Remove the file behind the store's back, leaving no trace but the absence.
+	if err := os.Remove(filepath.Join(s.Dir(), "gone.json")); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+
+	refs, complete := s.ReferencedSessionIDs(ctx)
+	if !complete {
+		t.Error("complete = false for a chat that vanished mid-scan; ENOENT is a concurrent delete, not doubt")
+	}
+	if _, ok := refs["sess_gone"]; ok {
+		t.Error("a deleted chat's session is still in the keep-list")
 	}
 }

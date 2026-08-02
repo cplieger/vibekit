@@ -16,7 +16,7 @@ import (
 // cutoff survive. A bug that inverts this deletes live data.
 func TestPurge_RetentionCutoff(t *testing.T) {
 	var rec purgeRecorder
-	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.record))
+	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
 
 	olderPath := writeArchivedChat(t, archiveDir, "older", 25*time.Hour)
 	newerPath := writeArchivedChat(t, archiveDir, "newer", 23*time.Hour)
@@ -39,7 +39,7 @@ func TestPurge_RetentionCutoff(t *testing.T) {
 // and subdirectories are left untouched even when old.
 func TestPurge_SkipsNonChatFiles(t *testing.T) {
 	var rec purgeRecorder
-	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.record))
+	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
 
 	chatPath := writeArchivedChat(t, archiveDir, "valid01", 48*time.Hour)
 
@@ -92,7 +92,7 @@ func TestPurge_SkipsNonChatFiles(t *testing.T) {
 func TestPurge_EmptyAndMissingDir(t *testing.T) {
 	t.Run("empty archive dir", func(t *testing.T) {
 		var rec purgeRecorder
-		svc, _, _ := newArchiveTestService(t, WithOnPurge(rec.record))
+		svc, _, _ := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
 		svc.Purge(context.Background(), 24*time.Hour)
 		if got := rec.sorted(); len(got) != 0 {
 			t.Errorf("onPurge fired %v on empty dir, want none", got)
@@ -102,7 +102,7 @@ func TestPurge_EmptyAndMissingDir(t *testing.T) {
 	t.Run("missing archive dir", func(t *testing.T) {
 		var rec purgeRecorder
 		dir := t.TempDir() // no archive subdir created
-		svc := New(newFakeStore(dir), WithOnPurge(rec.record))
+		svc := New(newFakeStore(dir), WithOnPurge(rec.recordPurge))
 		svc.Purge(context.Background(), 24*time.Hour)
 		if got := rec.sorted(); len(got) != 0 {
 			t.Errorf("onPurge fired %v on missing dir, want none", got)
@@ -128,7 +128,7 @@ func TestPurge_NilOnPurgeCallback(t *testing.T) {
 func TestPurgeScheduler_InitialEvaluationPurges(t *testing.T) {
 	purged := make(chan api.ChatID, 8)
 	svc, _, archiveDir := newArchiveTestService(t,
-		WithOnPurge(func(id api.ChatID) { purged <- id }))
+		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	writeArchivedChat(t, archiveDir, "sched1", 48*time.Hour)
 
 	sched := NewPurgeScheduler(context.Background(), svc,
@@ -146,7 +146,7 @@ func TestPurgeScheduler_InitialEvaluationPurges(t *testing.T) {
 func TestPurgeScheduler_ReArmsAndProcessesSecondTrigger(t *testing.T) {
 	purged := make(chan api.ChatID, 8)
 	svc, _, archiveDir := newArchiveTestService(t,
-		WithOnPurge(func(id api.ChatID) { purged <- id }))
+		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	writeArchivedChat(t, archiveDir, "first", 48*time.Hour)
 
 	sched := NewPurgeScheduler(context.Background(), svc,
@@ -172,7 +172,7 @@ func TestPurgeScheduler_ReArmsAndProcessesSecondTrigger(t *testing.T) {
 func TestPurgeScheduler_ZeroRetentionSkipsPurge(t *testing.T) {
 	purged := make(chan api.ChatID, 8)
 	svc, _, archiveDir := newArchiveTestService(t,
-		WithOnPurge(func(id api.ChatID) { purged <- id }))
+		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	chatPath := writeArchivedChat(t, archiveDir, "keepforever", 9000*time.Hour)
 
 	sched := NewPurgeScheduler(context.Background(), svc,
@@ -337,7 +337,7 @@ func recvWithin(t *testing.T, ch <-chan api.ChatID, d time.Duration) api.ChatID 
 // chats alongside it.
 func TestPurge_SkipsVanishedEntryWithoutAborting(t *testing.T) {
 	var rec purgeRecorder
-	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.record))
+	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
 
 	// A dangling symlink with a valid chat-id .json name: ReadDir lists
 	// it, but os.Stat (which follows the link) fails with ErrNotExist —
@@ -365,7 +365,7 @@ func TestPurge_SkipsVanishedEntryWithoutAborting(t *testing.T) {
 // Purge call entirely, leaving even ancient archived chats in place.
 func TestPurgeScheduler_RescheduleWithZeroRetentionDoesNotPurge(t *testing.T) {
 	var rec purgeRecorder
-	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.record))
+	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
 	chatPath := writeArchivedChat(t, archiveDir, "keepforever", 9000*time.Hour)
 
 	sched := NewPurgeScheduler(context.Background(), svc,
@@ -435,5 +435,42 @@ func TestPurgeScheduler_NextWaitFloorsAtMinWait(t *testing.T) {
 	}
 	if wait != 5*time.Second {
 		t.Errorf("nextWait floored to %v, want 5s: a deadline in the past must clamp to minWait, not 0", wait)
+	}
+}
+
+// TestPurge_HandsTheSessionChainToOnPurge pins that a purge reaps its OWN
+// session directories rather than leaving them to the orphan sweep.
+//
+// The ordering is the whole point: onPurge fires AFTER os.Remove(entry.path),
+// so the chain has to be read before the file goes or the ids are unrecoverable
+// — which is why the callback used to receive only a chat id and the purge could
+// clean up nothing but checkpoints. With DefaultChatRetentionDays at 1, nearly
+// every session directory would otherwise become an orphan within a day, making
+// the sweep the primary retention mechanism instead of a residue collector.
+func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
+	var rec purgeRecorder
+	svc, _, archiveDir := newArchiveTestService(t, WithOnPurge(rec.recordPurge))
+
+	// An archived chat that ran on two sessions before being archived.
+	chatPath := writeArchivedChat(t, archiveDir, "chained", 48*time.Hour)
+	body := `{"id":"chained","name":"C","acp_session_id":"sess_new",` +
+		`"prior_acp_session_ids":["sess_old"],"messages":[]}`
+	if err := os.WriteFile(chatPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("rewrite archived chat: %v", err)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(chatPath, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+
+	svc.Purge(context.Background(), 24*time.Hour)
+
+	if exists(t, chatPath) {
+		t.Fatalf("archived chat survived the purge: %s", chatPath)
+	}
+	got := rec.chainFor("chained")
+	want := []string{"sess_old", "sess_new"}
+	if !slices.Equal(got, want) {
+		t.Errorf("onPurge received chain %v, want %v — the purge cannot reap what it was not told about", got, want)
 	}
 }

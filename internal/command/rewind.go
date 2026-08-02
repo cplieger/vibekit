@@ -100,7 +100,7 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		}
 		c.CurrentModeID = parent.CurrentModeID
 		c.Model = parent.Model
-		c.ACPSessionID = forkedSessionID
+		c.RecordSession(forkedSessionID)
 		c.ParentChatID = cmd.ChatID
 		c.RewindFromTurn = p.TurnIndex
 		c.Messages = truncated

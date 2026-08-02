@@ -42,6 +42,12 @@ func (s *Store) ListArchived(ctx context.Context) []api.ChatHeader {
 	return s.archiveSvc().ListArchived(ctx)
 }
 
+// listArchivedWithCompleteness is ListArchived plus whether every archived
+// chat that exists was read. Feeds ReferencedSessionIDs's fail-closed answer.
+func (s *Store) listArchivedWithCompleteness(ctx context.Context) ([]api.ChatHeader, bool) {
+	return s.archiveSvc().ListArchivedWithCompleteness(ctx)
+}
+
 // RestoreArchived moves a chat from the archive back to the active
 // directory. Delegates to the archive sub-package.
 func (s *Store) RestoreArchived(ctx context.Context, chatID api.ChatID) error {

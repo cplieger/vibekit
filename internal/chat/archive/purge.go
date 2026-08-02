@@ -111,7 +111,10 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	// almost immediately. mtime is only the fallback for legacy archives
 	// (stamped before ArchivedAt existed) and the rare crash between the
 	// stamp and the rename.
-	if !s.purgeReferenceTime(entry, info.ModTime()).Before(cutoff) {
+	// Capture the chain BEFORE the remove: onPurge fires afterwards, when the
+	// file is gone and the session ids are no longer readable.
+	refTime, chain := s.purgeReferenceTime(entry, info.ModTime())
+	if !refTime.Before(cutoff) {
 		m.Unlock()
 		return purgeKept
 	}
@@ -122,22 +125,33 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	}
 	m.Unlock()
 	if s.onPurge != nil {
-		s.onPurge(api.ChatID(entry.name))
+		s.onPurge(api.ChatID(entry.name), chain)
 	}
 	return purgePurged
 }
 
-// purgeReferenceTime returns the time a purge decision ages from: the
-// chat's explicit ArchivedAt stamp when present, else the file mtime
-// (legacy archives written before the stamp existed, an unreadable file,
-// or the rare crash between the stamp write and the rename). Caller holds
-// the per-chat mutex.
-func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) time.Time {
+// purgeReferenceTime returns the time a purge decision ages from, plus the
+// chat's session chain.
+//
+// The reference time is the chat's explicit ArchivedAt stamp when present,
+// else the file mtime (legacy archives written before the stamp existed, an
+// unreadable file, or the rare crash between the stamp write and the rename).
+//
+// The chain rides along because this is the ONE place that already loads the
+// archived chat, and the purge needs it: `onPurge` fires after
+// os.Remove(entry.path), so by then the file is gone and the session ids are
+// unreadable. Widening this read costs no extra I/O and needs no second hook.
+// Caller holds the per-chat mutex.
+func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string) {
 	c, err := s.loadArchived(api.ChatID(entry.name))
-	if err != nil || c.ArchivedAt <= 0 {
-		return mtime
+	if err != nil {
+		return mtime, nil
 	}
-	return time.UnixMilli(c.ArchivedAt)
+	chain := c.SessionChain()
+	if c.ArchivedAt <= 0 {
+		return mtime, chain
+	}
+	return time.UnixMilli(c.ArchivedAt), chain
 }
 
 // logPurgeResult emits the end-of-pass summary at Warn when any entry

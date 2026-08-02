@@ -65,7 +65,7 @@ type Service struct {
 	store      StoreAccess
 	preArchive func(chatID api.ChatID)
 	onArchive  func(chatID api.ChatID)
-	onPurge    func(chatID api.ChatID)
+	onPurge    func(chatID api.ChatID, sessionChain []string)
 	listSF     singleflight.Group
 }
 
@@ -96,7 +96,13 @@ func WithOnArchive(fn func(chatID api.ChatID)) Option {
 }
 
 // WithOnPurge registers a callback fired after an archived chat is purged.
-func WithOnPurge(fn func(chatID api.ChatID)) Option {
+//
+// sessionChain is every KAS session the purged chat ran on, read before the
+// chat file was removed. The purge reaps its OWN session directories through
+// this: retention must not depend on the hourly orphan sweep finding them,
+// because that sweep's keep-list is derived by reading every chat file and is
+// the destructive leg of the system.
+func WithOnPurge(fn func(chatID api.ChatID, sessionChain []string)) Option {
 	return func(s *Service) { s.onPurge = fn }
 }
 
@@ -199,23 +205,45 @@ func (s *Service) stampArchivedAt(ctx context.Context, chatID api.ChatID, srcPat
 // UpdatedAt desc. Files that fail to read or parse are logged and
 // skipped. Always returns a non-nil slice.
 func (s *Service) ListArchived(ctx context.Context) []api.ChatHeader {
-	headers := sfDo(&s.listSF, "list", func() []api.ChatHeader {
-		return s.listArchivedOnce(ctx)
-	})
-	if headers == nil {
-		return []api.ChatHeader{}
-	}
+	headers, _ := s.ListArchivedWithCompleteness(ctx)
 	return headers
 }
 
-func (s *Service) listArchivedOnce(ctx context.Context) []api.ChatHeader {
+// ListArchivedWithCompleteness is ListArchived plus whether every archived
+// chat that exists was read. The retention sweep needs the flag: an archived
+// chat dropped from this list takes its session chain's keep-entries with it.
+//
+// Coalesces concurrent scans into one directory read.
+func (s *Service) ListArchivedWithCompleteness(ctx context.Context) ([]api.ChatHeader, bool) {
+	r := sfDo(&s.listSF, "list", func() archivedListResult {
+		headers, complete := s.listArchivedOnce(ctx)
+		return archivedListResult{headers: headers, complete: complete}
+	})
+	if r.headers == nil {
+		return []api.ChatHeader{}, r.complete
+	}
+	return r.headers, r.complete
+}
+
+// archivedListResult carries a scan and its completeness through one
+// singleflight slot.
+type archivedListResult struct {
+	headers  []api.ChatHeader
+	complete bool
+}
+
+func (s *Service) listArchivedOnce(ctx context.Context) ([]api.ChatHeader, bool) {
 	archiveDir := s.archivePath()
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Error("chat list_archived", "dir", archiveDir, "error", err)
+			// The directory exists but is unreadable: nothing is known about
+			// which archived chats there are.
+			return []api.ChatHeader{}, false
 		}
-		return []api.ChatHeader{}
+		// No archive dir yet -- genuinely nothing archived.
+		return []api.ChatHeader{}, true
 	}
 	var valid []chatEntry
 	for _, e := range entries {
@@ -231,14 +259,14 @@ func (s *Service) listArchivedOnce(ctx context.Context) []api.ChatHeader {
 		valid = append(valid, chatEntry{id: id, path: filepath.Join(archiveDir, e.Name())})
 	}
 	if len(valid) == 0 {
-		return []api.ChatHeader{}
+		return []api.ChatHeader{}, true
 	}
 
-	headers := readHeadersParallel(ctx, valid, "archived chat", s.store.OldestCheckpoint())
+	headers, complete := readHeadersParallel(ctx, valid, "archived chat", s.store.OldestCheckpoint())
 	sort.Slice(headers, func(i, j int) bool {
 		return headers[i].UpdatedAt > headers[j].UpdatedAt
 	})
-	return headers
+	return headers, complete
 }
 
 // RestoreArchived moves a chat from the archive back to the active
@@ -374,13 +402,20 @@ func (s *Service) DeleteArchived(ctx context.Context, chatID api.ChatID) error {
 	}
 	m := s.store.Lock(chatID)
 	m.Lock()
+	// Read the session chain before the remove — afterwards the ids are gone.
+	// A load failure is not fatal to the delete: the chat file still goes, and
+	// the orphan sweep remains the backstop for its session directories.
+	var chain []string
+	if c, lErr := s.loadArchived(chatID); lErr == nil {
+		chain = c.SessionChain()
+	}
 	if err := os.Remove(cleanChatPath); err != nil {
 		m.Unlock()
 		return err
 	}
 	m.Unlock()
 	if s.onPurge != nil {
-		s.onPurge(chatID)
+		s.onPurge(chatID, chain)
 	}
 	return nil
 }
