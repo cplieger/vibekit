@@ -35,6 +35,11 @@ type BridgeCoordinator struct {
 	// so Forward can flush a chat's staged writes when its bridge exits,
 	// without the coordinator importing the full Hub.
 	flushPending func(context.Context, api.ChatID, api.ClearReason)
+	// replayProjection is the session/load replay-projection lifecycle,
+	// injected from the Hub for the same reason as flushPending: Forward and
+	// tryLoadSession drive it, without the coordinator importing the full Hub.
+	// Nil in tests that do not exercise a load.
+	replayProjection replayProjector
 	// agentEngine is the kiro-cli agent engine for every bridge this
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
@@ -56,7 +61,9 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		lifecycle:      h.lifecycle,
 		preBridgeSpawn: h.preBridgeSpawn,
 		flushPending:   h.flushPendingForChat,
-		agentEngine:    resolveAgentEngine(),
+		// h implements replayProjector via load_projection.go.
+		replayProjection: h,
+		agentEngine:      resolveAgentEngine(),
 	}
 }
 
@@ -199,10 +206,21 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	// _kiro/auth/getAccessToken. On load failure the old bridge is swapped
 	// out of sb before it is stopped, so this goroutine's exit cleanup
 	// (removeIfBridge, identity-compared) cannot evict the replacement.
+	// Open the replay projection BEFORE Forward attaches, so the first replayed
+	// frame already has somewhere to land. KAS starts replaying as soon as it
+	// accepts session/load, which is inside Start below.
+	if bc.replayProjection != nil {
+		bc.replayProjection.OpenReplayProjection(chatID)
+	}
 	go bc.Forward(chatID, sb.bridge)
 	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
+		// A failed load has no transcript to adopt, so whatever partial replay
+		// arrived must not survive into the fresh session.
+		if bc.replayProjection != nil {
+			bc.replayProjection.DiscardReplayProjection(chatID)
+		}
 		old := sb.bridge
 		sb.bridge = bc.bridge.mgr.factory()
 		old.Stop()
@@ -220,6 +238,12 @@ func (bc *BridgeCoordinator) tryLoadSession(
 			slog.Error("clear stale acp_session_id", "chat_id", chatID, "error", mErr)
 		}
 		return false
+	}
+	// The load returned, which is the other half of the settle condition. The
+	// settle itself belongs to Forward — see load_projection.go's header for why
+	// this goroutine cannot safely decide the replay is drained.
+	if bc.replayProjection != nil {
+		bc.replayProjection.MarkReplayLoadDone(chatID)
 	}
 	title := sb.bridge.SessionTitle()
 	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
@@ -305,11 +329,35 @@ func (bc *BridgeCoordinator) CloseBridge(chatID api.ChatID) {
 	bc.bridge.mgr.close(chatID)
 }
 
+// replayProjector is the slice of the Hub's replay-projection lifecycle the
+// coordinator drives. See hub/load_projection.go for the settle barrier.
+type replayProjector interface {
+	OpenReplayProjection(api.ChatID)
+	MarkReplayLoadDone(api.ChatID)
+	DiscardReplayProjection(api.ChatID)
+	SettleReplayProjection(chatID api.ChatID, buffered int, force bool)
+}
+
 // Forward is the ACP notification → domain event translator, run as a
 // goroutine per bridge.
 func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
-	for msg := range bridge.NotifCh() {
+	ch := bridge.NotifCh()
+	for msg := range ch {
 		bc.translateEvent(chatID, msg)
+		// Settle a session/load replay projection here rather than at Start's
+		// return: this goroutine is the one draining the frames, so its own
+		// view of the channel depth is the only sound completion signal.
+		// len() on a receive-only channel is the whole barrier — no timeout,
+		// no extra bridge API. Rationale in hub/load_projection.go.
+		if bc.replayProjection != nil {
+			bc.replayProjection.SettleReplayProjection(chatID, len(ch), false)
+		}
+	}
+	// The channel closed, so no further frame can arrive to trigger the check
+	// above. Force the settle so a load whose trailing catalog frames never
+	// came still completes instead of leaking a projection.
+	if bc.replayProjection != nil {
+		bc.replayProjection.SettleReplayProjection(chatID, 0, true)
 	}
 
 	slog.Info("bridge exited", "chat_id", chatID)

@@ -250,8 +250,13 @@ func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *a
 	// to be replaced wholesale, which is legitimate here only because this is
 	// an alpha with one consumer and no migration code.
 	if base.Meta.Kiro.Replay {
-		slog.Debug("session/update: dropping replayed frame",
-			"chat_id", chatID, "kind", base.Kind)
+		// A load in flight consumes the frame into its projection; anything
+		// else is dropped, because a replay frame with no load to belong to has
+		// no transcript to build.
+		if !h.ingestReplayFrame(chatID, base.Kind, env.Params.Update) {
+			slog.Debug("session/update: dropping replayed frame, no load in flight",
+				"chat_id", chatID, "kind", base.Kind)
+		}
 		return
 	}
 

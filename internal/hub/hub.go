@@ -119,6 +119,11 @@ type Hub struct {
 	hookStatus         *hookStatusCache
 	governance         *governanceCache
 
+	// In-flight session/load replay projections (load_projection.go).
+	// Embedded ahead of the scalars below to keep govet fieldalignment happy:
+	// it carries pointers, so it must not sit after ciBusy.
+	projectionState
+
 	// Code-intelligence activation inputs + in-flight guard (code_intel.go).
 	ciGate func() bool
 	ciPath string
