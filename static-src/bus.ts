@@ -42,7 +42,6 @@ import type {
   OpenExternalURLPayload,
   CodeReferencesPayload,
   KnowledgeIndexingPayload,
-  SpecTaskChangedPayload,
   PermissionsChangedPayload,
   PolicyErrorPayload,
   SafetyStatusPayload,
@@ -91,7 +90,6 @@ export interface SSEPayloads {
   };
   readonly mode_changed: { readonly mode_id: string };
   readonly knowledge_indexing: KnowledgeIndexingPayload;
-  readonly spec_task_changed: SpecTaskChangedPayload;
   readonly safety_status: SafetyStatusPayload;
   readonly safety_properties: SafetyPropertiesPayload;
   readonly governance_state: GovernanceStatePayload;

@@ -90,7 +90,6 @@ const (
 	EventKnowledgeIndexing     EventType = "knowledge_indexing"
 	EventSafetyStatus          EventType = "safety_status"
 	EventSafetyProperties      EventType = "safety_properties"
-	EventSpecTaskChanged       EventType = "spec_task_changed"
 	EventSettingsUpdated       EventType = "settings_updated"
 	EventTerminalCreated       EventType = "terminal_created"
 	EventTerminalExited        EventType = "terminal_exited"

@@ -86,12 +86,6 @@ func main() {
 		wiregen.TypeRef[api.PolicyErrorItem](),
 		wiregen.TypeRef[api.PermissionsChangedPayload](),
 		wiregen.TypeRef[api.PolicyErrorPayload](),
-		wiregen.TypeRef[api.SpecTaskPBT](),
-		wiregen.TypeRef[api.SpecTaskNode](),
-		wiregen.TypeRef[api.Spec](),
-		wiregen.TypeRef[api.SpecsResponse](),
-		wiregen.TypeRef[api.SpecTaskChange](),
-		wiregen.TypeRef[api.SpecTaskChangedPayload](),
 		wiregen.TypeRef[api.SafetyProperty](),
 		wiregen.TypeRef[api.SafetyStatusPayload](),
 		wiregen.TypeRef[api.SafetyPropertiesPayload](),
@@ -149,8 +143,6 @@ func main() {
 		"MCPOAuthPayload": "mcp_oauth_payload",
 		// URL acronym cluster can't be split unambiguously; pin the path.
 		"OpenExternalURLPayload": "open_external_url_payload",
-		// PBT acronym cluster can't be split unambiguously; pin the path.
-		"SpecTaskPBT": "spec_task_pbt",
 	}
 
 	const typeMessage = "Message" // 3 SSE events decode to api.Message
@@ -184,7 +176,6 @@ func main() {
 		{EventType: "policy_error", TypeName: "PolicyErrorPayload"},
 		{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
 		{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
-		{EventType: "spec_task_changed", TypeName: "SpecTaskChangedPayload"},
 		{EventType: "tool_call", TypeName: "ToolCallPayload"},
 		{EventType: "tool_call_update", TypeName: "ToolCallUpdatePayload"},
 		{EventType: "tool_job_changed", TypeName: "ToolJobChangedPayload"},

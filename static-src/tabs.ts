@@ -19,7 +19,6 @@ import {
   ICON_TAB_FILES,
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
-  ICON_TAB_SPEC,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import * as uiState from "./ui-state.js";
@@ -46,7 +45,6 @@ export const TAB_VIEWS = {
   files: "#files-view",
   editor: "#editor-view",
   history: "#history-view",
-  specs: "#specs-view",
 } as const;
 
 type TabKind = keyof typeof TAB_VIEWS;
@@ -75,7 +73,6 @@ const TAB_SETTINGS = "__settings__";
 const TAB_GIT = "__git__";
 const TAB_FILES = "__files__";
 const TAB_HISTORY = "__history__";
-const TAB_SPECS = "__specs__";
 
 const ICONS: Readonly<Record<TabKind, string>> = {
   chat: ICON_TAB_CHAT,
@@ -85,7 +82,6 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   files: ICON_TAB_FILES,
   editor: ICON_TAB_EDITOR,
   history: ICON_TAB_HISTORY,
-  specs: ICON_TAB_SPEC,
 };
 
 // --- Store ---
@@ -454,7 +450,6 @@ const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = 
   git: () => $.gitBtn,
   files: () => $.filesBtn,
   history: () => $.historyBtn,
-  specs: () => $.specsBtn,
 };
 
 function syncSidebarButtons(activeKind: TabKind | null): void {
@@ -823,18 +818,6 @@ export function toggleHistoryView(onShow: () => void, onClose?: () => void): voi
     kind: "history",
     view: TAB_VIEWS.history,
     route: { kind: "history" },
-    onShow,
-    onClose,
-  });
-}
-
-export function toggleSpecsView(onShow: () => void, onClose?: () => void): void {
-  toggleSingleton({
-    id: TAB_SPECS,
-    name: "Specs",
-    kind: "specs",
-    view: TAB_VIEWS.specs,
-    route: { kind: "specs" },
     onShow,
     onClose,
   });

@@ -96,15 +96,6 @@ func (us *utilitySession) knowledgeRaw(ctx context.Context, params map[string]an
 	return us.rawCall(ctx, "knowledge call", methodKiroKnowledge, callerParams(params))
 }
 
-// specTaskStatusesRaw issues a _kiro/spec/getTaskStatuses request and
-// returns the raw JSON-RPC result. No sessionId: getTaskStatuses is a
-// stateless read that takes workspacePaths + tasksFilePath in params and
-// needs no session context (verified live). The Specs board works with no
-// chat open because this runs on the always-available utility session.
-func (us *utilitySession) specTaskStatusesRaw(ctx context.Context, params map[string]any) (json.RawMessage, error) {
-	return us.rawCall(ctx, "spec getTaskStatuses call", methodV3SpecGetTaskStatuses, callerParams(params))
-}
-
 // policyRaw issues a _kiro/permissions/* request and returns the raw
 // JSON-RPC result. Injects the utility session id (these requests are
 // session-scoped: list reads the session's resolved policy; explain

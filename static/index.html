@@ -102,9 +102,6 @@
           <svg class="git-btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
           <span id="git-badge" class="git-badge hidden"></span>
         </button>
-        <button type="button" id="specs-btn" class="icon-btn" data-tooltip="Spec board" aria-label="Spec board">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h9"/></svg>
-        </button>
         <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         </button>
@@ -820,17 +817,6 @@
           <p class="section-hint">Chats auto-archive when you close the tab. They stay here for the retention window (Settings → General). Click to reopen; × to delete permanently.</p>
           <div id="history-table" class="list-container">
             <div class="list-empty">No archived chats.</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Specs board (full-page): live requirements→design→tasks view of .kiro/specs -->
-      <div id="specs-view" class="hidden" data-tab-view>
-        <div class="page-content">
-          <h2 class="page-title">Specs</h2>
-          <p class="section-hint">Spec workflows in <code>.kiro/specs/</code>. Each spec's requirements, design, and tasks — click a document to open it. Run spec work from a Spec-mode chat; task status updates here live.</p>
-          <div id="specs-list" class="specs-list">
-            <div class="spec-loading">Loading specs…</div>
           </div>
         </div>
       </div>

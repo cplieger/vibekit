@@ -9,7 +9,6 @@
 //   /files[/{path}]               file browser at path (omit for workspace root)
 //   /file/{path}                  file editor for a specific file, with optional #L<line>
 //   /history                      archived chats (full-page view)
-//   /specs                        spec-workflow board (full-page view)
 //   /settings                     Settings (General tab)
 //   /settings/tools               Settings → Tools
 //   /settings/permissions         Settings → Permissions
@@ -55,16 +54,12 @@ interface RouteFile {
 interface RouteHistory {
   kind: "history";
 }
-interface RouteSpecs {
-  kind: "specs";
-}
 interface RouteSettings {
   kind: "settings";
   tab: SettingsTab;
 }
 
-export type Route =
-  RouteChat | RouteGit | RouteFiles | RouteFile | RouteHistory | RouteSpecs | RouteSettings;
+export type Route = RouteChat | RouteGit | RouteFiles | RouteFile | RouteHistory | RouteSettings;
 
 // --- Parse current URL into a Route ---
 
@@ -91,9 +86,6 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
 
     case "history":
       return { kind: "history" };
-
-    case "specs":
-      return { kind: "specs" };
 
     case "settings":
       return { kind: "settings", tab: parseSettingsTab(segments[1]) };
@@ -182,8 +174,6 @@ export function buildPath(route: Route): string {
       return route.tab === "changes" ? "/git" : `/git/${route.tab}`;
     case "history":
       return "/history";
-    case "specs":
-      return "/specs";
     case "files":
       return route.path === "." || route.path === ""
         ? "/files"

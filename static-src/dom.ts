@@ -276,14 +276,6 @@ class Elements {
     return byId("history-btn");
   }
 
-  // Specs board
-  get specsBtn(): HTMLButtonElement {
-    return byId("specs-btn");
-  }
-  get specsList(): HTMLDivElement {
-    return byId("specs-list");
-  }
-
   // Editor
   get editorContent(): HTMLTextAreaElement {
     return byId("editor-content");

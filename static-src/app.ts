@@ -58,7 +58,6 @@ import { initAwaySummary } from "./away-summary.js";
 import { initAgentTerminals } from "./agent-terminal.js";
 import { initTooltips } from "./tooltip.js";
 import { initHistory } from "./history.js";
-import { initSpecs, showSpecsView } from "./specs.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { handleFindHotkey } from "./find-in-chat.js";
@@ -200,7 +199,6 @@ function init(): void {
   initAgentTerminals();
   initTooltips();
   initHistory();
-  initSpecs();
   // initGovernance() moved to initPostAuth(): its /api/governance snapshot
   // (and settings.ts's version/git-badge fetches) shouldn't fire on the
   // login screen (B2).
@@ -461,11 +459,10 @@ function initPostAuth(): void {
  *  boot loop and editor tabs by restoreAll(); singletons were previously
  *  never reopened, so `hasTab(saved.active_view)` was always false for them
  *  and their position in the saved order was silently dropped.
- *  TODO(B7): History and Specs are still not restored — their data loaders
- *  are module-internal (history.ts / specs.ts export only toggle-style
- *  openers, which would close the tab when fired from onShow of an
- *  already-active tab). Export plain loaders from those modules and add
- *  them here. */
+ *  TODO(B7): History is still not restored — its data loader is
+ *  module-internal (history.ts exports only a toggle-style opener, which
+ *  would close the tab when fired from onShow of an already-active tab).
+ *  Export a plain loader from that module and add it here. */
 function restoreSingletonTabs(): void {
   for (const id of getSavedTabState().tab_order) {
     switch (id) {
@@ -733,9 +730,6 @@ function applyRoute(route: Route): void {
         .catch(() => {
           /* noop */
         });
-      break;
-    case "specs":
-      showSpecsView();
       break;
   }
 }

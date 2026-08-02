@@ -366,7 +366,6 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pending-changes/", h.handlePendingChange)
 	h.registerCheckpointRoutes(mux)
 	h.registerKnowledgeRoutes(mux)
-	h.registerSpecRoutes(mux)
 	h.registerHooksRoutes(mux)
 	h.registerGovernanceRoutes(mux)
 	// Pre-session mode + model catalog (kiro-cli 2.14 _kiro/config/template).

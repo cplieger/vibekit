@@ -70,8 +70,6 @@ func (h *Hub) initDispatch() {
 		methodV3PolicyError:   h.translator.HandlePolicyError,
 		// Licensed-code attribution: surfaced as a per-turn attribution chip.
 		methodV3CodeReferences: h.translator.HandleCodeReferences,
-		// Spec-workflow task-status deltas → the live Specs board SSE.
-		methodV3SpecTaskStatusChanged: h.translator.HandleSpecTaskChanged,
 		// Infrastructure-Safety gate state → safety_status / safety_properties
 		// SSE. Defensive: KAS only emits these when the gate is installed (client
 		// capability + an AWS governance flag that is off by default), so on a

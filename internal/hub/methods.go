@@ -51,19 +51,13 @@ const (
 	methodKiroCodeIntel       = "_kiro/codeIntelligence" // C→A request: code-intelligence status/init (subcommand param); needs the session opted in via initialize _meta.kiro.settings
 )
 
-// v3 (KAS) spec-workflow method names. getTaskStatuses is a stateless C→A
-// request ({workspacePaths, tasksFilePath, featureName} → {tasks:[tree]})
-// vibekit issues on the utility bridge to build the read-only board.
-// taskStatusChanged is an A→C notification ({sessionId, tasksFilePath,
-// changes:[{taskId, executionStatus, ...}]}) emitted while a spec execution
-// runs; translated to the spec_task_changed SSE. invoke / resolveSession are
-// verified functional but deliberately NOT wired (each invoke verb drives a
-// fire-and-forget agent turn with no acp turn-end signal — see hub/spec.go).
-// Shapes verified against the KAS 2.12 acp-server bundle + a live probe.
-const (
-	methodV3SpecGetTaskStatuses   = "_kiro/spec/getTaskStatuses"   // C→A request
-	methodV3SpecTaskStatusChanged = "_kiro/spec/taskStatusChanged" // A→C notification
-)
+// The whole `_kiro/spec/*` family is deliberately unwired. vibekit shipped a
+// read-only board over getTaskStatuses and it is deleted: the content is
+// `.kiro/specs/**/*.md`, which the file browser already opens, and the write
+// side never worked — every invoke verb drives a fire-and-forget agent turn
+// with no ACP turn-end signal, so a client cannot tell a finished task from a
+// hung one. Shapes were verified against the KAS 2.12 bundle and a live probe;
+// none of it is worth a hand-rolled task tree.
 
 // v3 (KAS) knowledge-base method names. _kiro/knowledge is a C→A request
 // dispatched by a `subcommand` field (show/add/remove/update/clear/cancel);
