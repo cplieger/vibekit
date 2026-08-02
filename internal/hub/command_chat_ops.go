@@ -18,7 +18,7 @@ import (
 // session, so both are reaped only at delete/purge, never on archive.
 // Everything else (flush the in-flight turn via CloseBridge, kill agent
 // terminals, clear pending perms + supervised trust, close+remove the
-// .partial) runs on both paths.
+// assistant buffer) runs on both paths.
 func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID, reapDurable bool) {
 	h.flushPendingForChat(ctx, chatID, api.ClearReasonChatDeleted)
 	h.perm.supervised.ClearTrust(chatID, api.ClearReasonChatDeleted)
@@ -26,10 +26,8 @@ func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID, reapDurab
 	h.coord.CloseBridge(chatID)
 	h.agentTerms.KillForChat(chatID)
 	h.lifecycle.mu.Lock()
-	buf := h.bridge.assistantBufs.Get(chatID)
 	h.bridge.assistantBufs.Delete(chatID)
 	h.lifecycle.mu.Unlock()
-	h.closeAndRemovePartial(ctx, chatID, buf)
 	if reapDurable {
 		h.reapChatSession(ctx, chatID)
 	}

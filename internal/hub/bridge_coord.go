@@ -453,7 +453,7 @@ func (bc *BridgeCoordinator) TakeBuffer(chatID api.ChatID) (*buffer.Buffer, bool
 
 // EmitTurnEndedWithStats finalizes any in-flight assistant message
 // and broadcasts turn_ended with the credit delta and elapsed time.
-func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64, closeAndRemovePartial func(context.Context, api.ChatID, *buffer.Buffer)) {
+func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
 	stopReason := extractStopReason(resp)
 
 	var changedFiles map[string]*api.FileChange
@@ -498,7 +498,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			TurnElapsedMs: elapsedMs,
 			ChangedFiles:  changedFiles,
 		}
-		bc.persistTurnOrKeepPartial(ctx, chatID, &msg, buf, closeAndRemovePartial)
+		bc.persistTurn(ctx, chatID, &msg)
 	}
 
 	if stopReason == stopReasonCancelled {
@@ -534,22 +534,20 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	}
 }
 
-// persistTurnOrKeepPartial persists the finalized turn BEFORE deleting
-// the .partial. A crash in this window would otherwise lose a COMPLETED
-// turn (the .partial gone, the chat file never committed).
-// RecoverPartials is idempotent — it skips the append when the MessageID
-// is already committed — so a crash AFTER this commit / BEFORE the
-// delete can't double-append on the next boot. On a FAILED append the
-// .partial is deliberately kept: it now holds the only durable copy of
-// the turn, and boot recovery re-imports it as an interrupted assistant
-// message — deleting it here would discard the turn entirely.
-func (bc *BridgeCoordinator) persistTurnOrKeepPartial(ctx context.Context, chatID api.ChatID, msg *api.Message, buf *buffer.Buffer, closeAndRemovePartial func(context.Context, api.ChatID, *buffer.Buffer)) {
+// persistTurn commits the finalized assistant turn to the chat file.
+//
+// A failed append used to be survivable: the .partial sidecar held the only
+// durable copy and boot recovery re-imported it. That sidecar is gone, and the
+// replacement is KAS's own log — measured to flush each sub-message as it
+// COMPLETES, so a session/load replay carries the turn and the projection
+// rebuilds it. What neither covers is the final streaming fragment, which is
+// the durability this deletion gives up; the old .partial gave it up too,
+// within its 500ms throttle.
+func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID api.ChatID, msg *api.Message) {
 	if err := bc.chatStore.AppendMessage(ctx, chatID, msg); err != nil {
-		slog.Error("persist assistant turn; keeping .partial for boot recovery",
+		slog.Error("persist assistant turn; the replay projection is the fallback",
 			"chat_id", chatID, "error", err)
-		return
 	}
-	closeAndRemovePartial(ctx, chatID, buf)
 }
 
 // TryFastModelSwitch attempts an in-session model swap via
@@ -594,15 +592,13 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID api.
 	}
 }
 
-// FlushInFlightTurnOnSwitch drops the assistant buffer and its .partial
-// sibling for chatID before a bridge restart.
-func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID api.ChatID, closeAndRemovePartial func(context.Context, api.ChatID, *buffer.Buffer)) {
+// FlushInFlightTurnOnSwitch drops the assistant buffer for chatID before a
+// bridge restart, announcing the interruption when a turn was in flight.
+func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID api.ChatID) {
 	buf, ok := bc.TakeBuffer(chatID)
 	if !ok || !buf.Started {
-		closeAndRemovePartial(ctx, chatID, buf)
 		return
 	}
-	closeAndRemovePartial(ctx, chatID, buf)
 	bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
 }
 

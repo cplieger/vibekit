@@ -8,7 +8,6 @@ import (
 	"context"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/translate"
 )
@@ -97,11 +96,6 @@ func (h *Hub) BufferStore() translate.BufferAccess {
 // LineTracker returns the line tracker for file-change recording.
 func (h *Hub) LineTracker() translate.LineRecorder {
 	return h.lines
-}
-
-// OpenPartialFile opens the partial recovery file for a chat.
-func (h *Hub) OpenPartialFile(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer) {
-	h.openPartialFile(ctx, chatID, buf)
 }
 
 // IsHookStatusEnabled returns whether hook status display is enabled.

@@ -206,49 +206,28 @@ func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *a
 	// a fresh message id whose `message_created` + `message_chunk` events go
 	// out to every connected client, re-streaming history as though the agent
 	// were typing it. There is no `session/prompt` response to end that turn,
-	// so it never flushes to the chat file, but the `.partial` writer does
-	// snapshot it, which puts RecoverPartials in a position to resurrect the
-	// duplicate as a real message on the following restart.
+	// so it never flushes to the chat file — but every connected client has
+	// already rendered the duplicate, and before the .partial sidecar was
+	// deleted, boot recovery could promote it to a real message.
 	//
-	// Dropping is correct rather than merely safe: vibekit persists its own
-	// transcript, so the history in a replay is already on disk. The
-	// projection that will CONSUME these frames (turn brackets, compaction
-	// collapse, staged-and-swapped atomically) hooks in right here — this is
-	// its seam, and until it exists "drop" is the honest behaviour.
-	// WIRING NOTE for whoever replaces this `return` with a routing call into
-	// translate.Projection. Three things were established before the projector
-	// landed and are cheaper to read than to re-derive:
+	// The frames are no longer dropped: they BUILD the transcript, via a
+	// per-chat translate.Projection opened for the load (load_projection.go).
 	//
-	//  1. THE DRAIN RACE IS REAL. `session/load` is issued inside
-	//     bridge.Start, which BLOCKS on the result, while the replay frames
-	//     arrive on the bc.Forward goroutine attached just before it (see
-	//     bridge_coord.tryLoadSession). The frames precede the result on the
-	//     wire, so by the time Start returns they have all been PUSHED to
-	//     notifCh — but notifCh is buffered (256, bridge.go), so Forward has
-	//     not necessarily DRAINED them. Swapping the projection into the chat
-	//     record at Start's return can therefore observe a partial transcript.
-	//     Do not assume ordering the channel does not give.
-	//  2. A BLIND REPLACE LOSES FOUR THINGS the replay cannot carry.
-	//     Recoverable from the wire but not yet consumed by the projection:
-	//     per-turn credits and elapsed time (session_info_update
-	//     kind=turn_completion carries promptTurnSummaries + elapsedTime).
-	//     NOT on the replay wire at all: `refusal` metadata, and every
-	//     api.RoleEvent message vibekit writes itself (cancelled,
-	//     model_switched, interrupted, compaction_failed). changed_files is
-	//     recomputable from tool-call locations.
-	//  3. THE EVENT MESSAGES DO NOT HAVE TO BE LOST. The projection now
-	//     produces WIRE timestamps (_meta.kiro.timestamp), so existing
-	//     event-role messages can be spliced back into the projected
-	//     transcript by timestamp. That keeps today's behaviour instead of
-	//     silently dropping the badges on every resume, and needs no new
-	//     schema.
+	// Three facts about that path are worth keeping here, at the seam:
 	//
-	// Note that user messages keep their vibekit id across a projection (KAS
-	// echoes back the messageId sent on session/prompt) but assistant turns do
-	// NOT — they adopt KAS's `<uuid>-say` / `<toolCallId>-call`. So a merge
-	// keyed on assistant ids would duplicate every turn; the assistant half has
-	// to be replaced wholesale, which is legitimate here only because this is
-	// an alpha with one consumer and no migration code.
+	//  1. Completion cannot be decided by the goroutine that issued the load.
+	//     session/load runs inside bridge.Start, which blocks on the result,
+	//     while these frames arrive on Forward. They precede the result on the
+	//     wire, so when Start returns they are all PUSHED — but notifCh is
+	//     buffered, so not necessarily DRAINED. Forward settles instead, on
+	//     loadDone && len(NotifCh()) == 0.
+	//  2. The projected transcript MERGES rather than replaces. Assistant ids
+	//     differ between vibekit's record and the wire, event messages exist
+	//     only in vibekit's, and a turn newer than the replay's window may be
+	//     one KAS never flushed. See mergeProjection.
+	//  3. The gate is PER-FRAME, not per-load. available_commands_update and
+	//     config_option_update arrive untagged during a load because they carry
+	//     current state, not history, and must keep reaching the live handlers.
 	if base.Meta.Kiro.Replay {
 		// A load in flight consumes the frame into its projection; anything
 		// else is dropped, because a replay frame with no load to belong to has

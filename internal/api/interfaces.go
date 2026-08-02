@@ -64,7 +64,7 @@ type ChatStore interface {
 	// are deleted FIRST (no crash window leaves a child referencing a
 	// deleted parent), the parent LAST. prepare (optional) runs before
 	// each record's deletion so the caller can tear down per-chat side
-	// effects (bridge, terminals, .partial) in the same order. Children
+	// effects (bridge, terminals, assistant buffer) in the same order. Children
 	// whose deletion failed are returned — still listed, still
 	// deletable; a parent failure is the returned error (its children
 	// are already gone at that point).

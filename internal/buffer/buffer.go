@@ -6,7 +6,6 @@
 package buffer
 
 import (
-	"context"
 	"slices"
 	"strings"
 	"sync"
@@ -39,7 +38,6 @@ type Buffer struct {
 	ToolStartTimes map[string]int64
 	ToolCallIndex  map[string]int
 	ChangedFiles   map[string]*api.FileChange
-	Partial        *WritingPartial
 	MessageID      string
 	Content        strings.Builder
 	Reasoning      strings.Builder
@@ -260,49 +258,4 @@ func (buf *Buffer) Snapshot() (api.Message, int64, bool) {
 		CodeReferences: slices.Clone(buf.CodeReferences),
 		Refusal:        buf.Refusal,
 	}, buf.chunkSeq, true
-}
-
-// WritePartial rewrites the partial file with the current buffer state.
-// No-op if the partial writer was not opened or is disabled.
-func (buf *Buffer) WritePartial(ctx context.Context) {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-	if buf.Partial == nil {
-		return
-	}
-	buf.Partial.Write(ctx, &PartialSnapshot{
-		MessageID:      buf.MessageID,
-		Content:        buf.Content.String(),
-		Reasoning:      buf.Reasoning.String(),
-		ToolCalls:      buf.ToolCalls,
-		Blocks:         buf.Blocks,
-		CodeReferences: buf.CodeReferences,
-		Refusal:        buf.Refusal,
-		Ts:             time.Now().UnixMilli(),
-	})
-}
-
-// OpenPartial opens the partial recovery file for a chat. Idempotent: a
-// no-op once the file is already open, so it can be called on every
-// content/reasoning chunk to open the .partial lazily (the first call
-// wins). If opening fails, Partial remains nil (degraded mode).
-func (buf *Buffer) OpenPartial(ctx context.Context, path string) {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-	if buf.Partial != nil {
-		return
-	}
-	buf.Partial = OpenPartial(ctx, path)
-}
-
-// ClosePartial flushes the final state, closes the partial file fd,
-// and removes the file at path.
-func (buf *Buffer) ClosePartial(ctx context.Context, path string) {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-	if buf.Partial == nil {
-		return
-	}
-	buf.Partial.CloseAndRemove(ctx, path)
-	buf.Partial = nil
 }

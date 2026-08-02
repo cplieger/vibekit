@@ -66,7 +66,6 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	// block since the trailing block is now tool_use, not text).
 	blockIndex := buf.AppendToolUseBlock(call.ID, tc.Meta.Kiro.AgentSubtaskID)
 	buf.RecordToolStart(tc.ToolCallID)
-	buf.WritePartial(ctx)
 	if len(diffs) > 0 {
 		isNew := tc.Kind == api.ToolKindEdit && tc.Status == api.ToolPending
 		buf.TrackFileChanges(diffs, isNew)
@@ -206,12 +205,14 @@ func (t *Translator) relPath(abs string) string {
 }
 
 // ensureTurnStarted initializes the buffer for a new turn if not already
-// started: assigns the message id and broadcasts message_created. It does
-// NOT open the .partial recovery file — that is opened lazily on the first
-// content/reasoning chunk (HandleAssistantChunk), so a tool-first turn
-// (whose first streamed event is a tool call) still becomes crash-durable
-// the moment any text arrives, and a pure-tool-only turn — which the
-// recovery guard would drop anyway — skips the file entirely.
+// started: assigns the message id and broadcasts message_created.
+//
+// It owns no crash durability. It used to open the .partial sidecar lazily on
+// the first content chunk; that sidecar is deleted, and a turn interrupted
+// mid-flight is now rebuilt from KAS's own log by the session/load replay
+// projection — measured to hold each sub-message as it completes, so a
+// tool-first turn is covered from its first tool call rather than from its
+// first text.
 func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer) {
 	if buf.Started {
 		return

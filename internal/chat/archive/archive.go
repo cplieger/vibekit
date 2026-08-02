@@ -81,9 +81,9 @@ type Option func(*Service)
 
 // WithPreArchive registers a callback fired BEFORE a chat's file is moved
 // to the archive dir. Used to run the hub's in-memory teardown (close the
-// bridge, kill terminals, clear pending state, remove the .partial) while
+// bridge, kill terminals, clear pending state, drop the assistant buffer) while
 // the chat record is still active, so archiving can't orphan a live bridge
-// or leave a ghost .partial.
+// or leave a stranded in-flight turn.
 func WithPreArchive(fn func(chatID api.ChatID)) Option {
 	return func(s *Service) { s.preArchive = fn }
 }
@@ -129,9 +129,9 @@ func (s *Service) Archive(ctx context.Context, chatID api.ChatID) error {
 		return err
 	}
 	// Pre-archive teardown (hub): close the bridge, kill agent terminals,
-	// clear pending perms + supervised trust, close+remove the .partial —
+	// clear pending perms + supervised trust, drop the assistant buffer —
 	// BEFORE the file moves, so a live bridge can't outlive its chat record
-	// and no orphan .partial survives. Runs outside the per-chat lock,
+	// and no in-flight turn is stranded. Runs outside the per-chat lock,
 	// mirroring the delete path's CleanupChatState-then-Delete order.
 	if s.preArchive != nil {
 		s.preArchive(chatID)

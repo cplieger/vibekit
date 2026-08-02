@@ -125,10 +125,6 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		}
 	})
 
-	t.Run("OpenPartialFile_does_not_panic", func(t *testing.T) {
-		d.OpenPartialFile(ctx, "chat-1", nil)
-	})
-
 	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {
 		_ = d.IsHookStatusEnabled()
 	})

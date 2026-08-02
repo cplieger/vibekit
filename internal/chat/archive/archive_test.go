@@ -183,7 +183,7 @@ func TestRestoreArchived_NoBroadcastWhenReloadFails(t *testing.T) {
 // TestArchive_PreArchiveRunsBeforeFileMoves verifies the pre-archive hook
 // fires while the chat file is still in the active dir (not yet in the
 // archive dir) — the ordering that lets the hub tear down a chat's live
-// bridge / in-flight turn / .partial before the record moves. (fakeStore.Load
+// bridge / in-flight turn before the record moves. (fakeStore.Load
 // errors, so the ArchivedAt stamp is a no-op here; the rename still proceeds.)
 func TestArchive_PreArchiveRunsBeforeFileMoves(t *testing.T) {
 	dir := t.TempDir()

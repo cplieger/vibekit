@@ -13,7 +13,6 @@ import (
 	"context"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // Compile-time assertion: Deps satisfies ChatStoreDeps (not embedded).
@@ -26,7 +25,6 @@ type StreamingAccess interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	BufferStore() BufferAccess
 	LineTracker() LineRecorder
-	OpenPartialFile(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer)
 	IsHookStatusEnabled() bool
 	ChatStore() api.ChatStore
 	ParentACPSession(chatID api.ChatID) string

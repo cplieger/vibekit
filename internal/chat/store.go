@@ -118,7 +118,7 @@ func WithBroadcaster(b api.Broadcaster) StoreOption {
 
 // WithPreArchive registers a callback fired BEFORE a chat's file is moved
 // to the archive dir, so the hub can tear down the chat's in-memory state
-// (bridge, terminals, pending perms/trust, .partial) while the record is
+// (bridge, terminals, pending perms/trust, assistant buffer) while the record is
 // still active. See archive.WithPreArchive.
 func WithPreArchive(fn func(chatID api.ChatID)) StoreOption {
 	return func(s *Store) { s.preArchive = fn }

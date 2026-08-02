@@ -72,7 +72,7 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 	}
 
 	// Fallback: full bridge restart.
-	h.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID, h.closeAndRemovePartial)
+	h.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID)
 	h.coord.CloseBridge(cmd.ChatID)
 
 	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, model)

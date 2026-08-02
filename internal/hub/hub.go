@@ -96,12 +96,11 @@ type permPlane struct {
 
 // Hub is the central coordinator.
 type Hub struct {
-	lifecycle    *lifecyclePlane
-	bridge       *bridgePlane
-	sse          *ssePlane
-	perm         *permPlane
-	bufLifecycle *buffer.Lifecycle
-	coord        *BridgeCoordinator
+	lifecycle *lifecyclePlane
+	bridge    *bridgePlane
+	sse       *ssePlane
+	perm      *permPlane
+	coord     *BridgeCoordinator
 
 	push               api.PushService
 	chatStore          api.ChatStore
@@ -219,10 +218,6 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals()
-	h.bufLifecycle = &buffer.Lifecycle{
-		ConfigDir: lc.configDir,
-		Store:     h.bridge.assistantBufs,
-	}
 	if lc.configDir != "" {
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
 	}
@@ -241,7 +236,7 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.Effor
 // OnChatArchiving is the pre-archive hook wired to chat.WithPreArchive.
 // It runs the SAME in-memory teardown a delete performs — flush the
 // in-flight turn (CloseBridge), kill agent terminals, clear pending perms
-// + supervised trust, close+remove the .partial — EXCEPT it does not remove
+// + supervised trust, drop the assistant buffer — EXCEPT it does not remove
 // the chat file (Archive moves it) and does not reap checkpoints (archive
 // is reversible; checkpoints are reaped only at purge / hard delete).
 //
@@ -249,7 +244,7 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.Effor
 //   - a live bridge can't outlive its chat record (invariant #3),
 //   - archiving mid-turn can't strand the in-flight turn (the moved file +
 //     tombstone would make Store.Mutate refuse the persist), and
-//   - no orphan .partial survives for RecoverPartials to resurrect as a
+//   - no in-flight turn is stranded, to be resurrected later as a
 //     ghost active chat after a restart.
 func (h *Hub) OnChatArchiving(chatID api.ChatID) {
 	ctx, cancel := h.hubContext()

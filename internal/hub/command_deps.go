@@ -131,5 +131,5 @@ func (h *Hub) IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool {
 
 // EmitTurnEndedWithStats broadcasts turn_ended with usage stats.
 func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
-	h.coord.EmitTurnEndedWithStats(ctx, chatID, resp, creditsDelta, elapsedMs, h.closeAndRemovePartial)
+	h.coord.EmitTurnEndedWithStats(ctx, chatID, resp, creditsDelta, elapsedMs)
 }

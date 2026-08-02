@@ -113,7 +113,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc),
 		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs))
 	chat.WithBroadcaster(h)(chatStore)
-	h.RecoverPartials()
 
 	mcpRegistry := mcpPkg.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(ctx, mcpStore)
@@ -207,7 +206,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// Pre-archive teardown MUST run before the chat file moves so archiving
 	// routes through the same bridge/in-memory teardown a delete performs
 	// (minus the file removal + checkpoint reap) — no orphaned live bridge,
-	// no stranded in-flight turn, no ghost .partial. See hub.OnChatArchiving.
+	// no stranded in-flight turn. See hub.OnChatArchiving.
 	chat.WithPreArchive(func(id api.ChatID) {
 		h.OnChatArchiving(id)
 	})(chatStore)

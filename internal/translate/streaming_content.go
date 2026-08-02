@@ -28,12 +28,6 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
-	// Open the .partial recovery file lazily on the first content/reasoning
-	// chunk (idempotent — no-op once open). This is what makes a tool-first
-	// turn crash-durable: the file opens as soon as any text arrives and
-	// WritePartial then captures the whole buffer, including tool calls
-	// that streamed before this chunk.
-	t.deps.OpenPartialFile(ctx, chatID, buf)
 	totalLen := buf.Content.Len() + buf.Reasoning.Len()
 	if totalLen+len(chunk.Content.Text) > maxBufferBytes {
 		return
@@ -67,7 +61,6 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	} else {
 		refusal = nil
 	}
-	buf.WritePartial(ctx)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
 		api.MessageChunkPayload{
 			MessageID:      buf.MessageID,
