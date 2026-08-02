@@ -539,3 +539,24 @@ type ResumableSession struct {
 	UpdatedAt int64  `json:"updated_at"`
 	CreatedAt int64  `json:"created_at,omitempty"`
 }
+
+// WorkflowRun is one previous workflow run, listed beside previous chats in
+// the history surface (GET /api/sessions) and reviewable read-only.
+//
+// Sourced from _kiro/workflow/list, NOT from session/list. session/list's
+// workflow rows are STEP sessions — measured 93 of them across 6 runs, with
+// one run's loop contributing 76 — and their status is idle regardless of the
+// run's outcome, so they can be neither counted nor judged as runs.
+type WorkflowRun struct {
+	WorkflowID string `json:"workflow_id"`
+	Name       string `json:"name"`
+	// Status is run-level: paused / completed / failed.
+	Status string `json:"status,omitempty"`
+	// ParentChatID is the vibekit chat that launched the run, resolved through
+	// the launching session's chain. Empty for a run with no vibekit parent
+	// (launched from the TUI, or by a chat vibekit no longer keeps).
+	ParentChatID string `json:"parent_chat_id,omitempty"`
+	UpdatedAt    int64  `json:"updated_at"`
+	CreatedAt    int64  `json:"created_at,omitempty"`
+	StartedAt    int64  `json:"started_at,omitempty"`
+}

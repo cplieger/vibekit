@@ -71,8 +71,14 @@ const (
 // surfaces. Shapes verified against the KAS 2.12 acp-server bundle + a live
 // probe (see kiro-cli-research.md "v3 _kiro/* wire surface").
 const (
-	methodKiroKnowledge                  = "_kiro/knowledge"                   // C→A request: {subcommand, ...} → {success, entries?/message?}
-	methodKiroConfigTemplate             = "_kiro/config/template"             // C→A request (2.14+): {} → {modes:{availableModes,currentModeId}, configOptions[]} — session-less catalog
+	methodKiroKnowledge      = "_kiro/knowledge"       // C→A request: {subcommand, ...} → {success, entries?/message?}
+	methodKiroConfigTemplate = "_kiro/config/template" // C→A request (2.14+): {} → {modes:{availableModes,currentModeId}, configOptions[]} — session-less catalog
+	// methodKiroWorkflowList enumerates workflow RUNS for a workspace.
+	// workspacePaths is an ARRAY and is REQUIRED: every other param shape
+	// (cwd, sessionId, a nested _meta) fails -32603 "workspacePaths is not
+	// iterable". Needs no workflows capability (probed 2026-08-02).
+	methodKiroWorkflowList               = "_kiro/workflow/list"               // C→A request: {workspacePaths[]} → {runs[]}
+	methodKiroWorkflowInspect            = "_kiro/workflow/inspect"            // C→A request: {workflowId} → {workflowId, state, nodePlan}
 	methodKiroKnowledgeIndexingStarted   = "_kiro/knowledge/indexingStarted"   // A→C notification: {sessionId, name, fileCount}
 	methodKiroKnowledgeIndexingCompleted = "_kiro/knowledge/indexingCompleted" // A→C notification: {sessionId, name, status, itemCount?}
 )

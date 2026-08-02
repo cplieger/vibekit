@@ -94,17 +94,25 @@ func (h *Hub) handleSessionList(w http.ResponseWriter, r *http.Request) {
 		api.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	rows, err := h.resumableSessions(r.Context())
+	// Chats and runs degrade INDEPENDENTLY: a workflow-list failure must not
+	// blank the chat list, and vice versa. They are separate verbs on the same
+	// bridge, so one can fail on its own.
+	claimed := h.claimedSessions(r.Context())
+	rows, err := h.resumableSessions(r.Context(), claimed)
 	if err != nil {
 		slog.Warn("session list failed", "error", err)
-		api.WriteJSON(w, map[string]any{"sessions": []api.ResumableSession{}})
-		return
+		rows = []api.ResumableSession{}
 	}
-	api.WriteJSON(w, map[string]any{"sessions": rows})
+	runs, rErr := h.workflowRuns(r.Context(), claimed)
+	if rErr != nil {
+		slog.Warn("workflow run list failed", "error", rErr)
+		runs = []api.WorkflowRun{}
+	}
+	api.WriteJSON(w, map[string]any{"sessions": rows, "runs": runs})
 }
 
 // resumableSessions fetches and filters the workspace's stored sessions.
-func (h *Hub) resumableSessions(ctx context.Context) ([]api.ResumableSession, error) {
+func (h *Hub) resumableSessions(ctx context.Context, claimed map[string]api.ChatID) ([]api.ResumableSession, error) {
 	u := h.ensureUtility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
@@ -122,16 +130,18 @@ func (h *Hub) resumableSessions(ctx context.Context) ([]api.ResumableSession, er
 	if uErr := json.Unmarshal(raw, &list); uErr != nil {
 		return nil, uErr
 	}
-	return h.toResumable(ctx, list.Sessions), nil
+	return h.toResumable(claimed, list.Sessions), nil
 }
 
-// toResumable filters the raw rows down to what belongs in a chat picker and
-// marks the ones a vibekit chat already owns.
-func (h *Hub) toResumable(ctx context.Context, rows []kasSessionRow) []api.ResumableSession {
-	// Every session already claimed by a chat record, so the picker can say so
-	// instead of offering a duplicate of a chat the user can just open. A chat
-	// owns its whole CHAIN, not only its current session (see
-	// Chat.SessionChain), which is why this is a set rather than a field read.
+// claimedSessions maps every KAS session a vibekit chat owns to that chat.
+//
+// Keyed on the whole session CHAIN, not the current id: a chat changes session
+// on a failed session/load, a model-switch fallback and empty-turn recovery
+// (all via Chat.RecordSession), so the current id alone would leave a chat's
+// own retired sessions looking unowned — offered back to the user as separate
+// resumable conversations, and leaving a run launched by such a chat
+// unattributed.
+func (h *Hub) claimedSessions(ctx context.Context) map[string]api.ChatID {
 	claimed := map[string]api.ChatID{}
 	// Indexed: api.ChatHeader is 304 bytes, which gocritic's rangeValCopy flags.
 	headers := h.chatStore.List(ctx)
@@ -140,7 +150,12 @@ func (h *Hub) toResumable(ctx context.Context, rows []kasSessionRow) []api.Resum
 			claimed[sid] = api.ChatID(headers[i].ID)
 		}
 	}
+	return claimed
+}
 
+// toResumable filters the raw rows down to what belongs in a chat picker and
+// marks the ones a vibekit chat already owns.
+func (h *Hub) toResumable(claimed map[string]api.ChatID, rows []kasSessionRow) []api.ResumableSession {
 	out := make([]api.ResumableSession, 0, len(rows))
 	for i := range rows {
 		row := &rows[i]
@@ -180,4 +195,104 @@ func parseKASTime(s string) int64 {
 		return 0
 	}
 	return t.UnixMilli()
+}
+
+// --- Workflow runs -------------------------------------------------------
+//
+// Previous workflow RUNS belong in the same history surface as previous chats,
+// but they do NOT come from session/list. That was the trap: session/list's
+// workflow-tagged rows are STEP sessions, all 93 of them `type:"step"` across
+// only 6 distinct workflowIds — one run's loop alone produced 76 rows
+// (`p24-step-parked · tick #17`, `#16`, …). Listing those would put 76 entries
+// in the history for a single run, and their `status` is `idle` on every one,
+// so a run's real outcome is not even in that data.
+//
+// _kiro/workflow/list is the run-level inventory: the same workspace that
+// yields 93 step rows yields 4 RUNS, each with a run-level status and the
+// session that launched it. Both it and _kiro/workflow/inspect work without
+// the workflows capability (probed 2026-08-02).
+
+// kasWorkflowRuns is the _kiro/workflow/list result.
+type kasWorkflowRuns struct {
+	Runs []kasWorkflowRun `json:"runs"`
+}
+
+// kasWorkflowRun is one run as _kiro/workflow/list reports it.
+type kasWorkflowRun struct {
+	WorkflowID string `json:"workflowId"`
+	Name       string `json:"name"`
+	// Status is RUN-level (e.g. paused / completed / failed), unlike the step
+	// sessions' status, which is idle regardless of what the run did.
+	Status    string `json:"status"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+	StartedAt string `json:"startedAt"`
+	// ParentSessionID is the session that launched the run, which is how a run
+	// is attributed back to the chat that started it.
+	ParentSessionID string `json:"parentSessionId"`
+}
+
+// workflowRuns fetches the workspace's workflow runs, newest first.
+func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]api.ChatID) ([]api.WorkflowRun, error) {
+	u := h.ensureUtility()
+	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
+	defer cancel()
+
+	// workspacePaths is an ARRAY and is required — see methodKiroWorkflowList.
+	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
+		callerParams(map[string]any{"workspacePaths": []string{h.lifecycle.workDir}}))
+	if err != nil {
+		return nil, err
+	}
+	var list kasWorkflowRuns
+	if uErr := json.Unmarshal(raw, &list); uErr != nil {
+		return nil, uErr
+	}
+	out := make([]api.WorkflowRun, 0, len(list.Runs))
+	for i := range list.Runs {
+		r := &list.Runs[i]
+		if r.WorkflowID == "" {
+			continue
+		}
+		out = append(out, api.WorkflowRun{
+			WorkflowID: r.WorkflowID,
+			Name:       r.Name,
+			Status:     r.Status,
+			CreatedAt:  parseKASTime(r.CreatedAt),
+			UpdatedAt:  parseKASTime(r.UpdatedAt),
+			StartedAt:  parseKASTime(r.StartedAt),
+			// Attributed through the launching session's chain, so a run
+			// launched by a chat that has since changed session still resolves.
+			ParentChatID: string(claimed[r.ParentSessionID]),
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	return out, nil
+}
+
+// handleWorkflowRun: GET /api/workflow-runs/{workflowId} → one run's full
+// state, for the read-only review tab. Passes KAS's `state` and `nodePlan`
+// through verbatim: the tree is KAS's shape and re-modelling it here would be
+// a second representation of a structure vibekit does not own.
+func (h *Hub) handleWorkflowRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		api.BadRequest(w, "missing workflow id")
+		return
+	}
+	u := h.ensureUtility()
+	cctx, cancel := context.WithTimeout(r.Context(), sessionListTimeout)
+	defer cancel()
+	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
+		callerParams(map[string]any{"workflowId": id}))
+	if err != nil {
+		slog.Warn("workflow inspect failed", "workflow_id", id, "error", err)
+		api.NotFound(w, "workflow run not found")
+		return
+	}
+	api.WriteRawJSON(w, raw)
 }
