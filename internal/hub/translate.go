@@ -215,6 +215,40 @@ func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *a
 	// projection that will CONSUME these frames (turn brackets, compaction
 	// collapse, staged-and-swapped atomically) hooks in right here — this is
 	// its seam, and until it exists "drop" is the honest behaviour.
+	// WIRING NOTE for whoever replaces this `return` with a routing call into
+	// translate.Projection. Three things were established before the projector
+	// landed and are cheaper to read than to re-derive:
+	//
+	//  1. THE DRAIN RACE IS REAL. `session/load` is issued inside
+	//     bridge.Start, which BLOCKS on the result, while the replay frames
+	//     arrive on the bc.Forward goroutine attached just before it (see
+	//     bridge_coord.tryLoadSession). The frames precede the result on the
+	//     wire, so by the time Start returns they have all been PUSHED to
+	//     notifCh — but notifCh is buffered (256, bridge.go), so Forward has
+	//     not necessarily DRAINED them. Swapping the projection into the chat
+	//     record at Start's return can therefore observe a partial transcript.
+	//     Do not assume ordering the channel does not give.
+	//  2. A BLIND REPLACE LOSES FOUR THINGS the replay cannot carry.
+	//     Recoverable from the wire but not yet consumed by the projection:
+	//     per-turn credits and elapsed time (session_info_update
+	//     kind=turn_completion carries promptTurnSummaries + elapsedTime).
+	//     NOT on the replay wire at all: `refusal` metadata, and every
+	//     api.RoleEvent message vibekit writes itself (cancelled,
+	//     model_switched, interrupted, compaction_failed). changed_files is
+	//     recomputable from tool-call locations.
+	//  3. THE EVENT MESSAGES DO NOT HAVE TO BE LOST. The projection now
+	//     produces WIRE timestamps (_meta.kiro.timestamp), so existing
+	//     event-role messages can be spliced back into the projected
+	//     transcript by timestamp. That keeps today's behaviour instead of
+	//     silently dropping the badges on every resume, and needs no new
+	//     schema.
+	//
+	// Note that user messages keep their vibekit id across a projection (KAS
+	// echoes back the messageId sent on session/prompt) but assistant turns do
+	// NOT — they adopt KAS's `<uuid>-say` / `<toolCallId>-call`. So a merge
+	// keyed on assistant ids would duplicate every turn; the assistant half has
+	// to be replaced wholesale, which is legitimate here only because this is
+	// an alpha with one consumer and no migration code.
 	if base.Meta.Kiro.Replay {
 		slog.Debug("session/update: dropping replayed frame",
 			"chat_id", chatID, "kind", base.Kind)
