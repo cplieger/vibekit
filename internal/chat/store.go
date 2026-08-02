@@ -58,8 +58,6 @@ const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
 type Store struct {
 	broadcast   api.Broadcaster
 	listSF      singleflight.Group
-	preArchive  func(chatID api.ChatID)
-	onArchive   func(chatID api.ChatID)
 	onPurge     func(chatID api.ChatID, sessionChain []string)
 	isLive      func(chatID api.ChatID) bool
 	tombstone   map[api.ChatID]time.Time
@@ -115,19 +113,6 @@ type StoreOption func(*Store)
 // chat_created / chat_updated / chat_deleted / message_* events.
 func WithBroadcaster(b api.Broadcaster) StoreOption {
 	return func(s *Store) { s.broadcast = b }
-}
-
-// WithPreArchive registers a callback fired BEFORE a chat's file is moved
-// to the archive dir, so the hub can tear down the chat's in-memory state
-// (bridge, terminals, pending perms/trust, assistant buffer) while the record is
-// still active. See archive.WithPreArchive.
-func WithPreArchive(fn func(chatID api.ChatID)) StoreOption {
-	return func(s *Store) { s.preArchive = fn }
-}
-
-// WithOnArchive registers a callback fired after a chat is archived.
-func WithOnArchive(fn func(chatID api.ChatID)) StoreOption {
-	return func(s *Store) { s.onArchive = fn }
 }
 
 // WithLiveChats registers the live-chat predicate purging exempts. See

@@ -6,61 +6,16 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// ErrorKind discriminates the class of chat store error. Using a
-// typed enum instead of independent sentinels lets handlers dispatch
-// via a single errors.As + switch on Kind.
-type ErrorKind int
-
-const (
-	// ErrKindNotFound means the target chat has no file on disk.
-	ErrKindNotFound ErrorKind = iota + 1
-	// ErrKindTombstoned means the target chat was recently deleted.
-	ErrKindTombstoned
-	// ErrKindIDInUse means the target chat ID is already used by an
-	// active (non-archived) chat.
-	ErrKindIDInUse
-)
-
-// StoreError is a typed error carrying a Kind discriminator and
-// optional detail. Handlers can dispatch via errors.As + switch on Kind
-// instead of N independent errors.Is chains.
-type StoreError struct {
-	Detail string
-	Kind   ErrorKind
-}
-
-func (e *StoreError) Error() string {
-	switch e.Kind {
-	case ErrKindNotFound:
-		if e.Detail != "" {
-			return "chat not found: " + e.Detail
-		}
-		return "chat not found"
-	case ErrKindTombstoned:
-		if e.Detail != "" {
-			return "chat recently deleted: " + e.Detail
-		}
-		return "chat recently deleted"
-	case ErrKindIDInUse:
-		if e.Detail != "" {
-			return "chat id in use: " + e.Detail
-		}
-		return "chat id in use"
-	default:
-		return "chat store error"
-	}
-}
-
-// Is supports errors.Is matching between *StoreError values.
-// Two store errors are considered equal when their Kinds match;
-// Detail is ignored. This lets tests assert on Kind without
-// constructing an identical-Detail comparator.
-func (e *StoreError) Is(target error) bool {
-	if other, ok := target.(*StoreError); ok {
-		return e.Kind == other.Kind
-	}
-	return false
-}
+// The typed StoreError / ErrorKind pair that used to live here is DELETED, not
+// relocated. It existed for two consumers, both of which are gone: the archive
+// service's id-in-use mapping (chats no longer move, so nothing can collide with
+// a restore) and writeChatErr's errors.As + switch dispatch (the archived-chat
+// endpoints it served no longer exist). Nothing in production constructed one,
+// and nothing consumed an ErrorKind.
+//
+// Do not reintroduce it speculatively: the store's remaining errors are either
+// wrapped filesystem errors, which callers already handle with errors.Is against
+// os.ErrNotExist, or the two canonical values below.
 
 // errInvalidChatID returns the canonical error for a malformed chat ID.
 // Single source of truth for the error message format.

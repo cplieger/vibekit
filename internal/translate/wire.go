@@ -98,9 +98,7 @@ type ACPKiroMeta struct {
 		// step's progress persisted onto the LAUNCHING chat, which arrives as
 		// a user_message_chunk carrying JSON — see isWorkflowProgress.
 		Notification struct {
-			Kind       string `json:"kind"`
-			WorkflowID string `json:"workflowId"`
-			EventType  string `json:"eventType"`
+			Kind string `json:"kind"`
 		} `json:"notification"`
 		HookAsk json.RawMessage `json:"hookAsk,omitempty"`
 	} `json:"kiro"`
