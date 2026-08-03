@@ -255,12 +255,24 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// per base, undefined when none). vibekit ships the knowledge UI and
 	// seeds chat.enableKnowledge, so the index exists and /knowledge works —
 	// the agent just could not see what was in it.
+	// _meta.kiro.secretStorage opts into KAS's AcpSecretStorage: it then asks
+	// the client to HOLD the MCP OAuth credentials it derives (the DCR result,
+	// the token set, the PKCE verifier) via _kiro/secret/{get,store,delete}.
+	// KAS keeps only an in-process memory copy and has no file of its own, so
+	// without this flag the store is never constructed and every bridge spawn
+	// re-runs discovery and a fresh POST /register — measured, and measured to
+	// stop at zero DCRs once a stored blob is replayed. Answered by
+	// hub/bridge_v3_secret.go against internal/secretstore. Declaring it is a
+	// COMMITMENT: KAS rethrows a client-side store/delete failure into the MCP
+	// connect path, so the handlers must answer on every bridge that declares
+	// it, the utility bridge included.
 	kiroMeta := map[string]any{
 		"openExternalUrl":      true,
 		"infrastructureSafety": true,
 		"userInput":            true,
 		"backgroundProcesses":  true,
 		"knowledge":            true,
+		"secretStorage":        true,
 		"settings":             map[string]any{"codeIntelligence": map[string]any{"enabled": true}},
 	}
 	if b.enableHooks {

@@ -146,6 +146,12 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 	if msg.ID != nil && h.handleKiroClientRequest(ctx, chatID, msg) {
 		return
 	}
+	// v3 (KAS) credential storage (_kiro/secret/*). Must be answered: KAS
+	// rethrows a store/delete failure into the MCP connect path, and an
+	// UNANSWERED request wedges the turn.
+	if msg.ID != nil && h.handleKiroSecretRequest(ctx, chatID, msg) {
+		return
+	}
 	// Terminal requests from kiro-cli (terminal/create, terminal/output, etc.)
 	if msg.ID != nil && strings.HasPrefix(msg.Method, methodTermPrefix) {
 		h.handleTerminalRequest(ctx, chatID, msg.Method, msg)

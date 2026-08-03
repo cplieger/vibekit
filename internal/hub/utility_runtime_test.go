@@ -281,6 +281,7 @@ func newTestUtilityRuntime() *utilityRuntime {
 		func() api.ACPBridge { return newFakeBridge() },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
+		nil, // secrets: no credential store in tests
 		false,
 	)
 }
@@ -617,6 +618,7 @@ func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
+		nil, // secrets: no credential store in tests
 		false,
 	)
 	defer u.session.Stop()
@@ -650,6 +652,7 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
+		nil, // secrets: no credential store in tests
 		false,
 	)
 	defer u.session.Stop()
@@ -750,6 +753,7 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
+		nil, // secrets: no credential store in tests
 		false,
 	)
 	defer u.session.Stop()

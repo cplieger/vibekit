@@ -30,6 +30,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/webhttp/sse"
 )
@@ -120,6 +121,14 @@ type Hub struct {
 	hookStatus         *hookStatusCache
 	governance         *governanceCache
 
+	// secrets holds the credential blobs KAS asks vibekit to persist on its
+	// behalf (_kiro/secret/*, bridge_v3_secret.go). ONE store for every
+	// bridge: KAS's key namespace is global, so sharing it is what lets a
+	// second bridge reuse the first one's MCP registration. Nil in tests and
+	// when no configDir is set → the handlers report "absent", which degrades
+	// to the pre-capability behaviour rather than failing an MCP connect.
+	secrets *secretstore.Store
+
 	// In-flight session/load replay projections (load_projection.go).
 	// Embedded ahead of the scalars below to keep govet fieldalignment happy:
 	// it carries pointers, so it must not sit after ciBusy.
@@ -155,8 +164,8 @@ func WithMCPConfig(c api.MCPConfig) Option {
 // WithSessionReaper wires the KAS session reaper and the referenced-session
 // thunk. The reaper removes on-disk kiro-cli/KAS session state: promptly on
 // chat delete (via cleanupChatState) and via a periodic orphan sweep that
-// spares any session id refs reports as still referenced by a live or
-// archived chat. Unset in tests → session reaping is a no-op.
+// spares any session id refs reports as still referenced by a chat.
+// Unset in tests → session reaping is a no-op.
 //
 // refs returns (set, complete). A false `complete` means the keep-list could
 // not be fully determined, and the sweep is SKIPPED rather than run against a
@@ -220,6 +229,16 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	h.agentTerms = newAgentTerminals()
 	if lc.configDir != "" {
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
+		// Best-effort: a store that cannot be opened leaves h.secrets nil,
+		// and the _kiro/secret/* handlers then answer "absent" — MCP OAuth
+		// re-registers per spawn as it did before the capability, rather than
+		// the hub refusing to construct over a credential cache.
+		secrets, err := secretstore.New(lc.configDir)
+		if err != nil {
+			slog.Error("secretstore: open failed; MCP credentials will not persist", "error", err)
+		} else {
+			h.secrets = secrets
+		}
 	}
 	go h.cleanIdempotency()
 	go h.cullIdleUtilityBridge()

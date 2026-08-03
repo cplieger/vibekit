@@ -51,6 +51,23 @@ const (
 	methodKiroCodeIntel       = "_kiro/codeIntelligence" // C→A request: code-intelligence status/init (subcommand param); needs the session opted in via initialize _meta.kiro.settings
 )
 
+// v3 (KAS) credential-storage requests. All three are A→C ONLY — probed
+// client→agent in every param shape and each returns -32603, so there is
+// nothing here for vibekit to CALL. KAS builds its AcpSecretStorage only when
+// initialize declares `_meta.kiro.secretStorage: true`; without the flag the
+// store is never constructed and every bridge spawn re-runs Dynamic Client
+// Registration. Answered in bridge_v3_secret.go against internal/secretstore.
+//
+// Failure semantics differ per method and are load-bearing: KAS CATCHES a get
+// failure (warns, treats the credential as absent) but RETHROWS a store or
+// delete failure into the MCP connect path. So a get may degrade quietly and a
+// store must not.
+const (
+	methodKiroSecretGet    = "_kiro/secret/get"
+	methodKiroSecretStore  = "_kiro/secret/store"  //nolint:gosec // G101: ACP method name, not a credential
+	methodKiroSecretDelete = "_kiro/secret/delete" //nolint:gosec // G101: ACP method name, not a credential
+)
+
 // The whole `_kiro/spec/*` family is deliberately unwired. vibekit shipped a
 // read-only board over getTaskStatuses and it is deleted: the content is
 // `.kiro/specs/**/*.md`, which the file browser already opens, and the write
