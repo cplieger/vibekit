@@ -138,6 +138,12 @@ type StartOpts struct {
 	AgentEngine string
 	Mode        string
 	MCPServers  []map[string]any
+	// ExtraArgs are operator-supplied kiro-cli launch flags
+	// (VIBEKIT_KIRO_ACP_ARGS), already filtered, appended after the args
+	// vibekit derives itself. Set on CHAT bridges only — never on the utility
+	// bridge, where an `--effort max` would spend real credits generating a
+	// two-word title. See bridge.FilterACPArgs.
+	ExtraArgs []string
 	// EnableHooks opts the session into KAS's v2 hook engine by
 	// declaring _meta.kiro.hooks={enabled,v2} in the initialize
 	// handshake. Set on BOTH the utility bridge (so the hooks-management

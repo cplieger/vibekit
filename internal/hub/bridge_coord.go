@@ -44,6 +44,11 @@ type BridgeCoordinator struct {
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
 	agentEngine string
+	// acpArgs are the filtered operator launch flags (VIBEKIT_KIRO_ACP_ARGS).
+	// Set on the CHAT spawns below and deliberately NOT threaded to the utility
+	// bridge, whose work is title generation and catalog fetches — an
+	// `--effort max` there would spend real credits on a two-word summary.
+	acpArgs []string
 }
 
 // newBridgeCoordinator constructs a BridgeCoordinator from the Hub's
@@ -64,6 +69,7 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		// h implements replayProjector via load_projection.go.
 		replayProjection: h,
 		agentEngine:      resolveAgentEngine(),
+		acpArgs:          h.acpArgs,
 	}
 }
 
@@ -168,7 +174,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// forward goroutine after Start deadlocks every fresh session. If Start
 	// fails it stops the bridge (NotifCh closes), so this goroutine exits.
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -213,7 +219,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		bc.replayProjection.OpenReplayProjection(chatID)
 	}
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so whatever partial replay

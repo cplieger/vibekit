@@ -137,7 +137,12 @@ type Hub struct {
 	// Code-intelligence activation inputs + in-flight guard (code_intel.go).
 	ciGate func() bool
 	ciPath string
-	ciBusy atomic.Bool
+	// acpArgs are the filtered operator kiro-cli launch flags
+	// (VIBEKIT_KIRO_ACP_ARGS via WithACPArgs). Chat bridges only. Ordered last
+	// among the pointer-bearing fields for govet fieldalignment: a slice is 8
+	// of 24 pointer bytes, less dense than a string's 8 of 16.
+	acpArgs []string
+	ciBusy  atomic.Bool
 }
 
 // Option configures optional Hub parameters.
@@ -147,6 +152,14 @@ type Option func(*Hub)
 // checkpoints, and ignore rules.
 func WithConfigDir(dir string) Option {
 	return func(h *Hub) { h.lifecycle.configDir = dir }
+}
+
+// WithACPArgs sets the operator-supplied kiro-cli launch flags appended to
+// every CHAT bridge's argv. Pass them already filtered (bridge.ParseACPArgs);
+// the hub does not re-validate. Never reaches the utility bridge — see
+// BridgeCoordinator.acpArgs.
+func WithACPArgs(args []string) Option {
+	return func(h *Hub) { h.acpArgs = args }
 }
 
 // WithPush wires the push notification service at construction time.

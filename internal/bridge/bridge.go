@@ -71,7 +71,10 @@ type Bridge struct {
 	// directory leads PATH through it, so `kiro-cli` resolves any sibling it
 	// needs out of the same verified install rather than through whatever else
 	// $TOOLS/bin holds. Empty leaves the environment fully inherited.
-	extraEnv    []string
+	extraEnv []string
+	// extraArgs are the filtered operator launch flags for this spawn
+	// (StartOpts.ExtraArgs). Immutable after Start, like agentEngine.
+	extraArgs   []string
 	nextID      atomic.Int64
 	enableHooks bool
 	stopOnce    sync.Once

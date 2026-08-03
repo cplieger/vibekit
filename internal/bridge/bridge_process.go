@@ -26,6 +26,7 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	// Immutable after Start; read lock-free by SetModel / initialize.
 	b.agentEngine = opts.AgentEngine
 	b.enableHooks = opts.EnableHooks
+	b.extraArgs = opts.ExtraArgs
 	if opts.SessionID != "" && !api.ValidSessionID(opts.SessionID) {
 		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
 	}
@@ -129,7 +130,13 @@ func (b *Bridge) startProcess(engine, model, effort string) error {
 		// verdict with the phase in its reason.
 		return errors.New("kiro-cli is not available yet: the pinned version is still installing or its install failed (see /api/health)")
 	}
-	args := buildACPArgs(engine, model, effort)
+	// Operator flags land AFTER the derived ones, so a launch flag is an
+	// initial value rather than an override in either direction: kiro-cli takes
+	// the last spelling of a repeated flag, and vibekit's own switch_model /
+	// set_effort commands still win afterwards via session/set_config_option.
+	// Already filtered (see acp_args.go) — never trust this slice to be safe
+	// because it came through StartOpts.
+	args := append(buildACPArgs(engine, model, effort), b.extraArgs...)
 	// Lifecycle is owned by Stop(), not by a context. The
 	// lifecycleCtx is a belt-and-braces kill signal: if the hub
 	// shuts down and Stop() races or panics, the OS-level context

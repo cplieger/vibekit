@@ -30,9 +30,13 @@ type fakeBridge struct {
 	modelID      string
 	sessionTitle string
 	calls        []string
-	mu           sync.Mutex
-	stopped      bool
-	started      bool
+	// startOpts records the StartOpts of the most recent Start, so a test can
+	// assert what a spawn was actually handed (e.g. that the utility bridge
+	// gets no operator launch flags).
+	startOpts *api.StartOpts
+	mu        sync.Mutex
+	stopped   bool
+	started   bool
 }
 
 func newFakeBridge() *fakeBridge {
@@ -46,11 +50,19 @@ func newFakeBridge() *fakeBridge {
 func (b *fakeBridge) Start(_ context.Context, opts *api.StartOpts) error {
 	b.mu.Lock()
 	b.started = true
+	b.startOpts = opts
 	if opts.SessionID != "" {
 		b.sessionID = opts.SessionID
 	}
 	b.mu.Unlock()
 	return nil
+}
+
+// lastStartOpts returns the StartOpts of the most recent Start, or nil.
+func (b *fakeBridge) lastStartOpts() *api.StartOpts {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startOpts
 }
 
 func (b *fakeBridge) Stop() {
