@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { sendPromptTo } from "./chat-commands.js";
+import { handleTypedCommand } from "./typed-commands.js";
 import { newMessageID } from "./transport.js";
 import { takeAttachments, addAttachment, type AttachedFile } from "./attachments.js";
 import {
@@ -59,6 +60,13 @@ const draining = new Set<string>();
 export async function submitPrompt(chatID: string, text: string): Promise<SubmitResult> {
   if (chatID === "" || text === "") {
     return "failed";
+  }
+  // Typed commands vibekit owns are intercepted BEFORE anything else: before the
+  // attachments are taken, before a message id is minted, and before the queue.
+  // A command is not a prompt, so it must not consume an attachment, occupy a
+  // queue slot, or leave a user bubble behind.
+  if (handleTypedCommand(chatID, text)) {
+    return "sent";
   }
   const attachments = takeAttachments();
   // One message id per user submit, minted HERE so the queue entry and

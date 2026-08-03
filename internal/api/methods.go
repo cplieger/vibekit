@@ -30,6 +30,19 @@ const (
 	// This replaced session/fork. A fork made a SECOND chat; a revert edits the
 	// one you are in, which is what rewinding was always meant to mean.
 	MethodCheckpointRevertMultiple = "_kiro/checkpoint/revertMultiple"
+	// MethodSessionCompact summarizes the conversation and replaces it with the
+	// summary, emitting the `summarization_completed` frame the translate layer
+	// already maps.
+	//
+	// This is what typed `/compact` was NOT doing. Probed: the typed form returns
+	// `end_turn` in ~3.4s with ZERO summarization frames while the model replies
+	// "Done — context compacted", because no parser inside KAS claims it. The
+	// native verb returns `{success: true}` and does the work.
+	//
+	// `{success: false}` covers three conditions with NO discriminator — a turn in
+	// flight, a compaction already running, and (as a thrown error rather than a
+	// false) no such session — so a caller can only surface one generic failure.
+	MethodSessionCompact = "_kiro/session/compact"
 )
 
 // File-system protocol method names (ACP fs/* namespace). Exported so

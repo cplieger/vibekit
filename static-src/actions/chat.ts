@@ -136,6 +136,28 @@ export const resolveAllPending = transportAction<
 
 // --- chat.trust_pending ---
 
+/** compactChat summarizes the conversation through KAS's NATIVE verb.
+ *
+ *  An action rather than passed-through text because typed `/compact` performs no
+ *  compaction — nothing in KAS parses it, so the text reaches the model, which
+ *  answers as if it had happened. See typed-commands.ts.
+ *
+ *  `idempotencyKey` because a retry that compacts twice summarizes a summary.
+ *  The error is the server's own message: KAS gives one undiscriminated
+ *  `{success: false}` for a turn in flight and for a compaction already running,
+ *  and the server turns that into the single cause a user can act on. */
+export const compactChat = transportAction<{ chatID: string }>({
+  name: "chat.compact",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
+  command: ({ chatID }) => ({
+    type: "compact",
+    chat_id: chatID,
+  }),
+  error: "Couldn't compact",
+});
+
 export const trustPending = transportAction<string>({
   name: "chat.trust_pending",
   networkMode: "always",

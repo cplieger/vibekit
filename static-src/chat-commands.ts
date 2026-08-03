@@ -24,9 +24,11 @@
 //
 // Compaction and mode changes are intentionally NOT exposed as typed
 // client commands:
-//   - /compact is reachable via the slash-command menu: user types
-//     "/compact", the text flows through sendPromptTo as a normal
-//     prompt, and kiro-cli natively parses it and compacts history.
+//   - /compact does NOT flow through here any more, and the comment that used to
+//     say it did was describing something that never worked: kiro-cli does not
+//     parse it, so the text reached the MODEL, which answered "Done — context
+//     compacted" while zero summarization frames were emitted. It is intercepted
+//     before send now and calls KAS's native verb (typed-commands.ts).
 //   - session/set_mode is agent-driven: the agent issues a switch_mode
 //     tool call that the user approves via the permission dialog, and
 //     the server executes the set_mode call on the user's behalf.

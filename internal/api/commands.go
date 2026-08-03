@@ -24,6 +24,7 @@ const (
 	CmdElicitationResponse      CommandType = "elicitation_response"
 	CmdUserInputResponse        CommandType = "user_input_response"
 	CmdRewindChat               CommandType = "rewind_chat"
+	CmdCompact                  CommandType = "compact"
 	CmdSetEffort                CommandType = "set_effort"
 	CmdSetMode                  CommandType = "set_mode"
 	CmdCreateHook               CommandType = "create_hook"
