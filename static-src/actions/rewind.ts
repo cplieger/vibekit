@@ -50,15 +50,7 @@ export const promoteRewindChat = transportAction<RewindArgs>({
   error: "Failed to promote rewind chat",
 });
 
-export const discardRewindChat = transportAction<RewindArgs>({
-  name: "rewind.discard",
-  networkMode: "always",
-  scope: (args) => "rewind:" + args.chatID,
-  idempotencyKey: true,
-  command: ({ chatID }) => ({
-    type: "discard_rewind_chat",
-    chat_id: chatID,
-    request_id: `discard-${Date.now()}`,
-  }),
-  error: "Failed to discard rewind chat",
-});
+// discardRewindChat is GONE: its only caller was tabs.ts's rewind-child prompt,
+// and under the sub-tab cascade there is no question to ask, so no dispatch to
+// make. The server-side command follows in task T3 with the rest of the branch
+// apparatus.

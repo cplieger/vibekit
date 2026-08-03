@@ -1,10 +1,28 @@
-.tab.tab-rewind-child {
+/* Sub-tab: a generic indent, driven by TabSpec.parentId rather than by any one
+   feature's data. The seven lines are the original rewind-child skin unchanged
+   apart from the name — the visual was right, only its key was wrong. */
+.tab.tab-child {
   margin-inline-start: 1rem;
 }
 
-.tab.tab-rewind-child .tab-name::before {
+.tab.tab-child .tab-name::before {
   content: "↳ ";
   color: var(--c-text-tertiary);
+}
+
+/* On the active tab the row is an accent fill, and --c-text-tertiary against it
+   is too quiet to read as structure. Inherit the row's own colour there. */
+.tab.tab-child.active .tab-name::before {
+  color: inherit;
+  opacity: 0.7;
+}
+
+/* Collapsed for the duration of a drag: children fold up into their parent so
+   the strip being reordered is top-level rows only, then redeploy on drop. A
+   child left in place would sit between two parents and make the drop indicator
+   point at a position that cannot be dropped into. */
+.tab.tab-child[data-drag-collapsed] {
+  display: none;
 }
 
 .tab-context-menu {
