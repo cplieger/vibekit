@@ -32,7 +32,7 @@
 // Read and write are deliberately NOT declared here. `fs._meta.kiro.readFile` /
 // `writeFile` would move them off the `fs/read_text_file` / `fs/write_text_file`
 // rung vibekit implements — the rung that carries the supervised staging path —
-// onto this one, which has no staging. See `vibekit-supervised.md`.
+// onto this one, which has no staging. See `vibekit-acp.md`.
 
 package hub
 

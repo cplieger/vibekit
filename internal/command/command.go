@@ -16,8 +16,13 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// maxCommandBody caps the whole POST /api/command envelope.
-const maxCommandBody = 5 * 1024 * 1024
+// maxCommandBody caps the whole POST /api/command envelope. It is the generic
+// api.MaxJSONBody: the largest payload this endpoint carries is a prompt's text
+// at maxPromptBytes (512 KiB) plus path-only attachment metadata, so 1 MiB is
+// ~2x headroom. It was 5 MiB to fit a 4 MiB user-merged partial-write payload,
+// and that command is gone — KAS decides per action, so there is no merged text
+// to post.
+const maxCommandBody = api.MaxJSONBody
 
 // Handler is the signature for a command handler function.
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)

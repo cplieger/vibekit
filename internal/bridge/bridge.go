@@ -228,7 +228,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// It is required for the gate's statusChanged/propertiesChanged notifications
 	// to ever surface (translate/safety.go); on an enterprise account with the
 	// flag on, enforce mode can block infra-as-code writes remotely. Distinct
-	// from vibekit's own Supervised write-gate (vibekit-supervised.md).
+	// from supervised mode, which is KAS's autopilot gate (vibekit-acp.md).
 	// _meta.kiro.settings.codeIntelligence opts every session into KAS's
 	// native code tool (tree-sitter symbol navigation always; LSP-backed
 	// rename/references/diagnostics once the workspace is initialized —

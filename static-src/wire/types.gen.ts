@@ -848,7 +848,7 @@ export interface SafetyProperty {
  * only emits this) when the client declares the infrastructureSafety capability
  * AND an AWS governance flag (infraSafetyMonitor/infraSafetyEnforce) is on — off
  * by default on individual/Builder-ID accounts, so this normally never fires.
- * Distinct from vibekit's own Supervised write-gate (see vibekit-supervised.md).
+ * Distinct from supervised mode, which is KAS's autopilot gate (vibekit-acp.md).
  */
 export interface SafetyStatusPayload {
   status: SafetyStatus;
