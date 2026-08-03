@@ -69,6 +69,34 @@ export function openFileDiff(
   });
 }
 
+/** Open a file's diff against a git ref, FETCHING both sides.
+ *
+ *  The counterpart to openFileDiff, which demands both contents up front. Here
+ *  the caller has only a path — which is the shape every "this changed, let me
+ *  look" affordance has: a turn's ledger row, a changed filename in a tool
+ *  card. `fromGit: true` is what routes `open` into fetchGitDiffSources, so the
+ *  pane fills itself and reports its own load failure.
+ *
+ *  An earlier openFileGitDiff died with the per-file-undo row it was attached
+ *  to. This one exists for the opposite reason: a changed filename IS the link
+ *  to its own diff now, so the openers a filename needs are load-bearing
+ *  rather than incidental. */
+export function openFileGitDiff(path: string, ref = "HEAD"): void {
+  open(path, {
+    mode: {
+      kind: "diff",
+      diffSource: {
+        oldContent: "",
+        newContent: "",
+        oldLabel: ref,
+        newLabel: "working tree",
+        fromGit: true,
+      },
+    },
+    ref,
+  });
+}
+
 export function openPendingDiff(chatID: string, toolCallID: string): void {
   if (chatID === "" || toolCallID === "") {
     return;

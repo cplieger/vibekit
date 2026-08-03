@@ -575,6 +575,8 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     credits: led.credits,
     elapsedMs: led.elapsedMs,
     changedFiles: led.changedFiles,
+    commands: led.commands,
+    reads: led.reads,
     outcome: t.outcome,
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");

@@ -144,7 +144,6 @@ describe("turnLedger", () => {
     const led = turnLedger(t!);
     expect(led.credits).toBeCloseTo(0.75);
     expect(led.elapsedMs).toBe(1500);
-    expect(led.contributors).toBe(2);
   });
 
   // changed_files is a cumulative per-turn SNAPSHOT stamped at turn_ended, not
@@ -169,20 +168,41 @@ describe("turnLedger", () => {
     expect(led.changedFiles["a.ts"]).toEqual({ lines_added: 5, lines_removed: 2 });
   });
 
-  it("reports no contributors for a turn that carried no ledger data", () => {
+  it("reports a zeroed ledger for a turn that carried no data", () => {
     const [t] = projectTurns([user("u1", "a"), assistant("a1")], false);
     const led = turnLedger(t!);
-    expect(led.contributors).toBe(0);
     expect(led.credits).toBe(0);
+    expect(led.elapsedMs).toBe(0);
+    expect(led.commands).toBe(0);
+    expect(led.reads).toBe(0);
     expect(Object.keys(led.changedFiles)).toEqual([]);
   });
 
-  it("does not count a zero-valued credit or elapsed as a contribution", () => {
+  // Non-file work exists only on the tool calls; nothing else aggregates it, so
+  // a turn that read forty files and wrote none reported no work at all.
+  it("counts commands and file reads from the turn's tool calls", () => {
     const [t] = projectTurns(
-      [user("u1", "a"), assistant("a1", { turn_credits: 0, turn_elapsed_ms: 0 })],
+      [
+        user("u1", "a"),
+        assistant("a1", {
+          tool_calls: [
+            { id: "1", kind: "execute" },
+            { id: "2", kind: "shell" },
+            { id: "3", kind: "command" },
+            { id: "4", kind: "read" },
+            { id: "5", kind: "read" },
+            { id: "6", kind: "edit" },
+            { id: "7", kind: "search" },
+          ],
+        } as Partial<Message>),
+        assistant("a2", { tool_calls: [{ id: "8", kind: "read" }] } as Partial<Message>),
+      ],
       false,
     );
-    expect(turnLedger(t!).contributors).toBe(0);
+    const led = turnLedger(t!);
+    expect(led.commands).toBe(3);
+    // Counted across every message in the turn; `edit` and `search` are neither.
+    expect(led.reads).toBe(3);
   });
 });
 

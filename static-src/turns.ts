@@ -55,10 +55,17 @@ export interface TurnLedger {
   credits: number;
   elapsedMs: number;
   changedFiles: Record<string, FileChange>;
-  /** Assistant messages that carried any ledger data at all. Zero means the
-   *  footer has nothing to say. */
-  contributors: number;
+  /** Commands the turn ran, and files it read. Derived from the turn's tool
+   *  calls, which is the only place the counts exist — nothing aggregates them,
+   *  so a turn that read forty files and wrote none reported no work at all. */
+  commands: number;
+  reads: number;
 }
+
+/** Tool kinds that mean "a command ran". `execute` and `shell` are the two KAS
+ *  actually emits for a shell invocation; `command` is in the wire enum and is
+ *  counted for completeness rather than because it has been observed. */
+const COMMAND_KINDS = new Set(["execute", "shell", "command"]);
 
 /** Group a flat message list into turns.
  *
@@ -126,25 +133,29 @@ function deriveOutcome(t: Turn, isLive: boolean): TurnOutcome {
 
 /** Sum a turn's ledger across its assistant messages. */
 export function turnLedger(t: Turn): TurnLedger {
-  const led: TurnLedger = { credits: 0, elapsedMs: 0, changedFiles: {}, contributors: 0 };
+  const led: TurnLedger = {
+    credits: 0,
+    elapsedMs: 0,
+    changedFiles: {},
+    commands: 0,
+    reads: 0,
+  };
   for (const m of t.body) {
-    let carried = false;
+    for (const tc of m.tool_calls ?? []) {
+      if (COMMAND_KINDS.has(tc.kind)) {
+        led.commands++;
+      } else if (tc.kind === "read") {
+        led.reads++;
+      }
+    }
     if (m.turn_credits !== undefined && m.turn_credits > 0) {
       led.credits += m.turn_credits;
-      carried = true;
     }
     if (m.turn_elapsed_ms !== undefined && m.turn_elapsed_ms > 0) {
       led.elapsedMs += m.turn_elapsed_ms;
-      carried = true;
     }
-    if (m.changed_files !== undefined) {
-      for (const [path, fc] of Object.entries(m.changed_files)) {
-        led.changedFiles[path] = fc;
-        carried = true;
-      }
-    }
-    if (carried) {
-      led.contributors++;
+    for (const [path, fc] of Object.entries(m.changed_files ?? {})) {
+      led.changedFiles[path] = fc;
     }
   }
   return led;

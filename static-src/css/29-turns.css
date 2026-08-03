@@ -245,10 +245,11 @@
  * here from 61-mcp-tools.css, where it sat because the footer used to be a
  * per-message node rather than part of a card. */
 .turn-footer {
+  display: flex;
+  flex-direction: column;
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
   padding: var(--sp-1) var(--sp-3);
-  text-align: right;
   font-variant-numeric: tabular-nums;
   background: var(--c-user-bubble);
   border-top: 1px solid var(--c-border);
@@ -264,4 +265,163 @@
 .turn-footer[data-outcome="failed"] {
   background: color-mix(in srgb, var(--c-red) 12%, var(--c-user-bubble));
   color: var(--c-text-secondary);
+}
+
+/* The ledger's depth ladder: aggregate row, per-file rows, click into a diff.
+ *
+ * The aggregate is a disclosure BUTTON when the turn changed files and a plain
+ * readout when it did not, so nothing offers a control that would do nothing. */
+.turn-ledger-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-inline-start: auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color var(--dur-micro) var(--ease-micro);
+}
+
+.turn-ledger-summary:disabled {
+  cursor: default;
+}
+
+.turn-ledger-summary:not(:disabled):hover {
+  color: var(--c-text-primary);
+}
+
+.turn-ledger-summary:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm, 4px);
+}
+
+/* Did it work: a glyph plus a colour, never colour alone — the footer's
+ * aria-label and the summary text carry the same fact in words. A ring for a
+ * clean turn, filled for a non-clean one, so the shape differs too. */
+.turn-ledger-glyph {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--c-green);
+}
+
+.turn-footer[data-outcome="running"] .turn-ledger-glyph {
+  border-color: var(--c-accent);
+}
+
+.turn-footer[data-outcome="interrupted"] .turn-ledger-glyph {
+  border-color: var(--c-yellow);
+  background: var(--c-yellow);
+}
+
+.turn-footer[data-outcome="failed"] .turn-ledger-glyph {
+  border-color: var(--c-red);
+  background: var(--c-red);
+}
+
+/* A chevron drawn in CSS rather than shipped as an icon: it is two borders,
+ * and it rotates to point down when the list is open. */
+.turn-ledger-caret {
+  width: 0.375rem;
+  height: 0.375rem;
+  flex-shrink: 0;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-micro) var(--ease-micro);
+}
+
+.turn-ledger-summary:disabled .turn-ledger-caret {
+  visibility: hidden;
+}
+
+.turn-footer[data-files="open"] .turn-ledger-caret {
+  transform: rotate(45deg);
+}
+
+.turn-ledger-files {
+  display: none;
+  list-style: none;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  text-align: left;
+}
+
+.turn-footer[data-files="open"] .turn-ledger-files {
+  display: block;
+}
+
+.turn-ledger-file {
+  margin: 0;
+}
+
+/* Every row is a click target into that file's diff. Full-width so the hit
+ * area is the row rather than the text — a path is a small target and WCAG
+ * 2.5.8 wants 24px, which the padding below supplies. */
+.turn-file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 1.5rem;
+  padding: var(--sp-1) var(--sp-1);
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm, 4px);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro);
+}
+
+.turn-file-row:hover {
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-primary);
+}
+
+.turn-file-row:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -2px;
+}
+
+.turn-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.turn-file-badge {
+  flex-shrink: 0;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  padding: 1px var(--sp-1);
+  border-radius: var(--r-sm, 4px);
+  background: color-mix(in srgb, var(--c-green) 18%, transparent);
+  color: var(--c-green);
+}
+
+.turn-file-delta {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--sp-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-file-add {
+  color: var(--c-green);
+}
+
+.turn-file-del {
+  color: var(--c-red);
 }
