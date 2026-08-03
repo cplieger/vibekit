@@ -565,3 +565,48 @@ func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
 		tr.RecordRunSteps(json.RawMessage(raw))
 	}
 }
+
+// TestStepToolCall_SharesTheStepsBlockKey pins the other half of step
+// attribution: a step's TOOL frames carry KAS's own agentSubtaskId (or none),
+// while its TEXT is keyed by nodePath — without the same override on the tool
+// path, one step's work fragments across two delegated-work boxes.
+func TestStepToolCall_SharesTheStepsBlockKey(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	tr := New(deps, WithIDGenerator(func() string { return "m1" }))
+	ctx := context.Background()
+	buf := deps.bufStore.GetOrInit(testChat)
+
+	wf := map[string]any{"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"}}
+	text, err := json.Marshal(map[string]any{
+		"content": map[string]any{"type": "text", "text": "building"},
+		"_meta":   map[string]any{"kiro": map[string]any{"workflow": wf}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.HandleAssistantChunk(ctx, testChat, text, false)
+
+	tool, err := json.Marshal(map[string]any{
+		"toolCallId": "tc-1", "title": "write file", "kind": "edit", "status": "pending",
+		"_meta": map[string]any{"kiro": map[string]any{
+			"workflow":       wf,
+			"agentSubtaskId": "kas-own-subtask-uuid",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr.HandleToolCall(ctx, testChat, tool, "")
+
+	if len(buf.Blocks) != 2 {
+		t.Fatalf("got %d blocks, want 2 (text + tool_use): %+v", len(buf.Blocks), buf.Blocks)
+	}
+	want := "wf:wf_1/build"
+	if buf.Blocks[0].AgentSubtaskID != want || buf.Blocks[1].AgentSubtaskID != want {
+		t.Errorf("block keys = %q / %q, want both %q (one step, one box)",
+			buf.Blocks[0].AgentSubtaskID, buf.Blocks[1].AgentSubtaskID, want)
+	}
+	if buf.ToolCalls[0].AgentSubtaskID != want {
+		t.Errorf("tool call subtask = %q, want %q", buf.ToolCalls[0].AgentSubtaskID, want)
+	}
+}

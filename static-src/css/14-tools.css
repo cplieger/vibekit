@@ -394,10 +394,12 @@
   display: contents;
 }
 
-/* Subagent block — a collapsible section whose body hosts the subagent's OWN
- * blocks (real tool cards, reasoning, text) rendered by the same dispatcher,
- * giving full parity with the main transcript. Open while the subagent runs;
- * auto-collapses once it settles (the IDE baseline). */
+/* The delegated-work card — a subagent's or a workflow step's box. The body
+ * hosts the delegate's OWN blocks (real tool cards, reasoning, text) rendered
+ * by the same dispatcher, full parity with the main transcript. COLLAPSED BY
+ * DEFAULT, always: the expanded state is worth nothing when N delegates
+ * stream at once, and the result is read from the footer. A rolling tail
+ * (last 3 lines) answers "which are progressing" while running + collapsed. */
 .subagent-block {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
@@ -493,6 +495,35 @@
 .subagent-body[aria-hidden="true"] {
   padding-block: 0;
   border-block-start: none;
+}
+
+/* The tail: rolling activity, shown only while RUNNING and COLLAPSED —
+   expanding shows the real thing, and a settled card's last word is its
+   footer. Fixed max-height so a burst of long lines cannot grow the card. */
+.subagent-tail {
+  display: none;
+  padding: var(--sp-1) var(--sp-3) var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden;
+}
+
+.subagent-block.collapsed.running .subagent-tail {
+  display: block;
+}
+
+.subagent-tail-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The footer ledger is turn-footer.ts reused; only its seams differ here. It
+   sits OUTSIDE the disclosure, so a collapsed card still states its result. */
+.subagent-footer {
+  border-block-start: 1px solid var(--c-border);
+  padding-inline: var(--sp-2);
 }
 
 /* Nested blocks fill the subagent body (no avatar column, no 85% cap). */

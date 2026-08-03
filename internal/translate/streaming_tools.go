@@ -35,6 +35,14 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
+	// A workflow STEP's tool frames carry KAS's own agentSubtaskId (or none),
+	// while the step's TEXT is keyed by its nodePath — so without this override
+	// one step's work fragments across two boxes. Same rule as the chunk path:
+	// the step's workflow identity wins.
+	subtask := tc.Meta.Kiro.AgentSubtaskID
+	if wf := tc.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
+		subtask = wf
+	}
 	var diffs []api.ToolDiff
 	for _, c := range tc.Content {
 		if c.Type == ContentTypeDiff && c.Path != "" {
@@ -50,7 +58,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		Status:         tc.Status,
 		Input:          tc.RawInput,
 		SubSessionID:   subSessionID,
-		AgentSubtaskID: tc.Meta.Kiro.AgentSubtaskID,
+		AgentSubtaskID: subtask,
 		Locations:      tc.Locations,
 		Diffs:          diffs,
 		Ts:             time.Now().UnixMilli(),
@@ -64,7 +72,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	// block — back-to-back tool calls each get their own tool_use
 	// block (the next text chunk after this will also start a new
 	// block since the trailing block is now tool_use, not text).
-	blockIndex := buf.AppendToolUseBlock(call.ID, tc.Meta.Kiro.AgentSubtaskID)
+	blockIndex := buf.AppendToolUseBlock(call.ID, subtask)
 	buf.RecordToolStart(tc.ToolCallID)
 	if len(diffs) > 0 {
 		isNew := tc.Kind == api.ToolKindEdit && tc.Status == api.ToolPending
@@ -156,8 +164,13 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 	if tc.SubSessionID == "" && subSessionID != "" {
 		tc.SubSessionID = subSessionID
 	}
-	if tc.AgentSubtaskID == "" && tu.Meta.Kiro.AgentSubtaskID != "" {
-		tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
+	if tc.AgentSubtaskID == "" {
+		// Late adoption mirrors the create path, workflow identity first.
+		if wf := tu.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
+			tc.AgentSubtaskID = wf
+		} else if tu.Meta.Kiro.AgentSubtaskID != "" {
+			tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
+		}
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
 }
