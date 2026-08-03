@@ -1,5 +1,12 @@
 // ---------------------------------------------------------------------------
-// SSE handlers for turn lifecycle + permission dialog + errors.
+// SSE handlers for turn lifecycle + the three decision types + errors.
+//
+// A decision is ENQUEUED, not shown: decision-dock.ts owns a per-chat queue
+// and renders the active chat's head. That is why these handlers no longer gate
+// on getActiveId() — a permission raised on a background chat used to be
+// dropped here and only came back if the SSE connection happened to reconnect,
+// which left the agent waiting on an answer the user was never offered. The
+// notification still fires either way; the tab dot is what points at it.
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
@@ -19,9 +26,7 @@ import {
   isPermissionNeededEnabled,
   NOTIFY_TITLE,
 } from "../notify.js";
-import { showPermissionDialog } from "../permission.js";
-import { showElicitationDialog } from "../elicitation.js";
-import { showUserInputDialog } from "../user-input.js";
+import { pushDecision } from "../decision-dock.js";
 import { drainNext } from "../prompt-queue.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
@@ -140,42 +145,44 @@ onSSE("turn_ended", (chatID, p) => {
 
 onSSE("permission_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
-    notifyAndBadge(NOTIFY_TITLE, `Permission needed: ${p.title ?? "Tool"}`);
+    notifyAndBadge(
+      NOTIFY_TITLE,
+      p.files !== undefined && p.files.length > 0
+        ? "Review this turn's changes"
+        : "Permission needed",
+    );
   }
-  if (chatID !== getActiveId()) {
-    return;
-  }
-
-  const toolCallInput = lookupToolInput(chatID, p.tool_call_id ?? "");
-  showPermissionDialog(
-    p.title ?? "Tool",
-    p.tool_call_id ?? "",
-    p.kind ?? "",
-    toolCallInput,
-    p.options,
-    (optionID: string) => {
-      void respondPermission.dispatch({
-        chatID,
-        requestID: p.request_id,
-        optionID,
-      });
+  pushDecision({
+    kind: "permission",
+    chatID,
+    requestID: p.request_id,
+    payload: p,
+    submit: (optionID, fileDecisions) => {
+      void respondPermission.dispatch(
+        fileDecisions !== undefined
+          ? { chatID, requestID: p.request_id, optionID, fileDecisions }
+          : { chatID, requestID: p.request_id, optionID },
+      );
     },
-  );
+  });
 });
 
 onSSE("elicitation_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
     notifyAndBadge(NOTIFY_TITLE, "Input requested by a tool");
   }
-  if (chatID !== getActiveId()) {
-    return;
-  }
-  showElicitationDialog(p, (action, content) => {
-    void respondElicitation.dispatch(
-      content !== undefined
-        ? { chatID, requestID: p.request_id, action, content }
-        : { chatID, requestID: p.request_id, action },
-    );
+  pushDecision({
+    kind: "elicitation",
+    chatID,
+    requestID: p.request_id,
+    payload: p,
+    submit: (action, content) => {
+      void respondElicitation.dispatch(
+        content !== undefined
+          ? { chatID, requestID: p.request_id, action, content }
+          : { chatID, requestID: p.request_id, action },
+      );
+    },
   });
 });
 
@@ -183,39 +190,20 @@ onSSE("user_input_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
     notifyAndBadge(NOTIFY_TITLE, "The agent has a question");
   }
-  if (chatID !== getActiveId()) {
-    return;
-  }
-  showUserInputDialog(p, (action, answer) => {
-    void respondUserInput.dispatch(
-      action === "answered" && answer !== undefined
-        ? { chatID, requestID: p.request_id, action, answer }
-        : { chatID, requestID: p.request_id, action },
-    );
+  pushDecision({
+    kind: "user_input",
+    chatID,
+    requestID: p.request_id,
+    payload: p,
+    submit: (action, answer) => {
+      void respondUserInput.dispatch(
+        action === "answered" && answer !== undefined
+          ? { chatID, requestID: p.request_id, action, answer }
+          : { chatID, requestID: p.request_id, action },
+      );
+    },
   });
 });
-
-function lookupToolInput(chatID: string, toolCallID: string): unknown {
-  if (toolCallID === "") {
-    return undefined;
-  }
-  const s = get(chatID);
-  if (s === undefined) {
-    return undefined;
-  }
-  for (let i = s.messages.length - 1; i >= 0; i--) {
-    const m = s.messages[i];
-    if (m?.tool_calls === undefined) {
-      continue;
-    }
-    for (const tc of m.tool_calls) {
-      if (tc.id === toolCallID) {
-        return tc.input;
-      }
-    }
-  }
-  return undefined;
-}
 
 // --- Data-driven error classification (imported from error-routing.ts) ---
 

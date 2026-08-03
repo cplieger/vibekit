@@ -77,6 +77,7 @@ import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
 import { initPromptInput } from "./prompt-input.js";
 import { initQueuedPrompts } from "./queued-prompts.js";
+import { mountDecisionDock } from "./decision-dock.js";
 import { initRuntimeHealth } from "./runtime-health.js";
 // commands-menu stripped — slash commands replaced by dedicated UI buttons
 import { refreshContextUI } from "./context-ui.js";
@@ -673,6 +674,10 @@ function setupInput(): void {
   initRolePicker();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initQueuedPrompts();
+  // The interaction dock: permission asks, elicitation forms and agent
+  // questions. Hosted by the chat's bottom bar; it takes its host as an
+  // argument so a future run tab's bottom bar can host one too.
+  mountDecisionDock($.decisionDock);
 
   // Expandable pills: context and status dot.
   const ctxExpand = $.contextIndicator.querySelector<HTMLElement>(".pill-expand-content");

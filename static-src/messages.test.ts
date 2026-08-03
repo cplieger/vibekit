@@ -29,10 +29,7 @@ vi.mock("./store.js", () => ({
 }));
 vi.mock("./linkify.js", () => ({ linkifyPaths: vi.fn() }));
 vi.mock("./code-blocks.js", () => ({ setShellRunCallback: vi.fn() }));
-vi.mock("./permission.js", () => ({
-  showPermissionDialog: vi.fn(),
-  hidePermission: vi.fn(),
-}));
+vi.mock("./permission.js", () => ({ buildPermissionCard: vi.fn() }));
 
 const { EVENT_RENDER_MAP } = await import("./messages-events.js");
 

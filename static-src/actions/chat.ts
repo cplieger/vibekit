@@ -397,16 +397,24 @@ export const respondPermission = transportAction<{
   chatID: string;
   requestID: number;
   optionID: string;
+  /** A TURN APPROVAL's per-action verdicts: KAS's action id → keep. Absent on
+   *  an ordinary tool permission. Every action the request offered must appear
+   *  — KAS restores whatever is not in the accepted set, so an omitted id is a
+   *  silent rollback rather than "no opinion". */
+  fileDecisions?: Record<string, boolean>;
 }>({
   name: "chat.respond_permission",
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  command: ({ chatID, requestID, optionID }) => ({
+  command: ({ chatID, requestID, optionID, fileDecisions }) => ({
     type: "permission_response",
     chat_id: chatID,
-    payload: { request_id: requestID, option_id: optionID },
+    payload:
+      fileDecisions !== undefined
+        ? { request_id: requestID, option_id: optionID, file_decisions: fileDecisions }
+        : { request_id: requestID, option_id: optionID },
   }),
   error: "Couldn't send permission response",
 });

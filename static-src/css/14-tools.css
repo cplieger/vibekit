@@ -1059,35 +1059,10 @@
   color: var(--c-text-primary);
 }
 
-[id="tool-approval"] {
-  margin: 0 var(--sp-4) var(--sp-2);
-  padding: var(--sp-3);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-yellow);
-  border-radius: var(--r);
-  flex-shrink: 0;
-  opacity: 1;
-  transform: scale(1);
-  transition:
-    opacity var(--dur-enter) var(--ease-enter),
-    transform var(--dur-enter) var(--ease-enter),
-    display var(--dur-enter) allow-discrete;
-
-  @starting-style {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-}
-
-[id="tool-approval"].hidden {
-  opacity: 0;
-  transform: scale(0.95);
-  display: none;
-  transition:
-    opacity var(--dur-exit) var(--ease-exit),
-    transform var(--dur-exit) var(--ease-exit),
-    display var(--dur-exit) allow-discrete;
-}
+/* No [id="tool-approval"] rules: the permission ask is a .dock-card in the
+   interaction dock (26-dock.css), not a positioned <dialog> with a backdrop.
+   The body/id/input/actions rules below are still used — they style the card's
+   CONTENTS, which the dock hosts unchanged. */
 
 .approval-body strong {
   color: var(--c-yellow);
@@ -1241,22 +1216,9 @@
   margin-block: var(--sp-2) var(--sp-1);
 }
 
-/* MCP elicitation dialog: a form requested by an MCP server mid-tool-run.
-   Styled as a centered modal (native <dialog> showModal) rather than the
-   inline tool-approval banner, since it can carry several input fields. */
-[id="elicitation-dialog"] {
-  margin: auto;
-  max-inline-size: min(32rem, 92vw);
-  padding: var(--sp-4);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-accent);
-  border-radius: var(--r);
-  color: var(--c-text-primary);
-}
-
-[id="elicitation-dialog"]::backdrop {
-  background: rgb(0 0 0 / 45%);
-}
+/* MCP elicitation form: requested by an MCP server mid-tool-run. No
+   [id="elicitation-dialog"] shell and no ::backdrop — it is a .dock-card in the
+   interaction dock (26-dock.css). Only its FIELD styling lives here. */
 
 .elicitation-body {
   display: flex;
@@ -1356,24 +1318,12 @@
   color: var(--warning, #d9a03f);
 }
 
-/* Agent user-input question dialog (kiro-cli v3 _kiro/userInput): the agent
-   asks a structured question mid-turn (plan clarifications, spec gates).
-   Same centered-modal treatment as the elicitation dialog; the options are
-   full-width choice cards, an option's sub-options render as a pre-checked
-   multi-select stage, and a typed answer is always available. */
-[id="user-input-dialog"] {
-  margin: auto;
-  inline-size: min(32rem, 92vw);
-  padding: var(--sp-4);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-accent);
-  border-radius: var(--r);
-  color: var(--c-text-primary);
-}
-
-[id="user-input-dialog"]::backdrop {
-  background: rgb(0 0 0 / 45%);
-}
+/* Agent question (kiro-cli v3 _kiro/userInput): asked mid-turn for plan
+   clarifications and spec gates. A .dock-card in the interaction dock
+   (26-dock.css), so there is no [id="user-input-dialog"] shell and no
+   ::backdrop. Options are full-width choice cards, an option's sub-options
+   render as a pre-checked multi-select stage, and a typed answer is always
+   available — that part is styled here. */
 
 .user-input-body {
   margin-block-end: var(--sp-3);

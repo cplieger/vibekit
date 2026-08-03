@@ -80,6 +80,20 @@ export interface AccountUsageBreakdown {
   has_limit?: boolean;
 }
 
+/** ApprovalFile is one file a turn wants to write, as offered for review. */
+export interface ApprovalFile {
+  /** Path is workspace-relative (KAS sends it absolute; translate normalizes). */
+  path: string;
+  /** SnapshotURI addresses the pre-image, so a diff is a snapshot read. */
+  snapshot_uri?: string;
+  /**
+ * ActionID is KAS's pending-action id and THE KEY the decision map must use.
+ * KAS applies the accepted ids and restores the rest, so an id omitted from
+ * the response counts as a REJECT rather than as unspecified.
+ */
+  action_id: string;
+}
+
 /**
  * Block is one entry in an assistant message's chronological content
  * array. Position in Message.Blocks IS the order in which the agent
@@ -661,7 +675,7 @@ export interface PermissionNeededPayload {
  * rather than a second event: the only difference is that it carries files and
  * expects per-file decisions back.
  */
-  files?: unknown[];
+  files?: ApprovalFile[];
   request_id: number;
 }
 

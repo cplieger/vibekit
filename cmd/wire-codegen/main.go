@@ -44,6 +44,7 @@ func main() {
 		wiregen.TypeRef[api.SessionModel](),
 		wiregen.TypeRef[api.ChatHeader](),
 		wiregen.TypeRef[api.PermissionOption](),
+		wiregen.TypeRef[api.ApprovalFile](),
 		wiregen.TypeRef[api.FileChange](),
 		wiregen.TypeRef[api.ConnectedPayload](),
 		wiregen.TypeRef[api.MessageChunkPayload](),

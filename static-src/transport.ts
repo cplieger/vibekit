@@ -73,7 +73,13 @@ export type TypedCommand =
   | {
       type: "permission_response";
       chat_id: string;
-      payload: { request_id: number; option_id: string };
+      // file_decisions answers a TURN APPROVAL on the ordinary permission
+      // reply: action id → keep. Omitting an id it offered is a rollback.
+      payload: {
+        request_id: number;
+        option_id: string;
+        file_decisions?: Record<string, boolean>;
+      };
     }
   | {
       type: "elicitation_response";

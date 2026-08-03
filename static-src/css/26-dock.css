@@ -1,0 +1,174 @@
+/* ==========================================================================
+   The interaction dock — where the agent asks the user something.
+
+   A region of the BOTTOM BAR, above the message box: a permission ask, an MCP
+   elicitation form and an agent question all land here. It replaced three
+   centered <dialog> modals, so the vocabulary shift is deliberate — no
+   backdrop, no dimming, no centering. The transcript stays readable because
+   answering usually requires reading it.
+
+   The bar GROWS to expose the dock rather than the dock floating over it: the
+   dock is inside .bottom-bar, so its height pushes the bar up and the
+   transcript's flex row shrinks by exactly that much. Nothing is covered.
+   ========================================================================== */
+
+.decision-dock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-width: var(--content-max-w);
+  margin: 0 auto var(--sp-2);
+  width: 100%;
+
+  /* Grow-in. interpolate-size + calc-size let height animate from the
+     content's own measurement, so no magic max-height has to be guessed and
+     then be wrong for a 12-field form. Browsers without it get the opacity and
+     translate halves, which is the part that reads as motion. */
+  interpolate-size: allow-keywords;
+  overflow: clip;
+  height: auto;
+  opacity: 1;
+  translate: 0 0;
+  transition:
+    height var(--dur-enter) var(--ease-enter),
+    opacity var(--dur-enter) var(--ease-enter),
+    translate var(--dur-enter) var(--ease-enter),
+    margin-block-end var(--dur-enter) var(--ease-enter);
+
+  @starting-style {
+    height: 0;
+    opacity: 0;
+    translate: 0 var(--sp-3);
+  }
+}
+
+/* .hidden is the utility layer's `display: none`, which cannot animate out.
+   The dock overrides it to collapse instead, so dismissing a decision reads as
+   the bar shrinking rather than as a jump. */
+.decision-dock.hidden {
+  display: flex;
+  height: 0;
+  margin-block-end: 0;
+  opacity: 0;
+  translate: 0 var(--sp-2);
+  transition:
+    height var(--dur-exit) var(--ease-exit),
+    opacity var(--dur-exit) var(--ease-exit),
+    translate var(--dur-exit) var(--ease-exit),
+    margin-block-end var(--dur-exit) var(--ease-exit);
+}
+
+/* One card shape for all three decision types. They differ in accent colour
+   only: the user is answering the same KIND of thing each time, and three
+   layouts would be three things to learn. */
+.dock-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-accent);
+  border-radius: var(--r);
+  color: var(--c-text-primary);
+}
+
+/* A tool permission is a yellow "your turn" ask; an approval and a question
+   are accent. Yellow is reserved for the one that blocks the agent on a
+   decision it cannot make itself. */
+.dock-permission,
+.dock-approval {
+  border-color: var(--c-yellow);
+}
+
+.dock-permission .approval-body strong,
+.dock-approval .approval-body strong {
+  color: var(--c-yellow);
+}
+
+.dock-depth {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  text-align: end;
+}
+
+/* --- Turn approval: the per-action file list --- */
+
+.dock-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  /* Enough for a handful of files at full height; a large turn scrolls rather
+     than pushing the message box off the screen. */
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.dock-file-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  transition:
+    opacity var(--dur-micro) var(--ease-micro),
+    background var(--dur-micro) var(--ease-micro);
+}
+
+/* Unchecked = will be rolled back. Struck through and dimmed, because the file
+   is already written: this row describes an undo, not a skipped write. */
+.dock-file-rejected {
+  opacity: 0.55;
+}
+
+.dock-file-rejected .dock-file-path {
+  text-decoration: line-through;
+  text-decoration-color: var(--c-red);
+}
+
+.dock-file-check {
+  inline-size: 1rem;
+  block-size: 1rem;
+  accent-color: var(--c-accent);
+}
+
+.dock-file-paths {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dock-file-path {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A multi-path group shares one action id, so it is one decision. The note
+   says so rather than letting the row read as a list the user can split. */
+.dock-file-atomic {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.approval-hint {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+/* Mobile: the dock competes with the keyboard for vertical space, so the file
+   list gives up height first. */
+@media (width <= 40rem) {
+  .dock-file-list {
+    max-height: 8rem;
+  }
+}

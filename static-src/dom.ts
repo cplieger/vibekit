@@ -114,14 +114,10 @@ class Elements {
   get roleList(): HTMLDivElement {
     return byId("role-list");
   }
-  get toolApproval(): HTMLDialogElement {
-    return byId("tool-approval");
-  }
-  get elicitationDialog(): HTMLDialogElement {
-    return byId("elicitation-dialog");
-  }
-  get userInputDialog(): HTMLDialogElement {
-    return byId("user-input-dialog");
+  /** The interaction dock's host. One region replaced the three decision
+   *  <dialog>s (tool-approval, elicitation-dialog, user-input-dialog). */
+  get decisionDock(): HTMLDivElement {
+    return byId("decision-dock");
   }
   get contextIndicator(): HTMLButtonElement {
     return byId("context-indicator");

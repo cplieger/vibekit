@@ -28,6 +28,7 @@ export type {
   // Domain shapes
   AccountUsage,
   AccountUsageBreakdown,
+  ApprovalFile,
   ChatHeader,
   FileChange,
   Message,

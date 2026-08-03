@@ -132,23 +132,11 @@
             <span>Latest</span>
           </button>
         </div>
-        <dialog id="tool-approval">
-          <div class="approval-body"></div>
-          <div class="approval-actions"></div>
-        </dialog>
-        <dialog id="elicitation-dialog">
-          <form class="elicitation-form" method="dialog">
-            <div class="elicitation-body"></div>
-            <div class="elicitation-fields"></div>
-            <div class="elicitation-actions"></div>
-          </form>
-        </dialog>
-        <dialog id="user-input-dialog">
-          <div class="user-input-body"></div>
-          <div class="user-input-options"></div>
-          <div class="user-input-freeform"></div>
-          <div class="user-input-actions"></div>
-        </dialog>
+        <!-- The three decision dialogs used to live here as centered <dialog>
+             modals with a backdrop. They are one dock region now, inside the
+             bottom bar below (#decision-dock): a permission ask, an MCP
+             elicitation form and an agent question all render there, above the
+             message box and never inside it. decision-dock.ts owns the queue. -->
         <!-- action="javascript:void 0" is the native-submission backstop: if a
              dynamically-added button ever lands in this form without
              type="button", or the submit handler throws before preventDefault,
@@ -158,6 +146,12 @@
              the failure mode becomes "nothing happens + console violation"
              instead of a page reload. -->
         <form id="prompt-form" class="bottom-bar" action="javascript:void 0">
+          <!-- The interaction dock. A sibling of .prompt-box, not a child: it
+               shares the bar's background but is not part of the text input,
+               and the bar grows upward to expose it. A bottom-bar region rather
+               than a composer feature because a workflow-run tab has no
+               composer and still has to be able to ask. -->
+          <div id="decision-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
           <div class="prompt-box">
             <textarea id="prompt-input" placeholder="Message Kiro..." rows="1" aria-label="Message" autofocus></textarea>
             <ul id="attachment-row" class="attachment-row hidden" aria-label="Attachments"></ul>
