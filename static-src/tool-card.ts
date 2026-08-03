@@ -17,7 +17,7 @@ import { iconEl } from "./icon-el.js";
 import { openFile, openFileDiff } from "./editor-openers.js";
 import { lineDiff, truncateChanged, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
-import { setUserScrolledUp } from "./scroll.js";
+import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import {
   renderInfoFor,
@@ -322,5 +322,11 @@ export function insertDiffPreview(
     wrap.appendChild(more);
   }
 
-  node.insertBefore(wrap, node.querySelector(".tool-details"));
+  // The third §3.4 case: a card GROWS when its diff preview lands on the update
+  // path, which pushes everything below it — including the reader's position —
+  // down. Content-growth class, same helper. Immediate, like reasoning's seal
+  // and unlike tool-group's animated collapse.
+  preserveReadingPosition(() => {
+    node.insertBefore(wrap, node.querySelector(".tool-details"));
+  }, "content-growth");
 }

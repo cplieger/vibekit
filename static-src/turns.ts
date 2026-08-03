@@ -161,6 +161,53 @@ export function turnLedger(t: Turn): TurnLedger {
   return led;
 }
 
+/** What a FOLDED turn shows on its right, in priority order.
+ *
+ *  The row has to earn the fold, so it shows the most concrete thing the turn
+ *  actually produced:
+ *
+ *    1. Changed filenames. If a turn touched files, that is what it was about.
+ *    2. Otherwise the first sentence of the reply — cheap, honest, and for a
+ *       conversational turn it IS the answer.
+ *    3. Otherwise nothing, and the footer's own cost/time line carries the row.
+ *       A turn that produced no files and no prose is a turn whose only fact is
+ *       that it happened.
+ *
+ *  NO generated summaries, and that was decided on evidence rather than cost:
+ *  the ONNX runtime bundled in kiro-cli is `all-MiniLM-L6-v2`, an EMBEDDING
+ *  model, and `generateSummary` / `generateTitle` / `localModel` return zero hits
+ *  across the whole installed surface. There is no local generative model to
+ *  call. A remote call per turn would spend money and latency on a sentence the
+ *  transcript already contains.
+ */
+export function turnFoldSummary(t: Turn): string {
+  const led = turnLedger(t);
+  const paths = Object.keys(led.changedFiles);
+  if (paths.length > 0) {
+    const names = paths.map((p) => p.split("/").pop() ?? p).sort((a, b) => a.localeCompare(b));
+    const shown = names.slice(0, 2).join(", ");
+    return names.length > 2 ? `${shown} +${String(names.length - 2)} more` : shown;
+  }
+  return firstSentence(t);
+}
+
+/** The reply's first sentence, truncated. Reads the turn's text content, not its
+ *  tool output — the answer is prose, and a tool's stdout is not a summary. */
+function firstSentence(t: Turn, max = 80): string {
+  for (const m of t.body) {
+    const text = (m.content ?? "").trim();
+    if (text === "") {
+      continue;
+    }
+    const flat = text.replace(/\s+/g, " ");
+    // A sentence end, or the whole thing if it has none.
+    const stop = /[.!?](\s|$)/.exec(flat);
+    const sentence = stop === null ? flat : flat.slice(0, stop.index + 1);
+    return sentence.length > max ? sentence.slice(0, max) + "\u2026" : sentence;
+  }
+  return "";
+}
+
 /** The stable DOM id a turn permalink targets, so `/chat/{id}#turn-{n}` can
  *  address a precise point from a ledger row, a run's launch record or a search
  *  hit. Lives here rather than in the renderer because the anchor is a property

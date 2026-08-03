@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { preserveReadingPosition } from "../scroll.js";
 
 /** A mounted reasoning block plus its imperative update handle. */
 export interface ReasoningView {
@@ -68,7 +69,14 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
       sealed = true;
       summary.textContent = "Thinking completed";
       root.classList.remove("streaming");
-      root.open = false;
+      // An IMMEDIATE geometry change — a bare `open = false` on a native
+      // <details>, no animation — which still removes height above the reader.
+      // Compensated for the same reason as tool-group's animated collapse, by
+      // the same helper; the two behave differently enough to be worth testing
+      // separately, which is why §3.4 names them apart.
+      preserveReadingPosition(() => {
+        root.open = false;
+      }, "content-growth");
     },
   };
 }

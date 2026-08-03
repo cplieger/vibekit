@@ -9,7 +9,6 @@
 import type { PermissionOption } from "./types.js";
 import { el } from "@cplieger/reactive";
 import { openDialog } from "@cplieger/ui-primitives/dialog";
-import { scroll } from "./scroll.js";
 import { $ } from "./dom.js";
 import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
 import { editNativeRule } from "./actions/permissions.js";
@@ -95,7 +94,6 @@ export function showPermissionDialog(
   }
 
   openDialog(approvalEl);
-  scroll();
 }
 
 /** Turn a tool input (usually an object, sometimes raw JSON string or

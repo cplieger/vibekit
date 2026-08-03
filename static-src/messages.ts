@@ -27,7 +27,19 @@ import { clearStreamingSig, clearReasoningSig, clearAllBlockSigs } from "./store
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { getScrollEl, scrollToBottom, resetScrollState, setLoadMore } from "./scroll.js";
+import {
+  getScrollEl,
+  scrollToBottom,
+  resetScrollState,
+  setLoadMore,
+  deferWhileReading,
+  preserveReadingPosition,
+  fillViewport,
+  onReadingStateChange,
+  setAnchorProvider,
+  setResumeLabel,
+  readingState,
+} from "./scroll.js";
 import {
   buildTurnHeader,
   updateTurnHeader,
@@ -39,7 +51,9 @@ import {
   hasTurnSummary,
   type TurnSummaryData,
 } from "./fundamentals/turn-footer.js";
-import { projectTurns, turnLedger, turnAnchorID, type Turn } from "./turns.js";
+import { projectTurns, turnLedger, turnAnchorID, turnFoldSummary, type Turn } from "./turns.js";
+import { isTurnOpen, setTurnOpen } from "./fold-state.js";
+import { searchHitCount } from "./chat-search.js";
 import { mountTurnRail, observeTurns, resetTurnRail, loadTurnRail } from "./turn-rail.js";
 import {
   buildAssistantBody,
@@ -184,6 +198,7 @@ export function mountChatView(): void {
   }
   mounted = true;
   initMessageActions();
+  initFollowModel();
   // The rail lives in the transcript's positioned outer wrapper rather than in
   // the scroller, so it stays put instead of scrolling away with the content.
   mountTurnRail($.messagesWrapOuter);
@@ -192,6 +207,61 @@ export function mountChatView(): void {
     void activeSession.value;
     paint();
   });
+}
+
+// ---------------------------------------------------------------------------
+// The follow model's two client-side obligations (§3.4).
+// ---------------------------------------------------------------------------
+
+/** Total blocks across a session, which is what the resume chip counts.
+ *
+ *  Blocks, not messages: a single streaming turn can produce dozens of blocks,
+ *  and a chip reading "1 new message" for four minutes of work is a static badge
+ *  rather than a progress read-out. */
+function blockCount(msgs: readonly Message[]): number {
+  let n = 0;
+  for (const m of msgs) {
+    n += m.blocks?.length ?? 0;
+  }
+  return n;
+}
+
+/** Blocks present when the reader last entered Reading. */
+let followBaseline = 0;
+
+function initFollowModel(): void {
+  // Following pins to the ACTIVE TEXT BLOCK rather than the document bottom.
+  // Without this, the agent streams a sentence, a 400-line diff card renders
+  // below it, and pinning to scrollHeight scrolls the sentence being read off
+  // the top — an edge case before evidence went full width, and the common case
+  // after. Tall evidence stays below the fold until the reader goes to it.
+  setAnchorProvider(() => {
+    const streaming = messagesEl.querySelector<HTMLElement>(".message.assistant.streaming");
+    return streaming;
+  });
+  onReadingStateChange((next) => {
+    if (next === "reading") {
+      followBaseline = blockCount(getActive()?.messages ?? []);
+    }
+    refreshResumeLabel();
+  });
+}
+
+/** The resume control is the only element on screen that knows the reader is
+ *  behind, so it is the only one that can say how far. */
+function refreshResumeLabel(): void {
+  if (readingState() === "following") {
+    return;
+  }
+  const session = getActive();
+  const behind = blockCount(session?.messages ?? []) - followBaseline;
+  if (behind > 0) {
+    setResumeLabel(`${String(behind)} new block${behind === 1 ? "" : "s"}`);
+    return;
+  }
+  // Nothing new since they parked: say what the turn is doing instead of
+  // claiming a count of zero.
+  setResumeLabel(session?.thinking === true ? session.working_label || "Working" : "Latest");
 }
 
 function paint(): void {
@@ -241,11 +311,14 @@ function paint(): void {
       }
     }
   }
-  reconcile(messagesEl, projectTurns(session.messages, session.thinking), turnSpec);
+  const turns = projectTurns(session.messages, session.thinking);
+  reconcile(messagesEl, turns, turnSpec);
   // Tell the rail which cards exist so it can track the turn in view. Re-run per
   // paint because the set changes as pages load and turns arrive.
   observeTurns(messagesEl.querySelectorAll<HTMLElement>(":scope > .turn"));
+  applyFoldPass(session.id, turns);
   finalizeStreamingIfNeeded(session.messages);
+  refreshResumeLabel();
   lastNewestId = session.messages[session.messages.length - 1]?.id;
   lastActiveId = session.id;
 }
@@ -503,6 +576,104 @@ function updateMessage(el: HTMLElement, m: Message): void {
   // user messages are immutable once mounted.
 }
 
+/**
+ * Fold every turn that should be folded, and unfold every turn that should not.
+ *
+ * DEFERRED WHILE READING and COMPENSATED WHEN APPLIED, both mandatory. A fold
+ * removes hundreds of pixels rather than tens, so content vanishing from above
+ * the reader through no action of their own is the failure mode this guards —
+ * which is why §3.4 makes the helper an obligation rather than a nicety.
+ *
+ * Runs on every paint because eligibility changes with every new turn: the turn
+ * that was second-newest becomes third-newest and folds.
+ */
+function applyFoldPass(chatID: string, turns: readonly Turn[]): void {
+  const wanted = new Map<string, boolean>();
+  const hits = new Map<string, number>();
+  for (const [i, t] of turns.entries()) {
+    wanted.set(t.id, isTurnOpen(chatID, t, i, turns.length));
+    hits.set(t.id, searchHitCount(t.n));
+  }
+  const changes: (() => void)[] = [];
+  for (const card of messagesEl.querySelectorAll<HTMLElement>(":scope > .turn")) {
+    const id = card.getAttribute(KEY_ATTR);
+    if (id === null) {
+      continue;
+    }
+    setHitCount(card, hits.get(id) ?? 0);
+    const open = wanted.get(id) ?? true;
+    const folded = card.hasAttribute("data-folded");
+    if (open === !folded) {
+      continue;
+    }
+    changes.push(() => {
+      setCardFolded(card, !open);
+    });
+  }
+  if (changes.length === 0) {
+    return;
+  }
+  deferWhileReading(() => {
+    preserveReadingPosition(() => {
+      for (const fn of changes) {
+        fn();
+      }
+    }, "content-growth");
+    // Folding can starve its own pagination trigger — once the resident turns
+    // fold, the page can be shorter than the viewport, and then there is no
+    // overflow, no scroll event and no fetch. Restore the trigger.
+    fillViewport();
+  });
+}
+
+/** Wire the header's fold toggle. One control, both directions, and the click
+ *  RECORDS the reader's choice — an explicit fold or unfold outranks the
+ *  two-newest rule and persists per chat, so the transcript does not undo a
+ *  deliberate decision on the next paint. */
+function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void {
+  const btn = header.querySelector<HTMLButtonElement>(
+    ":scope > .turn-head-row > .turn-fold-toggle",
+  );
+  if (btn === null || btn.dataset["bound"] === "") {
+    return;
+  }
+  btn.dataset["bound"] = "";
+  btn.addEventListener("click", () => {
+    const open = card.hasAttribute("data-folded");
+    const chatID = getActiveId();
+    if (chatID !== "") {
+      setTurnOpen(chatID, t.id, open);
+    }
+    // Applied immediately and compensated: this is the reader's own action, so
+    // it is not deferred, but it still must not move what they are looking at.
+    preserveReadingPosition(() => {
+      setCardFolded(card, !open);
+    }, "content-growth");
+  });
+}
+
+/** Show how many search hits a turn holds, so scanning the folded list tells the
+ *  reader which turns are worth opening before they open any. */
+function setHitCount(card: HTMLElement, n: number): void {
+  const badge = card.querySelector<HTMLElement>(
+    ":scope > .turn-header > .turn-head-row > .turn-hit-count",
+  );
+  if (badge === null) {
+    return;
+  }
+  badge.textContent = n > 0 ? String(n) : "";
+}
+
+function setCardFolded(card: HTMLElement, folded: boolean): void {
+  if (folded) {
+    card.setAttribute("data-folded", "");
+  } else {
+    card.removeAttribute("data-folded");
+  }
+  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+  header?.setAttribute("aria-expanded", folded ? "false" : "true");
+}
+
 // --- The turn card ---
 
 /** Build one turn: tinted header (the trigger), plain body (the work), tinted
@@ -519,6 +690,7 @@ function buildTurn(t: Turn): HTMLElement {
 
   const header = buildTurnHeader(headerData(t));
   mountRewind(header, t);
+  mountFoldToggle(header, card, t);
   card.appendChild(header);
 
   const body = el("div", { className: "turn-body" });
@@ -622,6 +794,7 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     commands: led.commands,
     reads: led.reads,
     outcome: t.outcome,
+    foldSummary: turnFoldSummary(t),
   };
   const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
   if (!hasTurnSummary(data)) {

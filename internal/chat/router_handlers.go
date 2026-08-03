@@ -54,6 +54,8 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 		rt.handleExport(w, r, cid)
 	case "turns":
 		rt.handleTurns(w, r, cid)
+	case "search":
+		rt.handleSearch(w, r, cid)
 	default:
 		api.NotFound(w, "unknown chat sub-resource")
 	}
@@ -126,6 +128,31 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api
 	// a bridge being mid-turn. The client owns the live turn's outcome, which is
 	// the one turn it always has resident anyway.
 	api.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
+}
+
+// handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
+// chat's messages, session-wide.
+//
+// Server-side because the CLIENT CANNOT DO IT HONESTLY. Its store is a paginated
+// window, so a store-only search would present itself as searching the
+// conversation while covering only the resident tail. It is also what makes
+// progressive collapse acceptable: a collapse that hides content from search is
+// a data-loss bug. See search.go's header for why there is no index.
+func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if !chatIDPattern(chatID) {
+		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		return
+	}
+	c, ok := rt.store.Get(r.Context(), chatID)
+	if !ok {
+		api.NotFound(w, errMsgChatNotFound)
+		return
+	}
+	api.WriteJSON(w, map[string]any{"hits": SearchChat(c.Messages, r.URL.Query().Get("q"))})
 }
 
 // parseLimitParam returns the validated ?limit= page size, defaulting to 50

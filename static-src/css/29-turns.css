@@ -606,3 +606,177 @@
     padding-inline-end: calc(var(--sp-4) + 1.75rem);
   }
 }
+
+/* ==========================================================================
+   The folded turn
+
+   Not a new component: it is the header and footer bands with the body removed,
+   laid out as ONE row — request on the left, outcome on the right. That is the
+   whole reason the card was given a header and a footer in the first place; the
+   collapse mechanism is built out of them rather than beside them.
+   ========================================================================== */
+
+.turn[data-folded] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.turn[data-folded] > .turn-body {
+  display: none;
+}
+
+/* Both bands lose their dividing rule and their rounding: there is one row now,
+   so a border between the halves would draw a line down the middle of it. */
+.turn[data-folded] > .turn-header {
+  border-bottom: 0;
+  border-start-end-radius: 0;
+  padding-block: var(--sp-1);
+  min-width: 0;
+}
+
+.turn[data-folded] > .turn-footer {
+  border-top: 0;
+  border-end-start-radius: 0;
+  background: none;
+  padding-block: var(--sp-1);
+}
+
+/* Folded, the header is ONE line: the meta row and the request sit side by side
+   instead of stacked, and the request truncates rather than wrapping. A folded
+   row that can grow to three lines is not a folded row. */
+.turn[data-folded] > .turn-header {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.turn[data-folded] .turn-req {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: row;
+  align-items: center;
+}
+
+.turn[data-folded] .turn-req-text {
+  max-width: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The three-line clamp is for an OPEN header. Folded, one line is the rule and
+   the show-more would offer to grow a row whose whole point is not growing. */
+.turn[data-folded] .turn-req-text[data-clamped] {
+  display: block;
+  -webkit-line-clamp: none;
+}
+
+.turn[data-folded] .turn-req-more,
+.turn[data-folded] .turn-head-actions,
+.turn[data-folded] .turn-ledger-files {
+  display: none;
+}
+
+/* Folded, the ledger drops to its glyph and the concrete thing the turn
+   produced; the full aggregate is what expanding is for. */
+.turn[data-folded] .turn-ledger-text {
+  display: none;
+}
+
+.turn[data-folded] .turn-ledger-caret {
+  display: none;
+}
+
+.turn-fold-summary {
+  display: none;
+}
+
+.turn[data-folded] .turn-fold-summary {
+  display: inline;
+  margin-inline-start: var(--sp-2);
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+/* The fold toggle: a chevron drawn from two borders, rotated by state. Pointing
+   down when open (the body hangs below), right when folded. */
+.turn-fold-toggle {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--c-text-tertiary);
+  cursor: pointer;
+}
+
+.turn-fold-toggle::before {
+  content: "";
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(45deg);
+  transition: transform var(--dur-micro) var(--ease-micro);
+}
+
+.turn[data-folded] .turn-fold-toggle::before {
+  transform: rotate(-45deg);
+}
+
+.turn-fold-toggle:hover {
+  color: var(--c-text-primary);
+}
+
+.turn-fold-toggle:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+  border-radius: var(--r-sm, 4px);
+}
+
+/* Search-match count on a turn's header. Empty unless a search is running, so
+   the selector keys on content rather than a second state attribute. A fold has
+   to advertise what is inside it — that is the bargain that makes collapse
+   acceptable instead of a place things go missing. */
+.turn-hit-count {
+  display: none;
+}
+
+.turn-hit-count:not(:empty) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-sm, 4px);
+  background: color-mix(in srgb, var(--c-yellow) 25%, transparent);
+  color: var(--c-yellow);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+/* A rail marker holding a search hit. The fastest read of WHERE in the session
+   the answer is: a match 200 rows up is visible before the reader goes looking. */
+.rail-marker[data-hit]::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: -1px;
+  inset-block-start: -1px;
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-radius: 50%;
+  background: var(--c-yellow);
+}
+
+.rail-marker {
+  position: relative;
+}

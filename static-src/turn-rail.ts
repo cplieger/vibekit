@@ -29,6 +29,7 @@ import { el } from "@cplieger/reactive";
 import { apiGet } from "./api-client.js";
 import { setUserScrolledUp } from "./scroll.js";
 import { turnAnchorID, type TurnOutcome } from "./turns.js";
+import { searchHitTurns } from "./chat-search.js";
 
 /** One row of the session-wide turn index. Mirrors api.TurnSummary. */
 export interface TurnSummary {
@@ -354,6 +355,12 @@ function rowNode(row: Row): HTMLElement {
   }
   if (pending.has(s.n)) {
     btn.dataset["pending"] = "";
+  }
+  // A search hit marks the rail, which is the fastest possible read of WHERE in
+  // the session the answer lives — a match in a turn 200 rows up is visible
+  // before the reader goes looking for it.
+  if (searchHitTurns().has(s.n)) {
+    btn.dataset["hit"] = "";
   }
   btn.addEventListener("click", () => {
     void jumpToTurn(s);

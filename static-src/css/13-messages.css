@@ -8,7 +8,16 @@
   min-height: 0;
 }
 
+/* THE HELPER OWNS EVERY MUTATION. Native CSS scroll anchoring is off here on
+ * purpose, and not as a fallback: Safari does not support `overflow-anchor` at
+ * all and on iOS every browser is WebKit, so the platform this app is most read
+ * on has none of it. Worse, leaving it ON alongside scroll.ts's
+ * preserveReadingPosition is a DOUBLE correction rather than a harmless no-op —
+ * anchoring queues an adjustment and applies it at the end of its suppression
+ * window while the helper adds the same delta itself, moving the reader roughly
+ * twice as far. Deterministic on one owner beats a feature-detect between two. */
 [id="messages-wrap"] {
+  overflow-anchor: none;
   position: absolute;
   inset: 0;
   overflow-y: auto;
@@ -448,6 +457,8 @@
     }
   }
 
+  /* `.message.system` no longer styles the load-more affordance — that became a
+   * real button (.load-more-btn, below). It still covers genuine system rows. */
   &.system {
     align-self: center;
     color: var(--c-text-tertiary);
@@ -464,6 +475,39 @@
     font-style: normal;
     color: var(--c-text-secondary);
   }
+}
+
+/* Load older messages: a real BUTTON, not the instruction it used to be.
+ * `div.message.system` reading "Scroll up for older messages" is unusable the
+ * moment progressive collapse makes the transcript shorter than the viewport —
+ * there is nothing to scroll, so the instruction describes an action the reader
+ * cannot take. */
+.load-more-btn {
+  align-self: center;
+  flex-shrink: 0;
+  padding: var(--sp-1) var(--sp-3);
+  min-height: 1.75rem;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+}
+
+.load-more-btn:hover {
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-primary);
+  border-color: var(--c-text-tertiary);
+}
+
+.load-more-btn:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
 }
 
 /* Reasoning/thinking block (collapsible) */

@@ -1,10 +1,19 @@
 // ---------------------------------------------------------------------------
 // Find in Chat (Ctrl-F / Cmd-F): an in-chat message search overlay.
 //
-// Scoped to the ACTIVE chat's rendered messages (`#messages`) — a client-only
-// feature, no server round-trip. Because the message list is DOM-capped at 50
-// nodes (see scroll.ts DOM_MESSAGE_CAP), this searches loaded messages only;
-// older messages that have been trimmed from the DOM are out of scope.
+// Scoped to the ACTIVE chat's rendered messages (`#messages`).
+//
+// THE DOM_MESSAGE_CAP CLAIM THIS COMMENT USED TO MAKE WAS FALSE. It said the
+// list is "DOM-capped at 50 nodes (see scroll.ts DOM_MESSAGE_CAP)"; no such
+// constant has ever existed and scroll.ts never trims the DOM. The 50 was
+// store-load.ts's PAGE SIZE — pagination, not eviction — and the wrong
+// provenance propagated out of here into a design document before it was caught.
+//
+// The real blind spots are three, and they are why the enumeration moves
+// server-side rather than being patched in this walker: non-resident pages;
+// resident rows whose `content-visibility: auto` makes checkVisibility report
+// false while rendering is skipped; and hidden or collapsed subtrees, which
+// progressive collapse adds a third time.
 //
 // Native-find override policy (researched against 2024-2026 a11y/UX guidance):
 //   - Overriding Ctrl-F is only acceptable because we provide an EQUIVALENT
@@ -28,6 +37,8 @@
 import { el } from "@cplieger/reactive";
 import { $, byId } from "./dom.js";
 import { setUserScrolledUp } from "./scroll.js";
+import { runServerSearch, resetServerSearch } from "./chat-search.js";
+import { getActiveId } from "./store.js";
 
 const HIT_CLASS = "chat-find-hit";
 const CURRENT_CLASS = "chat-find-hit-current";
@@ -415,11 +426,41 @@ function runSearch(query: string): void {
   if (engine === null) {
     return;
   }
+  // The SERVER pre-pass runs first and reveals the turns holding hits, because
+  // the DOM walker below prunes hidden and collapsed subtrees — so a folded
+  // turn's hit is invisible to it until the fold is lifted. Enumerating in the
+  // DOM alone was a silent miss on non-resident pages, on rows whose
+  // `content-visibility: auto` reports invisible, and on anything folded.
+  //
+  // The local pass still runs unconditionally rather than waiting: it keeps
+  // typing responsive on what IS resident, and the reveal simply widens what it
+  // can see when it lands a moment later.
   applyEngine(() => {
     engine?.search(query);
   });
   updateCounter();
   revealCurrent();
+
+  const chatID = getActiveId();
+  void runServerSearch(chatID, query)
+    .then((hits) => {
+      if (!isOpen || inputEl?.value !== query) {
+        return; // superseded by newer typing, or the overlay closed
+      }
+      if (hits.length === 0) {
+        return;
+      }
+      // Re-run over the now-revealed DOM so the marks and the count cover the
+      // turns the reveal opened.
+      applyEngine(() => {
+        engine?.search(query);
+      });
+      updateCounter();
+      revealCurrent();
+    })
+    .catch((e: unknown) => {
+      console.warn("[find] server search failed", e);
+    });
 }
 
 function step(dir: 1 | -1): void {
@@ -542,6 +583,10 @@ function closeFindInChat(): void {
   applyEngine(() => {
     engine?.clear();
   });
+  // Turns opened BY SEARCH re-fold; turns the reader opened by hand carry a
+  // persisted override and are left alone. A search must not permanently
+  // rearrange the transcript as a side effect of having been used.
+  resetServerSearch(getActiveId());
   overlayEl.classList.add("hidden");
   isOpen = false;
   updateCounter();

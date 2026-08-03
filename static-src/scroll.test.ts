@@ -1,119 +1,201 @@
 // @vitest-environment happy-dom
-// Tests for scroll.ts — drives the REAL ScrollController via its public API.
+// The follow model's two compensation MODES.
 //
-// Earlier revisions of this file imported nothing from ./scroll and instead
-// re-implemented isAtBottom / trimOldMessages / the debounce guards inline,
-// then asserted those copies against themselves (e.g. `expect(150).toBe(150)`
-// and `expect(controllerResult).toBe(atBottom)` where both sides were the same
-// expression). That exercised zero production code. These tests set up the DOM
-// the controller binds to and exercise setLoadMore and the scroll-event →
-// scroll-bottom toggle (which runs the private isAtBottom).
+// These are worth pinning because measuring the wrong one compensates by ZERO
+// rather than by the wrong amount, which is a silent failure: a growing composer
+// dock treated as content-growth reads a scrollHeight delta of 0 and moves
+// nothing, which is exactly the bug the helper exists to prevent.
+import { describe, it, expect, beforeEach, vi } from "vitest";
 
-import { describe, it, expect, beforeEach } from "vitest";
-
-// happy-dom may not implement ResizeObserver; scroll.ts's init() observes for
-// image/code-block resize, so provide a no-op only when it is missing.
-if (typeof globalThis.ResizeObserver === "undefined") {
-  globalThis.ResizeObserver = class {
-    observe(): void {
-      /* no-op */
-    }
-    unobserve(): void {
-      /* no-op */
-    }
-    disconnect(): void {
-      /* no-op */
-    }
-  } as unknown as typeof ResizeObserver;
-}
-
-// scroll.ts constructs its singleton at import time, binding to #messages /
-// #messages-wrap / #scroll-bottom, so the DOM must exist before the import.
-document.body.innerHTML = `
-  <div id="messages-wrap"><div id="messages"></div></div>
-  <button id="scroll-bottom" class="hidden"></button>
-`;
+// The module builds its singleton against $.messages / $.messagesWrap at import,
+// and reads $.scrollBottom in init.
+vi.mock("./dom.js", () => ({
+  $: new Proxy(
+    {},
+    {
+      get: (_t, prop: string) => {
+        const id = String(prop);
+        let e = document.getElementById(id);
+        if (e === null) {
+          e = document.createElement(id === "scrollBottom" ? "button" : "div");
+          e.id = id;
+          if (id === "scrollBottom") {
+            e.appendChild(document.createElement("span"));
+          }
+          document.body.appendChild(e);
+        }
+        return e;
+      },
+    },
+  ),
+}));
+vi.mock("./skeleton.js", () => ({ loadMoreSkeleton: () => document.createElement("div") }));
 
 const scroll = await import("./scroll.js");
-const messagesEl = document.getElementById("messages") as HTMLElement;
-const scrollWrap = document.getElementById("messages-wrap") as HTMLElement;
-const scrollBtn = document.getElementById("scroll-bottom") as HTMLElement;
 
-/** Define the three scroll-geometry props happy-dom does not compute. */
-function setGeometry(scrollTop: number, clientHeight: number, scrollHeight: number): void {
-  // writable so the controller's observer-driven scrollTo() (which assigns
-  // scrollTop) doesn't throw on these stubbed-geometry elements.
-  Object.defineProperty(scrollWrap, "scrollTop", {
-    value: scrollTop,
-    writable: true,
+/** happy-dom reports 0 for every layout metric, so the scroller is faked with
+ *  writable properties. That is the right level here: the helper's contract is
+ *  arithmetic over three numbers, not real layout. */
+function fakeScroller(init: { scrollHeight: number; clientHeight: number; scrollTop: number }) {
+  const el = scroll.getScrollEl();
+  const state = { ...init };
+  for (const key of ["scrollHeight", "clientHeight"] as const) {
+    Object.defineProperty(el, key, {
+      configurable: true,
+      get: () => state[key],
+    });
+  }
+  Object.defineProperty(el, "scrollTop", {
     configurable: true,
+    get: () => state.scrollTop,
+    set: (v: number) => {
+      state.scrollTop = v;
+    },
   });
-  Object.defineProperty(scrollWrap, "clientHeight", {
-    value: clientHeight,
-    writable: true,
-    configurable: true,
-  });
-  Object.defineProperty(scrollWrap, "scrollHeight", {
-    value: scrollHeight,
-    writable: true,
-    configurable: true,
-  });
+  return state;
 }
 
 beforeEach(() => {
   scroll.resetScrollState();
-  scroll.setLoadMore(null, false);
-  messagesEl.replaceChildren();
-  scrollBtn.classList.add("hidden");
 });
 
-describe("setLoadMore indicator", () => {
-  it("inserts a load-more indicator when there are more messages", () => {
-    scroll.setLoadMore(() => undefined, true);
-    const indicator = document.getElementById("load-more-indicator");
-    expect(indicator).not.toBeNull();
-    expect(indicator!.textContent).toContain("older messages");
+describe("preserveReadingPosition", () => {
+  it("runs the mutation bare while Following", () => {
+    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 500 });
+    scroll.setUserScrolledUp(false);
+    scroll.preserveReadingPosition(() => {
+      s.scrollHeight = 1400;
+    }, "content-growth");
+    // Following is pinned to the live edge and the auto-scroll re-pins, so there
+    // is nothing to preserve and scrollTop must not be nudged.
+    expect(s.scrollTop).toBe(500);
   });
 
-  it("removes the indicator when hasMore becomes false", () => {
-    scroll.setLoadMore(() => undefined, true);
-    expect(document.getElementById("load-more-indicator")).not.toBeNull();
-    scroll.setLoadMore(null, false);
-    expect(document.getElementById("load-more-indicator")).toBeNull();
+  it("restores the reader by the scrollHeight delta on content growth", () => {
+    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    scroll.preserveReadingPosition(() => {
+      s.scrollHeight = 1400;
+    }, "content-growth");
+    expect(s.scrollTop).toBe(600);
   });
 
-  it("does not insert an indicator when hasMore is false", () => {
-    scroll.setLoadMore(() => undefined, false);
-    expect(document.getElementById("load-more-indicator")).toBeNull();
+  it("restores the reader when content SHRINKS above them", () => {
+    // A fold is the shrink case, and it is the one that motivated the helper:
+    // hundreds of pixels leave from above the reading position.
+    const s = fakeScroller({ scrollHeight: 2000, clientHeight: 500, scrollTop: 900 });
+    scroll.setUserScrolledUp(true);
+    scroll.preserveReadingPosition(() => {
+      s.scrollHeight = 1200;
+    }, "content-growth");
+    expect(s.scrollTop).toBe(100);
+  });
+
+  it("restores the reader by the clientHeight delta on viewport shrink", () => {
+    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    scroll.preserveReadingPosition(() => {
+      s.clientHeight = 400;
+    }, "viewport-shrink");
+    expect(s.scrollTop).toBe(300);
+  });
+
+  // The distinction that makes two modes necessary rather than one.
+  it("compensates ZERO if a viewport shrink is measured as content growth", () => {
+    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    scroll.preserveReadingPosition(() => {
+      s.clientHeight = 400; // scrollHeight untouched
+    }, "content-growth");
+    expect(s.scrollTop).toBe(200);
+  });
+
+  it("leaves scrollTop alone when nothing moved", () => {
+    const s = fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    scroll.preserveReadingPosition(() => {
+      /* no geometry change */
+    }, "content-growth");
+    expect(s.scrollTop).toBe(200);
   });
 });
 
-describe("scroll event toggles the scroll-to-bottom button (isAtBottom)", () => {
-  it("hides the button when the user is at the bottom (within 100px tolerance)", () => {
-    // 600 + 400 = 1000 >= 1000 - 100 → at bottom.
-    setGeometry(600, 400, 1000);
-    scrollWrap.dispatchEvent(new Event("scroll"));
-    expect(scrollBtn.classList.contains("hidden")).toBe(true);
+describe("deferWhileReading", () => {
+  it("applies immediately while Following", () => {
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 500 });
+    scroll.setUserScrolledUp(false);
+    const fn = vi.fn();
+    scroll.deferWhileReading(fn);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the button when the user has scrolled up past the tolerance", () => {
-    // 100 + 400 = 500 < 1000 - 100 → not at bottom.
-    setGeometry(100, 400, 1000);
-    scrollWrap.dispatchEvent(new Event("scroll"));
-    expect(scrollBtn.classList.contains("hidden")).toBe(false);
+  // Content must never disappear from above the reader through no action of
+  // their own, which is exactly what a turn folding mid-read would do.
+  it("queues while Reading and applies on the return to Following", () => {
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    const fn = vi.fn();
+    scroll.deferWhileReading(fn);
+    expect(fn).not.toHaveBeenCalled();
+
+    scroll.setUserScrolledUp(false);
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("treats exactly 100px from the bottom as still at bottom (inclusive boundary)", () => {
-    // 500 + 400 = 900 >= 1000 - 100 (== 900) → at bottom (>= boundary).
-    setGeometry(500, 400, 1000);
-    scrollWrap.dispatchEvent(new Event("scroll"));
-    expect(scrollBtn.classList.contains("hidden")).toBe(true);
+  it("preserves arrival order", () => {
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    const order: number[] = [];
+    scroll.deferWhileReading(() => order.push(1));
+    scroll.deferWhileReading(() => order.push(2));
+    scroll.deferWhileReading(() => order.push(3));
+    scroll.setUserScrolledUp(false);
+    expect(order).toEqual([1, 2, 3]);
   });
 
-  it("treats 101px from the bottom as scrolled up", () => {
-    // 499 + 400 = 899 < 900 → not at bottom.
-    setGeometry(499, 400, 1000);
-    scrollWrap.dispatchEvent(new Event("scroll"));
-    expect(scrollBtn.classList.contains("hidden")).toBe(false);
+  it("does not replay a flushed queue on the next return", () => {
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    const fn = vi.fn();
+    scroll.deferWhileReading(fn);
+    scroll.setUserScrolledUp(false);
+    scroll.setUserScrolledUp(true);
+    scroll.setUserScrolledUp(false);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the queue on a chat switch", () => {
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    const fn = vi.fn();
+    scroll.deferWhileReading(fn);
+    scroll.resetScrollState();
+    scroll.setUserScrolledUp(false);
+    expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe("readingState", () => {
+  it("starts Following", () => {
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 500 });
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("names the state rather than exposing a boolean", () => {
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    scroll.setUserScrolledUp(true);
+    expect(scroll.readingState()).toBe("reading");
+    scroll.setUserScrolledUp(false);
+    expect(scroll.readingState()).toBe("following");
+  });
+
+  it("notifies listeners on a transition, and only on a transition", () => {
+    fakeScroller({ scrollHeight: 1000, clientHeight: 500, scrollTop: 200 });
+    const seen: string[] = [];
+    scroll.onReadingStateChange((s) => seen.push(s));
+    scroll.setUserScrolledUp(true);
+    scroll.setUserScrolledUp(true);
+    scroll.setUserScrolledUp(false);
+    expect(seen).toEqual(["reading", "following"]);
   });
 });

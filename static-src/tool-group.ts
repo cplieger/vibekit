@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { setUserScrolledUp } from "./scroll.js";
+import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
@@ -341,11 +341,17 @@ export function maybeCollapseGroup(node: HTMLElement): void {
       return;
     }
   }
-  group.classList.add(CLS_AUTO_COLLAPSED);
-  groupCtls.get(group)?.close();
-  const header = group.querySelector<HTMLElement>(".tool-group-header");
-  header?.setAttribute("aria-expanded", "false");
-  refreshGroupHeader(group);
+  // An AUTO collapse removes height ABOVE the reader, so it is compensated.
+  // (The user-toggle path below enters Reading instead — that is a different
+  // intent: the reader just acted, so nothing should re-pin.) This is the one
+  // ANIMATED height change of the three §3.4 names, via createDisclosure.
+  preserveReadingPosition(() => {
+    group.classList.add(CLS_AUTO_COLLAPSED);
+    groupCtls.get(group)?.close();
+    const header = group.querySelector<HTMLElement>(".tool-group-header");
+    header?.setAttribute("aria-expanded", "false");
+    refreshGroupHeader(group);
+  }, "content-growth");
 }
 
 export function formatDuration(ms: number): string {

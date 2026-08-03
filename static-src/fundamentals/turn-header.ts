@@ -48,12 +48,25 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   const header = el("div", { className: "turn-header" });
 
   const row = el("div", { className: "turn-head-row" });
+  // The fold toggle leads the row, so the affordance sits where the eye starts
+  // and is in the same place whether the turn is open or folded.
+  row.appendChild(
+    el("button", {
+      className: "turn-fold-toggle",
+      type: "button",
+      "aria-label": "Expand or collapse this turn",
+    }),
+  );
   row.appendChild(el("span", { className: "turn-n" }, `#${String(d.n)}`));
   row.appendChild(el("span", { className: "turn-dot", role: "img" }));
   row.appendChild(el("time", { className: "turn-ts" }));
   // Action slot: messages.ts mounts the per-turn Rewind here. Kept as an
   // explicit element so the header owns its own layout and the action does not
   // have to know the row's structure.
+  // Match count, filled while a search is active. A fold should ADVERTISE what
+  // is inside it rather than hiding it, which is the whole bargain that makes
+  // collapse acceptable.
+  row.appendChild(el("span", { className: "turn-hit-count" }));
   row.appendChild(el("div", { className: "turn-head-actions" }));
   header.appendChild(row);
 
