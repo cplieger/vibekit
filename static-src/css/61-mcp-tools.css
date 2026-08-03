@@ -466,6 +466,15 @@
   background: var(--c-accent);
 }
 
+/* The active tab's fill is accent-DERIVED, so an accent dot sits on nearly its
+   own hue there and all but disappears. Lift the two accent dots toward the text
+   colour on that row only; the amber pair needs nothing, since amber on a violet
+   fill separates on hue as well as lightness. */
+.tab.active .tab-dot-thinking,
+.tab.active .tab-dot-dirty {
+  background: color-mix(in oklch, var(--c-accent), var(--c-text-primary) 55%);
+}
+
 /* Tooltip + confirm dialog moved to @cplieger/ui-primitives — see the
    .uip-tooltip / .uip-ask skins in css/04-uip-skin.css (structure + motion
    from the vendored base stylesheet). */

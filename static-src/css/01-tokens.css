@@ -13,6 +13,14 @@
     --c-accent: oklch(59% 0.254 295.8deg);
     --c-accent-hover: oklch(54.1% 0.247 293deg);
     --c-accent-subtle: oklch(35.6% 0.172 285.8deg);
+
+    /* Tab selection. DERIVED, not two hand-picked swatches per theme: the fill
+     * is accent-over-surface and the edge is that fill lightened toward the text
+     * colour, so one definition covers dark and light and a theme change moves
+     * both. Same construction as web-terminal-kiro's --tab-active-bg /
+     * --tab-active-border, which is where the vocabulary comes from. */
+    --c-tab-active-bg: color-mix(in oklch, var(--c-accent) 30%, var(--c-bg-secondary));
+    --c-tab-active-border: color-mix(in oklch, var(--c-tab-active-bg), var(--c-text-primary) 25%);
     --c-border: oklch(34.5% 0.045 283.8deg);
     --c-green: oklch(85.8% 0.109 142.7deg);
     --c-red: oklch(75.6% 0.13 2.8deg);
