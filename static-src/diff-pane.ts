@@ -1,11 +1,23 @@
 // ---------------------------------------------------------------------------
-// Diff pane: renders a DiffLine[] as two scroll-synced columns (old on
-// the left, new on the right) with line numbers and red/green styling.
-// Shared by chat inline previews, the editor's diff mode, and the
-// conflict compare popup.
+// Diff pane: renders a DiffLine[] in one of two shapes, from the same data.
+//
+//   two-pane (default) — old on the left, new on the right, scroll-synced.
+//     For comparing two VERSIONS of a whole file: the git panel's changed-file
+//     click and the editor's diff-vs-saved.
+//   unified (`unified: true`) — one column. For reading a CHANGE, which is what
+//     a chat transcript does.
+//
+// Unified is the cheaper path, not an extra one: DiffLine[] is already a flat
+// unified array, and the two-pane form is derived from it by pushing every line
+// into both columns and wiring scroll sync. So this is the same loop into one
+// column with the sync dropped.
+//
+// Shared by chat inline previews, the editor's diff mode, and the conflict
+// compare popup.
 // ---------------------------------------------------------------------------
 
 import { lineDiff, type DiffLine } from "./diff.js";
+import { highlightByLang, normalizeLang } from "./highlight.js";
 import { el } from "@cplieger/reactive";
 
 export interface DiffPaneOpts {
@@ -19,8 +31,19 @@ export interface DiffPaneOpts {
   /** Whether to show gutter line numbers. Default true. */
   lineNumbers?: boolean;
   /** Whether to synchronize scroll between the two panes. Default true.
-   *  Turn off for the inline preview (no scrolling). */
+   *  Turn off for the inline preview (no scrolling). Ignored when `unified`. */
   syncScroll?: boolean;
+  /** Render ONE column instead of two. Default false.
+   *
+   *  Every row is a real code line in this mode, so `lang` can syntax-highlight
+   *  them — which is what makes an inline diff read like the editor. The change
+   *  signal stays on the row BACKGROUND plus the `+`/`-` marker, never on the
+   *  text colour: text colour is the only channel highlighting has. */
+  unified?: boolean;
+  /** Language hint for syntax highlighting in `unified` mode (a file extension
+   *  or a highlighter language id). Ignored in two-pane mode, where a row can
+   *  be half of a pair and highlighting one side of a deletion is misleading. */
+  lang?: string;
   /** Callback for "Ask about this" button on diff hunks. Receives the
    *  hunk text (old + new lines). If not set, no button is shown. */
   onAskAbout?: (hunkText: string) => void;
@@ -69,12 +92,28 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     );
   }
 
+  const unified = opts.unified === true;
+  const limit = opts.maxRows ?? Number.POSITIVE_INFINITY;
+  let rowCount = 0;
+
+  if (unified) {
+    container.classList.add("diff-pane-unified");
+    const col = el("div", { className: "diff-col diff-col-unified" }) as HTMLDivElement;
+    container.appendChild(el("div", { className: "diff-pane-body" }, col));
+    for (const line of lines) {
+      if (rowCount >= limit) {
+        break;
+      }
+      col.appendChild(makeUnifiedRow(line, lineNumbers, opts.lang));
+      rowCount++;
+    }
+    return finishPane(container, lines, rowCount, opts);
+  }
+
   const leftCol = el("div", { className: "diff-col diff-col-old" }) as HTMLDivElement;
   const rightCol = el("div", { className: "diff-col diff-col-new" }) as HTMLDivElement;
   container.appendChild(el("div", { className: "diff-pane-body" }, leftCol, rightCol));
 
-  const limit = opts.maxRows ?? Number.POSITIVE_INFINITY;
-  let rowCount = 0;
   for (const line of lines) {
     if (rowCount >= limit) {
       break;
@@ -82,12 +121,7 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
     appendRow(leftCol, rightCol, line, lineNumbers);
     rowCount++;
   }
-  const extra = Math.max(0, lines.length - rowCount);
-  if (extra > 0) {
-    container.appendChild(
-      el("div", { className: "diff-more" }, `+${String(extra)} more line${extra === 1 ? "" : "s"}`),
-    );
-  }
+  finishPane(container, lines, rowCount, opts);
 
   if (syncScroll) {
     wireSyncScroll(leftCol, rightCol);
@@ -162,6 +196,58 @@ export function renderDiffPane(lines: DiffLine[], opts: DiffPaneOpts = {}): HTML
   }
 
   return container;
+}
+
+/** Append the "+N more lines" footer when rows were dropped, and return the
+ *  pane. Shared by both shapes; the hunk toolbars are two-pane only (they belong
+ *  to conflict resolution and the pending-diff editor, neither of which renders
+ *  unified). */
+function finishPane(
+  container: HTMLDivElement,
+  lines: DiffLine[],
+  rowCount: number,
+  _opts: DiffPaneOpts,
+): HTMLDivElement {
+  const extra = Math.max(0, lines.length - rowCount);
+  if (extra > 0) {
+    container.appendChild(
+      el("div", { className: "diff-more" }, `+${String(extra)} more line${extra === 1 ? "" : "s"}`),
+    );
+  }
+  return container;
+}
+
+/** One unified row: gutter, marker, then the line itself.
+ *
+ *  The line is syntax-highlighted when a `lang` is known, because in this shape
+ *  every row IS a code line. Deleted lines are highlighted too — "what did it
+ *  replace my function with" is frequently the actual question, so they stay
+ *  fully legible rather than being dimmed to a strikethrough. */
+function makeUnifiedRow(line: DiffLine, lineNumbers: boolean, lang?: string): HTMLDivElement {
+  const row = el("div", { className: `diff-row diff-row-${line.kind}` }) as HTMLDivElement;
+  if (lineNumbers) {
+    // The NEW number where there is one, else the old: a unified row belongs to
+    // the post-change file except for deletions, which only exist in the pre.
+    const no = line.kind === "del" ? line.oldNo : line.newNo;
+    row.appendChild(el("span", { className: "diff-gutter" }, no > 0 ? String(no) : ""));
+  }
+  const marker = line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ";
+  const text = el("span", { className: "diff-line-text" });
+  const resolved = lang !== undefined && lang !== "" ? normalizeLang(lang) : "";
+  if (resolved !== "") {
+    text.innerHTML = highlightByLang(line.text, resolved);
+  } else {
+    text.textContent = line.text;
+  }
+  row.appendChild(
+    el(
+      "span",
+      { className: "diff-content" },
+      el("span", { className: "diff-marker" }, marker),
+      text,
+    ),
+  );
+  return row;
 }
 
 /** Identify contiguous hunks (groups of add/del lines separated by context). */

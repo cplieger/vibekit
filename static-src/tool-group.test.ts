@@ -5,6 +5,10 @@ import { describe, it, expect, vi } from "vitest";
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 import {
+  buildToolGroupShell,
+  groupBody,
+  refreshGroupHeader,
+  maybeCollapseGroup,
   formatDuration,
   summarizeSameKind,
   summarizeMCP,
@@ -223,5 +227,101 @@ describe("summarize", () => {
 
   it.each(cases)("%s", (_label, calls, expected) => {
     expect(summarize(calls)).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The four grouping amendments. All four turn on one axis: collapsing exists to
+// hide items that are individually uninteresting, and a FAILURE is the opposite.
+// ---------------------------------------------------------------------------
+
+/** A settled card, as the group's DOM sees it. */
+function card(kind: string, outcome: "ok" | "fail" | "running", filename = ""): HTMLElement {
+  const c = document.createElement("div");
+  c.className = "tool-call";
+  c.dataset["kind"] = kind;
+  c.dataset["outcome"] = outcome;
+  if (filename !== "") {
+    c.dataset["filename"] = filename;
+  }
+  if (outcome === "running") {
+    c.dataset["startMs"] = String(Date.now());
+  }
+  return c;
+}
+
+function groupWith(...cards: HTMLElement[]): HTMLElement {
+  const g = buildToolGroupShell();
+  for (const c of cards) {
+    groupBody(g).appendChild(c);
+  }
+  document.body.appendChild(g);
+  refreshGroupHeader(g);
+  return g;
+}
+
+describe("grouping amendments", () => {
+  it("names the failure in the summary rather than averaging it away", () => {
+    const g = groupWith(card("execute", "ok"), card("execute", "fail"), card("execute", "ok"));
+    const text = g.querySelector(".tool-group-count")?.textContent ?? "";
+    expect(text).toContain("1 failed");
+    // Still the aggregate FACT, never a count of cards.
+    expect(text).toContain("Ran 3 commands");
+    expect(text).not.toContain("3 tool calls");
+  });
+
+  it("tints the header glyph to the worst status inside it", () => {
+    const clean = groupWith(card("read", "ok"), card("read", "ok"));
+    expect(clean.querySelector(".tool-group-icon")?.classList.contains("is-ok")).toBe(true);
+
+    const dirty = groupWith(card("read", "ok"), card("read", "fail"));
+    const icon = dirty.querySelector(".tool-group-icon");
+    // One red member makes a red header, so a closed group is still actionable.
+    expect(icon?.classList.contains("is-fail")).toBe(true);
+    expect(icon?.textContent).toBe("\u2717");
+  });
+
+  it("a running member outranks a clean one but not a failure", () => {
+    const running = groupWith(card("read", "ok"), card("read", "running"));
+    expect(running.querySelector(".tool-group-icon")?.classList.contains("is-running")).toBe(true);
+
+    const both = groupWith(card("read", "fail"), card("read", "running"));
+    expect(both.querySelector(".tool-group-icon")?.classList.contains("is-fail")).toBe(true);
+  });
+
+  it("never auto-collapses a group holding a failure", () => {
+    const g = groupWith(card("execute", "ok"), card("execute", "fail"), card("execute", "ok"));
+    maybeCollapseGroup(groupBody(g).firstElementChild as HTMLElement);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+  });
+
+  it("auto-collapses a clean run of three", () => {
+    const g = groupWith(card("read", "ok"), card("read", "ok"), card("read", "ok"));
+    maybeCollapseGroup(groupBody(g).firstElementChild as HTMLElement);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+  });
+
+  it("re-opens a collapsed group when a member fails afterwards", () => {
+    // The half that was missing: a failure inside a run of twelve was invisible
+    // because the group closed while everything still looked fine.
+    const g = groupWith(card("read", "ok"), card("read", "ok"), card("read", "ok"));
+    const first = groupBody(g).firstElementChild as HTMLElement;
+    maybeCollapseGroup(first);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
+
+    const late = groupBody(g).lastElementChild as HTMLElement;
+    late.dataset["outcome"] = "fail";
+    maybeCollapseGroup(late);
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(false);
+  });
+
+  it("respects the user latch: a hand-collapsed group stays shut on a failure", () => {
+    const g = groupWith(card("read", "ok"), card("read", "ok"), card("read", "ok"));
+    g.classList.add("tool-group-user-toggled", "tool-group-auto-collapsed");
+    const late = groupBody(g).lastElementChild as HTMLElement;
+    late.dataset["outcome"] = "fail";
+    maybeCollapseGroup(late);
+    // The UI must not fight a reader who has taken control.
+    expect(g.classList.contains("tool-group-auto-collapsed")).toBe(true);
   });
 });

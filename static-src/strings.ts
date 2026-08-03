@@ -26,3 +26,30 @@ export function humanName(s: string): string {
 export function truncate(s: string, max = 40): string {
   return s.length > max ? s.slice(0, max - 3) + "\u2026" : s;
 }
+
+/** How many lines each end of a windowed command output keeps. */
+const OUTPUT_WINDOW_LINES = 20;
+
+/** Window a command's output to its first and last N lines with a marker
+ *  between, which is where the information is: a build's first lines say what it
+ *  did and its last say how it ended. The middle is one click further (depth 2).
+ *
+ *  Returns the windowed text plus how many lines it elided (0 when it all fit),
+ *  so the caller can decide whether a depth 2 exists at all. */
+export function windowOutput(
+  text: string,
+  n = OUTPUT_WINDOW_LINES,
+): { text: string; elided: number } {
+  const lines = text.split("\n");
+  // Trailing newline produces a final empty element that is not a line.
+  if (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  if (lines.length <= n * 2) {
+    return { text, elided: 0 };
+  }
+  const head = lines.slice(0, n);
+  const tail = lines.slice(-n);
+  const elided = lines.length - head.length - tail.length;
+  return { text: head.join("\n") + "\n" + tail.join("\n"), elided };
+}

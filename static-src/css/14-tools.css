@@ -14,16 +14,13 @@
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
 }
 
-/* Simple tier: 1-line card, no toggle, no expandable body. */
-:where(.tool-tier-simple) .tool-toggle {
-  display: none;
-}
+/* A claim-only card (read, delete, hook, think, switch_mode) has no depth 1, and
+   neither its toggle nor its details region is BUILT — there is nothing to hide,
+   so there is no rule here. This used to key off a display TIER that conflated
+   "has a toggle" with "how much output", hiding a toggle that still existed in
+   the accessibility tree, and denying an edit card any way to expand at all. */
 
-:where(.tool-tier-simple) .tool-details {
-  display: none;
-}
-
-/* Medium tier: 2-line card with subtitle row. */
+/* Second claim fact for search / fetch / generic kinds. */
 .tool-subtitle {
   padding: 0 0.75rem var(--sp-2);
   font-size: var(--fs-xs);
@@ -34,24 +31,51 @@
   font-family: var(--font-mono);
 }
 
-/* Complex tier: scrollable output box that grows from 1 line to max
-   ~6 lines (7.5rem), then becomes scrollable. Shows the bottom of
-   the output so the user sees the latest; scroll up for history. */
-.tool-output-box {
-  border-top: 1px solid var(--c-border);
-  max-height: 7.5rem;
-  overflow-y: auto;
-  padding: var(--sp-1) 0.75rem;
+/* There is no .tool-output-box. A command's output was an always-visible,
+   unwindowed box; it is a windowed reveal inside the card's own disclosure now
+   (first and last 20 lines, the rest one click further). */
+
+/* The reveal control for a windowed output's elided middle. The only depth 2 in
+   the ladder that does not leave the transcript. */
+.tool-output-reveal {
+  display: block;
+  margin: var(--sp-1) 0 0;
+  padding: 0.125rem var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.tool-output-reveal:hover {
+  background: var(--c-bg-hover);
+  color: var(--c-text-primary);
+}
+
+/* `from -> to`, the two facts a move's claim line cannot carry. */
+.tool-move-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 0.75rem var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
-  line-height: 1.4;
+  min-width: 0;
 }
 
-.tool-output-box pre {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.tool-move-from,
+.tool-move-to {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-move-arrow {
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
 }
 
 /* Tool call grouping */
@@ -122,16 +146,48 @@
   min-width: 0; /* allow ellipsis on flex children */
 }
 
+/* THE OUTCOME LIVES HERE. The per-kind glyph carries whether-it-worked by tint
+   PLUS a composited check/cross, because tint alone is a single channel and
+   would fail WCAG 1.4.1 exactly as a bare coloured dot does. The status WORD is
+   gone from the visible row; the card's aria-label carries it. */
 .tool-icon {
+  position: relative;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--c-accent);
+  transition: color var(--dur-micro) var(--ease-micro);
 }
 
 .tool-icon svg {
   display: block;
+}
+
+.tool-icon.is-ok {
+  color: var(--c-green);
+}
+
+.tool-icon.is-fail {
+  color: var(--c-red);
+}
+
+/* Running keeps the accent: the spinner beside it is the motion channel. */
+.tool-icon.is-running {
+  color: var(--c-accent);
+}
+
+.tool-outcome-badge {
+  position: absolute;
+  inset-block-end: -0.15rem;
+  inset-inline-end: -0.25rem;
+  font-size: 0.5rem;
+  line-height: 1;
+  font-weight: var(--fw-semibold);
+  /* Punched out of the card background so the glyph stays readable underneath. */
+  background: var(--c-bg-secondary);
+  border-radius: 50%;
+  padding: 0.05rem;
 }
 
 .tool-title {
@@ -167,27 +223,16 @@
   animation: vk-spin 0.8s linear infinite;
 }
 
-.tool-status {
-  font-size: var(--fs-xs);
-  padding: 0.125rem var(--sp-2);
-  border-radius: var(--r);
-  background: var(--c-bg-primary);
+/* No .tool-status rules: the status word they styled is deleted. A finished card
+   printing the literal enum value `completed` was the claim "Tool call
+   completed", which restates nothing the row does not already say. */
 
-  &.pending {
-    color: var(--c-text-tertiary);
-  }
-
-  /* stylelint-disable-next-line selector-class-pattern -- class mirrors the server's snake_case tool-status enum value */
-  &.in_progress {
-    color: var(--c-yellow);
-  }
-  &.completed {
-    color: var(--c-green);
-  }
-
-  &.failed {
-    color: var(--c-red);
-  }
+/* The group header wears the same glyph, tinted to the worst status inside. */
+.tool-group-icon {
+  width: 0.85rem;
+  font-size: 0.7rem;
+  font-weight: var(--fw-semibold);
+  text-align: center;
 }
 
 .tool-toggle {

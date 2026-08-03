@@ -18,12 +18,16 @@ beforeAll(() => {
 vi.mock("./scroll.js", () => import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock));
 
 // Mock editor-openers.ts to avoid its transitive DOM dependencies.
+const opened: string[] = [];
 vi.mock("./editor-openers.js", () => ({
-  openFile: () => {
-    /* noop */
+  openFile: (p: string) => {
+    opened.push(`file:${p}`);
   },
-  openFileDiff: () => {
-    /* noop */
+  openFileDiff: (p: string) => {
+    opened.push(`diff:${p}`);
+  },
+  openFileGitDiff: (p: string) => {
+    opened.push(`gitdiff:${p}`);
   },
 }));
 
@@ -153,5 +157,156 @@ describe("mcpHue properties", () => {
         },
       ),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The depth ladder's visible contract. These are task E's own done-when
+// criteria, and none of them had a test before: the status word had no coverage
+// at all, which is how a card printing `completed` survived.
+// ---------------------------------------------------------------------------
+
+describe("outcome is a glyph, not a word", () => {
+  it("a finished card prints no status word anywhere in its text", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    for (const status of ["completed", "failed"] as const) {
+      const card = buildToolCard({
+        id: "t1",
+        title: "strReplace",
+        kind: "edit",
+        status,
+        input: { path: "src/a.ts", oldStr: "a", newStr: "b" },
+        live: false,
+      });
+      // The literal wire enum must not appear as visible text.
+      expect(card.textContent).not.toContain("completed");
+      expect(card.textContent).not.toContain("failed");
+      expect(card.querySelector(".tool-status")).toBeNull();
+    }
+  });
+
+  it("tints the glyph AND composites a shape, because tint alone is one channel", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const ok = buildToolCard({
+      id: "t2",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+    });
+    const okIcon = ok.querySelector(".tool-icon");
+    expect(okIcon?.classList.contains("is-ok")).toBe(true);
+    expect(okIcon?.querySelector(".tool-outcome-badge")?.textContent).toBe("\u2713");
+
+    const bad = buildToolCard({
+      id: "t3",
+      title: "executePwsh",
+      kind: "execute",
+      status: "failed",
+      live: false,
+    });
+    const badIcon = bad.querySelector(".tool-icon");
+    expect(badIcon?.classList.contains("is-fail")).toBe(true);
+    expect(badIcon?.querySelector(".tool-outcome-badge")?.textContent).toBe("\u2717");
+  });
+
+  it("carries the outcome word in the accessible name instead", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t4",
+      title: "strReplace",
+      kind: "edit",
+      status: "failed",
+      input: { path: "src/auth.go", oldStr: "a", newStr: "b" },
+      live: false,
+    });
+    expect(card.getAttribute("aria-label")).toContain("auth.go");
+    expect(card.getAttribute("aria-label")).toContain("failed");
+  });
+});
+
+describe("the depth ladder", () => {
+  it("a claim-only kind gets no details region and no toggle", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t5",
+      title: "read_files",
+      kind: "read",
+      status: "completed",
+      input: { path: "src/a.ts" },
+      live: false,
+    });
+    expect(card.querySelector(".tool-details")).toBeNull();
+    expect(card.querySelector(".tool-toggle")).toBeNull();
+  });
+
+  it("an edit gets a details region — the old tier axis gave it none", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t6",
+      title: "strReplace",
+      kind: "edit",
+      status: "completed",
+      input: { path: "src/a.ts", oldStr: "one\ntwo", newStr: "one\nTWO" },
+      live: false,
+    });
+    expect(card.querySelector(".tool-details")).not.toBeNull();
+    expect(card.querySelector(".tool-toggle")).not.toBeNull();
+  });
+
+  it("has no second View diff button — the subject is the link", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t7",
+      title: "strReplace",
+      kind: "edit",
+      status: "completed",
+      input: { path: "src/a.ts", oldStr: "one", newStr: "two" },
+      live: false,
+    });
+    expect(card.querySelector(".tool-diff-view-btn")).toBeNull();
+    expect(card.textContent).not.toContain("View diff");
+  });
+
+  it("the filename opens the DIFF on a change and the FILE on a read", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    opened.length = 0;
+    const edit = buildToolCard({
+      id: "t8",
+      title: "strReplace",
+      kind: "edit",
+      status: "completed",
+      input: { path: "src/a.ts", oldStr: "one", newStr: "two" },
+      live: false,
+    });
+    edit.querySelector<HTMLElement>(".tool-file-link")?.click();
+    expect(opened).toEqual(["gitdiff:src/a.ts"]);
+
+    opened.length = 0;
+    const read = buildToolCard({
+      id: "t9",
+      title: "read_files",
+      kind: "read",
+      status: "completed",
+      input: { path: "src/a.ts" },
+      live: false,
+    });
+    read.querySelector<HTMLElement>(".tool-file-link")?.click();
+    expect(opened).toEqual(["file:src/a.ts"]);
+  });
+
+  it("a move states from and to, which its claim line cannot carry", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t10",
+      title: "smartRelocate",
+      kind: "move",
+      status: "completed",
+      input: { sourcePath: "old/a.ts", destinationPath: "new/a.ts" },
+      live: false,
+    });
+    const row = card.querySelector(".tool-move-row");
+    expect(row?.textContent).toContain("old/a.ts");
+    expect(row?.textContent).toContain("new/a.ts");
   });
 });

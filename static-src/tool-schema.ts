@@ -12,37 +12,96 @@
 import type { ToolKind, ToolStatus } from "./types.js";
 export type { ToolKind };
 
-/** Display tier for tool cards in the main transcript.
- *  - simple:  1-line card, no expandable body (file reads, edits, deletes, moves)
- *  - medium:  2-line card with subtitle row (searches, web fetches, thinks)
- *  - complex: scrollable output box (shell commands, MCP tools with output) */
-export type ToolTier = "simple" | "medium" | "complex";
+/** What a tool card reveals when you open it — its "depth 1".
+ *
+ *  This REPLACED a three-value display tier (simple / medium / complex), and the
+ *  replacement is the point rather than a rename. The tier decided three
+ *  unrelated things at once from one axis: whether the card got a disclosure
+ *  toggle at all (`simple` got none, so an edit could not be expanded), whether
+ *  its output was an always-visible unwindowed box (`complex`), and it said
+ *  nothing about WHAT to show. Depth is per KIND because the answer is
+ *  per kind: a diff for an edit, a windowed output for a command, nothing at all
+ *  for a read.
+ *
+ *  - `none`     claim-only. There is no second level; the card has no toggle.
+ *  - `diff`     the change itself, unified and windowed to whole hunks.
+ *  - `output`   first and last N lines with a truncation marker; complete at depth 2.
+ *  - `search`   match count per file and the first matching lines.
+ *  - `move`     `from -> to`, two facts the claim line cannot carry.
+ *  - `fetch`    resolved URL, response status, the head of the body.
+ *  - `mcp`      server badge, formatted input, output.
+ *  - `todo`     the checklist, next item marked.
+ *  - `generic`  the raw input/output block, for kinds with nothing better. */
+export type ToolDepth1 =
+  "none" | "diff" | "output" | "search" | "move" | "fetch" | "mcp" | "todo" | "generic";
 
-/** Map from tool kind to display tier. Record<ToolKind, ToolTier> enforces
- *  exhaustiveness at the type level — adding a new ToolKind without a tier
- *  entry is a compile error. */
-const TOOL_TIERS: Readonly<Record<ToolKind, ToolTier>> = {
-  read: "simple",
-  edit: "simple",
-  write: "simple",
-  delete: "simple",
-  move: "simple",
-  search: "medium",
-  fetch: "medium",
-  think: "medium",
-  switch_mode: "medium",
-  other: "medium",
-  execute: "complex",
-  shell: "complex",
-  command: "complex",
-  browser: "medium",
-  mcp: "complex",
-  hook: "simple",
+/** Depth-1 content per kind. Record<ToolKind, ToolDepth1> enforces
+ *  exhaustiveness at the type level — a new ToolKind without an entry is a
+ *  compile error, which is what keeps a new tool from silently landing in a
+ *  generic card. */
+const TOOL_DEPTH1: Readonly<Record<ToolKind, ToolDepth1>> = {
+  // Claim-only, and measured: `read` is 20.2% of 33,156 real tool calls, median
+  // 1 per turn but p99 75 and max 190. A card each is exactly where a transcript
+  // collapses, so reads carry their fact on the claim line and group (tool-group).
+  read: "none",
+  // Also claim-only, for the opposite reason: `delete_file` takes ONE targetFile,
+  // so a "path list" would be a one-item list restating the claim.
+  delete: "none",
+  hook: "none",
+  think: "none",
+  switch_mode: "none",
+
+  edit: "diff",
+  write: "diff",
+  move: "move",
+  search: "search",
+  fetch: "fetch",
+  mcp: "mcp",
+
+  execute: "output",
+  shell: "output",
+  command: "output",
+
+  browser: "generic",
+  other: "generic",
 };
 
-/** Classify a tool kind into a display tier. */
-export function toolTier(kind: ToolKind): ToolTier {
-  return TOOL_TIERS[kind];
+/** What a tool card reveals on expand. */
+export function toolDepth1(kind: ToolKind): ToolDepth1 {
+  return TOOL_DEPTH1[kind];
+}
+
+/** Whether a kind has anything to reveal. A card with no depth 1 gets no
+ *  disclosure toggle — a control that opens an empty region is worse than no
+ *  control. */
+export function hasDepth1(kind: ToolKind): boolean {
+  return TOOL_DEPTH1[kind] !== "none";
+}
+
+/** What a `read` tool actually read, phrased from the tool FAMILY.
+ *
+ *  `kind: "read"` covers seven action types and four of them do not read files:
+ *  `get_process_output` and `list_processes` read processes, `open_folders` reads
+ *  folders, `get_diagnostics` reads diagnostics. "Read 3 files" is false for all
+ *  four, and the card's own rule is that a claim must be specific and true. The
+ *  mapping keys on the tool NAME (both the live snake_case set and the legacy
+ *  camelCase aliases persisted sessions carry) and falls back to files, which is
+ *  what the other three read. */
+const READ_SUBJECTS: Readonly<Record<string, string>> = {
+  list_processes: "processes",
+  listProcesses: "processes",
+  get_process_output: "processes",
+  getProcessOutput: "processes",
+  open_folders: "folders",
+  openFolders: "folders",
+  listDirectory: "folders",
+  get_diagnostics: "diagnostics",
+  getDiagnostics: "diagnostics",
+};
+
+/** The plural noun a `read` claim should use for this tool name. */
+export function readSubject(toolName: string): string {
+  return READ_SUBJECTS[toolName] ?? "files";
 }
 
 interface ToolProfile {

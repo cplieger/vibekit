@@ -165,3 +165,28 @@ describe("truncate", () => {
     expect(truncate("")).toBe("");
   });
 });
+
+describe("windowOutput", () => {
+  it("keeps everything when it fits", async () => {
+    const { windowOutput } = await import("./strings.js");
+    const text = "a\nb\nc";
+    expect(windowOutput(text, 20)).toEqual({ text, elided: 0 });
+  });
+
+  it("keeps the first and last N lines and reports the elided middle", async () => {
+    const { windowOutput } = await import("./strings.js");
+    const lines = Array.from({ length: 50 }, (_, i) => `line${String(i)}`);
+    const got = windowOutput(lines.join("\n"), 5);
+    // A build's first lines say what it did and its last say how it ended.
+    expect(got.text.split("\n")).toHaveLength(10);
+    expect(got.text).toContain("line0");
+    expect(got.text).toContain("line49");
+    expect(got.text).not.toContain("line25");
+    expect(got.elided).toBe(40);
+  });
+
+  it("does not count a trailing newline as a line", async () => {
+    const { windowOutput } = await import("./strings.js");
+    expect(windowOutput("a\nb\n", 1).elided).toBe(0);
+  });
+});

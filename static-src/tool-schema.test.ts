@@ -4,11 +4,13 @@ import fc from "fast-check";
 import {
   mcpToolInfo,
   profileFor,
-  toolTier,
+  toolDepth1,
+  hasDepth1,
+  readSubject,
   formatMCPToolName,
   renderInfoFor,
 } from "./tool-schema.js";
-import type { ToolKind, ToolTier as TierType } from "./tool-schema.js";
+import type { ToolKind, ToolDepth1 as Depth1 } from "./tool-schema.js";
 
 // ---------------------------------------------------------------------------
 // mcpToolInfo — table-driven
@@ -206,27 +208,77 @@ describe("profileFor", () => {
 });
 
 // ---------------------------------------------------------------------------
-// toolTier — table-driven (all 12 ToolKind values)
+// toolDepth1 / hasDepth1 — what a card reveals, per kind
 // ---------------------------------------------------------------------------
 
-describe("toolTier", () => {
-  const cases: { kind: ToolKind; expected: TierType }[] = [
-    { kind: "read", expected: "simple" },
-    { kind: "edit", expected: "simple" },
-    { kind: "write", expected: "simple" },
-    { kind: "delete", expected: "simple" },
-    { kind: "move", expected: "simple" },
-    { kind: "search", expected: "medium" },
-    { kind: "fetch", expected: "medium" },
-    { kind: "think", expected: "medium" },
-    { kind: "switch_mode", expected: "medium" },
-    { kind: "other", expected: "medium" },
-    { kind: "execute", expected: "complex" },
-    { kind: "mcp", expected: "complex" },
+describe("toolDepth1", () => {
+  const cases: { kind: ToolKind; expected: Depth1 }[] = [
+    // Claim-only, and each for a stated reason: reads arrive in floods (p99 75
+    // per turn), and delete_file takes ONE path so a list would restate the claim.
+    { kind: "read", expected: "none" },
+    { kind: "delete", expected: "none" },
+    { kind: "hook", expected: "none" },
+    { kind: "think", expected: "none" },
+    { kind: "switch_mode", expected: "none" },
+    // The two that carry real information.
+    { kind: "edit", expected: "diff" },
+    { kind: "write", expected: "diff" },
+    { kind: "execute", expected: "output" },
+    { kind: "shell", expected: "output" },
+    { kind: "command", expected: "output" },
+    { kind: "move", expected: "move" },
+    { kind: "search", expected: "search" },
+    { kind: "fetch", expected: "fetch" },
+    { kind: "mcp", expected: "mcp" },
+    { kind: "browser", expected: "generic" },
+    { kind: "other", expected: "generic" },
   ];
 
   it.each(cases)("$kind → $expected", ({ kind, expected }) => {
-    expect(toolTier(kind)).toBe(expected);
+    expect(toolDepth1(kind)).toBe(expected);
+  });
+
+  it("hasDepth1 is false exactly for the claim-only kinds", () => {
+    for (const { kind, expected } of cases) {
+      expect(hasDepth1(kind)).toBe(expected !== "none");
+    }
+  });
+
+  it("an edit CAN be expanded, which the old tier axis prevented", () => {
+    // The tier this replaced gave `simple` (which included edit) no toggle at
+    // all, so the diff had to live in the resting state to be visible.
+    expect(hasDepth1("edit")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readSubject — a read claim must be true for the whole family
+// ---------------------------------------------------------------------------
+
+describe("readSubject", () => {
+  // `kind: "read"` covers seven action types and four of them read something
+  // other than files, so "Read 3 files" is false for those four.
+  it.each([
+    ["read_files", "files"],
+    ["read_file", "files"],
+    ["read_code", "files"],
+    ["list_processes", "processes"],
+    ["get_process_output", "processes"],
+    ["open_folders", "folders"],
+    ["get_diagnostics", "diagnostics"],
+  ])("%s reads %s", (name, subject) => {
+    expect(readSubject(name)).toBe(subject);
+  });
+
+  it("resolves the legacy camelCase aliases persisted sessions carry", () => {
+    expect(readSubject("listProcesses")).toBe("processes");
+    expect(readSubject("getProcessOutput")).toBe("processes");
+    expect(readSubject("openFolders")).toBe("folders");
+    expect(readSubject("getDiagnostics")).toBe("diagnostics");
+  });
+
+  it("falls back to files for an unknown reader", () => {
+    expect(readSubject("someNewReadTool")).toBe("files");
   });
 });
 

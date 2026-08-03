@@ -44,7 +44,11 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
 
   const icon = el("span", { className: "subagent-icon" });
   const nameEl = el("span", { className: "subagent-name" }, name);
-  const statusEl = el("span", { className: `tool-status ${status}` }, status);
+  // No status WORD here either — same vocabulary as a tool card: the icon
+  // carries the outcome by tint plus a composited check/cross, and the header's
+  // accessible name carries the word for a screen reader. This block was the
+  // fourth writer of that vocabulary and it moves with the other three; leaving
+  // it behind would have split the vocabulary down the middle of one transcript.
   // The chevron is purely decorative now: the HEADER is the disclosure
   // trigger (it carries aria-expanded + activation), so a nested focusable
   // button would be a redundant tab stop announcing a second control.
@@ -59,7 +63,6 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
     { className: "subagent-header", role: "button", tabindex: "0" },
     icon,
     nameEl,
-    statusEl,
     chevron,
   ) as HTMLDivElement;
   const body = el("div", { className: "subagent-body" });
@@ -84,13 +87,28 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
   let iconSvg = ICON_TAB_AGENT;
   let lastStatus = status;
   const applyIcon = (s: ToolStatus): void => {
+    const failed = s === "failed";
+    icon.classList.toggle("is-fail", failed);
+    icon.classList.toggle("is-ok", !failed && !isToolActive(s));
+    icon.classList.toggle("is-running", isToolActive(s));
     if (isToolActive(s)) {
       icon.classList.add("subagent-spinner");
       icon.replaceChildren();
     } else {
       icon.classList.remove("subagent-spinner");
-      icon.replaceChildren(iconEl(iconSvg));
+      icon.replaceChildren(
+        iconEl(iconSvg),
+        el(
+          "span",
+          { className: "tool-outcome-badge", "aria-hidden": "true" },
+          failed ? "\u2717" : "\u2713",
+        ),
+      );
     }
+    header.setAttribute(
+      "aria-label",
+      `${nameEl.textContent}, ${failed ? "failed" : isToolActive(s) ? "running" : "succeeded"}`,
+    );
   };
   applyIcon(status);
 
@@ -99,8 +117,6 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
     body,
     setStatus(s: ToolStatus): void {
       lastStatus = s;
-      statusEl.textContent = s;
-      statusEl.className = `tool-status ${s}`;
       applyIcon(s);
       // Auto-collapse a settled subagent so a long nested transcript doesn't
       // dominate the view — unless the user has taken control of the toggle.

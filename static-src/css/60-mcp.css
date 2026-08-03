@@ -160,23 +160,28 @@
   font-weight: 600;
 }
 
-.tool-diff-view-btn {
-  margin-left: auto;
-  padding: 2px var(--sp-2);
-  border: 1px solid var(--c-border);
-  border-radius: 4px;
-  background: var(--c-bg-secondary);
-  color: var(--c-text-primary);
-  font-size: var(--fs-sm);
+/* There is no .tool-diff-view-btn. Depth 2 is a click on the SUBJECT — the
+   filename in the header, or these stats — so a generic button beside them was a
+   second affordance for one intent. The stats themselves are the button now. */
+.tool-diff-stats {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
   cursor: pointer;
 }
 
-.tool-diff-view-btn:hover {
-  background: var(--c-bg-hover, var(--c-bg-tertiary));
+.tool-diff-stats:hover .diff-add-count,
+.tool-diff-stats:hover .diff-del-count {
+  text-decoration: underline;
 }
 
+/* Room for whole hunks. The old 5em cap was sized for a 3-changed-line peek and
+   would clip the very windows that replaced it; the row cap in windowHunks is
+   what bounds this now, and the scroll is the backstop. */
 .tool-diff-mini {
-  max-height: 5em;
+  max-height: 18em;
+  overflow-y: auto;
   border: 1px solid var(--c-border);
   border-radius: 4px;
 }
