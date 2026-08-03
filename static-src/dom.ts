@@ -276,6 +276,20 @@ class Elements {
     return byId("history-btn");
   }
 
+  // Kiro configuration browser (the book icon's page)
+  get docsBtn(): HTMLButtonElement {
+    return byId("docs-btn");
+  }
+  get docsView(): HTMLDivElement {
+    return byId("docs-view");
+  }
+  get docsTabBar(): HTMLElement {
+    return byId("docs-tab-bar");
+  }
+  get docsTabSelect(): HTMLSelectElement {
+    return byId("docs-tab-select");
+  }
+
   // Editor
   get editorContent(): HTMLTextAreaElement {
     return byId("editor-content");
@@ -400,11 +414,6 @@ class Elements {
   }
   get gitStashPopBtn(): HTMLButtonElement {
     return byId("git-stash-pop-btn");
-  }
-
-  // Kiro config viewer (list rendered into the Instructions tab)
-  get kiroConfigList(): HTMLDivElement {
-    return byId("kiro-config-list");
   }
 
   // PR panel

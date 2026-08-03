@@ -8,6 +8,8 @@
 //   /git/{tab}                    git panel sub-tab (prs | sources; changes omits the segment)
 //   /files[/{path}]               file browser at path (omit for workspace root)
 //   /file/{path}                  file editor for a specific file, with optional #L<line>
+//   /docs                         Kiro configuration browser (Steering tab — canonical)
+//   /docs/{tab}                   browser sub-tab (skills | agents | specs | hooks)
 //   /history                      previous chats + workflow runs (full-page view)
 //   /run/{workflowId}             read-only review of one previous run
 //   /settings                     Settings (General tab)
@@ -35,6 +37,12 @@ export type SettingsTab = "general" | "tools" | "permissions" | "instructions";
 // "general" maps to /settings.
 export type GitTab = "changes" | "prs" | "sources";
 
+// The configuration browser's five sub-tabs. "steering" is the canonical
+// default and its URL omits the segment (/docs, not /docs/steering), mirroring
+// SettingsTab's "general" and GitTab's "changes". No "workflows": a recipe is
+// not a .kiro file, so that tab arrives with the run-launch work.
+export type DocsTab = "steering" | "skills" | "agents" | "specs" | "hooks";
+
 interface RouteChat {
   kind: "chat";
   id: string;
@@ -55,6 +63,11 @@ interface RouteFile {
 interface RouteHistory {
   kind: "history";
 }
+/** The Kiro configuration browser. */
+interface RouteDocs {
+  kind: "docs";
+  tab: DocsTab;
+}
 /** A read-only review of one previous workflow run. */
 interface RouteRun {
   kind: "run";
@@ -66,7 +79,14 @@ interface RouteSettings {
 }
 
 export type Route =
-  RouteChat | RouteGit | RouteFiles | RouteFile | RouteHistory | RouteRun | RouteSettings;
+  | RouteChat
+  | RouteGit
+  | RouteFiles
+  | RouteFile
+  | RouteHistory
+  | RouteDocs
+  | RouteRun
+  | RouteSettings;
 
 // --- Parse current URL into a Route ---
 
@@ -93,6 +113,9 @@ export function parseRoute(pathname: string, hash: string = location.hash): Rout
 
     case "history":
       return { kind: "history" };
+
+    case "docs":
+      return { kind: "docs", tab: parseDocsTab(segments[1]) };
 
     case "run": {
       const id = safeDecode(segments[1] ?? "");
@@ -156,6 +179,20 @@ function parseSettingsTab(seg: string | undefined): SettingsTab {
   }
 }
 
+// parseDocsTab normalises an unknown / missing sub-tab segment to "steering"
+// (the canonical default), mirroring parseSettingsTab.
+function parseDocsTab(seg: string | undefined): DocsTab {
+  switch (seg) {
+    case "skills":
+    case "agents":
+    case "specs":
+    case "hooks":
+      return seg;
+    default:
+      return "steering";
+  }
+}
+
 // parseGitTab normalises an unknown / missing sub-tab segment to "changes"
 // (the canonical default), mirroring parseSettingsTab.
 function parseGitTab(seg: string | undefined): GitTab {
@@ -189,6 +226,9 @@ export function buildPath(route: Route): string {
       return route.tab === "changes" ? "/git" : `/git/${route.tab}`;
     case "history":
       return "/history";
+    case "docs":
+      // Steering is the canonical default; omit the tab segment.
+      return route.tab === "steering" ? "/docs" : `/docs/${route.tab}`;
     case "run":
       return `/run/${encodeURIComponent(route.id)}`;
     case "files":

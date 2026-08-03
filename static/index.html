@@ -105,6 +105,9 @@
         <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         </button>
+        <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/></svg>
+        </button>
         <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         </button>
@@ -570,12 +573,6 @@
               </div>
             </div>
 
-            <div class="page-section">
-              <h3 class="section-title">Steering docs, skills &amp; agents</h3>
-              <p class="section-hint">Files in <code>.kiro/</code> your agent reads as context. Steering docs load automatically (always, when matched, or when referenced); skills and agents are invoked on demand.</p>
-              <div id="kiro-config-list" class="list-container"><div class="list-empty">No steering docs, skills or agents found.</div></div>
-            </div>
-
             <div class="page-section" id="knowledge-section">
               <h3 class="section-title">Knowledge bases</h3>
               <p class="section-hint">Local directories indexed for semantic search. When <code>chat.enableKnowledge</code> is on, your agent searches these for relevant context. Indexing runs in the background; large directories take a moment.</p>
@@ -595,6 +592,43 @@
             </div>
           </div>
 
+        </div>
+      </div>
+
+      <!-- Kiro configuration browser: one page over everything in .kiro/.
+           Five sub-tabs, because the categories are not one kind of thing —
+           steering leads with its inclusion mode, an agent with its model, a
+           spec has no front-matter at all. Replaces the deleted spec board
+           (whose toolbar slot it took) and the duplicate list that used to sit
+           in Settings -> Custom instructions. -->
+      <div id="docs-view" class="hidden" data-tab-view>
+        <div class="page-content">
+          <header class="settings-header">
+            <div class="settings-title-row">
+              <h2 class="page-title"><span id="docs-page-title">Steering</span></h2>
+            </div>
+            <nav id="docs-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Kiro document categories">
+              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-docs-tab="steering">Steering</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="skills">Skills</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="agents">Agents</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="specs">Specs</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="hooks">Hooks</button>
+            </nav>
+            <label class="settings-tab-select-wrap" aria-label="Kiro document categories">
+              <select id="docs-tab-select" class="settings-tab-select">
+                <option value="steering">Steering</option>
+                <option value="skills">Skills</option>
+                <option value="agents">Agents</option>
+                <option value="specs">Specs</option>
+                <option value="hooks">Hooks</option>
+              </select>
+            </label>
+          </header>
+          <div data-docs-panel="steering" class="list-container docs-panel"></div>
+          <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="specs" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="hooks" class="list-container docs-panel hidden"></div>
         </div>
       </div>
 

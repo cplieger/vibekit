@@ -26,7 +26,7 @@
    as an inner scroller. */
 [id="git-view"] > .page-content,
 [id="history-view"] > .page-content,
-[id="specs-view"] > .page-content {
+[id="docs-view"] > .page-content {
   flex: 1 0 auto;
 }
 

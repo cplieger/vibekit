@@ -311,6 +311,13 @@ export const ICON_TAB_HISTORY = svg(
   14,
   '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
 );
+/** The Kiro configuration browser: an open book. The freed spec-board toolbar
+ *  slot, and the one glyph on the page — the categories are text, because a
+ *  five-icon set for five word-labelled tabs teaches nothing. */
+export const ICON_TAB_DOCS = svg(
+  14,
+  '<path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/>',
+);
 /** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
  *  plan. Distinct from the chat and subagent glyphs so a run tab is never
  *  mistaken for a conversation. */

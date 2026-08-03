@@ -13,7 +13,7 @@ vi.mock("./icons.js", () => ({
   ICON_TAB_RUN: "",
   ICON_TAB_EDITOR: "",
   ICON_TAB_HISTORY: "",
-  ICON_TAB_SPEC: "",
+  ICON_TAB_DOCS: "",
   ICON_SEND: "",
   ICON_SPINNER: "",
   ICON_HOURGLASS: "",

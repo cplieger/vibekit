@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { pushRoute } from "./router.js";
-import type { Route, SettingsTab, GitTab } from "./router.js";
+import type { Route, SettingsTab, GitTab, DocsTab } from "./router.js";
 import {
   ICON_CLOSE,
   ICON_TAB_CHAT,
@@ -20,6 +20,7 @@ import {
   ICON_TAB_RUN,
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
+  ICON_TAB_DOCS,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import * as uiState from "./ui-state.js";
@@ -46,6 +47,7 @@ export const TAB_VIEWS = {
   files: "#files-view",
   editor: "#editor-view",
   history: "#history-view",
+  docs: "#docs-view",
   run: "#run-view",
 } as const;
 
@@ -75,6 +77,7 @@ const TAB_SETTINGS = "__settings__";
 const TAB_GIT = "__git__";
 const TAB_FILES = "__files__";
 const TAB_HISTORY = "__history__";
+const TAB_DOCS = "__docs__";
 
 const ICONS: Readonly<Record<TabKind, string>> = {
   chat: ICON_TAB_CHAT,
@@ -84,6 +87,7 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   files: ICON_TAB_FILES,
   editor: ICON_TAB_EDITOR,
   history: ICON_TAB_HISTORY,
+  docs: ICON_TAB_DOCS,
   run: ICON_TAB_RUN,
 };
 
@@ -823,6 +827,33 @@ export function toggleHistoryView(onShow: () => void, onClose?: () => void): voi
     route: { kind: "history" },
     onShow,
     onClose,
+  });
+}
+
+/** Switch the docs browser's sub-tab route. No-op when it isn't open. Mirrors
+ *  setSettingsTab: keeps the __docs__ TabSpec route in sync so every emit (and
+ *  thus showView → pushRoute) reflects the active sub-tab rather than resetting
+ *  the URL to /docs. */
+export function setDocsTab(tab: DocsTab): void {
+  const spec = state.tabs.find((t) => t.id === TAB_DOCS);
+  if (spec === undefined) {
+    return;
+  }
+  spec.route = { kind: "docs", tab };
+  if (state.active === TAB_DOCS) {
+    emit();
+  }
+}
+
+/** Toggle the Kiro configuration browser, landing on the given sub-tab. */
+export function toggleDocsView(tab: DocsTab = "steering", onShow?: () => void): void {
+  toggleSingleton({
+    id: TAB_DOCS,
+    name: "Kiro docs",
+    kind: "docs",
+    view: TAB_VIEWS.docs,
+    route: { kind: "docs", tab },
+    onShow,
   });
 }
 

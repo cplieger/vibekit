@@ -175,44 +175,21 @@ func findRepoDocs(repoDir string) []Doc {
 	return findMdDocsInDir(filepath.Join(repoDir, ".kiro", "steering"))
 }
 
-// parseSteeringFrontmatter extracts inclusion / fileMatchPattern /
-// description from a steering markdown's YAML frontmatter. Mirrors
-// the kiro-cli convention used by the IDE:
+// parseSteeringFrontmatter adapts the shared front-matter parser (Parse, in
+// frontmatter.go) onto the Doc shape this file's environment.md writers use.
 //
-//	---
-//	inclusion: fileMatch
-//	fileMatchPattern: "internal/**/*.go"
-//	description: "Go layout for the internal/ tree"
-//	---
-//
-// Files without frontmatter default to inclusion=always with no pattern
-// and no description; an unrecognized inclusion value folds to "always".
-// Tolerant of a leading UTF-8 BOM and CRLF line endings so an
-// editor-saved doc doesn't silently lose its classification. Pure
-// function — testable without DOM/FS.
+// It used to BE the parser, line-oriented, and it returned the literal ">" as
+// the description of every document using a block scalar — which was all 47
+// agents and 14 of 28 skills in this repo, rendered into the agent-facing
+// environment.md as "— >". Do not reintroduce a local parse here; one parser
+// serves this generator and the REST scanners both.
 func parseSteeringFrontmatter(data []byte) Doc {
-	doc := Doc{Inclusion: inclusionAlways}
-	fm, ok := frontmatterBody(data)
-	if !ok {
-		return doc
+	fm := Parse(data)
+	return Doc{
+		Inclusion:   fm.Inclusion,
+		FileMatch:   fm.FileMatch,
+		Description: fm.Description,
 	}
-	for line := range strings.SplitSeq(fm, "\n") {
-		k, v, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		key := strings.TrimSpace(k)
-		val := strings.Trim(strings.TrimSpace(v), `"'`)
-		switch key {
-		case "inclusion":
-			doc.Inclusion = normalizeInclusion(val)
-		case "fileMatchPattern":
-			doc.FileMatch = val
-		case "description":
-			doc.Description = val
-		}
-	}
-	return doc
 }
 
 // frontmatterBody returns the YAML front-matter block of a steering
@@ -222,8 +199,7 @@ func parseSteeringFrontmatter(data []byte) Doc {
 // line-ending-agnostic (a CRLF- or BOM-authored doc must not fall
 // through the exact `---\n` prefix check and lose its front-matter).
 func frontmatterBody(data []byte) (string, bool) {
-	content := strings.TrimPrefix(string(data), "\ufeff")
-	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content := normalizeText(data)
 	if !strings.HasPrefix(content, "---\n") {
 		return "", false
 	}
@@ -277,7 +253,7 @@ func findRepoSkills(repoDir string) []Doc {
 		}
 		// The skill's classification lives in its SKILL.md frontmatter;
 		// a missing SKILL.md yields empty data -> default "always".
-		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), 64<<10)
+		data, _ := readCappedFile(filepath.Join(dir, e.Name(), "SKILL.md"), FrontMatterReadCap)
 		doc := parseSteeringFrontmatter(data)
 		doc.Filename = e.Name() + "/SKILL.md"
 		out = append(out, doc)
@@ -387,6 +363,15 @@ func findRepoHooks(repoDir string) []HookEntry {
 	return out
 }
 
+// ParseHooks parses a v1 hook document into its entries, with every field
+// sanitized. Exported so the REST docs scanner reuses this parser rather than
+// re-deriving one: hook files are workspace content, and sanitizeHookField is
+// what keeps a raw newline or backtick from breaking out of the code span these
+// values are rendered into.
+func ParseHooks(data []byte) []HookEntry {
+	return parseHookDoc(data)
+}
+
 // parseHookDoc parses a v1 hook document:
 //
 //	{"version":"v1","hooks":[{name, trigger, matcher?,
@@ -471,7 +456,7 @@ func findMdDocsInDir(dir string) []Doc {
 			continue
 		}
 		path := filepath.Join(dir, e.Name())
-		data, _ := readCappedFile(path, 64<<10)
+		data, _ := readCappedFile(path, FrontMatterReadCap)
 		doc := parseSteeringFrontmatter(data)
 		doc.Filename = e.Name()
 		out = append(out, doc)

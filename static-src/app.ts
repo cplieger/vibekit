@@ -175,6 +175,15 @@ function init(): void {
   initChatAttach();
   initTaskListPill();
   // Wire toolbar history button. Hidden when retention is 0 (nothing kept).
+  $.docsBtn.addEventListener("click", () => {
+    void import("./docs.js")
+      .then(({ showDocsView }) => {
+        showDocsView();
+      })
+      .catch(() => {
+        /* noop */
+      });
+  });
   $.historyBtn.addEventListener("click", () => {
     void import("./history.js")
       .then(({ showHistoryView }) => {
@@ -489,6 +498,28 @@ function restoreSingletonTabs(): void {
           { activate: false },
         );
         break;
+      case "__docs__":
+        openTab(
+          {
+            id,
+            name: "Kiro docs",
+            kind: "docs",
+            view: TAB_VIEWS.docs,
+            route: { kind: "docs", tab: "steering" },
+            onShow: () => {
+              void import("./docs.js")
+                .then(({ forceDocsTab, loadDocs }) => {
+                  forceDocsTab("steering");
+                  loadDocs();
+                })
+                .catch(() => {
+                  /* noop */
+                });
+            },
+          },
+          { activate: false },
+        );
+        break;
       case "__files__":
         // restoreAll() already restored the browser path from ui-state.
         openTab(
@@ -716,6 +747,15 @@ function applyRoute(route: Route): void {
       break;
     case "file":
       openFile(route.path, route.line);
+      break;
+    case "docs":
+      void import("./docs.js")
+        .then(({ showDocsView }) => {
+          showDocsView(route.tab);
+        })
+        .catch(() => {
+          /* noop */
+        });
       break;
     case "history":
       void import("./history.js")

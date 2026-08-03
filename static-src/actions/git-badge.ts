@@ -1,66 +1,32 @@
-// Action for refreshing the git sidebar badge. Replaces raw apiGet
-// calls with proper dedupe + cancellation so rapid SSE bursts
-// (turn_ended, forges_changed) coalesce into a single fetch pair.
+// Action for the git badge's FORGES half. The git-status half moved to
+// git-status-store.ts, which owns one poll shared by the badge, the docs page
+// and the file browser — the badge used to fetch /api/git/status-all itself,
+// which is why per-path status had no reader outside the git view.
+//
+// Forges stay here: a different endpoint with a different failure mode (an auth
+// error trumps every status), refreshed on its own cadence and on
+// forges_changed.
 // ---------------------------------------------------------------------------
 
-import { apiAction, defineAction, ActionError } from "./index.js";
-import type { GitRepoStatusBadge } from "../git-types.js";
+import { apiAction } from "./index.js";
 import type { ConfiguredForge } from "../wire/types.gen.js";
 
 /** Single source of truth for the /api/forges endpoint path. */
 const API_PATH_FORGES = "/api/forges" as const;
 
-// --- Response types (derived from git-types.ts) ---
-
-type RepoStatus = GitRepoStatusBadge;
-interface StatusAllResponse {
-  repos: RepoStatus[];
-}
+// --- Response types ---
 
 interface ForgesListResponse {
   forges: ConfiguredForge[];
 }
 
-interface GitBadgeData {
-  status: StatusAllResponse | null;
-  forges: ForgesListResponse | null;
-}
-
-// --- Internal fetch actions (no toast, no retry — advisory data) ---
-
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-const fetchStatusAll = apiAction<void, StatusAllResponse>({
-  name: "git-badge.status",
-  request: () => ({ method: "GET", path: "/api/git/status-all" }),
-  error: false,
-  success: false,
-});
-
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-const fetchForges = apiAction<void, ForgesListResponse>({
+/** Fetch the configured forges. Deduped so rapid SSE triggers coalesce.
+ *  Advisory data: no toast, no retry. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void as a generic argument for an action taking no args
+export const refreshForges = apiAction<void, ForgesListResponse>({
   name: "git-badge.forges",
   request: () => ({ method: "GET", path: API_PATH_FORGES }),
-  error: false,
-  success: false,
-});
-
-/** Refresh git badge data. Deduped so concurrent SSE triggers collapse
- *  into one in-flight pair of fetches. Returns both responses (either
- *  may be null on failure). */
-// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
-export const refreshGitBadge = defineAction<void, GitBadgeData>({
-  name: "git-badge.refresh",
   dedupe: true,
-  run: async (_args, signal) => {
-    const [status, forges] = await Promise.all([
-      fetchStatusAll.dispatch(undefined).catch(() => null),
-      fetchForges.dispatch(undefined).catch(() => null),
-    ]);
-    if (signal.aborted) {
-      throw new ActionError("cancelled", { code: "cancelled" });
-    }
-    return { status, forges };
-  },
   error: false,
   success: false,
 });
