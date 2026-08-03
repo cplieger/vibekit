@@ -310,3 +310,24 @@ describe("the depth ladder", () => {
     expect(row?.textContent).toContain("new/a.ts");
   });
 });
+
+describe("the search-hit seam", () => {
+  it("linkifies a search tool's output, which is where the hits are", async () => {
+    // linkifyPaths ran on prose and turn headers but never on tool output, so a
+    // grep result line — `path:line: match`, the whole point of the tool — was
+    // plain text with nothing to click.
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "s1",
+      title: "grepSearch",
+      kind: "search",
+      status: "completed",
+      input: { query: "needle" },
+      output: "src/a.ts:42: found the needle\n",
+      live: false,
+    });
+    const link = card.querySelector<HTMLElement>(".tool-output .inline-file-link");
+    expect(link).not.toBeNull();
+    expect(link?.textContent).toContain("a.ts:42");
+  });
+});

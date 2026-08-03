@@ -12,9 +12,11 @@
 import type { ToolStatus, ToolLocation, ToolDiff } from "./types.js";
 import { escText, windowOutput } from "./strings.js";
 import { ansiToHtml } from "./ansi.js";
+import { linkifyPaths } from "./linkify.js";
 import { fileIcon, toolIcon, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { openFile, openFileDiff, openFileGitDiff } from "./editor-openers.js";
+import { openFileDiff } from "./editor-openers.js";
+import { openChange, openAtLine } from "./navigate.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
@@ -316,9 +318,9 @@ function wireFileLink(el: HTMLElement, filePath: string, isChange: boolean): voi
   el.querySelector(".tool-file-link")?.addEventListener("click", (e: Event) => {
     e.stopPropagation();
     if (isChange) {
-      openFileGitDiff(filePath);
+      openChange(filePath);
     } else {
-      openFile(filePath);
+      openAtLine(filePath);
     }
   });
 }
@@ -374,11 +376,16 @@ function appendOutput(node: HTMLElement, output: string, windowed: boolean): voi
   const pre = el("pre");
   if (!windowed) {
     pre.innerHTML = ansiToHtml(output);
+    // A search tool's output IS its result list — `path:line: match` per hit —
+    // so linkifying it is the search-hit seam. It ran on prose and turn headers
+    // but never on tool output, which is where the hits actually are.
+    linkifyPaths(pre, { insidePre: true });
     out.appendChild(pre);
     return;
   }
   const win = windowOutput(output);
   pre.innerHTML = ansiToHtml(win.text);
+  linkifyPaths(pre, { insidePre: true });
   out.appendChild(pre);
   if (win.elided === 0) {
     return;
@@ -391,6 +398,7 @@ function appendOutput(node: HTMLElement, output: string, windowed: boolean): voi
   reveal.addEventListener("click", (e: Event) => {
     e.stopPropagation();
     pre.innerHTML = ansiToHtml(output);
+    linkifyPaths(pre, { insidePre: true });
     reveal.remove();
   });
   out.appendChild(reveal);

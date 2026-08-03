@@ -31,7 +31,7 @@ import type { ApprovalFile, PermissionNeededPayload, PermissionOption } from "./
 import { el } from "@cplieger/reactive";
 import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
 import { editNativeRule } from "./actions/permissions.js";
-import { openFileGitDiff } from "./editor-openers.js";
+import { openChange } from "./navigate.js";
 import { get } from "./store.js";
 import { ICON_DIFF } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -295,7 +295,7 @@ function buildGroupRow(g: ActionGroup, keep: Map<string, boolean>): HTMLElement 
     if (first !== undefined) {
       // vs HEAD, because the write already landed: the working tree IS the
       // proposed state, so git shows exactly what this turn did.
-      openFileGitDiff(first);
+      openChange(first);
     }
   });
 

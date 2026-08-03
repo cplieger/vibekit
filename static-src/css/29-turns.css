@@ -780,3 +780,30 @@
 .rail-marker {
   position: relative;
 }
+
+/* `Review changes`: the multi-file seam, one per turn under the file rows. Only
+   rendered when the turn touched more than one file — on a single-file turn the
+   row above already opens that change. */
+.turn-ledger-review {
+  margin-block-start: var(--sp-1);
+}
+
+.turn-review-all {
+  width: 100%;
+  text-align: start;
+  padding: 0.15rem var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro);
+}
+
+.turn-review-all:hover {
+  background: var(--c-bg-hover);
+  color: var(--c-text-primary);
+}

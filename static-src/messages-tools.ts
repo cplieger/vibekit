@@ -24,6 +24,7 @@ import { isToolDone, type ToolKind } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview, expandToolDetails, applyOutcome } from "./tool-card.js";
 import { windowOutput } from "./strings.js";
 import { ansiToHtml } from "./ansi.js";
+import { linkifyPaths } from "./linkify.js";
 import { bindLoadingState } from "./actions/index.js";
 
 // ---------------------------------------------------------------------------
@@ -271,6 +272,7 @@ export function applyOutputUpdate(card: HTMLDivElement, output: string): void {
   const existingPre = out.querySelector("pre");
   const pre = existingPre ?? el("pre");
   pre.innerHTML = ansiToHtml(shown.text);
+  linkifyPaths(pre, { insidePre: true });
   if (existingPre === null) {
     out.appendChild(pre);
   }
@@ -286,6 +288,7 @@ export function applyOutputUpdate(card: HTMLDivElement, output: string): void {
     reveal.addEventListener("click", (e: Event) => {
       e.stopPropagation();
       pre.innerHTML = ansiToHtml(output);
+      linkifyPaths(pre, { insidePre: true });
       reveal.remove();
     });
     out.appendChild(reveal);

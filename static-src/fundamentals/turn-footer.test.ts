@@ -207,3 +207,34 @@ describe("hasTurnSummary", () => {
     expect(hasTurnSummary({ outcome: "running" })).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// `Review changes` — the multi-file seam
+// ---------------------------------------------------------------------------
+
+describe("Review changes", () => {
+  it("is absent on a single-file turn, where the row above already opens it", () => {
+    const footer = buildTurnFooter({
+      outcome: "completed",
+      changedFiles: { "a.ts": { lines_added: 1, lines_removed: 0 } },
+    });
+    document.body.replaceChildren(footer);
+    footer.querySelector<HTMLElement>(".turn-ledger-summary")?.click();
+    expect(footer.querySelector(".turn-review-all")).toBeNull();
+  });
+
+  it("appears once for a multi-file turn and names the count", () => {
+    const footer = buildTurnFooter({
+      outcome: "completed",
+      changedFiles: {
+        "a.ts": { lines_added: 1, lines_removed: 0 },
+        "b.ts": { lines_added: 2, lines_removed: 1 },
+      },
+    });
+    document.body.replaceChildren(footer);
+    footer.querySelector<HTMLElement>(".turn-ledger-summary")?.click();
+    const all = footer.querySelectorAll(".turn-review-all");
+    expect(all).toHaveLength(1);
+    expect(all[0]?.textContent).toContain("2 files");
+  });
+});

@@ -25,7 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { openFileGitDiff } from "../editor-openers.js";
+import { openChange, openChangeSet } from "../navigate.js";
 import type { FileChange } from "../types.js";
 import type { TurnOutcome } from "../turns.js";
 
@@ -178,7 +178,11 @@ function renderFileRows(list: HTMLElement, files: [string, FileChange][]): void 
   // Sorted by path so a repaint cannot reshuffle the rows under the cursor
   // (Object.entries order follows insertion, and the map is rebuilt per turn).
   const sorted = [...files].sort((a, b) => a[0].localeCompare(b[0]));
-  const rows = sorted.map(([path, fc]) => fileRow(path, fc));
+  const rows: HTMLElement[] = sorted.map(([path, fc]) => fileRow(path, fc));
+  const review = reviewRow(sorted.length);
+  if (review !== null) {
+    rows.push(review);
+  }
   list.replaceChildren(...rows);
 }
 
@@ -206,10 +210,35 @@ function fileRow(path: string, fc: FileChange): HTMLElement {
   btn.appendChild(delta);
 
   btn.addEventListener("click", () => {
-    openFileGitDiff(path);
+    openChange(path);
   });
   item.appendChild(btn);
   return item;
+}
+
+/** `Review changes`: the multi-file seam, offered once per turn beneath the
+ *  per-file rows rather than on each row.
+ *
+ *  It appears ONLY when the turn touched more than one file. On a single-file
+ *  turn the row above it already opens that file's diff, so a second control
+ *  going to a broader view of the same one change is noise. */
+function reviewRow(count: number): HTMLElement | null {
+  if (count < 2) {
+    return null;
+  }
+  const btn = el(
+    "button",
+    {
+      className: "turn-review-all",
+      type: "button",
+      title: "Review every changed file in the git view",
+    },
+    `Review changes (${String(count)} files)`,
+  ) as HTMLButtonElement;
+  btn.addEventListener("click", () => {
+    openChangeSet();
+  });
+  return el("li", { className: "turn-ledger-file turn-ledger-review" }, btn);
 }
 
 function filesOpen(footer: HTMLElement): boolean {
