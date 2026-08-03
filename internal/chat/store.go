@@ -269,77 +269,16 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID api.ChatID, c *api
 	s.broadcast.Broadcast(ctx, api.NewEvent(evt, chatID, s.header(ctx, c)))
 }
 
-// DeleteFamily removes a chat and its rewind children as one named
-// transition (see api.ChatStore for the contract). Ordering is the
-// point: children go FIRST, so no crash window ever leaves a child
-// whose ParentChatID references a deleted parent — an interruption
-// mid-family leaves whole, listed, deletable chats and a parent that
-// still lists its survivors. The child set is re-derived here (not
-// passed in) so the scan and the deletion happen as close together as
-// per-chat locking allows; ChildrenOf remains advisory, so a child
-// created concurrently with the delete can still slip through — it
-// stays listed and deletable, which is the documented failure grade.
-func (s *Store) DeleteFamily(ctx context.Context, parentID api.ChatID, prepare func(api.ChatID)) (failedChildren []api.ChatID, err error) {
-	for _, childID := range s.ChildrenOf(ctx, parentID) {
-		if prepare != nil {
-			prepare(childID)
-		}
-		if delErr := s.Delete(ctx, childID); delErr != nil {
-			slog.Error("chat delete_family: child survived",
-				"parent", parentID, "child", childID, "error", delErr)
-			failedChildren = append(failedChildren, childID)
-		}
-	}
-	if prepare != nil {
-		prepare(parentID)
-	}
-	if delErr := s.Delete(ctx, parentID); delErr != nil {
-		return failedChildren, delErr
-	}
-	return failedChildren, nil
-}
+// DeleteFamily and PromoteRewind are GONE with the rewind-branch family. Both
+// existed only because a chat could own other chats: DeleteFamily supplied the
+// ordering contract that kept a crash from leaving a child pointing at a deleted
+// parent, and PromoteRewind cleared a child's parent linkage under one lock so a
+// promote could never report success while the relationship was intact. A rewind
+// reverts the chat it is in, so no chat has a parent or children and neither
+// transition has a subject. Delete is the whole delete path again.
 
-// PromoteRewind clears a rewind chat's parent linkage as one checked,
-// per-chat-locked transition (see api.ChatStore for the contract). The
-// validation and the clear run inside a single Mutate closure, so a
-// concurrent mutation of the same chat cannot slip between a read and
-// the write (the old command-level Get→Mutate pair could).
-func (s *Store) PromoteRewind(ctx context.Context, childID api.ChatID) (api.ChatID, error) {
-	var parentID api.ChatID
-	var opErr error
-	err := s.Mutate(ctx, childID, func(c *api.Chat, exists bool) bool {
-		if !exists {
-			opErr = api.ErrChatNotFound
-			return false
-		}
-		if c.ParentChatID == "" {
-			opErr = api.ErrNotRewind
-			return false
-		}
-		parentID = c.ParentChatID
-		c.ParentChatID = ""
-		c.RewindFromTurn = 0
-		return true
-	})
-	if opErr != nil {
-		return "", opErr
-	}
-	if err != nil {
-		return "", err
-	}
-	return parentID, nil
-}
-
-// Delete removes the chat file and broadcasts chat_deleted. No-op if the
-// chat does not exist. This is the only function that removes chat data.
-// After the file is gone we mark the id tombstoned so any in-flight
-// handler racing with the delete can't re-create it via Mutate — see
-// markDeleted for the race the tombstone guards against.
-//
-// Broadcast fires even when the chat file never existed so a stale DELETE
-// from a second device still propagates the UI update. We skip the
-// tombstone in that case — tombstoning a never-existed id would block a
-// legitimate new chat using the same id for 10 minutes.
+// Delete removes the chat file and broadcasts chat_deleted. Records a tombstone
+// first so a concurrent Mutate cannot resurrect the id as a ghost row.
 func (s *Store) Delete(ctx context.Context, chatID api.ChatID) error {
 	if err := ctx.Err(); err != nil {
 		return err

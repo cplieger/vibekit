@@ -158,6 +158,19 @@
   outline-offset: 2px;
 }
 
+/* Disabled while the agent runs: KAS refuses a revert on a live session, so the
+   control is unavailable rather than offering an error. Kept visible (not
+   hidden) so the row does not reflow when a turn starts and ends. */
+.turn-rewind:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.turn-rewind:disabled:hover {
+  background: none;
+  border-color: var(--c-border);
+}
+
 /* The request itself. */
 .turn-req {
   display: flex;

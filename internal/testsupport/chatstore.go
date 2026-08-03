@@ -29,9 +29,6 @@ func (NopChatStore) Get(context.Context, api.ChatID) (*api.Chat, bool) { return 
 // List returns nil; implements api.ChatStore.
 func (NopChatStore) List(context.Context) []api.ChatHeader { return nil }
 
-// ChildrenOf returns nil; implements api.ChatStore.
-func (NopChatStore) ChildrenOf(context.Context, api.ChatID) []api.ChatID { return nil }
-
 // BuildHistory returns an empty string; implements api.ChatStore.
 func (NopChatStore) BuildHistory(context.Context, api.ChatID) string { return "" }
 
@@ -42,16 +39,6 @@ func (NopChatStore) Mutate(context.Context, api.ChatID, func(*api.Chat, bool) bo
 
 // Delete is a no-op; implements api.ChatStore.
 func (NopChatStore) Delete(context.Context, api.ChatID) error { return nil }
-
-// DeleteFamily is a no-op; implements api.ChatStore.
-func (NopChatStore) DeleteFamily(context.Context, api.ChatID, func(api.ChatID)) ([]api.ChatID, error) {
-	return nil, nil
-}
-
-// PromoteRewind returns ErrChatNotFound; implements api.ChatStore.
-func (NopChatStore) PromoteRewind(context.Context, api.ChatID) (api.ChatID, error) {
-	return "", api.ErrChatNotFound
-}
 
 // AppendMessage is a no-op; implements api.ChatStore.
 func (NopChatStore) AppendMessage(context.Context, api.ChatID, *api.Message) error { return nil }
@@ -105,19 +92,6 @@ func (s *RecordingChatStore) List(_ context.Context) []api.ChatHeader {
 		hs = append(hs, c.Header())
 	}
 	return hs
-}
-
-// ChildrenOf returns the IDs of chats whose ParentChatID equals parentID.
-func (s *RecordingChatStore) ChildrenOf(_ context.Context, parentID api.ChatID) []api.ChatID {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var children []api.ChatID
-	for _, c := range s.Chats {
-		if c.ParentChatID == parentID {
-			children = append(children, api.ChatID(c.ID))
-		}
-	}
-	return children
 }
 
 // BuildHistory returns the plain-text transcript for the chat with the given id.
@@ -174,49 +148,6 @@ func (s *RecordingChatStore) Delete(_ context.Context, id api.ChatID) error {
 		s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_deleted", ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
 	return nil
-}
-
-// DeleteFamily removes children first, then the parent, mirroring the
-// real store's ordering contract; implements api.ChatStore.
-func (s *RecordingChatStore) DeleteFamily(ctx context.Context, parentID api.ChatID, prepare func(api.ChatID)) ([]api.ChatID, error) {
-	for _, childID := range s.ChildrenOf(ctx, parentID) {
-		if prepare != nil {
-			prepare(childID)
-		}
-		_ = s.Delete(ctx, childID)
-	}
-	if prepare != nil {
-		prepare(parentID)
-	}
-	return nil, s.Delete(ctx, parentID)
-}
-
-// PromoteRewind clears the rewind linkage under one Mutate, mirroring
-// the real store's contract; implements api.ChatStore.
-func (s *RecordingChatStore) PromoteRewind(ctx context.Context, childID api.ChatID) (api.ChatID, error) {
-	var parentID api.ChatID
-	var opErr error
-	err := s.Mutate(ctx, childID, func(c *api.Chat, exists bool) bool {
-		if !exists {
-			opErr = api.ErrChatNotFound
-			return false
-		}
-		if c.ParentChatID == "" {
-			opErr = api.ErrNotRewind
-			return false
-		}
-		parentID = c.ParentChatID
-		c.ParentChatID = ""
-		c.RewindFromTurn = 0
-		return true
-	})
-	if opErr != nil {
-		return "", opErr
-	}
-	if err != nil {
-		return "", err
-	}
-	return parentID, nil
 }
 
 // AppendMessage appends a message to the stored chat and broadcasts message_appended.

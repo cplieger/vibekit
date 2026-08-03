@@ -90,7 +90,6 @@ func TestChatHeader_copies_boolean_and_rewind_fields(t *testing.T) {
 	c := &Chat{
 		ID:             "rewind-1",
 		Name:           "Rewind branch",
-		ParentChatID:   "parent-1",
 		SupervisedMode: true,
 	}
 
@@ -98,9 +97,6 @@ func TestChatHeader_copies_boolean_and_rewind_fields(t *testing.T) {
 
 	if !h.SupervisedMode {
 		t.Error("SupervisedMode not copied to header")
-	}
-	if h.ParentChatID != "parent-1" {
-		t.Errorf("ParentChatID = %q, want parent-1", h.ParentChatID)
 	}
 }
 

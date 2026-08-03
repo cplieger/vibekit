@@ -391,7 +391,6 @@ type Chat struct {
 	Model               string         `json:"model,omitempty"`
 	ACPSessionID        string         `json:"acp_session_id,omitempty"`
 	CurrentModeID       string         `json:"current_mode_id,omitempty"`
-	ParentChatID        ChatID         `json:"parent_chat_id,omitempty"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
 	ID                  string         `json:"id"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
@@ -412,9 +411,14 @@ type Chat struct {
 	Usage              Usage    `json:"usage"`
 	CreatedAt          int64    `json:"created_at"`
 	UpdatedAt          int64    `json:"updated_at"`
-	RewindFromTurn     int      `json:"rewind_from_turn,omitempty"`
-	MessageCount       int      `json:"message_count"`
-	SupervisedMode     bool     `json:"supervised_mode,omitempty"`
+	// There is no ParentChatID and no RewindFromTurn. Both described a rewind
+	// BRANCH — a second chat truncated at a turn, pointing back at the chat it
+	// came from. A rewind reverts the chat it is in now, so nothing has a parent
+	// and no chat records which turn it started at. (api.WorkflowRun keeps its
+	// own ParentChatID; that one names the chat that LAUNCHED a run and is
+	// unrelated.)
+	MessageCount   int  `json:"message_count"`
+	SupervisedMode bool `json:"supervised_mode,omitempty"`
 }
 
 // SessionChain returns every KAS session id this chat has run on, current
@@ -474,7 +478,6 @@ func (c *Chat) Header() ChatHeader {
 		UpdatedAt:           c.UpdatedAt,
 		MessageCount:        len(c.Messages),
 		SupervisedMode:      c.SupervisedMode,
-		ParentChatID:        c.ParentChatID,
 		CompactionWatermark: c.CompactionWatermark,
 	}
 }
@@ -483,7 +486,6 @@ func (c *Chat) Header() ChatHeader {
 // by fieldalignment packing, not Chat's field order; both structs
 // serialise to JSON independently so the visual mismatch is harmless.
 type ChatHeader struct {
-	ParentChatID        ChatID         `json:"parent_chat_id,omitempty"`
 	Name                string         `json:"name"`
 	Model               string         `json:"model,omitempty"`
 	ACPSessionID        string         `json:"acp_session_id,omitempty"`

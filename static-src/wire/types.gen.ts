@@ -173,7 +173,6 @@ export interface ChatDeletedPayload {
  * serialise to JSON independently so the visual mismatch is harmless.
  */
 export interface ChatHeader {
-  parent_chat_id?: string;
   name: string;
   model?: string;
   acp_session_id?: string;

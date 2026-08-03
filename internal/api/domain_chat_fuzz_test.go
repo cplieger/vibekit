@@ -48,9 +48,6 @@ func FuzzChatHeaderConsistency(f *testing.F) {
 		if header.SupervisedMode != chat.SupervisedMode {
 			t.Fatalf("SupervisedMode mismatch")
 		}
-		if header.ParentChatID != chat.ParentChatID {
-			t.Fatalf("ParentChatID mismatch")
-		}
 		if header.CompactionWatermark != chat.CompactionWatermark {
 			t.Fatalf("CompactionWatermark mismatch")
 		}

@@ -180,19 +180,13 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
 
 	sb.primed = false
-	// Failed-fork rewind degrade: a rewind chat reaches this fresh
-	// session/new path only when session/fork was unavailable (ACPSessionID
-	// never set) or a stored forked session failed to load — in both cases
-	// the new session has none of the prior context the truncated UI
-	// transcript shows. Flag it so PrimeIfNeeded injects that history on the
-	// first prompt. Deriving from chat fields (no new schema field): a
-	// successfully-forked rewind resumes via session/load above and never
-	// reaches here (no prime); a promoted rewind has ParentChatID cleared;
-	// a normal new chat has no ParentChatID. Messages is already non-empty
-	// here (the rewind's truncated history plus the just-appended prompt).
-	if chat.ParentChatID != "" && len(chat.Messages) > 0 {
-		sb.primeReason = primeReasonRewind
-	}
+	// There is no rewind degrade path any more. It existed because a rewind
+	// FORKED a session, and a failed fork left a second chat showing a
+	// truncated transcript the fresh session knew nothing about — so its history
+	// had to be re-injected as an invisible priming prompt. A rewind reverts the
+	// session it is already in, so there is no fork to fail and no history to
+	// re-inject. primeReason keeps its model-switch member, which is a real
+	// recovery path.
 	sb.state = bridgeIdle
 
 	return sb, nil
@@ -406,12 +400,13 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	// Preambles live in translate (PrimePreamble*) because the focus-title
 	// derivation filter must recognise a title KAS derives from this prime
 	// text — one definition keeps the filter and the prime in lockstep.
+	// One reason left, so this stays a switch rather than collapsing to an if:
+	// primeReason is the mechanism, and the rewind arm's removal is not a reason
+	// to make adding a future one a re-shaping job.
 	var prime string
 	switch sb.primeReason {
 	case primeReasonSwitch:
 		prime = translate.PrimePreambleSwitch + history
-	case primeReasonRewind:
-		prime = translate.PrimePreambleRewind + history
 	default:
 		return
 	}

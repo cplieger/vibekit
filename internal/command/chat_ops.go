@@ -50,28 +50,24 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	d.RespondOK(w, cmd.RequestID)
 }
 
-// CmdDeleteChat removes a chat and cascades to rewind children via the
-// store's DeleteFamily transition (children first, parent last, per-
-// record side-effect teardown through the prepare hook). The response
-// is truthful on partial failure: surviving children are reported
-// instead of the old unconditional OK, and a failed parent delete is a
-// 500 (its children are already gone at that point — retrying deletes
-// the parent alone).
+// CmdDeleteChat removes a chat: tear down its side effects, then delete the
+// record.
+//
+// It used to cascade through DeleteFamily, whose whole subject was rewind
+// CHILDREN — a chat could own other chats, so deletion needed an ordering
+// contract (children first, so no crash window left a child pointing at a
+// deleted parent) and a truthful partial-failure response (`failed_children`).
+// A rewind reverts the chat it is in now, so no chat owns another and there is
+// nothing to order or to half-fail. The transition, its ordering guarantee and
+// the `failed_children` response are all gone rather than kept as a
+// single-element loop.
 func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	failedChildren, err := d.Chat().ChatStore().DeleteFamily(ctx, cmd.ChatID, func(id api.ChatID) {
-		d.Chat().CleanupChatState(ctx, id)
-	})
-	if err != nil {
+	d.Chat().CleanupChatState(ctx, cmd.ChatID)
+	if err := d.Chat().ChatStore().Delete(ctx, cmd.ChatID); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	slog.Info("chat deleted", "chat_id", cmd.ChatID, "failed_children", len(failedChildren))
-	if len(failedChildren) > 0 {
-		d.Respond(w, cmd.RequestID, responseWith(map[string]any{
-			"failed_children": failedChildren,
-		}))
-		return
-	}
+	slog.Info("chat deleted", "chat_id", cmd.ChatID)
 	d.RespondOK(w, cmd.RequestID)
 }
 

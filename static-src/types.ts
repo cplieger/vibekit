@@ -192,7 +192,6 @@ export interface Session {
   supervised_mode?: boolean;
   trusted_this_turn?: boolean;
   pending_changes: PendingChange[];
-  parent_chat_id?: string;
   compaction_watermark?: string;
 }
 

@@ -113,8 +113,6 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
     updated_at: reqNum(o, "updated_at", "$.chat_header"),
     message_count: reqNum(o, "message_count", "$.chat_header"),
   };
-  const parentChatId = o["parent_chat_id"] === null ? undefined : optStr(o, "parent_chat_id", "$.chat_header");
-  if (parentChatId !== undefined) out.parent_chat_id = parentChatId;
   const model = o["model"] === null ? undefined : optStr(o, "model", "$.chat_header");
   if (model !== undefined) out.model = model;
   const acpSessionId = o["acp_session_id"] === null ? undefined : optStr(o, "acp_session_id", "$.chat_header");

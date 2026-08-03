@@ -318,11 +318,6 @@ export function upsertHeader(h: ChatHeader): void {
       } else {
         delete next.compaction_watermark;
       }
-      if (h.parent_chat_id !== undefined) {
-        next.parent_chat_id = h.parent_chat_id;
-      } else {
-        delete next.parent_chat_id;
-      }
       return next;
     });
     return;
@@ -343,7 +338,6 @@ export function upsertHeader(h: ChatHeader): void {
     has_more: h.message_count > 0,
     thinking: false,
     working_label: "Thinking",
-    ...(h.parent_chat_id !== undefined && { parent_chat_id: h.parent_chat_id }),
   };
   if (h.compaction_watermark !== undefined) {
     s.compaction_watermark = h.compaction_watermark;

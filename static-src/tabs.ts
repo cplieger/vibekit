@@ -27,9 +27,7 @@ import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
 import { viewTransition as uipViewTransition } from "@cplieger/ui-primitives/view-transition";
 import { signal, effect, el } from "@cplieger/reactive";
-import { get as storeGet } from "./store.js";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
-import { promoteRewindChat } from "./actions/rewind.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
@@ -685,14 +683,14 @@ function createTabEl(tab: TabSpec): HTMLElement {
   // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
   attachTabInteraction(node, tab.id, tab.parentId === undefined);
 
-  // Right-click context menu for chat tabs: export (md/json), plus Promote
-  // for rewind children. Non-chat tabs keep the native browser menu.
+  // Right-click context menu for chat tabs: export (md/json). Non-chat tabs
+  // keep the native browser menu. (Promote is gone with the rewind branch —
+  // there is no second chat to promote over a first.)
   node.addEventListener("contextmenu", (e) => {
     if (tab.kind !== "chat") {
       return;
     }
     e.preventDefault();
-    const s = storeGet(tab.id);
     const items: ContextMenuItem[] = [
       {
         label: "Export as Markdown",
@@ -707,14 +705,6 @@ function createTabEl(tab: TabSpec): HTMLElement {
         },
       },
     ];
-    if (s?.parent_chat_id !== undefined && s.parent_chat_id !== "") {
-      items.push({
-        label: "Promote (replace original)",
-        action: () => {
-          void promoteRewindChat.dispatch({ chatID: s.id });
-        },
-      });
-    }
     showContextMenu(items, { x: e.clientX, y: e.clientY });
   });
 

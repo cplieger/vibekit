@@ -44,10 +44,6 @@ type ChatStore interface {
 	// List returns every chat's header (no messages) sorted by UpdatedAt
 	// descending. Checks ctx.Err() between per-file reads.
 	List(ctx context.Context) []ChatHeader
-	// ChildrenOf returns the IDs of chats whose ParentChatID equals
-	// parentID. Used by delete to cascade to rewind children without
-	// loading the full chat list.
-	ChildrenOf(ctx context.Context, parentID ChatID) []ChatID
 	// BuildHistory returns a plain-text transcript used for compress
 	// priming. Returns "" if the chat is missing or empty.
 	BuildHistory(ctx context.Context, id ChatID) string
@@ -59,24 +55,6 @@ type ChatStore interface {
 	Mutate(ctx context.Context, id ChatID, mutate func(c *Chat, exists bool) bool) error
 	// Delete removes the chat file and broadcasts chat_deleted.
 	Delete(ctx context.Context, id ChatID) error
-	// DeleteFamily removes a chat and its rewind children as one named
-	// transition with explicit ordering and truthful results: children
-	// are deleted FIRST (no crash window leaves a child referencing a
-	// deleted parent), the parent LAST. prepare (optional) runs before
-	// each record's deletion so the caller can tear down per-chat side
-	// effects (bridge, terminals, assistant buffer) in the same order. Children
-	// whose deletion failed are returned — still listed, still
-	// deletable; a parent failure is the returned error (its children
-	// are already gone at that point).
-	DeleteFamily(ctx context.Context, parentID ChatID, prepare func(ChatID)) (failedChildren []ChatID, err error)
-	// PromoteRewind clears a rewind chat's parent linkage (ParentChatID
-	// + RewindFromTurn) as a single checked, per-chat-locked transition,
-	// returning the former parent id for the caller to clean up and
-	// delete. Errors: ErrChatNotFound when the chat does not exist,
-	// ErrNotRewind when it has no parent; on ANY error the linkage is
-	// untouched — a promote never reports success while the
-	// relationship is still intact.
-	PromoteRewind(ctx context.Context, childID ChatID) (parentID ChatID, err error)
 	// AppendMessage appends msg to the chat's messages.
 	AppendMessage(ctx context.Context, chatID ChatID, msg *Message) error
 	// UpdateMessage mutates one message in place (by ID).

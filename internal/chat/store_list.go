@@ -132,23 +132,8 @@ func (s *Store) listOnce(ctx context.Context) ([]api.ChatHeader, bool) {
 	return headers, complete
 }
 
-// ChildrenOf returns the IDs of chats whose ParentChatID equals parentID.
-// Scans headers without loading messages — fast for the common case of
-// zero children.
-func (s *Store) ChildrenOf(ctx context.Context, parentID api.ChatID) []api.ChatID {
-	headers := s.List(ctx)
-	var children []api.ChatID
-	for i := range headers {
-		if headers[i].ParentChatID == parentID {
-			children = append(children, api.ChatID(headers[i].ID))
-		}
-	}
-	return children
-}
-
-// BuildHistory returns the chat as a plain-text transcript for compression
-// priming. Returns empty string if the chat does not exist or has no
-// messages.
+// BuildHistory returns a plain-text transcript used for prime priming. Returns
+// "" if the chat is missing or empty.
 func (s *Store) BuildHistory(ctx context.Context, chatID api.ChatID) string {
 	c, ok := s.Get(ctx, chatID)
 	if !ok || len(c.Messages) == 0 {

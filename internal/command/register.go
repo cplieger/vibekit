@@ -19,8 +19,6 @@ func RegisterDefaults(d *Dispatcher) {
 	d.Register(api.CmdElicitationResponse, wrap(d, CmdElicitationResponse))
 	d.Register(api.CmdUserInputResponse, wrap(d, CmdUserInputResponse))
 	d.Register(api.CmdRewindChat, wrap(d, CmdRewindChat))
-	d.Register(api.CmdPromoteRewindChat, wrap(d, CmdPromoteRewindChat))
-	d.Register(api.CmdDiscardRewindChat, wrap(d, CmdDiscardRewindChat))
 	d.Register(api.CmdSetEffort, wrap(d, CmdSetEffort))
 	d.Register(api.CmdSetMode, wrap(d, CmdSetMode))
 	d.Register(api.CmdResolvePendingChange, wrap(d, CmdResolvePendingChange))

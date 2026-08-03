@@ -24,8 +24,6 @@ const (
 	CmdElicitationResponse      CommandType = "elicitation_response"
 	CmdUserInputResponse        CommandType = "user_input_response"
 	CmdRewindChat               CommandType = "rewind_chat"
-	CmdPromoteRewindChat        CommandType = "promote_rewind_chat"
-	CmdDiscardRewindChat        CommandType = "discard_rewind_chat"
 	CmdSetEffort                CommandType = "set_effort"
 	CmdSetMode                  CommandType = "set_mode"
 	CmdCreateHook               CommandType = "create_hook"
@@ -149,9 +147,16 @@ type UserInputResponseCommand struct {
 }
 
 // RewindChatCommand is the payload for type="rewind_chat".
-// Creates a new chat branched from a specific turn of the current chat.
+//
+// Reverts THIS chat to a past turn: the addressed message and everything after
+// it are dropped and the files roll back. It used to branch a second chat.
+//
+// A message id, not a turn index, because that is what KAS's revert verb
+// addresses — and it must name a USER message, which KAS enforces (a non-user
+// target comes back `success:false` naming the type it found). Vibekit resolves
+// a click on any turn to its nearest preceding user message before sending.
 type RewindChatCommand struct {
-	TurnIndex int `json:"turn_index"` // 0-based index into parent's messages array
+	MessageID string `json:"message_id"`
 }
 
 // SetEffortCommand is the payload for type="set_effort".

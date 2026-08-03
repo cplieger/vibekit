@@ -119,7 +119,6 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 		{"short prompt verbatim", "Fix the retry test", "Fix the retry test", false},
 		{"long prompt truncation", longPrompt, strings.TrimSpace(longPrompt)[:77] + "...", false},
 		{"prime-derived (switch)", "", PrimePreambleSwitch[:77] + "...", false},
-		{"prime-derived (rewind)", "", PrimePreambleRewind[:77] + "...", false},
 		{"agent-authored", "Fix the retry test", "Scheduler retry flake", true},
 	}
 	for _, tc := range cases {

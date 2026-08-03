@@ -41,24 +41,20 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// Prime preambles: the fixed prefixes of the invisible priming prompt the
-// bridge coordinator sends on a fresh session after a model-switch
-// fallback or a degraded rewind (hub bridge_coord.go builds the prime as
-// preamble + history). Exported so the coordinator and the focus filter
-// share one definition — KAS derives a first-prompt title from whatever
-// prompt text it sees first, and on a primed session that is this text.
-const (
-	// PrimePreambleSwitch opens the model-switch recovery prime.
-	PrimePreambleSwitch = "The context was just switched (new agent, new model, " +
-		"or both). Below is the full conversation history. Read it " +
-		"silently and reply with a single short line confirming " +
-		"you're caught up.\n\n"
-	// PrimePreambleRewind opens the degraded-rewind prime.
-	PrimePreambleRewind = "This conversation was rewound to an earlier turn and is " +
-		"resuming in a fresh session. Below is the conversation history " +
-		"up to the rewind point. Read it silently and reply with a " +
-		"single short line confirming you're caught up.\n\n"
-)
+// PrimePreambleSwitch is the fixed prefix of the invisible priming prompt the
+// bridge coordinator sends on a fresh session after a model-switch fallback
+// (hub bridge_coord.go builds the prime as preamble + history). Exported so the
+// coordinator and the focus filter share one definition — KAS derives a
+// first-prompt title from whatever prompt text it sees first, and on a primed
+// session that is this text.
+//
+// There was a second preamble for a degraded rewind. It went with the fork: a
+// rewind reverts the session it is in, so no fresh session ever needs the
+// pre-rewind history injected into it.
+const PrimePreambleSwitch = "The context was just switched (new agent, new model, " +
+	"or both). Below is the full conversation history. Read it " +
+	"silently and reply with a single short line confirming " +
+	"you're caught up.\n\n"
 
 // derivedTitleEllipsis matches KAS's SESSION_TITLE_ELLIPSIS.
 const derivedTitleEllipsis = "..."
@@ -128,7 +124,7 @@ func titleIsPromptDerived(title string, c *api.Chat) bool {
 	if ellipsized {
 		// The prime is always far longer than the title cap, so a
 		// prime-derived title is always ellipsized — only check here.
-		if strings.HasPrefix(PrimePreambleSwitch, stripped) || strings.HasPrefix(PrimePreambleRewind, stripped) {
+		if strings.HasPrefix(PrimePreambleSwitch, stripped) {
 			return true
 		}
 	}

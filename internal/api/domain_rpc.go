@@ -72,13 +72,10 @@ type RPCErrorOut struct {
 // path for callers that need errors.Is classification.
 var ErrNotIdle = errors.New("session not idle")
 
-// ErrChatNotFound is the ChatStore sentinel for operations addressing
-// a chat id with no record (see PromoteRewind).
-var ErrChatNotFound = errors.New("chat not found")
-
-// ErrNotRewind is the ChatStore sentinel for rewind-family transitions
-// invoked on a chat with no parent linkage (see PromoteRewind).
-var ErrNotRewind = errors.New("not a rewind chat")
+// There is no api.ErrChatNotFound sentinel. It existed for errors.Is
+// classification against a store TRANSITION, and PromoteRewind was the only
+// transition that returned it. (command.ErrChatNotFound is a different, live
+// value: the 404 response body, not a sentinel to match on.)
 
 // TransportError wraps bridge-level transport failures (pipe closed,
 // write timeout, process exited) with explicit retryability semantics.

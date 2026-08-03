@@ -297,9 +297,12 @@ func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api
 	params := SessionParams(sb, map[string]any{
 		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
 	})
-	// Forward the client-generated user message id so KAS stores this turn
-	// under vibekit's own id. That id space is what session/fork references
-	// (via _meta.kiro.messageId) to rewind to a past turn (see CmdRewindChat).
+	// Forward the client-generated user message id so KAS stores this turn under
+	// vibekit's own id. That shared id space is what makes rewind addressable:
+	// _kiro/checkpoint/revertMultiple takes a messageId and requires it to name a
+	// USER message, and a user turn's id is one KAS only knows because it was
+	// sent here (an assistant turn carries KAS's own `<uuid>-say`). Drop this and
+	// rewind loses its handle on the transcript — see CmdRewindChat.
 	if p.MessageID != "" {
 		params["messageId"] = p.MessageID
 	}

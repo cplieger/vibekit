@@ -7,7 +7,7 @@ package api
 // Bridge lifecycle methods — used by the bridge package to drive the
 // kiro-cli subprocess through initialize → session/new|load. On v3 (KAS)
 // model/mode/effort switches all route through session/set_config_option
-// (session/set_model is gone), and session/fork branches a session at a
+// (session/set_model is gone), and a rewind reverts the session in place at a
 // message id (see command/rewind.go).
 const (
 	MethodInitialize  = "initialize"
@@ -18,8 +18,18 @@ const (
 	// 55 directories, against 2 for one workspace). `limit` is IGNORED.
 	MethodSessionList = "session/list"
 	MethodSetMode     = "session/set_mode"
-	MethodSessionFork = "session/fork"
 	MethodCancel      = "session/cancel"
+	// MethodCheckpointRevertMultiple reverts a session to a USER message,
+	// dropping that message and every one after it and rolling the files back
+	// from KAS's own snapshots. KAS appends a `checkpoint_revert` TOMBSTONE to
+	// its session log, so the truncation is durable: a later session/load
+	// replays the log through applyCheckpointReverts, which pops the stack back
+	// through the target. The verb refuses a mid-turn session and a concurrent
+	// revert itself, server-side, so vibekit does not police either.
+	//
+	// This replaced session/fork. A fork made a SECOND chat; a revert edits the
+	// one you are in, which is what rewinding was always meant to mean.
+	MethodCheckpointRevertMultiple = "_kiro/checkpoint/revertMultiple"
 )
 
 // File-system protocol method names (ACP fs/* namespace). Exported so
@@ -40,16 +50,9 @@ const (
 	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
 
-// Session createdReason values (kiro-cli 2.16+). KAS records why a session
-// exists in its own session metadata — `human | rewind | subagent | tangent`
-// — and a fork supplies it via _meta.kiro.createdReason on session/fork.
-// vibekit stamps Rewind on its branch forks (command/rewind.go) so they are
-// self-describing in KAS's roster; the other values are set by KAS itself
-// (tangent is the TUI's named-side-conversation feature, which vibekit does
-// not surface — its chat tabs already cover that model).
-const (
-	CreatedReasonRewind = "rewind"
-)
+// There is no createdReason constant. It labelled a FORKED session in KAS's
+// roster, and vibekit no longer forks: a rewind reverts the session it is in
+// rather than creating a second one, so there is no child session to label.
 
 // Agent user-input method name. On v3 (KAS, 2.14+) the agent's user_input
 // tool (structured questions: plan-mode clarifications, spec gates) is

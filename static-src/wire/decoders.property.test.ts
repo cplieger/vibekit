@@ -131,7 +131,6 @@ const chatHeaderArb = fc.record({
   created_at: posInt,
   updated_at: posInt,
   message_count: posInt,
-  parent_chat_id: optField(fc.string()),
   model: optField(fc.string()),
   acp_session_id: optField(fc.string()),
   current_mode_id: optField(fc.string()),

@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Message } from "./types.js";
-import { getActive, getActiveId, get, messagesVersion, activeSession } from "./store.js";
+import { getActive, getActiveId, messagesVersion, activeSession } from "./store.js";
 import { clearStreamingSig, clearReasoningSig, clearAllBlockSigs } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
@@ -251,74 +251,97 @@ function paint(): void {
 }
 
 /**
- * rewindConfirmText builds the confirmation shown before branching a new
- * chat from a past turn. It surfaces what the user is rewinding from — the
- * prompt preview plus the following assistant turn's tool-call and
- * touched-file counts — mirroring kiro-cli 2.7's enriched /rewind preview,
- * built from data vibekit already persists (no extra round-trip). All
- * field reads are defensive so a sparse/legacy message never throws.
+ * rewindConfirmText builds the confirmation shown before a rewind.
+ *
+ * THE CONFIRM IS THE ONLY GUARD, so it has to state the losses rather than
+ * describe an operation. A rewind is destructive in two directions now: the
+ * addressed turn and every turn after it are dropped from the transcript, and
+ * the files roll back to KAS's snapshots from before them. There is no branch to
+ * fall back to, no "keep both histories", and no undo — the previous version
+ * said "File contents on disk are not affected (use Restore for that)", which is
+ * now the exact opposite of the truth.
+ *
+ * It still surfaces what is being rewound FROM — the prompt preview plus the
+ * following turn's tool-call and touched-file counts — because that is the only
+ * thing that makes the cost legible before you accept it. All field reads stay
+ * defensive so a sparse message never throws.
  */
-function rewindConfirmText(m: Message, next: Message | undefined): string {
+function rewindConfirmText(m: Message, following: readonly Message[]): string {
   const promptRaw = (m.content ?? "").trim().replace(/\s+/g, " ");
-  const prompt = promptRaw.length > 100 ? promptRaw.slice(0, 100) + "…" : promptRaw;
-  const lines = ["Rewind from this turn?", ""];
+  const prompt = promptRaw.length > 100 ? promptRaw.slice(0, 100) + "\u2026" : promptRaw;
+  const lines = ["Rewind to this turn?", ""];
   if (prompt.length > 0) {
     lines.push(`Prompt: "${prompt}"`);
   }
-  if (next?.role === "assistant") {
-    const calls = next.tool_calls ?? [];
-    if (calls.length > 0) {
-      const files = [
-        ...new Set(
-          calls.flatMap((c) => (c.locations ?? []).map((l) => l.path.split("/").pop() ?? l.path)),
-        ),
-      ];
-      const toolPart = `${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}`;
-      const filePart =
-        files.length > 0
-          ? `, ${String(files.length)} file${files.length === 1 ? "" : "s"} touched (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", …" : ""})`
-          : "";
-      lines.push(`This turn's response: ${toolPart}${filePart}.`);
-    }
+
+  // Count across EVERY turn being dropped, not just the next one. The old text
+  // described one turn's work because a fork left the rest alive somewhere else;
+  // a revert discards all of it, so summarising only the first would understate
+  // the cost by however many turns follow.
+  const calls = following.flatMap((f) => f.tool_calls ?? []);
+  const files = [
+    ...new Set(
+      calls.flatMap((c) => (c.locations ?? []).map((l) => l.path.split("/").pop() ?? l.path)),
+    ),
+  ];
+  const turnWord = following.length === 1 ? "turn" : "turns";
+  lines.push(`Discards this prompt and ${String(following.length)} later ${turnWord}.`);
+  if (calls.length > 0) {
+    const toolPart = `${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}`;
+    const filePart =
+      files.length > 0
+        ? `, ${String(files.length)} file${files.length === 1 ? "" : "s"} touched (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", \u2026" : ""})`
+        : "";
+    lines.push(`Work being undone: ${toolPart}${filePart}.`);
   }
+
   lines.push("");
   lines.push(
-    "Creates a new chat branched from this point. File contents on disk are not affected (use Restore for that).",
+    "Files are rolled back on disk to their state before this turn. " +
+      "The prompt itself is discarded too, so you will need to retype it. " +
+      "This cannot be undone.",
   );
   return lines.join("\n");
 }
 
 /**
- * handleRewindClick confirms the rewind, dispatches it, then opens AND
- * activates the returned branch chat. Mirrors chat.ts's openPreviousSession
- * pattern: refresh the header list so the branch session exists in the store,
- * then open its tab (openChatTab activates it via onShow → activateChatView,
- * which loads the branch's messages). chat.ts / store-load.ts are imported
- * dynamically because chat.ts statically imports this module — a static import
- * back would be a cycle. The confirm uses the app's confirmDialog (not the
- * native, unstyled, focus-trap-less window.confirm).
+ * handleRewindClick confirms the rewind and dispatches it. That is the whole
+ * flow now.
+ *
+ * It used to dispatch, read back a server-assigned branch id, refresh the header
+ * list so the branch existed in the store, then open and activate its tab —
+ * which is why this module needed dynamic imports of chat.ts and store-load.ts
+ * to dodge a cycle. A revert changes the chat you are already looking at, so the
+ * new transcript arrives over SSE and there is no tab to open and no list to
+ * refresh.
+ *
+ * REFUSED MID-TURN, not queued. KAS throws on a session with a live
+ * abortController ("Cannot revert while the agent is still running"), so
+ * offering the button during a turn would only produce an error the user cannot
+ * act on. The button is disabled instead (see mountRewind), and this is the
+ * second gate for the race between the two.
  */
 async function handleRewindClick(m: Message): Promise<void> {
   const session = getActive();
   if (session === undefined) {
     return;
   }
-  const turnIdx = session.messages.findIndex((msg) => msg.id === m.id);
-  if (turnIdx < 0) {
+  if (session.thinking) {
     return;
   }
-  const proceed = await confirmDialog(rewindConfirmText(m, session.messages[turnIdx + 1]));
+  const idx = session.messages.findIndex((msg) => msg.id === m.id);
+  if (idx < 0) {
+    return;
+  }
+  const proceed = await confirmDialog(
+    rewindConfirmText(m, session.messages.slice(idx + 1)),
+    "Rewind",
+    "destructive",
+  );
   if (!proceed) {
     return;
   }
-  const res = await rewindChat.dispatch({ chatID: session.id, turnIndex: turnIdx });
-  const newID = res?.rewind_id ?? "";
-  if (newID === "") {
-    return;
-  }
-  const [storeLoad, chatMod] = await Promise.all([import("./store-load.js"), import("./chat.js")]);
-  await storeLoad.loadList();
-  chatMod.openChatTab(newID, get(newID)?.name ?? `Rewind: ${session.name}`);
+  await rewindChat.dispatch({ chatID: session.id, messageID: m.id });
 }
 
 /** Clear all per-message state, e.g. when the last chat is closed (active
@@ -556,25 +579,33 @@ function mountRewind(header: HTMLElement, t: Turn): void {
     slot.replaceChildren();
     return;
   }
-  if (slot.firstElementChild !== null) {
-    return; // already mounted; the handler closes over a stable message id
-  }
-  const btn = el(
-    "button",
-    {
-      className: "turn-rewind",
-      type: "button",
-      title: "Rewind conversation from this point",
-      "aria-label": "Rewind from this turn",
-    },
-    "Rewind",
-  );
-  btn.addEventListener("click", () => {
-    void handleRewindClick(trigger).catch((e: unknown) => {
-      console.warn("[messages] rewind failed", e);
+  let btn = slot.querySelector<HTMLButtonElement>(":scope > .turn-rewind");
+  if (btn === null) {
+    btn = el(
+      "button",
+      {
+        className: "turn-rewind",
+        type: "button",
+        "aria-label": "Rewind to this turn",
+      },
+      "Rewind",
+    ) as HTMLButtonElement;
+    btn.addEventListener("click", () => {
+      void handleRewindClick(trigger).catch((e: unknown) => {
+        console.warn("[messages] rewind failed", e);
+      });
     });
-  });
-  slot.appendChild(btn);
+    slot.appendChild(btn);
+  }
+  // DISABLED mid-turn, not queued. KAS refuses a revert on a session with a live
+  // abortController, so an enabled button during a turn could only produce an
+  // error the user cannot act on. Refreshed on every paint because `thinking` is
+  // exactly what a paint is reacting to.
+  const busy = getActive()?.thinking ?? false;
+  btn.disabled = busy;
+  btn.title = busy
+    ? "Can't rewind while the agent is running \u2014 cancel the turn first"
+    : "Rewind to this turn, discarding it and everything after";
 }
 
 /** Mount / refresh the turn's outcome ledger as the card's last child.
