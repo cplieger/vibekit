@@ -30,8 +30,22 @@ type RPCResponse struct {
 
 // RPCError is a JSON-RPC 2.0 error object.
 type RPCError struct {
-	Message string `json:"message"`
-	Code    int    `json:"code"`
+	// Data is the optional member JSON-RPC allows for implementation-defined
+	// detail, and on KAS it is where most errors actually SAY something.
+	//
+	// Counted over every engine-emitted frame in the wire logs: 127 `-32603`
+	// errors set Message to the literal "Internal error" and put the real text
+	// in Data — either `{"details": "…"}` or a Zod issue array — while the 6
+	// `-32602` and 4 `-32000` errors put it in Message and carry no Data at all.
+	// So the two fields are not redundant and neither is primary: dropping Data
+	// (which this struct did) loses the cause of every internal error, and
+	// dropping Message would lose every parameter-validation message.
+	//
+	// Kept as raw JSON because the two shapes have nothing in common;
+	// workflow.Details is the one place that unwraps both.
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	Code    int             `json:"code"`
 }
 
 // Error makes RPCError implement the error interface by returning the
@@ -39,6 +53,13 @@ type RPCError struct {
 // errors.As to recover the concrete *RPCError.
 func (e *RPCError) Error() string {
 	return e.Message
+}
+
+// ErrorData exposes the raw `error.data` member. An accessor rather than direct
+// field access so a decoder can unwrap it without importing this package's
+// concrete type — see workflow.Details.
+func (e *RPCError) ErrorData() json.RawMessage {
+	return e.Data
 }
 
 // RPCNotification is an outbound JSON-RPC 2.0 notification (no id, no

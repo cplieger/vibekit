@@ -91,6 +91,9 @@ func main() {
 		wiregen.TypeRef[api.ToolRemoveResponse](),
 		wiregen.TypeRef[api.ToolsJobsResponse](),
 		wiregen.TypeRef[api.ToolCatalogInfo](),
+		wiregen.TypeRef[api.RunStartedPayload](),
+		wiregen.TypeRef[api.RunProgressPayload](),
+		wiregen.TypeRef[api.RunFinishedPayload](),
 		wiregen.TypeRef[api.ToolJobChangedPayload](),
 		wiregen.TypeRef[api.ToolJobOutputPayload](),
 		wiregen.TypeRef[forges.ConfiguredForge](),
@@ -113,8 +116,9 @@ func main() {
 		"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
 		"PlanStatus": {},
 		"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
-		"SafetyStatus": {},
-		"Transport":    {Values: []string{"stdio", "http", "sse"}},
+		"SafetyStatus":    {},
+		"RunProgressKind": {},
+		"Transport":       {Values: []string{"stdio", "http", "sse"}},
 	}
 
 	r.EnumTSName = map[string]string{
@@ -152,6 +156,9 @@ func main() {
 		{EventType: "permission_needed", TypeName: "PermissionNeededPayload"},
 		{EventType: "permissions_changed", TypeName: "PermissionsChangedPayload"},
 		{EventType: "policy_error", TypeName: "PolicyErrorPayload"},
+		{EventType: "run_started", TypeName: "RunStartedPayload"},
+		{EventType: "run_progress", TypeName: "RunProgressPayload"},
+		{EventType: "run_finished", TypeName: "RunFinishedPayload"},
 		{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
 		{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
 		{EventType: "tool_call", TypeName: "ToolCallPayload"},

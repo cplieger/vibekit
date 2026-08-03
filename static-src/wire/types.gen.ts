@@ -10,6 +10,8 @@ export type PlanStatus = "pending" | "in_progress" | "completed";
 
 export type Role = "user" | "assistant" | "event";
 
+export type RunProgressKind = "node_start" | "node_complete" | "node_paused" | "loop_iteration" | "watch_poll" | "paused" | "steps_queued";
+
 export type SafetyStatus = "idle" | "formalizing" | "evaluating" | "blocked" | "error";
 
 export type StopReason = "end_turn" | "cancelled" | "interrupted" | "refusal";
@@ -828,6 +830,53 @@ export interface Repo {
   archived?: boolean;
   fork?: boolean;
   updated_at?: number;
+}
+
+/**
+ * RunFinishedPayload is the payload for type="run_finished": terminal. Status is
+ * KAS's own run-level status (completed / failed / aborted / paused — a policy
+ * pause at `onMaxIterations` reports through here too, since KAS emits
+ * `run_complete` for it).
+ * //
+ * There is no aborted_by_restart flag. A restart PAUSES a run — KAS's read-path
+ * reconcile has exactly one outcome and no path to aborted (probe 24) — so there
+ * is nothing for such a flag to mean.
+ */
+export interface RunFinishedPayload {
+  workflow_id: string;
+  status: string;
+}
+
+/**
+ * RunProgressPayload is the payload for type="run_progress": an INVALIDATION
+ * signal. The client refetches `GET /api/runs/{id}`; it never reconstructs run
+ * state from these events, and the payload is deliberately too thin to let it.
+ * //
+ * That thinness is load-bearing rather than minimalist. `run_start` re-fires on
+ * every resume and progress frames duplicate across a resume (probe 6 saw three
+ * `run_start` frames for one run), so a client accumulating them would render a
+ * garbled tree. `node_complete` also cannot be joined by (nodeId, iteration,
+ * branchId) — it carries none of the last two — so an accumulating client could
+ * not even tell two repeat iterations apart.
+ * //
+ * NodeID is absent on `paused` (a run-level frame) and holds the loop id on
+ * `loop_iteration`, which is the node the frame is about in both cases.
+ */
+export interface RunProgressPayload {
+  workflow_id: string;
+  node_id?: string;
+  kind: RunProgressKind;
+}
+
+/**
+ * RunStartedPayload is the payload for type="run_started": a run began on this
+ * chat. Carries the name because a client that has never fetched this run has
+ * nothing to label the row with, and a row appearing with no name reads as a
+ * bug rather than as a pending fetch.
+ */
+export interface RunStartedPayload {
+  workflow_id: string;
+  name?: string;
 }
 
 /**

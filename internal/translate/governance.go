@@ -100,7 +100,7 @@ func (t *Translator) HandleGovernanceState(ctx context.Context, chatID api.ChatI
 	if !ok {
 		return
 	}
-	if t.deriveSubSession(chatID, p.SessionID) != "" {
+	if t.foreignSession(chatID, p.SessionID) {
 		return
 	}
 	payload := p.payload()

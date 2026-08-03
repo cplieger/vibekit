@@ -81,6 +81,22 @@ func (h *Hub) initDispatch() {
 		// affordances the flags control (MCP availability, the org-policy
 		// disclosure, the code-reference chip). See translate/governance.go.
 		methodV3Governance: h.translator.HandleGovernanceState,
+		// Workflow-run lifecycle. Nine KAS notifications → three SSE events; the
+		// seven middle kinds share one handler because they mean one thing to a
+		// client ("refetch"). See translate/workflow.go.
+		methodWFRunStart:    h.translator.HandleRunStart,
+		methodWFRunComplete: h.translator.HandleRunComplete,
+	}
+	for method, kind := range map[string]api.RunProgressKind{
+		methodWFNodeStart:     api.RunProgressNodeStart,
+		methodWFNodeComplete:  api.RunProgressNodeComplete,
+		methodWFNodePaused:    api.RunProgressNodePaused,
+		methodWFPaused:        api.RunProgressPaused,
+		methodWFLoopIteration: api.RunProgressLoopIteration,
+		methodWFWatchPoll:     api.RunProgressWatchPoll,
+		methodWFStepsQueued:   api.RunProgressStepsQueued,
+	} {
+		h.chatHandlers[method] = h.translator.RunProgressHandler(kind)
 	}
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via
@@ -188,10 +204,20 @@ func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *a
 		return
 	}
 
-	// Determine subagent attribution. Empty or matching parent = parent.
+	// Determine attribution through the ONE shared classifier. This site and
+	// translate/deps.go's deriveSubSession are the protocol's two derivation
+	// points and they shared no code, so a step frame classified differently
+	// depending on which door it came through. ACP cannot supply the answer —
+	// its session model is flat, one sessionId per method with no parent/child
+	// concept — so it comes from KAS's own `_meta.kiro.workflow`, which the
+	// frame carries, plus the step-session registry for frames that do not.
+	//
+	// A STEP resolves to OwnerStep and therefore to an empty subSessionID: the
+	// per-kind handlers all read a non-empty value as "a subagent did this",
+	// which is not true of a step. A step's own attribution rides its blocks
+	// instead (ACPWorkflowMeta.SubtaskID).
 	subSessionID := ""
-	parent := h.parentACPSession(chatID)
-	if env.Params.SessionID != "" && parent != "" && env.Params.SessionID != parent {
+	if h.translator.ClassifyFrame(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow != nil) == translate.OwnerSubagent {
 		subSessionID = env.Params.SessionID
 	}
 

@@ -8,7 +8,7 @@
 // different surface.)
 //
 // The tree is rendered from KAS's own `state` shape, passed through verbatim by
-// GET /api/workflow-runs/{id}. vibekit deliberately does not re-model it: the
+// GET /api/runs/{id}. vibekit deliberately does not re-model it: the
 // node plan is KAS's structure, and a second representation of it here would be
 // one more thing to keep in sync for no gain.
 // ---------------------------------------------------------------------------
@@ -45,10 +45,29 @@ interface RunInspect {
   state?: RunState;
 }
 
+/** The run this view is currently showing, so an SSE invalidation knows whether
+ *  it is about the run on screen. Cleared when the view loads a different one;
+ *  a closed tab simply stops matching, because the next open reassigns it. */
+let shownRun = "";
+
 export function openRunView(workflowID: string, name: string): void {
   openRunTab(workflowID, name, () => {
+    shownRun = workflowID;
     void load(workflowID);
   });
+}
+
+/** Re-read the run on screen, if it is this one.
+ *
+ *  This is the whole client half of the invalidation contract: a run event says
+ *  only "something changed", and the state comes from `inspect`. Reconstructing a
+ *  run from its events would garble it — `run_start` re-fires on every resume and
+ *  `node_complete` carries neither iteration nor branch, so two passes of one
+ *  loop are indistinguishable on the wire. */
+export function refreshRunView(workflowID: string): void {
+  if (workflowID !== "" && workflowID === shownRun) {
+    void load(workflowID);
+  }
 }
 
 async function load(workflowID: string): Promise<void> {
@@ -56,9 +75,14 @@ async function load(workflowID: string): Promise<void> {
   if (container === null) {
     return;
   }
-  container.replaceChildren(el("div", { className: "list-empty" }, "Loading run…"));
+  // Only the FIRST paint shows a loading row. A refetch driven by an
+  // invalidation would otherwise blank a run the user is reading, several times a
+  // minute on a busy run.
+  if (container.childElementCount === 0) {
+    container.replaceChildren(el("div", { className: "list-empty" }, "Loading run…"));
+  }
 
-  const d = await apiGet<RunInspect>(`/api/workflow-runs/${encodeURIComponent(workflowID)}`);
+  const d = await apiGet<RunInspect>(`/api/runs/${encodeURIComponent(workflowID)}`);
   if (d?.state === undefined) {
     container.replaceChildren(
       el("div", { className: "list-empty" }, "Couldn't load this run. It may have been deleted."),

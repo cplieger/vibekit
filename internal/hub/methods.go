@@ -115,6 +115,27 @@ const (
 	methodKiroWorkflowInspect = "_kiro/workflow/inspect" // C→A request: {workflowId} → {workflowId, state, nodePlan}
 )
 
+// The nine A→C workflow lifecycle NOTIFICATIONS, exactly KAS's own
+// `KIND_TO_METHOD` table (`src/workflow/workflow-notification-bridge.ts`). Every
+// payload gets `parentSessionId` merged in when the run has a parent, and none
+// carries a top-level `sessionId` except node_start, which carries the STEP's.
+//
+// They arrive on the launching chat's bridge, because KAS parents a run on the
+// calling chat's session — so no session→chat resolution is needed and the
+// existing chatHandlers table is the right home. Translated to three SSE events;
+// see api/domain_workflow.go for why three and not six.
+const (
+	methodWFRunStart      = "_kiro/workflow/run_start"      // {workflowId, workflowName, inputs, nodeTree[], parentSessionId?}
+	methodWFRunComplete   = "_kiro/workflow/run_complete"   // {workflowId, status, finalState}
+	methodWFNodeStart     = "_kiro/workflow/node_start"     // {workflowId, nodeId, nodePath[], type, agentName?, sessionId?, iteration?, branchId?}
+	methodWFNodeComplete  = "_kiro/workflow/node_complete"  // {workflowId, nodeId, nodePath[], status, artifacts?, capturedOutput?}
+	methodWFNodePaused    = "_kiro/workflow/node_paused"    // {workflowId, nodeId, nodePath[], reason} — note `reason`, not `pauseReason`
+	methodWFPaused        = "_kiro/workflow/paused"         // {workflowId, pauseReason}
+	methodWFLoopIteration = "_kiro/workflow/loop_iteration" // {workflowId, loopId, iteration, stopConditionMet}
+	methodWFWatchPoll     = "_kiro/workflow/watch_poll"     // {workflowId, nodeId, nodePath[], outcome, at}
+	methodWFStepsQueued   = "_kiro/workflow/steps_queued"   // {workflowId, pendingSteps[], resolution?}
+)
+
 // v3 (KAS) hook-management method names. list/setEnabled/triggerHook are C→A
 // requests vibekit issues on the utility bridge (which opts into the v2 hook
 // engine via _meta.kiro.hooks={enabled,v2} — see internal/bridge/bridge.go).

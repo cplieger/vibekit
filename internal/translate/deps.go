@@ -55,12 +55,16 @@ type MCPRecorder interface {
 type Translator struct {
 	deps     Deps
 	newMsgID func() string
+	// steps maps a workflow step's ACP session id to its run and node. Fed from
+	// the wire (`node_start`) and from an `inspect` read; see workflow_steps.go.
+	steps *stepRegistry
 }
 
 // New constructs a Translator with the given Hub dependency surface.
 func New(deps Deps, opts ...Option) *Translator {
 	t := &Translator{
-		deps: deps,
+		deps:  deps,
+		steps: newStepRegistry(),
 	}
 	for _, o := range opts {
 		o(t)
@@ -91,18 +95,17 @@ func (t *Translator) newEventMessage(kind api.EventKind, content string) api.Mes
 	}
 }
 
-// deriveSubSession determines whether a notification belongs to a
-// subagent session. Returns the sessionID if it differs from the
-// parent ACP session (indicating a subagent), or "" for the parent.
+// deriveSubSession returns the sessionID when it belongs to a SUBAGENT, and ""
+// for the launching chat itself OR for a workflow step.
 //
-// On v3 (KAS) this returns "" in practice: subagents are ordinary tool
-// calls that ride the SAME parent sess_ id and attribute via
-// _meta.kiro.agentSubtaskId (threaded onto ToolCall.AgentSubtaskID), not
-// via a distinct session id. The differing-sessionId mechanism is inert
-// but harmless, so it stays for wire-compat rather than being ripped out.
+// A step returning "" is the point, not a loss: a step's frames arrive on the
+// chat's connection with their own session id, and every caller of this function
+// treats a non-empty result as "a subagent did this" — three by dropping the
+// frame and three by stamping SubSessionID. Neither is true of a step, so the
+// step case is answered where it is known (ClassifyFrame) and this function
+// keeps its one narrow meaning. See workflow_steps.go for the whole problem.
 func (t *Translator) deriveSubSession(chatID api.ChatID, sessionID string) string {
-	parent := t.deps.ParentACPSession(chatID)
-	if sessionID != "" && parent != "" && sessionID != parent {
+	if t.ClassifyFrame(chatID, sessionID, false) == OwnerSubagent {
 		return sessionID
 	}
 	return ""

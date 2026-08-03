@@ -145,7 +145,7 @@ func (t *Translator) HandleSafetyPropertiesChanged(ctx context.Context, chatID a
 	if !ok {
 		return
 	}
-	if t.deriveSubSession(chatID, p.SessionID) != "" {
+	if t.foreignSession(chatID, p.SessionID) {
 		return
 	}
 	props := decodeSafetyProps(p.Properties)

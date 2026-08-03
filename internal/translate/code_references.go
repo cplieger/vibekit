@@ -54,11 +54,12 @@ func (t *Translator) HandleCodeReferences(ctx context.Context, chatID api.ChatID
 	if !ok {
 		return
 	}
-	// Dedup the KAS fan-out: skip copies keyed to a subagent session; the
-	// parent-session copy carries the same references (KAS broadcasts the
-	// identical list to every session). deriveSubSession returns "" for the
-	// parent (or when the parent session is unknown), non-empty for a subagent.
-	if t.deriveSubSession(chatID, p.SessionID) != "" {
+	// Dedup the KAS fan-out: skip any copy keyed to a session that is not this
+	// chat's — a subagent's or a workflow step's — because the parent-session
+	// copy carries the same references (KAS broadcasts the identical list to
+	// every session). foreignSession is false for the chat itself and when the
+	// parent session is unknown.
+	if t.foreignSession(chatID, p.SessionID) {
 		return
 	}
 	refs := make([]api.CodeReference, 0, len(p.References))

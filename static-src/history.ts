@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------------
 
 import { toggleHistoryView } from "./tabs.js";
+import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
@@ -247,3 +248,15 @@ registerCleanup(() => {
 export function showHistoryView(): void {
   historyCtrl.showView();
 }
+
+// A run starting or finishing changes this list, and a workflow with twenty steps
+// would otherwise leave a stale row until the user reopened the page.
+//
+// Gated on the page being on screen, so this never becomes a background fetch for
+// a view nobody is looking at: `#history-table` only holds rows while the view is
+// mounted, so its emptiness IS the closed state.
+onBus(BUS_RUNS_CHANGED, () => {
+  if ((document.getElementById("history-table")?.childElementCount ?? 0) > 0) {
+    void historyCtrl.load();
+  }
+});

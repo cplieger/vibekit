@@ -44,10 +44,19 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	// HandleToolCall's AppendToolUseBlock call.
 	var blockIndex int
 	var seq int64
+	// A workflow STEP's frames arrive on this chat's connection with an EMPTY
+	// agentSubtaskId (KAS stamps that only on tool frames), so without this the
+	// step's prose extends the parent agent's trailing block — empty matches
+	// empty. The step's own `_meta.kiro.workflow` supplies an instance-unique
+	// key instead; see ACPWorkflowMeta.SubtaskID.
+	subtask := chunk.Meta.Kiro.AgentSubtaskID
+	if wf := chunk.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
+		subtask = wf
+	}
 	if isReasoning {
-		blockIndex, seq = buf.AppendThinkingDelta(chunk.Content.Text, chunk.Meta.Kiro.AgentSubtaskID)
+		blockIndex, seq = buf.AppendThinkingDelta(chunk.Content.Text, subtask)
 	} else {
-		blockIndex, seq = buf.AppendTextDelta(chunk.Content.Text, chunk.Meta.Kiro.AgentSubtaskID)
+		blockIndex, seq = buf.AppendTextDelta(chunk.Content.Text, subtask)
 	}
 	// A model refusal (kiro-cli 2.13): the explanation is this chunk's text;
 	// the update-level _meta.kiro.refusal classifies it. Stamp the buffer so
@@ -68,7 +77,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 			IsReasoning:    isReasoning,
 			BlockIndex:     blockIndex,
 			Seq:            seq,
-			AgentSubtaskID: chunk.Meta.Kiro.AgentSubtaskID,
+			AgentSubtaskID: subtask,
 			Refusal:        refusal,
 		}))
 }

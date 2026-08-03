@@ -8,6 +8,7 @@ package translate
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -100,8 +101,56 @@ type ACPKiroMeta struct {
 		Notification struct {
 			Kind string `json:"kind"`
 		} `json:"notification"`
-		HookAsk json.RawMessage `json:"hookAsk,omitempty"`
+		// Workflow is present on every frame of a workflow STEP's session
+		// (probe 17). It is what makes a step frame self-describing: the frame
+		// arrives on the launching chat's connection with a session id that is
+		// neither the chat's nor a subagent's, and this block is the only thing
+		// on the frame that says which.
+		//
+		// Note the nesting: this is `params.update._meta.kiro.workflow`, not
+		// `params._meta` — `params` carries only `sessionId` and `update`.
+		Workflow *ACPWorkflowMeta `json:"workflow"`
+		HookAsk  json.RawMessage  `json:"hookAsk,omitempty"`
 	} `json:"kiro"`
+}
+
+// ACPWorkflowMeta is the _meta.kiro.workflow block on a step session's frames.
+//
+// NodePath is KAS's own instance-unique address for a node — a repeat's second
+// iteration is `[wf…, loop, iter-1, step]` — which is why it, rather than
+// NodeID, is what a per-step attribution key is built from: two iterations of
+// one step share a NodeID and must not share a block.
+type ACPWorkflowMeta struct {
+	WorkflowID   string   `json:"workflowId"`
+	WorkflowName string   `json:"workflowName"`
+	NodeID       string   `json:"nodeId"`
+	Type         string   `json:"type"`
+	NodePath     []string `json:"nodePath"`
+}
+
+// SubtaskID is the per-block attribution key for a step's content.
+//
+// A step's prose otherwise MERGES into the launching chat's own paragraph, and
+// that reproduces exactly the context confusion workflows exist to avoid. The
+// mechanism: the chunk handlers append through `Buffer.AppendTextDelta(text,
+// subtask)`, which extends the trailing block only when kind AND subtask match —
+// and a step's text frame carries an EMPTY `agentSubtaskId` (KAS sets that only
+// on tool frames), so empty matched empty and the step's words landed inside the
+// parent agent's block.
+//
+// Reusing `agent_subtask_id` rather than adding a parallel channel is deliberate:
+// the client already groups contiguous same-subtask blocks into a collapsible
+// delegated-work block, so a step renders as delegated work with no client
+// change at all. The `wf:` prefix keeps the two id spaces from ever colliding —
+// KAS's subtask ids are uuids.
+func (w *ACPWorkflowMeta) SubtaskID() string {
+	if w == nil || w.WorkflowID == "" {
+		return ""
+	}
+	if len(w.NodePath) > 0 {
+		return "wf:" + strings.Join(w.NodePath, "/")
+	}
+	return "wf:" + w.WorkflowID + "/" + w.NodeID
 }
 
 // ACPCheckpointMeta is the _meta.kiro.checkpoint object on a completed
@@ -192,7 +241,12 @@ type ACPSessionUpdateBase struct {
 	Kind api.ACPUpdateKind `json:"sessionUpdate"`
 	Meta struct {
 		Kiro struct {
-			Replay bool `json:"replay"`
+			// Workflow is present on a workflow STEP's frames and is the
+			// discriminator the dispatcher classifies on. Decoded here, at the
+			// same shallow depth as Replay, because both answer "which door does
+			// this frame go through" before any per-kind decode happens.
+			Workflow *ACPWorkflowMeta `json:"workflow"`
+			Replay   bool             `json:"replay"`
 		} `json:"kiro"`
 	} `json:"_meta"`
 }

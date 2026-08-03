@@ -51,7 +51,11 @@ type sessionInfoUpdate struct {
 		Kiro struct {
 			Summarization   *v3Summarization `json:"summarization"`
 			UsagePercentage *float64         `json:"usagePercentage"`
-			ContextUsage    struct {
+			// Workflow marks the frame as a workflow STEP's, which is what
+			// lets a step's metering through the parent-only gate below
+			// while keeping it out of the chat's turn counters.
+			Workflow     *ACPWorkflowMeta `json:"workflow"`
+			ContextUsage struct {
 				UsagePercentage *float64 `json:"usagePercentage"`
 			} `json:"contextUsage"`
 			// Focus is the kind=="focus_update" block: the agent's
@@ -80,12 +84,20 @@ type promptTurnSummary struct {
 // _kiro.dev/metadata), and routes v3 compaction status (v2 sourced this
 // from _kiro.dev/compaction/status). Parent-only: subagent updates are
 // dropped so they don't overwrite the parent chat.
+//
+// ONE exception, and it is why the gate moved below the unmarshal: a workflow
+// STEP's turn_completion is the only record of what that step SPENT, and the
+// blanket gate discarded it — so a run of twenty steps reported no cost at all
+// on the chat that launched and paid for it. A step frame is now allowed
+// through for its metering only; see persistTurnSummary's owner argument for
+// why the turn counters are not the step's to move.
 func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
-	if subSessionID != "" {
-		return
-	}
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
+		return
+	}
+	step := u.Meta.Kiro.Workflow != nil && u.Meta.Kiro.Workflow.WorkflowID != ""
+	if subSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
 		return
 	}
 	// Agent focus updates (title / description / status) ride here as
@@ -104,7 +116,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.Cha
 	// on the live 2.12.1 wire). Without this, Usage.TurnCount/LastTurnMs/
 	// Credits had no writer and the context popup showed zeros forever.
 	if len(u.Meta.Kiro.PromptTurnSummaries) > 0 {
-		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime)
+		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime, step)
 		return
 	}
 	// Context usage. usage_update is the primary v3 channel (HandleUsageUpdate),
@@ -203,7 +215,15 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID api.ChatI
 // usage_update.cost channel (persistUsage) keeps overwrite precedence if
 // KAS ever ships both — an absolute value arriving after an increment
 // simply corrects it.
-func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, summaries []promptTurnSummary, elapsedMs float64) {
+// persistTurnSummary folds one turn's metering into the chat's usage.
+//
+// `step` says the metering came from a workflow STEP rather than from a turn of
+// the conversation, and it splits the three fields by what each one means:
+// CREDITS are real account spend the user is owed a readout of, so they
+// accumulate either way; TurnCount and LastTurnMs describe the CONVERSATION, so
+// a step must not touch them — twenty steps would otherwise report a four-message
+// chat as twenty-four turns and overwrite "last turn" with an unrelated duration.
+func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
 	var credits float64
 	for i := range summaries {
 		if summaries[i].Unit == "" || summaries[i].Unit == "credit" {
@@ -214,9 +234,11 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, 
 		if !exists {
 			return false
 		}
-		c.Usage.TurnCount++
-		if elapsedMs > 0 {
-			c.Usage.LastTurnMs = elapsedMs
+		if !step {
+			c.Usage.TurnCount++
+			if elapsedMs > 0 {
+				c.Usage.LastTurnMs = elapsedMs
+			}
 		}
 		if credits > 0 {
 			c.Usage.Credits += credits

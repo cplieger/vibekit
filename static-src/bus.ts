@@ -41,6 +41,9 @@ import type {
   GovernanceStatePayload,
   ToolJobChangedPayload,
   ToolJobOutputPayload,
+  RunStartedPayload,
+  RunProgressPayload,
+  RunFinishedPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -98,6 +101,9 @@ export interface SSEPayloads {
   readonly hooks_changed: undefined;
   readonly tool_job_changed: ToolJobChangedPayload;
   readonly tool_job_output: ToolJobOutputPayload;
+  readonly run_started: RunStartedPayload;
+  readonly run_progress: RunProgressPayload;
+  readonly run_finished: RunFinishedPayload;
 }
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined
@@ -177,6 +183,12 @@ export const BUS_TURN_IDLE = "turn:idle" as const;
 export const BUS_TRANSPORT_GAP = "transport:gap" as const;
 export const BUS_KEYS_ESCAPE = "keys:escape" as const;
 export const BUS_ACTIVATE_CHAT = "chat:activate" as const;
+/** A workflow run appeared or reached a terminal state, so any list of runs is
+ *  stale. On the bus rather than a direct call because the run handler and the
+ *  history page are two UI affordances that should not know about each other —
+ *  and concretely because importing the history page from a handler drags the
+ *  whole chat module in behind it. */
+export const BUS_RUNS_CHANGED = "runs:changed" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
@@ -184,6 +196,7 @@ interface BusPayloads {
   readonly [BUS_TRANSPORT_GAP]: { lastSeen: number; floor: number; head: number };
   readonly [BUS_KEYS_ESCAPE]: undefined;
   readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
+  readonly [BUS_RUNS_CHANGED]: undefined;
 }
 
 // The generic cross-module bus is backed by @cplieger/reactive's createBus

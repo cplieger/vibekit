@@ -90,6 +90,7 @@ import "./handlers/turn.js";
 import "./handlers/system.js";
 import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
+import "./handlers/run.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";

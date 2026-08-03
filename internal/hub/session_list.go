@@ -269,30 +269,3 @@ func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]api.ChatID) (
 	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
 	return out, nil
 }
-
-// handleWorkflowRun: GET /api/workflow-runs/{workflowId} → one run's full
-// state, for the read-only review tab. Passes KAS's `state` and `nodePlan`
-// through verbatim: the tree is KAS's shape and re-modelling it here would be
-// a second representation of a structure vibekit does not own.
-func (h *Hub) handleWorkflowRun(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
-		return
-	}
-	id := r.PathValue("id")
-	if id == "" {
-		api.BadRequest(w, "missing workflow id")
-		return
-	}
-	u := h.ensureUtility()
-	cctx, cancel := context.WithTimeout(r.Context(), sessionListTimeout)
-	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
-		callerParams(map[string]any{"workflowId": id}))
-	if err != nil {
-		slog.Warn("workflow inspect failed", "workflow_id", id, "error", err)
-		api.NotFound(w, "workflow run not found")
-		return
-	}
-	api.WriteRawJSON(w, raw)
-}
