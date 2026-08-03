@@ -1,65 +1,18 @@
 package hub
 
-// Tests for the run read surface's two side concerns: seeding step attribution
-// from a read, and the route's own registration.
+// Tests for the run read handler's own guards.
 //
-// The passthrough itself is not tested here — there is nothing to assert about
-// `raw in, raw out` that is not a restatement — but the seeding IS the recovery
-// path for step-frame classification, and getting it wrong is silent: a resumed
-// run's frames would be attributed to a subagent that does not exist, and the
-// only symptom is a step's prose appearing in the wrong place.
+// The passthrough is not tested here — there is nothing to assert about `raw in,
+// raw out` that is not a restatement — and the step-session seeding it performs is
+// tested where the registry lives (translate.RecordRunSteps), because that is
+// where the assertion can be about the observable consequence rather than about a
+// map reached through a test-only accessor.
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
-
-// TestRecordRunStepSessions_SeedsFromARead pins the recovery path.
-//
-// `node_start` announces a step's session id live, but a container restart empties
-// that registry while the run carries on — so reading the run is the only other
-// moment the mapping is in hand, and `inspect` carries it on every node.
-func TestRecordRunStepSessions_SeedsFromARead(t *testing.T) {
-	h, _, _ := newTestHub()
-	raw := json.RawMessage(`{
-	  "workflowId": "wf_1",
-	  "state": {"workflowId": "wf_1", "root": {"nodeId": "wf_1", "type": "sequence", "children": [
-	    {"nodeId": "build", "type": "step", "sessionId": "sess_build"},
-	    {"nodeId": "test", "type": "step", "sessionId": "sess_test"},
-	    {"nodeId": "later", "type": "step"}
-	  ]}}
-	}`)
-
-	h.recordRunStepSessions(raw)
-
-	ref, ok := h.translator.StepOf("sess_build")
-	if !ok {
-		t.Fatal("reading a run did not seed its step sessions")
-	}
-	if ref.WorkflowID != "wf_1" || ref.NodeID != "build" {
-		t.Errorf("StepOf(sess_build) = %+v, want {wf_1 build}", ref)
-	}
-	if _, ok := h.translator.StepOf("sess_test"); !ok {
-		t.Error("only the first step was seeded")
-	}
-	// A step with no session has not started; recording an empty key would make
-	// every unattributed frame look like a step.
-	if _, ok := h.translator.StepOf(""); ok {
-		t.Error("a pending step seeded an empty-keyed entry")
-	}
-}
-
-// TestRecordRunStepSessions_ToleratesJunk pins that seeding is best-effort. The
-// response is passed through raw and is useful whether or not the side effect
-// landed, so a decode failure must not be able to fail the read.
-func TestRecordRunStepSessions_ToleratesJunk(t *testing.T) {
-	h, _, _ := newTestHub()
-	for _, raw := range []string{`{`, `null`, `[]`, `{"state":null}`, `{"state":{"root":null}}`, `"a string"`} {
-		h.recordRunStepSessions(json.RawMessage(raw))
-	}
-}
 
 // TestHandleRun_RejectsNonGET pins that the surface is read-only at the method
 // level too. Runs have no controls at all (user decision), so a POST here is not

@@ -32,7 +32,6 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -85,22 +84,6 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 		api.NotFound(w, "workflow run not found")
 		return
 	}
-	h.recordRunStepSessions(raw)
+	h.translator.RecordRunSteps(raw)
 	api.WriteRawJSON(w, raw)
-}
-
-// recordRunStepSessions seeds the step-session registry from an inspect result.
-//
-// Best-effort on purpose: a decode failure here must not fail the read, because
-// the response is passed through raw and is useful whether or not the side
-// effect landed. The cost of missing it is one run's step frames classified as a
-// subagent's until the next read.
-func (h *Hub) recordRunStepSessions(raw json.RawMessage) {
-	var res workflow.InspectResult
-	if json.Unmarshal(raw, &res) != nil {
-		return
-	}
-	for _, s := range workflow.StepSessions(res.State) {
-		h.translator.RecordStepSession(s.SessionID, res.State.WorkflowID, s.NodeID)
-	}
 }

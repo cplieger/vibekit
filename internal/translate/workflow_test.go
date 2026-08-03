@@ -230,14 +230,14 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	var events []api.ServerEvent
 	tr := New(capturing(&events))
 
-	if _, ok := tr.StepOf("sess_new"); ok {
+	if _, ok := tr.steps.lookup("sess_new"); ok {
 		t.Fatal("registry is not empty before node_start")
 	}
 	tr.RunProgressHandler(api.RunProgressNodeStart)(context.Background(), testChat,
 		notif("_kiro/workflow/node_start", map[string]any{
 			"workflowId": "wf_1", "nodeId": "build", "sessionId": "sess_new",
 		}))
-	ref, ok := tr.StepOf("sess_new")
+	ref, ok := tr.steps.lookup("sess_new")
 	if !ok {
 		t.Fatal("node_start did not record the step session")
 	}
@@ -248,7 +248,7 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	// nothing rather than an entry keyed on "".
 	tr.RunProgressHandler(api.RunProgressNodeStart)(context.Background(), testChat,
 		notif("_kiro/workflow/node_start", map[string]any{"workflowId": "wf_1", "nodeId": "next"}))
-	if _, ok := tr.StepOf(""); ok {
+	if _, ok := tr.steps.lookup(""); ok {
 		t.Error("a node_start with no sessionId recorded an empty-keyed entry")
 	}
 }
@@ -269,11 +269,11 @@ func TestRunComplete_ForgetsTheRunsStepSessions(t *testing.T) {
 		notif("_kiro/workflow/run_complete", map[string]any{"workflowId": "wf_1", "status": "completed"}))
 
 	for _, id := range []string{"sess_a", "sess_b"} {
-		if _, ok := tr.StepOf(id); ok {
+		if _, ok := tr.steps.lookup(id); ok {
 			t.Errorf("%s survived its run's completion", id)
 		}
 	}
-	if _, ok := tr.StepOf("sess_c"); !ok {
+	if _, ok := tr.steps.lookup("sess_c"); !ok {
 		t.Error("another run's step session was forgotten too")
 	}
 }
@@ -284,7 +284,7 @@ func TestRecordStepSession_IgnoresIncompleteRefs(t *testing.T) {
 	tr := New(capturing(&events))
 	tr.RecordStepSession("", "wf_1", "a")
 	tr.RecordStepSession("sess_x", "", "a")
-	if _, ok := tr.StepOf("sess_x"); ok {
+	if _, ok := tr.steps.lookup("sess_x"); ok {
 		t.Error("recorded a step with no workflow id")
 	}
 }
@@ -293,7 +293,7 @@ func TestStepOf_EmptySessionIsNeverAStep(t *testing.T) {
 	t.Parallel()
 	var events []api.ServerEvent
 	tr := New(capturing(&events))
-	if _, ok := tr.StepOf(""); ok {
+	if _, ok := tr.steps.lookup(""); ok {
 		t.Error("StepOf(\"\") reported a step")
 	}
 }
@@ -511,5 +511,57 @@ func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 	New(deps).HandleSessionInfoUpdate(context.Background(), testChat, raw, "")
 	if store.mutateCalls != 0 {
 		t.Errorf("a step's context_usage reached the chat (%d mutations), want 0", store.mutateCalls)
+	}
+}
+
+// TestRecordRunSteps_SeedsFromAnInspectRead pins the recovery path for step
+// attribution.
+//
+// `node_start` announces a step's session id live, but a container restart
+// empties the registry while the run carries on — so reading the run is the only
+// other moment the mapping is in hand, and `inspect` carries it on every node.
+// The assertion is on the observable consequence: the frame now classifies as a
+// step rather than as a subagent.
+func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
+	t.Parallel()
+	var events []api.ServerEvent
+	tr := New(capturing(&events))
+
+	if got := tr.ClassifyFrame(testChat, "sess_build", false); got != OwnerSubagent {
+		t.Fatalf("before the read, sess_build classified %d, want OwnerSubagent", got)
+	}
+	tr.RecordRunSteps(json.RawMessage(`{
+	  "workflowId": "wf_1",
+	  "state": {"workflowId": "wf_1", "root": {"nodeId": "wf_1", "type": "sequence", "children": [
+	    {"nodeId": "build", "type": "step", "sessionId": "sess_build"},
+	    {"nodeId": "test", "type": "step", "sessionId": "sess_test"},
+	    {"nodeId": "later", "type": "step"}
+	  ]}}
+	}`))
+
+	for _, id := range []string{"sess_build", "sess_test"} {
+		if got := tr.ClassifyFrame(testChat, id, false); got != OwnerStep {
+			t.Errorf("after the read, %s classified %d, want OwnerStep", id, got)
+		}
+	}
+	ref, ok := tr.steps.lookup("sess_build")
+	if !ok || ref.WorkflowID != "wf_1" || ref.NodeID != "build" {
+		t.Errorf("lookup(sess_build) = %+v ok=%v, want {wf_1 build} true", ref, ok)
+	}
+	// A step with no session has not started; recording an empty key would make
+	// every unattributed frame on this chat look like a step.
+	if _, ok := tr.steps.lookup(""); ok {
+		t.Error("a pending step seeded an empty-keyed entry")
+	}
+}
+
+// TestRecordRunSteps_ToleratesJunk pins that seeding cannot fail a read: the run
+// endpoint passes the same bytes through to the client either way.
+func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
+	t.Parallel()
+	var events []api.ServerEvent
+	tr := New(capturing(&events))
+	for _, raw := range []string{`{`, `null`, `[]`, `{"state":null}`, `{"state":{"root":null}}`, `"a string"`, ``} {
+		tr.RecordRunSteps(json.RawMessage(raw))
 	}
 }

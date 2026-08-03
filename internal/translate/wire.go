@@ -121,11 +121,10 @@ type ACPKiroMeta struct {
 // NodeID, is what a per-step attribution key is built from: two iterations of
 // one step share a NodeID and must not share a block.
 type ACPWorkflowMeta struct {
-	WorkflowID   string   `json:"workflowId"`
-	WorkflowName string   `json:"workflowName"`
-	NodeID       string   `json:"nodeId"`
-	Type         string   `json:"type"`
-	NodePath     []string `json:"nodePath"`
+	WorkflowID string   `json:"workflowId"`
+	NodeID     string   `json:"nodeId"`
+	Type       string   `json:"type"`
+	NodePath   []string `json:"nodePath"`
 }
 
 // SubtaskID is the per-block attribution key for a step's content.

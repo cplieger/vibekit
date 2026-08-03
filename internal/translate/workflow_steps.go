@@ -39,9 +39,11 @@ package translate
 // on every node, which is the durable copy.
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/workflow"
 )
 
 // FrameOwner is who a frame on a chat's connection belongs to.
@@ -121,16 +123,6 @@ func (s *stepRegistry) forgetRun(workflowID string) {
 	delete(s.byRun, workflowID)
 }
 
-// StepOf resolves a session id to the run step it belongs to, if any. Exported
-// for the hub's own session-update dispatcher, which classifies before the
-// per-kind handlers run.
-func (t *Translator) StepOf(sessionID string) (StepRef, bool) {
-	if sessionID == "" {
-		return StepRef{}, false
-	}
-	return t.steps.lookup(sessionID)
-}
-
 // RecordStepSession notes a step session learned from somewhere other than a
 // `node_start` frame — specifically an `inspect` read, whose `state` carries
 // `sessionId` on every node. That is the recovery path: after a restart the
@@ -141,6 +133,28 @@ func (t *Translator) RecordStepSession(sessionID, workflowID, nodeID string) {
 		return
 	}
 	t.steps.record(sessionID, workflowID, nodeID)
+}
+
+// RecordRunSteps seeds the registry from a raw `_kiro/workflow/inspect` reply.
+//
+// Called on every run read, because that read is the only other moment the
+// durable step→session mapping is in hand: `node_start` announces it live, but a
+// container restart empties the registry while the run carries on, so a resumed
+// run's frames would arrive carrying session ids nothing in this process ever
+// announced — and be classified as a subagent's.
+//
+// Best-effort by design: the run endpoint passes the same bytes through to the
+// client and is useful whether or not this landed, so a decode failure must not
+// be able to fail a read. The cost of missing it is one run's frames
+// misclassified until the next read.
+func (t *Translator) RecordRunSteps(raw json.RawMessage) {
+	var res workflow.InspectResult
+	if json.Unmarshal(raw, &res) != nil || res.State == nil {
+		return
+	}
+	for _, st := range workflow.StepSessions(res.State) {
+		t.RecordStepSession(st.SessionID, res.State.WorkflowID, st.NodeID)
+	}
 }
 
 // ClassifyFrame decides who a frame belongs to, from the chat it arrived on and

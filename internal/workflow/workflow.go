@@ -50,21 +50,19 @@ type Node struct {
 	Children  []Node `json:"children"`
 }
 
-// State is the run state `inspect` returns, decoded to the same depth.
+// State is the run state `inspect` returns, decoded only as far as step
+// identification needs. Status, pauseReason, timings and the rest stay on the
+// wire: the read endpoint passes the whole thing through, so decoding a field
+// here would create a second definition of it that can only drift.
 type State struct {
-	Root            *Node  `json:"root"`
-	WorkflowID      string `json:"workflowId"`
-	Status          string `json:"status"`
-	ParentSessionID string `json:"parentSessionId"`
+	Root       *Node  `json:"root"`
+	WorkflowID string `json:"workflowId"`
 }
 
-// InspectResult is `_kiro/workflow/inspect`'s reply.
+// InspectResult is `_kiro/workflow/inspect`'s reply, decoded to the one part
+// vibekit reads. `nodePlan` rides through undecoded — see the package comment.
 type InspectResult struct {
-	State      *State `json:"state"`
-	WorkflowID string `json:"workflowId"`
-	// NodePlan is KAS's declared plan. Kept as raw JSON and never decoded: see
-	// the package comment for why it carries nothing the state tree lacks.
-	NodePlan json.RawMessage `json:"nodePlan"`
+	State *State `json:"state"`
 }
 
 // StepSession names one step node and the ACP session that executed it.
