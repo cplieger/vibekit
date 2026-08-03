@@ -70,6 +70,7 @@ vi.mock("./dom.js", () => ({ $: {} }));
 vi.mock("./retention.js", () => ({ isRetentionEnabled: vi.fn(() => false) }));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_ACTIVATE_CHAT: "activate-chat" }));
 vi.mock("./actions/chat.js", () => ({
+  closeChat: { dispatch: vi.fn() },
   deleteChat: { dispatch: vi.fn() },
   restoreChat: { dispatch: vi.fn() },
   setMode: { dispatch: setModeDispatch },
@@ -79,7 +80,7 @@ import { createPlannerSession, openChatTab } from "./chat.js";
 import { openTab } from "./tabs.js";
 import { get, removeChat } from "./store.js";
 import { isRetentionEnabled } from "./retention.js";
-import { deleteChat } from "./actions/chat.js";
+import { closeChat, deleteChat } from "./actions/chat.js";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -108,13 +109,15 @@ describe("openChatTab onClose retention gate", () => {
     return spec.onClose ?? ((): void => undefined);
   }
 
-  it("persists nothing on close when retention is ENABLED (N>0)", () => {
-    // There is no archive step any more: "archived" is computed from the
-    // chat's age against the retention window, so closing a tab is purely a
-    // local affair. The chat file stays exactly as it was.
+  it("persists nothing on close when retention is ENABLED (N>0), but kills the work", () => {
+    // There is no archive step: "archived" is computed from the chat's age
+    // against the retention window, so the chat FILE stays exactly as it was.
+    // The PROCESSES do not (user decision: the x kills the turn, the chat's
+    // runs, the bridge) — that is close_chat, fired before the local removal.
     vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
     vi.mocked(isRetentionEnabled).mockReturnValue(true);
     captureOnClose("c-closed")();
+    expect(closeChat.dispatch).toHaveBeenCalledWith("c-closed");
     expect(removeChat).toHaveBeenCalledWith("c-closed");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
   });

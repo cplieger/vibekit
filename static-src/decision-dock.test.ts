@@ -22,7 +22,14 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 vi.mock("./editor-openers.js", () => ({ openFileGitDiff: vi.fn() }));
 vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
 
-import { mountDecisionDock, pushDecision, dropDecisions, _resetForTest } from "./decision-dock.js";
+import {
+  mountDecisionDock,
+  mountRunDecisionDock,
+  rerenderDocks,
+  pushDecision,
+  dropDecisions,
+  _resetForTest,
+} from "./decision-dock.js";
 import { setSessions, setActive } from "./store.js";
 import type { PermissionNeededPayload, Session } from "./types.js";
 
@@ -249,5 +256,116 @@ describe("turn approval", () => {
     });
     clickButton("Roll back all");
     expect(submit).toHaveBeenCalledWith("reject_once", undefined);
+  });
+});
+
+describe("the run tab's dock", () => {
+  function mountRunHost(run: () => string): HTMLElement {
+    const el = document.createElement("div");
+    el.id = "run-dock";
+    el.className = "hidden";
+    document.body.appendChild(el);
+    mountRunDecisionDock(el, run);
+    return el;
+  }
+
+  it("renders a MANUAL run's ask — keyed to the synthetic run chat", () => {
+    const host = mountRunHost(() => "wf_1");
+    pushDecision({
+      kind: "permission",
+      chatID: "run:wf_1",
+      requestID: 1,
+      payload: perm({ request_id: 1 }),
+      submit: vi.fn(),
+    });
+    expect(host.classList.contains("hidden")).toBe(false);
+    expect(host.querySelector(".dock-card")).not.toBeNull();
+  });
+
+  it("renders an AGENT-LAUNCHED run's ask — keyed to the launching chat — in sync with the chat's dock", () => {
+    // The done-when's "banner in both, in sync": one decision object, two
+    // hosts rendering it, one answer clearing both.
+    setSessions([session("c1")]);
+    setActive("c1");
+    const runHost = mountRunHost(() => "wf_2");
+
+    const submit = vi.fn();
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      runID: "wf_2",
+      requestID: 5,
+      payload: perm({ request_id: 5 }),
+      submit,
+    });
+
+    // Both surfaces show it.
+    expect(host().querySelector(".dock-card")).not.toBeNull();
+    expect(runHost.querySelector(".dock-card")).not.toBeNull();
+
+    // Answer from the CHAT's dock; the run tab's rendering clears too.
+    host().querySelector<HTMLButtonElement>("button")?.click();
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(host().classList.contains("hidden")).toBe(true);
+    expect(runHost.classList.contains("hidden")).toBe(true);
+  });
+
+  it("shows nothing for another run's ask", () => {
+    const runHost = mountRunHost(() => "wf_3");
+    pushDecision({
+      kind: "permission",
+      chatID: "run:wf_OTHER",
+      requestID: 9,
+      payload: perm({ request_id: 9 }),
+      submit: vi.fn(),
+    });
+    expect(runHost.classList.contains("hidden")).toBe(true);
+  });
+
+  it("re-keys when the shared view shows a different run", () => {
+    // One #run-dock element serves every run tab; the run id is a getter and a
+    // tab switch re-renders through rerenderDocks.
+    let shown = "wf_a";
+    const runHost = mountRunHost(() => shown);
+    pushDecision({
+      kind: "permission",
+      chatID: "run:wf_b",
+      requestID: 11,
+      payload: perm({ request_id: 11 }),
+      submit: vi.fn(),
+    });
+    expect(runHost.classList.contains("hidden")).toBe(true);
+    shown = "wf_b";
+    rerenderDocks();
+    expect(runHost.classList.contains("hidden")).toBe(false);
+  });
+
+  it("lets the run tab answer an ask sitting BEHIND the chat's own head", () => {
+    // Settle guards on membership, not head position: the chat's queue can hold
+    // its own ask first, and the run tab renders (and answers) the step's ask
+    // behind it. Answering out of queue order is protocol-correct — each
+    // request id is its own JSON-RPC exchange — and refusing it would leave a
+    // dead button in the run tab.
+    setSessions([session("c1")]);
+    setActive("c1");
+    const runHost = mountRunHost(() => "wf_4");
+
+    const chatSubmit = pushPerm("c1", 20);
+    const stepSubmit = vi.fn();
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      runID: "wf_4",
+      requestID: 21,
+      payload: perm({ request_id: 21 }),
+      submit: stepSubmit,
+    });
+
+    // The chat's dock shows its head (20); the run tab shows the step's (21).
+    runHost.querySelector<HTMLButtonElement>("button")?.click();
+    expect(stepSubmit).toHaveBeenCalledTimes(1);
+    expect(chatSubmit).not.toHaveBeenCalled();
+    // The chat's own ask is still on screen, unharmed.
+    expect(host().querySelector(".dock-card")).not.toBeNull();
   });
 });

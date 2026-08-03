@@ -62,6 +62,11 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 // the `failed_children` response are all gone rather than kept as a
 // single-element loop.
 func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+	// Delete implies close semantics: the chat's runs are cancelled first,
+	// because a run is durable state a dead bridge only PAUSES — without this,
+	// deleting a chat mid-run left the run to revive and edit files attributed
+	// to a chat that no longer exists.
+	d.Chat().CancelChatRuns(ctx, cmd.ChatID)
 	d.Chat().CleanupChatState(ctx, cmd.ChatID)
 	if err := d.Chat().ChatStore().Delete(ctx, cmd.ChatID); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
@@ -87,6 +92,29 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	if err := sb.Notify(ctx, api.MethodCancel, SessionParams(sb)); err != nil {
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 	}
+	d.RespondOK(w, cmd.RequestID)
+}
+
+// CmdCloseChat is the tab-close teardown: the user closed the chat's tab, and
+// the gesture means "kill all of it" (user decision) — the turn, the runs, the
+// process. The chat RECORD is untouched; under retention a closed chat is just
+// a chat without a tab, and reopening it session/loads everything back.
+//
+// Ordering is the contract. The turn is cancelled FIRST (session/cancel, the
+// graceful stop — the model stops rather than being severed mid-write), then
+// the chat's runs (durable state; killing the process would only pause them,
+// and a paused run later revives and edits files nobody is watching), then the
+// process teardown, which also flushes the in-flight buffer and kills the
+// chat's agent terminals.
+func CmdCloseChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+	d.PendingPerms().ClearPendingPermsForChat(cmd.ChatID)
+	if sb := d.Bridge().GetBridge(cmd.ChatID); sb != nil {
+		if err := sb.Notify(ctx, api.MethodCancel, SessionParams(sb)); err != nil {
+			slog.Warn("close: turn cancel failed", "chat_id", cmd.ChatID, keyError, err)
+		}
+	}
+	d.Chat().CancelChatRuns(ctx, cmd.ChatID)
+	d.Chat().CleanupChatState(ctx, cmd.ChatID)
 	d.RespondOK(w, cmd.RequestID)
 }
 

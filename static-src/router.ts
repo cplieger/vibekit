@@ -41,7 +41,7 @@ export type GitTab = "changes" | "prs" | "sources";
 // default and its URL omits the segment (/docs, not /docs/steering), mirroring
 // SettingsTab's "general" and GitTab's "changes". No "workflows": a recipe is
 // not a .kiro file, so that tab arrives with the run-launch work.
-export type DocsTab = "steering" | "skills" | "agents" | "specs" | "hooks";
+export type DocsTab = "steering" | "skills" | "agents" | "specs" | "hooks" | "workflows";
 
 interface RouteChat {
   kind: "chat";

@@ -19,6 +19,7 @@ const (
 	CmdPrompt              CommandType = "prompt"
 	CmdCancel              CommandType = "cancel"
 	CmdDeleteChat          CommandType = "delete_chat"
+	CmdCloseChat           CommandType = "close_chat"
 	CmdSwitchModel         CommandType = "switch_model"
 	CmdPermissionResponse  CommandType = "permission_response"
 	CmdElicitationResponse CommandType = "elicitation_response"

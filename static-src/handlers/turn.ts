@@ -155,6 +155,7 @@ onSSE("permission_needed", (chatID, p) => {
   pushDecision({
     kind: "permission",
     chatID,
+    runID: p.run_id ?? "",
     requestID: p.request_id,
     payload: p,
     submit: (optionID, fileDecisions) => {
@@ -174,6 +175,7 @@ onSSE("elicitation_needed", (chatID, p) => {
   pushDecision({
     kind: "elicitation",
     chatID,
+    runID: p.run_id ?? "",
     requestID: p.request_id,
     payload: p,
     submit: (action, content) => {
@@ -193,6 +195,7 @@ onSSE("user_input_needed", (chatID, p) => {
   pushDecision({
     kind: "user_input",
     chatID,
+    runID: p.run_id ?? "",
     requestID: p.request_id,
     payload: p,
     submit: (action, answer) => {

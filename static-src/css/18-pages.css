@@ -752,7 +752,7 @@ h3.section-title {
   font-weight: 600;
   text-align: center;
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--c-text-tertiary);
 }
 .history-kind-run {
   border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
@@ -764,7 +764,7 @@ h3.section-title {
 .history-status {
   flex: 0 0 auto;
   font-size: var(--fs-xs);
-  color: var(--warn, var(--text-muted));
+  color: var(--warn, var(--c-text-tertiary));
   text-transform: capitalize;
 }
 
@@ -808,7 +808,7 @@ h3.section-title {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
-  background: var(--text-muted);
+  background: var(--c-text-tertiary);
 }
 .run-node-completed .run-node-dot {
   background: var(--ok, #3fb950);
@@ -827,7 +827,7 @@ h3.section-title {
 }
 .run-node-type,
 .run-node-dur {
-  color: var(--text-muted);
+  color: var(--c-text-tertiary);
   font-size: var(--fs-xs);
 }
 .run-node-dur {
@@ -839,15 +839,43 @@ h3.section-title {
 .run-output-node {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
-  color: var(--text-muted);
+  color: var(--c-text-tertiary);
   margin-bottom: 0.2rem;
 }
 .run-output-body {
   margin: 0;
   padding: var(--sp-2);
-  background: var(--bg-inset, var(--bg-alt));
+  background: var(--c-bg-secondary);
   border-radius: var(--radius-sm);
   overflow-x: auto;
   font-size: var(--fs-sm);
   white-space: pre-wrap;
+}
+
+/* --- The run tab's bottom bar --------------------------------------------- */
+
+/* The decision region, above the content it is about — the run tab's half of
+   the "one dock, two hosts" contract. No composer: there is nobody to type to,
+   which is exactly why the dock is a bottom-bar region rather than a composer
+   feature. The view becomes a column so the page content scrolls and the bar
+   stays pinned, same shape as the file browser's toolbar. */
+[id="run-view"] {
+  display: flex;
+  flex-direction: column;
+}
+
+[id="run-view"] .page-content {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.run-bottom-bar {
+  flex: 0 0 auto;
+
+  /* Collapse entirely while the dock inside is hidden: an empty bar is a
+     stripe of chrome claiming a decision region that is not there. */
+  &:has(> .decision-dock.hidden) {
+    display: none;
+  }
 }

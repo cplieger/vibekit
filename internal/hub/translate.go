@@ -143,6 +143,14 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 	ctx, cancel := h.hubContext()
 	defer cancel()
 
+	// A RUN bridge's frames take their own door: step content must not flow
+	// into any transcript, and this connection's workflow lifecycle frames are
+	// workspace-global rather than a chat's. See run_host.go.
+	if isRunChat(chatID) {
+		h.runDispatch(ctx, chatID, msg)
+		return
+	}
+
 	if msg.ID != nil && h.handleFSRequest(ctx, chatID, msg) {
 		return
 	}

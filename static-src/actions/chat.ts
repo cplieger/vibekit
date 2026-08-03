@@ -32,6 +32,20 @@ import {
 import { send as transportSend } from "../transport.js";
 import { clearLastError } from "../send-state.js";
 
+// --- chat.close ---
+// The tab-close teardown: the x means "kill all of it" (user decision) — the
+// in-flight turn, the chat's runs, the process. The chat RECORD survives;
+// reopening session/loads it back. Fire-and-forget with no error toast: the
+// tab is already gone, and there is nothing for the user to redo.
+
+export const closeChat = transportAction<string, { ok: boolean }>({
+  name: "chat.close",
+  networkMode: "always",
+  command: (chatID) => ({ type: "close_chat", chat_id: chatID }),
+  error: false,
+  success: false,
+});
+
 // --- chat.delete ---
 // The tab-close path in the "no retention" mode (retention = 0): closing a
 // non-empty chat deletes it permanently (ephemeral chats). With retention on,

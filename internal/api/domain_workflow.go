@@ -93,3 +93,44 @@ type RunFinishedPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	Status     string `json:"status"`
 }
+
+// RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
+//
+// The recipe is named by its `source` exactly as `_kiro/workflow/listRecipes`
+// reported it — `bundled://<name>` for a compiled-in recipe, an absolute
+// `*.workflow.json` path for a workspace one. The server re-validates the value
+// against a fresh listRecipes call rather than trusting it, so this endpoint
+// cannot be steered at an arbitrary file even though the wire value looks like
+// a path.
+type RunLaunchRequest struct {
+	Inputs map[string]string `json:"inputs,omitempty"`
+	Source string            `json:"source"`
+}
+
+// RunLaunchedResponse is POST /api/runs's reply. Name is the recipe's, so the
+// client can label the tab it opens without waiting for the first refetch.
+type RunLaunchedResponse struct {
+	WorkflowID string `json:"workflow_id"`
+	Name       string `json:"name"`
+}
+
+// Recipe is one launchable workflow definition, projected from
+// `_kiro/workflow/listRecipes` for GET /api/recipes.
+//
+// `plan` is deliberately not forwarded: the Workflows tab lists what CAN run,
+// and the node plan belongs to the run views that show what IS running.
+type Recipe struct {
+	// Inputs maps input name → declared type (`string`, `prompt`, `file`).
+	Inputs      map[string]string `json:"inputs,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	// Source is the launch key: `bundled://<name>` or a workspace
+	// `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
+	Source  string `json:"source"`
+	BuiltIn bool   `json:"built_in,omitempty"`
+}
+
+// RecipesResponse is GET /api/recipes's reply.
+type RecipesResponse struct {
+	Recipes []Recipe `json:"recipes"`
+}

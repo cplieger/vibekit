@@ -37,6 +37,7 @@ import { signal, subscribe } from "@cplieger/reactive";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { pushRoute } from "./router.js";
 import type { DocsTab } from "./router.js";
+import { renderRecipesPanel } from "./recipes.js";
 import { setDocsTab as setTabRoute, toggleDocsView } from "./tabs.js";
 
 /** One document row, as the server reports it. Fields are per-category and
@@ -67,6 +68,7 @@ export const DOCS_TABS: readonly DocsTab[] = [
   "agents",
   "specs",
   "hooks",
+  "workflows",
 ] as const;
 
 const TAB_LABELS: Readonly<Record<DocsTab, string>> = {
@@ -75,10 +77,14 @@ const TAB_LABELS: Readonly<Record<DocsTab, string>> = {
   agents: "Agents",
   specs: "Specs",
   hooks: "Hooks",
+  workflows: "Workflows",
 };
 
-/** Wire category (the server's value) per tab. */
-const TAB_CATEGORY: Readonly<Record<DocsTab, string>> = {
+/** Wire category (the server's value) per tab. Workflows has NO category: it
+ *  is RPC-sourced (a recipe is not a `.kiro` file — the bundled ones are
+ *  compiled into KAS and agent-authored ones live under KAS's sessions tree),
+ *  so renderActive hands its panel to recipes.ts instead of filtering docs. */
+const TAB_CATEGORY: Readonly<Record<Exclude<DocsTab, "workflows">, string>> = {
   steering: "steering",
   skills: "skill",
   agents: "agent",
@@ -86,7 +92,7 @@ const TAB_CATEGORY: Readonly<Record<DocsTab, string>> = {
   hooks: "hook",
 };
 
-const EMPTY_TEXT: Readonly<Record<DocsTab, string>> = {
+const EMPTY_TEXT: Readonly<Record<Exclude<DocsTab, "workflows">, string>> = {
   steering: "No steering docs in .kiro/steering/.",
   skills: "No skills in .kiro/skills/.",
   agents: "No custom agents in .kiro/agents/.",
@@ -270,6 +276,10 @@ function renderActive(): void {
   if (container === null) {
     return;
   }
+  if (tab === "workflows") {
+    renderRecipesPanel(container);
+    return;
+  }
   const rows = docs.filter((d) => d.category === TAB_CATEGORY[tab]);
   if (rows.length === 0) {
     container.replaceChildren(el("div", { className: "list-empty" }, EMPTY_TEXT[tab]));
@@ -323,7 +333,13 @@ function metaFor(doc: KiroDoc): HTMLElement[] {
       // me tokens on every session, or only when I touch its files".
       const mode = doc.inclusion ?? "";
       if (mode !== "") {
-        const badge = el("span", { className: `docs-badge docs-badge-${mode}` }, mode);
+        // The class is lowercased ("fileMatch" → filematch): CSS class names are
+        // kebab/lower by convention and the label keeps the camelCase spelling.
+        const badge = el(
+          "span",
+          { className: `docs-badge docs-badge-${mode.toLowerCase()}` },
+          mode,
+        );
         if (doc.file_match !== undefined && doc.file_match !== "") {
           badge.setAttribute("data-tooltip", doc.file_match);
         }

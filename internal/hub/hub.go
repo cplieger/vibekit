@@ -320,6 +320,9 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config-template", h.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", h.handleSessionList)
 	mux.HandleFunc("GET /api/runs/{id}", h.handleRun)
+	mux.HandleFunc("POST /api/runs", h.handleRunLaunch)
+	mux.HandleFunc("POST /api/runs/{id}/cancel", h.handleRunCancel)
+	mux.HandleFunc("GET /api/recipes", h.handleRecipes)
 }
 
 // Shutdown drains in-flight prompts and closes all bridges.

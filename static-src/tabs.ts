@@ -898,7 +898,12 @@ export function toggleDocsView(tab: DocsTab = "steering", onShow?: () => void): 
 /** Open (or focus) the read-only review tab for one previous workflow run.
  *  Not a singleton: several runs can be reviewed side by side, keyed by id.
  *  Closing it closes nothing else — a finished run has nothing to kill. */
-export function openRunTab(workflowID: string, name: string, onShow: () => void): void {
+export function openRunTab(
+  workflowID: string,
+  name: string,
+  onShow: () => void,
+  opts?: { onClose?: () => void },
+): void {
   openTab({
     id: `run:${workflowID}`,
     name,
@@ -906,6 +911,7 @@ export function openRunTab(workflowID: string, name: string, onShow: () => void)
     view: TAB_VIEWS.run,
     route: { kind: "run", id: workflowID },
     onShow,
+    onClose: opts?.onClose,
   });
 }
 

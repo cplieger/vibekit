@@ -136,6 +136,31 @@ const (
 	methodWFStepsQueued   = "_kiro/workflow/steps_queued"   // {workflowId, pendingSteps[], resolution?}
 )
 
+// C→A workflow verbs vibekit issues (beyond list/inspect above).
+//
+//   - listRecipes: {workspacePaths[]} → {recipes[{name, description, source,
+//     inputs, plan, builtIn}]}. `source` is the launch key: `bundled://<name>`
+//     for a compiled-in recipe, an absolute *.workflow.json path for a
+//     workspace one (probe 26).
+//   - new: {workflowPath, workspacePaths[], inputs} → {workflowId,
+//     initialState}. workflowPath accepts a `bundled://` source verbatim; a
+//     bare name is refused with "must end in '.workflow.json'" (probe 26).
+//     Validates completely and writes nothing on failure, so launch IS
+//     validation. Passing NO parentSessionId is what makes a run parentless.
+//   - invoke: {workflowId} → fire-and-forget; the run executes on the process
+//     that invoked it, and its lifecycle frames arrive on that connection.
+//   - cancel: {workflowId} — a node-boundary verb: it changes the recorded
+//     outcome, the in-flight node still runs out (probe 15).
+//   - resume: {workflowId} → {status} — the recovery verb for a
+//     restart-paused run (probe 24).
+const (
+	methodKiroWorkflowListRecipes = "_kiro/workflow/listRecipes"
+	methodKiroWorkflowNew         = "_kiro/workflow/new"
+	methodKiroWorkflowInvoke      = "_kiro/workflow/invoke"
+	methodKiroWorkflowCancel      = "_kiro/workflow/cancel"
+	methodKiroWorkflowResume      = "_kiro/workflow/resume"
+)
+
 // v3 (KAS) hook-management method names. list/setEnabled/triggerHook are C→A
 // requests vibekit issues on the utility bridge (which opts into the v2 hook
 // engine via _meta.kiro.hooks={enabled,v2} — see internal/bridge/bridge.go).

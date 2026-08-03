@@ -193,3 +193,15 @@ func (t *Translator) ClassifyFrame(chatID api.ChatID, sessionID string, workflow
 func (t *Translator) foreignSession(chatID api.ChatID, sessionID string) bool {
 	return t.ClassifyFrame(chatID, sessionID, false) != OwnerChat
 }
+
+// stepRef resolves a frame's session id to its run and node, when it is a
+// step's. The empty StepRef for everything else lets an ask handler stamp
+// unconditionally: a non-step ask stamps two empty strings, which omitempty
+// then keeps off the wire.
+func (t *Translator) stepRef(sessionID string) StepRef {
+	if sessionID == "" {
+		return StepRef{}
+	}
+	ref, _ := t.steps.lookup(sessionID)
+	return ref
+}

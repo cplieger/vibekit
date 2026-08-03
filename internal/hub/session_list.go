@@ -240,7 +240,7 @@ func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]api.ChatID) (
 
 	// workspacePaths is an ARRAY and is required — see methodKiroWorkflowList.
 	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		callerParams(map[string]any{"workspacePaths": []string{h.lifecycle.workDir}}))
+		callerParams(map[string]any{keyWorkspacePaths: []string{h.lifecycle.workDir}}))
 	if err != nil {
 		return nil, err
 	}

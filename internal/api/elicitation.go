@@ -52,7 +52,11 @@ type ElicitationNeededPayload struct {
 	URL             string                    `json:"url,omitempty"`
 	ToolCallID      string                    `json:"tool_call_id,omitempty"`
 	SubSessionID    string                    `json:"sub_session_id,omitempty"`
-	RequestID       int64                     `json:"request_id"`
+	// RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
+	// attributed to its run and node from the step-session registry.
+	RunID     string `json:"run_id,omitempty"`
+	NodeID    string `json:"node_id,omitempty"`
+	RequestID int64  `json:"request_id"`
 }
 
 // Elicitation actions per the MCP ElicitResult contract.

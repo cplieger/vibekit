@@ -299,6 +299,12 @@ export interface ElicitationNeededPayload {
   url?: string;
   tool_call_id?: string;
   sub_session_id?: string;
+  /**
+ * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
+ * attributed to its run and node from the step-session registry.
+ */
+  run_id?: string;
+  node_id?: string;
   request_id: number;
 }
 
@@ -669,6 +675,17 @@ export interface PermissionNeededPayload {
  */
   kind?: ToolKind;
   sub_session_id?: string;
+  /**
+ * RunID + NodeID attribute a WORKFLOW STEP's ask to its run. Stamped from
+ * the step-session registry whichever bridge the ask arrived on, so the
+ * same fields serve both launch shapes: an agent-launched run's ask (on
+ * the chat bridge, chat_id set) and a manually launched one's (on the run
+ * bridge, chat_id `run:<id>`). What they buy the client: the card can say
+ * WHICH step is asking, and a run tab can render the ask of a run it is
+ * watching even though the ask is keyed to the launching chat.
+ */
+  run_id?: string;
+  node_id?: string;
   options: PermissionOption[];
   /**
  * Files is the turn's staged file list, present ONLY on a turn approval
@@ -782,6 +799,31 @@ export interface PollResult {
 }
 
 /**
+ * Recipe is one launchable workflow definition, projected from
+ * `_kiro/workflow/listRecipes` for GET /api/recipes.
+ * //
+ * `plan` is deliberately not forwarded: the Workflows tab lists what CAN run,
+ * and the node plan belongs to the run views that show what IS running.
+ */
+export interface Recipe {
+  /** Inputs maps input name → declared type (`string`, `prompt`, `file`). */
+  inputs?: Record<string, string>;
+  name: string;
+  description?: string;
+  /**
+ * Source is the launch key: `bundled://<name>` or a workspace
+ * `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
+ */
+  source: string;
+  built_in?: boolean;
+}
+
+/** RecipesResponse is GET /api/recipes's reply. */
+export interface RecipesResponse {
+  recipes: Recipe[];
+}
+
+/**
  * RefusalInfo is the structured refusal metadata KAS attaches when the model
  * declines to continue a conversation (modelStopReason "content_filtered";
  * kiro-cli 2.13+). It rides the refusal explanation chunk's update-level
@@ -845,6 +887,30 @@ export interface Repo {
 export interface RunFinishedPayload {
   workflow_id: string;
   status: string;
+}
+
+/**
+ * RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.
+ * //
+ * The recipe is named by its `source` exactly as `_kiro/workflow/listRecipes`
+ * reported it — `bundled://<name>` for a compiled-in recipe, an absolute
+ * `*.workflow.json` path for a workspace one. The server re-validates the value
+ * against a fresh listRecipes call rather than trusting it, so this endpoint
+ * cannot be steered at an arbitrary file even though the wire value looks like
+ * a path.
+ */
+export interface RunLaunchRequest {
+  inputs?: Record<string, string>;
+  source: string;
+}
+
+/**
+ * RunLaunchedResponse is POST /api/runs's reply. Name is the recipe's, so the
+ * client can label the tab it opens without waiting for the first refetch.
+ */
+export interface RunLaunchedResponse {
+  workflow_id: string;
+  name: string;
 }
 
 /**
@@ -1225,6 +1291,12 @@ export interface UserInputNeededPayload {
   question: string;
   tool_call_id?: string;
   sub_session_id?: string;
+  /**
+ * RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
+ * attributed to its run and node from the step-session registry.
+ */
+  run_id?: string;
+  node_id?: string;
   options?: UserInputOption[];
   request_id: number;
 }

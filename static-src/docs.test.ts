@@ -80,7 +80,8 @@ describe("row rendering", () => {
     expect(row.textContent).toContain("actions");
     expect(row.textContent).toContain("fileMatch");
     expect(row.textContent).toContain("The actions framework");
-    const badge = row.querySelector(".docs-badge-fileMatch");
+    // The class is lowercased; the visible label keeps the camelCase spelling.
+    const badge = row.querySelector(".docs-badge-filematch");
     expect(badge?.getAttribute("data-tooltip")).toBe("actions/**");
   });
 

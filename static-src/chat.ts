@@ -49,7 +49,12 @@ import { iconForMode } from "./roles.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { isRetentionEnabled } from "./retention.js";
-import { deleteChat as deleteChatAction, resumeSession, setMode } from "./actions/chat.js";
+import {
+  closeChat as closeChatAction,
+  deleteChat as deleteChatAction,
+  resumeSession,
+  setMode,
+} from "./actions/chat.js";
 
 // --- Bus: activate chat from other modules without importing chat.ts ---
 
@@ -94,10 +99,15 @@ export function openChatTab(id: string, name: string, opts?: { activate?: boolea
         // dropped locally either way.
         const s = get(id);
         if (isRetentionEnabled()) {
+          // Closing kills the work (user decision): the turn, the chat's runs,
+          // the process — server-side, before the local row goes. The record
+          // survives; reopening session/loads it back.
+          void closeChatAction.dispatch(id);
           removeChat(id);
         } else if (s?.message_count === 0) {
           removeChat(id);
         } else {
+          // delete_chat implies the same teardown server-side.
           deleteChat(id);
         }
       },

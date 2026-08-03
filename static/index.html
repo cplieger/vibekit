@@ -606,6 +606,7 @@
               <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="agents">Agents</button>
               <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="specs">Specs</button>
               <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="hooks">Hooks</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="workflows">Workflows</button>
             </nav>
             <label class="settings-tab-select-wrap" aria-label="Kiro document categories">
               <select id="docs-tab-select" class="settings-tab-select">
@@ -614,6 +615,7 @@
                 <option value="agents">Agents</option>
                 <option value="specs">Specs</option>
                 <option value="hooks">Hooks</option>
+                <option value="workflows">Workflows</option>
               </select>
             </label>
           </header>
@@ -622,6 +624,7 @@
           <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
           <div data-docs-panel="specs" class="list-container docs-panel hidden"></div>
           <div data-docs-panel="hooks" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="workflows" class="list-container docs-panel hidden"></div>
         </div>
       </div>
 
@@ -848,8 +851,15 @@
       <div id="run-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">Workflow run</h2>
-          <p class="section-hint">A finished run, read-only. Closing this tab closes nothing else.</p>
+          <p class="section-hint">Live runs update as they progress; a step's questions appear below.</p>
           <div id="run-body" class="list-container"></div>
+        </div>
+        <!-- The run tab's bottom bar: the decision region, above the content it
+             is about, same as the chat's. No composer — there is nobody to type
+             to — which is exactly why the dock is a bottom-bar region rather
+             than a composer feature. -->
+        <div class="run-bottom-bar bottom-bar">
+          <div id="run-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
         </div>
       </div>
 

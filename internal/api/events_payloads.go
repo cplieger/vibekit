@@ -40,9 +40,18 @@ type PermissionNeededPayload struct {
 	// Kind forwards the ACP toolCall.kind so the client can style
 	// distinctive permission prompts (switch_mode gets a different
 	// dialog vs an execute_bash prompt).
-	Kind         ToolKind           `json:"kind,omitempty"`
-	SubSessionID string             `json:"sub_session_id,omitempty"`
-	Options      []PermissionOption `json:"options"`
+	Kind         ToolKind `json:"kind,omitempty"`
+	SubSessionID string   `json:"sub_session_id,omitempty"`
+	// RunID + NodeID attribute a WORKFLOW STEP's ask to its run. Stamped from
+	// the step-session registry whichever bridge the ask arrived on, so the
+	// same fields serve both launch shapes: an agent-launched run's ask (on
+	// the chat bridge, chat_id set) and a manually launched one's (on the run
+	// bridge, chat_id `run:<id>`). What they buy the client: the card can say
+	// WHICH step is asking, and a run tab can render the ask of a run it is
+	// watching even though the ask is keyed to the launching chat.
+	RunID   string             `json:"run_id,omitempty"`
+	NodeID  string             `json:"node_id,omitempty"`
+	Options []PermissionOption `json:"options"`
 	// Files is the turn's staged file list, present ONLY on a turn approval
 	// (`_meta.kiro.type == "turn_approval"`). A turn approval arrives as an
 	// ordinary session/request_permission, which is why it rides this payload

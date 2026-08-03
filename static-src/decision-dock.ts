@@ -46,6 +46,9 @@ import type {
 interface PermissionDecision {
   kind: "permission";
   chatID: string;
+  /** The workflow run this ask belongs to, when it is a step's ("" otherwise).
+   *  What lets a run tab render an ask that is KEYED to the launching chat. */
+  runID?: string;
   requestID: number;
   payload: PermissionNeededPayload;
   /** Answer. `fileDecisions` is sent only for a turn approval. */
@@ -55,6 +58,7 @@ interface PermissionDecision {
 interface ElicitationDecision {
   kind: "elicitation";
   chatID: string;
+  runID?: string;
   requestID: number;
   payload: ElicitationNeededPayload;
   submit: (action: "accept" | "decline" | "cancel", content?: Record<string, unknown>) => void;
@@ -63,6 +67,7 @@ interface ElicitationDecision {
 interface UserInputDecision {
   kind: "user_input";
   chatID: string;
+  runID?: string;
   requestID: number;
   payload: UserInputNeededPayload;
   submit: (action: "answered" | "dismissed", answer?: string) => void;
@@ -83,21 +88,63 @@ function bump(): void {
   queueVersion.value = queueVersion.peek() + 1;
 }
 
-let host: HTMLElement | null = null;
-let renderedKey = "";
+/** One mounted dock: its element, which decisions it shows, and what it last
+ *  rendered. The composer's dock shows the ACTIVE CHAT's queue; a run tab's
+ *  shows one RUN's decisions wherever they are keyed — an agent-launched run's
+ *  ask lives under the launching chat's id, a manual one's under `run:<id>`,
+ *  and the run tab must render both. */
+interface DockHost {
+  el: HTMLElement;
+  match: (d: Decision) => boolean;
+  renderedKey: string;
+}
 
-/** Wire the dock into a bottom bar. Idempotent per host. */
+const hosts: DockHost[] = [];
+
+/** Wire the composer's dock into the chat bottom bar. Idempotent per host. */
 export function mountDecisionDock(hostEl: HTMLElement): void {
-  if (host === hostEl) {
+  addHost({
+    el: hostEl,
+    match: (d) => d.chatID === activeChatID(),
+    renderedKey: "",
+  });
+}
+
+/** Wire the run view's dock: it shows the CURRENT run's decisions regardless
+ *  of which surface they are keyed to — an agent-launched run's ask is queued
+ *  under the launching chat's id, a manual one's under `run:<id>`, and the run
+ *  tab must render both. One shared view element serves every run tab, so the
+ *  run is a GETTER and a tab switch re-keys the same host (the switch bumps the
+ *  queue version via renderRunDock). Idempotent per host element. */
+export function mountRunDecisionDock(hostEl: HTMLElement, runID: () => string): void {
+  addHost({
+    el: hostEl,
+    match: (d) => {
+      const id = runID();
+      return id !== "" && (d.runID === id || d.chatID === `run:${id}`);
+    },
+    renderedKey: "",
+  });
+}
+
+/** Re-render every dock. The run view calls this when the run on screen
+ *  changes: the host's match closure reads new state the reactive graph cannot
+ *  see, so the repaint needs an explicit nudge. */
+export function rerenderDocks(): void {
+  bump();
+}
+
+function addHost(h: DockHost): void {
+  if (hosts.some((existing) => existing.el === h.el)) {
     return;
   }
-  host = hostEl;
+  hosts.push(h);
   // Two triggers: the active chat changed (a different queue is on screen), or
   // this module's queue changed (a decision arrived or was answered).
   effect(() => {
     void activeSession.value?.id;
     void queueVersion.value;
-    renderActive();
+    renderHost(h);
   });
 }
 
@@ -128,18 +175,27 @@ export function dropDecisions(chatID: string): void {
   bump();
 }
 
-/** Answer the head decision and advance the queue. The settle-once guard is
- *  here rather than in each card, because "answered already" is a property of
- *  the queue entry, not of the DOM that rendered it. */
+/** Answer a decision and retire it. The settle-once guard is here rather than
+ *  in each card, because "answered already" is a property of the queue entry,
+ *  not of the DOM that rendered it.
+ *
+ *  Membership, not head position, is the guard. With one host they were the
+ *  same thing; with a run tab in play they are not — the tab can legitimately
+ *  render a step's ask that sits BEHIND the chat's own ask in the launching
+ *  chat's queue, and refusing that answer would leave a dead button. Each
+ *  request id is its own JSON-RPC exchange, so answering out of queue order is
+ *  protocol-correct; what must never happen is answering one twice, and
+ *  splice-by-identity gives exactly that. */
 function settle(d: Decision, run: () => void): void {
   const q = queues.get(d.chatID);
-  if (q?.[0] !== d) {
-    // Superseded or already answered: the reply would target a request the
+  const i = q?.indexOf(d) ?? -1;
+  if (q === undefined || i < 0) {
+    // Already answered or dropped: the reply would target a request the
     // server has forgotten, and a double answer on one request id is worse
     // than a dropped click.
     return;
   }
-  q.shift();
+  q.splice(i, 1);
   if (q.length === 0) {
     queues.delete(d.chatID);
   }
@@ -147,19 +203,31 @@ function settle(d: Decision, run: () => void): void {
   bump();
 }
 
-function renderActive(): void {
-  if (host === null) {
-    return;
+/** The decisions a host should show, across every queue, FIFO within each.
+ *  Queue iteration order is insertion order, which is stable enough: a host
+ *  either matches one chat's queue (the composer) or filters by run id, where
+ *  cross-queue order barely arises (one run's asks come from one bridge). */
+function matching(h: DockHost): Decision[] {
+  const out: Decision[] = [];
+  for (const q of queues.values()) {
+    for (const d of q) {
+      if (h.match(d)) {
+        out.push(d);
+      }
+    }
   }
-  const chatID = activeChatID();
-  const q = queues.get(chatID);
-  const head = q?.[0];
+  return out;
+}
+
+function renderHost(h: DockHost): void {
+  const mine = matching(h);
+  const head = mine[0];
 
   if (head === undefined) {
-    if (renderedKey !== "") {
-      host.replaceChildren();
-      host.classList.add("hidden");
-      renderedKey = "";
+    if (h.renderedKey !== "") {
+      h.el.replaceChildren();
+      h.el.classList.add("hidden");
+      h.renderedKey = "";
     }
     return;
   }
@@ -167,22 +235,22 @@ function renderActive(): void {
   // Rebuilding a card the user is filling in would discard their typing, so a
   // render for the same decision is a no-op. Only the depth line, which lives
   // outside the card, updates in place.
-  const key = `${chatID}\u0000${head.kind}\u0000${String(head.requestID)}`;
-  const depth = q?.length ?? 1;
-  if (key === renderedKey) {
-    updateDepth(depth);
+  const key = `${head.chatID}\u0000${head.kind}\u0000${String(head.requestID)}`;
+  const depth = mine.length;
+  if (key === h.renderedKey) {
+    updateDepth(h, depth);
     return;
   }
 
-  host.replaceChildren(buildCard(head), depthRow(depth));
-  host.classList.remove("hidden");
-  renderedKey = key;
+  h.el.replaceChildren(buildCard(head), depthRow(depth));
+  h.el.classList.remove("hidden");
+  h.renderedKey = key;
   announce(announcementFor(head));
 }
 
-function updateDepth(depth: number): void {
-  const row = host?.querySelector(".dock-depth");
-  if (row === null || row === undefined) {
+function updateDepth(h: DockHost, depth: number): void {
+  const row = h.el.querySelector(".dock-depth");
+  if (row === null) {
     return;
   }
   row.textContent = depthText(depth);
@@ -244,7 +312,6 @@ function buildCard(d: Decision): HTMLElement {
 /** Reset module state for test isolation. Production never calls this. */
 export function _resetForTest(): void {
   queues.clear();
-  host = null;
-  renderedKey = "";
+  hosts.length = 0;
   queueVersion.value = 0;
 }

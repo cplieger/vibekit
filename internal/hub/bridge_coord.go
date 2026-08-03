@@ -34,6 +34,11 @@ type BridgeCoordinator struct {
 	// tryLoadSession drive it, without the coordinator importing the full Hub.
 	// Nil in tests that do not exercise a load.
 	replayProjection replayProjector
+	// onSessionRehydrated fires after a successful session/load, off the
+	// spawn path (own goroutine). The hub hangs the restart-paused run resume
+	// sweep here: a rehydrated chat is exactly the moment its runs should heal,
+	// because the chat's process dying is what paused them. Nil in tests.
+	onSessionRehydrated func(api.ChatID)
 	// agentEngine is the kiro-cli agent engine for every bridge this
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
@@ -62,6 +67,11 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		replayProjection: h,
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
+		onSessionRehydrated: func(chatID api.ChatID) {
+			ctx, cancel := h.hubContext()
+			defer cancel()
+			h.resumeRestartPausedRuns(ctx, chatID)
+		},
 	}
 }
 
@@ -253,6 +263,12 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	}
 	sb.primed = true
 	sb.state = bridgeIdle
+	// The chat is back; heal its restart-paused runs. Off the spawn path — the
+	// user's prompt must not wait behind a run-list round trip — and AFTER the
+	// state flip, so the resume's own bridge Call finds an idle bridge.
+	if bc.onSessionRehydrated != nil {
+		go bc.onSessionRehydrated(chatID)
+	}
 	return true
 }
 

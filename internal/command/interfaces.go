@@ -31,6 +31,12 @@ type ChatAccess interface {
 	ChatStore() api.ChatStore
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	CleanupChatState(ctx context.Context, chatID api.ChatID)
+	// CancelChatRuns cancels every non-terminal workflow run this chat's
+	// sessions launched. Part of the tab-close contract: closing the tab kills
+	// the work, and a run is durable state a dead process does NOT stop — KAS
+	// reconciles it to paused and a later read revives it, so it must be told
+	// to cancel, per run, before the bridge goes.
+	CancelChatRuns(ctx context.Context, chatID api.ChatID)
 }
 
 // PendingPermAccess provides the pending-PERMISSION bookkeeping handlers need:

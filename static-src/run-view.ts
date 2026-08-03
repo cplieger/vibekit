@@ -16,6 +16,8 @@
 import { apiGet } from "./api-client.js";
 import { el } from "@cplieger/reactive";
 import { openRunTab } from "./tabs.js";
+import { mountRunDecisionDock, rerenderDocks } from "./decision-dock.js";
+import { cancelRun } from "./actions/runs.js";
 
 /** One node of a run's state tree, as KAS reports it. Recursive: a sequence or
  *  repeat node carries children, a step node is a leaf. */
@@ -50,11 +52,46 @@ interface RunInspect {
  *  a closed tab simply stops matching, because the next open reassigns it. */
 let shownRun = "";
 
+/** Point the shared run view (one DOM element serves every run tab) at a run,
+ *  and give its dock somewhere to render. The dock host is mounted ONCE with a
+ *  dynamic match — the run on screen — so tab switches re-key it without
+ *  re-mounting. */
+function showRun(workflowID: string): void {
+  shownRun = workflowID;
+  const dock = document.getElementById("run-dock");
+  if (dock !== null) {
+    mountRunDecisionDock(dock, () => shownRun);
+  }
+  rerenderDocks();
+  void load(workflowID);
+}
+
+/** Open a run REVIEW: read-only, closing the tab closes nothing. The history
+ *  page's row opens these — a previous run has no process behind it. */
 export function openRunView(workflowID: string, name: string): void {
   openRunTab(workflowID, name, () => {
-    shownRun = workflowID;
-    void load(workflowID);
+    showRun(workflowID);
   });
+}
+
+/** Open a LAUNCHER-OWNED run tab: closing it CANCELS the run (user decision —
+ *  the × means stop; a workflow that outlived its tab would spend credits and
+ *  edit files with nothing on screen). The Workflows tab's Run button opens
+ *  these. Cancel is fire-and-forget: the terminal run_complete tears the
+ *  server-side bridge down, and the run_finished event settles every list. */
+export function openLiveRunView(workflowID: string, name: string): void {
+  openRunTab(
+    workflowID,
+    name,
+    () => {
+      showRun(workflowID);
+    },
+    {
+      onClose: () => {
+        void cancelRun.dispatch(workflowID, { silent: true });
+      },
+    },
+  );
 }
 
 /** Re-read the run on screen, if it is this one.

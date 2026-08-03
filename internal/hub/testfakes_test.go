@@ -35,6 +35,7 @@ type fakeBridge struct {
 	// gets no operator launch flags).
 	startOpts *api.StartOpts
 	mu        sync.Mutex
+	responds  int
 	stopped   bool
 	started   bool
 }
@@ -138,7 +139,38 @@ func (b *fakeBridge) callHadDeadline(method string) bool {
 
 func (b *fakeBridge) Notify(_ context.Context, _ string, _ any) error { return nil }
 
-func (b *fakeBridge) Respond(_ context.Context, _ int64, _ any, _ error) error { return nil }
+func (b *fakeBridge) Respond(_ context.Context, _ int64, _ any, _ error) error {
+	b.mu.Lock()
+	b.responds++
+	b.mu.Unlock()
+	return nil
+}
+
+// respondCount reports how many A→C requests were answered on this bridge.
+func (b *fakeBridge) respondCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.responds
+}
+
+// callLog snapshots the ordered method names Call received.
+func (b *fakeBridge) callLog() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, len(b.calls))
+	copy(out, b.calls)
+	return out
+}
+
+// lastCall is the most recent Call's method, or "".
+func (b *fakeBridge) lastCall() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.calls) == 0 {
+		return ""
+	}
+	return b.calls[len(b.calls)-1]
+}
 
 func (b *fakeBridge) SessionID() api.SessionID {
 	b.mu.Lock()

@@ -52,6 +52,23 @@ func (bm *bridgeManager) getOrInsert(chatID api.ChatID) (sb *sharedBridge, exist
 	return sb, false
 }
 
+// insert registers an ALREADY-STARTED bridge under chatID. The run-host path:
+// a run bridge's map key is its workflow id, which only `workflow/new`'s reply
+// knows, so the bridge is started first and registered once the key exists —
+// the inverse of getOrInsert's create-then-start. Replacing an existing entry
+// would orphan a live process, so insert refuses instead (the caller launched
+// the same run twice, which the single-run guard should have stopped).
+func (bm *bridgeManager) insert(chatID api.ChatID, sb *sharedBridge) bool {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	if _, exists := bm.bridges[chatID]; exists {
+		return false
+	}
+	bm.bridges[chatID] = sb
+	slog.Info("bridge registered", "chat_id", chatID)
+	return true
+}
+
 // remove deletes chatID from the map and returns the removed bridge
 // (nil if not present). Does NOT call Stop.
 func (bm *bridgeManager) remove(chatID api.ChatID) *sharedBridge {

@@ -93,12 +93,20 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 		}
 	}
 
+	// A workflow STEP's ask is attributed to its run, whichever bridge it
+	// arrived on: the launching chat's for an agent-launched run, the run
+	// bridge for a manual one. The run id is what lets a run tab render an ask
+	// keyed to a different surface, and the node id is what makes the card say
+	// WHO is asking.
+	step := t.stepRef(req.SessionID)
 	evt := api.NewEvent(api.EventPermissionNeeded, chatID, api.PermissionNeededPayload{
 		RequestID:    reqID,
 		ToolCallID:   req.ToolCall.ToolCallID,
 		Title:        req.ToolCall.Title,
 		Kind:         req.ToolCall.Kind,
 		SubSessionID: subSessionID,
+		RunID:        step.WorkflowID,
+		NodeID:       step.NodeID,
 		Options:      options,
 		Files:        files,
 	})

@@ -32,6 +32,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -70,7 +71,7 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 	cctx, cancel := context.WithTimeout(r.Context(), sessionListTimeout)
 	defer cancel()
 	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
-		callerParams(map[string]any{"workflowId": id}))
+		callerParams(map[string]any{keyWorkflowID: id}))
 	if err != nil {
 		if workflow.IsUnknownMethod(err) {
 			slog.Warn("workflow inspect: engine not available on this kiro-cli",
@@ -86,4 +87,80 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	h.translator.RecordRunSteps(raw)
 	api.WriteRawJSON(w, raw)
+}
+
+// handleRecipes: GET /api/recipes → the launchable recipe list, bundled +
+// workspace, projected to the fields the Workflows tab renders.
+func (h *Hub) handleRecipes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	recipes, err := h.listRecipes(r.Context())
+	if err != nil {
+		slog.Warn("recipe list failed", "error", err, "detail", workflow.Details(err))
+		api.InternalError(w, errors.New("recipe list unavailable"))
+		return
+	}
+	api.WriteJSON(w, api.RecipesResponse{Recipes: recipes})
+}
+
+// handleRunLaunch: POST /api/runs → launch one PARENTLESS run and answer with
+// its id and name. 409 when the recipe already has a live run — the wire shape
+// of the single-run rule, which is what keeps the Workflows row's Run ⇄ Cancel
+// button able to name one run.
+func (h *Hub) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var req api.RunLaunchRequest
+	if !api.DecodeJSON(w, r, &req) {
+		return
+	}
+	id, name, err := h.LaunchRun(r.Context(), req.Source, req.Inputs)
+	if err != nil {
+		if errors.Is(err, errRecipeBusy) {
+			api.Conflict(w, errRecipeBusy.Error())
+			return
+		}
+		slog.Warn("run launch failed", "source", req.Source, "error", err, "detail", workflow.Details(err))
+		// KAS's launch-time validation is precise (a bad input set, an
+		// unregistered agent) and the message names the problem; forward it
+		// rather than a generic sentinel, because the fix is the user's.
+		api.BadRequest(w, launchErrText(err))
+		return
+	}
+	api.WriteJSON(w, api.RunLaunchedResponse{WorkflowID: id, Name: name})
+}
+
+// launchErrText picks the most specific text a launch failure carries: KAS's
+// error.data detail when present, the error string otherwise.
+func launchErrText(err error) string {
+	if d := workflow.Details(err); d != "" {
+		return d
+	}
+	return err.Error()
+}
+
+// handleRunCancel: POST /api/runs/{id}/cancel → ask the run to stop. The
+// response confirms the ASK, not the stop: cancel is a node-boundary verb, so
+// the terminal run_complete (and the run_finished SSE it becomes) follows at
+// the in-flight node's end.
+func (h *Hub) handleRunCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		api.BadRequest(w, "missing workflow id")
+		return
+	}
+	if err := h.CancelRun(r.Context(), id); err != nil {
+		slog.Warn("run cancel failed", "workflow_id", id, "error", err, "detail", workflow.Details(err))
+		api.InternalError(w, errors.New("cancel failed"))
+		return
+	}
+	api.Ok(w)
 }
