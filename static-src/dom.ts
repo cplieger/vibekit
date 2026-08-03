@@ -72,6 +72,12 @@ class Elements {
   get messagesWrap(): HTMLDivElement {
     return byId("messages-wrap");
   }
+  // The positioned wrapper AROUND the scroller. The timeline rail mounts here
+  // rather than inside #messages-wrap so it stays put instead of scrolling away
+  // with the transcript.
+  get messagesWrapOuter(): HTMLDivElement {
+    return byId("messages-wrap-outer");
+  }
   get bannerStack(): HTMLDivElement {
     return byId("banner-stack");
   }

@@ -425,3 +425,171 @@
 .turn-file-del {
   color: var(--c-red);
 }
+
+/* ==========================================================================
+   The timeline rail
+
+   A fixed column of numbered markers at the right edge of the transcript. It
+   mounts in #messages-wrap-outer (the positioned wrapper) rather than in the
+   scroller, so it stays put instead of scrolling away with the content.
+
+   It must NOT become a scrolling widget of its own: when the turns stop fitting
+   they cluster into ranges and a click zooms the rail to a range. That is why
+   there is no overflow-y here — an `auto` would silently turn the compression
+   rule off and give the rail a second scrollbar competing with the transcript's.
+   ========================================================================== */
+
+.turn-rail {
+  position: absolute;
+  inset-block: var(--sp-3);
+  inset-inline-end: var(--sp-1);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  width: 1.75rem;
+  pointer-events: none;
+}
+
+.turn-rail:empty {
+  display: none;
+}
+
+.turn-rail > * {
+  pointer-events: auto;
+}
+
+/* One marker per turn: its number, in its outcome's colour. WCAG 2.5.8 wants a
+ * 24px target, and that number is what the capacity arithmetic in turn-rail.ts
+ * clusters against — keep them in step if this changes. */
+.rail-marker,
+.rail-cluster,
+.rail-zoom-out {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm, 4px);
+  background: none;
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+}
+
+.rail-marker:hover,
+.rail-cluster:hover,
+.rail-zoom-out:hover {
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-primary);
+}
+
+.rail-marker:focus-visible,
+.rail-cluster:focus-visible,
+.rail-zoom-out:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+.rail-marker[data-outcome="running"] {
+  color: var(--c-accent);
+}
+
+.rail-marker[data-outcome="interrupted"],
+.rail-cluster[data-outcome="interrupted"] {
+  color: var(--c-yellow);
+}
+
+.rail-marker[data-outcome="failed"],
+.rail-cluster[data-outcome="failed"] {
+  color: var(--c-red);
+}
+
+/* The current turn's marker is distinct — filled and outlined — so position in
+ * the session is readable without scrolling to find out. */
+.rail-marker[data-current] {
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  color: var(--c-bg-primary);
+  font-weight: var(--fw-semibold);
+}
+
+/* A turn the user did not trigger reads as a non-user marker rather than
+ * implying they asked for it. */
+.rail-marker[data-trigger="system"] {
+  font-style: italic;
+  border-style: dashed;
+  border-color: var(--c-border);
+}
+
+/* Waiting on a fetch: the target turn is not resident, so the jump has to page
+ * history in first. Saying so beats appearing to do nothing. */
+.rail-marker[data-pending] {
+  animation: vk-breathe 1s var(--ease-standard) infinite;
+}
+
+.rail-cluster {
+  font-size: 0.5625rem;
+  letter-spacing: -0.02em;
+}
+
+.rail-zoom-out {
+  color: var(--c-accent);
+  border-color: var(--c-border);
+  font-size: 0.5625rem;
+}
+
+/* Time as space: a pause between turns takes a row, so an overnight break is
+ * visible on the rail instead of being invisible in a flat message list. */
+.rail-gap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1rem;
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  opacity: 0.65;
+}
+
+/* A dashed tick above the label. Anchored to the gap row itself (hence the
+ * position: relative above) — anchoring it to the rail would stack every gap's
+ * tick at one spot. */
+.rail-gap::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 25%;
+  border-top: 1px dashed var(--c-border);
+}
+
+/* Hidden below the mobile breakpoint: there is no room, and there is no overlay
+ * substitute. Mobile navigates by CONTENT through transcript search, which is
+ * what a reader on a phone is actually looking for. That trade is accepted
+ * rather than patched. */
+@media (width <= 40rem) {
+  .turn-rail {
+    display: none;
+  }
+}
+
+/* Reserve the rail's column so a narrow-but-not-mobile viewport cannot let a
+ * marker sit on top of the transcript. On a wide screen the centred content
+ * column already leaves a gutter and this padding is invisible. */
+@media (width > 40rem) {
+  [id="messages"] {
+    padding-inline-end: calc(var(--sp-4) + 1.75rem);
+  }
+}

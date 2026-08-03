@@ -40,6 +40,7 @@ import {
   type TurnSummaryData,
 } from "./fundamentals/turn-footer.js";
 import { projectTurns, turnLedger, turnAnchorID, type Turn } from "./turns.js";
+import { mountTurnRail, observeTurns, resetTurnRail, loadTurnRail } from "./turn-rail.js";
 import {
   buildAssistantBody,
   updateAssistantBody,
@@ -64,6 +65,11 @@ import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 // ---------------------------------------------------------------------------
 
 export { getScrollEl, scrollToBottom, setLoadMore };
+// Re-exported for the same reason the scroll helpers are: this module owns the
+// rail (it mounts it and feeds it the painted cards), so chat.ts reaching the
+// rail THROUGH here keeps ownership in one place instead of two modules driving
+// the same surface.
+export { loadTurnRail };
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -178,6 +184,9 @@ export function mountChatView(): void {
   }
   mounted = true;
   initMessageActions();
+  // The rail lives in the transcript's positioned outer wrapper rather than in
+  // the scroller, so it stays put instead of scrolling away with the content.
+  mountTurnRail($.messagesWrapOuter);
   effect(() => {
     void messagesVersion.value;
     void activeSession.value;
@@ -233,6 +242,9 @@ function paint(): void {
     }
   }
   reconcile(messagesEl, projectTurns(session.messages, session.thinking), turnSpec);
+  // Tell the rail which cards exist so it can track the turn in view. Re-run per
+  // paint because the set changes as pages load and turns arrive.
+  observeTurns(messagesEl.querySelectorAll<HTMLElement>(":scope > .turn"));
   finalizeStreamingIfNeeded(session.messages);
   lastNewestId = session.messages[session.messages.length - 1]?.id;
   lastActiveId = session.id;
@@ -327,6 +339,7 @@ function teardownAll(): void {
   messageStates.clear();
   clearActionBindings();
   resetScrollState();
+  resetTurnRail();
   reconcile(messagesEl, [] as Turn[], turnSpec);
 }
 

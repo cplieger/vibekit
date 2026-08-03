@@ -1,0 +1,107 @@
+{
+  "_comment": [
+    "The turn-outcome rule, as a table both languages must satisfy.",
+    "",
+    "The rule is implemented twice on purpose and neither copy can go: the server",
+    "derives outcome for the whole session (internal/api/turns.go DeriveTurnOutcome)",
+    "because the timeline rail must describe turns the paginated client store does",
+    "not hold, and the client derives the IN-FLIGHT turn's outcome",
+    "(static-src/turns.ts deriveOutcome) because no fetched summary can know a turn",
+    "that is still streaming.",
+    "",
+    "This file is the contract between them. It is read by TestTurnOutcomeContract",
+    "(Go) and by turns.test.ts (TypeScript). Changing the rule in one language",
+    "fails the other language's test, which is the only mechanism keeping the two",
+    "in agreement — there is no code generation for behaviour.",
+    "",
+    "`body` lists the turn's non-trigger messages. `refusal` true means the message",
+    "carries a refusal marker; `event` names an inline event's kind. `is_live` is",
+    "the caller's 'this is the last turn and the session is thinking' flag."
+  ],
+  "cases": [
+    {
+      "name": "a clean finished turn",
+      "body": [{}],
+      "is_live": false,
+      "want": "completed"
+    },
+    {
+      "name": "an empty body is still a turn",
+      "body": [],
+      "is_live": false,
+      "want": "completed"
+    },
+    {
+      "name": "the live turn is running",
+      "body": [{}],
+      "is_live": true,
+      "want": "running"
+    },
+    {
+      "name": "a refusal fails the turn",
+      "body": [{ "refusal": true }],
+      "is_live": false,
+      "want": "failed"
+    },
+    {
+      "name": "a blocked infra-safety write fails the turn",
+      "body": [{ "event": "infra_safety_blocked" }],
+      "is_live": false,
+      "want": "failed"
+    },
+    {
+      "name": "a failed compaction fails the turn",
+      "body": [{ "event": "compaction_failed" }],
+      "is_live": false,
+      "want": "failed"
+    },
+    {
+      "name": "a cancel interrupts the turn",
+      "body": [{}, { "event": "cancelled" }],
+      "is_live": false,
+      "want": "interrupted"
+    },
+    {
+      "name": "an interrupt interrupts the turn",
+      "body": [{ "event": "interrupted" }],
+      "is_live": false,
+      "want": "interrupted"
+    },
+    {
+      "name": "a refusal beats the running flag",
+      "body": [{ "refusal": true }],
+      "is_live": true,
+      "want": "failed"
+    },
+    {
+      "name": "an interrupt beats the running flag",
+      "body": [{ "event": "interrupted" }],
+      "is_live": true,
+      "want": "interrupted"
+    },
+    {
+      "name": "failed beats interrupted when a turn carries both",
+      "body": [{ "event": "cancelled" }, { "event": "infra_safety_blocked" }],
+      "is_live": false,
+      "want": "failed"
+    },
+    {
+      "name": "failed beats interrupted regardless of order",
+      "body": [{ "event": "compaction_failed" }, { "event": "cancelled" }],
+      "is_live": false,
+      "want": "failed"
+    },
+    {
+      "name": "a model switch is not an outcome",
+      "body": [{ "event": "model_switched" }, {}],
+      "is_live": false,
+      "want": "completed"
+    },
+    {
+      "name": "a successful compaction is not an outcome",
+      "body": [{ "event": "compacted" }],
+      "is_live": false,
+      "want": "completed"
+    }
+  ]
+}

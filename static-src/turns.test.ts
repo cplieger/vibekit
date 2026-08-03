@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { projectTurns, turnLedger, turnAnchorID } from "./turns.js";
 import type { Message } from "./types.js";
@@ -209,5 +210,53 @@ describe("turnLedger", () => {
 describe("turnAnchorID", () => {
   it("builds the permalink fragment target", () => {
     expect(turnAnchorID(14)).toBe("turn-14");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The cross-language pin.
+//
+// The outcome rule exists in two implementations and neither can go: the server
+// derives it for the whole session (internal/api/turns.go), because the rail
+// must describe turns this paginated store does not hold, and the client derives
+// it for the IN-FLIGHT turn, which no fetched summary can know. This runs the
+// same fixture Go's TestTurnOutcomeContract runs, so a rule changed in one
+// language fails here.
+// ---------------------------------------------------------------------------
+
+interface OutcomeFixture {
+  cases: {
+    name: string;
+    body: { refusal?: boolean; event?: string }[];
+    is_live: boolean;
+    want: string;
+  }[];
+}
+
+const FIXTURE_PATH = "../internal/api/testdata/turn_outcomes.json";
+
+describe("the turn-outcome contract shared with the Go implementation", () => {
+  const raw = readFileSync(new URL(FIXTURE_PATH, import.meta.url), "utf8");
+  const fx = JSON.parse(raw) as OutcomeFixture;
+
+  it("carries cases (an empty table would pass forever)", () => {
+    expect(fx.cases.length).toBeGreaterThan(0);
+  });
+
+  it.each(fx.cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
+    const body: Message[] = c.body.map((b, i) => {
+      if (b.event !== undefined) {
+        return event(`e${String(i)}`, b.event);
+      }
+      if (b.refusal === true) {
+        return assistant(`a${String(i)}`, { refusal: {} } as Partial<Message>);
+      }
+      return assistant(`a${String(i)}`);
+    });
+    // projectTurns applies `is_live` to the LAST turn only, so a single turn
+    // built from a trigger plus this body reproduces the Go call exactly.
+    const turns = projectTurns([user("u1", "req"), ...body], c.is_live);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.outcome).toBe(c.want);
   });
 });

@@ -40,7 +40,7 @@ import { submitPrompt } from "./prompt-queue.js";
 import { chatSkeleton } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { showModelPicker, hideModelPicker } from "./picker.js";
-import { mountChatView, setLoadMore, scrollToBottom } from "./messages.js";
+import { mountChatView, setLoadMore, scrollToBottom, loadTurnRail } from "./messages.js";
 import { addAttachment, clearAttachments } from "./attachments.js";
 import { setCurrentModel, getLastModel } from "./session-context.js";
 import { applyLocalModel } from "./model-switcher.js";
@@ -171,6 +171,9 @@ function activateChatView(id: string): void {
         setupLoadMore(id);
         scrollToBottom();
       }
+      // The rail's index is session-wide and independent of the message window,
+      // so it is its own fetch rather than something derived from what loaded.
+      void loadTurnRail(id);
     });
   }
   refreshContextUI(session);

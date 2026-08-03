@@ -56,6 +56,10 @@ vi.mock("./messages.js", () => ({
   mountChatView: vi.fn(),
   setLoadMore: vi.fn(),
   scrollToBottom: vi.fn(),
+  // Needed even though no case below reaches it: activateChatView's success
+  // branch calls it, so omitting it leaves a TypeError waiting for whichever
+  // future test does exercise that path.
+  loadTurnRail: vi.fn(),
 }));
 vi.mock("./attachments.js", () => ({ addAttachment: vi.fn(), clearAttachments: vi.fn() }));
 vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));

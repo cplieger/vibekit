@@ -52,6 +52,8 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 	switch sub {
 	case "export":
 		rt.handleExport(w, r, cid)
+	case "turns":
+		rt.handleTurns(w, r, cid)
 	default:
 		api.NotFound(w, "unknown chat sub-resource")
 	}
@@ -91,6 +93,39 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		"messages": window,
 		"has_more": start > 0,
 	})
+}
+
+// handleTurns serves GET /api/chats/{id}/turns: the chat's session-wide turn
+// index (number, outcome, start time, first line) with no message bodies.
+//
+// The timeline rail spans the whole session while the client's transcript store
+// holds a paginated window, so a rail assembled from resident turns would grow
+// markers as the reader scrolled up — exactly the progress read-out it claims
+// not to be. Without this route the client's only option is walking `?before=`
+// to the beginning of history and pulling every message body over the wire to
+// count turns.
+//
+// It is cheap on purpose: `Get` already materialises the whole chat (the
+// paginated read does too, then discards all but a window), so the added cost
+// here is serialising a few fields per turn rather than any extra IO.
+func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if !chatIDPattern(chatID) {
+		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		return
+	}
+	c, ok := rt.store.Get(r.Context(), chatID)
+	if !ok {
+		api.NotFound(w, errMsgChatNotFound)
+		return
+	}
+	// thinking=false: the store is the persisted record and knows nothing about
+	// a bridge being mid-turn. The client owns the live turn's outcome, which is
+	// the one turn it always has resident anyway.
+	api.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
 }
 
 // parseLimitParam returns the validated ?limit= page size, defaulting to 50

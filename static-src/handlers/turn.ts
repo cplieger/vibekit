@@ -30,6 +30,7 @@ import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES } from "./error-routing.js";
+import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
 
 /** Notify the user and set the badge if the page is hidden. */
@@ -92,6 +93,9 @@ onSSE("turn_ended", (chatID, p) => {
   // prompt AND queued model switch fire when ITS turn ends.
   drainNext(chatID);
   drainModelSwitchQueue(chatID);
+  // turn_ended is the only moment the set of turns changes, so it is the only
+  // moment the rail's session-wide index needs re-reading.
+  void refreshTurnRail(chatID);
 
   // Prune stale entries unconditionally to prevent unbounded growth
   // when notifications are disabled (the notify path below is the only
