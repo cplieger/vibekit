@@ -313,5 +313,5 @@ EXPOSE 9847
 # the start period still has to cover the download. 60s marked such containers
 # unhealthy while the install was progressing normally.
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=300s \
-    CMD curl -sf http://127.0.0.1:9847/api/health || exit 1
+    CMD ["curl", "-sf", "http://127.0.0.1:9847/api/health"]
 ENTRYPOINT ["/opt/vibekit/entrypoint.sh"]
