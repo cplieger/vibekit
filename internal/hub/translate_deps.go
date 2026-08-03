@@ -51,8 +51,8 @@ func (h *Hub) MCPRecorder() translate.MCPRecorder {
 // hubMCPRecorder adapts Hub's MCP internals to the MCPRecorder interface.
 type hubMCPRecorder struct{ h *Hub }
 
-func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
-	r.h.mcpRegistry.recordConnected(ctx, serverName, prompts, resources)
+func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
+	r.h.mcpRegistry.recordConnected(ctx, serverName, tools, prompts, resources)
 }
 
 func (r *hubMCPRecorder) RecordOAuth(ctx context.Context, serverName, oauthURL string) {
@@ -65,12 +65,6 @@ func (r *hubMCPRecorder) RecordInitFailure(ctx context.Context, serverName, errM
 
 func (r *hubMCPRecorder) SignalReady() {
 	r.h.mcpRegistry.signalReady()
-}
-
-func (r *hubMCPRecorder) SetKnownTools(ctx context.Context, name string, tools []string) {
-	if r.h.mcpConfig != nil {
-		r.h.mcpConfig.SetKnownTools(ctx, name, tools)
-	}
 }
 
 // PendingPermsAdd tracks a pending permission event for SSE replay.

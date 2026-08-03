@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
@@ -34,7 +35,6 @@ func (f *fakeMCPConfig) EnabledNames(_ context.Context) map[string]struct{} {
 	}
 	return out
 }
-func (f *fakeMCPConfig) SetKnownTools(_ context.Context, _ string, _ []string) {}
 
 func newHubWithMCPConfig(cfg api.MCPConfig) *Hub {
 	cs := newFakeChatStore()
@@ -50,7 +50,7 @@ func newHubWithMCPConfig(cfg api.MCPConfig) *Hub {
 
 func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil, nil)
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v, want 1 server", snap)
@@ -62,7 +62,7 @@ func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 
 func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "linear", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "linear", nil, nil, nil)
 	h.mcpRegistry.recordOAuth(context.Background(), "linear", "https://oauth.example/auth")
 
 	snap := h.mcpRegistry.Snapshot()
@@ -107,8 +107,8 @@ func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 
 func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "b", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "b", nil, nil, nil)
 
 	_, before := h.sse.hub.Bounds()
 	h.mcpRegistry.clearAll(context.Background())
@@ -140,8 +140,8 @@ func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 	cfg := &fakeMCPConfig{enabled: map[string]struct{}{"github": {}}}
 	h := newHubWithMCPConfig(cfg)
-	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "disabled-server", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "disabled-server", nil, nil, nil)
 	h.mcpRegistry.recordInitFailure(context.Background(), "another-disabled", "x")
 
 	snap := h.mcpRegistry.Snapshot()
@@ -152,9 +152,9 @@ func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 
 func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "zulu", nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "alpha", nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "mike", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "zulu", nil, nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "alpha", nil, nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "mike", nil, nil, nil)
 
 	names := make([]string, 0)
 	for _, s := range h.mcpRegistry.Snapshot() {
@@ -176,7 +176,7 @@ func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
 		mu.Unlock()
 		done <- struct{}{}
 	})
-	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil, nil)
 	h.mcpRegistry.recordOAuth(context.Background(), "a", "url")
 	h.mcpRegistry.recordInitFailure(context.Background(), "a", "err")
 	h.mcpRegistry.clearAll(context.Background())
@@ -211,7 +211,7 @@ drained:
 
 func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil, nil)
 	h.mcpRegistry.recordInitFailure(context.Background(), "broken", "no auth")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil)
@@ -250,7 +250,7 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 		b.Run(fmt.Sprintf("servers=%d", n), func(b *testing.B) {
 			h := newHubWithMCPConfig(nil)
 			for i := range n {
-				h.mcpRegistry.recordConnected(context.Background(), fmt.Sprintf("server-%02d", i), nil, nil)
+				h.mcpRegistry.recordConnected(context.Background(), fmt.Sprintf("server-%02d", i), nil, nil, nil)
 			}
 			b.ResetTimer()
 			for range b.N {
@@ -266,7 +266,7 @@ func TestRealMCPConfig_Contract(t *testing.T) {
 	MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
 		t.Helper()
 		dir := t.TempDir()
-		s, err := mcp.New(context.Background(), dir, nil)
+		s, err := mcp.New(context.Background(), dir, nil, mcp.WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 		if err != nil {
 			t.Fatalf("mcp.New: %v", err)
 		}

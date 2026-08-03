@@ -208,7 +208,7 @@ type captureMCPRecorder struct {
 	resources *[]api.MCPResourceInfo
 }
 
-func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
+func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, _ []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
 	if r.connected != nil {
 		*r.connected = name
 	}

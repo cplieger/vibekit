@@ -72,27 +72,23 @@ type sessionCreated struct {
 	ConfigOptions []sessionConfigOption `json:"configOptions"`
 }
 
-// normalizeMCPServers converts in to a non-nil []any for the wire.
-func normalizeMCPServers(in []map[string]any) []any {
-	if len(in) == 0 {
-		return []any{}
-	}
-	out := make([]any, len(in))
-	for i, entry := range in {
-		out[i] = entry
-	}
-	return out
-}
+// There is no mcpServers parameter on session/new or session/load, and no
+// normalizeMCPServers. KAS reads the user's MCP servers from its own
+// hot-reloading config file, which vibekit renders (internal/mcp/kasfile.go).
+//
+// Do not add it back as a convenience. KAS merges `client > file-based`, so an
+// inline entry OUTRANKS the file: the file would still hot-reload, the agent
+// would keep using the inline copy, and every edit in the UI would look like it
+// did nothing. The parameter is also lossier — KAS's acpServerToWire drops
+// oauth, oauthScopes, autoApprove, cwd and timeout from a client-supplied entry.
 
 // validIdent delegates to api.ValidIdent.
 func validIdent(s string) bool {
 	return api.ValidIdent(s)
 }
 
-func (b *Bridge) newSession(ctx context.Context, mcpServers []map[string]any, mode string, supervised bool) error {
-	resp, err := b.Call(ctx, methodSessionNew, map[string]any{
-		"cwd": b.workDir, "mcpServers": normalizeMCPServers(mcpServers),
-	})
+func (b *Bridge) newSession(ctx context.Context, mode string, supervised bool) error {
+	resp, err := b.Call(ctx, methodSessionNew, map[string]any{"cwd": b.workDir})
 	if err != nil {
 		return fmt.Errorf("session/new: %w", err)
 	}
@@ -164,9 +160,9 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 	b.mu.Unlock()
 }
 
-func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string, mcpServers []map[string]any) error {
+func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string) error {
 	resp, err := b.Call(ctx, methodSessionLoad, map[string]any{
-		api.KeySessionID: acpSessionID, "cwd": b.workDir, "mcpServers": normalizeMCPServers(mcpServers),
+		api.KeySessionID: acpSessionID, "cwd": b.workDir,
 	})
 	if err != nil {
 		return fmt.Errorf("session/load: %w", err)

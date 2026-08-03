@@ -58,22 +58,30 @@ func KiroHome() string {
 	return filepath.Join(home, ".kiro")
 }
 
-// SetKiroHomeForTest overrides the cached kiro home for testing.
-// It registers a t.Cleanup to restore the original value.
+// SetKiroHomeForTest overrides the kiro home for testing, registering a
+// t.Cleanup that restores the previous state.
+//
+// It installs a RESOLVER as well as the cached value. Seeding the cache alone
+// was not enough and silently did nothing: KiroHome() only consults the cache
+// when a resolver is present, and in a test binary there is none — so it fell
+// through to os.UserHomeDir() and the "override" was ignored. A test using this
+// for ISOLATION then wrote the developer's real ~/.kiro, which is exactly the
+// failure this helper exists to prevent.
 func SetKiroHomeForTest(t interface {
 	Helper()
 	Cleanup(func())
 }, path string,
 ) {
 	t.Helper()
-	old := kiroHome
+	oldHome, oldResolver := kiroHome, kiroHomeResolver
 	// Replace the entire sync.Once with a fresh one to invalidate the cache.
 	// Don't copy the existing kiroHomeOnce by value (sync.Once cannot be copied).
 	kiroHome = path
+	kiroHomeResolver = func() string { return path }
 	kiroHomeOnce = sync.Once{}
 	kiroHomeOnce.Do(func() {}) // mark as done so KiroHome() returns the override
 	t.Cleanup(func() {
-		kiroHome = old
+		kiroHome, kiroHomeResolver = oldHome, oldResolver
 		kiroHomeOnce = sync.Once{}
 		kiroHomeOnce.Do(func() {})
 	})

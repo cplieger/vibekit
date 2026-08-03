@@ -39,9 +39,9 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	}
 	var err error
 	if opts.SessionID != "" {
-		err = b.loadSession(ctx, opts.SessionID, opts.Model, opts.MCPServers)
+		err = b.loadSession(ctx, opts.SessionID, opts.Model)
 	} else {
-		err = b.newSession(ctx, opts.MCPServers, opts.Mode, opts.Supervised)
+		err = b.newSession(ctx, opts.Mode, opts.Supervised)
 	}
 	if err != nil {
 		b.Stop()

@@ -1,5 +1,9 @@
-// Unit tests for the MCP discovery signal layer (mcp-state.ts): per-server
-// prompts/resources are stored and read reactively by server name.
+// Unit tests for the MCP discovery signal layer (mcp-state.ts): a server's
+// tools, prompts and resources are stored and read reactively by server name.
+//
+// `tools` joined the other two when KAS's config file became the source of
+// truth: the tool names are a discovery RESULT, and they used to be persisted
+// into vibekit's config record as `known_tools`.
 
 import { describe, it, expect } from "vitest";
 import { effect, flushSync } from "@cplieger/reactive";
@@ -12,26 +16,37 @@ const prompts: MCPPromptInfo[] = [
 const resources: MCPResourceInfo[] = [
   { name: "doc", uri: "demo://doc", mime_type: "text/markdown" },
 ];
+const tools = ["create_issue", "search_repos"];
 
 describe("discovery signals", () => {
-  it("defaults to empty prompts/resources for an unknown server", () => {
+  it("defaults to empty for an unknown server", () => {
     const d = discoverySignalFor("disc-unknown").value;
+    expect(d.tools).toEqual([]);
     expect(d.prompts).toEqual([]);
     expect(d.resources).toEqual([]);
   });
 
-  it("stores prompts/resources set via setDiscovery", () => {
-    mcpState.setDiscovery("disc-a", prompts, resources);
+  it("stores tools/prompts/resources set via setDiscovery", () => {
+    mcpState.setDiscovery("disc-a", tools, prompts, resources);
     const d = discoverySignalFor("disc-a").value;
+    expect(d.tools).toEqual(tools);
     expect(d.prompts).toHaveLength(1);
     expect(d.prompts[0]?.prompt_name).toBe("simple-prompt");
     expect(d.resources[0]?.uri).toBe("demo://doc");
   });
 
-  it("resets to empty when given no prompts/resources", () => {
-    mcpState.setDiscovery("disc-b", prompts, resources);
-    mcpState.setDiscovery("disc-b", [], []);
+  it("stores tools even when the server advertises no prompts or resources", () => {
+    // The common case: most MCP servers expose tools only. The empty-value
+    // fast path must not swallow them.
+    mcpState.setDiscovery("disc-tools-only", tools, [], []);
+    expect(discoverySignalFor("disc-tools-only").value.tools).toEqual(tools);
+  });
+
+  it("resets to empty when the server advertises nothing", () => {
+    mcpState.setDiscovery("disc-b", tools, prompts, resources);
+    mcpState.setDiscovery("disc-b", [], [], []);
     const d = discoverySignalFor("disc-b").value;
+    expect(d.tools).toEqual([]);
     expect(d.prompts).toEqual([]);
     expect(d.resources).toEqual([]);
   });
@@ -45,7 +60,7 @@ describe("discovery signals", () => {
     });
     flushSync();
     const before = runs;
-    mcpState.setDiscovery("disc-c", prompts, resources);
+    mcpState.setDiscovery("disc-c", tools, prompts, resources);
     flushSync();
     expect(runs).toBeGreaterThan(before);
     dispose();

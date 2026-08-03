@@ -13,7 +13,7 @@ import (
 type NopMCPRecorder struct{}
 
 // RecordConnected is a no-op; implements translate.MCPRecorder.
-func (*NopMCPRecorder) RecordConnected(context.Context, string, []api.MCPPromptInfo, []api.MCPResourceInfo) {
+func (*NopMCPRecorder) RecordConnected(context.Context, string, []string, []api.MCPPromptInfo, []api.MCPResourceInfo) {
 }
 
 // RecordOAuth is a no-op; implements translate.MCPRecorder.
@@ -24,6 +24,3 @@ func (*NopMCPRecorder) RecordInitFailure(context.Context, string, string) {}
 
 // SignalReady is a no-op; implements translate.MCPRecorder.
 func (*NopMCPRecorder) SignalReady() {}
-
-// SetKnownTools is a no-op; implements translate.MCPRecorder.
-func (*NopMCPRecorder) SetKnownTools(context.Context, string, []string) {}

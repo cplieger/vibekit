@@ -20,12 +20,4 @@ func MCPConfigContractTest(t *testing.T, newConfig func(t *testing.T) api.MCPCon
 			t.Errorf("EnabledNames() = %v, want empty", names)
 		}
 	})
-
-	t.Run("ACPServers_empty_when_no_servers", func(t *testing.T) {
-		cfg := newConfig(t)
-		servers := cfg.ACPServers(context.Background())
-		if len(servers) != 0 {
-			t.Errorf("ACPServers() = %v, want empty", servers)
-		}
-	})
 }

@@ -130,17 +130,16 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 		model = modelOverride
 	}
 
-	var mcpServers []map[string]any
-	if bc.mcpConfig != nil {
-		mcpServers = bc.mcpConfig.ACPServers(ctx)
-	}
-
+	// No mcpServers parameter. KAS reads the user's servers from its own
+	// hot-reloading config file, which vibekit renders (internal/mcp/kasfile.go).
+	// Sending them inline as well would WIN over the file (KAS merges
+	// `client > file-based`) and make every config edit look like a no-op.
 	if bc.preBridgeSpawn != nil {
 		bc.preBridgeSpawn(ctx)
 	}
 
 	if chat.ACPSessionID != "" {
-		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, mcpServers) {
+		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model) {
 			return sb, nil
 		}
 	}
@@ -169,7 +168,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// Supervised is passed at creation and only here: the session/load path below
 	// does not repeat it, because KAS persists `autopilot` in its own session
 	// metadata and a loaded session already carries the value.
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -190,7 +189,6 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 // tryLoadSession attempts session/load against the stored ACP session id.
 func (bc *BridgeCoordinator) tryLoadSession(
 	ctx context.Context, chatID api.ChatID, sb *sharedBridge, acpSessionID, model string,
-	mcpServers []map[string]any,
 ) bool {
 	// EnableHooks:true — the session/load path must opt into the hook engine
 	// too, so hooks autofire on resumed sessions after a container restart
@@ -208,7 +206,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		bc.replayProjection.OpenReplayProjection(chatID)
 	}
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so whatever partial replay

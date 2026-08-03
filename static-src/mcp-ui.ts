@@ -83,7 +83,7 @@ function buildSectionScaffold(): void {
   const hint = el(
     "p",
     { className: "section-hint" },
-    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Configuration changes apply on the next new chat. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a local package (pip, npm, a binary), install it from the Tools section above first (Add tool), then fill in credentials here.",
+    "Connect your agent to external systems: GitHub, Linear, Postgres, Sentry, or anything else that speaks the Model Context Protocol. Changes apply immediately, including to chats already running. Disabled servers are kept on disk but don't consume context tokens or spawn subprocesses. For servers that need a local package (pip, npm, a binary), install it from the Tools section above first (Add tool), then fill in credentials here.",
   );
 
   const btn = el("button", {
@@ -292,7 +292,7 @@ function mountRow(s: Server, id: string): HTMLElement {
 const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>> = {
   connected: { css: "connected", title: "Connected" },
   needs_auth: { css: "oauth", title: "Needs authentication" },
-  idle: { css: "idle", title: "Not yet connected — start a chat to initialise" },
+  idle: { css: "idle", title: "Not connected — no chat is running" },
   failed: { css: "failed", title: "Failed to initialise" },
 };
 
@@ -399,7 +399,7 @@ function renderDeleteBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement
   btn.addEventListener("click", () => {
     void (async () => {
       const ok = await confirmDialog(
-        `Remove "${s.name}"? The agent loses access to this integration on the next new chat.`,
+        `Remove "${s.name}"? The agent loses access to this integration immediately.`,
         "Remove",
         "destructive",
       );

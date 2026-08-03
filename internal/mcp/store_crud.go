@@ -218,47 +218,19 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 	return nil
 }
 
-// SetKnownTools updates the cached tool list for the named server.
-// Called when kiro-cli reports commands/available with per-server tool
-// names. Persists to mcp.json so the UI can show suggestions even when
-// the server is disconnected. No-op if the server name isn't found, or
-// if the incoming set is identical to what's already stored.
-func (s *Store) SetKnownTools(ctx context.Context, name string, tools []string) {
-	s.mu.Lock()
-	var found *Server
-	for _, srv := range s.servers {
-		if srv.Name == name {
-			found = srv
-			break
-		}
-	}
-	if found == nil {
-		s.mu.Unlock()
-		return
-	}
-	// Change-detection: kiro-cli re-reports the same known-tools set on
-	// every bridge spawn/reconnect, so without this guard opening N chats
-	// would fire N identical disk writes + mcp_config_changed broadcasts +
-	// npx prewarm passes for unchanged data. Skip when the set is
-	// unchanged; only a real change persists + notifies (comparison runs
-	// under the lock, before the mutation).
-	if slices.Equal(found.KnownTools, tools) {
-		s.mu.Unlock()
-		return
-	}
-	found.KnownTools = tools
-	s.mu.Unlock()
-
-	// Persist outside the lock: KnownTools is a non-critical UI cache
-	// field, so concurrent readers are not blocked during disk I/O.
-	// On failure the in-memory state is ahead of disk — acceptable for
-	// suggestion data that will be re-populated on next bridge start.
-	if err := s.persist(ctx); err != nil {
-		slog.Warn("mcp: persist after SetKnownTools failed", "server", name, "error", err)
-		return
-	}
-	s.notifyChange(ctx)
-}
+// There is no SetKnownTools. A connected server's tool names arrive on the same
+// _kiro/mcp/status notification as its prompts and resources, and they are
+// RUNTIME state — they describe what is connected right now, not what the user
+// configured. They used to be written into this config file on every status
+// notification, which made a notification path do disk I/O and put agent-derived
+// data in a user-intent file. They live in the hub's runtime registry now and
+// reach the UI through /api/mcp/status, beside the prompts and resources that
+// were already there.
+//
+// Deleting the write also closed a loop the KAS-file adoption would have opened:
+// persisting here re-rendered KAS's config, whose watcher re-emitted status,
+// which called back in. The identical-set guard stopped it after one extra
+// cycle, but the cycle had no reason to exist.
 
 // EnabledServers returns the prewarm-relevant view of enabled servers.
 // Satisfies prewarm.ServerLister so the Store can be passed directly

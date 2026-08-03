@@ -112,7 +112,6 @@ type Server struct {
 	Headers           []KeyPair `json:"headers,omitempty"`
 	DisabledTools     []string  `json:"disabled_tools,omitempty"`
 	AutoApprove       []string  `json:"auto_approve,omitempty"`
-	KnownTools        []string  `json:"known_tools,omitempty"`
 	CreatedAt         int64     `json:"created_at"`
 	UpdatedAt         int64     `json:"updated_at"`
 	Prewarm           bool      `json:"prewarm,omitempty"`
@@ -185,6 +184,7 @@ type KeyPair struct {
 type Store struct {
 	ctx      context.Context
 	path     string
+	kasPath  string
 	onChange func(context.Context)
 	servers  []*Server
 	mu       sync.RWMutex
@@ -195,19 +195,54 @@ type Store struct {
 // held) whenever the persisted set is mutated; nil is valid if no one
 // cares. The callback is free to call back into the store — it won't
 // deadlock on the caller's write lock. The ctx is stored for use in
-// fire-and-forget persist paths (e.g. SetKnownTools) so writes are
-// cancellable on shutdown.
-func New(ctx context.Context, configDir string, onChange func(context.Context)) (*Store, error) {
+// fire-and-forget persist paths so writes are cancellable on shutdown.
+//
+// Two files, one source of truth. `<configDir>/mcp.json` is vibekit's own record
+// — ordered KeyPairs, the transport enum, ids and timestamps, everything the
+// editor round-trips. KAS's `~/.kiro/settings/mcp.json` is RENDERED from it and
+// is what the agent actually reads (see kasfile.go). The render runs on every
+// persist and once at construction, so a config that predates this code, or a
+// KAS file deleted out from under us, is reconciled at boot rather than on the
+// next edit.
+func New(ctx context.Context, configDir string, onChange func(context.Context), opts ...Option) (*Store, error) {
 	s := &Store{
 		ctx:      ctx,
 		path:     filepath.Join(configDir, "mcp.json"),
+		kasPath:  kasConfigPath(),
 		onChange: onChange,
 		servers:  []*Server{},
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
+	// Boot reconcile, before anything can race on the store. A failure here must
+	// not stop the server from starting: the user needs the UI to fix whatever is
+	// wrong with the path or the disk, and a stale KAS file degrades to the
+	// previous server set rather than to nothing.
+	if err := s.writeKASConfig(ctx, s.servers); err != nil {
+		slog.Error("mcp: initial kas config write failed; the agent may use a stale server set",
+			"path", s.kasPath, "error", err)
+	}
 	return s, nil
+}
+
+// Option configures a Store at construction.
+type Option func(*Store)
+
+// WithKASConfigPath overrides where KAS's config file is rendered.
+//
+// This exists for TESTS, and it is a functional option rather than a package
+// var for a specific reason: the default resolves under $HOME, so a test that
+// constructs a store without isolating it writes the developer's own
+// ~/.kiro/settings/mcp.json — which is exactly what happened once. A global
+// override has to be remembered; a required-by-convention option is visible at
+// every call site, and `TestNew_DefaultKASPathIsUnderKiroHome` pins that
+// production still gets the real path.
+func WithKASConfigPath(path string) Option {
+	return func(s *Store) { s.kasPath = path }
 }
 
 // SetOnChange replaces the change callback.

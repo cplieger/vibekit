@@ -1,0 +1,35 @@
+# .punused-ignore — adjudicated punused findings.
+#
+# The CI gate runs punused per directory, then matches every finding line
+# against the literal substrings in this file. A finding that matches nothing
+# fails the build; an entry that matches nothing warns as stale. Full-line "#"
+# comments carry the reason.
+#
+# punused (github.com/bep/punused) drives gopls and reports two codes:
+#   EU1002 "is unused"            — gopls found ZERO references.
+#   EU1001 "is used in test only" — every reference is in a _test.go file.
+# Its reference view is one Go module with default build tags, so it cannot see
+# cross-language consumers (the generated TypeScript client), callers inside an
+# external library that dials back into our interface, reflection dispatch, or
+# an interface member load-bearing only through interface-to-interface
+# assignment.
+#
+# An entry is an adjudication, not an amnesty: adding one means the symbol was
+# checked and defended. Real dead code gets deleted instead.
+#
+# This file is INCOMPLETE. vibekit carries a large unadjudicated backlog that
+# the spec's final task works through; entries land here as they are defended.
+
+# --- Test-isolation seam that prevents writing the developer's own $HOME ------
+# internal/mcp's Store renders KAS's config file, whose default path resolves
+# under KiroHome() — i.e. ~/.kiro/settings/mcp.json. Before this option existed,
+# the package's own tests constructed a store and OVERWROTE the developer's real
+# file (observed, not hypothetical). WithKASConfigPath is how every test points
+# that write at t.TempDir().
+#
+# It is a functional option rather than a package var on purpose: a global
+# override has to be remembered at each call site, while an argument is visible
+# in the construction itself. The default is pinned by
+# TestNew_DefaultKASPathIsUnderKiroHome, so production cannot silently drift to
+# the test path either.
+function WithKASConfigPath

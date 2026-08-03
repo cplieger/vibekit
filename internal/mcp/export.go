@@ -2,8 +2,6 @@ package mcp
 
 import (
 	"context"
-
-	"github.com/cplieger/vibekit/internal/api"
 )
 
 // ACP export + secret masking helpers. Kept in a leaf file so store.go
@@ -101,136 +99,22 @@ func mergeSecrets(patch, existing []KeyPair) []KeyPair {
 	return out
 }
 
-// acpServer is the on-wire shape passed to kiro-cli's session/new and
-// session/load mcpServers parameter. Schema comes from the Agent Client
-// Protocol spec (McpServerStdio / McpServerHttp / McpServerSse). We
-// discriminate by "type" and emit only the fields relevant to each.
-type acpServer map[string]any
-
-// buildACP constructs the on-wire acpServer map for a server using this
-// transport. Returns nil for unknown transports (unreachable if Transport
-// is validated at the parse boundary via ParseTransport).
-func (t Transport) buildACP(s *Server) acpServer {
-	switch t {
-	case TransportStdio:
-		return stdioBuilder(s)
-	case TransportHTTP, TransportSSE:
-		// remoteBuilder emits "type": string(s.Transport), so an SSE
-		// server produces {type:"sse", ...} and an HTTP server
-		// {type:"http", ...} from the same code path (identical fields
-		// per the ACP McpServerHttp / McpServerSse schemas).
-		return remoteBuilder(s)
-	default:
-		return nil
-	}
-}
-
-func stdioBuilder(s *Server) acpServer {
-	entry := acpServer{
-		"type":          string(TransportStdio),
-		api.JSONKeyName: s.Name,
-		"command":       s.Command,
-		"args":          argsArray(s.Args),
-		"env":           pairsArray(s.Env),
-	}
-	if len(s.DisabledTools) > 0 {
-		entry["disabledTools"] = s.DisabledTools
-	}
-	if len(s.AutoApprove) > 0 {
-		entry["autoApprove"] = s.AutoApprove
-	}
-	return entry
-}
-
-func remoteBuilder(s *Server) acpServer {
-	entry := acpServer{
-		"type":          string(s.Transport),
-		api.JSONKeyName: s.Name,
-		"url":           s.URL,
-		"headers":       pairsArray(s.Headers),
-	}
-	if len(s.DisabledTools) > 0 {
-		entry["disabledTools"] = s.DisabledTools
-	}
-	if len(s.AutoApprove) > 0 {
-		entry["autoApprove"] = s.AutoApprove
-	}
-	// kiro-cli 2.3+ accepts a pre-registered OAuth client ID via
-	// `oauth.clientId`; 2.12+ adds `oauth.clientSecret` for confidential
-	// clients that authenticate at the token endpoint. Required for HTTP
-	// MCP servers that don't support Dynamic Client Registration (Slack,
-	// GitHub, Figma). Empty clientId falls back to DCR.
-	if s.OAuthClientID != "" || s.OAuthClientSecret != "" {
-		oauth := make(map[string]any, 2)
-		if s.OAuthClientID != "" {
-			oauth["clientId"] = s.OAuthClientID
-		}
-		if s.OAuthClientSecret != "" {
-			oauth["clientSecret"] = s.OAuthClientSecret
-		}
-		entry["oauth"] = oauth
-	}
-	return entry
-}
-
-// toACP converts enabled servers to the ACP mcpServers array. Skips any
-// server with an unknown transport so a bad record can't crash the
-// bridge start. Secrets are passed through as-is; callers must hold
-// raw copies, not masked.
+// There is no ACP wire builder here any more, and no ACPServers.
 //
-// Wire shape per the ACP spec (agentclientprotocol.com/protocol/schema):
+// vibekit sent its server set INLINE on session/new and session/load, as the
+// `mcpServers` parameter. It now renders KAS's own config file instead
+// (kasfile.go), and sends nothing — KAS merges `client > file-based`, so an
+// inline entry would win over the file and make every file edit look like a
+// no-op. The two had to swap in one change.
 //
-//	McpServerStdio = { type:"stdio", name, command, args: string[], env: {name,value}[] }
-//	McpServerHttp  = { type:"http",  name, url, headers: {name,value}[] }
-//	McpServerSse   = { type:"sse",   name, url, headers: {name,value}[] }
+// What went with it: toACP, the per-transport stdio/remote builders,
+// Transport.buildACP, argsArray and pairsArray. The ACP McpServerStdio /
+// McpServerHttp / McpServerSse shapes they encoded are no longer vibekit's
+// concern — KAS infers the transport from the fields present and negotiates
+// HTTP vs SSE itself.
 //
-// args, env, and headers are REQUIRED arrays (possibly empty). We emit
-// [] for the empty case, never null — kiro-cli would reject a schema
-// violation at session/new / session/load time.
-func toACP(servers []*Server) []acpServer {
-	out := make([]acpServer, 0, len(servers))
-	for _, s := range servers {
-		entry := s.Transport.buildACP(s)
-		if entry == nil {
-			continue
-		}
-		out = append(out, entry)
-	}
-	return out
-}
-
-// argsArray normalises a potentially-nil slice into a non-nil empty
-// slice so the JSON encoding is [] instead of null.
-func argsArray(in []string) []string {
-	if in == nil {
-		return []string{}
-	}
-	return in
-}
-
-// pairsArray returns the ACP-spec array-of-objects shape for env vars
-// and HTTP headers: [{api.JSONKeyName:..., "value":...}, ...]. Always emits at
-// least [] for the empty case so required-but-empty JSON is valid.
-func pairsArray(in []KeyPair) []map[string]string {
-	out := make([]map[string]string, 0, len(in))
-	for _, kv := range in {
-		out = append(out, map[string]string{api.JSONKeyName: kv.Name, "value": kv.Value})
-	}
-	return out
-}
-
-// ACPServers satisfies api.MCPConfig by returning every enabled server
-// shaped for kiro-cli's session/new / session/load mcpServers parameter.
-// Secrets are included; the slice must not be logged.
-func (s *Store) ACPServers(ctx context.Context) []map[string]any {
-	enabled := s.EnabledRaw(ctx)
-	acp := toACP(enabled)
-	out := make([]map[string]any, len(acp))
-	for i, entry := range acp {
-		out[i] = entry
-	}
-	return out
-}
+// EnabledNames stays: the hub still filters status notifications against the
+// set of servers the user has enabled.
 
 // EnabledNames satisfies api.MCPConfig, returning the set of enabled
 // server names for the hub's defensive filtering of init notifications.

@@ -100,7 +100,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		if r == nil {
 			t.Fatal("MCPRecorder() returned nil")
 		}
-		r.RecordConnected(ctx, "test-server", nil, nil)
+		r.RecordConnected(ctx, "test-server", nil, nil, nil)
 		r.SignalReady()
 	})
 

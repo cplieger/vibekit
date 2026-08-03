@@ -108,14 +108,17 @@ type Hub interface {
 
 // StartOpts collects the parameters for ACPBridge.Start. All fields are
 // optional; a zero-value StartOpts creates a new session with no model
-// override and no MCP servers.
+// override.
+//
+// There is no MCPServers field. The user's MCP servers reach KAS through its own
+// config file, which vibekit renders — passing them on session/new would OUTRANK
+// that file and freeze the set for the session's lifetime.
 type StartOpts struct {
 	SessionID   string
 	Model       string
 	Effort      string
 	AgentEngine string
 	Mode        string
-	MCPServers  []map[string]any
 	// ExtraArgs are operator-supplied kiro-cli launch flags
 	// (VIBEKIT_KIRO_ACP_ARGS), already filtered, appended after the args
 	// vibekit derives itself. Set on CHAT bridges only — never on the utility

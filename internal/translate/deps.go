@@ -39,13 +39,15 @@ type Deps interface {
 // Extracted from Deps to narrow the interface (21→17 methods) and
 // allow independent stubbing in tests.
 type MCPRecorder interface {
-	// RecordConnected marks a server connected and records the prompts +
-	// resources it advertises (from _kiro/mcp/status). Both may be nil.
-	RecordConnected(ctx context.Context, serverName string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo)
+	// RecordConnected marks a server connected and records what it advertises
+	// (from _kiro/mcp/status): its tool names, prompts and resources. All three
+	// may be nil, and all three arrive together — there is no separate
+	// SetKnownTools, because a second call would be a second write of the same
+	// notification and the record it lands in is replaced wholesale here.
+	RecordConnected(ctx context.Context, serverName string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo)
 	RecordOAuth(ctx context.Context, serverName, oauthURL string)
 	RecordInitFailure(ctx context.Context, serverName, errMsg string)
 	SignalReady()
-	SetKnownTools(ctx context.Context, name string, tools []string)
 }
 
 // Translator holds stateful translate logic extracted from Hub.

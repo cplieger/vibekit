@@ -126,9 +126,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	mcpStore.SetOnChange(func(ctx context.Context) {
 		h.Broadcast(ctx, api.NewEvent(api.EventMCPConfigChanged, "", api.MCPConfigChangedPayload{}))
 		mcpPrewarm.Run(ctx)
-		// v3 (KAS) has no live set_config_option for mcpServers; a bridge
-		// picks up the new MCP set when it next (re)starts a session
-		// (session/new and session/load both forward the current set).
+		// No bridge restart, and nothing to forward: the store's persist renders
+		// KAS's own config file, whose watcher re-merges and reconnects in place.
+		// A change reaches every LIVE session, not just the next one.
 	})
 	mcpPrewarm.Run(ctx)
 
