@@ -343,8 +343,8 @@
 /* Assistant block region — a pure logical grouping (no layout box) so the
  * text bubbles / reasoning / tool groups / subagent blocks flow inside the
  * assistant message wrap exactly as they did before the grouping element
- * existed. Keeps mountPlan/mountFooter's `:scope > .plan-message`/`.turn-footer`
- * queries against the wrap correct while blocks live under .assistant-blocks. */
+ * existed. Keeps mountPlan's `:scope > .plan-message` query against the wrap
+ * correct while blocks live under .assistant-blocks. */
 .assistant-blocks {
   display: contents;
 }

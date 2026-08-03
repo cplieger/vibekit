@@ -238,19 +238,9 @@
   margin-left: 0.5rem;
 }
 
-/* Turn footer: the per-turn summary (credits · elapsed · files changed),
- * projected from turn metadata on the assistant message into a keyed node
- * under the turn (fundamentals/turn-footer.ts). Replaces the old direct-DOM
- * .turn-summary / .turn-file-changes writes. */
-.turn-footer {
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-  padding: var(--sp-1) 0;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  animation: vk-chat-entry 200ms var(--ease-enter) both;
-}
+/* .turn-footer MOVED to 29-turns.css. It sat here while it was a per-message
+ * node; it is the turn card's bottom band now, and it belongs beside the header
+ * band it mirrors. */
 
 /* Turn actions: single row below the assistant bubble. Left slot
  * holds the turn summary (credits + elapsed); right slot holds the
@@ -321,43 +311,10 @@
   color: var(--c-green);
 }
 
-/* Turn separator: a dashed rule filling the row with the Rewind button
- * at its right. Was the "Checkpoint … Restore" row until restore became
- * KAS's job; Rewind is the one operation now. */
-.checkpoint-line {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) 0;
-  margin: var(--sp-2) 0;
-}
-
-.checkpoint-line::after {
-  content: "";
-  flex: 1 1 0;
-  border-top: 1px dashed var(--c-border);
-  min-width: var(--sp-4);
-}
-
-.checkpoint-rewind {
-  order: 2;
-  flex-shrink: 0;
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  background: none;
-  border: 1px solid var(--c-border);
-  border-radius: 4px;
-  padding: 2px var(--sp-2);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro);
-}
-
-.checkpoint-rewind:hover {
-  background: var(--c-bg-tertiary);
-  border-color: var(--c-text-tertiary);
-}
+/* The .checkpoint-line dashed separator and its .checkpoint-rewind button are
+ * GONE. A turn no longer needs a rule drawn between itself and its neighbour —
+ * it is a bordered card — and Rewind moved into the card header's action slot
+ * as .turn-rewind (29-turns.css), beside the turn number it acts on. */
 
 /* Prompt suggestions: follow-up pills below the turn summary */
 .prompt-suggestions {

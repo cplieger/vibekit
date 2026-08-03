@@ -35,12 +35,6 @@ import { buildAssistantBubble, type AssistantBubble } from "./fundamentals/text-
 import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js";
 import { buildSubagentBlock, type SubagentView } from "./fundamentals/subagent-block.js";
 import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/todo.js";
-import {
-  buildTurnFooter,
-  updateTurnFooter,
-  hasTurnSummary,
-  type TurnSummaryData,
-} from "./fundamentals/turn-footer.js";
 import { toolSpec } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group.js";
@@ -60,7 +54,7 @@ interface BlockCbs {
   /** Register a cleanup disposed on turn finalize / message unmount. */
   pushStreamingEffect(msgId: string, cleanup: () => void): void;
   /** Build an avatar row for a top-level assistant bubble. */
-  makeRow(side: "assistant"): HTMLDivElement;
+  makeRow(): HTMLDivElement;
 }
 
 let cbs: BlockCbs = {
@@ -118,12 +112,11 @@ export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean)
   const blocks = m.blocks ?? [];
   renderRange(st, m, 0, blocks.length, live);
   mountPlan(wrap, m);
-  mountFooter(wrap, m);
 }
 
-/** Incrementally sync the assistant body: mount newly-arrived blocks, update
- *  the plan and footer. Per-block/per-tool signals feed deltas into blocks
- *  already mounted, so this only handles structural growth. */
+/** Incrementally sync the assistant body: mount newly-arrived blocks and
+ *  update the plan. Per-block/per-tool signals feed deltas into blocks already
+ *  mounted, so this only handles structural growth. */
 export function updateAssistantBody(wrap: HTMLElement, m: Message, streaming: boolean): void {
   const st = renders.get(m.id);
   if (st === undefined) {
@@ -136,7 +129,6 @@ export function updateAssistantBody(wrap: HTMLElement, m: Message, streaming: bo
     renderRange(st, m, st.rendered, blocks.length, streaming);
   }
   mountPlan(wrap, m);
-  mountFooter(wrap, m);
 }
 
 /** Finalize: flush every markdown stream + seal every reasoning trace. */
@@ -257,7 +249,7 @@ function mountText(
   // Top-level bubbles carry an avatar row; subagent-body bubbles don't (the
   // subagent header is the identity — matches the IDE's indented nesting).
   if (container === st.blocksEl) {
-    const row = cbs.makeRow("assistant");
+    const row = cbs.makeRow();
     row.appendChild(bubble.root);
     container.appendChild(row);
   } else {
@@ -390,7 +382,7 @@ function closeToolGroup(st: MsgRender, container: HTMLElement): void {
 }
 
 // ---------------------------------------------------------------------------
-// Plan + turn footer (siblings after the block region)
+// Plan (a sibling after the block region)
 // ---------------------------------------------------------------------------
 
 function mountPlan(wrap: HTMLElement, m: Message): void {
@@ -405,30 +397,11 @@ function mountPlan(wrap: HTMLElement, m: Message): void {
   }
 }
 
-function mountFooter(wrap: HTMLElement, m: Message): void {
-  // Build with conditional assignment (exactOptionalPropertyTypes forbids
-  // setting an optional field to undefined).
-  const data: TurnSummaryData = {};
-  if (m.turn_credits !== undefined) {
-    data.credits = m.turn_credits;
-  }
-  if (m.turn_elapsed_ms !== undefined) {
-    data.elapsedMs = m.turn_elapsed_ms;
-  }
-  if (m.changed_files !== undefined) {
-    data.changedFiles = m.changed_files;
-  }
-  const existing = wrap.querySelector<HTMLDivElement>(":scope > .turn-footer");
-  if (!hasTurnSummary(data)) {
-    existing?.remove();
-    return;
-  }
-  if (existing === null) {
-    wrap.appendChild(buildTurnFooter(data));
-  } else {
-    updateTurnFooter(existing, data);
-  }
-}
+// The turn footer is NOT mounted here any more. It is the TURN's outcome
+// ledger, not a message's: a turn can hold several assistant messages (a
+// mid-turn model switch splits one), so a per-message footer rendered two
+// ledgers for one turn and each described a fragment. messages.ts owns it now,
+// summing across the turn's body and rendering once on the card.
 
 // ---------------------------------------------------------------------------
 // Subagent + todo classification / parsing

@@ -11,17 +11,27 @@
 
 import { el } from "@cplieger/reactive";
 import type { FileChange } from "../types.js";
+import type { TurnOutcome } from "../turns.js";
 
 /** The per-turn summary inputs, sourced from turn metadata on the message. */
 export interface TurnSummaryData {
   credits?: number;
   elapsedMs?: number;
   changedFiles?: Record<string, FileChange>;
+  /** The turn's result, carried as the footer's tint so outcome is scannable
+   *  down the transcript without reading a word. */
+  outcome?: TurnOutcome;
 }
 
-/** Whether there is anything worth showing (avoid an empty footer). */
+/** Whether there is anything worth showing (avoid an empty footer).
+ *
+ *  A non-clean outcome always qualifies, even with no numbers behind it: an
+ *  interrupted or failed turn is exactly when a reader needs to know what
+ *  landed, and suppressing the row because a cancel arrived before any usage
+ *  was stamped would hide the one fact that matters. */
 export function hasTurnSummary(d: TurnSummaryData): boolean {
   return (
+    (d.outcome !== undefined && d.outcome !== "completed" && d.outcome !== "running") ||
     (d.credits !== undefined && d.credits > 0) ||
     (d.elapsedMs !== undefined && d.elapsedMs > 0) ||
     (d.changedFiles !== undefined && Object.keys(d.changedFiles).length > 0)
@@ -41,6 +51,7 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
 
 /** Recompute the footer text from turn metadata. Idempotent. */
 export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void {
+  footer.dataset["outcome"] = d.outcome ?? "completed";
   const parts: string[] = [];
   if (d.credits !== undefined && d.credits > 0) {
     parts.push(`Est. ${d.credits.toFixed(2)} credits`);
@@ -64,6 +75,11 @@ export function updateTurnFooter(footer: HTMLElement, d: TurnSummaryData): void 
       fp += ` -${String(removed)}`;
     }
     parts.push(fp);
+  }
+  if (d.outcome === "interrupted") {
+    parts.unshift("Interrupted");
+  } else if (d.outcome === "failed") {
+    parts.unshift("Failed");
   }
   footer.textContent = parts.join(" · ");
 }
