@@ -281,7 +281,33 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	if _, err := b.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
-			"fs":          map[string]any{"readTextFile": true, "writeTextFile": true},
+			"fs": map[string]any{
+				"readTextFile":  true,
+				"writeTextFile": true,
+				// fs._meta.kiro.{stat,readDirectory,delete} claim KAS's own fs
+				// verbs. Declaring them CONFINES rather than grants: the
+				// else-branch is not a refusal, it is KAS's in-process
+				// NodeFileSystem doing the same fs.stat / fs.readdir / fs.rm
+				// with no vibekit path check at all. So an agent delete is an
+				// unchecked unlink today, and readDirectory is an unfiltered
+				// listing — which is how an agent discovers the file the
+				// ignore-list read filter would then refuse to open. Handled by
+				// hub/bridge_fs_kiro.go, which resolves inside the work dir,
+				// filters the listing, and executes; it does not stage or gate
+				// (KAS checkpoints before its own delete and restores a
+				// rejected one through fs/write_text_file — a second gate here
+				// would intercept that restore).
+				//
+				// readFile / writeFile are deliberately ABSENT. They are the
+				// same ladder one rung up, and claiming them would move reads
+				// and writes off fs/{read,write}_text_file — the rung that
+				// carries the supervised staging path.
+				"_meta": map[string]any{"kiro": map[string]any{
+					"stat":          true,
+					"readDirectory": true,
+					"delete":        true,
+				}},
+			},
 			"terminal":    true,
 			"elicitation": map[string]any{"form": map[string]any{}},
 			"_meta":       map[string]any{"kiro": kiroMeta},

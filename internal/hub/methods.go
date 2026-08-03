@@ -51,6 +51,20 @@ const (
 	methodKiroCodeIntel       = "_kiro/codeIntelligence" // C→A request: code-intelligence status/init (subcommand param); needs the session opted in via initialize _meta.kiro.settings
 )
 
+// KAS's own filesystem verbs, A→C, each gated on
+// `clientCapabilities.fs._meta.kiro.<name> === true`. Answered in
+// bridge_fs_kiro.go. NOT declaring one does not remove the capability: the
+// else-branch is KAS's in-process NodeFileSystem, so an undeclared verb is the
+// same operation with no vibekit path check on it. Read and write have their own
+// `_kiro/fs/{read_file,write_file}` rung which vibekit deliberately does NOT
+// declare — that would bypass the supervised staging path on
+// fs/{read,write}_text_file.
+const (
+	methodKiroFSStat          = "_kiro/fs/stat"
+	methodKiroFSReadDirectory = "_kiro/fs/read_directory"
+	methodKiroFSDelete        = "_kiro/fs/delete"
+)
+
 // v3 (KAS) credential-storage requests. All three are A→C ONLY — probed
 // client→agent in every param shape and each returns -32603, so there is
 // nothing here for vibekit to CALL. KAS builds its AcpSecretStorage only when

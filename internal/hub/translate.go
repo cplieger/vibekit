@@ -141,6 +141,12 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 	if msg.ID != nil && h.handleFSRequest(ctx, chatID, msg) {
 		return
 	}
+	// KAS's own fs verbs (_kiro/fs/{stat,read_directory,delete}). Separate from
+	// handleFSRequest because they are a different rung of KAS's adapter ladder
+	// with different shapes — and because these execute rather than stage.
+	if msg.ID != nil && h.handleKiroFSRequest(ctx, chatID, msg) {
+		return
+	}
 	// v3 (KAS) host-mediated client requests (_kiro/auth/getAccessToken,
 	// _kiro/terminal/shell_type). No-op under v1/v2.
 	if msg.ID != nil && h.handleKiroClientRequest(ctx, chatID, msg) {
