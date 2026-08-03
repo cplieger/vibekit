@@ -263,6 +263,9 @@ class Elements {
   get fbAddToChat(): HTMLButtonElement {
     return byId("fb-add-to-chat");
   }
+  get fbChatFilter(): HTMLButtonElement {
+    return byId("fb-chat-filter");
+  }
   get fbRename(): HTMLButtonElement {
     return byId("fb-rename");
   }

@@ -58,10 +58,44 @@ const repos = signal<readonly GitRepoStatus[]>([]);
  *  times per paint. */
 let index = new Map<string, string>();
 
+/** Absolute-path index: "<repo>/<rel>" → status letter.
+ *
+ *  The file browser has absolute paths and no idea which repo a path belongs to,
+ *  and making it resolve that itself would put a second copy of the repo-split
+ *  rule beside the docs page's. One more map off the SAME poll costs nothing. */
+let absIndex = new Map<string, string>();
+
+/** Ancestor rollup: absolute directory path → the worst letter beneath it.
+ *
+ *  A directory row has to say something, or a change three levels down is
+ *  invisible until you walk into it — which is the whole reason to decorate the
+ *  browser rather than only the git view. */
+let dirIndex = new Map<string, string>();
+
+/** Rollup precedence, worst first. A conflict is the most urgent thing a
+ *  directory can contain and an untracked file the least, so a folder holding
+ *  both reports the conflict. */
+const ROLLUP_ORDER: readonly string[] = ["U", "D", "M", "R", "A", "?"];
+
+function worse(a: string, b: string): string {
+  if (a === "") {
+    return b;
+  }
+  if (b === "") {
+    return a;
+  }
+  const ia = ROLLUP_ORDER.indexOf(a);
+  const ib = ROLLUP_ORDER.indexOf(b);
+  // An unknown letter sorts last rather than winning by accident.
+  return (ia === -1 ? ROLLUP_ORDER.length : ia) <= (ib === -1 ? ROLLUP_ORDER.length : ib) ? a : b;
+}
+
 let started = false;
 
 function rebuildIndex(list: readonly GitRepoStatus[]): void {
   const next = new Map<string, string>();
+  const nextAbs = new Map<string, string>();
+  const nextDir = new Map<string, string>();
   for (const r of list) {
     if (!r.is_repo) {
       continue;
@@ -74,9 +108,28 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
       if (!next.has(key)) {
         next.set(key, letter);
       }
+      if (letter === "") {
+        continue;
+      }
+      const abs = `${r.repo}/${f.path}`;
+      if (!nextAbs.has(abs)) {
+        nextAbs.set(abs, letter);
+      }
+      // Mark every ancestor up to and including the repo root.
+      let cut = abs.lastIndexOf("/");
+      while (cut > 0) {
+        const dir = abs.slice(0, cut);
+        nextDir.set(dir, worse(nextDir.get(dir) ?? "", letter));
+        if (dir === r.repo) {
+          break;
+        }
+        cut = dir.lastIndexOf("/");
+      }
     }
   }
   index = next;
+  absIndex = nextAbs;
+  dirIndex = nextDir;
 }
 
 /** Start the poll. Idempotent — safe to call from several init paths. */
@@ -117,6 +170,23 @@ async function refresh(): Promise<void> {
  *  view and the file browser show, so a user learns one alphabet. */
 export function statusFor(repo: string, relPath: string): string {
   return index.get(`${repo}\u0000${relPath}`) ?? "";
+}
+
+/** The status letter for an ABSOLUTE path, or "" when clean/unknown. For
+ *  consumers that hold real filesystem paths rather than a repo-relative pair. */
+export function statusForPath(absPath: string): string {
+  return absIndex.get(normalizeAbs(absPath)) ?? "";
+}
+
+/** The worst status letter anywhere BENEATH an absolute directory path, or "".
+ *  What lets a collapsed folder admit that something inside it changed. */
+export function statusUnder(absDirPath: string): string {
+  return dirIndex.get(normalizeAbs(absDirPath)) ?? "";
+}
+
+/** Trailing slashes and a bare "/" would miss every key. */
+function normalizeAbs(p: string): string {
+  return p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
 }
 
 /** Subscribe to poll results. Fires immediately with the current value. */

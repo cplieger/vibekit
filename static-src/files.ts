@@ -10,6 +10,16 @@ import { $, maybeViewTransition } from "./dom.js";
 import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
+import { openChange } from "./navigate.js";
+import {
+  initGitStatusStore,
+  onGitStatusChange,
+  statusForPath,
+  statusUnder,
+} from "./git-status-store.js";
+import { describeStatus } from "./git-types.js";
+import { activeSession } from "./store.js";
+import type { Session } from "./types.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import * as uiState from "./ui-state.js";
 import { fileIcon, FILE_ICONS } from "./icons.js";
@@ -25,6 +35,8 @@ import {
   joinPath,
   parentPath,
   displayPath,
+  withAncestors,
+  matchesRelative,
   errorRow,
   sortEntries,
   initEditablePath,
@@ -45,7 +57,7 @@ import {
   downloadFiles,
 } from "./actions/files.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
-import { el } from "@cplieger/reactive";
+import { el, effect } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
 import { FileBrowserState } from "./files-state.js";
 export { FileBrowserState } from "./files-state.js";
@@ -73,6 +85,32 @@ export function initFileBrowser(): void {
   $.fbDownload.addEventListener("click", downloadSelected);
   $.fbUpload.addEventListener("click", uploadViaDialog);
   $.fbAddToChat.addEventListener("click", addSelectedToChat);
+  $.fbChatFilter.addEventListener("click", () => {
+    $.fbChatFilter.setAttribute("aria-pressed", String(toggleChatFilter()));
+  });
+
+  // The shared status poll, and a repaint on each of its results. Idempotent, so
+  // it does not matter that the git badge and the docs page start it too. The
+  // repaint is in place (see repaintRows) — a 15s poll must not disturb the
+  // selection or the scroll position of a listing the user is working in.
+  initGitStatusStore();
+  registerCleanup(onGitStatusChange(repaintRows));
+
+  // The filter's OTHER input is which chat is active, and the browser is a
+  // singleton tab that stays open across chat switches — so without this the
+  // filter would keep showing the previous chat's set until the next poll, i.e.
+  // claiming one chat's writes belong to another for up to 15 seconds. Gated on
+  // the filter being on and guarded by a set comparison, because `activeSession`
+  // re-derives on every streaming chunk.
+  effect(() => {
+    const changed = chatFilterOn ? changedPathsOf(activeSession.value) : new Set<string>();
+    const key = [...changed].sort().join("\n");
+    if (key === lastChangedKey) {
+      return;
+    }
+    lastChangedKey = key;
+    repaintRows();
+  });
 
   initPathInput();
   initBrowserDragDrop({
@@ -403,6 +441,62 @@ function parentRow(): HTMLDivElement {
   return row;
 }
 
+/** Every workspace-relative path one chat changed, plus their ancestors.
+ *
+ *  No new request and no reverse query: `changed_files` is stamped on each turn's
+ *  final assistant message, so "what did this chat touch" is a fold over data the
+ *  transcript already holds. The opposite question — "which chat owns this path"
+ *  — is deliberately NOT built; it would need a server-side path→chat index that
+ *  nothing else wants.
+ *
+ *  Nor is the per-row "turn that last touched this file" link §3.10 sketches: a
+ *  turn's ordinal in the loaded window is not its ordinal in the session (the
+ *  store is paginated), so the link would name the wrong turn on any chat long
+ *  enough to page — and the honest source, the rail's session-wide index, is a
+ *  fetch and a cross-view jump the done-when does not ask for. */
+function changedPathsOf(s: Session | undefined): ReadonlySet<string> {
+  const rels: string[] = [];
+  for (const m of s?.messages ?? []) {
+    rels.push(...Object.keys(m.changed_files ?? {}));
+  }
+  return withAncestors(rels);
+}
+
+/** Serialized change set the last repaint was painted from. Lets the
+ *  active-session effect skip the ~20/second repaints a streaming turn would
+ *  otherwise trigger without changing a single row. */
+let lastChangedKey = "";
+
+/** The git letter badge for one row: the file's own status, or for a directory
+ *  the worst status beneath it. Clicking a file's badge opens its change.
+ *
+ *  The colour comes from the app's EXISTING `git-st-<letter>` vocabulary rather
+ *  than a browser-local one. Those rules were authored for a per-letter tint and
+ *  had no emitter at all — the git view renders one grey letter — so adopting
+ *  them here gives one alphabet ONE palette instead of adding a third. */
+function statusBadge(absPath: string, isDir: boolean): HTMLElement | null {
+  const letter = isDir ? statusUnder(absPath) : statusForPath(absPath);
+  if (letter === "") {
+    return null;
+  }
+  const label = describeStatus(letter);
+  const badge = el("span", {
+    className: `fb-git-letter git-st-${letter.toLowerCase()}`,
+    "data-tooltip": isDir ? `Contains changes: ${label}` : label,
+    "aria-label": isDir ? `Contains changes: ${label}` : `Git status: ${label}`,
+  });
+  badge.textContent = letter;
+  if (!isDir) {
+    badge.classList.add("fb-git-clickable");
+    badge.setAttribute("role", "button");
+    badge.addEventListener("click", (e: MouseEvent) => {
+      e.stopPropagation();
+      openChange(absPath);
+    });
+  }
+  return badge;
+}
+
 function entryRow(entry: FileEntry): HTMLDivElement {
   const check = el("input", {
     type: "checkbox",
@@ -442,6 +536,10 @@ function entryRow(entry: FileEntry): HTMLDivElement {
   parts.push(entry.mode);
   const meta = el("span", { className: FB_META }, parts.join("   ·   "));
 
+  const abs = joinPath(state.currentPath, entry.name);
+  const badge = statusBadge(abs, entry.isDir);
+  const mine = chatFilterOn && matchesRelative(abs, changedPathsOf(activeSession.peek()));
+
   const row = el(
     "div",
     {
@@ -449,14 +547,55 @@ function entryRow(entry: FileEntry): HTMLDivElement {
       role: "listitem",
       "data-name": entry.name,
       "data-is-dir": String(entry.isDir),
+      "data-path": abs,
     },
     check,
     icon,
     name,
+    ...(badge !== null ? [badge] : []),
     meta,
   ) as HTMLDivElement;
+  // The filter DIMS rather than hides. Hiding would make the listing lie about
+  // what is on disk, and a folder whose only changed child is filtered out would
+  // read as empty.
+  row.classList.toggle("fb-row-unattributed", chatFilterOn && !mine);
 
   return row;
+}
+
+/** "Changed by this chat" — off by default. */
+let chatFilterOn = false;
+
+/** Toggle the attribution filter and repaint the current listing. Returns the
+ *  new state; the caller mirrors it onto the button's `aria-pressed`, which is
+ *  also what makes the button LOOK pressed (see `.icon-btn[aria-pressed]`). No
+ *  second class on the list: one signal for one piece of state. */
+export function toggleChatFilter(): boolean {
+  chatFilterOn = !chatFilterOn;
+  repaintRows();
+  return chatFilterOn;
+}
+
+/** Repaint every row's decoration in place: the git letter (which the poll
+ *  refreshes) and the attribution dim. In place rather than a reload, because a
+ *  30-second poll must not blow away the user's selection or scroll. */
+function repaintRows(): void {
+  const changed = chatFilterOn ? changedPathsOf(activeSession.peek()) : new Set<string>();
+  for (const row of $.fbList.querySelectorAll<HTMLElement>(`.${FB_ROW}[data-path]`)) {
+    const abs = row.dataset["path"] ?? "";
+    const isDir = row.dataset["isDir"] === "true";
+    row.querySelector(".fb-git-letter")?.remove();
+    const badge = statusBadge(abs, isDir);
+    if (badge !== null) {
+      row.insertBefore(badge, row.querySelector(`.${FB_META}`));
+    }
+    row.classList.toggle("fb-row-unattributed", chatFilterOn && !matchesRelative(abs, changed));
+  }
+}
+
+/** @internal Test seam: the poll's repaint callback, without the poll. */
+export function _repaintRowsForTest(): void {
+  repaintRows();
 }
 
 function shiftSelect(from: string, to: string): void {

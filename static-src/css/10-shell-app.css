@@ -617,6 +617,14 @@
       color: var(--c-accent);
     }
 
+    /* A toggle's ON state, driven by the ARIA attribute itself so a pressed
+       control needs no second bookkeeping class to look pressed. Without this
+       an aria-pressed button announced its state and showed nothing. */
+    &[aria-pressed="true"] {
+      color: var(--c-accent);
+      background: var(--c-accent-subtle);
+    }
+
     &:hover {
       background: var(--c-bg-tertiary);
     }

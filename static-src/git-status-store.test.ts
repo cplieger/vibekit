@@ -3,7 +3,13 @@
 // the file browser read, and the index rules behind it.
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { _setReposForTest, statusFor, currentRepos } from "./git-status-store.js";
+import {
+  _setReposForTest,
+  statusFor,
+  statusForPath,
+  statusUnder,
+  currentRepos,
+} from "./git-status-store.js";
 import type { GitRepoStatus } from "./git-types.js";
 
 function repo(
@@ -84,6 +90,88 @@ describe("statusFor", () => {
     // The file was committed: the next poll no longer lists it.
     _setReposForTest([repo("r", [])]);
     expect(statusFor("r", "a.md")).toBe("");
+  });
+});
+
+describe("statusForPath", () => {
+  it("answers for an absolute path, so a consumer needs no repo split rule", () => {
+    _setReposForTest([repo("/workspace/vibekit", [{ path: "static-src/files.ts", status: "M" }])]);
+    expect(statusForPath("/workspace/vibekit/static-src/files.ts")).toBe("M");
+  });
+
+  it("returns empty for a clean path and for a directory (that is statusUnder's job)", () => {
+    _setReposForTest([repo("/w/r", [{ path: "a/b.md", status: "M" }])]);
+    expect(statusForPath("/w/r/a/other.md")).toBe("");
+    expect(statusForPath("/w/r/a")).toBe("");
+  });
+
+  it("tolerates a trailing slash", () => {
+    _setReposForTest([repo("/w/r", [{ path: "a.md", status: "A" }])]);
+    expect(statusForPath("/w/r/a.md/")).toBe("A");
+  });
+});
+
+describe("statusUnder", () => {
+  it("rolls a nested change up to every ancestor, including the repo root", () => {
+    _setReposForTest([repo("/w/r", [{ path: "a/b/c.md", status: "M" }])]);
+    expect(statusUnder("/w/r/a/b")).toBe("M");
+    expect(statusUnder("/w/r/a")).toBe("M");
+    expect(statusUnder("/w/r")).toBe("M");
+  });
+
+  it("stops at the repo root — a sibling repo's parent is not decorated", () => {
+    _setReposForTest([repo("/w/r", [{ path: "a.md", status: "M" }])]);
+    expect(statusUnder("/w")).toBe("");
+  });
+
+  it("reports the WORST letter beneath it, so a conflict outranks an untracked file", () => {
+    _setReposForTest([
+      repo("/w/r", [
+        { path: "a/untracked.md", status: "?" },
+        { path: "a/conflict.md", status: "U" },
+        { path: "a/mod.md", status: "M" },
+      ]),
+    ]);
+    expect(statusUnder("/w/r/a")).toBe("U");
+  });
+
+  it("orders the whole precedence chain U > D > M > R > A > ?", () => {
+    const worst = (letters: string[]): string => {
+      _setReposForTest([
+        repo(
+          "/w/r",
+          letters.map((s, i) => ({ path: `a/f${String(i)}.md`, status: s })),
+        ),
+      ]);
+      return statusUnder("/w/r/a");
+    };
+    expect(worst(["?", "A"])).toBe("A");
+    expect(worst(["A", "R"])).toBe("R");
+    expect(worst(["R", "M"])).toBe("M");
+    expect(worst(["M", "D"])).toBe("D");
+    expect(worst(["D", "U"])).toBe("U");
+  });
+
+  it("does not let an unrecognised letter win by accident", () => {
+    _setReposForTest([
+      repo("/w/r", [
+        { path: "a/x.md", status: "Z" },
+        { path: "a/y.md", status: "?" },
+      ]),
+    ]);
+    expect(statusUnder("/w/r/a")).toBe("?");
+  });
+
+  it("returns empty for a directory with nothing changed beneath it", () => {
+    _setReposForTest([repo("/w/r", [{ path: "a/b.md", status: "M" }])]);
+    expect(statusUnder("/w/r/other")).toBe("");
+  });
+
+  it("clears the rollup when the tree goes clean", () => {
+    _setReposForTest([repo("/w/r", [{ path: "a/b.md", status: "M" }])]);
+    expect(statusUnder("/w/r/a")).toBe("M");
+    _setReposForTest([repo("/w/r", [])]);
+    expect(statusUnder("/w/r/a")).toBe("");
   });
 });
 
