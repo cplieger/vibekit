@@ -87,17 +87,6 @@ export interface AccountUsageBreakdown {
 }
 
 /**
- * AvailableCommand is one entry in the slash-command catalogue surfaced
- * by kiro-cli's _kiro.dev/commands/available notification. The wire
- * shape carries opaque metadata; clients consume only Name and Description.
- */
-export interface AvailableCommand {
-  meta?: Record<string, unknown>;
-  name: string;
-  description?: string;
-}
-
-/**
  * Block is one entry in an assistant message's chronological content
  * array. Position in Message.Blocks IS the order in which the agent
  * emitted the block — text → tool → text → tool, etc. — so the client
@@ -242,12 +231,6 @@ export interface CodeReference {
 export interface CodeReferencesPayload {
   message_id: string;
   references: CodeReference[];
-}
-
-/** CommandsUpdatedPayload is the payload for type="commands_updated". */
-export interface CommandsUpdatedPayload {
-  commands: AvailableCommand[];
-  prompts?: AvailableCommand[];
 }
 
 /**

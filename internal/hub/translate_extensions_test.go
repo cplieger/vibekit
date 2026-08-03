@@ -84,9 +84,20 @@ func TestTranslateMCPStatus(t *testing.T) {
 	}
 }
 
-// --- Available commands (v3 session/update sub-kind) ---
+// --- Available commands (v3 session/update sub-kind, deliberately IGNORED) ---
 
-func TestTranslateV3_AvailableCommandsUpdate(t *testing.T) {
+// TestTranslateV3_AvailableCommandsUpdateIsIgnored is the inverse of the test it
+// replaced, and it pins task C's done-when clause: no category of the
+// slash-command catalog is decoded and discarded, because nothing decodes it.
+//
+// KAS still sends the frame — vibekit cannot stop it — so the contract is that
+// it falls through handleSessionUpdate silently: no event, no error, no log
+// noise. The palette this once fed was priced out (of 90 commands, 47 of the 49
+// agent names are already mode ids on the mode pill, the 5 workflow entries have
+// their own row, the 23 steering entries map onto attachment, and the 13 skills
+// have NO deterministic execution path anywhere in the bundle). Skills are
+// discoverable on the /docs Skills tab instead.
+func TestTranslateV3_AvailableCommandsUpdateIsIgnored(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
@@ -104,8 +115,9 @@ func TestTranslateV3_AvailableCommandsUpdate(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	types := extractTypes(t, bufferedSince(h, before))
-	wantSubset(t, types, "commands_updated")
+	if types := extractTypes(t, bufferedSince(h, before)); len(types) != 0 {
+		t.Errorf("the catalog frame produced events %v, want none: nothing decodes it any more", types)
+	}
 }
 
 // --- Compaction (v3 session_info_update summarization) ---

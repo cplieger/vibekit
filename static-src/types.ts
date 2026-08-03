@@ -14,7 +14,6 @@
 // --- Wire types (re-exported from generated) ---
 
 export type {
-  AvailableCommand,
   // Enums
   ClearReason,
   ErrorCode,
@@ -54,7 +53,6 @@ export type {
   // SSE payloads
   ChatDeletedPayload,
   CodeReferencesPayload,
-  CommandsUpdatedPayload,
   ConnectedPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,

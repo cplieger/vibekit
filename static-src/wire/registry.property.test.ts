@@ -15,7 +15,6 @@ const registeredEvents = [
   "chat_created",
   "chat_deleted",
   "chat_updated",
-  "commands_updated",
   "connected",
   "elicitation_needed",
   "error",

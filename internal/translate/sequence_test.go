@@ -224,30 +224,6 @@ func (*captureMCPRecorder) RecordInitFailure(context.Context, string, string) {}
 func (*captureMCPRecorder) SignalReady()                                      {}
 func (*captureMCPRecorder) SetKnownTools(context.Context, string, []string)   {}
 
-func TestSequence_AvailableCommands_BroadcastsUpdate(t *testing.T) {
-	deps, events := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
-	chatID := api.ChatID("c1")
-
-	// v3 available_commands_update session/update sub-kind.
-	tr.HandleAvailableCommandsUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
-		"availableCommands": []map[string]any{
-			{"name": "/help", "description": "Show help"},
-		},
-	}), "")
-
-	found := false
-	for _, evt := range *events {
-		if evt.Type == api.EventCommandsUpdated {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("no commands_updated event emitted; got events: %v", eventTypes(*events))
-	}
-}
-
 func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))

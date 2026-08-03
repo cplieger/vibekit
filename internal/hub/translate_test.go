@@ -663,25 +663,22 @@ func TestHandleSessionUpdate_DropsReplayedFrames(t *testing.T) {
 	}
 }
 
-// TestHandleSessionUpdate_CatalogFramesSurviveALoad pins that the gate is
+// TestHandleSessionUpdate_CatalogFrameSurvivesALoad pins that the gate is
 // per-frame rather than "suppress everything while loading".
 //
-// KAS does NOT tag available_commands_update or config_option_update as
-// replay (3 of the 9 measured frames are untagged, and these are among them):
-// they carry the session's CURRENT command catalog and model/mode selection,
-// not its history. Gating on the load OPERATION instead of the per-frame flag
-// would drop them, and the mode pill and slash catalog would come back empty
-// after every resume.
-func TestHandleSessionUpdate_CatalogFramesSurviveALoad(t *testing.T) {
-	for _, kind := range []api.ACPUpdateKind{
-		api.ACPUpdateCommandsAvailable,
-		api.ACPUpdateConfigOption,
-	} {
-		t.Run(string(kind), func(t *testing.T) {
-			h, _, _ := newTestHub()
-			if !dispatchUpdate(t, h, kind, nil) {
-				t.Errorf("%s was dropped; it is untagged by KAS and carries current session state", kind)
-			}
-		})
+// KAS does NOT tag config_option_update as replay (3 of the 9 measured frames
+// are untagged and this is one): it carries the session's CURRENT model/mode
+// selection, not its history. Gating on the load OPERATION instead of the
+// per-frame flag would drop it, and the mode pill would come back empty after
+// every resume.
+//
+// available_commands_update was the other witness to this property and is no
+// longer dispatched at all (the slash-command catalog had no consumer), so
+// config_option_update is the only one left — which makes this test MORE
+// load-bearing, not less.
+func TestHandleSessionUpdate_CatalogFrameSurvivesALoad(t *testing.T) {
+	h, _, _ := newTestHub()
+	if !dispatchUpdate(t, h, api.ACPUpdateConfigOption, nil) {
+		t.Error("config_option_update was dropped; it is untagged by KAS and carries current session state")
 	}
 }

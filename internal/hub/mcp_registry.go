@@ -6,9 +6,11 @@
 // `_kiro.dev/mcp/*` notifications named here previously were removed
 // with the v2 wire); cleared on bridge exit.
 //
-// Per-server tool lists are NOT stored here — they arrive with the v3
-// slash-command/tool catalog (available_commands_update), not the MCP
-// status stream.
+// Per-server tool lists are not stored HERE, but they do come from this same
+// `_kiro/mcp/status` stream: HandleMCPStatus extracts them per server and hands
+// them to the MCP config store via SetKnownTools. (They were once attributed to
+// the available_commands_update catalog, which was wrong and is now moot — that
+// catalog is no longer decoded at all.)
 //
 // The registry is:
 //
@@ -63,9 +65,10 @@ type mcpRegistry struct {
 	// debounced invocation. Capacity 1 means multiple signals within
 	// the debounce window collapse into one cb() call.
 	notifyCh chan struct{}
-	// readyCh is closed when the first _kiro.dev/commands/available
-	// notification arrives (which lists expected MCP servers). Prompts
-	// wait on this channel before forwarding to kiro-cli.
+	// readyCh is closed when the first `_kiro/mcp/status` notification arrives
+	// (HandleMCPStatus → SignalReady), i.e. once KAS has reported a terminal
+	// state for the session's MCP servers. Prompts wait on this channel before
+	// forwarding to kiro-cli, so a tool call cannot race server init.
 	readyCh chan struct{}
 	mu      sync.RWMutex
 }

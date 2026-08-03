@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// System-level handlers: settings_updated, transport:gap, commands_updated,
+// System-level handlers: settings_updated, transport:gap,
 // compaction_started.
 //
 // SSE events flow through bus (onSSE). `transport:gap` is a client-side
@@ -89,13 +89,16 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   }
 });
 
-// commands_updated: decoded but currently UNCONSUMED. The server still
-// broadcasts the per-session slash-command catalog (v3
-// available_commands_update, filtered of browser-incompatible entries)
-// and the wire decoder stays registered (wire/registry.gen.ts), but no
-// client feature reads it today — typed slash commands like /compact
-// ride the ordinary prompt envelope and kiro-cli parses them natively.
-// A future type-ahead popover would subscribe here.
+// The slash-command catalog is GONE, server and client, and should not come
+// back as a palette. Measured: of the 90 commands a session reports here, 47 of
+// the 49 custom-agent names are already mode ids reachable through the mode
+// pill, the 5 workflow entries are launched from the configuration browser's
+// own row, and the 23 steering entries map onto file attachment (declined with
+// _kiro/session/context). That leaves the 13 skills as the only unique
+// contribution — and there is no _kiro/skill* method anywhere in the bundle, so
+// a skill entry can only be sent as text and hoped over. A palette where one
+// category in four silently degrades to model prose teaches users that every
+// entry is a command. Skills are DISCOVERABLE instead, on the /docs Skills tab.
 
 // compaction_started is advisory. The `thinking` flag is already true
 // at this point (set by the prompt send), and the completed state is

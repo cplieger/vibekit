@@ -96,11 +96,13 @@ const (
 	ACPUpdateToolUpdate   ACPUpdateKind = "tool_call_update"
 	ACPUpdatePlan         ACPUpdateKind = "plan"
 	ACPUpdateModeChange   ACPUpdateKind = "current_mode_update"
-	// v3 (KAS) session/update sub-kinds. v3 moves context-usage stats and
-	// the available-command catalog into session/update instead of the v2
-	// _kiro.dev/metadata and _kiro.dev/commands/available notifications.
-	ACPUpdateSessionInfo       ACPUpdateKind = "session_info_update"
-	ACPUpdateCommandsAvailable ACPUpdateKind = "available_commands_update"
+	// v3 (KAS) session/update sub-kinds. v3 moves context-usage stats into
+	// session/update instead of the v2 _kiro.dev/metadata notification. The
+	// available_commands_update sub-kind arrives too and is deliberately NOT
+	// decoded: unhandled sub-kinds fall through silently in handleSessionUpdate,
+	// and the catalog has no consumer (see handlers/system.ts for why there is
+	// no palette).
+	ACPUpdateSessionInfo ACPUpdateKind = "session_info_update"
 	// config_option_update carries the live model/mode/effort catalog;
 	// usage_update carries context-window usage ({size, used, cost?}).
 	// Both are v3-only session/update sub-kinds (KAS 2.12).

@@ -354,21 +354,6 @@ type ChatDeletedPayload struct {
 	ID string `json:"id"`
 }
 
-// AvailableCommand is one entry in the slash-command catalogue surfaced
-// by kiro-cli's _kiro.dev/commands/available notification. The wire
-// shape carries opaque metadata; clients consume only Name and Description.
-type AvailableCommand struct {
-	Meta        map[string]any `json:"meta,omitempty"`
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-}
-
-// CommandsUpdatedPayload is the payload for type="commands_updated".
-type CommandsUpdatedPayload struct {
-	Commands []AvailableCommand `json:"commands"`
-	Prompts  []AvailableCommand `json:"prompts,omitempty"`
-}
-
 // CompactionStartedPayload is the payload for type="compaction_started".
 type CompactionStartedPayload struct{}
 

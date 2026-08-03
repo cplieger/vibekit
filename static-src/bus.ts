@@ -30,7 +30,6 @@ import type {
   MCPOAuthPayload,
   MCPFailedPayload,
   MCPDisconnectedPayload,
-  AvailableCommand,
   PendingChangeAddedPayload,
   PendingChangeResolvedPayload,
   PendingChangesClearedPayload,
@@ -83,10 +82,6 @@ export interface SSEPayloads {
   readonly mcp_failed: MCPFailedPayload;
   readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: { readonly package: string; readonly state: string };
-  readonly commands_updated: {
-    readonly commands: AvailableCommand[];
-    readonly prompts?: AvailableCommand[];
-  };
   readonly mode_changed: { readonly mode_id: string };
   readonly knowledge_indexing: KnowledgeIndexingPayload;
   readonly safety_status: SafetyStatusPayload;

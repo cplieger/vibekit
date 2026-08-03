@@ -5,16 +5,19 @@ package translate
 // v3 moves several things that v2 delivered as dedicated _kiro.dev/*
 // notifications into session/update sub-kinds:
 //
-//	session_info_update       context-usage stats  <- v2 _kiro.dev/metadata
-//	                          + compaction status  <- v2 _kiro.dev/compaction/status
-//	available_commands_update slash-command catalog <- v2 _kiro.dev/commands/available
-//	usage_update              context-window usage (primary v3 channel)
-//	config_option_update      live model/mode/effort catalog
+//	session_info_update  context-usage stats  <- v2 _kiro.dev/metadata
+//	                     + compaction status  <- v2 _kiro.dev/compaction/status
+//	usage_update         context-window usage (primary v3 channel)
+//	config_option_update live model/mode/effort catalog
 //
-// These handlers reshape the v3 payloads onto the same domain outputs
-// (chat usage + commands_updated SSE + compaction events + model catalog)
-// so the context ring, slash menu, compaction UI, and model picker work on
-// the KAS engine without the client knowing which engine is live.
+// These handlers reshape the v3 payloads onto domain outputs (chat usage +
+// compaction events + model catalog) so the context ring, compaction UI and
+// model picker work without the client knowing which engine is live.
+//
+// available_commands_update is the one sub-kind arriving here that is NOT
+// handled: the slash-command catalog had no consumer and is not decoded, so it
+// falls through handleSessionUpdate silently. See static-src/handlers/system.ts
+// for why there is no palette.
 //
 // Shapes verified against the KAS 2.12 acp-server bundle; see
 // kiro-cli-research.md "v3 _kiro/* wire surface".
@@ -283,29 +286,6 @@ func (t *Translator) persistUsage(ctx context.Context, chatID api.ChatID, pct fl
 	}); err != nil {
 		slog.Error("persist v3 usage", "chat_id", chatID, "error", err)
 	}
-}
-
-// availableCommandsUpdate is the v3 available_commands_update payload.
-// Each command is a name/description plus opaque input/_meta that flow
-// through toAvailableCommands' passthrough Meta map.
-type availableCommandsUpdate struct {
-	AvailableCommands []map[string]any `json:"availableCommands"`
-}
-
-// HandleAvailableCommandsUpdate maps the v3 command catalog onto the same
-// commands_updated SSE the v2 _kiro.dev/commands/available handler emits,
-// so the client slash-command type-ahead is engine-agnostic. Parent-only.
-func (t *Translator) HandleAvailableCommandsUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
-	if subSessionID != "" {
-		return
-	}
-	var p availableCommandsUpdate
-	if json.Unmarshal(raw, &p) != nil {
-		return
-	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventCommandsUpdated, chatID, api.CommandsUpdatedPayload{
-		Commands: toAvailableCommands(p.AvailableCommands),
-	}))
 }
 
 // configOptionUpdate is the v3 config_option_update payload: the live

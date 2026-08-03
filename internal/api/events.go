@@ -56,7 +56,6 @@ const (
 	EventChatDeleted           EventType = "chat_deleted"
 	EventChatStatus            EventType = "chat_status"
 	EventCodeReferences        EventType = "code_references"
-	EventCommandsUpdated       EventType = "commands_updated"
 	EventCompactionStarted     EventType = "compaction_started"
 	EventConnected             EventType = "connected"
 	EventError                 EventType = "error"

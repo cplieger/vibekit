@@ -122,10 +122,9 @@ func (h *Hub) initDispatch() {
 		// session_info_update also carries compaction (summarization) state;
 		// usage_update is the primary v3 context-usage channel; and
 		// config_option_update delivers the live model/mode/effort catalog.
-		api.ACPUpdateSessionInfo:       h.translator.HandleSessionInfoUpdate,
-		api.ACPUpdateCommandsAvailable: h.translator.HandleAvailableCommandsUpdate,
-		api.ACPUpdateUsage:             ignoreSubSession(h.translator.HandleUsageUpdate),
-		api.ACPUpdateConfigOption:      ignoreSubSession(h.translator.HandleConfigOptionUpdate),
+		api.ACPUpdateSessionInfo:  h.translator.HandleSessionInfoUpdate,
+		api.ACPUpdateUsage:        ignoreSubSession(h.translator.HandleUsageUpdate),
+		api.ACPUpdateConfigOption: ignoreSubSession(h.translator.HandleConfigOptionUpdate),
 	}
 }
 
