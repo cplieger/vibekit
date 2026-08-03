@@ -33,9 +33,11 @@ import {
   enqueuePrompt,
   peekPrompt,
   dequeuePrompt,
+  promoteQueuedAt,
   removeQueuedAt,
   queueLength,
 } from "./store.js";
+import { cancelTurn } from "./actions/chat.js";
 import { showBanner } from "./banner-stack.js";
 import type { QueuedPrompt } from "./types.js";
 
@@ -162,6 +164,22 @@ export function maybeDrainIfIdle(chatID: string): void {
  * and returns it so the caller can restore its text + attachments to the
  * input. Returns undefined when the index is out of range.
  */
+/** Deliver ONE queued entry next, jumping the wait: promote it to the front,
+ *  then either interrupt the streaming turn (the turn_ended drain delivers it)
+ *  or nudge the idle drain. Mechanically an interrupt, so it inherits the
+ *  interrupt's terminal-teardown gate server-side (§5.6 R3) — which is why
+ *  this control could not ship before that landed. */
+export function sendQueuedNow(chatID: string, index: number): void {
+  if (!promoteQueuedAt(chatID, index)) {
+    return;
+  }
+  if (isThinking(chatID)) {
+    void cancelTurn.dispatch(chatID);
+    return;
+  }
+  maybeDrainIfIdle(chatID);
+}
+
 export function cancelQueuedPrompt(chatID: string, index: number): QueuedPrompt | undefined {
   return removeQueuedAt(chatID, index);
 }

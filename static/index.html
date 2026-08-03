@@ -197,10 +197,13 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                 <span class="pill-label">Attach</span>
               </button>
-              <!-- No Supervised pill. The staged-change list it expanded to is
-                   KAS's now, so the pill had nothing left to show; the toggle
-                   itself moves to the chat options menu with the other
-                   set-once switches. -->
+              <!-- Chat options: the set-once, per-chat switches (supervised
+                   mode first). A menu rather than more pills — a pill earns
+                   its slot by changing per message; a set-once mode does not. -->
+              <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat options" aria-label="Chat options">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                <span id="chat-options-card" class="pill-expand-content chat-options-card hidden"></span>
+              </button>
               <button id="task-list-pill" class="pill pill-task-list pill-expandable hidden" type="button" data-tooltip="Task list" aria-label="Task list">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
                 <span id="task-list-badge" class="pill-badge hidden">0</span>
@@ -210,13 +213,11 @@
                 </span>
               </button>
               <div class="pill-spacer"></div>
-              <div id="send-wrap" class="send-wrap">
-                <button type="button" id="cancel-half" class="send-half send-cancel-half hidden" aria-label="Cancel this turn" data-tooltip="Cancel">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
-                </button>
-                <span class="send-divider hidden"></span>
-                <button type="submit" id="send-btn" class="send-half send-send-half" data-tooltip="Send" aria-label="Send"></button>
-              </div>
+              <!-- ONE activity button: Send when nothing runs, Cancel while a
+                   turn streams (prompt-input.ts flips its type so a streaming
+                   click can never submit). The 4-state split button it
+                   replaces is gone. -->
+              <button type="submit" id="send-btn" class="send-btn" data-tooltip="Send" aria-label="Send"></button>
             </div>
           </div>
         </form>

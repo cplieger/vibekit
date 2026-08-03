@@ -8,6 +8,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -265,5 +266,62 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 	}
 	if got := h.bridge.mgr.get("run:wf_1"); got != first {
 		t.Error("the original entry did not survive the refused insert")
+	}
+}
+
+// TestKillForTurn_ScopedToTheOpenTurn pins the interrupt gate's scope (§5.6
+// R3): a cancel kills the CURRENT turn's terminals and leaves a background
+// command an earlier turn started on purpose alone.
+func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
+	at := newAgentTerminals()
+	add := func(id string, chat api.ChatID) {
+		at.mu.Lock()
+		at.terms[id] = &agentTerminal{
+			cmd:     &exec.Cmd{},
+			chatID:  chat,
+			turnSeq: at.currentTurn(chat),
+			done:    make(chan struct{}),
+		}
+		at.byChatID[chat] = append(at.byChatID[chat], id)
+		at.mu.Unlock()
+	}
+
+	add("t1-old", "c1") // turn 0
+	at.AdvanceTurn("c1")
+	add("t2-cur", "c1") // turn 1, the open turn
+	add("t2-cur-b", "c1")
+	add("other-chat", "c2")
+
+	at.KillForTurn("c1")
+
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if _, ok := at.terms["t1-old"]; !ok {
+		t.Error("an earlier turn's terminal was killed — that background command was not the cancel's to take")
+	}
+	if _, ok := at.terms["t2-cur"]; ok {
+		t.Error("the open turn's terminal survived the interrupt")
+	}
+	if _, ok := at.terms["t2-cur-b"]; ok {
+		t.Error("the open turn's second terminal survived the interrupt")
+	}
+	if _, ok := at.terms["other-chat"]; !ok {
+		t.Error("another chat's terminal was killed")
+	}
+	if got := len(at.byChatID["c1"]); got != 1 {
+		t.Errorf("c1's index holds %d ids, want 1 (the survivor)", got)
+	}
+}
+
+// TestKillForTurn_NothingOpenIsANoOp pins that a cancel with no terminals (the
+// overwhelmingly common case) touches nothing.
+func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
+	at := newAgentTerminals()
+	at.AdvanceTurn("c1")
+	at.KillForTurn("c1") // must not panic or create entries
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	if len(at.terms) != 0 || len(at.byChatID["c1"]) != 0 {
+		t.Errorf("no-op kill mutated the registry: %d terms", len(at.terms))
 	}
 }

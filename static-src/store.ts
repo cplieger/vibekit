@@ -244,6 +244,24 @@ export function dequeuePrompt(id: string): QueuedPrompt | undefined {
   return removeQueuedAt(id, 0);
 }
 
+/** Move the entry at `index` to the queue's FRONT, preserving the relative
+ *  order of everything else. Backs the chip row's send-now: the drain always
+ *  delivers the front, so promotion is what "this one next" means. */
+export function promoteQueuedAt(id: string, index: number): boolean {
+  const q = get(id)?.prompt_queue;
+  if (q === undefined || index <= 0 || index >= q.length) {
+    // index 0 is already the front; treat it as promoted.
+    return q !== undefined && index === 0 && q.length > 0;
+  }
+  const entry = q[index];
+  if (entry === undefined) {
+    return false;
+  }
+  const next = [entry, ...q.filter((_, i) => i !== index)];
+  sessions.update(id, (cur) => ({ ...cur, prompt_queue: next }));
+  return true;
+}
+
 /** Remove and return the entry at `index` (0-based). Backs both the drain
  *  (front) and the UI cancel affordance (any position). No-op + undefined
  *  for an out-of-range index or unknown chat. */

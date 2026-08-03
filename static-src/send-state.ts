@@ -15,7 +15,11 @@
 // the user shouldn't submit surfaces as a single blocked state on the send
 // button with a tooltip explaining why.
 //
-// Precedence: disconnected > lastError > queued > thinking > idle.
+// Precedence: disconnected > lastError > streaming > queued > idle. The order
+// matters precisely at streaming+queued: with ONE button, `queued` winning
+// would show Send during a live turn — and then nothing on screen cancels the
+// turn, which is the one thing the single control exists to guarantee. (The
+// old order was right for the SPLIT button, where Cancel had its own half.)
 // ---------------------------------------------------------------------------
 
 import { signal, computed, effect } from "@cplieger/reactive";
@@ -38,12 +42,15 @@ const sendState = computed<SendState>(() => {
   if (session === undefined) {
     return { kind: "idle" };
   }
+  if (session.thinking) {
+    return { kind: "streaming" };
+  }
+  // Observable with nothing streaming: the queue survives reconnect and the
+  // window between turn_ended and the drain, so a bare Send above pending
+  // rows would misreport the state.
   const queue = session.prompt_queue;
   if (queue !== undefined && queue.length > 0) {
-    return { kind: "queued" };
-  }
-  if (session.thinking) {
-    return { kind: "busy" };
+    return { kind: "queued", count: queue.length };
   }
   return { kind: "idle" };
 });

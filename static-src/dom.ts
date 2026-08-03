@@ -266,6 +266,13 @@ class Elements {
   get fbChatFilter(): HTMLButtonElement {
     return byId("fb-chat-filter");
   }
+  // Chat options (the composer's set-once switches menu)
+  get chatOptionsBtn(): HTMLButtonElement {
+    return byId("chat-options-btn");
+  }
+  get chatOptionsCard(): HTMLElement {
+    return byId("chat-options-card");
+  }
   get fbRename(): HTMLButtonElement {
     return byId("fb-rename");
   }

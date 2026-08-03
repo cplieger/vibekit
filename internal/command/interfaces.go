@@ -53,6 +53,16 @@ type PendingPermAccess interface {
 	RemovePendingPerm(requestID int64)
 }
 
+// TerminalAccess is the interrupt's process half: a turn cancel must reach
+// the turn's agent terminals or it strands them (§5.6 R3 — cancelling
+// mid-`npm test` left the command running with no owner).
+type TerminalAccess interface {
+	// KillTurnTerminals kills the terminals the chat's CURRENT turn created,
+	// and nothing else — a background command an earlier turn left running
+	// on purpose is not the cancel's to kill.
+	KillTurnTerminals(chatID api.ChatID)
+}
+
 // InfraDeps provides shared infrastructure operations (workspace,
 // lifecycle, dedup, MCP readiness) used across multiple handlers.
 type InfraDeps interface {
@@ -79,6 +89,9 @@ func (d *Dispatcher) Chat() ChatAccess { return d.deps }
 
 // PendingPerms returns the PendingPermAccess subset of dependencies.
 func (d *Dispatcher) PendingPerms() PendingPermAccess { return d.deps }
+
+// Terminals returns the TerminalAccess subset of dependencies.
+func (d *Dispatcher) Terminals() TerminalAccess { return d.deps }
 
 // Infra returns the InfraDeps subset of dependencies.
 func (d *Dispatcher) Infra() InfraDeps { return d.deps }

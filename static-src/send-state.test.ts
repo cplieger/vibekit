@@ -56,7 +56,7 @@ beforeEach(() => {
 });
 
 describe("send-state precedence", () => {
-  it("orders disconnected > lastError > queued > thinking > idle", () => {
+  it("orders disconnected > lastError > streaming > queued > idle", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
@@ -77,20 +77,33 @@ describe("send-state precedence", () => {
     flushSync();
     expect(lastPushed()).toEqual({ kind: "blocked", reason: "boom" });
 
-    // Clear the error → queued wins.
+    // Clear the error → STREAMING wins, queue or no queue. This edge is the
+    // whole point of the order: with ONE button, `queued` winning here would
+    // show Send during a live turn — and then nothing on screen cancels it.
     clearLastError();
     flushSync();
-    expect(lastPushed()).toEqual({ kind: "queued" });
+    expect(lastPushed()).toEqual({ kind: "streaming" });
 
-    // Drain the queue → thinking wins.
-    dequeuePrompt(id);
-    flushSync();
-    expect(lastPushed()).toEqual({ kind: "busy" });
-
-    // Stop thinking → idle.
+    // Turn ends with the queue still pending → queued, with the count.
     setThinking(id, false);
     flushSync();
+    expect(lastPushed()).toEqual({ kind: "queued", count: 1 });
+
+    // Drain the queue → idle.
+    dequeuePrompt(id);
+    flushSync();
     expect(lastPushed()).toEqual({ kind: "idle" });
+  });
+
+  it("counts the resting queue on the badge", () => {
+    const id = "c1";
+    setSessions([makeSession(id)]);
+    setActive(id);
+    setSSEStatus("connected");
+    enqueuePrompt(id, "one", "m-1");
+    enqueuePrompt(id, "two", "m-2");
+    flushSync();
+    expect(lastPushed()).toEqual({ kind: "queued", count: 2 });
   });
 });
 
@@ -108,7 +121,7 @@ describe("send-state auto-tracking", () => {
     setThinking(id, true);
     flushSync();
     expect(pushed).toHaveBeenCalledTimes(1);
-    expect(lastPushed()).toEqual({ kind: "busy" });
+    expect(lastPushed()).toEqual({ kind: "streaming" });
   });
 });
 
@@ -120,7 +133,7 @@ describe("send-state disconnected override", () => {
     setSSEStatus("connected");
     enqueuePrompt(id, "hi", "m-test");
     flushSync();
-    expect(lastPushed()).toEqual({ kind: "queued" });
+    expect(lastPushed()).toEqual({ kind: "queued", count: 1 });
 
     setSSEStatus("disconnected");
     flushSync();

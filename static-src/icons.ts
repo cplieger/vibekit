@@ -77,6 +77,14 @@ export const ICON_HOURGLASS = svg(
   16,
   '<path d="M6 2h12v3a6 6 0 01-3 5.2 6 6 0 013 5.2V19a3 3 0 01-3 3H9a3 3 0 01-3-3v-3.6a6 6 0 013-5.2A6 6 0 016 5z"/>',
 );
+// The one-button activity control's Cancel face: a stop square. Filled — the
+// outline family reads as a checkbox at 16px, and stop-is-filled is the
+// transport convention every player uses.
+export const ICON_CANCEL = svg(
+  16,
+  '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
+);
+
 export const ICON_ALERT = svg(
   16,
   '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',

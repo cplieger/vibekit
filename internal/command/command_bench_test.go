@@ -38,6 +38,7 @@ func (d *benchDeps) InflightAdd(int)                                     {}
 func (d *benchDeps) InflightDone()                                       {}
 func (d *benchDeps) CleanupChatState(context.Context, api.ChatID)        {}
 func (d *benchDeps) CancelChatRuns(context.Context, api.ChatID)          {}
+func (d *benchDeps) KillTurnTerminals(api.ChatID)                        {}
 func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool { return true }
 func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)         { return "", nil }
 func (d *benchDeps) PrimeIfNeeded(context.Context, api.ChatID, Bridge)   {}

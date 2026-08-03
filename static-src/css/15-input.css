@@ -178,6 +178,46 @@
   color: var(--c-text-secondary);
 }
 
+/* Send-now: the queue-jump control for the one message that has become
+   urgent. The send glyph at chip scale; same quiet-until-hover treatment as
+   the discard beside it. */
+.queued-send-now {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 3px;
+  color: var(--c-accent);
+  opacity: 0.6;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    opacity var(--dur-micro) var(--ease-micro),
+    background var(--dur-micro) var(--ease-micro);
+
+  & svg {
+    width: 0.75rem;
+    height: 0.75rem;
+  }
+
+  &:hover {
+    opacity: 1;
+    background: var(--c-bg-hover);
+  }
+
+  &:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--c-accent);
+    outline-offset: 1px;
+  }
+}
+
 .queued-cancel {
   position: relative;
   display: inline-flex;
@@ -255,7 +295,7 @@
   align-items: center;
   gap: 0.25rem;
   padding: 0 var(--sp-2);
-  /* Matches .send-half height so the prompt-pills row reads as one
+  /* Matches .send-btn height so the prompt-pills row reads as one
    * uniform line of controls; border-radius = height/2 keeps the
    * pill perfectly rounded. */
   height: 2rem;
@@ -753,12 +793,67 @@
   background: var(--c-accent-subtle);
 }
 
-/* Send button: now lives inside .send-wrap as the right half.
- * Standalone styling removed; the wrapper provides the accent
- * background and border-radius. */
-[id="send-btn"] {
-  /* Inherits .send-half + .send-send-half styles from the split
-   * button CSS above. Only overrides needed here are state-specific. */
+/* The chat options card: the set-once switches menu. */
+.chat-options-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 16rem;
+  padding: var(--sp-3);
+  text-align: start;
+}
+
+.chat-opt-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+  cursor: pointer;
+
+  & input {
+    margin-block-start: 0.125rem;
+    flex-shrink: 0;
+    cursor: pointer;
+  }
+}
+
+.chat-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.chat-opt-name {
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+}
+
+.chat-opt-hint {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+/* THE activity button: one control, two states. Send when nothing runs,
+ * Cancel while a turn streams — the 4-state split button (send half + cancel
+ * half + divider + wrapper) is gone. Density and identity come from the same
+ * accent pill the send half had; the streaming face goes red-on-subtle so the
+ * label change is not the only signal. */
+.send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  border: none;
+  border-radius: 1rem;
+  background: var(--c-accent);
+  color: #fff;
+  cursor: pointer;
+  padding: 0 var(--sp-3);
+  min-width: 2.25rem;
+  height: 2rem;
+  flex-shrink: 0;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro);
 
   & svg {
     width: 1rem;
@@ -767,16 +862,23 @@
     transition: transform var(--dur-micro) var(--ease-micro);
   }
 
-  &:where(.busy) {
-    cursor: default;
+  &:hover {
+    background: var(--c-accent-hover);
   }
 
-  &:where(.queued) {
-    color: var(--c-text-secondary);
-    cursor: default;
+  &:active {
+    transform: scale(0.92);
+    transition: transform var(--dur-micro) var(--ease-micro);
+  }
 
-    & svg {
-      animation: send-hourglass 2s ease-in-out infinite;
+  /* Streaming = Cancel. Red on a quiet field: stopping is destructive-ish,
+     and the face must differ from Send by more than the glyph. */
+  &:where(.streaming) {
+    background: color-mix(in srgb, var(--c-red) 16%, var(--c-bg-tertiary));
+    color: var(--c-red);
+
+    &:hover {
+      background: color-mix(in srgb, var(--c-red) 28%, var(--c-bg-tertiary));
     }
   }
 
@@ -789,29 +891,11 @@
       transform: none;
       animation: vk-breathe 1.6s ease-in-out infinite;
     }
-  }
 
-  &:hover {
-    background: var(--c-accent-hover);
-  }
-
-  &:active {
-    transform: scale(0.92);
-    transition: transform var(--dur-micro) var(--ease-micro);
-  }
-
-  &:where(.busy):hover {
-    background: var(--c-accent-hover);
-  }
-
-  &:where(.queued):hover {
-    background: var(--c-bg-tertiary);
-    filter: none;
-  }
-
-  &:where(.blocked):hover {
-    background: var(--c-yellow, #b88f00);
-    filter: none;
+    &:hover {
+      background: var(--c-yellow, #b88f00);
+      filter: none;
+    }
   }
 
   &:disabled {
@@ -819,69 +903,25 @@
   }
 }
 
-/* Split send/cancel button wrapper. In idle state, only the send half
- * is visible (cancel + divider are hidden). In busy state, the wrapper
- * grows to show cancel | divider | spinner. Each half has its own
- * hover effect. The width transition animates the grow/shrink. */
-.send-wrap {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 1rem;
-  background: var(--c-accent);
-  overflow: hidden;
-  flex-shrink: 0;
-  transition: width var(--dur-standard) var(--ease-standard);
-}
-
-.send-wrap-busy {
-  background: var(--c-bg-tertiary);
-}
-
-.send-half {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: #fff;
-  cursor: pointer;
-  padding: 0;
-  min-width: 2.25rem;
-  height: 2rem;
-  transition: background var(--dur-micro) var(--ease-micro);
-}
-
-.send-send-half {
-  padding: 0 var(--sp-3);
-}
-
-.send-send-half svg {
-  width: 1rem;
+/* The pending count while the queue is non-empty and nothing streams: Send,
+   badged — the state is observable (the queue survives reconnect and the
+   turn_ended→drain window), so a bare Send above pending rows would lie. */
+.send-queue-badge {
+  position: absolute;
+  top: -0.375rem;
+  right: -0.25rem;
+  min-width: 1rem;
   height: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 0.5rem;
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-accent);
+  color: var(--c-accent);
+  font-size: 0.625rem;
+  font-weight: var(--fw-semibold);
+  line-height: calc(1rem - 2px);
+  text-align: center;
 }
-
-.send-cancel-half {
-  color: var(--c-red);
-  padding: 0 var(--sp-2);
-}
-
-.send-cancel-half:hover {
-  background: color-mix(in srgb, var(--c-red) 20%, transparent);
-}
-
-.send-divider {
-  width: 1px;
-  height: 1rem;
-  background: var(--c-border);
-  flex-shrink: 0;
-}
-
-.send-wrap-busy .send-send-half {
-  color: var(--c-text-secondary);
-  cursor: default;
-}
-
-/* Dedicated cancel button removed — merged into the split send wrapper. */
 
 /* CSS-driven spinner for the send button's busy state. The icon is
  * an arc (3/4 circle); we spin the whole SVG. Avoids needing a
@@ -893,28 +933,6 @@
 
 [id="context-indicator"] {
   anchor-name: --context-indicator;
-}
-
-@keyframes send-hourglass {
-  0% {
-    transform: rotate(0deg);
-    opacity: 1;
-  }
-
-  45% {
-    transform: rotate(0deg);
-    opacity: 1;
-  }
-
-  55% {
-    transform: rotate(180deg);
-    opacity: 0.6;
-  }
-
-  100% {
-    transform: rotate(180deg);
-    opacity: 1;
-  }
 }
 
 /* When the input is disabled (queued / blocked), grey it out so the

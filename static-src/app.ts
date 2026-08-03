@@ -77,6 +77,7 @@ import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
 import { initPromptInput } from "./prompt-input.js";
 import { initQueuedPrompts } from "./queued-prompts.js";
+import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
 import { initRuntimeHealth } from "./runtime-health.js";
 // commands-menu stripped — slash commands replaced by dedicated UI buttons
@@ -675,6 +676,7 @@ function setupInput(): void {
   initRolePicker();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initQueuedPrompts();
+  initChatOptions();
   // The interaction dock: permission asks, elicitation forms and agent
   // questions. Hosted by the chat's bottom bar; it takes its host as an
   // argument so a future run tab's bottom bar can host one too.

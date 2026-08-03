@@ -103,7 +103,17 @@ func (h *Hub) IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool {
 	return h.isEmptyTurn(resp, chatID)
 }
 
-// EmitTurnEndedWithStats broadcasts turn_ended with usage stats.
+// EmitTurnEndedWithStats broadcasts turn_ended with usage stats, and closes
+// the chat's terminal-attribution turn: terminals created after this belong
+// to the NEXT turn.
 func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
 	h.coord.EmitTurnEndedWithStats(ctx, chatID, resp, creditsDelta, elapsedMs)
+	h.agentTerms.AdvanceTurn(chatID)
+}
+
+// KillTurnTerminals kills the terminals the current turn created. The
+// interrupt half of the tab-close contract: cancel stops the model, and this
+// stops the processes the turn already spawned.
+func (h *Hub) KillTurnTerminals(chatID api.ChatID) {
+	h.agentTerms.KillForTurn(chatID)
 }

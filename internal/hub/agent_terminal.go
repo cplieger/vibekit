@@ -72,12 +72,16 @@ func ownsProcessGroup(pid, pgid int) bool { return pgid == pid }
 
 // agentTerminal is one headless subprocess spawned by kiro-cli.
 type agentTerminal struct {
-	exitErr  error
-	cmd      *exec.Cmd
-	done     chan struct{}
-	output   *byteRing
-	chatID   api.ChatID
-	signal   string
+	exitErr error
+	cmd     *exec.Cmd
+	done    chan struct{}
+	output  *byteRing
+	chatID  api.ChatID
+	signal  string
+	// turnSeq is the chat's turn sequence at creation — which TURN spawned
+	// this terminal. What lets an interrupt kill the turn's own processes
+	// without touching a background command an earlier turn left running.
+	turnSeq  uint64
 	exitCode int
 	mu       sync.Mutex
 }
@@ -140,13 +144,72 @@ func exitStatusFromState(st *os.ProcessState) (exitCode int, signal string) {
 type agentTerminals struct {
 	terms    map[string]*agentTerminal
 	byChatID map[api.ChatID][]string // chatID → []terminalID
-	mu       sync.Mutex
+	// turnSeq is each chat's CURRENT turn ordinal, incremented at every
+	// turn end. A terminal stamps the value at creation, so "this turn's
+	// terminals" is a comparison rather than bookkeeping the create path
+	// has to remember to do.
+	turnSeq map[api.ChatID]uint64
+	mu      sync.Mutex
 }
 
 func newAgentTerminals() *agentTerminals {
 	return &agentTerminals{
 		terms:    make(map[string]*agentTerminal),
 		byChatID: make(map[api.ChatID][]string),
+		turnSeq:  make(map[api.ChatID]uint64),
+	}
+}
+
+// AdvanceTurn marks a chat's turn boundary. Called at turn end, so every
+// terminal created since the LAST call belongs to the turn now closing —
+// nothing creates agent terminals outside a turn.
+func (at *agentTerminals) AdvanceTurn(chatID api.ChatID) {
+	at.mu.Lock()
+	at.turnSeq[chatID]++
+	at.mu.Unlock()
+}
+
+// currentTurn reads a chat's turn ordinal. Callers hold at.mu.
+func (at *agentTerminals) currentTurn(chatID api.ChatID) uint64 {
+	return at.turnSeq[chatID]
+}
+
+// KillForTurn kills the terminals the CURRENT (still-open) turn created and
+// leaves every other chat process alone. The interrupt gate (§5.6 R3): turn
+// cancel used to tear down nothing — `KillForChat`'s only callers are the
+// delete/close paths — so cancelling mid-`npm test` left the command running,
+// owned by nobody, streaming into a turn that no longer existed. Scoped to
+// the turn rather than the chat deliberately: KillForChat here would also
+// kill a background command an EARLIER turn started on purpose.
+func (at *agentTerminals) KillForTurn(chatID api.ChatID) {
+	at.mu.Lock()
+	cur := at.currentTurn(chatID)
+	ids := at.byChatID[chatID]
+	var doomed []*agentTerminal
+	kept := ids[:0]
+	for _, id := range ids {
+		term, ok := at.terms[id]
+		if !ok {
+			continue
+		}
+		if term.turnSeq != cur {
+			kept = append(kept, id)
+			continue
+		}
+		delete(at.terms, id)
+		doomed = append(doomed, term)
+	}
+	at.byChatID[chatID] = kept
+	at.mu.Unlock()
+	for _, term := range doomed {
+		if term.cmd.Process != nil {
+			if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
+				slog.Debug("hub: turn terminal kill failed", "chat_id", chatID, "error", err)
+			}
+		}
+	}
+	if len(doomed) > 0 {
+		slog.Info("interrupt: killed the turn's terminals", "chat_id", chatID, "count", len(doomed))
 	}
 }
 
@@ -336,6 +399,7 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	// leave the tab stuck "running". Registering + broadcasting first
 	// guarantees terminal_created is ordered ahead of any output/exit event.
 	h.agentTerms.mu.Lock()
+	term.turnSeq = h.agentTerms.currentTurn(chatID)
 	h.agentTerms.terms[termID] = term
 	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], termID)
 	h.agentTerms.mu.Unlock()

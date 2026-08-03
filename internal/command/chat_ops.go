@@ -84,6 +84,13 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	// escape from an unanswered approval and it reverts correctly).
 	d.PendingPerms().ClearPendingPermsForChat(cmd.ChatID)
 
+	// The interrupt's process half (§5.6 R3): stopping the MODEL does not stop
+	// the processes its turn already spawned — cancelling mid-`npm test` left
+	// the command running, owned by nobody, streaming into a turn that no
+	// longer existed. Scoped to the turn's own terminals; a background command
+	// an earlier turn started on purpose is not this gesture's to kill.
+	d.Terminals().KillTurnTerminals(cmd.ChatID)
+
 	sb := d.Bridge().GetBridge(cmd.ChatID)
 	if sb == nil {
 		d.RespondOK(w, cmd.RequestID)

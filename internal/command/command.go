@@ -33,6 +33,7 @@ type Dependencies interface {
 	BridgeAccess
 	ChatAccess
 	PendingPermAccess
+	TerminalAccess
 	InfraDeps
 	Draining() bool
 	CheckDedup(reqID string) ([]byte, bool)
