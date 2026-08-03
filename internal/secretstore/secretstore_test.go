@@ -66,7 +66,7 @@ func TestFileIs0600(t *testing.T) {
 	if err := s.Set(context.Background(), realKey, "v"); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
-	info, err := os.Stat(s.Path())
+	info, err := os.Stat(s.path)
 	if err != nil {
 		t.Fatalf("stat store: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestLoadTightensLoosePerms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	info, err := os.Stat(s.Path())
+	info, err := os.Stat(s.path)
 	if err != nil {
 		t.Fatalf("stat store: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestDeleteAbsentDoesNotWrite(t *testing.T) {
 	if err := s.Delete(context.Background(), "never-stored"); err != nil {
 		t.Fatalf("Delete(absent) error = %v", err)
 	}
-	if _, err := os.Stat(s.Path()); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(s.path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("stat store err = %v, want ErrNotExist: an absent-key delete must not create the file", err)
 	}
 }
@@ -175,8 +175,8 @@ func TestBounds(t *testing.T) {
 				t.Fatalf("Set(#%d) error = %v", i, err)
 			}
 		}
-		if got := s.Len(); got != MaxEntries {
-			t.Fatalf("Len() = %d, want %d", got, MaxEntries)
+		if got := s.count(); got != MaxEntries {
+			t.Fatalf("count = %d, want %d", got, MaxEntries)
 		}
 		if err := s.Set(ctx, "one-too-many", "v"); !errors.Is(err, ErrTooLarge) {
 			t.Errorf("Set() past the entry cap error = %v, want ErrTooLarge", err)
@@ -189,6 +189,15 @@ func TestBounds(t *testing.T) {
 			t.Errorf("Set(existing key) at the cap error = %v, want nil", err)
 		}
 	})
+}
+
+// count reports how many keys the store holds. A test helper rather than an
+// exported method: production never asks, and an exported accessor with only
+// test callers is dead weight punused correctly flags.
+func (s *Store) count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.secrets)
 }
 
 // firstKey returns any key the store holds. Only for the cap test.
@@ -213,8 +222,8 @@ func TestCorruptStoreMovedAside(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() over a corrupt store error = %v, want nil (credentials are re-derivable)", err)
 	}
-	if s.Len() != 0 {
-		t.Errorf("Len() = %d, want 0", s.Len())
+	if got := s.count(); got != 0 {
+		t.Errorf("count = %d, want 0", got)
 	}
 	if _, err := os.Stat(path + ".corrupt"); err != nil {
 		t.Errorf("stat moved-aside file: %v, want it preserved", err)
@@ -275,7 +284,7 @@ func TestOnDiskShape(t *testing.T) {
 	if err := s.Set(context.Background(), realKey, "blob"); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
-	data, err := os.ReadFile(s.Path())
+	data, err := os.ReadFile(s.path)
 	if err != nil {
 		t.Fatalf("read store: %v", err)
 	}

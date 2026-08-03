@@ -135,9 +135,6 @@ func New(configDir string) (*Store, error) {
 	return s, nil
 }
 
-// Path returns the store's file path. For diagnostics and tests.
-func (s *Store) Path() string { return s.path }
-
 func (s *Store) load() error {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -247,13 +244,6 @@ func (s *Store) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return nil
-}
-
-// Len reports how many keys the store holds. For diagnostics and tests.
-func (s *Store) Len() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.secrets)
 }
 
 // persistLocked writes the whole store atomically. Caller holds s.mu.

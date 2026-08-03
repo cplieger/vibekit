@@ -114,8 +114,11 @@ func TestSecretStoreRejectsBadParams(t *testing.T) {
 			if _, err := secretStoreResult(ctx, store, tc.params); err == nil {
 				t.Error("secretStoreResult() error = nil, want an error")
 			}
-			if store.Len() != 0 {
-				t.Errorf("store holds %d entries after a rejected store, want 0", store.Len())
+			// The store must be untouched. Asserted through the read path
+			// rather than an entry count, because "the credential is not
+			// there" is the property that matters to KAS.
+			if got := secretGetResult(store, rawParams(t, map[string]string{"key": probeKey})); got.Value != nil {
+				t.Errorf("a rejected store left a value: %q", *got.Value)
 			}
 		})
 	}
