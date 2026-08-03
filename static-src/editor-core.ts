@@ -7,7 +7,6 @@
 //   editor-types.ts    — shared types, state container, predicates
 //   editor-modes.ts    — restoreUI dispatcher
 //   editor-conflict.ts — conflict-mode rendering and AI merge suggestions
-//   editor-pending.ts  — supervised pending-change resolution
 //   editor-diff.ts     — diff source helpers
 //   editor-ui.ts       — rendering helpers (gutter, highlight, mode UI)
 //   editor-openers.ts  — file open, load, and fetch logic
@@ -19,13 +18,7 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { openEditorView } from "./tabs.js";
 import { parseConflicts } from "./conflict.js";
 import { saveFile as saveFileAction } from "./actions/editor.js";
-import { bindLoadingState, isPending } from "./actions/index.js";
-import { onBus, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
-import {
-  resolveActivePending,
-  applyActivePendingPartial,
-  openDiscussPromptForActive,
-} from "./editor-pending.js";
+import { isPending } from "./actions/index.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
 import {
   showReadMode,
@@ -41,9 +34,6 @@ import {
   getActiveFilePath,
   freshState,
   activeDirty,
-  isPendingPath,
-  parsePendingPath,
-  makePendingPath,
   unsavedDiffSource,
   gitDiffSource,
 } from "./editor-types.js";
@@ -52,45 +42,17 @@ import type { FileState } from "./editor-types.js";
 // --- Re-exports for backward compatibility ---
 // Consumers that import from editor-core.ts continue to work.
 
-export { isPendingPath, parsePendingPath, routeForPath } from "./editor-types.js";
-export type { FileState } from "./editor-types.js";
+export { routeForPath } from "./editor-types.js";
 
 export function initEditor(): void {
   $.editorEditBtn.addEventListener("click", startEditing);
   $.editorCancelBtn.addEventListener("click", confirmStopEditing);
   $.editorSaveBtn.addEventListener("click", saveFile);
   $.editorDiffBtn.addEventListener("click", toggleDiffMode);
-  $.editorPendingAcceptBtn.addEventListener("click", () => {
-    void resolveActivePending("accept");
-  });
-  $.editorPendingRejectBtn.addEventListener("click", () => {
-    void resolveActivePending("reject");
-  });
-  $.editorPendingApplyPartialBtn.addEventListener("click", () => {
-    void applyActivePendingPartial();
-  });
-  bindLoadingState("editor.resolve_partial", $.editorPendingApplyPartialBtn);
-  $.editorPendingDiscussBtn.addEventListener("click", () => {
-    openDiscussPromptForActive();
-  });
-
-  onBus(BUS_PENDING_RESOLVED, (p) => {
-    const targetPath = makePendingPath(p.chatID, p.toolCallID);
-    if (fileStates.has(targetPath)) {
-      closeEditorFile(targetPath);
-    }
-  });
-  onBus(BUS_PENDING_CLEARED, (p) => {
-    for (const path of [...fileStates.keys()]) {
-      if (!isPendingPath(path)) {
-        continue;
-      }
-      const { chatID } = parsePendingPath(path);
-      if (chatID === p.chatID) {
-        closeEditorFile(path);
-      }
-    }
-  });
+  // No pending accept/reject/partial/discuss buttons, and no bus listeners
+  // closing pending tabs: the whole staged-write review surface is gone. KAS
+  // reviews a turn at once, so there is no per-file verdict to give from the
+  // editor and no `pending:` tab to close when one lands.
   let conflictReparseQueued = false;
   $.editorContent.addEventListener("input", () => {
     const state = fileStates.get(getActiveFilePath());

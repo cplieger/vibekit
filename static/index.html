@@ -203,11 +203,10 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                 <span class="pill-label">Attach</span>
               </button>
-              <button id="supervised-pill" class="pill pill-expandable pill-supervised" type="button" aria-label="Supervised mode" aria-pressed="false">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-                <span class="pill-label">Supervised</span>
-                <span class="pill-expand-content pill-supervised-body hidden"></span>
-              </button>
+              <!-- No Supervised pill. The staged-change list it expanded to is
+                   KAS's now, so the pill had nothing left to show; the toggle
+                   itself moves to the chat options menu with the other
+                   set-once switches. -->
               <button id="task-list-pill" class="pill pill-task-list pill-expandable hidden" type="button" data-tooltip="Task list" aria-label="Task list">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
                 <span id="task-list-badge" class="pill-badge hidden">0</span>
@@ -760,10 +759,6 @@
             <div class="view-toolbar-inner">
               <span id="editor-filename" class="editor-filename"></span>
               <div class="editor-actions">
-                <button type="button" id="editor-pending-discuss-btn" class="btn-small hidden" data-tooltip="Ask the agent about this change" aria-label="Ask the agent about this change">Discuss</button>
-                <button type="button" id="editor-pending-apply-partial-btn" class="btn-small hidden primary" data-tooltip="Apply only the accepted hunks" aria-label="Apply only the accepted hunks">Apply selected</button>
-                <button type="button" id="editor-pending-reject-btn" class="btn-small hidden" data-tooltip="Reject this change" aria-label="Reject this change">Reject</button>
-                <button type="button" id="editor-pending-accept-btn" class="btn-small hidden primary" data-tooltip="Accept this change" aria-label="Accept this change">Accept</button>
                 <button type="button" id="editor-diff-btn" class="icon-btn" data-tooltip="View as diff (vs saved)" aria-label="View as diff (vs saved)">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h4M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M12 4v16"/></svg>
                 </button>

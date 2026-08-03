@@ -358,209 +358,14 @@
   flex: 1;
 }
 
-/* Supervised mode pill: accent when mode is on, warning when there
- * are pending changes (the colour shift grabs attention for the
- * most common pill state transition). */
-.pill-supervised.pill-active {
-  color: var(--c-accent);
-  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
-  border-color: var(--c-accent);
-  transition:
-    color var(--dur-spring) var(--ease-spring),
-    background var(--dur-spring) var(--ease-spring),
-    border-color var(--dur-spring) var(--ease-spring);
-}
+/* No Supervised pill, no tool-card approval row, no awaiting_approval
+ * status. KAS gates a whole turn, so there is no per-write state for a
+ * pill to count or a card to offer a verdict on; the turn decision is the
+ * bottom-bar dock's. `.pill-button` went with them — the supervised
+ * popover was its only consumer. */
 
-.pill-supervised.has-pending {
-  color: var(--c-yellow);
-  background: color-mix(in srgb, var(--c-yellow) 14%, transparent);
-  border-color: var(--c-yellow);
-}
-
-.pill-supervised.has-pending .pill-label {
-  font-variant-numeric: tabular-nums;
-}
-
-/* Per-turn trust active. Keeps the supervised-on accent hue so the
- * user still parses the pill as "Supervised family", but layers a
- * solid-background + white-text inverted treatment to make the
- * "writes pass through right now" state unmissable. `.is-trusted`
- * wins specificity over `.has-pending` when both happen to set —
- * trust activation drains pending, so overlap is transient. */
-.pill-supervised.is-trusted,
-.pill-supervised.is-trusted.has-pending {
-  color: var(--c-bg-primary);
-  background: var(--c-accent);
-  border-color: var(--c-accent);
-  animation: vk-breathe var(--dur-spring) ease-in-out infinite alternate;
-}
-
-.pill-supervised.is-trusted .pill-label {
-  font-weight: 600;
-}
-
-/* Supervised popover body — the detail card that drops out of the
- * pill on expand. Reuses .pill-expand-content chrome for the animation;
- * we only style the internal layout. */
-.pill-supervised-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-3);
-  min-width: 20rem;
-  max-width: 28rem;
-  padding: var(--sp-3);
-  font-size: var(--fs-sm);
-}
-
-.supervised-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
-}
-
-.supervised-title {
-  font-weight: var(--fw-semibold);
-  font-size: var(--fs-md);
-}
-
-.supervised-toggle-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-2);
-  cursor: pointer;
-  user-select: none;
-}
-
-.supervised-toggle-text {
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
-}
-
-.supervised-hint {
-  margin: 0;
-  font-size: var(--fs-sm);
-  line-height: 1.4;
-  color: var(--c-text-secondary);
-}
-
-.supervised-pending-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  max-height: 16rem;
-  overflow-y: auto;
-}
-
-.supervised-pending-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2);
-  border-radius: var(--r);
-  background: var(--c-bg-secondary);
-}
-
-.supervised-row-glyph {
-  font-weight: var(--fw-semibold);
-  font-size: 1.1em;
-  line-height: 1;
-}
-
-.supervised-pending-row[data-kind="create"] .supervised-row-glyph {
-  color: var(--c-green);
-}
-
-.supervised-pending-row[data-kind="delete"] .supervised-row-glyph {
-  color: var(--c-red);
-}
-
-.supervised-pending-row[data-kind="edit"] .supervised-row-glyph {
-  color: var(--c-accent);
-}
-
-.supervised-row-file {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-}
-
-.supervised-row-actions {
-  display: inline-flex;
-  gap: var(--sp-1);
-}
-
-.supervised-bulk-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--sp-2);
-  border-top: 1px solid var(--c-border);
-  padding-top: var(--sp-2);
-}
-
-/* The .pill-button inside popovers is a small secondary action.
- * .primary variant matches the existing primary accent colour. */
-.pill-button {
-  padding: 0.25rem 0.6rem;
-  border-radius: var(--r);
-  border: 1px solid var(--c-border);
-  background: transparent;
-  color: var(--c-text-primary);
-  font-size: 0.85em;
-  cursor: pointer;
-}
-
-.pill-button:hover {
-  background: var(--c-bg-tertiary);
-}
-
-.pill-button.primary {
-  background: var(--c-accent);
-  color: #fff;
-  border-color: var(--c-accent);
-}
-
-.pill-button.primary:hover {
-  filter: brightness(1.08);
-}
-
-/* --- Tool-card pending-action row ---
- * Lives on tool cards whose writes are staged for Supervised-mode
- * approval. Accept button uses
- * .primary for the typed-decision CTA; the diff + reject stay neutral. */
-.tool-pending-actions {
-  display: flex;
-  gap: var(--sp-1);
-  padding-top: var(--sp-2);
-  justify-content: flex-end;
-}
-
-.tool-pending-actions .turn-action-btn.primary {
-  color: #fff;
-  background: var(--c-accent);
-}
-
-.tool-pending-actions .turn-action-btn.primary:hover {
-  filter: brightness(1.08);
-}
-
-/* awaiting_approval status pill: warmer tone than in_progress to make
- * the "your turn" state legible at a glance. */
-/* stylelint-disable-next-line selector-class-pattern -- class mirrors the server's snake_case tool-status enum value */
-.tool-status.awaiting_approval {
-  color: var(--c-yellow);
-  background: color-mix(in srgb, var(--c-yellow) 14%, transparent);
-}
-
-/* Any expandable pill gets accent styling when its popup is open.
- * Keeps the context pill, model pill, and task-list pill visually
- * consistent with the auto-approve and supervised pill active states. */
+/* Any expandable pill gets accent styling when its popup is open, so the
+ * context, model, role and task-list pills all read the same way open. */
 .pill-expandable.pill-expanded {
   /* Accent border + background tint only. Recoloring the pill's TEXT to
    * the accent (as this rule once did) made the context pill's "%" figure
@@ -940,7 +745,8 @@
   font-size: var(--fs-xs);
 }
 
-/* Active state for any toggle pill (auto-approve, supervised, etc.). */
+/* Active state for any toggle pill, keyed on the a11y state rather than a
+ * per-feature class so a new toggle inherits it. */
 .pill[aria-pressed="true"] {
   color: var(--c-accent);
   border-color: var(--c-accent);

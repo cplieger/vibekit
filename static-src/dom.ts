@@ -333,22 +333,6 @@ class Elements {
   get editorConflictOverlay(): HTMLDivElement {
     return byId("editor-conflict-overlay");
   }
-  get editorPendingAcceptBtn(): HTMLButtonElement {
-    return byId("editor-pending-accept-btn");
-  }
-  get editorPendingRejectBtn(): HTMLButtonElement {
-    return byId("editor-pending-reject-btn");
-  }
-  get editorPendingApplyPartialBtn(): HTMLButtonElement {
-    return byId("editor-pending-apply-partial-btn");
-  }
-  get editorPendingDiscussBtn(): HTMLButtonElement {
-    return byId("editor-pending-discuss-btn");
-  }
-  get supervisedPill(): HTMLElement {
-    return byId("supervised-pill");
-  }
-
   // Modals
   get loginModal(): HTMLDivElement {
     return byId("login-modal");

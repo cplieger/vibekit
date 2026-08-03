@@ -2,14 +2,7 @@
 // Actions: editor + diff pane user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import {
-  apiAction,
-  defineAction,
-  ActionError,
-  retryNetwork,
-  RETRY_STANDARD,
-  transportAction,
-} from "./index.js";
+import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 import { routeForPath } from "../editor-types.js";
 
@@ -36,25 +29,9 @@ export const saveFile = apiAction<
   error: false,
 });
 
-/** Apply partial (per-hunk) pending change via transport. */
-export const resolvePendingPartial = transportAction<{
-  chatID: string;
-  toolCallID: string;
-  mergedText: string;
-}>({
-  name: "editor.resolve_partial",
-  networkMode: "always",
-  scope: (args) => "chat:" + args.chatID,
-  idempotencyKey: (args) => `editor.resolve_partial:${args.toolCallID}`,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  command: ({ chatID, toolCallID, mergedText }) => ({
-    type: "resolve_pending_change_partial",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, merged_text: mergedText },
-  }),
-  error: "Couldn't apply partial change",
-});
+// There is no per-hunk resolve action. KAS decides per ACTION, not per hunk
+// (a multi-file rename shares one toolCallId), so a merged-text reply had
+// nowhere to go. Editing after approval is the replacement.
 
 /** Request AI conflict resolution suggestion. Inline error; no retry (not idempotent). */
 export const suggestResolution = apiAction<

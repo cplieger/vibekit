@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"pgregory.net/rapid"
 )
 
 // The SSE transport (fan-out, replay ring, Last-Event-ID resume, slow-client
@@ -246,47 +245,7 @@ func BenchmarkEmit(b *testing.B) {
 	}
 }
 
-// TestSupervisedState_Property uses pgregory.net/rapid to verify
-// supervisedState Set/Clear/HasTrust invariants under random operation
-// sequences:
-//   - After SetTrust(id), HasTrust(id) == true
-//   - After ClearTrust(id, _), HasTrust(id) == false
-//   - SetTrust is idempotent: duplicate calls don't fire broadcast twice
-func TestSupervisedState_Property(t *testing.T) {
-	rapid.Check(t, func(t *rapid.T) {
-		var broadcasts int
-		ss := newSupervisedState(func(_ context.Context, _ api.ServerEvent) { broadcasts++ })
-
-		// Model: track expected trust state.
-		model := make(map[api.ChatID]bool)
-
-		ops := rapid.IntRange(1, 200).Draw(t, "ops")
-		for range ops {
-			chatID := api.ChatID(rapid.StringMatching(`^c[1-5]$`).Draw(t, "chatID"))
-			action := rapid.IntRange(0, 1).Draw(t, "action")
-
-			switch action {
-			case 0: // SetTrust
-				prevBroadcasts := broadcasts
-				wasSet := model[chatID]
-				ss.SetTrust(chatID)
-				model[chatID] = true
-				if !ss.HasTrust(chatID) {
-					t.Fatalf("HasTrust(%q) = false after SetTrust", chatID)
-				}
-				if wasSet && broadcasts != prevBroadcasts {
-					t.Fatalf("duplicate SetTrust(%q) fired broadcast", chatID)
-				}
-				if !wasSet && broadcasts != prevBroadcasts+1 {
-					t.Fatalf("first SetTrust(%q) did not fire broadcast", chatID)
-				}
-			case 1: // ClearTrust
-				ss.ClearTrust(chatID, "cancelled")
-				model[chatID] = false
-				if ss.HasTrust(chatID) {
-					t.Fatalf("HasTrust(%q) = true after ClearTrust", chatID)
-				}
-			}
-		}
-	})
-}
+// TestSupervisedState_Property is GONE with supervisedState. Its invariants were
+// about per-turn TRUST — a way to wave past vibekit's per-write staging gate for
+// the rest of a turn. KAS reviews the whole turn in one approval, so there is no
+// per-write gate and nothing to trust past.

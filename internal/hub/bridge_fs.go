@@ -18,8 +18,10 @@
 //
 // Layout:
 //   - bridge_fs_read.go:  handleFSRequest dispatch, respondFSRead, sliceByLines
-//   - bridge_fs_write.go: respondFSWrite, chatInSupervisedMode, currentMessageCount
+//   - bridge_fs_write.go: respondFSWrite, currentMessageCount
 //   - bridge_fs_path.go:  resolveInsideWorkDir, respondFSError, fsErrorIsRoutine, respondBridge, constants
-//   - bridge_fs_staging.go: stageFSWrite, extractToolCallID, readStagedOld, truncateForStaging
+//
+// There is no staging file. KAS gates a whole turn (autopilot: false), so a
+// write reaching here is already authorized — see bridge_fs_write.go.
 
 package hub

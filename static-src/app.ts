@@ -72,7 +72,6 @@ import {
   installStoreSubscribers,
 } from "./chat.js";
 import { initModelSwitcher } from "./model-switcher.js";
-import { initSupervisedPill } from "./supervised-pill.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
@@ -86,7 +85,6 @@ import { applyShareTarget } from "./share-target.js";
 
 import "./handlers/chat.js";
 import "./handlers/messages.js";
-import "./handlers/pending.js";
 import "./handlers/turn.js";
 import "./handlers/system.js";
 import "./handlers/open-external-url.js";
@@ -673,7 +671,6 @@ function setupInput(): void {
   initModelSwitcher();
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker();
-  initSupervisedPill();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initQueuedPrompts();
 

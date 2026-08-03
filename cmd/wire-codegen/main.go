@@ -44,7 +44,6 @@ func main() {
 		wiregen.TypeRef[api.SessionModel](),
 		wiregen.TypeRef[api.ChatHeader](),
 		wiregen.TypeRef[api.PermissionOption](),
-		wiregen.TypeRef[api.PendingChange](),
 		wiregen.TypeRef[api.FileChange](),
 		wiregen.TypeRef[api.ConnectedPayload](),
 		wiregen.TypeRef[api.MessageChunkPayload](),
@@ -56,9 +55,6 @@ func main() {
 		wiregen.TypeRef[api.MCPOAuthPayload](),
 		wiregen.TypeRef[api.MCPFailedPayload](),
 		wiregen.TypeRef[api.MCPDisconnectedPayload](),
-		wiregen.TypeRef[api.PendingChangeAddedPayload](),
-		wiregen.TypeRef[api.PendingChangeResolvedPayload](),
-		wiregen.TypeRef[api.PendingChangesClearedPayload](),
 		wiregen.TypeRef[api.ChatDeletedPayload](),
 		wiregen.TypeRef[api.ToolCallPayload](),
 		wiregen.TypeRef[api.ToolCallUpdatePayload](),
@@ -114,10 +110,10 @@ func main() {
 	// registered-type (root) package, so discovery doesn't scan it.
 	r.Enums = map[string]wiregen.EnumDef{
 		"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
-		"PlanStatus": {}, "PendingChangeKind": {},
+		"PlanStatus": {},
 		"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
-		"PendingAction": {}, "ClearReason": {}, "SafetyStatus": {},
-		"Transport": {Values: []string{"stdio", "http", "sse"}},
+		"SafetyStatus": {},
+		"Transport":    {Values: []string{"stdio", "http", "sse"}},
 	}
 
 	r.EnumTSName = map[string]string{
@@ -152,9 +148,6 @@ func main() {
 		{EventType: "message_created", TypeName: typeMessage},
 		{EventType: "message_updated", TypeName: typeMessage},
 		{EventType: "open_external_url", TypeName: "OpenExternalURLPayload"},
-		{EventType: "pending_change_added", TypeName: "PendingChangeAddedPayload"},
-		{EventType: "pending_change_resolved", TypeName: "PendingChangeResolvedPayload"},
-		{EventType: "pending_changes_cleared", TypeName: "PendingChangesClearedPayload"},
 		{EventType: "permission_needed", TypeName: "PermissionNeededPayload"},
 		{EventType: "permissions_changed", TypeName: "PermissionsChangedPayload"},
 		{EventType: "policy_error", TypeName: "PolicyErrorPayload"},

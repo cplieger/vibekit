@@ -38,7 +38,6 @@ import { newMessageID } from "./transport.js";
 import { getCurrentModel } from "./session-context.js";
 import {
   switchModel as switchModelAction,
-  resolvePendingChange as resolvePendingChangeAction,
   sendPrompt as sendPromptAction,
 } from "./actions/chat.js";
 
@@ -94,14 +93,4 @@ export async function switchModel(chatID: string, model: string): Promise<boolea
   }
   const result = await switchModelAction.dispatch({ chatID, model });
   return result !== null && result;
-}
-
-/** Resolve a single pending change (accept or reject). Shared by
- *  supervised-pill.ts, editor-pending.ts, and messages-actions.ts. */
-export function resolvePendingChange(
-  chatID: string,
-  toolCallID: string,
-  action: "accept" | "reject",
-): void {
-  void resolvePendingChangeAction.dispatch({ chatID, toolCallID, action });
 }

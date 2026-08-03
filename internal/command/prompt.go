@@ -15,7 +15,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/permissions"
+	cfgsettings "github.com/cplieger/vibekit/internal/settings"
 )
 
 // validatePromptPayload parses and validates the prompt command payload.
@@ -129,9 +129,26 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	return retryResp
 }
 
+// supervisedDefaultSetting reads the settings-wide Supervised default applied to
+// newly auto-created chats. Fails CLOSED to false: supervised mode is opt-in, and
+// a corrupt config.json must not suddenly gate every write on approval.
+//
+// Read here rather than through an internal/permissions package. That package was
+// 29 lines wrapping one settings read with a single caller, and it was named for a
+// responsibility vibekit no longer has — tool authorization is Cedar's and the
+// write gate is KAS's, so a package called "permissions" holding one default was
+// the last thing making it look otherwise.
+func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
+	var b bool
+	if !cfgsettings.FieldInto(ctx, configDir, cfgsettings.KeySupervisedDefault, cfgsettings.KeySupervisedDefault, &b) {
+		return false
+	}
+	return b
+}
+
 // appendUserMessage adds the prompt's user message to the chat.
 func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
-	supervisedDefault := permissions.SupervisedDefault(ctx, deps.ConfigDir())
+	supervisedDefault := supervisedDefaultSetting(ctx, deps.ConfigDir())
 	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		// Idempotent by message id (the documented invariant): if this id
 		// is already in the store — e.g. a 409-queued prompt whose first

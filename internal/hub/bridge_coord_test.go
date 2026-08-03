@@ -7,7 +7,6 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -157,34 +156,10 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 	})
 }
 
-// --- EmitTurnEndedWithStats trust-clear reason ---
-
-// A cancelled turn clears per-turn trust with the "cancelled" reason.
-func TestEmitTurnEnded_CancelledUsesCancelledClearReason(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := context.Background()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	h.perm.supervised.SetTrust("c1") // so ClearTrust actually broadcasts
-
-	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, 0, 0)
-
-	ev := lastReplayEventOfType(h, api.EventPendingTrustCleared)
-	if ev == nil {
-		t.Fatal("no pending_trust_cleared event broadcast")
-	}
-	raw, err := json.Marshal(ev.Payload)
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
-	var p api.PendingTrustClearedPayload
-	if err := json.Unmarshal(raw, &p); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if p.Reason != api.ClearReasonCancelled {
-		t.Errorf("ClearTrust reason = %q, want %q", p.Reason, api.ClearReasonCancelled)
-	}
-}
+// The per-turn trust-clear test is GONE with the trust it asserted on. Per-turn
+// trust existed to let a user wave past vibekit's own staging queue for the rest
+// of a turn; KAS reviews a whole turn at once, so there is no per-write gate to
+// wave past and no reason to clear anything at turn end.
 
 // A non-cancelled turn fires the "Agent finished" push.
 func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {

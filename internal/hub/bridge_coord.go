@@ -24,17 +24,11 @@ type BridgeCoordinator struct {
 	chatStore      api.ChatStore
 	broadcast      func(ctx context.Context, e api.ServerEvent)
 	translateEvent func(chatID api.ChatID, msg *api.RPCResponse)
-	supervised     *supervisedState
 	push           api.PushService
 	mcpConfig      api.MCPConfig
 	mcpRegistry    *mcpRegistry
 	lifecycle      *lifecyclePlane
 	preBridgeSpawn func(context.Context)
-	// flushPending rejects every outstanding pending op for a chat and
-	// broadcasts the cleared events. Injected (from h.flushPendingForChat)
-	// so Forward can flush a chat's staged writes when its bridge exits,
-	// without the coordinator importing the full Hub.
-	flushPending func(context.Context, api.ChatID, api.ClearReason)
 	// replayProjection is the session/load replay-projection lifecycle,
 	// injected from the Hub for the same reason as flushPending: Forward and
 	// tryLoadSession drive it, without the coordinator importing the full Hub.
@@ -59,13 +53,11 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		chatStore:      h.chatStore,
 		broadcast:      h.Broadcast,
 		translateEvent: h.translateACPEvent,
-		supervised:     h.perm.supervised,
 		push:           h.push,
 		mcpConfig:      h.mcpConfig,
 		mcpRegistry:    h.mcpRegistry,
 		lifecycle:      h.lifecycle,
 		preBridgeSpawn: h.preBridgeSpawn,
-		flushPending:   h.flushPendingForChat,
 		// h implements replayProjector via load_projection.go.
 		replayProjection: h,
 		agentEngine:      resolveAgentEngine(),
@@ -174,7 +166,10 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// forward goroutine after Start deadlocks every fresh session. If Start
 	// fails it stops the bridge (NotifCh closes), so this goroutine exits.
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs}); err != nil {
+	// Supervised is passed at creation and only here: the session/load path below
+	// does not repeat it, because KAS persists `autopilot` in its own session
+	// metadata and a loaded session already carries the value.
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -376,12 +371,6 @@ func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
 	// parked on its resume channel and a phantom "awaiting approval"
 	// pending op that would replay to reconnecting clients. Cancel, delete,
 	// and mode-disable already flush; this is the bridge-exit sibling.
-	// Idempotent: chat-delete flushes before CloseBridge, so the second
-	// flush here finds no ops and broadcasts nothing.
-	if bc.flushPending != nil {
-		bc.flushPending(bc.lifecycle.shutdownCtx, chatID, api.ClearReasonBridgeExited)
-	}
-
 	lastBridge := bc.bridge.mgr.count() == 0
 
 	if lastBridge {
@@ -530,12 +519,6 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			ChangedFiles: changedFiles,
 		}))
 	}
-
-	trustReason := api.ClearReasonTurnEnded
-	if stopReason == stopReasonCancelled {
-		trustReason = api.ClearReasonCancelled
-	}
-	bc.supervised.ClearTrust(chatID, trustReason)
 
 	if stopReason != stopReasonCancelled {
 		bc.NotifyPush(ctx, "Agent finished", api.PushKindAgentFinished)

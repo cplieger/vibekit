@@ -76,7 +76,6 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
     has_more: false,
     thinking: false,
     working_label: "Thinking",
-    pending_changes: [],
     ...over,
   };
 }

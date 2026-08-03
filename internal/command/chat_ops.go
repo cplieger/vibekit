@@ -73,9 +73,11 @@ func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 
 // CmdCancel cancels the active turn, if any.
 func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	d.Supervised().FlushPendingForChat(ctx, cmd.ChatID, api.ClearReasonCancelled)
-	d.Supervised().SupervisedClearTrust(cmd.ChatID, api.ClearReasonCancelled)
-	d.Supervised().ClearPendingPermsForChat(cmd.ChatID)
+	// Only the pending PERMISSIONS are cleared. There is no staging queue to
+	// flush and no per-turn trust to drop: KAS owns the write gate, and cancelling
+	// a turn reverts its own approval (measured — session/cancel is the documented
+	// escape from an unanswered approval and it reverts correctly).
+	d.PendingPerms().ClearPendingPermsForChat(cmd.ChatID)
 
 	sb := d.Bridge().GetBridge(cmd.ChatID)
 	if sb == nil {
@@ -100,9 +102,13 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	if err := sb.Respond(ctx, p.RequestID, api.PermissionOutcomeSelected(p.OptionID), nil); err != nil {
+	// A turn approval answers on the SAME reply, with per-file decisions in
+	// _meta. Built through one helper so the omitted-id-means-reject rule lives in
+	// exactly one place.
+	outcome := api.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
+	if err := sb.Respond(ctx, p.RequestID, outcome, nil); err != nil {
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.Supervised().RemovePendingPerm(p.RequestID)
+	d.PendingPerms().RemovePendingPerm(p.RequestID)
 	d.RespondOK(w, cmd.RequestID)
 }

@@ -131,6 +131,14 @@ type StartOpts struct {
 	// does not call back the client to execute autofired hooks. See
 	// internal/hub/hooks.go and internal/hub/bridge_coord.go.
 	EnableHooks bool
+	// Supervised requests KAS's turn-approval gate for this session, by setting
+	// the `autopilot` config option to FALSE at session/new.
+	//
+	// A value passed once at creation, not a flag vibekit enforces: it persists
+	// into KAS's own session metadata, so it survives session/load and never needs
+	// re-asserting. Everything vibekit used to do to hold writes back — staging
+	// them, mirroring them, resolving them one at a time — is KAS's now.
+	Supervised bool
 }
 
 // ACPBridge manages a single kiro-cli ACP subprocess for one chat. Methods
@@ -272,23 +280,7 @@ type AccountUsageProvider interface {
 
 // --- Pending Changes ---
 
-// PendingStore is the consumer-side interface for the pending-change
-// subsystem. The hub uses these methods for SSE replay, rejection on
-// bridge teardown, and full-content retrieval. The concrete
-// *pending.Store satisfies this interface implicitly.
-type PendingStore interface {
-	// ListForChat returns all pending changes for the given chat.
-	ListForChat(chatID ChatID) []PendingChange
-	// Get returns a single pending change by tool-call ID.
-	Get(toolCallID string) (PendingChange, bool)
-	// ChatIDs returns the IDs of all chats with pending changes.
-	ChatIDs() []ChatID
-	// RejectAllForChat rejects all pending changes for the given chat,
-	// returning the rejected snapshots.
-	RejectAllForChat(chatID ChatID) []PendingChange
-	// Resolve resolves a single pending change with the given action.
-	// chatID scopes the resolution: an op whose ChatID differs is treated
-	// as unknown, so a resolve command carrying a mismatched chat_id can
-	// never settle another chat's op.
-	Resolve(ctx context.Context, chatID ChatID, toolCallID string, action PendingAction) (PendingChange, error)
-}
+// There is no PendingStore interface. It existed for vibekit's own staging queue
+// — SSE replay of staged ops, rejection on bridge teardown, full-content
+// retrieval — and all three are gone with internal/pending. KAS's turn approval
+// arrives as an ordinary permission request, so the permission tracker covers it.

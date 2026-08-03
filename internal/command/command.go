@@ -27,7 +27,7 @@ type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCom
 type Dependencies interface {
 	BridgeAccess
 	ChatAccess
-	SupervisedAccess
+	PendingPermAccess
 	InfraDeps
 	Draining() bool
 	CheckDedup(reqID string) ([]byte, bool)

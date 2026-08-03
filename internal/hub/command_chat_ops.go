@@ -17,11 +17,10 @@ import (
 // chat must keep its checkpoints and be able to session/load its KAS
 // session, so both are reaped only at delete/purge, never on archive.
 // Everything else (flush the in-flight turn via CloseBridge, kill agent
-// terminals, clear pending perms + supervised trust, close+remove the
-// assistant buffer) runs on both paths.
+// terminals, clear pending perms, close+remove the assistant buffer) runs on both
+// paths. There is no staging queue to flush and no per-turn trust to clear —
+// both went with internal/pending.
 func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID, reapDurable bool) {
-	h.flushPendingForChat(ctx, chatID, api.ClearReasonChatDeleted)
-	h.perm.supervised.ClearTrust(chatID, api.ClearReasonChatDeleted)
 	h.clearPendingPermsForChat(chatID)
 	h.coord.CloseBridge(chatID)
 	h.agentTerms.KillForChat(chatID)

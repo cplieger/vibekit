@@ -1,7 +1,11 @@
-// Actions for chat lifecycle: delete, discard rewind, list previous sessions,
-// resume a previous session, cancel, switch model, set mode, send prompt,
-// resolve pending change, resolve all pending, permission response,
-// elicitation response, set supervised, trust pending, clear pending trust.
+// Actions for chat lifecycle: delete, list previous sessions, resume a
+// previous session, cancel, switch model, set mode, compact, send prompt,
+// permission response, elicitation response, user-input response, and the
+// supervised (autopilot) toggle.
+//
+// There are no resolve/trust pending-change actions: staging is KAS's, and a
+// turn's writes are approved through the ORDINARY permission reply carrying a
+// per-action fileDecisions map (see api.PermissionOutcomeWithFileDecisions).
 // ---------------------------------------------------------------------------
 
 import {
@@ -14,7 +18,7 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
 } from "./index.js";
 
-import type { PendingChange, ResumableSessionRow, Session, WorkflowRunRow } from "../types.js";
+import type { ResumableSessionRow, Session, WorkflowRunRow } from "../types.js";
 import {
   get,
   setThinking,
@@ -24,8 +28,6 @@ import {
   indexOfSession,
   setModel,
   setCurrentMode,
-  clearPendingChanges,
-  addPendingChange,
 } from "../store.js";
 import { send as transportSend } from "../transport.js";
 import { clearLastError } from "../send-state.js";
@@ -99,42 +101,7 @@ export const setSupervised = transportAction<
   error: "Couldn't update supervised mode",
 });
 
-// --- chat.resolve_all_pending ---
-
-export const resolveAllPending = transportAction<
-  { chatID: string; action: "accept" | "reject" },
-  { prev: PendingChange[] }
->({
-  name: "chat.resolve_all_pending",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  command: ({ chatID, action }) => ({
-    type: "resolve_all_pending_changes",
-    chat_id: chatID,
-    payload: { action },
-  }),
-  optimistic: ({ chatID }) => {
-    const session = get(chatID);
-    if (session === undefined) {
-      return undefined;
-    }
-    const prev = [...session.pending_changes];
-    clearPendingChanges(chatID);
-    return { prev };
-  },
-  rollback: ({ chatID }, op) => {
-    if (op !== undefined) {
-      for (const change of op.prev) {
-        addPendingChange(chatID, change);
-      }
-    }
-  },
-  error: "Couldn't resolve pending changes",
-});
-
-// --- chat.trust_pending ---
+// --- chat.compact ---
 
 /** compactChat summarizes the conversation through KAS's NATIVE verb.
  *
@@ -156,27 +123,6 @@ export const compactChat = transportAction<{ chatID: string }>({
     chat_id: chatID,
   }),
   error: "Couldn't compact",
-});
-
-export const trustPending = transportAction<string>({
-  name: "chat.trust_pending",
-  networkMode: "always",
-  scope: (chatID) => `chat:${chatID}`,
-  command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  error: "Couldn't trust pending changes",
-});
-
-// --- chat.clear_pending_trust ---
-
-export const clearPendingTrust = transportAction<string>({
-  name: "chat.clear_pending_trust",
-  scope: (chatID) => `chat:${chatID}`,
-  command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  error: "Couldn't clear pending trust",
 });
 
 // --- chat.set_mode ---
@@ -438,28 +384,6 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
     });
   },
   error: false, // send-state.ts (blocked send button) is the surface
-});
-
-// --- chat.resolve_pending_change ---
-
-export const resolvePendingChange = transportAction<{
-  chatID: string;
-  toolCallID: string;
-  action: "accept" | "reject";
-}>({
-  name: "chat.resolve_pending_change",
-  networkMode: "always",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  idempotencyKey: true,
-  command: ({ chatID, toolCallID, action }) => ({
-    type: "resolve_pending_change",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, action },
-  }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  // Args-aware error message: "Failed to accept change" / "Failed to reject change".
-  error: ({ action }) => `Failed to ${action} change`,
 });
 
 // --- chat.respond_permission ---

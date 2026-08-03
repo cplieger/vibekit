@@ -24,7 +24,6 @@ import type {
   CodeReference,
   RefusalInfo,
   FileChange,
-  PendingChange,
   QueuedPrompt,
 } from "./types.js";
 import { signal, computed, createCollection, batch } from "@cplieger/reactive";
@@ -298,8 +297,7 @@ export function upsertHeader(h: ChatHeader): void {
   const existing = get(h.id);
   if (existing !== undefined) {
     // Server-authoritative re-sync of the header fields (preserve messages,
-    // pending_changes, thinking, working_label, trusted_this_turn which are
-    // client/stream-owned).
+    // thinking and working_label, which are client/stream-owned).
     sessions.update(h.id, (s) => {
       const next: Session = {
         ...s,
@@ -331,7 +329,6 @@ export function upsertHeader(h: ChatHeader): void {
     available_modes: h.available_modes ?? [],
     available_models: h.available_models ?? [],
     supervised_mode: h.supervised_mode ?? false,
-    pending_changes: [],
     usage: h.usage,
     message_count: h.message_count,
     messages: [],
@@ -547,40 +544,6 @@ export function setTurnSummary(
   }
 }
 
-export function addPendingChange(chatID: string, change: PendingChange): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  if (s.pending_changes.some((p) => p.tool_call_id === change.tool_call_id)) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({
-    ...cur,
-    pending_changes: [...cur.pending_changes, change],
-  }));
-}
-
-export function removePendingChange(chatID: string, toolCallID: string): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  const next = s.pending_changes.filter((p) => p.tool_call_id !== toolCallID);
-  if (next.length === s.pending_changes.length) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({ ...cur, pending_changes: next }));
-}
-
-export function clearPendingChanges(chatID: string): void {
-  const s = get(chatID);
-  if (s === undefined || s.pending_changes.length === 0) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({ ...cur, pending_changes: [] }));
-}
-
 export function setSupervisedMode(chatID: string, enabled: boolean): void {
   const s = get(chatID);
   if (s === undefined || s.supervised_mode === enabled) {
@@ -616,17 +579,6 @@ export function setName(chatID: string, name: string): void {
 /** Return the current index of a session in the list, or -1. */
 export function indexOfSession(id: string): number {
   return sessions.ids.peek().indexOf(id);
-}
-
-export function setTrustedThisTurn(chatID: string, trusted: boolean): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  if ((s.trusted_this_turn === true) === trusted) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({ ...cur, trusted_this_turn: trusted }));
 }
 
 /** Per-chat chunk-sequence watermark from a connect-time turn_state

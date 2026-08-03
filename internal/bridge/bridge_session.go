@@ -89,7 +89,7 @@ func validIdent(s string) bool {
 	return api.ValidIdent(s)
 }
 
-func (b *Bridge) newSession(ctx context.Context, mcpServers []map[string]any, mode string) error {
+func (b *Bridge) newSession(ctx context.Context, mcpServers []map[string]any, mode string, supervised bool) error {
 	resp, err := b.Call(ctx, methodSessionNew, map[string]any{
 		"cwd": b.workDir, "mcpServers": normalizeMCPServers(mcpServers),
 	})
@@ -115,7 +115,32 @@ func (b *Bridge) newSession(ctx context.Context, mcpServers []map[string]any, mo
 	// workspace agent-as-mode) switch to it now — session/set_mode is
 	// legal on a just-created, idle session (verified on the wire).
 	b.applyInitialMode(ctx, sid, current, mode)
+	b.applySupervised(ctx, sid, supervised)
 	return nil
+}
+
+// applySupervised turns KAS's turn-approval gate on for this session by setting
+// `autopilot` to false. No-op when the chat is not supervised, because true is
+// already the session default.
+//
+// Set ONCE, at creation. The value persists into KAS's own session metadata, so
+// it survives session/load and re-asserting it would be a round trip that
+// changes nothing. Best-effort like applyInitialMode: a failure leaves the
+// session in autopilot and logs, rather than failing session creation — but it
+// logs at ERROR rather than WARN, because the consequence is that writes the user
+// asked to review get applied without review.
+func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervised bool) {
+	if !supervised {
+		return
+	}
+	if _, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
+		api.KeySessionID: sessionID,
+		"configId":       api.ConfigOptionAutopilot,
+		"value":          false,
+	}); err != nil {
+		slog.Error("supervised mode not applied; this session will NOT ask before writing",
+			"session_id", sessionID, "error", err)
+	}
 }
 
 // applyInitialMode switches a freshly-created session to wantMode when it

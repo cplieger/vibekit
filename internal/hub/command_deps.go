@@ -11,7 +11,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // Compile-time assertion: Hub satisfies command.Dependencies.
@@ -38,31 +37,6 @@ func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, model st
 // CloseBridge tears down the bridge for a chat.
 func (h *Hub) CloseBridge(chatID api.ChatID) {
 	h.coord.CloseBridge(chatID)
-}
-
-// PendingStore returns the pending-changes store.
-func (h *Hub) PendingStore() *pending.Store {
-	return h.perm.pending
-}
-
-// SupervisedSetTrust sets the per-turn trust flag for a chat.
-func (h *Hub) SupervisedSetTrust(chatID api.ChatID) {
-	h.perm.supervised.SetTrust(chatID)
-}
-
-// SupervisedClearTrust clears the per-turn trust flag.
-func (h *Hub) SupervisedClearTrust(chatID api.ChatID, reason api.ClearReason) {
-	h.perm.supervised.ClearTrust(chatID, reason)
-}
-
-// ChatInSupervisedMode reports whether the chat has supervised mode on.
-func (h *Hub) ChatInSupervisedMode(ctx context.Context, chatID api.ChatID) bool {
-	return h.chatInSupervisedMode(ctx, chatID)
-}
-
-// FlushPendingForChat rejects all outstanding pending ops for a chat.
-func (h *Hub) FlushPendingForChat(ctx context.Context, chatID api.ChatID, reason api.ClearReason) {
-	h.flushPendingForChat(ctx, chatID, reason)
 }
 
 // ClearPendingPermsForChat drops unresolved permission_needed entries.

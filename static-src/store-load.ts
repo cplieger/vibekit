@@ -86,7 +86,6 @@ export async function loadList(): Promise<boolean> {
       available_modes: h.available_modes ?? [],
       available_models: h.available_models ?? [],
       supervised_mode: h.supervised_mode ?? false,
-      pending_changes: existing?.pending_changes ?? [],
       usage: h.usage,
       message_count: h.message_count,
       messages: existing?.messages ?? [],
@@ -97,9 +96,6 @@ export async function loadList(): Promise<boolean> {
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
       ...(existing?.prompt_queue !== undefined && { prompt_queue: existing.prompt_queue }),
-      ...(existing?.trusted_this_turn !== undefined && {
-        trusted_this_turn: existing.trusted_this_turn,
-      }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
     };
     next.push(session);

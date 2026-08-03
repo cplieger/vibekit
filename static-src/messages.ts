@@ -66,7 +66,6 @@ import {
 } from "./messages-blocks.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
-import { initMessageActions, clearActionBindings } from "./messages-actions.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
 import { buildEvent, updateEvent, buildSystemFallback } from "./messages-events.js";
@@ -197,7 +196,6 @@ export function mountChatView(): void {
     return;
   }
   mounted = true;
-  initMessageActions();
   initFollowModel();
   // The rail lives in the transcript's positioned outer wrapper rather than in
   // the scroller, so it stays put instead of scrolling away with the content.
@@ -433,7 +431,6 @@ function teardownAll(): void {
   resetBlockRenders();
   clearAllBlockSigs();
   messageStates.clear();
-  clearActionBindings();
   resetScrollState();
   resetTurnRail();
   reconcile(messagesEl, [] as Turn[], turnSpec);

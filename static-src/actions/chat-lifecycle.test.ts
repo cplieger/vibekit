@@ -34,7 +34,6 @@ function makeSession(id: string, extra?: Partial<Session>): Session {
     available_modes: [],
     available_models: [],
     supervised_mode: false,
-    pending_changes: [],
     usage: {
       context_pct: 0,
       context_size: 0,
@@ -153,19 +152,20 @@ describe("chat.resume_session", () => {
   });
 });
 
-describe("chat.resolve_pending_change", () => {
-  it("sends resolve_pending_change with tool_call_id and action", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { resolvePendingChange } = await import("./chat.js");
-    await resolvePendingChange.dispatch({ chatID: "c1", toolCallID: "tc-1", action: "accept" });
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "resolve_pending_change",
-        chat_id: "c1",
-        payload: expect.objectContaining({ tool_call_id: "tc-1", action: "accept" }),
-      }),
-      expect.anything(),
-    );
+// There is no chat.resolve_pending_change test because there is no such
+// action: a turn's writes are approved through chat.respond_permission below,
+// which is the same reply KAS uses for every other permission.
+describe("chat.exports", () => {
+  it("exposes no pending-change resolver", async () => {
+    const mod = await import("./chat.js");
+    for (const name of [
+      "resolvePendingChange",
+      "resolveAllPending",
+      "trustPending",
+      "clearPendingTrust",
+    ]) {
+      expect(mod).not.toHaveProperty(name);
+    }
   });
 });
 

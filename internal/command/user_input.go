@@ -58,6 +58,6 @@ func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
 		slog.Error("user input response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.Supervised().RemovePendingPerm(p.RequestID)
+	d.PendingPerms().RemovePendingPerm(p.RequestID)
 	d.RespondOK(w, cmd.RequestID)
 }

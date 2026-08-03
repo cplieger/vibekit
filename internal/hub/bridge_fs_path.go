@@ -10,7 +10,6 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/pending"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -19,10 +18,10 @@ import (
 // binary file that shouldn't go through readTextFile.
 const fsReadCap = 8 << 20
 
-// fsWriteCap is the canonical per-write byte cap (4 MiB). Derived from
-// pending.Cap so the supervised staging path and the unstaged fs handler
-// share a single authoritative constant.
-const fsWriteCap = pending.Cap
+// fsWriteCap is the per-write byte cap (4 MiB). It used to be an alias of
+// pending.Cap so the staging path and the plain fs handler shared one constant;
+// there is only one write path now, so the number lives here.
+const fsWriteCap = 4 << 20
 
 // Sentinel errors for routine fs handler rejections. These are expected
 // outcomes (not bugs) and are logged at Debug rather than Warn.

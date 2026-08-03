@@ -22,12 +22,7 @@ func RegisterDefaults(d *Dispatcher) {
 	d.Register(api.CmdCompact, wrap(d, CmdCompact))
 	d.Register(api.CmdSetEffort, wrap(d, CmdSetEffort))
 	d.Register(api.CmdSetMode, wrap(d, CmdSetMode))
-	d.Register(api.CmdResolvePendingChange, wrap(d, CmdResolvePendingChange))
-	d.Register(api.CmdResolvePendingPartial, wrap(d, CmdResolvePendingChangePartial))
-	d.Register(api.CmdResolveAllPendingChanges, wrap(d, CmdResolveAllPendingChanges))
 	d.Register(api.CmdSetSupervisedMode, wrap(d, CmdSetSupervisedMode))
-	d.Register(api.CmdTrustPendingChanges, wrap(d, CmdTrustPendingChanges))
-	d.Register(api.CmdClearPendingTrust, wrap(d, CmdClearPendingTrust))
 	d.Register(api.CmdCreateHook, wrap(d, CmdCreateHook))
 }
 

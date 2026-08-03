@@ -1,43 +1,13 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from "vitest";
 import { effect } from "@cplieger/reactive";
-import { isPendingPath, parsePendingPath, routeForPath } from "./editor-core.js";
+import { routeForPath } from "./editor-core.js";
 import { freshState, fileStates, setActiveFilePath, activeDirty } from "./editor-types.js";
 
-describe("isPendingPath", () => {
-  it.each([
-    { input: "pending:chat1:tool1", expected: true },
-    { input: "pending:", expected: true },
-    { input: "pending:abc", expected: true },
-    { input: "src/file.ts", expected: false },
-    { input: "", expected: false },
-    { input: "pendingx:abc", expected: false },
-  ])("isPendingPath($input) === $expected", ({ input, expected }) => {
-    expect(isPendingPath(input)).toBe(expected);
-  });
-});
-
-describe("parsePendingPath", () => {
-  it.each([
-    { input: "pending:chat1:tool1", expected: { chatID: "chat1", toolCallID: "tool1" } },
-    { input: "pending:chat1", expected: { chatID: "chat1", toolCallID: "" } },
-    { input: "pending:", expected: { chatID: "", toolCallID: "" } },
-    { input: "pending:a:b:c", expected: { chatID: "a", toolCallID: "b:c" } },
-    { input: "src/file.ts", expected: { chatID: "", toolCallID: "" } },
-    { input: "", expected: { chatID: "", toolCallID: "" } },
-  ])("parsePendingPath($input)", ({ input, expected }) => {
-    expect(parsePendingPath(input)).toEqual(expected);
-  });
-});
-
+// There are no isPendingPath / parsePendingPath tests: the `pending:` virtual
+// path family is gone with vibekit's staging store. A path is a real file path
+// or it is not routable.
 describe("routeForPath", () => {
-  it("routes pending paths", () => {
-    const r = routeForPath("pending:chat1:tool42");
-    expect(r.readURL).toBe("/api/pending-changes/tool42");
-    expect(r.writeURL).toBe("/api/pending-changes/tool42");
-    expect(r.displayPath).toBe("pending change");
-  });
-
   it("routes plain file paths", () => {
     const r = routeForPath("src/main.ts");
     expect(r.readURL).toBe("/api/file?path=src%2Fmain.ts");

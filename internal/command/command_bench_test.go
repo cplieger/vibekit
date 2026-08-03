@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // benchDeps is a minimal Dependencies stub for benchmarking dispatch overhead.
@@ -29,24 +28,19 @@ func (d *benchDeps) GetBridge(api.ChatID) Bridge                { return nil }
 func (d *benchDeps) GetOrCreateBridge(context.Context, api.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
-func (d *benchDeps) CloseBridge(api.ChatID)                                           {}
-func (d *benchDeps) PendingStore() *pending.Store                                     { return nil }
-func (d *benchDeps) SupervisedSetTrust(api.ChatID)                                    {}
-func (d *benchDeps) SupervisedClearTrust(api.ChatID, api.ClearReason)                 {}
-func (d *benchDeps) ChatInSupervisedMode(context.Context, api.ChatID) bool            { return false }
-func (d *benchDeps) FlushPendingForChat(context.Context, api.ChatID, api.ClearReason) {}
-func (d *benchDeps) ClearPendingPermsForChat(api.ChatID)                              {}
-func (d *benchDeps) RemovePendingPerm(int64)                                          {}
-func (d *benchDeps) WorkDir() string                                                  { return "/tmp" }
-func (d *benchDeps) ConfigDir() string                                                { return "/tmp" }
-func (d *benchDeps) ShutdownCtx() context.Context                                     { return context.Background() }
-func (d *benchDeps) InflightAdd(int)                                                  {}
-func (d *benchDeps) InflightDone()                                                    {}
-func (d *benchDeps) CleanupChatState(context.Context, api.ChatID)                     {}
-func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool              { return true }
-func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)                      { return "", nil }
-func (d *benchDeps) PrimeIfNeeded(context.Context, api.ChatID, Bridge)                {}
-func (d *benchDeps) IsEmptyTurn(*api.RPCResponse, api.ChatID) bool                    { return false }
+func (d *benchDeps) CloseBridge(api.ChatID)                              {}
+func (d *benchDeps) ClearPendingPermsForChat(api.ChatID)                 {}
+func (d *benchDeps) RemovePendingPerm(int64)                             {}
+func (d *benchDeps) WorkDir() string                                     { return "/tmp" }
+func (d *benchDeps) ConfigDir() string                                   { return "/tmp" }
+func (d *benchDeps) ShutdownCtx() context.Context                        { return context.Background() }
+func (d *benchDeps) InflightAdd(int)                                     {}
+func (d *benchDeps) InflightDone()                                       {}
+func (d *benchDeps) CleanupChatState(context.Context, api.ChatID)        {}
+func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool { return true }
+func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)         { return "", nil }
+func (d *benchDeps) PrimeIfNeeded(context.Context, api.ChatID, Bridge)   {}
+func (d *benchDeps) IsEmptyTurn(*api.RPCResponse, api.ChatID) bool       { return false }
 func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPCResponse, float64, float64) {
 }
 
@@ -84,9 +78,6 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	// No-op methods must not panic.
 	d.Broadcast(context.Background(), api.ServerEvent{})
 	d.CloseBridge("x")
-	d.SupervisedSetTrust("x")
-	d.SupervisedClearTrust("x", "")
-	d.FlushPendingForChat(context.Background(), "x", "")
 	d.ClearPendingPermsForChat("x")
 	d.RemovePendingPerm(0)
 	d.InflightAdd(1)
@@ -126,9 +117,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 		if d.ChatStore() != nil {
 			t.Error("ChatStore expected nil for bench stub")
 		}
-		if d.PendingStore() != nil {
-			t.Error("PendingStore expected nil for bench stub")
-		}
 		if d.GetBridge("any") != nil {
 			t.Error("GetBridge expected nil for bench stub")
 		}
@@ -138,12 +126,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
 		d.Broadcast(context.Background(), api.ServerEvent{})
 		d.CloseBridge("x")
-		d.SupervisedSetTrust("x")
-		d.SupervisedClearTrust("x", "")
-		if d.ChatInSupervisedMode(context.Background(), "x") {
-			t.Error("ChatInSupervisedMode should be false")
-		}
-		d.FlushPendingForChat(context.Background(), "x", "")
 		d.ClearPendingPermsForChat("x")
 		d.RemovePendingPerm(0)
 		d.InflightAdd(1)

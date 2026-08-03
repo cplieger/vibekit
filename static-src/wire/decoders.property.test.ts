@@ -17,14 +17,6 @@ import type { Decoder } from "../validators.js";
 
 // --- Arbitraries for enum-like const arrays (matching decoders.gen.ts) ---
 
-const clearReasonArb = fc.constantFrom(
-  "turn_ended",
-  "cancelled",
-  "mode_disabled",
-  "chat_deleted",
-  "shutdown",
-  "user_cleared",
-);
 const errorCodeArb = fc.constantFrom(
   "recovery_failed",
   "bridge_start_failed",
@@ -45,8 +37,6 @@ const eventKindArb = fc.constantFrom(
   "compaction_failed",
 );
 const forgeKindArb = fc.constantFrom("github", "gitlab", "codeberg", "gitea");
-const pendingActionArb = fc.constantFrom("accept", "reject");
-const pendingChangeKindArb = fc.constantFrom("create", "edit", "delete");
 const planStatusArb = fc.constantFrom("pending", "in_progress", "completed");
 const roleArb = fc.constantFrom("user", "assistant", "event");
 const stopReasonArb = fc.constantFrom("end_turn", "cancelled", "interrupted");
@@ -283,31 +273,6 @@ const prArb = fc.record({
   draft: optField(fc.boolean()),
 });
 
-const pendingChangeArb = fc.record({
-  tool_call_id: fc.string({ minLength: 1 }),
-  chat_id: fc.string({ minLength: 1 }),
-  path: fc.string({ minLength: 1 }),
-  kind: pendingChangeKindArb,
-  created_at: posInt,
-  old_text: optField(fc.string()),
-  new_text: optField(fc.string()),
-  truncated: optField(fc.boolean()),
-});
-
-const pendingChangeAddedPayloadArb = fc.record({
-  change: pendingChangeArb,
-});
-
-const pendingChangeResolvedPayloadArb = fc.record({
-  tool_call_id: fc.string({ minLength: 1 }),
-  action: pendingActionArb,
-  path: optField(fc.string()),
-});
-
-const pendingChangesClearedPayloadArb = fc.record({
-  reason: optField(clearReasonArb),
-});
-
 const permissionOptionArb = fc.record({
   option_id: fc.string({ minLength: 1 }),
   name: fc.string({ minLength: 1 }),
@@ -479,22 +444,6 @@ const decoderRegistry: {
   },
   { name: "decodeMeteringItem", decoder: decoders.decodeMeteringItem, arb: meteringItemArb },
   { name: "decodePR", decoder: decoders.decodePR, arb: prArb },
-  { name: "decodePendingChange", decoder: decoders.decodePendingChange, arb: pendingChangeArb },
-  {
-    name: "decodePendingChangeAddedPayload",
-    decoder: decoders.decodePendingChangeAddedPayload,
-    arb: pendingChangeAddedPayloadArb,
-  },
-  {
-    name: "decodePendingChangeResolvedPayload",
-    decoder: decoders.decodePendingChangeResolvedPayload,
-    arb: pendingChangeResolvedPayloadArb,
-  },
-  {
-    name: "decodePendingChangesClearedPayload",
-    decoder: decoders.decodePendingChangesClearedPayload,
-    arb: pendingChangesClearedPayloadArb,
-  },
   {
     name: "decodePermissionNeededPayload",
     decoder: decoders.decodePermissionNeededPayload,

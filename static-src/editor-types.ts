@@ -11,47 +11,25 @@ import type { ConflictFile } from "./conflict.js";
 
 // --- Virtual path routing ---
 
-const PENDING_PREFIX = "pending:";
-
 // --- Diff label constants ---
 
-const DIFF_LABEL_DISK = "on disk";
-const DIFF_LABEL_PROPOSED = "proposed";
 const DIFF_LABEL_WORKING_TREE = "working tree";
 
 // --- Pure predicates ---
 
-export function isPendingPath(path: string): boolean {
-  return path.startsWith(PENDING_PREFIX);
-}
-
-/** Construct a pending-change virtual path from chat + tool-call IDs. */
-export function makePendingPath(chatID: string, toolCallID: string): string {
-  return `${PENDING_PREFIX}${chatID}:${toolCallID}`;
-}
-
-export function parsePendingPath(path: string): { chatID: string; toolCallID: string } {
-  if (!isPendingPath(path)) {
-    return { chatID: "", toolCallID: "" };
-  }
-  const rest = path.slice(PENDING_PREFIX.length);
-  const split = rest.indexOf(":");
-  if (split === -1) {
-    return { chatID: rest, toolCallID: "" };
-  }
-  return { chatID: rest.slice(0, split), toolCallID: rest.slice(split + 1) };
-}
-
+// THE `pending:` VIRTUAL PATH FAMILY IS GONE. isPendingPath, makePendingPath,
+// parsePendingPath and pendingDiffSource addressed a staged write held in
+// vibekit's memory and served from GET /api/pending-changes/. There are no staged
+// writes and no such endpoint: KAS holds the content and reviews a whole turn at
+// once, so a path scheme with nothing behind it is a route to a 404.
+//
+// routeForPath therefore has one branch, which is why it now reads as a plain
+// URL builder rather than a router.
 export function routeForPath(path: string): {
   readURL: string;
   writeURL: string;
   displayPath: string;
 } {
-  if (isPendingPath(path)) {
-    const { toolCallID } = parsePendingPath(path);
-    const url = `/api/pending-changes/${encodeURIComponent(toolCallID)}`;
-    return { readURL: url, writeURL: url, displayPath: "pending change" };
-  }
   const url = `/api/file?path=${encodeURIComponent(path)}`;
   return { readURL: url, writeURL: url, displayPath: path };
 }
@@ -64,17 +42,6 @@ interface DiffSource {
   oldLabel: string;
   newLabel: string;
   fromGit: boolean;
-}
-
-/** Factory: pending-change diff (on disk vs proposed). */
-export function pendingDiffSource(oldContent: string, newContent: string): DiffSource {
-  return {
-    oldContent,
-    newContent,
-    oldLabel: DIFF_LABEL_DISK,
-    newLabel: DIFF_LABEL_PROPOSED,
-    fromGit: false,
-  };
 }
 
 /** Factory: git diff (ref vs working tree). */
@@ -116,7 +83,6 @@ export interface FileState {
   returnToGitDiff: { ref: string; repo: string } | null;
   /** Repo identifier for git-diff sources (empty string = default). */
   repo: string;
-  pendingHunkDecisions: Map<number, "accept" | "reject">;
   /** Hunk count of the current diff. Derived (computed) from `mode`;
    *  auto-invalidates whenever `mode` is reassigned. */
   pendingHunkCount: ReadonlySignal<number>;
@@ -185,7 +151,6 @@ class EditorState {
       suggestions: new Map(),
       returnToGitDiff: null,
       repo: "",
-      pendingHunkDecisions: new Map(),
       pendingHunkCount,
       cachedDiff,
     };
@@ -221,14 +186,6 @@ export function getActiveFilePath(): string {
   return editorState.getActivePath();
 }
 
-// --- Late-bound closeEditorFile (set by editor-openers.ts at init) ---
-
-let closeFileFn: (path: string) => void = () => {
-  /* noop */
-};
-export function registerCloseFile(fn: (path: string) => void): void {
-  closeFileFn = fn;
-}
-export function closeFile(path: string): void {
-  closeFileFn(path);
-}
+// There is no late-bound closeFile indirection. It existed so editor-pending.ts
+// could close a `pending:` tab without importing editor-openers.ts, and that
+// module is gone; every remaining caller imports closeEditorFile directly.

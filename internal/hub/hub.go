@@ -29,7 +29,6 @@ import (
 	"github.com/cplieger/vibekit/internal/dedup"
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kirosession"
-	"github.com/cplieger/vibekit/internal/pending"
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/webhttp/sse"
@@ -90,9 +89,7 @@ type ssePlane struct {
 
 // permPlane groups Hub fields related to permissions and supervision.
 type permPlane struct {
-	pending    *pending.Store
-	supervised *supervisedState
-	ignore     *ignore.Matcher
+	ignore *ignore.Matcher
 }
 
 // Hub is the central coordinator.
@@ -214,16 +211,13 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 			pendingPerms: newPendingPermsTracker(),
 			chatStatus:   newChatStatusCache(),
 		},
-		perm: &permPlane{
-			pending: pending.New(),
-		},
+		perm:         &permPlane{},
 		chatStore:    chatStore,
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
 		governance:   newGovernanceCache(),
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
 	}
-	h.perm.supervised = newSupervisedState(h.Broadcast)
 	for _, o := range opts {
 		o(h)
 	}
@@ -319,7 +313,6 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/command", h.dispatcher)
 	mux.HandleFunc("/api/shell/ws", h.handleShellWS)
 	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
-	mux.HandleFunc("/api/pending-changes/", h.handlePendingChange)
 	h.registerKnowledgeRoutes(mux)
 	h.registerHooksRoutes(mux)
 	h.registerGovernanceRoutes(mux)
@@ -365,18 +358,11 @@ func (h *Hub) Shutdown() {
 		sb.bridge.Stop()
 	}
 
-	// 1b. Reject every outstanding Supervised-mode pending op. Without
-	// this, an fs handler parked on <-wait in stageFSWrite would block
-	// forever: bridge.Stop has already broken kiro-cli's ability to
-	// send session/cancel, and the user can't click "Reject" on a
-	// shutting-down server. inflight.Wait below would either time out
-	// at the HTTP server level or leak goroutines until process exit.
-	// Flushing here unblocks every handler with accepted=false; each
-	// then returns "change rejected by user" to a kiro-cli that's
-	// already dead, which is harmless.
-	for _, id := range h.listChatIDsWithPending() {
-		h.flushPendingForChat(h.lifecycle.shutdownCtx, id, api.ClearReasonShutdown)
-	}
+	// 1b. There is no pending-write flush at shutdown any more. It existed because a
+	// staged write blocked an fs handler until a human answered, and a shutting-down
+	// server could never deliver that answer — so every such handler had to be
+	// unblocked with accepted=false. KAS holds the writes now, so no vibekit
+	// goroutine is parked waiting on a verdict and there is nothing to unblock.
 
 	// 1c. Cancel the push service's request context so any pending
 	// browser-push HTTP round-trips unblock via context cancellation

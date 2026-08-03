@@ -244,7 +244,6 @@ export function createSession(initialPrompt?: string): void {
     current_mode_id: "",
     available_modes: [],
     available_models: [],
-    pending_changes: [],
     usage: defaultUsage(),
     messages: [],
     message_count: 0,

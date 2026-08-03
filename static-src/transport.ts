@@ -38,17 +38,10 @@ type CommandType =
   | "delete_chat"
   | "switch_model"
   | "set_supervised_mode"
-  | "resolve_pending_change"
-  | "resolve_pending_change_partial"
-  | "resolve_all_pending_changes"
-  | "trust_pending_changes"
-  | "clear_pending_trust"
   | "permission_response"
   | "elicitation_response"
   | "set_effort"
   | "set_mode"
-  | "promote_rewind_chat"
-  | "discard_rewind_chat"
   | "rewind_chat";
 
 export interface Command {
@@ -78,19 +71,6 @@ export type TypedCommand =
   | { type: "switch_model"; chat_id: string; payload: { model: string } }
   | { type: "set_supervised_mode"; chat_id: string; payload: { enabled: boolean } }
   | {
-      type: "resolve_pending_change";
-      chat_id: string;
-      payload: { tool_call_id: string; action: string };
-    }
-  | {
-      type: "resolve_pending_change_partial";
-      chat_id: string;
-      payload: { tool_call_id: string; merged_text: string };
-    }
-  | { type: "resolve_all_pending_changes"; chat_id: string; payload: { action: string } }
-  | { type: "trust_pending_changes"; chat_id: string }
-  | { type: "clear_pending_trust"; chat_id: string }
-  | {
       type: "permission_response";
       chat_id: string;
       payload: { request_id: number; option_id: string };
@@ -102,9 +82,9 @@ export type TypedCommand =
     }
   | { type: "set_effort"; chat_id: string; request_id: string; payload: { level: string } }
   | { type: "set_mode"; chat_id: string; payload: { mode_id: string } }
-  | { type: "promote_rewind_chat"; chat_id: string; request_id: string }
-  | { type: "discard_rewind_chat"; chat_id: string; request_id: string }
-  | { type: "rewind_chat"; chat_id: string; request_id: string; payload: { turn_index: number } };
+  // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
+  // messageId and refuses a non-user one.
+  | { type: "rewind_chat"; chat_id: string; request_id: string; payload: { message_id: string } };
 
 const TRANSPORT_ERROR_CODES = {
   TIMEOUT: "timeout",

@@ -12,7 +12,6 @@ import {
   upsertMessage,
   upsertHeader,
   removeChat,
-  addPendingChange,
   setThinking,
   setWorkingLabel,
   enqueuePrompt,
@@ -36,15 +35,6 @@ const arbMessage = () =>
     content: fc.string({ maxLength: 200 }),
   });
 
-const arbPendingChange = () =>
-  fc.record({
-    tool_call_id: fc.uuid(),
-    chat_id: fc.string({ minLength: 1, maxLength: 30 }),
-    path: fc.string({ minLength: 1, maxLength: 80 }),
-    kind: fc.constantFrom("create", "edit", "delete") as fc.Arbitrary<"create" | "edit" | "delete">,
-    created_at: fc.nat({ max: 2_000_000_000_000 }),
-  });
-
 function makeSession(chatID: string): Session {
   return {
     id: chatID,
@@ -55,7 +45,6 @@ function makeSession(chatID: string): Session {
     available_modes: [],
     available_models: [],
     supervised_mode: false,
-    pending_changes: [],
     usage: {
       context_pct: 0,
       context_size: 0,
@@ -153,54 +142,12 @@ describe("Store idempotency (property-based)", () => {
     );
   });
 
-  it("addPendingChange is idempotent: duplicate tool_call_id is ignored", () => {
-    fc.assert(
-      fc.property(arbPendingChange(), (change) => {
-        resetStore("chat-1");
-        addPendingChange("chat-1", change);
-        addPendingChange("chat-1", change);
-        const session = get("chat-1")!;
-        const matches = session.pending_changes.filter(
-          (p) => p.tool_call_id === change.tool_call_id,
-        );
-        expect(matches).toHaveLength(1);
-      }),
-      { numRuns: 200 },
-    );
-  });
-
-  it("addPendingChange: different tool_call_ids all land", () => {
-    fc.assert(
-      fc.property(fc.array(arbPendingChange(), { minLength: 1, maxLength: 10 }), (changes) => {
-        resetStore("chat-1");
-        const unique = changes.map((c, i) => ({ ...c, tool_call_id: `tc-${String(i)}` }));
-        for (const c of unique) {
-          addPendingChange("chat-1", c);
-        }
-        const session = get("chat-1")!;
-        expect(session.pending_changes).toHaveLength(unique.length);
-      }),
-      { numRuns: 100 },
-    );
-  });
-
   it("appendMessage on unknown chat is a no-op", () => {
     fc.assert(
       fc.property(arbMessage(), (msg) => {
         resetStore("chat-1");
         appendMessage("nonexistent", msg);
         expect(get("chat-1")!.messages).toHaveLength(0);
-      }),
-      { numRuns: 50 },
-    );
-  });
-
-  it("addPendingChange on unknown chat is a no-op", () => {
-    fc.assert(
-      fc.property(arbPendingChange(), (change) => {
-        resetStore("chat-1");
-        addPendingChange("nonexistent", change);
-        expect(get("chat-1")!.pending_changes).toHaveLength(0);
       }),
       { numRuns: 50 },
     );

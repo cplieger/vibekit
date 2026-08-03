@@ -59,7 +59,6 @@ function makeSession(id: string): Session {
     available_modes: [],
     available_models: [],
     supervised_mode: false,
-    pending_changes: [],
     usage: {
       context_pct: 0,
       context_size: 0,

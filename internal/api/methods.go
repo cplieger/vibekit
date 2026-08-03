@@ -119,6 +119,14 @@ const (
 	ConfigOptionModel  = "model"
 	ConfigOptionMode   = "mode"
 	ConfigOptionEffort = "effortLevel"
+	// ConfigOptionAutopilot is supervised mode on v3. `autopilot: false` makes KAS
+	// request a TURN APPROVAL before applying a file-touching turn's writes;
+	// `true` (its default at session creation) applies them as they happen.
+	//
+	// It persists into KAS's own session metadata, so it survives session/load and
+	// never needs re-asserting — which is what lets vibekit pass it once at
+	// session/new instead of policing every write.
+	ConfigOptionAutopilot = "autopilot"
 )
 
 // ACP content-block JSON field name constants. These are the wire-format

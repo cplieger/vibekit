@@ -15,12 +15,9 @@
 
 export type {
   // Enums
-  ClearReason,
   ErrorCode,
   EventKind,
   ForgeKind,
-  PendingAction,
-  PendingChangeKind,
   PlanStatus,
   Role,
   SafetyStatus,
@@ -38,7 +35,6 @@ export type {
   CodeReference,
   RefusalInfo,
   MeteringItem,
-  PendingChange,
   PermissionOption,
   PlanEntry,
   PolicyRule,
@@ -69,9 +65,6 @@ export type {
   MCPOAuthPayload,
   MessageChunkPayload,
   OpenExternalURLPayload,
-  PendingChangeAddedPayload,
-  PendingChangeResolvedPayload,
-  PendingChangesClearedPayload,
   PermissionNeededPayload,
   PermissionsChangedPayload,
   PolicyErrorPayload,
@@ -100,7 +93,7 @@ export type {
 // the generated naming. The generated type is PermissionNeededPayload.
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
-import type { Message, PendingChange, SessionMode, SessionModel, Usage } from "./wire/types.gen.js";
+import type { Message, SessionMode, SessionModel, Usage } from "./wire/types.gen.js";
 
 // --- Client-only types ---
 
@@ -130,21 +123,6 @@ export interface ModelInfo {
 
 /** Connection status flag, surfaced through the status bar. */
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
-
-/** Empty payload for `pending_trust_enabled`. The chat_id on the
- *  envelope is the only meaningful data; receipt means "flip this
- *  chat's Supervised pill to Trusted". Client-only because this
- *  event has no Go-side payload struct. */
-export interface PendingTrustEnabledPayload {
-  readonly _empty?: never;
-}
-
-/** Payload for `pending_trust_cleared`. Reason lets the UI
- *  differentiate user-initiated clear (mode toggle) from turn boundary.
- *  Client-only because this event has no Go-side payload struct. */
-export interface PendingTrustClearedPayload {
-  reason?: "turn_ended" | "cancelled" | "mode_disabled" | "chat_deleted";
-}
 
 /** One prompt buffered while a turn is in flight, waiting to drain on the
  *  next `turn_ended`. Text and its attachments travel together in one entry
@@ -189,8 +167,6 @@ export interface Session {
   agent_status_text?: string;
   prompt_queue?: QueuedPrompt[];
   supervised_mode?: boolean;
-  trusted_this_turn?: boolean;
-  pending_changes: PendingChange[];
   compaction_watermark?: string;
 }
 

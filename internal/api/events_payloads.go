@@ -43,7 +43,25 @@ type PermissionNeededPayload struct {
 	Kind         ToolKind           `json:"kind,omitempty"`
 	SubSessionID string             `json:"sub_session_id,omitempty"`
 	Options      []PermissionOption `json:"options"`
-	RequestID    int64              `json:"request_id"`
+	// Files is the turn's staged file list, present ONLY on a turn approval
+	// (`_meta.kiro.type == "turn_approval"`). A turn approval arrives as an
+	// ordinary session/request_permission, which is why it rides this payload
+	// rather than a second event: the only difference is that it carries files and
+	// expects per-file decisions back.
+	Files     []ApprovalFile `json:"files,omitempty"`
+	RequestID int64          `json:"request_id"`
+}
+
+// ApprovalFile is one file a turn wants to write, as offered for review.
+type ApprovalFile struct {
+	// Path is workspace-relative (KAS sends it absolute; translate normalizes).
+	Path string `json:"path"`
+	// SnapshotURI addresses the pre-image, so a diff is a snapshot read.
+	SnapshotURI string `json:"snapshot_uri,omitempty"`
+	// ActionID is KAS's pending-action id and THE KEY the decision map must use.
+	// KAS applies the accepted ids and restores the rest, so an id omitted from
+	// the response counts as a REJECT rather than as unspecified.
+	ActionID string `json:"action_id"`
 }
 
 // PermissionOption is one selectable response in a permission dialog.

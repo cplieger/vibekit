@@ -75,9 +75,10 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamInitialState writes the connected handshake and then replays the
-// client's outstanding state — pending permissions, staged Supervised
-// writes, and per-turn trust — so a reconnecting browser rebuilds its UI
-// exactly as it was.
+// client's outstanding state — the unanswered permission requests and the
+// in-flight turn — so a reconnecting browser rebuilds its UI exactly as it
+// was. A turn approval rides the permission channel, so it replays with the
+// rest and needs nothing of its own.
 //
 // The handshake's ConnectedPayload carries the ring-buffer floor (oldest
 // replayable event ID) and head (newest) so the client can detect a replay
@@ -112,18 +113,9 @@ func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter 
 		return err
 	}
 
-	// Replay every outstanding Supervised-mode staged op so the client
-	// rebuilds its pending pill and per-card Accept/Reject buttons.
-	if err := h.replayPendingChanges(writeEvent, chatFilter); err != nil {
-		return err
-	}
-
-	// Replay per-turn trust state. Without this, a reconnect mid-turn
-	// silently reverts the Supervised pill to plain "Supervised" even
-	// though the perTurnTrust flag is still active.
-	if err := h.replayPendingTrust(writeEvent, chatFilter); err != nil {
-		return err
-	}
+	// There is no staged-op or per-turn-trust replay. Both belonged to vibekit's
+	// own staging queue. A turn approval IS a permission request, so the replay
+	// above already covers it — which is the same reason it needed no new event.
 
 	// Synthesize turn_state for every busy chat (P6): the in-flight
 	// assistant message accumulated so far plus the authoritative
@@ -181,38 +173,6 @@ func (h *Hub) replayBounds() (floor, head uint64) {
 func (h *Hub) replayPendingPermissions(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
 	for _, evt := range h.sse.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// replayPendingChanges sends every outstanding pending op for a new SSE
-// client. The replay uses pending_change_added events so client handlers
-// are identical to the live path.
-func (h *Hub) replayPendingChanges(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
-	var chatIDs []api.ChatID
-	if chatFilter != "" {
-		chatIDs = []api.ChatID{chatFilter}
-	} else {
-		chatIDs = h.listChatIDsWithPending()
-	}
-	for _, id := range chatIDs {
-		for _, snap := range h.perm.pending.ListForChat(id) {
-			if err := writeFn(api.NewEvent(api.EventPendingChangeAdded, id, api.PendingChangeAddedPayload{Change: snap})); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// replayPendingTrust emits a pending_trust_enabled event for every chat
-// that currently has perTurnTrust set, keeping the Supervised pill's
-// "Trusted · this turn" state alive across reconnects.
-func (h *Hub) replayPendingTrust(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
-	for _, id := range h.perm.supervised.TrustedChatIDs(chatFilter) {
-		if err := writeFn(api.NewEvent(api.EventPendingTrustEnabled, id, api.PendingTrustEnabledPayload{})); err != nil {
 			return err
 		}
 	}
