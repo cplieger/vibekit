@@ -83,11 +83,19 @@ afterEach(() => {
 });
 
 describe("initKnowledge", () => {
-  it("sets the add icon, builds the inline form, and subscribes to the SSE", () => {
+  it("sets the add icon and builds the inline form", () => {
     initKnowledge();
     expect(document.getElementById("knowledge-add-btn")?.innerHTML).toContain("data-plus");
     expect(document.getElementById("knowledge-add-form")).not.toBeNull();
-    expect(vi.mocked(onSSE)).toHaveBeenCalledWith("knowledge_indexing", expect.any(Function));
+  });
+
+  // The inverse of the deleted subscription IS the contract now: the indexing
+  // notification fired only for a non-builtin mode's declared bases, whose
+  // per-agent store is disjoint from the default store this list reads, so its
+  // one action — refetching — could never show the base it announced.
+  it("subscribes to no SSE at all", () => {
+    initKnowledge();
+    expect(vi.mocked(onSSE)).not.toHaveBeenCalled();
   });
 
   it("toggles the add form open on + click", () => {
@@ -214,14 +222,75 @@ describe("remove flow", () => {
   });
 });
 
-describe("SSE refetch", () => {
-  it("refetches the list when a knowledge_indexing event arrives", async () => {
-    initKnowledge();
-    const handler = vi.mocked(onSSE).mock.calls.find((c) => c[0] === "knowledge_indexing")?.[1];
-    expect(handler).toBeDefined();
-    mockGet.mockResolvedValue({ contexts: [] });
-    (handler as () => void)();
-    await flush();
-    expect(mockGet).toHaveBeenCalled();
+// ---------------------------------------------------------------------------
+// The poll's stall budget.
+//
+// It used to be a flat cap of 200 ticks at 1500ms — a ~5-minute ceiling past
+// which the UI silently stopped updating while KAS carried on indexing, so a
+// large base appeared to hang forever. The budget is stall-based now, and these
+// pin the distinction: slow is not wedged.
+// ---------------------------------------------------------------------------
+
+describe("indexing poll", () => {
+  function indexing(items: number) {
+    return { contexts: [{ name: "big", id: "1", item_count: items, indexing: true }] };
+  }
+
+  it("keeps polling while progress advances past the old 5-minute ceiling", async () => {
+    vi.useFakeTimers();
+    try {
+      let items = 0;
+      mockGet.mockImplementation(() => {
+        items += 10;
+        return Promise.resolve(indexing(items));
+      });
+      loadKnowledge();
+      await flush();
+
+      // 400 ticks is twice the old cap. Every one advances, so every one must be
+      // followed by another.
+      for (let i = 0; i < 400; i++) {
+        await vi.advanceTimersByTimeAsync(1500);
+        await flush();
+      }
+      expect(mockGet.mock.calls.length).toBeGreaterThan(300);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up once progress stalls", async () => {
+    vi.useFakeTimers();
+    try {
+      // Same item_count every time: indexing is running but not moving.
+      mockGet.mockImplementation(() => Promise.resolve(indexing(42)));
+      loadKnowledge();
+      await flush();
+
+      for (let i = 0; i < 200; i++) {
+        await vi.advanceTimersByTimeAsync(1500);
+        await flush();
+      }
+      // Bounded well below the tick count, so a wedged index does not poll on
+      // forever.
+      expect(mockGet.mock.calls.length).toBeLessThan(60);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling when nothing is indexing", async () => {
+    vi.useFakeTimers();
+    try {
+      mockGet.mockResolvedValue({ contexts: [{ name: "done", id: "1", item_count: 9 }] });
+      loadKnowledge();
+      await flush();
+      const after = mockGet.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(1500 * 5);
+      await flush();
+      expect(mockGet.mock.calls.length).toBe(after);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

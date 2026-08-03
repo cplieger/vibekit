@@ -84,7 +84,6 @@ const (
 	EventForgesChanged         EventType = "forges_changed"
 	EventGovernanceState       EventType = "governance_state"
 	EventHooksChanged          EventType = "hooks_changed"
-	EventKnowledgeIndexing     EventType = "knowledge_indexing"
 	EventSafetyStatus          EventType = "safety_status"
 	EventSafetyProperties      EventType = "safety_properties"
 	EventSettingsUpdated       EventType = "settings_updated"

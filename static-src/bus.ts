@@ -39,7 +39,6 @@ import type {
   UserInputNeededPayload,
   OpenExternalURLPayload,
   CodeReferencesPayload,
-  KnowledgeIndexingPayload,
   PermissionsChangedPayload,
   PolicyErrorPayload,
   SafetyStatusPayload,
@@ -83,7 +82,6 @@ export interface SSEPayloads {
   readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: { readonly package: string; readonly state: string };
   readonly mode_changed: { readonly mode_id: string };
-  readonly knowledge_indexing: KnowledgeIndexingPayload;
   readonly safety_status: SafetyStatusPayload;
   readonly safety_properties: SafetyPropertiesPayload;
   readonly governance_state: GovernanceStatePayload;

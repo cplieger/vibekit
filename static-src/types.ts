@@ -63,7 +63,6 @@ export type {
   ErrorPayload,
   GovernanceFeatures,
   GovernanceStatePayload,
-  KnowledgeIndexingPayload,
   MCPConnectedPayload,
   MCPDisconnectedPayload,
   MCPFailedPayload,

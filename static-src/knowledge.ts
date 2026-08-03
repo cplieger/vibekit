@@ -9,14 +9,15 @@
 // it; mutations go through the knowledge.add / knowledge.remove actions and
 // refetch. Indexing runs in the BACKGROUND: `add` returns immediately and the
 // new base shows up as an "indexing" row with a live progress bar. A
-// user-initiated add does NOT push the knowledge_indexing SSE (verified live —
-// only agent-declared knowledge_bases sync does), so progress is driven by
-// POLLING GET /api/knowledge while any entry is still indexing; the SSE just
-// triggers an extra refetch for the agent-sync case.
+// user-initiated add pushes NO notification at all, so progress is driven by
+// POLLING GET /api/knowledge while any entry is still indexing. There is no SSE
+// to supplement it: the two indexing notifications fired only for a non-builtin
+// mode's declared bases, which land in a PER-AGENT store disjoint from the
+// `default` store this endpoint reads — so the refetch they triggered could never
+// show the base they announced. Deleted rather than kept as a no-op.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { onSSE } from "./bus.js";
 import { byId } from "./dom.js";
 import { reconcile } from "./reconcile.js";
 import { showToast } from "./toast.js";
@@ -77,12 +78,24 @@ const decodeList: Decoder<{ contexts: KnowledgeContext[] }> = (v) => {
 const KNOWLEDGE_FLAG = "chat.enableKnowledge";
 /** Poll cadence while any base is still indexing. */
 const POLL_MS = 1500;
-/** Safety cap on consecutive polls so a wedged index can't poll forever. */
-const MAX_POLLS = 200;
+/**
+ * Consecutive polls with NO OBSERVABLE PROGRESS before giving up.
+ *
+ * This used to be a flat cap of 200 ticks, which at 1500ms is a ~5-minute
+ * ceiling: past it the UI silently stopped updating while KAS carried on
+ * indexing, so a large base simply appeared to hang forever. The budget is
+ * stall-based now, because "this is taking a long time" and "this is wedged" are
+ * different conditions and only the second is worth abandoning. A big index that
+ * keeps advancing polls as long as it needs; a genuinely stuck one stops after
+ * ~45 seconds of no change.
+ */
+const MAX_STALLED_POLLS = 30;
 
 const listSlot = new CancellableSlot();
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
-let pollsLeft = 0;
+let stalledPolls = 0;
+/** Progress signature from the previous tick, to tell advance from stall. */
+let lastProgress = "";
 
 registerCleanup(() => {
   listSlot.abort();
@@ -111,12 +124,25 @@ function mergeByName(contexts: KnowledgeContext[]): KnowledgeContext[] {
   return [...byName.values()];
 }
 
-/** Fetch + render the knowledge list. `fromPoll` distinguishes a poll tick
- *  (keeps the budget counting down) from a user/SSE-triggered load (resets the
- *  budget). Reschedules itself while any base is still indexing. */
+/** A signature of how far indexing has got, so a stall is distinguishable from
+ *  slowness. Counts items per indexing base — the only progress this endpoint
+ *  exposes, since the per-file counter lives inside `show` and is pushed
+ *  nowhere. */
+function progressSignature(contexts: KnowledgeContext[]): string {
+  return contexts
+    .filter((c) => c.indexing === true)
+    .map((c) => `${c.name}:${String(c.item_count)}:${c.items_display ?? ""}`)
+    .sort((a, b) => a.localeCompare(b))
+    .join("|");
+}
+
+/** Fetch + render the knowledge list. `fromPoll` distinguishes a poll tick from a
+ *  user-triggered load, which resets the stall budget. Reschedules itself while
+ *  any base is still indexing. */
 export function loadKnowledge(fromPoll = false): void {
   if (!fromPoll) {
-    pollsLeft = MAX_POLLS;
+    stalledPolls = 0;
+    lastProgress = "";
   }
   clearPoll();
   const signal = listSlot.start();
@@ -130,12 +156,23 @@ export function loadKnowledge(fromPoll = false): void {
     }
     const merged = mergeByName(d.contexts);
     renderList(merged);
-    if (merged.some((c) => c.indexing === true) && pollsLeft > 0) {
-      pollsLeft--;
-      pollTimer = setTimeout(() => {
-        loadKnowledge(true);
-      }, POLL_MS);
+    if (!merged.some((c) => c.indexing === true)) {
+      return;
     }
+    const signature = progressSignature(merged);
+    if (signature === lastProgress) {
+      stalledPolls++;
+    } else {
+      // Advanced, so the budget resets: a long index is not a wedged one.
+      stalledPolls = 0;
+      lastProgress = signature;
+    }
+    if (stalledPolls >= MAX_STALLED_POLLS) {
+      return;
+    }
+    pollTimer = setTimeout(() => {
+      loadKnowledge(true);
+    }, POLL_MS);
   });
   // The enable-hint reads a kiro-cli setting (a subprocess shell-out), so only
   // refresh it on a user/SSE-triggered load — not on every poll tick.
@@ -357,9 +394,8 @@ export function initKnowledge(): void {
     }
   });
 
-  // Agent-declared knowledge_bases sync pushes this; refetch so the list +
-  // any progress reflect it. (User adds are covered by the poll loop.)
-  onSSE("knowledge_indexing", () => {
-    loadKnowledge();
-  });
+  // There is no knowledge_indexing subscription. The notification fired only for
+  // a non-builtin mode's declared bases, whose per-agent store is disjoint from
+  // the default store this list reads, so the refetch it triggered could not show
+  // what it announced. The poll is the whole progress channel.
 }

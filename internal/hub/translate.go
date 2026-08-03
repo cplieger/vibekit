@@ -81,16 +81,6 @@ func (h *Hub) initDispatch() {
 		// affordances the flags control (MCP availability, the org-policy
 		// disclosure, the code-reference chip). See translate/governance.go.
 		methodV3Governance: h.translator.HandleGovernanceState,
-		// Knowledge-base indexing progress → knowledge_indexing SSE. Two
-		// methods share one handler (a started/completed bool discriminates
-		// the payload). Fire only for agent-declared knowledge_bases sync;
-		// user-add progress is polled via GET /api/knowledge.
-		methodKiroKnowledgeIndexingStarted: func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-			h.translator.HandleKnowledgeIndexing(ctx, chatID, msg, true)
-		},
-		methodKiroKnowledgeIndexingCompleted: func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-			h.translator.HandleKnowledgeIndexing(ctx, chatID, msg, false)
-		},
 	}
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via

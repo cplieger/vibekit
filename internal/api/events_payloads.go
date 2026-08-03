@@ -152,22 +152,6 @@ type CodeReferencesPayload struct {
 	References []CodeReference `json:"references"`
 }
 
-// KnowledgeIndexingPayload is the payload for type="knowledge_indexing".
-// Translated from the KAS _kiro/knowledge/indexingStarted (Status="started",
-// carries FileCount) and _kiro/knowledge/indexingCompleted (Status="success"
-// or a failure string, carries ItemCount on success) notifications. Emitted
-// globally (no chat_id) because the knowledge store is workspace-global; the
-// client refetches GET /api/knowledge on receipt. Note: these fire only for
-// agent-declared knowledge_bases sync at session start — a user-initiated add
-// reports progress through the `show` active-operations list instead (verified
-// live), so the client also polls while an entry is still indexing.
-type KnowledgeIndexingPayload struct {
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	FileCount int    `json:"file_count,omitempty"`
-	ItemCount int    `json:"item_count,omitempty"`
-}
-
 // SafetyStatus is the v3 (KAS) Infrastructure-Safety gate state (GateStatus).
 // The gate evaluates infrastructure-as-code tool calls (Terraform, CFN, CDK,
 // Docker, k8s, …) against remotely-formalized safety properties. Typed so the

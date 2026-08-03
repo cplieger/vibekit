@@ -95,12 +95,15 @@ const (
 // vibekit issues it on the utility bridge WITHOUT a sessionId so it targets
 // the workspace-global default store (disk-backed at
 // $KIRO_HOME/.kiro/knowledge_bases/default), not any chat's session store.
-// The two indexingStarted/indexingCompleted notifications are A→C — verified
-// live to fire only for agent-declared knowledge_bases sync at session start,
-// NOT for a user-initiated `add` (whose progress is polled via `show`). They
-// are still translated to the knowledge_indexing SSE so the agent-sync case
-// surfaces. Shapes verified against the KAS 2.12 acp-server bundle + a live
-// probe (see kiro-cli-research.md "v3 _kiro/* wire surface").
+// THE indexingStarted/indexingCompleted NOTIFICATIONS ARE NO LONGER HANDLED, and
+// the reason is that their only possible action was a no-op. They fire solely for
+// a NON-BUILTIN mode's declared knowledge_bases, and those land in a PER-AGENT
+// store (`~/.kiro/knowledge_bases/<name>_<hash>`) that is disjoint from the
+// `default` store `GET /api/knowledge` reads — proven with a disjoint-view probe.
+// So the SSE's one action, refetching that endpoint, could never show the base it
+// had just announced. Progress for a user `add` is polled via `show`, which is
+// the only enumeration verb there is. See kiro-cli-research.md "v3 _kiro/* wire
+// surface".
 const (
 	methodKiroKnowledge      = "_kiro/knowledge"       // C→A request: {subcommand, ...} → {success, entries?/message?}
 	methodKiroConfigTemplate = "_kiro/config/template" // C→A request (2.14+): {} → {modes:{availableModes,currentModeId}, configOptions[]} — session-less catalog
@@ -108,10 +111,8 @@ const (
 	// workspacePaths is an ARRAY and is REQUIRED: every other param shape
 	// (cwd, sessionId, a nested _meta) fails -32603 "workspacePaths is not
 	// iterable". Needs no workflows capability (probed 2026-08-02).
-	methodKiroWorkflowList               = "_kiro/workflow/list"               // C→A request: {workspacePaths[]} → {runs[]}
-	methodKiroWorkflowInspect            = "_kiro/workflow/inspect"            // C→A request: {workflowId} → {workflowId, state, nodePlan}
-	methodKiroKnowledgeIndexingStarted   = "_kiro/knowledge/indexingStarted"   // A→C notification: {sessionId, name, fileCount}
-	methodKiroKnowledgeIndexingCompleted = "_kiro/knowledge/indexingCompleted" // A→C notification: {sessionId, name, status, itemCount?}
+	methodKiroWorkflowList    = "_kiro/workflow/list"    // C→A request: {workspacePaths[]} → {runs[]}
+	methodKiroWorkflowInspect = "_kiro/workflow/inspect" // C→A request: {workflowId} → {workflowId, state, nodePlan}
 )
 
 // v3 (KAS) hook-management method names. list/setEnabled/triggerHook are C→A
