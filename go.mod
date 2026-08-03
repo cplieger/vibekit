@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	github.com/cplieger/atomicfile/v2 v2.6.0
+	github.com/cplieger/atomicfile/v2 v2.7.0
 	github.com/cplieger/envx/yamlenv v1.2.1
 	github.com/cplieger/jsonx v1.4.0
 	github.com/cplieger/keyenc v1.0.1
