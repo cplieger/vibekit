@@ -268,7 +268,7 @@ function rewindConfirmText(m: Message, next: Message | undefined): string {
 
 /**
  * handleRewindClick confirms the rewind, dispatches it, then opens AND
- * activates the returned branch chat. Mirrors chat.ts's restoreArchivedChat
+ * activates the returned branch chat. Mirrors chat.ts's openPreviousSession
  * pattern: refresh the header list so the branch session exists in the store,
  * then open its tab (openChatTab activates it via onShow → activateChatView,
  * which loads the branch's messages). chat.ts / store-load.ts are imported

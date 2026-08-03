@@ -13,8 +13,8 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// purgeEntry is an archived chat file's (id, full path) pair gathered
-// during a purge scan.
+// purgeEntry is a chat file's (id, full path) pair gathered during a
+// purge scan.
 type purgeEntry struct {
 	name string
 	path string
@@ -38,16 +38,16 @@ const (
 // a state. So the same directory holds live and expired chats, and the age test
 // plus the live-chat exemption are what separate them.
 func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
-	archiveDir := s.store.Dir()
-	entries, err := os.ReadDir(archiveDir)
+	dir := s.store.Dir()
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			slog.Error("chat purge_archived: readdir",
-				"dir", archiveDir, "error", err)
+			slog.Error("chat purge: readdir",
+				"dir", dir, "error", err)
 		}
 		return
 	}
-	valid := collectPurgeEntries(entries, archiveDir)
+	valid := collectPurgeEntries(entries, dir)
 	if len(valid) == 0 {
 		return
 	}
@@ -80,7 +80,7 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
 // collectPurgeEntries filters a directory listing down to valid chat
 // files eligible for purging (skips dirs, non-.json files, and files
 // whose trimmed name is not a valid chat id).
-func collectPurgeEntries(entries []os.DirEntry, archiveDir string) []purgeEntry {
+func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 	var valid []purgeEntry
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), chatFileSuffix) {
@@ -90,14 +90,14 @@ func collectPurgeEntries(entries []os.DirEntry, archiveDir string) []purgeEntry 
 		if !api.ValidChatID(name) {
 			continue
 		}
-		valid = append(valid, purgeEntry{name: name, path: filepath.Join(archiveDir, e.Name())})
+		valid = append(valid, purgeEntry{name: name, path: filepath.Join(dir, e.Name())})
 	}
 	return valid
 }
 
-// purgeOne removes a single archived chat (and its plan draft) when its
-// mtime is older than cutoff. Holds the per-chat mutex across the
-// stat+remove so a concurrent restore/mutate can't race the delete.
+// purgeOne removes a single chat when its last activity is older than
+// cutoff. Holds the per-chat mutex across the stat+remove so a concurrent
+// mutate can't race the delete.
 func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	// A chat someone is USING is never purged, regardless of age. This is a
 	// hard rule, not a heuristic: a chat open in a tab with a live bridge is
@@ -115,17 +115,13 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 		if errors.Is(err, os.ErrNotExist) {
 			return purgeSkipped
 		}
-		slog.Warn("chat purge_archived: stat", "name", entry.name, "error", err)
+		slog.Warn("chat purge: stat", "name", entry.name, "error", err)
 		return purgeErr
 	}
-	// Age from the explicit ArchivedAt stamp, not the file mtime: a
-	// skipped/failed post-archive summary write leaves mtime at the chat's
-	// last-activity time, which would purge an old-but-just-archived chat
-	// almost immediately. mtime is only the fallback for legacy archives
-	// (stamped before ArchivedAt existed) and the rare crash between the
-	// stamp and the rename.
-	// Capture the chain BEFORE the remove: onPurge fires afterwards, when the
-	// file is gone and the session ids are no longer readable.
+	// Age from the chat's own UpdatedAt, with mtime only as the unreadable-file
+	// fallback (see purgeReferenceTime). Capture the chain BEFORE the remove:
+	// onPurge fires afterwards, when the file is gone and the session ids are
+	// no longer readable.
 	refTime, chain := s.purgeReferenceTime(entry, info.ModTime())
 	if !refTime.Before(cutoff) {
 		m.Unlock()
@@ -133,7 +129,7 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	}
 	if err := os.Remove(entry.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		m.Unlock()
-		slog.Warn("chat purge_archived: remove", "chat_id", entry.name, "error", err)
+		slog.Warn("chat purge: remove", "chat_id", entry.name, "error", err)
 		return purgeErr
 	}
 	m.Unlock()
@@ -173,17 +169,17 @@ func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime
 // errored, otherwise at Info.
 func logPurgeResult(purged, kept, errs int, maxAge time.Duration) {
 	if errs > 0 {
-		slog.Warn("chat purge_archived: pass complete with errors",
+		slog.Warn("chat purge: pass complete with errors",
 			"purged", purged, "kept", kept, "errors", errs,
 			"max_age", maxAge)
 		return
 	}
-	slog.Info("chat purge_archived: pass complete",
+	slog.Info("chat purge: pass complete",
 		"purged", purged, "kept", kept,
 		"max_age", maxAge)
 }
 
-// PurgeScheduler owns the archive-purge lifecycle. Uses a dedicated
+// PurgeScheduler owns the retention-purge lifecycle. Uses a dedicated
 // goroutine with a trigger channel for true collapse semantics.
 type PurgeScheduler struct {
 	ctx       context.Context
@@ -290,19 +286,19 @@ func (p *PurgeScheduler) purgeAndReschedule() (timer *time.Timer, timerC <-chan 
 	if !ok {
 		return nil, nil
 	}
-	slog.Debug("archive purge scheduled", "in", wait, "retention", retention)
+	slog.Debug("chat purge scheduled", "in", wait, "retention", retention)
 	t := time.NewTimer(wait)
 	return t, t.C
 }
 
 // nextWait computes how long to sleep before the next purge: the oldest
-// archived file's age plus the retention window, floored at minWait.
-// Returns ok=false when retention is disabled or the archive is empty.
+// chat file's age plus the retention window, floored at minWait.
+// Returns ok=false when retention is disabled or the directory is empty.
 func (p *PurgeScheduler) nextWait(retention time.Duration) (time.Duration, bool) {
 	if retention <= 0 {
 		return 0, false
 	}
-	oldest, ok := OldestArchiveMTime(p.ctx, p.svc.store.Dir())
+	oldest, ok := OldestChatMTime(p.ctx, p.svc.store.Dir())
 	if !ok {
 		return 0, false
 	}
@@ -311,22 +307,21 @@ func (p *PurgeScheduler) nextWait(retention time.Duration) (time.Duration, bool)
 	return max(time.Until(deadline), minWait), true
 }
 
-// OldestArchiveMTime returns the mtime of the oldest chat file and true, or the
+// OldestChatMTime returns the mtime of the oldest chat file and true, or the
 // zero time and false if the directory is empty or unreadable.
 //
 // Only a wake-up heuristic for the scheduler, never a purge decision: purgeOne
 // ages from the chat's UpdatedAt and exempts live chats. Waking too early costs
 // one no-op pass.
-func OldestArchiveMTime(ctx context.Context, storeDir string) (time.Time, bool) {
+func OldestChatMTime(ctx context.Context, storeDir string) (time.Time, bool) {
 	if ctx.Err() != nil {
 		return time.Time{}, false
 	}
-	archiveDir := storeDir
-	entries, err := os.ReadDir(archiveDir)
+	entries, err := os.ReadDir(storeDir)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			slog.Warn("purge scheduler: readdir",
-				"dir", archiveDir, "error", err)
+				"dir", storeDir, "error", err)
 		}
 		return time.Time{}, false
 	}

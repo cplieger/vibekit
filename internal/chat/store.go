@@ -121,7 +121,7 @@ func WithLiveChats(fn func(chatID api.ChatID) bool) StoreOption {
 	return func(s *Store) { s.isLive = fn }
 }
 
-// WithOnPurge registers a callback fired after an archived chat is purged.
+// WithOnPurge registers a callback fired after a retention purge removes a chat.
 // sessionChain carries every KAS session the chat ran on, captured before the
 // chat file was removed, so the purge can reap its own session directories.
 func WithOnPurge(fn func(chatID api.ChatID, sessionChain []string)) StoreOption {

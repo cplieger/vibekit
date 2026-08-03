@@ -308,7 +308,7 @@ export function attachPathToActiveChat(path: string): void {
  *
  *  The adopting client opens and activates the tab itself: the server
  *  broadcasts a generic chat_created to every client, and none of the others
- *  should auto-open a tab. Same shape restoreArchivedChat used. */
+ *  should auto-open a tab. */
 export function openPreviousSession(row: ResumableSessionRow): void {
   if (row.chat_id !== undefined && row.chat_id !== "") {
     const existing = get(row.chat_id);

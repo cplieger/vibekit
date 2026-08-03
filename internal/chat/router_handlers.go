@@ -13,9 +13,9 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// RegisterRoutes wires GET /api/chats (list), GET /api/chats/{id}
-// (one chat with paginated messages), and the archived-chat routes.
-// Delegates to Router for structural separation of HTTP concerns.
+// RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
+// (one chat with paginated messages). Delegates to Router for structural
+// separation of HTTP concerns.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	rt := NewRouter(s)
 	rt.Register(mux)

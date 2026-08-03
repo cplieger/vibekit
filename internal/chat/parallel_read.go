@@ -11,8 +11,7 @@ import (
 )
 
 // chatEntry is a chat file's (id, full path) pair gathered during a
-// directory scan. Used by both List and ListArchived to hand off work
-// to the parallel header reader.
+// directory scan, handed off to the parallel header reader.
 type chatEntry struct {
 	id   string
 	path string
@@ -49,19 +48,16 @@ func boundedParallel[T any](ctx context.Context, items []T, maxWorkers int, fn f
 
 // readHeadersParallel reads chat headers for each entry concurrently
 // (bounded at 8 workers) and returns the successfully-read headers.
-// `label` is used as both the readChatHeader diagnostic prefix and
-// the slog warn message; callers pass "chat" for the active list and
-// "archived chat" for the archive list.
 //
-// This replaces two near-identical worker-pool blocks in archive.go
-// (ListArchived) and store_list.go (List). Workers read from a shared
-// index channel; no per-chat lock needed because readChatHeader is
-// read-only and writes use atomic temp+rename (readers always see a
-// complete file).
+// Workers read from a shared index channel; no per-chat lock is needed
+// because readChatHeader is read-only and writes use atomic temp+rename
+// (readers always see a complete file). It used to take a `label` for the
+// diagnostic prefix, when the archive list was a second caller passing
+// "archived chat"; with one caller the parameter only produced the
+// doubled "chat chat:" warning.
 func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
-	label string,
 ) (headersOut []api.ChatHeader, complete bool) {
 	if len(valid) == 0 {
 		return nil, true
@@ -77,14 +73,14 @@ func readHeadersParallel(
 	results := make([]result, len(valid))
 
 	boundedParallel(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
-		h, err := readChatHeader(ce.path, label+" "+ce.id)
+		h, err := readChatHeader(ce.path, "chat "+ce.id)
 		if err != nil {
 			// ENOENT is a concurrent delete: the chat is genuinely gone, so
 			// dropping it is correct and the scan is still complete. Anything
 			// else means a chat that exists is missing from the result, which
 			// callers deriving a keep-list from it must not treat as authority.
 			if !errors.Is(err, os.ErrNotExist) {
-				slog.Warn("chat "+label+": skipping unreadable file",
+				slog.Warn("chat: skipping unreadable file",
 					"chat_id", ce.id, "error", err)
 				results[idx] = result{lost: true}
 			}

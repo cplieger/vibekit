@@ -12,21 +12,21 @@ import (
 	"github.com/cplieger/vibekit/internal/chat/archive"
 )
 
-// --- OldestArchiveMTime ---
+// --- OldestChatMTime ---
 
-func TestOldestArchiveMTime(t *testing.T) {
+func TestOldestChatMTime(t *testing.T) {
 	cases := []struct {
 		setup  func(t *testing.T, s *Store) time.Time
 		name   string
 		wantOK bool
 	}{
 		{
-			name:   "EmptyWhenNoArchiveDir",
+			name:   "EmptyWhenNoChatDir",
 			setup:  func(t *testing.T, s *Store) time.Time { return time.Time{} },
 			wantOK: false,
 		},
 		{
-			name: "EmptyWhenArchiveDirEmpty",
+			name: "EmptyWhenChatDirEmpty",
 			setup: func(t *testing.T, s *Store) time.Time {
 				if err := os.MkdirAll(s.dir, 0o700); err != nil {
 					t.Fatal(err)
@@ -38,12 +38,12 @@ func TestOldestArchiveMTime(t *testing.T) {
 		{
 			name: "PicksOldestJSONFile",
 			setup: func(t *testing.T, s *Store) time.Time {
-				archiveDir := s.dir
-				if err := os.MkdirAll(archiveDir, 0o700); err != nil {
+				dir := s.dir
+				if err := os.MkdirAll(dir, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				oldPath := filepath.Join(archiveDir, "old.json")
-				newPath := filepath.Join(archiveDir, "new.json")
+				oldPath := filepath.Join(dir, "old.json")
+				newPath := filepath.Join(dir, "new.json")
 				if err := os.WriteFile(oldPath, []byte("{}"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -61,15 +61,15 @@ func TestOldestArchiveMTime(t *testing.T) {
 		{
 			name: "SkipsSubdirsAndNonJSON",
 			setup: func(t *testing.T, s *Store) time.Time {
-				archiveDir := s.dir
-				if err := os.MkdirAll(archiveDir, 0o700); err != nil {
+				dir := s.dir
+				if err := os.MkdirAll(dir, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				subDir := filepath.Join(archiveDir, "subdir")
+				subDir := filepath.Join(dir, "subdir")
 				if err := os.MkdirAll(subDir, 0o700); err != nil {
 					t.Fatal(err)
 				}
-				md := filepath.Join(archiveDir, "chat.notes.md")
+				md := filepath.Join(dir, "chat.notes.md")
 				if err := os.WriteFile(md, []byte("# notes"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -77,7 +77,7 @@ func TestOldestArchiveMTime(t *testing.T) {
 				if err := os.Chtimes(md, mdTime, mdTime); err != nil {
 					t.Fatal(err)
 				}
-				j := filepath.Join(archiveDir, "chat.json")
+				j := filepath.Join(dir, "chat.json")
 				if err := os.WriteFile(j, []byte("{}"), 0o600); err != nil {
 					t.Fatal(err)
 				}
@@ -94,13 +94,13 @@ func TestOldestArchiveMTime(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
 			wantTime := tc.setup(t, s)
-			got, ok := archive.OldestArchiveMTime(context.Background(), s.dir)
+			got, ok := archive.OldestChatMTime(context.Background(), s.dir)
 			if ok != tc.wantOK {
-				t.Fatalf("OldestArchiveMTime ok=%v, want %v", ok, tc.wantOK)
+				t.Fatalf("OldestChatMTime ok=%v, want %v", ok, tc.wantOK)
 			}
 			if tc.wantOK {
 				if got.Sub(wantTime) > time.Second || wantTime.Sub(got) > time.Second {
-					t.Errorf("OldestArchiveMTime = %v, want near %v", got, wantTime)
+					t.Errorf("OldestChatMTime = %v, want near %v", got, wantTime)
 				}
 			}
 		})
@@ -109,7 +109,7 @@ func TestOldestArchiveMTime(t *testing.T) {
 
 // --- PurgeScheduler ---
 
-// waitForPurge polls for the archive file to disappear, with a timeout.
+// waitForPurge polls for the chat file to disappear, with a timeout.
 func waitForPurge(t *testing.T, path string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -158,7 +158,7 @@ func TestPurgeScheduler_TriggerRunsPurgeWhenRetentionPositive(t *testing.T) {
 }
 
 func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
-	// A fresh archive entry (not yet expired) should not be purged
+	// A fresh chat (not yet expired) should not be purged
 	// but the scheduler should schedule a future purge.
 	s, _ := newTestStore(t)
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -173,11 +173,11 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 
 	// The file should still exist (not expired yet).
 	if _, err := os.Stat(chatPath); err != nil {
-		t.Errorf("fresh archive file was purged: %v", err)
+		t.Errorf("fresh chat file was purged: %v", err)
 	}
 }
 
-func TestPurgeScheduler_TriggerWithNoArchiveIsNoOp(t *testing.T) {
+func TestPurgeScheduler_TriggerWithNoChatsIsNoOp(t *testing.T) {
 	s, _ := newTestStore(t)
 	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
 	p.Start()
@@ -204,7 +204,7 @@ func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 
 	// Stop must have short-circuited: the aged-out file survives.
 	if _, err := os.Stat(chatPath); err != nil {
-		t.Errorf("archive file removed after Stop: %v (Stop should freeze purge)", err)
+		t.Errorf("chat file removed after Stop: %v (Stop should freeze purge)", err)
 	}
 }
 
@@ -220,7 +220,7 @@ func TestPurgeScheduler_StartInvokesTrigger(t *testing.T) {
 	p.Start()
 
 	if !waitForPurge(t, chatPath, 2*time.Second) {
-		t.Error("archive file survived Start() after 2s")
+		t.Error("chat file survived Start() after 2s")
 	}
 }
 
@@ -261,7 +261,7 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 	if !waitForPurge(t, chatPath, 2*time.Second) {
 		t.Error("expired entry not purged")
 	}
-	// c2 should survive (freshly archived, retention=1s).
+	// c2 should survive (fresh activity, retention=1s).
 	if _, err := os.Stat(c2Path); err != nil {
 		t.Errorf("fresh entry purged unexpectedly: %v", err)
 	}
@@ -359,8 +359,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		// Each entry should be purged exactly once (no double-fire).
 		s, _ := newTestStore(t)
 		_ = s.Mutate(context.Background(), "dup1", func(c *api.Chat, _ bool) bool { c.Name = "Dup"; return true })
-		_ = (func(...any) error { return nil })("dup1")
-		chatPath := filepath.Join(s.dir, "archive", "dup1.json")
+		chatPath := filepath.Join(s.dir, "dup1.json")
 		ageChat(t, s, "dup1", 72*time.Hour)
 
 		retention := 24 * time.Hour
@@ -405,7 +404,7 @@ func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 	gonePath := filepath.Join(s.dir, "gone.json")
 	ageChat(t, s, "gone", 72*time.Hour)
 
-	s.PurgeArchived(ctx, 24*time.Hour)
+	s.purgeExpired(ctx, 24*time.Hour)
 
 	if _, err := os.Stat(keepPath); err != nil {
 		t.Errorf("chat with recent UpdatedAt was purged on a stale mtime: %v", err)

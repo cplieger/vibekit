@@ -174,7 +174,7 @@ function init(): void {
   initFilePicker();
   initChatAttach();
   initTaskListPill();
-  // Wire toolbar history button. Hidden when retention is 0 (no archive).
+  // Wire toolbar history button. Hidden when retention is 0 (nothing kept).
   $.historyBtn.addEventListener("click", () => {
     void import("./history.js")
       .then(({ showHistoryView }) => {
@@ -185,8 +185,8 @@ function init(): void {
       });
   });
   // Sync history button visibility with retention setting. Retention = 0 is
-  // "no retention" (ephemeral chats, nothing archived) → hide History; > 0
-  // archives on close → show it.
+  // "no retention" (ephemeral chats, nothing survives a close) → hide History;
+  // anything else keeps closed chats → show it.
   const syncHistoryBtn = (): void => {
     $.historyBtn.classList.toggle("hidden", !isRetentionEnabled());
   };
@@ -365,7 +365,7 @@ async function checkAuthAndStart(): Promise<void> {
   // first chat's session/new lands. Fire-and-forget; session-sourced
   // updates overwrite this the moment a bridge spawns.
   void fetchModelsFromREST();
-  // Read retention setting so tab-close knows whether to archive or delete.
+  // Read retention setting so tab-close knows whether to keep or delete.
   void refreshRetention();
 
   const skel = chatSkeleton();

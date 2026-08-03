@@ -66,37 +66,32 @@ func newTestStore(t *testing.T) (*Store, *fakeBroadcaster) {
 	return s, b
 }
 
-// ageArchivedChat rewrites an archived chat file so both its ArchivedAt
-// stamp and its mtime predate `ago`, making it eligible for purge. Purge
-// ages from ArchivedAt (mtime is only a legacy fallback), and Archive now
-// stamps ArchivedAt to the archive moment, so a test that wants an entry
-// purged must age the stamped field — os.Chtimes on the mtime alone no
-// longer suffices.
+// ageChat backdates a chat so it is eligible for purge, writing BOTH its
+// UpdatedAt and its mtime. Purge ages from the chat's own UpdatedAt — its last
+// activity — so aging the mtime alone does not make an entry purgeable; mtime is
+// written too because it is the fallback for a chat that cannot be read.
 func ageChat(t *testing.T, s *Store, id string, ago time.Duration) {
 	t.Helper()
 	path := filepath.Join(s.dir, id+chatFileSuffix)
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read archived chat %s: %v", id, err)
+		t.Fatalf("read chat %s: %v", id, err)
 	}
 	var c api.Chat
 	if err := json.Unmarshal(data, &c); err != nil {
-		t.Fatalf("unmarshal archived chat %s: %v", id, err)
+		t.Fatalf("unmarshal chat %s: %v", id, err)
 	}
 	old := time.Now().Add(-ago)
-	// Retention ages from the chat's own last activity now, not an archive
-	// stamp. mtime is set too, since it is the fallback when a chat is
-	// unreadable.
 	c.UpdatedAt = old.UnixMilli()
 	out, err := json.MarshalIndent(&c, "", "  ")
 	if err != nil {
-		t.Fatalf("marshal archived chat %s: %v", id, err)
+		t.Fatalf("marshal chat %s: %v", id, err)
 	}
 	if err := os.WriteFile(path, out, 0o600); err != nil {
-		t.Fatalf("write archived chat %s: %v", id, err)
+		t.Fatalf("write chat %s: %v", id, err)
 	}
 	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatalf("chtimes archived chat %s: %v", id, err)
+		t.Fatalf("chtimes chat %s: %v", id, err)
 	}
 }
 

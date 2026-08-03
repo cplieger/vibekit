@@ -125,9 +125,9 @@ export function restoreAll(s: AppSettings): void {
 //
 // kiro-cli's cleanup.periodDays is pinned to 0/never — vibekit owns retention
 // end to end. The Days-kept number field carries 0 (off) .. N (keep N days);
-// the Keep-forever checkbox overrides it to -1 (archive, never purged) and
+// the Keep-forever checkbox overrides it to -1 (kept, never purged) and
 // disables the number field. Writes go to /api/settings; the settings_updated
-// SSE refreshes retention.ts (archive-vs-delete-on-close + History visibility).
+// SSE refreshes retention.ts (keep-vs-delete-on-close + History visibility).
 function initChatRetention(s: AppSettings): void {
   const daysInput = document.getElementById("chat-retention-days") as HTMLInputElement | null;
   const foreverInput = document.getElementById("chat-retention-forever") as HTMLInputElement | null;

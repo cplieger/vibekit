@@ -32,9 +32,10 @@ import { clearLastError } from "../send-state.js";
 
 // --- chat.delete ---
 // The tab-close path in the "no retention" mode (retention = 0): closing a
-// non-empty chat deletes it permanently (ephemeral chats). Retention > 0 uses
-// chat.archive instead (chat moves to History). This is the app's ONLY
-// active-chat delete path; History rows use chat.delete_archived.
+// non-empty chat deletes it permanently (ephemeral chats). With retention on,
+// a close just drops the tab (removeChat) and the server keeps the chat until
+// the purge window expires — there is no archive action and no
+// chat.delete_archived. This is the app's ONLY chat delete path.
 
 export const deleteChat = transportAction<string, { session: Session; atIndex: number }>({
   name: "chat.delete",

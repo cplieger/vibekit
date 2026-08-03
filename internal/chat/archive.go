@@ -25,9 +25,11 @@ func (s *Store) archiveSvc() *archive.Service {
 	return s.archive
 }
 
-// PurgeArchived deletes chats whose last activity is older than maxAge.
-// Delegates to the archive sub-package. Named for the retention concept, not a
-// directory: nothing is archived any more.
-func (s *Store) PurgeArchived(ctx context.Context, maxAge time.Duration) {
+// purgeExpired deletes chats whose last activity is older than maxAge.
+// Delegates to the archive sub-package, whose name is the retention CONCEPT,
+// not a directory: nothing is archived any more. Production reaches the same
+// Purge through NewPurgeScheduler; this exists for the store's own tests, which
+// need a synchronous pass.
+func (s *Store) purgeExpired(ctx context.Context, maxAge time.Duration) {
 	s.archiveSvc().Purge(ctx, maxAge)
 }

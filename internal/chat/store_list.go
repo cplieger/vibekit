@@ -120,7 +120,7 @@ func (s *Store) listOnce(ctx context.Context) ([]api.ChatHeader, bool) {
 	// Bounded-parallel header reads. Workers read from a shared index;
 	// no per-chat lock needed because readChatHeader is read-only and
 	// writes use atomic temp+rename (readers always see a complete file).
-	headers, complete := readHeadersParallel(ctx, valid, "chat")
+	headers, complete := readHeadersParallel(ctx, valid)
 	sort.Slice(headers, func(i, j int) bool {
 		return headers[i].UpdatedAt > headers[j].UpdatedAt
 	})

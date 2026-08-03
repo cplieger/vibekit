@@ -13,8 +13,8 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// fakeStore is a minimal StoreAccess for archive tests. Only Dir and
-// Lock carry behavior the archive subsystem under test depends on; the
+// fakeStore is a minimal StoreAccess for purge tests. Only Dir and
+// Lock carry behavior the purge subsystem under test depends on; the
 // rest are inert stubs that record the calls a test wants to assert on.
 type fakeStore struct {
 	dir         string
@@ -35,7 +35,7 @@ func newFakeStore(dir string) *fakeStore {
 
 func (f *fakeStore) Dir() string { return f.dir }
 
-// Lock returns a stable per-chat mutex so the archive code's
+// Lock returns a stable per-chat mutex so the purge code's
 // lock/unlock pairing behaves like the real store.
 func (f *fakeStore) Lock(chatID api.ChatID) *sync.Mutex {
 	f.mu.Lock()
@@ -77,7 +77,7 @@ func (f *fakeStore) ClearTombstone(chatID api.ChatID) {
 
 func (f *fakeStore) Broadcast() api.Broadcaster { return f.bc }
 
-// purgeRecorder collects chat IDs passed to an onPurge / onArchive
+// purgeRecorder collects chat IDs passed to an onPurge
 // callback. Safe for concurrent use (Purge runs callbacks from worker
 // goroutines).
 type purgeRecorder struct {
@@ -120,9 +120,9 @@ func idsToSortedStrings(ids []api.ChatID) []string {
 	return out
 }
 
-// newArchiveTestService builds a Service backed by a fakeStore with a
-// fresh temp store dir and an existing (empty) archive subdirectory.
-func newArchiveTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, string) {
+// newPurgeTestService builds a Service backed by a fakeStore with a
+// fresh temp store dir.
+func newPurgeTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, string) {
 	t.Helper()
 	dir := t.TempDir()
 	store := newFakeStore(dir)
@@ -131,17 +131,17 @@ func newArchiveTestService(t *testing.T, opts ...Option) (*Service, *fakeStore, 
 	return New(store, opts...), store, dir
 }
 
-// writeArchivedChat writes a chat file whose MTIME is `age` in the past and
+// writeAgedChat writes a chat file whose MTIME is `age` in the past and
 // returns its path. age=0 means "now".
 //
 // It writes no UpdatedAt, so purgeReferenceTime falls through to the mtime —
 // which is what makes these age assertions readable. The UpdatedAt path has its
 // own test.
-func writeArchivedChat(t *testing.T, archiveDir, id string, age time.Duration) string {
+func writeAgedChat(t *testing.T, dir, id string, age time.Duration) string {
 	t.Helper()
-	p := filepath.Join(archiveDir, id+".json")
+	p := filepath.Join(dir, id+".json")
 	if err := os.WriteFile(p, []byte(`{"id":"`+id+`"}`), 0o600); err != nil {
-		t.Fatalf("write archived chat %s: %v", id, err)
+		t.Fatalf("write aged chat %s: %v", id, err)
 	}
 	if age != 0 {
 		mt := time.Now().Add(-age)
