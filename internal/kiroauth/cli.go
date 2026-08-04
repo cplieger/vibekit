@@ -136,15 +136,6 @@ func (s *CLISource) Token(ctx context.Context) (map[string]any, error) {
 	return data.result(), nil
 }
 
-// Invalidate drops the cached token so the next Token call re-invokes the
-// CLI. Called when KAS rejects a vended token: the CLI may have re-logged
-// in (new sqlite state) while a still-unexpired-looking cache lingers here.
-func (s *CLISource) Invalidate() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cached, s.expiry = nil, time.Time{}
-}
-
 // result renders the callback reply map. Optional fields are omitted when
 // empty — the reference host does the same, and KAS treats a present-but-
 // empty authMethod differently from an absent one.
