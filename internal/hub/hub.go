@@ -176,10 +176,12 @@ func WithMCPConfig(c api.MCPConfig) Option {
 // WithKiroCLIPath wires the v3 auth-callback token source over the active
 // kiro-cli binary. resolve is the install manager's path resolver (same
 // contract as the bridge factory's cliPath: "" while nothing is installed),
-// so a version switch reaches the next callback. Unset in tests → the auth
-// callback answers with an RPC error instead of vending a token.
-func WithKiroCLIPath(resolve func() string) Option {
-	return func(h *Hub) { h.kiroToken = kiroauth.NewCLISource(resolve) }
+// so a version switch reaches the next callback; env is the manager's PATH
+// overlay (kiro-cli resolves its kiro-cli-chat sidecar by bare name on
+// PATH, so the overlay is required, same as bridge spawns). Unset in tests
+// → the auth callback answers with an RPC error instead of vending a token.
+func WithKiroCLIPath(resolve func() string, env func() []string) Option {
+	return func(h *Hub) { h.kiroToken = kiroauth.NewCLISource(resolve, env) }
 }
 
 // WithSessionReaper wires the KAS session reaper and the referenced-session

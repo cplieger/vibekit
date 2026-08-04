@@ -406,7 +406,7 @@ h3.section-title {
 
 .toggle :where(input:checked) + .toggle-slider::before {
   transform: translateX(1rem);
-  background: #fff;
+  background: var(--c-on-accent);
 }
 
 .toggle-inline {

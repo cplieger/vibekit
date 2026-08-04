@@ -188,7 +188,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--c-text-primary);
+
+  /* The Kiro mark (messages.ts KIRO_AVATAR) is drawn in currentColor so it
+     follows the theme-split accent instead of a baked-in brand hex. */
+  color: var(--c-accent);
 }
 
 .msg-avatar .avatar-icon {

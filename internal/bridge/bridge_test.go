@@ -1721,20 +1721,24 @@ func waitForBridgePID(t *testing.T, path string) int {
 	}
 }
 
-// TestSessionParams_CarryNoMCPServers pins the PRECEDENCE half of the MCP config
-// adoption, on the wire.
+// TestSessionParams_CarryNoMCPServers pins BOTH halves of the MCP session
+// param contract, on the wire.
 //
-// vibekit used to send its server set inline as `mcpServers` on session/new and
-// session/load. It renders KAS's own hot-reloading config file instead. KAS
-// merges `client > file-based`, so a surviving inline entry OUTRANKS the file:
-// the file would still reload, the agent would keep using the inline copy, and
-// every edit in the UI would look like it did nothing. That failure is silent
-// and would present as "MCP settings don't work", so it gets a wire-level test
-// rather than trust in a deletion.
+// PRESENCE: kiro-cli 2.16's session/new schema requires `mcpServers` as a
+// non-optional array — omitting the key fails every session with "Invalid
+// params: expected array, received undefined". So the key must be there.
 //
-// It asserts on the RAW request bytes, not on a Go struct, because the bug it
-// guards against is a re-added map key — something a typed assertion on
-// StartOpts would not see.
+// EMPTINESS: vibekit used to send its server set inline. It renders KAS's
+// own hot-reloading config file instead, and KAS merges client entries over
+// file entries PER NAME — a surviving inline entry OUTRANKS the file: the
+// file would still reload, the agent would keep using the inline copy, and
+// every edit in the UI would look like it did nothing. That failure is
+// silent and would present as "MCP settings don't work". An EMPTY array
+// carries no names, so the file-based set is untouched.
+//
+// It asserts on the RAW request bytes, not on a Go struct, because the bug
+// it guards against is a re-added or re-dropped map key — something a typed
+// assertion on StartOpts would not see.
 func TestSessionParams_CarryNoMCPServers(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "requests.log")
@@ -1798,8 +1802,8 @@ done
 					continue
 				}
 				found = true
-				if strings.Contains(line, "mcpServers") {
-					t.Errorf("%s carries mcpServers, which OUTRANKS KAS's config file:\n%s", tc.method, line)
+				if !strings.Contains(line, `"mcpServers":[]`) {
+					t.Errorf("%s must carry an EMPTY mcpServers array (2.16 requires the key; entries would outrank KAS's config file):\n%s", tc.method, line)
 				}
 			}
 			if !found {

@@ -44,12 +44,27 @@ export KIRO_CLI_VERSION KIRO_CLI_SHA256 KIRO_CLI_SHA256_ARM64
 # retained predecessor.
 mkdir -p "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
   "$HOME/.local/share/kiro-cli" "$HOME/.ssh" \
-  "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" \
-  || {
+  "$KIRO_HOME" "$HOME/.cache/go-build" "$HOME/.docker/cli-plugins" ||
+  {
     printf "ERROR: failed to create required directories (is /config mounted and writable?)\n"
     sleep 10
     exit 1
   }
+
+# Normalize the modes of everything just created, EVERY boot — never trust
+# mkdir's result. The volume is host-owned storage: an inheritable ACL on the
+# mount (TrueNAS/SMB-managed ZFS datasets set these) or a nonstandard umask
+# stamps whatever modes it likes on new directories, mkdir -p silently keeps
+# whatever an existing directory already has, and two consumers refuse bad
+# modes outright — the tools engine will not execute from a group- or
+# other-writable root, and sshd/ssh refuses a lax ~/.ssh. Idempotent chmod is
+# cheap; a wrong mode here costs a disabled subsystem.
+chmod 755 "$HOME" || true
+chmod go-w "$TOOLS" "$TOOLS/bin" "$TOOLS/kiro-cli-versions" \
+  "$HOME/.local" "$HOME/.local/share" "$HOME/.local/share/kiro-cli" \
+  "$KIRO_HOME" "$HOME/.cache" "$HOME/.cache/go-build" \
+  "$HOME/.docker" "$HOME/.docker/cli-plugins" || true
+chmod 700 "$HOME/.ssh" || true
 
 # One-time migration from the legacy KIRO_HOME (/config/kiro). The v3
 # engine (KAS) ignores KIRO_HOME and reads $HOME/.kiro, so KIRO_HOME now
@@ -63,10 +78,10 @@ if [ -d /config/kiro ] && [ "$KIRO_HOME" != /config/kiro ]; then
   mkdir -p "$KIRO_HOME/settings" "$KIRO_HOME/steering" "$KIRO_HOME/agents"
   # Legacy copies are strictly newer than anything already at the
   # destination (writes moved to /config/kiro when it became KIRO_HOME).
-  [ -f /config/kiro/settings/cli.json ] \
-    && cp -f /config/kiro/settings/cli.json "$KIRO_HOME/settings/cli.json"
-  [ -f /config/kiro/steering/custom.md ] \
-    && cp -f /config/kiro/steering/custom.md "$KIRO_HOME/steering/custom.md"
+  [ -f /config/kiro/settings/cli.json ] &&
+    cp -f /config/kiro/settings/cli.json "$KIRO_HOME/settings/cli.json"
+  [ -f /config/kiro/steering/custom.md ] &&
+    cp -f /config/kiro/steering/custom.md "$KIRO_HOME/steering/custom.md"
   # User-defined agent configs, if any; keep existing destination files.
   if [ -d /config/kiro/agents ]; then
     cp -rn /config/kiro/agents/. "$KIRO_HOME/agents/" 2>/dev/null || true
@@ -123,12 +138,12 @@ prune_superseded_kas_runtimes() {
   fi
   kas_real=$(realpath "$kas_dir" 2>/dev/null) || kas_real=""
   case "$kas_real" in
-    "$data_home"/kiro-cli/kas) ;;
-    *)
-      printf "WARNING: kiro-cli kas store does not resolve inside the data dir; refusing to prune (%s -> %s)\n" \
-        "$kas_dir" "${kas_real:-unknown}" >&2
-      return 0
-      ;;
+  "$data_home"/kiro-cli/kas) ;;
+  *)
+    printf "WARNING: kiro-cli kas store does not resolve inside the data dir; refusing to prune (%s -> %s)\n" \
+      "$kas_dir" "${kas_real:-unknown}" >&2
+    return 0
+    ;;
   esac
   for entry in "$kas_dir"/*; do
     # An empty store leaves the glob unexpanded.
@@ -138,7 +153,7 @@ prune_superseded_kas_runtimes() {
     # <version>-<hash> stem); quoting keeps a version string from being read as a
     # glob. Anything not on the pin is a superseded version.
     case "$name" in
-      "$KIRO_CLI_VERSION"-*) continue ;;
+    "$KIRO_CLI_VERSION"-*) continue ;;
     esac
     # Only VERSION-KEYED entries are superseded runtimes. kas/ is kiro-cli's
     # directory, not ours, so an entry with no leading numeric version component is

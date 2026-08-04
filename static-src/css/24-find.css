@@ -118,7 +118,7 @@ mark.chat-find-hit {
 }
 
 mark.chat-find-hit-current {
-  color: #fff;
+  color: var(--c-on-accent);
   background: var(--c-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 45%, transparent);
 }
