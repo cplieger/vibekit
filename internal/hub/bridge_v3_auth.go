@@ -6,20 +6,22 @@
 //	_kiro/auth/getAccessToken -> {accessToken, expiresAt, profileArn?}
 //	_kiro/terminal/shell_type -> {shellType}
 //
-// Without answers, session/new stalls and no turn completes. It also sends
-// _kiro/openExternalUrl (only because we declare that client capability;
-// see internal/bridge/bridge.go initialize) when an MCP server needs a
-// browser OAuth page opened — answered here too. v1/v2 never send any of
-// these, so handleKiroClientRequest is a safe no-op there.
+// Without an answer to getAccessToken KAS runs unauthenticated: sessions
+// still open, but every service-backed surface (the model registry, turns)
+// fails. It also sends _kiro/openExternalUrl (only because we declare that
+// client capability; see internal/bridge/bridge.go initialize) when an MCP
+// server needs a browser OAuth page opened — answered here too. v1/v2
+// never send any of these, so handleKiroClientRequest is a safe no-op
+// there.
 //
-// The getAccessToken reply carries profileArn (from kiro-cli's state DB via
-// internal/kiroauth) so KAS routes to the profile's region and account-level
-// _kiro/account/getUsage can identify the account.
-//
-// Auth tokens are read (and refreshed when near expiry) from the ambient
-// kiro-cli SSO cache via internal/kiroauth. KAS rejects a token inside its
-// ~180s refresh buffer, so kiroauth refreshes via SSO-OIDC and writes the
-// rotated token back to the cache before we vend it.
+// Tokens come from kiro-cli itself: internal/kiroauth shells the CLI's
+// internal `chat _ get-kas-token` subcommand — the same interface the
+// CLI's own TUI host uses for this exact callback. The CLI owns the login
+// store and the refresh chain; the reply carries accessToken, expiresAt
+// and profileArn (plus authMethod/provider when present), so KAS routes to
+// the profile's region and _kiro/account/getUsage can identify the
+// account. vibekit performs no token refresh of its own — a second
+// refresher would fork the rotating refresh-token chain.
 
 package hub
 
@@ -38,18 +40,6 @@ const (
 	methodKiroGetAccessToken = "_kiro/auth/getAccessToken" //nolint:gosec // G101: ACP method name, not a credential
 	methodKiroShellType      = "_kiro/terminal/shell_type"
 )
-
-// kiroTokenReader vends (and refreshes) the ambient kiro-cli SSO access
-// token for the v3 auth callback. Package-level singleton: the reader
-// serializes refreshes internally so concurrent bridge callbacks don't
-// double-refresh the rotating token.
-var kiroTokenReader = kiroauth.NewReader("")
-
-// kiroProfileReader sources the CodeWhisperer profile ARN from kiro-cli's
-// state DB, included in the getAccessToken reply so KAS routes to the
-// profile's region and _kiro/account/getUsage can identify the account.
-// Package-level singleton (modtime-cached) so it isn't re-read per call.
-var kiroProfileReader = kiroauth.NewProfileReader("")
 
 // handleKiroClientRequest answers the v3-only server->client requests.
 // Returns true if msg was one of them (so translateACPEvent stops),
@@ -132,11 +122,11 @@ func isSafeExternalURL(u string) bool {
 	return parsed.Scheme == "http" || parsed.Scheme == "https"
 }
 
-// respondKiroAccessToken vends {accessToken, expiresAt} from the SSO
-// cache, refreshing first when near expiry. On failure it returns a
-// JSON-RPC error so KAS surfaces a clear auth failure rather than hanging.
+// respondKiroAccessToken vends the get-kas-token result. On failure it
+// returns a JSON-RPC error so KAS surfaces a clear auth failure rather
+// than hanging.
 func (h *Hub) respondKiroAccessToken(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-	result, err := kiroAccessTokenResult(ctx)
+	result, err := h.kiroAccessTokenResult(ctx)
 	if err != nil {
 		slog.Error("v3 auth: token unavailable", "chat_id", chatID, "error", err)
 		h.respondBridge(ctx, chatID, msg, nil, err)
@@ -145,27 +135,15 @@ func (h *Hub) respondKiroAccessToken(ctx context.Context, chatID api.ChatID, msg
 	h.respondBridge(ctx, chatID, msg, result, nil)
 }
 
-// kiroAccessTokenResult vends the {accessToken, expiresAt} result for the v3
-// _kiro/auth/getAccessToken host request, refreshing the SSO token when near
-// expiry. Shared by the chat-bridge responder and the utility bridge
-// (answerUtilityHostRequest) so the wire keys live in exactly one place.
-func kiroAccessTokenResult(ctx context.Context) (map[string]any, error) {
-	tok, exp, err := kiroTokenReader.Token(ctx)
-	if err != nil {
-		return nil, err
+// kiroAccessTokenResult vends the result for the v3 _kiro/auth/getAccessToken
+// host request by asking kiro-cli for its current token (see
+// kiroauth.CLISource). Shared by the chat-bridge responder and the utility
+// bridge (answerHostRequest) so the wire keys live in exactly one place.
+func (h *Hub) kiroAccessTokenResult(ctx context.Context) (map[string]any, error) {
+	if h.kiroToken == nil {
+		return nil, kiroauth.ErrNoSource
 	}
-	res := map[string]any{"accessToken": tok, "expiresAt": exp}
-	// profileArn is best-effort: KAS routes to the profile's region with
-	// it and falls back to a default region without it (turns still work).
-	// It IS required for _kiro/account/getUsage, which returns
-	// "Invalid profileArn." when the reply omits it. Omit on read failure
-	// rather than failing the whole auth callback.
-	if arn, aErr := kiroProfileReader.Arn(); aErr == nil && arn != "" {
-		res["profileArn"] = arn
-	} else if aErr != nil {
-		slog.Debug("v3 auth: profile arn unavailable", "error", aErr)
-	}
-	return res, nil
+	return h.kiroToken.Token(ctx)
 }
 
 // kiroShellTypeResult is the answer to the v3 _kiro/terminal/shell_type host

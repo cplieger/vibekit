@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/kiroauth"
 	"pgregory.net/rapid"
 )
 
@@ -354,21 +352,38 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 		}
 	})
 
-	t.Run("getAccessToken answered even when no token file", func(t *testing.T) {
-		saved := kiroTokenReader
-		kiroTokenReader = kiroauth.NewReader(filepath.Join(t.TempDir(), "absent.json"))
-		defer func() { kiroTokenReader = saved }()
+	t.Run("getAccessToken answered even when no token source", func(t *testing.T) {
 		rb := newRespondingBridge()
 		id := int64(9)
 		(&utilitySession{}).answerHostRequest(rb, &api.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
 		rb.respMu.Lock()
 		defer rb.respMu.Unlock()
-		// Answered as a JSON-RPC error (no token present) — never dropped.
+		// Answered as a JSON-RPC error (no source wired) — never dropped.
 		if rb.response.id != id {
 			t.Fatalf("auth request not answered: got id %d, want %d", rb.response.id, id)
 		}
 		if rb.response.err == nil {
-			t.Errorf("expected an error result when the token file is absent")
+			t.Errorf("expected an error result when no token source is wired")
+		}
+	})
+
+	t.Run("getAccessToken forwards the wired source's result", func(t *testing.T) {
+		rb := newRespondingBridge()
+		id := int64(11)
+		us := &utilitySession{hooks: utilitySessionHooks{
+			tokenSource: func(context.Context) (map[string]any, error) {
+				return map[string]any{"accessToken": "tok", "expiresAt": "2027-01-01T00:00:00Z"}, nil
+			},
+		}}
+		us.answerHostRequest(rb, &api.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
+		rb.respMu.Lock()
+		defer rb.respMu.Unlock()
+		if rb.response.id != id {
+			t.Fatalf("auth request not answered: got id %d, want %d", rb.response.id, id)
+		}
+		m, ok := rb.response.result.(map[string]any)
+		if !ok || m["accessToken"] != "tok" {
+			t.Errorf("result = %v, want the source's token map", rb.response.result)
 		}
 	})
 }
