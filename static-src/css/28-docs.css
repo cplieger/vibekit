@@ -85,7 +85,7 @@
   font-size: var(--fs-xs);
   line-height: 1;
   padding: 0.1875rem var(--sp-1);
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   background: var(--c-bg-tertiary);
   color: var(--c-text-tertiary);
   border: 1px solid var(--c-border);
@@ -145,7 +145,7 @@
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   font-weight: 600;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   background: color-mix(in oklch, var(--c-yellow) 18%, transparent);
   color: var(--c-yellow);
 }
@@ -160,7 +160,7 @@
 
 .docs-skel-name {
   height: 0.875rem;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
 }
 
 /* --- Workflows tab -------------------------------------------------------- */

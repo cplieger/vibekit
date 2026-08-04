@@ -558,7 +558,7 @@ h3.section-title {
 /* Pin (auto_update) toggle. Active = pinned (auto_update off): we
  * tint it so a glance shows which tools are version-frozen. */
 .list-row-pin.list-row-pin-active {
-  color: var(--c-accent, var(--c-text-primary));
+  color: var(--c-accent);
 }
 
 /* Inline "enable a runtime / install a CLI" banner used inside the
@@ -747,16 +747,16 @@ h3.section-title {
   flex: 0 0 auto;
   min-width: 2.6rem;
   padding: 0.05rem 0.35rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   font-size: var(--fs-xs);
   font-weight: 600;
   text-align: center;
-  border: 1px solid var(--border);
+  border: 1px solid var(--c-border);
   color: var(--c-text-tertiary);
 }
 .history-kind-run {
-  border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
-  color: var(--accent);
+  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
+  color: var(--c-accent);
 }
 
 /* Only a meaningful status is rendered (never KAS's ubiquitous `idle`), so this
@@ -764,7 +764,7 @@ h3.section-title {
 .history-status {
   flex: 0 0 auto;
   font-size: var(--fs-xs);
-  color: var(--warn, var(--c-text-tertiary));
+  color: var(--c-warning);
   text-transform: capitalize;
 }
 
@@ -772,7 +772,7 @@ h3.section-title {
   cursor: pointer;
 }
 .history-table-row:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--c-accent);
   outline-offset: -2px;
 }
 
@@ -811,16 +811,16 @@ h3.section-title {
   background: var(--c-text-tertiary);
 }
 .run-node-completed .run-node-dot {
-  background: var(--ok, #3fb950);
+  background: var(--c-green);
 }
 .run-node-failed .run-node-dot {
-  background: var(--danger, #f85149);
+  background: var(--c-danger);
 }
 .run-node-paused .run-node-dot {
-  background: var(--warn, #d29922);
+  background: var(--c-warning);
 }
 .run-node-running .run-node-dot {
-  background: var(--accent);
+  background: var(--c-accent);
 }
 .run-node-id {
   font-family: var(--font-mono);
@@ -846,7 +846,7 @@ h3.section-title {
   margin: 0;
   padding: var(--sp-2);
   background: var(--c-bg-secondary);
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   overflow-x: auto;
   font-size: var(--fs-sm);
   white-space: pre-wrap;

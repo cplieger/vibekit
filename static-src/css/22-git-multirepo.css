@@ -119,10 +119,10 @@
 .git-multirepo-error {
   padding: var(--sp-4);
   text-align: center;
-  border: 1px dashed color-mix(in srgb, var(--c-danger, #e66666) 50%, var(--c-border));
+  border: 1px dashed color-mix(in srgb, var(--c-danger) 50%, var(--c-border));
   border-radius: var(--r);
   font-size: var(--fs-sm);
-  color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
+  color: color-mix(in srgb, var(--c-danger) 90%, var(--c-text-primary));
 }
 
 /* Per-repo collapsible section */
@@ -271,11 +271,11 @@
 }
 
 .git-repo-ahead {
-  color: color-mix(in srgb, var(--c-accent, #6cbcff) 80%, var(--c-text-primary));
+  color: color-mix(in srgb, var(--c-accent) 80%, var(--c-text-primary));
 }
 
 .git-repo-behind {
-  color: color-mix(in srgb, var(--c-warning, #e6c074) 80%, var(--c-text-primary));
+  color: color-mix(in srgb, var(--c-warning) 80%, var(--c-text-primary));
 }
 
 .git-repo-stashes {
@@ -381,7 +381,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--c-warning, #e6c074) 80%, transparent);
+  background: color-mix(in srgb, var(--c-warning) 80%, transparent);
   margin-inline-start: var(--sp-1);
 }
 
@@ -407,7 +407,7 @@
 }
 
 .git-repo-row-error {
-  color: color-mix(in srgb, var(--c-danger, #e66666) 90%, var(--c-text-primary));
+  color: color-mix(in srgb, var(--c-danger) 90%, var(--c-text-primary));
 }
 
 .git-repo-action-bar {
@@ -424,8 +424,8 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  background: color-mix(in srgb, var(--c-accent, #6cbcff) 8%, var(--c-bg-primary));
-  border: 1px solid color-mix(in srgb, var(--c-accent, #6cbcff) 35%, var(--c-border));
+  background: color-mix(in srgb, var(--c-accent) 8%, var(--c-bg-primary));
+  border: 1px solid color-mix(in srgb, var(--c-accent) 35%, var(--c-border));
   border-radius: var(--r);
   font-size: var(--fs-sm);
 }
@@ -476,7 +476,7 @@
 }
 
 .git-repo-section-body .git-file-row.staged > .git-file-row-top {
-  background: color-mix(in srgb, var(--c-accent-2, #66e6bb) 6%, var(--c-bg-primary));
+  background: color-mix(in srgb, var(--c-teal) 6%, var(--c-bg-primary));
 }
 
 /* Inline diff drawer */
@@ -512,13 +512,13 @@
 }
 
 .git-diff-line-add {
-  background: color-mix(in srgb, #2da44e 12%, transparent);
-  color: color-mix(in srgb, #2da44e 80%, var(--c-text-primary));
+  background: color-mix(in srgb, var(--c-green) 12%, transparent);
+  color: color-mix(in srgb, var(--c-green) 80%, var(--c-text-primary));
 }
 
 .git-diff-line-del {
-  background: color-mix(in srgb, #cf222e 12%, transparent);
-  color: color-mix(in srgb, #cf222e 80%, var(--c-text-primary));
+  background: color-mix(in srgb, var(--c-red) 12%, transparent);
+  color: color-mix(in srgb, var(--c-red) 80%, var(--c-text-primary));
 }
 
 .git-diff-line-hunk {

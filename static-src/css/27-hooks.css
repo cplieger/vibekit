@@ -39,7 +39,7 @@
 /* Small pills for trigger / action-type / matcher. */
 .hook-badge {
   padding: 0 0.4rem;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   font-size: var(--fs-xs);
   line-height: 1.5;
   white-space: nowrap;
@@ -65,8 +65,8 @@
 }
 
 .hook-action-agent {
-  color: var(--c-purple, var(--c-accent));
-  background: color-mix(in srgb, var(--c-purple, var(--c-accent)) 14%, transparent);
+  color: var(--c-accent);
+  background: color-mix(in srgb, var(--c-accent) 14%, transparent);
 }
 
 .hook-matcher {

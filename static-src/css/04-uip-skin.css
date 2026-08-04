@@ -113,22 +113,26 @@
   outline-offset: 2px;
 }
 
+/* Status toasts carry --c-on-accent ink, not #fff: like the accent, the
+   red/green fills are pastel in dark mode (white ink read at 1.5-2.3:1) and
+   deep in light mode, so the ink flips with the theme. */
+
 /* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
 .uip-toast--error {
   background: var(--c-red);
-  color: #fff;
+  color: var(--c-on-accent);
   border-color: transparent;
 
-  --uip-toast-progress-color: color-mix(in srgb, #fff 50%, transparent);
+  --uip-toast-progress-color: color-mix(in srgb, var(--c-on-accent) 50%, transparent);
 }
 
 /* stylelint-disable-next-line selector-class-pattern -- BEM level modifier defined by @cplieger/ui-primitives */
 .uip-toast--success {
   background: var(--c-green);
-  color: #fff;
+  color: var(--c-on-accent);
   border-color: transparent;
 
-  --uip-toast-progress-color: color-mix(in srgb, #fff 50%, transparent);
+  --uip-toast-progress-color: color-mix(in srgb, var(--c-on-accent) 50%, transparent);
 }
 
 .uip-toast-msg {

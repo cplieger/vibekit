@@ -140,7 +140,7 @@
   color: var(--c-text-secondary);
   background: none;
   border: 1px solid var(--c-border);
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   padding: 2px var(--sp-2);
   cursor: pointer;
   transition:
@@ -310,7 +310,7 @@
 .turn-ledger-summary:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 2px;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
 }
 
 /* Did it work: a glyph plus a colour, never colour alone — the footer's
@@ -386,7 +386,7 @@
   padding: var(--sp-1) var(--sp-1);
   background: none;
   border: 0;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   color: var(--c-text-secondary);
   font-size: var(--fs-xs);
   font-family: var(--font-mono);
@@ -419,7 +419,7 @@
   font-size: var(--fs-xs);
   line-height: 1;
   padding: 1px var(--sp-1);
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   background: color-mix(in srgb, var(--c-green) 18%, transparent);
   color: var(--c-green);
 }
@@ -487,7 +487,7 @@
   min-height: 1.5rem;
   padding: 0 2px;
   border: 1px solid transparent;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   background: none;
   color: var(--c-text-tertiary);
   font-family: var(--font-mono);
@@ -534,7 +534,7 @@
 .rail-marker[data-current] {
   background: var(--c-accent);
   border-color: var(--c-accent);
-  color: var(--c-bg-primary);
+  color: var(--c-on-accent);
   font-weight: var(--fw-semibold);
 }
 
@@ -738,7 +738,7 @@
 .turn-fold-toggle:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 1px;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
 }
 
 /* Search-match count on a turn's header. Empty unless a search is running, so
@@ -755,7 +755,7 @@
   justify-content: center;
   min-width: 1rem;
   padding: 0 var(--sp-1);
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   background: color-mix(in srgb, var(--c-yellow) 25%, transparent);
   color: var(--c-yellow);
   font-family: var(--font-mono);

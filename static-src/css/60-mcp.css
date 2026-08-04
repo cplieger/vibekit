@@ -81,7 +81,7 @@
   flex: 0 0 3ch;
   text-align: right;
   padding: 0 var(--sp-1);
-  color: var(--c-text-tertiary, var(--c-text-secondary));
+  color: var(--c-text-tertiary);
   user-select: none;
   opacity: 0.7;
   background: var(--c-bg-elev-2, var(--c-bg-secondary));
@@ -96,7 +96,7 @@
 
 .diff-marker {
   flex: 0 0 1.5ch;
-  color: var(--c-text-tertiary, var(--c-text-secondary));
+  color: var(--c-text-tertiary);
   user-select: none;
 }
 
@@ -222,7 +222,7 @@
   border-radius: var(--r);
   margin: var(--sp-1);
   padding: var(--sp-1) var(--sp-2);
-  background: color-mix(in oklch, var(--c-coral, var(--c-red)) 10%, var(--c-bg-secondary));
+  background: color-mix(in oklch, var(--c-red) 10%, var(--c-bg-secondary));
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
@@ -235,7 +235,7 @@
 
 .conflict-status {
   font-weight: 600;
-  color: var(--c-coral, var(--c-red));
+  color: var(--c-red);
 }
 
 .conflict-hunk-row {
@@ -267,7 +267,7 @@
 }
 
 .conflict-btn:hover {
-  background: var(--c-bg-hover, var(--c-bg-tertiary));
+  background: var(--c-bg-hover);
 }
 
 .conflict-btn:disabled {
@@ -810,7 +810,7 @@
 }
 
 .mcp-disc-insert:hover {
-  background: var(--c-bg-hover, var(--c-bg-tertiary));
+  background: var(--c-bg-hover);
   border-color: var(--c-accent);
 }
 
