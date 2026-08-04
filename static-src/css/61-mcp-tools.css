@@ -103,7 +103,7 @@
 
 .commands-popover-row:hover,
 .commands-popover-row.selected {
-  background: var(--c-bg-hover, rgb(255 255 255 / 6%));
+  background: var(--c-bg-hover);
 }
 
 .commands-popover-name {

@@ -24,6 +24,38 @@
     color: var(--c-text-primary);
   }
 
+  /* Base link ink. Without this, any anchor outside a classed component
+     (the open-external-URL banner, an elicitation card's link, transcript
+     markdown) falls to the UA stylesheet, whose dark-scheme link blue reads
+     ~3:1 on this background — and its :visited purple darker still. An
+     author rule covers :visited too (origin beats the UA pseudo-class).
+     Living in the reset layer, every component link skin (term-link,
+     popup-link, code-refs-link) still wins. */
+  a {
+    color: var(--c-link);
+  }
+
+  /* Same "no UA fallthrough" rule for the other UA-colored primitives that
+     reach the DOM unclassed. The transcript's markdown `---` renders a bare
+     <hr> (smd-renderer maps RULE to hr with no class); UA <mark> is yellow
+     with BLACK ink, unreadable if any future mark misses its class. */
+  hr {
+    border: none;
+    border-block-start: 1px solid var(--c-border);
+  }
+
+  mark {
+    background: color-mix(in srgb, var(--c-yellow) 25%, transparent);
+    color: inherit;
+  }
+
+  /* Placeholder ink everywhere, not per-listed-class: the find bar and the
+     permission rule forms sat outside the old seven-class list and fell to
+     the UA grey. */
+  ::placeholder {
+    color: var(--c-text-tertiary);
+  }
+
   :where(input, textarea, select) {
     caret-color: var(--c-accent);
   }
@@ -40,18 +72,6 @@
   ):focus {
     outline: none;
     border-color: var(--c-accent);
-  }
-
-  :is(
-    .steering-textarea,
-    .auth-input,
-    .git-commit-input,
-    [id="prompt-input"],
-    .modal-input,
-    .page-textarea,
-    .tool-form-input
-  )::placeholder {
-    color: var(--c-text-tertiary);
   }
 
   /* Custom checkbox: appearance:none + design-token colors so checkboxes

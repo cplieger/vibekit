@@ -339,7 +339,7 @@
    diff to open, so only the file case gets a pointer and a hit target. */
 .fb-git-clickable {
   cursor: pointer;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   transition: background var(--dur-micro) var(--ease-micro);
 
   &:hover {

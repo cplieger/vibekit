@@ -58,6 +58,18 @@
     --c-border: oklch(45% 0 0deg);
     --c-text-tertiary: oklch(70% 0 0deg);
   }
+
+  /* The 70% lift above is dark-mode arithmetic; on the light theme it LOWERS
+     contrast (2.6:1 vs the default's 4.7:1). Push the other way there. */
+  :root[data-theme="light"] {
+    --c-text-tertiary: oklch(40% 0.015 277.1deg);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) {
+      --c-text-tertiary: oklch(40% 0.015 277.1deg);
+    }
+  }
 }
 
 @media (forced-colors: active) {

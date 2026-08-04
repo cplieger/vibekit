@@ -883,8 +883,11 @@
   }
 
   &:where(.blocked) {
-    background: var(--c-yellow, #b88f00);
-    color: oklch(0% 0 0deg);
+    background: var(--c-yellow);
+
+    /* on-accent, not black: the yellow fill is pastel in dark mode (dark ink)
+       and deep in light mode (white ink), same inversion as the accent. */
+    color: var(--c-on-accent);
     cursor: default;
 
     & svg {
@@ -893,7 +896,7 @@
     }
 
     &:hover {
-      background: var(--c-yellow, #b88f00);
+      background: var(--c-yellow);
       filter: none;
     }
   }
@@ -946,8 +949,8 @@
 .spinner {
   width: 1rem;
   height: 1rem;
-  border: 0.125rem solid oklch(100% 0 0deg / 30%);
-  border-top-color: #fff;
+  border: 0.125rem solid var(--c-border);
+  border-top-color: var(--c-text-primary);
   border-radius: 50%;
   animation: vk-spin 0.8s linear infinite;
 }

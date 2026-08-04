@@ -910,7 +910,7 @@
 }
 
 .git-st-r {
-  color: oklch(76.6% 0.111 259.9deg);
+  color: var(--c-blue);
 }
 
 .git-st-u {
@@ -1083,19 +1083,19 @@
 }
 
 .git-badge[data-state="local"] {
-  background: var(--c-warning, #e6c074);
+  background: var(--c-warning);
 }
 
 .git-badge[data-state="remote"] {
-  background: var(--c-accent, #6cbcff);
+  background: var(--c-accent);
 }
 
 .git-badge[data-state="both"] {
-  background: color-mix(in srgb, var(--c-warning, #e6c074) 50%, var(--c-accent, #6cbcff));
+  background: color-mix(in srgb, var(--c-warning) 50%, var(--c-accent));
 }
 
 .git-badge[data-state="error"] {
-  background: var(--c-danger, #e66666);
+  background: var(--c-danger);
 }
 
 [id="git-btn"] {
@@ -1373,7 +1373,7 @@
 }
 
 .tool-state-off {
-  background: var(--text-dim, #777);
+  background: var(--c-text-tertiary);
   opacity: 0.55;
 }
 
@@ -1386,12 +1386,12 @@
 
 /* Catalog freshness line under the Tools action bar. The error suffix
    marks a failed refresh whose last good catalog still stands. */
-#tool-catalog-meta {
+[id="tool-catalog-meta"] {
   margin: 0.35rem 0 0;
 }
 
 .catalog-meta-error {
-  color: var(--warning, #d9a03f);
+  color: var(--c-warning);
 }
 
 /* Agent question (kiro-cli v3 _kiro/userInput): asked mid-turn for plan
@@ -1457,7 +1457,7 @@
 
 .user-input-recommended {
   padding: 0 0.4rem;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   font-size: var(--fs-xs);
   line-height: 1.5;
   white-space: nowrap;

@@ -447,7 +447,7 @@
   .tab-close {
     background: none;
     border: none;
-    color: var(--c-text-tertiary);
+    color: var(--c-text-secondary);
     cursor: pointer;
     padding: var(--sp-1);
     flex-shrink: 0;
@@ -465,9 +465,20 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* On the active tab the × sits on the accent-derived fill, where the grey
+     inks sink in. Carry the row's full ink there (white in dark mode). */
+  .tab.active .tab-close {
+    color: var(--c-text-primary);
+  }
+
+  /* Hover lifts WHATEVER fill the × sits on — flat row, hovered row, or the
+     active tab's violet chip — instead of painting the global grey
+     --c-bg-hover square, which mismatched the accent fill and vanished
+     against an already-hovered row. Same text-mix construction as
+     --c-tab-active-border. */
   .tab-close:hover {
     color: var(--c-text-primary);
-    background: var(--c-bg-hover);
+    background: color-mix(in srgb, var(--c-text-primary) 12%, transparent);
   }
 
   /* Sidebar footer */

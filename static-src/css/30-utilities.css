@@ -105,12 +105,12 @@
 
   /* Syntax highlighting tokens */
   .hl-keyword {
-    color: oklch(72% 0.18 295deg);
+    color: var(--c-hl-keyword);
     font-weight: var(--fw-medium);
   }
 
   .hl-string {
-    color: oklch(75% 0.14 145deg);
+    color: var(--c-hl-string);
   }
 
   .hl-comment {
@@ -119,7 +119,7 @@
   }
 
   .hl-number {
-    color: oklch(78% 0.13 60deg);
+    color: var(--c-hl-number);
   }
 
   .hl-punctuation {
@@ -163,7 +163,7 @@
   }
 
   .diff-hunk {
-    color: oklch(76.6% 0.111 259.9deg);
+    color: var(--c-blue);
     font-style: italic;
   }
 

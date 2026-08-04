@@ -285,7 +285,7 @@
 
     & code {
       font-family: var(--font-mono);
-      background: oklch(0% 0 0deg / 30%);
+      background: var(--c-code-bg);
       padding: 0.125rem var(--sp-1);
       border-radius: calc(var(--r) / 2);
       font-size: 0.9em;
@@ -310,7 +310,7 @@
     }
 
     & :where(pre) {
-      background: oklch(0% 0 0deg / 30%);
+      background: var(--c-code-bg);
       padding: var(--sp-3);
       border-radius: var(--r);
       overflow-x: auto;
@@ -323,10 +323,6 @@
       font-size: var(--fs-sm);
       line-height: 1.55;
       position: relative;
-    }
-
-    & :where(a) {
-      color: oklch(81.7% 0.091 277.3deg);
     }
 
     & table {
@@ -945,7 +941,7 @@
 
 .refusal-chip {
   padding: 0 0.4rem;
-  border-radius: var(--r-sm, 4px);
+  border-radius: var(--r-sm);
   font-size: var(--fs-xs);
   line-height: 1.5;
   white-space: nowrap;
