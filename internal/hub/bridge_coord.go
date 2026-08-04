@@ -25,21 +25,30 @@ type BridgeCoordinator struct {
 	chatStore      api.ChatStore
 	broadcast      func(ctx context.Context, e api.ServerEvent)
 	translateEvent func(chatID api.ChatID, msg *api.RPCResponse)
-	supervised     *supervisedState
 	push           api.PushService
 	mcpConfig      api.MCPConfig
 	mcpRegistry    *mcpRegistry
 	lifecycle      *lifecyclePlane
 	preBridgeSpawn func(context.Context)
-	// flushPending rejects every outstanding pending op for a chat and
-	// broadcasts the cleared events. Injected (from h.flushPendingForChat)
-	// so Forward can flush a chat's staged writes when its bridge exits,
-	// without the coordinator importing the full Hub.
-	flushPending func(context.Context, api.ChatID, api.ClearReason)
+	// replayProjection is the session/load replay-projection lifecycle,
+	// injected from the Hub for the same reason as flushPending: Forward and
+	// tryLoadSession drive it, without the coordinator importing the full Hub.
+	// Nil in tests that do not exercise a load.
+	replayProjection replayProjector
+	// onSessionRehydrated fires after a successful session/load, off the
+	// spawn path (own goroutine). The hub hangs the restart-paused run resume
+	// sweep here: a rehydrated chat is exactly the moment its runs should heal,
+	// because the chat's process dying is what paused them. Nil in tests.
+	onSessionRehydrated func(api.ChatID)
 	// agentEngine is the kiro-cli agent engine for every bridge this
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
 	agentEngine string
+	// acpArgs are the filtered operator launch flags (VIBEKIT_KIRO_ACP_ARGS).
+	// Set on the CHAT spawns below and deliberately NOT threaded to the utility
+	// bridge, whose work is title generation and catalog fetches — an
+	// `--effort max` there would spend real credits on a two-word summary.
+	acpArgs []string
 }
 
 // newBridgeCoordinator constructs a BridgeCoordinator from the Hub's
@@ -50,14 +59,20 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		chatStore:      h.chatStore,
 		broadcast:      h.Broadcast,
 		translateEvent: h.translateACPEvent,
-		supervised:     h.perm.supervised,
 		push:           h.push,
 		mcpConfig:      h.mcpConfig,
 		mcpRegistry:    h.mcpRegistry,
 		lifecycle:      h.lifecycle,
 		preBridgeSpawn: h.preBridgeSpawn,
-		flushPending:   h.flushPendingForChat,
-		agentEngine:    resolveAgentEngine(),
+		// h implements replayProjector via load_projection.go.
+		replayProjection: h,
+		agentEngine:      resolveAgentEngine(),
+		acpArgs:          h.acpArgs,
+		onSessionRehydrated: func(chatID api.ChatID) {
+			ctx, cancel := h.hubContext()
+			defer cancel()
+			h.resumeRestartPausedRuns(ctx, chatID)
+		},
 	}
 }
 
@@ -154,17 +169,16 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 		model = modelOverride
 	}
 
-	var mcpServers []map[string]any
-	if bc.mcpConfig != nil {
-		mcpServers = bc.mcpConfig.ACPServers(ctx)
-	}
-
+	// No mcpServers parameter. KAS reads the user's servers from its own
+	// hot-reloading config file, which vibekit renders (internal/mcp/kasfile.go).
+	// Sending them inline as well would WIN over the file (KAS merges
+	// `client > file-based`) and make every config edit look like a no-op.
 	if bc.preBridgeSpawn != nil {
 		bc.preBridgeSpawn(ctx)
 	}
 
 	if chat.ACPSessionID != "" {
-		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model, mcpServers) {
+		if bc.tryLoadSession(ctx, chatID, sb, chat.ACPSessionID, model) {
 			return sb, nil
 		}
 	}
@@ -190,25 +204,22 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// forward goroutine after Start deadlocks every fresh session. If Start
 	// fails it stops the bridge (NotifCh closes), so this goroutine exits.
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
+	// Supervised is passed at creation and only here: the session/load path below
+	// does not repeat it, because KAS persists `autopilot` in its own session
+	// metadata and a loaded session already carries the value.
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
 
 	sb.primed = false
-	// Failed-fork rewind degrade: a rewind chat reaches this fresh
-	// session/new path only when session/fork was unavailable (ACPSessionID
-	// never set) or a stored forked session failed to load — in both cases
-	// the new session has none of the prior context the truncated UI
-	// transcript shows. Flag it so PrimeIfNeeded injects that history on the
-	// first prompt. Deriving from chat fields (no new schema field): a
-	// successfully-forked rewind resumes via session/load above and never
-	// reaches here (no prime); a promoted rewind has ParentChatID cleared;
-	// a normal new chat has no ParentChatID. Messages is already non-empty
-	// here (the rewind's truncated history plus the just-appended prompt).
-	if chat.ParentChatID != "" && len(chat.Messages) > 0 {
-		sb.primeReason = primeReasonRewind
-	}
+	// There is no rewind degrade path any more. It existed because a rewind
+	// FORKED a session, and a failed fork left a second chat showing a
+	// truncated transcript the fresh session knew nothing about — so its history
+	// had to be re-injected as an invisible priming prompt. A rewind reverts the
+	// session it is already in, so there is no fork to fail and no history to
+	// re-inject. primeReason keeps its model-switch member, which is a real
+	// recovery path.
 	sb.state = bridgeIdle
 
 	return sb, nil
@@ -217,7 +228,6 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 // tryLoadSession attempts session/load against the stored ACP session id.
 func (bc *BridgeCoordinator) tryLoadSession(
 	ctx context.Context, chatID api.ChatID, sb *sharedBridge, acpSessionID, model string,
-	mcpServers []map[string]any,
 ) bool {
 	// EnableHooks:true — the session/load path must opt into the hook engine
 	// too, so hooks autofire on resumed sessions after a container restart
@@ -228,10 +238,21 @@ func (bc *BridgeCoordinator) tryLoadSession(
 	// _kiro/auth/getAccessToken. On load failure the old bridge is swapped
 	// out of sb before it is stopped, so this goroutine's exit cleanup
 	// (removeIfBridge, identity-compared) cannot evict the replacement.
+	// Open the replay projection BEFORE Forward attaches, so the first replayed
+	// frame already has somewhere to land. KAS starts replaying as soon as it
+	// accepts session/load, which is inside Start below.
+	if bc.replayProjection != nil {
+		bc.replayProjection.OpenReplayProjection(chatID)
+	}
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, MCPServers: mcpServers, AgentEngine: bc.agentEngine, EnableHooks: true}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
+		// A failed load has no transcript to adopt, so whatever partial replay
+		// arrived must not survive into the fresh session.
+		if bc.replayProjection != nil {
+			bc.replayProjection.DiscardReplayProjection(chatID)
+		}
 		old := sb.bridge
 		sb.bridge = bc.bridge.mgr.factory()
 		old.Stop()
@@ -239,13 +260,24 @@ func (bc *BridgeCoordinator) tryLoadSession(
 			if !ex {
 				return false
 			}
-			c.ACPSessionID = ""
+			// Detach from the stale session but KEEP it in the chain: its
+			// directory still holds that period's transcript and pre-images,
+			// and blanking the id outright made the reaper sweep it as an
+			// orphan — vibekit deleting its own history.
+			c.RecordSession("")
 			return true
 		}); mErr != nil {
 			slog.Error("clear stale acp_session_id", "chat_id", chatID, "error", mErr)
 		}
 		return false
 	}
+	// The load returned, which is the other half of the settle condition. The
+	// settle itself belongs to Forward — see load_projection.go's header for why
+	// this goroutine cannot safely decide the replay is drained.
+	if bc.replayProjection != nil {
+		bc.replayProjection.MarkReplayLoadDone(chatID)
+	}
+	title := sb.bridge.SessionTitle()
 	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 		if !ex {
 			return false
@@ -253,34 +285,66 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		c.CurrentModeID = sb.bridge.CurrentMode()
 		c.AvailableModes = sb.bridge.Modes()
 		c.AvailableModels = sb.bridge.Models()
+		adoptKASTitle(c, title)
 		return true
 	}); mErr != nil {
 		slog.Error("refresh session metadata", "chat_id", chatID, "error", mErr)
 	}
 	sb.primed = true
 	sb.state = bridgeIdle
+	// The chat is back; heal its restart-paused runs. Off the spawn path — the
+	// user's prompt must not wait behind a run-list round trip — and AFTER the
+	// state flip, so the resume's own bridge Call finds an idle bridge.
+	if bc.onSessionRehydrated != nil {
+		go bc.onSessionRehydrated(chatID)
+	}
 	return true
 }
 
 // persistNewSessionMetadata stores the ACP session id, model, and session-
 // level metadata into the chat after a fresh session/new call.
+// kasDefaultSessionTitle is KAS's own placeholder title, spread onto every
+// session/new result's _meta (DEFAULT_SESSION_TITLE in the KAS bundle). It
+// carries no information, so adopting it would swap vibekit's placeholder for
+// a worse one AND make the chat non-default-named, which then rejects the real
+// title that arrives later. Probed 2026-08-02: session/new always returns it.
+const kasDefaultSessionTitle = "New Session"
+
+// adoptKASTitle names a chat from KAS's own session title, but only while the
+// chat has no name of its own and only when the title is real.
+//
+// Precedence on chat naming is: agent-authored focus_update title > local
+// first-prompt label > KAS's session title. So this fires for a chat vibekit
+// never named — in practice a session/load whose stored title KAS still has and
+// vibekit lost. It deliberately never overwrites: `titleIsPromptDerived`
+// (translate/focus.go) implements the top of that ordering on the focus channel,
+// and this implements the bottom.
+func adoptKASTitle(c *api.Chat, title string) {
+	if title == "" || title == kasDefaultSessionTitle || c.Name != api.DefaultChatName {
+		return
+	}
+	c.Name = title
+}
+
 func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID api.ChatID, bridge api.ACPBridge) {
 	newSessionID := bridge.SessionID()
 	newModelID := bridge.ModelID()
 	currentMode := bridge.CurrentMode()
 	modes := bridge.Modes()
 	models := bridge.Models()
+	title := bridge.SessionTitle()
 	if err := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
-		c.ACPSessionID = string(newSessionID)
+		c.RecordSession(string(newSessionID))
 		if newModelID != "" {
 			c.Model = string(newModelID)
 		}
 		c.CurrentModeID = currentMode
 		c.AvailableModes = modes
 		c.AvailableModels = models
+		adoptKASTitle(c, title)
 		return true
 	}); err != nil {
 		slog.Error("persist new session metadata",
@@ -298,16 +362,47 @@ func (bc *BridgeCoordinator) GetBridge(chatID api.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
 
+// HasLiveBridge reports whether a chat currently has a bridge, i.e. whether it
+// is in active use. Retention's exemption reads this: a chat with a live bridge
+// is open work and is never purged, however old (see archive.WithLiveChats).
+func (h *Hub) HasLiveBridge(chatID api.ChatID) bool {
+	return h.bridge.mgr.get(chatID) != nil
+}
+
 // CloseBridge stops a bridge and removes it from the map.
 func (bc *BridgeCoordinator) CloseBridge(chatID api.ChatID) {
 	bc.bridge.mgr.close(chatID)
 }
 
+// replayProjector is the slice of the Hub's replay-projection lifecycle the
+// coordinator drives. See hub/load_projection.go for the settle barrier.
+type replayProjector interface {
+	OpenReplayProjection(api.ChatID)
+	MarkReplayLoadDone(api.ChatID)
+	DiscardReplayProjection(api.ChatID)
+	SettleReplayProjection(chatID api.ChatID, buffered int, force bool)
+}
+
 // Forward is the ACP notification → domain event translator, run as a
 // goroutine per bridge.
 func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
-	for msg := range bridge.NotifCh() {
+	ch := bridge.NotifCh()
+	for msg := range ch {
 		bc.translateEvent(chatID, msg)
+		// Settle a session/load replay projection here rather than at Start's
+		// return: this goroutine is the one draining the frames, so its own
+		// view of the channel depth is the only sound completion signal.
+		// len() on a receive-only channel is the whole barrier — no timeout,
+		// no extra bridge API. Rationale in hub/load_projection.go.
+		if bc.replayProjection != nil {
+			bc.replayProjection.SettleReplayProjection(chatID, len(ch), false)
+		}
+	}
+	// The channel closed, so no further frame can arrive to trigger the check
+	// above. Force the settle so a load whose trailing catalog frames never
+	// came still completes instead of leaking a projection.
+	if bc.replayProjection != nil {
+		bc.replayProjection.SettleReplayProjection(chatID, 0, true)
 	}
 
 	slog.Info("bridge exited", "chat_id", chatID)
@@ -319,12 +414,6 @@ func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
 	// parked on its resume channel and a phantom "awaiting approval"
 	// pending op that would replay to reconnecting clients. Cancel, delete,
 	// and mode-disable already flush; this is the bridge-exit sibling.
-	// Idempotent: chat-delete flushes before CloseBridge, so the second
-	// flush here finds no ops and broadcasts nothing.
-	if bc.flushPending != nil {
-		bc.flushPending(bc.lifecycle.shutdownCtx, chatID, api.ClearReasonBridgeExited)
-	}
-
 	lastBridge := bc.bridge.mgr.count() == 0
 
 	if lastBridge {
@@ -343,12 +432,13 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	// Preambles live in translate (PrimePreamble*) because the focus-title
 	// derivation filter must recognise a title KAS derives from this prime
 	// text — one definition keeps the filter and the prime in lockstep.
+	// One reason left, so this stays a switch rather than collapsing to an if:
+	// primeReason is the mechanism, and the rewind arm's removal is not a reason
+	// to make adding a future one a re-shaping job.
 	var prime string
 	switch sb.primeReason {
 	case primeReasonSwitch:
 		prime = translate.PrimePreambleSwitch + history
-	case primeReasonRewind:
-		prime = translate.PrimePreambleRewind + history
 	default:
 		return
 	}
@@ -403,7 +493,7 @@ func (bc *BridgeCoordinator) TakeBuffer(chatID api.ChatID) (*buffer.Buffer, bool
 
 // EmitTurnEndedWithStats finalizes any in-flight assistant message
 // and broadcasts turn_ended with the credit delta and elapsed time.
-func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64, closeAndRemovePartial func(context.Context, api.ChatID, *buffer.Buffer)) {
+func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
 	stopReason := extractStopReason(resp)
 
 	var changedFiles map[string]*api.FileChange
@@ -448,7 +538,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			TurnElapsedMs: elapsedMs,
 			ChangedFiles:  changedFiles,
 		}
-		bc.persistTurnOrKeepPartial(ctx, chatID, &msg, buf, closeAndRemovePartial)
+		bc.persistTurn(ctx, chatID, &msg)
 	}
 
 	if stopReason == stopReasonCancelled {
@@ -473,33 +563,25 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 		}))
 	}
 
-	trustReason := api.ClearReasonTurnEnded
-	if stopReason == stopReasonCancelled {
-		trustReason = api.ClearReasonCancelled
-	}
-	bc.supervised.ClearTrust(chatID, trustReason)
-
 	if stopReason != stopReasonCancelled {
 		bc.NotifyPush(ctx, "Agent finished", api.PushKindAgentFinished)
 	}
 }
 
-// persistTurnOrKeepPartial persists the finalized turn BEFORE deleting
-// the .partial. A crash in this window would otherwise lose a COMPLETED
-// turn (the .partial gone, the chat file never committed).
-// RecoverPartials is idempotent — it skips the append when the MessageID
-// is already committed — so a crash AFTER this commit / BEFORE the
-// delete can't double-append on the next boot. On a FAILED append the
-// .partial is deliberately kept: it now holds the only durable copy of
-// the turn, and boot recovery re-imports it as an interrupted assistant
-// message — deleting it here would discard the turn entirely.
-func (bc *BridgeCoordinator) persistTurnOrKeepPartial(ctx context.Context, chatID api.ChatID, msg *api.Message, buf *buffer.Buffer, closeAndRemovePartial func(context.Context, api.ChatID, *buffer.Buffer)) {
+// persistTurn commits the finalized assistant turn to the chat file.
+//
+// A failed append used to be survivable: the .partial sidecar held the only
+// durable copy and boot recovery re-imported it. That sidecar is gone, and the
+// replacement is KAS's own log — measured to flush each sub-message as it
+// COMPLETES, so a session/load replay carries the turn and the projection
+// rebuilds it. What neither covers is the final streaming fragment, which is
+// the durability this deletion gives up; the old .partial gave it up too,
+// within its 500ms throttle.
+func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID api.ChatID, msg *api.Message) {
 	if err := bc.chatStore.AppendMessage(ctx, chatID, msg); err != nil {
-		slog.Error("persist assistant turn; keeping .partial for boot recovery",
+		slog.Error("persist assistant turn; the replay projection is the fallback",
 			"chat_id", chatID, "error", err)
-		return
 	}
-	closeAndRemovePartial(ctx, chatID, buf)
 }
 
 // TryFastModelSwitch attempts an in-session model swap via
@@ -544,15 +626,13 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID api.
 	}
 }
 
-// FlushInFlightTurnOnSwitch drops the assistant buffer and its .partial
-// sibling for chatID before a bridge restart.
-func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID api.ChatID, closeAndRemovePartial func(context.Context, api.ChatID, *buffer.Buffer)) {
+// FlushInFlightTurnOnSwitch drops the assistant buffer for chatID before a
+// bridge restart, announcing the interruption when a turn was in flight.
+func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID api.ChatID) {
 	buf, ok := bc.TakeBuffer(chatID)
 	if !ok || !buf.Started {
-		closeAndRemovePartial(ctx, chatID, buf)
 		return
 	}
-	closeAndRemovePartial(ctx, chatID, buf)
 	bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
 }
 

@@ -317,6 +317,43 @@
   white-space: nowrap;
 }
 
+/* --- Git status decoration ---------------------------------------------- */
+
+/* Shape only: the per-letter COLOUR is the app's existing `git-st-*`
+   vocabulary (14-tools.css), so the browser adds an emitter rather than a
+   second palette. Fixed square so the meta column does not shift as letters
+   appear and disappear across polls. */
+.fb-git-letter {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+}
+
+/* A file's letter opens its diff; a directory's rollup letter has no single
+   diff to open, so only the file case gets a pointer and a hit target. */
+.fb-git-clickable {
+  cursor: pointer;
+  border-radius: var(--r-sm, 4px);
+  transition: background var(--dur-micro) var(--ease-micro);
+
+  &:hover {
+    background: var(--c-bg-tertiary);
+  }
+}
+
+/* The attribution filter DIMS; it never hides. A hidden row would make the
+   listing lie about what is on disk, and a folder whose only changed child was
+   filtered out would read as empty. */
+.fb-row-unattributed {
+  opacity: 0.4;
+}
+
 .bottom-bar {
   padding: var(--sp-2) var(--sp-4) calc(var(--sp-2) + env(safe-area-inset-bottom, 0));
   border-block-start: 1px solid var(--c-border);

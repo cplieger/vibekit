@@ -7,118 +7,16 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"math"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/pending"
 )
 
-func TestTruncateForStaging_Table(t *testing.T) {
-	t.Parallel()
-	small := strings.Repeat("a", 8)
-	cap := strings.Repeat("b", pending.Cap)
-	over := strings.Repeat("c", pending.Cap+100)
-
-	cases := []struct {
-		name      string
-		oldIn     string
-		newIn     string
-		wantOld   int
-		wantNew   int
-		truncated bool
-	}{
-		{"both empty", "", "", 0, 0, false},
-		{"both small", small, small, len(small), len(small), false},
-		{"both at cap", cap, cap, pending.Cap, pending.Cap, false},
-		{"old over only", over, small, pending.Cap, len(small), true},
-		{"new over only", small, over, len(small), pending.Cap, true},
-		{"both over", over, over, pending.Cap, pending.Cap, true},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			gotOld, gotNew, gotTruncated := truncateForStaging(tc.oldIn, tc.newIn)
-			if len(gotOld) != tc.wantOld {
-				t.Errorf("oldText len = %d, want %d", len(gotOld), tc.wantOld)
-			}
-			if len(gotNew) != tc.wantNew {
-				t.Errorf("newText len = %d, want %d", len(gotNew), tc.wantNew)
-			}
-			if gotTruncated != tc.truncated {
-				t.Errorf("truncated = %v, want %v", gotTruncated, tc.truncated)
-			}
-			if len(gotOld) > pending.Cap {
-				t.Errorf("oldText len %d exceeds pending.Cap %d", len(gotOld), pending.Cap)
-			}
-			if len(gotNew) > pending.Cap {
-				t.Errorf("newText len %d exceeds pending.Cap %d", len(gotNew), pending.Cap)
-			}
-		})
-	}
-}
-
-func TestExtractToolCallID(t *testing.T) {
-	t.Parallel()
-	id99 := int64(99)
-	id7 := int64(7)
-	id3 := int64(3)
-
-	// Every key carries the chat id as its own component (fs:<chatID>:…) so
-	// two chats sharing a per-bridge msg.ID can't collide in the
-	// process-wide store, and a per-branch source tag so the three id
-	// spaces can't overlap either.
-	const chatID api.ChatID = "c1"
-
-	cases := []struct {
-		name       string
-		msg        *api.RPCResponse
-		want       string
-		wantPrefix string
-	}{
-		{
-			name: "prefers param field (chat-scoped, tool-tagged)",
-			msg:  &api.RPCResponse{ID: &id99, Params: mustJSON(t, map[string]any{"toolCallId": "from-param"})},
-			want: "fs:c1:tool:from-param",
-		},
-		{
-			name: "falls back to RPC ID",
-			msg:  &api.RPCResponse{ID: &id7, Params: mustJSON(t, map[string]any{})},
-			want: "fs:c1:msg:7",
-		},
-		{
-			name: "falls back to RPC ID when param blank",
-			msg:  &api.RPCResponse{ID: &id7, Params: mustJSON(t, map[string]any{"toolCallId": ""})},
-			want: "fs:c1:msg:7",
-		},
-		{
-			name:       "sequence fallback when no ID available",
-			msg:        &api.RPCResponse{ID: nil, Params: mustJSON(t, map[string]any{})},
-			wantPrefix: "fs:c1:fallback:",
-		},
-		{
-			name: "malformed params still returns non-empty",
-			msg:  &api.RPCResponse{ID: &id3, Params: json.RawMessage(`not-json`)},
-			want: "fs:c1:msg:3",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := extractToolCallID(chatID, tc.msg)
-			switch {
-			case tc.wantPrefix != "":
-				if !strings.HasPrefix(got, tc.wantPrefix) || got == tc.wantPrefix {
-					t.Errorf("extractToolCallID = %q, want prefix %q with suffix", got, tc.wantPrefix)
-				}
-			default:
-				if got != tc.want {
-					t.Errorf("extractToolCallID = %q, want %q", got, tc.want)
-				}
-			}
-		})
-	}
-}
+// TestTruncateForStaging_Table is GONE with truncateForStaging. It capped the
+// old/new text a staged write carried in its SSE payload, and there is no staged
+// write: KAS holds the content and vibekit's fs handler writes through.
 
 func TestCurrentMessageCount(t *testing.T) {
 	t.Parallel()

@@ -51,19 +51,6 @@ func (s *InMemoryChatStore) List(_ context.Context) []api.ChatHeader {
 	return hs
 }
 
-// ChildrenOf returns the IDs of chats whose ParentChatID equals parentID.
-func (s *InMemoryChatStore) ChildrenOf(_ context.Context, parentID api.ChatID) []api.ChatID {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var children []api.ChatID
-	for _, c := range s.chats {
-		if c.ParentChatID == parentID {
-			children = append(children, api.ChatID(c.ID))
-		}
-	}
-	return children
-}
-
 // BuildHistory returns the plain-text transcript for the chat with the given id.
 func (s *InMemoryChatStore) BuildHistory(_ context.Context, id api.ChatID) string {
 	s.mu.Lock()
@@ -119,73 +106,6 @@ func (s *InMemoryChatStore) Delete(_ context.Context, id api.ChatID) error {
 	}
 	return nil
 }
-
-// DeleteFamily removes children first, then the parent, mirroring the
-// real store's ordering contract; implements api.ChatStore.
-func (s *InMemoryChatStore) DeleteFamily(ctx context.Context, parentID api.ChatID, prepare func(api.ChatID)) ([]api.ChatID, error) {
-	for _, childID := range s.ChildrenOf(ctx, parentID) {
-		if prepare != nil {
-			prepare(childID)
-		}
-		_ = s.Delete(ctx, childID)
-	}
-	if prepare != nil {
-		prepare(parentID)
-	}
-	return nil, s.Delete(ctx, parentID)
-}
-
-// PromoteRewind clears the rewind linkage under one Mutate, mirroring
-// the real store's contract; implements api.ChatStore.
-func (s *InMemoryChatStore) PromoteRewind(ctx context.Context, childID api.ChatID) (api.ChatID, error) {
-	var parentID api.ChatID
-	var opErr error
-	err := s.Mutate(ctx, childID, func(c *api.Chat, exists bool) bool {
-		if !exists {
-			opErr = api.ErrChatNotFound
-			return false
-		}
-		if c.ParentChatID == "" {
-			opErr = api.ErrNotRewind
-			return false
-		}
-		parentID = c.ParentChatID
-		c.ParentChatID = ""
-		c.RewindFromTurn = 0
-		return true
-	})
-	if opErr != nil {
-		return "", opErr
-	}
-	if err != nil {
-		return "", err
-	}
-	return parentID, nil
-}
-
-// Archive removes the chat; delegates to Delete for test simplicity.
-func (s *InMemoryChatStore) Archive(_ context.Context, id api.ChatID) error {
-	return s.Delete(context.Background(), id)
-}
-
-// ListArchived returns nil; implements api.ChatStore.
-func (s *InMemoryChatStore) ListArchived(_ context.Context) []api.ChatHeader { return nil }
-
-// RestoreArchived is a no-op; implements api.ChatStore.
-func (s *InMemoryChatStore) RestoreArchived(_ context.Context, _ api.ChatID) error { return nil }
-
-// UpdateArchivedSummary is a no-op; implements api.ChatStore.
-func (s *InMemoryChatStore) UpdateArchivedSummary(_ context.Context, _ api.ChatID, _ string) error {
-	return nil
-}
-
-// LoadArchived returns (nil, nil); implements api.ChatStore.
-func (s *InMemoryChatStore) LoadArchived(_ context.Context, _ api.ChatID) (*api.Chat, error) {
-	return nil, nil
-}
-
-// DeleteArchived is a no-op; implements api.ChatStore.
-func (s *InMemoryChatStore) DeleteArchived(_ context.Context, _ api.ChatID) error { return nil }
 
 // AppendMessage appends a message to the stored chat and broadcasts message_appended.
 func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID api.ChatID, msg *api.Message) error {

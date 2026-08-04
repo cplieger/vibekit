@@ -14,22 +14,21 @@ import "context"
 // The hub does not care about persistence or validation; it only needs
 // to know which ACP server configs to pass on bridge spawn and which
 // raw records to expose for pre-warm.
+// MCPConfig is the hub's view of the user's MCP server configuration.
+//
+// It has ONE member, and the two it used to have are the shape of the file
+// adoption. There is no ACPServers: vibekit no longer sends servers inline on
+// session/new — it renders KAS's own hot-reloading config file, and KAS merges
+// `client > file-based`, so an inline copy would silently outrank the file. And
+// no SetKnownTools: a connected server's tool names are runtime state that
+// arrives with its prompts and resources, so they live in the hub's registry
+// rather than being written back into a user-config file on every notification.
 type MCPConfig interface {
-	// ACPServers returns the enabled servers shaped for kiro-cli's
-	// session/new and session/load mcpServers parameter. Each entry
-	// is an opaque map whose shape follows the ACP spec's
-	// McpServerStdio / McpServerHttp / McpServerSse schema —
-	// internal/mcp populates per-transport fields; the hub passes
-	// through verbatim.
-	ACPServers(ctx context.Context) []map[string]any
 	// EnabledNames returns the set of enabled server names. Used by the
-	// hub to filter server_initialized notifications that belong to
-	// disabled entries (defensive — kiro-cli shouldn't send them, but
-	// we don't trust the boundary).
+	// hub to filter status notifications that belong to disabled entries
+	// (defensive — KAS reports a disabled server as "disabled" rather than
+	// as connected, but we don't trust the boundary).
 	EnabledNames(ctx context.Context) map[string]struct{}
-	// SetKnownTools persists the tool list for a server so the UI can
-	// show suggestions in the per-tool deny section.
-	SetKnownTools(ctx context.Context, name string, tools []string)
 }
 
 // --- SSE payloads ---

@@ -7,14 +7,17 @@ package hub
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/kirosession"
 )
 
 // --- helpers ---
@@ -153,34 +156,10 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 	})
 }
 
-// --- EmitTurnEndedWithStats trust-clear reason ---
-
-// A cancelled turn clears per-turn trust with the "cancelled" reason.
-func TestEmitTurnEnded_CancelledUsesCancelledClearReason(t *testing.T) {
-	h, cs, _ := newTestHub()
-	ctx := context.Background()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	h.perm.supervised.SetTrust("c1") // so ClearTrust actually broadcasts
-
-	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, 0, 0)
-
-	ev := lastReplayEventOfType(h, api.EventPendingTrustCleared)
-	if ev == nil {
-		t.Fatal("no pending_trust_cleared event broadcast")
-	}
-	raw, err := json.Marshal(ev.Payload)
-	if err != nil {
-		t.Fatalf("marshal payload: %v", err)
-	}
-	var p api.PendingTrustClearedPayload
-	if err := json.Unmarshal(raw, &p); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if p.Reason != api.ClearReasonCancelled {
-		t.Errorf("ClearTrust reason = %q, want %q", p.Reason, api.ClearReasonCancelled)
-	}
-}
+// The per-turn trust-clear test is GONE with the trust it asserted on. Per-turn
+// trust existed to let a user wave past vibekit's own staging queue for the rest
+// of a turn; KAS reviews a whole turn at once, so there is no per-write gate to
+// wave past and no reason to clear anything at turn end.
 
 // A non-cancelled turn fires the "Agent finished" push.
 func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
@@ -263,5 +242,160 @@ func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	h.coord.PersistModelSwitch(ctx, "c1", "m-new", 1234)
 	if got := logs.String(); strings.Contains(got, "switch_model: append event") {
 		t.Errorf("unexpected append-event error log on success: %s", got)
+	}
+}
+
+// --- adoptKASTitle: the bottom of the chat-naming precedence ---
+
+// TestAdoptKASTitle pins all four arms of the guard. Every refusal here is a
+// bug that compiles cleanly: adopting KAS's "New Session" placeholder makes the
+// chat non-default-named, which then rejects the real title that arrives later
+// and leaves the chat reading "New Session" forever; adopting over an existing
+// name clobbers either the user's first-prompt label or the agent's
+// focus_update title, both of which outrank this channel.
+func TestAdoptKASTitle(t *testing.T) {
+	cases := []struct {
+		name  string
+		start string
+		title string
+		want  string
+	}{
+		{
+			name:  "adopts a real title onto a default-named chat",
+			start: api.DefaultChatName,
+			title: "Vibekit conversational surface",
+			want:  "Vibekit conversational surface",
+		},
+		{
+			name:  "refuses KAS's own placeholder",
+			start: api.DefaultChatName,
+			title: kasDefaultSessionTitle,
+			want:  api.DefaultChatName,
+		},
+		{
+			name:  "refuses an empty title",
+			start: api.DefaultChatName,
+			title: "",
+			want:  api.DefaultChatName,
+		},
+		{
+			name:  "never overwrites a first-prompt label",
+			start: "fix the reaper so it stops eating live sessions",
+			title: "Reaper fix",
+			want:  "fix the reaper so it stops eating live sessions",
+		},
+		{
+			name:  "never overwrites an agent-authored focus title",
+			start: "Reaper live-session exemption",
+			title: kasDefaultSessionTitle,
+			want:  "Reaper live-session exemption",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &api.Chat{Name: tc.start}
+			adoptKASTitle(c, tc.title)
+			if c.Name != tc.want {
+				t.Errorf("adoptKASTitle(%q, %q) left name %q, want %q",
+					tc.start, tc.title, c.Name, tc.want)
+			}
+		})
+	}
+}
+
+// --- sweepSessionsOnce: the keep-list is chat-referenced UNION live ---
+
+// TestSweepSessionsOnce_KeepListCompleteness pins doubt-retains at the sweep
+// boundary, against a real orphan on disk.
+//
+// A partial keep-list means some chat's sessions are missing from it, so
+// sweeping anyway deletes them. Not sweeping only postpones reclaiming disk
+// until the next hourly tick. The control arm proves the orphan really was
+// reapable, so the incomplete arm is not passing vacuously.
+func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
+	cases := []struct {
+		name        string
+		complete    bool
+		wantSurvive bool
+	}{
+		{name: "incomplete keep-list spares the orphan", complete: false, wantSurvive: true},
+		{name: "complete keep-list reaps it (control)", complete: true, wantSurvive: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sessionsDir := t.TempDir()
+			// An orphan old enough to clear the reaper's create-race guard.
+			orphan := filepath.Join(sessionsDir, "hash01", "sess_orphan")
+			if err := os.MkdirAll(orphan, 0o700); err != nil {
+				t.Fatalf("mkdir orphan: %v", err)
+			}
+			old := time.Now().Add(-24 * time.Hour)
+			if err := os.Chtimes(orphan, old, old); err != nil {
+				t.Fatalf("chtimes: %v", err)
+			}
+
+			// Wire the reaper at CONSTRUCTION, not after: New starts
+			// sweepSessionsLoop, which reads these fields, so assigning them
+			// afterwards is a data race (caught by -race, not by plain go test).
+			cs := newFakeChatStore()
+			h := New("/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs,
+				WithSessionReaper(
+					kirosession.New(sessionsDir),
+					func(context.Context) (map[string]struct{}, bool) {
+						return map[string]struct{}{}, tc.complete
+					},
+				))
+			cs.Bus = h
+			t.Cleanup(func() { h.Shutdown() })
+
+			h.sweepSessionsOnce()
+
+			_, err := os.Stat(orphan)
+			survived := err == nil
+			if survived != tc.wantSurvive {
+				t.Errorf("orphan survived = %v, want %v", survived, tc.wantSurvive)
+			}
+		})
+	}
+}
+
+// TestLiveSessionIDs_CoversEveryBridge pins that the exemption is general.
+//
+// It used to be one ad-hoc special case for the utility bridge, whose own
+// comment named the failure mode: without it the sweep deletes on-disk state
+// from under a live subprocess once it ages past the 10-minute guard, because
+// that guard is a create-race cushion and not a liveness test. Any bridge
+// holding a session no chat references hits the same bug — a parentless run tab
+// is the case that made it general.
+func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
+	// newTestHub's factory hands back ONE shared fake so tests can inspect it;
+	// this test needs bridges with distinct session ids, so build the hub with
+	// a per-spawn factory instead.
+	cs := newFakeChatStore()
+	h := New("/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs)
+	cs.Bus = h
+
+	setSession := func(chatID api.ChatID, sessionID string) {
+		t.Helper()
+		sb, _ := h.bridge.mgr.getOrInsert(chatID)
+		fb, ok := sb.bridge.(*fakeBridge)
+		if !ok {
+			t.Fatalf("bridge for %s is not a *fakeBridge", chatID)
+		}
+		fb.mu.Lock()
+		fb.sessionID = sessionID
+		fb.mu.Unlock()
+	}
+
+	setSession("chatA", "sess_chatA")
+	setSession("chatB", "sess_chatB")
+	// A bridge that has not started a session yet contributes nothing.
+	setSession("chatC", "")
+
+	got := h.liveSessionIDs()
+	slices.Sort(got)
+	want := []string{"sess_chatA", "sess_chatB"}
+	if !slices.Equal(got, want) {
+		t.Errorf("liveSessionIDs() = %v, want %v", got, want)
 	}
 }

@@ -21,26 +21,15 @@ vi.mock("./tool-card.js", () => ({
   insertDiffPreview: vi.fn(),
 }));
 vi.mock("./api-client.js", () => ({ apiPost: vi.fn() }));
-vi.mock("./plan-actions.js", () => ({
-  planToMarkdown: vi.fn(() => ""),
-  writePlanDraft: vi.fn(),
-  runPlan: vi.fn(),
-}));
-vi.mock("./editor-openers.js", () => ({ openPlanDraftPath: vi.fn() }));
 vi.mock("./messages-actions.js", () => ({
-  addEditActions: vi.fn(),
   initMessageActions: vi.fn(),
-  refreshConflictBadges: vi.fn(),
 }));
 vi.mock("./store.js", () => ({
   getActiveId: () => "test-chat",
 }));
 vi.mock("./linkify.js", () => ({ linkifyPaths: vi.fn() }));
 vi.mock("./code-blocks.js", () => ({ setShellRunCallback: vi.fn() }));
-vi.mock("./permission.js", () => ({
-  showPermissionDialog: vi.fn(),
-  hidePermission: vi.fn(),
-}));
+vi.mock("./permission.js", () => ({ buildPermissionCard: vi.fn() }));
 
 const { EVENT_RENDER_MAP } = await import("./messages-events.js");
 

@@ -238,19 +238,9 @@
   margin-left: 0.5rem;
 }
 
-/* Turn footer: the per-turn summary (credits · elapsed · files changed),
- * projected from turn metadata on the assistant message into a keyed node
- * under the turn (fundamentals/turn-footer.ts). Replaces the old direct-DOM
- * .turn-summary / .turn-file-changes writes. */
-.turn-footer {
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-  padding: var(--sp-1) 0;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  animation: vk-chat-entry 200ms var(--ease-enter) both;
-}
+/* .turn-footer MOVED to 29-turns.css. It sat here while it was a per-message
+ * node; it is the turn card's bottom band now, and it belongs beside the header
+ * band it mirrors. */
 
 /* Turn actions: single row below the assistant bubble. Left slot
  * holds the turn summary (credits + elapsed); right slot holds the
@@ -321,140 +311,10 @@
   color: var(--c-green);
 }
 
-/* Edit tool card actions (undo + diff). Thin row at the bottom of
- * completed edit tool cards, matching the turn-actions row style. */
-.tool-edit-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.125rem;
-  padding: var(--sp-1) 0 0;
-  border-block-start: 1px solid color-mix(in srgb, var(--c-border) 40%, transparent);
-  margin-block-start: var(--sp-1);
-}
-
-/* Cross-chat conflict chip. Sits inside .tool-edit-actions after
- * the Undo/Diff buttons; advisory UI that signals another chat
- * has edited this file. Amber border+fill to distinguish from
- * error (red) without being alarming. Click opens the editor in
- * diff mode comparing the two versions. */
-.conflict-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-inline-start: auto;
-  padding: 0.125rem var(--sp-2);
-  font-size: var(--fs-xs);
-  color: var(--c-yellow);
-  background: color-mix(in srgb, var(--c-yellow) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--c-yellow) 50%, var(--c-border));
-  border-radius: var(--r);
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-micro);
-}
-
-.conflict-chip:hover {
-  background: color-mix(in srgb, var(--c-yellow) 20%, transparent);
-}
-
-.conflict-chip:focus-visible {
-  outline: 2px solid var(--c-yellow);
-  outline-offset: 2px;
-}
-
-.conflict-chip svg {
-  flex-shrink: 0;
-}
-
-.conflict-chip-label {
-  line-height: 1;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .conflict-chip {
-    transition: none;
-  }
-}
-
-/* Checkpoint line: a row with "Checkpoint" label on the left, a
- * dashed line filling the middle, and a Restore button at the right.
- * The label sits inline with the line instead of floating above it. */
-.checkpoint-line {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  padding: var(--sp-2) 0;
-  margin: var(--sp-2) 0;
-}
-
-.checkpoint-line::after {
-  content: "";
-  flex: 1 1 0;
-  border-top: 1px dashed var(--c-border);
-  min-width: var(--sp-4);
-}
-
-.checkpoint-label {
-  flex-shrink: 0;
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.checkpoint-restore {
-  order: 1;
-  flex-shrink: 0;
-  font-size: var(--fs-xs);
-  color: var(--c-accent);
-  background: none;
-  border: 1px solid var(--c-accent);
-  border-radius: 4px;
-  padding: 2px var(--sp-2);
-  cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-micro);
-}
-
-.checkpoint-restore:hover {
-  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
-}
-
-.checkpoint-rewind {
-  order: 2;
-  flex-shrink: 0;
-  font-size: var(--fs-xs);
-  color: var(--c-text-secondary);
-  background: none;
-  border: 1px solid var(--c-border);
-  border-radius: 4px;
-  padding: 2px var(--sp-2);
-  cursor: pointer;
-  transition:
-    background var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro);
-}
-
-.checkpoint-rewind:hover {
-  background: var(--c-bg-tertiary);
-  border-color: var(--c-text-tertiary);
-}
-
-/* Frozen chat state (tangent active on parent) */
-[id="prompt-form"].frozen {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-[id="prompt-form"].frozen::after {
-  content: "Paused (tangent active)";
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-}
+/* The .checkpoint-line dashed separator and its .checkpoint-rewind button are
+ * GONE. A turn no longer needs a rule drawn between itself and its neighbour —
+ * it is a bordered card — and Rewind moved into the card header's action slot
+ * as .turn-rewind (29-turns.css), beside the turn number it acts on. */
 
 /* Prompt suggestions: follow-up pills below the turn summary */
 .prompt-suggestions {
@@ -604,6 +464,15 @@
    shared .tab-status-dot is exclusively the dirty indicator for them. */
 .tab-dot-dirty {
   background: var(--c-accent);
+}
+
+/* The active tab's fill is accent-DERIVED, so an accent dot sits on nearly its
+   own hue there and all but disappears. Lift the two accent dots toward the text
+   colour on that row only; the amber pair needs nothing, since amber on a violet
+   fill separates on hue as well as lightness. */
+.tab.active .tab-dot-thinking,
+.tab.active .tab-dot-dirty {
+  background: color-mix(in oklch, var(--c-accent), var(--c-text-primary) 55%);
 }
 
 /* Tooltip + confirm dialog moved to @cplieger/ui-primitives — see the

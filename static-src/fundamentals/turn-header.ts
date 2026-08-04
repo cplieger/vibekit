@@ -1,0 +1,197 @@
+// ---------------------------------------------------------------------------
+// Fundamental: TurnHeader — the turn card's tinted top band.
+//
+// The turn's TRIGGER, not always a user message. Two kinds, one component:
+// the user prompted (the request text), or the system did (a typed trigger
+// line). Everything else about the turn — number, outcome, timestamp,
+// permalink — is identical across both, so the trigger is the only branch.
+//
+// The request text is CLAMPED TO THREE LINES with a show-more. That is
+// load-bearing rather than cosmetic: once old turns fold to their header
+// (§3.4), the folded rows become the session's navigation surface, and one
+// pasted stack trace in a prompt would render hundreds of lines as a
+// "collapsed" turn and push every neighbouring row off-screen. The clamp is on
+// the TEXT only — the action row and any future attachment/reference chips sit
+// outside it, because they are how a reader identifies which request this was.
+// ---------------------------------------------------------------------------
+
+import { el } from "@cplieger/reactive";
+import { linkifyPaths } from "../linkify.js";
+import type { TurnOutcome } from "../turns.js";
+
+export interface TurnHeaderData {
+  /** 1-based turn ordinal as rendered. */
+  n: number;
+  outcome: TurnOutcome;
+  /** Turn start, ms epoch. */
+  ts: number;
+  /** The user's request. Undefined for a turn the user did not ask for. */
+  request: string | undefined;
+}
+
+/** Human label per outcome, used for the dot's accessible name (the dot itself
+ *  carries colour only — colour is never the sole channel). */
+const OUTCOME_LABEL: Record<TurnOutcome, string> = {
+  running: "Running",
+  completed: "Completed",
+  interrupted: "Interrupted",
+  failed: "Failed",
+};
+
+/** Above this many characters, assume the text overflows three lines when the
+ *  environment cannot measure (happy-dom has no layout, so `scrollHeight` is
+ *  0 there). Deliberately generous: a false positive shows an unnecessary
+ *  show-more, a false negative would make a long prompt unreadable. */
+const CLAMP_FALLBACK_CHARS = 220;
+
+export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
+  const header = el("div", { className: "turn-header" });
+
+  const row = el("div", { className: "turn-head-row" });
+  // The fold toggle leads the row, so the affordance sits where the eye starts
+  // and is in the same place whether the turn is open or folded.
+  row.appendChild(
+    el("button", {
+      className: "turn-fold-toggle",
+      type: "button",
+      "aria-label": "Expand or collapse this turn",
+    }),
+  );
+  row.appendChild(el("span", { className: "turn-n" }, `#${String(d.n)}`));
+  row.appendChild(el("span", { className: "turn-dot", role: "img" }));
+  row.appendChild(el("time", { className: "turn-ts" }));
+  // Action slot: messages.ts mounts the per-turn Rewind here. Kept as an
+  // explicit element so the header owns its own layout and the action does not
+  // have to know the row's structure.
+  // Match count, filled while a search is active. A fold should ADVERTISE what
+  // is inside it rather than hiding it, which is the whole bargain that makes
+  // collapse acceptable.
+  row.appendChild(el("span", { className: "turn-hit-count" }));
+  row.appendChild(el("div", { className: "turn-head-actions" }));
+  header.appendChild(row);
+
+  const req = el("div", { className: "turn-req" });
+  req.appendChild(el("div", { className: "turn-req-text" }));
+  const more = el("button", {
+    className: "turn-req-more",
+    type: "button",
+  }) as HTMLButtonElement;
+  more.hidden = true;
+  more.addEventListener("click", () => {
+    setExpanded(header, !isExpanded(header));
+  });
+  req.append(more);
+  header.appendChild(req);
+
+  updateTurnHeader(header, d);
+  return header;
+}
+
+/** Recompute the header from turn data. Idempotent, and preserves a
+ *  user-expanded clamp (a reader who opened a long prompt does not want the
+ *  next repaint to fold it back). */
+export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
+  header.dataset["outcome"] = d.outcome;
+
+  const num = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-n");
+  if (num !== null) {
+    num.textContent = `#${String(d.n)}`;
+  }
+
+  const dot = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-dot");
+  if (dot !== null) {
+    dot.setAttribute("aria-label", OUTCOME_LABEL[d.outcome]);
+  }
+
+  const time = header.querySelector<HTMLTimeElement>(":scope > .turn-head-row > .turn-ts");
+  if (time !== null && d.ts > 0) {
+    const when = new Date(d.ts);
+    time.dateTime = when.toISOString();
+    time.textContent = when.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
+  const more = header.querySelector<HTMLButtonElement>(":scope > .turn-req > .turn-req-more");
+  if (text === null || more === null) {
+    return;
+  }
+
+  if (d.request === undefined) {
+    // A turn the user did not ask for. Naming the trigger is the honest
+    // rendering; fabricating a user message would put words in their mouth.
+    header.dataset["trigger"] = "system";
+    text.textContent = "Agent-initiated turn";
+    text.removeAttribute("data-clamped");
+    more.hidden = true;
+    return;
+  }
+
+  header.dataset["trigger"] = "user";
+  const body = d.request.trim();
+  if (text.textContent !== body) {
+    text.textContent = body;
+    // A file path the user typed is the fastest route to the file they meant,
+    // so the header linkifies exactly as the old user bubble did. Runs after
+    // the textContent write, which is what wipes the previous pass's anchors.
+    linkifyPaths(text);
+    // New text: re-apply the clamp. An expansion belonged to the old content.
+    setExpanded(header, false);
+  }
+  syncClampAffordance(text, more, body);
+}
+
+function isExpanded(header: HTMLElement): boolean {
+  return header.dataset["expanded"] === "";
+}
+
+function setExpanded(header: HTMLElement, on: boolean): void {
+  const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
+  const more = header.querySelector<HTMLButtonElement>(":scope > .turn-req > .turn-req-more");
+  if (on) {
+    header.dataset["expanded"] = "";
+    text?.removeAttribute("data-clamped");
+  } else {
+    delete header.dataset["expanded"];
+    text?.setAttribute("data-clamped", "");
+  }
+  if (more !== null) {
+    more.textContent = on ? "Show less" : "Show more";
+    more.setAttribute("aria-expanded", on ? "true" : "false");
+  }
+}
+
+/** Decide whether the show-more is needed, and keep the clamp attribute in
+ *  sync. Measurement is the truth when layout is available; the character
+ *  fallback covers the no-layout case so a long prompt is never clamped with
+ *  no way to open it. */
+function syncClampAffordance(text: HTMLElement, more: HTMLButtonElement, body: string): void {
+  const header = text.closest<HTMLElement>(".turn-header");
+  if (header !== null && isExpanded(header)) {
+    more.hidden = false;
+    return;
+  }
+  text.setAttribute("data-clamped", "");
+  more.textContent = "Show more";
+  more.setAttribute("aria-expanded", "false");
+
+  const measured = text.scrollHeight;
+  const visible = text.clientHeight;
+  const overflows =
+    measured > 0 && visible > 0
+      ? measured - visible > 1
+      : body.length > CLAMP_FALLBACK_CHARS || countLines(body) > 3;
+  more.hidden = !overflows;
+}
+
+function countLines(s: string): number {
+  let n = 1;
+  for (const ch of s) {
+    if (ch === "\n") {
+      n++;
+    }
+  }
+  return n;
+}

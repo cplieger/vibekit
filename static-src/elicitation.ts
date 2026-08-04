@@ -1,100 +1,72 @@
 // ---------------------------------------------------------------------------
-// Elicitation dialog: shown when an MCP server requests structured input
-// mid-tool-execution (MCP elicitation, forwarded by kiro-cli over ACP).
+// Elicitation card: an MCP server is requesting structured input mid-tool-call
+// (MCP elicitation, forwarded by kiro-cli over ACP). Rendered in the
+// interaction dock, which owns the queue and the settle-once guard.
 //
 // Renders a form from the request's JSON-schema-shaped `requested_schema`
-// (form mode) or an "open link" affordance (url mode), collects the
-// answer, and reports {action, content} back to the caller. Mirrors the
-// permission dialog's request/response shape; styling reuses the
-// approval-dialog vocabulary.
+// (form mode) or an "open link" affordance (url mode), collects the answer,
+// and reports {action, content} back to the dock.
+//
+// It was a centered <dialog> with a backdrop and a focus trap. Both are gone:
+// a form asking about a tool call belongs beside the transcript that explains
+// why it is being asked, and trapping focus in a non-modal region prevents the
+// user from going to read that transcript.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { openDialog } from "@cplieger/ui-primitives/dialog";
 import type { ElicitationNeededPayload, ElicitationPropertySchema } from "./types.js";
-import { $ } from "./dom.js";
-import { trapFocus } from "./focus-trap.js";
 
 type ElicitAction = "accept" | "decline" | "cancel";
 type SubmitFn = (action: ElicitAction, content?: Record<string, unknown>) => void;
-
-// Resolved lazily: the dialog element only exists in the real app DOM,
-// and accessing $.elicitationDialog throws if missing. Keeping the
-// lookup out of module scope lets test files import this module (e.g.
-// via handlers/turn.ts) without a DOM stub.
-let cachedDialog: HTMLDialogElement | null = null;
-function dlg(): HTMLDialogElement {
-  cachedDialog ??= $.elicitationDialog;
-  return cachedDialog;
-}
-// The request currently shown, so a superseding elicitation_needed for a
-// different request can cancel the one still open before showing the new one.
-let activeRequestID: number | null = null;
-let activeSubmit: SubmitFn | null = null;
-let answered = false;
-let releaseFocus: (() => void) | null = null;
 
 // Reading inputs back: each rendered field registers a getter that
 // returns its current value, or `undefined` when left empty (so optional
 // fields are omitted from the content object rather than sent as "").
 type FieldReader = () => { name: string; value: unknown; filled: boolean };
 
-export function showElicitationDialog(payload: ElicitationNeededPayload, onSubmit: SubmitFn): void {
-  // Settle any dialog already open: it's being superseded, so cancel it.
-  if (activeRequestID !== null && !answered) {
-    finish("cancel");
-  }
+/** Build the dock card for one elicitation request. */
+export function buildElicitationCard(
+  payload: ElicitationNeededPayload,
+  onSubmit: SubmitFn,
+): HTMLElement {
+  const body = el("div", { className: "elicitation-body" });
+  const fieldsEl = el("div", { className: "elicitation-fields" });
+  const actions = el("div", { className: "elicitation-actions" });
 
-  activeRequestID = payload.request_id;
-  activeSubmit = onSubmit;
-  answered = false;
-
-  const dialogEl = dlg();
-  const form = dialogEl.querySelector<HTMLFormElement>(".elicitation-form");
-  const body = dialogEl.querySelector<HTMLElement>(".elicitation-body");
-  const fieldsEl = dialogEl.querySelector<HTMLElement>(".elicitation-fields");
-  const actions = dialogEl.querySelector<HTMLElement>(".elicitation-actions");
-  if (!form || !body || !fieldsEl || !actions) {
-    return;
-  }
-  body.replaceChildren();
-  fieldsEl.replaceChildren();
-  actions.replaceChildren();
-
-  const heading = el(
-    "strong",
-    null,
-    payload.message !== undefined && payload.message !== "" ? payload.message : "Input requested",
+  body.appendChild(
+    el(
+      "strong",
+      null,
+      payload.message !== undefined && payload.message !== "" ? payload.message : "Input requested",
+    ),
   );
-  body.appendChild(heading);
 
   const isURL = payload.mode === "url" && payload.url !== undefined && payload.url !== "";
   const readers: FieldReader[] = [];
 
   if (isURL) {
-    const link = el(
-      "a",
-      {
-        className: "elicitation-url btn-small confirm-allow",
-        href: payload.url ?? "",
-        target: "_blank",
-        rel: "noopener noreferrer",
-      },
-      "Open link\u2026",
+    body.appendChild(
+      el(
+        "a",
+        {
+          className: "elicitation-url btn-small confirm-allow",
+          href: payload.url ?? "",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+        "Open link\u2026",
+      ),
     );
-    body.appendChild(link);
   } else {
     const schema = payload.requested_schema;
     const required = new Set(schema?.required ?? []);
     const props = schema?.properties ?? {};
     for (const name of Object.keys(props)) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const reader = renderField(fieldsEl, name, props[name]!, required.has(name));
-      readers.push(reader);
+      readers.push(renderField(fieldsEl, name, props[name]!, required.has(name)));
     }
   }
 
-  // --- action buttons ---
   const submitBtn = el(
     "button",
     { type: "button", className: "btn-small confirm-allow" },
@@ -103,9 +75,9 @@ export function showElicitationDialog(payload: ElicitationNeededPayload, onSubmi
   submitBtn.addEventListener("click", () => {
     const content = isURL ? undefined : collect(readers, fieldsEl);
     if (!isURL && content === null) {
-      return; // a required field is empty; renderField marked it.
+      return; // a required field is empty; collect marked it.
     }
-    finish("accept", content ?? undefined);
+    onSubmit("accept", content ?? undefined);
   });
 
   const declineBtn = el(
@@ -114,44 +86,12 @@ export function showElicitationDialog(payload: ElicitationNeededPayload, onSubmi
     "Decline",
   );
   declineBtn.addEventListener("click", () => {
-    finish("decline");
+    onSubmit("decline");
   });
 
   actions.append(submitBtn, declineBtn);
 
-  // Native <dialog> "cancel" (Escape) and "close" both settle as cancel
-  // unless the user already submitted/declined.
-  form.onsubmit = (e): void => {
-    e.preventDefault();
-  };
-  dialogEl.oncancel = (e): void => {
-    e.preventDefault();
-    finish("cancel");
-  };
-
-  openDialog(dialogEl);
-  releaseFocus = trapFocus(dialogEl);
-}
-
-function finish(action: ElicitAction, content?: Record<string, unknown>): void {
-  if (answered) {
-    return;
-  }
-  answered = true;
-  const submit = activeSubmit;
-  closeDialog();
-  submit?.(action, content);
-}
-
-function closeDialog(): void {
-  releaseFocus?.();
-  releaseFocus = null;
-  activeSubmit = null;
-  activeRequestID = null;
-  const dialogEl = dlg();
-  if (dialogEl.open) {
-    dialogEl.close();
-  }
+  return el("div", { className: "dock-card dock-elicitation" }, body, fieldsEl, actions);
 }
 
 /** Render one form field and return a reader for its value. */

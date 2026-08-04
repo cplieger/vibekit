@@ -20,11 +20,12 @@ import { effect, el } from "@cplieger/reactive";
 import type { ReconcileSpec } from "./reconcile.js";
 
 import { maybeCollapseGroup, formatDuration, untrackInProgress } from "./tool-group.js";
-import { isToolDone } from "./tool-schema.js";
-import { buildToolCard, insertDiffPreview, expandToolDetails } from "./tool-card.js";
+import { isToolDone, type ToolKind } from "./tool-schema.js";
+import { buildToolCard, insertDiffPreview, expandToolDetails, applyOutcome } from "./tool-card.js";
+import { windowOutput } from "./strings.js";
 import { ansiToHtml } from "./ansi.js";
+import { linkifyPaths } from "./linkify.js";
 import { bindLoadingState } from "./actions/index.js";
-import { addEditActions } from "./messages-actions.js";
 
 // ---------------------------------------------------------------------------
 // Module state (tool-specific)
@@ -173,11 +174,17 @@ function applyStatusUpdate(
   serverDurationMs: number | undefined,
   toolId: string,
 ): void {
-  const s = card.querySelector(".tool-status");
-  if (s !== null) {
-    s.textContent = status;
-    s.className = `tool-status ${status}`;
-  }
+  // The outcome is the glyph's, through the one writer that owns that
+  // vocabulary. This used to set `.tool-status` text to the wire enum, so a
+  // finished card printed the word `completed`.
+  applyOutcome(card, status, card.dataset["title"] ?? "", {
+    kind: (card.dataset["kind"] ?? "other") as ToolKind,
+    writesFile: false,
+    filePath: card.dataset["filePath"] ?? "",
+    fileBasename: card.dataset["filename"] ?? "",
+    diffSources: null,
+    mcp: null,
+  });
   const done = isToolDone(status);
   if (done) {
     card.querySelector(".tool-spinner")?.remove();
@@ -200,9 +207,6 @@ function applyStatusUpdate(
     const group = card.closest(".tool-group");
     if (group !== null) {
       _refreshGroupHeader(group as HTMLElement);
-    }
-    if (status === "completed" && card.dataset["kind"] === "edit") {
-      addEditActions(card);
     }
   }
   if (status === "failed") {
@@ -251,30 +255,43 @@ function applyTitleUpdate(el: HTMLDivElement, title: string): void {
  *  snapshot compounds it (two updates "A" then "AB" → "AAB"). Exported for
  *  unit testing. */
 export function applyOutputUpdate(card: HTMLDivElement, output: string): void {
-  const box = card.querySelector(".tool-output-box");
-  if (box !== null) {
-    const pre = box.querySelector("pre");
-    if (pre !== null) {
-      pre.innerHTML = ansiToHtml(output);
-    } else {
-      const newPre = el("pre");
-      newPre.innerHTML = ansiToHtml(output);
-      box.appendChild(newPre);
-    }
-    box.scrollTop = box.scrollHeight;
-    return;
-  }
   const out = card.querySelector(".tool-output");
   if (out === null) {
     return;
   }
+  // There is no `.tool-output-box` branch any more: the always-visible unwindowed
+  // box is gone, so every kind's output lands in the one `.tool-output` region
+  // inside the disclosure.
+  //
+  // A command's output is WINDOWED here too, not just at build time. Streaming
+  // the middle of a 5,000-line build into the card would undo the window on the
+  // first update, and the reveal control is what re-offers the full text.
+  const windowed = card.dataset["depth1"] === "output";
+  const shown = windowed ? windowOutput(output) : { text: output, elided: 0 };
+
   const existingPre = out.querySelector("pre");
-  if (existingPre !== null) {
-    existingPre.innerHTML = ansiToHtml(output);
-  } else {
-    const pre = el("pre");
-    pre.innerHTML = ansiToHtml(output);
+  const pre = existingPre ?? el("pre");
+  pre.innerHTML = ansiToHtml(shown.text);
+  linkifyPaths(pre, { insidePre: true });
+  if (existingPre === null) {
     out.appendChild(pre);
+  }
+
+  // Rebuild the reveal so its count tracks the growing output.
+  out.querySelector(".tool-output-reveal")?.remove();
+  if (shown.elided > 0) {
+    const reveal = el(
+      "button",
+      { type: "button", className: "tool-output-reveal" },
+      `Show ${String(shown.elided)} more line${shown.elided === 1 ? "" : "s"}`,
+    );
+    reveal.addEventListener("click", (e: Event) => {
+      e.stopPropagation();
+      pre.innerHTML = ansiToHtml(output);
+      linkifyPaths(pre, { insidePre: true });
+      reveal.remove();
+    });
+    out.appendChild(reveal);
   }
 }
 

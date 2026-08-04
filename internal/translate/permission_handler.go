@@ -11,6 +11,9 @@ import (
 // as camelCase `optionId`; the SSE-facing api.PermissionOption tags it
 // `option_id`, and Go's case-insensitive match does not bridge the
 // underscore — so we decode from this wire struct and map to the SSE type.
+// approvalTypeTurn is the `_meta.kiro.type` marking a turn approval.
+const approvalTypeTurn = "turn_approval"
+
 type permOptionWire struct {
 	OptionID string `json:"optionId"`
 	Name     string `json:"name"`
@@ -42,6 +45,21 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 			Kind       api.ToolKind `json:"kind"`
 		} `json:"toolCall"`
 		Options []permOptionWire `json:"options"`
+		// Meta carries a TURN APPROVAL when one is being asked for. A turn
+		// approval is not a separate method — KAS raises it as an ordinary
+		// session/request_permission and puts the file list here, so this is the
+		// only thing distinguishing "may I run this tool" from "may I apply this
+		// turn's writes".
+		Meta struct {
+			Kiro struct {
+				Type  string `json:"type"`
+				Files []struct {
+					Path        string `json:"path"`
+					SnapshotURI string `json:"snapshotUri"`
+					ToolCallID  string `json:"toolCallId"`
+				} `json:"files"`
+			} `json:"kiro"`
+		} `json:"_meta"`
 	}
 	req, ok := unmarshalParams[permReq](msg, "session/request_permission")
 	if !ok {
@@ -60,13 +78,37 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 	// already auto-resolved everything it could — a request that
 	// reaches vibekit is a genuine ask and always surfaces to the user.
 
+	// A turn approval's files, workspace-relative. relPath because every other
+	// path vibekit puts on the wire is relative and a client that had to handle
+	// both would get it wrong somewhere.
+	var files []api.ApprovalFile
+	if req.Meta.Kiro.Type == approvalTypeTurn {
+		files = make([]api.ApprovalFile, 0, len(req.Meta.Kiro.Files))
+		for _, f := range req.Meta.Kiro.Files {
+			files = append(files, api.ApprovalFile{
+				Path:        t.relPath(f.Path),
+				SnapshotURI: f.SnapshotURI,
+				ActionID:    f.ToolCallID,
+			})
+		}
+	}
+
+	// A workflow STEP's ask is attributed to its run, whichever bridge it
+	// arrived on: the launching chat's for an agent-launched run, the run
+	// bridge for a manual one. The run id is what lets a run tab render an ask
+	// keyed to a different surface, and the node id is what makes the card say
+	// WHO is asking.
+	step := t.stepRef(req.SessionID)
 	evt := api.NewEvent(api.EventPermissionNeeded, chatID, api.PermissionNeededPayload{
 		RequestID:    reqID,
 		ToolCallID:   req.ToolCall.ToolCallID,
 		Title:        req.ToolCall.Title,
 		Kind:         req.ToolCall.Kind,
 		SubSessionID: subSessionID,
+		RunID:        step.WorkflowID,
+		NodeID:       step.NodeID,
 		Options:      options,
+		Files:        files,
 	})
 	t.deps.Broadcast(ctx, evt)
 	t.deps.PendingPermsAdd(reqID, evt)

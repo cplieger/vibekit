@@ -70,12 +70,15 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID api.ChatID, msg
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 	reqID := *msg.ID
 
+	step := t.stepRef(p.SessionID)
 	evt := api.NewEvent(api.EventUserInputNeeded, chatID, api.UserInputNeededPayload{
 		RequestID:    reqID,
 		Question:     p.Question,
 		Options:      options,
 		ToolCallID:   p.ToolCallID,
 		SubSessionID: subSessionID,
+		RunID:        step.WorkflowID,
+		NodeID:       step.NodeID,
 	})
 	t.deps.Broadcast(ctx, evt)
 	t.deps.PendingPermsAdd(reqID, evt)

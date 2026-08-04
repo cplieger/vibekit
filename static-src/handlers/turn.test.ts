@@ -19,7 +19,7 @@ vi.mock(
   "../scroll.js",
   async () => (await import("../__test-helpers__/scroll-mock.js")).scrollMock,
 );
-vi.mock("../permission.js", () => ({ showPermissionDialog: vi.fn() }));
+vi.mock("../decision-dock.js", () => ({ pushDecision: vi.fn() }));
 
 const mockDrainNext = vi.fn();
 vi.mock("../prompt-queue.js", () => ({ drainNext: mockDrainNext }));
@@ -76,7 +76,6 @@ function makeSession(id: string, over: Partial<Session> = {}): Session {
     has_more: false,
     thinking: false,
     working_label: "Thinking",
-    pending_changes: [],
     ...over,
   };
 }

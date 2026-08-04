@@ -36,6 +36,14 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
+	// A workflow STEP's tool frames carry KAS's own agentSubtaskId (or none),
+	// while the step's TEXT is keyed by its nodePath — so without this override
+	// one step's work fragments across two boxes. Same rule as the chunk path:
+	// the step's workflow identity wins.
+	subtask := tc.Meta.Kiro.AgentSubtaskID
+	if wf := tc.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
+		subtask = wf
+	}
 	var diffs []api.ToolDiff
 	for _, c := range tc.Content {
 		if c.Type == ContentTypeDiff && c.Path != "" {
@@ -51,7 +59,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		Status:         tc.Status,
 		Input:          tc.RawInput,
 		SubSessionID:   subSessionID,
-		AgentSubtaskID: tc.Meta.Kiro.AgentSubtaskID,
+		AgentSubtaskID: subtask,
 		Locations:      tc.Locations,
 		Diffs:          diffs,
 		Ts:             time.Now().UnixMilli(),
@@ -65,9 +73,8 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	// block — back-to-back tool calls each get their own tool_use
 	// block (the next text chunk after this will also start a new
 	// block since the trailing block is now tool_use, not text).
-	blockIndex := buf.AppendToolUseBlock(call.ID, tc.Meta.Kiro.AgentSubtaskID)
+	blockIndex := buf.AppendToolUseBlock(call.ID, subtask)
 	buf.RecordToolStart(tc.ToolCallID)
-	buf.WritePartial(ctx)
 	if len(diffs) > 0 {
 		isNew := tc.Kind == api.ToolKindEdit && tc.Status == api.ToolPending
 		buf.TrackFileChanges(diffs, isNew)
@@ -158,8 +165,41 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 	if tc.SubSessionID == "" && subSessionID != "" {
 		tc.SubSessionID = subSessionID
 	}
-	if tc.AgentSubtaskID == "" && tu.Meta.Kiro.AgentSubtaskID != "" {
-		tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
+	if tc.AgentSubtaskID == "" {
+		// Late adoption mirrors the create path, workflow identity first.
+		if wf := tu.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
+			tc.AgentSubtaskID = wf
+		} else if tu.Meta.Kiro.AgentSubtaskID != "" {
+			tc.AgentSubtaskID = tu.Meta.Kiro.AgentSubtaskID
+		}
+	}
+	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
+}
+
+// mergeCheckpoint folds a tool_call_update's _meta.kiro.checkpoint into the
+// buffered tool call, field by field so that a frame omitting a key cannot
+// erase one an earlier frame supplied.
+//
+// Per-field rather than wholesale because the key set genuinely varies
+// between frames for the same tool call: KAS sends {modified, local} for a
+// file creation and adds `original` only when there was a pre-image, so
+// replacing the struct would be correct today and lossy the moment a second
+// frame arrives with a narrower set.
+func mergeCheckpoint(tc *api.ToolCall, in *ACPCheckpointMeta) {
+	if in == nil || (in.Original == "" && in.Modified == "" && in.Local == "") {
+		return
+	}
+	if tc.Checkpoint == nil {
+		tc.Checkpoint = &api.ToolCheckpoint{}
+	}
+	if in.Original != "" {
+		tc.Checkpoint.Original = in.Original
+	}
+	if in.Modified != "" {
+		tc.Checkpoint.Modified = in.Modified
+	}
+	if in.Local != "" {
+		tc.Checkpoint.Local = in.Local
 	}
 }
 
@@ -186,12 +226,14 @@ func (t *Translator) relPath(abs string) string {
 }
 
 // ensureTurnStarted initializes the buffer for a new turn if not already
-// started: assigns the message id and broadcasts message_created. It does
-// NOT open the .partial recovery file — that is opened lazily on the first
-// content/reasoning chunk (HandleAssistantChunk), so a tool-first turn
-// (whose first streamed event is a tool call) still becomes crash-durable
-// the moment any text arrives, and a pure-tool-only turn — which the
-// recovery guard would drop anyway — skips the file entirely.
+// started: assigns the message id and broadcasts message_created.
+//
+// It owns no crash durability. It used to open the .partial sidecar lazily on
+// the first content chunk; that sidecar is deleted, and a turn interrupted
+// mid-flight is now rebuilt from KAS's own log by the session/load replay
+// projection — measured to hold each sub-message as it completes, so a
+// tool-first turn is covered from its first tool call rather than from its
+// first text.
 func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer) {
 	if buf.Started {
 		return

@@ -22,7 +22,6 @@ import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permi
 import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
 import { initHooks, loadHooks } from "./hooks.js";
-import { initKiroConfig, loadKiroConfig } from "./kiro-config.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
 import { apiGet } from "./api-client.js";
@@ -125,9 +124,9 @@ export function restoreAll(s: AppSettings): void {
 //
 // kiro-cli's cleanup.periodDays is pinned to 0/never — vibekit owns retention
 // end to end. The Days-kept number field carries 0 (off) .. N (keep N days);
-// the Keep-forever checkbox overrides it to -1 (archive, never purged) and
+// the Keep-forever checkbox overrides it to -1 (kept, never purged) and
 // disables the number field. Writes go to /api/settings; the settings_updated
-// SSE refreshes retention.ts (archive-vs-delete-on-close + History visibility).
+// SSE refreshes retention.ts (keep-vs-delete-on-close + History visibility).
 function initChatRetention(s: AppSettings): void {
   const daysInput = document.getElementById("chat-retention-days") as HTMLInputElement | null;
   const foreverInput = document.getElementById("chat-retention-forever") as HTMLInputElement | null;
@@ -165,12 +164,16 @@ function initChatRetention(s: AppSettings): void {
 
 // --- UI init ---
 
-/** Load the lists the Instructions tab shows: the .kiro/ steering-docs/
- *  skills/agents list, the workspace knowledge bases, and the hooks
- *  dashboard (the "workspace context" family). Fired once on the tab's
- *  first activation via the settings-tabs loader map. */
+/** Load the lists the Instructions tab shows: the workspace knowledge bases and
+ *  the hooks dashboard. Fired once on the tab's first activation via the
+ *  settings-tabs loader map.
+ *
+ *  The ".kiro/ steering docs, skills & agents" list is NOT here any more — it
+ *  moved to the Kiro configuration browser (the book icon, docs.ts), which shows
+ *  the whole inventory with its front-matter rather than three flat groups. The
+ *  /api/workspace/kiro-config ENDPOINT stays: role-picker.ts fetches it to seed
+ *  the mode picker with workspace agents before a session exists. */
 function loadInstructionsPanel(): void {
-  loadKiroConfig();
   loadKnowledge();
   loadHooks();
 }
@@ -204,7 +207,6 @@ export function initUI(): void {
   initMCP();
   initKnowledge();
   initHooks();
-  initKiroConfig();
   initAllModals();
 
   // The "Git & forges" tab in Settings was retired with the multi-repo

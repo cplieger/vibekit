@@ -281,6 +281,7 @@ func newTestUtilityRuntime() *utilityRuntime {
 		func() api.ACPBridge { return newFakeBridge() },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
+		nil, // secrets: no credential store in tests
 		false,
 	)
 }
@@ -506,10 +507,11 @@ func TestPolicyExplain_CallHasTimeout(t *testing.T) {
 	}
 }
 
-// TestCullIdleBridgesOnce_StopsIdleUtilityBridge verifies the cull captures
-// the idle utility session's bridge under the session mutex and stops that
-// exact instance.
-func TestCullIdleBridgesOnce_StopsIdleUtilityBridge(t *testing.T) {
+// TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge verifies the sweep
+// captures the idle utility session's bridge under the session mutex and
+// stops that exact instance. The utility session is the ONLY bridge with an
+// idle timer — a chat bridge is owned by its tab and never swept.
+func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 	h, _, _ := newTestHub()
 	u := h.ensureUtility()
 	if _, err := u.agent.UtilityPrompt(context.Background(), "warm", ""); err != nil {
@@ -524,7 +526,7 @@ func TestCullIdleBridgesOnce_StopsIdleUtilityBridge(t *testing.T) {
 	u.session.lastActiveAt = time.Now().Add(-bridgeIdleTimeout - time.Minute)
 	u.session.mu.Unlock()
 
-	h.cullIdleBridgesOnce()
+	h.cullIdleUtilityBridgeOnce()
 
 	// cull stops the captured victim in a goroutine; poll for it.
 	deadline := time.Now().Add(2 * time.Second)
@@ -564,7 +566,7 @@ func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); h.cullIdleBridgesOnce() }()
+	go func() { defer wg.Done(); h.cullIdleUtilityBridgeOnce() }()
 	go func() { defer wg.Done(); h.stopUtilityBridge() }()
 	wg.Wait()
 }
@@ -616,6 +618,7 @@ func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
+		nil, // secrets: no credential store in tests
 		false,
 	)
 	defer u.session.Stop()
@@ -649,6 +652,7 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
+		nil, // secrets: no credential store in tests
 		false,
 	)
 	defer u.session.Stop()
@@ -749,6 +753,7 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
+		nil, // secrets: no credential store in tests
 		false,
 	)
 	defer u.session.Stop()

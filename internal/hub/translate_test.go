@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -576,5 +577,108 @@ func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
 					got, tc.want, tc.registerPS, tc.sessionID)
 			}
 		})
+	}
+}
+
+// --- Replayed frames must not reach the live handlers ---
+
+// dispatchUpdate installs a capturing sub-handler for `kind`, drives
+// handleSessionUpdate with an update carrying that kind plus whatever extra
+// fields `extra` supplies, and reports whether the live handler ran.
+func dispatchUpdate(t *testing.T, h *Hub, kind api.ACPUpdateKind, extra map[string]any) (called bool) {
+	t.Helper()
+	h.sessUpdateHandlers = map[api.ACPUpdateKind]sessionUpdateHandler{
+		kind: func(_ context.Context, _ api.ChatID, _ json.RawMessage, _ string) { called = true },
+	}
+	update := map[string]any{"sessionUpdate": string(kind)}
+	maps.Copy(update, extra)
+	params := mustJSON(t, map[string]any{"sessionId": "", "update": mustJSON(t, update)})
+	h.handleSessionUpdate(context.Background(), "c1",
+		&api.RPCResponse{Method: "session/update", Params: params})
+	return called
+}
+
+// TestHandleSessionUpdate_DropsReplayedFrames pins the gate that keeps stored
+// history out of the live path.
+//
+// KAS replays a session's entire transcript as ordinary session/update
+// notifications when vibekit calls session/load — which it does on every
+// container-restart resume and every model-switch fallback. Measured against
+// kiro-cli 2.16.0: a load of a one-turn session returns 9 frames, 6 of them
+// tagged `_meta.kiro.replay: true`.
+//
+// Ungated, the replayed agent_message_chunk reaches HandleAssistantChunk,
+// which opens a PHANTOM turn: a fresh message id whose message_created and
+// message_chunk events re-stream history to every connected client as though
+// the agent were typing it now.
+//
+// The nesting is the trap this pins. The flag rides `update._meta.kiro.replay`,
+// NOT `params._meta` — reading it a level up yields false for every frame,
+// which is indistinguishable from a wire that never sets it.
+func TestHandleSessionUpdate_DropsReplayedFrames(t *testing.T) {
+	replayMeta := map[string]any{"kiro": map[string]any{"replay": true}}
+
+	tests := []struct {
+		name       string
+		extra      map[string]any
+		wantCalled bool
+	}{
+		{
+			name:       "a live frame reaches its handler",
+			extra:      map[string]any{"content": map[string]any{"type": "text", "text": "x"}},
+			wantCalled: true,
+		},
+		{
+			name: "a replay-tagged frame is dropped",
+			extra: map[string]any{
+				"content": map[string]any{"type": "text", "text": "x"},
+				"_meta":   replayMeta,
+			},
+			wantCalled: false,
+		},
+		{
+			name: "replay:false is not a replay",
+			extra: map[string]any{
+				"content": map[string]any{"type": "text", "text": "x"},
+				"_meta":   map[string]any{"kiro": map[string]any{"replay": false}},
+			},
+			wantCalled: true,
+		},
+		{
+			name: "the flag one level UP does not gate — it rides `update`, not `params`",
+			extra: map[string]any{
+				"content": map[string]any{"type": "text", "text": "x"},
+				"_meta":   map[string]any{"replay": true}, // missing the kiro nesting
+			},
+			wantCalled: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, _, _ := newTestHub()
+			if got := dispatchUpdate(t, h, api.ACPUpdateAgentChunk, tt.extra); got != tt.wantCalled {
+				t.Errorf("live handler called = %v, want %v", got, tt.wantCalled)
+			}
+		})
+	}
+}
+
+// TestHandleSessionUpdate_CatalogFrameSurvivesALoad pins that the gate is
+// per-frame rather than "suppress everything while loading".
+//
+// KAS does NOT tag config_option_update as replay (3 of the 9 measured frames
+// are untagged and this is one): it carries the session's CURRENT model/mode
+// selection, not its history. Gating on the load OPERATION instead of the
+// per-frame flag would drop it, and the mode pill would come back empty after
+// every resume.
+//
+// available_commands_update was the other witness to this property and is no
+// longer dispatched at all (the slash-command catalog had no consumer), so
+// config_option_update is the only one left — which makes this test MORE
+// load-bearing, not less.
+func TestHandleSessionUpdate_CatalogFrameSurvivesALoad(t *testing.T) {
+	h, _, _ := newTestHub()
+	if !dispatchUpdate(t, h, api.ACPUpdateConfigOption, nil) {
+		t.Error("config_option_update was dropped; it is untagged by KAS and carries current session state")
 	}
 }

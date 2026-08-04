@@ -200,7 +200,6 @@ func (fakeBusyBridge) Respond(context.Context, int64, any, error) error { return
 func (fakeBusyBridge) SessionID() api.SessionID                         { return "" }
 func (fakeBusyBridge) TryAcquireForPrompt() bool                        { return false }
 func (fakeBusyBridge) ReleaseAfterPrompt()                              {}
-func (fakeBusyBridge) SetLastActive()                                   {}
 func (fakeBusyBridge) SetPrompting()                                    {}
 func (fakeBusyBridge) IsPrimed() bool                                   { return true }
 func (fakeBusyBridge) SetPrimed()                                       {}

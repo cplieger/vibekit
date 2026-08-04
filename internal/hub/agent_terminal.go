@@ -30,14 +30,58 @@ import (
 // exit status (KAS zTerminalExitStatus {exitCode?, signal?}).
 const keySignal = "signal"
 
+// killGroup signals a terminal's whole process group, falling back to the head
+// alone when the child is not its own group leader.
+//
+// Agent terminals are the agent's own commands, so they are routinely TREES —
+// a build tool, a test runner, a dev server — and unlike the bridge there is no
+// stdin-EOF channel to reclaim them, because an agent-chosen command need never
+// read stdin. Signalling the head alone therefore strands the children: measured
+// on the shape any build tool produces (a shell with two children), 2 spawned and
+// 2 survived a head-only kill.
+//
+// The pgid == pid guard is load-bearing, not defensive. Without Setpgid the child
+// inherits VIBEKIT'S OWN process group, so Kill(-pgid, sig) would signal vibekit
+// itself. The guard restricts the group form to when the child really is its own
+// leader, which is exactly when Setpgid succeeded. A command that setsid()s on
+// purpose still escapes the group; that is accepted, since a command which
+// deliberately daemonizes is asking to outlive its terminal.
+func killGroup(p *os.Process, sig syscall.Signal) error {
+	pgid, err := syscall.Getpgid(p.Pid)
+	if err == nil && ownsProcessGroup(p.Pid, pgid) {
+		if gErr := syscall.Kill(-pgid, sig); gErr == nil {
+			return nil
+		}
+	}
+	// Not its own leader (Setpgid did not take, so the group is OURS and the
+	// group form would signal vibekit), Getpgid failed (already reaped), or the
+	// group signal failed — fall back to the head, which is exactly today's
+	// behaviour.
+	return p.Signal(sig)
+}
+
+// ownsProcessGroup reports whether pid is the leader of pgid, i.e. whether
+// Setpgid took and the group contains only this command's tree.
+//
+// Extracted as a pure function on purpose: this comparison is the guard that
+// keeps Kill(-pgid, …) off vibekit's own process group, and pinning it by
+// actually signalling a non-leader would deliver that signal to the test
+// binary. Table-test the decision here; the tree-kill integration is covered
+// separately against a real Setpgid child.
+func ownsProcessGroup(pid, pgid int) bool { return pgid == pid }
+
 // agentTerminal is one headless subprocess spawned by kiro-cli.
 type agentTerminal struct {
-	exitErr  error
-	cmd      *exec.Cmd
-	done     chan struct{}
-	output   *byteRing
-	chatID   api.ChatID
-	signal   string
+	exitErr error
+	cmd     *exec.Cmd
+	done    chan struct{}
+	output  *byteRing
+	chatID  api.ChatID
+	signal  string
+	// turnSeq is the chat's turn sequence at creation — which TURN spawned
+	// this terminal. What lets an interrupt kill the turn's own processes
+	// without touching a background command an earlier turn left running.
+	turnSeq  uint64
 	exitCode int
 	mu       sync.Mutex
 }
@@ -100,13 +144,72 @@ func exitStatusFromState(st *os.ProcessState) (exitCode int, signal string) {
 type agentTerminals struct {
 	terms    map[string]*agentTerminal
 	byChatID map[api.ChatID][]string // chatID → []terminalID
-	mu       sync.Mutex
+	// turnSeq is each chat's CURRENT turn ordinal, incremented at every
+	// turn end. A terminal stamps the value at creation, so "this turn's
+	// terminals" is a comparison rather than bookkeeping the create path
+	// has to remember to do.
+	turnSeq map[api.ChatID]uint64
+	mu      sync.Mutex
 }
 
 func newAgentTerminals() *agentTerminals {
 	return &agentTerminals{
 		terms:    make(map[string]*agentTerminal),
 		byChatID: make(map[api.ChatID][]string),
+		turnSeq:  make(map[api.ChatID]uint64),
+	}
+}
+
+// AdvanceTurn marks a chat's turn boundary. Called at turn end, so every
+// terminal created since the LAST call belongs to the turn now closing —
+// nothing creates agent terminals outside a turn.
+func (at *agentTerminals) AdvanceTurn(chatID api.ChatID) {
+	at.mu.Lock()
+	at.turnSeq[chatID]++
+	at.mu.Unlock()
+}
+
+// currentTurn reads a chat's turn ordinal. Callers hold at.mu.
+func (at *agentTerminals) currentTurn(chatID api.ChatID) uint64 {
+	return at.turnSeq[chatID]
+}
+
+// KillForTurn kills the terminals the CURRENT (still-open) turn created and
+// leaves every other chat process alone. The interrupt gate (§5.6 R3): turn
+// cancel used to tear down nothing — `KillForChat`'s only callers are the
+// delete/close paths — so cancelling mid-`npm test` left the command running,
+// owned by nobody, streaming into a turn that no longer existed. Scoped to
+// the turn rather than the chat deliberately: KillForChat here would also
+// kill a background command an EARLIER turn started on purpose.
+func (at *agentTerminals) KillForTurn(chatID api.ChatID) {
+	at.mu.Lock()
+	cur := at.currentTurn(chatID)
+	ids := at.byChatID[chatID]
+	var doomed []*agentTerminal
+	kept := ids[:0]
+	for _, id := range ids {
+		term, ok := at.terms[id]
+		if !ok {
+			continue
+		}
+		if term.turnSeq != cur {
+			kept = append(kept, id)
+			continue
+		}
+		delete(at.terms, id)
+		doomed = append(doomed, term)
+	}
+	at.byChatID[chatID] = kept
+	at.mu.Unlock()
+	for _, term := range doomed {
+		if term.cmd.Process != nil {
+			if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
+				slog.Debug("hub: turn terminal kill failed", "chat_id", chatID, "error", err)
+			}
+		}
+	}
+	if len(doomed) > 0 {
+		slog.Info("interrupt: killed the turn's terminals", "chat_id", chatID, "count", len(doomed))
 	}
 }
 
@@ -122,7 +225,7 @@ func (at *agentTerminals) KillForChat(chatID api.ChatID) {
 		if ok {
 			delete(at.terms, id)
 			if term.cmd.Process != nil {
-				if err := term.cmd.Process.Kill(); err != nil {
+				if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
 					slog.Debug("hub: agent terminal kill failed", "id", id, "error", err)
 				}
 			}
@@ -231,10 +334,14 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
 	stop := context.AfterFunc(h.lifecycle.shutdownCtx, cmdCancel)
 	cmd := exec.CommandContext(cmdCtx, params.Command, params.Args...) // #nosec G204 -- agent-controlled
+	// Own process group, so every teardown path can signal the whole tree
+	// rather than just the head. See killGroup for why the head alone is not
+	// enough here and why it IS enough for the bridge.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Graceful shutdown: SIGTERM on context cancel, escalate to SIGKILL
 	// after 2s. Matches the cplieger Go apps' consistent subprocess
 	// management pattern (fclones, bridge, subflux/ffmpeg).
-	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.Cancel = func() error { return killGroup(cmd.Process, syscall.SIGTERM) }
 	cmd.WaitDelay = 2 * time.Second
 	if env := termEnv(params.Env); env != nil {
 		cmd.Env = env
@@ -292,6 +399,7 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	// leave the tab stuck "running". Registering + broadcasting first
 	// guarantees terminal_created is ordered ahead of any output/exit event.
 	h.agentTerms.mu.Lock()
+	term.turnSeq = h.agentTerms.currentTurn(chatID)
 	h.agentTerms.terms[termID] = term
 	h.agentTerms.byChatID[chatID] = append(h.agentTerms.byChatID[chatID], termID)
 	h.agentTerms.mu.Unlock()
@@ -475,7 +583,7 @@ func (h *Hub) termRelease(ctx context.Context, chatID api.ChatID, msg *api.RPCRe
 	}
 	term, ok := h.agentTerms.release(params.TerminalID)
 	if ok && term.cmd.Process != nil {
-		if err := term.cmd.Process.Kill(); err != nil {
+		if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
 			slog.Warn("terminal release: kill failed", "term_id", params.TerminalID, "error", err)
 		}
 	}
@@ -535,7 +643,7 @@ func (h *Hub) termKill(ctx context.Context, chatID api.ChatID, msg *api.RPCRespo
 		return
 	}
 	if term.cmd.Process != nil {
-		if err := term.cmd.Process.Kill(); err != nil {
+		if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
 			slog.Warn("terminal kill failed", "term_id", params.TerminalID, "error", err)
 		}
 	}

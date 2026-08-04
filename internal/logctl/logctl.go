@@ -29,7 +29,16 @@ import (
 // levelVar is the shared LevelVar the installed handler follows: slogx.Setup
 // wires it into the default logger (in Install) and SetDebug flips it at
 // runtime, so a PATCH to debug_logs re-levels subsequent log calls in place.
-var levelVar *slog.LevelVar
+//
+// Pre-initialized rather than left nil so no exported call can panic before
+// Install runs: every accessor here dereferences it unconditionally, and a nil
+// deref in SetDebug takes the process down. Startup ordering makes that
+// unreachable today (Install runs in composition, before the settings endpoint
+// exists), but the nil window is one refactor away from a crash and
+// FuzzSetDebug trips it directly. A pre-Install Set lands on this throwaway
+// var, which no handler follows; Install then swaps in slogx's and applies the
+// configured level, so post-Install behavior is unchanged.
+var levelVar = new(slog.LevelVar)
 
 // Install wires the shared LevelVar into slog's default logger and
 // reads the initial level from configDir/config.json. Call exactly

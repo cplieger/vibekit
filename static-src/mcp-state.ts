@@ -82,6 +82,9 @@ const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   if (err !== undefined) {
     out.error = err;
   }
+  if (Array.isArray(s["tools"])) {
+    out.tools = (s["tools"] as unknown[]).map((x) => String(x));
+  }
   if (Array.isArray(s["prompts"])) {
     out.prompts = decodeArray(s["prompts"], decodePromptInfo, "$.mcp_status.server.prompts");
   }
@@ -150,9 +153,6 @@ const decodeServer: Decoder<Server> = (v) => {
   if (Array.isArray(o["disabled_tools"])) {
     out.disabled_tools = (o["disabled_tools"] as unknown[]).map((x) => String(x));
   }
-  if (Array.isArray(o["known_tools"])) {
-    out.known_tools = (o["known_tools"] as unknown[]).map((x) => String(x));
-  }
   return out;
 };
 
@@ -193,7 +193,6 @@ export interface Server {
   url?: string;
   headers?: KeyPair[];
   disabled_tools?: string[];
-  known_tools?: string[];
   /** Pre-registered OAuth 2.0 client ID for HTTP servers without
    *  Dynamic Client Registration support (Slack, GitHub, Figma).
    *  Forwarded to kiro-cli as `oauth.clientId` on session/new
@@ -232,9 +231,17 @@ export interface MCPResourceInfo {
   mime_type?: string;
 }
 
-/** Prompts + resources a connected server exposes (empty when none / not
- *  connected). Keyed by server name in the discovery signal map. */
+/** What a connected server exposes: its tool names, prompts and resources
+ *  (empty when none / not connected). Keyed by server name in the discovery
+ *  signal map. All three arrive together on /api/mcp/status.
+ *
+ *  `tools` used to be a PERSISTED config field (`known_tools` on the server
+ *  record). It moved here when KAS's config file became the source of truth:
+ *  the tool names are what the agent found at connect time, not something the
+ *  user configured, and writing them back into the config file made every
+ *  status notification a disk write. */
 export interface ServerDiscovery {
+  tools: string[];
   prompts: MCPPromptInfo[];
   resources: MCPResourceInfo[];
 }
@@ -257,6 +264,7 @@ interface WireRuntimeStatus {
   state: string;
   oauth_url?: string;
   error?: string;
+  tools?: string[];
   prompts?: MCPPromptInfo[];
   resources?: MCPResourceInfo[];
 }
@@ -292,12 +300,12 @@ export function statusSignalFor(name: string): ReadonlySignal<RuntimeStatus> {
 
 // --- Discovery registry (per-server prompts/resources, keyed by name) ---
 
-const EMPTY_DISCOVERY: ServerDiscovery = { prompts: [], resources: [] };
+const EMPTY_DISCOVERY: ServerDiscovery = { tools: [], prompts: [], resources: [] };
 const discoveryMap = new SignalMap<ServerDiscovery>();
 
-/** Reactive per-server discovery signal (prompts/resources; empty default).
- *  Populated from /api/mcp/status, which carries a connected server's
- *  advertised prompts + resources. */
+/** Reactive per-server discovery signal (tools/prompts/resources; empty
+ *  default). Populated from /api/mcp/status, which carries what a connected
+ *  server advertises. */
 export function discoverySignalFor(name: string): ReadonlySignal<ServerDiscovery> {
   return discoveryMap.ensure(name, EMPTY_DISCOVERY);
 }
@@ -395,24 +403,29 @@ class MCPStateController {
     for (const s of d?.servers ?? []) {
       seen.add(s.name);
       this.setStatus(s.name, adaptStatus(s));
-      this.setDiscovery(s.name, s.prompts ?? [], s.resources ?? []);
+      this.setDiscovery(s.name, s.tools ?? [], s.prompts ?? [], s.resources ?? []);
     }
     // Servers with no reported status revert to idle (fires their signal).
     for (const s of servers.items()) {
       if (!seen.has(s.name)) {
         this.deleteStatus(s.name);
-        this.setDiscovery(s.name, [], []);
+        this.setDiscovery(s.name, [], [], []);
       }
     }
   }
 
-  setDiscovery(name: string, prompts: MCPPromptInfo[], resources: MCPResourceInfo[]): void {
-    if (prompts.length === 0 && resources.length === 0) {
+  setDiscovery(
+    name: string,
+    tools: string[],
+    prompts: MCPPromptInfo[],
+    resources: MCPResourceInfo[],
+  ): void {
+    if (tools.length === 0 && prompts.length === 0 && resources.length === 0) {
       // Share the frozen empty value so idle servers don't churn the signal.
       discoveryMap.ensure(name, EMPTY_DISCOVERY).value = EMPTY_DISCOVERY;
       return;
     }
-    discoveryMap.ensure(name, EMPTY_DISCOVERY).value = { prompts, resources };
+    discoveryMap.ensure(name, EMPTY_DISCOVERY).value = { tools, prompts, resources };
   }
 }
 

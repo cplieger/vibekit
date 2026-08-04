@@ -383,8 +383,6 @@ func TestIsRetryablePromptError_TypedRPCError(t *testing.T) {
 	}
 }
 
-// --- Tangent commands ---
-
 // --- Create hook ---
 
 func TestCreateHook_RequiresNameAndEventType(t *testing.T) {
@@ -568,28 +566,6 @@ func TestCreateHook_RejectsOversizeField(t *testing.T) {
 	}
 }
 
-// --- Truncate helper ---
-
-func TestTruncateRunes(t *testing.T) {
-	tests := []struct {
-		in   string
-		want string
-		n    int
-	}{
-		{"short", "short", 10},
-		{"hello world", "hello", 5},
-		{"", "", 5},
-		{"abc", "abc", 3},
-		{"abcd", "abc", 3},
-	}
-	for _, tt := range tests {
-		got := truncateRunes(tt.in, tt.n)
-		if got != tt.want {
-			t.Errorf("truncateRunes(%q, %d) = %q, want %q", tt.in, tt.n, got, tt.want)
-		}
-	}
-}
-
 // --- IsEmptyTurn ---
 
 func TestIsEmptyTurn(t *testing.T) {
@@ -718,11 +694,6 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 	}
 }
 
-// TestPrompt_ShellInterception_FrozenChatRejects pins the
-// tangent-safety invariant: `!cmd` typed into a parent that has an
-// active tangent must 409 (frozen), otherwise the shell output
-// would mutate the frozen snapshot the tangent is supposed to
-// preserve for merge.
 func TestShellCappedBuffer(t *testing.T) {
 	var b command.ShellCappedBuffer
 	// First write lands fully.
@@ -754,11 +725,8 @@ func TestShellCappedBuffer(t *testing.T) {
 	}
 }
 
-// --- cmdPrompt busy / frozen ---
+// --- cmdPrompt busy ---
 
-// TestPrompt_FrozenChatReturns409 pins the invariant that a frozen
-// parent chat rejects prompts with 409, not 500 or silent-append.
-// Client-side tangent UX depends on this status.
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -912,64 +880,6 @@ func TestBuildPromptBlocks(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// --- cmdRestoreCheckpoint / cmdUndoEdit ---
-
-// TestCmdRestoreCheckpoint_NoCheckpointsWired pins the short-circuit
-// when the Hub was built without a checkpoint.Store.
-func TestCmdRestoreCheckpoint_NoCheckpointsWired(t *testing.T) {
-	h, _, _ := newTestHub()
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "restore_checkpoint", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"tag":"1"}`),
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
-// TestCmdRestoreCheckpoint_MissingTagIs400 pins the empty-tag guard.
-func TestCmdRestoreCheckpoint_MissingTagIs400(t *testing.T) {
-	h, _, _ := newCheckpointHub(t)
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "restore_checkpoint", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{}`),
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
-// TestCmdUndoEdit_NoCheckpointsWired returns 400 without checkpoints.
-func TestCmdUndoEdit_NoCheckpointsWired(t *testing.T) {
-	h, _, _ := newTestHub()
-	rec := postCmd(t, h, api.ClientCommand{
-		Type: "undo_edit", RequestID: "r1", ChatID: "c1",
-		Payload: json.RawMessage(`{"tag":"1","file_path":"f.go"}`),
-	})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
-	}
-}
-
-// TestCmdUndoEdit_MissingFieldsIs400 pins required-field validation.
-func TestCmdUndoEdit_MissingFieldsIs400(t *testing.T) {
-	h, _, _ := newCheckpointHub(t)
-	cases := []string{
-		`{}`,
-		`{"tag":"1"}`,
-		`{"file_path":"f.go"}`,
-	}
-	for _, body := range cases {
-		rec := postCmd(t, h, api.ClientCommand{
-			Type: "undo_edit", RequestID: "r", ChatID: "c1",
-			Payload: json.RawMessage(body),
-		})
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("payload=%q status=%d, want 400", body, rec.Code)
-		}
 	}
 }
 

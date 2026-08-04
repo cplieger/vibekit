@@ -20,11 +20,6 @@ vi.mock("./transport.js", () => ({
 vi.mock("./session-context.js", () => ({
   getCurrentModel: () => "claude",
 }));
-vi.mock("./editor-types.js", () => ({
-  getActiveFilePath: () => "src/main.ts",
-  getOpenFilePaths: () => ["src/main.ts"],
-}));
-
 import { sendPromptTo, switchModel } from "./chat-commands.js";
 
 beforeEach(() => {

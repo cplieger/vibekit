@@ -8,6 +8,7 @@ package translate
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -63,11 +64,101 @@ type ACPKiroMeta struct {
 		// marker: plain clients render the text, capable clients key off
 		// it for a distinct refusal affordance. The turn then ends with
 		// core stopReason "refusal".
-		Refusal        *ACPRefusalMeta `json:"refusal"`
-		Kind           string          `json:"kind"`
-		AgentSubtaskID string          `json:"agentSubtaskId"`
-		HookAsk        json.RawMessage `json:"hookAsk,omitempty"`
+		Refusal *ACPRefusalMeta `json:"refusal"`
+		// Checkpoint is KAS's snapshot mapping for a file-writing tool
+		// call. Probed 2026-08-02 (kiro-cli 2.16.0): it arrives ONLY on
+		// the tool_call_update whose status is "completed" — the initial
+		// tool_call and every in_progress/pending update carry none, which
+		// is why the value is folded in on update rather than set once.
+		//
+		// A sibling _meta.kiro.preview on that same frame repeats these
+		// URIs AND carries originalContent/modifiedContent in full. That
+		// is deliberately NOT decoded: persisting whole file bodies per
+		// tool call would bloat every chat file, and the snapshot URIs
+		// address the same bytes on demand.
+		Checkpoint     *ACPCheckpointMeta `json:"checkpoint"`
+		Kind           string             `json:"kind"`
+		AgentSubtaskID string             `json:"agentSubtaskId"`
+		// MessageID and Timestamp are KAS's own identity for the message
+		// record a frame belongs to. Measured on the v3 wire (probe 23,
+		// kiro-cli 2.16.0): present on user_message_chunk (a bare uuid —
+		// vibekit's OWN prompt messageId when vibekit sent one),
+		// agent_message_chunk (`<uuid>-say`), tool_call (`<id>-call`) and
+		// tool_call_update (`<id>-result`). Timestamp is RFC3339 with
+		// milliseconds.
+		//
+		// The replay projection depends on both: without MessageID it
+		// fabricates ids, so the same session projects differently on every
+		// load and nothing can address a message; without Timestamp every
+		// replayed turn is stamped with the load's wall clock and a resumed
+		// transcript claims all its history happened just now.
+		MessageID string `json:"messageId"`
+		Timestamp string `json:"timestamp"`
+		// Notification tags a row KAS wrote onto a chat's transcript on
+		// something else's behalf. kind "workflow-progress" is a workflow
+		// step's progress persisted onto the LAUNCHING chat, which arrives as
+		// a user_message_chunk carrying JSON — see isWorkflowProgress.
+		Notification struct {
+			Kind string `json:"kind"`
+		} `json:"notification"`
+		// Workflow is present on every frame of a workflow STEP's session
+		// (probe 17). It is what makes a step frame self-describing: the frame
+		// arrives on the launching chat's connection with a session id that is
+		// neither the chat's nor a subagent's, and this block is the only thing
+		// on the frame that says which.
+		//
+		// Note the nesting: this is `params.update._meta.kiro.workflow`, not
+		// `params._meta` — `params` carries only `sessionId` and `update`.
+		Workflow *ACPWorkflowMeta `json:"workflow"`
+		HookAsk  json.RawMessage  `json:"hookAsk,omitempty"`
 	} `json:"kiro"`
+}
+
+// ACPWorkflowMeta is the _meta.kiro.workflow block on a step session's frames.
+//
+// NodePath is KAS's own instance-unique address for a node — a repeat's second
+// iteration is `[wf…, loop, iter-1, step]` — which is why it, rather than
+// NodeID, is what a per-step attribution key is built from: two iterations of
+// one step share a NodeID and must not share a block.
+type ACPWorkflowMeta struct {
+	WorkflowID string   `json:"workflowId"`
+	NodeID     string   `json:"nodeId"`
+	Type       string   `json:"type"`
+	NodePath   []string `json:"nodePath"`
+}
+
+// SubtaskID is the per-block attribution key for a step's content.
+//
+// A step's prose otherwise MERGES into the launching chat's own paragraph, and
+// that reproduces exactly the context confusion workflows exist to avoid. The
+// mechanism: the chunk handlers append through `Buffer.AppendTextDelta(text,
+// subtask)`, which extends the trailing block only when kind AND subtask match —
+// and a step's text frame carries an EMPTY `agentSubtaskId` (KAS sets that only
+// on tool frames), so empty matched empty and the step's words landed inside the
+// parent agent's block.
+//
+// Reusing `agent_subtask_id` rather than adding a parallel channel is deliberate:
+// the client already groups contiguous same-subtask blocks into a collapsible
+// delegated-work block, so a step renders as delegated work with no client
+// change at all. The `wf:` prefix keeps the two id spaces from ever colliding —
+// KAS's subtask ids are uuids.
+func (w *ACPWorkflowMeta) SubtaskID() string {
+	if w == nil || w.WorkflowID == "" {
+		return ""
+	}
+	if len(w.NodePath) > 0 {
+		return "wf:" + strings.Join(w.NodePath, "/")
+	}
+	return "wf:" + w.WorkflowID + "/" + w.NodeID
+}
+
+// ACPCheckpointMeta is the _meta.kiro.checkpoint object on a completed
+// file-writing tool_call_update. Every field is independently optional —
+// see api.ToolCheckpoint for the create-has-no-pre-image case.
+type ACPCheckpointMeta struct {
+	Original string `json:"original"`
+	Modified string `json:"modified"`
+	Local    string `json:"local"`
 }
 
 // ACPRefusalMeta is the _meta.kiro.refusal block on a refusal explanation
@@ -130,9 +221,33 @@ type ACPSessionUpdateEnvelope struct {
 	Update    json.RawMessage `json:"update"`
 }
 
-// ACPSessionUpdateBase extracts the sessionUpdate kind discriminator.
+// ACPSessionUpdateBase extracts the two discriminators every session/update
+// dispatch needs: the sessionUpdate kind, and whether the frame is a REPLAY
+// of stored history rather than something happening now.
+//
+// KAS replays a session's whole transcript as ordinary session/update
+// notifications in response to `session/load` (bounded only when the caller
+// asks, via `_meta.kiro.replayLimit`), tagging each replayed frame
+// `_meta.kiro.replay: true`. Note the nesting: the flag is on the **update**
+// object, not on `params` — reading it off params yields false for every
+// frame, which looks exactly like a wire that never sets it.
+//
+// Live frames leave it absent. Catalog frames that arrive during a load
+// (`available_commands_update`, `config_option_update`) are deliberately NOT
+// tagged: they carry the session's CURRENT state, not its history, so they
+// must keep reaching the live handlers.
 type ACPSessionUpdateBase struct {
 	Kind api.ACPUpdateKind `json:"sessionUpdate"`
+	Meta struct {
+		Kiro struct {
+			// Workflow is present on a workflow STEP's frames and is the
+			// discriminator the dispatcher classifies on. Decoded here, at the
+			// same shallow depth as Replay, because both answer "which door does
+			// this frame go through" before any per-kind decode happens.
+			Workflow *ACPWorkflowMeta `json:"workflow"`
+			Replay   bool             `json:"replay"`
+		} `json:"kiro"`
+	} `json:"_meta"`
 }
 
 // JSON field name constants — the wire protocol uses these strings

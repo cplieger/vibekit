@@ -57,8 +57,6 @@ import { initTaskListPill } from "./task-list.js";
 import { initAwaySummary } from "./away-summary.js";
 import { initAgentTerminals } from "./agent-terminal.js";
 import { initTooltips } from "./tooltip.js";
-import { initHistory } from "./history.js";
-import { initSpecs, showSpecsView } from "./specs.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { handleFindHotkey } from "./find-in-chat.js";
@@ -74,12 +72,13 @@ import {
   installStoreSubscribers,
 } from "./chat.js";
 import { initModelSwitcher } from "./model-switcher.js";
-import { initSupervisedPill } from "./supervised-pill.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
 import { initPromptInput } from "./prompt-input.js";
 import { initQueuedPrompts } from "./queued-prompts.js";
+import { initChatOptions } from "./chat-options.js";
+import { mountDecisionDock } from "./decision-dock.js";
 import { initRuntimeHealth } from "./runtime-health.js";
 // commands-menu stripped — slash commands replaced by dedicated UI buttons
 import { refreshContextUI } from "./context-ui.js";
@@ -88,12 +87,11 @@ import { applyShareTarget } from "./share-target.js";
 
 import "./handlers/chat.js";
 import "./handlers/messages.js";
-import "./handlers/pending.js";
 import "./handlers/turn.js";
 import "./handlers/system.js";
 import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
-import { wireCheckpointRestore } from "./handlers/turn.js";
+import "./handlers/run.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
@@ -104,7 +102,6 @@ import { error as toastError } from "./toast.js";
 // without the user having to first open the chat that triggered
 // them. The module is small; the side-effect import is worth the
 // immediacy.
-import "./conflicts.js";
 
 function dismissLoadingScreen(): void {
   document.getElementById("app-loading")?.remove();
@@ -178,7 +175,16 @@ function init(): void {
   initFilePicker();
   initChatAttach();
   initTaskListPill();
-  // Wire toolbar history button. Hidden when retention is 0 (no archive).
+  // Wire toolbar history button. Hidden when retention is 0 (nothing kept).
+  $.docsBtn.addEventListener("click", () => {
+    void import("./docs.js")
+      .then(({ showDocsView }) => {
+        showDocsView();
+      })
+      .catch(() => {
+        /* noop */
+      });
+  });
   $.historyBtn.addEventListener("click", () => {
     void import("./history.js")
       .then(({ showHistoryView }) => {
@@ -189,8 +195,8 @@ function init(): void {
       });
   });
   // Sync history button visibility with retention setting. Retention = 0 is
-  // "no retention" (ephemeral chats, nothing archived) → hide History; > 0
-  // archives on close → show it.
+  // "no retention" (ephemeral chats, nothing survives a close) → hide History;
+  // anything else keeps closed chats → show it.
   const syncHistoryBtn = (): void => {
     $.historyBtn.classList.toggle("hidden", !isRetentionEnabled());
   };
@@ -199,8 +205,6 @@ function init(): void {
   initAwaySummary();
   initAgentTerminals();
   initTooltips();
-  initHistory();
-  initSpecs();
   // initGovernance() moved to initPostAuth(): its /api/governance snapshot
   // (and settings.ts's version/git-badge fetches) shouldn't fire on the
   // login screen (B2).
@@ -371,12 +375,11 @@ async function checkAuthAndStart(): Promise<void> {
   // first chat's session/new lands. Fire-and-forget; session-sourced
   // updates overwrite this the moment a bridge spawns.
   void fetchModelsFromREST();
-  // Read retention setting so tab-close knows whether to archive or delete.
+  // Read retention setting so tab-close knows whether to keep or delete.
   void refreshRetention();
 
   const skel = chatSkeleton();
   $.messages.appendChild(skel);
-  wireCheckpointRestore($.messages);
 
   suppressPush(true);
   // If share-target intends to create a session (e.g. ?agent=planner),
@@ -461,11 +464,10 @@ function initPostAuth(): void {
  *  boot loop and editor tabs by restoreAll(); singletons were previously
  *  never reopened, so `hasTab(saved.active_view)` was always false for them
  *  and their position in the saved order was silently dropped.
- *  TODO(B7): History and Specs are still not restored — their data loaders
- *  are module-internal (history.ts / specs.ts export only toggle-style
- *  openers, which would close the tab when fired from onShow of an
- *  already-active tab). Export plain loaders from those modules and add
- *  them here. */
+ *  TODO(B7): History is still not restored — its data loader is
+ *  module-internal (history.ts exports only a toggle-style opener, which
+ *  would close the tab when fired from onShow of an already-active tab).
+ *  Export a plain loader from that module and add it here. */
 function restoreSingletonTabs(): void {
   for (const id of getSavedTabState().tab_order) {
     switch (id) {
@@ -493,6 +495,28 @@ function restoreSingletonTabs(): void {
             view: TAB_VIEWS.git,
             route: { kind: "git", tab: "changes" },
             onShow: loadGitRepos,
+          },
+          { activate: false },
+        );
+        break;
+      case "__docs__":
+        openTab(
+          {
+            id,
+            name: "Kiro docs",
+            kind: "docs",
+            view: TAB_VIEWS.docs,
+            route: { kind: "docs", tab: "steering" },
+            onShow: () => {
+              void import("./docs.js")
+                .then(({ forceDocsTab, loadDocs }) => {
+                  forceDocsTab("steering");
+                  loadDocs();
+                })
+                .catch(() => {
+                  /* noop */
+                });
+            },
           },
           { activate: false },
         );
@@ -650,9 +674,13 @@ function setupInput(): void {
   initModelSwitcher();
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker();
-  initSupervisedPill();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
   initQueuedPrompts();
+  initChatOptions();
+  // The interaction dock: permission asks, elicitation forms and agent
+  // questions. Hosted by the chat's bottom bar; it takes its host as an
+  // argument so a future run tab's bottom bar can host one too.
+  mountDecisionDock($.decisionDock);
 
   // Expandable pills: context and status dot.
   const ctxExpand = $.contextIndicator.querySelector<HTMLElement>(".pill-expand-content");
@@ -725,6 +753,15 @@ function applyRoute(route: Route): void {
     case "file":
       openFile(route.path, route.line);
       break;
+    case "docs":
+      void import("./docs.js")
+        .then(({ showDocsView }) => {
+          showDocsView(route.tab);
+        })
+        .catch(() => {
+          /* noop */
+        });
+      break;
     case "history":
       void import("./history.js")
         .then(({ showHistoryView }) => {
@@ -734,8 +771,16 @@ function applyRoute(route: Route): void {
           /* noop */
         });
       break;
-    case "specs":
-      showSpecsView();
+    case "run":
+      void import("./run-view.js")
+        .then(({ openRunView }) => {
+          // Deep link: the run's name is not in the URL, so the tab is titled
+          // by id until the fetch supplies the real name.
+          openRunView(route.id, route.id);
+        })
+        .catch(() => {
+          /* noop */
+        });
       break;
   }
 }

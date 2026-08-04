@@ -4,10 +4,21 @@
 // On v3, KAS persists per-session state under $KIRO_HOME/sessions so a chat
 // can be resumed via session/load across container restarts. That state's
 // ONLY purpose is to reload a chat vibekit still keeps — so it must die with
-// the chat. vibekit owns this end to end (kiro-cli's own cleanup.periodDays is
-// pinned to 0/never): a session is reaped promptly when its chat is deleted,
-// and a periodic orphan sweep removes anything left behind by a crash, an
-// archived-chat purge, or a pre-v3 install.
+// the chat. vibekit owns this end to end: a session is reaped promptly when its
+// chat is deleted, when an archived chat is purged, and a periodic orphan sweep
+// removes crash residue and pre-v3 files.
+//
+// vibekit is the ONLY retention authority, but not for the reason previously
+// recorded here. This comment used to say kiro-cli's `cleanup.periodDays` is
+// "pinned to 0/never"; that key has ZERO occurrences in both the KAS bundle and
+// the kiro-cli binary, and `kiro-cli settings` accepts unknown keys, so
+// vibekit's 0 is stored and ignored. The pin is documentation of intent, not a
+// mechanism. The real reason is that KAS's one self-initiated delete path —
+// `sessionEviction`, an LRU sweep once total session bytes exceed a 500 MB
+// default budget, newest 5 preserved, checked once per process at newSession —
+// DEFAULTS TO DISABLED and neither layer enables it. If it were ever enabled it
+// would implement a different policy from this one and delete live chains
+// silently, which is why the boot conformance check asserts it stays absent.
 //
 // On-disk layout (verified against KAS 2.12):
 //
@@ -72,10 +83,15 @@ func (r *Reaper) Reap(sessionID string) {
 
 // Sweep removes orphaned session state: any session dir or cli sidecar whose
 // id is not in referenced and is older than the guard window, plus dead
-// v2-engine files (bare-uuid, no sess_ prefix) older than the guard. The
-// referenced set is the ACPSessionID of every chat vibekit still keeps
-// (active AND archived). Returns the number of sessions reaped. A no-op when
-// the reaper is nil or sessions dir is absent.
+// v2-engine files (bare-uuid, no sess_ prefix) older than the guard. Returns
+// the number of sessions reaped. A no-op when the reaper is nil or the sessions
+// dir is absent.
+//
+// `referenced` must be the COMPLETE keep-list — every session in every active
+// and archived chat's chain, unioned with every live bridge's session. Age is
+// not evidence that a session is disposable: the guard below is a create-race
+// cushion, not a liveness test. Passing a partial set deletes user history, so
+// the caller skips the sweep rather than narrowing the set (hub.sweepSessionsOnce).
 func (r *Reaper) Sweep(referenced map[string]struct{}) int {
 	if r == nil {
 		return 0

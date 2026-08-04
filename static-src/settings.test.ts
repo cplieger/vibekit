@@ -56,7 +56,6 @@ vi.mock("./permissions-ui.js", () => ({}));
 vi.mock("./mcp-ui.js", () => ({}));
 vi.mock("./knowledge.js", () => ({}));
 vi.mock("./hooks.js", () => ({}));
-vi.mock("./kiro-config.js", () => ({}));
 vi.mock("./settings-notifications.js", () => ({}));
 
 const { extractDiagnosticVersion, initDiagnostics } = await import("./settings.js");

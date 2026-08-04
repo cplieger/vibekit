@@ -76,10 +76,11 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ api.ChatID, msg *api
 		}
 		switch s.Status {
 		case "connected":
-			if names := mcpToolNames(s.Tools); len(names) > 0 {
-				t.MCP().SetKnownTools(ctx, s.Name, names)
-			}
-			t.MCP().RecordConnected(ctx, s.Name, mcpPrompts(s.Prompts), mcpResources(s.Resources))
+			// Tools, prompts and resources all ride this ONE notification, so they
+			// land in one registry write. They used to split: the tool names went to
+			// the MCP config store — a disk write, on a notification path, of
+			// agent-derived data into a user-intent file.
+			t.MCP().RecordConnected(ctx, s.Name, mcpToolNames(s.Tools), mcpPrompts(s.Prompts), mcpResources(s.Resources))
 		case "failed":
 			if s.AuthorizationURL != "" {
 				t.MCP().RecordOAuth(ctx, s.Name, s.AuthorizationURL)

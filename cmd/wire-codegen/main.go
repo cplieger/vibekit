@@ -31,6 +31,7 @@ func main() {
 	r.Types = []wiregen.WireType{
 		wiregen.TypeRef[api.ToolLocation](),
 		wiregen.TypeRef[api.ToolDiff](),
+		wiregen.TypeRef[api.ToolCheckpoint](),
 		wiregen.TypeRef[api.ToolCall](),
 		wiregen.TypeRef[api.PlanEntry](),
 		wiregen.TypeRef[api.Block](),
@@ -43,7 +44,7 @@ func main() {
 		wiregen.TypeRef[api.SessionModel](),
 		wiregen.TypeRef[api.ChatHeader](),
 		wiregen.TypeRef[api.PermissionOption](),
-		wiregen.TypeRef[api.PendingChange](),
+		wiregen.TypeRef[api.ApprovalFile](),
 		wiregen.TypeRef[api.FileChange](),
 		wiregen.TypeRef[api.ConnectedPayload](),
 		wiregen.TypeRef[api.MessageChunkPayload](),
@@ -55,19 +56,9 @@ func main() {
 		wiregen.TypeRef[api.MCPOAuthPayload](),
 		wiregen.TypeRef[api.MCPFailedPayload](),
 		wiregen.TypeRef[api.MCPDisconnectedPayload](),
-		wiregen.TypeRef[api.PendingChangeAddedPayload](),
-		wiregen.TypeRef[api.PendingChangeResolvedPayload](),
-		wiregen.TypeRef[api.PendingChangesClearedPayload](),
 		wiregen.TypeRef[api.ChatDeletedPayload](),
-		// api.ConflictDetectedPayload is an alias of
-		// checkpoint/types.ConflictPayload, so TypeRef resolves to the
-		// underlying name; the TS override below restores the event-payload
-		// naming convention.
-		wiregen.TypeRef[api.ConflictDetectedPayload](),
 		wiregen.TypeRef[api.ToolCallPayload](),
 		wiregen.TypeRef[api.ToolCallUpdatePayload](),
-		wiregen.TypeRef[api.CommandsUpdatedPayload](),
-		wiregen.TypeRef[api.AvailableCommand](),
 		wiregen.TypeRef[api.ElicitationPropertySchema](),
 		wiregen.TypeRef[api.ElicitationRequestSchema](),
 		wiregen.TypeRef[api.ElicitationNeededPayload](),
@@ -76,7 +67,6 @@ func main() {
 		wiregen.TypeRef[api.UserInputNeededPayload](),
 		wiregen.TypeRef[api.OpenExternalURLPayload](),
 		wiregen.TypeRef[api.CodeReferencesPayload](),
-		wiregen.TypeRef[api.KnowledgeIndexingPayload](),
 		wiregen.TypeRef[api.AccountUsageBreakdown](),
 		wiregen.TypeRef[api.AccountUsage](),
 		wiregen.TypeRef[api.PolicyRuleCore](),
@@ -86,12 +76,6 @@ func main() {
 		wiregen.TypeRef[api.PolicyErrorItem](),
 		wiregen.TypeRef[api.PermissionsChangedPayload](),
 		wiregen.TypeRef[api.PolicyErrorPayload](),
-		wiregen.TypeRef[api.SpecTaskPBT](),
-		wiregen.TypeRef[api.SpecTaskNode](),
-		wiregen.TypeRef[api.Spec](),
-		wiregen.TypeRef[api.SpecsResponse](),
-		wiregen.TypeRef[api.SpecTaskChange](),
-		wiregen.TypeRef[api.SpecTaskChangedPayload](),
 		wiregen.TypeRef[api.SafetyProperty](),
 		wiregen.TypeRef[api.SafetyStatusPayload](),
 		wiregen.TypeRef[api.SafetyPropertiesPayload](),
@@ -107,6 +91,13 @@ func main() {
 		wiregen.TypeRef[api.ToolRemoveResponse](),
 		wiregen.TypeRef[api.ToolsJobsResponse](),
 		wiregen.TypeRef[api.ToolCatalogInfo](),
+		wiregen.TypeRef[api.Recipe](),
+		wiregen.TypeRef[api.RecipesResponse](),
+		wiregen.TypeRef[api.RunLaunchRequest](),
+		wiregen.TypeRef[api.RunLaunchedResponse](),
+		wiregen.TypeRef[api.RunStartedPayload](),
+		wiregen.TypeRef[api.RunProgressPayload](),
+		wiregen.TypeRef[api.RunFinishedPayload](),
 		wiregen.TypeRef[api.ToolJobChangedPayload](),
 		wiregen.TypeRef[api.ToolJobOutputPayload](),
 		wiregen.TypeRef[forges.ConfiguredForge](),
@@ -127,20 +118,15 @@ func main() {
 	// registered-type (root) package, so discovery doesn't scan it.
 	r.Enums = map[string]wiregen.EnumDef{
 		"Role": {}, "EventKind": {}, "ToolKind": {}, "ToolStatus": {},
-		"PlanStatus": {}, "PendingChangeKind": {},
+		"PlanStatus": {},
 		"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
-		"PendingAction": {}, "ClearReason": {}, "SafetyStatus": {},
-		"Transport": {Values: []string{"stdio", "http", "sse"}},
+		"SafetyStatus":    {},
+		"RunProgressKind": {},
+		"Transport":       {Values: []string{"stdio", "http", "sse"}},
 	}
 
 	r.EnumTSName = map[string]string{
 		"Kind": "ForgeKind", // forges.Kind → ForgeKind in TS
-	}
-
-	r.TSNameOverride = map[string]string{
-		// checkpoint/types.ConflictPayload arrives via the api alias; name
-		// the TS interface after the SSE event it rides.
-		"ConflictPayload": "ConflictDetectedPayload",
 	}
 
 	// MCPOAuthPayload's acronym cluster (MCP+OAuth) can't be split
@@ -149,8 +135,6 @@ func main() {
 		"MCPOAuthPayload": "mcp_oauth_payload",
 		// URL acronym cluster can't be split unambiguously; pin the path.
 		"OpenExternalURLPayload": "open_external_url_payload",
-		// PBT acronym cluster can't be split unambiguously; pin the path.
-		"SpecTaskPBT": "spec_task_pbt",
 	}
 
 	const typeMessage = "Message" // 3 SSE events decode to api.Message
@@ -159,14 +143,11 @@ func main() {
 		{EventType: "chat_deleted", TypeName: "ChatDeletedPayload"},
 		{EventType: "chat_updated", TypeName: "ChatHeader"},
 		{EventType: "code_references", TypeName: "CodeReferencesPayload"},
-		{EventType: "commands_updated", TypeName: "CommandsUpdatedPayload"},
-		{EventType: "conflict_detected", TypeName: "ConflictPayload"},
 		{EventType: "connected", TypeName: "ConnectedPayload"},
 		{EventType: "elicitation_needed", TypeName: "ElicitationNeededPayload"},
 		{EventType: "user_input_needed", TypeName: "UserInputNeededPayload"},
 		{EventType: "error", TypeName: "ErrorPayload"},
 		{EventType: "governance_state", TypeName: "GovernanceStatePayload"},
-		{EventType: "knowledge_indexing", TypeName: "KnowledgeIndexingPayload"},
 		{EventType: "mcp_connected", TypeName: "MCPConnectedPayload"},
 		{EventType: "mcp_disconnected", TypeName: "MCPDisconnectedPayload"},
 		{EventType: "mcp_failed", TypeName: "MCPFailedPayload"},
@@ -176,15 +157,14 @@ func main() {
 		{EventType: "message_created", TypeName: typeMessage},
 		{EventType: "message_updated", TypeName: typeMessage},
 		{EventType: "open_external_url", TypeName: "OpenExternalURLPayload"},
-		{EventType: "pending_change_added", TypeName: "PendingChangeAddedPayload"},
-		{EventType: "pending_change_resolved", TypeName: "PendingChangeResolvedPayload"},
-		{EventType: "pending_changes_cleared", TypeName: "PendingChangesClearedPayload"},
 		{EventType: "permission_needed", TypeName: "PermissionNeededPayload"},
 		{EventType: "permissions_changed", TypeName: "PermissionsChangedPayload"},
 		{EventType: "policy_error", TypeName: "PolicyErrorPayload"},
+		{EventType: "run_started", TypeName: "RunStartedPayload"},
+		{EventType: "run_progress", TypeName: "RunProgressPayload"},
+		{EventType: "run_finished", TypeName: "RunFinishedPayload"},
 		{EventType: "safety_properties", TypeName: "SafetyPropertiesPayload"},
 		{EventType: "safety_status", TypeName: "SafetyStatusPayload"},
-		{EventType: "spec_task_changed", TypeName: "SpecTaskChangedPayload"},
 		{EventType: "tool_call", TypeName: "ToolCallPayload"},
 		{EventType: "tool_call_update", TypeName: "ToolCallUpdatePayload"},
 		{EventType: "tool_job_changed", TypeName: "ToolJobChangedPayload"},

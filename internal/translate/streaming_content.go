@@ -28,12 +28,6 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
-	// Open the .partial recovery file lazily on the first content/reasoning
-	// chunk (idempotent — no-op once open). This is what makes a tool-first
-	// turn crash-durable: the file opens as soon as any text arrives and
-	// WritePartial then captures the whole buffer, including tool calls
-	// that streamed before this chunk.
-	t.deps.OpenPartialFile(ctx, chatID, buf)
 	totalLen := buf.Content.Len() + buf.Reasoning.Len()
 	if totalLen+len(chunk.Content.Text) > maxBufferBytes {
 		return
@@ -50,10 +44,19 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	// HandleToolCall's AppendToolUseBlock call.
 	var blockIndex int
 	var seq int64
+	// A workflow STEP's frames arrive on this chat's connection with an EMPTY
+	// agentSubtaskId (KAS stamps that only on tool frames), so without this the
+	// step's prose extends the parent agent's trailing block — empty matches
+	// empty. The step's own `_meta.kiro.workflow` supplies an instance-unique
+	// key instead; see ACPWorkflowMeta.SubtaskID.
+	subtask := chunk.Meta.Kiro.AgentSubtaskID
+	if wf := chunk.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
+		subtask = wf
+	}
 	if isReasoning {
-		blockIndex, seq = buf.AppendThinkingDelta(chunk.Content.Text, chunk.Meta.Kiro.AgentSubtaskID)
+		blockIndex, seq = buf.AppendThinkingDelta(chunk.Content.Text, subtask)
 	} else {
-		blockIndex, seq = buf.AppendTextDelta(chunk.Content.Text, chunk.Meta.Kiro.AgentSubtaskID)
+		blockIndex, seq = buf.AppendTextDelta(chunk.Content.Text, subtask)
 	}
 	// A model refusal (kiro-cli 2.13): the explanation is this chunk's text;
 	// the update-level _meta.kiro.refusal classifies it. Stamp the buffer so
@@ -67,7 +70,6 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	} else {
 		refusal = nil
 	}
-	buf.WritePartial(ctx)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
 		api.MessageChunkPayload{
 			MessageID:      buf.MessageID,
@@ -75,7 +77,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 			IsReasoning:    isReasoning,
 			BlockIndex:     blockIndex,
 			Seq:            seq,
-			AgentSubtaskID: chunk.Meta.Kiro.AgentSubtaskID,
+			AgentSubtaskID: subtask,
 			Refusal:        refusal,
 		}))
 }

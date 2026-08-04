@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { pushRoute } from "./router.js";
-import type { Route, SettingsTab, GitTab } from "./router.js";
+import type { Route, SettingsTab, GitTab, DocsTab } from "./router.js";
 import {
   ICON_CLOSE,
   ICON_TAB_CHAT,
@@ -17,22 +17,20 @@ import {
   ICON_TAB_SETTINGS,
   ICON_TAB_GIT,
   ICON_TAB_FILES,
+  ICON_TAB_RUN,
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
-  ICON_TAB_SPEC,
+  ICON_TAB_DOCS,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import * as uiState from "./ui-state.js";
 import { $ } from "./dom.js";
 import { viewTransition as uipViewTransition } from "@cplieger/ui-primitives/view-transition";
 import { signal, effect, el } from "@cplieger/reactive";
-import { get as storeGet } from "./store.js";
 import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
-import { promoteRewindChat, discardRewindChat } from "./actions/rewind.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
-import { confirm as confirmDialog } from "./confirm.js";
 
 // --- Types ---
 
@@ -46,7 +44,8 @@ export const TAB_VIEWS = {
   files: "#files-view",
   editor: "#editor-view",
   history: "#history-view",
-  specs: "#specs-view",
+  docs: "#docs-view",
+  run: "#run-view",
 } as const;
 
 type TabKind = keyof typeof TAB_VIEWS;
@@ -67,6 +66,24 @@ export interface TabSpec {
   onShow?: (() => void) | undefined;
   /** Called when the tab is closed. */
   onClose?: (() => void) | undefined;
+  /** The tab this one hangs off, making it a SUB-TAB: it renders indented under
+   *  its parent, sorts immediately after it, is not independently draggable, is
+   *  not persisted in `tab_order`, and closes when its parent closes.
+   *
+   *  Deliberately a property of the TAB, not a lookup into chat state. The
+   *  indent used to key off the chat store's `parent_chat_id`, which coupled the
+   *  tab module to one feature's data model and meant only chats could ever have
+   *  children. Nothing in this contract knows what a run, a tangent or a diff
+   *  view is, so a future one is a two-field opt-in rather than a second
+   *  mechanism. */
+  parentId?: string | undefined;
+  /** Whether closing this tab tears down what it shows. Default true.
+   *
+   *  `owns: false` makes the tab a VIEW: closing it dismisses the view and
+   *  nothing else, so a sub-tab watching work another chat owns cannot kill that
+   *  work by being closed. The parent still tears down its own children when it
+   *  closes — that cascade is about the OWNER going away, not about the view. */
+  owns?: boolean | undefined;
 }
 
 // --- Singleton tab IDs (single source of truth) ---
@@ -75,7 +92,7 @@ const TAB_SETTINGS = "__settings__";
 const TAB_GIT = "__git__";
 const TAB_FILES = "__files__";
 const TAB_HISTORY = "__history__";
-const TAB_SPECS = "__specs__";
+const TAB_DOCS = "__docs__";
 
 const ICONS: Readonly<Record<TabKind, string>> = {
   chat: ICON_TAB_CHAT,
@@ -85,7 +102,8 @@ const ICONS: Readonly<Record<TabKind, string>> = {
   files: ICON_TAB_FILES,
   editor: ICON_TAB_EDITOR,
   history: ICON_TAB_HISTORY,
-  specs: ICON_TAB_SPEC,
+  docs: ICON_TAB_DOCS,
+  run: ICON_TAB_RUN,
 };
 
 // --- Store ---
@@ -154,12 +172,45 @@ export function openTab(spec: TabSpec, opts?: { activate?: boolean }): void {
     }
     return;
   }
-  state.tabs.push(spec);
+  insertSpec(spec);
   if (opts?.activate === false) {
     emit();
     return;
   }
   activateTab(spec.id);
+}
+
+/** A tab's sub-tabs, in creation order.
+ *
+ *  Reads `spec.parentId` rather than chat state, which is what decouples the tab
+ *  module from the chat store and lets any tab kind have children. */
+function childrenOf(id: string): TabSpec[] {
+  return state.tabs.filter((t) => t.parentId === id);
+}
+
+/** Insert a spec at its canonical position: a sub-tab immediately after its
+ *  parent's existing children (creation order within the group), a top-level tab
+ *  at the end. Keeping `state.tabs` parent-anchored means the render walk and
+ *  the keyboard order need no grouping logic of their own — the array already
+ *  reads the way the strip looks. */
+function insertSpec(spec: TabSpec): void {
+  const parent = spec.parentId;
+  if (parent === undefined) {
+    state.tabs.push(spec);
+    return;
+  }
+  const pIdx = state.tabs.findIndex((t) => t.id === parent);
+  if (pIdx < 0) {
+    // An orphan (parent already closed) behaves as top-level rather than
+    // vanishing: a tab nobody can see is worse than a tab in the wrong place.
+    state.tabs.push(spec);
+    return;
+  }
+  let at = pIdx + 1;
+  while (at < state.tabs.length && state.tabs[at]?.parentId === parent) {
+    at++;
+  }
+  state.tabs.splice(at, 0, spec);
 }
 
 /** Activate an existing tab. */
@@ -176,7 +227,7 @@ export function activateTab(id: string): void {
 
 /** Close a tab. Activates the neighbor or fires onEmpty if none remain.
  *  Pass `{ skipOnClose: true }` when the chat is already deleted remotely
- *  to avoid re-dispatching archive/delete actions against a stale session. */
+ *  to avoid re-dispatching the delete action against a stale session. */
 export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === id);
   if (idx < 0) {
@@ -185,21 +236,21 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
   const tab = state.tabs[idx]!;
 
-  // Check if this tab has rewind children. If so, ask the user.
-  const children = state.tabs.filter((t) => {
-    const s = storeGet(t.id);
-    return s?.parent_chat_id === id;
-  });
-  if (children.length > 0 && !opts?.skipOnClose) {
-    showRewindChildPrompt(
-      id,
-      children.map((t) => t.id),
-      opts,
-    );
-    return;
+  // Sub-tabs close with their parent, children FIRST. There is no question to
+  // ask: a child is a view of something the parent owns, so the parent going
+  // away takes it with it. (The prompt that used to live here offered "keep" —
+  // promoting a child to top-level — which only made sense while children were
+  // rewind branches with independent server-side lives.)
+  //
+  // Children first so a child's own teardown never runs against a parent that
+  // has already gone.
+  for (const child of childrenOf(id)) {
+    closeTab(child.id, opts);
   }
 
-  if (!opts?.skipOnClose) {
+  // `owns: false` tears down nothing: the tab is a view, and dismissing a view
+  // must not kill the work it was watching.
+  if (!opts?.skipOnClose && tab.owns !== false) {
     tab.onClose?.();
   }
   state.tabs.splice(idx, 1);
@@ -219,29 +270,6 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   } else {
     emit();
   }
-}
-
-/** Show a popup asking the user what to do with rewind children when
- *  their parent tab is closed. "Keep" promotes them to top-level;
- *  "Discard" closes them alongside the parent. */
-function showRewindChildPrompt(
-  parentId: string,
-  childIds: string[],
-  opts?: { skipOnClose?: boolean },
-): void {
-  const msg = `This chat has ${String(childIds.length)} rewind branch${childIds.length > 1 ? "es" : ""}. Discard all branches?`;
-  void confirmDialog(msg, "Discard all", "destructive").then((confirmed) => {
-    if (!confirmed) {
-      return;
-    }
-    // Discard children: dispatch server-side delete for each, then close tabs.
-    for (const cid of childIds) {
-      void discardRewindChat.dispatch({ chatID: cid });
-      closeTab(cid, { skipOnClose: true });
-    }
-    // Now close the parent.
-    closeTab(parentId, { ...opts, skipOnClose: false });
-  });
 }
 
 export function renameTab(id: string, name: string): void {
@@ -299,14 +327,31 @@ export function setTabDirty(id: string, dirty: boolean): void {
 function reorderTabs(order: string[]): void {
   const byID = new Map(state.tabs.map((t) => [t.id, t]));
   const next: TabSpec[] = [];
-  for (const id of order) {
+  /** Take a tab, then immediately its children — so a persisted or dragged
+   *  order that names only top-level ids still reproduces the full strip. */
+  const take = (id: string): void => {
     const t = byID.get(id);
-    if (t !== undefined) {
-      next.push(t);
-      byID.delete(id);
+    if (t === undefined) {
+      return;
+    }
+    next.push(t);
+    byID.delete(id);
+    for (const c of childrenOf(id)) {
+      if (byID.delete(c.id)) {
+        next.push(c);
+      }
+    }
+  };
+  for (const id of order) {
+    take(id);
+  }
+  // Preserve any unnamed tabs at the end (defensive; order drift). Parents go
+  // through take() so their children follow them rather than trailing the strip.
+  for (const t of [...byID.values()]) {
+    if (t.parentId === undefined) {
+      take(t.id);
     }
   }
-  // Preserve any unknown tabs at the end (defensive; order drift).
   for (const t of byID.values()) {
     next.push(t);
   }
@@ -391,7 +436,9 @@ function registerModuleSubscribers(): void {
     // Capture the previous session's state before the first overwrite.
     capturedUIState();
     uiState.save({
-      tab_order: state.tabs.map((t) => t.id),
+      // Top-level ids ONLY. A sub-tab's position is derived from its parent, so
+      // persisting it would let a restore place a child away from its parent.
+      tab_order: state.tabs.filter((t) => t.parentId === undefined).map((t) => t.id),
       active_view: state.active,
     });
   });
@@ -454,7 +501,6 @@ const ACTIVE_BTN: Readonly<Partial<Record<TabKind, () => HTMLButtonElement>>> = 
   git: () => $.gitBtn,
   files: () => $.filesBtn,
   history: () => $.historyBtn,
-  specs: () => $.specsBtn,
 };
 
 function syncSidebarButtons(activeKind: TabKind | null): void {
@@ -582,12 +628,10 @@ function renderDOM(): void {
     el.classList.toggle("active", tab.id === state.active);
     el.setAttribute("aria-selected", tab.id === state.active ? "true" : "false");
     el.tabIndex = tab.id === state.active ? 0 : -1;
-    // Rewind child indent: chats with parent_chat_id render indented.
-    const session = storeGet(tab.id);
-    el.classList.toggle(
-      "tab-rewind-child",
-      session?.parent_chat_id !== undefined && session.parent_chat_id !== "",
-    );
+    // Sub-tab indent, from the SPEC. Keying this off the chat store's
+    // parent_chat_id made the indent a chat-only feature and coupled the tab
+    // module to chat state; `parentId` is generic and any kind can carry it.
+    el.classList.toggle("tab-child", tab.parentId !== undefined);
     prev = el;
   }
 }
@@ -635,16 +679,18 @@ function createTabEl(tab: TabSpec): HTMLElement {
   const statusDot = el("span", { className: "tab-status-dot hidden" });
 
   node.append(icon, name, statusDot, close);
-  attachTabInteraction(node, tab.id);
+  // A sub-tab is not independently draggable: its position is its parent's.
+  // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
+  attachTabInteraction(node, tab.id, tab.parentId === undefined);
 
-  // Right-click context menu for chat tabs: export (md/json), plus Promote
-  // for rewind children. Non-chat tabs keep the native browser menu.
+  // Right-click context menu for chat tabs: export (md/json). Non-chat tabs
+  // keep the native browser menu. (Promote is gone with the rewind branch —
+  // there is no second chat to promote over a first.)
   node.addEventListener("contextmenu", (e) => {
     if (tab.kind !== "chat") {
       return;
     }
     e.preventDefault();
-    const s = storeGet(tab.id);
     const items: ContextMenuItem[] = [
       {
         label: "Export as Markdown",
@@ -659,14 +705,6 @@ function createTabEl(tab: TabSpec): HTMLElement {
         },
       },
     ];
-    if (s?.parent_chat_id !== undefined && s.parent_chat_id !== "") {
-      items.push({
-        label: "Promote (replace original)",
-        action: () => {
-          void promoteRewindChat.dispatch({ chatID: s.id });
-        },
-      });
-    }
     showContextMenu(items, { x: e.clientX, y: e.clientY });
   });
 
@@ -675,7 +713,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
 
 // --- Interaction (click, middle-click, drag, keyboard) ---
 
-function attachTabInteraction(el: HTMLElement, id: string): void {
+function attachTabInteraction(el: HTMLElement, id: string, draggable: boolean): void {
   // Click to activate (any target outside .tab-close).
   el.addEventListener("pointerup", (e) => {
     if (isDragHandled()) {
@@ -736,7 +774,9 @@ function attachTabInteraction(el: HTMLElement, id: string): void {
     }
   });
 
-  attachDrag(el);
+  if (draggable) {
+    attachDrag(el);
+  }
 }
 
 // --- Singleton tab helpers ---
@@ -828,15 +868,50 @@ export function toggleHistoryView(onShow: () => void, onClose?: () => void): voi
   });
 }
 
-export function toggleSpecsView(onShow: () => void, onClose?: () => void): void {
+/** Switch the docs browser's sub-tab route. No-op when it isn't open. Mirrors
+ *  setSettingsTab: keeps the __docs__ TabSpec route in sync so every emit (and
+ *  thus showView → pushRoute) reflects the active sub-tab rather than resetting
+ *  the URL to /docs. */
+export function setDocsTab(tab: DocsTab): void {
+  const spec = state.tabs.find((t) => t.id === TAB_DOCS);
+  if (spec === undefined) {
+    return;
+  }
+  spec.route = { kind: "docs", tab };
+  if (state.active === TAB_DOCS) {
+    emit();
+  }
+}
+
+/** Toggle the Kiro configuration browser, landing on the given sub-tab. */
+export function toggleDocsView(tab: DocsTab = "steering", onShow?: () => void): void {
   toggleSingleton({
-    id: TAB_SPECS,
-    name: "Specs",
-    kind: "specs",
-    view: TAB_VIEWS.specs,
-    route: { kind: "specs" },
+    id: TAB_DOCS,
+    name: "Kiro docs",
+    kind: "docs",
+    view: TAB_VIEWS.docs,
+    route: { kind: "docs", tab },
     onShow,
-    onClose,
+  });
+}
+
+/** Open (or focus) the read-only review tab for one previous workflow run.
+ *  Not a singleton: several runs can be reviewed side by side, keyed by id.
+ *  Closing it closes nothing else — a finished run has nothing to kill. */
+export function openRunTab(
+  workflowID: string,
+  name: string,
+  onShow: () => void,
+  opts?: { onClose?: () => void },
+): void {
+  openTab({
+    id: `run:${workflowID}`,
+    name,
+    kind: "run",
+    view: TAB_VIEWS.run,
+    route: { kind: "run", id: workflowID },
+    onShow,
+    onClose: opts?.onClose,
   });
 }
 

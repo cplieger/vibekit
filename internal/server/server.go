@@ -39,8 +39,12 @@ type Server struct {
 	steering      api.SteeringGenerator
 	mcpRegistry   api.RouteHandler
 	staticFS      fs.FS
-	cliRunner     CLIRunner
-	tools         *toolbelt.Engine
+	// kiroDocs memoizes the document-oriented .kiro inventory behind a
+	// directory-mtime signature (kiro_docs.go). A pointer so the zero Server
+	// used by the method-guard tests needs no initialisation.
+	kiroDocs  *docsCache
+	cliRunner CLIRunner
+	tools     *toolbelt.Engine
 	// kiroReady is the kiro-cli install manager's readiness verdict plus its
 	// TYPED reason, consulted per /api/health probe so a recovery becomes
 	// visible without a restart. Nil = this server does not own the install,
@@ -116,7 +120,8 @@ func WithForges(r api.RouteHandler) Option { return func(s *Server) { s.forges =
 // WithTools sets the tools engine backing the /api/tools surface.
 func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e } }
 
-// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks (rename, commit message, etc.).
+// WithUtilityPrompt sets the utility prompter used for AI-assisted tasks
+// (error explanations, commit messages, PR descriptions, conflict resolution).
 func WithUtilityPrompt(p api.UtilityPrompter) Option {
 	return func(s *Server) { s.utilityPrompt = p }
 }
@@ -190,6 +195,7 @@ func WithHostPolicy(p *webhttp.HostPolicy) Option {
 func New(opts ...Option) *Server {
 	s := &Server{
 		cliTimeouts: defaultCLITimeouts(),
+		kiroDocs:    &docsCache{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -233,6 +239,7 @@ func (s *Server) ListenAndServe() error {
 	s.files.RegisterRoutes(mux)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/workspace/kiro-config", s.handleKiroConfig)
+	mux.HandleFunc("/api/workspace/kiro-docs", s.handleKiroDocs)
 	s.mcpConfig.RegisterRoutes(mux)
 	s.mcpStatus.RegisterRoutes(mux)
 	s.mcpRegistry.RegisterRoutes(mux)

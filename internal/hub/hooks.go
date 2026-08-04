@@ -231,7 +231,7 @@ func (h *Hub) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 	cctx, cancel := context.WithTimeout(ctx, hookCallTimeout)
 	defer cancel()
 	raw, err := u.session.hooksRaw(cctx, methodKiroHooksList, map[string]any{
-		"workspacePaths": []string{h.lifecycle.workDir},
+		keyWorkspacePaths: []string{h.lifecycle.workDir},
 	})
 	if err != nil {
 		return nil, err

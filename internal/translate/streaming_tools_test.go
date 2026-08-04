@@ -487,3 +487,118 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 		}
 	})
 }
+
+// --- _meta.kiro.checkpoint: KAS's snapshot mapping ---
+
+// TestToolCallUpdate_CheckpointFromWire drives the two shapes a real
+// kiro-cli emits (probed 2026-08-02 against 2.16.0) through the actual JSON
+// decode, so the `_meta.kiro.checkpoint` NESTING is pinned and not just the
+// merge logic. A misplaced struct tag compiles cleanly and silently yields
+// nothing — the same trap that bit `_meta.title` — and here the symptom
+// would be "Rewind shows no diff", with nothing in any log.
+//
+// The create case is the one worth the table: KAS sends NO `original` for a
+// file it just created, so a consumer that requires all three keys breaks on
+// the first file the agent writes.
+func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
+	const (
+		origURI = "kiro-snapshot-v2://sess_51d58124:5c1bae6d/?originalPath%3Dexisting.txt"
+		modURI  = "kiro-snapshot-v2://sess_51d58124:952e8e1f/?originalPath%3Dexisting.txt"
+		local   = "file:///tmp/ws/existing.txt"
+	)
+	tests := []struct {
+		name       string
+		checkpoint map[string]any
+		want       api.ToolCheckpoint
+	}{
+		{
+			name:       "overwriting an existing file carries all three",
+			checkpoint: map[string]any{"original": origURI, "modified": modURI, "local": local},
+			want:       api.ToolCheckpoint{Original: origURI, Modified: modURI, Local: local},
+		},
+		{
+			name:       "creating a file has no pre-image",
+			checkpoint: map[string]any{"modified": modURI, "local": local},
+			want:       api.ToolCheckpoint{Modified: modURI, Local: local},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr, _, _, events, chatID := primeToolCall(t)
+			tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+				"toolCallId": "tc-1",
+				"status":     "completed",
+				"_meta":      map[string]any{"kiro": map[string]any{"checkpoint": tt.checkpoint}},
+			}), "")
+			tc, ok := lastToolCallUpdate(t, events)
+			if !ok {
+				t.Fatal("no tool_call_update event emitted")
+			}
+			if tc.Checkpoint == nil {
+				t.Fatalf("ToolCall.Checkpoint = nil, want %+v (is the _meta.kiro.checkpoint tag path right?)", tt.want)
+			}
+			if *tc.Checkpoint != tt.want {
+				t.Errorf("ToolCall.Checkpoint = %+v, want %+v", *tc.Checkpoint, tt.want)
+			}
+		})
+	}
+}
+
+// TestToolCallUpdate_CheckpointMergeIsPerField pins that a later frame with
+// a narrower key set cannot erase a value an earlier frame supplied.
+//
+// Not hypothetical: the key set genuinely varies frame to frame for one tool
+// call, so a wholesale struct replacement would drop `original` and take the
+// pre-image — the only thing a diff actually needs — with it.
+func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
+	tr, _, _, events, chatID := primeToolCall(t)
+	send := func(cp map[string]any) {
+		tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+			"toolCallId": "tc-1",
+			"_meta":      map[string]any{"kiro": map[string]any{"checkpoint": cp}},
+		}), "")
+	}
+	send(map[string]any{"original": "orig-uri", "modified": "mod-uri", "local": "local-uri"})
+	send(map[string]any{"modified": "mod-uri-2"})
+
+	tc, ok := lastToolCallUpdate(t, events)
+	if !ok {
+		t.Fatal("no tool_call_update event emitted")
+	}
+	want := api.ToolCheckpoint{Original: "orig-uri", Modified: "mod-uri-2", Local: "local-uri"}
+	if tc.Checkpoint == nil || *tc.Checkpoint != want {
+		t.Errorf("ToolCall.Checkpoint = %+v, want %+v (a narrower frame must refine, not replace)", tc.Checkpoint, want)
+	}
+}
+
+// TestToolCallUpdate_CheckpointAbsentStaysNil pins that a tool call which
+// touched no file grows no checkpoint. ~95% of tool calls are in this case,
+// so allocating an empty struct here would put a useless `"checkpoint":{}`
+// on almost every tool call in every chat file on disk.
+func TestToolCallUpdate_CheckpointAbsentStaysNil(t *testing.T) {
+	tests := []struct {
+		name string
+		meta map[string]any
+	}{
+		{name: "no _meta at all", meta: nil},
+		{name: "kiro meta without a checkpoint", meta: map[string]any{"kiro": map[string]any{"kind": "other"}}},
+		{name: "an explicitly empty checkpoint", meta: map[string]any{"kiro": map[string]any{"checkpoint": map[string]any{}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tr, _, _, events, chatID := primeToolCall(t)
+			frame := map[string]any{"toolCallId": "tc-1", "status": "completed"}
+			if tt.meta != nil {
+				frame["_meta"] = tt.meta
+			}
+			tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, frame), "")
+			tc, ok := lastToolCallUpdate(t, events)
+			if !ok {
+				t.Fatal("no tool_call_update event emitted")
+			}
+			if tc.Checkpoint != nil {
+				t.Errorf("ToolCall.Checkpoint = %+v, want nil (no file was written)", *tc.Checkpoint)
+			}
+		})
+	}
+}

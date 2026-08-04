@@ -8,9 +8,15 @@
 // message). Each chip previews the queued text and carries a cancel button;
 // when more than one is queued a count chip shows the depth/order.
 //
-// Cancelling restores the prompt's text + attachments to the input when the
-// input is empty (so the user can edit/resend), otherwise it just drops the
-// entry (the row re-render + a screen-reader announcement report the change).
+// Two controls per chip, one rule each. CANCEL discards — it never restores
+// the text to the input, because the restore path was a data-loss trap in both
+// directions: with a draft in the box it silently dropped the entry's
+// attachments and text, and with an empty box it could clobber what a
+// paste/undo was about to put there. Discard is what the × says. SEND-NOW
+// jumps the wait for the one message that has become urgent: promote to the
+// queue front, interrupt the streaming turn (the drain delivers on turn end)
+// — mechanically an interrupt, so it ships with the interrupt's terminal
+// teardown (§5.6 R3).
 //
 // State is a pure projection of `activeSession.prompt_queue`; the queue
 // lifecycle itself is owned by prompt-queue.ts.
@@ -20,11 +26,9 @@ import { el, computed, effect } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
 import { $ } from "./dom.js";
 import { activeSession, getActiveId } from "./store.js";
-import { cancelQueuedPrompt } from "./prompt-queue.js";
-import { addAttachment } from "./attachments.js";
-import { ICON_HOURGLASS } from "./icons.js";
+import { cancelQueuedPrompt, sendQueuedNow } from "./prompt-queue.js";
+import { ICON_HOURGLASS, ICON_SEND } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import type { AttachedFile } from "./attachments.js";
 import type { QueuedPrompt } from "./types.js";
 
 const PREVIEW_MAX = 60;
@@ -97,20 +101,42 @@ function buildChip(entry: QueuedPrompt, index: number): HTMLElement {
     iconEl(ICON_HOURGLASS),
   );
   const label = el("span", { className: "queued-text" }, preview);
+  const sendNow = el(
+    "button",
+    {
+      type: "button",
+      className: "queued-send-now",
+      "aria-label": `Send now: ${preview}`,
+      "data-tooltip": "Send now — interrupts the current turn",
+    },
+    iconEl(ICON_SEND),
+  );
+  sendNow.addEventListener("click", () => {
+    onSendNow(index);
+  });
   const cancel = el(
     "button",
     {
       type: "button",
       className: "queued-cancel",
-      "aria-label": `Cancel queued prompt: ${preview}`,
-      "data-tooltip": "Cancel this queued prompt",
+      "aria-label": `Discard queued prompt: ${preview}`,
+      "data-tooltip": "Discard this queued prompt",
     },
     "\u00d7",
   );
   cancel.addEventListener("click", () => {
     onCancel(index);
   });
-  return el("li", { className: "queued-prompt", title: entry.text }, icon, label, cancel);
+  return el("li", { className: "queued-prompt", title: entry.text }, icon, label, sendNow, cancel);
+}
+
+function onSendNow(index: number): void {
+  const chatID = getActiveId();
+  if (chatID === "") {
+    return;
+  }
+  sendQueuedNow(chatID, index);
+  announce("Sending this queued prompt next");
 }
 
 function onCancel(index: number): void {
@@ -118,27 +144,11 @@ function onCancel(index: number): void {
   if (chatID === "") {
     return;
   }
-  const removed = cancelQueuedPrompt(chatID, index);
-  if (removed === undefined) {
-    return;
-  }
-  // Restore text + attachments to the input only when the input is empty, so
-  // we never clobber something the user is mid-way through composing. When the
-  // input is busy we drop the entry (it's already gone from the queue) and let
-  // the announcement report it.
-  const input = $.promptInput;
-  if (input.value.trim() === "") {
-    input.value = removed.text;
-    for (const a of removed.attachments) {
-      const path = (a as AttachedFile).path;
-      if (typeof path === "string" && path !== "") {
-        addAttachment(path);
-      }
-    }
-    input.focus();
-    announce("Queued prompt moved back to the message box");
-  } else {
-    announce("Queued prompt removed");
+  if (cancelQueuedPrompt(chatID, index) !== undefined) {
+    // Discard, never restore-to-input: the restore was a data-loss trap (it
+    // dropped attachments+text when a draft was present, and clobbered the
+    // box otherwise). The row re-render + the announcement report the change.
+    announce("Queued prompt discarded");
   }
 }
 

@@ -1,15 +1,16 @@
 // ---------------------------------------------------------------------------
-// Fundamental: text bubbles — the user prompt bubble and the assistant
-// markdown bubble (streaming or replay).
+// Fundamental: the assistant markdown bubble (streaming or replay).
 //
-// Pure views. The assistant bubble owns its incremental markdown stream; the
-// composition layer forwards deltas and calls end() at turn finalize. Reuses
-// the existing `.message.user` / `.message.assistant` CSS vocab.
+// A pure view. The bubble owns its incremental markdown stream; the
+// composition layer forwards deltas and calls end() at turn finalize.
+//
+// `.message.assistant` is no longer a bubble in the chat-bubble sense — it is
+// the turn body's PROSE container, and its ~40rem cap is the reading measure
+// (evidence — diffs, tool cards, output — sits beside it uncapped).
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
 import { createMarkdownStream, renderMarkdownInto, type MarkdownStream } from "../markdown.js";
-import { linkifyPaths } from "../linkify.js";
 
 /** A mounted assistant text bubble plus its streaming handle. */
 export interface AssistantBubble {
@@ -59,9 +60,7 @@ export function buildAssistantBubble(initial: string, live: boolean): AssistantB
   };
 }
 
-/** Build the user prompt bubble (plain text + path linkification). */
-export function buildUserBubble(text: string): HTMLDivElement {
-  const bubble = el("div", { className: "message user" }, text) as HTMLDivElement;
-  linkifyPaths(bubble);
-  return bubble;
-}
+// buildUserBubble is GONE with the bubbles. The user's request is the turn
+// card's tinted header band now (fundamentals/turn-header.ts), which owns the
+// same plain-text + path-linkification rendering plus the three-line clamp a
+// free-standing bubble had no reason to want.

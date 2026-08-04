@@ -7,7 +7,6 @@
 //   editor-types.ts    — shared types, state container, predicates
 //   editor-modes.ts    — restoreUI dispatcher
 //   editor-conflict.ts — conflict-mode rendering and AI merge suggestions
-//   editor-pending.ts  — supervised pending-change resolution
 //   editor-diff.ts     — diff source helpers
 //   editor-ui.ts       — rendering helpers (gutter, highlight, mode UI)
 //   editor-openers.ts  — file open, load, and fetch logic
@@ -18,14 +17,8 @@ import { $ } from "./dom.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { openEditorView } from "./tabs.js";
 import { parseConflicts } from "./conflict.js";
-import { saveFile as saveFileAction, sendPlan as sendPlanAction } from "./actions/editor.js";
-import { bindLoadingState, isPending } from "./actions/index.js";
-import { onBus, BUS_PENDING_RESOLVED, BUS_PENDING_CLEARED } from "./bus.js";
-import {
-  resolveActivePending,
-  applyActivePendingPartial,
-  openDiscussPromptForActive,
-} from "./editor-pending.js";
+import { saveFile as saveFileAction } from "./actions/editor.js";
+import { isPending } from "./actions/index.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
 import {
   showReadMode,
@@ -41,10 +34,6 @@ import {
   getActiveFilePath,
   freshState,
   activeDirty,
-  isPendingPath,
-  parsePendingPath,
-  makePendingPath,
-  planDraftChatID,
   unsavedDiffSource,
   gitDiffSource,
 } from "./editor-types.js";
@@ -53,57 +42,17 @@ import type { FileState } from "./editor-types.js";
 // --- Re-exports for backward compatibility ---
 // Consumers that import from editor-core.ts continue to work.
 
-export {
-  isPendingPath,
-  parsePendingPath,
-  isPlanDraftPath,
-  routeForPath,
-  getDirtyEditorPaths,
-} from "./editor-types.js";
-export type { FileState } from "./editor-types.js";
+export { routeForPath } from "./editor-types.js";
 
 export function initEditor(): void {
   $.editorEditBtn.addEventListener("click", startEditing);
   $.editorCancelBtn.addEventListener("click", confirmStopEditing);
   $.editorSaveBtn.addEventListener("click", saveFile);
   $.editorDiffBtn.addEventListener("click", toggleDiffMode);
-  $.editorSendPlanBtn.addEventListener("click", () => {
-    void sendActivePlan();
-  });
-
-  // Registry-driven loading state for the send-plan button.
-  bindLoadingState("editor.send_plan", $.editorSendPlanBtn);
-  $.editorPendingAcceptBtn.addEventListener("click", () => {
-    void resolveActivePending("accept");
-  });
-  $.editorPendingRejectBtn.addEventListener("click", () => {
-    void resolveActivePending("reject");
-  });
-  $.editorPendingApplyPartialBtn.addEventListener("click", () => {
-    void applyActivePendingPartial();
-  });
-  bindLoadingState("editor.resolve_partial", $.editorPendingApplyPartialBtn);
-  $.editorPendingDiscussBtn.addEventListener("click", () => {
-    openDiscussPromptForActive();
-  });
-
-  onBus(BUS_PENDING_RESOLVED, (p) => {
-    const targetPath = makePendingPath(p.chatID, p.toolCallID);
-    if (fileStates.has(targetPath)) {
-      closeEditorFile(targetPath);
-    }
-  });
-  onBus(BUS_PENDING_CLEARED, (p) => {
-    for (const path of [...fileStates.keys()]) {
-      if (!isPendingPath(path)) {
-        continue;
-      }
-      const { chatID } = parsePendingPath(path);
-      if (chatID === p.chatID) {
-        closeEditorFile(path);
-      }
-    }
-  });
+  // No pending accept/reject/partial/discuss buttons, and no bus listeners
+  // closing pending tabs: the whole staged-write review surface is gone. KAS
+  // reviews a turn at once, so there is no per-file verdict to give from the
+  // editor and no `pending:` tab to close when one lands.
   let conflictReparseQueued = false;
   $.editorContent.addEventListener("input", () => {
     const state = fileStates.get(getActiveFilePath());
@@ -307,33 +256,4 @@ function saveFile(): void {
       },
     },
   );
-}
-
-// --- Plan handoff ---
-
-async function sendActivePlan(): Promise<void> {
-  const state = fileStates.get(getActiveFilePath());
-  if (state === undefined) {
-    return;
-  }
-  const chatID = planDraftChatID(state.path);
-  if (chatID === "") {
-    return;
-  }
-  const content = state.current.value; // capture before await
-  const result = await sendPlanAction.dispatch({ chatID, content });
-  if (result === null) {
-    // The failure already surfaced exactly once — the draft/size banner
-    // (writePlanDraft) or the shared "Failed to send plan" toast (plan.run).
-    // Deliberately no inline editor error on top: one surface per failure.
-    return;
-  }
-  state.original.value = content; // buffer now matches the saved draft
-  if (result === "sent") {
-    // The draft was deleted on send; close its editor tab so it doesn't
-    // linger pointing at a now-gone draft (reopening would show an empty file).
-    closeEditorFile(state.path);
-  }
-  // "queued": keep the tab + draft — the prompt drains from the queue and the
-  // draft stays the durable copy until then.
 }

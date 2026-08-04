@@ -50,9 +50,9 @@ const idempotencyMaxBody = 1 << 20 // 1 MiB
 
 // maxIdempotencyKeyBytes caps the Idempotency-Key header. Client keys
 // are opaque: some are framework-generated, others are composite
-// strings built from args (e.g. "files.rename:dir/old->dir/new" or
-// "plan.run:<chat>:<content slice>"), so the charset legitimately
-// includes '/', ':', '->', and spaces. 256 bytes comfortably fits the
+// strings built from args (e.g. "files.rename:dir/old->dir/new"), so the
+// charset legitimately includes '/', ':', '->', and spaces. 256 bytes
+// comfortably fits the
 // composite filename keys while bounding map-key memory. Mirrors the
 // bounded style of api.ValidRequestID with a wider bound and an opaque
 // charset.

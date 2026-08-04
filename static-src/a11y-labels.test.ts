@@ -191,93 +191,10 @@ describe("a11y: keyboard navigation on picker grid", () => {
   });
 });
 
-describe("a11y: aria-expanded on popover triggers", () => {
-  it("supervised-pill sets aria-expanded on expand/collapse", async () => {
-    vi.resetModules();
-    vi.doMock("./store.js", () => ({
-      getActive: () => ({
-        id: "s1",
-        supervised_mode: true,
-        pending_changes: [],
-        messages: [],
-      }),
-      version: { value: 1 },
-      sessionsVersion: { value: 1 },
-      activeVersion: { value: 1 },
-      activeSession: {
-        value: { id: "s1", supervised_mode: true, pending_changes: [], messages: [] },
-      },
-      messagesVersion: { value: 1 },
-    }));
-    vi.doMock("./signals.js", () => ({
-      effect: (fn: () => void) => {
-        fn();
-      },
-    }));
-    vi.doMock("./actions/chat.js", () => ({
-      setSupervised: { dispatch: vi.fn() },
-      resolveAllPending: { dispatch: vi.fn() },
-      resolvePendingChange: { dispatch: vi.fn() },
-      trustPending: { dispatch: vi.fn() },
-      clearPendingTrust: { dispatch: vi.fn() },
-    }));
-    vi.doMock("./actions/index.js", () => ({
-      bindLoadingState: () => () => {
-        /* noop */
-      },
-      registerCleanup: () => {
-        /* noop */
-      },
-    }));
-    vi.doMock("./editor-openers.js", () => ({ openPendingDiff: vi.fn() }));
-    vi.doMock("./pill-expand.js", () => ({
-      // Mirrors the real makeExpandable's ARIA contract (owned by the
-      // createPopup-backed implementation): collapsed state pre-seeded at
-      // wire time, aria-expanded flipped on every toggle.
-      makeExpandable: (
-        _pill: HTMLElement,
-        _content: HTMLElement,
-        opts?: { onExpand?: () => void; onCollapse?: () => void },
-      ) => {
-        _pill.setAttribute("aria-expanded", "false");
-        _pill.setAttribute("aria-haspopup", "true");
-        _pill.addEventListener("click", () => {
-          const expanded = _pill.classList.toggle("pill-expanded");
-          _pill.setAttribute("aria-expanded", String(expanded));
-          if (expanded) {
-            opts?.onExpand?.();
-          } else {
-            opts?.onCollapse?.();
-          }
-        });
-      },
-      collapseAll: vi.fn(),
-    }));
-
-    const pill = document.createElement("div");
-    pill.id = "supervised-pill";
-    const label = document.createElement("span");
-    label.className = "pill-label";
-    pill.appendChild(label);
-    const content = document.createElement("div");
-    content.className = "pill-expand-content";
-    pill.appendChild(content);
-    document.body.appendChild(pill);
-
-    const { initSupervisedPill } = await import("./supervised-pill.js");
-    initSupervisedPill();
-
-    expect(pill.getAttribute("aria-expanded")).toBe("false");
-
-    pill.click();
-    expect(pill.getAttribute("aria-expanded")).toBe("true");
-
-    pill.click();
-    expect(pill.getAttribute("aria-expanded")).toBe("false");
-
-    document.body.removeChild(pill);
-  });
-});
+// The supervised-pill aria-expanded test is gone with the pill. It also could
+// not fail: it mocked makeExpandable and then asserted the mock's own
+// aria-expanded flip. That contract belongs to @cplieger/ui-primitives'
+// createPopup, which owns and tests it.
 
 describe("a11y: tool-card aria-expanded on toggle", () => {
   it("tool-toggle button starts with aria-expanded=false and aria-label", async () => {
@@ -440,7 +357,6 @@ describe("a11y: failed tool aria-expanded", () => {
       maybeCollapseGroup: noop,
       formatDuration: (ms: number) => String(ms),
     }));
-    vi.doMock("./messages-actions.js", () => ({ addEditActions: noop }));
     vi.doMock("./actions/index.js", () => ({ bindLoadingState: () => () => undefined }));
 
     const { buildToolCard } = await import("./tool-card.js");
@@ -488,7 +404,6 @@ describe("a11y: failed tool aria-expanded", () => {
     vi.doUnmock("./editor-openers.js");
     vi.doUnmock("./tool-group.js");
     vi.doUnmock("./subagent.js");
-    vi.doUnmock("./messages-actions.js");
     vi.doUnmock("./actions/index.js");
   });
 });

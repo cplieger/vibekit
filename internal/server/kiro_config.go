@@ -23,11 +23,10 @@ const (
 	maxSkillsPerDir   = 20
 	maxAgentsPerDir   = 10
 
-	// steeringReadCap bounds how much of each steering .md is read for
-	// front-matter parsing. Only the head matters, so a crafted repo
-	// can't OOM the container with a giant file. Mirrors the 64 KiB cap
-	// in internal/steering.
-	steeringReadCap = 64 << 10
+	// steeringReadCap is steering.FrontMatterReadCap under a local name, kept
+	// only because the cap tests read it. The constant lives with the parser
+	// now; it used to be written out four times across two packages.
+	steeringReadCap = steering.FrontMatterReadCap
 )
 
 // handleKiroConfig scans .kiro/ for steering docs, skills, and agents.
@@ -122,7 +121,7 @@ func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigIt
 		// Read only the head of each file: front-matter is at the top,
 		// so an untrusted workspace repo can't OOM the container with a
 		// multi-GiB steering .md.
-		data, err := readCappedFS(root, "steering/"+e.Name(), steeringReadCap)
+		data, err := readCappedFS(root, "steering/"+e.Name())
 		if err != nil {
 			slog.Warn("kiro config: read steering file",
 				"name", e.Name(), "error", err)
@@ -145,18 +144,19 @@ func scanSteering(ctx context.Context, root fs.FS, prefix string) []kiroConfigIt
 	return items
 }
 
-// readCappedFS reads at most limit bytes of name from root. Used for
+// readCappedFS reads at most steering.FrontMatterReadCap bytes of name from
+// root. Used for
 // untrusted workspace steering files so a crafted large file can't OOM
 // the container — only the front-matter head is needed. Mirrors
 // readCappedFile in internal/steering, but over the fs.FS interface so
 // scanKiroDirFS stays testable with fstest.MapFS.
-func readCappedFS(root fs.FS, name string, limit int64) ([]byte, error) {
+func readCappedFS(root fs.FS, name string) ([]byte, error) {
 	f, err := root.Open(name)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(io.LimitReader(f, limit))
+	return io.ReadAll(io.LimitReader(f, steering.FrontMatterReadCap))
 }
 
 // scanSkills returns kiroConfigItems for subdirectories under skills/.

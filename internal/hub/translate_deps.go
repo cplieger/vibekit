@@ -8,7 +8,6 @@ import (
 	"context"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -25,6 +24,15 @@ func (h *Hub) ParentACPSession(chatID api.ChatID) string {
 // WorkDir returns the workspace root directory.
 func (h *Hub) WorkDir() string { return h.lifecycle.workDir }
 
+// BridgeRespond sends a response to the bridge for the given chat.
+func (h *Hub) BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error {
+	sb := h.bridge.mgr.get(chatID)
+	if sb == nil {
+		return nil
+	}
+	return sb.bridge.Respond(ctx, requestID, result, err)
+}
+
 // MCPRecorder returns the Hub's MCP state recorder.
 func (h *Hub) MCPRecorder() translate.MCPRecorder {
 	return &hubMCPRecorder{h: h}
@@ -33,8 +41,8 @@ func (h *Hub) MCPRecorder() translate.MCPRecorder {
 // hubMCPRecorder adapts Hub's MCP internals to the MCPRecorder interface.
 type hubMCPRecorder struct{ h *Hub }
 
-func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
-	r.h.mcpRegistry.recordConnected(ctx, serverName, prompts, resources)
+func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
+	r.h.mcpRegistry.recordConnected(ctx, serverName, tools, prompts, resources)
 }
 
 func (r *hubMCPRecorder) RecordOAuth(ctx context.Context, serverName, oauthURL string) {
@@ -47,12 +55,6 @@ func (r *hubMCPRecorder) RecordInitFailure(ctx context.Context, serverName, errM
 
 func (r *hubMCPRecorder) SignalReady() {
 	r.h.mcpRegistry.signalReady()
-}
-
-func (r *hubMCPRecorder) SetKnownTools(ctx context.Context, name string, tools []string) {
-	if r.h.mcpConfig != nil {
-		r.h.mcpConfig.SetKnownTools(ctx, name, tools)
-	}
 }
 
 // PendingPermsAdd tracks a pending permission event for SSE replay.
@@ -73,11 +75,6 @@ func (h *Hub) BufferStore() translate.BufferAccess {
 // LineTracker returns the line tracker for file-change recording.
 func (h *Hub) LineTracker() translate.LineRecorder {
 	return h.lines
-}
-
-// OpenPartialFile opens the partial recovery file for a chat.
-func (h *Hub) OpenPartialFile(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer) {
-	h.openPartialFile(ctx, chatID, buf)
 }
 
 // IsHookStatusEnabled returns whether hook status display is enabled.

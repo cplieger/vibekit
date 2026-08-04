@@ -14,28 +14,22 @@ type CommandType string
 // Command type constants. Every value here corresponds to a key in
 // hub/command.go's registerCommandHandlers dispatch map.
 const (
-	CmdCreateChat               CommandType = "create_chat"
-	CmdPrompt                   CommandType = "prompt"
-	CmdCancel                   CommandType = "cancel"
-	CmdDeleteChat               CommandType = "delete_chat"
-	CmdSwitchModel              CommandType = "switch_model"
-	CmdPermissionResponse       CommandType = "permission_response"
-	CmdElicitationResponse      CommandType = "elicitation_response"
-	CmdUserInputResponse        CommandType = "user_input_response"
-	CmdRestoreCheckpoint        CommandType = "restore_checkpoint"
-	CmdUndoEdit                 CommandType = "undo_edit"
-	CmdRewindChat               CommandType = "rewind_chat"
-	CmdPromoteRewindChat        CommandType = "promote_rewind_chat"
-	CmdDiscardRewindChat        CommandType = "discard_rewind_chat"
-	CmdSetEffort                CommandType = "set_effort"
-	CmdSetMode                  CommandType = "set_mode"
-	CmdCreateHook               CommandType = "create_hook"
-	CmdResolvePendingChange     CommandType = "resolve_pending_change"
-	CmdResolvePendingPartial    CommandType = "resolve_pending_change_partial"
-	CmdResolveAllPendingChanges CommandType = "resolve_all_pending_changes"
-	CmdSetSupervisedMode        CommandType = "set_supervised_mode"
-	CmdTrustPendingChanges      CommandType = "trust_pending_changes"
-	CmdClearPendingTrust        CommandType = "clear_pending_trust"
+	CmdCreateChat          CommandType = "create_chat"
+	CmdResumeSession       CommandType = "resume_session"
+	CmdPrompt              CommandType = "prompt"
+	CmdCancel              CommandType = "cancel"
+	CmdDeleteChat          CommandType = "delete_chat"
+	CmdCloseChat           CommandType = "close_chat"
+	CmdSwitchModel         CommandType = "switch_model"
+	CmdPermissionResponse  CommandType = "permission_response"
+	CmdElicitationResponse CommandType = "elicitation_response"
+	CmdUserInputResponse   CommandType = "user_input_response"
+	CmdRewindChat          CommandType = "rewind_chat"
+	CmdCompact             CommandType = "compact"
+	CmdSetEffort           CommandType = "set_effort"
+	CmdSetMode             CommandType = "set_mode"
+	CmdCreateHook          CommandType = "create_hook"
+	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
 )
 
 // ClientCommand is the envelope for every command the browser posts.
@@ -54,15 +48,11 @@ type ClientCommand struct {
 // set enforced by the hub's validMessageID check (128-byte cap, no
 // control chars). Model is optional; if non-empty it must match
 // validIdent (ASCII alphanumerics plus `_.-`, 1-128 bytes).
-// ActiveFile and OpenFiles are forwarded to kiro-cli as _meta.kiro
-// metadata; they do not reach a filesystem sink directly in vibekit.
 // Attachments are resolved via resolveInsideWorkDir before read.
 type PromptCommand struct {
 	Text        string       `json:"text"`
 	MessageID   string       `json:"message_id"` // client-generated ULID
 	Model       string       `json:"model,omitempty"`
-	ActiveFile  string       `json:"active_file,omitempty"` // editor active file path
-	OpenFiles   []string     `json:"open_files,omitempty"`  // all open editor tabs
 	Attachments []Attachment `json:"attachments,omitempty"` // files attached via pill row
 }
 
@@ -85,6 +75,18 @@ type CreateChatCommand struct {
 	Model string `json:"model,omitempty"`
 }
 
+// ResumeSessionCommand is the payload for type="resume_session": adopt a KAS
+// session the previous-session picker listed (GET /api/sessions) as a new
+// chat. The chat is created already bound to SessionID, so the next bridge
+// takes the session/load path and the replay projection supplies the
+// transcript — vibekit copies no messages.
+type ResumeSessionCommand struct {
+	// SessionID is the KAS session to adopt. Validated with ValidSessionID.
+	SessionID string `json:"session_id"`
+	// Name seeds the chat title, normally the session title KAS reported.
+	Name string `json:"name,omitempty"`
+}
+
 // SwitchModelCommand is the payload for type="switch_model". Ends the
 // current ACP session and starts a fresh one with a new model, priming
 // the replacement with the chat transcript so kiro-cli has context.
@@ -105,8 +107,15 @@ type SwitchModelCommand struct {
 
 // PermissionResponseCommand is the payload for type="permission_response".
 type PermissionResponseCommand struct {
-	OptionID  string `json:"option_id"`
-	RequestID int64  `json:"request_id"`
+	// FileDecisions answers a TURN APPROVAL: action id → accept. Absent on an
+	// ordinary tool permission.
+	//
+	// KAS treats an OMITTED id as a reject (it restores every action not in the
+	// accepted set), so a client sending a partial map silently discards the files
+	// it left out. The client sends a decision per offered file.
+	FileDecisions map[string]bool `json:"file_decisions,omitempty"`
+	OptionID      string          `json:"option_id"`
+	RequestID     int64           `json:"request_id"`
 }
 
 // ElicitationResponseCommand is the payload for type="elicitation_response".
@@ -142,9 +151,16 @@ type UserInputResponseCommand struct {
 }
 
 // RewindChatCommand is the payload for type="rewind_chat".
-// Creates a new chat branched from a specific turn of the current chat.
+//
+// Reverts THIS chat to a past turn: the addressed message and everything after
+// it are dropped and the files roll back. It used to branch a second chat.
+//
+// A message id, not a turn index, because that is what KAS's revert verb
+// addresses — and it must name a USER message, which KAS enforces (a non-user
+// target comes back `success:false` naming the type it found). Vibekit resolves
+// a click on any turn to its nearest preceding user message before sending.
 type RewindChatCommand struct {
-	TurnIndex int `json:"turn_index"` // 0-based index into parent's messages array
+	MessageID string `json:"message_id"`
 }
 
 // SetEffortCommand is the payload for type="set_effort".
@@ -184,51 +200,11 @@ func (e EffortLevel) Valid() bool {
 	return false
 }
 
-// ResolvePendingChangeCommand is the payload for
-// type="resolve_pending_change". Accept or reject ONE staged file op.
-// The ToolCallID identifies the op; Action is "accept" or "reject".
-// Unknown actions or unknown ids produce a 400; idempotent re-resolve
-// of an already-settled op produces a success no-op.
-type ResolvePendingChangeCommand struct {
-	ToolCallID string        `json:"tool_call_id"`
-	Action     PendingAction `json:"action"` // "accept" | "reject"
-}
-
-// ResolveAllPendingChangesCommand is the payload for
-// type="resolve_all_pending_changes". Bulk-resolve every outstanding
-// staged op in the chat with the same action. Convenience for the
-// Supervised pill's "Accept all" / "Reject all" buttons.
-type ResolveAllPendingChangesCommand struct {
-	Action PendingAction `json:"action"` // "accept" | "reject"
-}
-
 // SetSupervisedModeCommand is the payload for type="set_supervised_mode".
-// Toggles the chat's SupervisedMode field. Disabling while ops are
-// outstanding auto-rejects them (broadcast as pending_changes_cleared
-// with reason="mode_disabled"); the agent unblocks with an error per op.
+// Records the chat's supervised choice and, on a running session, sets KAS's
+// `autopilot` config option. It gates nothing itself: KAS holds the turn's
+// writes and asks for one approval, so there is no vibekit-side queue for a
+// toggle to drain, and no resolve/trust/partial companion commands.
 type SetSupervisedModeCommand struct {
 	Enabled bool `json:"enabled"`
 }
-
-// ResolvePendingChangePartialCommand is the payload for
-// type="resolve_pending_change_partial". Applies a user-authored
-// MergedText in place of the agent's proposed write — the fs handler
-// unblocks with accept semantics but writes the caller-supplied text
-// instead of the staged NewText. Used by per-hunk Accept/Reject in
-// the editor: the client starts from OldText, splices in only the
-// accepted hunks, and sends the result. Rejecting every hunk should
-// use resolve_pending_change with action="reject" instead (no write).
-//
-// MergedText is capped the same way staging is: 4 MiB max. Larger
-// payloads are rejected at the JSON body limit layer.
-type ResolvePendingChangePartialCommand struct {
-	ToolCallID string `json:"tool_call_id"`
-	MergedText string `json:"merged_text"`
-}
-
-// TrustPendingChangesCommand has no payload beyond the envelope's chat_id.
-// Enables the chat's per-turn trust flag so subsequent fs/write_text_file
-// calls in the same agent turn bypass the staging gate. The flag clears on
-// turn_ended, cancel, supervised-mode toggle, and chat delete. Also accepts
-// every currently-outstanding op so the agent unblocks immediately.
-// type="trust_pending_changes"

@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -12,12 +11,11 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/webhttp"
 )
 
-// RegisterRoutes wires GET /api/chats (list), GET /api/chats/{id}
-// (one chat with paginated messages), and the archived-chat routes.
-// Delegates to Router for structural separation of HTTP concerns.
+// RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
+// (one chat with paginated messages). Delegates to Router for structural
+// separation of HTTP concerns.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	rt := NewRouter(s)
 	rt.Register(mux)
@@ -52,12 +50,12 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 // the addressed sub-resource.
 func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid api.ChatID, sub string) {
 	switch sub {
-	case "plan-draft":
-		rt.handlePlanDraft(w, r, cid)
 	case "export":
 		rt.handleExport(w, r, cid)
-	case "archive":
-		rt.handleArchive(w, r, cid)
+	case "turns":
+		rt.handleTurns(w, r, cid)
+	case "search":
+		rt.handleSearch(w, r, cid)
 	default:
 		api.NotFound(w, "unknown chat sub-resource")
 	}
@@ -99,6 +97,64 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	})
 }
 
+// handleTurns serves GET /api/chats/{id}/turns: the chat's session-wide turn
+// index (number, outcome, start time, first line) with no message bodies.
+//
+// The timeline rail spans the whole session while the client's transcript store
+// holds a paginated window, so a rail assembled from resident turns would grow
+// markers as the reader scrolled up — exactly the progress read-out it claims
+// not to be. Without this route the client's only option is walking `?before=`
+// to the beginning of history and pulling every message body over the wire to
+// count turns.
+//
+// It is cheap on purpose: `Get` already materialises the whole chat (the
+// paginated read does too, then discards all but a window), so the added cost
+// here is serialising a few fields per turn rather than any extra IO.
+func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if !chatIDPattern(chatID) {
+		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		return
+	}
+	c, ok := rt.store.Get(r.Context(), chatID)
+	if !ok {
+		api.NotFound(w, errMsgChatNotFound)
+		return
+	}
+	// thinking=false: the store is the persisted record and knows nothing about
+	// a bridge being mid-turn. The client owns the live turn's outcome, which is
+	// the one turn it always has resident anyway.
+	api.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
+}
+
+// handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
+// chat's messages, session-wide.
+//
+// Server-side because the CLIENT CANNOT DO IT HONESTLY. Its store is a paginated
+// window, so a store-only search would present itself as searching the
+// conversation while covering only the resident tail. It is also what makes
+// progressive collapse acceptable: a collapse that hides content from search is
+// a data-loss bug. See search.go's header for why there is no index.
+func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+	if r.Method != http.MethodGet {
+		api.MethodNotAllowed(w, http.MethodGet)
+		return
+	}
+	if !chatIDPattern(chatID) {
+		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		return
+	}
+	c, ok := rt.store.Get(r.Context(), chatID)
+	if !ok {
+		api.NotFound(w, errMsgChatNotFound)
+		return
+	}
+	api.WriteJSON(w, map[string]any{"hits": SearchChat(c.Messages, r.URL.Query().Get("q"))})
+}
+
 // parseLimitParam returns the validated ?limit= page size, defaulting to 50
 // and honouring values in the inclusive 1..500 range; anything else (absent,
 // non-numeric, <=0, >500) falls back to the default.
@@ -135,8 +191,7 @@ const (
 // handleExport serves GET /api/chats/{id}/export?format=md|json, rendering
 // the persisted chat to a downloadable Markdown transcript (the default) or
 // the raw chat JSON. The chat store is the source of truth, so no live ACP
-// bridge is involved — any chat exports, including archived ones, which are
-// served by falling back to the archive directory (the History view).
+// bridge is involved.
 func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
 	if r.Method != http.MethodGet {
 		api.MethodNotAllowed(w, http.MethodGet)
@@ -185,17 +240,10 @@ func parseExportFormat(v string) (exportFormat, bool) {
 	}
 }
 
-// loadForExport returns the chat for chatID, checking the active store first
-// and falling back to the archive directory so archived chats (surfaced in
-// the History view) export too. No live bridge is required either way.
+// loadForExport returns the chat for chatID. One lookup: chats never move, so
+// there is no second location to fall back to.
 func (rt *Router) loadForExport(ctx context.Context, chatID api.ChatID) (*api.Chat, bool) {
-	if c, ok := rt.store.Get(ctx, chatID); ok {
-		return c, true
-	}
-	if c, err := rt.store.LoadArchived(ctx, chatID); err == nil {
-		return c, true
-	}
-	return nil, false
+	return rt.store.Get(ctx, chatID)
 }
 
 // dispositionAttachment builds a safe Content-Disposition header value
@@ -246,108 +294,4 @@ func sanitizeFilenamePart(s string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
-}
-
-// handleArchive moves a chat to the archive directory.
-func (rt *Router) handleArchive(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
-		return
-	}
-	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
-		return
-	}
-	if err := rt.store.Archive(r.Context(), chatID); err != nil {
-		slog.Error("chat archive failed", "chat_id", chatID, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("archive failed"))
-		return
-	}
-	api.Ok(w)
-}
-
-// handlePlanDraft dispatches GET/PUT/DELETE for the plan-draft sub-resource.
-func (rt *Router) handlePlanDraft(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		rt.getPlanDraft(w, r, chatID)
-	case http.MethodPut:
-		rt.putPlanDraft(w, r, chatID)
-	case http.MethodDelete:
-		rt.deletePlanDraftHTTP(w, r, chatID)
-	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodDelete)
-	}
-}
-
-// getPlanDraft serves GET for the plan-draft sub-resource.
-func (rt *Router) getPlanDraft(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	content, err := rt.store.GetPlanDraft(r.Context(), chatID)
-	if err != nil {
-		slog.Error("chat plan_draft: read failed", "chat_id", chatID, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("read failed"))
-		return
-	}
-	api.WriteJSON(w, map[string]string{"content": content})
-}
-
-// putPlanDraft serves PUT for the plan-draft sub-resource.
-func (rt *Router) putPlanDraft(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if ct := r.Header.Get("Content-Type"); ct != "" && !strings.HasPrefix(ct, api.MIMETypeJSON) {
-		slog.Warn("chat plan_draft: unexpected content-type",
-			"chat_id", chatID, "content_type", ct)
-		api.BadRequest(w, "expected "+api.MIMETypeJSON)
-		return
-	}
-	var body struct {
-		Content string `json:"content"`
-	}
-	// DecodeJSONInto owns the cap (+ json envelope overhead) and the
-	// trailing-data rejection; the 413-vs-400 mapping stays here.
-	if err := webhttp.DecodeJSONInto(w, r, &body, maxPlanDraftBytes+4096); err != nil {
-		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			slog.Warn("chat plan_draft: body too large",
-				"chat_id", chatID, "limit", maxPlanDraftBytes+4096, "error", maxErr)
-			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				api.ErrorJSON("request body too large"))
-			return
-		}
-		if errors.Is(err, webhttp.ErrTrailingData) {
-			api.BadRequest(w, "unexpected trailing data")
-			return
-		}
-		api.BadRequest(w, "invalid json")
-		return
-	}
-	err := rt.store.SetPlanDraft(r.Context(), chatID, body.Content)
-	if err != nil {
-		if _, ok := errors.AsType[*StoreError](err); ok {
-			writeChatErr(w, err)
-		} else {
-			slog.Error("chat plan_draft: save failed", "chat_id", chatID, "error", err)
-			api.WriteJSONStatus(w, http.StatusInternalServerError,
-				api.ErrorJSON("save failed"))
-		}
-		return
-	}
-	slog.Info("chat plan_draft: saved", "chat_id", chatID, "size_bytes", len(body.Content))
-	api.Ok(w)
-}
-
-// deletePlanDraftHTTP serves DELETE for the plan-draft sub-resource.
-func (rt *Router) deletePlanDraftHTTP(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
-	if err := rt.store.DeletePlanDraft(r.Context(), chatID); err != nil {
-		slog.Error("chat plan_draft: delete failed", "chat_id", chatID, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("delete failed"))
-		return
-	}
-	slog.Debug("chat plan_draft: delete http", "chat_id", chatID)
-	api.Ok(w)
 }

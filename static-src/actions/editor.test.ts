@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-// Tests for actions/editor.ts: saveFile, resolvePendingPartial, fetchAgentLines, suggestResolution.
+// Tests for actions/editor.ts: saveFile, fetchAgentLines, suggestResolution.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -25,11 +25,8 @@ vi.mock("../editor-types.js", () => ({
 }));
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { getActionLog as recentLog } from "./index.js";
-import { send as transportSend } from "../transport.js";
 
 const mockFetch = vi.fn();
-const mockSend = vi.mocked(transportSend);
 
 beforeEach(() => {
   resetActionFramework();
@@ -60,31 +57,13 @@ describe("editor.save_file", () => {
   });
 });
 
+// The inverse IS the done-when for N4: per-hunk resolution is gone because
+// KAS decides per ACTION (a multi-file rename shares one toolCallId), so a
+// merged-text reply had no addressable target.
 describe("editor.resolve_partial", () => {
-  it("sends resolve_pending_change_partial via transport", async () => {
-    mockSend.mockResolvedValue({ ok: true, status: 200 });
-    const { resolvePendingPartial } = await import("./editor.js");
-    await resolvePendingPartial.dispatch({ chatID: "c1", toolCallID: "tc1", mergedText: "merged" });
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: "resolve_pending_change_partial",
-        chat_id: "c1",
-        payload: expect.objectContaining({ tool_call_id: "tc1", merged_text: "merged" }),
-      }),
-      expect.anything(),
-    );
-  });
-
-  it("records error on transport failure", async () => {
-    mockSend.mockResolvedValue({ ok: false, status: 500, error: "internal" });
-    const { resolvePendingPartial } = await import("./editor.js");
-    const r = await resolvePendingPartial.dispatch({
-      chatID: "c1",
-      toolCallID: "tc1",
-      mergedText: "",
-    });
-    expect(r).toBeNull();
-    expect(recentLog()[0]?.status).toBe("error");
+  it("no longer exists", async () => {
+    const mod = await import("./editor.js");
+    expect(mod).not.toHaveProperty("resolvePendingPartial");
   });
 });
 

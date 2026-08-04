@@ -6,7 +6,7 @@ import { $ } from "./dom.js";
 import { renderDiffPane } from "./diff-pane.js";
 import { getActiveId } from "./store.js";
 import type { FileState } from "./editor-types.js";
-import { isPendingPath, getCachedDiff } from "./editor-types.js";
+import { getCachedDiff } from "./editor-types.js";
 import { renderEditModeUI, showDiffMode } from "./editor-ui.js";
 
 export function renderDiffModeUI(state: FileState): void {
@@ -19,23 +19,12 @@ export function renderDiffModeUI(state: FileState): void {
   const src = m.diffSource;
   $.editorDiffPane.replaceChildren();
   const diff = getCachedDiff(state);
-  const pending = isPendingPath(state.path);
   const paneOpts: Parameters<typeof renderDiffPane>[1] = {
     oldLabel: src.oldLabel,
     newLabel: src.newLabel,
     lineNumbers: true,
     syncScroll: true,
     onAskAbout: (hunkText: string) => {
-      if (pending) {
-        void import("./editor-pending.js")
-          .then((m) => {
-            m.openDiscussPrompt(state.path, hunkText);
-          })
-          .catch(() => {
-            /* noop */
-          });
-        return;
-      }
       const chatID = getActiveId();
       if (chatID === "") {
         return;
@@ -50,57 +39,26 @@ export function renderDiffModeUI(state: FileState): void {
         });
     },
   };
-  if (!pending) {
-    // Wire the "Ignore whitespace" toggle: diff.ts supports a
-    // whitespace-insensitive compare and diff-pane re-diffs + re-renders in
-    // place from these source texts. Left off for pending (supervised) diffs,
-    // whose per-hunk accept/reject indices must line up with the real,
-    // un-normalized diff that buildPartialMergeText walks.
-    paneOpts.source = { oldText: src.oldContent, newText: src.newContent };
-  }
-  if (pending) {
-    paneOpts.onAcceptHunk = (hunkIndex: number) => {
-      state.pendingHunkDecisions.set(hunkIndex, "accept");
-      void import("./editor-pending.js")
-        .then((m) => {
-          m.refreshPendingToolbar(state);
-        })
-        .catch(() => {
-          /* noop */
-        });
-    };
-    paneOpts.onRejectHunk = (hunkIndex: number) => {
-      state.pendingHunkDecisions.set(hunkIndex, "reject");
-      void import("./editor-pending.js")
-        .then((m) => {
-          m.refreshPendingToolbar(state);
-        })
-        .catch(() => {
-          /* noop */
-        });
-    };
-  }
+  // The "Ignore whitespace" toggle: diff.ts supports a whitespace-insensitive
+  // compare and diff-pane re-diffs + re-renders in place from these source texts.
+  // It used to be suppressed for a supervised diff, whose per-hunk accept/reject
+  // indices had to line up with the un-normalized diff a partial merge walked —
+  // there are no per-hunk decisions now, so it applies everywhere.
+  paneOpts.source = { oldText: src.oldContent, newText: src.newContent };
+  // No per-hunk accept/reject. KAS's decision wire is PER FILE, and the IDE ships
+  // only `supervisedDiff.discussHunk` beside it — there is no per-hunk verdict to
+  // send. The replacement is ordinary editing: approve the turn, then edit what
+  // you partly disagree with.
   const pane = renderDiffPane(diff, paneOpts);
   $.editorDiffPane.appendChild(pane);
   // showDiffMode inline
   showDiffMode();
 
-  if (!isPendingPath(state.path)) {
-    $.editorDiffBtn.classList.remove("hidden");
-    $.editorDiffBtn.setAttribute("data-tooltip", "Exit diff view");
-    $.editorDiffBtn.setAttribute("aria-label", "Exit diff view");
-    $.editorEditBtn.classList.remove("hidden");
-    $.editorEditBtn.disabled = false;
-  }
+  $.editorDiffBtn.classList.remove("hidden");
+  $.editorDiffBtn.setAttribute("data-tooltip", "Exit diff view");
+  $.editorDiffBtn.setAttribute("aria-label", "Exit diff view");
+  $.editorEditBtn.classList.remove("hidden");
+  $.editorEditBtn.disabled = false;
   $.editorCancelBtn.classList.add("hidden");
   $.editorSaveBtn.classList.add("hidden");
-  if (pending) {
-    void import("./editor-pending.js")
-      .then((m) => {
-        m.refreshPendingToolbar(state);
-      })
-      .catch(() => {
-        /* noop */
-      });
-  }
 }

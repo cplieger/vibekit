@@ -1,5 +1,12 @@
 // ---------------------------------------------------------------------------
-// SSE handlers for turn lifecycle + permission dialog + errors.
+// SSE handlers for turn lifecycle + the three decision types + errors.
+//
+// A decision is ENQUEUED, not shown: decision-dock.ts owns a per-chat queue
+// and renders the active chat's head. That is why these handlers no longer gate
+// on getActiveId() — a permission raised on a background chat used to be
+// dropped here and only came back if the SSE connection happened to reconnect,
+// which left the agent waiting on an answer the user was never offered. The
+// notification still fires either way; the tab dot is what points at it.
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
@@ -19,9 +26,7 @@ import {
   isPermissionNeededEnabled,
   NOTIFY_TITLE,
 } from "../notify.js";
-import { showPermissionDialog } from "../permission.js";
-import { showElicitationDialog } from "../elicitation.js";
-import { showUserInputDialog } from "../user-input.js";
+import { pushDecision } from "../decision-dock.js";
 import { drainNext } from "../prompt-queue.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
@@ -30,8 +35,8 @@ import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES } from "./error-routing.js";
+import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
-export { wireCheckpointRestore } from "./checkpoint-restore.js";
 
 /** Notify the user and set the badge if the page is hidden. */
 function notifyAndBadge(title: string, body: string): void {
@@ -93,6 +98,9 @@ onSSE("turn_ended", (chatID, p) => {
   // prompt AND queued model switch fire when ITS turn ends.
   drainNext(chatID);
   drainModelSwitchQueue(chatID);
+  // turn_ended is the only moment the set of turns changes, so it is the only
+  // moment the rail's session-wide index needs re-reading.
+  void refreshTurnRail(chatID);
 
   // Prune stale entries unconditionally to prevent unbounded growth
   // when notifications are disabled (the notify path below is the only
@@ -137,42 +145,46 @@ onSSE("turn_ended", (chatID, p) => {
 
 onSSE("permission_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
-    notifyAndBadge(NOTIFY_TITLE, `Permission needed: ${p.title ?? "Tool"}`);
+    notifyAndBadge(
+      NOTIFY_TITLE,
+      p.files !== undefined && p.files.length > 0
+        ? "Review this turn's changes"
+        : "Permission needed",
+    );
   }
-  if (chatID !== getActiveId()) {
-    return;
-  }
-
-  const toolCallInput = lookupToolInput(chatID, p.tool_call_id ?? "");
-  showPermissionDialog(
-    p.title ?? "Tool",
-    p.tool_call_id ?? "",
-    p.kind ?? "",
-    toolCallInput,
-    p.options,
-    (optionID: string) => {
-      void respondPermission.dispatch({
-        chatID,
-        requestID: p.request_id,
-        optionID,
-      });
+  pushDecision({
+    kind: "permission",
+    chatID,
+    runID: p.run_id ?? "",
+    requestID: p.request_id,
+    payload: p,
+    submit: (optionID, fileDecisions) => {
+      void respondPermission.dispatch(
+        fileDecisions !== undefined
+          ? { chatID, requestID: p.request_id, optionID, fileDecisions }
+          : { chatID, requestID: p.request_id, optionID },
+      );
     },
-  );
+  });
 });
 
 onSSE("elicitation_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
     notifyAndBadge(NOTIFY_TITLE, "Input requested by a tool");
   }
-  if (chatID !== getActiveId()) {
-    return;
-  }
-  showElicitationDialog(p, (action, content) => {
-    void respondElicitation.dispatch(
-      content !== undefined
-        ? { chatID, requestID: p.request_id, action, content }
-        : { chatID, requestID: p.request_id, action },
-    );
+  pushDecision({
+    kind: "elicitation",
+    chatID,
+    runID: p.run_id ?? "",
+    requestID: p.request_id,
+    payload: p,
+    submit: (action, content) => {
+      void respondElicitation.dispatch(
+        content !== undefined
+          ? { chatID, requestID: p.request_id, action, content }
+          : { chatID, requestID: p.request_id, action },
+      );
+    },
   });
 });
 
@@ -180,39 +192,21 @@ onSSE("user_input_needed", (chatID, p) => {
   if (isPermissionNeededEnabled()) {
     notifyAndBadge(NOTIFY_TITLE, "The agent has a question");
   }
-  if (chatID !== getActiveId()) {
-    return;
-  }
-  showUserInputDialog(p, (action, answer) => {
-    void respondUserInput.dispatch(
-      action === "answered" && answer !== undefined
-        ? { chatID, requestID: p.request_id, action, answer }
-        : { chatID, requestID: p.request_id, action },
-    );
+  pushDecision({
+    kind: "user_input",
+    chatID,
+    runID: p.run_id ?? "",
+    requestID: p.request_id,
+    payload: p,
+    submit: (action, answer) => {
+      void respondUserInput.dispatch(
+        action === "answered" && answer !== undefined
+          ? { chatID, requestID: p.request_id, action, answer }
+          : { chatID, requestID: p.request_id, action },
+      );
+    },
   });
 });
-
-function lookupToolInput(chatID: string, toolCallID: string): unknown {
-  if (toolCallID === "") {
-    return undefined;
-  }
-  const s = get(chatID);
-  if (s === undefined) {
-    return undefined;
-  }
-  for (let i = s.messages.length - 1; i >= 0; i--) {
-    const m = s.messages[i];
-    if (m?.tool_calls === undefined) {
-      continue;
-    }
-    for (const tc of m.tool_calls) {
-      if (tc.id === toolCallID) {
-        return tc.input;
-      }
-    }
-  }
-  return undefined;
-}
 
 // --- Data-driven error classification (imported from error-routing.ts) ---
 
@@ -246,5 +240,3 @@ onSSE("error", (chatID, p) => {
       route.surface satisfies never;
   }
 });
-
-// --- Checkpoint restore (extracted to handlers/checkpoint-restore.ts) ---

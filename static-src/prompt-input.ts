@@ -16,10 +16,10 @@
 import { $ } from "./dom.js";
 import { getActive, getActiveId } from "./store.js";
 import { fixIOSViewport } from "./platform.js";
-import { ICON_SEND, ICON_SPINNER, ICON_HOURGLASS, ICON_ALERT } from "./icons.js";
+import { ICON_SEND, ICON_CANCEL, ICON_ALERT } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
-import { signal, effect } from "@cplieger/reactive";
+import { signal, effect, el } from "@cplieger/reactive";
 
 // Single source of truth for the "context (nearly) full → block the next
 // prompt" state, scoped to the ACTIVE chat (the prompt bar is shared). The
@@ -40,21 +40,24 @@ type Submit = (text: string) => void;
 type Cancel = () => void;
 
 export type SendState =
-  { kind: "idle" } | { kind: "busy" } | { kind: "queued" } | { kind: "blocked"; reason: string };
+  | { kind: "idle" }
+  | { kind: "streaming" }
+  | { kind: "queued"; count: number }
+  | { kind: "blocked"; reason: string };
 
 type SendKind = SendState["kind"];
 
 const STATE_ICON: Record<SendKind, string> = {
   idle: ICON_SEND,
-  busy: ICON_SPINNER,
-  queued: ICON_HOURGLASS,
+  streaming: ICON_CANCEL,
+  queued: ICON_SEND,
   blocked: ICON_ALERT,
 };
 
 const DEFAULT_TOOLTIP: Record<SendKind, string> = {
   idle: "Send",
-  busy: "Agent is thinking…",
-  queued: "Queued — will send when the current turn finishes",
+  streaming: "Cancel this turn",
+  queued: "Send — the queue delivers in order",
   blocked: "Cannot send right now",
 };
 
@@ -68,11 +71,7 @@ class PromptInputController {
 
   // Send-button state
   private state: SendState = { kind: "idle" };
-
-  // Cached DOM references for applyButtonState
-  private cancelHalf: HTMLElement | null = null;
-  private divider: Element | null = null;
-  private sendWrap: HTMLElement | null = null;
+  private onCancel: Cancel = () => undefined;
 
   private exitCycling(): void {
     this.idx = -1;
@@ -120,12 +119,19 @@ class PromptInputController {
   private applyButtonState(): void {
     const k = this.state.kind;
     // Context-full (the sole `sendDisabled` signal from context-ui.ts) is an
-    // orthogonal disable that only applies while idle — queued/blocked/busy
-    // already own their own disable + affordance, and typing-ahead during a
-    // turn (busy) must stay allowed. This is the single place the
-    // send-button/textarea `disabled` + placeholder are written.
+    // orthogonal disable that only applies while idle — blocked owns its own
+    // disable, and typing-ahead during a streaming turn (which QUEUES) must
+    // stay allowed. This is the single place the send-button/textarea
+    // `disabled` + placeholder are written.
     const ctxFull = k === "idle" && sendDisabled.value;
     $.sendBtn.replaceChildren(iconEl(STATE_ICON[k]));
+    // The queue badge: a streaming turn with pending messages shows Cancel
+    // (stopping is the guarantee), a resting queue shows Send with the count.
+    if (k === "queued") {
+      $.sendBtn.appendChild(
+        el("span", { className: "send-queue-badge" }, String(this.state.count)),
+      );
+    }
     const tooltip = ctxFull
       ? SEND_DISABLED_REASON
       : this.state.kind === "blocked"
@@ -133,24 +139,18 @@ class PromptInputController {
         : DEFAULT_TOOLTIP[k];
     $.sendBtn.setAttribute("data-tooltip", tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);
-    $.sendBtn.classList.toggle("busy", k === "busy");
+    $.sendBtn.classList.toggle("streaming", k === "streaming");
     $.sendBtn.classList.toggle("queued", k === "queued");
     $.sendBtn.classList.toggle("blocked", k === "blocked");
 
-    const disableForm = k === "queued" || k === "blocked" || k === "busy" || ctxFull;
-    $.sendBtn.disabled = disableForm;
-    $.promptInput.disabled = k === "queued" || k === "blocked" || ctxFull;
+    // ONE button, two meanings: type=button while streaming so a click cannot
+    // fire the form — clicking always CANCELS during a turn, while Enter still
+    // submits (the keydown dispatches the form event directly). Two gestures,
+    // one rule each; the label never decides.
+    $.sendBtn.type = k === "streaming" ? "button" : "submit";
+    $.sendBtn.disabled = k === "blocked" || ctxFull;
+    $.promptInput.disabled = k === "blocked" || ctxFull;
     $.promptInput.placeholder = ctxFull ? SEND_DISABLED_REASON : "Message Kiro...";
-
-    if (this.cancelHalf !== null) {
-      this.cancelHalf.classList.toggle("hidden", k !== "busy");
-    }
-    if (this.divider !== null) {
-      this.divider.classList.toggle("hidden", k !== "busy");
-    }
-    if (this.sendWrap !== null) {
-      this.sendWrap.classList.toggle("send-wrap-busy", k === "busy");
-    }
   }
 
   setSendState(next: SendState): void {
@@ -174,17 +174,14 @@ class PromptInputController {
     const form = $.promptForm;
     const input = $.promptInput;
 
-    // Cache DOM references for applyButtonState.
-    this.cancelHalf = document.getElementById("cancel-half");
-    this.divider = document.querySelector(".send-divider");
-    this.sendWrap = document.getElementById("send-wrap");
-
-    this.cancelHalf?.setAttribute("aria-label", "Cancel turn");
-    this.cancelHalf?.addEventListener("click", (e: MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (this.state.kind === "busy") {
-        onCancel();
+    // The one button's streaming-click = cancel. type=button in that state
+    // keeps the click out of the form's submit path entirely.
+    this.onCancel = onCancel;
+    $.sendBtn.addEventListener("click", (e: MouseEvent) => {
+      if (this.state.kind === "streaming") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.onCancel();
       }
     });
 
@@ -199,11 +196,11 @@ class PromptInputController {
 
     form.addEventListener("submit", (e: Event) => {
       e.preventDefault();
-      if (
-        this.state.kind === "queued" ||
-        this.state.kind === "blocked" ||
-        this.state.kind === "busy"
-      ) {
+      // Enter is defined independently of the label: it appends to the queue
+      // whenever a turn is streaming OR the queue is already non-empty, and
+      // the drain is the only thing that sends (prompt-queue owns that
+      // decision). Only a hard block refuses input.
+      if (this.state.kind === "blocked") {
         return;
       }
       const text = input.value.trim();

@@ -26,7 +26,7 @@
    as an inner scroller. */
 [id="git-view"] > .page-content,
 [id="history-view"] > .page-content,
-[id="specs-view"] > .page-content {
+[id="docs-view"] > .page-content {
   flex: 1 0 auto;
 }
 
@@ -736,4 +736,146 @@ h3.section-title {
   margin-block-start: 0;
   padding-block-start: 0;
   border-block-start: none;
+}
+
+/* --- History rows: chats and workflow runs in one list -------------------- */
+
+/* Kind chip. A run and a chat are structurally different destinations (one
+   opens a conversation, one opens a read-only review), so the row says which
+   before it is clicked rather than surprising the user after. */
+.history-kind {
+  flex: 0 0 auto;
+  min-width: 2.6rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-align: center;
+  border: 1px solid var(--border);
+  color: var(--c-text-tertiary);
+}
+.history-kind-run {
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--border));
+  color: var(--accent);
+}
+
+/* Only a meaningful status is rendered (never KAS's ubiquitous `idle`), so this
+   badge appearing at all is itself the signal. */
+.history-status {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  color: var(--warn, var(--c-text-tertiary));
+  text-transform: capitalize;
+}
+
+.history-table-row {
+  cursor: pointer;
+}
+.history-table-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* --- Read-only workflow run review --------------------------------------- */
+
+.run-summary {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: baseline;
+  margin-bottom: var(--sp-3);
+}
+.run-status {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.run-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: var(--sp-4);
+}
+.run-node {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  padding: 0.2rem var(--sp-2);
+  font-size: var(--fs-sm);
+}
+/* A dot rather than an emoji or a glyph font: the status vocabulary is KAS's
+   and may grow, so an unknown status still renders as a neutral dot. */
+.run-node-dot {
+  flex: 0 0 auto;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--c-text-tertiary);
+}
+.run-node-completed .run-node-dot {
+  background: var(--ok, #3fb950);
+}
+.run-node-failed .run-node-dot {
+  background: var(--danger, #f85149);
+}
+.run-node-paused .run-node-dot {
+  background: var(--warn, #d29922);
+}
+.run-node-running .run-node-dot {
+  background: var(--accent);
+}
+.run-node-id {
+  font-family: var(--font-mono);
+}
+.run-node-type,
+.run-node-dur {
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+}
+.run-node-dur {
+  margin-left: auto;
+}
+.run-output {
+  margin-bottom: var(--sp-3);
+}
+.run-output-node {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  margin-bottom: 0.2rem;
+}
+.run-output-body {
+  margin: 0;
+  padding: var(--sp-2);
+  background: var(--c-bg-secondary);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+}
+
+/* --- The run tab's bottom bar --------------------------------------------- */
+
+/* The decision region, above the content it is about — the run tab's half of
+   the "one dock, two hosts" contract. No composer: there is nobody to type to,
+   which is exactly why the dock is a bottom-bar region rather than a composer
+   feature. The view becomes a column so the page content scrolls and the bar
+   stays pinned, same shape as the file browser's toolbar. */
+[id="run-view"] {
+  display: flex;
+  flex-direction: column;
+}
+
+[id="run-view"] .page-content {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.run-bottom-bar {
+  flex: 0 0 auto;
+
+  /* Collapse entirely while the dock inside is hidden: an empty bar is a
+     stripe of chrome claiming a decision region that is not there. */
+  &:has(> .decision-dock.hidden) {
+    display: none;
+  }
 }

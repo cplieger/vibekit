@@ -21,6 +21,11 @@ export interface UIState {
   fb_path: string;
   theme: "dark" | "light" | null;
   dismissed_banners: string[];
+  /** Per-chat, per-turn fold overrides: chat id → turn's opening message id →
+   *  open. Absent means "follow the automatic rule", which is why the value is a
+   *  boolean rather than a set of open ids — a turn the reader deliberately
+   *  FOLDED has to outrank the two-newest rule too. */
+  turn_folds: Record<string, Record<string, boolean>>;
 }
 
 function empty(): UIState {
@@ -33,6 +38,7 @@ function empty(): UIState {
     fb_path: "",
     theme: null,
     dismissed_banners: [],
+    turn_folds: {},
   };
 }
 
@@ -71,7 +77,33 @@ function sanitize(d: unknown): UIState {
     fb_path: typeof o["fb_path"] === "string" ? o["fb_path"] : e.fb_path,
     theme: o["theme"] === "dark" || o["theme"] === "light" ? o["theme"] : null,
     dismissed_banners: strArray(o["dismissed_banners"]) ?? e.dismissed_banners,
+    turn_folds: foldMap(o["turn_folds"]) ?? e.turn_folds,
   };
+}
+
+/** Validate the nested fold map. Hand-edited or stale data must not reach the
+ *  renderer's open/closed decision, so anything not string→string→boolean is
+ *  dropped at its own level rather than failing the whole state. */
+function foldMap(v: unknown): Record<string, Record<string, boolean>> | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return undefined;
+  }
+  const out: Record<string, Record<string, boolean>> = {};
+  for (const [chatID, byTurn] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof byTurn !== "object" || byTurn === null || Array.isArray(byTurn)) {
+      continue;
+    }
+    const inner: Record<string, boolean> = {};
+    for (const [turnID, open] of Object.entries(byTurn as Record<string, unknown>)) {
+      if (typeof open === "boolean") {
+        inner[turnID] = open;
+      }
+    }
+    if (Object.keys(inner).length > 0) {
+      out[chatID] = inner;
+    }
+  }
+  return out;
 }
 
 function strArray(v: unknown): string[] | undefined {

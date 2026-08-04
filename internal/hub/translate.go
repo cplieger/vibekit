@@ -70,8 +70,6 @@ func (h *Hub) initDispatch() {
 		methodV3PolicyError:   h.translator.HandlePolicyError,
 		// Licensed-code attribution: surfaced as a per-turn attribution chip.
 		methodV3CodeReferences: h.translator.HandleCodeReferences,
-		// Spec-workflow task-status deltas → the live Specs board SSE.
-		methodV3SpecTaskStatusChanged: h.translator.HandleSpecTaskChanged,
 		// Infrastructure-Safety gate state → safety_status / safety_properties
 		// SSE. Defensive: KAS only emits these when the gate is installed (client
 		// capability + an AWS governance flag that is off by default), so on a
@@ -83,16 +81,22 @@ func (h *Hub) initDispatch() {
 		// affordances the flags control (MCP availability, the org-policy
 		// disclosure, the code-reference chip). See translate/governance.go.
 		methodV3Governance: h.translator.HandleGovernanceState,
-		// Knowledge-base indexing progress → knowledge_indexing SSE. Two
-		// methods share one handler (a started/completed bool discriminates
-		// the payload). Fire only for agent-declared knowledge_bases sync;
-		// user-add progress is polled via GET /api/knowledge.
-		methodKiroKnowledgeIndexingStarted: func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-			h.translator.HandleKnowledgeIndexing(ctx, chatID, msg, true)
-		},
-		methodKiroKnowledgeIndexingCompleted: func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
-			h.translator.HandleKnowledgeIndexing(ctx, chatID, msg, false)
-		},
+		// Workflow-run lifecycle. Nine KAS notifications → three SSE events; the
+		// seven middle kinds share one handler because they mean one thing to a
+		// client ("refetch"). See translate/workflow.go.
+		methodWFRunStart:    h.translator.HandleRunStart,
+		methodWFRunComplete: h.translator.HandleRunComplete,
+	}
+	for method, kind := range map[string]api.RunProgressKind{
+		methodWFNodeStart:     api.RunProgressNodeStart,
+		methodWFNodeComplete:  api.RunProgressNodeComplete,
+		methodWFNodePaused:    api.RunProgressNodePaused,
+		methodWFPaused:        api.RunProgressPaused,
+		methodWFLoopIteration: api.RunProgressLoopIteration,
+		methodWFWatchPoll:     api.RunProgressWatchPoll,
+		methodWFStepsQueued:   api.RunProgressStepsQueued,
+	} {
+		h.chatHandlers[method] = h.translator.RunProgressHandler(kind)
 	}
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via
@@ -124,10 +128,9 @@ func (h *Hub) initDispatch() {
 		// session_info_update also carries compaction (summarization) state;
 		// usage_update is the primary v3 context-usage channel; and
 		// config_option_update delivers the live model/mode/effort catalog.
-		api.ACPUpdateSessionInfo:       h.translator.HandleSessionInfoUpdate,
-		api.ACPUpdateCommandsAvailable: h.translator.HandleAvailableCommandsUpdate,
-		api.ACPUpdateUsage:             ignoreSubSession(h.translator.HandleUsageUpdate),
-		api.ACPUpdateConfigOption:      ignoreSubSession(h.translator.HandleConfigOptionUpdate),
+		api.ACPUpdateSessionInfo:  h.translator.HandleSessionInfoUpdate,
+		api.ACPUpdateUsage:        ignoreSubSession(h.translator.HandleUsageUpdate),
+		api.ACPUpdateConfigOption: ignoreSubSession(h.translator.HandleConfigOptionUpdate),
 	}
 }
 
@@ -140,12 +143,32 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 	ctx, cancel := h.hubContext()
 	defer cancel()
 
+	// A RUN bridge's frames take their own door: step content must not flow
+	// into any transcript, and this connection's workflow lifecycle frames are
+	// workspace-global rather than a chat's. See run_host.go.
+	if isRunChat(chatID) {
+		h.runDispatch(ctx, chatID, msg)
+		return
+	}
+
 	if msg.ID != nil && h.handleFSRequest(ctx, chatID, msg) {
+		return
+	}
+	// KAS's own fs verbs (_kiro/fs/{stat,read_directory,delete}). Separate from
+	// handleFSRequest because they are a different rung of KAS's adapter ladder
+	// with different shapes — and because these execute rather than stage.
+	if msg.ID != nil && h.handleKiroFSRequest(ctx, chatID, msg) {
 		return
 	}
 	// v3 (KAS) host-mediated client requests (_kiro/auth/getAccessToken,
 	// _kiro/terminal/shell_type). No-op under v1/v2.
 	if msg.ID != nil && h.handleKiroClientRequest(ctx, chatID, msg) {
+		return
+	}
+	// v3 (KAS) credential storage (_kiro/secret/*). Must be answered: KAS
+	// rethrows a store/delete failure into the MCP connect path, and an
+	// UNANSWERED request wedges the turn.
+	if msg.ID != nil && h.handleKiroSecretRequest(ctx, chatID, msg) {
 		return
 	}
 	// Terminal requests from kiro-cli (terminal/create, terminal/output, etc.)
@@ -189,11 +212,66 @@ func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *a
 		return
 	}
 
-	// Determine subagent attribution. Empty or matching parent = parent.
+	// Determine attribution through the ONE shared classifier. This site and
+	// translate/deps.go's deriveSubSession are the protocol's two derivation
+	// points and they shared no code, so a step frame classified differently
+	// depending on which door it came through. ACP cannot supply the answer —
+	// its session model is flat, one sessionId per method with no parent/child
+	// concept — so it comes from KAS's own `_meta.kiro.workflow`, which the
+	// frame carries, plus the step-session registry for frames that do not.
+	//
+	// A STEP resolves to OwnerStep and therefore to an empty subSessionID: the
+	// per-kind handlers all read a non-empty value as "a subagent did this",
+	// which is not true of a step. A step's own attribution rides its blocks
+	// instead (ACPWorkflowMeta.SubtaskID).
 	subSessionID := ""
-	parent := h.parentACPSession(chatID)
-	if env.Params.SessionID != "" && parent != "" && env.Params.SessionID != parent {
+	if h.translator.ClassifyFrame(chatID, env.Params.SessionID, base.Meta.Kiro.Workflow != nil) == translate.OwnerSubagent {
 		subSessionID = env.Params.SessionID
+	}
+
+	// A REPLAYED frame is stored history, not something happening now, and
+	// must not reach the live handlers. KAS replays a session's whole
+	// transcript on `session/load` — which vibekit calls on every
+	// container-restart resume and every model-switch fallback — as ordinary
+	// session/update notifications tagged `_meta.kiro.replay`.
+	//
+	// Measured against kiro-cli 2.16.0: a load of a one-turn session returns
+	// 9 frames, 6 of them replay-tagged. Ungated, the replayed
+	// agent_message_chunk runs ensureTurnStarted and opens a PHANTOM turn —
+	// a fresh message id whose `message_created` + `message_chunk` events go
+	// out to every connected client, re-streaming history as though the agent
+	// were typing it. There is no `session/prompt` response to end that turn,
+	// so it never flushes to the chat file — but every connected client has
+	// already rendered the duplicate, and before the .partial sidecar was
+	// deleted, boot recovery could promote it to a real message.
+	//
+	// The frames are no longer dropped: they BUILD the transcript, via a
+	// per-chat translate.Projection opened for the load (load_projection.go).
+	//
+	// Three facts about that path are worth keeping here, at the seam:
+	//
+	//  1. Completion cannot be decided by the goroutine that issued the load.
+	//     session/load runs inside bridge.Start, which blocks on the result,
+	//     while these frames arrive on Forward. They precede the result on the
+	//     wire, so when Start returns they are all PUSHED — but notifCh is
+	//     buffered, so not necessarily DRAINED. Forward settles instead, on
+	//     loadDone && len(NotifCh()) == 0.
+	//  2. The projected transcript MERGES rather than replaces. Assistant ids
+	//     differ between vibekit's record and the wire, event messages exist
+	//     only in vibekit's, and a turn newer than the replay's window may be
+	//     one KAS never flushed. See mergeProjection.
+	//  3. The gate is PER-FRAME, not per-load. available_commands_update and
+	//     config_option_update arrive untagged during a load because they carry
+	//     current state, not history, and must keep reaching the live handlers.
+	if base.Meta.Kiro.Replay {
+		// A load in flight consumes the frame into its projection; anything
+		// else is dropped, because a replay frame with no load to belong to has
+		// no transcript to build.
+		if !h.ingestReplayFrame(chatID, base.Kind, env.Params.Update) {
+			slog.Debug("session/update: dropping replayed frame, no load in flight",
+				"chat_id", chatID, "kind", base.Kind)
+		}
+		return
 	}
 
 	// Sub-kinds without a handler fall through silently. user_message_chunk

@@ -304,7 +304,7 @@ func TestValidIdempotencyKey(t *testing.T) {
 	}{
 		{"uuid-like", "018f-2a1c-7e", true},
 		{"composite file rename", "files.rename:dir/old.txt->dir/new.txt", true},
-		{"composite with spaces", "plan.run:chat-1:Do the thing now", true},
+		{"composite with spaces", "files.rename:a/old name.txt->a/new name.txt", true},
 		{"utf8 filename", "files.create:dir/café.txt", true},
 		{"empty", "", false},
 		{"newline", "abc\ndef", false},

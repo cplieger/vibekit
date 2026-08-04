@@ -102,11 +102,11 @@
           <svg class="git-btn-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
           <span id="git-badge" class="git-badge hidden"></span>
         </button>
-        <button type="button" id="specs-btn" class="icon-btn" data-tooltip="Spec board" aria-label="Spec board">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h9"/></svg>
-        </button>
         <button type="button" id="shell-btn" class="icon-btn" data-tooltip="Toggle shell" aria-label="Toggle shell">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </button>
+        <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/></svg>
         </button>
         <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -132,23 +132,11 @@
             <span>Latest</span>
           </button>
         </div>
-        <dialog id="tool-approval">
-          <div class="approval-body"></div>
-          <div class="approval-actions"></div>
-        </dialog>
-        <dialog id="elicitation-dialog">
-          <form class="elicitation-form" method="dialog">
-            <div class="elicitation-body"></div>
-            <div class="elicitation-fields"></div>
-            <div class="elicitation-actions"></div>
-          </form>
-        </dialog>
-        <dialog id="user-input-dialog">
-          <div class="user-input-body"></div>
-          <div class="user-input-options"></div>
-          <div class="user-input-freeform"></div>
-          <div class="user-input-actions"></div>
-        </dialog>
+        <!-- The three decision dialogs used to live here as centered <dialog>
+             modals with a backdrop. They are one dock region now, inside the
+             bottom bar below (#decision-dock): a permission ask, an MCP
+             elicitation form and an agent question all render there, above the
+             message box and never inside it. decision-dock.ts owns the queue. -->
         <!-- action="javascript:void 0" is the native-submission backstop: if a
              dynamically-added button ever lands in this form without
              type="button", or the submit handler throws before preventDefault,
@@ -158,6 +146,12 @@
              the failure mode becomes "nothing happens + console violation"
              instead of a page reload. -->
         <form id="prompt-form" class="bottom-bar" action="javascript:void 0">
+          <!-- The interaction dock. A sibling of .prompt-box, not a child: it
+               shares the bar's background but is not part of the text input,
+               and the bar grows upward to expose it. A bottom-bar region rather
+               than a composer feature because a workflow-run tab has no
+               composer and still has to be able to ask. -->
+          <div id="decision-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
           <div class="prompt-box">
             <textarea id="prompt-input" placeholder="Message Kiro..." rows="1" aria-label="Message" autofocus></textarea>
             <ul id="attachment-row" class="attachment-row hidden" aria-label="Attachments"></ul>
@@ -203,10 +197,12 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
                 <span class="pill-label">Attach</span>
               </button>
-              <button id="supervised-pill" class="pill pill-expandable pill-supervised" type="button" aria-label="Supervised mode" aria-pressed="false">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-                <span class="pill-label">Supervised</span>
-                <span class="pill-expand-content pill-supervised-body hidden"></span>
+              <!-- Chat options: the set-once, per-chat switches (supervised
+                   mode first). A menu rather than more pills — a pill earns
+                   its slot by changing per message; a set-once mode does not. -->
+              <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat options" aria-label="Chat options">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                <span id="chat-options-card" class="pill-expand-content chat-options-card hidden"></span>
               </button>
               <button id="task-list-pill" class="pill pill-task-list pill-expandable hidden" type="button" data-tooltip="Task list" aria-label="Task list">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
@@ -217,13 +213,11 @@
                 </span>
               </button>
               <div class="pill-spacer"></div>
-              <div id="send-wrap" class="send-wrap">
-                <button type="button" id="cancel-half" class="send-half send-cancel-half hidden" aria-label="Cancel this turn" data-tooltip="Cancel">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
-                </button>
-                <span class="send-divider hidden"></span>
-                <button type="submit" id="send-btn" class="send-half send-send-half" data-tooltip="Send" aria-label="Send"></button>
-              </div>
+              <!-- ONE activity button: Send when nothing runs, Cancel while a
+                   turn streams (prompt-input.ts flips its type so a streaming
+                   click can never submit). The 4-state split button it
+                   replaces is gone. -->
+              <button type="submit" id="send-btn" class="send-btn" data-tooltip="Send" aria-label="Send"></button>
             </div>
           </div>
         </form>
@@ -573,12 +567,6 @@
               </div>
             </div>
 
-            <div class="page-section">
-              <h3 class="section-title">Steering docs, skills &amp; agents</h3>
-              <p class="section-hint">Files in <code>.kiro/</code> your agent reads as context. Steering docs load automatically (always, when matched, or when referenced); skills and agents are invoked on demand.</p>
-              <div id="kiro-config-list" class="list-container"><div class="list-empty">No steering docs, skills or agents found.</div></div>
-            </div>
-
             <div class="page-section" id="knowledge-section">
               <h3 class="section-title">Knowledge bases</h3>
               <p class="section-hint">Local directories indexed for semantic search. When <code>chat.enableKnowledge</code> is on, your agent searches these for relevant context. Indexing runs in the background; large directories take a moment.</p>
@@ -598,6 +586,46 @@
             </div>
           </div>
 
+        </div>
+      </div>
+
+      <!-- Kiro configuration browser: one page over everything in .kiro/.
+           Five sub-tabs, because the categories are not one kind of thing —
+           steering leads with its inclusion mode, an agent with its model, a
+           spec has no front-matter at all. Replaces the deleted spec board
+           (whose toolbar slot it took) and the duplicate list that used to sit
+           in Settings -> Custom instructions. -->
+      <div id="docs-view" class="hidden" data-tab-view>
+        <div class="page-content">
+          <header class="settings-header">
+            <div class="settings-title-row">
+              <h2 class="page-title"><span id="docs-page-title">Steering</span></h2>
+            </div>
+            <nav id="docs-tab-bar" class="settings-tab-bar" role="tablist" aria-label="Kiro document categories">
+              <button type="button" class="settings-tab active" role="tab" aria-selected="true" data-docs-tab="steering">Steering</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="skills">Skills</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="agents">Agents</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="specs">Specs</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="hooks">Hooks</button>
+              <button type="button" class="settings-tab" role="tab" aria-selected="false" data-docs-tab="workflows">Workflows</button>
+            </nav>
+            <label class="settings-tab-select-wrap" aria-label="Kiro document categories">
+              <select id="docs-tab-select" class="settings-tab-select">
+                <option value="steering">Steering</option>
+                <option value="skills">Skills</option>
+                <option value="agents">Agents</option>
+                <option value="specs">Specs</option>
+                <option value="hooks">Hooks</option>
+                <option value="workflows">Workflows</option>
+              </select>
+            </label>
+          </header>
+          <div data-docs-panel="steering" class="list-container docs-panel"></div>
+          <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="specs" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="hooks" class="list-container docs-panel hidden"></div>
+          <div data-docs-panel="workflows" class="list-container docs-panel hidden"></div>
         </div>
       </div>
 
@@ -729,11 +757,6 @@
             <div class="view-toolbar-inner">
               <span id="editor-filename" class="editor-filename"></span>
               <div class="editor-actions">
-                <button type="button" id="editor-send-plan-btn" class="btn-small hidden" data-tooltip="Send this plan to the agent to implement (switches out of Plan mode if needed)" aria-label="Send this plan to the agent to implement (switches out of Plan mode if needed)">Send plan</button>
-                <button type="button" id="editor-pending-discuss-btn" class="btn-small hidden" data-tooltip="Ask the agent about this change" aria-label="Ask the agent about this change">Discuss</button>
-                <button type="button" id="editor-pending-apply-partial-btn" class="btn-small hidden primary" data-tooltip="Apply only the accepted hunks" aria-label="Apply only the accepted hunks">Apply selected</button>
-                <button type="button" id="editor-pending-reject-btn" class="btn-small hidden" data-tooltip="Reject this change" aria-label="Reject this change">Reject</button>
-                <button type="button" id="editor-pending-accept-btn" class="btn-small hidden primary" data-tooltip="Accept this change" aria-label="Accept this change">Accept</button>
                 <button type="button" id="editor-diff-btn" class="icon-btn" data-tooltip="View as diff (vs saved)" aria-label="View as diff (vs saved)">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v14a2 2 0 002 2h4M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4M12 4v16"/></svg>
                 </button>
@@ -777,6 +800,9 @@
               </button>
               <input id="fb-path" class="fb-path" type="text" readonly aria-label="Current path">
               <div class="fb-actions">
+                <button type="button" id="fb-chat-filter" class="icon-btn" data-tooltip="Highlight files this chat changed" aria-label="Highlight files this chat changed" aria-pressed="false">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54z"/></svg>
+                </button>
                 <button type="button" id="fb-add-to-chat" class="icon-btn" data-tooltip="Add selection to chat" aria-label="Add selection to chat" disabled>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><line x1="12" y1="8" x2="12" y2="14"/><line x1="9" y1="11" x2="15" y2="11"/></svg>
                 </button>
@@ -817,21 +843,24 @@
       <div id="history-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">History</h2>
-          <p class="section-hint">Chats auto-archive when you close the tab. They stay here for the retention window (Settings → General). Click to reopen; × to delete permanently.</p>
+          <p class="section-hint">Previous chats and workflow runs in this workspace, newest first. Click a chat to reopen it, or a run to review what it did.</p>
           <div id="history-table" class="list-container">
-            <div class="list-empty">No archived chats.</div>
+            <div class="list-empty">No previous sessions in this workspace.</div>
           </div>
         </div>
       </div>
-
-      <!-- Specs board (full-page): live requirements→design→tasks view of .kiro/specs -->
-      <div id="specs-view" class="hidden" data-tab-view>
+      <div id="run-view" class="hidden" data-tab-view>
         <div class="page-content">
-          <h2 class="page-title">Specs</h2>
-          <p class="section-hint">Spec workflows in <code>.kiro/specs/</code>. Each spec's requirements, design, and tasks — click a document to open it. Run spec work from a Spec-mode chat; task status updates here live.</p>
-          <div id="specs-list" class="specs-list">
-            <div class="spec-loading">Loading specs…</div>
-          </div>
+          <h2 class="page-title">Workflow run</h2>
+          <p class="section-hint">Live runs update as they progress; a step's questions appear below.</p>
+          <div id="run-body" class="list-container"></div>
+        </div>
+        <!-- The run tab's bottom bar: the decision region, above the content it
+             is about, same as the chat's. No composer — there is nobody to type
+             to — which is exactly why the dock is a bottom-bar region rather
+             than a composer feature. -->
+        <div class="run-bottom-bar bottom-bar">
+          <div id="run-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
         </div>
       </div>
 

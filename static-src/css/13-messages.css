@@ -8,7 +8,16 @@
   min-height: 0;
 }
 
+/* THE HELPER OWNS EVERY MUTATION. Native CSS scroll anchoring is off here on
+ * purpose, and not as a fallback: Safari does not support `overflow-anchor` at
+ * all and on iOS every browser is WebKit, so the platform this app is most read
+ * on has none of it. Worse, leaving it ON alongside scroll.ts's
+ * preserveReadingPosition is a DOUBLE correction rather than a harmless no-op —
+ * anchoring queues an adjustment and applies it at the end of its suppression
+ * window while the helper adds the same delta itself, moving the reader roughly
+ * twice as far. Deterministic on one owner beats a feature-detect between two. */
 [id="messages-wrap"] {
+  overflow-anchor: none;
   position: absolute;
   inset: 0;
   overflow-y: auto;
@@ -158,10 +167,9 @@
  * `.msg-wrap` (one element per message) rather than the row + child
  * blocks separately so the bubble + reasoning + tool group enter
  * together as a single unit. */
-.msg-wrap[data-chat-entry] {
-  animation: vk-slide-up-pronounced var(--dur-enter) var(--ease-enter) both;
-  animation-delay: calc(var(--stagger-index, 0) * 30ms);
-}
+/* Entry animation lives on `.turn` now (29-turns.css): a turn arrives as one
+ * unit, so its header, body and footer have to enter together. `.msg-wrap`
+ * survives as the per-message grouping INSIDE a card's body. */
 
 @keyframes vk-slide-up-pronounced {
   from {
@@ -170,13 +178,8 @@
   }
 }
 
-.msg-row-user {
-  flex-direction: row-reverse;
-}
-
-.msg-row-assistant {
-  flex-direction: row;
-}
+/* No .msg-row-user / .msg-row-assistant: only the agent gets an avatar row,
+ * and `row` is flex's default, so the surviving direction needs no rule. */
 
 .msg-avatar {
   width: 1.5rem;
@@ -193,34 +196,30 @@
 }
 
 .message {
-  max-width: 85%;
+  /* No max-width here. The old `max-width: 85%` lived on this SHARED rule, so
+   * it capped assistant turns too and combined with the bubble tails to make a
+   * 40rem column with a triangle glued to one edge read as a rendering
+   * accident. The prose measure now lives on `&.assistant` alone, and evidence
+   * (tool cards, diffs, output) is uncapped by not being this element. */
   padding: var(--sp-3) var(--sp-4);
   font-size: var(--fs-md);
   line-height: 1.6;
   overflow-wrap: anywhere;
 
-  &.user {
-    background: var(--c-user-bubble);
-    color: var(--c-text-primary);
-    border-radius: var(--r);
-    position: relative;
-    white-space: pre-wrap;
-
-    &::before {
-      content: "";
-      position: absolute;
-      bottom: 0.375rem;
-      inset-inline-end: -0.375rem;
-      border: 0.375rem solid transparent;
-      border-inline-start-color: var(--c-user-bubble);
-      border-inline-end: 0;
-    }
-  }
+  /* `&.user` and its tail are GONE. The user's request is the turn card's
+   * tinted header band (29-turns.css), which carries the same pre-wrap text
+   * plus the three-line clamp a free-standing bubble had no reason to want. */
 
   &.assistant {
-    background: var(--c-agent-bubble);
+    /* No resting background and no border-radius: inside a turn card the
+     * agent's reply sits on the card's own surface, and a second box around it
+     * would be a bubble by another name. The streaming wash below stays — that
+     * one carries live state rather than identity.
+     *
+     * `max-width` is NOT decoration here: it is the PROSE measure, ~40rem,
+     * which is where reading speed peaks. Evidence renders as siblings of this
+     * element and is deliberately uncapped. */
     color: var(--c-text-primary);
-    border-radius: var(--r);
     position: relative;
     max-width: 40.75rem;
     width: 100%;
@@ -234,14 +233,16 @@
      * instantly; the per-chunk fade-in (data-vk-chunk-enter) supplies
      * the perception of motion. */
     &.streaming {
-      /* Subtle accent wash while streaming so the live bubble is
-       * visually distinct from completed assistants. Released on
-       * turn_ended via the .streaming class removal. */
+      /* Subtle accent wash while streaming so the live turn is visually
+       * distinct from completed ones. Released on turn_ended via the
+       * .streaming class removal. Now the ONLY background this element ever
+       * carries, so it reads as state rather than as a bubble. */
       background: linear-gradient(
         180deg,
-        var(--c-agent-bubble) 0%,
-        color-mix(in srgb, var(--c-agent-bubble) 92%, var(--c-accent) 8%) 100%
+        transparent 0%,
+        color-mix(in srgb, var(--c-accent) 8%, transparent) 100%
       );
+      border-radius: var(--r);
     }
 
     /* Blinking caret at the end of the streaming bubble — a small
@@ -276,15 +277,8 @@
       animation: vk-fade-in var(--dur-enter) var(--ease-enter) both;
     }
 
-    &::before {
-      content: "";
-      position: absolute;
-      bottom: 0.375rem;
-      inset-inline-start: -0.375rem;
-      border: 0.375rem solid transparent;
-      border-inline-end-color: var(--c-agent-bubble);
-      border-inline-start: 0;
-    }
+    /* The mirrored tail is GONE with the user's. Both sides of the bubble
+     * convention went, and so did the asymmetry between them. */
 
     & code {
       font-family: var(--font-mono);
@@ -463,6 +457,8 @@
     }
   }
 
+  /* `.message.system` no longer styles the load-more affordance — that became a
+   * real button (.load-more-btn, below). It still covers genuine system rows. */
   &.system {
     align-self: center;
     color: var(--c-text-tertiary);
@@ -479,6 +475,39 @@
     font-style: normal;
     color: var(--c-text-secondary);
   }
+}
+
+/* Load older messages: a real BUTTON, not the instruction it used to be.
+ * `div.message.system` reading "Scroll up for older messages" is unusable the
+ * moment progressive collapse makes the transcript shorter than the viewport —
+ * there is nothing to scroll, so the instruction describes an action the reader
+ * cannot take. */
+.load-more-btn {
+  align-self: center;
+  flex-shrink: 0;
+  padding: var(--sp-1) var(--sp-3);
+  min-height: 1.75rem;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+}
+
+.load-more-btn:hover {
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-primary);
+  border-color: var(--c-text-tertiary);
+}
+
+.load-more-btn:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
 }
 
 /* Reasoning/thinking block (collapsible) */

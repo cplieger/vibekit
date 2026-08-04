@@ -10,20 +10,24 @@
 // ---------------------------------------------------------------------------
 
 import type { ToolStatus, ToolLocation, ToolDiff } from "./types.js";
-import { escText } from "./strings.js";
+import { escText, windowOutput } from "./strings.js";
 import { ansiToHtml } from "./ansi.js";
+import { linkifyPaths } from "./linkify.js";
 import { fileIcon, toolIcon, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { openFile, openFileDiff } from "./editor-openers.js";
-import { lineDiff, truncateChanged, stats as diffStats } from "./diff.js";
+import { openFileDiff } from "./editor-openers.js";
+import { openChange, openAtLine } from "./navigate.js";
+import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
 import { renderDiffPane } from "./diff-pane.js";
-import { setUserScrolledUp } from "./scroll.js";
+import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import {
   renderInfoFor,
   formatMCPToolName,
-  toolTier,
+  toolDepth1,
+  hasDepth1,
   isToolActive,
+  isToolDone,
   type ToolRenderInfo,
 } from "./tool-schema.js";
 import { trackInProgress } from "./tool-group.js";
@@ -46,14 +50,14 @@ export interface BuildToolCardOpts {
 /** Build a tool-call element. Does not append it to the DOM. */
 export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   const info = renderInfoFor(opts.title, opts.kind, opts.input);
-  const tier = toolTier(info.kind);
+  const depth1 = toolDepth1(info.kind);
   const rawTitle = opts.title.startsWith("Running: ") ? opts.title.slice(9) : opts.title;
   const displayTitle = info.mcp !== null ? formatMCPToolName(info.mcp.tool) : rawTitle;
 
-  const node = el("div", { className: `tool-call tool-tier-${tier}` }) as HTMLDivElement;
+  const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
   node.dataset["kind"] = info.kind;
   node.dataset["title"] = displayTitle;
-  node.dataset["tier"] = tier;
+  node.dataset["depth1"] = depth1;
   node.dataset["toolId"] = opts.id;
   if (info.mcp !== null) {
     node.dataset["mcpServer"] = info.mcp.server;
@@ -67,48 +71,65 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
     trackInProgress(node);
   }
 
-  node.appendChild(buildHeader(opts, displayTitle, info));
+  node.appendChild(buildHeader(opts, displayTitle, info, hasDepth1(info.kind)));
+  applyOutcome(node, opts.status, displayTitle, info);
 
-  // Medium tier: add a subtitle row with the first meaningful input param.
-  if (tier === "medium") {
+  // A claim-only kind gets no details region and no toggle. A `search` or
+  // `fetch` keeps the subtitle row, which is its claim's second fact.
+  if (depth1 === "search" || depth1 === "fetch" || depth1 === "generic") {
     const subtitle = extractSubtitle(opts.input);
     if (subtitle !== "") {
-      const sub = el("div", { className: "tool-subtitle" }, subtitle);
-      node.appendChild(sub);
+      node.appendChild(el("div", { className: "tool-subtitle" }, subtitle));
     }
   }
 
-  // Complex tier: add a scrollable output box.
-  // Simple + medium: add a hidden details block (toggle on click).
-  if (tier === "complex") {
-    const outputBox = el("div", { className: "tool-output-box" }) as HTMLDivElement;
-    node.appendChild(outputBox);
-    if (opts.output !== undefined && opts.output !== "") {
-      appendToOutputBox(outputBox, opts.output);
+  if (depth1 === "move") {
+    const row = moveRow(opts.input);
+    if (row !== null) {
+      node.appendChild(row);
     }
-  } else {
+  }
+
+  if (hasDepth1(info.kind)) {
     node.insertAdjacentHTML("beforeend", buildDetails(opts));
     if (opts.output !== undefined && opts.output !== "") {
-      appendOutput(node, opts.output);
+      appendOutput(node, opts.output, depth1 === "output");
     }
-  }
-
-  wireFileLink(node, info.filePath);
-  if (tier !== "simple") {
     wireToggle(node);
   }
 
-  if (opts.diffs !== undefined && opts.diffs.length > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const d = opts.diffs[0]!;
-    insertDiffPreview(node, d.path, {
-      oldText: d.old_text ?? "",
-      newText: d.new_text,
-    });
-  } else if (info.writesFile && info.diffSources !== null) {
-    insertDiffPreview(node, info.filePath, info.diffSources);
+  wireFileLink(node, info.filePath, depth1 === "diff");
+
+  // An edit's diff lives BEHIND the disclosure, not in the resting state. It
+  // used to be inserted unconditionally, which made every edit card's depth 1
+  // its resting state — and turned a merged multi-edit group into a wall of
+  // hunks by default, the opposite of what progressive collapse buys.
+  if (depth1 === "diff") {
+    if (opts.diffs !== undefined && opts.diffs.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const d = opts.diffs[0]!;
+      insertDiffPreview(node, d.path, { oldText: d.old_text ?? "", newText: d.new_text });
+    } else if (info.writesFile && info.diffSources !== null) {
+      insertDiffPreview(node, info.filePath, info.diffSources);
+    }
   }
   return node;
+}
+
+/** Two facts a move's claim line cannot carry. */
+function moveRow(input: Record<string, unknown> | undefined): HTMLElement | null {
+  const from = typeof input?.["sourcePath"] === "string" ? input["sourcePath"] : "";
+  const to = typeof input?.["destinationPath"] === "string" ? input["destinationPath"] : "";
+  if (from === "" || to === "") {
+    return null;
+  }
+  return el(
+    "div",
+    { className: "tool-move-row" },
+    el("span", { className: "tool-move-from" }, from),
+    el("span", { className: "tool-move-arrow", "aria-hidden": "true" }, "\u2192"),
+    el("span", { className: "tool-move-to" }, to),
+  );
 }
 
 /** Extract a one-line subtitle from tool input for medium-tier cards. */
@@ -126,25 +147,13 @@ export function extractSubtitle(input: Record<string, unknown> | undefined): str
   return "";
 }
 
-/** Append text to a complex-tier scrollable output box. Auto-scrolls
- *  to the bottom so the user sees the latest output. */
-function appendToOutputBox(box: HTMLDivElement, text: string): void {
-  const pre = box.querySelector("pre");
-  if (pre !== null) {
-    pre.textContent += text;
-  } else {
-    const newPre = el("pre", null, text);
-    box.appendChild(newPre);
-  }
-  box.scrollTop = box.scrollHeight;
-}
-
 // --- HTML fragments ---
 
 function buildHeader(
   opts: BuildToolCardOpts,
   displayTitle: string,
   info: ToolRenderInfo,
+  withToggle: boolean,
 ): HTMLDivElement {
   const header = el("div", { className: "tool-header", title: opts.title }) as HTMLDivElement;
 
@@ -165,9 +174,17 @@ function buildHeader(
   }
 
   if (info.filePath !== "") {
+    // The filename IS the link to the change. There used to be a second
+    // "View diff" button beside the stats; depth 2 is a click on the SUBJECT,
+    // and a generic button next to it was a second affordance for one intent.
     const btn = el(
       "button",
-      { className: "tool-file-link", "data-path": info.filePath, title: info.filePath },
+      {
+        className: "tool-file-link",
+        "data-path": info.filePath,
+        title: info.filePath,
+        "data-tooltip": "Open the diff",
+      },
       el("span", { className: "tool-file-icon" }, iconEl(fileIcon(info.fileBasename, false))),
       el("span", { className: "tool-file-name" }, info.fileBasename),
     );
@@ -184,21 +201,81 @@ function buildHeader(
     header.appendChild(duration);
   }
 
-  const status = el("span", { className: `tool-status ${opts.status}` }, opts.status);
-  header.appendChild(status);
+  // No status WORD. Outcome rides the per-kind glyph (see applyOutcome): a
+  // finished card printing the literal enum value `completed` was the claim
+  // "Tool call completed", which says nothing the row does not already say.
 
-  const toggle = el(
-    "button",
-    {
-      className: "tool-toggle",
-      "aria-expanded": "false",
-      "aria-label": "Toggle tool details",
-    },
-    iconEl(ICON_CHEVRON_DOWN),
-  );
-  header.appendChild(toggle);
+  // A claim-only card has nothing to reveal, so it gets no toggle AT ALL rather
+  // than a hidden one: a `display: none` button is still a button in the
+  // accessibility tree, announcing a control that would open an empty region.
+  if (withToggle) {
+    header.appendChild(
+      el(
+        "button",
+        {
+          className: "tool-toggle",
+          "aria-expanded": "false",
+          "aria-label": "Toggle tool details",
+        },
+        iconEl(ICON_CHEVRON_DOWN),
+      ),
+    );
+  }
 
   return header;
+}
+
+/** Paint a card's outcome onto its glyph, and give the card an accessible name.
+ *
+ *  ONE writer for the whole vocabulary, which is the point: the outcome used to
+ *  be written in four places (here, the update path, the subagent block, and the
+ *  group header) and each spelled it slightly differently.
+ *
+ *  Tint alone would fail WCAG 1.4.1 — a green and a red glyph of identical shape
+ *  are one channel — so a settled card also carries a SHAPE: a small check or
+ *  cross composited on the glyph. The status word is not restored as visible
+ *  text; the accessible name carries it instead ("Edited auth.go, succeeded"),
+ *  and a programmatic name is not visible text. */
+export function applyOutcome(
+  node: HTMLElement,
+  status: ToolStatus,
+  displayTitle: string,
+  info: ToolRenderInfo,
+): void {
+  const icon = node.querySelector<HTMLElement>(".tool-icon");
+  const state = isToolDone(status) ? (status === "failed" ? "fail" : "ok") : "running";
+  node.dataset["outcome"] = state;
+  if (icon !== null) {
+    icon.classList.remove("is-ok", "is-fail", "is-running");
+    icon.classList.add(`is-${state}`);
+    // The shape half. Rebuilt rather than toggled so a re-render cannot stack
+    // two badges on one glyph.
+    icon.querySelector(".tool-outcome-badge")?.remove();
+    if (state !== "running") {
+      icon.appendChild(
+        el(
+          "span",
+          { className: "tool-outcome-badge", "aria-hidden": "true" },
+          state === "ok" ? "\u2713" : "\u2717",
+        ),
+      );
+    }
+  }
+  const subject = info.fileBasename !== "" ? `${displayTitle} ${info.fileBasename}` : displayTitle;
+  node.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
+}
+
+/** The word the accessible name uses. Deliberately not the wire enum: "pending"
+ *  and "in_progress" both mean the same thing to a listener. */
+function outcomeWord(state: string): string {
+  switch (state) {
+    case "ok":
+      return "succeeded";
+    case "fail":
+      return "failed";
+    default:
+      return "running";
+  }
 }
 
 // mcpHue derives a stable integer in [0,360) from the server name so
@@ -227,13 +304,24 @@ function buildDetails(opts: BuildToolCardOpts): string {
 
 // --- Wiring ---
 
-function wireFileLink(el: HTMLElement, filePath: string): void {
+/** The filename opens the CHANGE on a card that made one, and the FILE on a card
+ *  that only read it — a read card's filename has no diff to show.
+ *
+ *  A change opens vs HEAD rather than from the card's own before/after pair,
+ *  which is the honest source: the write has already landed, so the working tree
+ *  IS the after state and git holds the before. (The card's own pair is what the
+ *  `+N -M` link uses, for the narrower "what did THIS call do".) */
+function wireFileLink(el: HTMLElement, filePath: string, isChange: boolean): void {
   if (filePath === "") {
     return;
   }
   el.querySelector(".tool-file-link")?.addEventListener("click", (e: Event) => {
     e.stopPropagation();
-    openFile(filePath);
+    if (isChange) {
+      openChange(filePath);
+    } else {
+      openAtLine(filePath);
+    }
   });
 }
 
@@ -271,14 +359,49 @@ export function expandToolDetails(card: HTMLElement): void {
   detailCtls.get(card)?.open();
 }
 
-function appendOutput(node: HTMLElement, output: string): void {
+/** Fill a card's output region. When `windowed`, depth 1 shows the first and
+ *  last N lines and a control reveals the rest IN PLACE — the only depth 2 in
+ *  the ladder that does not leave the transcript.
+ *
+ *  It deliberately does NOT route to the shell panel. That is one global LIVE
+ *  server-side PTY whose only host controls are send and reset; writing a
+ *  finished command's historical bytes into it would present them as part of the
+ *  current stream, where the next server frame can interleave or erase them, and
+ *  would corrupt a surface the user may be using for something else. */
+function appendOutput(node: HTMLElement, output: string, windowed: boolean): void {
   const out = node.querySelector(".tool-output");
   if (out === null) {
     return;
   }
   const pre = el("pre");
-  pre.innerHTML = ansiToHtml(output);
+  if (!windowed) {
+    pre.innerHTML = ansiToHtml(output);
+    // A search tool's output IS its result list — `path:line: match` per hit —
+    // so linkifying it is the search-hit seam. It ran on prose and turn headers
+    // but never on tool output, which is where the hits actually are.
+    linkifyPaths(pre, { insidePre: true });
+    out.appendChild(pre);
+    return;
+  }
+  const win = windowOutput(output);
+  pre.innerHTML = ansiToHtml(win.text);
+  linkifyPaths(pre, { insidePre: true });
   out.appendChild(pre);
+  if (win.elided === 0) {
+    return;
+  }
+  const reveal = el(
+    "button",
+    { type: "button", className: "tool-output-reveal" },
+    `Show ${String(win.elided)} more line${win.elided === 1 ? "" : "s"}`,
+  );
+  reveal.addEventListener("click", (e: Event) => {
+    e.stopPropagation();
+    pre.innerHTML = ansiToHtml(output);
+    linkifyPaths(pre, { insidePre: true });
+    reveal.remove();
+  });
+  out.appendChild(reveal);
 }
 
 // --- Inline diff preview for file-writing tools ---
@@ -296,31 +419,49 @@ export function insertDiffPreview(
 
   const wrap = el("div", { className: "tool-diff-preview" });
 
-  const stats = el("div", { className: "tool-diff-stats" });
-  stats.innerHTML =
-    `<span class="diff-add-count">+${String(s.adds)}</span>` +
-    `<span class="diff-del-count">-${String(s.dels)}</span>`;
-  const viewBtn = el("button", { className: "tool-diff-view-btn" }, "View diff");
-  viewBtn.addEventListener("click", (e: Event) => {
+  // `+N -M` is a link to the same diff, scrolled to the first hunk. Numbers
+  // answer "how much" where the glyph's colour only answers "whether", so they
+  // stay on the claim line and become the second entry point to depth 2.
+  const statBtn = el(
+    "button",
+    { type: "button", className: "tool-diff-stats", "data-tooltip": "Open the diff" },
+    el("span", { className: "diff-add-count" }, `+${String(s.adds)}`),
+    el("span", { className: "diff-del-count" }, `-${String(s.dels)}`),
+  );
+  statBtn.addEventListener("click", (e: Event) => {
     e.stopPropagation();
     openFileDiff(filePath, src.oldText, src.newText, { oldLabel: "before", newLabel: "after" });
   });
-  stats.appendChild(viewBtn);
-  wrap.appendChild(stats);
+  wrap.appendChild(statBtn);
 
-  const trimmed = truncateChanged(diff, 3);
-  const mini = renderDiffPane(trimmed.lines, { lineNumbers: false, syncScroll: false });
+  // Unified, whole hunks, line numbers ON. Line numbers are what let a reader
+  // carry their place across the click into the real document; without them the
+  // peek is a fragment with no address.
+  const win = windowHunks(diff, { maxRows: 24, context: 2 });
+  const mini = renderDiffPane(win.lines, {
+    unified: true,
+    lineNumbers: true,
+    syncScroll: false,
+    lang: filePath,
+  });
   mini.classList.add("tool-diff-mini");
   wrap.appendChild(mini);
 
-  if (trimmed.more > 0) {
-    const more = el(
-      "div",
-      { className: "tool-diff-more" },
-      `+${String(trimmed.more)} more change${trimmed.more === 1 ? "" : "s"}`,
+  if (win.hunksOmitted > 0) {
+    wrap.appendChild(
+      el(
+        "div",
+        { className: "tool-diff-more" },
+        `+${String(win.hunksOmitted)} more hunk${win.hunksOmitted === 1 ? "" : "s"}`,
+      ),
     );
-    wrap.appendChild(more);
   }
 
-  node.insertBefore(wrap, node.querySelector(".tool-details"));
+  // The third §3.4 case: a card GROWS when its diff preview lands on the update
+  // path, which pushes everything below it — including the reader's position —
+  // down. Content-growth class, same helper. Immediate, like reasoning's seal
+  // and unlike tool-group's animated collapse.
+  preserveReadingPosition(() => {
+    node.insertBefore(wrap, node.querySelector(".tool-details"));
+  }, "content-growth");
 }

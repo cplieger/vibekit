@@ -1,8 +1,11 @@
-// Actions for chat lifecycle: delete, archive, restore, discard tangent,
-// load history, delete archived, cancel, switch model, set mode, send prompt,
-// resolve pending change, resolve all pending, permission response,
-// elicitation response, restore checkpoint, set supervised, trust pending,
-// clear pending trust.
+// Actions for chat lifecycle: delete, list previous sessions, resume a
+// previous session, cancel, switch model, set mode, compact, send prompt,
+// permission response, elicitation response, user-input response, and the
+// supervised (autopilot) toggle.
+//
+// There are no resolve/trust pending-change actions: staging is KAS's, and a
+// turn's writes are approved through the ORDINARY permission reply carrying a
+// per-action fileDecisions map (see api.PermissionOutcomeWithFileDecisions).
 // ---------------------------------------------------------------------------
 
 import {
@@ -15,7 +18,7 @@ import {
   IDEMPOTENCY_COMMAND_FIELD,
 } from "./index.js";
 
-import type { PendingChange, Session } from "../types.js";
+import type { ResumableSessionRow, Session, WorkflowRunRow } from "../types.js";
 import {
   get,
   setThinking,
@@ -25,17 +28,30 @@ import {
   indexOfSession,
   setModel,
   setCurrentMode,
-  clearPendingChanges,
-  addPendingChange,
 } from "../store.js";
 import { send as transportSend } from "../transport.js";
 import { clearLastError } from "../send-state.js";
 
+// --- chat.close ---
+// The tab-close teardown: the x means "kill all of it" (user decision) — the
+// in-flight turn, the chat's runs, the process. The chat RECORD survives;
+// reopening session/loads it back. Fire-and-forget with no error toast: the
+// tab is already gone, and there is nothing for the user to redo.
+
+export const closeChat = transportAction<string, { ok: boolean }>({
+  name: "chat.close",
+  networkMode: "always",
+  command: (chatID) => ({ type: "close_chat", chat_id: chatID }),
+  error: false,
+  success: false,
+});
+
 // --- chat.delete ---
 // The tab-close path in the "no retention" mode (retention = 0): closing a
-// non-empty chat deletes it permanently (ephemeral chats). Retention > 0 uses
-// chat.archive instead (chat moves to History). This is the app's ONLY
-// active-chat delete path; History rows use chat.delete_archived.
+// non-empty chat deletes it permanently (ephemeral chats). With retention on,
+// a close just drops the tab (removeChat) and the server keeps the chat until
+// the purge window expires — there is no archive action and no
+// chat.delete_archived. This is the app's ONLY chat delete path.
 
 export const deleteChat = transportAction<string, { session: Session; atIndex: number }>({
   name: "chat.delete",
@@ -64,37 +80,6 @@ export const deleteChat = transportAction<string, { session: Session; atIndex: n
     }
   },
   error: "Couldn't delete chat",
-});
-
-// --- chat.archive ---
-
-export const archiveChat = apiAction<string, unknown, { session: Session; atIndex: number }>({
-  name: "chat.archive",
-  scope: (id) => `chat:${id}`,
-  dedupe: true,
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: (id) => ({
-    method: "POST",
-    path: `/api/chats/${encodeURIComponent(id)}/archive`,
-  }),
-  optimistic: (id) => {
-    const session = get(id);
-    if (session === undefined) {
-      return undefined;
-    }
-    const atIndex = indexOfSession(id);
-    removeChat(id);
-    return { session, atIndex };
-  },
-  rollback: (_id, op) => {
-    if (op !== undefined) {
-      reinsertSession(op.session, op.atIndex);
-    }
-  },
-  success: false,
-  error: "Couldn't archive chat",
 });
 
 // --- chat.set_supervised ---
@@ -130,62 +115,28 @@ export const setSupervised = transportAction<
   error: "Couldn't update supervised mode",
 });
 
-// --- chat.resolve_all_pending ---
+// --- chat.compact ---
 
-export const resolveAllPending = transportAction<
-  { chatID: string; action: "accept" | "reject" },
-  { prev: PendingChange[] }
->({
-  name: "chat.resolve_all_pending",
+/** compactChat summarizes the conversation through KAS's NATIVE verb.
+ *
+ *  An action rather than passed-through text because typed `/compact` performs no
+ *  compaction — nothing in KAS parses it, so the text reaches the model, which
+ *  answers as if it had happened. See typed-commands.ts.
+ *
+ *  `idempotencyKey` because a retry that compacts twice summarizes a summary.
+ *  The error is the server's own message: KAS gives one undiscriminated
+ *  `{success: false}` for a turn in flight and for a compaction already running,
+ *  and the server turns that into the single cause a user can act on. */
+export const compactChat = transportAction<{ chatID: string }>({
+  name: "chat.compact",
+  networkMode: "always",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  command: ({ chatID, action }) => ({
-    type: "resolve_all_pending_changes",
+  command: ({ chatID }) => ({
+    type: "compact",
     chat_id: chatID,
-    payload: { action },
   }),
-  optimistic: ({ chatID }) => {
-    const session = get(chatID);
-    if (session === undefined) {
-      return undefined;
-    }
-    const prev = [...session.pending_changes];
-    clearPendingChanges(chatID);
-    return { prev };
-  },
-  rollback: ({ chatID }, op) => {
-    if (op !== undefined) {
-      for (const change of op.prev) {
-        addPendingChange(chatID, change);
-      }
-    }
-  },
-  error: "Couldn't resolve pending changes",
-});
-
-// --- chat.trust_pending ---
-
-export const trustPending = transportAction<string>({
-  name: "chat.trust_pending",
-  networkMode: "always",
-  scope: (chatID) => `chat:${chatID}`,
-  command: (chatID) => ({ type: "trust_pending_changes", chat_id: chatID }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  error: "Couldn't trust pending changes",
-});
-
-// --- chat.clear_pending_trust ---
-
-export const clearPendingTrust = transportAction<string>({
-  name: "chat.clear_pending_trust",
-  scope: (chatID) => `chat:${chatID}`,
-  command: (chatID) => ({ type: "clear_pending_trust", chat_id: chatID }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  error: "Couldn't clear pending trust",
+  error: "Couldn't compact",
 });
 
 // --- chat.set_mode ---
@@ -225,48 +176,37 @@ export const setMode = transportAction<{ chatID: string; modeID: string }, { pre
 
 // --- chat.restore ---
 
-export const restoreChat = apiAction<string, { ok: boolean }>({
-  name: "chat.restore",
-  scope: (id) => `chat:${id}`,
-  idempotencyKey: true,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  request: (id) => ({
-    method: "POST",
-    path: "/api/chats/archived",
-    body: { id },
-  }),
-  error: "Couldn't restore chat",
-});
-
-// --- chat.delete_archived ---
-// No auto-retry and no manual Retry button: DELETE is destructive. If the
-// first attempt succeeds but the response times out, a retry would hit 404
-// and surface a misleading error toast.
-
-export const deleteArchivedChat = apiAction<string>({
-  name: "chat.delete_archived",
-  scope: (id) => `chat:${id}`,
-  request: (id) => ({
-    method: "DELETE",
-    path: `/api/chats/archived/${encodeURIComponent(id)}`,
-  }),
-  error: "Couldn't delete chat",
-});
-
-// --- chat.load_history ---
-
-export const loadHistory = apiAction<
-  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args/result
+export const loadSessions = apiAction<
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- void used as generic type argument for action with no args
   void,
-  { chats: { id: string; name: string; summary?: string; updated_at: number }[] }
+  { sessions: ResumableSessionRow[]; runs: WorkflowRunRow[] }
 >({
-  name: "chat.load_history",
+  name: "chat.load_sessions",
   dedupe: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  request: () => ({ method: "GET", path: "/api/chats/archived" }),
-  error: "Couldn't load chat history",
+  request: () => ({ method: "GET", path: "/api/sessions" }),
+  error: "Couldn't load previous sessions",
+});
+
+// --- chat.resume_session ---
+// Adopts a KAS session the picker listed as a NEW chat. The server creates the
+// chat already bound to the session id; the transcript arrives from the
+// session/load replay, so nothing is copied client-side.
+
+export const resumeSession = transportAction<
+  { chatID: string; sessionID: string; name: string },
+  { ok: boolean }
+>({
+  name: "chat.resume_session",
+  command: ({ chatID, sessionID, name }) => ({
+    type: "resume_session",
+    chat_id: chatID,
+    payload: { session_id: sessionID, name },
+  }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: "Couldn't resume that session",
 });
 
 // --- chat.cancel_turn ---
@@ -367,8 +307,6 @@ interface SendPromptArgs {
   text: string;
   messageID: string;
   model: string;
-  activeFile: string;
-  openFiles: readonly string[];
   attachments?: readonly unknown[];
 }
 
@@ -410,7 +348,7 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
     }
   },
   run: async (args, signal, ctx) => {
-    const { chatID, text, messageID, model, activeFile, openFiles, attachments } = args;
+    const { chatID, text, messageID, model, attachments } = args;
     const r = await transportSend(
       {
         type: "prompt",
@@ -419,8 +357,6 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
           text,
           message_id: messageID,
           model,
-          active_file: activeFile,
-          open_files: openFiles,
           attachments:
             attachments !== undefined && attachments.length > 0 ? attachments : undefined,
           // Only include the key if the framework provided one (avoids
@@ -464,28 +400,6 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
   error: false, // send-state.ts (blocked send button) is the surface
 });
 
-// --- chat.resolve_pending_change ---
-
-export const resolvePendingChange = transportAction<{
-  chatID: string;
-  toolCallID: string;
-  action: "accept" | "reject";
-}>({
-  name: "chat.resolve_pending_change",
-  networkMode: "always",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  idempotencyKey: true,
-  command: ({ chatID, toolCallID, action }) => ({
-    type: "resolve_pending_change",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, action },
-  }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  // Args-aware error message: "Failed to accept change" / "Failed to reject change".
-  error: ({ action }) => `Failed to ${action} change`,
-});
-
 // --- chat.respond_permission ---
 // Scope is per-request (not per-chat): two pending permission requests in
 // the same chat are independent and should fire in parallel. Serializing
@@ -497,16 +411,24 @@ export const respondPermission = transportAction<{
   chatID: string;
   requestID: number;
   optionID: string;
+  /** A TURN APPROVAL's per-action verdicts: KAS's action id → keep. Absent on
+   *  an ordinary tool permission. Every action the request offered must appear
+   *  — KAS restores whatever is not in the accepted set, so an omitted id is a
+   *  silent rollback rather than "no opinion". */
+  fileDecisions?: Record<string, boolean>;
 }>({
   name: "chat.respond_permission",
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  command: ({ chatID, requestID, optionID }) => ({
+  command: ({ chatID, requestID, optionID, fileDecisions }) => ({
     type: "permission_response",
     chat_id: chatID,
-    payload: { request_id: requestID, option_id: optionID },
+    payload:
+      fileDecisions !== undefined
+        ? { request_id: requestID, option_id: optionID, file_decisions: fileDecisions }
+        : { request_id: requestID, option_id: optionID },
   }),
   error: "Couldn't send permission response",
 });
@@ -553,21 +475,4 @@ export const respondUserInput = transportAction<{
         : { request_id: requestID, action },
   }),
   error: "Couldn't send your answer",
-});
-
-// --- chat.restore_checkpoint ---
-
-export const restoreCheckpoint = transportAction<{ chatID: string; tag: string }>({
-  name: "chat.restore_checkpoint",
-  scope: ({ chatID }) => `chat:${chatID}`,
-  dedupe: true,
-  idempotencyKey: true,
-  command: ({ chatID, tag }) => ({
-    type: "restore_checkpoint",
-    chat_id: chatID,
-    payload: { tag },
-  }),
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  error: "Couldn't restore checkpoint",
 });

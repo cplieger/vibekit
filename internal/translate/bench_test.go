@@ -42,18 +42,22 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
 func (d *baseDeps) ChatStore() api.ChatStore           { return d.store }
 func (d *baseDeps) ParentACPSession(api.ChatID) string { return d.parent }
 func (d *baseDeps) WorkDir() string                    { return "/tmp" }
-func (d *baseDeps) MCPRecorder() MCPRecorder           { return &testsupport.NopMCPRecorder{} }
+func (d *baseDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]any) error {
+	return nil
+}
+func (d *baseDeps) BridgeRespond(context.Context, api.ChatID, int64, any, error) error { return nil }
+func (d *baseDeps) MCPRecorder() MCPRecorder                                           { return &testsupport.NopMCPRecorder{} }
 func (d *baseDeps) SetGovernance(g api.GovernanceStatePayload) {
 	if d.onSetGovernance != nil {
 		d.onSetGovernance(g)
 	}
 }
-func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)                      {}
-func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind)            {}
-func (d *baseDeps) BufferStore() BufferAccess                                   { return d.bufStore }
-func (d *baseDeps) LineTracker() LineRecorder                                   { return d.lineTracker }
-func (d *baseDeps) OpenPartialFile(context.Context, api.ChatID, *buffer.Buffer) {}
-func (d *baseDeps) IsHookStatusEnabled() bool                                   { return false }
+func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)           {}
+func (d *baseDeps) PendingPermsRemove(int64)                         {}
+func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind) {}
+func (d *baseDeps) BufferStore() BufferAccess                        { return d.bufStore }
+func (d *baseDeps) LineTracker() LineRecorder                        { return d.lineTracker }
+func (d *baseDeps) IsHookStatusEnabled() bool                        { return false }
 
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 

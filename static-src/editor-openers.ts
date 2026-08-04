@@ -9,21 +9,15 @@ import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
 import { abortSuggestion, clearSuggestionState } from "./editor-conflict.js";
-import { apiGet, withTimeout, API_TIMEOUT_MS } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { loadDiff as loadDiffAction } from "./actions/editor.js";
 import type { FileMode, FileState } from "./editor-types.js";
 import {
   fileStates,
   getActiveFilePath,
   setActiveFilePath,
-  isPendingPath,
   routeForPath,
   freshState,
-  pendingDiffSource,
-  gitDiffSource,
-  registerCloseFile,
-  makePlanDraftPath,
-  makePendingPath,
 } from "./editor-types.js";
 import {
   showReadMode,
@@ -71,36 +65,37 @@ export function openFileDiff(
   });
 }
 
-export function openFileGitDiff(path: string, ref = "HEAD", repo = ""): void {
+/** Open a file's diff against a git ref, FETCHING both sides.
+ *
+ *  The counterpart to openFileDiff, which demands both contents up front. Here
+ *  the caller has only a path — which is the shape every "this changed, let me
+ *  look" affordance has: a turn's ledger row, a changed filename in a tool
+ *  card. `fromGit: true` is what routes `open` into fetchGitDiffSources, so the
+ *  pane fills itself and reports its own load failure.
+ *
+ *  An earlier openFileGitDiff died with the per-file-undo row it was attached
+ *  to. This one exists for the opposite reason: a changed filename IS the link
+ *  to its own diff now, so the openers a filename needs are load-bearing
+ *  rather than incidental. */
+export function openFileGitDiff(path: string, ref = "HEAD"): void {
   open(path, {
     mode: {
       kind: "diff",
-      diffSource: gitDiffSource(ref, "", ""),
+      diffSource: {
+        oldContent: "",
+        newContent: "",
+        oldLabel: ref,
+        newLabel: "working tree",
+        fromGit: true,
+      },
     },
-    repo,
     ref,
   });
 }
 
-export function openPlanDraftPath(chatID: string): void {
-  const path = makePlanDraftPath(chatID);
-  fileStates.delete(path);
-  open(path, { mode: { kind: "edit", editing: false } });
-}
-
-export function openPendingDiff(chatID: string, toolCallID: string): void {
-  if (chatID === "" || toolCallID === "") {
-    return;
-  }
-  const path = makePendingPath(chatID, toolCallID);
-  fileStates.delete(path);
-  open(path, {
-    mode: {
-      kind: "diff",
-      diffSource: pendingDiffSource("", ""),
-    },
-  });
-}
+// openPendingDiff is GONE. It opened a `pending:<chat>:<toolCall>` virtual path
+// served from GET /api/pending-changes/, and neither the path family nor the
+// endpoint exists: KAS holds staged content and reviews a whole turn at once.
 
 interface OpenOpts {
   mode: FileMode;
@@ -252,11 +247,6 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   showReadMode();
   $.editorEditBtn.disabled = true;
 
-  if (isPendingPath(state.path)) {
-    await loadPendingDiff(state, signal);
-    return;
-  }
-
   const d = await apiGet<{ content?: string; error?: string }>(
     routeForPath(state.path).readURL,
     signal,
@@ -288,57 +278,6 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   applyPendingLine(state.path);
 }
 
-/** Set state to a loaded-diff terminal state and render. */
-function settlePendingDiff(state: FileState, error: string, oldText = "", newText = ""): void {
-  state.error = error;
-  state.loaded = true;
-  state.original.value = newText;
-  state.current.value = newText;
-  state.mode.value = { kind: "diff", diffSource: pendingDiffSource(oldText, newText) };
-  restoreUI(state);
-}
-
-async function loadPendingDiff(state: FileState, signal?: AbortSignal): Promise<void> {
-  interface PendingData {
-    path?: string;
-    kind?: string;
-    old_text?: string;
-    new_text?: string;
-    truncated?: boolean;
-  }
-  const url = routeForPath(state.path).readURL;
-  let d: PendingData | null = null;
-  let is404 = false;
-  try {
-    const r = await fetch(url, { signal: withTimeout(signal, API_TIMEOUT_MS) });
-    if (r.status === 404) {
-      is404 = true;
-    } else if (!r.ok) {
-      settlePendingDiff(state, "Network error \u2014 try again");
-      return;
-    } else {
-      d = (await r.json()) as PendingData;
-    }
-  } catch {
-    if (signal?.aborted === true) {
-      return;
-    }
-    settlePendingDiff(state, "Network error \u2014 try again");
-    return;
-  }
-  if (signal?.aborted === true) {
-    return;
-  }
-  if (is404 || d === null) {
-    settlePendingDiff(state, "Change already resolved");
-    return;
-  }
-  const oldText = d.old_text ?? "";
-  const newText = d.new_text ?? "";
-  settlePendingDiff(state, "", oldText, newText);
-  applyPendingLine(state.path);
-}
-
 function persistOpenFiles(): void {
   uiState.save({ editor_files: [...fileStates.keys()] });
 }
@@ -361,7 +300,3 @@ export function closeEditorFile(path: string): void {
   }
   persistOpenFiles();
 }
-
-// Register with editor-types so modules that can't import editor-openers
-// (due to cycle risk) can still close files via the late-bound reference.
-registerCloseFile(closeEditorFile);

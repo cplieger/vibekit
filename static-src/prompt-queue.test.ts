@@ -15,23 +15,30 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Declared via vi.hoisted so they exist when the hoisted vi.mock factories run.
-const { mockSendPromptTo, mockShowBanner, mockTakeAttachments, mockAddAttachment } = vi.hoisted(
-  () => ({
+const { mockSendPromptTo, mockShowBanner, mockTakeAttachments, mockAddAttachment, mockCancelTurn } =
+  vi.hoisted(() => ({
     mockSendPromptTo: vi.fn(),
     mockShowBanner: vi.fn(),
     mockTakeAttachments: vi.fn(() => [] as unknown[]),
     mockAddAttachment: vi.fn(),
-  }),
-);
+    mockCancelTurn: vi.fn(),
+  }));
 
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
+vi.mock("./actions/chat.js", () => ({ cancelTurn: { dispatch: mockCancelTurn } }));
 vi.mock("./banner-stack.js", () => ({ showBanner: mockShowBanner }));
 vi.mock("./attachments.js", () => ({
   takeAttachments: mockTakeAttachments,
   addAttachment: mockAddAttachment,
 }));
 
-import { submitPrompt, drainNext, maybeDrainIfIdle, cancelQueuedPrompt } from "./prompt-queue.js";
+import {
+  submitPrompt,
+  drainNext,
+  maybeDrainIfIdle,
+  cancelQueuedPrompt,
+  sendQueuedNow,
+} from "./prompt-queue.js";
 import {
   setSessions,
   setActive,
@@ -59,7 +66,6 @@ function makeSession(id: string): Session {
     available_modes: [],
     available_models: [],
     supervised_mode: false,
-    pending_changes: [],
     usage: {
       context_pct: 0,
       context_size: 0,
@@ -308,6 +314,60 @@ describe("cancelQueuedPrompt", () => {
     resetStore("c1");
     enqueuePrompt("c1", "a", "m-test");
     expect(cancelQueuedPrompt("c1", 9)).toBeUndefined();
+    expect(queueLength("c1")).toBe(1);
+  });
+});
+
+describe("sendQueuedNow", () => {
+  // The queue-jump for the one message that has become urgent (§3.15): promote
+  // to the front, then interrupt the streaming turn — the turn_ended drain
+  // delivers it — or nudge the idle drain when nothing is streaming.
+  it("promotes the entry and interrupts a streaming turn", () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    enqueuePrompt("c1", "first", "m-1");
+    enqueuePrompt("c1", "urgent", "m-2");
+
+    sendQueuedNow("c1", 1);
+
+    expect(peekPrompt("c1")?.text).toBe("urgent");
+    expect(queueLength("c1")).toBe(2);
+    expect(mockCancelTurn).toHaveBeenCalledWith("c1");
+    // The interrupt DELIVERS nothing itself — the drain on turn_ended does.
+    expect(mockSendPromptTo).not.toHaveBeenCalled();
+  });
+
+  it("drains immediately when nothing is streaming", async () => {
+    resetStore("c1");
+    enqueuePrompt("c1", "only", "m-1");
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    sendQueuedNow("c1", 0);
+    await flush();
+
+    expect(mockCancelTurn).not.toHaveBeenCalled();
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(1);
+    expect(queueLength("c1")).toBe(0);
+  });
+
+  it("keeps everyone else's relative order behind the promoted entry", () => {
+    resetStore("c1");
+    setThinking("c1", true);
+    enqueuePrompt("c1", "a", "m-1");
+    enqueuePrompt("c1", "b", "m-2");
+    enqueuePrompt("c1", "c", "m-3");
+
+    sendQueuedNow("c1", 2);
+
+    const q = get("c1")?.prompt_queue ?? [];
+    expect(q.map((e) => e.text)).toEqual(["c", "a", "b"]);
+  });
+
+  it("is a no-op for an out-of-range index", () => {
+    resetStore("c1");
+    enqueuePrompt("c1", "a", "m-1");
+    sendQueuedNow("c1", 5);
+    expect(mockCancelTurn).not.toHaveBeenCalled();
     expect(queueLength("c1")).toBe(1);
   });
 });

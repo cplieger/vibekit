@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // BridgeAccess provides bridge lifecycle operations needed by prompt,
@@ -32,25 +31,36 @@ type ChatAccess interface {
 	ChatStore() api.ChatStore
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	CleanupChatState(ctx context.Context, chatID api.ChatID)
+	// CancelChatRuns cancels every non-terminal workflow run this chat's
+	// sessions launched. Part of the tab-close contract: closing the tab kills
+	// the work, and a run is durable state a dead process does NOT stop — KAS
+	// reconciles it to paused and a later read revives it, so it must be told
+	// to cancel, per run, before the bridge goes.
+	CancelChatRuns(ctx context.Context, chatID api.ChatID)
 }
 
-// CheckpointAccess provides checkpoint operations needed by prompt,
-// restore, and undo handlers.
-type CheckpointAccess interface {
-	Checkpoints() api.CheckpointService
-	AdvanceCheckpointTurn(ctx context.Context, chatID api.ChatID)
-}
-
-// SupervisedAccess provides supervised-mode and pending-permission
-// operations needed by pending/trust handlers.
-type SupervisedAccess interface {
-	PendingStore() *pending.Store
-	SupervisedSetTrust(chatID api.ChatID)
-	SupervisedClearTrust(chatID api.ChatID, reason api.ClearReason)
-	ChatInSupervisedMode(ctx context.Context, chatID api.ChatID) bool
-	FlushPendingForChat(ctx context.Context, chatID api.ChatID, reason api.ClearReason)
+// PendingPermAccess provides the pending-PERMISSION bookkeeping handlers need:
+// an unanswered request is replayed to a reconnecting client, so answering or
+// abandoning one has to retire the entry.
+//
+// It was SupervisedAccess, and the rename is the point. The pending-CHANGE half
+// went with internal/pending — vibekit no longer holds writes back, so there is
+// no staging queue to resolve, trust past or flush, and KAS's turn approval
+// arrives as an ordinary permission request. Nothing supervised is left here,
+// and a `ChatInSupervisedMode` reader with no consumer went with the gate.
+type PendingPermAccess interface {
 	ClearPendingPermsForChat(chatID api.ChatID)
 	RemovePendingPerm(requestID int64)
+}
+
+// TerminalAccess is the interrupt's process half: a turn cancel must reach
+// the turn's agent terminals or it strands them (§5.6 R3 — cancelling
+// mid-`npm test` left the command running with no owner).
+type TerminalAccess interface {
+	// KillTurnTerminals kills the terminals the chat's CURRENT turn created,
+	// and nothing else — a background command an earlier turn left running
+	// on purpose is not the cancel's to kill.
+	KillTurnTerminals(chatID api.ChatID)
 }
 
 // InfraDeps provides shared infrastructure operations (workspace,
@@ -61,7 +71,6 @@ type InfraDeps interface {
 	ShutdownCtx() context.Context
 	InflightAdd(delta int)
 	InflightDone()
-	InflightGo(fn func())
 	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool
 	ResolveInsideWorkDir(rel string) (string, error)
 	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
@@ -78,8 +87,8 @@ func (d *Dispatcher) Bridge() BridgeAccess { return d.deps }
 // Chat returns the ChatAccess subset of dependencies.
 func (d *Dispatcher) Chat() ChatAccess { return d.deps }
 
-// Checkpoint returns the CheckpointAccess subset of dependencies.
-func (d *Dispatcher) Checkpoint() CheckpointAccess { return d.deps }
+// PendingPerms returns the PendingPermAccess subset of dependencies.
+func (d *Dispatcher) PendingPerms() PendingPermAccess { return d.deps }
 
-// Supervised returns the SupervisedAccess subset of dependencies.
-func (d *Dispatcher) Supervised() SupervisedAccess { return d.deps }
+// Terminals returns the TerminalAccess subset of dependencies.
+func (d *Dispatcher) Terminals() TerminalAccess { return d.deps }

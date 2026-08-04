@@ -86,8 +86,39 @@ class TabDragController {
     });
   }
 
+  /** The rows a drag reorders: everything except the dragged row, the drop
+   *  indicator, and any sub-tab collapsed for the duration of the drag.
+   *
+   *  Excluding collapsed children is not cosmetic. The indicator's target index
+   *  is a position in THIS list and the dropped order is read back from it, so a
+   *  hidden child left in the list would contribute a zero-height rect that can
+   *  never be hit and an id at a position nothing can be dropped into. */
+  private draggableSiblings(list: HTMLElement): HTMLElement[] {
+    return [...list.children].filter(
+      (c) =>
+        c !== this.dragEl &&
+        c !== this.dragIndicator &&
+        !(c as HTMLElement).hasAttribute("data-drag-collapsed"),
+    ) as HTMLElement[];
+  }
+
+  /** Fold sub-tabs into their parent for the duration of the drag, and unfold on
+   *  drop. Without this, dragging a parent past its own children reads as
+   *  chaos — the children do not move with it, because their position is derived
+   *  rather than dragged. */
+  private setChildrenCollapsed(list: HTMLElement | null, on: boolean): void {
+    for (const c of list?.querySelectorAll<HTMLElement>(".tab-child") ?? []) {
+      if (on) {
+        c.dataset["dragCollapsed"] = "";
+      } else {
+        delete c.dataset["dragCollapsed"];
+      }
+    }
+  }
+
   private startDrag(tabEl: HTMLElement, clientY: number, pointerId: number): void {
     this.dragEl = tabEl;
+    this.setChildrenCollapsed(tabEl.parentElement, true);
     const rect = tabEl.getBoundingClientRect();
     this.dragOffsetY = clientY - rect.top;
 
@@ -100,14 +131,11 @@ class TabDragController {
 
     this.dragIndicator = el("div", { className: "tab-drag-indicator" });
     tabEl.insertAdjacentElement("afterend", this.dragIndicator);
-    this.dragTargetIdx = [...(tabEl.parentElement?.children ?? [])]
-      .filter((c) => c !== tabEl && c !== this.dragIndicator)
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      .indexOf(this.dragIndicator.nextElementSibling!);
+    const list0 = tabEl.parentElement;
+    const siblings0 = list0 === null ? [] : this.draggableSiblings(list0);
+    this.dragTargetIdx = siblings0.indexOf(this.dragIndicator.nextElementSibling as HTMLElement);
     if (this.dragTargetIdx === -1) {
-      this.dragTargetIdx = [...(tabEl.parentElement?.children ?? [])].filter(
-        (c) => c !== tabEl && c !== this.dragIndicator,
-      ).length;
+      this.dragTargetIdx = siblings0.length;
     }
 
     tabEl.classList.add("tab-drag-placeholder");
@@ -130,9 +158,7 @@ class TabDragController {
     if (list === null) {
       return;
     }
-    const siblings = [...list.children].filter(
-      (c) => c !== this.dragEl && c !== this.dragIndicator,
-    ) as HTMLElement[];
+    const siblings = this.draggableSiblings(list);
 
     let target = siblings.length;
     for (let i = 0; i < siblings.length; i++) {
@@ -203,10 +229,17 @@ class TabDragController {
         c.style.transform = "";
         c.style.transition = "";
       }
+      // Read the order back BEFORE unfolding, so it is top-level ids only —
+      // which is exactly what the tab store persists and what reorderTabs
+      // re-anchors children against.
       const newOrder = [...list.children]
+        .filter((c) => !(c as HTMLElement).hasAttribute("data-drag-collapsed"))
         .map((c) => (c as HTMLElement).dataset["tabId"] ?? "")
         .filter((v) => v !== "");
+      this.setChildrenCollapsed(list, false);
       this.reorderCallback?.(newOrder);
+    } else {
+      this.setChildrenCollapsed(list, false);
     }
 
     this.dragEl.removeEventListener("pointermove", this.boundDragMove);

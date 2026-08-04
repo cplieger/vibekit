@@ -61,6 +61,7 @@ func (h *Hub) ensureUtility() *utilityRuntime {
 				onHooksChanged:    h.broadcastHooksChanged,
 				onGovernanceState: h.cacheGovernanceFromUtility,
 			},
+			h.secrets,
 			true, // enableHooks
 		)
 	})

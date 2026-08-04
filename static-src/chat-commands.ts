@@ -13,7 +13,7 @@
 //
 // This module is a *leaf* from the dependency-graph standpoint: it imports
 // only store, session-context, and transport. Callers higher in
-// the tree (chat.ts, plan-actions.ts) layer domain behaviour on top.
+// the tree (chat.ts, prompt-queue.ts) layer domain behaviour on top.
 //
 // Terminology: "switch model" kills the ACP session, starts a fresh one
 // with the chosen model, and primes it with the transcript. kiro-cli
@@ -24,9 +24,11 @@
 //
 // Compaction and mode changes are intentionally NOT exposed as typed
 // client commands:
-//   - /compact is reachable via the slash-command menu: user types
-//     "/compact", the text flows through sendPromptTo as a normal
-//     prompt, and kiro-cli natively parses it and compacts history.
+//   - /compact does NOT flow through here any more, and the comment that used to
+//     say it did was describing something that never worked: kiro-cli does not
+//     parse it, so the text reached the MODEL, which answered "Done — context
+//     compacted" while zero summarization frames were emitted. It is intercepted
+//     before send now and calls KAS's native verb (typed-commands.ts).
 //   - session/set_mode is agent-driven: the agent issues a switch_mode
 //     tool call that the user approves via the permission dialog, and
 //     the server executes the set_mode call on the user's behalf.
@@ -34,10 +36,8 @@
 
 import { newMessageID } from "./transport.js";
 import { getCurrentModel } from "./session-context.js";
-import { getActiveFilePath, getOpenFilePaths } from "./editor-types.js";
 import {
   switchModel as switchModelAction,
-  resolvePendingChange as resolvePendingChangeAction,
   sendPrompt as sendPromptAction,
 } from "./actions/chat.js";
 
@@ -68,8 +68,6 @@ export async function sendPromptTo(
     text,
     messageID: opts.messageID ?? newMessageID(),
     model: opts.model ?? getCurrentModel(),
-    activeFile: getActiveFilePath(),
-    openFiles: getOpenFilePaths(),
     ...(opts.attachments !== undefined ? { attachments: opts.attachments } : {}),
   });
   return result ?? "failed";
@@ -95,14 +93,4 @@ export async function switchModel(chatID: string, model: string): Promise<boolea
   }
   const result = await switchModelAction.dispatch({ chatID, model });
   return result !== null && result;
-}
-
-/** Resolve a single pending change (accept or reject). Shared by
- *  supervised-pill.ts, editor-pending.ts, and messages-actions.ts. */
-export function resolvePendingChange(
-  chatID: string,
-  toolCallID: string,
-  action: "accept" | "reject",
-): void {
-  void resolvePendingChangeAction.dispatch({ chatID, toolCallID, action });
 }

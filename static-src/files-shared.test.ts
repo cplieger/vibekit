@@ -1,7 +1,15 @@
 // Unit tests for files-shared.ts — pure functions, no DOM dependency.
 import { describe, it, expect, vi } from "vitest";
 import fc from "fast-check";
-import { formatSize, joinPath, parentPath, displayPath, sortEntries } from "./files-shared.js";
+import {
+  formatSize,
+  joinPath,
+  parentPath,
+  displayPath,
+  sortEntries,
+  withAncestors,
+  matchesRelative,
+} from "./files-shared.js";
 import { isSafeUrl } from "./utils-url.js";
 import { relativeTime } from "./utils-format.js";
 
@@ -278,5 +286,58 @@ describe("isSafeUrl property-based", () => {
       ),
       { numRuns: 1000 },
     );
+  });
+});
+
+describe("withAncestors", () => {
+  it("adds every ancestor directory of a nested path", () => {
+    expect([...withAncestors(["a/b/c.go"])].sort()).toEqual(["a", "a/b", "a/b/c.go"]);
+  });
+
+  it("leaves a top-level path alone (no empty-string ancestor)", () => {
+    expect([...withAncestors(["main.go"])]).toEqual(["main.go"]);
+  });
+
+  it("dedupes shared ancestors across paths", () => {
+    expect([...withAncestors(["a/b/one.go", "a/b/two.go"])].sort()).toEqual([
+      "a",
+      "a/b",
+      "a/b/one.go",
+      "a/b/two.go",
+    ]);
+  });
+
+  it("is empty for no input", () => {
+    expect(withAncestors([]).size).toBe(0);
+  });
+});
+
+describe("matchesRelative", () => {
+  // The ancestor expansion plus this suffix rule is what lets ONE rule decorate
+  // a file row and a folder row without the browser knowing the workspace root.
+  const changed = withAncestors(["static-src/files.ts"]);
+
+  it("matches the file under any root prefix", () => {
+    expect(matchesRelative("/workspace/vibekit/static-src/files.ts", changed)).toBe(true);
+    expect(matchesRelative("/somewhere/else/static-src/files.ts", changed)).toBe(true);
+  });
+
+  it("matches the containing folder, which is what decorates a collapsed row", () => {
+    expect(matchesRelative("/workspace/vibekit/static-src", changed)).toBe(true);
+  });
+
+  it("matches a bare relative path (no root prefix at all)", () => {
+    expect(matchesRelative("static-src/files.ts", changed)).toBe(true);
+  });
+
+  it("does not match a sibling that merely ends with the same characters", () => {
+    // The `/` boundary is the whole point: "other-static-src" is not a match.
+    expect(matchesRelative("/workspace/vibekit/other-static-src/files.ts", changed)).toBe(false);
+    expect(matchesRelative("/workspace/notfiles.ts", withAncestors(["files.ts"]))).toBe(false);
+  });
+
+  it("does not match an unrelated path or an empty set", () => {
+    expect(matchesRelative("/workspace/vibekit/main.go", changed)).toBe(false);
+    expect(matchesRelative("/workspace/vibekit/static-src/files.ts", new Set())).toBe(false);
   });
 });

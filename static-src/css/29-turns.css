@@ -1,0 +1,809 @@
+/* ==========================================================================
+   The turn card — one trigger and everything it caused, as a single object.
+
+   Header (tinted, the trigger) / body (plain, the work) / footer (tinted, the
+   outcome ledger). Exactly ONE card type: a one-word answer and a forty-tool-
+   call refactor are the same shape, differing only in body height. Density is
+   bought with type scale and padding, never with structural variation.
+
+   Replaces the chat-bubble convention outright. Bubbles told two similar
+   speakers apart in a symmetric exchange of short lines; here the exchange is
+   wildly asymmetric and the card already says who is speaking, so side and
+   tail were spending a whole visual convention on information the layout
+   conveys. The distinction is carried by BACKGROUND and RULE instead, which
+   survives at any width, on mobile, and when the request is three paragraphs.
+
+   Two measures, deliberately: prose is capped near 40rem (13-messages.css's
+   `.message.assistant`) because that is where reading speed peaks; evidence —
+   diffs, tool cards, terminal output — is UNCAPPED, because a diff wrapped at
+   40rem is a worse diff. Those are siblings inside `.turn-body`, so the two
+   measures fall out of the existing structure rather than needing a second
+   container.
+
+   Unlayered like the other component slices, so it wins over the layered base
+   by source order. Reduced motion is handled globally in 40-a11y.css.
+   ========================================================================== */
+
+.turn {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-secondary);
+  flex-shrink: 0;
+
+  /* Deliberately NOT `overflow: clip`. Clipping would keep the tinted bands
+   * inside the rounded corners for free, but it also creates a clipping
+   * context, so anything absolutely positioned inside a turn (a tool card's
+   * future popup, a tooltip) could no longer escape the card. The bands round
+   * their own outer corners instead, below. Long content is already contained:
+   * `.turn-body` sets `min-width: 0`, prose wraps with `overflow-wrap: anywhere`
+   * and `pre` scrolls on its own axis. */
+
+  /* Outcome as a hairline down the leading edge. Present on the whole card
+   * rather than only the footer so a turn taller than the viewport still
+   * declares its result while you read the middle of it. */
+  border-inline-start: 0.1875rem solid var(--c-border);
+
+  &[data-outcome="running"] {
+    border-inline-start-color: var(--c-accent);
+  }
+
+  &[data-outcome="interrupted"] {
+    border-inline-start-color: var(--c-yellow);
+  }
+
+  &[data-outcome="failed"] {
+    border-inline-start-color: var(--c-red);
+  }
+}
+
+/* Entry animation moved from `.msg-wrap` to the card: a turn arrives as one
+ * unit, so the header, body and footer must enter together. */
+.turn[data-chat-entry] {
+  animation: vk-slide-up-pronounced var(--dur-enter) var(--ease-enter) both;
+  animation-delay: calc(var(--stagger-index, 0) * 30ms);
+}
+
+/* --------------------------------------------------------------------------
+   Header — the trigger
+   -------------------------------------------------------------------------- */
+
+.turn-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--c-user-bubble);
+  border-bottom: 1px solid var(--c-border);
+  /* -1px so the tint sits inside the card's own border rather than over it. */
+  border-start-start-radius: calc(var(--r) - 1px);
+  border-start-end-radius: calc(var(--r) - 1px);
+}
+
+/* Meta row: number, outcome dot, time, then the action slot pushed right. */
+.turn-head-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.turn-n {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--fw-medium);
+  color: var(--c-text-secondary);
+}
+
+/* A dot, not an emoji: one shape, four colours, no font dependency. The
+ * accessible name comes from aria-label, so colour is never the sole channel. */
+.turn-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--c-text-tertiary);
+}
+
+.turn-header[data-outcome="running"] .turn-dot {
+  background: var(--c-accent);
+  animation: vk-breathe 1.4s var(--ease-standard) infinite;
+}
+
+.turn-header[data-outcome="completed"] .turn-dot {
+  background: var(--c-green);
+}
+
+.turn-header[data-outcome="interrupted"] .turn-dot {
+  background: var(--c-yellow);
+}
+
+.turn-header[data-outcome="failed"] .turn-dot {
+  background: var(--c-red);
+}
+
+.turn-ts {
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-head-actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.turn-rewind {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm, 4px);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+}
+
+.turn-rewind:hover {
+  background: var(--c-bg-tertiary);
+  border-color: var(--c-text-tertiary);
+}
+
+.turn-rewind:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+/* Disabled while the agent runs: KAS refuses a revert on a live session, so the
+   control is unavailable rather than offering an error. Kept visible (not
+   hidden) so the row does not reflow when a turn starts and ends. */
+.turn-rewind:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.turn-rewind:disabled:hover {
+  background: none;
+  border-color: var(--c-border);
+}
+
+/* The request itself. */
+.turn-req {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+}
+
+.turn-req-text {
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  color: var(--c-text-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  /* Prose measure applies to the request too — it is running text. */
+  max-width: 40.75rem;
+}
+
+/* THE CLAMP. Three lines, then a show-more.
+ *
+ * Load-bearing, not cosmetic: once old turns fold to their header, the folded
+ * rows are the session's navigation surface, and one pasted stack trace in a
+ * prompt would render hundreds of lines as a "collapsed" turn and push every
+ * neighbouring row off-screen. Scoped to the TEXT element, so the action row
+ * and any future attachment/reference chips are unclamped by construction —
+ * they are how a reader identifies which request this was. */
+.turn-req-text[data-clamped] {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.turn-req-more {
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.turn-req-more:hover {
+  color: var(--c-accent);
+}
+
+.turn-req-more:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
+/* A turn the user did not ask for: a typed trigger line rather than a
+ * fabricated user message. */
+.turn-header[data-trigger="system"] .turn-req-text {
+  font-style: italic;
+  color: var(--c-text-tertiary);
+}
+
+/* --------------------------------------------------------------------------
+   Body — the work
+   -------------------------------------------------------------------------- */
+
+.turn-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  min-width: 0;
+}
+
+/* An empty body (a prompt whose turn has not started streaming) must not leave
+ * a padded void between header and footer. */
+.turn-body:empty {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   Footer — the outcome ledger
+   -------------------------------------------------------------------------- */
+
+/* One small tinted line, mirroring the header band so the turn is visually
+ * bracketed. There is no separate status rail: the footer IS the rail. Moved
+ * here from 61-mcp-tools.css, where it sat because the footer used to be a
+ * per-message node rather than part of a card. */
+.turn-footer {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+  padding: var(--sp-1) var(--sp-3);
+  font-variant-numeric: tabular-nums;
+  background: var(--c-user-bubble);
+  border-top: 1px solid var(--c-border);
+  border-end-start-radius: calc(var(--r) - 1px);
+  border-end-end-radius: calc(var(--r) - 1px);
+}
+
+.turn-footer[data-outcome="interrupted"] {
+  background: color-mix(in srgb, var(--c-yellow) 12%, var(--c-user-bubble));
+  color: var(--c-text-secondary);
+}
+
+.turn-footer[data-outcome="failed"] {
+  background: color-mix(in srgb, var(--c-red) 12%, var(--c-user-bubble));
+  color: var(--c-text-secondary);
+}
+
+/* The ledger's depth ladder: aggregate row, per-file rows, click into a diff.
+ *
+ * The aggregate is a disclosure BUTTON when the turn changed files and a plain
+ * readout when it did not, so nothing offers a control that would do nothing. */
+.turn-ledger-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-inline-start: auto;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color var(--dur-micro) var(--ease-micro);
+}
+
+.turn-ledger-summary:disabled {
+  cursor: default;
+}
+
+.turn-ledger-summary:not(:disabled):hover {
+  color: var(--c-text-primary);
+}
+
+.turn-ledger-summary:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm, 4px);
+}
+
+/* Did it work: a glyph plus a colour, never colour alone — the footer's
+ * aria-label and the summary text carry the same fact in words. A ring for a
+ * clean turn, filled for a non-clean one, so the shape differs too. */
+.turn-ledger-glyph {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--c-green);
+}
+
+.turn-footer[data-outcome="running"] .turn-ledger-glyph {
+  border-color: var(--c-accent);
+}
+
+.turn-footer[data-outcome="interrupted"] .turn-ledger-glyph {
+  border-color: var(--c-yellow);
+  background: var(--c-yellow);
+}
+
+.turn-footer[data-outcome="failed"] .turn-ledger-glyph {
+  border-color: var(--c-red);
+  background: var(--c-red);
+}
+
+/* A chevron drawn in CSS rather than shipped as an icon: it is two borders,
+ * and it rotates to point down when the list is open. */
+.turn-ledger-caret {
+  width: 0.375rem;
+  height: 0.375rem;
+  flex-shrink: 0;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(-45deg);
+  transition: transform var(--dur-micro) var(--ease-micro);
+}
+
+.turn-ledger-summary:disabled .turn-ledger-caret {
+  visibility: hidden;
+}
+
+.turn-footer[data-files="open"] .turn-ledger-caret {
+  transform: rotate(45deg);
+}
+
+.turn-ledger-files {
+  display: none;
+  list-style: none;
+  margin: var(--sp-1) 0 0;
+  padding: 0;
+  text-align: left;
+}
+
+.turn-footer[data-files="open"] .turn-ledger-files {
+  display: block;
+}
+
+.turn-ledger-file {
+  margin: 0;
+}
+
+/* Every row is a click target into that file's diff. Full-width so the hit
+ * area is the row rather than the text — a path is a small target and WCAG
+ * 2.5.8 wants 24px, which the padding below supplies. */
+.turn-file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 1.5rem;
+  padding: var(--sp-1) var(--sp-1);
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm, 4px);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro);
+}
+
+.turn-file-row:hover {
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-primary);
+}
+
+.turn-file-row:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -2px;
+}
+
+.turn-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.turn-file-badge {
+  flex-shrink: 0;
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  padding: 1px var(--sp-1);
+  border-radius: var(--r-sm, 4px);
+  background: color-mix(in srgb, var(--c-green) 18%, transparent);
+  color: var(--c-green);
+}
+
+.turn-file-delta {
+  flex-shrink: 0;
+  display: flex;
+  gap: var(--sp-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-file-add {
+  color: var(--c-green);
+}
+
+.turn-file-del {
+  color: var(--c-red);
+}
+
+/* ==========================================================================
+   The timeline rail
+
+   A fixed column of numbered markers at the right edge of the transcript. It
+   mounts in #messages-wrap-outer (the positioned wrapper) rather than in the
+   scroller, so it stays put instead of scrolling away with the content.
+
+   It must NOT become a scrolling widget of its own: when the turns stop fitting
+   they cluster into ranges and a click zooms the rail to a range. That is why
+   there is no overflow-y here — an `auto` would silently turn the compression
+   rule off and give the rail a second scrollbar competing with the transcript's.
+   ========================================================================== */
+
+.turn-rail {
+  position: absolute;
+  inset-block: var(--sp-3);
+  inset-inline-end: var(--sp-1);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  width: 1.75rem;
+  pointer-events: none;
+}
+
+.turn-rail:empty {
+  display: none;
+}
+
+.turn-rail > * {
+  pointer-events: auto;
+}
+
+/* One marker per turn: its number, in its outcome's colour. WCAG 2.5.8 wants a
+ * 24px target, and that number is what the capacity arithmetic in turn-rail.ts
+ * clusters against — keep them in step if this changes. */
+.rail-marker,
+.rail-cluster,
+.rail-zoom-out {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  min-height: 1.5rem;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm, 4px);
+  background: none;
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+}
+
+.rail-marker:hover,
+.rail-cluster:hover,
+.rail-zoom-out:hover {
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-primary);
+}
+
+.rail-marker:focus-visible,
+.rail-cluster:focus-visible,
+.rail-zoom-out:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+.rail-marker[data-outcome="running"] {
+  color: var(--c-accent);
+}
+
+.rail-marker[data-outcome="interrupted"],
+.rail-cluster[data-outcome="interrupted"] {
+  color: var(--c-yellow);
+}
+
+.rail-marker[data-outcome="failed"],
+.rail-cluster[data-outcome="failed"] {
+  color: var(--c-red);
+}
+
+/* The current turn's marker is distinct — filled and outlined — so position in
+ * the session is readable without scrolling to find out. */
+.rail-marker[data-current] {
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  color: var(--c-bg-primary);
+  font-weight: var(--fw-semibold);
+}
+
+/* A turn the user did not trigger reads as a non-user marker rather than
+ * implying they asked for it. */
+.rail-marker[data-trigger="system"] {
+  font-style: italic;
+  border-style: dashed;
+  border-color: var(--c-border);
+}
+
+/* Waiting on a fetch: the target turn is not resident, so the jump has to page
+ * history in first. Saying so beats appearing to do nothing. */
+.rail-marker[data-pending] {
+  animation: vk-breathe 1s var(--ease-standard) infinite;
+}
+
+.rail-cluster {
+  font-size: 0.5625rem;
+  letter-spacing: -0.02em;
+}
+
+.rail-zoom-out {
+  color: var(--c-accent);
+  border-color: var(--c-border);
+  font-size: 0.5625rem;
+}
+
+/* Time as space: a pause between turns takes a row, so an overnight break is
+ * visible on the rail instead of being invisible in a flat message list. */
+.rail-gap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1rem;
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  opacity: 0.65;
+}
+
+/* A dashed tick above the label. Anchored to the gap row itself (hence the
+ * position: relative above) — anchoring it to the rail would stack every gap's
+ * tick at one spot. */
+.rail-gap::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 25%;
+  border-top: 1px dashed var(--c-border);
+}
+
+/* Hidden below the mobile breakpoint: there is no room, and there is no overlay
+ * substitute. Mobile navigates by CONTENT through transcript search, which is
+ * what a reader on a phone is actually looking for. That trade is accepted
+ * rather than patched. */
+@media (width <= 40rem) {
+  .turn-rail {
+    display: none;
+  }
+}
+
+/* Reserve the rail's column so a narrow-but-not-mobile viewport cannot let a
+ * marker sit on top of the transcript. On a wide screen the centred content
+ * column already leaves a gutter and this padding is invisible. */
+@media (width > 40rem) {
+  [id="messages"] {
+    padding-inline-end: calc(var(--sp-4) + 1.75rem);
+  }
+}
+
+/* ==========================================================================
+   The folded turn
+
+   Not a new component: it is the header and footer bands with the body removed,
+   laid out as ONE row — request on the left, outcome on the right. That is the
+   whole reason the card was given a header and a footer in the first place; the
+   collapse mechanism is built out of them rather than beside them.
+   ========================================================================== */
+
+.turn[data-folded] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.turn[data-folded] > .turn-body {
+  display: none;
+}
+
+/* Both bands lose their dividing rule and their rounding: there is one row now,
+   so a border between the halves would draw a line down the middle of it. */
+.turn[data-folded] > .turn-header {
+  border-bottom: 0;
+  border-start-end-radius: 0;
+  padding-block: var(--sp-1);
+  min-width: 0;
+}
+
+.turn[data-folded] > .turn-footer {
+  border-top: 0;
+  border-end-start-radius: 0;
+  background: none;
+  padding-block: var(--sp-1);
+}
+
+/* Folded, the header is ONE line: the meta row and the request sit side by side
+   instead of stacked, and the request truncates rather than wrapping. A folded
+   row that can grow to three lines is not a folded row. */
+.turn[data-folded] > .turn-header {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.turn[data-folded] .turn-req {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: row;
+  align-items: center;
+}
+
+.turn[data-folded] .turn-req-text {
+  max-width: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The three-line clamp is for an OPEN header. Folded, one line is the rule and
+   the show-more would offer to grow a row whose whole point is not growing. */
+.turn[data-folded] .turn-req-text[data-clamped] {
+  display: block;
+  -webkit-line-clamp: none;
+}
+
+.turn[data-folded] .turn-req-more,
+.turn[data-folded] .turn-head-actions,
+.turn[data-folded] .turn-ledger-files {
+  display: none;
+}
+
+/* Folded, the ledger drops to its glyph and the concrete thing the turn
+   produced; the full aggregate is what expanding is for. */
+.turn[data-folded] .turn-ledger-text {
+  display: none;
+}
+
+.turn[data-folded] .turn-ledger-caret {
+  display: none;
+}
+
+.turn-fold-summary {
+  display: none;
+}
+
+.turn[data-folded] .turn-fold-summary {
+  display: inline;
+  margin-inline-start: var(--sp-2);
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+/* The fold toggle: a chevron drawn from two borders, rotated by state. Pointing
+   down when open (the body hangs below), right when folded. */
+.turn-fold-toggle {
+  width: 1rem;
+  height: 1rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--c-text-tertiary);
+  cursor: pointer;
+}
+
+.turn-fold-toggle::before {
+  content: "";
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: rotate(45deg);
+  transition: transform var(--dur-micro) var(--ease-micro);
+}
+
+.turn[data-folded] .turn-fold-toggle::before {
+  transform: rotate(-45deg);
+}
+
+.turn-fold-toggle:hover {
+  color: var(--c-text-primary);
+}
+
+.turn-fold-toggle:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+  border-radius: var(--r-sm, 4px);
+}
+
+/* Search-match count on a turn's header. Empty unless a search is running, so
+   the selector keys on content rather than a second state attribute. A fold has
+   to advertise what is inside it — that is the bargain that makes collapse
+   acceptable instead of a place things go missing. */
+.turn-hit-count {
+  display: none;
+}
+
+.turn-hit-count:not(:empty) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-sm, 4px);
+  background: color-mix(in srgb, var(--c-yellow) 25%, transparent);
+  color: var(--c-yellow);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+/* A rail marker holding a search hit. The fastest read of WHERE in the session
+   the answer is: a match 200 rows up is visible before the reader goes looking. */
+.rail-marker[data-hit]::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: -1px;
+  inset-block-start: -1px;
+  width: 0.3125rem;
+  height: 0.3125rem;
+  border-radius: 50%;
+  background: var(--c-yellow);
+}
+
+.rail-marker {
+  position: relative;
+}
+
+/* `Review changes`: the multi-file seam, one per turn under the file rows. Only
+   rendered when the turn touched more than one file — on a single-file turn the
+   row above already opens that change. */
+.turn-ledger-review {
+  margin-block-start: var(--sp-1);
+}
+
+.turn-review-all {
+  width: 100%;
+  text-align: start;
+  padding: 0.15rem var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro);
+}
+
+.turn-review-all:hover {
+  background: var(--c-bg-hover);
+  color: var(--c-text-primary);
+}

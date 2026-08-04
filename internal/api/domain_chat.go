@@ -6,6 +6,7 @@ package api
 
 import (
 	"encoding/json"
+	"slices"
 )
 
 // Role identifies the speaker of a message.
@@ -95,11 +96,13 @@ const (
 	ACPUpdateToolUpdate   ACPUpdateKind = "tool_call_update"
 	ACPUpdatePlan         ACPUpdateKind = "plan"
 	ACPUpdateModeChange   ACPUpdateKind = "current_mode_update"
-	// v3 (KAS) session/update sub-kinds. v3 moves context-usage stats and
-	// the available-command catalog into session/update instead of the v2
-	// _kiro.dev/metadata and _kiro.dev/commands/available notifications.
-	ACPUpdateSessionInfo       ACPUpdateKind = "session_info_update"
-	ACPUpdateCommandsAvailable ACPUpdateKind = "available_commands_update"
+	// v3 (KAS) session/update sub-kinds. v3 moves context-usage stats into
+	// session/update instead of the v2 _kiro.dev/metadata notification. The
+	// available_commands_update sub-kind arrives too and is deliberately NOT
+	// decoded: unhandled sub-kinds fall through silently in handleSessionUpdate,
+	// and the catalog has no consumer (see handlers/system.ts for why there is
+	// no palette).
+	ACPUpdateSessionInfo ACPUpdateKind = "session_info_update"
 	// config_option_update carries the live model/mode/effort catalog;
 	// usage_update carries context-window usage ({size, used, cost?}).
 	// Both are v3-only session/update sub-kinds (KAS 2.12).
@@ -170,12 +173,48 @@ type ToolCall struct {
 	// _meta.kiro.kind=="agent-subtask"; this id links the subagent card
 	// to its nested agent_message_chunk / agent_thought_chunk deltas
 	// (which carry the same id) so the client can render them nested.
-	AgentSubtaskID string          `json:"agent_subtask_id,omitempty"`
-	Input          json.RawMessage `json:"input,omitempty"`
-	Locations      []ToolLocation  `json:"locations,omitempty"`
-	Diffs          []ToolDiff      `json:"diffs,omitempty"`
-	DurationMs     int             `json:"duration_ms,omitempty"`
-	Ts             int64           `json:"ts"`
+	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
+	// Checkpoint is KAS's snapshot mapping for a tool call that wrote a
+	// file, taken from _meta.kiro.checkpoint. Nil for every tool call that
+	// touched no file — which is most of them. Placed ahead of the slices
+	// below to keep govet fieldalignment happy: a trailing pointer would
+	// extend the GC scan region past a slice's non-pointer len/cap words.
+	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
+	Input      json.RawMessage `json:"input,omitempty"`
+	Locations  []ToolLocation  `json:"locations,omitempty"`
+	Diffs      []ToolDiff      `json:"diffs,omitempty"`
+	DurationMs int             `json:"duration_ms,omitempty"`
+	Ts         int64           `json:"ts"`
+}
+
+// ToolCheckpoint is KAS's pre/post-image mapping for one file write,
+// persisted verbatim so a diff is a snapshot read plus a file read with no
+// derivation. vibekit captures no snapshots of its own; KAS does it
+// unconditionally and hands the addresses over on the wire.
+//
+// Original and Modified are `kiro-snapshot-v2://<sessionId>:<snapshotId>/?originalPath=<relpath>`
+// URIs — opaque handles, NOT filesystem paths, deliberately stored
+// unparsed. Local is a `file://` URI for the live file.
+//
+// **All three fields are independently optional and a consumer must
+// tolerate any subset** (probed 2026-08-02, kiro-cli 2.16.0): a file
+// CREATE has no pre-image, so it arrives as {Modified, Local} with Original
+// empty, while overwriting an existing file yields all three. Code that
+// treats this as a fixed triplet breaks on the first file the agent
+// creates.
+//
+// Granularity is per-file-write, not per-turn, and a multi-file tool
+// (semantic_rename) carries no per-file mapping at all — KAS's
+// checkpoint.fileChanges has zero occurrences in the corpus — so
+// multi-file attribution is not recoverable from this field and must not
+// be inferred from it.
+type ToolCheckpoint struct {
+	// Original is the pre-image snapshot URI. Empty on a file creation.
+	Original string `json:"original,omitempty"`
+	// Modified is the post-image snapshot URI.
+	Modified string `json:"modified,omitempty"`
+	// Local is the `file://` URI of the live file on disk.
+	Local string `json:"local,omitempty"`
 }
 
 // ToolLocation is a file path (and optional line) the agent is working
@@ -260,17 +299,10 @@ type Message struct {
 	// extended-thinking models emit it as a parallel stream alongside
 	// Content. Persisted on the same message so the one-message-per-turn
 	// invariant holds; rendered above the content bubble in the UI.
-	Reasoning string `json:"reasoning,omitempty"`
-	// CheckpointTag is the REAL checkpoint tag the server allocated for
-	// this turn (set only on the user message that started a turn whose
-	// agent produced at least one file snapshot). It is the turn-canonical
-	// tag ("N", never "N.K") the client passes verbatim to restore_checkpoint
-	// / undo_edit. Empty when the turn produced no snapshot; persisted so it
-	// survives reload.
-	CheckpointTag string     `json:"checkpoint_tag,omitempty"`
-	EventKind     EventKind  `json:"event_kind,omitempty"`
-	ID            string     `json:"id"`
-	ToolCalls     []ToolCall `json:"tool_calls,omitempty"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	EventKind EventKind  `json:"event_kind,omitempty"`
+	ID        string     `json:"id"`
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// Blocks is the chronologically-ordered content array — text / tool_use /
 	// thinking blocks in the order the agent emitted them, each stamped with an
 	// agent_subtask_id (empty for the parent agent, set for a subagent). It is
@@ -359,28 +391,74 @@ type Chat struct {
 	Model               string         `json:"model,omitempty"`
 	ACPSessionID        string         `json:"acp_session_id,omitempty"`
 	CurrentModeID       string         `json:"current_mode_id,omitempty"`
-	ParentChatID        ChatID         `json:"parent_chat_id,omitempty"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
-	Summary             string         `json:"summary,omitempty"`
-	OldestCheckpointTag string         `json:"oldest_checkpoint_tag,omitempty"`
 	ID                  string         `json:"id"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
 	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
 	Messages            []Message      `json:"messages"`
 	CurrentPlan         []PlanEntry    `json:"current_plan,omitempty"`
-	Usage               Usage          `json:"usage"`
-	CreatedAt           int64          `json:"created_at"`
-	UpdatedAt           int64          `json:"updated_at"`
-	// ArchivedAt is the unix-milli timestamp recorded when the chat was
-	// moved to the archive dir. Purge ages from this, NOT the file mtime:
-	// a skipped/failed post-archive summary write leaves mtime at the
-	// chat's last-activity time, which would purge an old-but-just-archived
-	// chat almost immediately. Zero for active chats and for legacy archives
-	// written before this field existed (purge falls back to mtime then).
-	ArchivedAt     int64 `json:"archived_at,omitempty"`
-	RewindFromTurn int   `json:"rewind_from_turn,omitempty"`
-	MessageCount   int   `json:"message_count"`
-	SupervisedMode bool  `json:"supervised_mode,omitempty"`
+	// PriorACPSessionIDs are the KAS sessions this chat USED to run on,
+	// oldest first. ACPSessionID is only the current one, and a chat
+	// routinely changes session: a failed session/load blanks it, a model
+	// switch fallback recreates it. Each of those sessions still holds that
+	// period's transcript and pre-images on disk, so retention has to key on
+	// the whole CHAIN — a chat's data is its vibekit file plus every session
+	// directory in its chain, and they live and die together.
+	//
+	// Never trimmed: an entry here is a directory the reaper must spare, so
+	// dropping one deletes history. Maintained by RecordSession.
+	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
+	Usage              Usage    `json:"usage"`
+	CreatedAt          int64    `json:"created_at"`
+	UpdatedAt          int64    `json:"updated_at"`
+	// There is no ParentChatID and no RewindFromTurn. Both described a rewind
+	// BRANCH — a second chat truncated at a turn, pointing back at the chat it
+	// came from. A rewind reverts the chat it is in now, so nothing has a parent
+	// and no chat records which turn it started at. (api.WorkflowRun keeps its
+	// own ParentChatID; that one names the chat that LAUNCHED a run and is
+	// unrelated.)
+	MessageCount   int  `json:"message_count"`
+	SupervisedMode bool `json:"supervised_mode,omitempty"`
+}
+
+// SessionChain returns every KAS session id this chat has run on, current
+// one last. This is the reaper's keep-set for the chat: any session
+// directory in it holds part of the chat's history.
+func (c *Chat) SessionChain() []string {
+	return sessionChain(c.ACPSessionID, c.PriorACPSessionIDs)
+}
+
+// sessionChain composes the current session id and the retired ones into the
+// chat's full chain. Shared by Chat and ChatHeader so the two views cannot
+// disagree about what a chat's retention set is.
+func sessionChain(current string, prior []string) []string {
+	if current == "" {
+		return prior
+	}
+	chain := make([]string, 0, len(prior)+1)
+	chain = append(chain, prior...)
+	return append(chain, current)
+}
+
+// RecordSession points the chat at session id, retiring whatever it was on
+// into the chain first. Pass "" to detach from the current session without
+// forgetting it (a failed session/load), which is the case that used to lose
+// the id outright.
+//
+// Idempotent: re-recording the current id, or an id already in the chain, is
+// a no-op, so a caller does not have to check first.
+func (c *Chat) RecordSession(id string) {
+	if c.ACPSessionID == id {
+		return
+	}
+	if c.ACPSessionID != "" && !slices.Contains(c.PriorACPSessionIDs, c.ACPSessionID) {
+		c.PriorACPSessionIDs = append(c.PriorACPSessionIDs, c.ACPSessionID)
+	}
+	c.ACPSessionID = id
+	// A revisited id lives in exactly one place: the current field.
+	if id != "" {
+		c.PriorACPSessionIDs = slices.DeleteFunc(c.PriorACPSessionIDs, func(s string) bool { return s == id })
+	}
 }
 
 // Header returns the chat's metadata without messages. Used for list
@@ -391,6 +469,7 @@ func (c *Chat) Header() ChatHeader {
 		Name:                c.Name,
 		Model:               c.Model,
 		ACPSessionID:        c.ACPSessionID,
+		PriorACPSessionIDs:  c.PriorACPSessionIDs,
 		CurrentModeID:       c.CurrentModeID,
 		AvailableModes:      c.AvailableModes,
 		AvailableModels:     c.AvailableModels,
@@ -399,10 +478,7 @@ func (c *Chat) Header() ChatHeader {
 		UpdatedAt:           c.UpdatedAt,
 		MessageCount:        len(c.Messages),
 		SupervisedMode:      c.SupervisedMode,
-		ParentChatID:        c.ParentChatID,
 		CompactionWatermark: c.CompactionWatermark,
-		OldestCheckpointTag: c.OldestCheckpointTag,
-		Summary:             c.Summary,
 	}
 }
 
@@ -410,20 +486,71 @@ func (c *Chat) Header() ChatHeader {
 // by fieldalignment packing, not Chat's field order; both structs
 // serialise to JSON independently so the visual mismatch is harmless.
 type ChatHeader struct {
-	ParentChatID        ChatID         `json:"parent_chat_id,omitempty"`
 	Name                string         `json:"name"`
 	Model               string         `json:"model,omitempty"`
 	ACPSessionID        string         `json:"acp_session_id,omitempty"`
 	CurrentModeID       string         `json:"current_mode_id,omitempty"`
 	ID                  string         `json:"id"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
-	OldestCheckpointTag string         `json:"oldest_checkpoint_tag,omitempty"`
-	Summary             string         `json:"summary,omitempty"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
 	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
-	Usage               Usage          `json:"usage"`
-	CreatedAt           int64          `json:"created_at"`
-	UpdatedAt           int64          `json:"updated_at"`
-	MessageCount        int            `json:"message_count"`
-	SupervisedMode      bool           `json:"supervised_mode,omitempty"`
+	// PriorACPSessionIDs mirrors Chat's. Carried on the header because the
+	// retention sweep derives its keep-list from header reads rather than
+	// loading every chat in full.
+	PriorACPSessionIDs []string `json:"prior_acp_session_ids,omitempty"`
+	Usage              Usage    `json:"usage"`
+	CreatedAt          int64    `json:"created_at"`
+	UpdatedAt          int64    `json:"updated_at"`
+	MessageCount       int      `json:"message_count"`
+	SupervisedMode     bool     `json:"supervised_mode,omitempty"`
+}
+
+// SessionChain returns every KAS session id the chat has run on, current one
+// last. Same set as Chat.SessionChain.
+func (h *ChatHeader) SessionChain() []string {
+	return sessionChain(h.ACPSessionID, h.PriorACPSessionIDs)
+}
+
+// ResumableSession is one stored KAS session offered by the previous-session
+// picker (GET /api/sessions). Adopts kiro-cli's own `--resume-picker`
+// capability: KAS owns the inventory and the transcript, so vibekit carries no
+// archive of its own. See hub/session_list.go for the wire provenance.
+//
+// Field order is fieldalignment's, not the JSON's.
+type ResumableSession struct {
+	SessionID string `json:"session_id"`
+	Title     string `json:"title"`
+	AgentMode string `json:"agent_mode,omitempty"`
+	// Status is KAS's own session status: idle | failed | waiting_on_user.
+	Status string `json:"status,omitempty"`
+	// Description is the agent's self-declared focus for that session, present
+	// on a minority of rows (88 of 399 measured).
+	Description string `json:"description,omitempty"`
+	// ChatID names the vibekit chat that already owns this session, empty when
+	// no chat does. A claimed session is one the user can simply open, so the
+	// picker offers it differently rather than duplicating the chat.
+	ChatID    string `json:"chat_id,omitempty"`
+	UpdatedAt int64  `json:"updated_at"`
+	CreatedAt int64  `json:"created_at,omitempty"`
+}
+
+// WorkflowRun is one previous workflow run, listed beside previous chats in
+// the history surface (GET /api/sessions) and reviewable read-only.
+//
+// Sourced from _kiro/workflow/list, NOT from session/list. session/list's
+// workflow rows are STEP sessions — measured 93 of them across 6 runs, with
+// one run's loop contributing 76 — and their status is idle regardless of the
+// run's outcome, so they can be neither counted nor judged as runs.
+type WorkflowRun struct {
+	WorkflowID string `json:"workflow_id"`
+	Name       string `json:"name"`
+	// Status is run-level: paused / completed / failed.
+	Status string `json:"status,omitempty"`
+	// ParentChatID is the vibekit chat that launched the run, resolved through
+	// the launching session's chain. Empty for a run with no vibekit parent
+	// (launched from the TUI, or by a chat vibekit no longer keeps).
+	ParentChatID string `json:"parent_chat_id,omitempty"`
+	UpdatedAt    int64  `json:"updated_at"`
+	CreatedAt    int64  `json:"created_at,omitempty"`
+	StartedAt    int64  `json:"started_at,omitempty"`
 }

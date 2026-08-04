@@ -16,8 +16,13 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// maxCommandBody caps the whole POST /api/command envelope.
-const maxCommandBody = 5 * 1024 * 1024
+// maxCommandBody caps the whole POST /api/command envelope. It is the generic
+// api.MaxJSONBody: the largest payload this endpoint carries is a prompt's text
+// at maxPromptBytes (512 KiB) plus path-only attachment metadata, so 1 MiB is
+// ~2x headroom. It was 5 MiB to fit a 4 MiB user-merged partial-write payload,
+// and that command is gone — KAS decides per action, so there is no merged text
+// to post.
+const maxCommandBody = api.MaxJSONBody
 
 // Handler is the signature for a command handler function.
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)
@@ -27,8 +32,8 @@ type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCom
 type Dependencies interface {
 	BridgeAccess
 	ChatAccess
-	CheckpointAccess
-	SupervisedAccess
+	PendingPermAccess
+	TerminalAccess
 	InfraDeps
 	Draining() bool
 	CheckDedup(reqID string) ([]byte, bool)
@@ -44,34 +49,17 @@ type Bridge = api.CommandBridge
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
 	deps     Dependencies
-	prompter api.UtilityPrompter
 	handlers map[api.CommandType]Handler
 	mu       sync.RWMutex
 }
 
-// Option configures optional Dispatcher capabilities.
-type Option func(*Dispatcher)
-
-// WithPrompter injects the utility prompter used by AsyncRenameChat.
-// If not provided, auto-rename is silently skipped.
-func WithPrompter(p api.UtilityPrompter) Option {
-	return func(d *Dispatcher) { d.prompter = p }
-}
-
 // New constructs a Dispatcher with the given dependencies.
-func New(deps Dependencies, opts ...Option) *Dispatcher {
-	d := &Dispatcher{
+func New(deps Dependencies) *Dispatcher {
+	return &Dispatcher{
 		deps:     deps,
 		handlers: make(map[api.CommandType]Handler),
 	}
-	for _, o := range opts {
-		o(d)
-	}
-	return d
 }
-
-// Prompter returns the utility prompter, or nil if not configured.
-func (d *Dispatcher) Prompter() api.UtilityPrompter { return d.prompter }
 
 // Deps returns the dependencies for use by handler functions.
 func (d *Dispatcher) Deps() Dependencies { return d.deps }

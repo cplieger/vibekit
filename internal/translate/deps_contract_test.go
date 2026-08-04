@@ -80,7 +80,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		if r == nil {
 			t.Fatal("MCPRecorder() returned nil")
 		}
-		r.RecordConnected(ctx, "test-server", nil, nil)
+		r.RecordConnected(ctx, "test-server", nil, nil, nil)
 		r.SignalReady()
 	})
 
@@ -102,10 +102,6 @@ func TestBaseDeps_FullContract(t *testing.T) {
 		if d.LineTracker() == nil {
 			t.Error("LineTracker() returned nil")
 		}
-	})
-
-	t.Run("OpenPartialFile_does_not_panic", func(t *testing.T) {
-		d.OpenPartialFile(ctx, "chat-1", nil)
 	})
 
 	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {

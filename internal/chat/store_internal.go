@@ -13,12 +13,8 @@ import (
 
 // --- Unexported Store methods ---
 
-func (s *Store) header(ctx context.Context, c *api.Chat) api.ChatHeader {
-	h := c.Header()
-	if s.oldestCheckpoint != nil {
-		h.OldestCheckpointTag = s.oldestCheckpoint(ctx, api.ChatID(c.ID))
-	}
-	return h
+func (s *Store) header(_ context.Context, c *api.Chat) api.ChatHeader {
+	return c.Header()
 }
 
 // lock returns the per-chat mutex for chatID, creating it lazily. Entries
@@ -42,32 +38,8 @@ func (s *Store) Lock(chatID api.ChatID) *sync.Mutex { return s.lock(chatID) }
 // Dir returns the store's base directory.
 func (s *Store) Dir() string { return s.dir }
 
-// PathFor returns the path to the active chat file (exported for archive).
-func (s *Store) PathFor(chatID api.ChatID) (string, error) { return s.pathFor(chatID) }
-
 // Load reads a chat from the active directory (exported for archive).
 func (s *Store) Load(chatID api.ChatID) (*api.Chat, error) { return s.load(chatID) }
-
-// Header builds a ChatHeader from a Chat (exported for archive).
-func (s *Store) Header(ctx context.Context, c *api.Chat) api.ChatHeader { return s.header(ctx, c) }
-
-// MarkDeleted records a tombstone for the chat ID (exported for archive).
-func (s *Store) MarkDeleted(chatID api.ChatID) { s.markDeleted(chatID) }
-
-// ClearTombstone removes the tombstone for a restored chat.
-func (s *Store) ClearTombstone(chatID api.ChatID) {
-	s.tombMu.Lock()
-	delete(s.tombstone, chatID)
-	s.tombMu.Unlock()
-}
-
-// Broadcast returns the broadcaster (may be nil).
-func (s *Store) Broadcast() api.Broadcaster { return s.broadcast }
-
-// OldestCheckpoint returns the checkpoint lookup function (may be nil).
-func (s *Store) OldestCheckpoint() func(ctx context.Context, chatID api.ChatID) string {
-	return s.oldestCheckpoint
-}
 
 // markDeleted records that chatID was just deleted. Mutate calls for
 // the same id within tombstoneTTL will refuse to auto-create.

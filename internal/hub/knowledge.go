@@ -24,7 +24,8 @@ package hub
 //   - a user-initiated `add` does NOT emit _kiro/knowledge/indexing* — those
 //     fire only for agent-declared knowledge_bases sync at session start — so
 //     the client polls `show` for user-add progress (see translate/knowledge.go
-//     for the notification → knowledge_indexing SSE that covers the agent case).
+//     the ONLY progress channel — there is no notification path any more, see
+//     below).
 
 import (
 	"context"

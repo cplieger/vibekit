@@ -33,9 +33,13 @@ type UserInputOption struct {
 // slice means a free-form question (the client renders a text field).
 // RequestID is the JSON-RPC id the user_input_response command echoes back.
 type UserInputNeededPayload struct {
-	Question     string            `json:"question"`
-	ToolCallID   string            `json:"tool_call_id,omitempty"`
-	SubSessionID string            `json:"sub_session_id,omitempty"`
-	Options      []UserInputOption `json:"options,omitempty"`
-	RequestID    int64             `json:"request_id"`
+	Question     string `json:"question"`
+	ToolCallID   string `json:"tool_call_id,omitempty"`
+	SubSessionID string `json:"sub_session_id,omitempty"`
+	// RunID/NodeID: as on PermissionNeededPayload — a workflow step's ask,
+	// attributed to its run and node from the step-session registry.
+	RunID     string            `json:"run_id,omitempty"`
+	NodeID    string            `json:"node_id,omitempty"`
+	Options   []UserInputOption `json:"options,omitempty"`
+	RequestID int64             `json:"request_id"`
 }

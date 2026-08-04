@@ -5,107 +5,31 @@
 // ---------------------------------------------------------------------------
 
 import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/reactive";
-import { join, split, HashedKeyError, MalformedKeyError } from "@cplieger/keyenc";
 import { lineDiff, type DiffLine } from "./diff.js";
 import { countHunks } from "./diff-pane.js";
 import type { ConflictFile } from "./conflict.js";
 
 // --- Virtual path routing ---
 
-const PLAN_DRAFT_PREFIX = "plan-draft:";
-const PENDING_PREFIX = "pending:";
-
 // --- Diff label constants ---
 
-const DIFF_LABEL_DISK = "on disk";
-const DIFF_LABEL_PROPOSED = "proposed";
 const DIFF_LABEL_WORKING_TREE = "working tree";
 
 // --- Pure predicates ---
 
-export function isPlanDraftPath(path: string): boolean {
-  return path.startsWith(PLAN_DRAFT_PREFIX);
-}
-
-export function planDraftChatID(path: string): string {
-  return isPlanDraftPath(path) ? path.slice(PLAN_DRAFT_PREFIX.length) : "";
-}
-
-export function isPendingPath(path: string): boolean {
-  return path.startsWith(PENDING_PREFIX);
-}
-
-/** Construct a plan-draft virtual path from a chat ID. */
-export function makePlanDraftPath(chatID: string): string {
-  return PLAN_DRAFT_PREFIX + chatID;
-}
-
-/** Construct a pending-change virtual path from chat + tool-call IDs.
- *
- *  The two ids are joined with keyenc so a tool-call id carrying a ":" cannot
- *  shift the split. Byte-identical to the old `pending:${chatID}:${toolCallID}`
- *  template for any id containing neither ":" nor "\\" (keyenc emits such a
- *  component verbatim), which is what lets already-persisted paths keep
- *  parsing — these keys are persisted per-device in localStorage through
- *  `persistOpenFiles` -> `uiState.save({editor_files})`. The prefix stays
- *  OUTSIDE the join so `isPendingPath` keeps working even in the (unreachable
- *  in practice) case where keyenc reduces the pair to a hashed identity. */
-export function makePendingPath(chatID: string, toolCallID: string): string {
-  return PENDING_PREFIX + join(chatID, toolCallID);
-}
-
-/** Recover the chat + tool-call ids from a pending-change path.
- *
- *  TOTAL, like the parser it replaces: a non-pending path, an unparseable
- *  key, or the wrong component count all return the empty pair, and every
- *  caller already treats an empty id as "not a pending change"
- *  (`editor-pending.ts`, `editor-core.ts`). keyenc's `split` throws on a
- *  hashed identity and on a key it did not produce, so both are caught here
- *  rather than escaping to callers.
- *
- *  BEHAVIOUR CHANGE (the only one): the old parser took `toolCallID` as
- *  rest-of-string, so `pending:a:b:c` parsed as chatID "a" / toolCallID "b:c".
- *  Requiring exactly two components means a LEGACY persisted path whose
- *  toolCallID contained a ":" now fails to parse once — that editor tab loads
- *  empty and can be closed. No data loss (a pending change lives server-side;
- *  the path is only a routing key) and no recurrence, because
- *  `makePendingPath` escapes such an id from now on. */
-export function parsePendingPath(path: string): { chatID: string; toolCallID: string } {
-  const none = { chatID: "", toolCallID: "" };
-  if (!isPendingPath(path)) {
-    return none;
-  }
-  let parts: string[];
-  try {
-    parts = split(path.slice(PENDING_PREFIX.length));
-  } catch (e) {
-    if (e instanceof HashedKeyError || e instanceof MalformedKeyError) {
-      return none;
-    }
-    throw e;
-  }
-  const [chatID, toolCallID, ...extra] = parts;
-  if (chatID === undefined || toolCallID === undefined || extra.length > 0) {
-    return none;
-  }
-  return { chatID, toolCallID };
-}
-
+// THE `pending:` VIRTUAL PATH FAMILY IS GONE. isPendingPath, makePendingPath,
+// parsePendingPath and pendingDiffSource addressed a staged write held in
+// vibekit's memory and served from GET /api/pending-changes/. There are no staged
+// writes and no such endpoint: KAS holds the content and reviews a whole turn at
+// once, so a path scheme with nothing behind it is a route to a 404.
+//
+// routeForPath therefore has one branch, which is why it now reads as a plain
+// URL builder rather than a router.
 export function routeForPath(path: string): {
   readURL: string;
   writeURL: string;
   displayPath: string;
 } {
-  if (isPlanDraftPath(path)) {
-    const id = planDraftChatID(path);
-    const url = `/api/chats/${encodeURIComponent(id)}/plan-draft`;
-    return { readURL: url, writeURL: url, displayPath: `plan draft · ${id.slice(0, 12)}` };
-  }
-  if (isPendingPath(path)) {
-    const { toolCallID } = parsePendingPath(path);
-    const url = `/api/pending-changes/${encodeURIComponent(toolCallID)}`;
-    return { readURL: url, writeURL: url, displayPath: "pending change" };
-  }
   const url = `/api/file?path=${encodeURIComponent(path)}`;
   return { readURL: url, writeURL: url, displayPath: path };
 }
@@ -118,17 +42,6 @@ interface DiffSource {
   oldLabel: string;
   newLabel: string;
   fromGit: boolean;
-}
-
-/** Factory: pending-change diff (on disk vs proposed). */
-export function pendingDiffSource(oldContent: string, newContent: string): DiffSource {
-  return {
-    oldContent,
-    newContent,
-    oldLabel: DIFF_LABEL_DISK,
-    newLabel: DIFF_LABEL_PROPOSED,
-    fromGit: false,
-  };
 }
 
 /** Factory: git diff (ref vs working tree). */
@@ -170,7 +83,6 @@ export interface FileState {
   returnToGitDiff: { ref: string; repo: string } | null;
   /** Repo identifier for git-diff sources (empty string = default). */
   repo: string;
-  pendingHunkDecisions: Map<number, "accept" | "reject">;
   /** Hunk count of the current diff. Derived (computed) from `mode`;
    *  auto-invalidates whenever `mode` is reassigned. */
   pendingHunkCount: ReadonlySignal<number>;
@@ -209,20 +121,6 @@ class EditorState {
     return s ? s.dirty.value : false;
   }
 
-  getOpenFilePaths(): string[] {
-    return [...this.files.keys()];
-  }
-
-  getDirtyPaths(): string[] {
-    const out: string[] = [];
-    for (const [, state] of this.files) {
-      if (state.loaded && state.dirty.value) {
-        out.push(state.path);
-      }
-    }
-    return out;
-  }
-
   freshState(path: string): FileState {
     // Reactive inputs: `mode`, `current`, `original`. Everything else is a
     // computed derived from them, so it auto-invalidates with no manual
@@ -253,7 +151,6 @@ class EditorState {
       suggestions: new Map(),
       returnToGitDiff: null,
       repo: "",
-      pendingHunkDecisions: new Map(),
       pendingHunkCount,
       cachedDiff,
     };
@@ -288,21 +185,7 @@ export function freshState(path: string): FileState {
 export function getActiveFilePath(): string {
   return editorState.getActivePath();
 }
-export function getOpenFilePaths(): string[] {
-  return editorState.getOpenFilePaths();
-}
-export function getDirtyEditorPaths(): string[] {
-  return editorState.getDirtyPaths();
-}
 
-// --- Late-bound closeEditorFile (set by editor-openers.ts at init) ---
-
-let closeFileFn: (path: string) => void = () => {
-  /* noop */
-};
-export function registerCloseFile(fn: (path: string) => void): void {
-  closeFileFn = fn;
-}
-export function closeFile(path: string): void {
-  closeFileFn(path);
-}
+// There is no late-bound closeFile indirection. It existed so editor-pending.ts
+// could close a `pending:` tab without importing editor-openers.ts, and that
+// module is gone; every remaining caller imports closeEditorFile directly.

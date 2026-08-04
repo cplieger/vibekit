@@ -44,6 +44,14 @@ export function ensureToolCallSig(toolID: string, initial: ToolCall): Signal<Too
   return toolCallSigs.ensure(toolID, initial);
 }
 
+/** The current value of a tool call's signal, untracked, or undefined when no
+ *  signal exists. For derivations that run inside someone ELSE's effect (the
+ *  delegate footer sums its members on the invocation's ticks) — reading
+ *  `.value` there would subscribe that effect to every member. */
+export function peekToolCallSig(toolID: string): ToolCall | undefined {
+  return toolCallSigs.get(toolID)?.peek();
+}
+
 /** Key helper for per-(message, block-index) signal maps. */
 export function blockKey(messageID: string, blockIndex: number): string {
   return `${messageID}:${String(blockIndex)}`;

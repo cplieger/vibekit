@@ -1,7 +1,7 @@
-// Table-driven tests for diff.ts — lineDiff and truncateChanged.
+// Table-driven tests for diff.ts — lineDiff and windowHunks.
 import { describe, it, expect } from "vitest";
 import fc from "fast-check";
-import { lineDiff, truncateChanged, stats, type DiffLine } from "./diff.js";
+import { lineDiff, windowHunks, stats, type DiffLine } from "./diff.js";
 
 describe("lineDiff", () => {
   const cases: {
@@ -172,96 +172,69 @@ describe("lineDiff", () => {
   });
 });
 
-describe("truncateChanged", () => {
-  const cases: {
-    name: string;
-    lines: DiffLine[];
-    n: number;
-    expectedLines: DiffLine[];
-    expectedMore: number;
-  }[] = [
-    {
-      name: "no changes — returns all context",
-      lines: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "a" },
-        { kind: "ctx", oldNo: 2, newNo: 2, text: "b" },
-      ],
-      n: 1,
-      expectedLines: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "a" },
-        { kind: "ctx", oldNo: 2, newNo: 2, text: "b" },
-      ],
-      expectedMore: 0,
-    },
-    {
-      name: "truncate at 1 with 3 changes",
-      lines: [
-        { kind: "del", oldNo: 1, newNo: 0, text: "a" },
-        { kind: "add", oldNo: 0, newNo: 1, text: "b" },
-        { kind: "add", oldNo: 0, newNo: 2, text: "c" },
-      ],
-      n: 1,
-      expectedLines: [{ kind: "del", oldNo: 1, newNo: 0, text: "a" }],
-      expectedMore: 2,
-    },
-    {
-      name: "truncate at 2 with interleaved context",
-      lines: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "x" },
-        { kind: "del", oldNo: 2, newNo: 0, text: "a" },
-        { kind: "ctx", oldNo: 3, newNo: 2, text: "y" },
-        { kind: "add", oldNo: 0, newNo: 3, text: "b" },
-        { kind: "del", oldNo: 4, newNo: 0, text: "c" },
-      ],
-      n: 2,
-      expectedLines: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "x" },
-        { kind: "del", oldNo: 2, newNo: 0, text: "a" },
-        { kind: "ctx", oldNo: 3, newNo: 2, text: "y" },
-        { kind: "add", oldNo: 0, newNo: 3, text: "b" },
-      ],
-      expectedMore: 1,
-    },
-    {
-      name: "n exceeds total changes — returns all",
-      lines: [
-        { kind: "del", oldNo: 1, newNo: 0, text: "a" },
-        { kind: "add", oldNo: 0, newNo: 1, text: "b" },
-      ],
-      n: 10,
-      expectedLines: [
-        { kind: "del", oldNo: 1, newNo: 0, text: "a" },
-        { kind: "add", oldNo: 0, newNo: 1, text: "b" },
-      ],
-      expectedMore: 0,
-    },
-    {
-      name: "n=0 returns nothing but context before first change",
-      lines: [
-        { kind: "ctx", oldNo: 1, newNo: 1, text: "x" },
-        { kind: "del", oldNo: 2, newNo: 0, text: "a" },
-        { kind: "add", oldNo: 0, newNo: 2, text: "b" },
-      ],
-      n: 0,
-      expectedLines: [{ kind: "ctx", oldNo: 1, newNo: 1, text: "x" }],
-      expectedMore: 2,
-    },
-    {
-      name: "empty input",
-      lines: [],
-      n: 5,
-      expectedLines: [],
-      expectedMore: 0,
-    },
-  ];
+describe("windowHunks", () => {
+  // The unit is the HUNK, which is the whole point of the replacement: keeping
+  // the first three CHANGED LINES showed a 12-line rewrite as a quarter of
+  // itself, cut mid-thought.
+  const ctx = (n: number, t: string): DiffLine => ({ kind: "ctx", oldNo: n, newNo: n, text: t });
+  const del = (n: number, t: string): DiffLine => ({ kind: "del", oldNo: n, newNo: 0, text: t });
+  const add = (n: number, t: string): DiffLine => ({ kind: "add", oldNo: 0, newNo: n, text: t });
 
-  for (const tc of cases) {
-    it(tc.name, () => {
-      const result = truncateChanged(tc.lines, tc.n);
-      expect(result.lines).toEqual(tc.expectedLines);
-      expect(result.more).toBe(tc.expectedMore);
-    });
-  }
+  it("a diff with no changes yields nothing — there is no hunk to show", () => {
+    const got = windowHunks([ctx(1, "a"), ctx(2, "b")]);
+    expect(got.lines).toEqual([]);
+    expect(got.hunksOmitted).toBe(0);
+  });
+
+  it("empty input is empty", () => {
+    expect(windowHunks([])).toEqual({ lines: [], hunksOmitted: 0 });
+  });
+
+  it("keeps a whole hunk even when it exceeds maxRows, rather than cutting it", () => {
+    const hunk = [del(1, "a"), del(2, "b"), add(1, "c"), add(2, "d"), add(3, "e")];
+    const got = windowHunks(hunk, { maxRows: 2 });
+    // The first hunk always goes in whole: a half-hunk is the failure mode this
+    // function exists to remove.
+    expect(got.lines).toEqual(hunk);
+    expect(got.hunksOmitted).toBe(0);
+  });
+
+  it("drops a LATER hunk whole when the cap is reached, and counts it", () => {
+    const lines = [del(1, "a"), add(1, "b"), ctx(2, "keep"), del(3, "c"), add(3, "d")];
+    const got = windowHunks(lines, { maxRows: 2, context: 1 });
+    expect(got.hunksOmitted).toBe(1);
+    // Nothing from the dropped hunk survives.
+    expect(got.lines.some((l) => l.text === "c" || l.text === "d")).toBe(false);
+  });
+
+  it("keeps context adjoining a hunk and elides a long run between two", () => {
+    const lines = [
+      ctx(1, "far-before"),
+      ctx(2, "near-before"),
+      del(3, "changed"),
+      ctx(4, "near-after"),
+      ctx(5, "middle"),
+      ctx(6, "middle2"),
+      ctx(7, "near-before2"),
+      add(8, "changed2"),
+    ];
+    const got = windowHunks(lines, { maxRows: 40, context: 1 });
+    const texts = got.lines.map((l) => l.text);
+    expect(texts).toContain("near-before");
+    expect(texts).toContain("near-after");
+    expect(texts).toContain("near-before2");
+    // The interior of a long context run is elided.
+    expect(texts).not.toContain("middle");
+    // A context run touching no hunk on its far side contributes nothing there.
+    expect(texts).not.toContain("far-before");
+    expect(got.hunksOmitted).toBe(0);
+  });
+
+  it("keeps a short context run whole rather than double-counting its ends", () => {
+    const lines = [del(1, "x"), ctx(2, "only"), add(3, "y")];
+    const got = windowHunks(lines, { context: 2 });
+    expect(got.lines.filter((l) => l.text === "only")).toHaveLength(1);
+  });
 });
 
 describe("stats", () => {

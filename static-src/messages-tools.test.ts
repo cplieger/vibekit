@@ -20,19 +20,21 @@ vi.mock("./tool-card.js", () => ({
   buildToolCard: vi.fn(() => document.createElement("div")),
   insertDiffPreview: vi.fn(),
 }));
-vi.mock("./messages-actions.js", () => ({ addEditActions: vi.fn() }));
 
 import { applyOutputUpdate } from "./messages-tools.js";
 
-function complexCard(): HTMLDivElement {
+/** A card whose depth 1 is a windowed output (execute / shell / command). */
+function commandCard(): HTMLDivElement {
   const card = document.createElement("div");
   card.className = "tool-call";
-  const box = document.createElement("div");
-  box.className = "tool-output-box";
-  card.appendChild(box);
+  card.dataset["depth1"] = "output";
+  const out = document.createElement("div");
+  out.className = "tool-output";
+  card.appendChild(out);
   return card;
 }
 
+/** A card with a plain (unwindowed) output region. */
 function simpleCard(): HTMLDivElement {
   const card = document.createElement("div");
   card.className = "tool-call";
@@ -47,19 +49,36 @@ describe("applyOutputUpdate (cumulative output → replace, not append)", () => 
     document.body.replaceChildren();
   });
 
-  it("replaces the .tool-output-box <pre> with the latest cumulative output", () => {
-    const card = complexCard();
+  it("replaces the <pre> rather than appending each cumulative snapshot", () => {
+    const card = commandCard();
     applyOutputUpdate(card, "line one\n");
     applyOutputUpdate(card, "line one\nline two\n");
-    const pre = card.querySelector(".tool-output-box pre");
+    const pre = card.querySelector(".tool-output pre");
     expect(pre).not.toBeNull();
     // Not appended ("line one\nline one\nline two\n") — replaced.
     expect(pre?.textContent).toBe("line one\nline two\n");
     // Exactly one <pre>, not one per update.
-    expect(card.querySelectorAll(".tool-output-box pre").length).toBe(1);
+    expect(card.querySelectorAll(".tool-output pre").length).toBe(1);
   });
 
-  it("replaces the .tool-output <pre> (simple/medium tier) with the latest output", () => {
+  it("keeps a command's streaming output WINDOWED, and offers the rest", () => {
+    // Streaming the middle of a 5,000-line build into the card would undo the
+    // window on the first update.
+    const card = commandCard();
+    const lines = Array.from({ length: 200 }, (_, i) => `line${String(i)}`);
+    applyOutputUpdate(card, lines.join("\n"));
+    const pre = card.querySelector(".tool-output pre");
+    expect(pre?.textContent).not.toContain("line100");
+    const reveal = card.querySelector(".tool-output-reveal");
+    expect(reveal?.textContent).toContain("160 more lines");
+
+    // The reveal restores the full text and retires itself.
+    (reveal as HTMLElement).click();
+    expect(card.querySelector(".tool-output pre")?.textContent).toContain("line100");
+    expect(card.querySelector(".tool-output-reveal")).toBeNull();
+  });
+
+  it("does not window a card whose depth 1 is not an output", () => {
     const card = simpleCard();
     applyOutputUpdate(card, "A");
     applyOutputUpdate(card, "AB");

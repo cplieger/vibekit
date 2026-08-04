@@ -129,3 +129,33 @@
     opacity: 0;
   }
 }
+
+/* --- Unified (single-column) diff --------------------------------------------
+   The shape chat uses. Reading a CHANGE wants one column; comparing two
+   VERSIONS of a file wants the two-pane form, which is why both exist.
+
+   Change rides the row BACKGROUND plus the +/- marker. It must not ride the text
+   colour: in this shape every row is a real code line and gets syntax
+   highlighting, and text colour is the only channel highlighting has. */
+.diff-pane-unified .diff-pane-body {
+  display: block;
+}
+
+.diff-pane-unified .diff-col-unified {
+  width: 100%;
+  /* A long code line SCROLLS rather than wraps — a wrapped line in a diff is
+     worse than a clipped one, because the +/- column stops aligning. */
+  overflow-x: auto;
+}
+
+.diff-pane-unified .diff-row-add {
+  background: color-mix(in srgb, var(--c-green) 12%, transparent);
+}
+
+.diff-pane-unified .diff-row-del {
+  background: color-mix(in srgb, var(--c-red) 12%, transparent);
+}
+
+.diff-pane-unified .diff-line-text {
+  white-space: pre;
+}

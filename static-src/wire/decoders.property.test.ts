@@ -17,14 +17,6 @@ import type { Decoder } from "../validators.js";
 
 // --- Arbitraries for enum-like const arrays (matching decoders.gen.ts) ---
 
-const clearReasonArb = fc.constantFrom(
-  "turn_ended",
-  "cancelled",
-  "mode_disabled",
-  "chat_deleted",
-  "shutdown",
-  "user_cleared",
-);
 const errorCodeArb = fc.constantFrom(
   "recovery_failed",
   "bridge_start_failed",
@@ -45,8 +37,6 @@ const eventKindArb = fc.constantFrom(
   "compaction_failed",
 );
 const forgeKindArb = fc.constantFrom("github", "gitlab", "codeberg", "gitea");
-const pendingActionArb = fc.constantFrom("accept", "reject");
-const pendingChangeKindArb = fc.constantFrom("create", "edit", "delete");
 const planStatusArb = fc.constantFrom("pending", "in_progress", "completed");
 const roleArb = fc.constantFrom("user", "assistant", "event");
 const stopReasonArb = fc.constantFrom("end_turn", "cancelled", "interrupted");
@@ -122,12 +112,6 @@ const sessionModeArb = fc.record({
   source: optField(fc.string()),
 });
 
-const availableCommandArb = fc.record({
-  name: fc.string({ minLength: 1 }),
-  description: optField(fc.string()),
-  meta: optField(fc.dictionary(fc.string({ minLength: 1 }).filter(notProto), fc.anything())),
-});
-
 const chatDeletedPayloadArb = fc.record({ id: fc.string({ minLength: 1 }) });
 
 const chatHeaderArb = fc.record({
@@ -137,13 +121,10 @@ const chatHeaderArb = fc.record({
   created_at: posInt,
   updated_at: posInt,
   message_count: posInt,
-  parent_chat_id: optField(fc.string()),
   model: optField(fc.string()),
   acp_session_id: optField(fc.string()),
   current_mode_id: optField(fc.string()),
   compaction_watermark: optField(fc.string()),
-  oldest_checkpoint_tag: optField(fc.string()),
-  summary: optField(fc.string()),
   available_models: optField(fc.array(sessionModelArb, { maxLength: 3 })),
   available_modes: optField(fc.array(sessionModeArb, { maxLength: 3 })),
   supervised_mode: optField(fc.boolean()),
@@ -154,11 +135,6 @@ const checkArb = fc.record({
   status: fc.string({ minLength: 1 }),
   conclusion: fc.string({ minLength: 1 }),
   url: optField(fc.string()),
-});
-
-const commandsUpdatedPayloadArb = fc.record({
-  commands: fc.array(availableCommandArb, { maxLength: 3 }),
-  prompts: optField(fc.array(availableCommandArb, { maxLength: 3 })),
 });
 
 const configuredForgeArb = fc.record({
@@ -297,31 +273,6 @@ const prArb = fc.record({
   draft: optField(fc.boolean()),
 });
 
-const pendingChangeArb = fc.record({
-  tool_call_id: fc.string({ minLength: 1 }),
-  chat_id: fc.string({ minLength: 1 }),
-  path: fc.string({ minLength: 1 }),
-  kind: pendingChangeKindArb,
-  created_at: posInt,
-  old_text: optField(fc.string()),
-  new_text: optField(fc.string()),
-  truncated: optField(fc.boolean()),
-});
-
-const pendingChangeAddedPayloadArb = fc.record({
-  change: pendingChangeArb,
-});
-
-const pendingChangeResolvedPayloadArb = fc.record({
-  tool_call_id: fc.string({ minLength: 1 }),
-  action: pendingActionArb,
-  path: optField(fc.string()),
-});
-
-const pendingChangesClearedPayloadArb = fc.record({
-  reason: optField(clearReasonArb),
-});
-
 const permissionOptionArb = fc.record({
   option_id: fc.string({ minLength: 1 }),
   name: fc.string({ minLength: 1 }),
@@ -440,22 +391,12 @@ const decoderRegistry: {
   arb: fc.Arbitrary<unknown>;
 }[] = [
   {
-    name: "decodeAvailableCommand",
-    decoder: decoders.decodeAvailableCommand,
-    arb: availableCommandArb,
-  },
-  {
     name: "decodeChatDeletedPayload",
     decoder: decoders.decodeChatDeletedPayload,
     arb: chatDeletedPayloadArb,
   },
   { name: "decodeChatHeader", decoder: decoders.decodeChatHeader, arb: chatHeaderArb },
   { name: "decodeCheck", decoder: decoders.decodeCheck, arb: checkArb },
-  {
-    name: "decodeCommandsUpdatedPayload",
-    decoder: decoders.decodeCommandsUpdatedPayload,
-    arb: commandsUpdatedPayloadArb,
-  },
   {
     name: "decodeConfiguredForge",
     decoder: decoders.decodeConfiguredForge,
@@ -503,22 +444,6 @@ const decoderRegistry: {
   },
   { name: "decodeMeteringItem", decoder: decoders.decodeMeteringItem, arb: meteringItemArb },
   { name: "decodePR", decoder: decoders.decodePR, arb: prArb },
-  { name: "decodePendingChange", decoder: decoders.decodePendingChange, arb: pendingChangeArb },
-  {
-    name: "decodePendingChangeAddedPayload",
-    decoder: decoders.decodePendingChangeAddedPayload,
-    arb: pendingChangeAddedPayloadArb,
-  },
-  {
-    name: "decodePendingChangeResolvedPayload",
-    decoder: decoders.decodePendingChangeResolvedPayload,
-    arb: pendingChangeResolvedPayloadArb,
-  },
-  {
-    name: "decodePendingChangesClearedPayload",
-    decoder: decoders.decodePendingChangesClearedPayload,
-    arb: pendingChangesClearedPayloadArb,
-  },
   {
     name: "decodePermissionNeededPayload",
     decoder: decoders.decodePermissionNeededPayload,

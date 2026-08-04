@@ -7,10 +7,18 @@
 //
 // User-initiated clicks disable auto-collapse (the group becomes user-
 // controlled) so the UI doesn't fight against the reader.
+//
+// FAILURE IS NOT NOISE, and that is the axis the grouping rules turn on.
+// Collapsing exists to hide items that are individually uninteresting; a failed
+// call is the opposite. So: a group holding a failure never auto-collapses, one
+// that fails while already collapsed re-opens itself, the header's glyph is
+// tinted to the WORST status inside it (one red member makes a red header, so the
+// reader can act on a closed group without opening it), and the summary NAMES
+// the failure rather than averaging it away — `Ran 12 commands · 1 failed`.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { setUserScrolledUp } from "./scroll.js";
+import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
@@ -111,6 +119,9 @@ export function buildToolGroupShell(): HTMLDivElement {
   const header = el(
     "div",
     { className: "tool-group-header", role: "button", tabindex: "0", "aria-expanded": "true" },
+    // Same glyph slot as a member card, tinted by refreshGroupHeader to the
+    // worst status inside. One vocabulary, learned once.
+    el("span", { className: "tool-group-icon tool-icon" }),
     el("span", { className: "tool-group-count" }),
   ) as HTMLDivElement;
   header.addEventListener("click", () => {
@@ -141,8 +152,34 @@ export function refreshGroupHeader(group: HTMLElement): void {
   ] as HTMLElement[];
   const collapsed =
     group.classList.contains(CLS_COLLAPSED) || group.classList.contains(CLS_AUTO_COLLAPSED);
-  const summary = summarize(calls);
+  const failures = countFailures(calls);
+  // The summary states the aggregate FACT and names any failure in it. It never
+  // counts cards: "Read 5 files" is right, "5 tool calls" is a bug.
+  const summary = summarize(calls) + (failures > 0 ? ` \u00b7 ${String(failures)} failed` : "");
   header.textContent = collapsed ? `${summary} (collapsed)` : summary;
+  paintGroupOutcome(group, calls, failures);
+}
+
+/** How many settled members of a group failed. */
+function countFailures(calls: HTMLElement[]): number {
+  return calls.filter((c) => c.dataset["outcome"] === "fail").length;
+}
+
+/** Tint the group's glyph to the worst status inside it, with the same
+ *  check/cross shape a member card carries. Reads the members' own
+ *  `data-outcome`, so there is one source for the state. */
+function paintGroupOutcome(group: HTMLElement, calls: HTMLElement[], failures: number): void {
+  const icon = group.querySelector<HTMLElement>(".tool-group-icon");
+  if (icon === null) {
+    return;
+  }
+  const running = calls.some((c) => c.dataset["outcome"] === "running");
+  const state = failures > 0 ? "fail" : running ? "running" : "ok";
+  group.dataset["outcome"] = state;
+  icon.classList.remove("is-ok", "is-fail", "is-running");
+  icon.classList.add(`is-${state}`);
+  icon.textContent = state === "fail" ? "\u2717" : state === "ok" ? "\u2713" : "";
+  icon.setAttribute("aria-hidden", "true");
 }
 
 // --- Summarizers (pure, no state dependency) ---
@@ -326,26 +363,56 @@ export function maybeCollapseGroup(node: HTMLElement): void {
   if (group === null) {
     return;
   }
+  const calls = [
+    ...group.querySelectorAll(":scope > .tool-group-body > .tool-call"),
+  ] as HTMLElement[];
+
+  // A failure inside the group defeats collapse in BOTH directions: it blocks an
+  // auto-collapse, and it re-opens a group that already auto-collapsed before
+  // the failing member settled. Without the second half a failure inside a run
+  // of twelve is invisible — the group closed while everything still looked fine.
+  if (countFailures(calls) > 0) {
+    if (
+      group.classList.contains(CLS_AUTO_COLLAPSED) &&
+      !group.classList.contains(CLS_USER_TOGGLED)
+    ) {
+      preserveReadingPosition(() => {
+        group.classList.remove(CLS_AUTO_COLLAPSED);
+        groupCtls.get(group)?.open();
+        group
+          .querySelector<HTMLElement>(".tool-group-header")
+          ?.setAttribute("aria-expanded", "true");
+        refreshGroupHeader(group);
+      }, "content-growth");
+    }
+    return;
+  }
+
   if (group.classList.contains(CLS_AUTO_COLLAPSED)) {
     return;
   }
   if (group.classList.contains(CLS_USER_TOGGLED)) {
     return;
   }
-  const calls = group.querySelectorAll(":scope > .tool-group-body > .tool-call");
   if (calls.length < 3) {
     return;
   }
   for (const c of calls) {
-    if ((c as HTMLElement).dataset["startMs"] !== undefined) {
+    if (c.dataset["startMs"] !== undefined) {
       return;
     }
   }
-  group.classList.add(CLS_AUTO_COLLAPSED);
-  groupCtls.get(group)?.close();
-  const header = group.querySelector<HTMLElement>(".tool-group-header");
-  header?.setAttribute("aria-expanded", "false");
-  refreshGroupHeader(group);
+  // An AUTO collapse removes height ABOVE the reader, so it is compensated.
+  // (The user-toggle path below enters Reading instead — that is a different
+  // intent: the reader just acted, so nothing should re-pin.) This is the one
+  // ANIMATED height change of the three §3.4 names, via createDisclosure.
+  preserveReadingPosition(() => {
+    group.classList.add(CLS_AUTO_COLLAPSED);
+    groupCtls.get(group)?.close();
+    const header = group.querySelector<HTMLElement>(".tool-group-header");
+    header?.setAttribute("aria-expanded", "false");
+    refreshGroupHeader(group);
+  }, "content-growth");
 }
 
 export function formatDuration(ms: number): string {

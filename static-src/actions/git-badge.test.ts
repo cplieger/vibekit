@@ -1,5 +1,11 @@
 // @vitest-environment happy-dom
-// Tests for git-badge.ts: refreshGitBadge dedupe + parallel fetch.
+// Tests for the git badge's FORGES action.
+//
+// This file used to test a combined action that fetched /api/git/status-all and
+// /api/forges together. The status half moved to git-status-store.ts (one shared
+// poll, so per-path status has a reader outside the git view), so what remains
+// here is the forges fetch and its dedupe. The moved behaviour is covered by
+// git-status-store.test.ts.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../toast.js", () =>
@@ -14,7 +20,7 @@ vi.mock("../api-client.js", () => ({
   apiPost: vi.fn(),
 }));
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { refreshGitBadge } from "./git-badge.js";
+import { refreshForges } from "./git-badge.js";
 
 const mockFetch = vi.fn();
 
@@ -27,75 +33,51 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const statusResp = {
-  repos: [{ repo: "main", is_repo: true, branch: "main", ahead: 0, behind: 0, has_dirty: false }],
-};
 const forgesResp = { forges: [{ id: "gh:1", connected: true }] };
 
-describe("refreshGitBadge", () => {
-  it("has correct action name", () => {
-    expect(refreshGitBadge.name).toBe("git-badge.refresh");
+describe("refreshForges", () => {
+  it("has the expected action name", () => {
+    expect(refreshForges.name).toBe("git-badge.forges");
   });
 
-  it("fetches both status-all and forges in parallel", async () => {
+  it("fetches /api/forges and does NOT fetch status-all", async () => {
     mockFetch.mockImplementation((url: string) => {
-      if (url === "/api/git/status-all") {
-        return Promise.resolve(new Response(JSON.stringify(statusResp), { status: 200 }));
-      }
       if (url === "/api/forges") {
         return Promise.resolve(new Response(JSON.stringify(forgesResp), { status: 200 }));
       }
       return Promise.resolve(new Response("", { status: 404 }));
     });
 
-    const result = await refreshGitBadge.dispatch(undefined);
-    expect(result).not.toBeNull();
-    expect(result!.status).toEqual(statusResp);
-    expect(result!.forges).toEqual(forgesResp);
-    // Both endpoints called
+    const result = await refreshForges.dispatch(undefined);
+    expect(result).toEqual(forgesResp);
     const urls = mockFetch.mock.calls.map((c) => c[0]);
-    expect(urls).toContain("/api/git/status-all");
     expect(urls).toContain("/api/forges");
+    // The badge must not re-fetch git status: that is the shared store's job,
+    // and a second fetch here is the duplication this split removed.
+    expect(urls).not.toContain("/api/git/status-all");
   });
 
   it("dedupes concurrent dispatches", async () => {
     mockFetch.mockImplementation(
-      (url: string) =>
+      () =>
         new Promise((r) =>
-          setTimeout(() => {
-            if (url === "/api/git/status-all") {
-              r(new Response(JSON.stringify(statusResp), { status: 200 }));
-            } else {
-              r(new Response(JSON.stringify(forgesResp), { status: 200 }));
-            }
-          }, 10),
+          setTimeout(() => r(new Response(JSON.stringify(forgesResp), { status: 200 })), 10),
         ),
     );
 
     vi.useFakeTimers();
-    const p1 = refreshGitBadge.dispatch(undefined);
-    const p2 = refreshGitBadge.dispatch(undefined);
+    const p1 = refreshForges.dispatch(undefined);
+    const p2 = refreshForges.dispatch(undefined);
     await vi.advanceTimersByTimeAsync(10);
     const [r1, r2] = await Promise.all([p1, p2]);
     vi.useRealTimers();
 
-    // Both resolve to the same result, but fetch only called twice (one per endpoint)
     expect(r1).toEqual(r2);
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("returns null fields when sub-fetches fail", async () => {
-    mockFetch.mockImplementation((url: string) => {
-      if (url === "/api/git/status-all") {
-        return Promise.resolve(new Response("", { status: 500 }));
-      }
-      return Promise.resolve(new Response(JSON.stringify(forgesResp), { status: 200 }));
-    });
-
-    const result = await refreshGitBadge.dispatch(undefined);
-    // status fetch failed → null, forges succeeded
-    expect(result).not.toBeNull();
-    expect(result!.status).toBeNull();
-    expect(result!.forges).toEqual(forgesResp);
+  it("resolves null on a failed fetch rather than throwing", async () => {
+    mockFetch.mockResolvedValue(new Response("", { status: 500 }));
+    await expect(refreshForges.dispatch(undefined)).resolves.toBeNull();
   });
 });

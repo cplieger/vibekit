@@ -14,14 +14,10 @@
 // --- Wire types (re-exported from generated) ---
 
 export type {
-  AvailableCommand,
   // Enums
-  ClearReason,
   ErrorCode,
   EventKind,
   ForgeKind,
-  PendingAction,
-  PendingChangeKind,
   PlanStatus,
   Role,
   SafetyStatus,
@@ -32,6 +28,7 @@ export type {
   // Domain shapes
   AccountUsage,
   AccountUsageBreakdown,
+  ApprovalFile,
   ChatHeader,
   FileChange,
   Message,
@@ -39,7 +36,6 @@ export type {
   CodeReference,
   RefusalInfo,
   MeteringItem,
-  PendingChange,
   PermissionOption,
   PlanEntry,
   PolicyRule,
@@ -47,20 +43,13 @@ export type {
   PolicyExplainResult,
   SessionMode,
   SessionModel,
-  Spec,
-  SpecTaskNode,
-  SpecTaskPBT,
-  SpecsResponse,
   ToolCall,
   ToolDiff,
   ToolLocation,
   Usage,
   // SSE payloads
   ChatDeletedPayload,
-  SpecTaskChange,
-  SpecTaskChangedPayload,
   CodeReferencesPayload,
-  CommandsUpdatedPayload,
   ConnectedPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
@@ -71,16 +60,12 @@ export type {
   ErrorPayload,
   GovernanceFeatures,
   GovernanceStatePayload,
-  KnowledgeIndexingPayload,
   MCPConnectedPayload,
   MCPDisconnectedPayload,
   MCPFailedPayload,
   MCPOAuthPayload,
   MessageChunkPayload,
   OpenExternalURLPayload,
-  PendingChangeAddedPayload,
-  PendingChangeResolvedPayload,
-  PendingChangesClearedPayload,
   PermissionNeededPayload,
   PermissionsChangedPayload,
   PolicyErrorPayload,
@@ -97,10 +82,16 @@ export type {
   RemoveResponse,
   SearchHit,
   SearchResponse,
-  ConflictDetectedPayload,
   ToolInfo,
   ToolJobChangedPayload,
   ToolJobOutputPayload,
+  RunStartedPayload,
+  RunProgressPayload,
+  RunFinishedPayload,
+  Recipe,
+  RecipesResponse,
+  RunLaunchRequest,
+  RunLaunchedResponse,
   SystemTool,
   TurnEndedPayload,
   TurnStatePayload,
@@ -110,7 +101,7 @@ export type {
 // the generated naming. The generated type is PermissionNeededPayload.
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
-import type { Message, PendingChange, SessionMode, SessionModel, Usage } from "./wire/types.gen.js";
+import type { Message, SessionMode, SessionModel, Usage } from "./wire/types.gen.js";
 
 // --- Client-only types ---
 
@@ -140,21 +131,6 @@ export interface ModelInfo {
 
 /** Connection status flag, surfaced through the status bar. */
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
-
-/** Empty payload for `pending_trust_enabled`. The chat_id on the
- *  envelope is the only meaningful data; receipt means "flip this
- *  chat's Supervised pill to Trusted". Client-only because this
- *  event has no Go-side payload struct. */
-export interface PendingTrustEnabledPayload {
-  readonly _empty?: never;
-}
-
-/** Payload for `pending_trust_cleared`. Reason lets the UI
- *  differentiate user-initiated clear (mode toggle) from turn boundary.
- *  Client-only because this event has no Go-side payload struct. */
-export interface PendingTrustClearedPayload {
-  reason?: "turn_ended" | "cancelled" | "mode_disabled" | "chat_deleted";
-}
 
 /** One prompt buffered while a turn is in flight, waiting to drain on the
  *  next `turn_ended`. Text and its attachments travel together in one entry
@@ -199,9 +175,32 @@ export interface Session {
   agent_status_text?: string;
   prompt_queue?: QueuedPrompt[];
   supervised_mode?: boolean;
-  trusted_this_turn?: boolean;
-  pending_changes: PendingChange[];
-  parent_chat_id?: string;
   compaction_watermark?: string;
-  oldest_checkpoint_tag?: string;
+}
+
+/** One resumable KAS session, from GET /api/sessions. Mirrors
+ *  api.ResumableSession. */
+export interface ResumableSessionRow {
+  session_id: string;
+  title: string;
+  agent_mode?: string;
+  status?: string;
+  description?: string;
+  /** Set when a vibekit chat already owns this session, so opening it is just
+   *  opening that chat rather than adopting it. */
+  chat_id?: string;
+  updated_at: number;
+  created_at?: number;
+}
+
+/** One previous workflow run, from GET /api/sessions. Mirrors
+ *  api.WorkflowRun. */
+export interface WorkflowRunRow {
+  workflow_id: string;
+  name: string;
+  status?: string;
+  parent_chat_id?: string;
+  updated_at: number;
+  created_at?: number;
+  started_at?: number;
 }

@@ -1,79 +1,56 @@
 // ---------------------------------------------------------------------------
-// User-input question dialog: shown when the agent asks a structured
-// question mid-turn (kiro-cli v3 user_input tool — plan-mode
-// clarifications, spec gates — forwarded as _kiro/userInput because
-// vibekit declares the _meta.kiro.userInput capability).
+// User-input card: the agent asked a structured question mid-turn (kiro-cli
+// v3 `_kiro/userInput` — plan clarifications, spec gates). Rendered in the
+// interaction dock, which owns the queue and the settle-once guard.
 //
-// Renders the question with its options as choice cards (title +
-// description + Recommended badge). A plain option answers on click; an
-// option with sub-options expands a pre-checked multi-select stage
-// (Confirm folds the picks into "Title [Sub1, Sub2]" — the TUI's answer
-// format). A free-form question (no options) renders a textarea; when
-// options exist a compact "type your own answer" field is offered too,
-// mirroring the TUI where typing overrides the picker. Mirrors the
-// permission/elicitation dialogs' request/response shape; styling reuses
-// the approval-dialog vocabulary.
+// Three answer shapes, all reported as a plain string because that is the
+// wire contract: a clicked option sends its title, an option with sub-options
+// sends the TUI's "Title [Sub1, Sub2]", and a typed answer sends its text.
+// Skip dismisses, which makes the agent advance to its next phase.
+//
+// It was a centered <dialog> with a focus trap. A question about work in the
+// transcript should not cover the transcript, and a non-modal region must not
+// hold focus captive.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { openDialog } from "@cplieger/ui-primitives/dialog";
 import type { UserInputNeededPayload, UserInputOption } from "./types.js";
-import { $ } from "./dom.js";
-import { trapFocus } from "./focus-trap.js";
 
 type UserInputAction = "answered" | "dismissed";
 type SubmitFn = (action: UserInputAction, answer?: string) => void;
 
-// Resolved lazily: the dialog element only exists in the real app DOM.
-let cachedDialog: HTMLDialogElement | null = null;
-function dlg(): HTMLDialogElement {
-  cachedDialog ??= $.userInputDialog;
-  return cachedDialog;
-}
-
-// The request currently shown, so a superseding user_input_needed for a
-// different request can dismiss the one still open before showing the new
-// one (its agent-side question was superseded or re-asked on reconnect).
-let activeRequestID: number | null = null;
+// The mounted card's reporter. One card is on screen at a time (the dock
+// renders its queue head), and the dock rejects a second answer for the same
+// request, so the stage renderers can reach it as module state instead of
+// threading it through every stage transition.
 let activeSubmit: SubmitFn | null = null;
-let answered = false;
-let releaseFocus: (() => void) | null = null;
 
-export function showUserInputDialog(payload: UserInputNeededPayload, onSubmit: SubmitFn): void {
-  // Settle any dialog already open: it's being superseded, so dismiss it.
-  if (activeRequestID !== null && !answered) {
-    finish("dismissed");
-  }
-
-  activeRequestID = payload.request_id;
+/** Build the dock card for one agent question. */
+export function buildUserInputCard(
+  payload: UserInputNeededPayload,
+  onSubmit: SubmitFn,
+): HTMLElement {
   activeSubmit = onSubmit;
-  answered = false;
 
-  const dialogEl = dlg();
-  const body = dialogEl.querySelector<HTMLElement>(".user-input-body");
-  const optionsEl = dialogEl.querySelector<HTMLElement>(".user-input-options");
-  const freeformEl = dialogEl.querySelector<HTMLElement>(".user-input-freeform");
-  const actions = dialogEl.querySelector<HTMLElement>(".user-input-actions");
-  if (!body || !optionsEl || !freeformEl || !actions) {
-    return;
-  }
-  body.replaceChildren(
+  const body = el(
+    "div",
+    { className: "user-input-body" },
     el("strong", null, payload.question !== "" ? payload.question : "The agent has a question"),
   );
-  optionsEl.replaceChildren();
-  freeformEl.replaceChildren();
-  actions.replaceChildren();
+  const optionsEl = el("div", { className: "user-input-options" });
+  const freeformEl = el("div", { className: "user-input-freeform" });
+  const actions = el("div", { className: "user-input-actions" });
 
-  const options = payload.options ?? [];
-  renderOptionsStage(optionsEl, freeformEl, actions, options);
+  renderOptionsStage(optionsEl, freeformEl, actions, payload.options ?? []);
 
-  dialogEl.oncancel = (e): void => {
-    e.preventDefault();
-    finish("dismissed");
-  };
-
-  openDialog(dialogEl);
-  releaseFocus = trapFocus(dialogEl);
+  return el(
+    "div",
+    { className: "dock-card dock-user-input" },
+    body,
+    optionsEl,
+    freeformEl,
+    actions,
+  );
 }
 
 /** Stage 1: the choice cards (or the free-form editor when no options). */
@@ -230,32 +207,10 @@ function dismissButton(): HTMLButtonElement {
 }
 
 function finish(action: UserInputAction, answer?: string): void {
-  if (answered) {
-    return;
-  }
-  answered = true;
-  const submit = activeSubmit;
-  closeDialog();
-  submit?.(action, answer);
+  activeSubmit?.(action, answer);
 }
 
-function closeDialog(): void {
-  releaseFocus?.();
-  releaseFocus = null;
-  activeSubmit = null;
-  activeRequestID = null;
-  const dialogEl = dlg();
-  if (dialogEl.open) {
-    dialogEl.close();
-  }
-}
-
-/** Reset module state (cached dialog element + active request) for test
- *  isolation. Production never calls this. */
+/** Reset module state for test isolation. Production never calls this. */
 export function _resetForTest(): void {
-  cachedDialog = null;
-  activeRequestID = null;
   activeSubmit = null;
-  answered = false;
-  releaseFocus = null;
 }

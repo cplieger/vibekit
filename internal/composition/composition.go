@@ -111,10 +111,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"))
 	h := hub.New(cfg.WorkDir, bridgeFactory, chatStore,
 		hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc),
+		hub.WithACPArgs(cfg.ACPArgs),
 		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs))
 	chat.WithBroadcaster(h)(chatStore)
-	h.RecoverPartials()
-	h.StartCheckpointBackgroundTasks()
 
 	mcpRegistry := mcpPkg.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(ctx, mcpStore)
@@ -127,9 +126,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	mcpStore.SetOnChange(func(ctx context.Context) {
 		h.Broadcast(ctx, api.NewEvent(api.EventMCPConfigChanged, "", api.MCPConfigChangedPayload{}))
 		mcpPrewarm.Run(ctx)
-		// v3 (KAS) has no live set_config_option for mcpServers; a bridge
-		// picks up the new MCP set when it next (re)starts a session
-		// (session/new and session/load both forward the current set).
+		// No bridge restart, and nothing to forward: the store's persist renders
+		// KAS's own config file, whose watcher re-merges and reconnects in place.
+		// A change reaches every LIVE session, not just the next one.
 	})
 	mcpPrewarm.Run(ctx)
 
@@ -145,22 +144,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// disabled LSP + gh templates on fresh volumes (toggled on in
 	// Settings -> Tools). Boot reconciles async — installed tools
 	// persist on the volume, so nothing blocks server start.
-	toolsEngine, err := buildToolsEngine(cfg, h)
+	toolsEngine, err := wireToolsEngine(cfg, h)
 	if err != nil {
 		return nil, err
-	}
-	// A nil engine is the root-integrity degraded verdict (buildToolsEngine),
-	// not an error. Skip the tools-dependent wiring rather than nil-guarding
-	// each consumer downstream: none of toolbelt's methods is nil-receiver
-	// safe, and server.WithTools already omits the /api/tools mount for a nil
-	// engine. forges.EnsureTool left nil makes a forge login report "gh is
-	// not installed (tools engine unavailable)" instead of panicking.
-	if toolsEngine != nil {
-		warnIfNoLSPEnabled(toolsEngine)
-		// Installed-tool changes matter to the agent (kiro-cli scans PATH
-		// for language servers); regenerate the steering env on each list
-		// read is overkill, but forge logins need synchronous installs:
-		forgesPkg.EnsureTool = toolsEngine.EnsureInstalled
 	}
 
 	forgesManager := forgesPkg.NewManager()
@@ -176,11 +162,6 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Built-in editor saves fold into the owning chat's checkpoint
-	// timeline (pre-write capture; see hub.CaptureEditorSave). Only
-	// the editor's PUT /api/file path is captured — uploads, copies,
-	// and shell writes stay outside the checkpoint contract.
-	fileHandler.SetWriteObserver(h.CaptureEditorSave)
 	authHandler := auth.NewHandler(kiro.cliPath,
 		auth.WithConfig(cfg.AuthConfig),
 		auth.WithTrustedProxies(cfg.TrustedProxies))
@@ -218,21 +199,16 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return time.Duration(days) * 24 * time.Hour
 	}
 	purgeScheduler := chat.NewPurgeScheduler(ctx, chatStore, retention)
-	// Pre-archive teardown MUST run before the chat file moves so archiving
-	// routes through the same bridge/in-memory teardown a delete performs
-	// (minus the file removal + checkpoint reap) — no orphaned live bridge,
-	// no stranded in-flight turn, no ghost .partial. See hub.OnChatArchiving.
-	chat.WithPreArchive(func(id api.ChatID) {
-		h.OnChatArchiving(id)
+	// Retention must never delete a chat someone is using. Chats no longer
+	// move to an archive directory, so the purge scans the SAME directory live
+	// chats live in — this predicate is what keeps an old-but-open conversation
+	// out of it.
+	chat.WithLiveChats(h.HasLiveBridge)(chatStore)
+	chat.WithOnPurge(func(_ api.ChatID, sessionChain []string) {
+		for _, id := range sessionChain {
+			sessionReaper.Reap(id)
+		}
 	})(chatStore)
-	chat.WithOnArchive(func(id api.ChatID) {
-		h.OnChatArchived(id)
-		purgeScheduler.Trigger()
-	})(chatStore)
-	chat.WithOnPurge(func(chatID api.ChatID) {
-		h.CleanupCheckpoints(ctx, chatID)
-	})(chatStore)
-	chat.WithOldestCheckpointFn(h.CheckpointOldestTag)(chatStore)
 	purgeScheduler.Start()
 
 	srv := server.New(
@@ -484,6 +460,29 @@ func repoNamesFor(ctx context.Context, kind forgesPkg.Kind, host string) []strin
 // refusal (Config.VerifyRootIntegrity below) returns no engine and no error,
 // and Build carries on tool-less. Every other New failure still returns an
 // error and stops the boot, exactly as it did before the check existed.
+// wireToolsEngine builds the tools engine and, when the root is intact,
+// wires its consumers. A nil engine is the root-integrity degraded verdict
+// (buildToolsEngine), not an error. The tools-dependent wiring is skipped
+// rather than nil-guarding each consumer downstream: none of toolbelt's
+// methods is nil-receiver safe, and server.WithTools already omits the
+// /api/tools mount for a nil engine. forges.EnsureTool left nil makes a
+// forge login report "gh is not installed (tools engine unavailable)"
+// instead of panicking.
+func wireToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
+	toolsEngine, err := buildToolsEngine(cfg, h)
+	if err != nil {
+		return nil, err
+	}
+	if toolsEngine != nil {
+		warnIfNoLSPEnabled(toolsEngine)
+		// Installed-tool changes matter to the agent (kiro-cli scans PATH
+		// for language servers); regenerate the steering env on each list
+		// read is overkill, but forge logins need synchronous installs:
+		forgesPkg.EnsureTool = toolsEngine.EnsureInstalled
+	}
+	return toolsEngine, nil
+}
+
 func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,

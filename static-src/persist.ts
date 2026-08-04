@@ -25,9 +25,10 @@ export interface AppSettings {
   model_effort?: { last_model: string; effort: EffortLevel };
   /** Chat retention, owned end to end by vibekit (kiro-cli's own
    *  cleanup.periodDays is pinned to 0/never). Encoding: -1 = forever
-   *  (archive on close, never purged — "backups"), 0 = off (delete on
-   *  close, History hidden — ephemeral), N = keep N days (archive on
-   *  close, purged after N). */
+   *  (close keeps the chat, never purged — "backups"), 0 = off (delete on
+   *  close, History hidden — ephemeral), N = keep N days (close keeps the
+   *  chat, purged after N). There is no archive directory: "archived" is
+   *  computed from the chat's age against the window. */
   chat_retention_days?: number;
 }
 

@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
-	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"golang.org/x/sync/singleflight"
@@ -15,18 +14,16 @@ import (
 // reducing Hub's direct field count and clarifying the ownership
 // boundary: bridgeManager owns the map; Hub owns dispatch.
 type bridgeManager struct {
-	spawnSF  singleflight.Group
-	bridges  map[api.ChatID]*sharedBridge
-	factory  api.ACPBridgeFactory
-	inflight *sync.WaitGroup
-	mu       sync.Mutex
+	spawnSF singleflight.Group
+	bridges map[api.ChatID]*sharedBridge
+	factory api.ACPBridgeFactory
+	mu      sync.Mutex
 }
 
-func newBridgeManager(factory api.ACPBridgeFactory, inflight *sync.WaitGroup) *bridgeManager {
+func newBridgeManager(factory api.ACPBridgeFactory) *bridgeManager {
 	return &bridgeManager{
-		bridges:  make(map[api.ChatID]*sharedBridge),
-		factory:  factory,
-		inflight: inflight,
+		bridges: make(map[api.ChatID]*sharedBridge),
+		factory: factory,
 	}
 }
 
@@ -53,6 +50,23 @@ func (bm *bridgeManager) getOrInsert(chatID api.ChatID) (sb *sharedBridge, exist
 	bm.mu.Unlock()
 	slog.Info("bridge spawned", "chat_id", chatID)
 	return sb, false
+}
+
+// insert registers an ALREADY-STARTED bridge under chatID. The run-host path:
+// a run bridge's map key is its workflow id, which only `workflow/new`'s reply
+// knows, so the bridge is started first and registered once the key exists —
+// the inverse of getOrInsert's create-then-start. Replacing an existing entry
+// would orphan a live process, so insert refuses instead (the caller launched
+// the same run twice, which the single-run guard should have stopped).
+func (bm *bridgeManager) insert(chatID api.ChatID, sb *sharedBridge) bool {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	if _, exists := bm.bridges[chatID]; exists {
+		return false
+	}
+	bm.bridges[chatID] = sb
+	slog.Info("bridge registered", "chat_id", chatID)
+	return true
 }
 
 // remove deletes chatID from the map and returns the removed bridge
@@ -98,87 +112,11 @@ func (bm *bridgeManager) close(chatID api.ChatID) {
 	}
 }
 
-// culledBridge pairs a removed bridge with its chat id so callers of
-// closeAndStop can log eviction metadata (e.g. lastActiveAt) outside
-// the manager's lock.
-type culledBridge struct {
-	sb     *sharedBridge
-	chatID api.ChatID
-}
-
-// closeAndStop atomically removes the given chat IDs from the map
-// (under bm.mu) and fires sb.bridge.Stop() for each in a goroutine.
-// Returns the removed entries so callers can log eviction metadata
-// outside the lock. Ids not present in the map are silently skipped.
-// Used by Hub's idle-bridge culling path so Hub does not need to
-// reach into bm.bridges or hold bm.mu directly.
-func (bm *bridgeManager) closeAndStop(ids []api.ChatID) []culledBridge {
-	if len(ids) == 0 {
-		return nil
-	}
-	bm.mu.Lock()
-	culled := make([]culledBridge, 0, len(ids))
-	for _, id := range ids {
-		if sb, ok := bm.bridges[id]; ok {
-			delete(bm.bridges, id)
-			culled = append(culled, culledBridge{chatID: id, sb: sb})
-		}
-	}
-	bm.mu.Unlock()
-	// Stop runs outside the lock so a slow Stop doesn't block other
-	// bridgeMgr operations. Tracked via inflight WaitGroup so
-	// Hub.Shutdown waits for all cull-triggered stops.
-	for _, c := range culled {
-		if bm.inflight != nil {
-			bm.inflight.Go(func() {
-				c.sb.bridge.Stop()
-			})
-		} else {
-			go c.sb.bridge.Stop()
-		}
-	}
-	return culled
-}
-
-// selectIdleBridges returns the ids whose sharedBridge.lastActiveAt
-// is non-zero and strictly before now-idleTimeout. A bridge in the
-// bridgePrompting state is never selected: lastActiveAt is stamped at
-// prompt START (and again at release), so a legitimately long turn —
-// the Call doc says one "can legitimately run for hours" — would
-// otherwise be culled mid-turn once it outlives the timeout. Pure
-// function apart from the per-bridge mutex; no hub state, no I/O,
-// extracted so the cutoff boundary can be tested without driving a
-// real ticker.
-func selectIdleBridges(now time.Time, idleTimeout time.Duration, bridges map[api.ChatID]*sharedBridge) []api.ChatID {
-	cutoff := now.Add(-idleTimeout)
-	var out []api.ChatID
-	for id, sb := range bridges {
-		sb.mu.Lock()
-		idle := sb.state != bridgePrompting &&
-			!sb.lastActiveAt.IsZero() && sb.lastActiveAt.Before(cutoff)
-		sb.mu.Unlock()
-		if idle {
-			out = append(out, id)
-		}
-	}
-	return out
-}
-
-// selectIdle returns chat IDs whose bridges have been idle longer than
-// the given timeout. Delegates to the pure selectIdleBridges function
-// so the cutoff boundary can be exercised in isolation (see
-// hub_cull_test.go); this method only adds locking around the map.
-func (bm *bridgeManager) selectIdle(timeout time.Duration) []api.ChatID {
-	bm.mu.Lock()
-	defer bm.mu.Unlock()
-	return selectIdleBridges(time.Now(), timeout, bm.bridges)
-}
-
 // promptingChatIDs returns the chats whose bridge currently holds the
 // prompt slot (state == bridgePrompting) — i.e. exactly the chats a
 // new prompt would 409 on, which is the authoritative "busy" set the
-// connect-time turn_state replay synthesizes from. Same locking shape
-// as selectIdleBridges: bm.mu for the map, per-bridge mu for state.
+// connect-time turn_state replay synthesizes from. Locking shape:
+// bm.mu for the map, per-bridge mu for state.
 func (bm *bridgeManager) promptingChatIDs() []api.ChatID {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()

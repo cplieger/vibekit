@@ -25,12 +25,11 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/checkpoint"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/dedup"
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kirosession"
-	"github.com/cplieger/vibekit/internal/pending"
+	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/webhttp/sse"
 )
@@ -81,26 +80,25 @@ type ssePlane struct {
 	hub          *sse.Hub
 	idempotency  *dedup.Cache
 	pendingPerms *pendingPermsTracker
-	// turnMirror replicates each chat's in-flight turn from the emit
-	// stream for the connect-time turn_state replay (see turn_mirror.go).
-	turnMirror *turnMirror
+	// chatStatus holds each chat's last self-declared status, the one
+	// turn_state input that lives on no message and in no replay
+	// (chat_status.go). The in-flight MESSAGE comes from the assistant
+	// buffer, not from a replica.
+	chatStatus *chatStatusCache
 }
 
 // permPlane groups Hub fields related to permissions and supervision.
 type permPlane struct {
-	pending    *pending.Store
-	supervised *supervisedState
-	ignore     *ignore.Matcher
+	ignore *ignore.Matcher
 }
 
 // Hub is the central coordinator.
 type Hub struct {
-	lifecycle    *lifecyclePlane
-	bridge       *bridgePlane
-	sse          *ssePlane
-	perm         *permPlane
-	bufLifecycle *buffer.Lifecycle
-	coord        *BridgeCoordinator
+	lifecycle *lifecyclePlane
+	bridge    *bridgePlane
+	sse       *ssePlane
+	perm      *permPlane
+	coord     *BridgeCoordinator
 
 	push               api.PushService
 	chatStore          api.ChatStore
@@ -113,18 +111,35 @@ type Hub struct {
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
-	checkpoints        api.CheckpointService
 	sessionReaper      *kirosession.Reaper
-	sessionRefs        func(context.Context) map[string]struct{}
+	sessionRefs        func(context.Context) (map[string]struct{}, bool)
 	lines              *buffer.LineTracker
 	agentTerms         *agentTerminals
 	hookStatus         *hookStatusCache
 	governance         *governanceCache
 
+	// secrets holds the credential blobs KAS asks vibekit to persist on its
+	// behalf (_kiro/secret/*, bridge_v3_secret.go). ONE store for every
+	// bridge: KAS's key namespace is global, so sharing it is what lets a
+	// second bridge reuse the first one's MCP registration. Nil in tests and
+	// when no configDir is set → the handlers report "absent", which degrades
+	// to the pre-capability behaviour rather than failing an MCP connect.
+	secrets *secretstore.Store
+
+	// In-flight session/load replay projections (load_projection.go).
+	// Embedded ahead of the scalars below to keep govet fieldalignment happy:
+	// it carries pointers, so it must not sit after ciBusy.
+	projectionState
+
 	// Code-intelligence activation inputs + in-flight guard (code_intel.go).
 	ciGate func() bool
 	ciPath string
-	ciBusy atomic.Bool
+	// acpArgs are the filtered operator kiro-cli launch flags
+	// (VIBEKIT_KIRO_ACP_ARGS via WithACPArgs). Chat bridges only. Ordered last
+	// among the pointer-bearing fields for govet fieldalignment: a slice is 8
+	// of 24 pointer bytes, less dense than a string's 8 of 16.
+	acpArgs []string
+	ciBusy  atomic.Bool
 }
 
 // Option configures optional Hub parameters.
@@ -134,6 +149,14 @@ type Option func(*Hub)
 // checkpoints, and ignore rules.
 func WithConfigDir(dir string) Option {
 	return func(h *Hub) { h.lifecycle.configDir = dir }
+}
+
+// WithACPArgs sets the operator-supplied kiro-cli launch flags appended to
+// every CHAT bridge's argv. Pass them already filtered (bridge.ParseACPArgs);
+// the hub does not re-validate. Never reaches the utility bridge — see
+// BridgeCoordinator.acpArgs.
+func WithACPArgs(args []string) Option {
+	return func(h *Hub) { h.acpArgs = args }
 }
 
 // WithPush wires the push notification service at construction time.
@@ -151,9 +174,13 @@ func WithMCPConfig(c api.MCPConfig) Option {
 // WithSessionReaper wires the KAS session reaper and the referenced-session
 // thunk. The reaper removes on-disk kiro-cli/KAS session state: promptly on
 // chat delete (via cleanupChatState) and via a periodic orphan sweep that
-// spares any session id refs reports as still referenced by a live or
-// archived chat. Unset in tests → session reaping is a no-op.
-func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) map[string]struct{}) Option {
+// spares any session id refs reports as still referenced by a chat.
+// Unset in tests → session reaping is a no-op.
+//
+// refs returns (set, complete). A false `complete` means the keep-list could
+// not be fully determined, and the sweep is SKIPPED rather than run against a
+// partial one — see sweepSessionsOnce.
+func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[string]struct{}, bool)) Option {
 	return func(h *Hub) {
 		h.sessionReaper = r
 		h.sessionRefs = refs
@@ -175,49 +202,53 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		lifecycle: lc,
 		bridge: &bridgePlane{
 			factory:       factory,
-			mgr:           newBridgeManager(factory, &lc.inflight),
+			mgr:           newBridgeManager(factory),
 			assistantBufs: buffer.NewStore(),
 		},
 		sse: &ssePlane{
 			hub:          sseHub,
 			idempotency:  dedup.New(dedup.DefaultTTL, dedup.DefaultMaxEntries, dedup.DefaultMaxResult),
 			pendingPerms: newPendingPermsTracker(),
-			turnMirror:   newTurnMirror(),
+			chatStatus:   newChatStatusCache(),
 		},
-		perm: &permPlane{
-			pending: pending.New(),
-		},
+		perm:         &permPlane{},
 		chatStore:    chatStore,
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
 		governance:   newGovernanceCache(),
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
 	}
-	h.perm.supervised = newSupervisedState(h.Broadcast)
 	for _, o := range opts {
 		o(h)
 	}
 	h.translator = translate.New(h)
-	h.dispatcher = command.New(h, command.WithPrompter(h))
+	h.dispatcher = command.New(h)
 	h.registerCommandHandlers()
 	h.initDispatch()
 	h.mcpRegistry = newMCPRegistry(h)
+	// A settled session/load replay becomes the chat's transcript. Assigned
+	// here (not in the struct literal) because it is a method value on the
+	// fully-built Hub; see load_projection.go.
+	h.onProjection = h.swapProjectedTranscript
 	h.coord = newBridgeCoordinator(h)
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals()
-	h.bufLifecycle = &buffer.Lifecycle{
-		ConfigDir: lc.configDir,
-		Store:     h.bridge.assistantBufs,
-	}
 	if lc.configDir != "" {
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
-		h.checkpoints = checkpoint.NewStore(lc.configDir, workDir, func(chatID string, p *checkpoint.ConflictPayload) {
-			h.broadcastConflict(api.ChatID(chatID), p)
-		})
+		// Best-effort: a store that cannot be opened leaves h.secrets nil,
+		// and the _kiro/secret/* handlers then answer "absent" — MCP OAuth
+		// re-registers per spawn as it did before the capability, rather than
+		// the hub refusing to construct over a credential cache.
+		secrets, err := secretstore.New(lc.configDir)
+		if err != nil {
+			slog.Error("secretstore: open failed; MCP credentials will not persist", "error", err)
+		} else {
+			h.secrets = secrets
+		}
 	}
 	go h.cleanIdempotency()
-	go h.cullIdleBridges()
+	go h.cullIdleUtilityBridge()
 	go h.sweepSessionsLoop()
 	return h
 }
@@ -226,87 +257,6 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 // api.UtilityPrompter. The runtime is lazily constructed on first call.
 func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error) {
 	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
-}
-
-// CleanupCheckpoints removes a chat's checkpoint event log (the
-// content-addressed blob store is GC'd separately — there is no git
-// repository involved; see internal/checkpoint/events.go "Why JSONL
-// instead of git"). Safe to call even if the checkpoint store is nil
-// (no configDir).
-func (h *Hub) CleanupCheckpoints(ctx context.Context, chatID api.ChatID) {
-	if h.checkpoints != nil {
-		h.checkpoints.Cleanup(ctx, chatID)
-	}
-}
-
-// OnChatArchiving is the pre-archive hook wired to chat.WithPreArchive.
-// It runs the SAME in-memory teardown a delete performs — flush the
-// in-flight turn (CloseBridge), kill agent terminals, clear pending perms
-// + supervised trust, close+remove the .partial — EXCEPT it does not remove
-// the chat file (Archive moves it) and does not reap checkpoints (archive
-// is reversible; checkpoints are reaped only at purge / hard delete).
-//
-// It MUST run before the chat file is moved to the archive dir so that:
-//   - a live bridge can't outlive its chat record (invariant #3),
-//   - archiving mid-turn can't strand the in-flight turn (the moved file +
-//     tombstone would make Store.Mutate refuse the persist), and
-//   - no orphan .partial survives for RecoverPartials to resurrect as a
-//     ghost active chat after a restart.
-func (h *Hub) OnChatArchiving(chatID api.ChatID) {
-	ctx, cancel := h.hubContext()
-	defer cancel()
-	h.cleanupChatState(ctx, chatID, false)
-}
-
-// OnChatArchived is the post-archive callback wired to chat.WithOnArchive.
-// The in-memory teardown (including the line tracker) already ran in
-// OnChatArchiving before the file moved; checkpoints are deliberately NOT
-// reaped here (archive is reversible — a restored chat keeps its
-// file-restore/undo history; only purge / hard delete reap them). All that
-// remains is kicking off the async summary under the hub's inflight
-// WaitGroup so Shutdown can drain it. Skipped entirely when the hub is
-// already draining: no point spawning new work that's about to race teardown.
-func (h *Hub) OnChatArchived(chatID api.ChatID) {
-	if h.lifecycle.draining.Load() {
-		return
-	}
-	// Derive a fresh done-aware context for the summary goroutine
-	// (cancelled by h.lifecycle.done).
-	sumCtx, sumCancel := h.hubContext()
-	h.lifecycle.inflight.Go(func() {
-		defer sumCancel()
-		h.summarizeOnArchive(sumCtx, chatID)
-	})
-}
-
-// CheckpointOldestTag returns the earliest available checkpoint tag
-// for chatID, or "" when none exist. The chat store reads this when
-// building ChatHeader so the client can decide which turns still have
-// working Restore buttons.
-func (h *Hub) CheckpointOldestTag(ctx context.Context, chatID api.ChatID) string {
-	if h.checkpoints == nil {
-		return ""
-	}
-	return string(h.checkpoints.OldestTag(ctx, chatID))
-}
-
-// StartCheckpointBackgroundTasks kicks off the blob GC ticker and
-// runs the initial sweep. Called from main.go after Hub construction
-// so tests can opt out.
-func (h *Hub) StartCheckpointBackgroundTasks() {
-	if h.checkpoints == nil {
-		return
-	}
-	h.checkpoints.StartBackgroundTasks(h.lifecycle.shutdownCtx)
-}
-
-// StopCheckpointBackgroundTasks halts the blob GC goroutine. Called
-// from Hub.Shutdown.
-func (h *Hub) StopCheckpointBackgroundTasks() {
-	if h.checkpoints == nil {
-		return
-	}
-	h.checkpoints.Stop()
 }
 
 // MCPRegistry returns the in-memory registry of currently-connected MCP
@@ -358,14 +308,16 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("/api/command", h.dispatcher)
 	mux.HandleFunc("/api/shell/ws", h.handleShellWS)
 	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
-	mux.HandleFunc("/api/pending-changes/", h.handlePendingChange)
-	h.registerCheckpointRoutes(mux)
 	h.registerKnowledgeRoutes(mux)
-	h.registerSpecRoutes(mux)
 	h.registerHooksRoutes(mux)
 	h.registerGovernanceRoutes(mux)
 	// Pre-session mode + model catalog (kiro-cli 2.14 _kiro/config/template).
 	mux.HandleFunc("GET /api/config-template", h.handleConfigTemplate)
+	mux.HandleFunc("GET /api/sessions", h.handleSessionList)
+	mux.HandleFunc("GET /api/runs/{id}", h.handleRun)
+	mux.HandleFunc("POST /api/runs", h.handleRunLaunch)
+	mux.HandleFunc("POST /api/runs/{id}/cancel", h.handleRunCancel)
+	mux.HandleFunc("GET /api/recipes", h.handleRecipes)
 }
 
 // Shutdown drains in-flight prompts and closes all bridges.
@@ -404,18 +356,11 @@ func (h *Hub) Shutdown() {
 		sb.bridge.Stop()
 	}
 
-	// 1b. Reject every outstanding Supervised-mode pending op. Without
-	// this, an fs handler parked on <-wait in stageFSWrite would block
-	// forever: bridge.Stop has already broken kiro-cli's ability to
-	// send session/cancel, and the user can't click "Reject" on a
-	// shutting-down server. inflight.Wait below would either time out
-	// at the HTTP server level or leak goroutines until process exit.
-	// Flushing here unblocks every handler with accepted=false; each
-	// then returns "change rejected by user" to a kiro-cli that's
-	// already dead, which is harmless.
-	for _, id := range h.listChatIDsWithPending() {
-		h.flushPendingForChat(h.lifecycle.shutdownCtx, id, api.ClearReasonShutdown)
-	}
+	// 1b. There is no pending-write flush at shutdown any more. It existed because a
+	// staged write blocked an fs handler until a human answered, and a shutting-down
+	// server could never deliver that answer — so every such handler had to be
+	// unblocked with accepted=false. KAS holds the writes now, so no vibekit
+	// goroutine is parked waiting on a verdict and there is nothing to unblock.
 
 	// 1c. Cancel the push service's request context so any pending
 	// browser-push HTTP round-trips unblock via context cancellation
@@ -434,9 +379,6 @@ func (h *Hub) Shutdown() {
 	// 3. Stop utility bridge.
 	h.stopUtilityBridge()
 
-	// 4. Stop checkpoint background tasks (blob GC ticker).
-	h.StopCheckpointBackgroundTasks()
-
 	// 4b. Kill all agent terminal subprocesses.
 	h.agentTerms.drainAll()
 
@@ -446,6 +388,9 @@ func (h *Hub) Shutdown() {
 	slog.Info("hub shutdown complete")
 }
 
+// bridgeIdleTimeout bounds how long the tab-less utility session may sit
+// idle before it is stopped. It does NOT apply to chat bridges — those are
+// owned by their tab (see cullIdleUtilityBridge).
 const bridgeIdleTimeout = 30 * time.Minute
 
 // --- Broadcast ---
@@ -481,15 +426,6 @@ func (h *Hub) Draining() bool {
 // allocation child context.
 func (h *Hub) hubContext() (context.Context, context.CancelFunc) {
 	return context.WithCancel(h.lifecycle.shutdownCtx)
-}
-
-// broadcastConflict fans a cross-chat drift event out to SSE
-// subscribers. Wired into checkpoint.NewStore; every call is the
-// result of a Snapshot detecting drift, so we just wrap the
-// payload into a ServerEvent. Since api.ConflictDetectedPayload is
-// a type alias for checkpoint.ConflictPayload, no field copy needed.
-func (h *Hub) broadcastConflict(chatID api.ChatID, p *checkpoint.ConflictPayload) {
-	h.Broadcast(h.lifecycle.shutdownCtx, api.NewEvent(api.EventConflictDetected, chatID, *p))
 }
 
 // parentACPSession returns the ACP session id of the running bridge
@@ -542,23 +478,54 @@ func (h *Hub) sweepSessionsLoop() {
 	}
 }
 
-// sweepSessionsOnce runs one orphan-session sweep against a fresh referenced
-// set (every active + archived chat's acp_session_id), plus the live utility
-// bridge's session — it is referenced by no chat, and without the exemption
-// the sweep would delete its on-disk KAS state from under the live
-// subprocess once it idles past the reaper's age guard (10 min guard vs the
-// 30 min utility cull leaves a window every hourly sweep can land in).
+// sweepSessionsOnce runs one orphan-session sweep. The keep-list is
+//
+//	every session in every active + archived chat's CHAIN  ∪  every LIVE session
+//
+// and both halves are needed for the same reason: age is not evidence that a
+// session is disposable.
+//
+// The live half used to be one ad-hoc exemption for the utility bridge, whose
+// own comment named the failure mode — without it the sweep deletes on-disk
+// KAS state from under a live subprocess once it ages past the 10-minute
+// guard, because that guard is a create-race cushion and not a liveness test.
+// Any bridge holding a session that no chat references hits the same bug, so
+// the exemption is now general rather than a special case beside a gap.
+//
+// A sweep is SKIPPED entirely when the keep-list is incomplete. Sweeping with
+// a partial list deletes the sessions of whatever chat could not be read; not
+// sweeping only postpones reclaiming disk until the next hour.
 func (h *Hub) sweepSessionsOnce() {
 	ctx, cancel := h.hubContext()
 	defer cancel()
-	refs := h.sessionRefs(ctx)
-	if id := h.utilityLiveSessionID(); id != "" {
-		if refs == nil {
-			refs = map[string]struct{}{}
-		}
+	refs, complete := h.sessionRefs(ctx)
+	if !complete {
+		slog.Warn("kirosession: skipping orphan sweep, keep-list incomplete (a chat file could not be read)")
+		return
+	}
+	if refs == nil {
+		refs = map[string]struct{}{}
+	}
+	for _, id := range h.liveSessionIDs() {
 		refs[id] = struct{}{}
 	}
 	h.sessionReaper.Sweep(refs)
+}
+
+// liveSessionIDs returns the ACP session id of every bridge vibekit currently
+// holds: each chat bridge plus the utility session. These are exempt from the
+// sweep at any age — a live subprocess is using the directory.
+func (h *Hub) liveSessionIDs() []string {
+	var ids []string
+	for _, sb := range h.bridge.mgr.all() {
+		if id := string(sb.bridge.SessionID()); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if id := h.utilityLiveSessionID(); id != "" {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // utilityLiveSessionID snapshots the utility runtime pointer under
@@ -577,7 +544,7 @@ func (h *Hub) utilityLiveSessionID() string {
 // stopUtilityBridge stops the utility session if it exists.
 //
 // The h.bridge.utility field read + nil is guarded by h.lifecycle.mu so it
-// serialises with cullIdleBridgesOnce, which reads the same field under
+// serialises with cullIdleUtilityBridgeOnce, which reads the same field under
 // that lock (snapshot-and-release). Only called from Shutdown, where
 // inflight.Wait() has already returned, so no in-flight turn or RPC holds
 // a lease on the session being stopped.
@@ -592,12 +559,16 @@ func (h *Hub) stopUtilityBridge() {
 	u.session.Stop()
 }
 
-// cullIdleBridges stops bridges that have been idle for longer than
-// bridgeIdleTimeout. Runs every 60 seconds. The next prompt on a
-// culled chat will create a fresh bridge via getOrCreateBridge (which
-// already handles session/load for existing ACP sessions). Exits on
-// Shutdown via h.lifecycle.done so a late tick can't race bridge teardown.
-func (h *Hub) cullIdleBridges() {
+// cullIdleUtilityBridge stops the utility session once it has been idle
+// for longer than bridgeIdleTimeout. Runs every 60 seconds. Exits on
+// Shutdown via h.lifecycle.done so a late tick can't race teardown.
+//
+// CHAT bridges are deliberately NOT swept. A chat open in a tab owns its
+// process for as long as the tab is open: nothing auto-kills the process,
+// its turn, or its runs, and closing the tab kills all of it. The utility
+// session is the one bridge with no tab to own it — it is a pool of one-shot
+// text generators — so an idle timer is the right bound there and only there.
+func (h *Hub) cullIdleUtilityBridge() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for {
@@ -605,33 +576,19 @@ func (h *Hub) cullIdleBridges() {
 		case <-h.lifecycle.done:
 			return
 		case <-ticker.C:
-			h.cullIdleBridgesOnce()
+			h.cullIdleUtilityBridgeOnce()
 		}
 	}
 }
 
-// cullIdleBridgesOnce runs one sweep of the cull logic: chat bridges
-// first (delete-and-Stop in one pass), then the utility bridge under
-// its own mutex. Exported via lowercase to keep the hot path testable
-// without driving a real ticker.
-func (h *Hub) cullIdleBridgesOnce() {
-	count := h.bridge.mgr.count()
-	timeout := bridgeIdleTimeout
-	if count > 5 {
-		adaptive := max(bridgeIdleTimeout/time.Duration(count), 5*time.Minute)
-		timeout = adaptive
-	}
-	toClose := h.bridge.mgr.selectIdle(timeout)
-	for _, c := range h.bridge.mgr.closeAndStop(toClose) {
-		slog.Info("culled idle bridge", "chat_id", c.chatID,
-			"idle_since", c.sb.lastActiveAt.UTC().Format(time.RFC3339))
-	}
-	// Utility session: stopIfIdle owns the victim-capture dance (the
-	// session mutex is short-held, so this never waits behind an
-	// in-flight text turn; acquire bumps lastActiveAt at turn start, so a
-	// live turn is trivially "recently active"). h.bridge.utility itself
-	// is read under h.lifecycle.mu (snapshot-and-release) so a concurrent
-	// stopUtilityBridge clearing the field can't tear the pointer read.
+// cullIdleUtilityBridgeOnce runs one utility-session sweep. stopIfIdle owns
+// the victim-capture dance (the session mutex is short-held, so this never
+// waits behind an in-flight text turn; acquire bumps lastActiveAt at turn
+// start, so a live turn is trivially "recently active"). h.bridge.utility
+// itself is read under h.lifecycle.mu (snapshot-and-release) so a concurrent
+// stopUtilityBridge clearing the field can't tear the pointer read. Lowercase
+// rather than inlined so the sweep is testable without driving a real ticker.
+func (h *Hub) cullIdleUtilityBridgeOnce() {
 	h.lifecycle.mu.Lock()
 	u := h.bridge.utility
 	h.lifecycle.mu.Unlock()

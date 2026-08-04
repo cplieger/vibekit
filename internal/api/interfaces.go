@@ -13,16 +13,12 @@
 // Atomic file I/O (SaveBytes, bounded reads) lives in the external
 // cplieger/atomicfile package, not here.
 //
-// Implementation packages import api, never the reverse. Domain types
-// Tag, FileChange, and ConflictPayload live in checkpoint/types (a
-// leaf package with zero internal dependencies).
+// Implementation packages import api, never the reverse.
 package api
 
 import (
 	"context"
 	"net/http"
-
-	checkpoint "github.com/cplieger/vibekit/internal/checkpoint/types"
 )
 
 // --- Persistence ---
@@ -41,10 +37,6 @@ type ChatStore interface {
 	// List returns every chat's header (no messages) sorted by UpdatedAt
 	// descending. Checks ctx.Err() between per-file reads.
 	List(ctx context.Context) []ChatHeader
-	// ChildrenOf returns the IDs of chats whose ParentChatID equals
-	// parentID. Used by delete to cascade to rewind children without
-	// loading the full chat list.
-	ChildrenOf(ctx context.Context, parentID ChatID) []ChatID
 	// BuildHistory returns a plain-text transcript used for compress
 	// priming. Returns "" if the chat is missing or empty.
 	BuildHistory(ctx context.Context, id ChatID) string
@@ -56,36 +48,6 @@ type ChatStore interface {
 	Mutate(ctx context.Context, id ChatID, mutate func(c *Chat, exists bool) bool) error
 	// Delete removes the chat file and broadcasts chat_deleted.
 	Delete(ctx context.Context, id ChatID) error
-	// DeleteFamily removes a chat and its rewind children as one named
-	// transition with explicit ordering and truthful results: children
-	// are deleted FIRST (no crash window leaves a child referencing a
-	// deleted parent), the parent LAST. prepare (optional) runs before
-	// each record's deletion so the caller can tear down per-chat side
-	// effects (bridge, terminals, .partial) in the same order. Children
-	// whose deletion failed are returned — still listed, still
-	// deletable; a parent failure is the returned error (its children
-	// are already gone at that point).
-	DeleteFamily(ctx context.Context, parentID ChatID, prepare func(ChatID)) (failedChildren []ChatID, err error)
-	// PromoteRewind clears a rewind chat's parent linkage (ParentChatID
-	// + RewindFromTurn) as a single checked, per-chat-locked transition,
-	// returning the former parent id for the caller to clean up and
-	// delete. Errors: ErrChatNotFound when the chat does not exist,
-	// ErrNotRewind when it has no parent; on ANY error the linkage is
-	// untouched — a promote never reports success while the
-	// relationship is still intact.
-	PromoteRewind(ctx context.Context, childID ChatID) (parentID ChatID, err error)
-	// Archive moves a chat to the archive directory instead of deleting.
-	Archive(ctx context.Context, id ChatID) error
-	// ListArchived returns headers for all archived chats.
-	ListArchived(ctx context.Context) []ChatHeader
-	// RestoreArchived moves a chat from the archive back to active.
-	RestoreArchived(ctx context.Context, id ChatID) error
-	// UpdateArchivedSummary rewrites an archived chat's Summary field.
-	UpdateArchivedSummary(ctx context.Context, id ChatID, summary string) error
-	// LoadArchived returns the parsed archived chat.
-	LoadArchived(ctx context.Context, id ChatID) (*Chat, error)
-	// DeleteArchived permanently removes a single archived chat.
-	DeleteArchived(ctx context.Context, id ChatID) error
 	// AppendMessage appends msg to the chat's messages.
 	AppendMessage(ctx context.Context, chatID ChatID, msg *Message) error
 	// UpdateMessage mutates one message in place (by ID).
@@ -110,8 +72,6 @@ type CommandBridge interface {
 	TryAcquireForPrompt() bool
 	// ReleaseAfterPrompt releases the prompt lock.
 	ReleaseAfterPrompt()
-	// SetLastActive updates the last-active timestamp.
-	SetLastActive()
 	// SetPrompting sets the bridge state to prompting (for recovery).
 	SetPrompting()
 	// IsPrimed reports whether the bridge has been primed.
@@ -141,14 +101,23 @@ type Hub interface {
 
 // StartOpts collects the parameters for ACPBridge.Start. All fields are
 // optional; a zero-value StartOpts creates a new session with no model
-// override and no MCP servers.
+// override.
+//
+// There is no MCPServers field. The user's MCP servers reach KAS through its own
+// config file, which vibekit renders — passing them on session/new would OUTRANK
+// that file and freeze the set for the session's lifetime.
 type StartOpts struct {
 	SessionID   string
 	Model       string
 	Effort      string
 	AgentEngine string
 	Mode        string
-	MCPServers  []map[string]any
+	// ExtraArgs are operator-supplied kiro-cli launch flags
+	// (VIBEKIT_KIRO_ACP_ARGS), already filtered, appended after the args
+	// vibekit derives itself. Set on CHAT bridges only — never on the utility
+	// bridge, where an `--effort max` would spend real credits generating a
+	// two-word title. See bridge.FilterACPArgs.
+	ExtraArgs []string
 	// EnableHooks opts the session into KAS's v2 hook engine by
 	// declaring _meta.kiro.hooks={enabled,v2} in the initialize
 	// handshake. Set on BOTH the utility bridge (so the hooks-management
@@ -158,6 +127,14 @@ type StartOpts struct {
 	// does not call back the client to execute autofired hooks. See
 	// internal/hub/hooks.go and internal/hub/bridge_coord.go.
 	EnableHooks bool
+	// Supervised requests KAS's turn-approval gate for this session, by setting
+	// the `autopilot` config option to FALSE at session/new.
+	//
+	// A value passed once at creation, not a flag vibekit enforces: it persists
+	// into KAS's own session metadata, so it survives session/load and never needs
+	// re-asserting. Everything vibekit used to do to hold writes back — staging
+	// them, mirroring them, resolving them one at a time — is KAS's now.
+	Supervised bool
 }
 
 // ACPBridge manages a single kiro-cli ACP subprocess for one chat. Methods
@@ -192,6 +169,12 @@ type ACPBridge interface {
 	// CurrentMode returns the currently-active session mode id (empty
 	// if the agent doesn't expose modes).
 	CurrentMode() string
+	// SessionTitle returns KAS's own title for the session, from the
+	// session/new or session/load result's flat _meta.title. Creation
+	// always yields the literal "New Session"; load yields the real
+	// stored title. Advisory — the caller adopts it only for a chat that
+	// is still default-named.
+	SessionTitle() string
 	// Modes returns the set of session modes the running agent
 	// supports. Empty for agents that don't expose modes.
 	Modes() []SessionMode
@@ -272,8 +255,9 @@ type PushService interface {
 // UtilityPrompter is the narrow interface for AI-backed prompt
 // generation (error explanations, conflict resolution, commit messages).
 // Declared here so both the server and git packages share a single
-// typed contract. effort is the per-task reasoning-effort level: cheap
-// tasks (titles, summaries, error explanations) pass EffortLow, tasks
+// typed contract. It is NOT used for chat titles — those come from KAS
+// (see translate/focus.go). effort is the per-task reasoning-effort
+// level: cheap tasks (summaries, error explanations) pass EffortLow, tasks
 // that read a diff or merge code (commit messages, PR descriptions,
 // conflict resolution) pass EffortMedium; "" keeps the session's current
 // level. Best-effort — a model with no effort config ignores it.
@@ -292,48 +276,7 @@ type AccountUsageProvider interface {
 
 // --- Pending Changes ---
 
-// PendingStore is the consumer-side interface for the pending-change
-// subsystem. The hub uses these methods for SSE replay, rejection on
-// bridge teardown, and full-content retrieval. The concrete
-// *pending.Store satisfies this interface implicitly.
-type PendingStore interface {
-	// ListForChat returns all pending changes for the given chat.
-	ListForChat(chatID ChatID) []PendingChange
-	// Get returns a single pending change by tool-call ID.
-	Get(toolCallID string) (PendingChange, bool)
-	// ChatIDs returns the IDs of all chats with pending changes.
-	ChatIDs() []ChatID
-	// RejectAllForChat rejects all pending changes for the given chat,
-	// returning the rejected snapshots.
-	RejectAllForChat(chatID ChatID) []PendingChange
-	// Resolve resolves a single pending change with the given action.
-	// chatID scopes the resolution: an op whose ChatID differs is treated
-	// as unknown, so a resolve command carrying a mismatched chat_id can
-	// never settle another chat's op.
-	Resolve(ctx context.Context, chatID ChatID, toolCallID string, action PendingAction) (PendingChange, error)
-}
-
-// --- Checkpoints ---
-
-// CheckpointService is the consumer-side interface for the checkpoint
-// subsystem. Enables stub/mock injection in hub tests without
-// constructing a real checkpoint.Store with filesystem state.
-type CheckpointService interface {
-	Snapshot(ctx context.Context, chatID ChatID, relPath string, newContent []byte, messageCount int) (checkpoint.Tag, error)
-	// OwnerOf returns the chat whose agent most recently wrote relPath
-	// (the owner of the path's checkpoint lineage), or ok=false when no
-	// chat tracks the path. Warms the cross-chat index from disk on
-	// first use so a cold process answers correctly.
-	OwnerOf(ctx context.Context, relPath string) (ChatID, bool)
-	Restore(ctx context.Context, chatID ChatID, tag checkpoint.Tag) (int, error)
-	RestorePreview(ctx context.Context, chatID ChatID, tag checkpoint.Tag) ([]string, error)
-	CheckoutFile(ctx context.Context, chatID ChatID, tag checkpoint.Tag, relPath string) error
-	Diff(ctx context.Context, chatID ChatID, from, to checkpoint.Tag) ([]checkpoint.FileChange, error)
-	Conflicts(ctx context.Context, chatID ChatID) ([]checkpoint.ConflictPayload, error)
-	ReadBlob(ctx context.Context, chatID ChatID, sha string) ([]byte, error)
-	OldestTag(ctx context.Context, chatID ChatID) checkpoint.Tag
-	AdvanceTurn(ctx context.Context, chatID ChatID, messageCount int)
-	Cleanup(ctx context.Context, chatID ChatID)
-	StartBackgroundTasks(ctx context.Context)
-	Stop()
-}
+// There is no PendingStore interface. It existed for vibekit's own staging queue
+// — SSE replay of staged ops, rejection on bridge teardown, full-content
+// retrieval — and all three are gone with internal/pending. KAS's turn approval
+// arrives as an ordinary permission request, so the permission tracker covers it.

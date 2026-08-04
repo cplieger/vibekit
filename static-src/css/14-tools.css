@@ -14,16 +14,13 @@
   animation: vk-slide-up var(--dur-enter) var(--ease-enter) both;
 }
 
-/* Simple tier: 1-line card, no toggle, no expandable body. */
-:where(.tool-tier-simple) .tool-toggle {
-  display: none;
-}
+/* A claim-only card (read, delete, hook, think, switch_mode) has no depth 1, and
+   neither its toggle nor its details region is BUILT — there is nothing to hide,
+   so there is no rule here. This used to key off a display TIER that conflated
+   "has a toggle" with "how much output", hiding a toggle that still existed in
+   the accessibility tree, and denying an edit card any way to expand at all. */
 
-:where(.tool-tier-simple) .tool-details {
-  display: none;
-}
-
-/* Medium tier: 2-line card with subtitle row. */
+/* Second claim fact for search / fetch / generic kinds. */
 .tool-subtitle {
   padding: 0 0.75rem var(--sp-2);
   font-size: var(--fs-xs);
@@ -34,24 +31,51 @@
   font-family: var(--font-mono);
 }
 
-/* Complex tier: scrollable output box that grows from 1 line to max
-   ~6 lines (7.5rem), then becomes scrollable. Shows the bottom of
-   the output so the user sees the latest; scroll up for history. */
-.tool-output-box {
-  border-top: 1px solid var(--c-border);
-  max-height: 7.5rem;
-  overflow-y: auto;
-  padding: var(--sp-1) 0.75rem;
+/* There is no .tool-output-box. A command's output was an always-visible,
+   unwindowed box; it is a windowed reveal inside the card's own disclosure now
+   (first and last 20 lines, the rest one click further). */
+
+/* The reveal control for a windowed output's elided middle. The only depth 2 in
+   the ladder that does not leave the transcript. */
+.tool-output-reveal {
+  display: block;
+  margin: var(--sp-1) 0 0;
+  padding: 0.125rem var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  background: var(--c-bg-primary);
+  color: var(--c-text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.tool-output-reveal:hover {
+  background: var(--c-bg-hover);
+  color: var(--c-text-primary);
+}
+
+/* `from -> to`, the two facts a move's claim line cannot carry. */
+.tool-move-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 0.75rem var(--sp-2);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
-  line-height: 1.4;
+  min-width: 0;
 }
 
-.tool-output-box pre {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.tool-move-from,
+.tool-move-to {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-move-arrow {
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
 }
 
 /* Tool call grouping */
@@ -122,16 +146,48 @@
   min-width: 0; /* allow ellipsis on flex children */
 }
 
+/* THE OUTCOME LIVES HERE. The per-kind glyph carries whether-it-worked by tint
+   PLUS a composited check/cross, because tint alone is a single channel and
+   would fail WCAG 1.4.1 exactly as a bare coloured dot does. The status WORD is
+   gone from the visible row; the card's aria-label carries it. */
 .tool-icon {
+  position: relative;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   color: var(--c-accent);
+  transition: color var(--dur-micro) var(--ease-micro);
 }
 
 .tool-icon svg {
   display: block;
+}
+
+.tool-icon.is-ok {
+  color: var(--c-green);
+}
+
+.tool-icon.is-fail {
+  color: var(--c-red);
+}
+
+/* Running keeps the accent: the spinner beside it is the motion channel. */
+.tool-icon.is-running {
+  color: var(--c-accent);
+}
+
+.tool-outcome-badge {
+  position: absolute;
+  inset-block-end: -0.15rem;
+  inset-inline-end: -0.25rem;
+  font-size: 0.5rem;
+  line-height: 1;
+  font-weight: var(--fw-semibold);
+  /* Punched out of the card background so the glyph stays readable underneath. */
+  background: var(--c-bg-secondary);
+  border-radius: 50%;
+  padding: 0.05rem;
 }
 
 .tool-title {
@@ -167,27 +223,16 @@
   animation: vk-spin 0.8s linear infinite;
 }
 
-.tool-status {
-  font-size: var(--fs-xs);
-  padding: 0.125rem var(--sp-2);
-  border-radius: var(--r);
-  background: var(--c-bg-primary);
+/* No .tool-status rules: the status word they styled is deleted. A finished card
+   printing the literal enum value `completed` was the claim "Tool call
+   completed", which restates nothing the row does not already say. */
 
-  &.pending {
-    color: var(--c-text-tertiary);
-  }
-
-  /* stylelint-disable-next-line selector-class-pattern -- class mirrors the server's snake_case tool-status enum value */
-  &.in_progress {
-    color: var(--c-yellow);
-  }
-  &.completed {
-    color: var(--c-green);
-  }
-
-  &.failed {
-    color: var(--c-red);
-  }
+/* The group header wears the same glyph, tinted to the worst status inside. */
+.tool-group-icon {
+  width: 0.85rem;
+  font-size: 0.7rem;
+  font-weight: var(--fw-semibold);
+  text-align: center;
 }
 
 .tool-toggle {
@@ -343,16 +388,18 @@
 /* Assistant block region — a pure logical grouping (no layout box) so the
  * text bubbles / reasoning / tool groups / subagent blocks flow inside the
  * assistant message wrap exactly as they did before the grouping element
- * existed. Keeps mountPlan/mountFooter's `:scope > .plan-message`/`.turn-footer`
- * queries against the wrap correct while blocks live under .assistant-blocks. */
+ * existed. Keeps mountPlan's `:scope > .plan-message` query against the wrap
+ * correct while blocks live under .assistant-blocks. */
 .assistant-blocks {
   display: contents;
 }
 
-/* Subagent block — a collapsible section whose body hosts the subagent's OWN
- * blocks (real tool cards, reasoning, text) rendered by the same dispatcher,
- * giving full parity with the main transcript. Open while the subagent runs;
- * auto-collapses once it settles (the IDE baseline). */
+/* The delegated-work card — a subagent's or a workflow step's box. The body
+ * hosts the delegate's OWN blocks (real tool cards, reasoning, text) rendered
+ * by the same dispatcher, full parity with the main transcript. COLLAPSED BY
+ * DEFAULT, always: the expanded state is worth nothing when N delegates
+ * stream at once, and the result is read from the footer. A rolling tail
+ * (last 3 lines) answers "which are progressing" while running + collapsed. */
 .subagent-block {
   background: var(--c-bg-secondary);
   border: 1px solid color-mix(in srgb, var(--c-accent) 35%, transparent);
@@ -448,6 +495,35 @@
 .subagent-body[aria-hidden="true"] {
   padding-block: 0;
   border-block-start: none;
+}
+
+/* The tail: rolling activity, shown only while RUNNING and COLLAPSED —
+   expanding shows the real thing, and a settled card's last word is its
+   footer. Fixed max-height so a burst of long lines cannot grow the card. */
+.subagent-tail {
+  display: none;
+  padding: var(--sp-1) var(--sp-3) var(--sp-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden;
+}
+
+.subagent-block.collapsed.running .subagent-tail {
+  display: block;
+}
+
+.subagent-tail-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The footer ledger is turn-footer.ts reused; only its seams differ here. It
+   sits OUTSIDE the disclosure, so a collapsed card still states its result. */
+.subagent-footer {
+  border-block-start: 1px solid var(--c-border);
+  padding-inline: var(--sp-2);
 }
 
 /* Nested blocks fill the subagent body (no avatar column, no 85% cap). */
@@ -1059,35 +1135,10 @@
   color: var(--c-text-primary);
 }
 
-[id="tool-approval"] {
-  margin: 0 var(--sp-4) var(--sp-2);
-  padding: var(--sp-3);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-yellow);
-  border-radius: var(--r);
-  flex-shrink: 0;
-  opacity: 1;
-  transform: scale(1);
-  transition:
-    opacity var(--dur-enter) var(--ease-enter),
-    transform var(--dur-enter) var(--ease-enter),
-    display var(--dur-enter) allow-discrete;
-
-  @starting-style {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-}
-
-[id="tool-approval"].hidden {
-  opacity: 0;
-  transform: scale(0.95);
-  display: none;
-  transition:
-    opacity var(--dur-exit) var(--ease-exit),
-    transform var(--dur-exit) var(--ease-exit),
-    display var(--dur-exit) allow-discrete;
-}
+/* No [id="tool-approval"] rules: the permission ask is a .dock-card in the
+   interaction dock (26-dock.css), not a positioned <dialog> with a backdrop.
+   The body/id/input/actions rules below are still used — they style the card's
+   CONTENTS, which the dock hosts unchanged. */
 
 .approval-body strong {
   color: var(--c-yellow);
@@ -1241,22 +1292,9 @@
   margin-block: var(--sp-2) var(--sp-1);
 }
 
-/* MCP elicitation dialog: a form requested by an MCP server mid-tool-run.
-   Styled as a centered modal (native <dialog> showModal) rather than the
-   inline tool-approval banner, since it can carry several input fields. */
-[id="elicitation-dialog"] {
-  margin: auto;
-  max-inline-size: min(32rem, 92vw);
-  padding: var(--sp-4);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-accent);
-  border-radius: var(--r);
-  color: var(--c-text-primary);
-}
-
-[id="elicitation-dialog"]::backdrop {
-  background: rgb(0 0 0 / 45%);
-}
+/* MCP elicitation form: requested by an MCP server mid-tool-run. No
+   [id="elicitation-dialog"] shell and no ::backdrop — it is a .dock-card in the
+   interaction dock (26-dock.css). Only its FIELD styling lives here. */
 
 .elicitation-body {
   display: flex;
@@ -1356,24 +1394,12 @@
   color: var(--warning, #d9a03f);
 }
 
-/* Agent user-input question dialog (kiro-cli v3 _kiro/userInput): the agent
-   asks a structured question mid-turn (plan clarifications, spec gates).
-   Same centered-modal treatment as the elicitation dialog; the options are
-   full-width choice cards, an option's sub-options render as a pre-checked
-   multi-select stage, and a typed answer is always available. */
-[id="user-input-dialog"] {
-  margin: auto;
-  inline-size: min(32rem, 92vw);
-  padding: var(--sp-4);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-accent);
-  border-radius: var(--r);
-  color: var(--c-text-primary);
-}
-
-[id="user-input-dialog"]::backdrop {
-  background: rgb(0 0 0 / 45%);
-}
+/* Agent question (kiro-cli v3 _kiro/userInput): asked mid-turn for plan
+   clarifications and spec gates. A .dock-card in the interaction dock
+   (26-dock.css), so there is no [id="user-input-dialog"] shell and no
+   ::backdrop. Options are full-width choice cards, an option's sub-options
+   render as a pre-checked multi-select stage, and a typed answer is always
+   available — that part is styled here. */
 
 .user-input-body {
   margin-block-end: var(--sp-3);

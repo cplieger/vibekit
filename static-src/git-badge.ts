@@ -29,7 +29,8 @@
 
 import { onSSE } from "./bus.js";
 import { $ } from "./dom.js";
-import { refreshGitBadge as refreshGitBadgeAction } from "./actions/git-badge.js";
+import { refreshForges as refreshForgesAction } from "./actions/git-badge.js";
+import { initGitStatusStore, onGitStatusChange, currentRepos } from "./git-status-store.js";
 import { pollAction } from "./actions/index.js";
 import type { GitRepoStatusBadge } from "./git-types.js";
 import type { ConfiguredForge } from "./wire/types.gen.js";
@@ -55,50 +56,55 @@ interface ForgesListResponse {
 let started = false;
 let lastState: BadgeState = { kind: "none" };
 let lastTooltip = "";
+/** Last forges response. The badge still owns this fetch — only the git STATUS
+ *  half moved to the shared store. */
+let lastForges: ForgesListResponse | null = null;
 
-/** Wire SSE listeners + start the poll. Idempotent. */
+/** Wire SSE listeners + start the badge. Idempotent.
+ *
+ *  The git-status poll is NOT started here any more: git-status-store.ts owns
+ *  it, and the badge repaints from its subscription. That removed one of the two
+ *  independent /api/git/status-all pollers, and is what let the docs page and
+ *  the file browser get per-path letters without adding a third. */
 export function initGitBadge(): void {
   if (started) {
     return;
   }
   started = true;
-  onSSE("turn_ended", () => {
-    void refreshGitBadge();
-  });
+  initGitStatusStore();
   onSSE("forges_changed", () => {
     void refreshGitBadge();
   });
-  // pollAction handles cleanup, pause-when-hidden (no need to refresh
-  // the badge when the user can't see it), and refresh-on-focus (instant
-  // freshness when the user returns to the tab). The action's result is
-  // projected to the DOM via onSuccess.
-  pollAction(refreshGitBadgeAction, undefined, {
+  // Repaint whenever the shared store lands a new poll result. Fires
+  // immediately with the current (initially empty) value.
+  onGitStatusChange(() => {
+    repaint();
+  });
+  // The forges half keeps its own poll: it is a different endpoint with a
+  // different failure mode (an auth error trumps every status).
+  pollAction(refreshForgesAction, undefined, {
     interval: POLL_INTERVAL_MS,
-    onSuccess: ({ status, forges }) => {
-      const state = deriveState(status ?? null, forges ?? null);
-      const tooltip = deriveTooltip(state);
-      applyBadge(state, tooltip);
+    onSuccess: (forges) => {
+      lastForges = forges;
+      repaint();
     },
   });
 }
 
-/** Recompute the badge state from current server data. Safe to call
- *  often — coalesces by short-circuiting if nothing visible changed. */
+/** Recompute the badge from current data, refreshing forges first. */
 export async function refreshGitBadge(): Promise<void> {
-  const result = await refreshGitBadgeAction.dispatch(undefined);
-  const statusRes = result?.status ?? null;
-  const forgesRes = result?.forges ?? null;
+  lastForges = await refreshForgesAction.dispatch(undefined);
+  repaint();
+}
 
-  const state = deriveState(statusRes, forgesRes);
-  const tooltip = deriveTooltip(state);
-  applyBadge(state, tooltip);
+/** Project the current store + forges data onto the badge DOM. */
+function repaint(): void {
+  const state = deriveState({ repos: [...currentRepos()] }, lastForges);
+  applyBadge(state, deriveTooltip(state));
 }
 
 /** @internal Pure derivation for testing. */
-function deriveState(
-  status: StatusAllResponse | null,
-  forges: ForgesListResponse | null,
-): BadgeState {
+function deriveState(status: StatusAllResponse, forges: ForgesListResponse | null): BadgeState {
   // Forge error trumps everything: an unusable forge means PR/clone
   // operations would fail; surface it first.
   if (forges !== null) {
@@ -111,9 +117,6 @@ function deriveState(
     if (erroredIds.length > 0) {
       return { kind: "error", forgeIds: erroredIds };
     }
-  }
-  if (status === null) {
-    return { kind: "none" };
   }
 
   let dirtyCount = 0;

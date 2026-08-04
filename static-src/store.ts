@@ -24,7 +24,6 @@ import type {
   CodeReference,
   RefusalInfo,
   FileChange,
-  PendingChange,
   QueuedPrompt,
 } from "./types.js";
 import { signal, computed, createCollection, batch } from "@cplieger/reactive";
@@ -245,6 +244,24 @@ export function dequeuePrompt(id: string): QueuedPrompt | undefined {
   return removeQueuedAt(id, 0);
 }
 
+/** Move the entry at `index` to the queue's FRONT, preserving the relative
+ *  order of everything else. Backs the chip row's send-now: the drain always
+ *  delivers the front, so promotion is what "this one next" means. */
+export function promoteQueuedAt(id: string, index: number): boolean {
+  const q = get(id)?.prompt_queue;
+  if (q === undefined || index <= 0 || index >= q.length) {
+    // index 0 is already the front; treat it as promoted.
+    return q !== undefined && index === 0 && q.length > 0;
+  }
+  const entry = q[index];
+  if (entry === undefined) {
+    return false;
+  }
+  const next = [entry, ...q.filter((_, i) => i !== index)];
+  sessions.update(id, (cur) => ({ ...cur, prompt_queue: next }));
+  return true;
+}
+
 /** Remove and return the entry at `index` (0-based). Backs both the drain
  *  (front) and the UI cancel affordance (any position). No-op + undefined
  *  for an out-of-range index or unknown chat. */
@@ -268,25 +285,6 @@ export function removeQueuedAt(id: string, index: number): QueuedPrompt | undefi
     return copy;
   });
   return removed;
-}
-
-// --- Index helpers ---
-function clearMsgIndex(sessionID: string): void {
-  msgIndex.delete(sessionID);
-}
-
-/** Invalidate a background session's cache so the next switch refetches. */
-export function invalidateSession(chatID: string): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  // Messages cleared in place (messages live on the session object; the
-  // messages renderer reacts to messagesVersion, not the session signal).
-  s.messages = [];
-  s.has_more = false;
-  clearMsgIndex(chatID);
-  emitMessages();
 }
 
 /** Rebuild the message index for a session. Exported for store-load.ts. */
@@ -317,8 +315,7 @@ export function upsertHeader(h: ChatHeader): void {
   const existing = get(h.id);
   if (existing !== undefined) {
     // Server-authoritative re-sync of the header fields (preserve messages,
-    // pending_changes, thinking, working_label, trusted_this_turn which are
-    // client/stream-owned).
+    // thinking and working_label, which are client/stream-owned).
     sessions.update(h.id, (s) => {
       const next: Session = {
         ...s,
@@ -337,16 +334,6 @@ export function upsertHeader(h: ChatHeader): void {
       } else {
         delete next.compaction_watermark;
       }
-      if (h.oldest_checkpoint_tag !== undefined) {
-        next.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
-      } else {
-        delete next.oldest_checkpoint_tag;
-      }
-      if (h.parent_chat_id !== undefined) {
-        next.parent_chat_id = h.parent_chat_id;
-      } else {
-        delete next.parent_chat_id;
-      }
       return next;
     });
     return;
@@ -360,20 +347,15 @@ export function upsertHeader(h: ChatHeader): void {
     available_modes: h.available_modes ?? [],
     available_models: h.available_models ?? [],
     supervised_mode: h.supervised_mode ?? false,
-    pending_changes: [],
     usage: h.usage,
     message_count: h.message_count,
     messages: [],
     has_more: h.message_count > 0,
     thinking: false,
     working_label: "Thinking",
-    ...(h.parent_chat_id !== undefined && { parent_chat_id: h.parent_chat_id }),
   };
   if (h.compaction_watermark !== undefined) {
     s.compaction_watermark = h.compaction_watermark;
-  }
-  if (h.oldest_checkpoint_tag !== undefined) {
-    s.oldest_checkpoint_tag = h.oldest_checkpoint_tag;
   }
   // New sessions go to the front of the list (matches the previous unshift).
   sessions.prepend([s]);
@@ -485,9 +467,6 @@ function mergeMessage(existing: Message, incoming: Message): Message {
   if (incoming.refusal !== undefined) {
     merged.refusal = incoming.refusal;
   }
-  if (nonEmptyStr(incoming.checkpoint_tag)) {
-    merged.checkpoint_tag = incoming.checkpoint_tag;
-  }
   if (incoming.event_kind !== undefined) {
     merged.event_kind = incoming.event_kind;
   }
@@ -583,40 +562,6 @@ export function setTurnSummary(
   }
 }
 
-export function addPendingChange(chatID: string, change: PendingChange): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  if (s.pending_changes.some((p) => p.tool_call_id === change.tool_call_id)) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({
-    ...cur,
-    pending_changes: [...cur.pending_changes, change],
-  }));
-}
-
-export function removePendingChange(chatID: string, toolCallID: string): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  const next = s.pending_changes.filter((p) => p.tool_call_id !== toolCallID);
-  if (next.length === s.pending_changes.length) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({ ...cur, pending_changes: next }));
-}
-
-export function clearPendingChanges(chatID: string): void {
-  const s = get(chatID);
-  if (s === undefined || s.pending_changes.length === 0) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({ ...cur, pending_changes: [] }));
-}
-
 export function setSupervisedMode(chatID: string, enabled: boolean): void {
   const s = get(chatID);
   if (s === undefined || s.supervised_mode === enabled) {
@@ -652,17 +597,6 @@ export function setName(chatID: string, name: string): void {
 /** Return the current index of a session in the list, or -1. */
 export function indexOfSession(id: string): number {
   return sessions.ids.peek().indexOf(id);
-}
-
-export function setTrustedThisTurn(chatID: string, trusted: boolean): void {
-  const s = get(chatID);
-  if (s === undefined) {
-    return;
-  }
-  if ((s.trusted_this_turn === true) === trusted) {
-    return;
-  }
-  sessions.update(chatID, (cur) => ({ ...cur, trusted_this_turn: trusted }));
 }
 
 /** Per-chat chunk-sequence watermark from a connect-time turn_state

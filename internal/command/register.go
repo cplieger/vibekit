@@ -11,25 +11,19 @@ import (
 // handlers. Called once from Hub construction.
 func RegisterDefaults(d *Dispatcher) {
 	d.Register(api.CmdCreateChat, wrap(d, CmdCreateChat))
+	d.Register(api.CmdResumeSession, wrap(d, CmdResumeSession))
 	d.Register(api.CmdPrompt, wrap(d, CmdPrompt))
 	d.Register(api.CmdCancel, wrap(d, CmdCancel))
 	d.Register(api.CmdDeleteChat, wrap(d, CmdDeleteChat))
+	d.Register(api.CmdCloseChat, wrap(d, CmdCloseChat))
 	d.Register(api.CmdPermissionResponse, wrap(d, CmdPermission))
 	d.Register(api.CmdElicitationResponse, wrap(d, CmdElicitationResponse))
 	d.Register(api.CmdUserInputResponse, wrap(d, CmdUserInputResponse))
-	d.Register(api.CmdRestoreCheckpoint, wrap(d, CmdRestoreCheckpoint))
-	d.Register(api.CmdUndoEdit, wrap(d, CmdUndoEdit))
 	d.Register(api.CmdRewindChat, wrap(d, CmdRewindChat))
-	d.Register(api.CmdPromoteRewindChat, wrap(d, CmdPromoteRewindChat))
-	d.Register(api.CmdDiscardRewindChat, wrap(d, CmdDiscardRewindChat))
+	d.Register(api.CmdCompact, wrap(d, CmdCompact))
 	d.Register(api.CmdSetEffort, wrap(d, CmdSetEffort))
 	d.Register(api.CmdSetMode, wrap(d, CmdSetMode))
-	d.Register(api.CmdResolvePendingChange, wrap(d, CmdResolvePendingChange))
-	d.Register(api.CmdResolvePendingPartial, wrap(d, CmdResolvePendingChangePartial))
-	d.Register(api.CmdResolveAllPendingChanges, wrap(d, CmdResolveAllPendingChanges))
 	d.Register(api.CmdSetSupervisedMode, wrap(d, CmdSetSupervisedMode))
-	d.Register(api.CmdTrustPendingChanges, wrap(d, CmdTrustPendingChanges))
-	d.Register(api.CmdClearPendingTrust, wrap(d, CmdClearPendingTrust))
 	d.Register(api.CmdCreateHook, wrap(d, CmdCreateHook))
 }
 

@@ -17,7 +17,6 @@ import { createBus } from "@cplieger/reactive";
 import type {
   ServerEvent,
   ChatHeader,
-  ConflictDetectedPayload,
   Message,
   MessageChunkPayload,
   ToolCallPayload,
@@ -31,18 +30,10 @@ import type {
   MCPOAuthPayload,
   MCPFailedPayload,
   MCPDisconnectedPayload,
-  AvailableCommand,
-  PendingChangeAddedPayload,
-  PendingChangeResolvedPayload,
-  PendingChangesClearedPayload,
-  PendingTrustEnabledPayload,
-  PendingTrustClearedPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
   OpenExternalURLPayload,
   CodeReferencesPayload,
-  KnowledgeIndexingPayload,
-  SpecTaskChangedPayload,
   PermissionsChangedPayload,
   PolicyErrorPayload,
   SafetyStatusPayload,
@@ -50,6 +41,9 @@ import type {
   GovernanceStatePayload,
   ToolJobChangedPayload,
   ToolJobOutputPayload,
+  RunStartedPayload,
+  RunProgressPayload,
+  RunFinishedPayload,
 } from "./types.js";
 
 // --- Typed SSE surface ---
@@ -85,13 +79,7 @@ export interface SSEPayloads {
   readonly mcp_failed: MCPFailedPayload;
   readonly mcp_disconnected: MCPDisconnectedPayload;
   readonly mcp_prewarm: { readonly package: string; readonly state: string };
-  readonly commands_updated: {
-    readonly commands: AvailableCommand[];
-    readonly prompts?: AvailableCommand[];
-  };
   readonly mode_changed: { readonly mode_id: string };
-  readonly knowledge_indexing: KnowledgeIndexingPayload;
-  readonly spec_task_changed: SpecTaskChangedPayload;
   readonly safety_status: SafetyStatusPayload;
   readonly safety_properties: SafetyPropertiesPayload;
   readonly governance_state: GovernanceStatePayload;
@@ -109,17 +97,13 @@ export interface SSEPayloads {
     readonly exit_code?: number;
     readonly signal?: string;
   };
-  readonly checkpoint_restored: { readonly tag: string; readonly message_count: number };
-  readonly conflict_detected: ConflictDetectedPayload;
   readonly forges_changed: undefined;
   readonly hooks_changed: undefined;
   readonly tool_job_changed: ToolJobChangedPayload;
   readonly tool_job_output: ToolJobOutputPayload;
-  readonly pending_change_added: PendingChangeAddedPayload;
-  readonly pending_change_resolved: PendingChangeResolvedPayload;
-  readonly pending_changes_cleared: PendingChangesClearedPayload;
-  readonly pending_trust_enabled: PendingTrustEnabledPayload;
-  readonly pending_trust_cleared: PendingTrustClearedPayload;
+  readonly run_started: RunStartedPayload;
+  readonly run_progress: RunProgressPayload;
+  readonly run_finished: RunFinishedPayload;
 }
 
 export type SSEHandler<K extends keyof SSEPayloads> = SSEPayloads[K] extends undefined
@@ -198,26 +182,21 @@ export function dispatch(evt: ServerEvent): void {
 export const BUS_TURN_IDLE = "turn:idle" as const;
 export const BUS_TRANSPORT_GAP = "transport:gap" as const;
 export const BUS_KEYS_ESCAPE = "keys:escape" as const;
-export const BUS_PENDING_ADDED = "pending:added" as const;
-export const BUS_PENDING_RESOLVED = "pending:resolved" as const;
-export const BUS_PENDING_CLEARED = "pending:cleared" as const;
-export const BUS_PENDING_TRUST_ENABLED = "pending:trust-enabled" as const;
-export const BUS_PENDING_TRUST_CLEARED = "pending:trust-cleared" as const;
 export const BUS_ACTIVATE_CHAT = "chat:activate" as const;
-
-import type { PendingChange } from "./types.js";
+/** A workflow run appeared or reached a terminal state, so any list of runs is
+ *  stale. On the bus rather than a direct call because the run handler and the
+ *  history page are two UI affordances that should not know about each other —
+ *  and concretely because importing the history page from a handler drags the
+ *  whole chat module in behind it. */
+export const BUS_RUNS_CHANGED = "runs:changed" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
   readonly [BUS_TURN_IDLE]: string; // chatID
   readonly [BUS_TRANSPORT_GAP]: { lastSeen: number; floor: number; head: number };
   readonly [BUS_KEYS_ESCAPE]: undefined;
-  readonly [BUS_PENDING_ADDED]: { chatID: string; change: PendingChange };
-  readonly [BUS_PENDING_RESOLVED]: { chatID: string; toolCallID: string; action: string };
-  readonly [BUS_PENDING_CLEARED]: { chatID: string; reason: string };
-  readonly [BUS_PENDING_TRUST_ENABLED]: { chatID: string };
-  readonly [BUS_PENDING_TRUST_CLEARED]: { chatID: string; reason: string };
   readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
+  readonly [BUS_RUNS_CHANGED]: undefined;
 }
 
 // The generic cross-module bus is backed by @cplieger/reactive's createBus

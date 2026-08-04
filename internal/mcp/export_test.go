@@ -5,9 +5,8 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
+	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -100,121 +99,9 @@ func TestMergeSecrets_MaskedWithNoPriorValueBecomesEmpty(t *testing.T) {
 	}
 }
 
-func TestToACP_StdioShape(t *testing.T) {
-	srv := []*Server{{
-		Name:      "gh",
-		Transport: TransportStdio,
-		Command:   "npx",
-		Args:      []string{"-y", "@pkg/gh"},
-		Env:       []KeyPair{{Name: "TOKEN", Value: "tok"}},
-	}}
-	out := toACP(srv)
-	if len(out) != 1 {
-		t.Fatalf("toACP len = %d", len(out))
-	}
-	e := out[0]
-	if e["type"] != "stdio" || e["name"] != "gh" || e["command"] != "npx" {
-		t.Errorf("stdio shape wrong: %+v", e)
-	}
-	data, _ := json.Marshal(e)
-	s := string(data)
-	// Must include an env array, never null.
-	if !strings.Contains(s, `"env":[`) {
-		t.Errorf("env not emitted as array: %s", data)
-	}
-	if !strings.Contains(s, `"args":[`) {
-		t.Errorf("args not emitted as array: %s", data)
-	}
-}
-
-func TestToACP_HTTPShape(t *testing.T) {
-	srv := []*Server{{
-		Name:      "api",
-		Transport: TransportHTTP,
-		URL:       "https://api.example",
-		Headers:   []KeyPair{{Name: "Auth", Value: "bearer"}},
-	}}
-	out := toACP(srv)
-	if len(out) != 1 {
-		t.Fatalf("toACP len = %d", len(out))
-	}
-	e := out[0]
-	if e["type"] != "http" || e["url"] != "https://api.example" {
-		t.Errorf("http shape wrong: %+v", e)
-	}
-	if _, ok := e["command"]; ok {
-		t.Errorf("http shape should not include command: %+v", e)
-	}
-}
-
-func TestToACP_SSEShape(t *testing.T) {
-	srv := []*Server{{
-		Name:      "legacy",
-		Transport: TransportSSE,
-		URL:       "https://api.example/sse",
-		Headers:   []KeyPair{{Name: "Auth", Value: "bearer"}},
-	}}
-	out := toACP(srv)
-	if len(out) != 1 {
-		t.Fatalf("toACP len = %d", len(out))
-	}
-	e := out[0]
-	// SSE shares McpServerHttp's field set but carries the "sse" type
-	// discriminator (ACP McpServerSse); kiro-cli v3/KAS keys the union on it.
-	if e["type"] != "sse" || e["url"] != "https://api.example/sse" {
-		t.Errorf("sse shape wrong: %+v", e)
-	}
-	if _, ok := e["command"]; ok {
-		t.Errorf("sse shape should not include command: %+v", e)
-	}
-}
-
-func TestToACP_SkipsUnknownTransport(t *testing.T) {
-	srv := []*Server{
-		{Name: "good", Transport: TransportStdio, Command: "x"},
-		{Name: "bad", Transport: "not-a-real-transport"},
-	}
-	out := toACP(srv)
-	if len(out) != 1 || out[0]["name"] != "good" {
-		t.Errorf("expected only 'good', got %+v", out)
-	}
-}
-
-func TestToACP_EmptyInputReturnsEmptySlice(t *testing.T) {
-	out := toACP(nil)
-	if out == nil {
-		t.Fatal("toACP(nil) returned nil, want []")
-	}
-	if len(out) != 0 {
-		t.Errorf("toACP(nil) len = %d, want 0", len(out))
-	}
-}
-
-func TestExportACPServers_EnabledOnly(t *testing.T) {
-	// Note: a more elaborate ACP export test lives in store_test.go.
-	// This covers the bare "enabled only" invariant once more in the
-	// export-focused file so the enabled/disabled filter is part of
-	// the Wire-shape contract tests, not just store lifecycle.
-	tmp := t.TempDir()
-	s, err := New(context.Background(), tmp, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = s.Create(context.Background(), &Server{Name: "on", Transport: TransportStdio, Command: "a", Enabled: true})
-	_, _ = s.Create(context.Background(), &Server{Name: "off", Transport: TransportStdio, Command: "b", Enabled: false})
-
-	acp := s.ACPServers(context.Background())
-	if len(acp) != 1 {
-		t.Fatalf("ACPServers() len = %d, want 1 (enabled only)", len(acp))
-	}
-	if acp[0]["name"] != "on" {
-		t.Errorf("ACPServers()[0] = %+v", acp[0])
-	}
-}
-
 func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 	tmp := t.TempDir()
-	s, err := New(context.Background(), tmp, nil)
+	s, err := New(context.Background(), tmp, nil, WithKASConfigPath(filepath.Join(tmp, "kas-mcp.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,73 +114,6 @@ func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 	}
 	if _, ok := names["beta"]; ok {
 		t.Errorf("beta should be excluded: %+v", names)
-	}
-}
-
-// F2: DisabledTools must round-trip through ToACP on every transport
-// (stdio, http, sse). Protects against a refactor that branches only
-// on stdio.
-func TestToACP_DisabledToolsForwardedOnAllTransports(t *testing.T) {
-	cases := []struct {
-		extras    func(*Server)
-		name      string
-		transport Transport
-	}{
-		{func(s *Server) { s.Command = "npx" }, "stdio", TransportStdio},
-		{func(s *Server) { s.URL = "https://x.example" }, "http", TransportHTTP},
-		{func(s *Server) { s.URL = "https://x.example/sse" }, "sse", TransportSSE},
-	}
-	for _, tc := range cases {
-		t.Run(string(tc.transport), func(t *testing.T) {
-			srv := &Server{
-				Name:          "s",
-				Transport:     tc.transport,
-				DisabledTools: []string{"delete_repo", "force_push"},
-			}
-			tc.extras(srv)
-
-			out := toACP([]*Server{srv})
-			if len(out) != 1 {
-				t.Fatalf("toACP len = %d, want 1", len(out))
-			}
-			raw, ok := out[0]["disabledTools"]
-			if !ok {
-				t.Fatalf("toACP(%s) missing disabledTools", tc.transport)
-			}
-			got, ok := raw.([]string)
-			if !ok {
-				t.Fatalf("toACP(%s).disabledTools type = %T, want []string", tc.transport, raw)
-			}
-			want := []string{"delete_repo", "force_push"}
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("toACP(%s).disabledTools = %v, want %v", tc.transport, got, want)
-			}
-		})
-	}
-}
-
-// F2: When DisabledTools is empty or nil, the ACP entry must not contain
-// the key at all — kiro-cli would reject `disabledTools: null` at schema check.
-func TestToACP_DisabledToolsOmittedWhenEmpty(t *testing.T) {
-	cases := []*Server{
-		{Name: "s1", Transport: TransportStdio, Command: "npx"},
-		{Name: "s2", Transport: TransportStdio, Command: "npx", DisabledTools: []string{}},
-		{Name: "s3", Transport: TransportStdio, Command: "npx", DisabledTools: nil},
-		{Name: "s4", Transport: TransportHTTP, URL: "https://x.example"},
-		{Name: "s5", Transport: TransportHTTP, URL: "https://x.example"},
-	}
-	out := toACP(cases)
-	if len(out) != 5 {
-		t.Fatalf("toACP len = %d, want 5", len(out))
-	}
-	for i, entry := range out {
-		if _, present := entry["disabledTools"]; present {
-			t.Errorf("toACP[%d] emitted disabledTools with empty/nil slice: %+v", i, entry)
-		}
-		j, _ := json.Marshal(entry)
-		if strings.Contains(string(j), "disabledTools") {
-			t.Errorf("toACP[%d] JSON leaks disabledTools: %s", i, j)
-		}
 	}
 }
 

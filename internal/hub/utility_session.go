@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/secretstore"
 )
 
 // utilityRuntime bundles the two halves of the utility subsystem the hub
@@ -55,8 +56,8 @@ type utilityRuntime struct {
 }
 
 // newUtilityRuntime wires a session and its agent.
-func newUtilityRuntime(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, enableHooks bool) *utilityRuntime {
-	session := newUtilitySession(shutdownCtx, factory, hubModels, hooks, enableHooks)
+func newUtilityRuntime(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
+	session := newUtilitySession(shutdownCtx, factory, hubModels, hooks, secrets, enableHooks)
 	return &utilityRuntime{session: session, agent: newUtilityAgent(session)}
 }
 
@@ -84,7 +85,11 @@ type utilitySession struct {
 	shutdownCtx   context.Context
 	bridgeFactory api.ACPBridgeFactory
 	hubModels     func() []api.SessionModel
-	hooks         utilitySessionHooks
+	// secrets is the hub's credential store, shared not copied, so a
+	// registration obtained on any bridge is visible from every other one.
+	// Nil when the hub has no configDir; see bridge_v3_secret.go.
+	secrets *secretstore.Store
+	hooks   utilitySessionHooks
 
 	// lastActiveAt, bridge, gen, started, responseCh, forwardDone are the
 	// lifecycle fields guarded by mu. mu is held only for short
@@ -112,11 +117,12 @@ type utilitySession struct {
 
 // newUtilitySession constructs a stopped session with the initialization
 // invariants explicit: started=false, gen=0, lastActiveAt=zero.
-func newUtilitySession(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, enableHooks bool) *utilitySession {
+func newUtilitySession(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
 	return &utilitySession{
 		shutdownCtx:   shutdownCtx,
 		bridgeFactory: factory,
 		hubModels:     hubModels,
+		secrets:       secrets,
 		hooks:         hooks,
 		enableHooks:   enableHooks,
 	}
@@ -391,6 +397,19 @@ func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCRe
 		_ = bridge.Respond(ctx, *msg.ID, result, nil)
 	case msg.Method == methodKiroShellType:
 		_ = bridge.Respond(ctx, *msg.ID, kiroShellTypeResult(), nil)
+	case msg.Method == methodKiroSecretGet:
+		// The utility session starts with NO mcpServers, so it should never
+		// connect an MCP server and never reach this. It is answered anyway
+		// because the secretStorage capability is declared by the SHARED
+		// bridge initialize: were KAS to ask, the default branch's refusal
+		// would be a store/delete rethrow rather than a clean miss.
+		_ = bridge.Respond(ctx, *msg.ID, secretGetResult(us.secrets, msg.Params), nil)
+	case msg.Method == methodKiroSecretStore:
+		result, err := secretStoreResult(ctx, us.secrets, msg.Params)
+		_ = bridge.Respond(ctx, *msg.ID, result, err)
+	case msg.Method == methodKiroSecretDelete:
+		result, err := secretDeleteResult(ctx, us.secrets, msg.Params)
+		_ = bridge.Respond(ctx, *msg.ID, result, err)
 	case msg.Method == methodKiroHooksExecuteHook:
 		us.answerExecuteHook(bridge, msg)
 	case msg.Method == api.MethodRequestPermission:

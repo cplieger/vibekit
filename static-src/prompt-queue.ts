@@ -24,6 +24,7 @@
 // ---------------------------------------------------------------------------
 
 import { sendPromptTo } from "./chat-commands.js";
+import { handleTypedCommand } from "./typed-commands.js";
 import { newMessageID } from "./transport.js";
 import { takeAttachments, addAttachment, type AttachedFile } from "./attachments.js";
 import {
@@ -32,9 +33,11 @@ import {
   enqueuePrompt,
   peekPrompt,
   dequeuePrompt,
+  promoteQueuedAt,
   removeQueuedAt,
   queueLength,
 } from "./store.js";
+import { cancelTurn } from "./actions/chat.js";
 import { showBanner } from "./banner-stack.js";
 import type { QueuedPrompt } from "./types.js";
 
@@ -59,6 +62,13 @@ const draining = new Set<string>();
 export async function submitPrompt(chatID: string, text: string): Promise<SubmitResult> {
   if (chatID === "" || text === "") {
     return "failed";
+  }
+  // Typed commands vibekit owns are intercepted BEFORE anything else: before the
+  // attachments are taken, before a message id is minted, and before the queue.
+  // A command is not a prompt, so it must not consume an attachment, occupy a
+  // queue slot, or leave a user bubble behind.
+  if (handleTypedCommand(chatID, text)) {
+    return "sent";
   }
   const attachments = takeAttachments();
   // One message id per user submit, minted HERE so the queue entry and
@@ -154,6 +164,22 @@ export function maybeDrainIfIdle(chatID: string): void {
  * and returns it so the caller can restore its text + attachments to the
  * input. Returns undefined when the index is out of range.
  */
+/** Deliver ONE queued entry next, jumping the wait: promote it to the front,
+ *  then either interrupt the streaming turn (the turn_ended drain delivers it)
+ *  or nudge the idle drain. Mechanically an interrupt, so it inherits the
+ *  interrupt's terminal-teardown gate server-side (§5.6 R3) — which is why
+ *  this control could not ship before that landed. */
+export function sendQueuedNow(chatID: string, index: number): void {
+  if (!promoteQueuedAt(chatID, index)) {
+    return;
+  }
+  if (isThinking(chatID)) {
+    void cancelTurn.dispatch(chatID);
+    return;
+  }
+  maybeDrainIfIdle(chatID);
+}
+
 export function cancelQueuedPrompt(chatID: string, index: number): QueuedPrompt | undefined {
   return removeQueuedAt(chatID, index);
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/cplieger/envx"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/auth"
+	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/filehandler"
 	"github.com/cplieger/webhttp"
 )
@@ -65,6 +66,13 @@ type Config struct {
 	// (colon-separated absolute paths, e.g. "/tmp:/data"). Everything
 	// outside the grants is denied by default.
 	BrowseRoots []string
+	// ACPArgs are operator-supplied kiro-cli launch flags from
+	// VIBEKIT_KIRO_ACP_ARGS, already filtered by bridge.ParseACPArgs (which
+	// refuses --agent-engine and the two inert trust flags). Appended to every
+	// CHAT bridge's argv, never to the utility bridge's. An escape hatch for a
+	// flag upstream adds, not a capability switch: vibekit already pins v3 and
+	// already emits --model / --effort.
+	ACPArgs []string
 	// ToolCatalogRefresh is the engine refresh cadence under toolbelt's
 	// canonical policy (default 24h; zero = schedule disabled, keeping
 	// the manual UI/API refresh).
@@ -100,6 +108,7 @@ func ConfigFromEnv() Config {
 		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
 		HostPolicy:          parseAllowedHosts(os.Getenv("ALLOWED_HOSTS")),
 		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
+		ACPArgs:             bridge.ParseACPArgs(os.Getenv("VIBEKIT_KIRO_ACP_ARGS")),
 		AuthConfig:          ac,
 	}
 }

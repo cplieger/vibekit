@@ -11,10 +11,9 @@ import (
 // documented in vibekit.md / vibekit-acp.md; centralising them keeps
 // the goconst linter happy and makes renames visible in one place.
 const (
-	keyError    = "error"
-	keyName     = api.JSONKeyName
-	keyResolved = "resolved"
-	keyType     = api.ContentKeyType
+	keyError = "error"
+	keyName  = api.JSONKeyName
+	keyType  = api.ContentKeyType
 )
 
 // keySessionID references the canonical api.KeySessionID constant.
@@ -24,14 +23,6 @@ const keySessionID = api.KeySessionID
 // titles, prompt previews, shell command labels). Kept as a constant
 // so the same visual indicator is used everywhere.
 const ellipsis = "..."
-
-// resolvedResponse is the typed wire shape for commands that report
-// how many pending changes were resolved. Replaces ad-hoc
-// map[string]any{"ok": true, "resolved": N} literals.
-type resolvedResponse struct {
-	OK       bool `json:"ok"`
-	Resolved int  `json:"resolved"`
-}
 
 // responseOK is the standard success response for commands that have
 // no meaningful return value. Shared across all command handlers to

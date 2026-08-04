@@ -72,6 +72,12 @@ class Elements {
   get messagesWrap(): HTMLDivElement {
     return byId("messages-wrap");
   }
+  // The positioned wrapper AROUND the scroller. The timeline rail mounts here
+  // rather than inside #messages-wrap so it stays put instead of scrolling away
+  // with the transcript.
+  get messagesWrapOuter(): HTMLDivElement {
+    return byId("messages-wrap-outer");
+  }
   get bannerStack(): HTMLDivElement {
     return byId("banner-stack");
   }
@@ -108,14 +114,10 @@ class Elements {
   get roleList(): HTMLDivElement {
     return byId("role-list");
   }
-  get toolApproval(): HTMLDialogElement {
-    return byId("tool-approval");
-  }
-  get elicitationDialog(): HTMLDialogElement {
-    return byId("elicitation-dialog");
-  }
-  get userInputDialog(): HTMLDialogElement {
-    return byId("user-input-dialog");
+  /** The interaction dock's host. One region replaced the three decision
+   *  <dialog>s (tool-approval, elicitation-dialog, user-input-dialog). */
+  get decisionDock(): HTMLDivElement {
+    return byId("decision-dock");
   }
   get contextIndicator(): HTMLButtonElement {
     return byId("context-indicator");
@@ -261,6 +263,16 @@ class Elements {
   get fbAddToChat(): HTMLButtonElement {
     return byId("fb-add-to-chat");
   }
+  get fbChatFilter(): HTMLButtonElement {
+    return byId("fb-chat-filter");
+  }
+  // Chat options (the composer's set-once switches menu)
+  get chatOptionsBtn(): HTMLButtonElement {
+    return byId("chat-options-btn");
+  }
+  get chatOptionsCard(): HTMLElement {
+    return byId("chat-options-card");
+  }
   get fbRename(): HTMLButtonElement {
     return byId("fb-rename");
   }
@@ -276,12 +288,18 @@ class Elements {
     return byId("history-btn");
   }
 
-  // Specs board
-  get specsBtn(): HTMLButtonElement {
-    return byId("specs-btn");
+  // Kiro configuration browser (the book icon's page)
+  get docsBtn(): HTMLButtonElement {
+    return byId("docs-btn");
   }
-  get specsList(): HTMLDivElement {
-    return byId("specs-list");
+  get docsView(): HTMLDivElement {
+    return byId("docs-view");
+  }
+  get docsTabBar(): HTMLElement {
+    return byId("docs-tab-bar");
+  }
+  get docsTabSelect(): HTMLSelectElement {
+    return byId("docs-tab-select");
   }
 
   // Editor
@@ -321,25 +339,6 @@ class Elements {
   get editorConflictOverlay(): HTMLDivElement {
     return byId("editor-conflict-overlay");
   }
-  get editorSendPlanBtn(): HTMLButtonElement {
-    return byId("editor-send-plan-btn");
-  }
-  get editorPendingAcceptBtn(): HTMLButtonElement {
-    return byId("editor-pending-accept-btn");
-  }
-  get editorPendingRejectBtn(): HTMLButtonElement {
-    return byId("editor-pending-reject-btn");
-  }
-  get editorPendingApplyPartialBtn(): HTMLButtonElement {
-    return byId("editor-pending-apply-partial-btn");
-  }
-  get editorPendingDiscussBtn(): HTMLButtonElement {
-    return byId("editor-pending-discuss-btn");
-  }
-  get supervisedPill(): HTMLElement {
-    return byId("supervised-pill");
-  }
-
   // Modals
   get loginModal(): HTMLDivElement {
     return byId("login-modal");
@@ -411,11 +410,6 @@ class Elements {
   }
   get gitStashPopBtn(): HTMLButtonElement {
     return byId("git-stash-pop-btn");
-  }
-
-  // Kiro config viewer (list rendered into the Instructions tab)
-  get kiroConfigList(): HTMLDivElement {
-    return byId("kiro-config-list");
   }
 
   // PR panel

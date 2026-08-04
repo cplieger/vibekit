@@ -26,6 +26,7 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	// Immutable after Start; read lock-free by SetModel / initialize.
 	b.agentEngine = opts.AgentEngine
 	b.enableHooks = opts.EnableHooks
+	b.extraArgs = opts.ExtraArgs
 	if opts.SessionID != "" && !api.ValidSessionID(opts.SessionID) {
 		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
 	}
@@ -38,9 +39,9 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	}
 	var err error
 	if opts.SessionID != "" {
-		err = b.loadSession(ctx, opts.SessionID, opts.Model, opts.MCPServers)
+		err = b.loadSession(ctx, opts.SessionID, opts.Model)
 	} else {
-		err = b.newSession(ctx, opts.MCPServers, opts.Mode)
+		err = b.newSession(ctx, opts.Mode, opts.Supervised)
 	}
 	if err != nil {
 		b.Stop()
@@ -61,8 +62,8 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 
 // Stop kills the subprocess and closes NotifCh. Safe to call multiple
 // times; subsequent calls are no-ops. Multiple call sites (hub.Shutdown,
-// cullIdleBridges, session/load recovery) can race to stop the same
-// bridge; the sync.Once gate prevents a double-close panic on b.done.
+// tab close, model switch, session/load recovery) can race to stop the
+// same bridge; the sync.Once gate prevents a double-close panic on b.done.
 // Reaps the process via cmd.Wait so the OS releases its process entry
 // immediately (no <defunct> accumulation across chat lifecycle churn).
 func (b *Bridge) Stop() {
@@ -129,7 +130,13 @@ func (b *Bridge) startProcess(engine, model, effort string) error {
 		// verdict with the phase in its reason.
 		return errors.New("kiro-cli is not available yet: the pinned version is still installing or its install failed (see /api/health)")
 	}
-	args := buildACPArgs(engine, model, effort)
+	// Operator flags land AFTER the derived ones, so a launch flag is an
+	// initial value rather than an override in either direction: kiro-cli takes
+	// the last spelling of a repeated flag, and vibekit's own switch_model /
+	// set_effort commands still win afterwards via session/set_config_option.
+	// Already filtered (see acp_args.go) — never trust this slice to be safe
+	// because it came through StartOpts.
+	args := append(buildACPArgs(engine, model, effort), b.extraArgs...)
 	// Lifecycle is owned by Stop(), not by a context. The
 	// lifecycleCtx is a belt-and-braces kill signal: if the hub
 	// shuts down and Stop() races or panics, the OS-level context
@@ -150,9 +157,26 @@ func (b *Bridge) startProcess(engine, model, effort string) error {
 	// (Go 1.20+) escalate to SIGKILL only after a 5s SIGTERM grace period,
 	// giving kiro-cli a chance to flush its own state. Stop() (called for
 	// normal teardown) still uses Process.Kill directly so chat-switch and
-	// cull-idle remain instantaneous; this path only fires if Stop races
-	// or panics during hub shutdown.
-	b.cmd.Cancel = func() error { return b.cmd.Process.Signal(syscall.SIGTERM) }
+	// tab-close teardown remain instantaneous; this path only fires if Stop
+	// races or panics during hub shutdown.
+	//
+	// Closing stdin FIRST is what makes the grace period mean anything, and it
+	// is the whole reason Stop() reclaims the tree. vibekit spawns
+	// `kiro-cli acp` on pipes and the head passes its stdio down, so the tree
+	// (kiro-cli -> kiro-cli-chat -> node, ~300 MB) shares one session with no
+	// setsid() and closing our write end delivers EOF to the entire chain. A
+	// bare head SIGTERM does not: WaitDelay's SIGKILL escalation targets the
+	// head only, so the children keep running with nobody holding their stdin.
+	// Measured on kiro-cli 2.16.0: signal-without-close leaked 2/2 trials at
+	// ~250 MB each, while close-then-signal leaked 0/2. Signal errors are
+	// returned; a Close error is not, because a second Close is the expected
+	// case when Stop() already ran.
+	b.cmd.Cancel = func() error {
+		if b.stdin != nil {
+			_ = b.stdin.Close()
+		}
+		return b.cmd.Process.Signal(syscall.SIGTERM)
+	}
 	b.cmd.WaitDelay = 5 * time.Second
 	stdin, err := b.cmd.StdinPipe()
 	if err != nil {

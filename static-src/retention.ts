@@ -1,19 +1,20 @@
 // ---------------------------------------------------------------------------
 // Chat retention state. Reads the vibekit-owned chat_retention_days setting
-// (/api/settings) and exposes it to the tab-close handler (archive vs delete)
-// and the history button (hidden when retention is off).
+// (/api/settings) and exposes it to the tab-close handler (keep vs delete) and
+// the history button (hidden when retention is off).
 //
 // vibekit owns retention end to end — kiro-cli's own cleanup.periodDays is
 // pinned to 0/never, so there are not two systems fighting over one value.
-// Encoding:
+// There is no archive: a closed chat stays exactly where it was, and
+// "archived" is computed from its age against the window. Encoding:
 //
-//   -1 = forever → archive on tab close, show History, never purged ("backups").
+//   -1 = forever → close keeps the chat, show History, never purged ("backups").
 //    0 = off     → NO retention: closing a tab deletes the chat (ephemeral,
 //                  lost on close) and the History button is hidden.
-//    N = keep N days → archive on tab close, show History, server purges after N.
+//    N = keep N days → close keeps the chat, show History, server purges after N.
 //
-// So retention is "enabled" (close archives, History shown) whenever the value
-// is not 0 — both a positive day count and forever archive.
+// So retention is "enabled" (close keeps, History shown) whenever the value is
+// not 0 — both a positive day count and forever.
 //
 // Backed by a reactive signal: onRetentionChange is just subscribe(), so
 // consumers re-run on every change. subscribe() also fires immediately with
@@ -46,7 +47,7 @@ const refreshRetentionAction = defineAction<void, number>({
   error: false,
 });
 
-/** Whether closing a tab archives the chat (and History is shown). True for a
+/** Whether closing a tab KEEPS the chat (and History is shown). True for a
  *  positive day count AND forever (-1); false only when retention is off (0). */
 export function isRetentionEnabled(): boolean {
   return retentionDays.value !== 0;

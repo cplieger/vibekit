@@ -11,7 +11,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-func writeFile(w http.ResponseWriter, r *http.Request, l loc, observer WriteObserver) {
+func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	api.LimitBody(w, r, maxFileSize)
 	var body struct {
 		Content string `json:"content"`
@@ -42,13 +42,6 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc, observer WriteObse
 		slog.Warn("filehandler: "+stage, "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON("write failed"))
-	}
-	// Editor-save checkpoint capture fires BEFORE the write lands so
-	// the pre-save content is still on disk to snapshot as the undo
-	// target (see WriteObserver's contract for the ordering rationale
-	// and the failed-write phantom tradeoff).
-	if observer != nil {
-		observer(r.Context(), l.abs, []byte(body.Content))
 	}
 	// O_NOFOLLOW on the write prevents a dangling symlink planted
 	// between resolvePath's EvalSymlinks and this open from steering

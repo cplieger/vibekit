@@ -153,6 +153,40 @@ export function displayPath(currentPath: string): string {
   return currentPath === "." ? "/" : `/${currentPath}`;
 }
 
+/** Expand a set of workspace-relative paths with every ancestor directory.
+ *
+ *  Including the ancestors is what lets ONE matching rule serve a file row and a
+ *  folder row alike, without the browser needing to know where the workspace
+ *  root is — which it genuinely does not: the listing's paths come from an
+ *  allow-list of mounts, so hardcoding `/workspace` would be wrong the moment a
+ *  second root is granted. */
+export function withAncestors(rels: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const rel of rels) {
+    out.add(rel);
+    let cut = rel.lastIndexOf("/");
+    while (cut > 0) {
+      const dir = rel.slice(0, cut);
+      out.add(dir);
+      cut = dir.lastIndexOf("/");
+    }
+  }
+  return out;
+}
+
+/** Whether an absolute row path is in a set of workspace-relative paths.
+ *
+ *  A suffix rule on a `/`-delimited boundary, so `src/a.go` matches
+ *  `/workspace/src/a.go` but never `/workspace/other-src/a.go`. */
+export function matchesRelative(absPath: string, rels: ReadonlySet<string>): boolean {
+  for (const p of rels) {
+    if (absPath === p || absPath.endsWith(`/${p}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Build an error row element safely (no innerHTML with user content). */
 export function errorRow(msg: string, onRetry?: () => void): HTMLDivElement {
   const row = el(

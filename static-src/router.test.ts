@@ -55,12 +55,13 @@ describe("parseRoute (table-driven)", () => {
       expected: { kind: "git", tab: "changes" },
     },
     { name: "/history", pathname: "/history", hash: "", expected: { kind: "history" } },
-    { name: "/specs", pathname: "/specs", hash: "", expected: { kind: "specs" } },
     {
-      name: "/specs/ (trailing slash) → specs",
-      pathname: "/specs/",
+      // The spec board is deleted outright — no shim, no redirect. A saved
+      // /specs bookmark is just an unknown path now.
+      name: "/specs (retired route) → default chat",
+      pathname: "/specs",
       hash: "",
-      expected: { kind: "specs" },
+      expected: { kind: "chat", id: "" },
     },
     {
       name: "/files → workspace root",
@@ -203,8 +204,6 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
     ),
     // history
     fc.constant<Route>({ kind: "history" }),
-    // specs
-    fc.constant<Route>({ kind: "specs" }),
     // files with path "." (root)
     fc.constant<Route>({ kind: "files", path: "." }),
     // files with non-trivial path (segments without slashes or empty parts)

@@ -47,6 +47,7 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID api.Cha
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 	reqID := *msg.ID
 
+	step := t.stepRef(p.SessionID)
 	evt := api.NewEvent(api.EventElicitationNeeded, chatID, api.ElicitationNeededPayload{
 		RequestID:       reqID,
 		Mode:            p.Elicitation.Mode,
@@ -54,6 +55,8 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID api.Cha
 		URL:             p.Elicitation.URL,
 		ToolCallID:      p.ToolCallID,
 		SubSessionID:    subSessionID,
+		RunID:           step.WorkflowID,
+		NodeID:          step.NodeID,
 		RequestedSchema: p.Elicitation.RequestedSchema,
 	})
 	t.deps.Broadcast(ctx, evt)

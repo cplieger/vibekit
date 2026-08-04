@@ -6,15 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -122,84 +122,6 @@ func TestValidIdent(t *testing.T) {
 	for _, tc := range cases {
 		if got := validIdent(tc.in); got != tc.want {
 			t.Errorf("validIdent(%q) = %v, want %v", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestNormalizeMCPServers_NilReturnsEmptySlice(t *testing.T) {
-	got := normalizeMCPServers(nil)
-	if got == nil {
-		t.Fatal("normalizeMCPServers(nil) returned nil, want empty slice")
-	}
-	if len(got) != 0 {
-		t.Errorf("normalizeMCPServers(nil) len = %d, want 0", len(got))
-	}
-	// Marshal-round-trip check: must serialize as [] not null.
-	data, err := json.Marshal(got)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if string(data) != "[]" {
-		t.Errorf("JSON = %s, want []", data)
-	}
-}
-
-func TestNormalizeMCPServers_EmptyReturnsEmptySlice(t *testing.T) {
-	got := normalizeMCPServers([]map[string]any{})
-	if got == nil || len(got) != 0 {
-		t.Errorf("normalizeMCPServers(empty) = %v, want empty non-nil slice", got)
-	}
-}
-
-func TestNormalizeMCPServers_PreservesEntriesAndOrder(t *testing.T) {
-	in := []map[string]any{
-		{"name": "github", "command": "npx"},
-		{"name": "linear", "url": "https://..."},
-	}
-	got := normalizeMCPServers(in)
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
-	}
-	first, ok := got[0].(map[string]any)
-	if !ok {
-		t.Fatalf("got[0] type = %T, want map[string]any", got[0])
-	}
-	if first["name"] != "github" {
-		t.Errorf("got[0].name = %v, want github", first["name"])
-	}
-	second, ok := got[1].(map[string]any)
-	if !ok {
-		t.Fatalf("got[1] type = %T, want map[string]any", got[1])
-	}
-	if second["name"] != "linear" {
-		t.Errorf("got[1].name = %v, want linear", second["name"])
-	}
-}
-
-// TestNormalizeMCPServers_PreservesAllFieldsAndLength pins the contract
-// beyond the name field: every entry's arbitrary fields (command, args,
-// url, headers, disabled) must round-trip intact, and the output
-// length must equal the input length for ≥3 entries.
-func TestNormalizeMCPServers_PreservesAllFieldsAndLength(t *testing.T) {
-	in := []map[string]any{
-		{"name": "a", "command": "npx", "args": []string{"-y", "pkg"}},
-		{"name": "b", "url": "https://example", "headers": map[string]string{"k": "v"}},
-		{"name": "c", "disabled": true},
-	}
-	got := normalizeMCPServers(in)
-	if len(got) != 3 {
-		t.Fatalf("len = %d, want 3", len(got))
-	}
-	for i, want := range in {
-		m, ok := got[i].(map[string]any)
-		if !ok {
-			t.Errorf("got[%d] type = %T, want map[string]any", i, got[i])
-			continue
-		}
-		for k, v := range want {
-			if !reflect.DeepEqual(m[k], v) {
-				t.Errorf("got[%d][%q] = %v, want %v", i, k, m[k], v)
-			}
 		}
 	}
 }
@@ -1126,43 +1048,6 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 	}
 }
 
-// --- tarch-b8-c7-p2: Fuzz normalizeMCPServers ---
-
-// FuzzNormalizeMCPServers exercises normalizeMCPServers with arbitrary
-// map slices asserting: output length == input length, output is never
-// nil, no panic, JSON marshal never errors.
-func FuzzNormalizeMCPServers(f *testing.F) {
-	f.Add(0)
-	f.Add(1)
-	f.Add(5)
-	f.Add(50)
-	f.Fuzz(func(t *testing.T, n int) {
-		if n < 0 || n > 200 {
-			return
-		}
-		in := make([]map[string]any, n)
-		for i := range in {
-			in[i] = map[string]any{
-				"name":    fmt.Sprintf("server-%d", i),
-				"command": "npx",
-				"nil_val": nil,
-				"nested":  map[string]any{"k": i},
-				"num":     float64(i),
-			}
-		}
-		got := normalizeMCPServers(in)
-		if got == nil {
-			t.Fatal("normalizeMCPServers returned nil, want non-nil")
-		}
-		if len(got) != len(in) {
-			t.Fatalf("len(got) = %d, want %d", len(got), len(in))
-		}
-		if _, err := json.Marshal(got); err != nil {
-			t.Fatalf("json.Marshal(output) failed: %v", err)
-		}
-	})
-}
-
 func BenchmarkBridgeRespond(b *testing.B) {
 	// Create a Bridge with a pipe-based writer (no real process).
 	_, pw, err := os.Pipe()
@@ -1259,7 +1144,7 @@ func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *api.RPCRespo
 
 	done := make(chan error, 1)
 	go func() {
-		done <- b.loadSession(context.Background(), "acp-session-xyz", fallback, nil)
+		done <- b.loadSession(context.Background(), "acp-session-xyz", fallback)
 	}()
 
 	var ch chan *api.RPCResponse
@@ -1669,6 +1554,19 @@ done
 		if !strings.Contains(got, `"settings":{"codeIntelligence":{"enabled":true}}`) {
 			t.Errorf("initialize missing the code-intelligence settings opt-in; got: %s", got)
 		}
+		// Both flags are read by KAS with a strict `=== true` against the TOP
+		// level of _meta.kiro, and both fail SILENTLY when absent: without
+		// backgroundProcesses the agent simply has no control_bash_process /
+		// list_processes / get_process_output tool (probed: it answers "no such
+		// tool" instead of erroring), and without knowledge the system prompt
+		// carries no knowledge-base listing. Nesting either one or dropping it
+		// costs the capability with nothing in any log to say so.
+		if !strings.Contains(got, `"backgroundProcesses":true`) {
+			t.Errorf("initialize missing the background-process opt-in; got: %s", got)
+		}
+		if !strings.Contains(got, `"knowledge":true`) {
+			t.Errorf("initialize missing the knowledge opt-in; got: %s", got)
+		}
 	})
 
 	t.Run("disabled omits the hooks opt-in", func(t *testing.T) {
@@ -1680,4 +1578,233 @@ done
 			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
 		}
 	})
+}
+
+// --- _meta.title: the wire shape KAS actually sends ---
+
+// TestApplySessionResult_TakesFlatMetaTitle pins that the session title is read
+// from a FLAT `_meta.title`, not from `_meta.kiro.title`.
+//
+// Every other `_meta` vibekit decodes on this wire is nested under `kiro`
+// (sessionConfigChoice's rateMultiplier, the prompt metadata), so `_meta.kiro`
+// is the shape a reader expects — and moving the tag there compiles cleanly and
+// silently yields "". Probed 2026-08-02 against a live kiro-cli: session/new and
+// session/load both spread KAS's session-metadata object directly onto `_meta`,
+// so `title` sits at its top level alongside `id`, `agentMode` and
+// `workspacePaths`. The second case is the trap.
+func TestApplySessionResult_TakesFlatMetaTitle(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "flat _meta.title is adopted",
+			body: `{"sessionId":"s1","_meta":{"id":"s1","title":"Reaper live-session exemption","agentMode":"vibe"}}`,
+			want: "Reaper live-session exemption",
+		},
+		{
+			name: "nested _meta.kiro.title is NOT the wire shape",
+			body: `{"sessionId":"s1","_meta":{"kiro":{"title":"wrong nesting"}}}`,
+			want: "",
+		},
+		{
+			name: "session/new placeholder arrives verbatim for the caller to reject",
+			body: `{"sessionId":"s1","_meta":{"title":"New Session"}}`,
+			want: "New Session",
+		},
+		{
+			name: "absent _meta leaves the title empty",
+			body: `{"sessionId":"s1"}`,
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r sessionCreated
+			if err := json.Unmarshal([]byte(tc.body), &r); err != nil {
+				t.Fatalf("unmarshal session result: %v", err)
+			}
+			b := &Bridge{}
+			b.mu.Lock()
+			b.applySessionResultLocked(r, "")
+			b.mu.Unlock()
+			if got := b.SessionTitle(); got != tc.want {
+				t.Errorf("SessionTitle() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// --- R1: the bridge's Cancel must close stdin, not just signal the head ---
+
+// TestCancelClosesStdinSoTheTreeSeesEOF is the R1 regression.
+//
+// vibekit runs `kiro-cli acp` on pipes and the head passes its stdio down, so
+// the tree (kiro-cli -> kiro-cli-chat -> node, ~300 MB) stays in ONE session
+// with no setsid(). Closing vibekit's write end therefore delivers EOF to the
+// whole chain, and that — not the signal — is what reclaims it: WaitDelay's
+// SIGKILL escalation targets the head only. Measured on kiro-cli 2.16.0,
+// signal-without-close leaked 2/2 trials at ~250 MB each while
+// close-then-signal leaked 0/2.
+//
+// The bait isolates the close from the signal: the head IGNORES SIGTERM, so the
+// grandchild can only be reclaimed by stdin reaching EOF. If Cancel goes back to
+// a bare Signal(SIGTERM), the grandchild survives and this fails.
+func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "grandchild.pid")
+	// The head IGNORES SIGTERM and blocks forever. Its child reads vibekit's
+	// stdin pipe, and `head -c 1` returns the moment that pipe closes with no
+	// data. So the grandchild's death proves an EOF reached the TREE, and
+	// nothing else can cause it inside the deadline: WaitDelay's 5s SIGKILL
+	// escalation is past it, and Wait — which would close the pipes itself — is
+	// not called until Stop.
+	//
+	// `exec 3<&0` is required, not decoration: POSIX redirects an asynchronous
+	// command's stdin from /dev/null when job control is off, so a plain
+	// `head &` would read EOF instantly and the test would pass vacuously
+	// (observed). fd 3 carries the real pipe past that rule.
+	script := "#!/bin/sh\ntrap '' TERM\nexec 3<&0\nhead -c 1 <&3 >/dev/null &\n" +
+		"echo $! > " + pidFile + "\nwhile :; do sleep 0.05; done\n"
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write bait script: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	b := New(scriptPath, dir)
+	// Start's ACP handshake never completes (the bait speaks no ACP), so drive
+	// the spawn directly — this test is about teardown, not the handshake.
+	// lifecycleCtx is what CommandContext binds to, which is the path Cancel
+	// fires from.
+	b.lifecycleCtx = ctx
+	if err := b.startProcess("", "model", ""); err != nil {
+		t.Fatalf("startProcess: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		b.Stop()
+	})
+
+	grandchild := waitForBridgePID(t, pidFile)
+	if syscall.Kill(grandchild, 0) != nil {
+		t.Fatalf("bait grandchild %d not alive before cancel; the test proves nothing", grandchild)
+	}
+
+	cancel() // fires cmd.Cancel
+
+	deadline := time.Now().Add(3 * time.Second)
+	for syscall.Kill(grandchild, 0) == nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("grandchild %d survived ctx cancel; Cancel signalled the head without closing stdin, so the tree never saw EOF", grandchild)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// waitForBridgePID polls for the bait script's pid file and returns the pid.
+func waitForBridgePID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		raw, err := os.ReadFile(path) // #nosec G304 -- t.TempDir path
+		if err == nil {
+			if pid, cErr := strconv.Atoi(strings.TrimSpace(string(raw))); cErr == nil && pid > 0 {
+				return pid
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bait never wrote its grandchild pid to %s", path)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestSessionParams_CarryNoMCPServers pins the PRECEDENCE half of the MCP config
+// adoption, on the wire.
+//
+// vibekit used to send its server set inline as `mcpServers` on session/new and
+// session/load. It renders KAS's own hot-reloading config file instead. KAS
+// merges `client > file-based`, so a surviving inline entry OUTRANKS the file:
+// the file would still reload, the agent would keep using the inline copy, and
+// every edit in the UI would look like it did nothing. That failure is silent
+// and would present as "MCP settings don't work", so it gets a wire-level test
+// rather than trust in a deletion.
+//
+// It asserts on the RAW request bytes, not on a Go struct, because the bug it
+// guards against is a re-added map key — something a typed assertion on
+// StartOpts would not see.
+func TestSessionParams_CarryNoMCPServers(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "requests.log")
+
+	// The fake logs every line it receives, then answers the three methods Start
+	// needs. `tee -a` is the whole instrumentation.
+	script := `#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "` + logPath + `"
+  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$method" in
+    initialize)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    session/new)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-new"}}\n' "$id"
+      ;;
+    session/load)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-load"}}\n' "$id"
+      ;;
+    *)
+      if [ -n "$id" ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      fi
+      ;;
+  esac
+done
+`
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake script: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		opts   *api.StartOpts
+		method string
+	}{
+		{"session/new", &api.StartOpts{Model: "m"}, "session/new"},
+		{"session/load", &api.StartOpts{SessionID: "existing", Model: "m"}, "session/load"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+				t.Fatalf("reset log: %v", err)
+			}
+			b := New(scriptPath, dir)
+			if err := b.Start(context.Background(), tc.opts); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			b.Stop()
+
+			data, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("read log: %v", err)
+			}
+			var found bool
+			for line := range strings.SplitSeq(string(data), "\n") {
+				if !strings.Contains(line, `"method":"`+tc.method+`"`) {
+					continue
+				}
+				found = true
+				if strings.Contains(line, "mcpServers") {
+					t.Errorf("%s carries mcpServers, which OUTRANKS KAS's config file:\n%s", tc.method, line)
+				}
+			}
+			if !found {
+				t.Fatalf("no %s request in the log; the test proved nothing:\n%s", tc.method, data)
+			}
+		})
+	}
 }

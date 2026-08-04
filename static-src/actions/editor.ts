@@ -2,14 +2,7 @@
 // Actions: editor + diff pane user-initiated mutations.
 // ---------------------------------------------------------------------------
 
-import {
-  apiAction,
-  defineAction,
-  ActionError,
-  retryNetwork,
-  RETRY_STANDARD,
-  transportAction,
-} from "./index.js";
+import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } from "./index.js";
 
 import { routeForPath } from "../editor-types.js";
 
@@ -36,56 +29,9 @@ export const saveFile = apiAction<
   error: false,
 });
 
-/** Send the active plan to the agent. Saves the draft, then hands off via
- *  runPlan (which switches out of Plan mode when needed and sends the prompt).
- *  Returns the send status ("sent" | "queued") so the editor can close the
- *  plan-draft tab only once the draft is actually sent+deleted.
- *
- *  Error surfaces are single: writePlanDraft shows its own draft/size banner
- *  and the inner plan.run shows the "Failed to send plan" toast, so this
- *  action's own framework toast is suppressed (error:false) and the editor
- *  adds no inline error on top.
- *  Note: writePlanDraft is not cancellable — once started it will complete
- *  regardless of signal state. Cancellation is checked between steps. */
-export const sendPlan = defineAction<{ chatID: string; content: string }, "sent" | "queued">({
-  name: "editor.send_plan",
-  scope: (args) => "chat:" + args.chatID,
-  run: async ({ chatID, content }, signal) => {
-    const { writePlanDraft, runPlan } = await import("../plan-actions.js");
-    if (!(await writePlanDraft(chatID, content))) {
-      throw new ActionError("Could not save plan draft", { code: "draft_failed" });
-    }
-    if (signal.aborted) {
-      throw new ActionError("cancelled", { code: "cancelled" });
-    }
-    const result = await runPlan(chatID, content.trim());
-    if (result === "failed" || result === "too_large") {
-      throw new ActionError("Plan send failed", { code: "run_plan_failed" });
-    }
-    return result;
-  },
-  error: false,
-});
-
-/** Apply partial (per-hunk) pending change via transport. */
-export const resolvePendingPartial = transportAction<{
-  chatID: string;
-  toolCallID: string;
-  mergedText: string;
-}>({
-  name: "editor.resolve_partial",
-  networkMode: "always",
-  scope: (args) => "chat:" + args.chatID,
-  idempotencyKey: (args) => `editor.resolve_partial:${args.toolCallID}`,
-  retryable: retryNetwork,
-  retry: RETRY_STANDARD,
-  command: ({ chatID, toolCallID, mergedText }) => ({
-    type: "resolve_pending_change_partial",
-    chat_id: chatID,
-    payload: { tool_call_id: toolCallID, merged_text: mergedText },
-  }),
-  error: "Couldn't apply partial change",
-});
+// There is no per-hunk resolve action. KAS decides per ACTION, not per hunk
+// (a multi-file rename shares one toolCallId), so a merged-text reply had
+// nowhere to go. Editing after approval is the replacement.
 
 /** Request AI conflict resolution suggestion. Inline error; no retry (not idempotent). */
 export const suggestResolution = apiAction<

@@ -1,10 +1,15 @@
 package command
 
-// Rewind lifecycle commands: fork from a historical turn, promote a
-// rewind to replace its parent, or discard a rewind and return to the
-// parent. Replaces the old tangent system (fork/merge/discard) with a
-// simpler model: no parent freeze, no merge — just branch + promote
-// or discard.
+// Rewind: revert THIS chat to a past turn. There is no branch, no promote and
+// no discard — the whole family apparatus is gone, because a fork made a SECOND
+// chat and rewinding was always meant to edit the one you are in.
+//
+// The operation is one KAS call. `_kiro/checkpoint/revertMultiple` drops the
+// addressed user message and everything after it, rolls the files back from
+// KAS's own snapshots, and appends a `checkpoint_revert` tombstone to its
+// session log so the truncation is durable. Vibekit's Rewind and its former
+// turn-level Restore are therefore the same operation: the transcript and the
+// files move together, because KAS moves them together.
 
 import (
 	"context"
@@ -12,169 +17,40 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// CmdRewindChat creates a new chat branched from a specific turn of
-// the current chat. Uses kiro-cli's native `session/fork` ACP method
-// to fork the ACP session at the given turn index, then persists a
-// new vibekit chat with truncated history and `parent_chat_id` set.
+// CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint
+// machinery, then truncates vibekit's record to match.
 //
-// Unlike the old tangent system, the parent is NOT frozen — both
-// chats continue independently.
+// The truncation is NOT redundant with the revert, and it is not a
+// re-derivation of KAS's answer either. KAS's tombstone makes ITS log correct;
+// vibekit's chat file still holds the dropped turns, and `mergeProjection`
+// deliberately preserves anything newer than a replay's last message (KAS's log
+// is not fsynced, so an absent tail is normally a durability gap rather than an
+// intended deletion). Left alone, the next resume would therefore hand the
+// reverted turns straight back. A revert is the one case where the tail is gone
+// ON PURPOSE, and only vibekit knows that at this moment, so it cuts its own
+// record here.
+//
+// That is also why there is no session/load: the live session's context is
+// already reverted in place by the handler, the tombstone covers every future
+// load, and a reload would only re-derive an answer both sides already agree on
+// at the price of tearing down the bridge.
+//
+// Mid-turn is refused, not queued. KAS throws on `session.abortController`
+// ("Cannot revert while the agent is still running"), and refuses a concurrent
+// revert per session — so both races are settled upstream and vibekit forwards
+// the reason instead of reimplementing the guard.
 func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
 	var p api.RewindChatCommand
-	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.TurnIndex < 0 {
+	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.MessageID == "" {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
-		return
-	}
-
-	parent, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
-	if !ok {
-		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
-		return
-	}
-
-	// Validate turn index is within bounds.
-	if p.TurnIndex >= len(parent.Messages) {
-		d.RespondErr(w, http.StatusBadRequest,
-			errors.New("turn_index out of range"))
-		return
-	}
-
-	// Truncate messages to the specified turn (inclusive).
-	truncated := make([]api.Message, p.TurnIndex+1)
-	copy(truncated, parent.Messages[:p.TurnIndex+1])
-
-	// Try session/fork on the parent's bridge for ACP session continuity.
-	// If it succeeds, the new chat gets the forked session ID so its
-	// bridge can session/load it (model "remembers" earlier turns).
-	var forkedSessionID string
-	bridge := deps.GetBridge(cmd.ChatID)
-	if bridge != nil {
-		// v3 (KAS) session/fork keys the fork point on _meta.kiro.messageId
-		// (a transcript message id, not a turn index) and requires cwd +
-		// sessionId. The id space is populated by forwarding the user
-		// message id on session/prompt (see BuildPromptParams); KAS only
-		// knows the ids vibekit supplied, i.e. user turns.
-		resp, err := bridge.Call(ctx, api.MethodSessionFork, SessionParams(bridge, map[string]any{
-			"cwd":   deps.WorkDir(),
-			"_meta": map[string]any{"kiro": map[string]any{"messageId": forkMessageID(parent.Messages, p.TurnIndex)}},
-		}))
-		if err == nil && resp != nil && resp.Result != nil {
-			var result struct {
-				SessionID string `json:"sessionId"`
-			}
-			_ = json.Unmarshal(resp.Result, &result)
-			forkedSessionID = result.SessionID
-		} else if err != nil {
-			slog.Warn("session/fork failed; rewind starts a fresh session", "chat", cmd.ChatID, keyError, err)
-		}
-	}
-
-	// Create the rewind chat with truncated history.
-	rewindID := api.NewChatID()
-	now := time.Now().UnixMilli()
-	err := deps.ChatStore().Mutate(ctx, rewindID, func(c *api.Chat, exists bool) bool {
-		if exists {
-			return false
-		}
-		c.Name = "Rewind: " + TruncateRunes(parent.Name, 25)
-		if len(c.Name) > api.MaxChatNameBytes {
-			c.Name = c.Name[:api.MaxChatNameBytes]
-		}
-		c.CurrentModeID = parent.CurrentModeID
-		c.Model = parent.Model
-		c.ACPSessionID = forkedSessionID
-		c.ParentChatID = cmd.ChatID
-		c.RewindFromTurn = p.TurnIndex
-		c.Messages = truncated
-		c.MessageCount = len(truncated)
-		c.CreatedAt = now
-		c.UpdatedAt = now
-		return true
-	})
-	if err != nil {
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	slog.Info("rewind chat created",
-		"parent", cmd.ChatID, "rewind", rewindID, "turn", p.TurnIndex)
-	d.Respond(w, cmd.RequestID, map[string]any{
-		"ok":        true,
-		"rewind_id": string(rewindID),
-	})
-}
-
-// forkMessageID returns the transcript message id KAS should fork at:
-// the message at turnIndex, or the nearest preceding user message. KAS
-// only knows the ids vibekit supplied on session/prompt (user turns), so
-// assistant/event turns resolve back to their originating user message.
-// Empty when no user message precedes turnIndex (KAS then forks at the
-// session head). Callers guarantee 0 <= turnIndex < len(messages).
-func forkMessageID(messages []api.Message, turnIndex int) string {
-	for i := turnIndex; i >= 0; i-- {
-		if messages[i].Role == api.RoleUser && messages[i].ID != "" {
-			return messages[i].ID
-		}
-	}
-	return ""
-}
-
-// CmdPromoteRewindChat promotes a rewind chat to replace its parent
-// via the store's PromoteRewind transition (validated + cleared under
-// one per-chat lock), then deletes the parent. The transition's order
-// is crash-safe: an interruption between the clear and the parent
-// delete leaves a promoted top-level chat plus a surviving parent
-// (benign — the user can delete it) rather than a chat whose
-// ParentChatID references a deleted parent. A failed clear aborts the
-// promote with an error instead of reporting success while the
-// relationship is intact.
-func CmdPromoteRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
-	deps := d.Deps()
-	if !d.RequireChatID(w, cmd) {
-		return
-	}
-
-	parentID, err := deps.ChatStore().PromoteRewind(ctx, cmd.ChatID)
-	switch {
-	case errors.Is(err, api.ErrChatNotFound):
-		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
-		return
-	case errors.Is(err, api.ErrNotRewind):
-		d.RespondErr(w, http.StatusBadRequest, errNotRewindChat)
-		return
-	case err != nil:
-		slog.Error("promote rewind: clear parent link", "rewind", cmd.ChatID, keyError, err)
-		d.RespondErr(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	// Delete the parent. A failure here is benign-but-visible: the
-	// promote already took effect (the chat is top-level), so respond OK
-	// and log — the surviving parent stays listed and can be deleted
-	// manually.
-	deps.CleanupChatState(ctx, parentID)
-	if err := deps.ChatStore().Delete(ctx, parentID); err != nil {
-		slog.Error("promote rewind: delete parent", "parent", parentID, keyError, err)
-	}
-
-	slog.Info("rewind promoted", "rewind", cmd.ChatID, "deleted_parent", parentID)
-	d.Respond(w, cmd.RequestID, responseWith(nil))
-}
-
-// CmdDiscardRewindChat discards a rewind chat and returns to the parent.
-// Deletes the rewind chat; the parent is unaffected (it was never frozen).
-func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
-	deps := d.Deps()
-	if !d.RequireChatID(w, cmd) {
 		return
 	}
 
@@ -183,24 +59,108 @@ func CmdDiscardRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWri
 		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
 	}
-	if chat.ParentChatID == "" {
-		d.RespondErr(w, http.StatusBadRequest,
-			errNotRewindChat)
+	idx := userMessageIndex(chat.Messages, p.MessageID)
+	if idx < 0 {
+		d.RespondErr(w, http.StatusBadRequest, errRewindTargetNotFound)
 		return
 	}
 
-	parentID := chat.ParentChatID
-
-	deps.CleanupChatState(ctx, cmd.ChatID)
-	if err := deps.ChatStore().Delete(ctx, cmd.ChatID); err != nil {
-		slog.Error("discard rewind: delete", "rewind", cmd.ChatID, keyError, err)
+	bridge := deps.GetBridge(cmd.ChatID)
+	if bridge == nil {
+		// No live session to revert. The files and the transcript move together
+		// or not at all, so truncating the record alone is not an option.
+		d.RespondErr(w, http.StatusConflict, errNoBridge)
+		return
 	}
 
-	slog.Info("rewind discarded", "rewind", cmd.ChatID, "parent", parentID)
-	d.Respond(w, cmd.RequestID, map[string]any{
-		"ok":        true,
-		"parent_id": string(parentID),
-	})
+	result, status, err := revertToMessage(ctx, bridge, p.MessageID)
+	if err != nil {
+		slog.Warn("rewind: revert failed", "chat", cmd.ChatID, "status", status, keyError, err)
+		d.RespondErr(w, status, err)
+		return
+	}
+
+	// Cut at idx, not idx+1: the addressed message is discarded WITH its
+	// successors (KAS slices from the target inclusive), so the prompt at that
+	// turn is gone and has to be retyped. That is the operation, not a bug.
+	if mErr := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			return false
+		}
+		if idx >= len(c.Messages) {
+			return false
+		}
+		c.Messages = c.Messages[:idx]
+		c.MessageCount = len(c.Messages)
+		return true
+	}); mErr != nil {
+		slog.Error("rewind: truncate record", "chat", cmd.ChatID, keyError, mErr)
+		d.RespondErr(w, http.StatusInternalServerError, mErr)
+		return
+	}
+
+	slog.Info("chat rewound",
+		"chat", cmd.ChatID, "message", p.MessageID,
+		"dropped_messages", len(chat.Messages)-idx,
+		"restored_files", len(result.AffectedFiles), "total_files", result.TotalFiles)
+	d.Respond(w, cmd.RequestID, responseWith(map[string]any{
+		"restored_files": result.AffectedFiles,
+	}))
+}
+
+// revertResult is KAS's reply to a revert. affectedFiles are the paths it put
+// back (or removed, for a file the discarded turns created).
+type revertResult struct {
+	Error         string   `json:"error"`
+	AffectedFiles []string `json:"affectedFiles"`
+	TotalFiles    int      `json:"totalFiles"`
+	Success       bool     `json:"success"`
+}
+
+// revertToMessage performs the KAS round trip and normalises its TWO failure
+// channels into one error plus the HTTP status to report.
+//
+// Two channels because KAS uses both: a transport/JSON-RPC failure comes back as
+// an error, while a refusal it can explain — an unknown id, a non-user target, a
+// live turn, a concurrent revert, an unreadable snapshot — comes back
+// `success:false` with a reason. The reason is forwarded verbatim: it is more
+// specific than anything vibekit could infer, and a revert that did not happen
+// must never read like one that did.
+func revertToMessage(ctx context.Context, bridge Bridge, messageID string) (revertResult, int, error) {
+	var result revertResult
+	resp, err := bridge.Call(ctx, api.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
+		"messageId": messageID,
+	}))
+	if err != nil {
+		return result, http.StatusBadGateway, err
+	}
+	if resp != nil && resp.Result != nil {
+		_ = json.Unmarshal(resp.Result, &result)
+	}
+	if !result.Success {
+		reason := result.Error
+		if reason == "" {
+			reason = "revert failed"
+		}
+		return result, http.StatusConflict, errors.New(reason)
+	}
+	return result, http.StatusOK, nil
+}
+
+// userMessageIndex locates the revert target: the USER message with this id.
+//
+// User-only because KAS requires it — a non-user target is refused in-band with
+// the type it found — and because only user messages share an id space with KAS
+// at all. It echoes back the messageId vibekit sends on session/prompt, while an
+// assistant turn carries KAS's own `<uuid>-say`, so an assistant id would be
+// unknown to the revert regardless of role checking. Returns -1 when absent.
+func userMessageIndex(messages []api.Message, id string) int {
+	for i := range messages {
+		if messages[i].ID == id && messages[i].Role == api.RoleUser {
+			return i
+		}
+	}
+	return -1
 }
 
 // CmdSetEffort applies a reasoning-effort level to the active session. On

@@ -251,6 +251,12 @@
     align-items: center;
     gap: var(--sp-2);
     padding: var(--sp-2) var(--sp-3);
+    /* A transparent border is reserved on EVERY tab so toggling the active
+     * outline below never shifts the row. This is what the old design got wrong
+     * in miniature: it drew a 2px accent border on the active tab only and paid
+     * for it with a compensating `padding-inline-start`, so the selected row's
+     * text sat 2px off from every other row's. */
+    border: 1px solid transparent;
     border-radius: var(--r);
     cursor: pointer;
     font-size: var(--fs-sm);
@@ -258,6 +264,7 @@
     min-height: var(--btn-h);
     transition:
       background var(--dur-micro),
+      border-color var(--dur-micro),
       opacity var(--dur-micro),
       transform var(--dur-micro) var(--ease-standard);
 
@@ -271,22 +278,36 @@
       overflow: hidden;
     }
 
-    &:hover {
+    /* Inactive tabs stay FLAT — no chip, no border — and lift on hover, so the
+     * only filled row in the strip is the selected one. */
+    &:not(.active):hover {
       background: var(--c-bg-hover);
     }
 
+    /* The active tab is a FILLED row, not a bordered one: the whole background
+     * is accent-derived, with the fill lightened toward the text colour as a
+     * subtle edge. Adopted from web-terminal-kiro's tab vocabulary so the two
+     * apps read the same way (`--tab-active-bg` / `--tab-active-border` there).
+     *
+     * The 2px accent left-border it replaces marked selection with a sliver at
+     * one edge, which is easy to miss on a dense strip and impossible to see at
+     * all once a row is indented (a sub-tab's `↳` sits exactly where the border
+     * was). A fill is unambiguous at any indent. */
     &.active {
-      background: var(--c-bg-tertiary);
-      border-inline-start: 2px solid var(--c-accent);
-      padding-inline-start: calc(var(--sp-3) - 2px);
+      background: var(--c-tab-active-bg);
+      border-color: var(--c-tab-active-border);
     }
 
-    &.active:hover {
-      background: var(--c-bg-hover);
-    }
+    /* There is deliberately NO `&.active:hover`. The rule that used to live here
+     * repainted the active tab to --c-bg-hover, so hovering the selected tab
+     * ERASED the thing marking it selected. Under a fill the state is
+     * unambiguous and needs no hover feedback of its own. */
 
+    /* Dragging keeps the accent outline and takes its fill elsewhere: under the
+     * active fill, --c-accent-subtle is nearly the same swatch, so a dragged
+     * active tab and a dragged inactive one looked identical. */
     &.dragging {
-      background: var(--c-accent-subtle);
+      background: var(--c-bg-tertiary);
       outline: 1px solid var(--c-accent);
     }
 
@@ -594,6 +615,14 @@
 
     &.active {
       color: var(--c-accent);
+    }
+
+    /* A toggle's ON state, driven by the ARIA attribute itself so a pressed
+       control needs no second bookkeeping class to look pressed. Without this
+       an aria-pressed button announced its state and showed nothing. */
+    &[aria-pressed="true"] {
+      color: var(--c-accent);
+      background: var(--c-accent-subtle);
     }
 
     &:hover {

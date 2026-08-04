@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,7 +16,7 @@ import (
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := New(context.Background(), dir, nil)
+	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -174,7 +173,7 @@ func TestPersist_FileIs0600(t *testing.T) {
 func TestOnChangeFires(t *testing.T) {
 	dir := t.TempDir()
 	var calls atomic.Int32
-	s, err := New(context.Background(), dir, func(context.Context) { calls.Add(1) })
+	s, err := New(context.Background(), dir, func(context.Context) { calls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -196,7 +195,7 @@ func TestLoad_ReadsExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(context.Background(), dir, nil)
+	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -222,93 +221,12 @@ func TestLoad_CorruptFileStartsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(context.Background(), dir, nil)
+	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
 	}
 	if len(s.List(context.Background())) != 0 {
 		t.Error("corrupt file should load empty")
-	}
-}
-
-func TestACPServers_EnabledOnly(t *testing.T) {
-	s := newTestStore(t)
-	a, _ := s.Create(context.Background(), &Server{
-		Transport: TransportStdio, Name: "a", Command: "bash", Enabled: true,
-	})
-	_, _ = s.Create(context.Background(), &Server{
-		Transport: TransportStdio, Name: "b", Command: "bash", Enabled: false,
-	})
-	// Force enabled true on a via SetEnabled which is more idiomatic.
-	_, _ = s.SetEnabled(context.Background(), a.ID, true)
-
-	acp := s.ACPServers(context.Background())
-	if len(acp) != 1 {
-		t.Fatalf("expected 1 enabled server in ACP export, got %d", len(acp))
-	}
-	if acp[0]["name"] != "a" {
-		t.Errorf("wrong server exported; got %v", acp[0]["name"])
-	}
-}
-
-func TestACPServers_WireShape(t *testing.T) {
-	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{
-		Transport: TransportHTTP, Name: "linear", URL: "https://mcp.linear.app/sse",
-		Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
-		Enabled: true,
-	})
-	acp := s.ACPServers(context.Background())
-	if len(acp) != 1 {
-		t.Fatalf("len = %d", len(acp))
-	}
-	// Serialise to JSON to verify the shape matches ACP's McpServerHttp
-	// exactly: headers is an array of {name,value} objects, not a map.
-	j, err := json.Marshal(acp[0])
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	s1 := string(j)
-	for _, want := range []string{
-		`"type":"http"`,
-		`"name":"linear"`,
-		`"url":"https://mcp.linear.app/sse"`,
-		`"headers":[{"name":"Authorization","value":"Bearer x"}]`,
-	} {
-		if !strings.Contains(s1, want) {
-			t.Errorf("missing %q in %s", want, s1)
-		}
-	}
-}
-
-func TestACPServers_SSEWireShape(t *testing.T) {
-	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{
-		Transport: TransportSSE, Name: "legacy", URL: "https://mcp.example/sse",
-		Headers: []KeyPair{{Name: "Authorization", Value: "Bearer x"}},
-		Enabled: true,
-	})
-	acp := s.ACPServers(context.Background())
-	if len(acp) != 1 {
-		t.Fatalf("len = %d", len(acp))
-	}
-	// Wire shape matches ACP McpServerSse: type "sse", name, url, and a
-	// {name,value}[] headers array — identical to McpServerHttp but for the
-	// discriminator (verified against the KAS 2.12 zMcpServer union).
-	j, err := json.Marshal(acp[0])
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	got := string(j)
-	for _, want := range []string{
-		`"type":"sse"`,
-		`"name":"legacy"`,
-		`"url":"https://mcp.example/sse"`,
-		`"headers":[{"name":"Authorization","value":"Bearer x"}]`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in %s", want, got)
-		}
 	}
 }
 
@@ -345,7 +263,7 @@ func TestParseTransport(t *testing.T) {
 // backward-compat guarantee that adding sse doesn't rewrite stored entries.
 func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 	dir := t.TempDir()
-	s, err := New(context.Background(), dir, nil)
+	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -356,7 +274,7 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 		t.Fatalf("Create sse: %v", err)
 	}
 	// Reload from the same directory: the transport must stay "sse".
-	reloaded, err := New(context.Background(), dir, nil)
+	reloaded, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("reload New: %v", err)
 	}
@@ -423,59 +341,6 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 	}
 }
 
-func TestACPServers_StdioWireShape(t *testing.T) {
-	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{
-		Transport: TransportStdio, Name: "gh", Command: "npx",
-		Args:    []string{"-y", "@modelcontextprotocol/server-github"},
-		Env:     []KeyPair{{Name: "GITHUB_TOKEN", Value: "tok"}},
-		Enabled: true,
-	})
-	acp := s.ACPServers(context.Background())
-	j, _ := json.Marshal(acp[0])
-	s1 := string(j)
-	// env must be an array of {name,value}, not a JSON object.
-	if !strings.Contains(s1, `"env":[{"name":"GITHUB_TOKEN","value":"tok"}]`) {
-		t.Errorf("env not in array shape: %s", s1)
-	}
-	if !strings.Contains(s1, `"args":["-y","@modelcontextprotocol/server-github"]`) {
-		t.Errorf("args not in expected shape: %s", s1)
-	}
-}
-
-func TestACPServers_EmptyArraysNotNull(t *testing.T) {
-	s := newTestStore(t)
-	// stdio with no args and no env: wire must use [] for both, never null.
-	_, _ = s.Create(context.Background(), &Server{
-		Transport: TransportStdio, Name: "x", Command: "/bin/sh",
-		Enabled: true,
-	})
-	acp := s.ACPServers(context.Background())
-	j, _ := json.Marshal(acp[0])
-	s1 := string(j)
-	if strings.Contains(s1, `"args":null`) || strings.Contains(s1, `"env":null`) {
-		t.Errorf("args/env serialised as null: %s", s1)
-	}
-	if !strings.Contains(s1, `"args":[]`) || !strings.Contains(s1, `"env":[]`) {
-		t.Errorf("args/env not [] when empty: %s", s1)
-	}
-
-	// http with no headers: same.
-	_, _ = s.Create(context.Background(), &Server{
-		Transport: TransportHTTP, Name: "y", URL: "https://example.com",
-		Enabled: true,
-	})
-	acp = s.ACPServers(context.Background())
-	for _, entry := range acp {
-		if entry["name"] == "y" {
-			j, _ := json.Marshal(entry)
-			if !strings.Contains(string(j), `"headers":[]`) {
-				t.Errorf("http headers not [] when empty: %s", j)
-			}
-		}
-	}
-}
-
 func TestEnabledNames_DefensiveFilter(t *testing.T) {
 	s := newTestStore(t)
 	_, _ = s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "on", Command: "bash", Enabled: true})
@@ -528,7 +393,7 @@ func waitForCounter(t *testing.T, c *atomic.Int32, want int32) {
 func TestSetOnChange_ReplacesCallback(t *testing.T) {
 	dir := t.TempDir()
 	var firstCalls, secondCalls atomic.Int32
-	s, err := New(context.Background(), dir, func(context.Context) { firstCalls.Add(1) })
+	s, err := New(context.Background(), dir, func(context.Context) { firstCalls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -556,7 +421,7 @@ func TestSetOnChange_ReplacesCallback(t *testing.T) {
 func TestSetOnChange_NilIsNoop(t *testing.T) {
 	dir := t.TempDir()
 	var calls atomic.Int32
-	s, err := New(context.Background(), dir, func(context.Context) { calls.Add(1) })
+	s, err := New(context.Background(), dir, func(context.Context) { calls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -770,7 +635,7 @@ func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 	}
 
 	buf := captureSlog(t)
-	s, err := New(context.Background(), dir, nil)
+	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
 	}
@@ -820,7 +685,7 @@ func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	}
 
 	buf := captureSlog(t)
-	if _, err := New(context.Background(), dir, nil); err != nil {
+	if _, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -845,7 +710,7 @@ func TestLoad_NullServersPreservesNonNilInvariant(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"servers":null}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), dir, nil)
+	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -974,7 +839,7 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	s, err := New(context.Background(), dir, nil)
+	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New must tolerate rename failure, got: %v", err)
 	}
@@ -991,48 +856,6 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 // OAuth client ID (kiro-cli 2.3+): pre-registered client_id for HTTP MCP
 // servers that don't support DCR.
 // ---------------------------------------------------------------------------
-
-func TestACPServers_HTTPWithOAuthClientID(t *testing.T) {
-	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{
-		Transport:     TransportHTTP,
-		Name:          "slack",
-		URL:           "https://slack.example/mcp",
-		OAuthClientID: "abc123",
-		Enabled:       true,
-	})
-	acp := s.ACPServers(context.Background())
-	if len(acp) != 1 {
-		t.Fatalf("len = %d", len(acp))
-	}
-	j, err := json.Marshal(acp[0])
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	got := string(j)
-	// Wire shape: nested object {oauth: {clientId: "..."}} per kiro-cli's
-	// MCP server config schema.
-	if !strings.Contains(got, `"oauth":{"clientId":"abc123"}`) {
-		t.Errorf("expected nested oauth.clientId in wire shape, got %s", got)
-	}
-}
-
-func TestACPServers_HTTPWithoutOAuthClientID_OmitsField(t *testing.T) {
-	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{
-		Transport: TransportHTTP, Name: "linear", URL: "https://linear.example/mcp",
-		Enabled: true,
-	})
-	acp := s.ACPServers(context.Background())
-	j, err := json.Marshal(acp[0])
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	got := string(j)
-	if strings.Contains(got, `"oauth"`) {
-		t.Errorf("oauth field should be omitted when empty, got %s", got)
-	}
-}
 
 func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 	s := newTestStore(t)

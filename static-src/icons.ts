@@ -56,8 +56,6 @@ export const ICON_REPO =
   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>';
 export const ICON_EXPORT =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-export const ICON_UNDO =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
 export const ICON_DIFF =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M12 4v16"/></svg>';
 export const ICON_CHECK =
@@ -79,6 +77,14 @@ export const ICON_HOURGLASS = svg(
   16,
   '<path d="M6 2h12v3a6 6 0 01-3 5.2 6 6 0 013 5.2V19a3 3 0 01-3 3H9a3 3 0 01-3-3v-3.6a6 6 0 013-5.2A6 6 0 016 5z"/>',
 );
+// The one-button activity control's Cancel face: a stop square. Filled — the
+// outline family reads as a checkbox at 16px, and stop-is-filled is the
+// transport convention every player uses.
+export const ICON_CANCEL = svg(
+  16,
+  '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
+);
+
 export const ICON_ALERT = svg(
   16,
   '<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
@@ -312,6 +318,20 @@ export const ICON_TAB_FILES = svg(
 export const ICON_TAB_HISTORY = svg(
   14,
   '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+);
+/** The Kiro configuration browser: an open book. The freed spec-board toolbar
+ *  slot, and the one glyph on the page — the categories are text, because a
+ *  five-icon set for five word-labelled tabs teaches nothing. */
+export const ICON_TAB_DOCS = svg(
+  14,
+  '<path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/>',
+);
+/** Workflow run: three nodes joined top-to-bottom, the shape of a run's node
+ *  plan. Distinct from the chat and subagent glyphs so a run tab is never
+ *  mistaken for a conversation. */
+export const ICON_TAB_RUN = svg(
+  14,
+  '<rect x="9" y="2" width="6" height="5" rx="1"/><rect x="3" y="17" width="6" height="5" rx="1"/><rect x="15" y="17" width="6" height="5" rx="1"/><path d="M12 7v4M12 11H6v6M12 11h6v6"/>',
 );
 /** Seti file type icons keyed by short name. */
 export const FILE_ICONS: Record<string, string> = {

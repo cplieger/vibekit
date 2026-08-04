@@ -6,7 +6,7 @@
 package buffer
 
 import (
-	"context"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,7 +38,6 @@ type Buffer struct {
 	ToolStartTimes map[string]int64
 	ToolCallIndex  map[string]int
 	ChangedFiles   map[string]*api.FileChange
-	Partial        *WritingPartial
 	MessageID      string
 	Content        strings.Builder
 	Reasoning      strings.Builder
@@ -53,9 +52,10 @@ type Buffer struct {
 	// broadcast chunk carries its value (MessageChunkPayload.Seq) so
 	// the connect-time turn_state snapshot can carry a watermark and
 	// clients can drop deltas the snapshot already folded in. Guarded
-	// by mu like the blocks it counts; read only via the Append*Delta
-	// return values (the hub's turn mirror, not this buffer, is the
-	// cross-goroutine snapshot surface).
+	// by mu like the blocks it counts, and read either from the
+	// Append*Delta return values or from Snapshot — which is this
+	// buffer's own cross-goroutine read, replacing the hub-side replica
+	// that used to be the snapshot surface.
 	chunkSeq int64
 	mu       sync.Mutex
 	Started  bool
@@ -221,47 +221,41 @@ func (buf *Buffer) MarkCancelledToolsFailed() []api.ToolCall {
 	return changed
 }
 
-// WritePartial rewrites the partial file with the current buffer state.
-// No-op if the partial writer was not opened or is disabled.
-func (buf *Buffer) WritePartial(ctx context.Context) {
+// Snapshot returns the in-flight turn as an api.Message plus the chunk-sequence
+// watermark, for a client that connects mid-turn and needs the accumulated
+// transcript rather than only the next delta.
+//
+// This is the buffer serving its own cross-goroutine read, which the hub used to
+// keep a whole SECOND replica for (hub/turn_mirror.go re-folded every broadcast
+// event into a parallel api.Message — a duplicate implementation of the block
+// assembly happening right here, and one that could drift from it). Everything
+// that snapshot needs is already in these fields; the only thing missing was a
+// guarded reader, so this is it.
+//
+// Reports false when the turn has produced nothing yet, which the caller sends
+// as a bare busy signal instead of an empty message.
+func (buf *Buffer) Snapshot() (api.Message, int64, bool) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	if buf.Partial == nil {
-		return
+	if buf.MessageID == "" {
+		return api.Message{}, 0, false
 	}
-	buf.Partial.Write(ctx, &PartialSnapshot{
-		MessageID:      buf.MessageID,
+	if buf.Content.Len() == 0 && buf.Reasoning.Len() == 0 && len(buf.ToolCalls) == 0 {
+		return api.Message{}, buf.chunkSeq, false
+	}
+	// Field-for-field the same shape bridge_coord assembles at turn end, so a
+	// mid-turn snapshot renders byte-equivalently to the turn that follows it.
+	// Slices are copied: the caller reads them off this goroutine while the
+	// dispatch loop keeps appending.
+	return api.Message{
+		ID:             buf.MessageID,
+		Role:           api.RoleAssistant,
+		Ts:             time.Now().UnixMilli(),
 		Content:        buf.Content.String(),
 		Reasoning:      buf.Reasoning.String(),
-		ToolCalls:      buf.ToolCalls,
-		Blocks:         buf.Blocks,
-		CodeReferences: buf.CodeReferences,
+		ToolCalls:      slices.Clone(buf.ToolCalls),
+		Blocks:         slices.Clone(buf.Blocks),
+		CodeReferences: slices.Clone(buf.CodeReferences),
 		Refusal:        buf.Refusal,
-		Ts:             time.Now().UnixMilli(),
-	})
-}
-
-// OpenPartial opens the partial recovery file for a chat. Idempotent: a
-// no-op once the file is already open, so it can be called on every
-// content/reasoning chunk to open the .partial lazily (the first call
-// wins). If opening fails, Partial remains nil (degraded mode).
-func (buf *Buffer) OpenPartial(ctx context.Context, path string) {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-	if buf.Partial != nil {
-		return
-	}
-	buf.Partial = OpenPartial(ctx, path)
-}
-
-// ClosePartial flushes the final state, closes the partial file fd,
-// and removes the file at path.
-func (buf *Buffer) ClosePartial(ctx context.Context, path string) {
-	buf.mu.Lock()
-	defer buf.mu.Unlock()
-	if buf.Partial == nil {
-		return
-	}
-	buf.Partial.CloseAndRemove(ctx, path)
-	buf.Partial = nil
+	}, buf.chunkSeq, true
 }

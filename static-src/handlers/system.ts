@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// System-level handlers: settings_updated, transport:gap, commands_updated,
+// System-level handlers: settings_updated, transport:gap,
 // compaction_started.
 //
 // SSE events flow through bus (onSSE). `transport:gap` is a client-side
@@ -12,14 +12,7 @@
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
-import {
-  getSessions,
-  getActiveId,
-  setThinking,
-  setAgentStatus,
-  setCurrentMode,
-  invalidateSession,
-} from "../store.js";
+import { getSessions, getActiveId, setThinking, setAgentStatus, setCurrentMode } from "../store.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { maybeDrainIfIdle } from "../prompt-queue.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
@@ -78,7 +71,7 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   void loadList().then(() => {
     // Reconcile tabs: close any chat/plan tab whose session no longer
     // exists on the server. During a gap the server may have deleted
-    // chats (user action on another device, retention cleanup, tangent
+    // chats (user action on another device, retention cleanup, rewind
     // discard) and we missed the chat_deleted SSE.
     const sessionIDs = new Set(getSessions().map((s) => s.id));
     // Walk open tabs via the tabs module (avoids DOM scraping).
@@ -96,13 +89,16 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
   }
 });
 
-// commands_updated: decoded but currently UNCONSUMED. The server still
-// broadcasts the per-session slash-command catalog (v3
-// available_commands_update, filtered of browser-incompatible entries)
-// and the wire decoder stays registered (wire/registry.gen.ts), but no
-// client feature reads it today — typed slash commands like /compact
-// ride the ordinary prompt envelope and kiro-cli parses them natively.
-// A future type-ahead popover would subscribe here.
+// The slash-command catalog is GONE, server and client, and should not come
+// back as a palette. Measured: of the 90 commands a session reports here, 47 of
+// the 49 custom-agent names are already mode ids reachable through the mode
+// pill, the 5 workflow entries are launched from the configuration browser's
+// own row, and the 23 steering entries map onto file attachment (declined with
+// _kiro/session/context). That leaves the 13 skills as the only unique
+// contribution — and there is no _kiro/skill* method anywhere in the bundle, so
+// a skill entry can only be sent as text and hoped over. A palette where one
+// category in four silently degrades to model prose teaches users that every
+// entry is a command. Skills are DISCOVERABLE instead, on the /docs Skills tab.
 
 // compaction_started is advisory. The `thinking` flag is already true
 // at this point (set by the prompt send), and the completed state is
@@ -126,26 +122,4 @@ onSSE("mode_changed", (chatID, p) => {
     return;
   }
   setCurrentMode(chatID, p.mode_id);
-});
-
-// checkpoint_restored arrives after the server rolls the workspace back
-// and truncates the chat transcript to match. The server's own chat_updated
-// broadcast fires first and updates the header (message_count,
-// oldest_checkpoint_tag); we follow up by reloading messages so the DOM drops
-// stale checkpoint lines referring to truncated turns.
-onSSE("checkpoint_restored", (chatID, _payload) => {
-  if (chatID === "") {
-    return;
-  }
-  if (getActiveId() === chatID) {
-    // Refetch-then-swap: loadMessages replaces the message array wholesale,
-    // rebuilds the index, and emits ONCE — the keyed reconcile then trims the
-    // rolled-back tail in a single render. Do NOT pre-clear messages here: the
-    // old empties-then-refetches sequence painted an empty transcript for the
-    // whole network round-trip (the flashing bug the render rewrite fixed).
-    void loadMessages(chatID);
-  } else {
-    // Background chat: just invalidate the cache so the next switch refetches.
-    invalidateSession(chatID);
-  }
 });

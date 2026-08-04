@@ -6,9 +6,14 @@
 // `_kiro.dev/mcp/*` notifications named here previously were removed
 // with the v2 wire); cleared on bridge exit.
 //
-// Per-server tool lists are NOT stored here — they arrive with the v3
-// slash-command/tool catalog (available_commands_update), not the MCP
-// status stream.
+// Per-server TOOL lists live here too, alongside the prompts and resources they
+// arrive with on that same notification. They used to be written into the MCP
+// config file instead, which put agent-derived state in a user-intent file and
+// did disk I/O on a notification path; once KAS's own config file became the
+// source of truth that write also fed its watcher and bounced back as another
+// status notification. (They were once attributed to the
+// available_commands_update catalog, which was wrong and is now moot — that
+// catalog is no longer decoded at all.)
 //
 // The registry is:
 //
@@ -50,6 +55,7 @@ type mcpServerRuntime struct {
 	State     mcpServerState
 	OAuthURL  string
 	Error     string
+	Tools     []string
 	Prompts   []api.MCPPromptInfo
 	Resources []api.MCPResourceInfo
 }
@@ -63,9 +69,10 @@ type mcpRegistry struct {
 	// debounced invocation. Capacity 1 means multiple signals within
 	// the debounce window collapse into one cb() call.
 	notifyCh chan struct{}
-	// readyCh is closed when the first _kiro.dev/commands/available
-	// notification arrives (which lists expected MCP servers). Prompts
-	// wait on this channel before forwarding to kiro-cli.
+	// readyCh is closed when the first `_kiro/mcp/status` notification arrives
+	// (HandleMCPStatus → SignalReady), i.e. once KAS has reported a terminal
+	// state for the session's MCP servers. Prompts wait on this channel before
+	// forwarding to kiro-cli, so a tool call cannot race server init.
 	readyCh chan struct{}
 	mu      sync.RWMutex
 }
@@ -153,7 +160,7 @@ func (r *mcpRegistry) signalReady() {
 // resources it advertises), broadcasts mcp_connected, and fires onChange.
 // Called from the _kiro/mcp/status handler when a server reports the
 // "connected" state. prompts/resources may be nil (server exposes none).
-func (r *mcpRegistry) recordConnected(ctx context.Context, name string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
+func (r *mcpRegistry) recordConnected(ctx context.Context, name string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
 	if !r.nameIsEnabled(ctx, name) {
 		return
 	}
@@ -161,6 +168,7 @@ func (r *mcpRegistry) recordConnected(ctx context.Context, name string, prompts 
 	r.servers[name] = &mcpServerRuntime{
 		Name:      name,
 		State:     mcpStateConnected,
+		Tools:     tools,
 		Prompts:   prompts,
 		Resources: resources,
 	}
@@ -244,11 +252,18 @@ type mcpStatusResponse struct {
 	Servers []statusServer `json:"servers"`
 }
 
+// statusServer is the JSON projection of one mcpServerRuntime. The field ORDER
+// must match that struct: handleStatus converts between them directly, so a
+// reorder here is a compile error rather than a silent field swap.
 type statusServer struct {
-	Name      string                `json:"name"`
-	State     api.MCPServerState    `json:"state"`
-	OAuthURL  string                `json:"oauth_url,omitempty"`
-	Error     string                `json:"error,omitempty"`
+	Name     string             `json:"name"`
+	State    api.MCPServerState `json:"state"`
+	OAuthURL string             `json:"oauth_url,omitempty"`
+	Error    string             `json:"error,omitempty"`
+	// Tools is the connected server's tool names. The per-tool deny editor reads
+	// them from here to offer suggestions; they were a persisted config field
+	// (`known_tools`) until the config file became KAS's.
+	Tools     []string              `json:"tools,omitempty"`
 	Prompts   []api.MCPPromptInfo   `json:"prompts,omitempty"`
 	Resources []api.MCPResourceInfo `json:"resources,omitempty"`
 }
@@ -256,8 +271,8 @@ type statusServer struct {
 func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	snap := r.Snapshot()
 	out := make([]statusServer, len(snap))
-	for i, s := range snap {
-		out[i] = statusServer(s)
+	for i := range snap {
+		out[i] = statusServer(snap[i])
 	}
 	api.WriteJSON(w, mcpStatusResponse{Servers: out})
 }

@@ -4,6 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { onSSE } from "../bus.js";
+import { forgetChatFolds } from "../fold-state.js";
 import { upsertHeader, removeChat, getActiveId, setAgentStatus } from "../store.js";
 import { closeTab, hasTab } from "../tabs.js";
 import { parseRoute, replaceRoute } from "../router.js";
@@ -65,14 +66,9 @@ onSSE("chat_deleted", (_chatID, p) => {
     closeTab(p.id, { skipOnClose: true });
   }
   removeChat(p.id);
-  void import("../conflicts.js").then(
-    (m) => {
-      m.clearConflicts(p.id);
-    },
-    (e: unknown) => {
-      console.warn("[handlers/chat] clearConflicts import failed", e);
-    },
-  );
+  // Drop the chat's per-turn fold overrides with it, or localStorage accumulates
+  // an entry per deleted chat forever.
+  forgetChatFolds(p.id);
   // Drop any banners for the deleted chat — otherwise their
   // BannerEntry objects + dismissed_banners localStorage entries
   // accumulate over a long session.

@@ -11,14 +11,26 @@ import (
 )
 
 // emit is the single path for broadcasting an event to SSE clients. It
-// folds the event into the turn mirror (the connect-time turn_state
-// source — apply-before-publish is what keeps a connect snapshot >=
-// the ring content a new client just replayed), then marshals once and
-// hands it to the shared sse hub, which assigns the monotonic ID,
-// appends to the replay ring, and fans out to subscribed clients
+// records a chat_status before publishing (apply-before-publish is what keeps a
+// connect snapshot >= the ring content a new client just replayed), then
+// marshals once and hands it to the shared sse hub, which assigns the monotonic
+// ID, appends to the replay ring, and fans out to subscribed clients
 // (topic = chat ID; events with an empty ChatID are global).
+//
+// It used to fold EVERY event into a turn mirror that rebuilt the in-flight
+// assistant message in parallel with buffer.Buffer. That replica is gone: the
+// buffer already holds the turn and now snapshots it (buffer.Buffer.Snapshot),
+// so the only thing left to record here is the status, which lives on no
+// message and in no replay.
 func (h *Hub) emit(evt api.ServerEvent) {
-	h.sse.turnMirror.Apply(evt)
+	switch evt.Type {
+	case api.EventChatStatus:
+		if p, ok := evt.Payload.(api.ChatStatusPayload); ok {
+			h.sse.chatStatus.Set(evt.ChatID, p)
+		}
+	case api.EventTurnEnded:
+		h.sse.chatStatus.Clear(evt.ChatID)
+	}
 	data, err := json.Marshal(evt)
 	if err != nil {
 		slog.Error("emit marshal", "type", evt.Type, "error", err)
@@ -63,9 +75,10 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamInitialState writes the connected handshake and then replays the
-// client's outstanding state — pending permissions, staged Supervised
-// writes, and per-turn trust — so a reconnecting browser rebuilds its UI
-// exactly as it was.
+// client's outstanding state — the unanswered permission requests and the
+// in-flight turn — so a reconnecting browser rebuilds its UI exactly as it
+// was. A turn approval rides the permission channel, so it replays with the
+// rest and needs nothing of its own.
 //
 // The handshake's ConnectedPayload carries the ring-buffer floor (oldest
 // replayable event ID) and head (newest) so the client can detect a replay
@@ -100,18 +113,9 @@ func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter 
 		return err
 	}
 
-	// Replay every outstanding Supervised-mode staged op so the client
-	// rebuilds its pending pill and per-card Accept/Reject buttons.
-	if err := h.replayPendingChanges(writeEvent, chatFilter); err != nil {
-		return err
-	}
-
-	// Replay per-turn trust state. Without this, a reconnect mid-turn
-	// silently reverts the Supervised pill to plain "Supervised" even
-	// though the perTurnTrust flag is still active.
-	if err := h.replayPendingTrust(writeEvent, chatFilter); err != nil {
-		return err
-	}
+	// There is no staged-op or per-turn-trust replay. Both belonged to vibekit's
+	// own staging queue. A turn approval IS a permission request, so the replay
+	// above already covers it — which is the same reason it needed no new event.
 
 	// Synthesize turn_state for every busy chat (P6): the in-flight
 	// assistant message accumulated so far plus the authoritative
@@ -122,20 +126,33 @@ func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter 
 }
 
 // replayTurnState emits one synthesized turn_state event per busy chat
-// (bridge holding the prompt slot). The mirror snapshot may be absent
-// for a turn that hasn't produced content yet — the event still goes
-// out as a bare busy signal (the client sets thinking without touching
-// messages). Gating on the prompting state (not mirror presence) is
-// what keeps a stale mirror entry from ever resurrecting a finished
-// turn: an idle chat is never replayed.
+// (bridge holding the prompt slot). The snapshot may be absent for a turn that
+// hasn't produced content yet — the event still goes out as a bare busy signal
+// (the client sets thinking without touching messages). Gating on the prompting
+// state, not on snapshot presence, is what keeps a finished turn from ever being
+// resurrected: an idle chat is never replayed.
+//
+// The in-flight message comes straight from the chat's assistant buffer, which
+// is the same object the live stream and the turn-end persist read. There is no
+// separate replica to drift from it.
 func (h *Hub) replayTurnState(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
 	for _, id := range h.bridge.mgr.promptingChatIDs() {
 		if chatFilter != "" && id != chatFilter {
 			continue
 		}
-		// A missing mirror entry (turn accepted, nothing streamed yet)
-		// still emits: the zero payload is the bare busy signal.
-		payload, _ := h.sse.turnMirror.Snapshot(id)
+		status := h.sse.chatStatus.Get(id)
+		payload := api.TurnStatePayload{
+			Status:      status.Status,
+			Description: status.Description,
+		}
+		if buf := h.bridge.assistantBufs.Get(id); buf != nil {
+			if msg, seq, ok := buf.Snapshot(); ok {
+				payload.Message = &msg
+				payload.ChunkSeq = seq
+			} else {
+				payload.ChunkSeq = seq
+			}
+		}
 		if err := writeFn(api.NewEvent(api.EventTurnState, id, payload)); err != nil {
 			return err
 		}
@@ -156,38 +173,6 @@ func (h *Hub) replayBounds() (floor, head uint64) {
 func (h *Hub) replayPendingPermissions(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
 	for _, evt := range h.sse.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// replayPendingChanges sends every outstanding pending op for a new SSE
-// client. The replay uses pending_change_added events so client handlers
-// are identical to the live path.
-func (h *Hub) replayPendingChanges(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
-	var chatIDs []api.ChatID
-	if chatFilter != "" {
-		chatIDs = []api.ChatID{chatFilter}
-	} else {
-		chatIDs = h.listChatIDsWithPending()
-	}
-	for _, id := range chatIDs {
-		for _, snap := range h.perm.pending.ListForChat(id) {
-			if err := writeFn(api.NewEvent(api.EventPendingChangeAdded, id, api.PendingChangeAddedPayload{Change: snap})); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// replayPendingTrust emits a pending_trust_enabled event for every chat
-// that currently has perTurnTrust set, keeping the Supervised pill's
-// "Trusted · this turn" state alive across reconnects.
-func (h *Hub) replayPendingTrust(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
-	for _, id := range h.perm.supervised.TrustedChatIDs(chatFilter) {
-		if err := writeFn(api.NewEvent(api.EventPendingTrustEnabled, id, api.PendingTrustEnabledPayload{})); err != nil {
 			return err
 		}
 	}

@@ -13,10 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
-	"github.com/cplieger/vibekit/internal/permissions"
+	cfgsettings "github.com/cplieger/vibekit/internal/settings"
 )
 
 // validatePromptPayload parses and validates the prompt command payload.
@@ -90,7 +89,10 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 		if !ex {
 			return false
 		}
-		c.ACPSessionID = ""
+		// Detach, don't forget: the abandoned session still holds this chat's
+		// earlier transcript on disk, and it must stay in the chain or the
+		// reaper sweeps it as an orphan.
+		c.RecordSession("")
 		return true
 	}); err != nil {
 		slog.Error("empty turn: clear session ID", "chat_id", chatID, keyError, err)
@@ -112,10 +114,8 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 		}))
 		return resp
 	}
-	sb2.SetLastActive()
 	sb2.SetPrompting()
 	defer sb2.ReleaseAfterPrompt()
-	deps.AdvanceCheckpointTurn(ctx, chatID)
 	params[api.KeySessionID] = sb2.SessionID()
 	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
@@ -129,9 +129,26 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	return retryResp
 }
 
+// supervisedDefaultSetting reads the settings-wide Supervised default applied to
+// newly auto-created chats. Fails CLOSED to false: supervised mode is opt-in, and
+// a corrupt config.json must not suddenly gate every write on approval.
+//
+// Read here rather than through an internal/permissions package. That package was
+// 29 lines wrapping one settings read with a single caller, and it was named for a
+// responsibility vibekit no longer has — tool authorization is Cedar's and the
+// write gate is KAS's, so a package called "permissions" holding one default was
+// the last thing making it look otherwise.
+func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
+	var b bool
+	if !cfgsettings.FieldInto(ctx, configDir, cfgsettings.KeySupervisedDefault, cfgsettings.KeySupervisedDefault, &b) {
+		return false
+	}
+	return b
+}
+
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
-	supervisedDefault := permissions.SupervisedDefault(ctx, deps.ConfigDir())
+func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
+	supervisedDefault := supervisedDefaultSetting(ctx, deps.ConfigDir())
 	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		// Idempotent by message id (the documented invariant): if this id
 		// is already in the store — e.g. a 409-queued prompt whose first
@@ -160,10 +177,6 @@ func appendUserMessage(deps Dependencies, prompter api.UtilityPrompter, ctx cont
 				name += ellipsis
 			}
 			c.Name = name
-			if prompter != nil {
-				placeholder := name
-				deps.InflightGo(func() { AsyncRenameChat(deps, prompter, chatID, p.Text, placeholder) })
-			}
 		}
 		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, &userMsg))
 		return true
@@ -228,13 +241,12 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		return
 	}
 
-	// 1. Ensure the chat exists, append the user message, auto-rename.
-	if err := appendUserMessage(deps, d.Prompter(), ctx, cmd.ChatID, &p); err != nil {
+	// 1. Ensure the chat exists and append the user message, naming the chat
+	// from its first prompt.
+	if err := appendUserMessage(deps, ctx, cmd.ChatID, &p); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	deps.AdvanceCheckpointTurn(ctx, cmd.ChatID)
 
 	// 2. Ensure the bridge exists and serialize per-chat prompts. The turn
 	// runs under a context detached from the prompt POST's r.Context()
@@ -254,7 +266,6 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		return
 	}
 	defer sb.ReleaseAfterPrompt()
-	sb.SetLastActive()
 
 	deps.InflightAdd(1)
 	defer deps.InflightDone()
@@ -303,21 +314,14 @@ func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api
 	params := SessionParams(sb, map[string]any{
 		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
 	})
-	// Forward the client-generated user message id so KAS stores this turn
-	// under vibekit's own id. That id space is what session/fork references
-	// (via _meta.kiro.messageId) to rewind to a past turn (see CmdRewindChat).
+	// Forward the client-generated user message id so KAS stores this turn under
+	// vibekit's own id. That shared id space is what makes rewind addressable:
+	// _kiro/checkpoint/revertMultiple takes a messageId and requires it to name a
+	// USER message, and a user turn's id is one KAS only knows because it was
+	// sent here (an assistant turn carries KAS's own `<uuid>-say`). Drop this and
+	// rewind loses its handle on the transcript — see CmdRewindChat.
 	if p.MessageID != "" {
 		params["messageId"] = p.MessageID
-	}
-	kiroMeta := map[string]any{}
-	if p.ActiveFile != "" {
-		kiroMeta["activeFile"] = p.ActiveFile
-	}
-	if len(p.OpenFiles) > 0 {
-		kiroMeta["openFiles"] = p.OpenFiles
-	}
-	if len(kiroMeta) > 0 {
-		params["_meta"] = map[string]any{"kiro": kiroMeta}
 	}
 	return params
 }
@@ -344,43 +348,4 @@ func IsRetryablePromptError(err error) bool {
 		return false
 	}
 	return false
-}
-
-// AsyncRenameChat generates a better chat title via the utility bridge.
-// placeholder is the truncated-first-prompt name appendUserMessage set; the
-// generated title only lands while the chat still carries it. If the name
-// changed meanwhile — the agent published a focus title via
-// update_session_information (translate/focus handling), which is richer
-// than a 2-3 word summary of the first message — the utility title is
-// discarded rather than clobbering it.
-func AsyncRenameChat(deps Dependencies, prompter api.UtilityPrompter, chatID api.ChatID, firstPrompt, placeholder string) {
-	prompt := "Give this chat a 2-3 word title (max 30 characters) based on the topic of the message below. Return ONLY the title.\n\n" + firstPrompt
-	ctx, cancel := context.WithTimeout(deps.ShutdownCtx(), 30*time.Second)
-	defer cancel()
-	title, err := prompter.UtilityPrompt(ctx, prompt, api.EffortLow)
-	if err != nil || strings.TrimSpace(title) == "" {
-		return
-	}
-	title = strings.TrimSpace(title)
-	if len(title) >= 2 && ((title[0] == '"' && title[len(title)-1] == '"') ||
-		(title[0] == '\'' && title[len(title)-1] == '\'')) {
-		title = title[1 : len(title)-1]
-	}
-	// Sanitize + cap on a rune boundary: the title is model output headed
-	// for logs and the chat header UI, and a byte-index cut could split a
-	// multi-byte rune.
-	title = runesafe.SanitizeSingleLineBounded(title, 27)
-	if title == "" {
-		return
-	}
-	if err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
-		if !exists || c.Name != placeholder {
-			return false
-		}
-		c.Name = title
-		return true
-	}); err != nil {
-		slog.Error("auto-rename chat", "chat_id", chatID, keyError, err)
-	}
-	slog.Info("chat auto-renamed", "chat_id", chatID, "title", title)
 }

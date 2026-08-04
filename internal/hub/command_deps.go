@@ -11,7 +11,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/pending"
 )
 
 // Compile-time assertion: Hub satisfies command.Dependencies.
@@ -40,31 +39,6 @@ func (h *Hub) CloseBridge(chatID api.ChatID) {
 	h.coord.CloseBridge(chatID)
 }
 
-// PendingStore returns the pending-changes store.
-func (h *Hub) PendingStore() *pending.Store {
-	return h.perm.pending
-}
-
-// SupervisedSetTrust sets the per-turn trust flag for a chat.
-func (h *Hub) SupervisedSetTrust(chatID api.ChatID) {
-	h.perm.supervised.SetTrust(chatID)
-}
-
-// SupervisedClearTrust clears the per-turn trust flag.
-func (h *Hub) SupervisedClearTrust(chatID api.ChatID, reason api.ClearReason) {
-	h.perm.supervised.ClearTrust(chatID, reason)
-}
-
-// ChatInSupervisedMode reports whether the chat has supervised mode on.
-func (h *Hub) ChatInSupervisedMode(ctx context.Context, chatID api.ChatID) bool {
-	return h.chatInSupervisedMode(ctx, chatID)
-}
-
-// FlushPendingForChat rejects all outstanding pending ops for a chat.
-func (h *Hub) FlushPendingForChat(ctx context.Context, chatID api.ChatID, reason api.ClearReason) {
-	h.flushPendingForChat(ctx, chatID, reason)
-}
-
 // ClearPendingPermsForChat drops unresolved permission_needed entries.
 func (h *Hub) ClearPendingPermsForChat(chatID api.ChatID) {
 	h.clearPendingPermsForChat(chatID)
@@ -73,16 +47,6 @@ func (h *Hub) ClearPendingPermsForChat(chatID api.ChatID) {
 // RemovePendingPerm removes a single pending permission by request ID.
 func (h *Hub) RemovePendingPerm(requestID int64) {
 	h.sse.pendingPerms.Remove(requestID)
-}
-
-// Checkpoints returns the checkpoint service, or nil if unavailable.
-func (h *Hub) Checkpoints() api.CheckpointService {
-	return h.checkpoints
-}
-
-// AdvanceCheckpointTurn bumps the checkpoint turn counter.
-func (h *Hub) AdvanceCheckpointTurn(ctx context.Context, chatID api.ChatID) {
-	h.advanceCheckpointTurn(ctx, chatID)
 }
 
 // ConfigDir returns the configuration directory.
@@ -103,11 +67,6 @@ func (h *Hub) InflightAdd(delta int) {
 // InflightDone decrements the inflight counter.
 func (h *Hub) InflightDone() {
 	h.lifecycle.inflight.Done()
-}
-
-// InflightGo runs fn under the inflight WaitGroup.
-func (h *Hub) InflightGo(fn func()) {
-	h.lifecycle.inflight.Go(fn)
 }
 
 // CleanupChatState tears down all in-memory state for a chat that is being
@@ -144,7 +103,17 @@ func (h *Hub) IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool {
 	return h.isEmptyTurn(resp, chatID)
 }
 
-// EmitTurnEndedWithStats broadcasts turn_ended with usage stats.
+// EmitTurnEndedWithStats broadcasts turn_ended with usage stats, and closes
+// the chat's terminal-attribution turn: terminals created after this belong
+// to the NEXT turn.
 func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
-	h.coord.EmitTurnEndedWithStats(ctx, chatID, resp, creditsDelta, elapsedMs, h.closeAndRemovePartial)
+	h.coord.EmitTurnEndedWithStats(ctx, chatID, resp, creditsDelta, elapsedMs)
+	h.agentTerms.AdvanceTurn(chatID)
+}
+
+// KillTurnTerminals kills the terminals the current turn created. The
+// interrupt half of the tab-close contract: cancel stops the model, and this
+// stops the processes the turn already spawned.
+func (h *Hub) KillTurnTerminals(chatID api.ChatID) {
+	h.agentTerms.KillForTurn(chatID)
 }

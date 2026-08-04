@@ -51,12 +51,6 @@ func TestNopChatStore_Contract(t *testing.T) {
 		}
 	})
 
-	t.Run("Archive_returns_nil", func(t *testing.T) {
-		if err := s.Archive(context.Background(), "any"); err != nil {
-			t.Errorf("Archive: %v", err)
-		}
-	})
-
 	t.Run("AppendMessage_returns_nil", func(t *testing.T) {
 		err := s.AppendMessage(context.Background(), "any", &api.Message{})
 		if err != nil {
@@ -79,12 +73,6 @@ func TestNopChatStore_Contract(t *testing.T) {
 		_ = s.BuildHistory(context.Background(), "x")
 		_ = s.Mutate(context.Background(), "x", func(*api.Chat, bool) bool { return false })
 		_ = s.Delete(context.Background(), "x")
-		_ = s.Archive(context.Background(), "x")
-		_ = s.ListArchived(context.Background())
-		_ = s.RestoreArchived(context.Background(), "x")
-		_ = s.UpdateArchivedSummary(context.Background(), "x", "s")
-		_, _ = s.LoadArchived(context.Background(), "x")
-		_ = s.DeleteArchived(context.Background(), "x")
 		_ = s.AppendMessage(context.Background(), "x", &api.Message{})
 		_ = s.UpdateMessage(context.Background(), "x", "m", func(*api.Message) {})
 	})
@@ -105,12 +93,6 @@ func TestNopChatStore_ConcurrentSafety(t *testing.T) {
 			_ = s.BuildHistory(ctx, "x")
 			_ = s.Mutate(ctx, "x", func(*api.Chat, bool) bool { return false })
 			_ = s.Delete(ctx, "x")
-			_ = s.Archive(ctx, "x")
-			_ = s.ListArchived(ctx)
-			_ = s.RestoreArchived(ctx, "x")
-			_ = s.UpdateArchivedSummary(ctx, "x", "s")
-			_, _ = s.LoadArchived(ctx, "x")
-			_ = s.DeleteArchived(ctx, "x")
 			_ = s.AppendMessage(ctx, "x", &api.Message{})
 			_ = s.UpdateMessage(ctx, "x", "m", func(*api.Message) {})
 		}()

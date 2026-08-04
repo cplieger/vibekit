@@ -1,3 +1,17 @@
+// Package checkpoint is a line-diff primitive, and nothing else.
+//
+// It used to be vibekit's own content-addressed snapshot system — a blob
+// store, an append-only event log, a tag grammar, a cross-chat index and a
+// two-phase journaled restore. All of it is deleted. KAS snapshots every
+// file its own edit tools touch, unconditionally, and hands the pre- and
+// post-image addresses to the client on the wire (`_meta.kiro.checkpoint`,
+// persisted on api.ToolCall.Checkpoint). So "show this edit's diff" is a
+// snapshot read plus a file read, and nothing has to reconstruct which
+// files moved between two of vibekit's own tags.
+//
+// What survives is countLineDelta: the "+N/-M" summary, computed from two
+// byte slices with no state and no I/O. Do NOT grow this package back into
+// a store — see vibekit-runtime.md "Checkpoints".
 package checkpoint
 
 import (

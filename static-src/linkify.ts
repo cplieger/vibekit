@@ -3,10 +3,16 @@
 // and converts `src/foo.ts:42` mentions into clickable buttons that open
 // the editor at the target line. Skips <code>, <pre>, <a>, <button> so
 // code samples aren't clobbered.
+//
+// TOOL OUTPUT opts out of the <pre> skip (`{ insidePre: true }`), because there
+// the pre is not a code sample — it IS the result list. A grep's `path:line:
+// match` and a stack trace's frame are the most useful links in a transcript,
+// and skipping them left the search tool with nothing to click. The skip stays
+// the default for prose, where a fenced block should be left alone.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { openFile } from "./editor-openers.js";
+import { openAtLine } from "./navigate.js";
 import { fileIcon } from "./icons.js";
 import { FILE_EXTS } from "./file-extensions.js";
 
@@ -21,15 +27,24 @@ const PATH_TEST_RX = new RegExp(PATH_PATTERN);
 const PATH_EXEC_RX = new RegExp(PATH_PATTERN, "g");
 
 const SKIP_TAGS = new Set(["CODE", "PRE", "A", "BUTTON"]);
+// A and BUTTON still skip: a link inside a link is a broken control either way.
+const SKIP_TAGS_IN_PRE = new Set(["A", "BUTTON"]);
 
-export function linkifyPaths(root: HTMLElement): void {
+export interface LinkifyOpts {
+  /** Allow linkification inside a <pre>. For tool output, whose pre is the
+   *  result list rather than a code sample. */
+  insidePre?: boolean;
+}
+
+export function linkifyPaths(root: HTMLElement, opts: LinkifyOpts = {}): void {
+  const skip = opts.insidePre === true ? SKIP_TAGS_IN_PRE : SKIP_TAGS;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(n) {
       const parent = n.parentElement;
       if (parent === null) {
         return NodeFilter.FILTER_REJECT;
       }
-      if (SKIP_TAGS.has(parent.tagName)) {
+      if (skip.has(parent.tagName)) {
         return NodeFilter.FILTER_REJECT;
       }
       return PATH_TEST_RX.test(n.nodeValue ?? "")
@@ -79,7 +94,7 @@ function makeLink(path: string, lineStr: string | undefined): HTMLButtonElement 
   const labelSpan = el("span", undefined, label);
   btn.append(iconSpan, labelSpan);
   btn.addEventListener("click", () => {
-    openFile(path, line);
+    openAtLine(path, line);
   });
   return btn as HTMLButtonElement;
 }

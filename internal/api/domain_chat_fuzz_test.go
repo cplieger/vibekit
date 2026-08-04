@@ -48,17 +48,8 @@ func FuzzChatHeaderConsistency(f *testing.F) {
 		if header.SupervisedMode != chat.SupervisedMode {
 			t.Fatalf("SupervisedMode mismatch")
 		}
-		if header.ParentChatID != chat.ParentChatID {
-			t.Fatalf("ParentChatID mismatch")
-		}
 		if header.CompactionWatermark != chat.CompactionWatermark {
 			t.Fatalf("CompactionWatermark mismatch")
-		}
-		if header.Summary != chat.Summary {
-			t.Fatalf("Summary mismatch")
-		}
-		if header.OldestCheckpointTag != chat.OldestCheckpointTag {
-			t.Fatalf("OldestCheckpointTag mismatch")
 		}
 
 		// Invariant 2: MessageCount must reflect the actual Messages slice length.

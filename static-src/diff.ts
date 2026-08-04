@@ -345,30 +345,65 @@ function diffMiddle(
   return out;
 }
 
-/** Keep only the first `n` changed lines (adds/dels) plus their interleaved
- *  context. Used for the 3-line inline preview in chat tool-call cards.
- *  Returns the trimmed list plus how many extra changes were dropped. */
-export function truncateChanged(lines: DiffLine[], n: number): { lines: DiffLine[]; more: number } {
-  let changed = 0;
-  const out: DiffLine[] = [];
-  for (const l of lines) {
-    if (l.kind !== "ctx") {
-      if (changed >= n) {
-        return { lines: out, more: countChanged(lines) - changed };
-      }
-      changed++;
-    }
-    out.push(l);
-  }
-  return { lines: out, more: 0 };
-}
+/** Window a diff to WHOLE HUNKS with surrounding context, capped on total rows.
+ *
+ *  This replaced `truncateChanged(diff, 3)`, whose unit was wrong rather than
+ *  merely small: keeping the first three CHANGED LINES shows a 12-line rewrite
+ *  as a quarter of itself, cut mid-thought. A hunk is the unit a reader thinks
+ *  in, so the window keeps as many complete hunks as fit and says how many it
+ *  dropped.
+ *
+ *  `context` lines of `ctx` are kept on each side of a hunk; runs longer than
+ *  2×context collapse, with the elided middle counted. Returns the windowed
+ *  lines plus the number of whole HUNKS omitted (0 when everything fit). */
+export function windowHunks(
+  lines: DiffLine[],
+  opts: { maxRows?: number; context?: number } = {},
+): { lines: DiffLine[]; hunksOmitted: number } {
+  const maxRows = opts.maxRows ?? 24;
+  const context = opts.context ?? 2;
 
-function countChanged(lines: DiffLine[]): number {
-  let c = 0;
+  // Segment into runs, tagging each as a hunk (has a change) or context.
+  const runs: { changed: boolean; lines: DiffLine[] }[] = [];
   for (const l of lines) {
-    if (l.kind !== "ctx") {
-      c++;
+    const changed = l.kind !== "ctx";
+    const last = runs[runs.length - 1];
+    if (last?.changed === changed) {
+      last.lines.push(l);
+    } else {
+      runs.push({ changed, lines: [l] });
     }
   }
-  return c;
+
+  const totalHunks = runs.filter((r) => r.changed).length;
+  if (totalHunks === 0) {
+    return { lines: [], hunksOmitted: 0 };
+  }
+
+  const out: DiffLine[] = [];
+  let kept = 0;
+  for (let i = 0; i < runs.length; i++) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const run = runs[i]!;
+    if (!run.changed) {
+      // Context adjoining a hunk is kept, up to `context` lines on the side that
+      // touches it; a long run between two hunks keeps both ends and elides the
+      // middle. A run touching no hunk on a side contributes nothing there.
+      const head = runs[i - 1]?.changed === true ? run.lines.slice(0, context) : [];
+      const tail = runs[i + 1]?.changed === true ? run.lines.slice(-context) : [];
+      if (head.length + tail.length >= run.lines.length) {
+        out.push(...run.lines); // the two ends meet; nothing to elide
+      } else {
+        out.push(...head, ...tail);
+      }
+      continue;
+    }
+    // A hunk goes in WHOLE or not at all — that is the point of the unit.
+    if (out.length + run.lines.length > maxRows && kept > 0) {
+      break;
+    }
+    out.push(...run.lines);
+    kept++;
+  }
+  return { lines: out, hunksOmitted: totalHunks - kept };
 }

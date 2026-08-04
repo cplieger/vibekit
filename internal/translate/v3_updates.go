@@ -5,16 +5,19 @@ package translate
 // v3 moves several things that v2 delivered as dedicated _kiro.dev/*
 // notifications into session/update sub-kinds:
 //
-//	session_info_update       context-usage stats  <- v2 _kiro.dev/metadata
-//	                          + compaction status  <- v2 _kiro.dev/compaction/status
-//	available_commands_update slash-command catalog <- v2 _kiro.dev/commands/available
-//	usage_update              context-window usage (primary v3 channel)
-//	config_option_update      live model/mode/effort catalog
+//	session_info_update  context-usage stats  <- v2 _kiro.dev/metadata
+//	                     + compaction status  <- v2 _kiro.dev/compaction/status
+//	usage_update         context-window usage (primary v3 channel)
+//	config_option_update live model/mode/effort catalog
 //
-// These handlers reshape the v3 payloads onto the same domain outputs
-// (chat usage + commands_updated SSE + compaction events + model catalog)
-// so the context ring, slash menu, compaction UI, and model picker work on
-// the KAS engine without the client knowing which engine is live.
+// These handlers reshape the v3 payloads onto domain outputs (chat usage +
+// compaction events + model catalog) so the context ring, compaction UI and
+// model picker work without the client knowing which engine is live.
+//
+// available_commands_update is the one sub-kind arriving here that is NOT
+// handled: the slash-command catalog had no consumer and is not decoded, so it
+// falls through handleSessionUpdate silently. See static-src/handlers/system.ts
+// for why there is no palette.
 //
 // Shapes verified against the KAS 2.12 acp-server bundle; see
 // kiro-cli-research.md "v3 _kiro/* wire surface".
@@ -48,7 +51,11 @@ type sessionInfoUpdate struct {
 		Kiro struct {
 			Summarization   *v3Summarization `json:"summarization"`
 			UsagePercentage *float64         `json:"usagePercentage"`
-			ContextUsage    struct {
+			// Workflow marks the frame as a workflow STEP's, which is what
+			// lets a step's metering through the parent-only gate below
+			// while keeping it out of the chat's turn counters.
+			Workflow     *ACPWorkflowMeta `json:"workflow"`
+			ContextUsage struct {
 				UsagePercentage *float64 `json:"usagePercentage"`
 			} `json:"contextUsage"`
 			// Focus is the kind=="focus_update" block: the agent's
@@ -77,12 +84,20 @@ type promptTurnSummary struct {
 // _kiro.dev/metadata), and routes v3 compaction status (v2 sourced this
 // from _kiro.dev/compaction/status). Parent-only: subagent updates are
 // dropped so they don't overwrite the parent chat.
+//
+// ONE exception, and it is why the gate moved below the unmarshal: a workflow
+// STEP's turn_completion is the only record of what that step SPENT, and the
+// blanket gate discarded it — so a run of twenty steps reported no cost at all
+// on the chat that launched and paid for it. A step frame is now allowed
+// through for its metering only; see persistTurnSummary's owner argument for
+// why the turn counters are not the step's to move.
 func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
-	if subSessionID != "" {
-		return
-	}
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
+		return
+	}
+	step := u.Meta.Kiro.Workflow != nil && u.Meta.Kiro.Workflow.WorkflowID != ""
+	if subSessionID != "" || (step && len(u.Meta.Kiro.PromptTurnSummaries) == 0) {
 		return
 	}
 	// Agent focus updates (title / description / status) ride here as
@@ -101,7 +116,7 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.Cha
 	// on the live 2.12.1 wire). Without this, Usage.TurnCount/LastTurnMs/
 	// Credits had no writer and the context popup showed zeros forever.
 	if len(u.Meta.Kiro.PromptTurnSummaries) > 0 {
-		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime)
+		t.persistTurnSummary(ctx, chatID, u.Meta.Kiro.PromptTurnSummaries, u.Meta.Kiro.ElapsedTime, step)
 		return
 	}
 	// Context usage. usage_update is the primary v3 channel (HandleUsageUpdate),
@@ -112,9 +127,61 @@ func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.Cha
 		pct = u.Meta.Kiro.UsagePercentage
 	}
 	if pct == nil {
-		return // this session_info_update carries no context-usage percentage
+		// No recognised sub-block and no usage percentage. Most sub-kinds
+		// legitimately land here, but an UNKNOWN one is worth a line — see
+		// logUnconsumedInfoKind.
+		t.logUnconsumedInfoKind(chatID, u.Meta.Kiro.Kind)
+		return
 	}
 	t.persistUsage(ctx, chatID, *pct, 0, -1) // no size/credits on this channel
+}
+
+// knownSessionInfoKinds is every `_meta.kiro.kind` value KAS is known to
+// multiplex through session_info_update, enumerated from all 30
+// buildSessionInfoUpdate call sites plus the two that reach the wire via
+// SessionInfoEmitter.send (`steering_injected`, `repositories_update`) and
+// so are invisible to a call-site census.
+//
+// This set exists to tell "a sub-kind vibekit deliberately ignores" apart
+// from "a sub-kind KAS added since this was written". Membership implies
+// nothing about whether vibekit consumes the kind — most of these are
+// ignored on purpose.
+var knownSessionInfoKinds = map[string]struct{}{
+	"turn_start": {}, "turn_end": {}, "turn_completion": {},
+	"context_usage": {}, "summarization_separator": {}, "summary_message": {},
+	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
+	"user_message_id_assigned": {}, "focus_update": {}, "display_error": {},
+	"pending_interaction": {}, "interaction_resolved": {}, "recap": {},
+	"steering_inclusion": {}, "steering_queued": {}, "steering_cleared": {},
+	"queued": {}, "hook_update": {}, "steering_injected": {}, "repositories_update": {},
+}
+
+// logUnconsumedInfoKind reports a session_info_update that reached the end of
+// the dispatch cascade without being consumed.
+//
+// session_info_update is a CARRIER, not a message type: it multiplexes 22+
+// sub-kinds under `_meta.kiro.kind`, and the cascade above dispatches on
+// which sub-BLOCK is present (focus / summarization / promptTurnSummaries /
+// contextUsage) rather than on the kind string. That is deliberate — those
+// four are proven against the live wire, and keying them off kind values
+// instead would be a guess — but it means everything else falls through
+// here silently.
+//
+// A kind absent from knownSessionInfoKinds is logged at Warn because it is
+// most likely a KAS addition vibekit has not looked at yet, and the whole
+// failure mode of a multiplexed carrier is that new payloads vanish without
+// a trace. A known-but-ignored kind logs at Debug: expected, not news.
+func (t *Translator) logUnconsumedInfoKind(chatID api.ChatID, kind string) {
+	if kind == "" {
+		return
+	}
+	if _, known := knownSessionInfoKinds[kind]; known {
+		slog.Debug("session_info_update: known kind carries nothing vibekit consumes",
+			"chat_id", chatID, "kind", kind)
+		return
+	}
+	slog.Warn("session_info_update: UNKNOWN kind, dropped — KAS may have added a sub-kind",
+		"chat_id", chatID, "kind", kind)
 }
 
 // handleV3Summarization maps the v3 summarization sub-states onto the
@@ -148,7 +215,15 @@ func (t *Translator) handleV3Summarization(ctx context.Context, chatID api.ChatI
 // usage_update.cost channel (persistUsage) keeps overwrite precedence if
 // KAS ever ships both — an absolute value arriving after an increment
 // simply corrects it.
-func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, summaries []promptTurnSummary, elapsedMs float64) {
+// persistTurnSummary folds one turn's metering into the chat's usage.
+//
+// `step` says the metering came from a workflow STEP rather than from a turn of
+// the conversation, and it splits the three fields by what each one means:
+// CREDITS are real account spend the user is owed a readout of, so they
+// accumulate either way; TurnCount and LastTurnMs describe the CONVERSATION, so
+// a step must not touch them — twenty steps would otherwise report a four-message
+// chat as twenty-four turns and overwrite "last turn" with an unrelated duration.
+func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, summaries []promptTurnSummary, elapsedMs float64, step bool) {
 	var credits float64
 	for i := range summaries {
 		if summaries[i].Unit == "" || summaries[i].Unit == "credit" {
@@ -159,9 +234,11 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, 
 		if !exists {
 			return false
 		}
-		c.Usage.TurnCount++
-		if elapsedMs > 0 {
-			c.Usage.LastTurnMs = elapsedMs
+		if !step {
+			c.Usage.TurnCount++
+			if elapsedMs > 0 {
+				c.Usage.LastTurnMs = elapsedMs
+			}
 		}
 		if credits > 0 {
 			c.Usage.Credits += credits
@@ -231,29 +308,6 @@ func (t *Translator) persistUsage(ctx context.Context, chatID api.ChatID, pct fl
 	}); err != nil {
 		slog.Error("persist v3 usage", "chat_id", chatID, "error", err)
 	}
-}
-
-// availableCommandsUpdate is the v3 available_commands_update payload.
-// Each command is a name/description plus opaque input/_meta that flow
-// through toAvailableCommands' passthrough Meta map.
-type availableCommandsUpdate struct {
-	AvailableCommands []map[string]any `json:"availableCommands"`
-}
-
-// HandleAvailableCommandsUpdate maps the v3 command catalog onto the same
-// commands_updated SSE the v2 _kiro.dev/commands/available handler emits,
-// so the client slash-command type-ahead is engine-agnostic. Parent-only.
-func (t *Translator) HandleAvailableCommandsUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
-	if subSessionID != "" {
-		return
-	}
-	var p availableCommandsUpdate
-	if json.Unmarshal(raw, &p) != nil {
-		return
-	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventCommandsUpdated, chatID, api.CommandsUpdatedPayload{
-		Commands: toAvailableCommands(p.AvailableCommands),
-	}))
 }
 
 // configOptionUpdate is the v3 config_option_update payload: the live

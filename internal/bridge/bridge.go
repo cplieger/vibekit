@@ -64,13 +64,17 @@ type Bridge struct {
 	workDir      string
 	cliPath      string
 	currentMode  string
+	sessionTitle string
 	agentEngine  string
 	// extraEnv is appended to the inherited environment of the kiro-cli
 	// process this bridge starts. The install manager's active version
 	// directory leads PATH through it, so `kiro-cli` resolves any sibling it
 	// needs out of the same verified install rather than through whatever else
 	// $TOOLS/bin holds. Empty leaves the environment fully inherited.
-	extraEnv    []string
+	extraEnv []string
+	// extraArgs are the filtered operator launch flags for this spawn
+	// (StartOpts.ExtraArgs). Immutable after Start, like agentEngine.
+	extraArgs   []string
 	nextID      atomic.Int64
 	enableHooks bool
 	stopOnce    sync.Once
@@ -131,6 +135,20 @@ func (b *Bridge) CurrentMode() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.currentMode
+}
+
+// SessionTitle returns KAS's own title for the live session, taken from the
+// session/new or session/load result's flat `_meta.title`. On creation this is
+// always the literal "New Session" placeholder; on load it is the real stored
+// title. Empty when no session result has been applied.
+//
+// This is NOT the authoritative chat name. The caller adopts it only while the
+// chat is still default-named (bridge_coord.go), and an agent-authored
+// focus_update title outranks it — see translate/focus.go.
+func (b *Bridge) SessionTitle() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessionTitle
 }
 
 // Modes returns the available session modes as declared by the agent
@@ -210,7 +228,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// It is required for the gate's statusChanged/propertiesChanged notifications
 	// to ever surface (translate/safety.go); on an enterprise account with the
 	// flag on, enforce mode can block infra-as-code writes remotely. Distinct
-	// from vibekit's own Supervised write-gate (vibekit-supervised.md).
+	// from supervised mode, which is KAS's autopilot gate (vibekit-acp.md).
 	// _meta.kiro.settings.codeIntelligence opts every session into KAS's
 	// native code tool (tree-sitter symbol navigation always; LSP-backed
 	// rename/references/diagnostics once the workspace is initialized —
@@ -228,10 +246,36 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// instead of silently skipped (without the capability KAS advances
 	// past them). Handled by translate/user_input.go; answered via the
 	// user_input_response command.
+	// _meta.kiro.backgroundProcesses opts into KAS's background-process tools
+	// (control_bash_process, list_processes, get_process_output). KAS serves
+	// them from its own ACPBackgroundProcessManager over standard
+	// terminal/create + terminal/output, which vibekit already implements
+	// (hub/agent_terminal.go) — so the capability is the whole integration:
+	// without it the agent has no way to run a dev server or a watcher
+	// without blocking its turn on a foreground command.
+	// _meta.kiro.knowledge gates getKnowledgeListing into the system prompt,
+	// i.e. it tells the agent WHICH knowledge bases are indexed (four lines
+	// per base, undefined when none). vibekit ships the knowledge UI and
+	// seeds chat.enableKnowledge, so the index exists and /knowledge works —
+	// the agent just could not see what was in it.
+	// _meta.kiro.secretStorage opts into KAS's AcpSecretStorage: it then asks
+	// the client to HOLD the MCP OAuth credentials it derives (the DCR result,
+	// the token set, the PKCE verifier) via _kiro/secret/{get,store,delete}.
+	// KAS keeps only an in-process memory copy and has no file of its own, so
+	// without this flag the store is never constructed and every bridge spawn
+	// re-runs discovery and a fresh POST /register — measured, and measured to
+	// stop at zero DCRs once a stored blob is replayed. Answered by
+	// hub/bridge_v3_secret.go against internal/secretstore. Declaring it is a
+	// COMMITMENT: KAS rethrows a client-side store/delete failure into the MCP
+	// connect path, so the handlers must answer on every bridge that declares
+	// it, the utility bridge included.
 	kiroMeta := map[string]any{
 		"openExternalUrl":      true,
 		"infrastructureSafety": true,
 		"userInput":            true,
+		"backgroundProcesses":  true,
+		"knowledge":            true,
+		"secretStorage":        true,
 		"settings":             map[string]any{"codeIntelligence": map[string]any{"enabled": true}},
 	}
 	if b.enableHooks {
@@ -240,7 +284,33 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	if _, err := b.Call(ctx, methodInitialize, map[string]any{
 		"protocolVersion": 1,
 		"clientCapabilities": map[string]any{
-			"fs":          map[string]any{"readTextFile": true, "writeTextFile": true},
+			"fs": map[string]any{
+				"readTextFile":  true,
+				"writeTextFile": true,
+				// fs._meta.kiro.{stat,readDirectory,delete} claim KAS's own fs
+				// verbs. Declaring them CONFINES rather than grants: the
+				// else-branch is not a refusal, it is KAS's in-process
+				// NodeFileSystem doing the same fs.stat / fs.readdir / fs.rm
+				// with no vibekit path check at all. So an agent delete is an
+				// unchecked unlink today, and readDirectory is an unfiltered
+				// listing — which is how an agent discovers the file the
+				// ignore-list read filter would then refuse to open. Handled by
+				// hub/bridge_fs_kiro.go, which resolves inside the work dir,
+				// filters the listing, and executes; it does not stage or gate
+				// (KAS checkpoints before its own delete and restores a
+				// rejected one through fs/write_text_file — a second gate here
+				// would intercept that restore).
+				//
+				// readFile / writeFile are deliberately ABSENT. They are the
+				// same ladder one rung up, and claiming them would move reads
+				// and writes off fs/{read,write}_text_file — the rung that
+				// carries the supervised staging path.
+				"_meta": map[string]any{"kiro": map[string]any{
+					"stat":          true,
+					"readDirectory": true,
+					"delete":        true,
+				}},
+			},
 			"terminal":    true,
 			"elicitation": map[string]any{"form": map[string]any{}},
 			"_meta":       map[string]any{"kiro": kiroMeta},

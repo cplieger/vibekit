@@ -7,15 +7,42 @@ package api
 // Bridge lifecycle methods — used by the bridge package to drive the
 // kiro-cli subprocess through initialize → session/new|load. On v3 (KAS)
 // model/mode/effort switches all route through session/set_config_option
-// (session/set_model is gone), and session/fork branches a session at a
+// (session/set_model is gone), and a rewind reverts the session in place at a
 // message id (see command/rewind.go).
 const (
 	MethodInitialize  = "initialize"
 	MethodSessionNew  = "session/new"
 	MethodSessionLoad = "session/load"
+	// MethodSessionList enumerates stored sessions. Scope it with {cwd} —
+	// unscoped it returns every session on the box (measured: 399 rows across
+	// 55 directories, against 2 for one workspace). `limit` is IGNORED.
+	MethodSessionList = "session/list"
 	MethodSetMode     = "session/set_mode"
-	MethodSessionFork = "session/fork"
 	MethodCancel      = "session/cancel"
+	// MethodCheckpointRevertMultiple reverts a session to a USER message,
+	// dropping that message and every one after it and rolling the files back
+	// from KAS's own snapshots. KAS appends a `checkpoint_revert` TOMBSTONE to
+	// its session log, so the truncation is durable: a later session/load
+	// replays the log through applyCheckpointReverts, which pops the stack back
+	// through the target. The verb refuses a mid-turn session and a concurrent
+	// revert itself, server-side, so vibekit does not police either.
+	//
+	// This replaced session/fork. A fork made a SECOND chat; a revert edits the
+	// one you are in, which is what rewinding was always meant to mean.
+	MethodCheckpointRevertMultiple = "_kiro/checkpoint/revertMultiple"
+	// MethodSessionCompact summarizes the conversation and replaces it with the
+	// summary, emitting the `summarization_completed` frame the translate layer
+	// already maps.
+	//
+	// This is what typed `/compact` was NOT doing. Probed: the typed form returns
+	// `end_turn` in ~3.4s with ZERO summarization frames while the model replies
+	// "Done — context compacted", because no parser inside KAS claims it. The
+	// native verb returns `{success: true}` and does the work.
+	//
+	// `{success: false}` covers three conditions with NO discriminator — a turn in
+	// flight, a compaction already running, and (as a thrown error rather than a
+	// false) no such session — so a caller can only surface one generic failure.
+	MethodSessionCompact = "_kiro/session/compact"
 )
 
 // File-system protocol method names (ACP fs/* namespace). Exported so
@@ -35,6 +62,10 @@ const (
 const (
 	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
+
+// There is no createdReason constant. It labelled a FORKED session in KAS's
+// roster, and vibekit no longer forks: a rewind reverts the session it is in
+// rather than creating a second one, so there is no child session to label.
 
 // Agent user-input method name. On v3 (KAS, 2.14+) the agent's user_input
 // tool (structured questions: plan-mode clarifications, spec gates) is
@@ -88,6 +119,14 @@ const AgentEngineV3 = "v3"
 const (
 	ConfigOptionModel  = "model"
 	ConfigOptionEffort = "effortLevel"
+	// ConfigOptionAutopilot is supervised mode on v3. `autopilot: false` makes KAS
+	// request a TURN APPROVAL before applying a file-touching turn's writes;
+	// `true` (its default at session creation) applies them as they happen.
+	//
+	// It persists into KAS's own session metadata, so it survives session/load and
+	// never needs re-asserting — which is what lets vibekit pass it once at
+	// session/new instead of policing every write.
+	ConfigOptionAutopilot = "autopilot"
 )
 
 // ACP content-block JSON field name constants. These are the wire-format

@@ -22,13 +22,39 @@
 // ---------------------------------------------------------------------------
 
 import type { Message } from "./types.js";
-import { getActive, getActiveId, get, messagesVersion, activeSession } from "./store.js";
+import { getActive, getActiveId, messagesVersion, activeSession } from "./store.js";
 import { clearStreamingSig, clearReasoningSig, clearAllBlockSigs } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
-import { reconcile, type ReconcileSpec } from "./reconcile.js";
+import { reconcile, KEY_ATTR, type ReconcileSpec } from "./reconcile.js";
 import { $ } from "./dom.js";
-import { getScrollEl, scrollToBottom, resetScrollState, setLoadMore } from "./scroll.js";
-import { buildUserBubble } from "./fundamentals/text-bubble.js";
+import {
+  getScrollEl,
+  scrollToBottom,
+  resetScrollState,
+  setLoadMore,
+  deferWhileReading,
+  preserveReadingPosition,
+  fillViewport,
+  onReadingStateChange,
+  setAnchorProvider,
+  setResumeLabel,
+  readingState,
+} from "./scroll.js";
+import {
+  buildTurnHeader,
+  updateTurnHeader,
+  type TurnHeaderData,
+} from "./fundamentals/turn-header.js";
+import {
+  buildTurnFooter,
+  updateTurnFooter,
+  hasTurnSummary,
+  type TurnSummaryData,
+} from "./fundamentals/turn-footer.js";
+import { projectTurns, turnLedger, turnAnchorID, turnFoldSummary, type Turn } from "./turns.js";
+import { isTurnOpen, setTurnOpen } from "./fold-state.js";
+import { searchHitCount } from "./chat-search.js";
+import { mountTurnRail, observeTurns, resetTurnRail, loadTurnRail } from "./turn-rail.js";
 import {
   buildAssistantBody,
   updateAssistantBody,
@@ -40,7 +66,6 @@ import {
 } from "./messages-blocks.js";
 import { explainError as explainErrorAction } from "./actions/messages.js";
 import { rewindChat } from "./actions/rewind.js";
-import { initMessageActions, clearActionBindings } from "./messages-actions.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
 import { buildEvent, updateEvent, buildSystemFallback } from "./messages-events.js";
@@ -53,6 +78,11 @@ import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 // ---------------------------------------------------------------------------
 
 export { getScrollEl, scrollToBottom, setLoadMore };
+// Re-exported for the same reason the scroll helpers are: this module owns the
+// rail (it mounts it and feeds it the painted cards), so chat.ts reaching the
+// rail THROUGH here keeps ownership in one place instead of two modules driving
+// the same surface.
+export { loadTurnRail };
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -124,8 +154,8 @@ const staggerIndex = new Map<string, number>();
 // Avatars (parsed once, cloned per use).
 const KIRO_AVATAR =
   '<svg class="avatar-icon" width="18" height="18" viewBox="5.9 5.9 36.2 36.2" fill="none"><path d="M35.08 17.80C35.05 17.92 34.99 18.27 34.95 18.50C34.91 18.72 34.87 18.95 34.84 19.16C34.81 19.38 34.78 19.60 34.76 19.81C34.75 20.02 34.74 20.22 34.75 20.43C34.77 20.63 34.79 20.83 34.84 21.03C34.89 21.23 34.96 21.42 35.04 21.60C35.12 21.79 35.22 21.97 35.33 22.15C35.44 22.33 35.57 22.50 35.70 22.67C35.83 22.85 35.98 23.02 36.12 23.20C36.27 23.38 36.42 23.56 36.57 23.74C36.72 23.92 36.87 24.11 37.01 24.30C37.15 24.50 37.29 24.69 37.41 24.89C37.54 25.09 37.65 25.30 37.75 25.50C37.85 25.70 37.93 25.91 38.00 26.11C38.06 26.31 38.10 26.52 38.13 26.71C38.15 26.91 38.16 27.10 38.14 27.29C38.12 27.47 38.09 27.65 38.03 27.83C37.98 28.00 37.90 28.17 37.81 28.33C37.71 28.49 37.60 28.65 37.47 28.79C37.34 28.94 37.18 29.08 37.02 29.21C36.85 29.35 36.67 29.47 36.48 29.59C36.28 29.70 36.08 29.81 35.86 29.90C35.65 30.00 35.43 30.09 35.21 30.18C34.99 30.26 34.76 30.34 34.54 30.41C34.32 30.49 34.10 30.56 33.88 30.64C33.67 30.71 33.46 30.78 33.25 30.87C33.04 30.95 32.84 31.04 32.65 31.14C32.46 31.24 32.27 31.35 32.09 31.48C31.92 31.61 31.75 31.76 31.60 31.92C31.46 32.08 31.32 32.25 31.20 32.44C31.08 32.62 30.97 32.82 30.87 33.02C30.77 33.21 30.69 33.42 30.60 33.63C30.51 33.84 30.43 34.06 30.34 34.28C30.26 34.49 30.17 34.71 30.08 34.93C29.99 35.14 29.90 35.36 29.80 35.56C29.70 35.77 29.59 35.97 29.47 36.16C29.36 36.34 29.24 36.52 29.11 36.68C28.98 36.83 28.85 36.98 28.71 37.10C28.57 37.22 28.43 37.33 28.29 37.41C28.15 37.49 28.00 37.56 27.86 37.61C27.71 37.65 27.56 37.68 27.41 37.70C27.26 37.71 27.10 37.71 26.94 37.69C26.78 37.67 26.61 37.63 26.44 37.58C26.27 37.52 26.09 37.45 25.91 37.37C25.73 37.28 25.55 37.17 25.37 37.06C25.19 36.94 25.01 36.81 24.84 36.67C24.66 36.54 24.48 36.38 24.31 36.23C24.14 36.08 23.96 35.93 23.79 35.77C23.62 35.62 23.45 35.46 23.27 35.31C23.09 35.15 22.92 35.00 22.72 34.86C22.53 34.72 22.34 34.59 22.12 34.47C21.91 34.35 21.68 34.24 21.45 34.16C21.21 34.08 20.96 34.02 20.72 33.98C20.48 33.94 20.23 33.93 19.98 33.93C19.74 33.93 19.50 33.95 19.27 33.97C19.03 33.99 18.80 34.02 18.56 34.05C18.33 34.08 18.10 34.12 17.87 34.15C17.65 34.18 17.42 34.21 17.20 34.23C16.98 34.25 16.76 34.27 16.55 34.27C16.34 34.28 16.14 34.27 15.95 34.25C15.76 34.24 15.58 34.21 15.42 34.17C15.26 34.13 15.11 34.08 14.99 34.02C14.86 33.97 14.75 33.90 14.65 33.83C14.55 33.76 14.47 33.68 14.40 33.60C14.33 33.51 14.27 33.43 14.21 33.32C14.16 33.22 14.11 33.11 14.07 32.98C14.03 32.85 14.00 32.71 13.98 32.55C13.96 32.40 13.95 32.22 13.95 32.04C13.95 31.86 13.96 31.67 13.98 31.47C14.00 31.27 14.03 31.05 14.07 30.84C14.10 30.63 14.15 30.41 14.20 30.19C14.24 29.96 14.30 29.74 14.34 29.51C14.39 29.27 14.44 29.04 14.48 28.79C14.52 28.55 14.56 28.30 14.57 28.03C14.58 27.77 14.59 27.49 14.56 27.21C14.53 26.94 14.48 26.65 14.41 26.37C14.33 26.10 14.22 25.83 14.10 25.58C13.99 25.33 13.85 25.10 13.71 24.88C13.57 24.66 13.42 24.46 13.27 24.26C13.13 24.07 12.97 23.88 12.83 23.70C12.69 23.51 12.55 23.34 12.41 23.16C12.28 22.99 12.15 22.81 12.04 22.64C11.93 22.48 11.83 22.31 11.74 22.15C11.65 21.99 11.58 21.83 11.53 21.69C11.47 21.55 11.43 21.42 11.41 21.30C11.38 21.18 11.37 21.07 11.37 20.98C11.37 20.89 11.38 20.82 11.40 20.74C11.42 20.67 11.44 20.62 11.47 20.55C11.50 20.49 11.54 20.43 11.59 20.36C11.65 20.30 11.71 20.22 11.79 20.15C11.87 20.07 11.97 19.99 12.09 19.91C12.21 19.84 12.35 19.75 12.50 19.67C12.65 19.60 12.82 19.52 13.00 19.44C13.18 19.37 13.38 19.30 13.58 19.22C13.78 19.15 13.99 19.08 14.21 19.01C14.43 18.94 14.66 18.87 14.89 18.78C15.13 18.70 15.37 18.61 15.62 18.50C15.86 18.39 16.12 18.27 16.38 18.12C16.63 17.97 16.90 17.79 17.13 17.59C17.37 17.38 17.60 17.14 17.80 16.91C17.99 16.67 18.16 16.40 18.31 16.15C18.46 15.91 18.58 15.65 18.69 15.41C18.80 15.17 18.89 14.94 18.98 14.71C19.07 14.48 19.15 14.26 19.23 14.05C19.32 13.85 19.39 13.64 19.48 13.46C19.56 13.27 19.64 13.09 19.72 12.93C19.81 12.77 19.89 12.62 19.98 12.50C20.06 12.37 20.15 12.26 20.22 12.17C20.30 12.09 20.38 12.02 20.44 11.97C20.50 11.92 20.56 11.89 20.60 11.87C20.65 11.84 20.69 11.84 20.72 11.83C20.76 11.82 20.79 11.82 20.84 11.82C20.89 11.82 20.94 11.82 21.01 11.84C21.08 11.85 21.16 11.87 21.26 11.91C21.36 11.95 21.47 12.00 21.60 12.06C21.72 12.13 21.86 12.21 22.00 12.30C22.14 12.40 22.29 12.51 22.45 12.63C22.60 12.75 22.77 12.89 22.93 13.03C23.10 13.17 23.27 13.32 23.45 13.48C23.64 13.63 23.82 13.80 24.03 13.96C24.24 14.12 24.46 14.29 24.71 14.45C24.96 14.60 25.23 14.77 25.52 14.90C25.81 15.03 26.14 15.15 26.46 15.23C26.78 15.31 27.12 15.35 27.43 15.38C27.75 15.40 28.06 15.39 28.35 15.38C28.63 15.36 28.90 15.32 29.16 15.28C29.41 15.25 29.65 15.20 29.89 15.16C30.12 15.12 30.44 15.07 30.55 15.05L29.70 9.92C29.58 9.94 29.18 10.01 28.96 10.05C28.74 10.08 28.54 10.12 28.38 10.15C28.21 10.17 28.08 10.19 27.98 10.20C27.88 10.21 27.81 10.20 27.77 10.20C27.72 10.20 27.72 10.20 27.70 10.20C27.68 10.19 27.69 10.20 27.65 10.18C27.62 10.17 27.57 10.15 27.50 10.10C27.42 10.05 27.32 9.99 27.20 9.89C27.08 9.80 26.93 9.68 26.77 9.55C26.60 9.41 26.41 9.25 26.21 9.09C26.01 8.92 25.78 8.74 25.54 8.56C25.30 8.39 25.04 8.20 24.76 8.02C24.48 7.85 24.18 7.67 23.86 7.52C23.54 7.37 23.20 7.22 22.84 7.11C22.49 7.00 22.10 6.90 21.72 6.85C21.33 6.80 20.92 6.78 20.51 6.82C20.11 6.85 19.70 6.92 19.31 7.04C18.92 7.16 18.54 7.33 18.19 7.53C17.84 7.72 17.51 7.96 17.22 8.22C16.93 8.47 16.67 8.75 16.44 9.03C16.21 9.32 16.01 9.62 15.82 9.91C15.64 10.21 15.49 10.51 15.35 10.80C15.22 11.09 15.10 11.38 14.99 11.65C14.89 11.92 14.80 12.18 14.72 12.42C14.64 12.65 14.57 12.87 14.50 13.07C14.44 13.26 14.38 13.42 14.33 13.56C14.27 13.69 14.23 13.80 14.19 13.87C14.16 13.95 14.14 13.99 14.11 14.03C14.09 14.07 14.09 14.08 14.07 14.11C14.04 14.14 14.02 14.16 13.96 14.20C13.90 14.24 13.83 14.29 13.71 14.35C13.60 14.41 13.46 14.48 13.29 14.55C13.12 14.62 12.91 14.70 12.69 14.78C12.47 14.87 12.23 14.96 11.98 15.07C11.72 15.18 11.45 15.29 11.17 15.43C10.90 15.56 10.61 15.71 10.33 15.88C10.05 16.05 9.76 16.24 9.49 16.45C9.22 16.67 8.95 16.91 8.70 17.17C8.46 17.44 8.23 17.73 8.03 18.05C7.84 18.36 7.66 18.71 7.54 19.07C7.41 19.42 7.33 19.80 7.28 20.17C7.24 20.55 7.24 20.93 7.27 21.29C7.30 21.66 7.38 22.02 7.48 22.36C7.57 22.70 7.71 23.02 7.85 23.33C7.99 23.64 8.16 23.92 8.33 24.20C8.50 24.47 8.68 24.72 8.86 24.96C9.04 25.19 9.23 25.41 9.40 25.62C9.57 25.82 9.75 26.01 9.90 26.18C10.06 26.35 10.20 26.51 10.32 26.65C10.44 26.79 10.55 26.91 10.63 27.01C10.71 27.12 10.77 27.20 10.82 27.28C10.87 27.35 10.90 27.40 10.93 27.46C10.95 27.52 10.97 27.57 10.99 27.64C11.00 27.72 11.02 27.80 11.02 27.92C11.03 28.03 11.02 28.17 11.01 28.34C11.00 28.50 10.97 28.70 10.94 28.91C10.92 29.12 10.88 29.35 10.84 29.60C10.81 29.85 10.77 30.12 10.75 30.39C10.72 30.67 10.69 30.97 10.68 31.27C10.68 31.57 10.68 31.88 10.70 32.19C10.73 32.51 10.76 32.83 10.84 33.15C10.91 33.46 11.00 33.79 11.12 34.09C11.25 34.40 11.41 34.70 11.59 34.98C11.78 35.26 12.00 35.52 12.24 35.76C12.49 35.99 12.76 36.19 13.05 36.36C13.33 36.54 13.64 36.67 13.94 36.78C14.25 36.89 14.57 36.96 14.88 37.02C15.19 37.07 15.51 37.09 15.81 37.10C16.12 37.11 16.43 37.09 16.72 37.07C17.01 37.04 17.29 37.00 17.56 36.96C17.84 36.91 18.10 36.86 18.34 36.81C18.58 36.76 18.81 36.71 19.02 36.66C19.24 36.62 19.43 36.57 19.60 36.54C19.78 36.51 19.93 36.49 20.07 36.48C20.20 36.47 20.32 36.46 20.42 36.47C20.53 36.47 20.62 36.48 20.72 36.50C20.82 36.53 20.91 36.55 21.02 36.60C21.13 36.65 21.25 36.72 21.38 36.80C21.52 36.88 21.66 36.98 21.82 37.10C21.98 37.22 22.15 37.35 22.33 37.50C22.51 37.64 22.71 37.80 22.91 37.95C23.12 38.11 23.33 38.27 23.56 38.42C23.79 38.58 24.03 38.74 24.28 38.88C24.53 39.02 24.80 39.15 25.07 39.26C25.34 39.37 25.62 39.47 25.91 39.54C26.19 39.61 26.49 39.65 26.79 39.67C27.08 39.68 27.38 39.67 27.67 39.62C27.96 39.57 28.25 39.49 28.53 39.38C28.80 39.27 29.06 39.13 29.30 38.97C29.54 38.80 29.76 38.61 29.97 38.40C30.17 38.20 30.36 37.97 30.52 37.74C30.69 37.51 30.84 37.26 30.97 37.01C31.11 36.77 31.23 36.51 31.33 36.26C31.44 36.01 31.53 35.76 31.62 35.52C31.71 35.28 31.79 35.04 31.86 34.82C31.93 34.60 32.00 34.38 32.07 34.19C32.14 34.00 32.20 33.82 32.27 33.65C32.34 33.49 32.40 33.35 32.48 33.22C32.55 33.09 32.62 32.99 32.70 32.88C32.78 32.78 32.87 32.69 32.97 32.61C33.08 32.52 33.19 32.44 33.32 32.36C33.46 32.28 33.61 32.20 33.78 32.12C33.95 32.04 34.14 31.96 34.34 31.88C34.54 31.80 34.76 31.72 34.99 31.63C35.21 31.55 35.45 31.45 35.69 31.35C35.92 31.25 36.17 31.14 36.41 31.02C36.64 30.89 36.89 30.76 37.11 30.61C37.34 30.46 37.57 30.30 37.77 30.12C37.98 29.95 38.17 29.75 38.35 29.55C38.52 29.34 38.67 29.11 38.80 28.88C38.92 28.65 39.02 28.39 39.10 28.14C39.17 27.89 39.21 27.62 39.22 27.36C39.24 27.09 39.22 26.83 39.18 26.56C39.14 26.30 39.07 26.04 38.99 25.79C38.90 25.53 38.79 25.28 38.67 25.04C38.55 24.80 38.41 24.57 38.26 24.35C38.11 24.12 37.95 23.91 37.80 23.70C37.64 23.50 37.47 23.30 37.32 23.12C37.16 22.93 37.00 22.75 36.86 22.58C36.71 22.41 36.57 22.25 36.45 22.09C36.33 21.94 36.21 21.79 36.12 21.64C36.03 21.50 35.95 21.36 35.88 21.22C35.82 21.08 35.77 20.95 35.73 20.81C35.70 20.67 35.68 20.53 35.66 20.37C35.65 20.21 35.65 20.05 35.67 19.87C35.68 19.69 35.70 19.50 35.73 19.30C35.76 19.10 35.80 18.88 35.84 18.66C35.88 18.43 35.94 18.07 35.96 17.95Z" fill="#9046FF"/><circle cx="30.12" cy="12.48" r="2.60" fill="#9046FF"/><circle cx="35.52" cy="17.88" r="0.45" fill="#9046FF"/></svg>';
-const USER_AVATAR =
-  '<svg class="avatar-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 00-16 0"/></svg>';
+// There is no USER_AVATAR: the user's request is the turn card's header band,
+// so nothing needs a face to attribute it.
 
 function svgTemplate(markup: string): () => Node {
   const tpl = document.createElement("template");
@@ -134,7 +164,6 @@ function svgTemplate(markup: string): () => Node {
   return () => content.cloneNode(true);
 }
 const cloneKiroAvatar = svgTemplate(KIRO_AVATAR);
-const cloneUserAvatar = svgTemplate(USER_AVATAR);
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -167,12 +196,70 @@ export function mountChatView(): void {
     return;
   }
   mounted = true;
-  initMessageActions();
+  initFollowModel();
+  // The rail lives in the transcript's positioned outer wrapper rather than in
+  // the scroller, so it stays put instead of scrolling away with the content.
+  mountTurnRail($.messagesWrapOuter);
   effect(() => {
     void messagesVersion.value;
     void activeSession.value;
     paint();
   });
+}
+
+// ---------------------------------------------------------------------------
+// The follow model's two client-side obligations (§3.4).
+// ---------------------------------------------------------------------------
+
+/** Total blocks across a session, which is what the resume chip counts.
+ *
+ *  Blocks, not messages: a single streaming turn can produce dozens of blocks,
+ *  and a chip reading "1 new message" for four minutes of work is a static badge
+ *  rather than a progress read-out. */
+function blockCount(msgs: readonly Message[]): number {
+  let n = 0;
+  for (const m of msgs) {
+    n += m.blocks?.length ?? 0;
+  }
+  return n;
+}
+
+/** Blocks present when the reader last entered Reading. */
+let followBaseline = 0;
+
+function initFollowModel(): void {
+  // Following pins to the ACTIVE TEXT BLOCK rather than the document bottom.
+  // Without this, the agent streams a sentence, a 400-line diff card renders
+  // below it, and pinning to scrollHeight scrolls the sentence being read off
+  // the top — an edge case before evidence went full width, and the common case
+  // after. Tall evidence stays below the fold until the reader goes to it.
+  setAnchorProvider(() => {
+    const streaming = messagesEl.querySelector<HTMLElement>(".message.assistant.streaming");
+    return streaming;
+  });
+  onReadingStateChange((next) => {
+    if (next === "reading") {
+      followBaseline = blockCount(getActive()?.messages ?? []);
+    }
+    refreshResumeLabel();
+  });
+}
+
+/** The resume control is the only element on screen that knows the reader is
+ *  behind, so it is the only one that can say how far. */
+function refreshResumeLabel(): void {
+  if (readingState() === "following") {
+    return;
+  }
+  const session = getActive();
+  const behind = blockCount(session?.messages ?? []) - followBaseline;
+  if (behind > 0) {
+    setResumeLabel(`${String(behind)} new block${behind === 1 ? "" : "s"}`);
+    return;
+  }
+  // Nothing new since they parked: say what the turn is doing instead of
+  // claiming a count of zero.
+  setResumeLabel(session?.thinking === true ? session.working_label || "Working" : "Latest");
 }
 
 function paint(): void {
@@ -222,81 +309,110 @@ function paint(): void {
       }
     }
   }
-  reconcile(messagesEl, session.messages, messageSpec);
+  const turns = projectTurns(session.messages, session.thinking);
+  reconcile(messagesEl, turns, turnSpec);
+  // Tell the rail which cards exist so it can track the turn in view. Re-run per
+  // paint because the set changes as pages load and turns arrive.
+  observeTurns(messagesEl.querySelectorAll<HTMLElement>(":scope > .turn"));
+  applyFoldPass(session.id, turns);
   finalizeStreamingIfNeeded(session.messages);
+  refreshResumeLabel();
   lastNewestId = session.messages[session.messages.length - 1]?.id;
   lastActiveId = session.id;
 }
 
 /**
- * rewindConfirmText builds the confirmation shown before branching a new
- * chat from a past turn. It surfaces what the user is rewinding from — the
- * prompt preview plus the following assistant turn's tool-call and
- * touched-file counts — mirroring kiro-cli 2.7's enriched /rewind preview,
- * built from data vibekit already persists (no extra round-trip). All
- * field reads are defensive so a sparse/legacy message never throws.
+ * rewindConfirmText builds the confirmation shown before a rewind.
+ *
+ * THE CONFIRM IS THE ONLY GUARD, so it has to state the losses rather than
+ * describe an operation. A rewind is destructive in two directions now: the
+ * addressed turn and every turn after it are dropped from the transcript, and
+ * the files roll back to KAS's snapshots from before them. There is no branch to
+ * fall back to, no "keep both histories", and no undo — the previous version
+ * said "File contents on disk are not affected (use Restore for that)", which is
+ * now the exact opposite of the truth.
+ *
+ * It still surfaces what is being rewound FROM — the prompt preview plus the
+ * following turn's tool-call and touched-file counts — because that is the only
+ * thing that makes the cost legible before you accept it. All field reads stay
+ * defensive so a sparse message never throws.
  */
-function rewindConfirmText(m: Message, next: Message | undefined): string {
+function rewindConfirmText(m: Message, following: readonly Message[]): string {
   const promptRaw = (m.content ?? "").trim().replace(/\s+/g, " ");
-  const prompt = promptRaw.length > 100 ? promptRaw.slice(0, 100) + "…" : promptRaw;
-  const lines = ["Rewind from this turn?", ""];
+  const prompt = promptRaw.length > 100 ? promptRaw.slice(0, 100) + "\u2026" : promptRaw;
+  const lines = ["Rewind to this turn?", ""];
   if (prompt.length > 0) {
     lines.push(`Prompt: "${prompt}"`);
   }
-  if (next?.role === "assistant") {
-    const calls = next.tool_calls ?? [];
-    if (calls.length > 0) {
-      const files = [
-        ...new Set(
-          calls.flatMap((c) => (c.locations ?? []).map((l) => l.path.split("/").pop() ?? l.path)),
-        ),
-      ];
-      const toolPart = `${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}`;
-      const filePart =
-        files.length > 0
-          ? `, ${String(files.length)} file${files.length === 1 ? "" : "s"} touched (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", …" : ""})`
-          : "";
-      lines.push(`This turn's response: ${toolPart}${filePart}.`);
-    }
+
+  // Count across EVERY turn being dropped, not just the next one. The old text
+  // described one turn's work because a fork left the rest alive somewhere else;
+  // a revert discards all of it, so summarising only the first would understate
+  // the cost by however many turns follow.
+  const calls = following.flatMap((f) => f.tool_calls ?? []);
+  const files = [
+    ...new Set(
+      calls.flatMap((c) => (c.locations ?? []).map((l) => l.path.split("/").pop() ?? l.path)),
+    ),
+  ];
+  const turnWord = following.length === 1 ? "turn" : "turns";
+  lines.push(`Discards this prompt and ${String(following.length)} later ${turnWord}.`);
+  if (calls.length > 0) {
+    const toolPart = `${String(calls.length)} tool call${calls.length === 1 ? "" : "s"}`;
+    const filePart =
+      files.length > 0
+        ? `, ${String(files.length)} file${files.length === 1 ? "" : "s"} touched (${files.slice(0, 4).join(", ")}${files.length > 4 ? ", \u2026" : ""})`
+        : "";
+    lines.push(`Work being undone: ${toolPart}${filePart}.`);
   }
+
   lines.push("");
   lines.push(
-    "Creates a new chat branched from this point. File contents on disk are not affected (use Restore for that).",
+    "Files are rolled back on disk to their state before this turn. " +
+      "The prompt itself is discarded too, so you will need to retype it. " +
+      "This cannot be undone.",
   );
   return lines.join("\n");
 }
 
 /**
- * handleRewindClick confirms the rewind, dispatches it, then opens AND
- * activates the returned branch chat. Mirrors chat.ts's restoreArchivedChat
- * pattern: refresh the header list so the branch session exists in the store,
- * then open its tab (openChatTab activates it via onShow → activateChatView,
- * which loads the branch's messages). chat.ts / store-load.ts are imported
- * dynamically because chat.ts statically imports this module — a static import
- * back would be a cycle. The confirm uses the app's confirmDialog (not the
- * native, unstyled, focus-trap-less window.confirm).
+ * handleRewindClick confirms the rewind and dispatches it. That is the whole
+ * flow now.
+ *
+ * It used to dispatch, read back a server-assigned branch id, refresh the header
+ * list so the branch existed in the store, then open and activate its tab —
+ * which is why this module needed dynamic imports of chat.ts and store-load.ts
+ * to dodge a cycle. A revert changes the chat you are already looking at, so the
+ * new transcript arrives over SSE and there is no tab to open and no list to
+ * refresh.
+ *
+ * REFUSED MID-TURN, not queued. KAS throws on a session with a live
+ * abortController ("Cannot revert while the agent is still running"), so
+ * offering the button during a turn would only produce an error the user cannot
+ * act on. The button is disabled instead (see mountRewind), and this is the
+ * second gate for the race between the two.
  */
 async function handleRewindClick(m: Message): Promise<void> {
   const session = getActive();
   if (session === undefined) {
     return;
   }
-  const turnIdx = session.messages.findIndex((msg) => msg.id === m.id);
-  if (turnIdx < 0) {
+  if (session.thinking) {
     return;
   }
-  const proceed = await confirmDialog(rewindConfirmText(m, session.messages[turnIdx + 1]));
+  const idx = session.messages.findIndex((msg) => msg.id === m.id);
+  if (idx < 0) {
+    return;
+  }
+  const proceed = await confirmDialog(
+    rewindConfirmText(m, session.messages.slice(idx + 1)),
+    "Rewind",
+    "destructive",
+  );
   if (!proceed) {
     return;
   }
-  const res = await rewindChat.dispatch({ chatID: session.id, turnIndex: turnIdx });
-  const newID = res?.rewind_id ?? "";
-  if (newID === "") {
-    return;
-  }
-  const [storeLoad, chatMod] = await Promise.all([import("./store-load.js"), import("./chat.js")]);
-  await storeLoad.loadList();
-  chatMod.openChatTab(newID, get(newID)?.name ?? `Rewind: ${session.name}`);
+  await rewindChat.dispatch({ chatID: session.id, messageID: m.id });
 }
 
 /** Clear all per-message state, e.g. when the last chat is closed (active
@@ -315,14 +431,50 @@ function teardownAll(): void {
   resetBlockRenders();
   clearAllBlockSigs();
   messageStates.clear();
-  clearActionBindings();
   resetScrollState();
-  reconcile(messagesEl, [] as Message[], messageSpec);
+  resetTurnRail();
+  reconcile(messagesEl, [] as Turn[], turnSpec);
 }
 
 // ---------------------------------------------------------------------------
-// Reconcile spec
+// Reconcile specs
+//
+// Two levels, both keyed. The outer list is TURNS keyed by the turn's opening
+// message id; each card's `.turn-body` is an inner keyed list of that turn's
+// messages. Nesting is safe because reconcile only considers children carrying
+// its key attribute, so a card's unkeyed header and footer are invisible to
+// the inner pass and the inner pass is invisible to the outer one.
 // ---------------------------------------------------------------------------
+
+const turnSpec: ReconcileSpec<Turn> = {
+  key: (t) => t.id,
+  mount: (t) => {
+    const card = buildTurn(t);
+    // Only animate a genuinely-new turn; chat-switch replay and pagination
+    // prepends mount silently. A new turn's id is its trigger's message id,
+    // which is what paint() records in appendNewIds.
+    if (appendNewIds.has(t.id)) {
+      card.setAttribute("data-chat-entry", "");
+    }
+    const stagger = staggerIndex.get(t.id);
+    if (stagger !== undefined && stagger > 0) {
+      card.style.setProperty("--stagger-index", String(stagger));
+    }
+    return card;
+  },
+  update: updateTurn,
+  onRemove: (card) => {
+    // Dispose the body's messages: the inner reconcile never runs again for a
+    // removed card, so its onRemove would not fire on its own.
+    const rows = card.querySelectorAll<HTMLElement>(`:scope > .turn-body > [${KEY_ATTR}]`);
+    for (const row of rows) {
+      const key = row.getAttribute(KEY_ATTR);
+      if (key !== null) {
+        disposeMessage(key);
+      }
+    }
+  },
+};
 
 const messageSpec: ReconcileSpec<Message> = {
   key: (m) => m.id,
@@ -369,34 +521,46 @@ const messageSpec: ReconcileSpec<Message> = {
     }
   },
   onRemove: (_el, key) => {
-    const arr = bindUnbinds.get(key);
-    if (arr !== undefined) {
-      for (const fn of arr) {
-        fn();
-      }
-      bindUnbinds.delete(key);
-    }
-    disposeStreamingEffect(key);
-    // Flush any live markdown stream, then drop the block render state
-    // (cleanup only — the message row is being removed).
-    finalizeAssistantBody(key);
-    disposeAssistantBody(key);
-    messageStates.delete(key);
+    disposeMessage(key);
   },
 };
+
+/** Drop every per-message resource for `key`. Called from the body reconcile's
+ *  onRemove, and from the turn reconcile's onRemove for each of a discarded
+ *  card's rows — a removed card's inner list never reconciles again, so its
+ *  own onRemove would never fire. */
+function disposeMessage(key: string): void {
+  const arr = bindUnbinds.get(key);
+  if (arr !== undefined) {
+    for (const fn of arr) {
+      fn();
+    }
+    bindUnbinds.delete(key);
+  }
+  disposeStreamingEffect(key);
+  // Flush any live markdown stream, then drop the block render state
+  // (cleanup only — the message row is being removed).
+  finalizeAssistantBody(key);
+  disposeAssistantBody(key);
+  messageStates.delete(key);
+}
 
 // ---------------------------------------------------------------------------
 // Per-role builders + updaters
 // ---------------------------------------------------------------------------
 
+/** Build one message of a turn's BODY. A user message never reaches here:
+ *  projectTurns promotes it to its turn's header, so the body holds only what
+ *  the trigger caused. An unexpected role still renders as a plain system row
+ *  rather than vanishing from the transcript. */
 function buildMessage(m: Message): HTMLElement {
   switch (m.role) {
-    case "user":
-      return buildUser(m);
     case "assistant":
       return buildAssistant(m);
     case "event":
       return buildEvent(m) ?? buildSystemFallback(m);
+    case "user":
+      return buildSystemFallback(m);
   }
 }
 
@@ -409,64 +573,236 @@ function updateMessage(el: HTMLElement, m: Message): void {
   // user messages are immutable once mounted.
 }
 
-// --- User ---
+/**
+ * Fold every turn that should be folded, and unfold every turn that should not.
+ *
+ * DEFERRED WHILE READING and COMPENSATED WHEN APPLIED, both mandatory. A fold
+ * removes hundreds of pixels rather than tens, so content vanishing from above
+ * the reader through no action of their own is the failure mode this guards —
+ * which is why §3.4 makes the helper an obligation rather than a nicety.
+ *
+ * Runs on every paint because eligibility changes with every new turn: the turn
+ * that was second-newest becomes third-newest and folds.
+ */
+function applyFoldPass(chatID: string, turns: readonly Turn[]): void {
+  const wanted = new Map<string, boolean>();
+  const hits = new Map<string, number>();
+  for (const [i, t] of turns.entries()) {
+    wanted.set(t.id, isTurnOpen(chatID, t, i, turns.length));
+    hits.set(t.id, searchHitCount(t.n));
+  }
+  const changes: (() => void)[] = [];
+  for (const card of messagesEl.querySelectorAll<HTMLElement>(":scope > .turn")) {
+    const id = card.getAttribute(KEY_ATTR);
+    if (id === null) {
+      continue;
+    }
+    setHitCount(card, hits.get(id) ?? 0);
+    const open = wanted.get(id) ?? true;
+    const folded = card.hasAttribute("data-folded");
+    if (open === !folded) {
+      continue;
+    }
+    changes.push(() => {
+      setCardFolded(card, !open);
+    });
+  }
+  if (changes.length === 0) {
+    return;
+  }
+  deferWhileReading(() => {
+    preserveReadingPosition(() => {
+      for (const fn of changes) {
+        fn();
+      }
+    }, "content-growth");
+    // Folding can starve its own pagination trigger — once the resident turns
+    // fold, the page can be shorter than the viewport, and then there is no
+    // overflow, no scroll event and no fetch. Restore the trigger.
+    fillViewport();
+  });
+}
 
-function buildUser(m: Message): HTMLElement {
-  const wrap = el("div", { className: "msg-wrap msg-wrap-user" });
+/** Wire the header's fold toggle. One control, both directions, and the click
+ *  RECORDS the reader's choice — an explicit fold or unfold outranks the
+ *  two-newest rule and persists per chat, so the transcript does not undo a
+ *  deliberate decision on the next paint. */
+function mountFoldToggle(header: HTMLElement, card: HTMLElement, t: Turn): void {
+  const btn = header.querySelector<HTMLButtonElement>(
+    ":scope > .turn-head-row > .turn-fold-toggle",
+  );
+  if (btn === null || btn.dataset["bound"] === "") {
+    return;
+  }
+  btn.dataset["bound"] = "";
+  btn.addEventListener("click", () => {
+    const open = card.hasAttribute("data-folded");
+    const chatID = getActiveId();
+    if (chatID !== "") {
+      setTurnOpen(chatID, t.id, open);
+    }
+    // Applied immediately and compensated: this is the reader's own action, so
+    // it is not deferred, but it still must not move what they are looking at.
+    preserveReadingPosition(() => {
+      setCardFolded(card, !open);
+    }, "content-growth");
+  });
+}
 
-  // Checkpoint / rewind affordances above the bubble. The server stamps the
-  // REAL per-turn checkpoint tag on the user message (m.checkpoint_tag), set
-  // only on turns whose agent wrote at least one file — so Restore renders
-  // only when that tag is non-empty (no more off-by-one recompute from a
-  // 0-based turn index). Rewind is decoupled from checkpoint existence:
-  // branching a new chat is independent of file snapshots, so it is offered
-  // on EVERY user turn (a read-only / Q&A turn can still be branched from).
-  const cp = m.checkpoint_tag ?? "";
-  const line = el("div", { className: "checkpoint-line" });
-  if (cp !== "") {
-    const label = el("span", { className: "checkpoint-label" }, "Checkpoint");
-    const restoreBtn = el(
+/** Show how many search hits a turn holds, so scanning the folded list tells the
+ *  reader which turns are worth opening before they open any. */
+function setHitCount(card: HTMLElement, n: number): void {
+  const badge = card.querySelector<HTMLElement>(
+    ":scope > .turn-header > .turn-head-row > .turn-hit-count",
+  );
+  if (badge === null) {
+    return;
+  }
+  badge.textContent = n > 0 ? String(n) : "";
+}
+
+function setCardFolded(card: HTMLElement, folded: boolean): void {
+  if (folded) {
+    card.setAttribute("data-folded", "");
+  } else {
+    card.removeAttribute("data-folded");
+  }
+  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+  header?.setAttribute("aria-expanded", folded ? "false" : "true");
+}
+
+// --- The turn card ---
+
+/** Build one turn: tinted header (the trigger), plain body (the work), tinted
+ *  footer (the outcome ledger). One card type for every turn — a one-word
+ *  answer and a forty-tool-call refactor are the same object, differing only
+ *  in how much body they have. Density comes from type scale, not from
+ *  structural variation. */
+function buildTurn(t: Turn): HTMLElement {
+  const card = el("div", { className: "turn" });
+  card.dataset["outcome"] = t.outcome;
+  // The permalink target. `#turn-{n}` addresses a turn from a ledger row, a
+  // search hit or the rail.
+  card.id = turnAnchorID(t.n);
+
+  const header = buildTurnHeader(headerData(t));
+  mountRewind(header, t);
+  mountFoldToggle(header, card, t);
+  card.appendChild(header);
+
+  const body = el("div", { className: "turn-body" });
+  card.appendChild(body);
+  reconcile(body, t.body, messageSpec);
+
+  mountTurnFooter(card, t);
+
+  // A new user turn pops the reader back to the bottom. scrollToBottom() does
+  // an explicit RAF-paced scroll that lands on the new card immediately
+  // (suppressScroll would have blocked the auto-scroll for the very turn that
+  // just arrived).
+  if (t.trigger !== undefined) {
+    scrollToBottom();
+  }
+  return card;
+}
+
+function updateTurn(card: HTMLElement, t: Turn): void {
+  card.dataset["outcome"] = t.outcome;
+  const header = card.querySelector<HTMLElement>(":scope > .turn-header");
+  if (header !== null) {
+    updateTurnHeader(header, headerData(t));
+    mountRewind(header, t);
+  }
+  const body = card.querySelector<HTMLElement>(":scope > .turn-body");
+  if (body !== null) {
+    reconcile(body, t.body, messageSpec);
+  }
+  mountTurnFooter(card, t);
+}
+
+function headerData(t: Turn): TurnHeaderData {
+  const request = t.trigger?.content;
+  return {
+    n: t.n,
+    outcome: t.outcome,
+    ts: t.ts,
+    // An empty prompt is not a request; fall through to the system-trigger
+    // rendering rather than showing a blank header band.
+    request: request !== undefined && request.trim() !== "" ? request : undefined,
+  };
+}
+
+/** Mount the Rewind action into the header's action slot, once.
+ *
+ *  Offered on every turn with a real trigger: rewinding is independent of
+ *  whether the agent wrote a file, so a read-only Q&A turn can still be
+ *  rewound from. A turn the user did not ask for has no user message to
+ *  address, so it gets no button. */
+function mountRewind(header: HTMLElement, t: Turn): void {
+  const slot = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-head-actions");
+  if (slot === null) {
+    return;
+  }
+  const trigger = t.trigger;
+  if (trigger === undefined) {
+    slot.replaceChildren();
+    return;
+  }
+  let btn = slot.querySelector<HTMLButtonElement>(":scope > .turn-rewind");
+  if (btn === null) {
+    btn = el(
       "button",
       {
-        className: "checkpoint-restore",
+        className: "turn-rewind",
         type: "button",
-        "data-tag": cp,
-        title: "Restore files to this point",
-        "aria-label": `Restore to checkpoint ${cp}`,
+        "aria-label": "Rewind to this turn",
       },
-      "Restore",
-    );
-    line.append(label, restoreBtn);
-  }
-  const rewindBtn = el(
-    "button",
-    {
-      className: "checkpoint-rewind",
-      type: "button",
-      title: "Rewind conversation from this point",
-      "aria-label": "Rewind from this turn",
-    },
-    "Rewind",
-  );
-  rewindBtn.addEventListener("click", () => {
-    void handleRewindClick(m).catch((e: unknown) => {
-      console.warn("[messages] rewind failed", e);
+      "Rewind",
+    ) as HTMLButtonElement;
+    btn.addEventListener("click", () => {
+      void handleRewindClick(trigger).catch((e: unknown) => {
+        console.warn("[messages] rewind failed", e);
+      });
     });
-  });
-  line.appendChild(rewindBtn);
-  wrap.appendChild(line);
+    slot.appendChild(btn);
+  }
+  // DISABLED mid-turn, not queued. KAS refuses a revert on a session with a live
+  // abortController, so an enabled button during a turn could only produce an
+  // error the user cannot act on. Refreshed on every paint because `thinking` is
+  // exactly what a paint is reacting to.
+  const busy = getActive()?.thinking ?? false;
+  btn.disabled = busy;
+  btn.title = busy
+    ? "Can't rewind while the agent is running \u2014 cancel the turn first"
+    : "Rewind to this turn, discarding it and everything after";
+}
 
-  const row = makeRow("user");
-  const bubble = buildUserBubble(m.content ?? "");
-  row.appendChild(bubble);
-  wrap.appendChild(row);
-
-  // User messages always pop the user back to the bottom. scrollToBottom()
-  // does an explicit RAF-paced scroll that lands on the new user bubble
-  // immediately (suppressScroll would have blocked the auto-scroll for the
-  // very message that just arrived).
-  scrollToBottom();
-  return wrap;
+/** Mount / refresh the turn's outcome ledger as the card's last child.
+ *
+ *  Turn-scoped rather than message-scoped: a turn can hold more than one
+ *  assistant message (a mid-turn model switch splits it), and the ledger
+ *  describes the TURN, so it sums across them and renders once. */
+function mountTurnFooter(card: HTMLElement, t: Turn): void {
+  const led = turnLedger(t);
+  const data: TurnSummaryData = {
+    credits: led.credits,
+    elapsedMs: led.elapsedMs,
+    changedFiles: led.changedFiles,
+    commands: led.commands,
+    reads: led.reads,
+    outcome: t.outcome,
+    foldSummary: turnFoldSummary(t),
+  };
+  const existing = card.querySelector<HTMLDivElement>(":scope > .turn-footer");
+  if (!hasTurnSummary(data)) {
+    existing?.remove();
+    return;
+  }
+  if (existing === null) {
+    card.appendChild(buildTurnFooter(data));
+  } else {
+    updateTurnFooter(existing, data);
+  }
 }
 
 // --- Assistant ---
@@ -554,10 +890,13 @@ function isLikelyLiveStreaming(m: Message): boolean {
 
 // --- Helpers ---
 
-function makeRow(side: "user" | "assistant"): HTMLDivElement {
-  const row = el("div", { className: `msg-row msg-row-${side}` }) as HTMLDivElement;
+/** An avatar row for a top-level assistant bubble. Only the agent gets one:
+ *  the user's side of the exchange is the turn card's header band, which is
+ *  identified by its tint and its position rather than by a face. */
+function makeRow(): HTMLDivElement {
+  const row = el("div", { className: "msg-row" }) as HTMLDivElement;
   const avatar = el("div", { className: "msg-avatar" });
-  avatar.appendChild(side === "assistant" ? cloneKiroAvatar() : cloneUserAvatar());
+  avatar.appendChild(cloneKiroAvatar());
   row.appendChild(avatar);
   return row;
 }

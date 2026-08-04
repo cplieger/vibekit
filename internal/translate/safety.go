@@ -22,7 +22,7 @@ package translate
 // wired. Authoring is entirely out-of-band: properties are formalized remotely;
 // there is no client RPC to create/set/toggle one (verified: 0 setter methods
 // on the acp surface). This is Kiro's infra guardrail, distinct from vibekit's
-// own Supervised write-gate (vibekit-supervised.md).
+// autopilot-backed supervised mode (vibekit-acp.md).
 //
 // Wire shapes (verified against the KAS 2.12 acp-server bundle):
 //
@@ -145,7 +145,7 @@ func (t *Translator) HandleSafetyPropertiesChanged(ctx context.Context, chatID a
 	if !ok {
 		return
 	}
-	if t.deriveSubSession(chatID, p.SessionID) != "" {
+	if t.foreignSession(chatID, p.SessionID) {
 		return
 	}
 	props := decodeSafetyProps(p.Properties)

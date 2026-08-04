@@ -1,9 +1,5 @@
 package api
 
-import (
-	checkpoint "github.com/cplieger/vibekit/internal/checkpoint/types"
-)
-
 // Per-event payload structs for SSE events. The envelope types and
 // event-type constants live in events.go; this file contains only the
 // payload shapes that change when new events are added or existing
@@ -44,10 +40,37 @@ type PermissionNeededPayload struct {
 	// Kind forwards the ACP toolCall.kind so the client can style
 	// distinctive permission prompts (switch_mode gets a different
 	// dialog vs an execute_bash prompt).
-	Kind         ToolKind           `json:"kind,omitempty"`
-	SubSessionID string             `json:"sub_session_id,omitempty"`
-	Options      []PermissionOption `json:"options"`
-	RequestID    int64              `json:"request_id"`
+	Kind         ToolKind `json:"kind,omitempty"`
+	SubSessionID string   `json:"sub_session_id,omitempty"`
+	// RunID + NodeID attribute a WORKFLOW STEP's ask to its run. Stamped from
+	// the step-session registry whichever bridge the ask arrived on, so the
+	// same fields serve both launch shapes: an agent-launched run's ask (on
+	// the chat bridge, chat_id set) and a manually launched one's (on the run
+	// bridge, chat_id `run:<id>`). What they buy the client: the card can say
+	// WHICH step is asking, and a run tab can render the ask of a run it is
+	// watching even though the ask is keyed to the launching chat.
+	RunID   string             `json:"run_id,omitempty"`
+	NodeID  string             `json:"node_id,omitempty"`
+	Options []PermissionOption `json:"options"`
+	// Files is the turn's staged file list, present ONLY on a turn approval
+	// (`_meta.kiro.type == "turn_approval"`). A turn approval arrives as an
+	// ordinary session/request_permission, which is why it rides this payload
+	// rather than a second event: the only difference is that it carries files and
+	// expects per-file decisions back.
+	Files     []ApprovalFile `json:"files,omitempty"`
+	RequestID int64          `json:"request_id"`
+}
+
+// ApprovalFile is one file a turn wants to write, as offered for review.
+type ApprovalFile struct {
+	// Path is workspace-relative (KAS sends it absolute; translate normalizes).
+	Path string `json:"path"`
+	// SnapshotURI addresses the pre-image, so a diff is a snapshot read.
+	SnapshotURI string `json:"snapshot_uri,omitempty"`
+	// ActionID is KAS's pending-action id and THE KEY the decision map must use.
+	// KAS applies the accepted ids and restores the rest, so an id omitted from
+	// the response counts as a REJECT rather than as unspecified.
+	ActionID string `json:"action_id"`
 }
 
 // PermissionOption is one selectable response in a permission dialog.
@@ -111,14 +134,6 @@ type TurnStatePayload struct {
 	ChunkSeq int64 `json:"chunk_seq,omitempty"`
 }
 
-// CheckpointRestoredPayload is the payload for type="checkpoint_restored".
-// Replaces the ad-hoc map[string]any so the wire shape is discoverable
-// via IDE completion and typos in key names become compile errors.
-type CheckpointRestoredPayload struct {
-	Tag          string `json:"tag"`
-	MessageCount int    `json:"message_count"`
-}
-
 // ErrorCode identifies an SSE error event class. Using a typed string
 // prevents typos at construction sites and makes the valid set
 // discoverable via IDE completion.
@@ -164,22 +179,6 @@ type CodeReferencesPayload struct {
 	References []CodeReference `json:"references"`
 }
 
-// KnowledgeIndexingPayload is the payload for type="knowledge_indexing".
-// Translated from the KAS _kiro/knowledge/indexingStarted (Status="started",
-// carries FileCount) and _kiro/knowledge/indexingCompleted (Status="success"
-// or a failure string, carries ItemCount on success) notifications. Emitted
-// globally (no chat_id) because the knowledge store is workspace-global; the
-// client refetches GET /api/knowledge on receipt. Note: these fire only for
-// agent-declared knowledge_bases sync at session start — a user-initiated add
-// reports progress through the `show` active-operations list instead (verified
-// live), so the client also polls while an entry is still indexing.
-type KnowledgeIndexingPayload struct {
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	FileCount int    `json:"file_count,omitempty"`
-	ItemCount int    `json:"item_count,omitempty"`
-}
-
 // SafetyStatus is the v3 (KAS) Infrastructure-Safety gate state (GateStatus).
 // The gate evaluates infrastructure-as-code tool calls (Terraform, CFN, CDK,
 // Docker, k8s, …) against remotely-formalized safety properties. Typed so the
@@ -203,7 +202,7 @@ const (
 // only emits this) when the client declares the infrastructureSafety capability
 // AND an AWS governance flag (infraSafetyMonitor/infraSafetyEnforce) is on — off
 // by default on individual/Builder-ID accounts, so this normally never fires.
-// Distinct from vibekit's own Supervised write-gate (see vibekit-supervised.md).
+// Distinct from supervised mode, which is KAS's autopilot gate (vibekit-acp.md).
 type SafetyStatusPayload struct {
 	Status            SafetyStatus `json:"status"`
 	Detail            string       `json:"detail,omitempty"`
@@ -361,28 +360,9 @@ type ModeChangedPayload struct {
 	ModeID string `json:"mode_id"`
 }
 
-// ConflictDetectedPayload is the payload for type="conflict_detected".
-// Type alias to checkpoint/types.ConflictPayload — single source of truth.
-type ConflictDetectedPayload = checkpoint.ConflictPayload
-
 // ChatDeletedPayload is the payload for type="chat_deleted".
 type ChatDeletedPayload struct {
 	ID string `json:"id"`
-}
-
-// AvailableCommand is one entry in the slash-command catalogue surfaced
-// by kiro-cli's _kiro.dev/commands/available notification. The wire
-// shape carries opaque metadata; clients consume only Name and Description.
-type AvailableCommand struct {
-	Meta        map[string]any `json:"meta,omitempty"`
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-}
-
-// CommandsUpdatedPayload is the payload for type="commands_updated".
-type CommandsUpdatedPayload struct {
-	Commands []AvailableCommand `json:"commands"`
-	Prompts  []AvailableCommand `json:"prompts,omitempty"`
 }
 
 // CompactionStartedPayload is the payload for type="compaction_started".
@@ -431,19 +411,4 @@ type ToolJobOutputPayload struct {
 // SettingsUpdatedPayload is the payload for type="settings_updated".
 type SettingsUpdatedPayload struct{}
 
-// --- HTTP response types for checkpoint and MCP endpoints ---
-
-// CheckpointDiffResponse is the typed response for the checkpoint diff endpoint.
-type CheckpointDiffResponse struct {
-	Files []checkpoint.FileChange `json:"files"`
-}
-
-// CheckpointRestorePreviewResponse is the typed response for restore-preview.
-type CheckpointRestorePreviewResponse struct {
-	Files []string `json:"files"`
-}
-
-// CheckpointConflictsResponse is the typed response for the conflicts endpoint.
-type CheckpointConflictsResponse struct {
-	Conflicts []checkpoint.ConflictPayload `json:"conflicts"`
-}
+// --- HTTP response types for MCP endpoints ---

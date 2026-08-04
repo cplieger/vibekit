@@ -25,11 +25,17 @@ type fakeBridge struct {
 	// blockOn optionally makes Call block (after recording the call) until
 	// the method's channel is closed — for tests proving concurrency
 	// properties (e.g. RPC reads completing while a text turn is in flight).
-	blockOn   map[string]chan struct{}
-	sessionID string
-	modelID   string
-	calls     []string
+	blockOn      map[string]chan struct{}
+	sessionID    string
+	modelID      string
+	sessionTitle string
+	calls        []string
+	// startOpts records the StartOpts of the most recent Start, so a test can
+	// assert what a spawn was actually handed (e.g. that the utility bridge
+	// gets no operator launch flags).
+	startOpts *api.StartOpts
 	mu        sync.Mutex
+	responds  int
 	stopped   bool
 	started   bool
 }
@@ -45,11 +51,19 @@ func newFakeBridge() *fakeBridge {
 func (b *fakeBridge) Start(_ context.Context, opts *api.StartOpts) error {
 	b.mu.Lock()
 	b.started = true
+	b.startOpts = opts
 	if opts.SessionID != "" {
 		b.sessionID = opts.SessionID
 	}
 	b.mu.Unlock()
 	return nil
+}
+
+// lastStartOpts returns the StartOpts of the most recent Start, or nil.
+func (b *fakeBridge) lastStartOpts() *api.StartOpts {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startOpts
 }
 
 func (b *fakeBridge) Stop() {
@@ -125,7 +139,38 @@ func (b *fakeBridge) callHadDeadline(method string) bool {
 
 func (b *fakeBridge) Notify(_ context.Context, _ string, _ any) error { return nil }
 
-func (b *fakeBridge) Respond(_ context.Context, _ int64, _ any, _ error) error { return nil }
+func (b *fakeBridge) Respond(_ context.Context, _ int64, _ any, _ error) error {
+	b.mu.Lock()
+	b.responds++
+	b.mu.Unlock()
+	return nil
+}
+
+// respondCount reports how many A→C requests were answered on this bridge.
+func (b *fakeBridge) respondCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.responds
+}
+
+// callLog snapshots the ordered method names Call received.
+func (b *fakeBridge) callLog() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, len(b.calls))
+	copy(out, b.calls)
+	return out
+}
+
+// lastCall is the most recent Call's method, or "".
+func (b *fakeBridge) lastCall() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.calls) == 0 {
+		return ""
+	}
+	return b.calls[len(b.calls)-1]
+}
 
 func (b *fakeBridge) SessionID() api.SessionID {
 	b.mu.Lock()
@@ -139,7 +184,16 @@ func (b *fakeBridge) ModelID() api.ModelID {
 	return api.ModelID(b.modelID)
 }
 
-func (b *fakeBridge) CurrentMode() string        { return "" }
+func (b *fakeBridge) CurrentMode() string { return "" }
+
+// SessionTitle reports KAS's own session title. The fake returns the value
+// tests set on it so the bridge_coord adoption guard can be exercised.
+func (b *fakeBridge) SessionTitle() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sessionTitle
+}
+
 func (b *fakeBridge) Modes() []api.SessionMode   { return nil }
 func (b *fakeBridge) Models() []api.SessionModel { return nil }
 

@@ -165,6 +165,22 @@ environment:
 
 Each grant must exist in the container (mount it via `volumes:` first); a malformed or missing entry is logged and skipped, never fatal. Credential and internal state files under `/config` (SSH keys, cloud tokens, chat store, MCP config) stay blocked regardless of grants.
 
+### Extra kiro-cli launch flags (`VIBEKIT_KIRO_ACP_ARGS`)
+
+An escape hatch for reaching a `kiro-cli acp` flag vibekit does not pass yet, without waiting for a release. Whitespace-separated, appended to every chat's launch command:
+
+```yaml
+environment:
+  VIBEKIT_KIRO_ACP_ARGS: "-v"
+```
+
+Only the values are appended; nothing is interpreted as a shell command. Three flags are refused with a logged reason, because vibekit's own behaviour depends on them staying fixed:
+
+- `--agent-engine` — vibekit speaks only the v3 wire, so selecting v1 or v2 would leave every chat unable to start.
+- `--trust-all-tools` / `--trust-tools` — these have no effect on v3. Tool approval is the policy you edit in **Settings → Permissions**, so setting them here would look like turning approvals off without doing so.
+
+vibekit already passes `--model` and `--effort` itself, and anything you set here is a starting value: changing the model or reasoning effort in the UI still takes precedence afterwards. Flags are logged by count only, never by value, so a mistyped value cannot leak into the logs. Not applied to the small background helper vibekit uses for chat titles.
+
 ### Environment variable reference
 
 Every knob, including the ones detailed above. A malformed duration value logs a warning and falls back to its default.
@@ -174,6 +190,7 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 | `TRUSTED_PROXIES` | Reverse-proxy CIDRs whose `X-Forwarded-For` resolves `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy-trusted_proxies). | _(unset)_ |
 | `ALLOWED_HOSTS` | Exact hostnames/IPs vibekit answers for; anything else is rejected (anti-DNS-rebinding). See [Host allowlist](#host-allowlist-allowed_hosts). | _(unset)_ |
 | `VIBEKIT_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). | _(unset)_ |
+| `VIBEKIT_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-vibekit_kiro_acp_args). | _(unset)_ |
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
 | `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |

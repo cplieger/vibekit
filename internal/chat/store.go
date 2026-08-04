@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -36,10 +35,9 @@ var _ archive.StoreAccess = (*Store)(nil)
 // fileMode is the on-disk mode for chat files. The parent dir uses 0o700
 // because chat content may contain secrets the user pasted into prompts.
 const (
-	fileMode        = 0o600
-	dirMode         = 0o700
-	chatFileSuffix  = ".json"
-	planDraftSuffix = ".plan.md"
+	fileMode       = 0o600
+	dirMode        = 0o700
+	chatFileSuffix = ".json"
 )
 
 // maxChatFileBytes caps the size of a single chat file loaded by `load`.
@@ -58,18 +56,16 @@ const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
 // Mutate refuse to create for a recently-deleted id — late writes
 // become no-ops instead of undead resurrections.
 type Store struct {
-	broadcast        api.Broadcaster
-	listSF           singleflight.Group
-	preArchive       func(chatID api.ChatID)
-	onArchive        func(chatID api.ChatID)
-	onPurge          func(chatID api.ChatID)
-	oldestCheckpoint func(ctx context.Context, chatID api.ChatID) string
-	tombstone        map[api.ChatID]time.Time
-	archive          *archive.Service
-	locks            sync.Map
-	dir              string
-	archiveOnce      sync.Once
-	tombMu           sync.Mutex
+	broadcast   api.Broadcaster
+	listSF      singleflight.Group
+	onPurge     func(chatID api.ChatID, sessionChain []string)
+	isLive      func(chatID api.ChatID) bool
+	tombstone   map[api.ChatID]time.Time
+	archive     *archive.Service
+	locks       sync.Map
+	dir         string
+	archiveOnce sync.Once
+	tombMu      sync.Mutex
 }
 
 // tombstoneTTL is how long a deleted chat id blocks re-creation via
@@ -119,27 +115,16 @@ func WithBroadcaster(b api.Broadcaster) StoreOption {
 	return func(s *Store) { s.broadcast = b }
 }
 
-// WithPreArchive registers a callback fired BEFORE a chat's file is moved
-// to the archive dir, so the hub can tear down the chat's in-memory state
-// (bridge, terminals, pending perms/trust, .partial) while the record is
-// still active. See archive.WithPreArchive.
-func WithPreArchive(fn func(chatID api.ChatID)) StoreOption {
-	return func(s *Store) { s.preArchive = fn }
+// WithLiveChats registers the live-chat predicate purging exempts. See
+// archive.WithLiveChats.
+func WithLiveChats(fn func(chatID api.ChatID) bool) StoreOption {
+	return func(s *Store) { s.isLive = fn }
 }
 
-// WithOnArchive registers a callback fired after a chat is archived.
-func WithOnArchive(fn func(chatID api.ChatID)) StoreOption {
-	return func(s *Store) { s.onArchive = fn }
-}
-
-// WithOldestCheckpointFn wires the lookup used to populate
-// ChatHeader.OldestCheckpointTag.
-func WithOldestCheckpointFn(fn func(ctx context.Context, chatID api.ChatID) string) StoreOption {
-	return func(s *Store) { s.oldestCheckpoint = fn }
-}
-
-// WithOnPurge registers a callback fired after an archived chat is purged.
-func WithOnPurge(fn func(chatID api.ChatID)) StoreOption {
+// WithOnPurge registers a callback fired after a retention purge removes a chat.
+// sessionChain carries every KAS session the chat ran on, captured before the
+// chat file was removed, so the purge can reap its own session directories.
+func WithOnPurge(fn func(chatID api.ChatID, sessionChain []string)) StoreOption {
 	return func(s *Store) { s.onPurge = fn }
 }
 
@@ -280,77 +265,16 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID api.ChatID, c *api
 	s.broadcast.Broadcast(ctx, api.NewEvent(evt, chatID, s.header(ctx, c)))
 }
 
-// DeleteFamily removes a chat and its rewind children as one named
-// transition (see api.ChatStore for the contract). Ordering is the
-// point: children go FIRST, so no crash window ever leaves a child
-// whose ParentChatID references a deleted parent — an interruption
-// mid-family leaves whole, listed, deletable chats and a parent that
-// still lists its survivors. The child set is re-derived here (not
-// passed in) so the scan and the deletion happen as close together as
-// per-chat locking allows; ChildrenOf remains advisory, so a child
-// created concurrently with the delete can still slip through — it
-// stays listed and deletable, which is the documented failure grade.
-func (s *Store) DeleteFamily(ctx context.Context, parentID api.ChatID, prepare func(api.ChatID)) (failedChildren []api.ChatID, err error) {
-	for _, childID := range s.ChildrenOf(ctx, parentID) {
-		if prepare != nil {
-			prepare(childID)
-		}
-		if delErr := s.Delete(ctx, childID); delErr != nil {
-			slog.Error("chat delete_family: child survived",
-				"parent", parentID, "child", childID, "error", delErr)
-			failedChildren = append(failedChildren, childID)
-		}
-	}
-	if prepare != nil {
-		prepare(parentID)
-	}
-	if delErr := s.Delete(ctx, parentID); delErr != nil {
-		return failedChildren, delErr
-	}
-	return failedChildren, nil
-}
+// DeleteFamily and PromoteRewind are GONE with the rewind-branch family. Both
+// existed only because a chat could own other chats: DeleteFamily supplied the
+// ordering contract that kept a crash from leaving a child pointing at a deleted
+// parent, and PromoteRewind cleared a child's parent linkage under one lock so a
+// promote could never report success while the relationship was intact. A rewind
+// reverts the chat it is in, so no chat has a parent or children and neither
+// transition has a subject. Delete is the whole delete path again.
 
-// PromoteRewind clears a rewind chat's parent linkage as one checked,
-// per-chat-locked transition (see api.ChatStore for the contract). The
-// validation and the clear run inside a single Mutate closure, so a
-// concurrent mutation of the same chat cannot slip between a read and
-// the write (the old command-level Get→Mutate pair could).
-func (s *Store) PromoteRewind(ctx context.Context, childID api.ChatID) (api.ChatID, error) {
-	var parentID api.ChatID
-	var opErr error
-	err := s.Mutate(ctx, childID, func(c *api.Chat, exists bool) bool {
-		if !exists {
-			opErr = api.ErrChatNotFound
-			return false
-		}
-		if c.ParentChatID == "" {
-			opErr = api.ErrNotRewind
-			return false
-		}
-		parentID = c.ParentChatID
-		c.ParentChatID = ""
-		c.RewindFromTurn = 0
-		return true
-	})
-	if opErr != nil {
-		return "", opErr
-	}
-	if err != nil {
-		return "", err
-	}
-	return parentID, nil
-}
-
-// Delete removes the chat file and broadcasts chat_deleted. No-op if the
-// chat does not exist. This is the only function that removes chat data.
-// After the file is gone we mark the id tombstoned so any in-flight
-// handler racing with the delete can't re-create it via Mutate — see
-// markDeleted for the race the tombstone guards against.
-//
-// Broadcast fires even when the chat file never existed so a stale DELETE
-// from a second device still propagates the UI update. We skip the
-// tombstone in that case — tombstoning a never-existed id would block a
-// legitimate new chat using the same id for 10 minutes.
+// Delete removes the chat file and broadcasts chat_deleted. Records a tombstone
+// first so a concurrent Mutate cannot resurrect the id as a ghost row.
 func (s *Store) Delete(ctx context.Context, chatID api.ChatID) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -364,20 +288,6 @@ func (s *Store) Delete(ctx context.Context, chatID api.ChatID) error {
 	}
 	rmErr := os.Remove(path)
 	missing := errors.Is(rmErr, os.ErrNotExist)
-	// Best-effort cleanup of any plan draft for this chat. ENOENT is the
-	// common case (most chats have no draft); anything else is logged so
-	// orphan drafts surface in monitoring rather than silently outliving
-	// the chat they belonged to (e.g. if the volume remounts read-only
-	// between the chat remove and the draft remove). Inline the path
-	// join: pathFor already accepted chatID, so planDraftPathFor would
-	// re-run the same chatIDPattern validation and rebuild the same
-	// filepath.Join — wasted work. Matches the inline-join pattern
-	// already used in SetPlanDraft.
-	draftPath := filepath.Join(s.dir, string(chatID)+planDraftSuffix)
-	if rmDraftErr := os.Remove(draftPath); rmDraftErr != nil && !errors.Is(rmDraftErr, os.ErrNotExist) {
-		slog.Warn("chat delete: plan-draft removal failed",
-			"chat_id", chatID, "error", rmDraftErr)
-	}
 	if !missing {
 		// Mark tombstone while we still hold the per-chat lock so any
 		// racing Mutate attempt has to queue behind us and will then

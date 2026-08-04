@@ -22,25 +22,23 @@
 // text-preview fold.
 // ---------------------------------------------------------------------------
 
-import type { Message, Block, ToolCall, PlanStatus } from "./types.js";
+import type { Message, Block, ToolCall, PlanStatus, FileChange } from "./types.js";
 import { effect, el } from "@cplieger/reactive";
 import { KEY_ATTR as RECONCILE_KEY } from "./reconcile.js";
 import {
   ensureBlockTextSig,
   ensureBlockThinkingSig,
   ensureToolCallSig,
+  peekToolCallSig,
   clearToolCallSig,
 } from "./store-signals.js";
+import { lineDiff, stats } from "./diff.js";
+import { isToolActive } from "./tool-schema.js";
+import type { TurnSummaryData } from "./fundamentals/turn-footer.js";
 import { buildAssistantBubble, type AssistantBubble } from "./fundamentals/text-bubble.js";
 import { buildReasoning, type ReasoningView } from "./fundamentals/reasoning.js";
 import { buildSubagentBlock, type SubagentView } from "./fundamentals/subagent-block.js";
 import { buildTodoList, updateTodoList, type TodoItem } from "./fundamentals/todo.js";
-import {
-  buildTurnFooter,
-  updateTurnFooter,
-  hasTurnSummary,
-  type TurnSummaryData,
-} from "./fundamentals/turn-footer.js";
 import { toolSpec } from "./messages-tools.js";
 import { planElement, updatePlanElement } from "./messages-plan.js";
 import { buildToolGroupShell, groupBody, refreshGroupHeader } from "./tool-group.js";
@@ -60,7 +58,7 @@ interface BlockCbs {
   /** Register a cleanup disposed on turn finalize / message unmount. */
   pushStreamingEffect(msgId: string, cleanup: () => void): void;
   /** Build an avatar row for a top-level assistant bubble. */
-  makeRow(side: "assistant"): HTMLDivElement;
+  makeRow(): HTMLDivElement;
 }
 
 let cbs: BlockCbs = {
@@ -85,6 +83,10 @@ interface MsgRender {
   rendered: number;
   /** subtask id → its SubagentBlock view. */
   subagents: Map<string, SubagentView>;
+  /** subtask id → the tool-call ids routed into that box, for the footer's
+   *  ledger (commands, reads, changed files). The INVOCATION call is not a
+   *  member — it is the box itself. */
+  subagentMembers: Map<string, Set<string>>;
   /** Every mounted bubble handle (for finalize end()). */
   bubbles: AssistantBubble[];
   /** Every mounted reasoning handle (for finalize seal()). */
@@ -109,6 +111,7 @@ export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean)
     blocksEl,
     rendered: 0,
     subagents: new Map(),
+    subagentMembers: new Map(),
     bubbles: [],
     reasonings: [],
     openReasoning: new Map(),
@@ -118,12 +121,11 @@ export function buildAssistantBody(wrap: HTMLElement, m: Message, live: boolean)
   const blocks = m.blocks ?? [];
   renderRange(st, m, 0, blocks.length, live);
   mountPlan(wrap, m);
-  mountFooter(wrap, m);
 }
 
-/** Incrementally sync the assistant body: mount newly-arrived blocks, update
- *  the plan and footer. Per-block/per-tool signals feed deltas into blocks
- *  already mounted, so this only handles structural growth. */
+/** Incrementally sync the assistant body: mount newly-arrived blocks and
+ *  update the plan. Per-block/per-tool signals feed deltas into blocks already
+ *  mounted, so this only handles structural growth. */
 export function updateAssistantBody(wrap: HTMLElement, m: Message, streaming: boolean): void {
   const st = renders.get(m.id);
   if (st === undefined) {
@@ -136,7 +138,6 @@ export function updateAssistantBody(wrap: HTMLElement, m: Message, streaming: bo
     renderRange(st, m, st.rendered, blocks.length, streaming);
   }
   mountPlan(wrap, m);
-  mountFooter(wrap, m);
 }
 
 /** Finalize: flush every markdown stream + seal every reasoning trace. */
@@ -222,9 +223,18 @@ function placeBlock(st: MsgRender, m: Message, block: Block, i: number, live: bo
       if (subtask !== "" && isSubagentInvocation(tc)) {
         const sa = st.subagents.get(subtask);
         if (sa !== undefined) {
-          bindSubagent(m.id, sa, tc);
+          bindSubagent(st, subtask, m.id, sa, tc);
         }
         return;
+      }
+      // A delegate's own tool call: a footer-ledger member of its box.
+      if (subtask !== "") {
+        let members = st.subagentMembers.get(subtask);
+        if (members === undefined) {
+          members = new Set();
+          st.subagentMembers.set(subtask, members);
+        }
+        members.add(tc.id);
       }
       if (isTodoTool(tc)) {
         sealReasoning(st, container);
@@ -257,7 +267,7 @@ function mountText(
   // Top-level bubbles carry an avatar row; subagent-body bubbles don't (the
   // subagent header is the identity — matches the IDE's indented nesting).
   if (container === st.blocksEl) {
-    const row = cbs.makeRow("assistant");
+    const row = cbs.makeRow();
     row.appendChild(bubble.root);
     container.appendChild(row);
   } else {
@@ -335,11 +345,19 @@ function mountTodo(msgId: string, container: HTMLElement, tc: ToolCall): void {
   });
 }
 
-/** Wire the subagent invocation tool's status/name/icon onto its block header. */
-function bindSubagent(msgId: string, sa: SubagentView, tc: ToolCall): void {
+/** Wire the subagent invocation tool's status/name/icon onto its block header,
+ *  and its box's footer ledger onto the members' current state. */
+function bindSubagent(
+  st: MsgRender,
+  subtask: string,
+  msgId: string,
+  sa: SubagentView,
+  tc: ToolCall,
+): void {
   sa.setName(subagentLabel(tc));
   sa.setIcon(iconForSubagent(subagentName(tc)));
   sa.setStatus(tc.status);
+  sa.setSummary(subagentSummary(st, subtask, tc));
   const sig = ensureToolCallSig(tc.id, tc);
   let last = tc;
   const cleanup = effect(() => {
@@ -355,12 +373,59 @@ function bindSubagent(msgId: string, sa: SubagentView, tc: ToolCall): void {
       sa.setName(label);
       sa.setIcon(iconForSubagent(subagentName(next)));
     }
+    // The ledger re-derives on every invocation update. The members settle
+    // BEFORE the invocation does (the delegate finishes last), so the settle
+    // tick sees their final diffs; earlier ticks keep the running numbers
+    // honest at no extra subscription cost.
+    sa.setSummary(subagentSummary(st, subtask, next));
     last = next;
   });
   cbs.pushStreamingEffect(msgId, () => {
     cleanup();
     clearToolCallSig(tc.id);
   });
+}
+
+/** The facts a delegate's footer can state honestly from the CLIENT's data:
+ *  outcome, wall-clock, member command/read counts, and changed files with
+ *  line counts summed from the members' own diff fragments — the same numbers
+ *  the tool cards inside the box show as +N −M. Credits and the resolved
+ *  model are deliberately absent: nothing on this wire carries them per
+ *  delegate, and a fabricated number is worse than a missing row. */
+function subagentSummary(st: MsgRender, subtask: string, invocation: ToolCall): TurnSummaryData {
+  const members = st.subagentMembers.get(subtask);
+  let commands = 0;
+  let reads = 0;
+  const changed: Record<string, FileChange> = {};
+  for (const id of members ?? []) {
+    const tc = peekToolCallSig(id);
+    if (tc === undefined) {
+      continue;
+    }
+    if (tc.kind === "execute" || tc.kind === "shell" || tc.kind === "command") {
+      commands++;
+    } else if (tc.kind === "read") {
+      reads++;
+    }
+    for (const d of tc.diffs ?? []) {
+      const s = stats(lineDiff(d.old_text ?? "", d.new_text));
+      const cur = changed[d.path] ?? { lines_added: 0, lines_removed: 0 };
+      changed[d.path] = {
+        lines_added: cur.lines_added + s.adds,
+        lines_removed: cur.lines_removed + s.dels,
+      };
+    }
+  }
+  const settled = !isToolActive(invocation.status);
+  const out: TurnSummaryData = { commands, reads, changedFiles: changed };
+  if (settled) {
+    out.outcome = invocation.status === "failed" ? "failed" : "completed";
+    const elapsed = invocation.duration_ms ?? 0;
+    if (elapsed > 0) {
+      out.elapsedMs = elapsed;
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +455,7 @@ function closeToolGroup(st: MsgRender, container: HTMLElement): void {
 }
 
 // ---------------------------------------------------------------------------
-// Plan + turn footer (siblings after the block region)
+// Plan (a sibling after the block region)
 // ---------------------------------------------------------------------------
 
 function mountPlan(wrap: HTMLElement, m: Message): void {
@@ -405,30 +470,11 @@ function mountPlan(wrap: HTMLElement, m: Message): void {
   }
 }
 
-function mountFooter(wrap: HTMLElement, m: Message): void {
-  // Build with conditional assignment (exactOptionalPropertyTypes forbids
-  // setting an optional field to undefined).
-  const data: TurnSummaryData = {};
-  if (m.turn_credits !== undefined) {
-    data.credits = m.turn_credits;
-  }
-  if (m.turn_elapsed_ms !== undefined) {
-    data.elapsedMs = m.turn_elapsed_ms;
-  }
-  if (m.changed_files !== undefined) {
-    data.changedFiles = m.changed_files;
-  }
-  const existing = wrap.querySelector<HTMLDivElement>(":scope > .turn-footer");
-  if (!hasTurnSummary(data)) {
-    existing?.remove();
-    return;
-  }
-  if (existing === null) {
-    wrap.appendChild(buildTurnFooter(data));
-  } else {
-    updateTurnFooter(existing, data);
-  }
-}
+// The turn footer is NOT mounted here any more. It is the TURN's outcome
+// ledger, not a message's: a turn can hold several assistant messages (a
+// mid-turn model switch splits one), so a per-message footer rendered two
+// ledgers for one turn and each described a fragment. messages.ts owns it now,
+// summing across the turn's body and rendering once on the card.
 
 // ---------------------------------------------------------------------------
 // Subagent + todo classification / parsing

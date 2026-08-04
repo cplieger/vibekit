@@ -55,33 +55,40 @@ type sessionConfigChoice struct {
 	} `json:"_meta"`
 }
 
+// sessionCreated is the session/new and session/load result.
+//
+// _meta is KAS's session-metadata object spread verbatim onto the result —
+// FLAT, not under `_meta.kiro` (probed 2026-08-02 against both verbs). Only
+// `title` is decoded: session/new always carries the literal "New Session"
+// placeholder, while session/load hands back the real stored title, which is
+// the case worth adopting. session/load's result carries no `sessionId`, which
+// is why loadSession sets it from its own argument.
 type sessionCreated struct {
-	Modes         *sessionModes         `json:"modes"`
-	SessionID     string                `json:"sessionId"`
+	Modes     *sessionModes `json:"modes"`
+	SessionID string        `json:"sessionId"`
+	Meta      struct {
+		Title string `json:"title"`
+	} `json:"_meta"`
 	ConfigOptions []sessionConfigOption `json:"configOptions"`
 }
 
-// normalizeMCPServers converts in to a non-nil []any for the wire.
-func normalizeMCPServers(in []map[string]any) []any {
-	if len(in) == 0 {
-		return []any{}
-	}
-	out := make([]any, len(in))
-	for i, entry := range in {
-		out[i] = entry
-	}
-	return out
-}
+// There is no mcpServers parameter on session/new or session/load, and no
+// normalizeMCPServers. KAS reads the user's MCP servers from its own
+// hot-reloading config file, which vibekit renders (internal/mcp/kasfile.go).
+//
+// Do not add it back as a convenience. KAS merges `client > file-based`, so an
+// inline entry OUTRANKS the file: the file would still hot-reload, the agent
+// would keep using the inline copy, and every edit in the UI would look like it
+// did nothing. The parameter is also lossier — KAS's acpServerToWire drops
+// oauth, oauthScopes, autoApprove, cwd and timeout from a client-supplied entry.
 
 // validIdent delegates to api.ValidIdent.
 func validIdent(s string) bool {
 	return api.ValidIdent(s)
 }
 
-func (b *Bridge) newSession(ctx context.Context, mcpServers []map[string]any, mode string) error {
-	resp, err := b.Call(ctx, methodSessionNew, map[string]any{
-		"cwd": b.workDir, "mcpServers": normalizeMCPServers(mcpServers),
-	})
+func (b *Bridge) newSession(ctx context.Context, mode string, supervised bool) error {
+	resp, err := b.Call(ctx, methodSessionNew, map[string]any{"cwd": b.workDir})
 	if err != nil {
 		return fmt.Errorf("session/new: %w", err)
 	}
@@ -104,7 +111,32 @@ func (b *Bridge) newSession(ctx context.Context, mcpServers []map[string]any, mo
 	// workspace agent-as-mode) switch to it now — session/set_mode is
 	// legal on a just-created, idle session (verified on the wire).
 	b.applyInitialMode(ctx, sid, current, mode)
+	b.applySupervised(ctx, sid, supervised)
 	return nil
+}
+
+// applySupervised turns KAS's turn-approval gate on for this session by setting
+// `autopilot` to false. No-op when the chat is not supervised, because true is
+// already the session default.
+//
+// Set ONCE, at creation. The value persists into KAS's own session metadata, so
+// it survives session/load and re-asserting it would be a round trip that
+// changes nothing. Best-effort like applyInitialMode: a failure leaves the
+// session in autopilot and logs, rather than failing session creation — but it
+// logs at ERROR rather than WARN, because the consequence is that writes the user
+// asked to review get applied without review.
+func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervised bool) {
+	if !supervised {
+		return
+	}
+	if _, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
+		api.KeySessionID: sessionID,
+		"configId":       api.ConfigOptionAutopilot,
+		"value":          false,
+	}); err != nil {
+		slog.Error("supervised mode not applied; this session will NOT ask before writing",
+			"session_id", sessionID, "error", err)
+	}
 }
 
 // applyInitialMode switches a freshly-created session to wantMode when it
@@ -128,9 +160,9 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 	b.mu.Unlock()
 }
 
-func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string, mcpServers []map[string]any) error {
+func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string) error {
 	resp, err := b.Call(ctx, methodSessionLoad, map[string]any{
-		api.KeySessionID: acpSessionID, "cwd": b.workDir, "mcpServers": normalizeMCPServers(mcpServers),
+		api.KeySessionID: acpSessionID, "cwd": b.workDir,
 	})
 	if err != nil {
 		return fmt.Errorf("session/load: %w", err)
@@ -167,6 +199,7 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 		}
 		b.modes.Store(&modes)
 	}
+	b.sessionTitle = r.Meta.Title
 	b.applyModelConfigOptionLocked(r.ConfigOptions)
 	if b.modelID == "" {
 		b.modelID = api.ModelID(fallbackModel)

@@ -6,7 +6,13 @@
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { closeModal, RollingOutput } from "./modals.js";
-import { type Server, type KeyPair, type Transport, mcpState } from "./mcp-state.js";
+import {
+  type Server,
+  type KeyPair,
+  type Transport,
+  mcpState,
+  discoverySignalFor,
+} from "./mcp-state.js";
 import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
 import { buildChip } from "./chip.js";
 import { saveServer, searchRegistry } from "./actions/mcp.js";
@@ -514,7 +520,11 @@ function initDisabledToolsSection(server: Server | null): void {
 
   section.classList.remove("hidden");
   session.disabledToolsList = [...(server.disabled_tools ?? [])];
-  const knownTools = server.known_tools ?? [];
+  // The tool names come from the RUNTIME status (what the connected server
+  // advertises), not from the config record — they are a discovery result, and
+  // the config file is KAS's now. Empty until a chat has connected the server,
+  // which is the honest state: nothing has told us its tools yet.
+  const knownTools = discoverySignalFor(server.name).peek().tools;
   renderDisabledChips(chips, section, knownTools);
 
   const add = (): void => {
@@ -536,7 +546,7 @@ function initDisabledToolsSection(server: Server | null): void {
   };
 
   // Render known tools as clickable suggestions below the input.
-  renderToolSuggestions(section, server.known_tools ?? [], chips);
+  renderToolSuggestions(section, knownTools, chips);
 }
 
 function renderToolSuggestions(
