@@ -60,6 +60,7 @@ func (h *Hub) ensureUtility() *utilityRuntime {
 				runHookCommand:    h.runHookCommand,
 				onHooksChanged:    h.broadcastHooksChanged,
 				onGovernanceState: h.cacheGovernanceFromUtility,
+				tokenSource:       h.kiroAccessTokenResult,
 			},
 			h.secrets,
 			true, // enableHooks

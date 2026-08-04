@@ -52,7 +52,6 @@
   }
 
   .logo-icon {
-    border-radius: var(--r);
     flex-shrink: 0;
     transform-origin: center;
     transition: transform var(--dur-enter) var(--ease-enter);
@@ -64,11 +63,11 @@
      JS. Rotation direction correlates with horizontal motion (right =
      clockwise, left = anti-clockwise) to sell "hovering/flying". */
     animation:
-      ghost-float 3.7s cubic-bezier(0.45, 0, 0.55, 1) infinite,
-      ghost-tilt 2.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+      logo-float 3.7s cubic-bezier(0.45, 0, 0.55, 1) infinite,
+      logo-tilt 2.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   }
 
-  @keyframes ghost-float {
+  @keyframes logo-float {
     /* Figure-8 in the X axis plus a gentle bob in Y. 12 keyframes keeps
      the motion continuous — no perceptible stops. */
     0% {
@@ -124,9 +123,9 @@
     }
   }
 
-  @keyframes ghost-tilt {
-    /* Right-leaning (clockwise) when the ghost is moving right; the
-     offset against ghost-float's timing keeps the coupling organic. */
+  @keyframes logo-tilt {
+    /* Right-leaning (clockwise) when the logo is moving right; the
+     offset against logo-float's timing keeps the coupling organic. */
     0% {
       rotate: 0deg;
     }

@@ -17,10 +17,6 @@
   font-weight: var(--fw-semibold);
 }
 
-.modal-logo svg {
-  border-radius: var(--r);
-}
-
 .modal-subtitle {
   color: var(--c-text-tertiary);
   font-size: var(--fs-sm);

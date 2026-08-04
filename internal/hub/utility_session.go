@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/secretstore"
 )
 
@@ -75,6 +76,9 @@ type utilitySessionHooks struct {
 	// session receives on session/new (its notifications bypass the main
 	// dispatcher), so GET /api/governance is warm with no chat open.
 	onGovernanceState func(json.RawMessage)
+	// tokenSource answers the _kiro/auth/getAccessToken callback (the hub's
+	// kiroAccessTokenResult). nil = not wired (older tests) → RPC error.
+	tokenSource func(context.Context) (map[string]any, error)
 }
 
 // utilitySession owns the dedicated kiro-cli subprocess + ACP session.
@@ -388,7 +392,11 @@ func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCRe
 	ctx := context.Background()
 	switch {
 	case msg.Method == methodKiroGetAccessToken:
-		result, err := kiroAccessTokenResult(ctx)
+		if us.hooks.tokenSource == nil {
+			_ = bridge.Respond(ctx, *msg.ID, nil, kiroauth.ErrNoSource)
+			return
+		}
+		result, err := us.hooks.tokenSource(ctx)
 		if err != nil {
 			slog.Error("utility bridge v3 auth: token unavailable", "error", err)
 			_ = bridge.Respond(ctx, *msg.ID, nil, err)

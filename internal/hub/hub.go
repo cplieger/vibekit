@@ -28,6 +28,7 @@ import (
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/dedup"
 	"github.com/cplieger/vibekit/internal/ignore"
+	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
@@ -105,6 +106,7 @@ type Hub struct {
 	mcpConfig          api.MCPConfig
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
+	kiroToken          *kiroauth.CLISource
 	preBridgeSpawn     func(context.Context) // optional; fired before each new bridge starts
 	chatHandlers       map[string]chatHandler
 	sessUpdateHandlers map[api.ACPUpdateKind]sessionUpdateHandler
@@ -169,6 +171,15 @@ func WithPush(p api.PushService) Option {
 // circular dependencies (mcpStore→hub broadcast).
 func WithMCPConfig(c api.MCPConfig) Option {
 	return func(h *Hub) { h.mcpConfig = c }
+}
+
+// WithKiroCLIPath wires the v3 auth-callback token source over the active
+// kiro-cli binary. resolve is the install manager's path resolver (same
+// contract as the bridge factory's cliPath: "" while nothing is installed),
+// so a version switch reaches the next callback. Unset in tests → the auth
+// callback answers with an RPC error instead of vending a token.
+func WithKiroCLIPath(resolve func() string) Option {
+	return func(h *Hub) { h.kiroToken = kiroauth.NewCLISource(resolve) }
 }
 
 // WithSessionReaper wires the KAS session reaper and the referenced-session
