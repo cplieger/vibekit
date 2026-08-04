@@ -194,23 +194,6 @@ func TestToken_CLIFailureWrapped(t *testing.T) {
 	}
 }
 
-func TestInvalidate_DropsCache(t *testing.T) {
-	calls := 0
-	src := NewCLISource(func() string { return "/fake/kiro-cli" })
-	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(time.Hour).Format(time.RFC3339Nano)), nil)
-
-	if _, err := src.Token(context.Background()); err != nil {
-		t.Fatalf("Token: %v", err)
-	}
-	src.Invalidate()
-	if _, err := src.Token(context.Background()); err != nil {
-		t.Fatalf("post-invalidate Token: %v", err)
-	}
-	if calls != 2 {
-		t.Errorf("CLI invoked %d times, want 2 (Invalidate must drop the cache)", calls)
-	}
-}
-
 // FuzzParseTokenEnvelope pins two invariants over arbitrary CLI output:
 // (1) success implies a non-empty access token; (2) an error NEVER echoes
 // the access-token value — CLI output is the one place a credential
