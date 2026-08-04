@@ -122,12 +122,10 @@ type MCPResourceInfo struct {
 // MCPServerState is the lifecycle status of one configured MCP server.
 // Exported so the hub's mcpRegistry and the /api/mcp/status endpoint
 // share a single typed enum with compile-time safety.
+//
+// The four values are "idle" (configured but no bridge running),
+// "connected" (kiro-cli reported server_initialized), "needs_auth"
+// (kiro-cli sent oauth_request) and "failed" (kiro-cli sent
+// server_init_failure). They are declared as constants where they are
+// produced — the hub's mcpRegistry, which serves /api/mcp/status.
 type MCPServerState string
-
-// MCPStateIdle and the following constants define the valid MCPServerState lifecycle values.
-const (
-	MCPStateIdle      MCPServerState = "idle"       // configured but no bridge running
-	MCPStateConnected MCPServerState = "connected"  // kiro-cli reported server_initialized
-	MCPStateOAuth     MCPServerState = "needs_auth" // kiro-cli sent oauth_request
-	MCPStateFailed    MCPServerState = "failed"     // kiro-cli sent server_init_failure
-)

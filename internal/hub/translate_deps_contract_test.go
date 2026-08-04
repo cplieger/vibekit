@@ -33,22 +33,6 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 		d.Broadcast(context.Background(), api.ServerEvent{Type: "test_event", ChatID: "chat-1"})
 	})
 
-	t.Run("BridgeNotify_nil_error_for_unknown_chat", func(t *testing.T) {
-		d := newDeps(t)
-		err := d.BridgeNotify(context.Background(), "unknown-chat", "test/method", nil)
-		if err != nil {
-			t.Errorf("BridgeNotify(unknown) = %v, want nil", err)
-		}
-	})
-
-	t.Run("BridgeRespond_nil_error_for_unknown_chat", func(t *testing.T) {
-		d := newDeps(t)
-		err := d.BridgeRespond(context.Background(), "unknown-chat", 1, nil, nil)
-		if err != nil {
-			t.Errorf("BridgeRespond(unknown) = %v, want nil", err)
-		}
-	})
-
 	t.Run("ParentACPSession_empty_for_unknown_chat", func(t *testing.T) {
 		d := newDeps(t)
 		if s := d.ParentACPSession("unknown-chat"); s != "" {
@@ -66,10 +50,9 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 		r.SignalReady()
 	})
 
-	t.Run("PendingPermsAdd_Remove_does_not_panic", func(t *testing.T) {
+	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
 		d.PendingPermsAdd(42, api.ServerEvent{Type: "permission_needed", ChatID: "c1"})
-		d.PendingPermsRemove(42)
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {

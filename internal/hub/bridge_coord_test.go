@@ -52,7 +52,7 @@ func newRecordingStartHub(t *testing.T) (*Hub, *fakeChatStore, *recordingStartBr
 	cs := newFakeChatStore()
 	rb := newRecordingStartBridge()
 	h := New("/tmp/rec-start", func() api.ACPBridge { return rb }, cs)
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	return h, cs, rb
 }
@@ -166,7 +166,7 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	cs := newFakeChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New("/tmp/push", func() api.ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	ctx := context.Background()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })

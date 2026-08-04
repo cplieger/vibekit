@@ -70,7 +70,7 @@ func newLineCaptureDeps() (*lineDeps, *lineRec, *[]api.ServerEvent) {
 func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]api.ServerEvent, api.ChatID) {
 	t.Helper()
 	deps, rec, events := newLineCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "tc-mid" }))
+	tr := New(deps, withIDGenerator(func() string { return "tc-mid" }))
 	chatID := api.ChatID("c1")
 	tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
@@ -139,7 +139,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 	t.Run("SuppressedWhenStatusDisabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		chatID := api.ChatID("c1")
 		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, hookAsk), "")
 		if hasToolCallEvent(events) {
@@ -153,7 +153,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 	t.Run("ShownWhenStatusEnabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: true}
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, hookAsk), "")
 		if !hasToolCallEvent(events) {
 			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
@@ -163,7 +163,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 	t.Run("NonHookAskShownWhenStatusDisabled", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"title":      "readFile",
@@ -182,7 +182,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 func TestHandleToolCall_DiffGate(t *testing.T) {
 	t.Run("WithDiffRecordsLineChanges", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff",
 			"title":      "writeFile",
@@ -198,7 +198,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 	})
 	t.Run("WithoutDiffSkipsLineTracker", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-nodiff",
 			"title":      "readFile",
@@ -417,11 +417,17 @@ func TestRelPath(t *testing.T) {
 		{name: "StripsRootPrefix", workDir: "/work", abs: "/work/sub/file.go", want: "sub/file.go"},
 		{name: "OutsideWorkDirReturnsAbs", workDir: "/work", abs: "/elsewhere/x.go", want: "/elsewhere/x.go"},
 		{name: "EmptyWorkDirReturnsAbs", workDir: "", abs: "/a/b.go", want: "/a/b.go"},
+		// A first component that merely BEGINS with two dots is a directory
+		// name, not a traversal: the escape test is separator-precise
+		// (pathinside.RelEscapes), so this stays relative instead of leaking
+		// the absolute path to the client.
+		{name: "DotDotPrefixedDirIsRelative", workDir: "/work", abs: "/work/..drafts/x.go", want: "..drafts/x.go"},
+		{name: "ParentEscapeReturnsAbs", workDir: "/work", abs: "/x.go", want: "/x.go"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			deps := &workDirDeps{baseDeps: newBaseDeps(), workDir: tt.workDir}
-			tr := New(deps, WithIDGenerator(func() string { return "mid" }))
+			tr := New(deps, withIDGenerator(func() string { return "mid" }))
 			if got := tr.relPath(tt.abs); got != tt.want {
 				t.Errorf("relPath(%q) [workDir=%q] = %q, want %q", tt.abs, tt.workDir, got, tt.want)
 			}
@@ -438,7 +444,7 @@ func TestRelPath(t *testing.T) {
 func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	t.Run("PendingEditMarksNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		chatID := api.ChatID("c1")
 		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-new",
@@ -460,7 +466,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 	})
 	t.Run("CompletedEditIsNotNewFile", func(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
-		tr := New(deps, WithIDGenerator(func() string { return "id" }))
+		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		chatID := api.ChatID("c2")
 		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-existing",

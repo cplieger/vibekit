@@ -6,7 +6,8 @@ TOOLS="$CONFIG_DIR/tools"
 # kiro-cli is pinned via Renovate against the public install manifest at
 # https://desktop-release.q.us-east-1.amazonaws.com/index.json. These three
 # literals are the ONLY kiro-cli knowledge left in this script: the server
-# installs from them (internal/kirocli), so bumping one and rebuilding the image
+# installs from them (the cplieger/pinstall library, wired in
+# internal/composition/kirocli.go), so bumping one and rebuilding the image
 # makes the next boot download, verify and activate that version. The in-binary
 # auto-update is disabled so what runs always matches the version baked into the
 # image tag and the digest verified at install time. KIRO_CLI_SHA256 (x86_64) and
@@ -18,12 +19,12 @@ TOOLS="$CONFIG_DIR/tools"
 # comments intact: the shared custom datasource matches on exactly this shape,
 # and tests/shell/pins_export_test.sh asserts it along with the export below.
 # renovate: datasource=custom.kiro-cli depName=kiro-cli
-KIRO_CLI_VERSION="2.15.1"
-KIRO_CLI_SHA256="f17d352eea8f67ed92f6585193ad6a49ef045d6400822ed9f0888021d14754ac"
+KIRO_CLI_VERSION="2.16.0"
+KIRO_CLI_SHA256="a7b9b3b2d159dfcf596c4400fcd9c9b13c457e9bae0c77ef3e48db931d261b60"
 # The `# kiro-cli <version>` trailer is Renovate's version anchor for this
 # arch's digest lookup — do not hand-edit or drop it.
 # renovate: datasource=custom.kiro-cli-arm64 depName=kiro-cli-arm64
-KIRO_CLI_SHA256_ARM64="83346f95bc8a986d4ba9270720082c36535d652350afd3799bedb9b0f15617cb" # kiro-cli 2.15.1
+KIRO_CLI_SHA256_ARM64="136c4ff9dad8c364d2990ca96087204faf97ff06aca68eee40d5c9193e4d4e49" # kiro-cli 2.16.0
 
 # Export the pins to the server, which owns the install. Without this the server
 # sees no pins, resolves kiro-cli by bare name and turns its readiness gate OFF —

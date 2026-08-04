@@ -60,7 +60,7 @@ COPY . ./
 # runtime refresh re-runs the same check before every swap.
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/v2
-ARG TOOLBELT_TOOLCATALOG_VERSION=v2.2.14
+ARG TOOLBELT_TOOLCATALOG_VERSION=v2.4.2
 # hadolint ignore=DL3062
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
     go run "github.com/cplieger/toolbelt/v2/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
@@ -107,7 +107,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # imports `render` from it (the reset primitives), and it is the peer the UI
 # package builds on; bundled into app.js by cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=3.2.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=3.4.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
@@ -120,7 +120,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # app.js by cmd/bundle; its css/ bundle (MANIFEST.touch) is concatenated into
 # style.css by the same tool.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=4.8.1
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=5.2.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
@@ -142,6 +142,16 @@ ARG CPLIEGER_UI_PRIMITIVES_VERSION=3.0.0
 RUN mkdir -p static-src/node_modules/@cplieger/ui-primitives && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/ui-primitives/-/ui-primitives-${CPLIEGER_UI_PRIMITIVES_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/ui-primitives --strip-components=1
+
+# @cplieger/keyenc encodes the client's composite keys (row signatures, the
+# persisted banner-dismissal and pending-path keys, the action idempotency
+# keys) so no field's content can forge a different field split. This ARG and
+# static-src/package.json's @cplieger/keyenc pin track the same exact version.
+# renovate: datasource=npm depName=@cplieger/keyenc
+ARG CPLIEGER_KEYENC_VERSION=1.0.1
+RUN mkdir -p static-src/node_modules/@cplieger/keyenc && \
+    curl -fsSL "https://registry.npmjs.org/@cplieger/keyenc/-/keyenc-${CPLIEGER_KEYENC_VERSION}.tgz" \
+      | tar -xz -C static-src/node_modules/@cplieger/keyenc --strip-components=1
 
 # Build the browser client, then the Go server (static files embedded via
 # go:embed). BUILD_VERSION is stamped into internal/version.Build via

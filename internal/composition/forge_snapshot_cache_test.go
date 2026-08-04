@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/steering"
-	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // newCacheForTest builds a forgeSnapshotCache around an injected build
@@ -21,7 +20,6 @@ func newCacheForTest(t *testing.T, build func(context.Context) steering.ForgeSna
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 	steer := steering.New(t.TempDir(), t.TempDir())
 	steer.SetForgeSnapshot(func() steering.ForgeSnapshot { return steering.ForgeSnapshot{} })
 	c := newForgeSnapshotCache(context.Background(), steer, build)

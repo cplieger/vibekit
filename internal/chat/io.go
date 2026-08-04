@@ -7,23 +7,44 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/cplieger/jsonx/bounded"
+	"github.com/cplieger/pathinside"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
 // readCappedFile reads a file at path, enforcing the maxChatFileBytes
 // size cap and the TOCTOU grow-during-read guard. Returns the raw bytes.
 //
-// Path is filepath.Clean'd up-front and rejected if it escapes via ".."
-// or is non-absolute. Callers already pass paths derived from store.Dir()
-// + ValidChatID-checked chatID, but the local guard makes the safety
-// property visible to CodeQL's go/path-injection analyzer (which doesn't
-// follow ValidChatID across package boundaries).
+// Path is filepath.Clean'd up-front and rejected if it holds a ".."
+// component or is non-absolute. Callers already pass paths derived from
+// store.Dir() + a ValidChatID-checked chatID, but the local guard makes
+// the safety property visible to CodeQL's go/path-injection analyzer
+// (which doesn't follow ValidChatID across package boundaries).
+//
+// The traversal half is pathinside.HasDotDot, which matches a ".."
+// COMPONENT rather than the two-character substring the test it replaced
+// searched for. That is the whole behavioural delta: an ordinary chat
+// file whose name happens to hold two adjacent dots ("a..b.json",
+// "..extras.json") is now read instead of rejected as unsafe. Nothing
+// that was refused for traversal is accepted — see below.
+//
+// KNOWN VACUITY, deliberately preserved: this predicate runs on the
+// CLEANED value, and filepath.Clean has already collapsed every ".."
+// and clamped at the filesystem root, so no ".." component can survive
+// in an absolute cleaned path and the traversal test cannot fire. It is
+// kept because it is what CodeQL reads as the sanitizer, and it is kept
+// on `clean` rather than moved to the raw `path` on purpose: judging the
+// raw value WOULD be a real gate, but it would also refuse every read
+// under a KIRO_CONFIG_DIR an operator wrote with a ".." segment
+// ("/config/../data"), which ConfigFromEnv accepts verbatim today.
+// Turning this into a live gate is a config-normalisation change
+// (canonicalise ConfigDir at load, then judge the raw path here), not a
+// one-line swap — and failing every chat read on a legal operator
+// config is the failure shape invariant 6 exists to prevent.
 func readCappedFile(path, label string) ([]byte, error) {
 	clean := filepath.Clean(path)
-	if !filepath.IsAbs(clean) || strings.Contains(clean, "..") {
+	if !filepath.IsAbs(clean) || pathinside.HasDotDot(clean) {
 		return nil, fmt.Errorf("%s: rejected unsafe path %q", label, path)
 	}
 	f, err := os.Open(clean)

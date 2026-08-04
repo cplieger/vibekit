@@ -44,12 +44,16 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   handshake, and the filesystem read/write handlers. The binary it runs is
   resolved once per bridge, from the install manager, so a version switch reaches
   the next chat instead of being frozen at boot.
-- `internal/kirocli/`: the kiro-cli install manager. Downloads the pinned
-  archive, verifies its per-arch SHA-256, installs into
+- `internal/composition/kirocli.go`: vibekit's deployment of
+  [pinstall](https://github.com/cplieger/pinstall), the digest-pinned install
+  library, with its ready-made `pinstall/kirocli` release profile. The library
+  downloads the pinned archive, verifies its per-arch SHA-256, installs into
   `<tools dir>/kiro-cli-versions/<version>/` behind a `.complete` sentinel written
   last, selects the active version (re-probing `--version` before trusting any
-  directory), reasserts the settings the pin depends on, keeps exactly one
-  predecessor, and purges the layout the shell installer used to promote into
+  directory), re-asserts the settings the pin depends on, and keeps exactly one
+  predecessor. What this file owns is the deployment: the pins, the tools tree, the
+  required/optional artifact split, the eight experimental settings, and the purge
+  data for the layout vibekit's own shell installer used to promote into
   `$TOOLS/bin`. Nothing in it exits the process: every failure degrades readiness
   instead, so the UI and the `docker exec` repair path survive a broken install.
   `entrypoint.sh` supplies only the three Renovate-pinned literals.
@@ -190,8 +194,8 @@ go run .              # run the server (needs kiro-cli on PATH to do useful work
 `go run .` installs nothing: with no `KIRO_CLI_VERSION` in the environment the
 manager stands down, kiro-cli is resolved by bare name, and `/api/health` reports
 only that the listener is up. The install runs when the entrypoint exports the
-pins, so a first boot in the container answers `503` with a phase in its reason
-while the archive downloads, then flips to healthy on its own.
+pins, so a first boot in the container answers `503` with a reason naming the
+state while the archive downloads, then flips to healthy on its own.
 
 #### Exercising the managed install without a 528 MB download
 
@@ -208,6 +212,11 @@ $VIBEKIT_TOOLS_DIR/kiro-cli-versions/<version>/
 
 ```sh
 export VIBEKIT_TOOLS_DIR=/tmp/vibekit-tools KIRO_CLI_VERSION=2.14.2
+# Both digests are validated when the manager is CONSTRUCTED, before it knows
+# whether it has anything to download, so they must be 64 lowercase hex
+# characters each — but nothing is fetched here, so the values are arbitrary.
+export KIRO_CLI_SHA256=0000000000000000000000000000000000000000000000000000000000000000
+export KIRO_CLI_SHA256_ARM64=0000000000000000000000000000000000000000000000000000000000000000
 V="$VIBEKIT_TOOLS_DIR/kiro-cli-versions/$KIRO_CLI_VERSION"
 mkdir -p "$V"
 cp /path/to/kiro-cli "$V/"
@@ -216,13 +225,12 @@ go run .
 ```
 
 Only the main dispatcher is required here, because `kiro-cli acp` is served by it;
-`kiro-cli-chat` and `kiro-cli-term` are optional and merely warn when absent. Both
-digest variables stay unset, since nothing is fetched to verify. `.complete` is
-what makes the directory a selection candidate, and the two per-boot gates still
-run against whatever you put there: `kiro-cli --version` must print the
-directory's own name, and `app.disableAutoupdates=true` must be assertable
-through `kiro-cli settings` or readiness is withheld. A shell script answering
-both is enough for a wiring check;
+`kiro-cli-chat` and `kiro-cli-term` are optional and merely warn when absent.
+`.complete` is what makes the directory a selection candidate, and the two
+per-boot gates still run against whatever you put there: `kiro-cli --version` must
+print the directory's own name, and `app.disableAutoupdates=true` must be
+assertable through `kiro-cli settings` or readiness is withheld. A shell script
+answering both is enough for a wiring check;
 `internal/composition/kirocli_test.go` builds exactly that fake dispatcher.
 
 The full application (Go server, kiro-cli download, and the on-demand tool

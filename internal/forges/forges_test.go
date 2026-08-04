@@ -131,14 +131,13 @@ func TestKindHelpers(t *testing.T) {
 		kind  Kind
 		cli   string
 		host  string
-		title string
 		valid bool
 	}{
-		{KindGitHub, "gh", "github.com", "GitHub", true},
-		{KindGitLab, "glab", "gitlab.com", "GitLab", true},
-		{KindCodeberg, "tea", "codeberg.org", "Codeberg", true},
-		{KindGitea, "tea", "", "Gitea", true},
-		{Kind("nope"), "", "", "nope", false},
+		{KindGitHub, "gh", "github.com", true},
+		{KindGitLab, "glab", "gitlab.com", true},
+		{KindCodeberg, "tea", "codeberg.org", true},
+		{KindGitea, "tea", "", true},
+		{Kind("nope"), "", "", false},
 	}
 	for _, c := range cases {
 		if got := c.kind.Valid(); got != c.valid {
@@ -149,9 +148,6 @@ func TestKindHelpers(t *testing.T) {
 		}
 		if got := c.kind.DefaultHost(); got != c.host {
 			t.Errorf("%s.DefaultHost() = %q", c.kind, got)
-		}
-		if got := c.kind.Title(); got != c.title {
-			t.Errorf("%s.Title() = %q", c.kind, got)
 		}
 	}
 }
@@ -229,7 +225,8 @@ func TestSanitizeEnv(t *testing.T) {
 func setConfigHomeTemp(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()
-	SetConfigHome(tmp)
-	t.Cleanup(func() { SetConfigHome("") })
+	// configHome() reads $XDG_CONFIG_HOME, so the env var IS the seam —
+	// no production override hook needed. t.Setenv restores on cleanup.
+	t.Setenv("XDG_CONFIG_HOME", tmp)
 	return tmp
 }

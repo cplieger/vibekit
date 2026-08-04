@@ -59,9 +59,6 @@ func newGitLab(host string) *gitlabProvider {
 	return &gitlabProvider{host: host}
 }
 
-func (p *gitlabProvider) Kind() Kind   { return KindGitLab }
-func (p *gitlabProvider) Host() string { return p.host }
-
 // withHost prepends host-targeting flags. glab uses GITLAB_HOST env
 // var or per-config-section host; --hostname is supported on most
 // commands.
@@ -138,7 +135,7 @@ func (p *gitlabProvider) ListRepos(ctx context.Context) ([]Repo, error) {
 
 // ListPRs (MRs) — glab calls them merge requests.
 func (p *gitlabProvider) ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error) {
-	mrState := mrStateForListing(string(state))
+	mrState := mrStateForListing(state)
 	args := p.withHost("mr", "list", "--repo", repo, "--state", mrState, "--output", "json", "--per-page", "100")
 	out, err := runCmd(ctx, ListTimeout, nil, "glab", args...)
 	if err != nil {
@@ -431,22 +428,20 @@ func (p *gitlabProvider) ListLabels(ctx context.Context, repo string) ([]Label, 
 }
 
 // mrStateForListing maps the unified state filter to glab's expected
-// values. glab uses stateOpened rather than stateOpen and treats merged as
-// a separate state outside of stateClosed.
-func mrStateForListing(s string) string {
+// values. glab uses stateOpened rather than StateOpen and treats merged as
+// a separate state outside of StateClosed.
+func mrStateForListing(s ListState) string {
 	switch s {
-	case stateOpen:
+	case StateOpen, "":
 		return stateOpened
-	case stateMerged:
+	case StateMerged:
 		return stateMerged
-	case stateClosed:
+	case StateClosed:
 		return stateClosed
-	case "all":
-		return "all"
-	case "":
-		return stateOpened
+	case StateAll:
+		return string(StateAll)
 	}
-	return s
+	return string(s)
 }
 
 // mapGLabStatus converts a GitLab pipeline status to our canonical

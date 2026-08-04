@@ -4,8 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/cplieger/vibekit/internal/workspace"
 )
 
 // mustWriteFile writes content to path, creating any missing parent
@@ -20,13 +18,12 @@ func mustWriteFile(t *testing.T, path, content string) {
 	}
 }
 
-// setupKiroHome redirects $HOME and pins the cached kiro-home to a temp
-// dir so Generate writes into an isolated tree. Returns the resolved
+// setupKiroHome redirects $HOME so KiroHome() resolves into an isolated
+// temp tree and Generate writes there. Returns the resolved
 // environment.md steering path.
 func setupKiroHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 	return filepath.Join(home, ".kiro", "steering", "environment.md")
 }

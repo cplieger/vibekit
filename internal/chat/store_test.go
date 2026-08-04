@@ -1269,3 +1269,227 @@ func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 		t.Errorf("err = %v, unexpectedly ENOENT (file should still exist)", err)
 	}
 }
+
+// --- handleExport ---
+// Ported from main's pre-rewrite store_test.go: the export handler and
+// its filename sanitiser survived the conversational-surface rewrite
+// unchanged, so their handler-level battery comes along.
+
+func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "Named Chat"
+		c.Messages = []api.Message{
+			{ID: "m1", Role: api.RoleUser, Content: "hi"},
+		}
+		return true
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=json", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	disp := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(disp, `attachment`) || !strings.Contains(disp, "Named Chat-c1.json") {
+		t.Errorf("Content-Disposition = %q, want attachment with <name>-<id>.json", disp)
+	}
+	if !strings.Contains(rec.Body.String(), `"role":"user"`) {
+		t.Errorf("body = %q, want full chat including messages", rec.Body.String())
+	}
+}
+
+func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "Named Chat"
+		c.Messages = []api.Message{
+			{ID: "m1", Role: api.RoleUser, Content: "hi"},
+		}
+		return true
+	})
+
+	// No ?format= param — Markdown is the default.
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q, want text/markdown", ct)
+	}
+	disp := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(disp, `attachment`) || !strings.Contains(disp, "Named Chat-c1.md") {
+		t.Errorf("Content-Disposition = %q, want attachment with <name>-<id>.md", disp)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "# Named Chat") || !strings.Contains(body, "## User") {
+		t.Errorf("body = %q, want Markdown transcript with title and role headings", body)
+	}
+}
+
+func TestHandleExport_RejectsUnsupportedFormat(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=xml", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400 for unsupported format", rec.Code)
+	}
+}
+
+func TestHandleExport_FallsBackToChatIDWhenNameEmpty(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { return true })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	disp := rec.Header().Get("Content-Disposition")
+	if !strings.Contains(disp, "c1.md") {
+		t.Errorf("Content-Disposition = %q, want chat id fallback filename", disp)
+	}
+}
+
+func TestHandleExport_NotFoundForMissingChat(t *testing.T) {
+	s, _ := newTestStore(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("code = %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleExport_RejectsNonGET(t *testing.T) {
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(method, "/api/chats/c1/export", nil)
+		rec := httptest.NewRecorder()
+		NewRouter(s).handleOne(rec, req)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("handleExport(%s) = %d, want 405", method, rec.Code)
+		}
+	}
+}
+
+func TestHandleExport_RejectsInvalidChatID(t *testing.T) {
+	s, _ := newTestStore(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/bad.id/export", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400", rec.Code)
+	}
+}
+
+func TestHandleExport_SanitisesAdversarialChatName(t *testing.T) {
+	// Regression: chat names with quotes, CR/LF, or path chars used to
+	// break the Content-Disposition header via string concatenation.
+	// mime.FormatMediaType + safeExportName now handle all of these.
+	s, _ := newTestStore(t)
+	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "evil\"; filename=\"spoof"
+		return true
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
+	rec := httptest.NewRecorder()
+	NewRouter(s).handleOne(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d", rec.Code)
+	}
+	disp := rec.Header().Get("Content-Disposition")
+	if strings.Contains(disp, `filename="spoof`) && !strings.Contains(disp, `filename=`) {
+		t.Errorf("header leaked injected filename= param: %q", disp)
+	}
+	// The sanitiser must have replaced the embedded double-quote with
+	// an underscore so the header stays well-formed.
+	if strings.Count(disp, `"`)%2 != 0 {
+		t.Errorf("Content-Disposition has unbalanced quotes: %q", disp)
+	}
+}
+
+// --- exportFilename ---
+
+func TestExportFilename(t *testing.T) {
+	tests := []struct {
+		name, id, ext, want string
+	}{
+		{"", "c1", ".md", "c1.md"},
+		{"hello", "c1", ".md", "hello-c1.md"},
+		{"Named Chat", "c1", ".json", "Named Chat-c1.json"},
+		{"bad/name", "c1", ".md", "bad_name-c1.md"},
+		{"with\"quote", "c1", ".md", "with_quote-c1.md"},
+		{"win<bad>:chars", "c1", ".md", "win_bad__chars-c1.md"},
+		{"   ", "c1", ".md", "c1.md"},
+		{"\x01\x02ctrl", "c1", ".md", "__ctrl-c1.md"},
+		{"", "", ".md", "chat.md"},
+	}
+	for _, tc := range tests {
+		if got := exportFilename(tc.name, tc.id, tc.ext); got != tc.want {
+			t.Errorf("exportFilename(%q, %q, %q) = %q, want %q",
+				tc.name, tc.id, tc.ext, got, tc.want)
+		}
+	}
+	// Rune cap on the name stem (id and ext are appended after the cap).
+	got := exportFilename(strings.Repeat("x", 200), "c1", ".md")
+	if len([]rune(got)) > 80+len("-c1.md") {
+		t.Errorf("len(%q) = %d runes, want stem capped at 80", got, len([]rune(got)))
+	}
+}
+
+// --- UTF-8 write gate ---
+
+// TestMutate_RejectsInvalidUTF8 pins the store's write-side UTF-8 gate:
+// a mutation producing invalid UTF-8 anywhere in the chat must abort
+// before save (json.Marshal would otherwise silently corrupt it to
+// U+FFFD) and must not broadcast.
+func TestMutate_RejectsInvalidUTF8(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(c *api.Chat)
+	}{
+		{
+			name:   "invalid utf-8 in name",
+			mutate: func(c *api.Chat) { c.Name = "bad\xff\xfename" },
+		},
+		{
+			name: "invalid utf-8 in message content",
+			mutate: func(c *api.Chat) {
+				c.Messages = append(c.Messages, api.Message{ID: "m1", Role: api.RoleUser, Content: "ok\xffbad"})
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, b := newTestStore(t)
+			err := s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+				tc.mutate(c)
+				return true
+			})
+			if !errors.Is(err, errInvalidUTF8) {
+				t.Fatalf("Mutate = %v, want errInvalidUTF8", err)
+			}
+			if _, ok := s.Get(context.Background(), "c1"); ok {
+				t.Error("invalid-UTF8 chat was persisted; the mutation must abort before save")
+			}
+			if n := len(b.snapshot()); n != 0 {
+				t.Errorf("broadcast fired %d time(s) on a rejected mutation; want 0", n)
+			}
+		})
+	}
+}

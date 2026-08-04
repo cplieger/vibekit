@@ -28,7 +28,7 @@ func FuzzCheckDirWritable(f *testing.F) {
 		}
 		_ = os.MkdirAll(target, 0o755)
 
-		err := checkDirWritable(target, envVar)
+		err := checkDirWritable(t.Context(), target, envVar)
 		if err == nil {
 			return
 		}

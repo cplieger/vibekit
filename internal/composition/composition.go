@@ -61,7 +61,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, fmt.Errorf("another vibekit instance is running on %s: %w", cfg.ConfigDir, err)
 	}
 
-	if err := validateConfig(cfg); err != nil {
+	if err := validateConfig(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
 
@@ -144,15 +144,10 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// disabled LSP + gh templates on fresh volumes (toggled on in
 	// Settings -> Tools). Boot reconciles async — installed tools
 	// persist on the volume, so nothing blocks server start.
-	toolsEngine, err := buildToolsEngine(cfg, h)
+	toolsEngine, err := wireToolsEngine(cfg, h)
 	if err != nil {
 		return nil, err
 	}
-	warnIfNoLSPEnabled(toolsEngine)
-	// Installed-tool changes matter to the agent (kiro-cli scans PATH
-	// for language servers); regenerate the steering env on each list
-	// read is overkill, but forge logins need synchronous installs:
-	forgesPkg.EnsureTool = toolsEngine.EnsureInstalled
 
 	forgesManager := forgesPkg.NewManager()
 	if refreshErr := forgesManager.Refresh(ctx); refreshErr != nil {
@@ -274,7 +269,10 @@ func (a *App) Shutdown() {
 	a.stopKiro()
 	a.purgeScheduler.Stop()
 	a.mcpPrewarm.Stop()
-	a.tools.Close()
+	// nil on the root-integrity degraded boot; Close is not nil-receiver safe.
+	if a.tools != nil {
+		a.tools.Close()
+	}
 	a.Hub.Shutdown()
 }
 
@@ -457,6 +455,34 @@ func repoNamesFor(ctx context.Context, kind forgesPkg.Kind, host string) []strin
 // boot-critical work on the single-flight queue). Failures to enqueue
 // are logged, not fatal: installed tools persist on the volume and
 // keep-last-good absorbs an unreachable publisher.
+//
+// (nil, nil) is the DEGRADED verdict, not an omission: the root-integrity
+// refusal (Config.VerifyRootIntegrity below) returns no engine and no error,
+// and Build carries on tool-less. Every other New failure still returns an
+// error and stops the boot, exactly as it did before the check existed.
+// wireToolsEngine builds the tools engine and, when the root is intact,
+// wires its consumers. A nil engine is the root-integrity degraded verdict
+// (buildToolsEngine), not an error. The tools-dependent wiring is skipped
+// rather than nil-guarding each consumer downstream: none of toolbelt's
+// methods is nil-receiver safe, and server.WithTools already omits the
+// /api/tools mount for a nil engine. forges.EnsureTool left nil makes a
+// forge login report "gh is not installed (tools engine unavailable)"
+// instead of panicking.
+func wireToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
+	toolsEngine, err := buildToolsEngine(cfg, h)
+	if err != nil {
+		return nil, err
+	}
+	if toolsEngine != nil {
+		warnIfNoLSPEnabled(toolsEngine)
+		// Installed-tool changes matter to the agent (kiro-cli scans PATH
+		// for language servers); regenerate the steering env on each list
+		// read is overkill, but forge logins need synchronous installs:
+		forgesPkg.EnsureTool = toolsEngine.EnsureInstalled
+	}
+	return toolsEngine, nil
+}
+
 func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,
@@ -464,13 +490,24 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 		Interval: cfg.ToolCatalogRefresh,
 	}
 	toolsEngine, err := toolbelt.New(&toolbelt.Config{
-		ConfigDir:       cfg.ConfigDir,
-		ToolsDir:        cfg.ToolsDir,
-		CatalogPath:     cfg.ToolCatalogPath,
-		Refresh:         catalogRefresh,
-		CatalogOverlays: cfg.ToolCatalogOverlays,
-		Seed:            toolbelt.DefaultSeed(),
-		System:          []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
+		ConfigDir: cfg.ConfigDir,
+		ToolsDir:  cfg.ToolsDir,
+		// The engine EXECUTES what it finds in ToolsDir: an install probe
+		// runs <ToolsDir>/bin/<tool> directly, and that dir goes first on
+		// PATH for every package-manager run. vibekit runs those as root
+		// over /config, a volume the operator reshapes by hand, and the
+		// entrypoint creates only bin/ and kiro-cli-versions/ — opt/, npm/
+		// and python/ are engine-owned and nothing checked them. On:
+		// inspect the roots before writing anything.
+		//
+		// This is why the refusal must NOT be fatal — see the degraded arm
+		// below.
+		VerifyRootIntegrity: true,
+		CatalogPath:         cfg.ToolCatalogPath,
+		Refresh:             catalogRefresh,
+		CatalogOverlays:     cfg.ToolCatalogOverlays,
+		Seed:                toolbelt.DefaultSeed(),
+		System:              []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
 		OnJobChanged: func(j *toolbelt.Job) {
 			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobChanged, "",
 				api.ToolJobChangedPayload{Job: j}))
@@ -489,7 +526,10 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("tools engine: %w", err)
+		// Both answers travel in the error: nil from the classifier is the
+		// DEGRADED verdict, so this one return yields (nil, nil) for an
+		// integrity refusal and (nil, wrapped) for everything else.
+		return nil, toolsEngineFailure(err)
 	}
 	if _, rerr := toolsEngine.Reconcile(toolbelt.ReconcileFull); rerr != nil {
 		slog.Warn("tools: boot reconcile not enqueued", "error", rerr)
@@ -516,6 +556,61 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 	})
 	go h.EnsureCodeIntelligence(context.Background())
 	return toolsEngine, nil
+}
+
+// toolsEngineFailure decides what a toolbelt.New failure costs vibekit. A nil
+// return is the DEGRADED verdict — buildToolsEngine hands back no engine and no
+// error, and Build carries on tool-less.
+//
+// ONLY the root-integrity refusal degrades. A manifest this engine refuses to
+// guess at, or an absent required dir, stays a fatal New failure wrapped exactly
+// as it was before the check existed — narrowing by sentinel rather than by "any
+// New error" is what keeps an unrelated regression from being swallowed into a
+// tool-less boot nobody notices.
+//
+// Degraded, not dead, because an unfit root is persistent-volume state this
+// process neither created nor may repair (the check reports only, deliberately),
+// and refusing to boot on it would take away the only way IN to fix it: the
+// operator reaches /config through this container. See the vibekit steering doc's
+// invariant 6 — the entrypoint aborts on ONE condition, a /config that is absent
+// or unwritable, and everything else warns and continues.
+func toolsEngineFailure(err error) error {
+	if !errors.Is(err, toolbelt.ErrRootIntegrity) {
+		return fmt.Errorf("tools engine: %w", err)
+	}
+	logRootIntegrityRefusal(err)
+	return nil
+}
+
+// logRootIntegrityRefusal reports a root-integrity refusal one line per
+// offending path, then states the consequence. toolbelt logs the same
+// findings itself, but joined into a single field on its own logger; the
+// per-path lines are what an operator can grep and act on individually,
+// and "vibekit is running without tools" is this app's verdict to state,
+// not the library's.
+//
+// The refusal does NOT touch readiness: /api/health's verdict is the
+// kiro-cli install manager's, and wiring a never-self-healing condition
+// into it would report the container unready forever, with no repair path
+// that does not go through the host. The log plus an absent /api/tools
+// mount is the signal.
+func logRootIntegrityRefusal(err error) {
+	var refusal *toolbelt.RootIntegrityError
+	if !errors.As(err, &refusal) {
+		// Classified by the sentinel but not carrying the concrete type
+		// (a future wrapper): report the whole error rather than nothing.
+		slog.Error("tools engine disabled: a managed root failed the integrity check", "error", err)
+		return
+	}
+	for _, f := range refusal.Findings {
+		slog.Error("tools: managed root is not fit to execute from",
+			"path", f.Path, "reason", f.Reason)
+	}
+	slog.Warn("tools engine disabled: vibekit is running without the tools subsystem; "+
+		"Settings -> Tools is unavailable and forge CLIs will not auto-install",
+		"finding_count", len(refusal.Findings),
+		"hint", "the check reports only and never repairs: fix the paths above from inside the container "+
+			"(chmod g-w,o-w on a writable dir; replace a symlinked root with a real directory), then restart it")
 }
 
 func warnIfNoLSPEnabled(e *toolbelt.Engine) {

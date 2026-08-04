@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestByteRing_BoundsAfterOverflow verifies that Len() never exceeds
+// TestByteRing_BoundsAfterOverflow verifies that the ring never holds more than
 // capacity even after writing more data than the buffer can hold.
 func TestByteRing_BoundsAfterOverflow(t *testing.T) {
 	const cap = 16
@@ -17,16 +17,13 @@ func TestByteRing_BoundsAfterOverflow(t *testing.T) {
 	}
 	r.Write(bigData)
 
-	if r.Len() != cap {
-		t.Fatalf("Len() = %d after overflow write, want %d", r.Len(), cap)
-	}
 	if len(r.Bytes()) != cap {
 		t.Fatalf("len(Bytes()) = %d, want %d", len(r.Bytes()), cap)
 	}
 }
 
 // TestByteRing_ConcurrentWriteRead exercises concurrent Write and
-// String/Bytes/Len calls. byteRing is NOT documented as thread-safe,
+// String/Bytes calls. byteRing is NOT documented as thread-safe,
 // but if callers ever use it from multiple goroutines (e.g. pump +
 // reconnect replay), this test catches the race.
 //
@@ -68,10 +65,10 @@ func TestByteRing_ExactCapacityWrite(t *testing.T) {
 	data := []byte("12345678")
 	r.Write(data)
 
-	if r.Len() != cap {
-		t.Fatalf("Len() = %d, want %d", r.Len(), cap)
-	}
 	got := r.Bytes()
+	if len(got) != cap {
+		t.Fatalf("len(Bytes()) = %d, want %d", len(got), cap)
+	}
 	if string(got) != "12345678" {
 		t.Fatalf("Bytes() = %q, want %q", got, "12345678")
 	}
@@ -94,8 +91,8 @@ func TestByteRing_ExactCapacityAcrossWrites(t *testing.T) {
 	r := newByteRing(cap)
 	r.Write([]byte("1234"))
 	r.Write([]byte("5678")) // fills to exactly cap; pos wraps but nothing dropped
-	if r.Len() != cap {
-		t.Fatalf("Len() = %d, want %d", r.Len(), cap)
+	if len(r.Bytes()) != cap {
+		t.Fatalf("len(Bytes()) = %d, want %d", len(r.Bytes()), cap)
 	}
 	if string(r.Bytes()) != "12345678" {
 		t.Fatalf("Bytes() = %q, want %q", r.Bytes(), "12345678")

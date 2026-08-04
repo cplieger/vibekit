@@ -18,9 +18,10 @@
 # Renovate-pinned kiro-cli literals and exports them, creates and proves /config,
 # prunes the superseded kiro-cli agent-runtime trees, sweeps the legacy $HOME
 # residue, and execs the server. The INSTALL is no longer here — the Go server owns
-# it (internal/kirocli), so the download, the digest verification, the version
-# selection and the settings reassertion are Go tests, and the shell tests that
-# drove `install_kiro_cli` and its promotion sequence were deleted with it rather
+# it (the cplieger/pinstall library, wired in internal/composition/kirocli.go), so
+# the download, the digest verification, the version selection and the settings
+# reassertion are the library's own tests, and the shell tests that drove
+# `install_kiro_cli` and its promotion sequence were deleted with it rather
 # than left asserting against code that no longer ships.
 #
 # What remains here is what the entrypoint still does, and its most consequential

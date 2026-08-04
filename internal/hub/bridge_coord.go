@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
@@ -88,7 +89,8 @@ func resolveAgentEngine() string {
 }
 
 // GetOrCreateBridge returns an existing bridge for chatID, or creates one.
-// Concurrent callers for the same chatID coalesce via singleflight.
+// Concurrent callers for the same chatID coalesce via singleflight, keyed by
+// bridgeSpawnKey.
 //
 //nolint:revive // unexported-return: sharedBridge is package-internal; callers within hub use the methods on it. Exporting would leak ACP wiring outside the hub package.
 func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, modelOverride string) (*sharedBridge, error) {
@@ -100,7 +102,7 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 	// Coalesce concurrent spawn attempts for the same chatID+model.
 	// Including the model override in the key ensures callers with
 	// different model parameters don't coalesce onto the wrong bridge.
-	sfKey := string(chatID) + "\x00" + modelOverride
+	sfKey := bridgeSpawnKey(chatID, modelOverride)
 	v, err, _ := bc.bridge.mgr.spawnSF.Do(sfKey, func() (any, error) {
 		return bc.spawnBridge(ctx, chatID, modelOverride)
 	})
@@ -109,6 +111,33 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 	}
 	b, _ := v.(*sharedBridge)
 	return b, nil
+}
+
+// bridgeSpawnKey composes the bridge-spawn singleflight key over
+// (chatID, modelOverride).
+//
+// NEITHER field can carry keyenc's ':' separator today — api.ValidChatID
+// restricts a chat id to [a-zA-Z0-9_-] and api.ValidIdent restricts a model
+// id to [A-Za-z0-9_.-] — so this key is unambiguous either way, and because
+// both alphabets are separator-free the encoded key is BYTE-IDENTICAL to a
+// plain "chatID:modelOverride" concatenation. keyenc is here for uniformity
+// with the repo's other composite keys and so the key stays injective if
+// either field's alphabet is ever widened: a model id taken verbatim from an
+// upstream catalog, say, which is an edit to a validator in another package
+// that would not look like it touched key encoding.
+//
+// Consequence of a collision, concretely: singleflight hands every coalesced
+// caller the leader's result, so two distinct (chat, model) pairs sharing a
+// key mean the second caller receives the FIRST caller's bridge — a chat
+// talking to another chat's kiro-cli session, or a model-override request
+// silently served by a bridge running a different model. The pre-keyenc form
+// used a 0x00 separator, which is unreachable through both validators rather
+// than merely absent from them; the ':' form trades that for an encoding that
+// stays injective whatever the fields contain. The key's bytes changed (0x00
+// became ':'); nothing persists it, the singleflight group lives on the
+// in-memory bridge manager for the life of one spawn.
+func bridgeSpawnKey(chatID api.ChatID, modelOverride string) string {
+	return keyenc.Join(string(chatID), modelOverride)
 }
 
 // spawnBridge creates (or returns the just-created) bridge for chatID.

@@ -1,35 +1,178 @@
-# .punused-ignore — adjudicated punused findings.
+# Adjudicated punused findings for vibekit.
 #
-# The CI gate runs punused per directory, then matches every finding line
-# against the literal substrings in this file. A finding that matches nothing
-# fails the build; an entry that matches nothing warns as stale. Full-line "#"
-# comments carry the reason.
+# The go-ci punused step scans one directory at a time (a whole-module run
+# silently under-reports) and checks every finding line against this file.
+# A full-line "#" comment carries the reason; every other non-empty line is
+# ONE literal substring matched against the finding line. Never put
+# file:line:col in a pattern — line numbers shift and the entry goes stale
+# (the gate then warns "matches nothing").
 #
-# punused (github.com/bep/punused) drives gopls and reports two codes:
-#   EU1002 "is unused"            — gopls found ZERO references.
-#   EU1001 "is used in test only" — every reference is in a _test.go file.
-# Its reference view is one Go module with default build tags, so it cannot see
-# cross-language consumers (the generated TypeScript client), callers inside an
-# external library that dials back into our interface, reflection dispatch, or
-# an interface member load-bearing only through interface-to-interface
-# assignment.
+# Nothing below is dead code. Real dead code is deleted or wired up, never
+# whitelisted. Read the codes precisely: EU1002 = punused/gopls found no
+# reference at all; EU1001 = every reference is in a _test.go file. Neither
+# code can see a call made through an interface, through reflection
+# (encoding/json), from another language, or from a _test.go DECLARATION
+# (punused never inspects those, though references from them do count).
 #
-# An entry is an adjudication, not an amnesty: adding one means the symbol was
-# checked and defended. Real dead code gets deleted instead.
-#
-# This file is INCOMPLETE. vibekit carries a large unadjudicated backlog that
-# the spec's final task works through; entries land here as they are defended.
+# One entry may report as "matches nothing" on a given run: punused caps a
+# single invocation at a 30s context deadline and drops the rest of the
+# shard silently (the masked error reads "file already closed", which the
+# gate filters), and internal/api is over that budget. The policy.go entry
+# is the one that flickers. Entries here are the union of a complete
+# per-FILE scan, so this file stays a superset either way.
 
-# --- Test-isolation seam that prevents writing the developer's own $HOME ------
-# internal/mcp's Store renders KAS's config file, whose default path resolves
-# under KiroHome() — i.e. ~/.kiro/settings/mcp.json. Before this option existed,
-# the package's own tests constructed a store and OVERWROTE the developer's real
-# file (observed, not hypothetical). WithKASConfigPath is how every test points
-# that write at t.TempDir().
-#
-# It is a functional option rather than a package var on purpose: a global
-# override has to be remembered at each call site, while an argument is visible
-# in the construction itself. The default is pinned by
-# TestNew_DefaultKASPathIsUnderKiroHome, so production cannot silently drift to
-# the test path either.
+# --- 1. Cross-language wire contract: enum members the TypeScript client
+# consumes. cmd/wire-codegen walks the Go AST (wiregen) and emits
+# static-src/wire/types.gen.ts; each value below is a member of a union in
+# that generated file, and the generated decoder rejects any value outside
+# its union. Deleting the Go constant silently shrinks the contract, so a
+# legitimate server value would fail client-side decode. Verified by
+# grepping the VALUE, not the Go identifier:
+#   "other"          -> types.gen.ts ToolKind union   (+ static-src/tool-schema.ts OTHER profile)
+#   "refusal"        -> types.gen.ts StopReason union (+ static-src/refusal.ts)
+#   "stream_timeout" -> types.gen.ts ErrorCode union
+#   "spawn_failed"   -> types.gen.ts ErrorCode union
+constant ToolKindOther
+constant StopReasonRefusal
+constant ErrCodeStreamTimeout
+constant ErrCodeSpawnFailed
+
+# --- 2. json-tagged fields on wiregen-registered structs. The struct is
+# registered in cmd/wire-codegen, so the field is part of the generated TS
+# interface AND its validating decoder; encoding/json populates it by
+# reflection, which no reference search can see. Several are REQUIRED in the
+# generated decoder, so deleting the Go field breaks the client outright:
+#   PlanEntry.Priority        -> types.gen.ts PlanEntry.priority, decoders.gen.ts reqStr($.plan_entry)
+#   Usage.MeteringItems       -> types.gen.ts Usage.metering_items, decodeArray($.usage.metering_items)
+#   MeteringItem.UnitSingular -> reqStr($.metering_item)
+#   MeteringItem.UnitPlural   -> reqStr($.metering_item)
+#   MeteringItem.Value        -> types.gen.ts MeteringItem.value
+#   CommandsUpdatedPayload.Prompts -> types.gen.ts CommandsUpdatedPayload.prompts
+field Priority is
+field MeteringItems is
+field UnitSingular is
+field UnitPlural is
+field Value is
+field Prompts is
+
+# Whole-file entries: every exported struct in these two files is a
+# wiregen-registered wire type (ElicitationPropertySchema,
+# ElicitationRequestSchema / PolicyRuleCore, PolicyRule, PolicyView,
+# PolicyExplainResult, PolicyErrorItem), so every field is generated into
+# types.gen.ts + decoders.gen.ts and filled by encoding/json. The
+# elicitation schemas are pass-through JSON-Schema: vibekit forwards the
+# MCP server's form definition to the client verbatim and never inspects a
+# property, which is exactly why no Go code reads these fields.
+internal/api/elicitation.go
+internal/api/policy.go
+
+# --- 3. Inbound envelopes decoded by encoding/json, deliberately not read.
+# internal/api/commands.go holds the client -> server command payloads; the
+# browser sends every field and json.Unmarshal fills it. Attachment.Name is
+# the only unread one: internal/command/prompt_attachments.go re-derives the
+# display name with filepath.Base(att.Path) rather than trusting a
+# client-supplied string that reaches log lines and agent-visible text.
+# Deleting it would erase the record of what the client actually sends.
+internal/api/commands.go
+# RPCResponse.JSONRPC is the inbound half of the ACP JSON-RPC envelope
+# (the outbound RPCRequest/RPCNotification/RPCResponseOut copies ARE set in
+# internal/bridge/bridge_rpc.go). The reader ignores the version field, but
+# json.Unmarshal populates it and the bridge tests build realistic
+# envelopes with it.
+field JSONRPC is
+
+# --- 4. Inbound ACP wire shapes (internal/translate/wire.go). Every struct
+# in that file is a json.Unmarshal target for a KAS session update. Two
+# fields are decoded and deliberately unread: _meta.kiro.kind (the
+# "agent-subtask" discriminator — the translator keys off agentSubtaskId
+# instead) and _meta.kiro.refusal.explanation (duplicates the chunk text,
+# so only Category/RecommendedModel flow into api.RefusalInfo). Both
+# document the wire contract at the only place it is expressed in code.
+internal/translate/wire.go
+
+# --- 5. fmt.Stringer implementations on typed identifiers. fmt and slog
+# discover String() by reflection at %s/%v sites, so no reference exists to
+# find. All four are string-kind types whose String() returns the
+# underlying string, giving the ID family one uniform conversion affordance
+# (api.ChatID/SessionID/ModelID, mcp.ServerID).
+method (ChatID).String
+method (SessionID).String
+method (ModelID).String
+method (ServerID).String
+
+# --- 6. error-interface machinery. Error() is called by whatever formats
+# the error; Unwrap() is what makes errors.Is/As walk the chain. Call
+# sites: internal/command/prompt.go errors.AsType[*api.TransportError],
+# and internal/forges/cliexec constructs &CmdError{Err: ...} as an error.
+method (*TransportError).Unwrap
+method (*CmdError).Error
+method (*CmdError).Unwrap
+
+# --- 7. container/heap.Interface method sets. The stdlib calls Len/Less/
+# Swap/Push/Pop through the interface: internal/buffer/lines.go uses
+# heap.Pop/heap.Fix/heap.Push on &state.h (fileHeap) and internal/dedup
+# uses heap.Init/heap.Push/heap.Pop on &c.evictHeap (evictionHeap).
+# Removing any member breaks the interface at compile time.
+method (fileHeap).
+method (*fileHeap).
+method (evictionHeap).
+method (*evictionHeap).
+
+# --- 8. http.Handler. internal/hub/hub.go registers the command dispatcher
+# with mux.Handle("/api/command", h.dispatcher), so net/http invokes
+# ServeHTTP through the interface.
+method (*Dispatcher).ServeHTTP
+
+# --- 9. io.Writer implementations wired into os/exec. Each buffer is
+# assigned to a subprocess's Stdout/Stderr, so os/exec calls Write:
+#   ShellCappedBuffer -> internal/command/shell.go   shellProc.Stdout/Stderr
+#   hookCappedBuffer  -> internal/hub/hooks.go       proc.Stdout/Stderr
+#   RingBuffer        -> internal/mcp/prewarm        cmd.Stdout/Stderr
+#   cappedBuffer      -> internal/server/cli.go      cmd.Stdout
+method (*ShellCappedBuffer).Write
+method (*hookCappedBuffer).Write
+method (*RingBuffer).Write
+method (*cappedBuffer).Write
+
+# --- 10. json.Unmarshaler. encoding/json calls (*mcp.Server).UnmarshalJSON
+# whenever the servers file is decoded; it is the boundary that rejects an
+# unknown transport value. Deleting it would silently accept one.
+method (*Server).UnmarshalJSON
+
+# --- 11. internal/testsupport fakes. This package exists so sibling
+# packages' TEST binaries share one implementation, so EU1001 is its
+# design, not a defect. The EU1002 members are interface-satisfaction
+# stubs pinned by the compile-time assertions in these files:
+#   var _ api.ChatStore  = NopChatStore{}                (chatstore.go)
+#   var _ api.ChatStore  = (*RecordingChatStore)(nil)    (chatstore.go)
+#   var _ api.ChatStore  = (*InMemoryChatStore)(nil)     (inmem_chatstore.go)
+#   var _ api.Broadcaster = (*CaptureBroadcaster)(nil)   (broadcaster.go)
+# Consumers: internal/hub (fakeChatStore = testsupport.RecordingChatStore),
+# internal/command and internal/translate (NewInMemoryChatStore).
+internal/testsupport/chatstore.go
+internal/testsupport/inmem_chatstore.go
+internal/testsupport/broadcaster.go
+
+# --- 12. internal/testsupport shared contract suites. Each is a t.Run
+# battery invoked from another package's _test.go: internal/chat and
+# internal/hub (ChatStoreContractTest), internal/mcp and internal/hub
+# (MCPConfigContractTest), internal/testsupport's own bridge_test.go
+# (ACPBridgeContractTest, post-Start smoke), internal/bridge and
+# internal/hub (ACPBridgePreStartContractTest, pre-Start lifecycle).
+internal/testsupport/chatstore_contract.go
+internal/testsupport/mcpconfig_contract.go
+internal/testsupport/bridge_contract.go
+internal/testsupport/bridge_prestart_contract.go
+
+# --- 13. Test-isolation seam that prevents writing the developer's own
+# $HOME. internal/mcp's Store renders KAS's config file, whose default path
+# resolves under KiroHome() — i.e. ~/.kiro/settings/mcp.json. Before this
+# option existed, the package's own tests constructed a store and OVERWROTE
+# the developer's real file (observed, not hypothetical). WithKASConfigPath
+# is how every test points that write at t.TempDir(). It is a functional
+# option rather than a package var on purpose: a global override has to be
+# remembered at each call site, while an argument is visible in the
+# construction itself. The default is pinned by
+# TestNew_DefaultKASPathIsUnderKiroHome, so production cannot silently
+# drift to the test path either.
 function WithKASConfigPath

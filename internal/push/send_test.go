@@ -484,3 +484,71 @@ func TestEncryptPayload_buildsRFC8291WireBody(t *testing.T) {
 		t.Errorf("ephemeral key length byte = %d, want %d", body[20], ephLen)
 	}
 }
+
+// TestFitToCap_ChargesTheMarkerInsideTheCap pins the tightened budget the
+// runesafe Capped pair brought. The composition this replaced put the marker
+// OUTSIDE the byte cap, so fitToCap had to subtract the marker width from every
+// cap it asked for — spending those bytes twice and landing len(pushTruncMarker)
+// bytes short of the vendor budget on every trim. With the marker charged inside
+// the cap the arithmetic is the overflow alone, so a single pass lands the
+// marshaled payload on pushBodyCap exactly: the notification keeps every byte the
+// vendor will accept. An assertion of "at most the cap" (FuzzPayloadTruncation's
+// job) cannot see that regression return, which is why this one is exact.
+func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
+	title := "Vibekit"
+	body := strings.Repeat("x", 4000)
+
+	gotTitle, gotBody, truncated := fitToCap(title, body)
+	if !truncated {
+		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
+	}
+	if n := marshaledLen(gotTitle, gotBody); n != pushBodyCap {
+		t.Errorf("marshaled payload = %d bytes, want exactly %d: the trim must spend the whole budget, marker included", n, pushBodyCap)
+	}
+	if !strings.HasSuffix(gotBody, pushTruncMarker) {
+		t.Errorf("trimmed body should end with %q, got suffix %q",
+			pushTruncMarker, gotBody[max(len(gotBody)-10, 0):])
+	}
+	if gotTitle != title {
+		t.Errorf("title = %q, want it untouched: the body absorbed the overflow", gotTitle)
+	}
+}
+
+// TestFitToCap_KeepsTheBodysCRLFAxis pins which sanitize policy each field gets,
+// the property that made the local capMultiline helper exist before the library
+// offered the CR/LF-keeping axis. A notification body is legitimately multi-line,
+// so its newlines must survive the trim while every other control rune is
+// rewritten; a title is a single-line sink, so its newlines must not survive.
+// Collapsing both onto one policy is the regression this guards.
+func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
+	t.Run("body keeps newlines, loses other control runes", func(t *testing.T) {
+		body := "a\x1bb\nc" + strings.Repeat("x", 4000)
+		gotTitle, gotBody, truncated := fitToCap("Vibekit", body)
+		if !truncated {
+			t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
+		}
+		if !strings.Contains(gotBody, "\n") {
+			t.Errorf("body lost its newline: %q", gotBody[:min(len(gotBody), 10)])
+		}
+		if strings.Contains(gotBody, "\x1b") {
+			t.Error("body kept a raw ESC; the sanitize half of the trim did not run")
+		}
+		if n := marshaledLen(gotTitle, gotBody); n > pushBodyCap {
+			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
+		}
+	})
+
+	t.Run("title loses newlines", func(t *testing.T) {
+		title := "a\x1bb\nc" + strings.Repeat("y", 4000)
+		gotTitle, gotBody, truncated := fitToCap(title, "")
+		if !truncated {
+			t.Fatalf("fitToCap reported no truncation for a %d-byte title", len(title))
+		}
+		if strings.ContainsAny(gotTitle, "\n\r\x1b") {
+			t.Errorf("title kept a record-forging rune: %q", gotTitle[:min(len(gotTitle), 10)])
+		}
+		if n := marshaledLen(gotTitle, gotBody); n > pushBodyCap {
+			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
+		}
+	})
+}

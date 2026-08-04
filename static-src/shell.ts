@@ -210,13 +210,19 @@ function initShellResize(): void {
 /** Build the terminal exactly once, into the (empty) #shell-terminal root. The
  *  server PTY persists across WS reconnects, so this is safe to call on the
  *  first open and never again; reopening the panel reuses the same terminal and
- *  its live connection. */
+ *  its live connection.
+ *
+ *  `features` is the preset FUNCTION, not its result (ui v5): passing
+ *  `presetTouch()` evaluated the preset as an argument, so a throw inside it
+ *  escaped before createTerminal's failure boundary existed and the panel was
+ *  left empty with only a console error. Handing over the uncalled function
+ *  moves that failure inside, where the kernel reports it. */
 function ensureTerminal(): void {
   if (handle !== null) {
     return;
   }
   handle = createTerminal($.shellTerminal, {
-    features: presetTouch(),
+    features: presetTouch,
     layout: "container",
     wsPath: SHELL_WS_PATH,
     fontReady: SHELL_FONT_READY,

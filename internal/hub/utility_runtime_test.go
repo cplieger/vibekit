@@ -243,7 +243,7 @@ func TestCheapestModel_RapidInvariants(t *testing.T) {
 		}
 
 		ctx := context.Background()
-		result := CheapestModel(ctx, catalog)
+		result := cheapestModel(ctx, catalog)
 
 		if result == "" {
 			// Either empty catalog or all models excluded/auto.

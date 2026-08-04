@@ -36,6 +36,7 @@ vi.mock("./api-client.js", () => ({
 vi.mock("./dom.js", () => ({ byId: (id: string) => document.getElementById(id) }));
 
 import { apiGetTyped } from "./api-client.js";
+import { split, join } from "@cplieger/keyenc";
 import { onSSE } from "./bus.js";
 import { openFile } from "./editor-openers.js";
 import { showToast } from "./toast.js";
@@ -277,5 +278,102 @@ describe("SSE refetch", () => {
     (handler as () => void)();
     await vi.advanceTimersByTimeAsync(300);
     expect(mockGet).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Row signature (keyenc `join`, both nesting levels).
+//
+// The signature only gates whether a row's children are rebuilt — row identity
+// is `hook:${id}`, so a collision leaves a STALE ROW, not a missing or wrong
+// one. `command`, `prompt`, `matcher` come from the hook file and the run
+// `output` is captured process output, so the old "\u00a7" / "|" separators
+// were merely unlikely, not reserved.
+// ---------------------------------------------------------------------------
+
+describe("hook row signature", () => {
+  const SECTION = "\u00a7";
+
+  /** The signature expression as it was before the keyenc adoption. */
+  function oldSig(h: HookLike, out?: { ran: boolean; exit_code: number; output: string }): string {
+    const outSig = out ? `${out.ran ? "1" : "0"}|${String(out.exit_code)}|${out.output}` : "";
+    return [
+      h.enabled ? "1" : "0",
+      h.trigger,
+      h.action_type,
+      h.scope ?? "",
+      h.command ?? "",
+      h.prompt ?? "",
+      h.matcher ?? "",
+      h.disabled_reason ?? "",
+      outSig,
+    ].join(SECTION);
+  }
+
+  async function sigFor(h: HookLike): Promise<string> {
+    mockGet.mockResolvedValue({ hooks: [h] });
+    loadHooks();
+    await flush();
+    return list().querySelector(".hook-row")?.getAttribute("data-sig") ?? "";
+  }
+
+  it("distinguishes two states the old \u00a7-joined signature collapsed", async () => {
+    // `command` and `prompt` are adjacent free-form fields, so a section sign
+    // inside the command could impersonate the boundary before the prompt.
+    const a = cmdHook({ command: `echo a${SECTION}b`, prompt: "c" });
+    const b = cmdHook({ command: "echo a", prompt: `b${SECTION}c` });
+    expect(oldSig(a)).toBe(oldSig(b));
+
+    // Same hook id, so the second load reuses the row and rewrites data-sig
+    // only when the signature actually changed.
+    expect(await sigFor(a)).not.toBe(await sigFor(b));
+  });
+
+  it("emits verbatim components for ordinary input", async () => {
+    const sig = await sigFor(cmdHook({ matcher: "*.ts" }));
+    expect(sig).toBe("1:Manual:runCommand::echo hello::*.ts::");
+    // Nine components, one per field, none of them escaped.
+    expect(split(sig)).toEqual(["1", "Manual", "runCommand", "", "echo hello", "", "*.ts", "", ""]);
+  });
+
+  it("nests the run-output signature as ONE component of the row signature", async () => {
+    // An output carrying the row separator used to add a field to the row
+    // signature; nested through its own join it stays a single component.
+    initHooks();
+    mockGet.mockResolvedValue({ hooks: [cmdHook()] });
+    loadHooks();
+    await flush();
+    mockRun.mockResolvedValue({ output: `x${SECTION}y:z`, exit_code: 0, ran: true });
+
+    (list().querySelector(".hook-run") as HTMLButtonElement).click();
+    await flush();
+
+    const sig = list().querySelector(".hook-row")?.getAttribute("data-sig") ?? "";
+    const parts = split(sig);
+    expect(parts).toHaveLength(9);
+    // The 9th component is exactly the inner join of the three output fields,
+    // recoverable in full — the outer level never saw its contents.
+    expect(parts[8]).toBe(join("1", "0", `x${SECTION}y:z`));
+    expect(split(parts[8] ?? "")).toEqual(["1", "0", `x${SECTION}y:z`]);
+  });
+
+  it("keeps a hook with a run output distinct from one whose text mimics it", async () => {
+    const withOutput = cmdHook();
+    const mimic = cmdHook({ disabled_reason: `1|0|hello${SECTION}` });
+
+    initHooks();
+    mockGet.mockResolvedValue({ hooks: [withOutput] });
+    loadHooks();
+    await flush();
+    mockRun.mockResolvedValue({ output: "hello", exit_code: 0, ran: true });
+    (list().querySelector(".hook-run") as HTMLButtonElement).click();
+    await flush();
+    const sigWithOutput = list().querySelector(".hook-row")?.getAttribute("data-sig") ?? "";
+
+    _resetForTest();
+    seedDom();
+    const sigMimic = await sigFor(mimic);
+
+    expect(sigWithOutput).not.toBe(sigMimic);
   });
 });

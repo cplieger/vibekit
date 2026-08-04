@@ -114,10 +114,10 @@ const AgentEngineV3 = "v3"
 // and reasoning-effort switches route through set_config_option with one of
 // these configId values plus a matching value string. (Verified against the
 // KAS 2.12 acp-server bundle: MODEL_CONFIG_ID / EFFORT_LEVEL_CONFIG_ID.)
-// Mode switches use the dedicated session/set_mode method, not this path.
+// Mode switches use the dedicated session/set_mode method, so there is
+// deliberately no "mode" configId constant here.
 const (
 	ConfigOptionModel  = "model"
-	ConfigOptionMode   = "mode"
 	ConfigOptionEffort = "effortLevel"
 	// ConfigOptionAutopilot is supervised mode on v3. `autopilot: false` makes KAS
 	// request a TURN APPROVAL before applying a file-touching turn's writes;

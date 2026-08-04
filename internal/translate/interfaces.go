@@ -35,22 +35,16 @@ type StreamingAccess interface {
 // for permission request handling and push notifications. Shell-command
 // authorization is owned by kiro-cli's native Cedar policy: any
 // session/request_permission that reaches vibekit is a genuine ask, so
-// there is no auto-approval surface here.
+// there is no auto-approval surface here. Answering a request is NOT in
+// this surface either: the user's choice arrives as a separate
+// permission_response command and is forwarded to the bridge by
+// internal/command, never from a translate handler.
 type PermissionAccess interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
-	BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error
 	ChatStore() api.ChatStore
 	NotifyPush(ctx context.Context, body string, kind api.PushKind)
 	ParentACPSession(chatID api.ChatID) string
 	PendingPermsAdd(requestID int64, evt api.ServerEvent)
-	PendingPermsRemove(requestID int64)
-}
-
-// BridgeComm provides bridge communication methods needed by compact.go
-// and permission_handler.go for sending notifications and responses.
-type BridgeComm interface {
-	BridgeNotify(ctx context.Context, chatID api.ChatID, method string, params map[string]any) error
-	BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error
 }
 
 // ChatStoreDeps provides the minimal interface needed by handlers that

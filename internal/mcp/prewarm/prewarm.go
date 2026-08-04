@@ -85,15 +85,6 @@ func NewRunner(ctx context.Context, lister ServerLister) *Runner {
 	}
 }
 
-// Lock locks the runner's mutex (for test access).
-func (p *Runner) Lock() { p.mu.Lock() }
-
-// Unlock unlocks the runner's mutex (for test access).
-func (p *Runner) Unlock() { p.mu.Unlock() }
-
-// Running returns the in-flight set (for test access).
-func (p *Runner) Running() map[string]struct{} { return p.running }
-
 // Stop cancels all in-flight and future installs.
 func (p *Runner) Stop() {
 	p.cancel()

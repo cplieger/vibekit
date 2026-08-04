@@ -9,17 +9,9 @@ import (
 	"time"
 )
 
-// Exported status/state constants defining the forge protocol vocabulary.
-const (
-	StatusSuccess  = "success"
-	StatusFailure  = "failure"
-	StatusError    = "error"
-	StatePending   = "pending"
-	StateSkipped   = "skipped"
-	StateCompleted = "completed"
-)
-
-// Internal implementation constants.
+// Status/state vocabulary shared by the CLI provider implementations.
+// The canonical Check.Status / Check.Conclusion sets are documented on
+// those fields in provider.go.
 const (
 	stateMerged    = "merged"
 	stateCompleted = "completed"

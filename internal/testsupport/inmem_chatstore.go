@@ -12,9 +12,10 @@ import (
 
 // InMemoryChatStore is a functional in-memory api.ChatStore with broadcast
 // support. Suitable for integration-style tests that need real Mutate/Get
-// semantics without filesystem I/O.
+// semantics without filesystem I/O. Assign Bus to fan out lifecycle events
+// (same shape as RecordingChatStore).
 type InMemoryChatStore struct {
-	bus   api.Broadcaster
+	Bus   api.Broadcaster
 	chats map[api.ChatID]*api.Chat
 	mu    sync.Mutex
 }
@@ -23,9 +24,6 @@ type InMemoryChatStore struct {
 func NewInMemoryChatStore() *InMemoryChatStore {
 	return &InMemoryChatStore{chats: make(map[api.ChatID]*api.Chat)}
 }
-
-// SetBroadcaster sets the broadcaster used to fan out chat lifecycle events.
-func (s *InMemoryChatStore) SetBroadcaster(b api.Broadcaster) { s.bus = b }
 
 // RegisterRoutes is a no-op; implements api.ChatStore.
 func (s *InMemoryChatStore) RegisterRoutes(_ *http.ServeMux) {}
@@ -88,11 +86,11 @@ func (s *InMemoryChatStore) Mutate(_ context.Context, id api.ChatID, mutate func
 	}
 	c.UpdatedAt = time.Now().UnixMilli()
 	s.chats[id] = &c
-	if s.bus != nil {
+	if s.Bus != nil {
 		if !exists {
-			s.bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_created", ChatID: id, Payload: c.Header()})
+			s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_created", ChatID: id, Payload: c.Header()})
 		} else {
-			s.bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_updated", ChatID: id, Payload: c.Header()})
+			s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_updated", ChatID: id, Payload: c.Header()})
 		}
 	}
 	return nil
@@ -103,8 +101,8 @@ func (s *InMemoryChatStore) Delete(_ context.Context, id api.ChatID) error {
 	s.mu.Lock()
 	delete(s.chats, id)
 	s.mu.Unlock()
-	if s.bus != nil {
-		s.bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_deleted", ChatID: id, Payload: map[string]string{"id": string(id)}})
+	if s.Bus != nil {
+		s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_deleted", ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
 	return nil
 }
@@ -116,8 +114,8 @@ func (s *InMemoryChatStore) AppendMessage(_ context.Context, chatID api.ChatID, 
 			return false
 		}
 		c.Messages = append(c.Messages, *msg)
-		if s.bus != nil {
-			s.bus.Broadcast(context.Background(), api.ServerEvent{Type: "message_appended", ChatID: chatID, Payload: msg})
+		if s.Bus != nil {
+			s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "message_appended", ChatID: chatID, Payload: msg})
 		}
 		return true
 	})

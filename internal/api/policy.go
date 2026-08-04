@@ -17,25 +17,15 @@ import "context"
 //     (a PURE simulation — no consent prompt; safe for pre-flight)
 //   - policy/check is NOT used: it calls acpToolApproval and raises a real
 //     session/request_permission, so it is unsafe as a UI pre-flight query.
-
-// Policy effect values (3-valued). deny > ask > allow at evaluation time.
-const (
-	PolicyEffectAllow = "allow"
-	PolicyEffectDeny  = "deny"
-	PolicyEffectAsk   = "ask"
-)
-
-// Policy scope values. Only user + workspace are file-editable by vibekit;
-// kiro/administration are read-only baselines, agent comes from the agent
-// profile, and session is runtime state.
-const (
-	PolicyScopeKiro           = "kiro"
-	PolicyScopeAdministration = "administration"
-	PolicyScopeUser           = "user"
-	PolicyScopeWorkspace      = "workspace"
-	PolicyScopeAgent          = "agent"
-	PolicyScopeSession        = "session"
-)
+//
+// Enum values on the wire (the Go string constants for both live in
+// internal/policyfile, the package that writes the editable scopes):
+//   - effect is 3-valued: allow | deny | ask (deny > ask > allow at
+//     evaluation time)
+//   - scope is kiro | administration | user | workspace | agent | session.
+//     Only user + workspace are file-editable by vibekit;
+//     kiro/administration are read-only baselines, agent comes from the
+//     agent profile, and session is runtime state.
 
 // PolicyRule is one native policy rule as reported by _kiro/permissions/list.
 // Capability + effect are always present; match/exclude are optional glob

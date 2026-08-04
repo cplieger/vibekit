@@ -99,13 +99,5 @@ func (r *byteRing) String() string {
 	return strings.ToValidUTF8(string(r.Bytes()), "")
 }
 
-// Len returns the number of bytes currently stored.
-func (r *byteRing) Len() int {
-	if r.full {
-		return len(r.buf)
-	}
-	return r.pos
-}
-
 // Truncated returns true if any data was evicted from the buffer.
 func (r *byteRing) Truncated() bool { return r.truncated }

@@ -2,11 +2,10 @@ package server
 
 import (
 	"log/slog"
-	"net"
 	"net/http"
 
+	"github.com/cplieger/pinstall"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/kirocli"
 	"github.com/cplieger/webhttp"
 )
 
@@ -15,6 +14,51 @@ import (
 // which is the half of the healing posture bounded retries cannot cover (a
 // restored version directory arrives after the retries are exhausted).
 const kiroRescanPath = "/api/kiro-cli/rescan"
+
+// The readiness reasons vibekit puts on the wire, one per operator situation.
+//
+// The install manager reports a TYPED reason (pinstall.Reason) that names only
+// the distinction — "installing", "unavailable" — because the wording a consumer
+// shows its own users is the consumer's. These four literals ARE that wording,
+// and they are a published contract in two directions: an operator reads them
+// from `docker inspect` / a monitor, and static-src/runtime-health.ts
+// PREFIX-MATCHES them (on "kiro-cli") to pick its banner copy, keyed on each
+// literal in full. Renaming one here silently degrades that banner to its
+// terminal fallback, so kiroReasonText is the single place they are produced and
+// TestKiroReasonTextIsTheClientContract pins the exact strings.
+const (
+	reasonInstalling = "kiro-cli installing"
+	reasonRetrying   = "kiro-cli install retrying"
+	// reasonUnavailable is also the fallback for a rescan with no verdict to
+	// read, and for a reason a future library version adds: a state we cannot
+	// name still blocks chats, and the terminal wording says so.
+	reasonUnavailable = "kiro-cli unavailable"
+	// reasonSettings is pinstall.ReasonAssertion in vibekit's terms. The only
+	// REQUIRED assertion here is the profile's mandatory app.disableAutoupdates
+	// (every setting kiroSettings passes is best-effort), so a withheld verdict
+	// means exactly that the binary may replace itself and invalidate the
+	// verified digest.
+	reasonSettings = "kiro-cli required settings not enforced"
+)
+
+// kiroReasonText renders the install manager's typed reason as the reason
+// /api/health and the repair hook serve. ReasonReady maps to "", which the
+// health envelope omits.
+func kiroReasonText(why pinstall.Reason) string {
+	switch why {
+	case pinstall.ReasonReady:
+		return ""
+	case pinstall.ReasonInstalling:
+		return reasonInstalling
+	case pinstall.ReasonRetrying:
+		return reasonRetrying
+	case pinstall.ReasonUnavailable:
+		return reasonUnavailable
+	case pinstall.ReasonAssertion:
+		return reasonSettings
+	}
+	return reasonUnavailable
+}
 
 // handleKiroRescan re-derives the active kiro-cli version from what is on disk
 // right now — downloading nothing — and reports the resulting readiness. 200
@@ -34,10 +78,10 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 	// at Warn or Error, so this reports the VERDICT rather than the error text:
 	// err can name a filesystem path, and this response is not the place to
 	// widen what a caller learns about the volume.
-	reason := kirocli.ReasonUnavailable
+	reason := reasonUnavailable
 	if s.kiroReady != nil {
-		if _, why := s.kiroReady(); why != "" {
-			reason = why
+		if _, why := s.kiroReady(); why != pinstall.ReasonReady {
+			reason = kiroReasonText(why)
 		}
 	}
 	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", err)
@@ -48,7 +92,9 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 }
 
 // loopbackOnly admits only requests whose SOCKET PEER *and* Host header are both
-// loopback. Forwarded headers are deliberately ignored — they are
+// loopback, via webhttp.LoopbackRequest — the shared two-legged conjunction,
+// which reads only RemoteAddr and Host and fails closed when either is
+// unparseable. Forwarded headers are deliberately ignored — they are
 // client-controlled, and this gate is the repair hook's only boundary on an
 // otherwise-unauthenticated port. The intended caller is an operator or an agent
 // INSIDE the container (`curl -X POST localhost:9847/api/kiro-cli/rescan`);
@@ -60,7 +106,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 // LAN would hand an unauthenticated caller a process-spawn lever.
 func loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !loopbackPeer(r.RemoteAddr) || !loopbackHost(r.Host) {
+		if !webhttp.LoopbackRequest(r) {
 			// The repo's canonical error envelope, not the health envelope the
 			// success and unready paths use: this is a rejected request, not a
 			// readiness verdict, and a caller keying on {"status":...} must not
@@ -71,33 +117,4 @@ func loopbackOnly(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
-}
-
-// loopbackPeer reports whether an http.Request.RemoteAddr belongs to a loopback
-// socket peer. Forwarded headers play no part — RemoteAddr is set by the server
-// from the accepted connection. Malformed values fail closed.
-func loopbackPeer(remoteAddr string) bool {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err != nil {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-// loopbackHost reports whether a request's Host header names the local host:
-// "localhost" or a loopback IP literal, canonicalized by webhttp.CanonicalHost
-// (so 127.0.0.1:9847, [::1]:9847 and localhost all match, and a malformed Host
-// canonicalizes to "" and fails closed). Paired with loopbackPeer this is the
-// both-ends test webhttp.WithLoopbackExempt applies to the ALLOWED_HOSTS
-// carve-out: a DNS-rebound page carries the ATTACKER's name in Host even when
-// its socket peer is loopback, so the peer check alone does not close CWE-346
-// wherever the browser and the server share a loopback interface.
-func loopbackHost(host string) bool {
-	canon := webhttp.CanonicalHost(host)
-	if canon == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(canon)
-	return ip != nil && ip.IsLoopback()
 }

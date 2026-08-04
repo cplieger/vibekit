@@ -31,7 +31,7 @@ func hubWithBridge(t *testing.T, workDir string, br api.ACPBridge) *Hub {
 	cs := newFakeChatStore()
 	factory := func() api.ACPBridge { return br }
 	h := New(workDir, factory, cs)
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 	if err := cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		return true

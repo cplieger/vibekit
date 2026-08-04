@@ -126,8 +126,8 @@ func TestCheapestModel(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := CheapestModel(ctx, tc.models); got != tc.want {
-				t.Errorf("CheapestModel() = %q, want %q", got, tc.want)
+			if got := cheapestModel(ctx, tc.models); got != tc.want {
+				t.Errorf("cheapestModel() = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -174,7 +174,7 @@ func BenchmarkCheapestModel(b *testing.B) {
 		b.Run(fmt.Sprintf("catalog_%d", size), func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				CheapestModel(ctx, catalog)
+				cheapestModel(ctx, catalog)
 			}
 		})
 	}

@@ -60,6 +60,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cplieger/pathinside"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -201,15 +202,21 @@ func decodeHookID(encoded string) (string, error) {
 // $HOME/.kiro/hooks) → a ~-prefixed display path when it resolves under HOME,
 // the absolute path otherwise (display only either way; the client renders no
 // open affordance for global rows).
+//
+// Both escape tests use pathinside.RelEscapes rather than a leading-".."
+// string prefix: the rel is needed for the display path anyway, and the
+// separator-precise rule keeps a hook that genuinely lives under a directory
+// whose name merely BEGINS with two dots ("..drafts/build.kiro.hook")
+// classified as the workspace hook it is instead of a global one.
 func (h *Hub) hookScopeAndPath(abs string) (scope, path string) {
 	if abs == "" {
 		return hookScopeWorkspace, ""
 	}
-	if rel, err := filepath.Rel(h.lifecycle.workDir, abs); err == nil && !strings.HasPrefix(rel, "..") {
+	if rel, err := filepath.Rel(h.lifecycle.workDir, abs); err == nil && !pathinside.RelEscapes(rel) {
 		return hookScopeWorkspace, filepath.ToSlash(rel)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if rel, err := filepath.Rel(home, abs); err == nil && !strings.HasPrefix(rel, "..") {
+		if rel, err := filepath.Rel(home, abs); err == nil && !pathinside.RelEscapes(rel) {
 			return hookScopeGlobal, "~/" + filepath.ToSlash(rel)
 		}
 	}

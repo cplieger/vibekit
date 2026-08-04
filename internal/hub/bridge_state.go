@@ -2,7 +2,6 @@ package hub
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -17,25 +16,8 @@ const (
 	bridgePrompting                    // prompt in flight
 )
 
-// Compile-time assertion: update String() when adding variants.
-var _ [bridgePrompting + 1]struct{} = [3]struct{}{}
-
 // Compile-time assertion: sharedBridge satisfies api.CommandBridge.
 var _ api.CommandBridge = (*sharedBridge)(nil)
-
-// String returns a human-readable name for the bridge lifecycle state.
-func (s bridgeState) String() string {
-	switch s {
-	case bridgeIdle:
-		return "idle"
-	case bridgeStarting:
-		return "starting"
-	case bridgePrompting:
-		return "prompting"
-	default:
-		return fmt.Sprintf("bridgeState(%d)", int(s))
-	}
-}
 
 // sharedBridge wraps an ACP bridge with the hub's per-chat state.
 // The mu mutex protects field access; the state field encodes the

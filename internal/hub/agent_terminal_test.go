@@ -60,19 +60,19 @@ func TestAgentTerminalsNewAndLookup(t *testing.T) {
 	}
 }
 
-func TestRingBuffer_LenReportsBufferSize(t *testing.T) {
+func TestRingBuffer_StoresBoundedByteCount(t *testing.T) {
 	t.Parallel()
 	r := newByteRing(20)
-	if r.Len() != 0 {
-		t.Errorf("empty byteRing.Len() = %d, want 0", r.Len())
+	if got := len(r.Bytes()); got != 0 {
+		t.Errorf("empty byteRing stored bytes = %d, want 0", got)
 	}
 	r.Write([]byte("hello"))
-	if r.Len() != 5 {
-		t.Errorf("byteRing.Len() after 'hello' = %d, want 5", r.Len())
+	if got := len(r.Bytes()); got != 5 {
+		t.Errorf("byteRing stored bytes after 'hello' = %d, want 5", got)
 	}
 	r.Write([]byte(" world, this is long"))
-	if r.Len() > 20 {
-		t.Errorf("byteRing.Len() = %d, exceeds limit 20", r.Len())
+	if got := len(r.Bytes()); got > 20 {
+		t.Errorf("byteRing stored bytes = %d, exceeds limit 20", got)
 	}
 }
 

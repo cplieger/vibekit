@@ -346,7 +346,7 @@ func TestWorkflowMeta_SubtaskID(t *testing.T) {
 // paragraph — reproducing exactly the context confusion workflows exist to fix.
 func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "m1" }))
+	tr := New(deps, withIDGenerator(func() string { return "m1" }))
 	ctx := context.Background()
 	buf := deps.bufStore.GetOrInit(testChat)
 
@@ -400,7 +400,7 @@ func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
 // nodeId is the key: a repeat's iterations reuse the node id.
 func TestStepChunk_TwoIterationsDoNotShareABlock(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "m1" }))
+	tr := New(deps, withIDGenerator(func() string { return "m1" }))
 	ctx := context.Background()
 	buf := deps.bufStore.GetOrInit(testChat)
 
@@ -572,7 +572,7 @@ func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
 // path, one step's work fragments across two delegated-work boxes.
 func TestStepToolCall_SharesTheStepsBlockKey(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "m1" }))
+	tr := New(deps, withIDGenerator(func() string { return "m1" }))
 	ctx := context.Background()
 	buf := deps.bufStore.GetOrInit(testChat)
 

@@ -62,7 +62,7 @@ func (d *baseDeps) IsHookStatusEnabled() bool                        { return fa
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 
 func BenchmarkTranslator_HandleToolCall(b *testing.B) {
-	tr := New(newBaseDeps(), WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(newBaseDeps(), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
 	chatID := api.ChatID("bench-chat")
 
@@ -76,7 +76,7 @@ func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 // overhead on the steady-state path (buffer already started).
 func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
 	chatID := api.ChatID("bench-chunk")
 
@@ -98,7 +98,7 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 // Measures end-to-end throughput including buffer management.
 func BenchmarkTranslator_FullTurn(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
@@ -126,7 +126,7 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 
 func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps, WithIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := context.Background()
 	chatID := api.ChatID("bench-usage")
 	raw := json.RawMessage(`{"size":100000,"used":42500}`)

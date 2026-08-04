@@ -23,8 +23,8 @@
     "eslint": "10.8.0",
     "fast-check": "4.9.0",
     "happy-dom": "20.11.1",
-    "html-validate": "11.5.6",
-    "knip": "6.29.0",
+    "html-validate": "11.6.0",
+    "knip": "6.31.0",
     "prettier": "3.9.6",
     "stylelint": "17.14.1",
     "stylelint-config-standard": "40.0.0",
@@ -35,10 +35,11 @@
   "dependencies": {
     "@cplieger/actions": "3.1.1",
     "@cplieger/fetch": "2.1.0",
+    "@cplieger/keyenc": "1.0.1",
     "@cplieger/reactive": "1.2.5",
     "@cplieger/ui-primitives": "3.0.0",
-    "@cplieger/web-terminal-engine": "3.2.0",
-    "@cplieger/web-terminal-ui": "4.8.1",
+    "@cplieger/web-terminal-engine": "3.4.0",
+    "@cplieger/web-terminal-ui": "5.2.1",
     "ansi_up": "6.0.6"
   },
   "overrides": {
