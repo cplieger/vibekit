@@ -104,10 +104,7 @@ function repaint(): void {
 }
 
 /** @internal Pure derivation for testing. */
-function deriveState(
-  status: StatusAllResponse | null,
-  forges: ForgesListResponse | null,
-): BadgeState {
+function deriveState(status: StatusAllResponse, forges: ForgesListResponse | null): BadgeState {
   // Forge error trumps everything: an unusable forge means PR/clone
   // operations would fail; surface it first.
   if (forges !== null) {
@@ -120,9 +117,6 @@ function deriveState(
     if (erroredIds.length > 0) {
       return { kind: "error", forgeIds: erroredIds };
     }
-  }
-  if (status === null) {
-    return { kind: "none" };
   }
 
   let dirtyCount = 0;

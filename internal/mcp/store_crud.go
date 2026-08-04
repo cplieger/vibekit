@@ -213,7 +213,11 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 		return err
 	}
 	s.mu.Unlock()
-	slog.Info("mcp: server deleted", "id", id)
+	// Log the STORED record's id, not the request parameter: identical
+	// bytes (the index lookup matched them), but the stored value is
+	// vibekit-generated at Create (newID base32), which breaks the
+	// user-input taint chain a raw path segment would carry into the log.
+	slog.Info("mcp: server deleted", "id", removed.ID)
 	s.notifyChange(ctx)
 	return nil
 }
