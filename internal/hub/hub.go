@@ -259,11 +259,6 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.Effor
 	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
 }
 
-// MCPConfig returns the MCP configuration store.
-func (h *Hub) MCPConfig() api.MCPConfig {
-	return h.mcpConfig
-}
-
 // MCPRegistry returns the in-memory registry of currently-connected MCP
 // servers as an api.RouteHandler (the only surface main.go needs — the
 // registry registers its own HTTP routes). Exposing the concrete type

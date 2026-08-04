@@ -20,9 +20,6 @@ type NopChatStore struct{}
 // RegisterRoutes is a no-op; implements api.ChatStore.
 func (NopChatStore) RegisterRoutes(*http.ServeMux) {}
 
-// SetBroadcaster is a no-op; implements api.ChatStore.
-func (NopChatStore) SetBroadcaster(api.Broadcaster) {}
-
 // Get returns (nil, false); implements api.ChatStore.
 func (NopChatStore) Get(context.Context, api.ChatID) (*api.Chat, bool) { return nil, false }
 
@@ -64,9 +61,6 @@ type RecordingChatStore struct {
 func NewRecordingChatStore() *RecordingChatStore {
 	return &RecordingChatStore{Chats: make(map[api.ChatID]*api.Chat)}
 }
-
-// SetBroadcaster sets the broadcaster used to fan out chat lifecycle events.
-func (s *RecordingChatStore) SetBroadcaster(b api.Broadcaster) { s.Bus = b }
 
 // RegisterRoutes is a no-op; implements api.ChatStore.
 func (s *RecordingChatStore) RegisterRoutes(_ *http.ServeMux) {}

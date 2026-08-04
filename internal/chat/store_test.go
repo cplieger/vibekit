@@ -62,7 +62,7 @@ func newTestStore(t *testing.T) (*Store, *fakeBroadcaster) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	b := &fakeBroadcaster{}
-	s.SetBroadcaster(b)
+	WithBroadcaster(b)(s)
 	return s, b
 }
 

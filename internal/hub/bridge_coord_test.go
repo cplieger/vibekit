@@ -345,7 +345,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 						return map[string]struct{}{}, tc.complete
 					},
 				))
-			cs.SetBroadcaster(h)
+			cs.Bus = h
 			t.Cleanup(func() { h.Shutdown() })
 
 			h.sweepSessionsOnce()
@@ -373,7 +373,7 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	// a per-spawn factory instead.
 	cs := newFakeChatStore()
 	h := New("/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs)
-	cs.SetBroadcaster(h)
+	cs.Bus = h
 
 	setSession := func(chatID api.ChatID, sessionID string) {
 		t.Helper()

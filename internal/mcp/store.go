@@ -166,11 +166,6 @@ func WithEnv(env []KeyPair) ServerOption {
 	return func(s *Server) { s.Env = env }
 }
 
-// WithHeaders sets HTTP headers for HTTP transport servers.
-func WithHeaders(headers []KeyPair) ServerOption {
-	return func(s *Server) { s.Headers = headers }
-}
-
 // KeyPair is an ordered env-var or header entry. Ordered (vs map) so
 // the UI can edit entries without dropping duplicates; the on-wire ACP
 // format is a JSON object so we flatten on export.

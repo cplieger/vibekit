@@ -176,3 +176,32 @@ internal/testsupport/bridge_prestart_contract.go
 # TestNew_DefaultKASPathIsUnderKiroHome, so production cannot silently
 # drift to the test path either.
 function WithKASConfigPath
+
+# --- 14. Test-isolation seam that prevents writing the developer's own
+# $HOME, part two. SetKiroHomeForTest installs a kiro-home RESOLVER (not
+# just a cached value: KiroHome() only consults the cache when a resolver
+# is present, so seeding the cache alone silently did nothing and the
+# "override" fell through to os.UserHomeDir()). Four packages' tests use
+# it (composition, mcp, steering x2) to point ~/.kiro writes at
+# t.TempDir(); without it they overwrite the developer's real files.
+function SetKiroHomeForTest
+
+# --- 15. Cross-package test synchronisation. The purge scheduler runs a
+# goroutine; internal/chat's store tests (a DIFFERENT package from
+# archive, so no access to the unexported done field) wait on Done() to
+# assert the drain instead of sleeping. archive's own tests read .done
+# directly.
+method (*PurgeScheduler).Done
+
+# --- 16. Validated construction seam for internal/mcp's own tests.
+# Production servers are decoded from JSON (UnmarshalJSON is the
+# boundary that rejects unknown transports; the REST handlers persist
+# what the client sent after Validate). The kasfile render tests build
+# their fixtures through NewServer + options because a hand-rolled
+# struct literal would skip the same Validate the production path runs,
+# letting a fixture drift into a shape production would refuse.
+function NewServer is
+function WithCommand
+function WithURL is
+function WithOAuthClientID
+function WithEnv is

@@ -92,6 +92,3 @@ func (d *Dispatcher) PendingPerms() PendingPermAccess { return d.deps }
 
 // Terminals returns the TerminalAccess subset of dependencies.
 func (d *Dispatcher) Terminals() TerminalAccess { return d.deps }
-
-// Infra returns the InfraDeps subset of dependencies.
-func (d *Dispatcher) Infra() InfraDeps { return d.deps }
