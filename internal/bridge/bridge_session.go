@@ -72,13 +72,20 @@ type sessionCreated struct {
 	ConfigOptions []sessionConfigOption `json:"configOptions"`
 }
 
-// There is no mcpServers parameter on session/new or session/load, and no
-// normalizeMCPServers. KAS reads the user's MCP servers from its own
+// session/new and session/load carry `mcpServers: []` — always EMPTY, never
+// vibekit's server set. KAS reads the user's MCP servers from its own
 // hot-reloading config file, which vibekit renders (internal/mcp/kasfile.go).
 //
-// Do not add it back as a convenience. KAS merges `client > file-based`, so an
-// inline entry OUTRANKS the file: the file would still hot-reload, the agent
-// would keep using the inline copy, and every edit in the UI would look like it
+// The key itself is REQUIRED: kiro-cli 2.16's session/new schema declares
+// mcpServers as a non-optional array, so omitting it fails every session
+// with "Invalid params: expected array, received undefined". The empty
+// array is SAFE alongside the file: KAS's mergeServers unions the four
+// sources per NAME (client entries win only for names they carry), so zero
+// client entries leaves the file-based set untouched.
+//
+// Do not put real entries back as a convenience. A client entry OUTRANKS
+// the file for its name: the file would still hot-reload, the agent would
+// keep using the inline copy, and every edit in the UI would look like it
 // did nothing. The parameter is also lossier — KAS's acpServerToWire drops
 // oauth, oauthScopes, autoApprove, cwd and timeout from a client-supplied entry.
 
@@ -88,7 +95,9 @@ func validIdent(s string) bool {
 }
 
 func (b *Bridge) newSession(ctx context.Context, mode string, supervised bool) error {
-	resp, err := b.Call(ctx, methodSessionNew, map[string]any{"cwd": b.workDir})
+	resp, err := b.Call(ctx, methodSessionNew, map[string]any{
+		"cwd": b.workDir, "mcpServers": []any{},
+	})
 	if err != nil {
 		return fmt.Errorf("session/new: %w", err)
 	}
@@ -162,7 +171,7 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 
 func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string) error {
 	resp, err := b.Call(ctx, methodSessionLoad, map[string]any{
-		api.KeySessionID: acpSessionID, "cwd": b.workDir,
+		api.KeySessionID: acpSessionID, "cwd": b.workDir, "mcpServers": []any{},
 	})
 	if err != nil {
 		return fmt.Errorf("session/load: %w", err)

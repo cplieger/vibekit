@@ -798,7 +798,7 @@
 .btn-small.primary,
 .btn-small.btn-primary {
   background: var(--c-accent);
-  color: #fff;
+  color: var(--c-on-accent);
   border-color: var(--c-accent);
 }
 

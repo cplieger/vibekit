@@ -420,7 +420,7 @@
   font-size: 0.5rem;
   font-weight: var(--fw-semibold);
   background: var(--c-accent);
-  color: #fff;
+  color: var(--c-on-accent);
   border-radius: 0.5rem;
   padding: 0 0.25rem;
   min-width: 0.875rem;
@@ -845,7 +845,7 @@
   border: none;
   border-radius: 1rem;
   background: var(--c-accent);
-  color: #fff;
+  color: var(--c-on-accent);
   cursor: pointer;
   padding: 0 var(--sp-3);
   min-width: 2.25rem;

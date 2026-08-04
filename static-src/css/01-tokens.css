@@ -10,9 +10,20 @@
     --c-text-primary: oklch(100% 0 0deg);
     --c-text-secondary: oklch(75.1% 0.04 273.9deg);
     --c-text-tertiary: oklch(55% 0.034 277.1deg);
-    --c-accent: oklch(59% 0.254 295.8deg);
-    --c-accent-hover: oklch(54.1% 0.247 293deg);
-    --c-accent-subtle: oklch(35.6% 0.172 285.8deg);
+    /* Accent is THEME-SPLIT: dark mode carries web-terminal-kiro's pastel
+     * violet family (#c099ff) because the old deep purple (#9046FF,
+     * oklch(59% 0.254 295.8deg)) read at 3.5:1 as text on --c-bg-primary;
+     * the pastel reads at 7.2:1. Light mode keeps the deep purple. A pastel
+     * fill inverts its ink: anything ON an accent fill uses --c-on-accent
+     * (dark ink here, white in light mode), never a hardcoded #fff. The
+     * --img-*-on-accent tokens bake that same ink into the checkbox glyph
+     * SVGs, which as data URIs cannot read custom properties. */
+    --c-accent: oklch(75.8% 0.147 300.4deg);
+    --c-accent-hover: oklch(70% 0.16 300.4deg);
+    --c-accent-subtle: oklch(35.6% 0.15 300.4deg);
+    --c-on-accent: oklch(22% 0.05 300.4deg);
+    --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e142e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e142e' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
 
     /* Tab selection. DERIVED, not two hand-picked swatches per theme: the fill
      * is accent-over-surface and the edge is that fill lightened toward the text
@@ -119,6 +130,9 @@
       --c-accent: oklch(50% 0.254 295.8deg);
       --c-accent-hover: oklch(45% 0.247 293deg);
       --c-accent-subtle: oklch(90% 0.06 285.8deg);
+      --c-on-accent: oklch(100% 0 0deg);
+      --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+      --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
       --c-border: oklch(85% 0.01 283.8deg);
       --c-green: oklch(50% 0.12 142.7deg);
       --c-red: oklch(55% 0.15 2.8deg);
@@ -161,6 +175,9 @@
     --c-accent: oklch(50% 0.254 295.8deg);
     --c-accent-hover: oklch(45% 0.247 293deg);
     --c-accent-subtle: oklch(90% 0.06 285.8deg);
+    --c-on-accent: oklch(100% 0 0deg);
+    --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
     --c-border: oklch(85% 0.01 283.8deg);
     --c-green: oklch(50% 0.12 142.7deg);
     --c-red: oklch(55% 0.15 2.8deg);

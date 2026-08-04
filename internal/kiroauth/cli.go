@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -83,17 +84,27 @@ type CLISource struct {
 	// bridge factory's cliPath).
 	resolve func() string
 
+	// env returns the environment overlay for the invocation — the install
+	// manager's PATH overlay leading with the active version directory. It
+	// is REQUIRED for correctness, not hygiene: `kiro-cli chat` delegates
+	// to the kiro-cli-chat sidecar by BARE NAME on PATH (it does not look
+	// beside its own executable), so without the overlay every invocation
+	// fails with ENOENT even though the sidecar sits next to the binary.
+	// nil = no overlay (tests).
+	env func() []string
+
 	// runCommand is the exec seam for tests; production uses execGetToken.
-	runCommand func(ctx context.Context, cliPath string) ([]byte, error)
+	runCommand func(ctx context.Context, cliPath string, env []string) ([]byte, error)
 
 	cached *tokenData
 	expiry time.Time
 	mu     sync.Mutex
 }
 
-// NewCLISource builds a CLISource over the given binary resolver.
-func NewCLISource(resolve func() string) *CLISource {
-	return &CLISource{resolve: resolve, runCommand: execGetToken}
+// NewCLISource builds a CLISource over the given binary resolver and
+// environment-overlay source (both from the install manager).
+func NewCLISource(resolve func() string, env func() []string) *CLISource {
+	return &CLISource{resolve: resolve, env: env, runCommand: execGetToken}
 }
 
 // Token returns the current access token result for the auth callback:
@@ -113,9 +124,13 @@ func (s *CLISource) Token(ctx context.Context) (map[string]any, error) {
 	if cliPath == "" {
 		return nil, errCLIUnavailable
 	}
+	var overlay []string
+	if s.env != nil {
+		overlay = s.env()
+	}
 	cctx, cancel := context.WithTimeout(ctx, cliTimeout)
 	defer cancel()
-	out, err := s.runCommand(cctx, cliPath)
+	out, err := s.runCommand(cctx, cliPath, overlay)
 	if err != nil {
 		// stdout is NOT echoed into the error: on success it holds the
 		// token, and a partial failure could still carry one.
@@ -183,9 +198,14 @@ func parseTokenEnvelope(out []byte) (*tokenData, error) {
 
 // execGetToken runs `<cliPath> chat _ get-kas-token` and returns stdout.
 // stderr is discarded: the CLI logs progress there, and folding it into
-// errors risks echoing sensitive material into logs.
-func execGetToken(ctx context.Context, cliPath string) ([]byte, error) {
+// errors risks echoing sensitive material into logs. env is the PATH
+// overlay; exec.Cmd deduplicates duplicate keys taking the LAST entry, so
+// appending it to the ambient environment makes the overlay win.
+func execGetToken(ctx context.Context, cliPath string, env []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, cliPath, "chat", "_", "get-kas-token")
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("exec: %w", err)

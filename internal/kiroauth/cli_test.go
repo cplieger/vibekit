@@ -12,8 +12,8 @@ import (
 
 // fakeRun returns a runCommand seam that counts invocations and returns
 // the given output/error.
-func fakeRun(calls *int, out string, err error) func(context.Context, string) ([]byte, error) {
-	return func(context.Context, string) ([]byte, error) {
+func fakeRun(calls *int, out string, err error) func(context.Context, string, []string) ([]byte, error) {
+	return func(context.Context, string, []string) ([]byte, error) {
 		*calls++
 		if err != nil {
 			return nil, err
@@ -112,8 +112,8 @@ func TestTokenResult_OmitsEmptyOptionalFields(t *testing.T) {
 
 func TestToken_NoResolver(t *testing.T) {
 	for name, src := range map[string]*CLISource{
-		"nil resolver":   NewCLISource(nil),
-		"empty resolver": NewCLISource(func() string { return "" }),
+		"nil resolver":   NewCLISource(nil, nil),
+		"empty resolver": NewCLISource(func() string { return "" }, nil),
 	} {
 		if _, err := src.Token(context.Background()); !errors.Is(err, errCLIUnavailable) {
 			t.Errorf("%s: err = %v, want errCLIUnavailable", name, err)
@@ -123,7 +123,7 @@ func TestToken_NoResolver(t *testing.T) {
 
 func TestToken_SuccessAndCache(t *testing.T) {
 	calls := 0
-	src := NewCLISource(func() string { return "/fake/kiro-cli" })
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
 	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(time.Hour).Format(time.RFC3339Nano)), nil)
 
 	res, err := src.Token(context.Background())
@@ -148,7 +148,7 @@ func TestToken_SuccessAndCache(t *testing.T) {
 
 func TestToken_NearExpiryReinvokes(t *testing.T) {
 	calls := 0
-	src := NewCLISource(func() string { return "/fake/kiro-cli" })
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
 	// Expires in 1 minute — inside the 5-minute reuse leeway, so every
 	// call must re-ask the CLI (which owns the refresh decision).
 	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(time.Minute).Format(time.RFC3339Nano)), nil)
@@ -165,7 +165,7 @@ func TestToken_NearExpiryReinvokes(t *testing.T) {
 
 func TestToken_UnparseableExpiryVendsButNeverCaches(t *testing.T) {
 	calls := 0
-	src := NewCLISource(func() string { return "/fake/kiro-cli" })
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
 	src.runCommand = fakeRun(&calls, envelope("not-a-timestamp"), nil)
 
 	res, err := src.Token(context.Background())
@@ -185,7 +185,7 @@ func TestToken_UnparseableExpiryVendsButNeverCaches(t *testing.T) {
 
 func TestToken_CLIFailureWrapped(t *testing.T) {
 	calls := 0
-	src := NewCLISource(func() string { return "/fake/kiro-cli" })
+	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
 	src.runCommand = fakeRun(&calls, "", errors.New("exit status 1"))
 
 	_, err := src.Token(context.Background())

@@ -93,16 +93,20 @@
     outline-offset: 2px;
   }
 
+  /* Glyph SVGs come from the theme tokens: a data URI cannot read
+     --c-on-accent, so 01-tokens.css bakes the per-theme ink into
+     --img-{check,dash}-on-accent (dark ink on the pastel dark-mode accent,
+     white on the deep light-mode accent). */
   input[type="checkbox"]:checked {
     background-color: var(--c-accent);
     border-color: var(--c-accent);
-    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
+    background-image: var(--img-check-on-accent);
   }
 
   input[type="checkbox"]:indeterminate {
     background-color: var(--c-accent);
     border-color: var(--c-accent);
-    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
+    background-image: var(--img-dash-on-accent);
   }
 
   input[type="checkbox"]:disabled {

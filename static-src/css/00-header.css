@@ -8,7 +8,7 @@
 @property --c-accent {
   syntax: "<color>";
   inherits: true;
-  initial-value: oklch(59% 0.254 295.8deg);
+  initial-value: oklch(75.8% 0.147 300.4deg);
 }
 
 @property --mcp-hue {

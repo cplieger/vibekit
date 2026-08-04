@@ -112,7 +112,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	h := hub.New(cfg.WorkDir, bridgeFactory, chatStore,
 		hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc),
 		hub.WithACPArgs(cfg.ACPArgs),
-		hub.WithKiroCLIPath(kiro.cliPath),
+		hub.WithKiroCLIPath(kiro.cliPath, kiro.env),
 		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs))
 	chat.WithBroadcaster(h)(chatStore)
 
