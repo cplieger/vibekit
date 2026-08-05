@@ -1,11 +1,15 @@
 // ---------------------------------------------------------------------------
-// Read-only review of one previous workflow run.
+// One workflow run: its node tree, its captured outputs, and its controls.
 //
-// Opened from the History list. A completed run has nothing to steer, so this
-// view has no composer, no input bar and no cancel — it is the run's node tree
-// and its captured outputs, and closing the tab closes nothing else. (The
-// live-run tab, which CAN be cancelled and whose close kills the run, is a
-// different surface.)
+// Opened from the History list (a review) or from the Workflows tab (a live,
+// launcher-owned tab whose close cancels the run).
+//
+// The four controls are KAS's own verbs, routed through the server. This view
+// used to be read-only on the reasoning that "a completed run has nothing to
+// steer" — true of steering, but a FAILED run has something to do about it, and
+// retry is exactly the verb a review of a failure wants. What the read-only note
+// was right about is kept: there is still no composer and no input bar, because
+// there is nobody to type to.
 //
 // The tree is rendered from KAS's own `state` shape, passed through verbatim by
 // GET /api/runs/{id}. vibekit deliberately does not re-model it: the
@@ -17,7 +21,18 @@ import { apiGet } from "./api-client.js";
 import { el } from "@cplieger/reactive";
 import { openRunTab } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks } from "./decision-dock.js";
-import { cancelRun } from "./actions/runs.js";
+import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
+import { RUN_CONTROLS, CONTROL_LABEL, type RunVerb } from "./run-controls.js";
+
+/** Verb → its action. Separate from run-controls.ts's table on purpose: that
+ *  module is the pure RULE and must stay importable without the actions
+ *  framework; this is the wiring. */
+const RUN_ACTION: Record<RunVerb, { dispatch: (id: string) => Promise<unknown> }> = {
+  pause: pauseRun,
+  resume: resumeRun,
+  retry: retryRun,
+  cancel: cancelRun,
+};
 
 /** One node of a run's state tree, as KAS reports it. Recursive: a sequence or
  *  repeat node carries children, a step node is a leaf. */
@@ -135,6 +150,7 @@ async function load(workflowID: string): Promise<void> {
       { className: "run-summary" },
       el("span", { className: "run-status" }, state.status ?? "unknown"),
       el("span", { className: "text-muted text-sm" }, state.workflowId),
+      buildRunControls(workflowID, state.status ?? ""),
     ),
   );
 
@@ -162,6 +178,36 @@ async function load(workflowID: string): Promise<void> {
   }
 
   container.replaceChildren(...parts);
+}
+
+/** The run's control row. Empty for an unknown status, which renders nothing
+ *  rather than an empty container. */
+function buildRunControls(workflowID: string, status: string): HTMLElement | null {
+  const verbs = RUN_CONTROLS[status];
+  if (verbs === undefined) {
+    return null;
+  }
+  const row = el("div", { className: "run-controls" });
+  for (const verb of verbs) {
+    const dispatch = RUN_ACTION[verb];
+    const btn = el(
+      "button",
+      {
+        type: "button",
+        className: verb === "cancel" ? "btn btn-sm btn-danger" : "btn btn-sm",
+        onclick: () => {
+          // No optimistic state flip. Every one of these verbs settles at a NODE
+          // boundary, so the run is still `running` when the reply arrives and a
+          // flipped label would be a lie for as long as the node takes. The
+          // run_progress invalidation is what repaints this row.
+          void dispatch.dispatch(workflowID);
+        },
+      },
+      CONTROL_LABEL[verb],
+    );
+    row.appendChild(btn);
+  }
+  return row;
 }
 
 /** Render one node and its children. Depth drives indentation only. */

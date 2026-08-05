@@ -26,15 +26,30 @@ package hub
 //     its `capturedOutput`, which `inspect` returns and the run view renders. The
 //     transcript would be a third copy of content already in two places.
 //
-// There are no mutations here at all. Runs have no controls (user decision): no
-// Retry, no Continue, no Pause, no Resume, no Delete. The agent orchestrates and
-// decides; the one cancel vibekit performs is on tab close and is server-internal.
+// The mutations here are the four run-control verbs: cancel, pause, resume and
+// retry. All four are KAS's own, and this file only routes to them.
+//
+// That reverses a recorded decision, deliberately and with a reason. The
+// previous note read "Runs have no controls (user decision): no Retry, no
+// Continue, no Pause, no Resume, no Delete. The agent orchestrates and decides."
+// It was taken when the assumption was that offering a control meant BUILDING
+// one — a state machine vibekit would own, competing with the agent's own
+// orchestration. The 2.16.1 sweep established that every verb is already a live
+// handler in the pinned binary, so the choice was never build-or-not; it was
+// route-or-not, and withholding the route left a paused run with no way forward
+// except deleting the chat.
+//
+// What the original decision was right about is kept: vibekit adds no control of
+// its own, no scheduling, no retry policy and no delete. Each route is one call
+// to one native verb, gated on the statuses KAS itself accepts.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/workflow"
@@ -87,6 +102,39 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	h.translator.RecordRunSteps(raw)
 	api.WriteRawJSON(w, raw)
+}
+
+// runStatus reads one run's current status via `_kiro/workflow/inspect`.
+// Returns "" when the run is unknown, which the caller turns into a 404.
+//
+// Its own inspect call rather than a shared cache: a control decision must be
+// made against the status as of NOW, and the run list the client rendered its
+// buttons from is by definition older than the click. This is one round trip on
+// a deliberate user action, not a hot path.
+func (h *Hub) runStatus(ctx context.Context, workflowID string) (string, error) {
+	u := h.ensureUtility()
+	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
+	defer cancel()
+	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
+		callerParams(map[string]any{keyWorkflowID: workflowID}))
+	if err != nil {
+		// An unknown run and an unavailable engine are both "no status to gate
+		// on" rather than a fault to report: the caller 404s, and the verb is
+		// not attempted.
+		if workflow.IsUnknownMethod(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	var res struct {
+		State struct {
+			Status string `json:"status"`
+		} `json:"state"`
+	}
+	if uErr := json.Unmarshal(raw, &res); uErr != nil {
+		return "", uErr
+	}
+	return res.State.Status, nil
 }
 
 // handleRecipes: GET /api/recipes → the launchable recipe list, bundled +
@@ -148,6 +196,73 @@ func launchErrText(err error) string {
 // the terminal run_complete (and the run_finished SSE it becomes) follows at
 // the in-flight node's end.
 func (h *Hub) handleRunCancel(w http.ResponseWriter, r *http.Request) {
+	h.runControlHandler(w, r, runVerbCancel)
+}
+
+// handleRunPause / handleRunResume / handleRunRetry are the three run-control
+// verbs added once the 2.16.1 sweep established that all of them were already
+// live server-side. Each is the same shape as cancel; the differences are which
+// statuses permit them, which runVerb carries.
+func (h *Hub) handleRunPause(w http.ResponseWriter, r *http.Request) {
+	h.runControlHandler(w, r, runVerbPause)
+}
+
+func (h *Hub) handleRunResume(w http.ResponseWriter, r *http.Request) {
+	h.runControlHandler(w, r, runVerbResume)
+}
+
+func (h *Hub) handleRunRetry(w http.ResponseWriter, r *http.Request) {
+	h.runControlHandler(w, r, runVerbRetry)
+}
+
+// runVerb describes one run-control verb: how to issue it, and which run
+// statuses it is legal from.
+//
+// The status gate exists because KAS's own refusals are throws that surface as a
+// -32603 with the reason buried in `error.data`, and two of them are ordinary
+// user timing rather than faults: clicking Retry on a run that just resumed, or
+// Pause on one that just finished. Gating here turns those into a 409 naming the
+// current status, and leaves -32603 to mean something actually went wrong.
+//
+// KAS remains the authority. The gate is a pre-check against a status read one
+// round trip earlier, so a run that changes state in between still gets KAS's
+// refusal, forwarded verbatim.
+type runVerb struct {
+	name  string
+	issue func(*Hub, context.Context, string) error
+	// from lists the statuses the verb is legal from. Empty means unrestricted.
+	from []string
+}
+
+// The workflow status vocabulary is KAS's WorkflowStatusSchema:
+// running | paused | completed | failed | aborted.
+var (
+	runVerbCancel = runVerb{
+		name: "cancel",
+		// Deliberately unrestricted. Cancel is the tab-close gesture and must
+		// never be the verb that fails; KAS is idempotent on an
+		// already-terminal run (it answers ok with the previous status).
+		issue: (*Hub).CancelRun,
+	}
+	runVerbPause = runVerb{
+		name:  "pause",
+		issue: (*Hub).PauseRun,
+		from:  []string{"running"},
+	}
+	runVerbResume = runVerb{
+		name:  "resume",
+		issue: (*Hub).ResumeRun,
+		from:  []string{"paused"},
+	}
+	runVerbRetry = runVerb{
+		name:  "retry",
+		issue: (*Hub).RetryRun,
+		// KAS throws for anything non-terminal, naming these three.
+		from: []string{"completed", "failed", "aborted"},
+	}
+)
+
+func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
 	if r.Method != http.MethodPost {
 		api.MethodNotAllowed(w, http.MethodPost)
 		return
@@ -157,9 +272,27 @@ func (h *Hub) handleRunCancel(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "missing workflow id")
 		return
 	}
-	if err := h.CancelRun(r.Context(), id); err != nil {
-		slog.Warn("run cancel failed", "workflow_id", id, "error", err, "detail", workflow.Details(err))
-		api.InternalError(w, errors.New("cancel failed"))
+	if len(verb.from) > 0 {
+		status, err := h.runStatus(r.Context(), id)
+		if err != nil {
+			slog.Warn("run control: status read failed",
+				"verb", verb.name, "workflow_id", id, "error", err, "detail", workflow.Details(err))
+			api.InternalError(w, errors.New(verb.name+" failed"))
+			return
+		}
+		if status == "" {
+			api.NotFound(w, "run not found")
+			return
+		}
+		if !slices.Contains(verb.from, status) {
+			api.Conflict(w, verb.name+" is not available for a "+status+" run")
+			return
+		}
+	}
+	if err := verb.issue(h, r.Context(), id); err != nil {
+		slog.Warn("run control failed",
+			"verb", verb.name, "workflow_id", id, "error", err, "detail", workflow.Details(err))
+		api.InternalError(w, errors.New(verb.name+" failed"))
 		return
 	}
 	api.Ok(w)

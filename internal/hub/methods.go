@@ -159,6 +159,22 @@ const (
 	methodKiroWorkflowInvoke      = "_kiro/workflow/invoke"
 	methodKiroWorkflowCancel      = "_kiro/workflow/cancel"
 	methodKiroWorkflowResume      = "_kiro/workflow/resume"
+	// The two remaining run-control verbs, wired 2026-08 after the 2.16.1
+	// sweep found every one of them already live server-side. Their contracts,
+	// read off the handler bodies rather than inferred:
+	//
+	//   pause  {workflowId} -> {paused:true}. Sets control.pauseRequested; the
+	//          run stops at the next NODE boundary, like cancel.
+	//   retry  {workflowId, nodeId?} -> throws unless the run is TERMINAL
+	//          (completed/failed/aborted) and re-drives from the failed node,
+	//          or from nodeId when given.
+	//
+	// cancel additionally takes an optional `targetStatus` (default "aborted")
+	// that vibekit does not send: the UI verb is "stop", and letting a client
+	// choose which terminal status a stop records would make the run history
+	// mean different things depending on which door was used.
+	methodKiroWorkflowPause = "_kiro/workflow/pause"
+	methodKiroWorkflowRetry = "_kiro/workflow/retry"
 )
 
 // v3 (KAS) hook-management method names. list/setEnabled/triggerHook are C→A

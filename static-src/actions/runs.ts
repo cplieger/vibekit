@@ -1,10 +1,15 @@
 // ---------------------------------------------------------------------------
-// Workflow-run actions: the recipe list, launch, and cancel.
+// Workflow-run actions: the recipe list, launch, and the four run controls.
 //
-// Launch and cancel are the app's ONLY run verbs (user decision): there is no
-// pause, resume, retry or delete anywhere. Cancel is a stop, the same gesture
-// as closing the tab — which is exactly what dispatches it for a launcher-owned
-// run tab.
+// Cancel, pause, resume and retry are all KAS's own verbs; vibekit adds no
+// control of its own and no policy. Cancel doubles as the tab-close gesture,
+// which is what dispatches it for a launcher-owned run tab.
+//
+// This replaces an earlier note that said launch and cancel were the app's only
+// run verbs by user decision. That decision assumed offering a control meant
+// building one; the 2.16.1 sweep found every verb already live in the pinned
+// binary, so the real choice was whether to route to them — and not routing left
+// a paused run with no way forward except deleting the chat.
 // ---------------------------------------------------------------------------
 
 import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
@@ -68,3 +73,36 @@ export const cancelRun = apiAction<string, { ok: boolean }>({
   }),
   error: "Couldn't cancel the run",
 });
+
+/** One run-control verb. All four share a shape: POST to a sub-path, no body,
+ *  `{ok:true}` back. Built rather than written four times so a fifth verb is one
+ *  line and cannot drift from the others. */
+function runControl(verb: string, errorText: string) {
+  return apiAction<string, { ok: boolean }>({
+    name: `runs.${verb}`,
+    request: (workflowID) => ({
+      method: "POST",
+      path: `/api/runs/${encodeURIComponent(workflowID)}/${verb}`,
+    }),
+    error: errorText,
+  });
+}
+
+/** Stop a run at its next node boundary, keeping it resumable.
+ *
+ *  Like cancel, the reply confirms the ASK: KAS sets a pause flag and the
+ *  in-flight node runs to completion, so the run is still `running` when this
+ *  resolves. The paused state arrives as a run_progress invalidation. */
+export const pauseRun = runControl("pause", "Couldn't pause the run");
+
+/** Re-drive a paused run. Works even when the launching process is gone — KAS
+ *  reloads the run from disk — which is why the button is offered on any paused
+ *  run rather than only on one this browser started. */
+export const resumeRun = runControl("resume", "Couldn't resume the run");
+
+/** Re-drive a finished run from its failed node.
+ *
+ *  Only legal on a terminal run (completed, failed or aborted); the server
+ *  answers 409 naming the current status otherwise, which is the honest response
+ *  to clicking Retry on a run that resumed a moment ago. */
+export const retryRun = runControl("retry", "Couldn't retry the run");
