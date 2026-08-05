@@ -147,13 +147,50 @@ func (h *Hub) LaunchRun(ctx context.Context, source string, inputs map[string]st
 // because the owning process must live to the node boundary to certify the
 // cancelled state.
 func (h *Hub) CancelRun(ctx context.Context, workflowID string) error {
+	return h.runControl(ctx, workflowID, methodKiroWorkflowCancel, "workflow cancel call")
+}
+
+// PauseRun asks a running run to stop at its next node boundary, keeping its
+// state resumable. Same delivery shape as CancelRun, and the same node-boundary
+// semantics: KAS sets `control.pauseRequested` and the in-flight node runs to
+// completion, so the reply confirms the ASK rather than a paused state.
+func (h *Hub) PauseRun(ctx context.Context, workflowID string) error {
+	return h.runControl(ctx, workflowID, methodKiroWorkflowPause, "workflow pause call")
+}
+
+// ResumeRun re-drives a paused run. KAS loads it from disk when the registry
+// has lost it, so this works on a run whose owning process died — which is why
+// it is safe to offer on any paused run rather than only on one this process
+// launched.
+func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
+	return h.runControl(ctx, workflowID, methodKiroWorkflowResume, "workflow resume call")
+}
+
+// RetryRun re-drives a TERMINAL run from its failed node. KAS refuses anything
+// else — it throws for a running run and for any non-terminal status — so the
+// REST layer gates on status before calling, and this returns KAS's refusal
+// verbatim if the state changed in between.
+func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
+	return h.runControl(ctx, workflowID, methodKiroWorkflowRetry, "workflow retry call")
+}
+
+// runControl issues one run-control verb, preferring the run's OWN bridge and
+// falling back to the utility bridge.
+//
+// The preference is not an optimisation. A run launched by this process has a
+// live bridge that owns the run's registry entry, and issuing the verb there is
+// what lets KAS act on the in-memory record rather than reloading it from disk.
+// The utility fallback is what makes the verb work on a run this process did not
+// launch (a TUI-launched run, or one whose launching bridge has since been
+// culled), because every one of these handlers rehydrates from disk when the
+// registry misses.
+func (h *Hub) runControl(ctx context.Context, workflowID, method, logLabel string) error {
 	params := map[string]any{keyWorkflowID: workflowID}
 	if sb := h.bridge.mgr.get(runChatID(workflowID)); sb != nil {
-		resp, err := sb.bridge.Call(ctx, methodKiroWorkflowCancel, params)
+		resp, err := sb.bridge.Call(ctx, method, params)
 		return runCallErr(resp, err)
 	}
-	_, err := h.ensureUtility().session.rawCall(ctx, "workflow cancel call", methodKiroWorkflowCancel,
-		callerParams(params))
+	_, err := h.ensureUtility().session.rawCall(ctx, logLabel, method, callerParams(params))
 	return err
 }
 
