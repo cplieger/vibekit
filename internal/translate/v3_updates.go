@@ -62,7 +62,18 @@ type sessionInfoUpdate struct {
 			// Focus is the kind=="focus_update" block: the agent's
 			// self-declared title/description/status (see focus.go).
 			Focus *focusUpdate `json:"focus"`
-			Kind  string       `json:"kind"`
+			// The steering sub-kinds' fields, FLAT beside Kind rather than in a
+			// sub-block of their own. That is not a modelling choice here: KAS's
+			// buildSessionInfoUpdate spreads the update object straight into
+			// _meta.kiro, and its legacyFields() returns {} for all three
+			// steering kinds — so unlike focus or contextUsage there is no
+			// nested object to key off, and these three must dispatch on the
+			// kind STRING. See handleSteeringUpdate.
+			MessageIDs           []string `json:"messageIds"`
+			MessageID            string   `json:"messageId"`
+			Content              string   `json:"content"`
+			NotificationSeverity string   `json:"notificationSeverity"`
+			Kind                 string   `json:"kind"`
 			// PromptTurnSummaries is KAS's per-turn metering record,
 			// emitted as a session_info_update just before the
 			// session/prompt response returns (verified on the live
@@ -95,6 +106,15 @@ type promptTurnSummary struct {
 func (t *Translator) HandleSessionInfoUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string) {
 	var u sessionInfoUpdate
 	if json.Unmarshal(raw, &u) != nil {
+		return
+	}
+	// Steering is dispatched BEFORE the parent-only gate, and deliberately.
+	// A steer belongs to the CHAT — the user typed it into this conversation —
+	// but it is consumed by whichever execution happens to be running, which may
+	// be a subagent's. Gating on attribution would drop the injected signal for
+	// exactly the case where the agent delegated, leaving a chip that says
+	// "waiting" forever over a message the model already read.
+	if t.handleSteeringUpdate(ctx, chatID, &u) {
 		return
 	}
 	step := u.Meta.Kiro.Workflow != nil && u.Meta.Kiro.Workflow.WorkflowID != ""
@@ -153,8 +173,7 @@ var knownSessionInfoKinds = map[string]struct{}{
 	"summarization_started": {}, "summarization_failed": {}, "summarization_completed": {},
 	"user_message_id_assigned": {}, "focus_update": {}, "display_error": {},
 	"pending_interaction": {}, "interaction_resolved": {}, "recap": {},
-	"steering_inclusion": {}, "steering_queued": {}, "steering_cleared": {},
-	"queued": {}, "hook_update": {}, "steering_injected": {}, "repositories_update": {},
+	"steering_inclusion": {}, "queued": {}, "hook_update": {}, "repositories_update": {},
 }
 
 // logUnconsumedInfoKind reports a session_info_update that reached the end of

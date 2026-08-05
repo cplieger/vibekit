@@ -93,6 +93,9 @@ export type {
   RunLaunchRequest,
   RunLaunchedResponse,
   SystemTool,
+  SteerQueuedPayload,
+  SteerInjectedPayload,
+  SteerClearedPayload,
   TurnEndedPayload,
   TurnStatePayload,
 } from "./wire/types.gen.js";
@@ -132,21 +135,33 @@ export interface ModelInfo {
 /** Connection status flag, surfaced through the status bar. */
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
 
-/** One prompt buffered while a turn is in flight, waiting to drain on the
- *  next `turn_ended`. Text and its attachments travel together in one entry
- *  so they can never desync (the earlier design kept attachments in a
- *  parallel map keyed positionally, which was one refactor away from
- *  leaking onto the wrong prompt). Attachments are `unknown[]` — the same
- *  loose shape the attachment row uses — carrying `AttachedFile` objects. */
-export interface QueuedPrompt {
+/** One mid-turn steer, projected from the server.
+ *
+ *  This is NOT a client-side queue entry. It is vibekit's view of a message
+ *  sitting in KAS's own per-session steering buffer, and every field here is
+ *  written by an SSE event (`steer_queued` / `steer_injected` /
+ *  `steer_cleared`) rather than by the code that sent it. The client keeps no
+ *  independent copy: there is nothing to drain, nothing to retry and no order
+ *  to preserve, because the buffer and its delivery are KAS's.
+ *
+ *  It replaced a `QueuedPrompt` FIFO that held text until `turn_ended` and then
+ *  sent it as a NEW turn — so a correction always arrived after the work it was
+ *  correcting had finished. A steer lands in the turn already running. */
+export interface PendingSteer {
+  /** KAS's own steer id (`steer-<uuid>`), and the key for every lifecycle
+   *  event. Client-minted and echoed back, so the chip that appears is the
+   *  one this device sent. */
+  id: string;
   text: string;
-  attachments: unknown[];
-  /** The client-generated user-message id this prompt was FIRST sent
-   *  under. The drain re-sends with the SAME id so the server's
-   *  append-by-id idempotency absorbs the retry — a 409'd first attempt
-   *  already persisted (and rendered) the user bubble, and a fresh id on
-   *  the drain would append it a second time. */
-  messageId: string;
+  /** Whether the model has actually READ it. False means it is in the buffer
+   *  waiting for the next node boundary. This is the distinction the chip row
+   *  exists to show, and the reason `steer_injected` is its own event. */
+  injected: boolean;
+  /** Present only when KAS classified the message as a system notification
+   *  instead of a user steer, which it decides by sniffing the text. vibekit
+   *  refuses to SEND such a message, so a severity here means the notice came
+   *  from a workflow step or a subagent rather than from the user. */
+  severity?: string;
 }
 
 // --- Local session state (client-only projection of server chat) ---
@@ -173,7 +188,10 @@ export interface Session {
   /** Agent-declared one-line description of what it is working on
    *  (chat_status SSE). Shown as the chat tab's tooltip. */
   agent_status_text?: string;
-  prompt_queue?: QueuedPrompt[];
+  /** Mid-turn steers KAS is holding or has just delivered for this chat.
+   *  A pure projection of the three steer SSE events; cleared at every turn
+   *  boundary because that is when KAS clears its own buffer. */
+  steers?: PendingSteer[];
   supervised_mode?: boolean;
   compaction_watermark?: string;
 }

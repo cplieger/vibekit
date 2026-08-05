@@ -17,7 +17,7 @@ vi.mock("../transport.js", () => ({
 vi.mock("../store.js", () => ({
   get: () => ({ id: "c1", model: "m1" }),
   setThinking: vi.fn(),
-  enqueuePrompt: vi.fn(),
+  recordSteerQueued: vi.fn(),
   setModel: vi.fn(),
   setSupervisedMode: vi.fn(),
   removeChat: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 import { send as transportSend } from "../transport.js";
-import { setThinking, enqueuePrompt } from "../store.js";
+import { setThinking, recordSteerQueued } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { sendPrompt } from "./chat.js";
 
@@ -52,9 +52,12 @@ describe("sendPrompt — 409 queued path", () => {
       model: "model-1",
     });
     expect(result).toBe("queued");
-    // The action stays a pure send so the drain path can re-send a queued
-    // prompt without double-enqueuing. prompt-queue.submitPrompt owns enqueue.
-    expect(enqueuePrompt).not.toHaveBeenCalled();
+    // The action stays a PURE send: on 409 it reports and does nothing else.
+    // submit.ts owns what a busy chat means (it steers into the running turn),
+    // and the steer chip is written only by the server's own frame — so an
+    // action that recorded one here would put a chip on screen for a message
+    // KAS may yet refuse.
+    expect(recordSteerQueued).not.toHaveBeenCalled();
   });
 
   it("sets thinking optimistically", async () => {

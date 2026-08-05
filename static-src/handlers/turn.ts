@@ -18,6 +18,7 @@ import {
   get,
   getActiveId,
   tabStatusFor,
+  clearSteers,
 } from "../store.js";
 import {
   notifyIfHidden,
@@ -27,7 +28,6 @@ import {
   NOTIFY_TITLE,
 } from "../notify.js";
 import { pushDecision } from "../decision-dock.js";
-import { drainNext } from "../prompt-queue.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
 import { setLastError, clearLastError } from "../send-state.js";
@@ -93,10 +93,15 @@ onSSE("turn_ended", (chatID, p) => {
   clearLastError();
   onTurnEnded(chatID);
   refreshGitBadge();
-  // Prompt queue and model-switch queue both drain off the per-chat turn_ended
-  // (not the active-only turn:idle bus event) so a background chat's queued
-  // prompt AND queued model switch fire when ITS turn ends.
-  drainNext(chatID);
+  // KAS clears its steering buffer at EVERY turn boundary, so the chip row must
+  // empty here too. The `steer_cleared` frame covers the case where something
+  // was still unread; this covers the ordinary one, where every steer was
+  // injected and the server sends nothing because there was nothing to drop.
+  clearSteers(chatID);
+  // The model-switch queue still drains off the per-chat turn_ended (not the
+  // active-only turn:idle bus event) so a background chat's queued switch fires
+  // when ITS turn ends. There is no prompt queue left to drain — a mid-turn
+  // prompt is a steer now and was delivered during the turn.
   drainModelSwitchQueue(chatID);
   // turn_ended is the only moment the set of turns changes, so it is the only
   // moment the rail's session-wide index needs re-reading.

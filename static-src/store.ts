@@ -24,7 +24,7 @@ import type {
   CodeReference,
   RefusalInfo,
   FileChange,
-  QueuedPrompt,
+  PendingSteer,
 } from "./types.js";
 import { signal, computed, createCollection, batch } from "@cplieger/reactive";
 import {
@@ -198,93 +198,101 @@ export function setWorkingLabel(id: string, label: string): void {
   sessions.update(id, (s) => ({ ...s, working_label: label }));
 }
 
-// --- Prompt queue (per-chat FIFO of prompts buffered while a turn runs) ---
+// --- Mid-turn steers (a projection of KAS's own steering buffer) ---
 //
-// Text and its attachments travel together in one QueuedPrompt entry, so
-// they can never desync (the old design kept attachments in a parallel map
-// keyed positionally). The queue is client-only (never persisted or sent to
-// the server) and reactive — a field on the session — so send-state.ts
-// derives the "queued" button state and queued-prompts.ts renders the pending
-// chips straight off `session.prompt_queue`. All lifecycle decisions
-// (enqueue-on-409, drain, idle re-check, cancel) live in prompt-queue.ts;
-// these are the pure data ops.
+// Not a queue. Every function here is driven by an SSE event, never by the code
+// that sent a steer: `steer_queued` records one, `steer_injected` marks it read,
+// `steer_cleared` (and every turn boundary) drops it. There is no enqueue, no
+// peek, no dequeue and no promote, because vibekit no longer owns delivery —
+// KAS's buffer does, and the client's job is to show its state.
+//
+// What this replaced: a client-side FIFO with five mutators, a re-entrant drain
+// guard, a 409-after-turn_ended race check and a promote-to-front used to jump
+// the queue by CANCELLING the running turn. All of it existed to work around not
+// being able to reach a live turn. Reactive because it is a field on the session,
+// so pending-steers.ts renders straight off `session.steers`.
 
-/** Number of prompts currently queued for a chat. */
-export function queueLength(id: string): number {
-  return get(id)?.prompt_queue?.length ?? 0;
+/** Number of steers outstanding for a chat, injected or not. */
+export function steerCount(id: string): number {
+  return get(id)?.steers?.length ?? 0;
 }
 
-/** Append a prompt (text + its attachments) to the back of the queue. */
-export function enqueuePrompt(
+/** Record a steer KAS has accepted into its buffer.
+ *
+ *  Idempotent by id: the same `steer_queued` can arrive twice through an SSE
+ *  reconnect replay, and a second chip for one message would misreport how much
+ *  the agent has been told. A repeat refreshes the entry rather than being
+ *  dropped, so a corrected text or a late severity still lands. */
+export function recordSteerQueued(
   id: string,
-  text: string,
-  messageId: string,
-  attachments?: readonly unknown[],
+  steer: { id: string; text: string; severity?: string },
 ): void {
   const s = get(id);
-  if (s === undefined) {
+  if (s === undefined || steer.id === "") {
     return;
   }
-  const entry: QueuedPrompt = {
-    text,
-    attachments: attachments !== undefined ? [...attachments] : [],
-    messageId,
+  const entry: PendingSteer = {
+    id: steer.id,
+    text: steer.text,
+    injected: false,
+    ...(steer.severity !== undefined && steer.severity !== "" ? { severity: steer.severity } : {}),
   };
-  const queue = [...(s.prompt_queue ?? []), entry];
-  sessions.update(id, (cur) => ({ ...cur, prompt_queue: queue }));
+  const existing = s.steers ?? [];
+  const at = existing.findIndex((e) => e.id === steer.id);
+  const next =
+    at >= 0
+      ? existing.map((e, i) => (i === at ? { ...entry, injected: e.injected } : e))
+      : [...existing, entry];
+  sessions.update(id, (cur) => ({ ...cur, steers: next }));
 }
 
-/** Read the front entry without removing it. */
-export function peekPrompt(id: string): QueuedPrompt | undefined {
-  return get(id)?.prompt_queue?.[0];
+/** Mark a steer as read by the model.
+ *
+ *  Tolerates an id it has never seen by CREATING the entry: `steer_injected` can
+ *  legitimately arrive without its `steer_queued` — another device sent the
+ *  steer, or this one connected mid-turn — and dropping it would leave the
+ *  transcript with no sign that the agent was redirected. */
+export function markSteerInjected(id: string, steerID: string, text: string): void {
+  const s = get(id);
+  if (s === undefined || steerID === "") {
+    return;
+  }
+  const existing = s.steers ?? [];
+  const at = existing.findIndex((e) => e.id === steerID);
+  const next =
+    at >= 0
+      ? existing.map((e, i) => (i === at ? { ...e, injected: true } : e))
+      : [...existing, { id: steerID, text, injected: true }];
+  sessions.update(id, (cur) => ({ ...cur, steers: next }));
 }
 
-/** Remove and return the front entry (FIFO). */
-export function dequeuePrompt(id: string): QueuedPrompt | undefined {
-  return removeQueuedAt(id, 0);
-}
-
-/** Move the entry at `index` to the queue's FRONT, preserving the relative
- *  order of everything else. Backs the chip row's send-now: the drain always
- *  delivers the front, so promotion is what "this one next" means. */
-export function promoteQueuedAt(id: string, index: number): boolean {
-  const q = get(id)?.prompt_queue;
-  if (q === undefined || index <= 0 || index >= q.length) {
-    // index 0 is already the front; treat it as promoted.
-    return q !== undefined && index === 0 && q.length > 0;
+/** Drop steers. Named ids remove just those; an empty list clears the chat's
+ *  whole set, which is what a turn boundary means.
+ *
+ *  The field is DELETED rather than left as an empty array so a session object
+ *  compares equal to one that never had steers — the chip row's `computed`
+ *  dedups by value, and an empty array would re-render on every clear. */
+export function clearSteers(id: string, steerIDs?: readonly string[]): void {
+  const s = get(id);
+  if (s?.steers === undefined) {
+    return;
   }
-  const entry = q[index];
-  if (entry === undefined) {
-    return false;
+  const rest =
+    steerIDs === undefined || steerIDs.length === 0
+      ? []
+      : s.steers.filter((e) => !steerIDs.includes(e.id));
+  if (rest.length === s.steers.length) {
+    return;
   }
-  const next = [entry, ...q.filter((_, i) => i !== index)];
-  sessions.update(id, (cur) => ({ ...cur, prompt_queue: next }));
-  return true;
-}
-
-/** Remove and return the entry at `index` (0-based). Backs both the drain
- *  (front) and the UI cancel affordance (any position). No-op + undefined
- *  for an out-of-range index or unknown chat. */
-export function removeQueuedAt(id: string, index: number): QueuedPrompt | undefined {
-  const q = get(id)?.prompt_queue;
-  if (q === undefined || index < 0 || index >= q.length) {
-    return undefined;
-  }
-  const removed = q[index];
-  if (removed === undefined) {
-    return undefined;
-  }
-  const rest = q.filter((_, i) => i !== index);
   sessions.update(id, (cur) => {
     const copy = { ...cur };
     if (rest.length === 0) {
-      delete copy.prompt_queue;
+      delete copy.steers;
     } else {
-      copy.prompt_queue = rest;
+      copy.steers = rest;
     }
     return copy;
   });
-  return removed;
 }
 
 /** Rebuild the message index for a session. Exported for store-load.ts. */

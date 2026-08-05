@@ -12,9 +12,15 @@
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
-import { getSessions, getActiveId, setThinking, setAgentStatus, setCurrentMode } from "../store.js";
+import {
+  getSessions,
+  getActiveId,
+  setThinking,
+  setAgentStatus,
+  setCurrentMode,
+  clearSteers,
+} from "../store.js";
 import { loadList, loadMessages } from "../store-load.js";
-import { maybeDrainIfIdle } from "../prompt-queue.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
@@ -57,12 +63,12 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     // Agent-declared status is as untrustworthy as `thinking` after a
     // gap: the clearing chat_status may be among the dropped events.
     setAgentStatus(s.id, "", "");
-    // A prompt queued before the outage would strand if we missed the
-    // turn_ended that should have drained it: thinking is now cleared, so no
-    // future turn_ended will fire for that turn. Re-drain any chat that is
-    // idle with a pending queue so the queued prompt (the user's intent)
-    // still gets sent instead of sitting forever behind a "queued" button.
-    maybeDrainIfIdle(s.id);
+    // Steers are KAS's state, and a gap means we may have missed the frames
+    // that resolved or dropped them. Clearing is the honest default for the same
+    // reason `thinking` is cleared above: a chip claiming the agent has not read
+    // something is a claim this client can no longer support. A turn still
+    // running re-announces its buffer through the connect replay.
+    clearSteers(s.id);
     // Same reasoning for a queued mid-turn model switch: its drain rides
     // turn_ended, which we missed during the gap. Fire it for the now-idle
     // chat so the switch isn't stranded behind a stuck ".pending" pill.

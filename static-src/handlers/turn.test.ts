@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { setSessions, setActive, get } from "../store.js";
+import { setSessions, setActive, get, recordSteerQueued, steerCount } from "../store.js";
 import type { Session } from "../types.js";
 
 // scroll.ts touches DOM elements at import; use the shared mock.
@@ -20,9 +20,6 @@ vi.mock(
   async () => (await import("../__test-helpers__/scroll-mock.js")).scrollMock,
 );
 vi.mock("../decision-dock.js", () => ({ pushDecision: vi.fn() }));
-
-const mockDrainNext = vi.fn();
-vi.mock("../prompt-queue.js", () => ({ drainNext: mockDrainNext }));
 
 vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
 
@@ -169,21 +166,27 @@ describe("turn_ended side effects", () => {
     expect(get("chat-1")?.thinking).toBe(false);
   });
 
-  it("drains the queue on turn end (draining is delegated to prompt-queue)", () => {
+  // KAS clears its steering buffer at every turn boundary, and on the ordinary
+  // path — every steer injected — it sends no steer_cleared because there was
+  // nothing left to drop. So the handler has to clear locally or a delivered
+  // chip would outlive the turn it belonged to.
+  it("clears the chat's steers on turn end", () => {
     setSessions([makeSession("chat-1")]);
     setActive("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    expect(steerCount("chat-1")).toBe(1);
+
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
-    // The handler always hands off to drainNext, which no-ops internally when
-    // the queue is empty and is failure-safe when it isn't (see
-    // prompt-queue.test.ts). The unit boundary here is "turn_ended → drain".
-    expect(mockDrainNext).toHaveBeenCalledWith("chat-1");
+    expect(steerCount("chat-1")).toBe(0);
   });
 
-  it("drains even for a background (non-active) chat", () => {
+  it("clears them for a background (non-active) chat too", () => {
     setSessions([makeSession("chat-1"), makeSession("chat-2")]);
     setActive("chat-2");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
-    expect(mockDrainNext).toHaveBeenCalledWith("chat-1");
+    expect(steerCount("chat-1")).toBe(0);
   });
 });
 

@@ -3,7 +3,6 @@
 //   - SSE connection status        (signal, set by transport.ts)
 //   - last command error           (signal, set by transport.ts / turn.ts;
 //                                    network / 5xx / etc. — NOT 409 busy)
-//   - queued prompt for the active chat   (reactive via the store)
 //   - thinking flag for the active chat   (reactive via the store)
 //
 // The two externally-driven inputs are `signal`s; the resulting SendState is a
@@ -15,11 +14,14 @@
 // the user shouldn't submit surfaces as a single blocked state on the send
 // button with a tooltip explaining why.
 //
-// Precedence: disconnected > lastError > streaming > queued > idle. The order
-// matters precisely at streaming+queued: with ONE button, `queued` winning
-// would show Send during a live turn — and then nothing on screen cancels the
-// turn, which is the one thing the single control exists to guarantee. (The
-// old order was right for the SPLIT button, where Cancel had its own half.)
+// Precedence: disconnected > lastError > streaming > idle.
+//
+// There used to be a `queued` state between streaming and idle, and its removal
+// is the point rather than a simplification: a prompt typed mid-turn is a STEER
+// now, delivered into the running turn instead of buffered client-side, so there
+// is no pending-send for the button to report. What IS pending — a steer the
+// agent has not read yet — is server state and belongs on the chip row that
+// projects it, not on the one control whose job is to stop the turn.
 // ---------------------------------------------------------------------------
 
 import { signal, computed, effect } from "@cplieger/reactive";
@@ -44,13 +46,6 @@ const sendState = computed<SendState>(() => {
   }
   if (session.thinking) {
     return { kind: "streaming" };
-  }
-  // Observable with nothing streaming: the queue survives reconnect and the
-  // window between turn_ended and the drain, so a bare Send above pending
-  // rows would misreport the state.
-  const queue = session.prompt_queue;
-  if (queue !== undefined && queue.length > 0) {
-    return { kind: "queued", count: queue.length };
   }
   return { kind: "idle" };
 });

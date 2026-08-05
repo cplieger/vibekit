@@ -5,8 +5,11 @@
 // Four send-button states driven by send-state.ts:
 //   idle    → send icon, input enabled, click submits
 //   busy    → stop icon (pulse), input enabled, click cancels the turn
-//   queued  → hourglass, input disabled, auto-sends on turn_ended
 //   blocked → alert icon, input disabled, tooltip explains why
+//
+// There is no `queued` state: a prompt typed during a turn is a steer, sent
+// straight away, so nothing waits on the button. Steers awaiting the agent show
+// on the chip row (pending-steers.ts).
 //
 // The send button IS the error surface. Whenever the user can't submit,
 // the button shows why via icon + tooltip. No inline error cards, no
@@ -19,7 +22,7 @@ import { fixIOSViewport } from "./platform.js";
 import { ICON_SEND, ICON_CANCEL, ICON_ALERT } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
-import { signal, effect, el } from "@cplieger/reactive";
+import { signal, effect } from "@cplieger/reactive";
 
 // Single source of truth for the "context (nearly) full → block the next
 // prompt" state, scoped to the ACTIVE chat (the prompt bar is shared). The
@@ -40,24 +43,19 @@ type Submit = (text: string) => void;
 type Cancel = () => void;
 
 export type SendState =
-  | { kind: "idle" }
-  | { kind: "streaming" }
-  | { kind: "queued"; count: number }
-  | { kind: "blocked"; reason: string };
+  { kind: "idle" } | { kind: "streaming" } | { kind: "blocked"; reason: string };
 
 type SendKind = SendState["kind"];
 
 const STATE_ICON: Record<SendKind, string> = {
   idle: ICON_SEND,
   streaming: ICON_CANCEL,
-  queued: ICON_SEND,
   blocked: ICON_ALERT,
 };
 
 const DEFAULT_TOOLTIP: Record<SendKind, string> = {
   idle: "Send",
   streaming: "Cancel this turn",
-  queued: "Send — the queue delivers in order",
   blocked: "Cannot send right now",
 };
 
@@ -120,18 +118,11 @@ class PromptInputController {
     const k = this.state.kind;
     // Context-full (the sole `sendDisabled` signal from context-ui.ts) is an
     // orthogonal disable that only applies while idle — blocked owns its own
-    // disable, and typing-ahead during a streaming turn (which QUEUES) must
+    // disable, and typing-ahead during a streaming turn (which STEERS) must
     // stay allowed. This is the single place the send-button/textarea
     // `disabled` + placeholder are written.
     const ctxFull = k === "idle" && sendDisabled.value;
     $.sendBtn.replaceChildren(iconEl(STATE_ICON[k]));
-    // The queue badge: a streaming turn with pending messages shows Cancel
-    // (stopping is the guarantee), a resting queue shows Send with the count.
-    if (k === "queued") {
-      $.sendBtn.appendChild(
-        el("span", { className: "send-queue-badge" }, String(this.state.count)),
-      );
-    }
     const tooltip = ctxFull
       ? SEND_DISABLED_REASON
       : this.state.kind === "blocked"
@@ -140,7 +131,6 @@ class PromptInputController {
     $.sendBtn.setAttribute("data-tooltip", tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);
     $.sendBtn.classList.toggle("streaming", k === "streaming");
-    $.sendBtn.classList.toggle("queued", k === "queued");
     $.sendBtn.classList.toggle("blocked", k === "blocked");
 
     // ONE button, two meanings: type=button while streaming so a click cannot
@@ -196,10 +186,9 @@ class PromptInputController {
 
     form.addEventListener("submit", (e: Event) => {
       e.preventDefault();
-      // Enter is defined independently of the label: it appends to the queue
-      // whenever a turn is streaming OR the queue is already non-empty, and
-      // the drain is the only thing that sends (prompt-queue owns that
-      // decision). Only a hard block refuses input.
+      // Enter is defined independently of the label, and submit.ts decides what
+      // it means: a prompt on an idle chat, a steer into a turn already running.
+      // Only a hard block refuses input.
       if (this.state.kind === "blocked") {
         return;
       }

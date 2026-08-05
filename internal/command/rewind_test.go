@@ -17,9 +17,11 @@ import (
 	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
-// revertBridge is a CommandBridge that records the revert call and replies with
-// a scripted result. Only Call is exercised; the rest satisfies the interface.
-type revertBridge struct {
+// recordingBridge is a CommandBridge that records the one call made through it
+// and replies with a scripted result. Only Call is exercised; the rest satisfies
+// the interface. Shared by every command test that needs to assert what went
+// onto the wire.
+type recordingBridge struct {
 	callErr   error
 	result    any
 	gotMethod string
@@ -28,7 +30,7 @@ type revertBridge struct {
 	sessionID api.SessionID
 }
 
-func (b *revertBridge) Call(_ context.Context, method string, params any) (*api.RPCResponse, error) {
+func (b *recordingBridge) Call(_ context.Context, method string, params any) (*api.RPCResponse, error) {
 	b.callCount++
 	b.gotMethod = method
 	if m, ok := params.(map[string]any); ok {
@@ -44,16 +46,16 @@ func (b *revertBridge) Call(_ context.Context, method string, params any) (*api.
 	return &api.RPCResponse{Result: raw}, nil
 }
 
-func (b *revertBridge) Notify(context.Context, string, any) error        { return nil }
-func (b *revertBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (b *revertBridge) SessionID() api.SessionID                         { return b.sessionID }
-func (b *revertBridge) TryAcquireForPrompt() bool                        { return true }
-func (b *revertBridge) ReleaseAfterPrompt()                              {}
-func (b *revertBridge) SetPrompting()                                    {}
-func (b *revertBridge) IsPrimed() bool                                   { return true }
-func (b *revertBridge) SetPrimed()                                       {}
+func (b *recordingBridge) Notify(context.Context, string, any) error        { return nil }
+func (b *recordingBridge) Respond(context.Context, int64, any, error) error { return nil }
+func (b *recordingBridge) SessionID() api.SessionID                         { return b.sessionID }
+func (b *recordingBridge) TryAcquireForPrompt() bool                        { return true }
+func (b *recordingBridge) ReleaseAfterPrompt()                              {}
+func (b *recordingBridge) SetPrompting()                                    {}
+func (b *recordingBridge) IsPrimed() bool                                   { return true }
+func (b *recordingBridge) SetPrimed()                                       {}
 
-// bridgeDeps adds a bridge to storeDeps so the revert call can be observed.
+// bridgeDeps adds a bridge to storeDeps so the outgoing call can be observed.
 type bridgeDeps struct {
 	*storeDeps
 	bridge Bridge
@@ -61,7 +63,7 @@ type bridgeDeps struct {
 
 func (d *bridgeDeps) GetBridge(api.ChatID) Bridge { return d.bridge }
 
-func newRevertDispatcher(store api.ChatStore, bridge Bridge) *Dispatcher {
+func newBridgeDispatcher(store api.ChatStore, bridge Bridge) *Dispatcher {
 	return New(&bridgeDeps{
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
@@ -110,8 +112,8 @@ func okResult() map[string]any {
 func TestCmdRewindChat_DropsTheTargetAndEverythingAfter(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	b := &revertBridge{result: okResult(), sessionID: "sess-1"}
-	d := newRevertDispatcher(store, b)
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	d := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
 	CmdRewindChat(d, context.Background(), w, rewindReq(t, "c1", "u2"))
@@ -138,8 +140,8 @@ func TestCmdRewindChat_DropsTheTargetAndEverythingAfter(t *testing.T) {
 func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	b := &revertBridge{result: okResult(), sessionID: "sess-1"}
-	d := newRevertDispatcher(store, b)
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	d := newBridgeDispatcher(store, b)
 
 	CmdRewindChat(d, context.Background(), httptest.NewRecorder(), rewindReq(t, "c1", "u1"))
 
@@ -162,8 +164,8 @@ func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) 
 func TestCmdRewindChat_RefusesANonUserTarget(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	b := &revertBridge{result: okResult(), sessionID: "sess-1"}
-	d := newRevertDispatcher(store, b)
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	d := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
 	CmdRewindChat(d, context.Background(), w, rewindReq(t, "c1", "a1"))
@@ -183,8 +185,8 @@ func TestCmdRewindChat_RefusesANonUserTarget(t *testing.T) {
 func TestCmdRewindChat_RefusesAnUnknownTarget(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	b := &revertBridge{result: okResult(), sessionID: "sess-1"}
-	d := newRevertDispatcher(store, b)
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	d := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
 	CmdRewindChat(d, context.Background(), w, rewindReq(t, "c1", "nope"))
@@ -200,7 +202,7 @@ func TestCmdRewindChat_RefusesAnUnknownTarget(t *testing.T) {
 func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	d := newRevertDispatcher(store, &revertBridge{result: okResult()})
+	d := newBridgeDispatcher(store, &recordingBridge{result: okResult()})
 	w := httptest.NewRecorder()
 
 	CmdRewindChat(d, context.Background(), w, rewindReq(t, "c1", ""))
@@ -215,7 +217,7 @@ func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
 func TestCmdRewindChat_RequiresALiveBridge(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	d := newRevertDispatcher(store, nil)
+	d := newBridgeDispatcher(store, nil)
 	w := httptest.NewRecorder()
 
 	CmdRewindChat(d, context.Background(), w, rewindReq(t, "c1", "u2"))
@@ -235,14 +237,14 @@ func TestCmdRewindChat_RequiresALiveBridge(t *testing.T) {
 func TestCmdRewindChat_InBandRefusalLeavesTheRecordIntact(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	b := &revertBridge{
+	b := &recordingBridge{
 		result: map[string]any{
 			"success": false,
 			"error":   "Cannot revert while the agent is still running. Stop the turn and try again.",
 		},
 		sessionID: "sess-1",
 	}
-	d := newRevertDispatcher(store, b)
+	d := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
 	CmdRewindChat(d, context.Background(), w, rewindReq(t, "c1", "u2"))
@@ -264,8 +266,8 @@ func TestCmdRewindChat_InBandRefusalLeavesTheRecordIntact(t *testing.T) {
 func TestCmdRewindChat_TransportFailureLeavesTheRecordIntact(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	b := &revertBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"}
-	d := newRevertDispatcher(store, b)
+	b := &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"}
+	d := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
 	CmdRewindChat(d, context.Background(), w, rewindReq(t, "c1", "u2"))
@@ -284,8 +286,8 @@ func TestCmdRewindChat_TransportFailureLeavesTheRecordIntact(t *testing.T) {
 func TestCmdRewindChat_ToTheFirstMessageEmptiesTheTranscript(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	b := &revertBridge{result: okResult(), sessionID: "sess-1"}
-	d := newRevertDispatcher(store, b)
+	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
+	d := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
 	CmdRewindChat(d, context.Background(), w, rewindReq(t, "c1", "u1"))

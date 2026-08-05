@@ -232,8 +232,18 @@ func (p *Projection) ingestAgentText(raw json.RawMessage, thinking bool) {
 		p.buf.Reasoning.WriteString(c.Content.Text)
 		return
 	}
-	p.buf.AppendTextDelta(c.Content.Text, sub)
-	p.buf.Content.WriteString(c.Content.Text)
+	// The same marker filter as the live path, and not optional here: KAS replays
+	// its own log on every restart-resume and model-switch fallback, and the
+	// marker it never scrubbed is stored in that log. Without this, a marker the
+	// live stream hid would reappear the first time the chat was resumed.
+	prev, _ := p.buf.SteerCarry()
+	text, carry := stripSteerAcks(prev, c.Content.Text)
+	p.buf.SetSteerCarry(carry, sub)
+	if text == "" {
+		return
+	}
+	p.buf.AppendTextDelta(text, sub)
+	p.buf.Content.WriteString(text)
 }
 
 func (p *Projection) ingestToolCall(raw json.RawMessage) {
@@ -418,6 +428,10 @@ func (p *Projection) closeTurn() {
 	if b == nil {
 		return
 	}
+	// Settle anything the marker filter still withheld before the emptiness
+	// check below reads Content — a turn whose only text was a held candidate
+	// would otherwise be judged empty and dropped.
+	FlushSteerCarry(b)
 	if b.Content.Len() == 0 && b.Reasoning.Len() == 0 && len(b.ToolCalls) == 0 {
 		return
 	}

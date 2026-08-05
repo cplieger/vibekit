@@ -24,6 +24,8 @@ func RegisterDefaults(d *Dispatcher) {
 	d.Register(api.CmdSetEffort, wrap(d, CmdSetEffort))
 	d.Register(api.CmdSetMode, wrap(d, CmdSetMode))
 	d.Register(api.CmdSetSupervisedMode, wrap(d, CmdSetSupervisedMode))
+	d.Register(api.CmdSteer, wrap(d, CmdSteer))
+	d.Register(api.CmdSteerClear, wrap(d, CmdSteerClear))
 	d.Register(api.CmdCreateHook, wrap(d, CmdCreateHook))
 }
 

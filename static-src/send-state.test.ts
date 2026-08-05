@@ -7,7 +7,7 @@ import { flushSync } from "@cplieger/reactive";
 import type { SendState } from "./prompt-input.js";
 import { setSendState } from "./prompt-input.js";
 import { setSSEStatus, setLastError, clearLastError } from "./send-state.js";
-import { setSessions, setActive, setThinking, enqueuePrompt, dequeuePrompt } from "./store.js";
+import { setSessions, setActive, setThinking, recordSteerQueued } from "./store.js";
 import type { Session } from "./types.js";
 
 // Capture every SendState pushed to prompt-input without loading its DOM deps.
@@ -62,7 +62,6 @@ describe("send-state precedence", () => {
     setActive(id);
     // Make every lower-priority condition true at once.
     setThinking(id, true);
-    enqueuePrompt(id, "hi", "m-test");
     setLastError("boom");
     setSSEStatus("disconnected");
     flushSync();
@@ -77,33 +76,36 @@ describe("send-state precedence", () => {
     flushSync();
     expect(lastPushed()).toEqual({ kind: "blocked", reason: "boom" });
 
-    // Clear the error → STREAMING wins, queue or no queue. This edge is the
-    // whole point of the order: with ONE button, `queued` winning here would
-    // show Send during a live turn — and then nothing on screen cancels it.
+    // Clear the error → STREAMING wins. Cancelling the turn is what the one
+    // control has to guarantee, so nothing below it may take the button.
     clearLastError();
     flushSync();
     expect(lastPushed()).toEqual({ kind: "streaming" });
 
-    // Turn ends with the queue still pending → queued, with the count.
+    // Turn ends → idle. There is no state between the two: a message typed
+    // mid-turn was steered into that turn, so nothing is pending client-side to
+    // report.
     setThinking(id, false);
-    flushSync();
-    expect(lastPushed()).toEqual({ kind: "queued", count: 1 });
-
-    // Drain the queue → idle.
-    dequeuePrompt(id);
     flushSync();
     expect(lastPushed()).toEqual({ kind: "idle" });
   });
 
-  it("counts the resting queue on the badge", () => {
+  // Outstanding steers must NOT reach the button. They are server state about
+  // what the agent has read, shown on the chip row; putting them here would give
+  // the one control two jobs, and during a turn it would stop offering Cancel.
+  it("ignores pending steers entirely", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    enqueuePrompt(id, "one", "m-1");
-    enqueuePrompt(id, "two", "m-2");
+    recordSteerQueued(id, { id: "steer-1", text: "one" });
+    recordSteerQueued(id, { id: "steer-2", text: "two" });
     flushSync();
-    expect(lastPushed()).toEqual({ kind: "queued", count: 2 });
+    expect(lastPushed()).toEqual({ kind: "idle" });
+
+    setThinking(id, true);
+    flushSync();
+    expect(lastPushed()).toEqual({ kind: "streaming" });
   });
 });
 
@@ -126,14 +128,14 @@ describe("send-state auto-tracking", () => {
 });
 
 describe("send-state disconnected override", () => {
-  it("setSSEStatus('disconnected') wins over a queued state", () => {
+  it("setSSEStatus('disconnected') wins over a live turn", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
     setSSEStatus("connected");
-    enqueuePrompt(id, "hi", "m-test");
+    setThinking(id, true);
     flushSync();
-    expect(lastPushed()).toEqual({ kind: "queued", count: 1 });
+    expect(lastPushed()).toEqual({ kind: "streaming" });
 
     setSSEStatus("disconnected");
     flushSync();

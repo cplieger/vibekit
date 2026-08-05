@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { setSessions, setActive, get } from "../store.js";
+import { setSessions, setActive, get, recordSteerQueued, steerCount } from "../store.js";
 import type { Session } from "../types.js";
 
 vi.mock("../store-load.js", () => ({
@@ -33,9 +33,6 @@ vi.mock("../settings.js", () => ({ syncSettings: vi.fn(() => Promise.resolve({})
 vi.mock("../session-context.js", () => ({ restoreLastModel: vi.fn() }));
 vi.mock("../status.js", () => ({ refreshCompactionThreshold: vi.fn() }));
 vi.mock("../retention.js", () => ({ refreshRetention: vi.fn() }));
-
-const mockMaybeDrainIfIdle = vi.fn();
-vi.mock("../prompt-queue.js", () => ({ maybeDrainIfIdle: mockMaybeDrainIfIdle }));
 
 // Capture SSE handlers (shared helper) + bus handlers (onBus) so we can fire
 // both transport:gap and mode_changed.
@@ -129,14 +126,19 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     expect(mockLoadMessages).toHaveBeenCalledWith("active-chat");
   });
 
-  it("re-drains every session so a queued prompt isn't stranded by the outage", () => {
-    // The gap clears thinking on all chats; a prompt queued before the outage
-    // would otherwise wait for a turn_ended that will never fire. The handler
-    // re-checks each chat for a drainable queue.
+  it("clears every session's steers, because they are claims it can no longer support", () => {
+    // Steers are KAS's state and the gap means the frames that resolved or
+    // dropped them may be among the lost ones. A chip saying "the agent hasn't
+    // read this" is an assertion about the server; after an outage this client
+    // cannot make it, so it stops making it. Same reasoning as clearing
+    // `thinking` on every chat above.
     setSessions([makeSession("a"), makeSession("b", { thinking: true })]);
+    recordSteerQueued("a", { id: "steer-a", text: "one" });
+    recordSteerQueued("b", { id: "steer-b", text: "two" });
+
     fireGap();
-    expect(mockMaybeDrainIfIdle).toHaveBeenCalledWith("a");
-    expect(mockMaybeDrainIfIdle).toHaveBeenCalledWith("b");
+    expect(steerCount("a")).toBe(0);
+    expect(steerCount("b")).toBe(0);
   });
 });
 

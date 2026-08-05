@@ -76,7 +76,7 @@ import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
 import { initPromptInput } from "./prompt-input.js";
-import { initQueuedPrompts } from "./queued-prompts.js";
+import { initPendingSteers } from "./pending-steers.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
 import { initRuntimeHealth } from "./runtime-health.js";
@@ -92,6 +92,7 @@ import "./handlers/system.js";
 import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
 import "./handlers/run.js";
+import "./handlers/steer.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
@@ -675,7 +676,7 @@ function setupInput(): void {
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
-  initQueuedPrompts();
+  initPendingSteers();
   initChatOptions();
   // The interaction dock: permission asks, elicitation forms and agent
   // questions. Hosted by the chat's bottom bar; it takes its host as an
