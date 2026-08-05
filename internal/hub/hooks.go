@@ -383,7 +383,11 @@ func (h *Hub) handleHookTrigger(w http.ResponseWriter, r *http.Request) {
 	// approved:true — the user's explicit "Run now" click is the consent, so
 	// we skip KAS's extra per-command approval round-trip. The command is the
 	// server-sourced hook command, not client input.
-	run, err := u.session.triggerRunCommandHook(cctx, hook.ID, hook.Name, hook.Action.Command)
+	// hook.Action.Timeout is the hook file's own declared cap, already decoded
+	// into kasHookAction. Forwarding it is what makes a file-declared timeout
+	// mean anything on Run-now; without it every trigger was capped at KAS's
+	// 60s default regardless of what the file said.
+	run, err := u.session.triggerRunCommandHook(cctx, hook.ID, hook.Name, hook.Action.Command, hook.Action.Timeout)
 	if err != nil {
 		h.writeHookErr(w, err)
 		return

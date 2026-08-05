@@ -131,7 +131,7 @@ func (us *utilitySession) configTemplateRaw(ctx context.Context) (json.RawMessag
 // so KAS skips its own per-command approval round-trip. hookTriggerMu
 // serializes concurrent triggers, whose shared expectingHookExec +
 // lastHookRun would otherwise cross outputs.
-func (us *utilitySession) triggerRunCommandHook(ctx context.Context, hookID, hookName, command string) (hookRunResult, error) {
+func (us *utilitySession) triggerRunCommandHook(ctx context.Context, hookID, hookName, command string, timeoutSecs int) (hookRunResult, error) {
 	us.hookTriggerMu.Lock()
 	defer us.hookTriggerMu.Unlock()
 
@@ -139,13 +139,25 @@ func (us *utilitySession) triggerRunCommandHook(ctx context.Context, hookID, hoo
 	us.expectingHookExec.Store(true)
 	defer us.expectingHookExec.Store(false)
 
-	raw, err := us.rawCall(ctx, "hooks trigger", methodKiroHooksTriggerHook, scopedParams(map[string]any{
+	params := map[string]any{
 		"hookId":         hookID,
 		"hookName":       hookName,
 		"hookActionType": actionRunCommand,
 		"command":        command,
 		"approved":       true,
-	}))
+	}
+	// Forward the hook file's own declared timeout. KAS destructures
+	// `{command, timeout, approved}` off these params and re-forwards timeout
+	// onto the executeHook callback (`...timeout != null ? {timeout} : {}`),
+	// which is the value runHookCommand then applies. Omitting it silently
+	// capped every Run-now at the 60s default, so a hook file declaring
+	// `timeout: 300` was killed at 60 with no signal that its own setting had
+	// been ignored. Zero means the file declared none, and KAS's own default
+	// then applies -- which is why this is conditional rather than always sent.
+	if timeoutSecs > 0 {
+		params["timeout"] = timeoutSecs
+	}
+	raw, err := us.rawCall(ctx, "hooks trigger", methodKiroHooksTriggerHook, scopedParams(params))
 	if err != nil {
 		return hookRunResult{}, err
 	}
