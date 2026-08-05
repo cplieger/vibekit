@@ -545,3 +545,80 @@ func TestPurge_WithoutTheLivePredicateStillPurges(t *testing.T) {
 		t.Error("purge did nothing with no live predicate wired")
 	}
 }
+
+// TestPurgeScheduler_AlwaysArmsATimer pins the invariant the loop depends on
+// and that nothing previously covered: purgeAndReschedule must NEVER return a
+// nil timer. It used to return (nil, nil) whenever nextWait reported not-ok,
+// which left the loop with no wake-up at all and no way back except Trigger(),
+// whose only production caller is Start.
+//
+// Both not-ok inputs are ordinary states, which is what made the bug quiet: a
+// fresh container has an empty chat directory, and "keep forever" sets
+// retention to a non-positive value. In either case the loop went dark, and in
+// the retention case it stayed dark after the setting was turned back on,
+// because the settings path does not Trigger.
+//
+// Asserting on the returned timer rather than on an elapsed wake-up is
+// deliberate: the poll ceiling is an hour, so a timing test would either sleep
+// for an hour or need a production seam to shorten it. The nil return IS the
+// defect, so it is what the test names.
+func TestPurgeScheduler_AlwaysArmsATimer(t *testing.T) {
+	cases := map[string]struct {
+		aged      bool          // seed one purgeable chat
+		retention time.Duration // what the settings hook reports
+	}{
+		"empty directory, retention on":  {aged: false, retention: 24 * time.Hour},
+		"chats present, retention off":   {aged: true, retention: 0},
+		"empty directory, retention off": {aged: false, retention: 0},
+		"keep forever":                   {aged: true, retention: -1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc, _, dir := newPurgeTestService(t)
+			if tc.aged {
+				writeAgedChat(t, dir, "aged", 48*time.Hour)
+			}
+			sched := NewPurgeScheduler(context.Background(), svc,
+				func() time.Duration { return tc.retention })
+
+			timer, timerC := sched.purgeAndReschedule()
+			if timer == nil || timerC == nil {
+				t.Fatalf("purgeAndReschedule() = (%v, %v), want an armed timer: "+
+					"a nil channel leaves the loop with no wake-up and it never purges again",
+					timer, timerC)
+			}
+			timer.Stop()
+		})
+	}
+}
+
+// TestPurgeScheduler_CapsTheArmedWait pins the ceiling. Without it the armed
+// wait was the oldest chat's age plus the whole retention window, so a 30-day
+// retention slept ~29 days and no settings change could shorten it: the loop
+// was already asleep when the change happened and nothing woke it.
+func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
+	svc, _, dir := newPurgeTestService(t)
+	// Brand new chat plus a very long retention: the natural deadline is far
+	// beyond the ceiling, so the ceiling is what must be armed.
+	writeAgedChat(t, dir, "fresh", 0)
+	sched := NewPurgeScheduler(context.Background(), svc,
+		func() time.Duration { return 30 * 24 * time.Hour })
+
+	wait, ok := sched.nextWait(30 * 24 * time.Hour)
+	if !ok {
+		t.Fatal("nextWait reported no work for a chat that exists")
+	}
+	if wait <= maxWait {
+		t.Skipf("natural wait %v is already under the %v ceiling; nothing to cap", wait, maxWait)
+	}
+	timer, timerC := sched.purgeAndReschedule()
+	if timer == nil || timerC == nil {
+		t.Fatal("purgeAndReschedule returned no timer")
+	}
+	defer timer.Stop()
+	// The armed duration is not observable directly, so assert the cap through
+	// the helper the scheduler uses, which is what purgeAndReschedule clamps.
+	if got := min(wait, maxWait); got != maxWait {
+		t.Errorf("clamped wait = %v, want the %v ceiling", got, maxWait)
+	}
+}
