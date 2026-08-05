@@ -35,7 +35,6 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -427,7 +426,13 @@ func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCRe
 	case msg.Method == api.MethodFSRead || msg.Method == api.MethodFSWrite ||
 		strings.HasPrefix(msg.Method, methodTermPrefix):
 		slog.Warn("utility bridge: refusing tool request (text-only session)", "method", msg.Method)
-		_ = bridge.Respond(ctx, *msg.ID, nil, errors.New("utility session is text-generation only; tools are unavailable"))
+		// -32601 rather than a bare error, for the reason the sibling refusals
+		// carry it: this is a capability vibekit deliberately does not offer on
+		// this session, not a fault it hit while trying.
+		_ = bridge.Respond(ctx, *msg.ID, nil, &api.RPCError{
+			Code:    api.RPCCodeMethodNotFound,
+			Message: "utility session is text-generation only; tools are unavailable",
+		})
 	default:
 		// Unknown peer request: answer with an error rather than leaving
 		// the request pending (an unanswered request can wedge the turn).

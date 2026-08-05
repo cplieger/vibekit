@@ -237,7 +237,7 @@ func (h *Hub) hostedRunControl(ctx context.Context, workflowID, method string) e
 // Only cancel qualifies. A run launched by this process has a live bridge that
 // owns the run's registry entry, and issuing the verb there lets KAS act on the
 // in-memory record. The utility fallback is what makes cancel work on a run this
-// process did not launch — a TUI-launched run, or one whose bridge was culled —
+// process did not launch — a TUI-launched run, or one from before a restart —
 // because cancel rehydrates from disk and then only WRITES state; it never
 // re-drives execution, so a text-only session is a sufficient carrier for it.
 // The verbs that do execute use hostedRunControl instead.
@@ -318,7 +318,10 @@ func (h *Hub) runDispatchRequest(ctx context.Context, chatID api.ChatID, msg *ap
 		return
 	}
 	slog.Warn("run bridge: refusing unexpected request", "method", msg.Method, "chat_id", chatID)
-	_ = h.BridgeRespond(ctx, chatID, *msg.ID, nil, errors.New("unsupported on a run bridge"))
+	_ = h.BridgeRespond(ctx, chatID, *msg.ID, nil, &api.RPCError{
+		Code:    api.RPCCodeMethodNotFound,
+		Message: "unsupported on a run bridge: " + msg.Method,
+	})
 }
 
 // closeFinishedRunBridge closes a run bridge once its run reached a TERMINAL
