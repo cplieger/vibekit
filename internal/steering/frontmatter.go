@@ -57,8 +57,11 @@ type FrontMatter struct {
 	Name string
 	// Description is the `description` key, block scalars included.
 	Description string
-	// Inclusion is `inclusion`, validated to always|fileMatch|manual with
+	// Inclusion is `inclusion`, validated to always|fileMatch|manual|auto with
 	// anything unrecognised folded to always.
+	//
+	// The default is the STEERING default, so a caller classifying something
+	// else must consult HasInclusion before believing it.
 	Inclusion string
 	// FileMatch is `fileMatchPattern`, meaningful when Inclusion is fileMatch.
 	FileMatch string
@@ -66,6 +69,18 @@ type FrontMatter struct {
 	Model string
 	// Tools is an agent's `tools` sequence, flow (`[a, b]`) or block (`- a`).
 	Tools []string
+	// HasInclusion reports whether the document actually DECLARED an inclusion
+	// key, as opposed to inheriting the default above.
+	//
+	// The distinction exists because "always" is the right default for a
+	// steering document and a fabrication for a skill. KAS's
+	// SkillFrontMatterSchema declares no `inclusion` — only
+	// SteeringContextFrontMatterSchema does — but it is `.passthrough()`, and
+	// `createSteeringCommandSource` reads `config?.inclusion` across skills AND
+	// steering alike, so a skill that DOES declare `manual` or `auto` really
+	// becomes a slash command. Both facts have to hold at once: forward a
+	// declared mode, invent nothing.
+	HasInclusion bool
 	// SteeringOverride reports whether `steering_override` is present and
 	// truthy — a skill that replaces the steering set is worth spotting.
 	SteeringOverride bool
@@ -109,6 +124,7 @@ func applyField(fm *FrontMatter, f field) {
 		fm.Description = f.value
 	case "inclusion":
 		fm.Inclusion = normalizeInclusion(f.value)
+		fm.HasInclusion = true
 	case "fileMatchPattern":
 		fm.FileMatch = f.value
 	case "model":

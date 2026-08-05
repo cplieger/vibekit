@@ -179,6 +179,21 @@ func TestFindRepoDocs_CapAt20(t *testing.T) {
 // writeRepoSteering / writeRepoSkills group headers + entry annotations
 // ---------------------------------------------------------------------------
 
+// An "auto" doc is on-demand, so it belongs under the Manual header ("read on
+// demand") and must NOT be announced to the agent as always-loaded. KAS groups
+// the two the same way, offering both as slash commands.
+func TestWriteRepoSteering_AutoIsOnDemandNotAlwaysLoaded(t *testing.T) {
+	var b strings.Builder
+	writeRepoSteering(&b, "myrepo", []Doc{{Filename: "auto.md", Inclusion: inclusionAuto}})
+	out := b.String()
+	if strings.Contains(out, "Always-loaded steering") {
+		t.Errorf("an auto doc was announced as always-loaded:\n%s", out)
+	}
+	if !strings.Contains(out, "Manual steering") {
+		t.Errorf("an auto doc is missing from the on-demand group:\n%s", out)
+	}
+}
+
 // TestWriteRepoSteering_OmitsEmptyGroupHeaders verifies each inclusion
 // group's header is emitted only when that group holds at least one doc.
 func TestWriteRepoSteering_OmitsEmptyGroupHeaders(t *testing.T) {

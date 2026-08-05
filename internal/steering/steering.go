@@ -40,6 +40,7 @@ const (
 	inclusionAlways    = "always"
 	inclusionFileMatch = "fileMatch"
 	inclusionManual    = "manual"
+	inclusionAuto      = "auto"
 
 	// Forge kinds, mirroring forges.Kind values without the import.
 	kindGitHub   = "github"

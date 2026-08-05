@@ -94,7 +94,8 @@
 
 /* Inclusion mode is the most useful fact on the steering and skills tabs — it
    answers "is this doc costing me tokens on every session, or only when I touch
-   its files" — so the three modes are colour-coded by cost, warmest first. */
+   its files" — so the four modes are colour-coded by cost, warmest first.
+   `manual` and `auto` are both on-demand and share the cheapest treatment. */
 .docs-badge-always {
   background: color-mix(in oklch, var(--c-yellow) 14%, transparent);
   border-color: color-mix(in oklch, var(--c-yellow) 34%, transparent);
@@ -107,7 +108,8 @@
   color: var(--c-accent);
 }
 
-.docs-badge-manual {
+.docs-badge-manual,
+.docs-badge-auto {
   color: var(--c-text-tertiary);
 }
 
