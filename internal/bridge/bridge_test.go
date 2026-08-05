@@ -1551,8 +1551,23 @@ done
 		if !strings.Contains(got, `"openExternalUrl":true`) || !strings.Contains(got, `"infrastructureSafety":true`) {
 			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
 		}
-		if !strings.Contains(got, `"settings":{"codeIntelligence":{"enabled":true}}`) {
-			t.Errorf("initialize missing the code-intelligence settings opt-in; got: %s", got)
+		// Each settings key is asserted INDEPENDENTLY rather than as one exact
+		// `"settings":{...}` substring. Three reasons: Go marshals map keys
+		// sorted, so an exact match breaks whenever a key is added; the old exact
+		// form is what hid the two MISSING keys, since it asserted the map's
+		// contents were complete when they were not; and each key gates a
+		// different KAS subsystem, so a per-key assertion says which one broke.
+		//
+		// All three are read with an absent-key-means-false resolver on the
+		// KAS side, so dropping one costs a whole capability with nothing in any
+		// log to say so: codeIntelligence removes the native code tool,
+		// knowledge removes the Knowledge tool (leaving vibekit's whole
+		// knowledge UI with no retrieval half), and workflows removes the entire
+		// workflowChatTools array plus the workflow steering doc.
+		for _, key := range []string{"codeIntelligence", "knowledge", "workflows"} {
+			if !strings.Contains(got, `"`+key+`":{"enabled":true}`) {
+				t.Errorf("initialize missing the %s settings opt-in; got: %s", key, got)
+			}
 		}
 		// Both flags are read by KAS with a strict `=== true` against the TOP
 		// level of _meta.kiro, and both fail SILENTLY when absent: without
