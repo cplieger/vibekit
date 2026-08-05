@@ -9,9 +9,9 @@
 //   /files[/{path}]               file browser at path (omit for workspace root)
 //   /file/{path}                  file editor for a specific file, with optional #L<line>
 //   /docs                         Kiro configuration browser (Steering tab — canonical)
-//   /docs/{tab}                   browser sub-tab (skills | agents | specs | hooks)
+//   /docs/{tab}                   browser sub-tab (skills | agents | specs | hooks | workflows)
 //   /history                      previous chats + workflow runs (full-page view)
-//   /run/{workflowId}             read-only review of one previous run
+//   /run/{workflowId}             one workflow run (a review, or a launcher-owned live tab)
 //   /settings                     Settings (General tab)
 //   /settings/tools               Settings → Tools
 //   /settings/permissions         Settings → Permissions
@@ -37,10 +37,16 @@ export type SettingsTab = "general" | "tools" | "permissions" | "instructions";
 // "general" maps to /settings.
 export type GitTab = "changes" | "prs" | "sources";
 
-// The configuration browser's five sub-tabs. "steering" is the canonical
-// default and its URL omits the segment (/docs, not /docs/steering), mirroring
-// SettingsTab's "general" and GitTab's "changes". No "workflows": a recipe is
-// not a .kiro file, so that tab arrives with the run-launch work.
+// The configuration browser's six sub-tabs. "steering" is the canonical default
+// and its URL omits the segment (/docs, not /docs/steering), mirroring
+// SettingsTab's "general" and GitTab's "changes".
+//
+// "workflows" is RPC-sourced rather than a .kiro file scan (a recipe is compiled
+// into KAS or lives under its sessions tree), which is why it arrived later than
+// the rest — but it is a sub-tab like any other and MUST stay in parseDocsTab
+// below. It was added here and to formatRoute without the parser, so the app
+// wrote /docs/workflows and then read it back as /docs: a reload, a back button
+// or a shared link silently landed on Steering.
 export type DocsTab = "steering" | "skills" | "agents" | "specs" | "hooks" | "workflows";
 
 interface RouteChat {
@@ -187,6 +193,7 @@ function parseDocsTab(seg: string | undefined): DocsTab {
     case "agents":
     case "specs":
     case "hooks":
+    case "workflows":
       return seg;
     default:
       return "steering";

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { parseRoute, buildPath, type Route, type SettingsTab } from "./router";
+import { parseRoute, buildPath, type Route, type SettingsTab, type DocsTab } from "./router";
 
 // ---------------------------------------------------------------------------
 // Proposal tarch-b14-p2: Table-driven test for parseRoute
@@ -189,6 +189,26 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
   // "git" removed: the retired Git & forges settings tab no longer exists.
   const settingsTabs: SettingsTab[] = ["general", "tools", "permissions", "instructions"];
 
+  // Exhaustive BY CONSTRUCTION: `satisfies Record<DocsTab, true>` makes a
+  // missing tab a compile error, so a seventh sub-tab cannot be added to the
+  // type without appearing here — and once it is here, the round-trip below
+  // fails until parseDocsTab learns it.
+  //
+  // That chain is not hypothetical. `workflows` was added to DocsTab and to
+  // buildPath but not to parseDocsTab, so the app wrote /docs/workflows and read
+  // it straight back as /docs: a reload, a back button or a shared link landed
+  // on Steering, and nothing failed because this family was absent from the
+  // arbitrary below.
+  const DOCS_TABS = {
+    steering: true,
+    skills: true,
+    agents: true,
+    specs: true,
+    hooks: true,
+    workflows: true,
+  } satisfies Record<DocsTab, true>;
+  const docsTabs = Object.keys(DOCS_TABS) as DocsTab[];
+
   // Arbitrary for a canonical Route (one that round-trips cleanly).
   const arbRoute: fc.Arbitrary<Route> = fc.oneof(
     // chat with non-empty id (empty id maps to "/" which is the default)
@@ -238,6 +258,9 @@ describe("parseRoute/buildPath round-trip (property-based)", () => {
       .map(([segs, line]): Route => ({ kind: "file", path: segs.join("/"), line })),
     // settings
     fc.constantFrom(...settingsTabs).map((tab): Route => ({ kind: "settings", tab })),
+    // docs — every sub-tab. "steering" omits the segment (/docs), the rest
+    // carry it, and all six must survive the trip.
+    fc.constantFrom(...docsTabs).map((tab): Route => ({ kind: "docs", tab })),
   );
 
   it("buildPath(route) round-trips through parseRoute to the canonical form", () => {
