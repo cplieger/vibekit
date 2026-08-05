@@ -11,6 +11,21 @@
 // is no composer and no input bar in any state, because there is nobody to type
 // to.
 //
+// The History page opens runs into this view, and it does NOT filter by status,
+// so a `running` or `paused` run reached from History gets controls too. That is
+// intended and the asymmetry is the point: History's opener is the non-owning
+// flavour, so you can pause or cancel a run from there while closing the tab
+// kills nothing. Before this, a live run in History was a dead end.
+//
+// Known rough edge, deliberately not gated: Pause and Resume reach a run only
+// through its own `run:<id>` bridge, which an AGENT-launched run never has (KAS
+// parents those on the calling chat's session). Clicking Pause on one answers 409
+// naming the situation. The discriminator is on the wire — `parent_chat_id` set
+// means agent-launched, so a guaranteed 409 — but the run list carries it and
+// `_kiro/workflow/inspect` does not, and this view is also reachable by tab
+// restore with no row in hand. Threading it through for a hidden button was worse
+// than a clear refusal.
+//
 // The tree is rendered from KAS's own `state` shape, passed through verbatim by
 // GET /api/runs/{id}. vibekit deliberately does not re-model it: the
 // node plan is KAS's structure, and a second representation of it here would be
