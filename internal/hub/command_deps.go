@@ -111,6 +111,15 @@ func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, res
 	h.agentTerms.AdvanceTurn(chatID)
 }
 
+// AbandonInFlightTurn finalizes a turn that failed before it could end, and
+// closes its terminal-attribution turn on the way out. It mirrors
+// EmitTurnEndedWithStats' AdvanceTurn call for the same reason: the terminals
+// this turn created must not be attributed to the next one.
+func (h *Hub) AbandonInFlightTurn(ctx context.Context, chatID api.ChatID) {
+	h.coord.AbandonInFlightTurn(ctx, chatID)
+	h.agentTerms.AdvanceTurn(chatID)
+}
+
 // KillTurnTerminals kills the terminals the current turn created. The
 // interrupt half of the tab-close contract: cancel stops the model, and this
 // stops the processes the turn already spawned.

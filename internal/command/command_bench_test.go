@@ -46,6 +46,8 @@ func (d *benchDeps) IsEmptyTurn(*api.RPCResponse, api.ChatID) bool       { retur
 func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPCResponse, float64, float64) {
 }
 
+func (d *benchDeps) AbandonInFlightTurn(context.Context, api.ChatID) {}
+
 // TestBenchDeps_NoPanic verifies that every benchDeps method can be called
 // with zero-value arguments without panicking.
 func TestBenchDeps_NoPanic(t *testing.T) {

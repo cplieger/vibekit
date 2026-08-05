@@ -509,35 +509,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			}
 		}
 
-		msg := api.Message{
-			ID:        buf.MessageID,
-			Role:      api.RoleAssistant,
-			Ts:        time.Now().UnixMilli(),
-			Content:   buf.Content.String(),
-			Reasoning: buf.Reasoning.String(),
-			ToolCalls: buf.ToolCalls,
-			// Blocks captures the chronological text/tool/thinking
-			// emission order; client renderers prefer it over
-			// Content+ToolCalls so a turn renders the way the agent
-			// actually produced it (text, tool, more text, another
-			// tool, …) rather than collapsing all text to the top.
-			Blocks: buf.Blocks,
-			// CodeReferences persists the turn's licensed-code
-			// attributions so the chip survives reload (the streamed
-			// assistant turn is never re-broadcast as message_appended).
-			CodeReferences: buf.CodeReferences,
-			// Refusal metadata (kiro-cli 2.13): stamped from the refusal
-			// explanation chunk; persisting it here is what makes the
-			// refusal callout survive reload.
-			Refusal: buf.Refusal,
-			// Turn summary (credits · elapsed · files changed) — persisted on
-			// the message so the turn footer survives reload. The same values
-			// ride the turn_ended SSE for the live render; omitempty drops the
-			// zero/nil cases (a read-only or zero-cost turn carries no footer).
-			TurnCredits:   creditsDelta,
-			TurnElapsedMs: elapsedMs,
-			ChangedFiles:  changedFiles,
-		}
+		msg := assistantTurnMessage(buf, creditsDelta, elapsedMs)
 		bc.persistTurn(ctx, chatID, &msg)
 	}
 
@@ -634,6 +606,82 @@ func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chat
 		return
 	}
 	bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
+}
+
+// assistantTurnMessage builds the persisted assistant message from a finished
+// buffer. Extracted so the interrupted path (AbandonInFlightTurn) and the normal
+// path (EmitTurnEndedWithStats) cannot drift: every field below exists because
+// something in the client reads it after a reload, so a second hand-written
+// literal would quietly lose one of them.
+func assistantTurnMessage(buf *buffer.Buffer, creditsDelta, elapsedMs float64) api.Message {
+	return api.Message{
+		ID:        buf.MessageID,
+		Role:      api.RoleAssistant,
+		Ts:        time.Now().UnixMilli(),
+		Content:   buf.Content.String(),
+		Reasoning: buf.Reasoning.String(),
+		ToolCalls: buf.ToolCalls,
+		// Blocks captures the chronological text/tool/thinking
+		// emission order; client renderers prefer it over
+		// Content+ToolCalls so a turn renders the way the agent
+		// actually produced it (text, tool, more text, another
+		// tool, …) rather than collapsing all text to the top.
+		Blocks: buf.Blocks,
+		// CodeReferences persists the turn's licensed-code
+		// attributions so the chip survives reload (the streamed
+		// assistant turn is never re-broadcast as message_appended).
+		CodeReferences: buf.CodeReferences,
+		// Refusal metadata (kiro-cli 2.13): stamped from the refusal
+		// explanation chunk; persisting it here is what makes the
+		// refusal callout survive reload.
+		Refusal: buf.Refusal,
+		// Turn summary (credits · elapsed · files changed) — persisted on
+		// the message so the turn footer survives reload. The same values
+		// ride the turn_ended SSE for the live render; omitempty drops the
+		// zero/nil cases (a read-only or zero-cost turn carries no footer).
+		TurnCredits:   creditsDelta,
+		TurnElapsedMs: elapsedMs,
+		ChangedFiles:  buf.ChangedFiles,
+	}
+}
+
+// AbandonInFlightTurn finalizes a turn that failed before it could end, and it
+// PERSISTS the partial rather than dropping it.
+//
+// The bug it closes: CmdPrompt's error arm returned without any call that takes
+// the assistant buffer, so the buffer survived with Started == true. The next
+// prompt's ensureTurnStarted then saw a started buffer, emitted no
+// message_created, and extended the dead turn's blocks under the dead turn's
+// message id -- one persisted assistant message holding two turns' replies,
+// with the second turn's text appearing under the first turn's header.
+//
+// Persist rather than discard, deliberately. FlushInFlightTurnOnSwitch drops the
+// buffer, which is right for a model switch (the user asked for a different
+// answer and the old one is moot), and wrong here: the user watched this text
+// stream in, and invariant 1 says the client never shows what the server has not
+// persisted. Dropping it makes the transcript diverge on reload, which is the
+// vanishing-message class this codebase already paid for once. It also restores
+// the `interrupted` badge for this path, which vibekit-runtime.md records as a
+// casualty of deleting the .partial sidecar.
+func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID api.ChatID) {
+	buf, ok := bc.TakeBuffer(chatID)
+	if !ok || !buf.Started {
+		return
+	}
+	msg := assistantTurnMessage(buf, 0, 0)
+	bc.persistTurn(ctx, chatID, &msg)
+
+	evt := api.Message{
+		ID:        newMessageID(),
+		Role:      api.RoleEvent,
+		Ts:        time.Now().UnixMilli(),
+		EventKind: api.EventInterrupted,
+	}
+	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
+		slog.Error("persist interrupted event", "chat_id", chatID, "error", err)
+	}
+	bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID,
+		api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
 }
 
 const stopReasonCancelled = api.StopReasonCancelled
