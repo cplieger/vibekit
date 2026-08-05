@@ -154,12 +154,17 @@ func (h *Hub) CancelRun(ctx context.Context, workflowID string) error {
 // when there is none. Distinct from a KAS refusal so the REST layer can answer
 // 409 with an explanation rather than 500.
 //
-// The wording avoids "not hosted by this server", which would be wrong for the
-// commonest case: an agent-launched run IS executing here, on the calling chat's
-// bridge, and simply cannot be addressed by these verbs.
+// The wording says what is missing (a bridge these verbs can address) rather than
+// claiming the run is not running here: an agent-launched run IS executing on
+// this server, on the calling chat's bridge, and is simply out of reach. It also
+// names cancel as the surviving verb rather than claiming it is the only possible
+// one -- KAS would rehydrate for resume too (`_kiro/workflow/resume` loads from
+// disk), so a restart-orphaned paused run is dead-ended by vibekit's missing
+// carrier, not by the protocol.
 var errRunNotHosted = errors.New(
-	"this run has no live bridge here, so only cancel is available; " +
-		"an agent-launched run or one from before a restart is in this state")
+	"this run has no live bridge on this server, so it cannot be paused or resumed from here; " +
+		"cancel still works. An agent-launched run is always in this state, " +
+		"and so is any run from before the last restart")
 
 // PauseRun asks a running run to stop at its next node boundary, keeping its
 // state resumable. KAS sets `control.pauseRequested` and the in-flight node runs
@@ -177,17 +182,23 @@ func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
 	return h.hostedRunControl(ctx, workflowID, methodKiroWorkflowResume)
 }
 
-// There is deliberately NO RetryRun, and the reason is structural rather than a
-// missing line. Retry is legal only from `failed` or `aborted` (KAS throws on the
-// no-nodeId branch otherwise), and `closeFinishedRunBridge` closes a run's bridge
-// on every terminal run_complete -- including those two. So the moment retry
-// becomes legal is the moment its carrier is gone, and a wired retry would be a
-// button whose only outcome is a 409.
+// There is deliberately NO RetryRun, and the missing piece is a CARRIER, not a
+// capability.
 //
-// Making it work needs re-hosting an existing run on a fresh bridge, and
-// `_kiro/workflow/load` does NOT do that for a run the registry has lost: it
-// takes its disk branch and registers nothing. So this is a feature with its own
-// design, not a route, and it stays out until someone builds it.
+// Retry is legal only from `failed` or `aborted` (KAS throws on the no-nodeId
+// branch otherwise), and `closeFinishedRunBridge` closes a run's bridge on every
+// terminal run_complete -- including those two. So the moment retry becomes legal
+// is the moment the connection that could carry it is gone, and a wired retry is
+// a button whose only outcome is a 409.
+//
+// KAS's side would cope fine, and an earlier revision of this comment was wrong
+// to imply otherwise: `_kiro/workflow/retry` calls `rehydrateWorkflowFromDisk`
+// and then `runner.loadFromDisk`, so it registers the run itself. What vibekit
+// lacks is a process to send it on, because a registry is per-kiro-cli-process
+// and each bridge is its own. Building one is roughly `LaunchRun` minus `new` and
+// `invoke` -- a re-hosting feature with its own lifecycle and failure modes, and
+// a decision about who owns a bridge nobody launched. That is why it stays out:
+// the work is real, not because the wire refuses it.
 
 // hostedRunControl issues a verb that must run on the run's OWN bridge, and
 // refuses rather than falling back to the utility bridge.
@@ -203,10 +214,11 @@ func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
 // The cost is stated rather than hidden, and it is bigger than it first looks.
 // These verbs reach a run only while it has a live bridge under its own synthetic
 // chat id, which means a run launched through POST /api/runs, in this process,
-// still running or paused. Three cases fall outside that and can only be
-// cancelled: a run orphaned by a container restart, a run whose bridge was
-// culled, and an AGENT-launched run, which KAS parents on the calling chat's
-// session and which therefore never has a `run:<id>` bridge at all.
+// still running or paused. Two cases fall outside that and can only be cancelled:
+// a run orphaned by a container restart, and an AGENT-launched run, which KAS
+// parents on the calling chat's session and which therefore never has a
+// `run:<id>` bridge at all. The second is not an edge case, and closing it means
+// routing by the run's parent chat, which the wire already carries.
 //
 // That is why the 409 says "no live bridge" rather than naming a server: the run
 // may well be executing, on a connection these verbs cannot address.

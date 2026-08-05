@@ -297,8 +297,8 @@ func (p *PurgeScheduler) purgeAndReschedule() (timer *time.Timer, timerC <-chan 
 		p.svc.Purge(purgeCtx, retention)
 		purgeCancel()
 	}
-	wait := p.armWait(retention)
-	slog.Debug("chat purge scheduled", "in", wait, "retention", retention)
+	wait, hadWork := p.armWait(retention)
+	slog.Debug("chat purge scheduled", "in", wait, "retention", retention, "had_work", hadWork)
 	t := time.NewTimer(wait)
 	return t, t.C
 }
@@ -310,14 +310,16 @@ func (p *PurgeScheduler) purgeAndReschedule() (timer *time.Timer, timerC <-chan 
 // actually arms. It was inline, and the test asserted `min(natural, cap) == cap`
 // by recomputing the clamp itself — which stayed green when the clamp was deleted
 // from production, because the test was proving arithmetic rather than behaviour.
-func (p *PurgeScheduler) armWait(retention time.Duration) time.Duration {
-	wait, ok := p.nextWait(retention)
+func (p *PurgeScheduler) armWait(retention time.Duration) (wait time.Duration, hadWork bool) {
+	natural, ok := p.nextWait(retention)
 	if !ok {
 		// Nothing to purge right now (retention off, or no chats yet). Re-check
-		// on the poll interval rather than going dark.
-		return maxWait
+		// on the poll interval rather than going dark. hadWork is returned so the
+		// log can tell this apart from a real deadline that happened to be capped
+		// at the same value; without it the two states logged identically.
+		return maxWait, false
 	}
-	return min(wait, maxWait)
+	return min(natural, maxWait), true
 }
 
 // maxWait bounds how long the purge loop may sleep between passes. It is the

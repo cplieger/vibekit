@@ -4,12 +4,12 @@
 // Opened from the History list (a review) or from the Workflows tab (a live,
 // launcher-owned tab whose close cancels the run).
 //
-// The four controls are KAS's own verbs, routed through the server. This view
-// used to be read-only on the reasoning that "a completed run has nothing to
-// steer" — true of steering, but a FAILED run has something to do about it, and
-// retry is exactly the verb a review of a failure wants. What the read-only note
-// was right about is kept: there is still no composer and no input bar, because
-// there is nobody to type to.
+// The controls are KAS's own verbs, routed through the server: Pause and Resume
+// on a live run, Cancel on either. A finished run offers none, so a review of a
+// completed or failed run is still read-only in practice — retry would have been
+// the verb a failure review wants and it is unreachable (see run_host.go). There
+// is no composer and no input bar in any state, because there is nobody to type
+// to.
 //
 // The tree is rendered from KAS's own `state` shape, passed through verbatim by
 // GET /api/runs/{id}. vibekit deliberately does not re-model it: the
