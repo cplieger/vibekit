@@ -30,6 +30,8 @@ const (
 	CmdSetMode             CommandType = "set_mode"
 	CmdCreateHook          CommandType = "create_hook"
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
+	CmdSteer               CommandType = "steer"
+	CmdSteerClear          CommandType = "steer_clear"
 )
 
 // ClientCommand is the envelope for every command the browser posts.
@@ -207,4 +209,28 @@ func (e EffortLevel) Valid() bool {
 // toggle to drain, and no resolve/trust/partial companion commands.
 type SetSupervisedModeCommand struct {
 	Enabled bool `json:"enabled"`
+}
+
+// SteerCommand is the payload for type="steer": a message that joins the
+// RUNNING turn rather than waiting for it to end.
+//
+// This is what a prompt typed mid-turn becomes. It replaced a client-side
+// queue that held the text until `turn_ended` and then sent it as a NEW turn —
+// so the agent finished the work you were trying to redirect before it read the
+// redirection. The other half of that queue was a "send now" button that
+// CANCELLED the turn to jump ahead, discarding whatever it had done since its
+// last durable step. A steer needs neither: KAS merges the message into the
+// live turn's context at the next node boundary.
+//
+// Text is required, trimmed, and capped at maxSteerBytes. MessageID is
+// client-generated like a prompt's and travels so the id space stays the
+// client's; KAS prefixes it `steer-` if it is not already.
+//
+// There is no Attachments field, and that is a wire constraint rather than an
+// omission: `_session/steer` takes a plain string, so there is nowhere for a
+// content block to go. The client degrades an attachment to the path reference
+// it already falls back to for unsupported types.
+type SteerCommand struct {
+	Text      string `json:"text"`
+	MessageID string `json:"message_id"`
 }

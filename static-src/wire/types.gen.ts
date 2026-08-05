@@ -1059,6 +1059,51 @@ export interface SessionModel {
   has_effort?: boolean;
 }
 
+/**
+ * SteerClearedPayload is the payload for type="steer_cleared": the steers named
+ * here were dropped from the buffer without reaching the model.
+ * //
+ * KAS clears at every turn boundary — normal end, prompt error, and cancel —
+ * and on an explicit steer_clear, bumping an epoch so a concurrent append is
+ * refused. So an id appearing here after its steer_injected is ordinary
+ * housekeeping, while one appearing WITHOUT an injected is a message the user
+ * wrote that nothing ever read. The client has to be able to tell those apart,
+ * which is why injected is its own event.
+ */
+export interface SteerClearedPayload {
+  steer_ids: string[];
+}
+
+/**
+ * SteerInjectedPayload is the payload for type="steer_injected": the model has
+ * now READ the steer. This is the moment the chip stops being a promise.
+ */
+export interface SteerInjectedPayload {
+  steer_id: string;
+  text: string;
+}
+
+/**
+ * SteerQueuedPayload is the payload for type="steer_queued": a mid-turn steer
+ * reached KAS's per-session buffer and is waiting for the next node boundary.
+ * //
+ * Text is carried even though the sending client already has it, because this
+ * event is the ONLY source for every other device — and for the sender itself
+ * after a reconnect. The chip row is a projection of server state, so it has to
+ * be reconstructible from the events alone.
+ * //
+ * Severity is set only when KAS classified the message as a system notification
+ * instead of a user steer, which it decides by sniffing the text (see
+ * command/steer.go). vibekit refuses to send such a steer, so a non-empty
+ * Severity here means the notification came from somewhere else — a workflow
+ * step or a subagent reporting into this chat — and it is not the user's words.
+ */
+export interface SteerQueuedPayload {
+  steer_id: string;
+  text: string;
+  severity?: string;
+}
+
 /** SystemTool is one image-baked binary surfaced read-only (Config.System). */
 export interface SystemTool {
   name: string;

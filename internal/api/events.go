@@ -90,16 +90,26 @@ const (
 	EventSafetyStatus     EventType = "safety_status"
 	EventSafetyProperties EventType = "safety_properties"
 	EventSettingsUpdated  EventType = "settings_updated"
-	EventTerminalCreated  EventType = "terminal_created"
-	EventTerminalExited   EventType = "terminal_exited"
-	EventTerminalOutput   EventType = "terminal_output"
-	EventToolCall         EventType = "tool_call"
-	EventToolCallUpdate   EventType = "tool_call_update"
-	EventToolJobChanged   EventType = "tool_job_changed"
-	EventToolJobOutput    EventType = "tool_job_output"
-	EventTurnEnded        EventType = "turn_ended"
-	EventTurnState        EventType = "turn_state"
-	EventWorkingLabel     EventType = "working_label"
+	// Mid-turn steering, mirroring KAS's own three signals rather than
+	// collapsing them. Each answers a different question the chip row asks:
+	// queued = it reached the buffer, injected = the model has actually read
+	// it, cleared = the turn boundary dropped whatever was still unread. A
+	// single "steer_changed" event would make "sent but not yet seen"
+	// indistinguishable from "seen", which is the one distinction a user
+	// steering a live turn cares about.
+	EventSteerQueued     EventType = "steer_queued"
+	EventSteerInjected   EventType = "steer_injected"
+	EventSteerCleared    EventType = "steer_cleared"
+	EventTerminalCreated EventType = "terminal_created"
+	EventTerminalExited  EventType = "terminal_exited"
+	EventTerminalOutput  EventType = "terminal_output"
+	EventToolCall        EventType = "tool_call"
+	EventToolCallUpdate  EventType = "tool_call_update"
+	EventToolJobChanged  EventType = "tool_job_changed"
+	EventToolJobOutput   EventType = "tool_job_output"
+	EventTurnEnded       EventType = "turn_ended"
+	EventTurnState       EventType = "turn_state"
+	EventWorkingLabel    EventType = "working_label"
 )
 
 // labelRunning is the working label shared by the running-process kinds

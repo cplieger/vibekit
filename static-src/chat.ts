@@ -36,7 +36,7 @@ import {
   setTabIcon,
   TAB_VIEWS,
 } from "./tabs.js";
-import { submitPrompt } from "./prompt-queue.js";
+import { submitPrompt } from "./submit.js";
 import { chatSkeleton } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { showModelPicker, hideModelPicker } from "./picker.js";

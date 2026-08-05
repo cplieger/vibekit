@@ -39,8 +39,21 @@ type Buffer struct {
 	ToolCallIndex  map[string]int
 	ChangedFiles   map[string]*api.FileChange
 	MessageID      string
-	Content        strings.Builder
-	Reasoning      strings.Builder
+	// steerCarry is text withheld from this turn because it might still grow
+	// into a steering acknowledgement marker, and steerCarrySubtask is the
+	// attribution of the delta it came from — kept alongside so a flush can put
+	// the bytes back in the block they belong to rather than guessing.
+	//
+	// Marker stripping has to happen mid-stream (KAS never scrubs the marker, so
+	// it arrives inside ordinary text deltas) and a marker can straddle any
+	// number of chunk boundaries. The withheld bytes therefore need a per-turn
+	// home with a single writer, which is exactly what this buffer already is.
+	// The rules for what may be withheld live with the filter in
+	// translate/steer_marker.go; this is only the storage.
+	steerCarry        string
+	steerCarrySubtask string
+	Content           strings.Builder
+	Reasoning         strings.Builder
 	// Refusal marks the in-flight turn as a model refusal (kiro-cli 2.13):
 	// set once from the refusal explanation chunk's _meta.kiro.refusal,
 	// persisted onto the final assistant message at turn end. Guarded by mu.
@@ -59,6 +72,26 @@ type Buffer struct {
 	chunkSeq int64
 	mu       sync.Mutex
 	Started  bool
+}
+
+// SteerCarry returns the withheld marker-candidate text and its attribution.
+func (buf *Buffer) SteerCarry() (text, subtaskID string) {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	return buf.steerCarry, buf.steerCarrySubtask
+}
+
+// SetSteerCarry replaces the withheld text. An empty text clears the
+// attribution too, so a released carry leaves nothing stale behind for the next
+// delta to inherit.
+func (buf *Buffer) SetSteerCarry(text, subtaskID string) {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	buf.steerCarry = text
+	if text == "" {
+		subtaskID = ""
+	}
+	buf.steerCarrySubtask = subtaskID
 }
 
 // AppendCodeReferences merges refs into the turn's licensed-code

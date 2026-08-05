@@ -95,7 +95,7 @@ export async function loadList(): Promise<boolean> {
           : h.message_count > 0,
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
-      ...(existing?.prompt_queue !== undefined && { prompt_queue: existing.prompt_queue }),
+      ...(existing?.steers !== undefined && { steers: existing.steers }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
     };
     next.push(session);

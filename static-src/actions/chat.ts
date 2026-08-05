@@ -139,6 +139,46 @@ export const compactChat = transportAction<{ chatID: string }>({
   error: "Couldn't compact",
 });
 
+// --- chat.steer ---
+
+/** Deliver a message INTO the running turn (`_session/steer`).
+ *
+ *  No optimistic anything, deliberately. The chip appears when KAS's own
+ *  `steer_queued` frame arrives, not when this dispatch resolves — same rule as
+ *  a user message waiting for `message_appended` (vibekit.md #2). Optimism here
+ *  would also be wrong rather than merely early: the server can refuse with 409
+ *  when the turn ended mid-flight, and a chip that appeared and then vanished
+ *  reads as a message that was lost.
+ *
+ *  The error toast is the server's own words. Both refusals it can return are
+ *  specific and actionable — the turn ended, or the text opens with a
+ *  `[notification/...]` prefix KAS would reclassify — so restating them here
+ *  would only make them vaguer.
+ */
+export const steerChat = transportAction<{ chatID: string; text: string; messageID: string }>({
+  name: "chat.steer",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  idempotencyKey: true,
+  command: ({ chatID, text, messageID }) => ({
+    type: "steer",
+    chat_id: chatID,
+    payload: { text, message_id: messageID },
+  }),
+});
+
+/** Drop every steer KAS is still holding for this chat (`_session/steer/clear`).
+ *
+ *  Does not cancel the turn: changing your mind about a message you just sent
+ *  should not also throw away the work in flight. */
+export const clearSteers = transportAction<{ chatID: string }>({
+  name: "chat.clear_steers",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID }) => ({ type: "steer_clear", chat_id: chatID }),
+  error: "Couldn't discard",
+});
+
 // --- chat.set_mode ---
 //
 // Switch the chat's session mode (v3): the prompt-bar mode picker's apply

@@ -43,6 +43,39 @@ const (
 	// flight, a compaction already running, and (as a thrown error rather than a
 	// false) no such session — so a caller can only surface one generic failure.
 	MethodSessionCompact = "_kiro/session/compact"
+
+	// MethodSessionSteer delivers a mid-turn steer: a message that joins the
+	// RUNNING turn instead of waiting for it to end.
+	//
+	// Note the namespace — `_session/*`, not `_kiro/*` like every other extension
+	// method here. That is KAS's spelling, not a typo to be tidied.
+	//
+	// Params `{sessionId, message, messageId?}`; the reply is
+	// `{queued: true, messageId}` or `{queued: false, messageId, dropped: "..."}`.
+	// A missing sessionId, an unknown session and an empty message all THROW
+	// rather than answering, so a transport error here is a real failure.
+	//
+	// KAS appends the message to a per-session steering buffer, and the graph
+	// consumes it at the next node boundary as an ordinary human turn — resetting
+	// the agent's iteration counter so it has budget to act on the new guidance.
+	// A steer that arrives too late for the current node does not get dropped: the
+	// end-of-turn drain loops the turn back through the model to consume it.
+	//
+	// TWO CONSEQUENCES vibekit has to handle rather than ignore. `message` is a
+	// plain STRING, so attachments cannot ride a steer. And KAS decides whether
+	// the message is a user steer or a system notification by SNIFFING its text
+	// against `^\s*\[notification/(info|success|warning|error)\]` — not from a
+	// parameter — so a user message that happens to open that way is silently
+	// reclassified. See command/steer.go for what vibekit does about both.
+	MethodSessionSteer = "_session/steer"
+	// MethodSessionSteerClear drops every steer still queued in the session's
+	// buffer before the model reads it. Params `{sessionId}`, reply
+	// `{messageIds: [...]}` naming what it dropped; clearing an empty buffer is a
+	// no-op returning an empty list.
+	//
+	// Unlike `session/cancel` this does NOT abort the turn — the in-flight
+	// execution keeps running, only the unread steers go away.
+	MethodSessionSteerClear = "_session/steer/clear"
 )
 
 // File-system protocol method names (ACP fs/* namespace). Exported so

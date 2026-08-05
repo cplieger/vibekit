@@ -500,6 +500,12 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	var refusal *api.RefusalInfo
 
 	if buf, ok := bc.TakeBuffer(chatID); ok && buf.Started {
+		// Settle whatever the steering-marker filter was still withholding. A
+		// carry carrying the committing prefix is an unclosed marker and is
+		// dropped; a shorter one is prose that merely looked like the start of
+		// one, and goes back into the turn. Must precede assistantTurnMessage,
+		// which is what reads the buffer into the persisted message.
+		translate.FlushSteerCarry(buf)
 		changedFiles = buf.ChangedFiles
 		refusal = buf.Refusal
 		if stopReason == stopReasonCancelled {

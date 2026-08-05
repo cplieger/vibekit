@@ -28,22 +28,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
-	totalLen := buf.Content.Len() + buf.Reasoning.Len()
-	if totalLen+len(chunk.Content.Text) > maxBufferBytes {
-		return
-	}
-	if isReasoning {
-		buf.Reasoning.WriteString(chunk.Content.Text)
-	} else {
-		buf.Content.WriteString(chunk.Content.Text)
-	}
-	// Mirror the delta into the chronological block array. For runs of
-	// same-kind chunks the helper extends the trailing block; a switch
-	// from text to thinking (or vice versa) starts a new block. Tool
-	// calls between chunks bump the next text run to its own block via
-	// HandleToolCall's AppendToolUseBlock call.
-	var blockIndex int
-	var seq int64
+
 	// A workflow STEP's frames arrive on this chat's connection with an EMPTY
 	// agentSubtaskId (KAS stamps that only on tool frames), so without this the
 	// step's prose extends the parent agent's trailing block — empty matches
@@ -53,10 +38,50 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	if wf := chunk.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
 		subtask = wf
 	}
+
+	// Strip the steering acknowledgement marker before anything reads the text.
+	// All three consumers below — the content builder, the block array and the
+	// SSE delta — take the same string, so filtering once here covers the live
+	// render, the persisted message and the mid-turn reconnect snapshot together.
+	//
+	// Text only: KAS's own recordSteeringAcks reads the marker from text entries
+	// and never from reasoning, and one stream means one carry (see
+	// steer_marker.go).
+	text := chunk.Content.Text
+	if !isReasoning {
+		prev, _ := buf.SteerCarry()
+		var carry string
+		text, carry = stripSteerAcks(prev, text)
+		buf.SetSteerCarry(carry, subtask)
+		if text == "" {
+			// The whole delta is either withheld as a marker candidate or was a
+			// marker in full. Returning here rather than broadcasting an empty
+			// delta keeps the sequence counter honest and avoids an empty block
+			// for text that may never be shown.
+			return
+		}
+	}
+
+	totalLen := buf.Content.Len() + buf.Reasoning.Len()
+	if totalLen+len(text) > maxBufferBytes {
+		return
+	}
 	if isReasoning {
-		blockIndex, seq = buf.AppendThinkingDelta(chunk.Content.Text, subtask)
+		buf.Reasoning.WriteString(text)
 	} else {
-		blockIndex, seq = buf.AppendTextDelta(chunk.Content.Text, subtask)
+		buf.Content.WriteString(text)
+	}
+	// Mirror the delta into the chronological block array. For runs of
+	// same-kind chunks the helper extends the trailing block; a switch
+	// from text to thinking (or vice versa) starts a new block. Tool
+	// calls between chunks bump the next text run to its own block via
+	// HandleToolCall's AppendToolUseBlock call.
+	var blockIndex int
+	var seq int64
+	if isReasoning {
+		blockIndex, seq = buf.AppendThinkingDelta(text, subtask)
+	} else {
+		blockIndex, seq = buf.AppendTextDelta(text, subtask)
 	}
 	// A model refusal (kiro-cli 2.13): the explanation is this chunk's text;
 	// the update-level _meta.kiro.refusal classifies it. Stamp the buffer so
@@ -73,7 +98,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
 		api.MessageChunkPayload{
 			MessageID:      buf.MessageID,
-			Delta:          chunk.Content.Text,
+			Delta:          text,
 			IsReasoning:    isReasoning,
 			BlockIndex:     blockIndex,
 			Seq:            seq,

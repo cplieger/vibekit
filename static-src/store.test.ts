@@ -14,11 +14,10 @@ import {
   removeChat,
   setThinking,
   setWorkingLabel,
-  enqueuePrompt,
-  dequeuePrompt,
-  peekPrompt,
-  removeQueuedAt,
-  queueLength,
+  recordSteerQueued,
+  markSteerInjected,
+  clearSteers,
+  steerCount,
   setName,
   activeSession,
   getActiveId,
@@ -366,149 +365,118 @@ describe("Store setWorkingLabel/setThinking interaction", () => {
   });
 });
 
-describe("Store queue operations (property-based)", () => {
-  it("enqueue N then dequeue N yields same items in FIFO order", () => {
+// --- Mid-turn steers: a projection of KAS's buffer, not a queue ---
+//
+// Every case here is about surviving the wire rather than about data structure
+// mechanics. The old queue was client-owned, so its tests could assume each
+// mutation happened once and in order; this projection is driven by SSE, where a
+// frame can arrive twice, out of order, or without the frame that should have
+// preceded it. Those are the cases that matter.
+
+describe("Store steer projection", () => {
+  it("records a queued steer as not-yet-read", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "actually use tabs" });
+    expect(steerCount("chat-1")).toBe(1);
+    expect(get("chat-1")?.steers?.[0]).toEqual({
+      id: "steer-1",
+      text: "actually use tabs",
+      injected: false,
+    });
+  });
+
+  // An SSE reconnect replays unacknowledged frames, so the same steer_queued can
+  // legitimately arrive twice. Two chips for one message would misreport how much
+  // the agent has been told.
+  it("is idempotent by id across a replayed frame", () => {
     fc.assert(
-      fc.property(
-        fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 20 }),
-        (items) => {
-          resetStore("chat-1");
-          for (const text of items) {
-            enqueuePrompt("chat-1", text, "m-test");
-          }
-          expect(queueLength("chat-1")).toBe(items.length);
-          const dequeued: string[] = [];
-          let next = dequeuePrompt("chat-1");
-          while (next !== undefined) {
-            dequeued.push(next.text);
-            next = dequeuePrompt("chat-1");
-          }
-          expect(dequeued).toEqual(items);
-          expect(queueLength("chat-1")).toBe(0);
-        },
-      ),
-      { numRuns: 200 },
+      fc.property(fc.integer({ min: 1, max: 6 }), (repeats) => {
+        resetStore("chat-1");
+        for (let i = 0; i < repeats; i++) {
+          recordSteerQueued("chat-1", { id: "steer-1", text: "same message" });
+        }
+        expect(steerCount("chat-1")).toBe(1);
+      }),
     );
   });
 
-  it("dequeue on empty returns undefined", () => {
+  // A replay must not un-read a steer the model has already consumed: injected is
+  // the client's own knowledge and the queued frame carries no opinion about it.
+  it("keeps the read state when a queued frame is replayed", () => {
     resetStore("chat-1");
-    expect(dequeuePrompt("chat-1")).toBeUndefined();
-    expect(queueLength("chat-1")).toBe(0);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    markSteerInjected("chat-1", "steer-1", "one");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    expect(get("chat-1")?.steers?.[0]?.injected).toBe(true);
   });
 
-  it("dequeue on unknown chat returns undefined", () => {
+  it("marks a steer read", () => {
     resetStore("chat-1");
-    expect(dequeuePrompt("nonexistent")).toBeUndefined();
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    markSteerInjected("chat-1", "steer-1", "one");
+    expect(get("chat-1")?.steers?.[0]?.injected).toBe(true);
   });
 
-  it("peekPrompt returns the front entry without consuming it", () => {
-    fc.assert(
-      fc.property(
-        fc.array(fc.string({ minLength: 1, maxLength: 50 }), { minLength: 1, maxLength: 10 }),
-        (items) => {
-          resetStore("chat-1");
-          for (const text of items) {
-            enqueuePrompt("chat-1", text, "m-test");
-          }
-          if (items.length > 0) {
-            expect(peekPrompt("chat-1")?.text).toBe(items[0]);
-            expect(peekPrompt("chat-1")?.text).toBe(items[0]);
-            expect(queueLength("chat-1")).toBe(items.length);
-          } else {
-            expect(peekPrompt("chat-1")).toBeUndefined();
-          }
-        },
-      ),
-      { numRuns: 100 },
-    );
+  // steer_injected can arrive with no steer_queued behind it: another device sent
+  // the steer, or this one connected mid-turn. Dropping it would leave the row
+  // with no sign the agent was redirected at all.
+  it("creates an entry for an injected steer it never saw queued", () => {
+    resetStore("chat-1");
+    markSteerInjected("chat-1", "steer-ghost", "from another tab");
+    expect(get("chat-1")?.steers).toEqual([
+      { id: "steer-ghost", text: "from another tab", injected: true },
+    ]);
   });
 
-  it("peekPrompt returns undefined for unknown chat", () => {
+  it("carries a notification severity when KAS classified one", () => {
     resetStore("chat-1");
-    expect(peekPrompt("nonexistent")).toBeUndefined();
-  });
-});
-
-describe("Store queue attachments (inlined with text)", () => {
-  it("dequeue/peek return the attachments that were enqueued with the text", () => {
-    resetStore("chat-1");
-    const att = [{ path: "a.ts" }, { path: "b.ts" }];
-    enqueuePrompt("chat-1", "hello", "m-test", att);
-    const want = { text: "hello", attachments: att, messageId: "m-test" };
-    expect(peekPrompt("chat-1")).toEqual(want);
-    // Peek does not consume.
-    expect(peekPrompt("chat-1")).toEqual(want);
-    expect(dequeuePrompt("chat-1")).toEqual(want);
+    recordSteerQueued("chat-1", { id: "notify-1", text: "step failed", severity: "error" });
+    expect(get("chat-1")?.steers?.[0]?.severity).toBe("error");
   });
 
-  it("attachments stay aligned to their own prompt across a multi-entry queue", () => {
+  it("ignores an empty id rather than creating an unaddressable entry", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "first", "m-test", [{ path: "x.ts" }]);
-    enqueuePrompt("chat-1", "second", "m-test", [{ path: "y.ts" }]);
-    // Text and attachments travel together — no positional drift possible.
-    expect(dequeuePrompt("chat-1")).toEqual({
-      text: "first",
-      attachments: [{ path: "x.ts" }],
-      messageId: "m-test",
-    });
-    expect(dequeuePrompt("chat-1")).toEqual({
-      text: "second",
-      attachments: [{ path: "y.ts" }],
-      messageId: "m-test",
-    });
+    recordSteerQueued("chat-1", { id: "", text: "nowhere" });
+    markSteerInjected("chat-1", "", "nowhere");
+    expect(steerCount("chat-1")).toBe(0);
   });
 
-  it("enqueue without attachments stores an empty array (never undefined)", () => {
+  // The field is DELETED rather than emptied so a cleared session compares equal
+  // to one that never had steers — the chip row dedups by value, and an empty
+  // array would repaint on every turn boundary.
+  it("deletes the field when the last steer goes", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "no files", "m-test");
-    expect(dequeuePrompt("chat-1")).toEqual({
-      text: "no files",
-      attachments: [],
-      messageId: "m-test",
-    });
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    clearSteers("chat-1");
+    expect(get("chat-1")?.steers).toBeUndefined();
   });
 
-  it("enqueue copies the attachments array (later caller mutation does not leak in)", () => {
+  it("clears only the named ids", () => {
     resetStore("chat-1");
-    const att = [{ path: "a.ts" }];
-    enqueuePrompt("chat-1", "hello", "m-test", att);
-    att.push({ path: "sneaky.ts" });
-    expect(peekPrompt("chat-1")?.attachments).toEqual([{ path: "a.ts" }]);
-  });
-});
-
-describe("Store removeQueuedAt (UI cancel affordance)", () => {
-  it("removes and returns the entry at the given index", () => {
-    resetStore("chat-1");
-    enqueuePrompt("chat-1", "a", "m-test");
-    enqueuePrompt("chat-1", "b", "m-test");
-    enqueuePrompt("chat-1", "c", "m-test");
-    expect(removeQueuedAt("chat-1", 1)).toEqual({
-      text: "b",
-      attachments: [],
-      messageId: "m-test",
-    });
-    expect(dequeuePrompt("chat-1")?.text).toBe("a");
-    expect(dequeuePrompt("chat-1")?.text).toBe("c");
-    expect(dequeuePrompt("chat-1")).toBeUndefined();
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    recordSteerQueued("chat-1", { id: "steer-2", text: "two" });
+    recordSteerQueued("chat-1", { id: "steer-3", text: "three" });
+    clearSteers("chat-1", ["steer-1", "steer-3"]);
+    expect(get("chat-1")?.steers?.map((e) => e.id)).toEqual(["steer-2"]);
   });
 
-  it("clears prompt_queue when the last entry is removed", () => {
+  it("treats an empty id list as clear-everything, which is what a turn boundary means", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "only", "m-test");
-    expect(removeQueuedAt("chat-1", 0)?.text).toBe("only");
-    expect(get("chat-1")?.prompt_queue).toBeUndefined();
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    clearSteers("chat-1", []);
+    expect(get("chat-1")?.steers).toBeUndefined();
   });
 
-  it("returns undefined for an out-of-range index or unknown chat", () => {
+  it("is a no-op for ids it does not hold, and for an unknown chat", () => {
     resetStore("chat-1");
-    enqueuePrompt("chat-1", "a", "m-test");
-    expect(removeQueuedAt("chat-1", 5)).toBeUndefined();
-    expect(removeQueuedAt("chat-1", -1)).toBeUndefined();
-    expect(removeQueuedAt("nonexistent", 0)).toBeUndefined();
-    // The valid entry is untouched.
-    expect(queueLength("chat-1")).toBe(1);
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    const before = get("chat-1")?.steers;
+    clearSteers("chat-1", ["steer-nope"]);
+    // Same array identity: a no-op must not churn the session, or every
+    // boundary would repaint the row.
+    expect(get("chat-1")?.steers).toBe(before);
+    clearSteers("nonexistent");
+    expect(steerCount("nonexistent")).toBe(0);
   });
 });
 

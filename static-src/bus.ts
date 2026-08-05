@@ -22,6 +22,9 @@ import type {
   ToolCallPayload,
   ToolCallUpdatePayload,
   TurnEndedPayload,
+  SteerQueuedPayload,
+  SteerInjectedPayload,
+  SteerClearedPayload,
   TurnStatePayload,
   PermissionNeeded,
   ErrorPayload,
@@ -65,6 +68,13 @@ export interface SSEPayloads {
   readonly tool_call: ToolCallPayload;
   readonly tool_call_update: ToolCallUpdatePayload;
   readonly turn_ended: TurnEndedPayload;
+  // Mid-turn steering, three signals kept apart on purpose: queued = KAS's
+  // buffer has it, injected = the model has read it, cleared = the turn
+  // boundary dropped it unread. Collapsing them would hide the only
+  // distinction that matters to somebody correcting a running turn.
+  readonly steer_queued: SteerQueuedPayload;
+  readonly steer_injected: SteerInjectedPayload;
+  readonly steer_cleared: SteerClearedPayload;
   readonly turn_state: TurnStatePayload;
   readonly permission_needed: PermissionNeeded;
   readonly permissions_changed: PermissionsChangedPayload;
