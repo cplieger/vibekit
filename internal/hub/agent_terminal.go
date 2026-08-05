@@ -13,6 +13,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"maps"
@@ -297,6 +298,24 @@ func (h *Hub) handleTerminalRequest(ctx context.Context, chatID api.ChatID, meth
 		h.termWaitForExit(ctx, chatID, msg)
 	case methodTermKill:
 		h.termKill(ctx, chatID, msg)
+	default:
+		// The caller routes here on a `terminal/` PREFIX match, so a verb KAS
+		// adds later reaches this switch and must still be answered. Falling
+		// off the end left the request pending forever, and because
+		// Bridge.Call has no client-side deadline that wedges the turn rather
+		// than failing it (see translateACPEvent's refusal branch for the full
+		// mechanism). Refusing is the honest answer: vibekit does not implement
+		// the verb, and KAS can surface that to the model.
+		if msg.ID == nil {
+			return
+		}
+		slog.Warn("chat bridge: refusing an unimplemented terminal verb",
+			"method", method, "chat_id", chatID, "id", *msg.ID)
+		if err := h.BridgeRespond(ctx, chatID, *msg.ID, nil,
+			fmt.Errorf("unimplemented terminal method: %s", method)); err != nil {
+			slog.Error("chat bridge: terminal refusal could not be delivered; the turn may be wedged",
+				"method", method, "chat_id", chatID, "error", err)
+		}
 	}
 }
 
