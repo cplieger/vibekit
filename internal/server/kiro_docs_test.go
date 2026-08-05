@@ -100,6 +100,31 @@ func TestScanKiroDocs_Steering(t *testing.T) {
 	}
 }
 
+// A skill that declares NO inclusion must report none. steering.Parse defaults
+// the field to "always" because that is right for a steering document, and
+// forwarding it here badged every skill in the browser as always-loaded — a
+// claim about token cost that was never in the file. KAS's
+// SkillFrontMatterSchema declares no inclusion key at all.
+func TestScanKiroDocs_SkillWithoutInclusionReportsNone(t *testing.T) {
+	fsys := fstest.MapFS{
+		"skills/plain/SKILL.md": {Data: []byte("---\nname: plain\ndescription: No mode declared\n---\n")},
+	}
+	skills := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catSkill)
+	p, ok := findDoc(skills, "plain")
+	if !ok {
+		t.Fatal("plain row missing")
+	}
+	if p.Inclusion != "" {
+		t.Errorf("Inclusion = %q, want empty — the mode was never declared", p.Inclusion)
+	}
+}
+
+// The other half, and why the fix is not simply dropping the field: the schema is
+// `.passthrough()` and createSteeringCommandSource reads `config?.inclusion`
+// across skills and steering alike, so a skill declaring manual really does
+// become a slash command and that is worth showing.
+// (TestScanKiroDocs_SkillsAreManifestsOnly below covers the declared case.)
+
 // TestScanKiroDocs_SkillsAreManifestsOnly pins the design's scoping rule:
 // reference material under a skill directory is not a row.
 func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {

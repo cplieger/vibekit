@@ -17,13 +17,13 @@ import (
 // steering inventory in environment.md grouped by trigger type.
 type Doc struct {
 	Filename    string // basename, e.g. "architecture.md"
-	Inclusion   string // "always" | "fileMatch" | "manual"; defaults to "always"
+	Inclusion   string // "always" | "fileMatch" | "manual" | "auto"; defaults to "always"
 	FileMatch   string // glob pattern when Inclusion == "fileMatch"; empty otherwise
 	Description string // human-readable description from the description field
 }
 
 // writeRepoSteering renders the per-repo steering inventory grouped
-// by inclusion trigger ("always", "fileMatch", "manual"). Indented one
+// by inclusion trigger ("always", "fileMatch", "manual"/"auto"). Indented one
 // level under the repo bullet so the relationship is visually clear.
 func writeRepoSteering(b *strings.Builder, repo string, docs []Doc) {
 	always := make([]Doc, 0, len(docs))
@@ -33,7 +33,10 @@ func writeRepoSteering(b *strings.Builder, repo string, docs []Doc) {
 		switch d.Inclusion {
 		case inclusionFileMatch:
 			matched = append(matched, d)
-		case inclusionManual:
+		case inclusionManual, inclusionAuto:
+			// "auto" is on-demand like "manual" — KAS offers both as slash
+			// commands and excludes both from its always-loaded set — so the
+			// header below ("read on demand") already describes it.
 			manual = append(manual, d)
 		default:
 			always = append(always, d)
@@ -127,7 +130,10 @@ func writeRepoSkills(b *strings.Builder, repo string, docs []Doc) {
 		switch d.Inclusion {
 		case inclusionFileMatch:
 			matched = append(matched, d)
-		case inclusionManual:
+		case inclusionManual, inclusionAuto:
+			// "auto" is on-demand like "manual" — KAS offers both as slash
+			// commands and excludes both from its always-loaded set — so the
+			// header below ("read on demand") already describes it.
 			manual = append(manual, d)
 		default:
 			always = append(always, d)
@@ -212,19 +218,29 @@ func frontmatterBody(data []byte) (string, bool) {
 
 // normalizeInclusion validates a steering front-matter inclusion value,
 // folding any unrecognized value (typo, empty) to the default "always".
+//
+// FOUR values, not three. KAS's SteeringContextFrontMatterSchema declares
+// `inclusion: enum(["always","fileMatch","manual","auto"])`, and "auto" is an
+// ON-DEMAND mode: `emitDocumentsChanged` filters `inclusion !== "auto"` out of
+// its notification, and `createSteeringCommandSource` collects `manual` and
+// `auto` together as slash-command entries. Folding it to "always" therefore
+// claimed the exact opposite of the truth about the one thing the inclusion
+// badge exists to answer — whether a doc costs tokens on every session.
 func normalizeInclusion(v string) string {
 	switch v {
 	case inclusionFileMatch:
 		return inclusionFileMatch
 	case inclusionManual:
 		return inclusionManual
+	case inclusionAuto:
+		return inclusionAuto
 	default:
 		return inclusionAlways
 	}
 }
 
 // ParseInclusion returns the validated inclusion mode ("always",
-// "fileMatch", or "manual") from a steering markdown file's YAML
+// "fileMatch", "manual" or "auto") from a steering markdown file's YAML
 // front-matter, folding unknown or absent values to "always". It
 // tolerates a leading UTF-8 BOM and CRLF line endings. Exported so the
 // REST kiro-config scanner (internal/server) classifies steering docs

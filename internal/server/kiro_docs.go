@@ -289,13 +289,28 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
 		if name == "" {
 			name = e.Name()
 		}
+		// A DECLARED mode only, never the default. KAS's SkillFrontMatterSchema
+		// declares no `inclusion` key — only SteeringContextFrontMatterSchema
+		// does — so steering.Parse's "always" default is the steering default
+		// leaking onto a document it was not written for. Forwarding it badged
+		// every skill in the browser as always-loaded: a claim about token cost
+		// that was never in the file, on the one axis the badge exists to answer.
+		//
+		// Not simply dropped either, because the schema is `.passthrough()` and
+		// `createSteeringCommandSource` reads `config?.inclusion` across skills
+		// and steering alike — a skill declaring `manual` or `auto` genuinely
+		// becomes a slash command, and that is worth showing. An absent mode
+		// renders no badge client-side.
+		inclusion := ""
+		if fm.HasInclusion {
+			inclusion = fm.Inclusion
+		}
 		docs = append(docs, kiroDoc{
 			Category:         catSkill,
 			Name:             name,
 			Path:             prefix + "/skills/" + rel,
 			Description:      fm.Description,
-			Inclusion:        fm.Inclusion,
-			FileMatch:        fm.FileMatch,
+			Inclusion:        inclusion,
 			SteeringOverride: fm.SteeringOverride,
 		})
 	}

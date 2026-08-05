@@ -182,6 +182,37 @@ func TestParse_UnknownInclusionFoldsToAlways(t *testing.T) {
 	}
 }
 
+// "auto" is KAS's fourth mode and it is ON-DEMAND, not always-loaded:
+// emitDocumentsChanged filters `inclusion !== "auto"` out of its notification
+// and createSteeringCommandSource collects manual AND auto as slash commands.
+// Folding it to "always" asserted the opposite of the truth about token cost.
+func TestParse_AutoIsPreservedNotFoldedToAlways(t *testing.T) {
+	fm := Parse([]byte("---\ninclusion: auto\n---\n"))
+	if fm.Inclusion != inclusionAuto {
+		t.Errorf("inclusion auto → %q, want auto", fm.Inclusion)
+	}
+}
+
+// HasInclusion separates a DECLARED mode from the inherited steering default,
+// which is what lets a skill (whose schema has no inclusion key) avoid being
+// badged always-loaded while still showing a mode it really did declare.
+func TestParse_HasInclusionSeparatesDeclaredFromDefault(t *testing.T) {
+	if fm := Parse([]byte("---\nname: thing\n---\n")); fm.HasInclusion {
+		t.Error("HasInclusion = true for a document that declared none")
+	}
+	if fm := Parse([]byte("---\nname: thing\n---\n")); fm.Inclusion != inclusionAlways {
+		t.Error("the steering default must still be reported for callers that want it")
+	}
+	if fm := Parse([]byte("---\ninclusion: manual\n---\n")); !fm.HasInclusion {
+		t.Error("HasInclusion = false for a declared mode")
+	}
+	// A typo folds to always AND still counts as declared: the author said
+	// something, so a caller that only forwards declared modes should forward it.
+	if fm := Parse([]byte("---\ninclusion: typo\n---\n")); !fm.HasInclusion {
+		t.Error("HasInclusion = false for a declared-but-invalid mode")
+	}
+}
+
 func TestIsTruthy(t *testing.T) {
 	for _, v := range []string{"true", "TRUE", "yes", "on", "1"} {
 		if !isTruthy(v) {
