@@ -26,6 +26,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -285,13 +286,29 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID api.ChatID, r
 // no-op write. size <= 0 leaves the stored context size unchanged;
 // credits < 0 leaves credits unchanged (the session_info_update
 // context-usage path carries no cost).
+//
+// The context-percentage gate is a MATERIAL delta, not any delta, and that
+// distinction is the whole cost of this function. A chat file is rewritten
+// wholesale on every Mutate (load, Unmarshal, Marshal, atomic save with an
+// fsync), and KAS emits contextUsagePercentAtModelResponse once per model
+// response plus a second breakdown-bearing frame, so an exact-inequality gate
+// turned a 20-tool-call turn into roughly 40 full-transcript rewrites,
+// serialized on the per-chat mutex, to move a float by fractions of a point.
+// Measured on this fleet's real KAS transcripts: p50 737 KB, p90 5.6 MB, max
+// 21.1 MB across 12,473 records. The fsync is cheap (~9 ms for 20 MB on ZFS);
+// the JSON round trip is not.
+//
+// The threshold is 1.0 percentage point because that is the resolution the
+// context ring actually renders, plus the two tier boundaries KAS itself keys
+// on (80 = warning, 95 = critical) so a crossing is never rounded away. A
+// change the UI cannot show is not worth a transcript rewrite.
 func (t *Translator) persistUsage(ctx context.Context, chatID api.ChatID, pct float64, size int, credits float64) {
 	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
 		changed := false
-		if !c.Usage.HasRealData || c.Usage.ContextPct != pct {
+		if !c.Usage.HasRealData || materialPctDelta(c.Usage.ContextPct, pct) {
 			c.Usage.ContextPct = pct
 			c.Usage.HasRealData = true
 			changed = true
@@ -308,6 +325,30 @@ func (t *Translator) persistUsage(ctx context.Context, chatID api.ChatID, pct fl
 	}); err != nil {
 		slog.Error("persist v3 usage", "chat_id", chatID, "error", err)
 	}
+}
+
+// contextPctEpsilon is the smallest context-percentage change worth a full
+// transcript rewrite: one point, the resolution the context ring renders.
+const contextPctEpsilon = 1.0
+
+// contextPctTiers are KAS's own context-usage tier boundaries (normal < 80,
+// warning 80-95, critical >= 95). A crossing must always persist even when the
+// move is under contextPctEpsilon, because the tier is what the UI colours on.
+var contextPctTiers = [...]float64{80, 95}
+
+// materialPctDelta reports whether moving the stored context percentage from
+// old to new is worth persisting: a move of at least contextPctEpsilon, or any
+// move that crosses a tier boundary.
+func materialPctDelta(old, new float64) bool {
+	if math.Abs(new-old) >= contextPctEpsilon {
+		return true
+	}
+	for _, tier := range contextPctTiers {
+		if (old < tier) != (new < tier) {
+			return true
+		}
+	}
+	return false
 }
 
 // configOptionUpdate is the v3 config_option_update payload: the live
