@@ -167,8 +167,12 @@ func WithPush(p api.PushService) Option {
 }
 
 // WithMCPConfig wires the MCP configuration store. The hub reads
-// ACPServers() on every bridge spawn. Accepts a lazy thunk to resolve
-// circular dependencies (mcpStore→hub broadcast).
+// EnabledNames() to filter status notifications belonging to disabled entries.
+//
+// It used to read an ACPServers() that no longer exists: vibekit stopped sending
+// servers inline and adopted KAS's own mcp.json, leaving `mcpServers` on the
+// session methods as a required-but-empty array (bridge_session.go). The comment
+// outlived the method.
 func WithMCPConfig(c api.MCPConfig) Option {
 	return func(h *Hub) { h.mcpConfig = c }
 }

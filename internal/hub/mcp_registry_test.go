@@ -25,7 +25,6 @@ type fakeMCPConfig struct {
 	mu      sync.Mutex
 }
 
-func (f *fakeMCPConfig) ACPServers(_ context.Context) []map[string]any { return nil }
 func (f *fakeMCPConfig) EnabledNames(_ context.Context) map[string]struct{} {
 	f.mu.Lock()
 	defer f.mu.Unlock()
