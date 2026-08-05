@@ -165,16 +165,15 @@ const (
 	//
 	//   pause  {workflowId} -> {paused:true}. Sets control.pauseRequested; the
 	//          run stops at the next NODE boundary, like cancel.
-	//   retry  {workflowId, nodeId?} -> throws unless the run is TERMINAL
-	//          (completed/failed/aborted) and re-drives from the failed node,
-	//          or from nodeId when given.
+	// retry is NOT declared here: it is unreachable by construction (see
+	// run_host.go), and a method constant with no caller is a claim that
+	// something is wired.
 	//
 	// cancel additionally takes an optional `targetStatus` (default "aborted")
 	// that vibekit does not send: the UI verb is "stop", and letting a client
 	// choose which terminal status a stop records would make the run history
 	// mean different things depending on which door was used.
 	methodKiroWorkflowPause = "_kiro/workflow/pause"
-	methodKiroWorkflowRetry = "_kiro/workflow/retry"
 )
 
 // v3 (KAS) hook-management method names. list/setEnabled/triggerHook are C→A

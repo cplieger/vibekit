@@ -199,20 +199,18 @@ func (h *Hub) handleRunCancel(w http.ResponseWriter, r *http.Request) {
 	h.runControlHandler(w, r, runVerbCancel)
 }
 
-// handleRunPause / handleRunResume / handleRunRetry are the three run-control
-// verbs added once the 2.16.1 sweep established that all of them were already
-// live server-side. Each is the same shape as cancel; the differences are which
-// statuses permit them, which runVerb carries.
+// handleRunPause / handleRunResume are the two run-control verbs added once the
+// sweep established they were already live server-side. Each is the same shape as
+// cancel; the difference is which statuses permit them, which runVerb carries.
+//
+// Retry is absent by design -- see run_host.go, where the reason lives with the
+// mechanism that causes it.
 func (h *Hub) handleRunPause(w http.ResponseWriter, r *http.Request) {
 	h.runControlHandler(w, r, runVerbPause)
 }
 
 func (h *Hub) handleRunResume(w http.ResponseWriter, r *http.Request) {
 	h.runControlHandler(w, r, runVerbResume)
-}
-
-func (h *Hub) handleRunRetry(w http.ResponseWriter, r *http.Request) {
-	h.runControlHandler(w, r, runVerbRetry)
 }
 
 // runVerb describes one run-control verb: how to issue it, and which run
@@ -254,16 +252,6 @@ var (
 		issue: (*Hub).ResumeRun,
 		from:  []string{"paused"},
 	}
-	runVerbRetry = runVerb{
-		name:  "retry",
-		issue: (*Hub).RetryRun,
-		// FAILED or ABORTED only, not every terminal status. KAS's retry admits
-		// all three terminal states in its outer check and then, on the
-		// no-nodeId branch vibekit uses, throws unless the status is failed or
-		// aborted. Offering it on a completed run would produce a button whose
-		// only possible outcome is an error.
-		from: []string{"failed", "aborted"},
-	}
 )
 
 func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
@@ -294,10 +282,10 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 		}
 	}
 	if err := verb.issue(h, r.Context(), id); err != nil {
-		// A run this server does not host is a state of the world, not a fault:
-		// only cancel is available there, and saying so is more useful than a
-		// 500. See hostedRunControl for why the utility bridge is not a fallback
-		// for the verbs that execute.
+		// A run with no live bridge here is a state of the world, not a fault:
+		// only cancel is available for it, and saying so is more useful than a
+		// 500. See hostedRunControl for which runs fall outside, and for why the
+		// utility bridge is not a fallback for the verbs that execute.
 		if errors.Is(err, errRunNotHosted) {
 			slog.Info("run control unavailable: run not hosted here",
 				"verb", verb.name, "workflow_id", id)
