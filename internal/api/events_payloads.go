@@ -311,7 +311,17 @@ const (
 	RPCCodeInternal = -32603
 	// RPCCodeNotIdle indicates the session is still processing a prior turn.
 	RPCCodeNotIdle = -32001
-	// RPCCodeBridgeExited is a server-defined code indicating the ACP bridge process exited.
+	// RPCCodeBridgeExited is a server-defined code indicating the ACP bridge
+	// process exited.
+	//
+	// COLLISION, deliberate but load-bearing: -32000 is also the code KAS uses
+	// for a MAPPED backend error, throttles included (it carries
+	// `data.{errorType,retryErrorType,requestId}` there). The two never reach
+	// the same reader today because the bridge-exited frame is intercepted by
+	// POINTER IDENTITY in Call before the code is ever read, so it becomes a
+	// TransportError wrapping ErrBridgeExited rather than an RPCError. But a
+	// future `switch re.Code` on this constant would silently swallow every
+	// throttle. Classify by errors.Is(err, ErrBridgeExited), never by this code.
 	RPCCodeBridgeExited = -32000
 )
 

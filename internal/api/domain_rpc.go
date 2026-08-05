@@ -93,6 +93,16 @@ type RPCErrorOut struct {
 // path for callers that need errors.Is classification.
 var ErrNotIdle = errors.New("session not idle")
 
+// ErrBridgeExited is the sentinel a Call returns (wrapped in a TransportError)
+// when the ACP subprocess died with the request still pending. Exported for the
+// same reason as ErrNotIdle: a caller has to be able to tell this apart from a
+// transient write failure without substring matching, because the two want
+// OPPOSITE actions. A write that failed once may succeed on a retry; a dead
+// bridge cannot, because the readLoop has closed its done channel permanently,
+// so every retry fails instantly and the only thing the attempts buy is dead
+// wall-clock time before the same error surfaces.
+var ErrBridgeExited = errors.New("ACP bridge exited")
+
 // There is no api.ErrChatNotFound sentinel. It existed for errors.Is
 // classification against a store TRANSITION, and PromoteRewind was the only
 // transition that returned it. (command.ErrChatNotFound is a different, live

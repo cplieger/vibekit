@@ -4,7 +4,6 @@ package bridge
 import (
 	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,7 +35,11 @@ const stderrLineCap = 64 * 1024
 // is unblocked by readLoop's post-exit drain or by the done-channel
 // race-guard. Kept as a var-level errors.New rather than fmt.Errorf
 // so callers can errors.Is against it without allocating per-call.
-var errBridgeExited = errors.New("ACP bridge exited")
+// errBridgeExited aliases the exported sentinel so a caller in another package
+// can classify a dead bridge with errors.Is. It must stay an alias rather than
+// its own errors.New: two distinct values with the same text would make the
+// classification silently fail and the retry loop would spin on a corpse again.
+var errBridgeExited = api.ErrBridgeExited
 
 // ACP RPC method names — re-exported from api for package-local use.
 // The canonical definitions live in api/methods.go so the full protocol
