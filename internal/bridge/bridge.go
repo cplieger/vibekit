@@ -343,6 +343,25 @@ func (b *Bridge) initialize(ctx context.Context) error {
 					"delete":        true,
 				}},
 			},
+			// terminal:true is what routes every agent shell command through
+			// vibekit's own terminal/* handlers (hub/agent_terminal.go) rather
+			// than an in-process spawn inside KAS, so vibekit owns the pid, the
+			// argv and the output ring for all agent shell work.
+			//
+			// It also decides WHICH ExecuteBash the agent gets, and that is not
+			// obvious from here. KAS ships two: an ACP-origin one with no upper
+			// bound, and a clamped one at min(input.timeout ?? 120000, 1800000).
+			// vibekit gets the clamped one, so an agent command carries a 30
+			// minute ceiling, because `hasClientIOTools` is false and
+			// mergeTools' second argument wins.
+			//
+			// The trap: registering ANY client tool whose id is in KAS's
+			// CORE_IO_TOOL_IDS set flips `hasClientIOTools` and silently
+			// promotes the agent to the UNBOUNDED variant. Nothing logs it and
+			// no test would catch it, so the 30 minute ceiling would disappear
+			// as a side effect of an unrelated feature. If a future change wants
+			// to register such a tool, the bound has to be reintroduced here
+			// deliberately rather than lost by accident.
 			"terminal":    true,
 			"elicitation": map[string]any{"form": map[string]any{}},
 			"_meta":       map[string]any{"kiro": kiroMeta},
