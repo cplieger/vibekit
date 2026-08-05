@@ -69,10 +69,23 @@ import (
 // handshake); the read itself is fast. bridge.Call has no timeout of its own.
 const hookCallTimeout = 45 * time.Second
 
-// hookTriggerTimeout bounds a triggerHook round-trip. For a runCommand hook
-// KAS awaits the executeHook callback (which runs the command, itself bounded
-// by hookCommandTimeout), so this must comfortably exceed the command cap.
-const hookTriggerTimeout = 90 * time.Second
+// hookTriggerSlack is how much longer a triggerHook round-trip is allowed than
+// the command it carries. KAS awaits the executeHook callback for the whole
+// command, so the RPC deadline must be derived from the command's timeout rather
+// than fixed -- a fixed 90s was correct only while every command was capped at
+// the 60s default, and became wrong the moment a hook file's own declared
+// timeout started being forwarded.
+//
+// Getting this backwards is not a slow request, it is a wedged utility bridge:
+// rawCall's timeout resets the SHARED session, while answerExecuteHook's command
+// runs under context.Background() and cannot be cancelled by it, so the reset
+// releases hookTriggerMu and expectingHookExec with the command still running --
+// exactly the crossed-output race that mutex exists to prevent.
+const hookTriggerSlack = 30 * time.Second
+
+// hookTriggerTimeout bounds a triggerHook round-trip for a command with no
+// declared timeout of its own.
+const hookTriggerTimeout = hookCommandTimeout + hookTriggerSlack
 
 // hookCommandTimeout is the default wall-clock cap for a runCommand hook's
 // shell command when the hook file declares no explicit timeout. Matches the
@@ -378,7 +391,7 @@ func (h *Hub) handleHookTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := h.ensureUtility()
-	cctx, cancel := context.WithTimeout(r.Context(), hookTriggerTimeout)
+	cctx, cancel := context.WithTimeout(r.Context(), hookTriggerDeadline(hook.Action.Timeout))
 	defer cancel()
 	// approved:true — the user's explicit "Run now" click is the consent, so
 	// we skip KAS's extra per-command approval round-trip. The command is the
@@ -393,6 +406,19 @@ func (h *Hub) handleHookTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	api.WriteJSON(w, hookTriggerResponse{Output: run.Output, ExitCode: run.ExitCode, Ran: run.Ran})
+}
+
+// hookTriggerDeadline is how long to wait for a triggerHook carrying a command
+// with the given declared timeout in seconds. Zero means the file declared none,
+// so KAS's own default applies and the default deadline covers it. The declared
+// value is clamped the same way runHookCommand clamps it, so a pathological hook
+// file cannot pin the request for longer than the command can actually run.
+func hookTriggerDeadline(declaredSecs int) time.Duration {
+	if declaredSecs <= 0 {
+		return hookTriggerTimeout
+	}
+	cmd := min(time.Duration(declaredSecs)*time.Second, hookMaxCommandTimeout)
+	return cmd + hookTriggerSlack
 }
 
 // findHook re-lists the workspace hooks and returns the one whose KAS id

@@ -195,18 +195,31 @@ func TestMaterialPctDelta(t *testing.T) {
 		old, new float64
 		want     bool
 	}{
-		"identical":                          {50, 50, false},
-		"sub-point up is not material":       {50, 50.4, false},
-		"sub-point down is not material":     {50, 49.6, false},
-		"exactly one point up":               {50, 51, true},
-		"exactly one point down":             {51, 50, true},
-		"large jump":                         {10, 90, true},
-		"tiny move crossing 80":              {79.9, 80.0, true},
-		"tiny move crossing 80 downward":     {80.0, 79.9, true},
+		"identical":                      {50, 50, false},
+		"sub-point up is not material":   {50, 50.4, false},
+		"sub-point down is not material": {50, 49.6, false},
+		"exactly one point up":           {50, 51, true},
+		"exactly one point down":         {51, 50, true},
+		"large jump":                     {10, 90, true},
+		// The tiers are vibekit's OWN client thresholds, not KAS's: 70 and 90 are
+		// where status.ts recolours the context ring, 95 is context-ui.ts's
+		// DEFAULT_CUTOFF_PCT where the composer stops accepting input. An earlier
+		// revision used KAS's 80/95 TUI boundaries, which this client never
+		// renders, so a sub-point crossing of 70, 90 or 95 could be rounded away
+		// — including the one that disables the composer.
+		"tiny move crossing 70":              {69.9, 70.0, true},
+		"tiny move crossing 70 downward":     {70.0, 69.9, true},
+		"tiny move crossing 90":              {89.9, 90.0, true},
 		"tiny move crossing 95":              {94.9, 95.0, true},
-		"tiny move inside the warning tier":  {85.0, 85.2, false},
-		"tiny move inside the critical tier": {96.0, 96.3, false},
-		"from zero is material":              {0, 1, true},
+		"tiny move crossing 95 downward":     {95.0, 94.9, true},
+		"tiny move inside the warning band":  {75.0, 75.2, false},
+		"tiny move inside the critical band": {91.0, 91.3, false},
+		"tiny move above the cutoff":         {96.0, 96.3, false},
+		// 80 is KAS's boundary and NOT one of vibekit's, so a sub-point move
+		// across it is correctly ignored. This row is what would fail if someone
+		// reinstated KAS's tiers here.
+		"tiny move crossing KAS's 80 is not material": {79.9, 80.0, false},
+		"from zero is material":                       {0, 1, true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

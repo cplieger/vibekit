@@ -80,12 +80,39 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// KAS reports a throttle on the same -32000 vibekit uses for its own
 		// bridge-exited constant. The data payload is the distinguisher.
 		"throttle is not retryable": {
-			err: rpcErr(t, api.RPCCodeBridgeExited, "Internal error", throttleErrorData{
-				ErrorType:      "ThrottlingException",
-				RetryErrorType: "USER_REQUEST_RATE_EXCEEDED",
+			err: rpcErr(t, api.RPCCodeBridgeExited, "Too many requests, please wait.", mappedErrorData{
+				ErrorType:      "ClientThrottleError",
+				RetryErrorType: "THROTTLING",
 				RequestID:      "abc-123",
 			}),
 			want: classThrottled,
+		},
+		// The regression this table exists to prevent. 16 of KAS's 24 mapped
+		// error classes report CLIENT_ERROR and 2 report SERVER_ERROR; an earlier
+		// revision classified a mapped error by the mere PRESENCE of the data
+		// block, so all 21 non-throttle classes were reported to the user as a
+		// rate limit. A validation failure telling the user to wait and retry is
+		// worse than the bare "Internal error" it replaced.
+		"validation error is not a throttle": {
+			err: rpcErr(t, api.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
+				ErrorType:      "GenericValidationError",
+				RetryErrorType: "CLIENT_ERROR",
+			}),
+			want: classFatal,
+		},
+		"access denied is not a throttle": {
+			err: rpcErr(t, api.RPCCodeBridgeExited, "Access denied.", mappedErrorData{
+				ErrorType:      "AccessDeniedError",
+				RetryErrorType: "CLIENT_ERROR",
+			}),
+			want: classFatal,
+		},
+		"server error is not a throttle": {
+			err: rpcErr(t, api.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
+				ErrorType:      "InternalServerError",
+				RetryErrorType: "SERVER_ERROR",
+			}),
+			want: classFatal,
 		},
 		"mapped error with no retry classification is fatal": {
 			err:  rpcErr(t, api.RPCCodeBridgeExited, "some other mapped failure", nil),
@@ -129,9 +156,9 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 		t.Error("a dead bridge is reported retryable; every attempt fails instantly against a closed done channel")
 	}
 
-	throttle := rpcErr(t, api.RPCCodeBridgeExited, "Internal error", throttleErrorData{
-		ErrorType:      "ThrottlingException",
-		RetryErrorType: "USER_REQUEST_RATE_EXCEEDED",
+	throttle := rpcErr(t, api.RPCCodeBridgeExited, "Too many requests.", mappedErrorData{
+		ErrorType:      "ClientThrottleError",
+		RetryErrorType: "THROTTLING",
 	})
 	if retriesFor(throttle) {
 		t.Error("a throttle is reported retryable; kiro-cli already exhausted its own adaptive attempts")
@@ -152,20 +179,34 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 // which describes neither the cause nor the remedy, on the one failure where
 // both are known.
 func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
-	err := rpcErr(t, api.RPCCodeBridgeExited, "Internal error", throttleErrorData{
-		ErrorType:      "ThrottlingException",
-		RetryErrorType: "USER_REQUEST_RATE_EXCEEDED",
+	const kasMsg = "Too many requests, please wait before trying again."
+	err := rpcErr(t, api.RPCCodeBridgeExited, kasMsg, mappedErrorData{
+		ErrorType:      "ClientThrottleError",
+		RetryErrorType: "THROTTLING",
 		RequestID:      "req-9",
 	})
 	got := promptFailureReason(err)
 
-	for _, want := range []string{"rate limiting", "ThrottlingException", "req-9"} {
+	// KAS's own message is already written for a user, so it must SURVIVE rather
+	// than be replaced. What is added is the one thing it cannot know (retrying
+	// now will not help, because KAS already spent its attempts) plus the request
+	// id, which lives in `data` where nothing else surfaces it.
+	if !strings.Contains(got, kasMsg) {
+		t.Errorf("reason %q dropped KAS's own user-facing message", got)
+	}
+	for _, want := range []string{"already retried", "req-9"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("reason %q does not mention %q", got, want)
 		}
 	}
-	if strings.Contains(got, "Internal error") {
-		t.Errorf("reason %q still leads with KAS's placeholder message", got)
+
+	// A non-throttle mapped error must NOT gain the wait-and-retry advice.
+	other := rpcErr(t, api.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
+		ErrorType:      "GenericValidationError",
+		RetryErrorType: "CLIENT_ERROR",
+	})
+	if reason := promptFailureReason(other); strings.Contains(reason, "already retried") {
+		t.Errorf("a validation error was given throttle advice: %q", reason)
 	}
 
 	// Anything else falls through verbatim: inventing prose for an error we do

@@ -11,7 +11,7 @@ describe("run control gating", () => {
   it("offers each verb only from the statuses that accept it", () => {
     expect(RUN_CONTROLS.running).toEqual(["pause", "cancel"]);
     expect(RUN_CONTROLS.paused).toEqual(["resume", "cancel"]);
-    expect(RUN_CONTROLS.completed).toEqual(["retry"]);
+    expect(RUN_CONTROLS.completed).toEqual([]);
     expect(RUN_CONTROLS.failed).toEqual(["retry"]);
     expect(RUN_CONTROLS.aborted).toEqual(["retry"]);
   });
@@ -22,6 +22,19 @@ describe("run control gating", () => {
     for (const status of ["completed", "failed", "aborted"] as const) {
       expect(RUN_CONTROLS[status]).not.toContain("cancel");
     }
+  });
+
+  // Retry is offered on failed and aborted only, NOT on completed. KAS's retry
+  // throws on the no-nodeId branch unless the status is failed or aborted, so a
+  // Retry button on a completed run could only ever produce an error. An earlier
+  // revision of this table included it and both the Go and the TS test asserted
+  // the wrong matrix, which is what a matrix test is supposed to prevent.
+  it("offers retry only where KAS accepts it", () => {
+    expect(RUN_CONTROLS.failed).toContain("retry");
+    expect(RUN_CONTROLS.aborted).toContain("retry");
+    expect(RUN_CONTROLS.completed).not.toContain("retry");
+    expect(RUN_CONTROLS.running).not.toContain("retry");
+    expect(RUN_CONTROLS.paused).not.toContain("retry");
   });
 
   // Pause and resume are opposites and must never both be on offer, or the row

@@ -35,7 +35,11 @@ export const RUN_STATUSES = ["running", "paused", "completed", "failed", "aborte
 export const RUN_CONTROLS: Record<string, readonly RunVerb[]> = {
   running: ["pause", "cancel"],
   paused: ["resume", "cancel"],
-  completed: ["retry"],
+  // No retry on `completed`, even though it is terminal. KAS's retry throws on
+  // the no-nodeId branch unless the status is failed or aborted, and then throws
+  // again if the walk finds nothing failed to reset, so a Retry button on a
+  // completed run could only ever produce an error.
+  completed: [],
   failed: ["retry"],
   aborted: ["retry"],
 };

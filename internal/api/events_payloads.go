@@ -309,6 +309,14 @@ type OpenExternalURLPayload struct {
 const (
 	// RPCCodeInternal is the JSON-RPC 2.0 "Internal error" code (-32603).
 	RPCCodeInternal = -32603
+	// RPCCodeMethodNotFound is the JSON-RPC 2.0 "Method not found" code (-32601),
+	// the honest answer when vibekit is asked for a method it does not implement.
+	//
+	// KAS answers its OWN unknown ext-methods with -32603 and switches on nothing,
+	// so either code settles its promise. Matching KAS was the first instinct and
+	// it was wrong: -32603 means "I broke", and mislabelling a deliberate refusal
+	// as an internal fault makes vibekit's logs lie about which side has a problem.
+	RPCCodeMethodNotFound = -32601
 	// RPCCodeNotIdle indicates the session is still processing a prior turn.
 	RPCCodeNotIdle = -32001
 	// RPCCodeBridgeExited is a server-defined code indicating the ACP bridge

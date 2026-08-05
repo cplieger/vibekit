@@ -150,40 +150,74 @@ func (h *Hub) CancelRun(ctx context.Context, workflowID string) error {
 	return h.runControl(ctx, workflowID, methodKiroWorkflowCancel, "workflow cancel call")
 }
 
+// errRunNotHosted is returned by a control verb that needs the run's OWN bridge
+// when this process does not have one. Distinct from a KAS refusal so the REST
+// layer can answer 409 with an explanation rather than 500.
+var errRunNotHosted = errors.New("this run is not hosted by this server; only cancel is available")
+
 // PauseRun asks a running run to stop at its next node boundary, keeping its
-// state resumable. Same delivery shape as CancelRun, and the same node-boundary
-// semantics: KAS sets `control.pauseRequested` and the in-flight node runs to
-// completion, so the reply confirms the ASK rather than a paused state.
-func (h *Hub) PauseRun(ctx context.Context, workflowID string) error {
-	return h.runControl(ctx, workflowID, methodKiroWorkflowPause, "workflow pause call")
-}
-
-// ResumeRun re-drives a paused run. KAS loads it from disk when the registry
-// has lost it, so this works on a run whose owning process died — which is why
-// it is safe to offer on any paused run rather than only on one this process
-// launched.
-func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
-	return h.runControl(ctx, workflowID, methodKiroWorkflowResume, "workflow resume call")
-}
-
-// RetryRun re-drives a TERMINAL run from its failed node. KAS refuses anything
-// else — it throws for a running run and for any non-terminal status — so the
-// REST layer gates on status before calling, and this returns KAS's refusal
-// verbatim if the state changed in between.
-func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
-	return h.runControl(ctx, workflowID, methodKiroWorkflowRetry, "workflow retry call")
-}
-
-// runControl issues one run-control verb, preferring the run's OWN bridge and
-// falling back to the utility bridge.
+// state resumable. KAS sets `control.pauseRequested` and the in-flight node runs
+// to completion, so the reply confirms the ASK rather than a paused state.
 //
-// The preference is not an optimisation. A run launched by this process has a
-// live bridge that owns the run's registry entry, and issuing the verb there is
-// what lets KAS act on the in-memory record rather than reloading it from disk.
-// The utility fallback is what makes the verb work on a run this process did not
-// launch (a TUI-launched run, or one whose launching bridge has since been
-// culled), because every one of these handlers rehydrates from disk when the
-// registry misses.
+// Requires the run's own bridge: KAS's pause reaches `registry.require`, which
+// throws for a run that is not in the live in-memory registry and does NOT
+// rehydrate from disk the way cancel, resume and retry do.
+func (h *Hub) PauseRun(ctx context.Context, workflowID string) error {
+	return h.hostedRunControl(ctx, workflowID, methodKiroWorkflowPause)
+}
+
+// ResumeRun re-drives a paused run.
+func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
+	return h.hostedRunControl(ctx, workflowID, methodKiroWorkflowResume)
+}
+
+// RetryRun re-drives a FAILED or ABORTED run from its failed nodes.
+//
+// Not `completed`, despite completed being a terminal status: KAS's retry admits
+// all three terminal states in its outer check and then, on the no-nodeId branch
+// vibekit uses, throws unless the status is failed or aborted, and throws again
+// if the walk finds no failed node to reset. Retrying part of a completed run
+// would need an explicit node selector.
+func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
+	return h.hostedRunControl(ctx, workflowID, methodKiroWorkflowRetry)
+}
+
+// hostedRunControl issues a verb that must run on the run's OWN bridge, and
+// refuses rather than falling back to the utility bridge.
+//
+// The fallback would be actively harmful for two of the three. Resume and retry
+// make the run EXECUTE, and the utility bridge is a text-only session: it denies
+// every `session/request_permission`, errors every `fs/*` and `terminal/*`
+// request, and discards every `_kiro/workflow/*` notification. So a run resumed
+// there would grind through its steps with no tools and no UI updates, which is
+// worse than not offering the verb. Pause cannot use it either, for the
+// unrelated reason above.
+//
+// The cost is stated rather than hidden: a run whose launching bridge is gone —
+// after a container restart, or once the bridge was culled — can only be
+// cancelled. Re-hosting an orphaned run is buildable (`_kiro/workflow/load` binds
+// an existing workflow id to a fresh bridge, which is how a launch registers its
+// own) but it is a feature with its own failure modes, not part of routing to
+// verbs that already exist.
+func (h *Hub) hostedRunControl(ctx context.Context, workflowID, method string) error {
+	sb := h.bridge.mgr.get(runChatID(workflowID))
+	if sb == nil {
+		return errRunNotHosted
+	}
+	resp, err := sb.bridge.Call(ctx, method, map[string]any{keyWorkflowID: workflowID})
+	return runCallErr(resp, err)
+}
+
+// runControl issues a verb that is safe on either connection, preferring the
+// run's OWN bridge and falling back to the utility bridge.
+//
+// Only cancel qualifies. A run launched by this process has a live bridge that
+// owns the run's registry entry, and issuing the verb there lets KAS act on the
+// in-memory record. The utility fallback is what makes cancel work on a run this
+// process did not launch — a TUI-launched run, or one whose bridge was culled —
+// because cancel rehydrates from disk and then only WRITES state; it never
+// re-drives execution, so a text-only session is a sufficient carrier for it.
+// The verbs that do execute use hostedRunControl instead.
 func (h *Hub) runControl(ctx context.Context, workflowID, method, logLabel string) error {
 	params := map[string]any{keyWorkflowID: workflowID}
 	if sb := h.bridge.mgr.get(runChatID(workflowID)); sb != nil {

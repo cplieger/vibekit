@@ -257,8 +257,12 @@ var (
 	runVerbRetry = runVerb{
 		name:  "retry",
 		issue: (*Hub).RetryRun,
-		// KAS throws for anything non-terminal, naming these three.
-		from: []string{"completed", "failed", "aborted"},
+		// FAILED or ABORTED only, not every terminal status. KAS's retry admits
+		// all three terminal states in its outer check and then, on the
+		// no-nodeId branch vibekit uses, throws unless the status is failed or
+		// aborted. Offering it on a completed run would produce a button whose
+		// only possible outcome is an error.
+		from: []string{"failed", "aborted"},
 	}
 )
 
@@ -290,6 +294,16 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 		}
 	}
 	if err := verb.issue(h, r.Context(), id); err != nil {
+		// A run this server does not host is a state of the world, not a fault:
+		// only cancel is available there, and saying so is more useful than a
+		// 500. See hostedRunControl for why the utility bridge is not a fallback
+		// for the verbs that execute.
+		if errors.Is(err, errRunNotHosted) {
+			slog.Info("run control unavailable: run not hosted here",
+				"verb", verb.name, "workflow_id", id)
+			api.Conflict(w, err.Error())
+			return
+		}
 		slog.Warn("run control failed",
 			"verb", verb.name, "workflow_id", id, "error", err, "detail", workflow.Details(err))
 		api.InternalError(w, errors.New(verb.name+" failed"))

@@ -26,10 +26,15 @@ func TestRunVerbGates(t *testing.T) {
 		verb  runVerb
 		legal []string
 	}{
-		"pause is live-only":     {runVerbPause, []string{"running"}},
-		"resume is paused-only":  {runVerbResume, []string{"paused"}},
-		"retry is terminal-only": {runVerbRetry, []string{"completed", "failed", "aborted"}},
-		"cancel is unrestricted": {runVerbCancel, all},
+		"pause is live-only":    {runVerbPause, []string{"running"}},
+		"resume is paused-only": {runVerbResume, []string{"paused"}},
+		// Not "completed", even though it is terminal. KAS's retry admits all
+		// three terminal states in its outer check and then, on the no-nodeId
+		// branch vibekit uses, throws unless the status is failed or aborted. An
+		// earlier revision listed all three here and this test asserted that
+		// wrong matrix, which is the failure mode a matrix test exists to prevent.
+		"retry is failed-or-aborted only": {runVerbRetry, []string{"failed", "aborted"}},
+		"cancel is unrestricted":          {runVerbCancel, all},
 	}
 
 	for name, tc := range cases {
