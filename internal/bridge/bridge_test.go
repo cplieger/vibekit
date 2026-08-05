@@ -1564,7 +1564,7 @@ done
 		// knowledge removes the Knowledge tool (leaving vibekit's whole
 		// knowledge UI with no retrieval half), and workflows removes the entire
 		// workflowChatTools array plus the workflow steering doc.
-		for _, key := range []string{"codeIntelligence", "knowledge", "workflows"} {
+		for _, key := range []string{"codeIntelligence", "knowledge", "workflows", "subagentOrchestration"} {
 			if !strings.Contains(got, `"`+key+`":{"enabled":true}`) {
 				t.Errorf("initialize missing the %s settings opt-in; got: %s", key, got)
 			}
