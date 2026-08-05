@@ -623,7 +623,7 @@ func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 	// here. An earlier version of this test computed min(natural, maxWait) itself
 	// and asserted it equalled maxWait, which is arithmetically true whatever
 	// production does — it stayed green with the clamp deleted from purge.go.
-	if armed := sched.armWait(retention); armed != maxWait {
+	if armed, _ := sched.armWait(retention); armed != maxWait {
 		t.Errorf("armWait = %v, want the %v ceiling (natural wait was %v)",
 			armed, maxWait, natural)
 	}

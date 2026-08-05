@@ -83,10 +83,6 @@ const hookCallTimeout = 45 * time.Second
 // exactly the crossed-output race that mutex exists to prevent.
 const hookTriggerSlack = 30 * time.Second
 
-// hookTriggerTimeout bounds a triggerHook round-trip for a command with no
-// declared timeout of its own.
-const hookTriggerTimeout = hookCommandTimeout + hookTriggerSlack
-
 // hookCommandTimeout is the default wall-clock cap for a runCommand hook's
 // shell command when the hook file declares no explicit timeout. Matches the
 // `!cmd` shell-interception default feel; overridable per-hook (bounded by
@@ -409,16 +405,31 @@ func (h *Hub) handleHookTrigger(w http.ResponseWriter, r *http.Request) {
 }
 
 // hookTriggerDeadline is how long to wait for a triggerHook carrying a command
-// with the given declared timeout in seconds. Zero means the file declared none,
-// so KAS's own default applies and the default deadline covers it. The declared
-// value is clamped the same way runHookCommand clamps it, so a pathological hook
-// file cannot pin the request for longer than the command can actually run.
+// with the given declared timeout in seconds.
+//
+// Always the command cap plus slack, with no separate constant for the
+// no-declared-timeout case: that constant existed, went unread the moment this
+// became a derivation, and a named timeout nothing consults is exactly the kind
+// of thing a reader trusts and shouldn't.
 func hookTriggerDeadline(declaredSecs int) time.Duration {
+	return clampedHookCommandTimeout(declaredSecs) + hookTriggerSlack
+}
+
+// clampedHookCommandTimeout resolves a hook's declared timeout in seconds to the
+// wall-clock cap the command actually runs under: the default when the file
+// declares none, clamped to hookMaxCommandTimeout so a pathological file cannot
+// pin a runner.
+//
+// ONE function for a rule two call sites need, because they must agree by
+// construction. The request deadline is derived from the command cap, so if the
+// two computed it independently a change to one would silently make the RPC
+// shorter than the command it carries -- which is the failure this whole
+// timeout pass exists to fix, reintroduced one level up.
+func clampedHookCommandTimeout(declaredSecs int) time.Duration {
 	if declaredSecs <= 0 {
-		return hookTriggerTimeout
+		return hookCommandTimeout
 	}
-	cmd := min(time.Duration(declaredSecs)*time.Second, hookMaxCommandTimeout)
-	return cmd + hookTriggerSlack
+	return min(time.Duration(declaredSecs)*time.Second, hookMaxCommandTimeout)
 }
 
 // findHook re-lists the workspace hooks and returns the one whose KAS id
@@ -447,11 +458,7 @@ func (h *Hub) runHookCommand(ctx context.Context, cmdStr string, timeoutSecs int
 	if cmdStr == "" {
 		return hookRunResult{Ran: true}
 	}
-	timeout := hookCommandTimeout
-	if timeoutSecs > 0 {
-		timeout = min(time.Duration(timeoutSecs)*time.Second, hookMaxCommandTimeout)
-	}
-	cctx, cancel := context.WithTimeout(ctx, timeout)
+	cctx, cancel := context.WithTimeout(ctx, clampedHookCommandTimeout(timeoutSecs))
 	defer cancel()
 
 	// The command is user-authored (.kiro/hooks/*.json), sourced server-side
