@@ -56,7 +56,7 @@ import {
   attr_to_html_attr,
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
-import { isSafeUrl } from "./utils-url.js";
+import { isSafeUrl, rewriteWorkspaceImageSrc } from "./utils-url.js";
 import { el } from "@cplieger/reactive";
 
 export type { Renderer } from "./smd-parser-types.js";
@@ -235,6 +235,13 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   }
   if ((attrName === "href" || attrName === "src") && !isSafeUrl(value)) {
     node.setAttribute(attrName, "#");
+    return;
+  }
+  // An agent-written workspace path is a real file, not a URL the SPA can serve.
+  // Rewritten AFTER the safety gate so the rewrite can never launder a scheme
+  // isSafeUrl just rejected.
+  if (attrName === "src" && node.tagName === "IMG") {
+    node.setAttribute(attrName, rewriteWorkspaceImageSrc(value));
     return;
   }
   if (attrName === "class" && node.tagName === "CODE") {

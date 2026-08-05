@@ -208,6 +208,7 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 ## Security
 
 - **No built-in authentication**: put vibekit behind an authenticating reverse proxy and/or a private network (see the warning above).
+- **No outbound telemetry.** vibekit reports nothing about you or your code to anyone. Every outbound request it makes is one you asked for: the AI provider `kiro-cli` is signed in to, any MCP server you configure yourself, the forge APIs (`gh` / `glab` / `tea`) when you use the git panel, and the public MCP registry when you search it from Settings → Tools. `kiro-cli`'s own telemetry is seeded **off** and is a toggle in Settings → General.
 - Web push uses an SSRF-hardened transport.
 - Debian base: a shell and the `kiro-cli` subprocess are required, so this is intentionally not distroless.
 - Images are published with cosign signatures and SBOM attestations.
