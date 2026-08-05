@@ -3,6 +3,7 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -105,6 +106,83 @@ func TestHandleUserInput(t *testing.T) {
 		}))
 		if len(*events) != 0 || len(deps.pendingAdds) != 0 {
 			t.Errorf("un-answerable request must be dropped: events=%d pending=%v", len(*events), deps.pendingAdds)
+		}
+	})
+}
+
+// The agent composes userInput options, so they are model output on a trusted
+// channel. These cases pin the three ways forwarding them unchecked goes wrong,
+// each of which fails silently rather than loudly.
+func TestSanitizeUserInputOptions(t *testing.T) {
+	t.Run("drops an empty title, because the title IS the answer", func(t *testing.T) {
+		// The reply carries the option's title text, so an empty one sends "" to
+		// the agent and renders a card nobody can read.
+		got := sanitizeUserInputOptions([]wireUserInputOption{
+			{Title: "Keep"}, {Title: "   "}, {Title: ""}, {Title: "Discard"},
+		})
+		if len(got) != 2 || got[0].Title != "Keep" || got[1].Title != "Discard" {
+			t.Errorf("got %+v, want just Keep and Discard", got)
+		}
+	})
+
+	t.Run("drops a duplicate title, which is ambiguous by construction", func(t *testing.T) {
+		got := sanitizeUserInputOptions([]wireUserInputOption{
+			{Title: "Retry"}, {Title: "Retry"}, {Title: "Cancel"},
+		})
+		if len(got) != 2 {
+			t.Errorf("got %d options, want 2 (the second Retry is unanswerable)", len(got))
+		}
+	})
+
+	t.Run("trims, so a padded title is not mistaken for a distinct one", func(t *testing.T) {
+		got := sanitizeUserInputOptions([]wireUserInputOption{
+			{Title: " Retry "}, {Title: "Retry"},
+		})
+		if len(got) != 1 || got[0].Title != "Retry" {
+			t.Errorf("got %+v, want one trimmed Retry", got)
+		}
+	})
+
+	t.Run("bounds the list so it cannot push the composer off screen", func(t *testing.T) {
+		in := make([]wireUserInputOption, maxUserInputOptions+10)
+		for i := range in {
+			in[i].Title = "opt-" + strconv.Itoa(i)
+		}
+		if got := sanitizeUserInputOptions(in); len(got) != maxUserInputOptions {
+			t.Errorf("got %d options, want the cap %d", len(got), maxUserInputOptions)
+		}
+	})
+
+	t.Run("applies the same three rules to sub-options", func(t *testing.T) {
+		in := []wireUserInputOption{{
+			Title: "Pick",
+			SubOptions: []wireUserInputSubOption{
+				{Title: "a"}, {Title: ""}, {Title: "a"}, {Title: "b"},
+			},
+		}}
+		got := sanitizeUserInputOptions(in)
+		if len(got) != 1 || len(got[0].SubOptions) != 2 {
+			t.Fatalf("got %+v, want one option with two usable sub-options", got)
+		}
+	})
+
+	t.Run("keeps a legitimate question whole", func(t *testing.T) {
+		in := []wireUserInputOption{
+			{Title: "Yes", Description: "do it", Recommended: true},
+			{Title: "No", Description: "stop"},
+		}
+		got := sanitizeUserInputOptions(in)
+		if len(got) != 2 || !got[0].Recommended || got[0].Description != "do it" {
+			t.Errorf("got %+v, want both options with their metadata intact", got)
+		}
+	})
+
+	// A question whose every option is unusable still returns empty rather than
+	// nil-vs-empty ambiguity, and the caller treats empty options as free-form.
+	t.Run("returns empty, not nil, when nothing survives", func(t *testing.T) {
+		got := sanitizeUserInputOptions([]wireUserInputOption{{Title: ""}})
+		if got == nil || len(got) != 0 {
+			t.Errorf("got %#v, want an empty non-nil slice", got)
 		}
 	})
 }
