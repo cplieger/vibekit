@@ -30,6 +30,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/kirosession"
+	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/webhttp/sse"
@@ -113,6 +114,7 @@ type Hub struct {
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
+	schedules          *schedule.Store
 	sessionReaper      *kirosession.Reaper
 	sessionRefs        func(context.Context) (map[string]struct{}, bool)
 	lines              *buffer.LineTracker
@@ -160,6 +162,17 @@ func WithConfigDir(dir string) Option {
 func WithACPArgs(args []string) Option {
 	return func(h *Hub) { h.acpArgs = args }
 }
+
+// WithSchedules wires the workflow-schedule store. Absent, the schedule routes
+// are not registered at all and nothing fires — scheduling is off rather than
+// half-present.
+func WithSchedules(st *schedule.Store) Option {
+	return func(h *Hub) { h.schedules = st }
+}
+
+// Schedules exposes the store so the composition root can build the runner over
+// the same instance the REST handlers mutate.
+func (h *Hub) Schedules() *schedule.Store { return h.schedules }
 
 // WithPush wires the push notification service at construction time.
 func WithPush(p api.PushService) Option {
@@ -337,6 +350,7 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs/{id}/pause", h.handleRunPause)
 	mux.HandleFunc("POST /api/runs/{id}/resume", h.handleRunResume)
 	mux.HandleFunc("GET /api/recipes", h.handleRecipes)
+	h.registerScheduleRoutes(mux)
 }
 
 // Shutdown drains in-flight prompts and closes all bridges.
