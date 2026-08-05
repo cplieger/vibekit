@@ -7,9 +7,16 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
+
+// cancelGrace is how long a cooperative session/cancel gets to be reflected
+// in a turn end before vibekit unblocks the turn itself. Copied from
+// KiroCrew's `_CANCEL_GRACE_SECS` (src/kiro_crew/acp/{client,session_handle}.py)
+// rather than guessed.
+const cancelGrace = 10 * time.Second
 
 // CmdCreateChat creates a new chat with the given metadata.
 func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
@@ -98,6 +105,21 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	}
 	if err := sb.Notify(ctx, api.MethodCancel, SessionParams(sb)); err != nil {
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
+	}
+	// Unresponsive-cancel budget. session/cancel is a notification, so nothing
+	// acks it directly: the turn ends only when KAS answers the pending
+	// session/prompt with a cancelled stop reason. If it never does, the prompt
+	// Call blocks forever and the chat stays busy, refusing every later prompt
+	// with 409. After the grace expires the prompt's context is cancelled, which
+	// makes Call return and runs the ordinary prompt-failure finalization.
+	//
+	// The 10s value is KiroCrew's `_CANCEL_GRACE_SECS`, adopted rather than
+	// invented. Its own comment records why it does NOT kill the process there
+	// ("impossible on a multiplexed runtime") — vibekit is one process per chat,
+	// so it does not need to: cancelling the context is enough and leaves the
+	// session intact, so the chat stays resumable instead of being restarted.
+	if !sb.ArmCancelGrace(sb.PromptGeneration(), cancelGrace) {
+		slog.Debug("cancel: no in-flight prompt to arm a grace budget against", "chat_id", cmd.ChatID)
 	}
 	d.RespondOK(w, cmd.RequestID)
 }

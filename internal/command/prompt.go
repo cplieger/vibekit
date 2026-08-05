@@ -270,6 +270,15 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	}
 	defer sb.ReleaseAfterPrompt()
 
+	// The prompt Call gets its own cancellable context so CmdCancel's grace
+	// budget has something to trip when KAS never acks a session/cancel.
+	// Without this the Call blocks until the bridge is torn down, and the
+	// deferred ReleaseAfterPrompt above never runs.
+	ctx, cancelPrompt := context.WithCancel(ctx)
+	defer cancelPrompt()
+	sb.BeginPromptCall(cancelPrompt)
+	defer sb.EndPromptCall()
+
 	deps.InflightAdd(1)
 	defer deps.InflightDone()
 

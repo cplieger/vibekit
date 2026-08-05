@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
@@ -52,6 +53,10 @@ func (b *recordingBridge) SessionID() api.SessionID                         { re
 func (b *recordingBridge) TryAcquireForPrompt() bool                        { return true }
 func (b *recordingBridge) ReleaseAfterPrompt()                              {}
 func (b *recordingBridge) SetPrompting()                                    {}
+func (b *recordingBridge) BeginPromptCall(context.CancelFunc) uint64        { return 0 }
+func (b *recordingBridge) EndPromptCall()                                   {}
+func (b *recordingBridge) PromptGeneration() uint64                         { return 0 }
+func (b *recordingBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }
 func (b *recordingBridge) IsPrimed() bool                                   { return true }
 func (b *recordingBridge) SetPrimed()                                       {}
 
