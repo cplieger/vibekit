@@ -149,16 +149,36 @@ func (us *utilitySession) triggerRunCommandHook(ctx context.Context, hookID, hoo
 	if err != nil {
 		return hookRunResult{}, err
 	}
-	// A success:false reply (e.g. session gone) is a real failure; a
-	// success:true with a non-zero command exit is a valid "ran, failed"
-	// outcome carried in lastHookRun. A nil lastHookRun (KAS never issued
-	// the executeHook callback, e.g. a hook disabled server-side) yields
-	// the zero result.
-	if res := parseHookResult(raw); !res.Success {
-		return hookRunResult{}, hookTriggerError(res)
-	}
-	if run := us.lastHookRun.Load(); run != nil {
+	// Distinguish "the command ran and failed" from "the trigger failed".
+	//
+	// The previous logic treated every success:false as a real failure and
+	// returned an error, discarding lastHookRun. That is backwards for the case
+	// that matters: KAS sets `failed: exitCode !== 0` and then reports
+	// `success: false`, so a hook whose command exits non-zero lands here with
+	// its output and exit code sitting in lastHookRun -- and vibekit threw them
+	// away, on the one run the user clicked "Run now" specifically to diagnose.
+	// The comment above this block asserted the opposite (that a non-zero exit
+	// arrives as success:true), which is why the discard looked correct.
+	//
+	// A genuine trigger failure (session gone, hook disabled server-side, KAS
+	// refused) never issues the executeHook callback, so lastHookRun stays nil.
+	// That is the distinguisher, and it is the reason this checks the callback
+	// result BEFORE the success flag rather than after.
+	return chooseHookOutcome(parseHookResult(raw), us.lastHookRun.Load())
+}
+
+// chooseHookOutcome decides what a "Run now" returns, given KAS's trigger reply
+// and whatever the executeHook callback recorded.
+//
+// A pure function because the ORDER is the whole content: consult the callback
+// result first, and fall back to the success flag only when there is none. A
+// populated callback means the command really ran, whatever the flag says.
+func chooseHookOutcome(res kasHookResult, run *hookRunResult) (hookRunResult, error) {
+	if run != nil {
 		return *run, nil
+	}
+	if !res.Success {
+		return hookRunResult{}, hookTriggerError(res)
 	}
 	return hookRunResult{}, nil
 }
