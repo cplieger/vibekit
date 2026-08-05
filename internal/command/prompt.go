@@ -65,14 +65,17 @@ func retryWithBackoff[T any](ctx context.Context, maxAttempts int, delay time.Du
 	return result, err
 }
 
-// callPromptWithRetry sends the prompt to kiro-cli with retry on transient errors.
+// callPromptWithRetry sends the prompt to kiro-cli, retrying only the classes a
+// second attempt can actually fix. The class is logged either way, because the
+// old single-boolean version logged "prompt retry" for a dead bridge and nothing
+// at all for a throttle, which is exactly backwards from what a reader needs.
 func callPromptWithRetry(ctx context.Context, sb Bridge, params map[string]any, chatID api.ChatID) (*api.RPCResponse, error) {
 	return retryWithBackoff(ctx, 2, 2*time.Second, func(err error) bool {
-		if IsRetryablePromptError(err) {
-			slog.Warn("prompt retry", "chat_id", chatID, keyError, err)
-			return true
-		}
-		return false
+		class := classifyPromptFailure(err)
+		retry := class == classBusy || class == classTransient
+		slog.Warn("prompt failure",
+			"chat_id", chatID, "class", class.String(), "retry", retry, keyError, err)
+		return retry
 	}, func() (*api.RPCResponse, error) {
 		return sb.Call(ctx, api.MethodPrompt, params)
 	})
@@ -298,7 +301,8 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		// holding two turns' replies. The partial is persisted rather than
 		// dropped -- see AbandonInFlightTurn for why that direction.
 		deps.AbandonInFlightTurn(ctx, cmd.ChatID)
-		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodePromptFailed, Message: err.Error()}))
+		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID,
+			api.ErrorPayload{Code: api.ErrCodePromptFailed, Message: promptFailureReason(err)}))
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -333,26 +337,165 @@ func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api
 	return params
 }
 
-// IsRetryablePromptError returns true for errors that indicate kiro-cli
-// is temporarily busy or hit a transient internal error.
-func IsRetryablePromptError(err error) bool {
+// promptFailureClass names why a prompt failed, because the four causes want
+// four different actions and one boolean could only ever pick one of them.
+//
+// The single `IsRetryablePromptError` this replaces got each cause wrong in a
+// different direction: it retried a DEAD bridge (three attempts against a closed
+// done channel, four seconds of wall-clock, same error), it gave a throttle the
+// same fixed 2s as a busy session even though KAS had already spent five
+// adaptive attempts of its own, and it retried an auth failure that no number of
+// attempts can fix.
+type promptFailureClass int
+
+const (
+	// classFatal is the default: surface it, do not retry.
+	classFatal promptFailureClass = iota
+	// classPipeDeath is a dead subprocess. Retrying the same bridge is provably
+	// useless (readLoop closed done permanently), so this must not loop.
+	classPipeDeath
+	// classBusy is the session still finishing a prior turn: a real wait.
+	classBusy
+	// classTransient is a write failure or an internal error that a second
+	// attempt can plausibly fix.
+	classTransient
+	// classThrottled is a backend rate limit. NOT retryable here: KAS's own
+	// client already exhausted its adaptive attempts before handing this over.
+	classThrottled
+)
+
+// throttleErrorData is the shape KAS puts in `error.data` on a mapped backend
+// error. retryErrorType is the field that distinguishes a throttle from any
+// other -32000, and requestId is what makes a report actionable upstream.
+type throttleErrorData struct {
+	ErrorType      string `json:"errorType"`
+	RetryErrorType string `json:"retryErrorType"`
+	RequestID      string `json:"requestId"`
+}
+
+// classifyPromptFailure maps a prompt error onto its class.
+func classifyPromptFailure(err error) promptFailureClass {
 	if err == nil {
-		return false
+		return classFatal
 	}
-	if te, ok := errors.AsType[*api.TransportError](err); ok {
-		return te.Retryable
+	// Order matters: a dead bridge arrives WRAPPED in a TransportError whose
+	// Retryable is true, so the identity check has to win or the corpse gets
+	// retried exactly as before.
+	if errors.Is(err, api.ErrBridgeExited) {
+		return classPipeDeath
 	}
 	if errors.Is(err, api.ErrNotIdle) {
-		return true
+		return classBusy
+	}
+	if te, ok := errors.AsType[*api.TransportError](err); ok {
+		if te.Retryable {
+			return classTransient
+		}
+		return classFatal
 	}
 	if re, ok := errors.AsType[*api.RPCError](err); ok {
 		switch re.Code {
 		case api.RPCCodeNotIdle:
-			return true
+			return classBusy
+		case api.RPCCodeBridgeExited:
+			// KAS's mapped-backend-error code, which happens to share a number
+			// with vibekit's own bridge-exited constant (see its comment). A
+			// bridge exit never arrives here as an RPCError, so this is KAS's.
+			if throttleFromData(re) != nil {
+				return classThrottled
+			}
+			return classFatal
 		case api.RPCCodeInternal:
+			// -32603 is KAS's catch-all: a genuine internal fault, and also
+			// every validation failure and every auth failure. Retrying an auth
+			// failure is pure latency, so it is excluded by name.
+			if isAuthShaped(re) {
+				return classFatal
+			}
+			return classTransient
+		}
+	}
+	return classFatal
+}
+
+// throttleFromData decodes a mapped-error payload and returns it only when it
+// carries a retry classification, which is what marks it a throttle rather than
+// some other mapped backend failure.
+func throttleFromData(re *api.RPCError) *throttleErrorData {
+	raw := re.ErrorData()
+	if len(raw) == 0 {
+		return nil
+	}
+	var d throttleErrorData
+	if err := json.Unmarshal(raw, &d); err != nil {
+		return nil
+	}
+	if d.RetryErrorType == "" && d.ErrorType == "" {
+		return nil
+	}
+	return &d
+}
+
+// isAuthShaped reports whether an internal error is really an authentication
+// failure. Matched on the payload rather than the code because KAS collapses
+// both onto -32603, and no amount of retrying fixes an expired token.
+func isAuthShaped(re *api.RPCError) bool {
+	hay := re.Message + string(re.ErrorData())
+	for _, marker := range []string{"not logged in", "Unauthorized", "unauthorized",
+		"ExpiredToken", "AccessDenied", "credentials"} {
+		if strings.Contains(hay, marker) {
 			return true
 		}
+	}
+	return false
+}
+
+// promptFailureReason renders a failure into something worth showing the user.
+// A throttle is the case that needs it: without this the user gets a bare
+// "Internal error" for a condition that has a name, a cause and a remedy.
+func promptFailureReason(err error) string {
+	if re, ok := errors.AsType[*api.RPCError](err); ok {
+		if d := throttleFromData(re); d != nil {
+			msg := "the model backend is rate limiting this account"
+			if d.ErrorType != "" {
+				msg += " (" + d.ErrorType + ")"
+			}
+			if d.RequestID != "" {
+				msg += "; request " + d.RequestID
+			}
+			return msg + ". kiro-cli already retried; wait a moment and resend."
+		}
+	}
+	return err.Error()
+}
+
+// IsRetryablePromptError reports whether a prompt error is worth another
+// attempt. Retained as the narrow predicate the retry loop needs; the class it
+// derives from is what carries the reasoning.
+func IsRetryablePromptError(err error) bool {
+	switch classifyPromptFailure(err) {
+	case classBusy, classTransient:
+		return true
+	case classFatal, classPipeDeath, classThrottled:
 		return false
 	}
 	return false
+}
+
+// String names the class for logs. A number in a log line is a lookup the
+// reader should not have to perform.
+func (c promptFailureClass) String() string {
+	switch c {
+	case classPipeDeath:
+		return "pipe_death"
+	case classBusy:
+		return "busy"
+	case classTransient:
+		return "transient"
+	case classThrottled:
+		return "throttled"
+	case classFatal:
+		return "fatal"
+	}
+	return "unknown"
 }
