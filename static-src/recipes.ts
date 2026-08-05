@@ -24,6 +24,10 @@ import { el } from "@cplieger/reactive";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
+import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/schedules.js";
+import { buildSchedulePicker, defaultSpec, summaryLine } from "./schedule-picker.js";
+import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
+import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openLiveRunView } from "./run-view.js";
 import type { Recipe, WorkflowRunRow } from "./types.js";
 
@@ -61,7 +65,78 @@ export function renderRecipesPanel(panel: HTMLElement): void {
       recipes = r.recipes;
     }
     paint();
+    // Decoration, deliberately off the critical path: the workflow list must
+    // still render when the schedule endpoint is unavailable.
+    void refreshSchedules();
   })();
+}
+
+/** Schedules by recipe source. One per recipe, matching the single-run rule. */
+let schedules = new Map<string, ScheduleView>();
+
+/** Refetch the schedule set and repaint the summary lines. */
+async function refreshSchedules(): Promise<void> {
+  const d = await loadSchedules.dispatch(undefined);
+  if (d === null) {
+    return;
+  }
+  const next = new Map<string, ScheduleView>();
+  for (const v of d.schedules) {
+    next.set(v.source, v);
+  }
+  schedules = next;
+  paint();
+}
+
+/** Reflect a recipe's schedule onto its row's summary line. */
+function syncSchedule(row: HTMLElement, source: string): void {
+  const line = row.querySelector<HTMLElement>(".recipe-sched-summary");
+  if (line === null) {
+    return;
+  }
+  const view = schedules.get(source);
+  line.textContent = summaryLine(view);
+  line.classList.toggle("is-scheduled", view?.enabled === true);
+  const btn = row.querySelector<HTMLButtonElement>(".recipe-sched-btn");
+  if (btn !== null) {
+    btn.classList.toggle("on", view?.enabled === true);
+  }
+}
+
+/** Open the recurrence picker anchored to a row's Schedule button. */
+function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
+  btn.addEventListener("click", (e: MouseEvent) => {
+    e.stopPropagation();
+    const view = schedules.get(source);
+    const body = el("div", { className: "sched-popup" });
+    const popup = createPopup(body, { trigger: btn, group: "recipe-schedule" });
+    body.appendChild(
+      buildSchedulePicker({
+        spec: view?.spec ?? defaultSpec(),
+        enabled: view?.enabled ?? false,
+        onSave: (spec: ScheduleSpec) => {
+          popup.hide();
+          void (async () => {
+            await saveSchedule.dispatch({ source, spec, enabled: true });
+            await refreshSchedules();
+          })();
+        },
+        onRemove: () => {
+          popup.hide();
+          void (async () => {
+            if (view !== undefined) {
+              await deleteSchedule.dispatch(view.id);
+            }
+            await refreshSchedules();
+          })();
+        },
+        onClose: () => {
+          popup.hide();
+        },
+      }),
+    );
+    popup.show();
+  });
 }
 
 function isShowing(): boolean {
@@ -112,6 +187,7 @@ function paint(): void {
     mount: (r: Recipe) => recipeRow(r),
     update: (row: HTMLElement, r: Recipe) => {
       syncButton(row, r);
+      syncSchedule(row, r.source);
     },
   });
 }
@@ -139,11 +215,20 @@ function recipeRow(r: Recipe): HTMLElement {
     }
   });
 
+  const schedBtn = el("button", {
+    type: "button",
+    className: "btn-small recipe-sched-btn",
+    "aria-label": `Schedule ${r.name}`,
+  }) as HTMLButtonElement;
+  schedBtn.textContent = "Schedule";
+  wireSchedulePopup(schedBtn, r.source);
+
   const row = el(
     "div",
     { className: "list-row docs-row recipe-row", "data-recipe": r.source },
-    el("div", { className: "docs-row-top" }, name, meta, btn),
+    el("div", { className: "docs-row-top" }, name, meta, schedBtn, btn),
   );
+  row.appendChild(el("div", { className: "recipe-sched-summary text-muted" }));
   const desc = r.description ?? "";
   if (desc !== "") {
     row.appendChild(el("div", { className: "docs-row-sub" }, desc));
@@ -155,6 +240,7 @@ function recipeRow(r: Recipe): HTMLElement {
     );
   }
   syncButton(row, r);
+  syncSchedule(row, r.source);
   return row;
 }
 

@@ -48,6 +48,14 @@ vi.mock("./actions/runs.js", () => ({
 }));
 vi.mock("./run-view.js", () => ({ openLiveRunView: vi.fn() }));
 
+// The Schedule button's actions: unmocked they reach the network, and a row's
+// summary line is decoration this suite does not assert on.
+vi.mock("./actions/schedules.js", () => ({
+  loadSchedules: { dispatch: vi.fn(async () => ({ schedules: [] })) },
+  saveSchedule: { dispatch: vi.fn(async () => null) },
+  deleteSchedule: { dispatch: vi.fn(async () => null) },
+}));
+
 import { renderRecipesPanel } from "./recipes.js";
 import { openLiveRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";

@@ -235,3 +235,124 @@
     border-color: var(--c-accent);
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Workflow schedules
+
+   The Schedule button sits beside Run and pushes it right: `margin-inline-start:
+   auto` moves to the FIRST of the pair, or the two would separate. The summary
+   line reuses the row's own sub-line vocabulary rather than inventing a second
+   metadata slot.
+   --------------------------------------------------------------------------- */
+
+.recipe-sched-btn {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
+
+/* An active schedule is a state, marked the way every other on-state is. */
+.recipe-sched-btn.on {
+  color: var(--c-accent);
+  border-color: color-mix(in oklch, var(--c-accent) 40%, transparent);
+}
+
+.recipe-run-btn {
+  /* The pair is right-aligned as a unit, so only the first claims the space. */
+  margin-inline-start: 0;
+}
+
+.recipe-sched-summary {
+  font-size: var(--fs-xs);
+  padding-inline-start: var(--sp-1);
+}
+
+/* Only a live schedule earns the accent; "Not scheduled" stays muted. */
+.recipe-sched-summary.is-scheduled {
+  color: var(--c-accent);
+}
+
+.sched-popup {
+  min-width: 17rem;
+  padding: var(--sp-3);
+}
+
+.sched-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.sched-row,
+.sched-detail,
+.sched-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.sched-freq,
+.sched-monthday,
+.sched-time,
+.sched-num {
+  font: inherit;
+  color: var(--c-text-primary);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+.sched-num {
+  width: 4rem;
+}
+
+.sched-label {
+  font-size: var(--fs-sm);
+  color: var(--c-text-secondary);
+}
+
+.sched-days {
+  display: flex;
+  gap: var(--sp-1);
+}
+
+/* Weekday chips are a multi-select, so each carries aria-pressed and the
+   selected state is a fill rather than a colour change alone. */
+.sched-day {
+  width: 1.75rem;
+  height: 1.75rem;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: transparent;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--c-bg-hover);
+  }
+}
+
+.sched-day.on {
+  color: var(--c-bg-primary);
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+}
+
+/* The summary is the element the user reads to confirm the rule, so it is the
+   most prominent thing in the picker after the controls themselves. */
+.sched-summary {
+  font-size: var(--fs-sm);
+  color: var(--c-text-primary);
+  padding: var(--sp-2);
+  background: var(--c-bg-tertiary);
+  border-radius: var(--r-sm);
+  border-inline-start: 2px solid var(--c-accent);
+}
+
+.sched-actions {
+  justify-content: flex-end;
+}
