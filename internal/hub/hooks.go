@@ -232,6 +232,15 @@ func (h *Hub) hooksListRaw(ctx context.Context) ([]kasHook, error) {
 	defer cancel()
 	raw, err := u.session.hooksRaw(cctx, methodKiroHooksList, map[string]any{
 		keyWorkspacePaths: []string{h.lifecycle.workDir},
+		// includeDisabled is load-bearing, not a nicety. Without it
+		// registry.list() filters disabled hooks out of the response, which made
+		// the dashboard toggle a ONE-WAY DOOR: writing enabled:false broadcast
+		// hooks_changed, the client refetched, and the row it had just toggled
+		// was gone from the payload. There was no re-enable path in the UI at
+		// all -- the user had to find the file by hand, and the row that
+		// vanished was the only pointer to it. It also made a whole tranche of
+		// hooks.ts unreachable, since no disabled hook could ever render.
+		"includeDisabled": true,
 	})
 	if err != nil {
 		return nil, err

@@ -27,7 +27,11 @@ func TestValidateHookPayload(t *testing.T) {
 	atMax := strings.Repeat("a", max)     // exactly MaxHookField bytes
 	overMax := strings.Repeat("a", max+1) // one byte over
 	const validName = "valid-hook"        // matches validHookNameRe
-	const validEvent = "file:save"        // non-empty, short
+	// A real trigger, not merely a non-empty string. The old fixture was
+	// "file:save", chosen for being short, which is not a value KAS loads -- so
+	// every "valid" row here was asserting that a hook destined to be silently
+	// discarded validates fine.
+	const validEvent = "PostFileSave"
 
 	cases := []struct {
 		name     string
@@ -53,7 +57,12 @@ func TestValidateHookPayload(t *testing.T) {
 		{name: "description over max", p: hookCreatePayload{Name: validName, EventType: validEvent, ActionType: "askAgent", Prompt: "p", Description: overMax}, wantCode: http.StatusRequestEntityTooLarge, wantErr: true},
 
 		// event_type: non-empty, no regex -> at max passes.
-		{name: "event_type at max", p: hookCreatePayload{Name: validName, EventType: atMax, ActionType: "askAgent", Prompt: "p"}, wantCode: 0, wantErr: false},
+		// event_type has no at-max accept row: a field-length probe needs a value
+		// of exactly MaxHookField, and no real trigger name is that long, so the
+		// row could only ever assert that an over-long UNKNOWN trigger is
+		// rejected for the wrong reason. The over-max row below still pins the
+		// size gate, and it must be rejected for SIZE rather than for being an
+		// unknown trigger, which is why it stays first in validateHookPayload.
 		{name: "event_type over max", p: hookCreatePayload{Name: validName, EventType: overMax, ActionType: "askAgent", Prompt: "p"}, wantCode: http.StatusRequestEntityTooLarge, wantErr: true},
 
 		// action_type: at max is not a valid action -> switch default 400; over max -> 413.
@@ -99,9 +108,11 @@ func TestValidateHookPayload(t *testing.T) {
 
 func FuzzValidateHookPayload(f *testing.F) {
 	// Seed corpus: valid askAgent payload.
+	f.Add([]byte(`{"name":"my-hook","event_type":"PostFileSave","action_type":"askAgent","prompt":"do stuff"}`))
+	// An unknown trigger must be refused, not panic.
 	f.Add([]byte(`{"name":"my-hook","event_type":"file:save","action_type":"askAgent","prompt":"do stuff"}`))
 	// Valid runCommand payload.
-	f.Add([]byte(`{"name":"build","event_type":"file:save","action_type":"runCommand","command":"make build"}`))
+	f.Add([]byte(`{"name":"build","event_type":"PostFileSave","action_type":"runCommand","command":"make build"}`))
 	// Oversized field.
 	f.Add(make([]byte, 9000))
 	// Empty name.
@@ -149,14 +160,50 @@ func TestNormalizeTrigger(t *testing.T) {
 		// Case-insensitive + trimmed.
 		{"POSTFILESAVE", "PostFileSave"},
 		{"  fileEdited  ", "PostFileSave"},
-		// Unknown passes through trimmed (best effort).
-		{"someFutureTrigger", "someFutureTrigger"},
-		{"  x  ", "x"},
+		// The three aliases KAS accepts that this map used to be missing.
+		{"agentSpawn", "SessionStart"},
+		{"SessionEnd", "Stop"},
+		{"AfterFileEdit", "PostFileSave"},
 	}
 	for _, tc := range cases {
-		if got := normalizeTrigger(tc.in); got != tc.want {
+		got, ok := normalizeTrigger(tc.in)
+		if !ok {
+			t.Errorf("normalizeTrigger(%q) reported unknown, want %q", tc.in, tc.want)
+			continue
+		}
+		if got != tc.want {
 			t.Errorf("normalizeTrigger(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// TestNormalizeTrigger_RejectsUnknown is the inverted case, and the inversion is
+// the point. This used to pass an unknown trigger through trimmed, which read as
+// leniency and behaved as silence: KAS's parseHookDocument DROPS a hook whose
+// trigger it does not recognise, so create_hook answered 200 with a file path for
+// a hook that loads nowhere, never fires and never appears in /api/hooks.
+func TestNormalizeTrigger_RejectsUnknown(t *testing.T) {
+	for _, in := range []string{"someFutureTrigger", "  x  ", "", "PostFileSaved!"} {
+		if got, ok := normalizeTrigger(in); ok {
+			t.Errorf("normalizeTrigger(%q) = (%q, true), want it reported unknown so the "+
+				"caller can refuse instead of writing a hook KAS will discard", in, got)
+		}
+	}
+}
+
+// TestKnownHookTriggers_NamesTheAcceptedSet guards the error message rather than
+// the refusal, because a rejection that does not say what IS accepted just moves
+// the guessing from the server to the user.
+func TestKnownHookTriggers_NamesTheAcceptedSet(t *testing.T) {
+	got := knownHookTriggers()
+	for _, want := range []string{"SessionStart", "Stop", "PreToolUse", "PostToolUse", "Manual"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("knownHookTriggers() = %q, missing %q", got, want)
+		}
+	}
+	// Deduped: every trigger has several aliases mapping onto it.
+	if strings.Count(got, "PostFileSave") != 1 {
+		t.Errorf("knownHookTriggers() = %q, want PostFileSave listed once", got)
 	}
 }
 

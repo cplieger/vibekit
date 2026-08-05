@@ -6,11 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/atomicfile/v2"
@@ -69,6 +71,11 @@ func validateHookPayload(cmd *api.ClientCommand) (p hookCreatePayload, safeName 
 	default:
 		return p, "", http.StatusBadRequest,
 			errors.New("action_type must be askAgent or runCommand")
+	}
+	if _, known := normalizeTrigger(p.EventType); !known {
+		return p, "", http.StatusBadRequest,
+			fmt.Errorf("event_type %q is not a trigger kiro-cli loads; expected one of: %s",
+				p.EventType, knownHookTriggers())
 	}
 	safeName = strings.ReplaceAll(strings.ToLower(p.Name), " ", "-")
 	if !validHookNameRe.MatchString(safeName) {
@@ -139,17 +146,55 @@ var hookTriggers = map[string]string{
 	"filedelete":        "PostFileDelete",
 	"filedeleted":       "PostFileDelete",
 	"usertriggered":     "Manual",
+	// Three more spellings KAS itself accepts. Their absence meant a payload
+	// using any of them produced a hook file KAS then discarded.
+	"agentspawn":    "SessionStart",
+	"sessionend":    "Stop",
+	"afterfileedit": "PostFileSave",
 }
 
 // normalizeTrigger maps a client event-type value to its PascalCase v1
-// trigger. Unrecognised values pass through trimmed (best effort) so a
-// trigger this map doesn't yet know about isn't blocked server-side.
-func normalizeTrigger(eventType string) string {
+// trigger, reporting whether the value is one KAS will actually load.
+//
+// It used to pass an unrecognised value through trimmed, on the reasoning that
+// vibekit should not block a trigger its map does not yet know. That reasoning
+// inverts here, because the permissive branch is not lenient, it is silent:
+// KAS's parseHookDocument DROPS a hook whose trigger it does not recognise, so
+// create_hook answered 200 with a file path for a hook that loads nowhere, never
+// fires, and never appears in /api/hooks. The user is told a hook exists and
+// there is no signal anywhere that it does not.
+//
+// Refusing costs nothing by comparison: the closed set lives in this map, and a
+// trigger KAS adds later is one map entry away. Silence was the expensive
+// choice.
+func normalizeTrigger(eventType string) (trigger string, ok bool) {
 	trimmed := strings.TrimSpace(eventType)
-	if t, ok := hookTriggers[strings.ToLower(trimmed)]; ok {
-		return t
+	t, ok := hookTriggers[strings.ToLower(trimmed)]
+	return t, ok
+}
+
+// knownHookTriggers lists the canonical trigger names for an error message, so a
+// rejection tells the caller what IS accepted rather than only what is not.
+func knownHookTriggers() string {
+	seen := make(map[string]struct{}, len(hookTriggers))
+	names := make([]string, 0, len(hookTriggers))
+	for _, v := range hookTriggers {
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		names = append(names, v)
 	}
-	return trimmed
+	slices.Sort(names)
+	return strings.Join(names, ", ")
+}
+
+// mustTrigger resolves an event type validateHookPayload has already accepted.
+// Separate from normalizeTrigger so the validated path reads as one expression
+// while the boundary check keeps its two-value form.
+func mustTrigger(eventType string) string {
+	t, _ := normalizeTrigger(eventType)
+	return t
 }
 
 // buildHookAction maps vibekit's action_type payload ("askAgent" /
@@ -174,7 +219,7 @@ func buildHookAction(p *hookCreatePayload) hookAction {
 func buildHookDoc(p *hookCreatePayload) hookDoc {
 	entry := hookEntry{
 		Name:        p.Name,
-		Trigger:     normalizeTrigger(p.EventType),
+		Trigger:     mustTrigger(p.EventType),
 		Description: p.Description,
 		Matcher:     strings.TrimSpace(p.Patterns),
 		Action:      buildHookAction(p),
