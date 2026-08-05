@@ -30,6 +30,7 @@ import (
 	mcpPkg "github.com/cplieger/vibekit/internal/mcp"
 	"github.com/cplieger/vibekit/internal/mcp/prewarm"
 	pushPkg "github.com/cplieger/vibekit/internal/push"
+	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/steering"
@@ -103,6 +104,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
+	scheduleStore := openScheduleStore(cfg.ConfigDir)
+
 	pushSvc := pushPkg.New(ctx, cfg.ConfigDir, cfg.VapidSub)
 
 	// vibekit owns kiro-cli/KAS session cleanup end to end (cleanup.periodDays
@@ -113,8 +116,11 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc),
 		hub.WithACPArgs(cfg.ACPArgs),
 		hub.WithKiroCLIPath(kiro.cliPath, kiro.env),
-		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs))
+		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
+		hub.WithSchedules(scheduleStore))
 	chat.WithBroadcaster(h)(chatStore)
+
+	startScheduleRunner(ctx, scheduleStore, h)
 
 	mcpRegistry := mcpPkg.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(ctx, mcpStore)
@@ -626,4 +632,31 @@ func warnIfNoLSPEnabled(e *toolbelt.Engine) {
 	}
 	slog.Warn("no language servers enabled; kiro code intelligence will be limited",
 		"hint", "enable gopls (Go), typescript-language-server (TypeScript), or pyright (Python) in Settings -> Tools")
+}
+
+// openScheduleStore opens the workflow-schedule store, or returns nil to leave
+// scheduling off.
+//
+// A malformed schedules.json warns and disables scheduling rather than aborting
+// boot (invariant 6: this is a dev box, so a bad file on the persistent volume
+// must still leave a way IN to fix it).
+func openScheduleStore(dir string) *schedule.Store {
+	st, err := schedule.NewStore(dir)
+	if err != nil {
+		slog.Warn("workflow scheduling disabled", "error", err)
+		return nil
+	}
+	return st
+}
+
+// startScheduleRunner starts the schedule sweep when scheduling is available.
+//
+// The runner reuses Hub.LaunchRun, which already launches a PARENTLESS run on
+// its own bridge, so a scheduled run needs no host chat and never shows up in
+// the chat list.
+func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Launcher) {
+	if st == nil {
+		return
+	}
+	go schedule.NewRunner(st, l).Run(ctx)
 }
