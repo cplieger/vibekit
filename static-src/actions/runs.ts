@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Workflow-run actions: the recipe list, launch, and the four run controls.
 //
-// Cancel, pause, resume and retry are all KAS's own verbs; vibekit adds no
+// Cancel, pause and resume are all KAS's own verbs; vibekit adds no
 // control of its own and no policy. Cancel doubles as the tab-close gesture,
 // which is what dispatches it for a launcher-owned run tab.
 //
@@ -99,10 +99,3 @@ export const pauseRun = runControl("pause", "Couldn't pause the run");
  *  reloads the run from disk — which is why the button is offered on any paused
  *  run rather than only on one this browser started. */
 export const resumeRun = runControl("resume", "Couldn't resume the run");
-
-/** Re-drive a finished run from its failed node.
- *
- *  Only legal on a terminal run (completed, failed or aborted); the server
- *  answers 409 naming the current status otherwise, which is the honest response
- *  to clicking Retry on a run that resumed a moment ago. */
-export const retryRun = runControl("retry", "Couldn't retry the run");

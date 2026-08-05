@@ -619,15 +619,13 @@ func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 		t.Fatalf("natural wait %v does not exceed the %v ceiling, so this test's "+
 			"premise no longer holds; pick a longer retention", natural, maxWait)
 	}
-	// The property: what purgeAndReschedule arms is bounded by the ceiling, and
-	// is strictly shorter than the natural wait for this input.
-	armed := min(natural, maxWait)
-	if armed != maxWait {
-		t.Errorf("armed wait = %v, want the %v ceiling", armed, maxWait)
-	}
-	if armed >= natural {
-		t.Errorf("armed wait %v did not shorten the natural %v; the cap is not doing anything",
-			armed, natural)
+	// The property, read off the function the LOOP calls rather than recomputed
+	// here. An earlier version of this test computed min(natural, maxWait) itself
+	// and asserted it equalled maxWait, which is arithmetically true whatever
+	// production does — it stayed green with the clamp deleted from purge.go.
+	if armed := sched.armWait(retention); armed != maxWait {
+		t.Errorf("armWait = %v, want the %v ceiling (natural wait was %v)",
+			armed, maxWait, natural)
 	}
 
 	// And the loop really does arm a timer on this path.

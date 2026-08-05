@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 /** The four run-control verbs, in the order a row presents them. */
-export type RunVerb = "pause" | "resume" | "retry" | "cancel";
+export type RunVerb = "pause" | "resume" | "cancel";
 
 /** KAS's WorkflowStatusSchema. Exported so a test can be exhaustive over it
  *  rather than over whatever subset the table happens to name. */
@@ -30,24 +30,32 @@ export const RUN_STATUSES = ["running", "paused", "completed", "failed", "aborte
  *  every live run must offer a way out, and a finished run must not offer a stop
  *  that would do nothing.
  *
+ *  A live run may still offer nothing: these verbs reach a run only through its
+ *  own bridge, which an agent-launched run never has and a restarted server has
+ *  lost. The server answers 409 in that case, which is why the buttons render
+ *  from status alone and the reply is what tells the user the run is out of
+ *  reach.
+ *
  *  An unknown status is ABSENT rather than mapped to an empty list, so a future
  *  KAS status degrades to a read-only view instead of a wrong control. */
 export const RUN_CONTROLS: Record<string, readonly RunVerb[]> = {
   running: ["pause", "cancel"],
   paused: ["resume", "cancel"],
-  // No retry on `completed`, even though it is terminal. KAS's retry throws on
-  // the no-nodeId branch unless the status is failed or aborted, and then throws
-  // again if the walk finds nothing failed to reset, so a Retry button on a
-  // completed run could only ever produce an error.
+  // Every terminal status offers nothing, and retry is absent entirely.
+  //
+  // Retry looked like the natural verb for a failed run and is unreachable by
+  // construction: KAS accepts it only from failed or aborted, and vibekit closes
+  // a run's bridge on every terminal run_complete, so the moment retry becomes
+  // legal is the moment its carrier is gone. Re-hosting an orphaned run is a
+  // feature (see run_host.go); until it exists, a finished run is a record.
   completed: [],
-  failed: ["retry"],
-  aborted: ["retry"],
+  failed: [],
+  aborted: [],
 };
 
 /** Button text per verb. */
 export const CONTROL_LABEL: Record<RunVerb, string> = {
   pause: "Pause",
   resume: "Resume",
-  retry: "Retry",
   cancel: "Cancel",
 };

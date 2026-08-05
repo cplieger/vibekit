@@ -151,9 +151,15 @@ func (h *Hub) CancelRun(ctx context.Context, workflowID string) error {
 }
 
 // errRunNotHosted is returned by a control verb that needs the run's OWN bridge
-// when this process does not have one. Distinct from a KAS refusal so the REST
-// layer can answer 409 with an explanation rather than 500.
-var errRunNotHosted = errors.New("this run is not hosted by this server; only cancel is available")
+// when there is none. Distinct from a KAS refusal so the REST layer can answer
+// 409 with an explanation rather than 500.
+//
+// The wording avoids "not hosted by this server", which would be wrong for the
+// commonest case: an agent-launched run IS executing here, on the calling chat's
+// bridge, and simply cannot be addressed by these verbs.
+var errRunNotHosted = errors.New(
+	"this run has no live bridge here, so only cancel is available; " +
+		"an agent-launched run or one from before a restart is in this state")
 
 // PauseRun asks a running run to stop at its next node boundary, keeping its
 // state resumable. KAS sets `control.pauseRequested` and the in-flight node runs
@@ -171,16 +177,17 @@ func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
 	return h.hostedRunControl(ctx, workflowID, methodKiroWorkflowResume)
 }
 
-// RetryRun re-drives a FAILED or ABORTED run from its failed nodes.
+// There is deliberately NO RetryRun, and the reason is structural rather than a
+// missing line. Retry is legal only from `failed` or `aborted` (KAS throws on the
+// no-nodeId branch otherwise), and `closeFinishedRunBridge` closes a run's bridge
+// on every terminal run_complete -- including those two. So the moment retry
+// becomes legal is the moment its carrier is gone, and a wired retry would be a
+// button whose only outcome is a 409.
 //
-// Not `completed`, despite completed being a terminal status: KAS's retry admits
-// all three terminal states in its outer check and then, on the no-nodeId branch
-// vibekit uses, throws unless the status is failed or aborted, and throws again
-// if the walk finds no failed node to reset. Retrying part of a completed run
-// would need an explicit node selector.
-func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
-	return h.hostedRunControl(ctx, workflowID, methodKiroWorkflowRetry)
-}
+// Making it work needs re-hosting an existing run on a fresh bridge, and
+// `_kiro/workflow/load` does NOT do that for a run the registry has lost: it
+// takes its disk branch and registers nothing. So this is a feature with its own
+// design, not a route, and it stays out until someone builds it.
 
 // hostedRunControl issues a verb that must run on the run's OWN bridge, and
 // refuses rather than falling back to the utility bridge.
@@ -193,12 +200,16 @@ func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
 // worse than not offering the verb. Pause cannot use it either, for the
 // unrelated reason above.
 //
-// The cost is stated rather than hidden: a run whose launching bridge is gone —
-// after a container restart, or once the bridge was culled — can only be
-// cancelled. Re-hosting an orphaned run is buildable (`_kiro/workflow/load` binds
-// an existing workflow id to a fresh bridge, which is how a launch registers its
-// own) but it is a feature with its own failure modes, not part of routing to
-// verbs that already exist.
+// The cost is stated rather than hidden, and it is bigger than it first looks.
+// These verbs reach a run only while it has a live bridge under its own synthetic
+// chat id, which means a run launched through POST /api/runs, in this process,
+// still running or paused. Three cases fall outside that and can only be
+// cancelled: a run orphaned by a container restart, a run whose bridge was
+// culled, and an AGENT-launched run, which KAS parents on the calling chat's
+// session and which therefore never has a `run:<id>` bridge at all.
+//
+// That is why the 409 says "no live bridge" rather than naming a server: the run
+// may well be executing, on a connection these verbs cannot address.
 func (h *Hub) hostedRunControl(ctx context.Context, workflowID, method string) error {
 	sb := h.bridge.mgr.get(runChatID(workflowID))
 	if sb == nil {

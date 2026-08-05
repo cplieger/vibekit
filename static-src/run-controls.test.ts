@@ -12,8 +12,8 @@ describe("run control gating", () => {
     expect(RUN_CONTROLS.running).toEqual(["pause", "cancel"]);
     expect(RUN_CONTROLS.paused).toEqual(["resume", "cancel"]);
     expect(RUN_CONTROLS.completed).toEqual([]);
-    expect(RUN_CONTROLS.failed).toEqual(["retry"]);
-    expect(RUN_CONTROLS.aborted).toEqual(["retry"]);
+    expect(RUN_CONTROLS.failed).toEqual([]);
+    expect(RUN_CONTROLS.aborted).toEqual([]);
   });
 
   // A terminal run must never offer cancel: there is nothing to stop, and the
@@ -24,17 +24,17 @@ describe("run control gating", () => {
     }
   });
 
-  // Retry is offered on failed and aborted only, NOT on completed. KAS's retry
-  // throws on the no-nodeId branch unless the status is failed or aborted, so a
-  // Retry button on a completed run could only ever produce an error. An earlier
-  // revision of this table included it and both the Go and the TS test asserted
-  // the wrong matrix, which is what a matrix test is supposed to prevent.
-  it("offers retry only where KAS accepts it", () => {
-    expect(RUN_CONTROLS.failed).toContain("retry");
-    expect(RUN_CONTROLS.aborted).toContain("retry");
-    expect(RUN_CONTROLS.completed).not.toContain("retry");
-    expect(RUN_CONTROLS.running).not.toContain("retry");
-    expect(RUN_CONTROLS.paused).not.toContain("retry");
+  // Retry is absent from every status, and that is the finding rather than an
+  // omission. KAS accepts retry only from failed or aborted, and vibekit closes a
+  // run's bridge on every terminal run_complete — so the moment retry becomes
+  // legal is the moment its carrier is gone. An earlier revision shipped it on
+  // `completed` (where KAS always throws) and then on failed/aborted (where the
+  // bridge is already closed); both were buttons that could only produce an
+  // error.
+  it("offers retry nowhere, because it is unreachable by construction", () => {
+    for (const status of RUN_STATUSES) {
+      expect(RUN_CONTROLS[status] ?? []).not.toContain("retry");
+    }
   });
 
   // Pause and resume are opposites and must never both be on offer, or the row

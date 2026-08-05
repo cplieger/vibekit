@@ -432,7 +432,13 @@ func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCRe
 		// Unknown peer request: answer with an error rather than leaving
 		// the request pending (an unanswered request can wedge the turn).
 		slog.Warn("utility bridge: unexpected peer request, refusing", "method", msg.Method, "id", *msg.ID)
-		_ = bridge.Respond(ctx, *msg.ID, nil, errors.New("unsupported on the utility session"))
+		// -32601, for the same reason the chat dispatcher uses it: this is a
+		// deliberate refusal, not an internal fault, and -32603 would make the
+		// log blame the wrong side.
+		_ = bridge.Respond(ctx, *msg.ID, nil, &api.RPCError{
+			Code:    api.RPCCodeMethodNotFound,
+			Message: "unsupported on the utility session: " + msg.Method,
+		})
 	}
 }
 

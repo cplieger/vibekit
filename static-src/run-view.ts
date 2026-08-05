@@ -21,7 +21,7 @@ import { apiGet } from "./api-client.js";
 import { el } from "@cplieger/reactive";
 import { openRunTab } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks } from "./decision-dock.js";
-import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
+import { cancelRun, pauseRun, resumeRun } from "./actions/runs.js";
 import { RUN_CONTROLS, CONTROL_LABEL, type RunVerb } from "./run-controls.js";
 
 /** Verb → its action. Separate from run-controls.ts's table on purpose: that
@@ -30,7 +30,6 @@ import { RUN_CONTROLS, CONTROL_LABEL, type RunVerb } from "./run-controls.js";
 const RUN_ACTION: Record<RunVerb, { dispatch: (id: string) => Promise<unknown> }> = {
   pause: pauseRun,
   resume: resumeRun,
-  retry: retryRun,
   cancel: cancelRun,
 };
 
