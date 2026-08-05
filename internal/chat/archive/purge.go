@@ -273,8 +273,23 @@ func stopTimer(t *time.Timer) {
 }
 
 // purgeAndReschedule runs one purge pass (when retention is positive)
-// and returns a freshly-armed timer for the next wake-up, or (nil, nil)
-// when nothing remains to schedule.
+// and always returns an armed timer, so the loop can never go dark.
+//
+// It used to return (nil, nil) whenever nextWait reported not-ok, which is
+// reachable two ways: retention <= 0, and an EMPTY chat directory. Both are
+// ordinary states, and both left the loop with a nil timer channel whose only
+// remaining wake-up was Trigger() — which has exactly one production caller,
+// Start. So a fresh container booted with no chats, armed nothing, and never
+// purged again for the life of the process; and toggling retention through 0
+// and back killed purging permanently, because the toggle path does not
+// Trigger. Neither failure was observable: no log, no metric, just a chat
+// directory that grows forever while the setting says otherwise.
+//
+// A poll ceiling fixes both, and also fixes a third, quieter problem: the
+// armed wait was uncapped, so a 30-day retention slept ~29 days and no
+// setting change could shorten it. Re-checking at most maxWait later costs one
+// directory stat per interval and makes every retention change take effect
+// within one interval regardless of what was armed when it happened.
 func (p *PurgeScheduler) purgeAndReschedule() (timer *time.Timer, timerC <-chan time.Time) {
 	retention := p.retention()
 	if retention > 0 {
@@ -284,12 +299,20 @@ func (p *PurgeScheduler) purgeAndReschedule() (timer *time.Timer, timerC <-chan 
 	}
 	wait, ok := p.nextWait(retention)
 	if !ok {
-		return nil, nil
+		// Nothing to purge right now (retention off, or no chats yet). Re-check
+		// on the poll interval rather than going dark.
+		wait = maxWait
 	}
-	slog.Debug("chat purge scheduled", "in", wait, "retention", retention)
+	wait = min(wait, maxWait)
+	slog.Debug("chat purge scheduled", "in", wait, "retention", retention, "had_work", ok)
 	t := time.NewTimer(wait)
 	return t, t.C
 }
+
+// maxWait bounds how long the purge loop may sleep between passes. It is the
+// ceiling on how stale an armed wake-up can be after a retention change, and
+// the re-check interval when there is nothing scheduled at all.
+const maxWait = 1 * time.Hour
 
 // nextWait computes how long to sleep before the next purge: the oldest
 // chat file's age plus the retention window, floored at minWait.
