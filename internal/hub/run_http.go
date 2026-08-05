@@ -282,10 +282,10 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 		}
 	}
 	if err := verb.issue(h, r.Context(), id); err != nil {
-		// A run with no live bridge here is a state of the world, not a fault:
-		// only cancel is available for it, and saying so is more useful than a
-		// 500. See hostedRunControl for which runs fall outside, and for why the
-		// utility bridge is not a fallback for the verbs that execute.
+		// A run with no live bridge here is a state of the world, not a fault, so
+		// it earns a 409 naming the situation rather than a 500. See
+		// hostedRunControl for which runs fall outside and why the utility bridge
+		// is not a fallback for the verbs that execute.
 		if errors.Is(err, errRunNotHosted) {
 			slog.Info("run control unavailable: run not hosted here",
 				"verb", verb.name, "workflow_id", id)

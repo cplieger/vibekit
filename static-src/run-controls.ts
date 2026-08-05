@@ -8,7 +8,7 @@
 // would drag the whole app graph and a partially-staged DOM in behind it.
 // ---------------------------------------------------------------------------
 
-/** The four run-control verbs, in the order a row presents them. */
+/** The run-control verbs, in the order a row presents them. */
 export type RunVerb = "pause" | "resume" | "cancel";
 
 /** KAS's WorkflowStatusSchema. Exported so a test can be exhaustive over it
