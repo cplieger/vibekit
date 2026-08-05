@@ -9,11 +9,11 @@ describe("run control gating", () => {
   // (the server is the authority; the client renders only buttons that can
   // succeed) and this is what stops them drifting.
   it("offers each verb only from the statuses that accept it", () => {
-    expect(RUN_CONTROLS.running).toEqual(["pause", "cancel"]);
-    expect(RUN_CONTROLS.paused).toEqual(["resume", "cancel"]);
-    expect(RUN_CONTROLS.completed).toEqual([]);
-    expect(RUN_CONTROLS.failed).toEqual([]);
-    expect(RUN_CONTROLS.aborted).toEqual([]);
+    expect(RUN_CONTROLS["running"]).toEqual(["pause", "cancel"]);
+    expect(RUN_CONTROLS["paused"]).toEqual(["resume", "cancel"]);
+    expect(RUN_CONTROLS["completed"]).toEqual([]);
+    expect(RUN_CONTROLS["failed"]).toEqual([]);
+    expect(RUN_CONTROLS["aborted"]).toEqual([]);
   });
 
   // A terminal run must never offer cancel: there is nothing to stop, and the
@@ -49,7 +49,7 @@ describe("run control gating", () => {
   // An unknown status renders NO controls rather than guessing. A future KAS
   // status should degrade to a read-only view, not to a wrong button.
   it("offers nothing for an unknown status", () => {
-    expect(RUN_CONTROLS.some_future_status).toBeUndefined();
+    expect(RUN_CONTROLS["some_future_status"]).toBeUndefined();
     expect(RUN_CONTROLS[""]).toBeUndefined();
   });
 
