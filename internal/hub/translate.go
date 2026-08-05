@@ -24,6 +24,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 
@@ -184,9 +185,42 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 	if _, ok := h.noopMethods[msg.Method]; ok {
 		return
 	}
-	// v3 (KAS) emits the _kiro/* extension namespace. Unhandled surfaces
-	// (Cedar policy, spec/hooks/knowledge/safety/sandbox families, etc.)
-	// fall through to a debug log rather than a silent drop.
+	// An unrecognised REQUEST must be answered. KAS calls its ext-methods with
+	// `await connection.extMethod(...)` and no timeout — the only rejection is
+	// the connection closing — so an unanswered request does not degrade a
+	// feature, it wedges the whole turn: the session/prompt Call never returns
+	// (Bridge.Call has no client-side deadline by design), bridgePrompting is
+	// never released, and every later prompt on that chat 409s into a client
+	// queue whose only drain is a turn_ended that will never fire.
+	//
+	// This mirrors the fallback the utility bridge (utility_session.go) and the
+	// run bridge (run_host.go) already have, with the same rationale written in
+	// their comments. The chat dispatcher was the one of the three without it.
+	//
+	// The reachable case today is _kiro/workspace/{active_file,
+	// currently_open_files}: KAS registers those resolvers with NO capability
+	// gate, and reaches them from processPromptWithContext on any `#[[...]]`
+	// reference in a workspace-authored agent prompt. vibekit deliberately does
+	// not implement the pull direction (see vibekit-acp.md), so a prompt in this
+	// very repo can raise a request nothing answers.
+	//
+	// The code is -32603, not -32601: KAS's own answer for an unknown
+	// ext-method is -32603, nothing on either side switches on the value, and
+	// matching what the peer does keeps one shape on the wire.
+	if msg.ID != nil {
+		slog.Warn("chat bridge: refusing an unexpected peer request",
+			"method", msg.Method, "chat_id", chatID, "id", *msg.ID)
+		if err := h.BridgeRespond(ctx, chatID, *msg.ID, nil,
+			fmt.Errorf("unsupported on the chat session: %s", msg.Method)); err != nil {
+			slog.Error("chat bridge: refusal could not be delivered; the turn may be wedged",
+				"method", msg.Method, "chat_id", chatID, "error", err)
+		}
+		return
+	}
+	// v3 (KAS) emits the _kiro/* extension namespace. Unhandled NOTIFICATIONS
+	// (Cedar policy, spec/hooks/knowledge/safety/sandbox families, etc.) fall
+	// through to a debug log rather than a silent drop. Nothing is owed on the
+	// wire for these, unlike the request branch above.
 	if strings.HasPrefix(msg.Method, "_kiro/") {
 		slog.Debug("unhandled kiro extension",
 			"method", msg.Method, "chat_id", chatID)
