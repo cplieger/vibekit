@@ -159,8 +159,7 @@ func (g *Generator) Generate(ctx context.Context) {
 	b.WriteString("- Container has no Docker socket\n\n")
 
 	b.WriteString("## Capabilities\n\n")
-	b.WriteString("- Chat history is stored in `" + g.configDir + "/chats/*.json` (one file per chat; ")
-	b.WriteString("archived chats move to the `chats/archive/` subdirectory)\n")
+	b.WriteString("- Chat history is stored in `" + g.configDir + "/chats/*.json` (one file per chat)\n")
 	b.WriteString("- Conversations are searchable via the chat files\n")
 	b.WriteString("- File browser and editor are available in the UI for reading and writing files\n")
 	b.WriteString("- You can read, write, and edit files in the workspace directly\n")
