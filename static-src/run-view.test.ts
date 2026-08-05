@@ -21,14 +21,16 @@ interface RunInspectReply {
 interface OpenedTab {
   id: string;
   onShow: () => void;
-  onClose?: () => void;
+  // Explicitly `| undefined`: a review tab pushes onClose: undefined, and
+  // exactOptionalPropertyTypes distinguishes that from an absent property.
+  onClose?: (() => void) | undefined;
 }
 
 // Hoisted with the vi.mock factories below, which run before ordinary top-level
 // initialisers and would otherwise read these in their TDZ.
 const m = vi.hoisted(() => ({
   reply: { current: undefined as unknown },
-  opened: [] as { id: string; onShow: () => void; onClose?: () => void }[],
+  opened: [] as { id: string; onShow: () => void; onClose?: (() => void) | undefined }[],
   dispatched: [] as string[],
 }));
 
@@ -78,8 +80,10 @@ async function paint(
   document.body.append(body, dock);
 
   door("wf_1", "nightly");
-  const tab = m.opened[m.opened.length - 1];
-  expect(tab).toBeDefined();
+  const tab = m.opened.at(-1);
+  if (tab === undefined) {
+    throw new Error("the opener did not open a tab");
+  }
   tab.onShow();
   // load() awaits one apiGet before painting; drain enough microtasks for the
   // promise chain to settle without reaching for fake timers.
