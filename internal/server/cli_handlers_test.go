@@ -229,60 +229,6 @@ func TestCappedBuffer_CapsAndFlags(t *testing.T) {
 	}
 }
 
-// TestRedactSecrets covers the best-effort redactor directly, including a
-// benign build hash that must survive (no over-redaction).
-func TestRedactSecrets(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		gone []string
-		kept []string
-	}{
-		{
-			name: "secret-named json value",
-			in:   `"client_secret": "s3cr3tVALUE123456"`,
-			gone: []string{"s3cr3tVALUE123456"},
-			kept: []string{`"client_secret"`, "[redacted]"},
-		},
-		{
-			name: "aws access key id",
-			in:   "id is AKIAIOSFODNN7EXAMPLE here",
-			gone: []string{"AKIAIOSFODNN7EXAMPLE"},
-			kept: []string{"[redacted]"},
-		},
-		{
-			name: "github pat",
-			in:   "token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 ok",
-			gone: []string{"ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345"},
-		},
-		{
-			name: "bearer header",
-			in:   "Authorization: Bearer abcDEF012345_and-more.tokenvalue",
-			gone: []string{"abcDEF012345_and-more.tokenvalue"},
-		},
-		{
-			name: "benign build hash not redacted",
-			in:   `"commit": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"`,
-			kept: []string{"1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			out := redactSecrets(tt.in)
-			for _, g := range tt.gone {
-				if strings.Contains(out, g) {
-					t.Errorf("secret %q survived redaction: %q", g, out)
-				}
-			}
-			for _, k := range tt.kept {
-				if !strings.Contains(out, k) {
-					t.Errorf("expected %q to survive, got %q", k, out)
-				}
-			}
-		})
-	}
-}
-
 // TestExecCLIRunner_RunStdoutCapped_SeparatesStderr verifies the production
 // runner captures STDOUT only and does not merge stderr into the result.
 func TestExecCLIRunner_RunStdoutCapped_SeparatesStderr(t *testing.T) {

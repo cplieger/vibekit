@@ -51,6 +51,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/redact"
 )
 
 // replayInfoMeta decodes the `_meta.kiro` block of a replayed
@@ -300,7 +301,7 @@ func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 	}
 	for _, item := range tu.Content {
 		if item.Type == ContentTypeContent && item.Content.Text != "" {
-			tc.Output += api.SanitizeOutput(item.Content.Text) + "\n"
+			tc.Output += redact.Output(api.SanitizeOutput(item.Content.Text)) + "\n"
 		}
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)

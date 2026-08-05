@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/redact"
 	"github.com/cplieger/vibekit/internal/version"
 )
 
@@ -46,7 +47,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	}
 	// Sanitize (ANSI + hidden Unicode) then best-effort redact obvious
 	// secret patterns before the report reaches the browser.
-	report := redactSecrets(api.SanitizeOutput(string(out)))
+	report := redact.Report(api.SanitizeOutput(string(out)))
 	if truncated {
 		report += "\n\n[truncated]"
 	}

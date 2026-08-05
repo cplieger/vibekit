@@ -5,7 +5,6 @@ import (
 	"context"
 	"log/slog"
 	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 
@@ -183,37 +182,5 @@ func parseKiroSettingOutput(s string) string {
 	if i := strings.LastIndexByte(s, '('); i > 0 {
 		s = strings.TrimSpace(s[:i])
 	}
-	return s
-}
-
-// secretKVRe matches a JSON string key whose name looks secret-ish and
-// captures the `"key":` prefix (group 1) so the value can be replaced with a
-// placeholder. Go's regexp is RE2 (linear time), so this is ReDoS-safe.
-var secretKVRe = regexp.MustCompile(
-	`(?i)("[^"\r\n]*(?:token|secret|password|passwd|authorization|credential|` +
-		`api[_-]?key|access[_-]?key|secret[_-]?key|session[_-]?token|` +
-		`private[_-]?key|client[_-]?secret|bearer)[^"\r\n]*"\s*:\s*)"[^"]*"`)
-
-// secretTokenRe matches unambiguous standalone secret token shapes: AWS
-// access-key ids, common provider PATs (GitHub/GitLab/Slack), and Bearer auth
-// headers. Kept tight to unmistakable prefixes so benign values like commit
-// hashes are not redacted.
-var secretTokenRe = regexp.MustCompile(
-	`(?i)\b(?:AKIA|ASIA)[0-9A-Z]{16}\b` +
-		`|\bgh[opsur]_[A-Za-z0-9]{20,}\b` +
-		`|\bgithub_pat_[A-Za-z0-9_]{20,}\b` +
-		`|\bglpat-[A-Za-z0-9_-]{16,}\b` +
-		`|\bxox[baprs]-[A-Za-z0-9-]{10,}\b` +
-		`|bearer\s+[A-Za-z0-9._~+/-]{8,}={0,2}`)
-
-// redactSecrets applies best-effort secret redaction to text destined for the
-// browser: it blanks the values of secret-named JSON fields and masks
-// standalone token shapes. It is intentionally conservative (over-redacts
-// rather than leaks) and, being pattern-based, is a defense-in-depth layer,
-// not a guarantee — kiro-cli's own diagnostic already uses an env-var
-// allowlist and sanitizes usernames.
-func redactSecrets(s string) string {
-	s = secretKVRe.ReplaceAllString(s, `${1}"[redacted]"`)
-	s = secretTokenRe.ReplaceAllString(s, "[redacted]")
 	return s
 }
