@@ -36,7 +36,12 @@ type RPCError struct {
 	// Counted over every engine-emitted frame in the wire logs: 127 `-32603`
 	// errors set Message to the literal "Internal error" and put the real text
 	// in Data — either `{"details": "…"}` or a Zod issue array — while the 6
-	// `-32602` and 4 `-32000` errors put it in Message and carry no Data at all.
+	// `-32602` errors put it in Message and carry no Data at all.
+	//
+	// The 4 `-32000` errors are NOT in that second group, and the earlier claim
+	// that they carry no Data was wrong: -32000 is KAS's own application code
+	// and it does attach Data (the throttle case is the one vibekit reads, in
+	// command/prompt.go's promptFailureReason). Treat -32000 as "check both".
 	// So the two fields are not redundant and neither is primary: dropping Data
 	// (which this struct did) loses the cause of every internal error, and
 	// dropping Message would lose every parameter-validation message.

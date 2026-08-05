@@ -72,6 +72,23 @@ type Buffer struct {
 	chunkSeq int64
 	mu       sync.Mutex
 	Started  bool
+	// overCap latches once the turn has exceeded maxBufferBytes, so the
+	// truncation notice and its log line are emitted exactly once. Frames keep
+	// arriving after the cap is hit, and one notice per frame would be a second
+	// defect on top of the silent drop it replaced.
+	overCap bool
+}
+
+// MarkOverCap latches the over-cap state and reports whether THIS call was the
+// one that set it, so exactly one caller announces the truncation.
+func (buf *Buffer) MarkOverCap() bool {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	if buf.overCap {
+		return false
+	}
+	buf.overCap = true
+	return true
 }
 
 // SteerCarry returns the withheld marker-candidate text and its attribution.

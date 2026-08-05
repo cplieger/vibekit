@@ -56,6 +56,26 @@ const PrimePreambleSwitch = "The context was just switched (new agent, new model
 	"silently and reply with a single short line confirming " +
 	"you're caught up.\n\n"
 
+// PrimePreambleReload is the counterpart for a fresh session created because
+// `session/load` FAILED. Same instruction, different first sentence, and the
+// difference matters: telling the model its context was "just switched" when
+// nothing was switched is a small lie in the one message it reads before
+// everything else.
+//
+// Before this existed, that fallback primed NOTHING — primeReason had a single
+// member and the prime switch's `default` arm returns — so a chat whose reload
+// failed came back with its transcript on screen and an agent that had never
+// seen it.
+const PrimePreambleReload = "The previous session could not be reloaded, so this " +
+	"is a fresh one. Below is the full conversation history. Read it " +
+	"silently and reply with a single short line confirming " +
+	"you're caught up.\n\n"
+
+// primePreambles is every preamble the coordinator can send. The focus filter
+// walks all of them: KAS derives a first-prompt title from whatever text it sees
+// first, so a preamble missing from this list becomes a chat title.
+var primePreambles = []string{PrimePreambleSwitch, PrimePreambleReload}
+
 // derivedTitleEllipsis matches KAS's SESSION_TITLE_ELLIPSIS.
 const derivedTitleEllipsis = "..."
 
@@ -119,14 +139,24 @@ func (t *Translator) applyFocusTitle(ctx context.Context, chatID api.ChatID, tit
 // truncation (long prompt); the prompt KAS saw is either one of the
 // chat's user messages or, on a freshly primed session, the priming
 // preamble + transcript.
-func titleIsPromptDerived(title string, c *api.Chat) bool {
-	stripped, ellipsized := strings.CutSuffix(title, derivedTitleEllipsis)
-	if ellipsized {
-		// The prime is always far longer than the title cap, so a
-		// prime-derived title is always ellipsized — only check here.
-		if strings.HasPrefix(PrimePreambleSwitch, stripped) {
+// titleIsPrimeDerived reports whether an ellipsized title is the head of any
+// priming preamble. Split out so titleIsPromptDerived stays inside the
+// complexity budget as preambles are added.
+func titleIsPrimeDerived(stripped string) bool {
+	for _, preamble := range primePreambles {
+		if strings.HasPrefix(preamble, stripped) {
 			return true
 		}
+	}
+	return false
+}
+
+func titleIsPromptDerived(title string, c *api.Chat) bool {
+	stripped, ellipsized := strings.CutSuffix(title, derivedTitleEllipsis)
+	// The prime is always far longer than the title cap, so a prime-derived
+	// title is always ellipsized — only check there.
+	if ellipsized && titleIsPrimeDerived(stripped) {
+		return true
 	}
 	for i := range c.Messages {
 		m := &c.Messages[i]

@@ -93,7 +93,14 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		out, err := s.cliRunner.Run(ctx, "settings", key, value)
 		if err != nil {
-			api.WriteJSON(w, api.ErrorJSON(strings.TrimSpace(string(out))))
+			// 502, not 200-with-an-error-body. The client's action framework
+			// classifies by STATUS, so answering a refused write with 200 made
+			// every failure read as success: the toggle stayed flipped, no toast
+			// fired, and the setting was not written. kiro-cli is the upstream
+			// here and it declined, which is what Bad Gateway means.
+			slog.Warn("kiro-cli settings write refused", "key", key, "error", err)
+			api.WriteJSONStatus(w, http.StatusBadGateway,
+				api.ErrorJSON(strings.TrimSpace(string(out))))
 			return
 		}
 		api.Ok(w)

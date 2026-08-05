@@ -1827,3 +1827,93 @@ done
 		})
 	}
 }
+
+// coreIOToolIDs is KAS's own CORE_IO_TOOL_IDS set, read off the 2.16.1 bundle
+// (acp-server.js:464015-464022).
+//
+// KAS ships TWO ExecuteBash implementations and picks between them with
+// `hasClientIOTools = clientTools.some(t => CORE_IO_TOOL_IDS.has(t.id))`. vibekit
+// gets the CLAMPED one — `min(input.timeout ?? 120000, 1800000)`, a 30 minute
+// ceiling on every agent shell command — precisely because it declares none of
+// these ids.
+var coreIOToolIDs = []string{
+	"execute_bash", "read_file", "fs_write", "str_replace", "grep_search", "file_search",
+}
+
+// TestInitialize_DeclaresNoCoreIOTool guards a bound vibekit does not own and
+// cannot see.
+//
+// Registering any client tool named above flips `hasClientIOTools` and silently
+// promotes the agent to the UNBOUNDED ExecuteBash. Nothing logs the switch and no
+// behaviour changes until some command runs long, so the 30 minute ceiling would
+// vanish as a side effect of an unrelated feature and the symptom would be "a
+// turn hung forever" months later.
+//
+// The constraint was already written down beside the capability map
+// (bridge.go's clientCapabilities block). A comment does not fail a build, which
+// is what this test is for. If a future change genuinely wants one of these
+// tools, it has to delete this test — and that deletion is the conversation about
+// reintroducing the bound deliberately.
+//
+// Asserts on the RAW initialize bytes rather than a Go value: the ids can reach
+// KAS through clientCapabilities or through _meta, and only the wire sees both.
+func TestInitialize_DeclaresNoCoreIOTool(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "init.log")
+
+	script := `#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "` + logPath + `"
+  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$method" in
+    initialize)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    session/new)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess-new"}}\n' "$id"
+      ;;
+    *)
+      if [ -n "$id" ]; then
+        printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      fi
+      ;;
+  esac
+done
+`
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake script: %v", err)
+	}
+
+	b := New(scriptPath, dir)
+	if err := b.Start(context.Background(), &api.StartOpts{Model: "m"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	b.Stop()
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	var initLine string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.Contains(line, `"method":"initialize"`) {
+			initLine = line
+			break
+		}
+	}
+	if initLine == "" {
+		t.Fatalf("no initialize request in the log; the test proved nothing:\n%s", data)
+	}
+	for _, id := range coreIOToolIDs {
+		if strings.Contains(initLine, `"`+id+`"`) {
+			t.Errorf(`initialize declares %q, which is in KAS's CORE_IO_TOOL_IDS.
+That flips hasClientIOTools and swaps the agent onto the UNBOUNDED ExecuteBash,
+removing the 30 minute ceiling on every shell command. If this is intended, the
+bound has to be reintroduced deliberately (see bridge.go's clientCapabilities).
+initialize was:
+%s`, id, initLine)
+		}
+	}
+}

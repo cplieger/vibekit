@@ -256,6 +256,10 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		old := sb.bridge
 		sb.bridge = bc.bridge.mgr.factory()
 		old.Stop()
+		// The replacement session has never seen this chat. Record why it needs
+		// priming, or maybePrime's default arm returns and the agent answers the
+		// next prompt with no idea what came before it.
+		sb.primeReason = primeReasonReload
 		if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 			if !ex {
 				return false
@@ -432,13 +436,12 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	// Preambles live in translate (PrimePreamble*) because the focus-title
 	// derivation filter must recognise a title KAS derives from this prime
 	// text — one definition keeps the filter and the prime in lockstep.
-	// One reason left, so this stays a switch rather than collapsing to an if:
-	// primeReason is the mechanism, and the rewind arm's removal is not a reason
-	// to make adding a future one a re-shaping job.
 	var prime string
 	switch sb.primeReason {
 	case primeReasonSwitch:
 		prime = translate.PrimePreambleSwitch + history
+	case primeReasonReload:
+		prime = translate.PrimePreambleReload + history
 	default:
 		return
 	}
