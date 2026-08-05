@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -201,6 +202,10 @@ func (fakeBusyBridge) SessionID() api.SessionID                         { return
 func (fakeBusyBridge) TryAcquireForPrompt() bool                        { return false }
 func (fakeBusyBridge) ReleaseAfterPrompt()                              {}
 func (fakeBusyBridge) SetPrompting()                                    {}
+func (fakeBusyBridge) BeginPromptCall(context.CancelFunc) uint64        { return 0 }
+func (fakeBusyBridge) EndPromptCall()                                   {}
+func (fakeBusyBridge) PromptGeneration() uint64                         { return 0 }
+func (fakeBusyBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }
 func (fakeBusyBridge) IsPrimed() bool                                   { return true }
 func (fakeBusyBridge) SetPrimed()                                       {}
 
