@@ -24,7 +24,6 @@ package hub
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"strings"
 
@@ -182,14 +181,19 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 	// not implement the pull direction (see vibekit-acp.md), so a prompt in this
 	// very repo can raise a request nothing answers.
 	//
-	// The code is -32603, not -32601: KAS's own answer for an unknown
-	// ext-method is -32603, nothing on either side switches on the value, and
-	// matching what the peer does keeps one shape on the wire.
+	// The code is -32601, "Method not found", which is what JSON-RPC 2.0 assigns
+	// to exactly this case. KAS answers its own unknown ext-methods with -32603
+	// and switches on nothing, so either settles its promise — but -32603 means
+	// "I broke", and labelling a deliberate refusal an internal fault would make
+	// these logs lie about which side has the problem.
 	if msg.ID != nil {
 		slog.Warn("chat bridge: refusing an unexpected peer request",
 			"method", msg.Method, "chat_id", chatID, "id", *msg.ID)
 		if err := h.BridgeRespond(ctx, chatID, *msg.ID, nil,
-			fmt.Errorf("unsupported on the chat session: %s", msg.Method)); err != nil {
+			&api.RPCError{
+				Code:    api.RPCCodeMethodNotFound,
+				Message: "unsupported on the chat session: " + msg.Method,
+			}); err != nil {
 			slog.Error("chat bridge: refusal could not be delivered; the turn may be wedged",
 				"method", msg.Method, "chat_id", chatID, "error", err)
 		}

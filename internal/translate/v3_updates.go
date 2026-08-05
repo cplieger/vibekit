@@ -321,6 +321,14 @@ func (t *Translator) persistUsage(ctx context.Context, chatID api.ChatID, pct fl
 			c.Usage.Credits = credits
 			changed = true
 		}
+		// Credits keep an exact-inequality gate deliberately, and it costs
+		// nothing: the only caller that passes a non-negative credits value is
+		// HandleUsageUpdate, and `usage_update` has no emit site in KAS 2.16.0 or
+		// 2.16.1 (one occurrence, in a Zod schema). The live channel is
+		// session_info_update's context-usage sub-kind, which passes -1 here. So
+		// this arm is unreachable today; when KAS revives the notification, a
+		// money value is also the one field where rounding a change away would be
+		// wrong.
 		return changed
 	}); err != nil {
 		slog.Error("persist v3 usage", "chat_id", chatID, "error", err)
@@ -331,10 +339,16 @@ func (t *Translator) persistUsage(ctx context.Context, chatID api.ChatID, pct fl
 // transcript rewrite: one point, the resolution the context ring renders.
 const contextPctEpsilon = 1.0
 
-// contextPctTiers are KAS's own context-usage tier boundaries (normal < 80,
-// warning 80-95, critical >= 95). A crossing must always persist even when the
-// move is under contextPctEpsilon, because the tier is what the UI colours on.
-var contextPctTiers = [...]float64{80, 95}
+// contextPctTiers are the thresholds a percentage crossing must always persist
+// through, because each one changes what the CLIENT does rather than merely how
+// it rounds: 70 and 90 are where the context ring changes colour, and 95 is
+// DEFAULT_CUTOFF_PCT, where the client stops accepting input entirely.
+//
+// vibekit's own thresholds, not KAS's. An earlier revision used KAS's 80/95 tier
+// boundaries, which are the ones its TUI colours on and which this client never
+// renders — so the epsilon could round away a crossing of the one threshold that
+// disables the composer.
+var contextPctTiers = [...]float64{70, 90, 95}
 
 // materialPctDelta reports whether moving the stored context percentage from
 // prev to next is worth persisting: a move of at least contextPctEpsilon, or any

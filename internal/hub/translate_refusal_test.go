@@ -1,7 +1,8 @@
 package hub
 
 import (
-	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,8 +68,24 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 				t.Errorf("responded to id %d, want %d", got.id, id)
 			}
 			if got.err == nil {
-				t.Errorf("responded to %s with a success result (%v), want an error: "+
+				t.Fatalf("responded to %s with a success result (%v), want an error: "+
 					"vibekit does not implement it and must say so", method, got.result)
+			}
+			// The CODE matters, not just that it errored. -32601 is what JSON-RPC
+			// 2.0 assigns to method-not-found; -32603 would label a deliberate
+			// refusal an internal fault and make these logs blame the wrong side.
+			var rpcErr *api.RPCError
+			if !errors.As(got.err, &rpcErr) {
+				t.Fatalf("refusal for %s is not an *api.RPCError (%T); the code is not on the wire",
+					method, got.err)
+			}
+			if rpcErr.Code != api.RPCCodeMethodNotFound {
+				t.Errorf("refusal for %s used code %d, want %d (method not found)",
+					method, rpcErr.Code, api.RPCCodeMethodNotFound)
+			}
+			if !strings.Contains(rpcErr.Message, method) {
+				t.Errorf("refusal message %q does not name the method; a log line would not say what was refused",
+					rpcErr.Message)
 			}
 		})
 	}
@@ -111,5 +128,4 @@ func TestHubContextIsLiveOnAFreshHub(t *testing.T) {
 	if err := ctx.Err(); err != nil {
 		t.Fatalf("a fresh hub's context is already done (%v); the refusal tests would be vacuous", err)
 	}
-	_ = context.Cause
 }

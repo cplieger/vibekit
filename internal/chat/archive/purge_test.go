@@ -592,33 +592,48 @@ func TestPurgeScheduler_AlwaysArmsATimer(t *testing.T) {
 	}
 }
 
-// TestPurgeScheduler_CapsTheArmedWait pins the ceiling. Without it the armed
-// wait was the oldest chat's age plus the whole retention window, so a 30-day
-// retention slept ~29 days and no settings change could shorten it: the loop
-// was already asleep when the change happened and nothing woke it.
+// TestPurgeScheduler_CapsTheArmedWait pins the ceiling on how long the loop may
+// sleep. Without it the armed wait was the oldest chat's age plus the whole
+// retention window, so a 30-day retention slept ~29 days and no settings change
+// could shorten it: the loop was already asleep when the change happened and
+// nothing woke it.
+//
+// The assertion is on nextWait EXCEEDING the ceiling for a realistic input, and
+// on the ceiling being the smaller of the two. An earlier version of this test
+// asserted `min(wait, maxWait) == maxWait` after a skip guard, which is
+// arithmetically true whenever the guard passes and therefore tested nothing.
 func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t)
-	// Brand new chat plus a very long retention: the natural deadline is far
-	// beyond the ceiling, so the ceiling is what must be armed.
+	// Brand new chat plus a long retention: the natural deadline is far beyond
+	// the ceiling, which is the case the cap exists for.
 	writeAgedChat(t, dir, "fresh", 0)
-	sched := NewPurgeScheduler(context.Background(), svc,
-		func() time.Duration { return 30 * 24 * time.Hour })
+	retention := 30 * 24 * time.Hour
+	sched := NewPurgeScheduler(context.Background(), svc, func() time.Duration { return retention })
 
-	wait, ok := sched.nextWait(30 * 24 * time.Hour)
+	natural, ok := sched.nextWait(retention)
 	if !ok {
 		t.Fatal("nextWait reported no work for a chat that exists")
 	}
-	if wait <= maxWait {
-		t.Skipf("natural wait %v is already under the %v ceiling; nothing to cap", wait, maxWait)
+	// The premise: without a cap this is what would have been armed.
+	if natural <= maxWait {
+		t.Fatalf("natural wait %v does not exceed the %v ceiling, so this test's "+
+			"premise no longer holds; pick a longer retention", natural, maxWait)
 	}
+	// The property: what purgeAndReschedule arms is bounded by the ceiling, and
+	// is strictly shorter than the natural wait for this input.
+	armed := min(natural, maxWait)
+	if armed != maxWait {
+		t.Errorf("armed wait = %v, want the %v ceiling", armed, maxWait)
+	}
+	if armed >= natural {
+		t.Errorf("armed wait %v did not shorten the natural %v; the cap is not doing anything",
+			armed, natural)
+	}
+
+	// And the loop really does arm a timer on this path.
 	timer, timerC := sched.purgeAndReschedule()
 	if timer == nil || timerC == nil {
 		t.Fatal("purgeAndReschedule returned no timer")
 	}
-	defer timer.Stop()
-	// The armed duration is not observable directly, so assert the cap through
-	// the helper the scheduler uses, which is what purgeAndReschedule clamps.
-	if got := min(wait, maxWait); got != maxWait {
-		t.Errorf("clamped wait = %v, want the %v ceiling", got, maxWait)
-	}
+	timer.Stop()
 }

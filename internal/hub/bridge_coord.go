@@ -668,6 +668,16 @@ func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID api
 	if !ok || !buf.Started {
 		return
 	}
+	// Fail the tool calls still marked in-flight BEFORE building the message.
+	// Without this the persisted turn carries running tool cards, and a reload
+	// renders permanent spinners for work that stopped when the prompt failed --
+	// the same reason EmitTurnEndedWithStats does it on the cancel path.
+	changed := buf.MarkCancelledToolsFailed()
+	for i := range changed {
+		bc.broadcast(ctx, api.NewEvent(api.EventToolCallUpdate, chatID,
+			api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: changed[i]}))
+	}
+
 	msg := assistantTurnMessage(buf, 0, 0)
 	bc.persistTurn(ctx, chatID, &msg)
 

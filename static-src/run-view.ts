@@ -184,7 +184,9 @@ async function load(workflowID: string): Promise<void> {
  *  rather than an empty container. */
 function buildRunControls(workflowID: string, status: string): HTMLElement | null {
   const verbs = RUN_CONTROLS[status];
-  if (verbs === undefined) {
+  // Empty is as good as absent: a completed run offers nothing, and an empty
+  // control row would be a visible container with no purpose.
+  if (verbs === undefined || verbs.length === 0) {
     return null;
   }
   const row = el("div", { className: "run-controls" });

@@ -13,7 +13,6 @@ package hub
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"maps"
@@ -312,7 +311,10 @@ func (h *Hub) handleTerminalRequest(ctx context.Context, chatID api.ChatID, meth
 		slog.Warn("chat bridge: refusing an unimplemented terminal verb",
 			"method", method, "chat_id", chatID, "id", *msg.ID)
 		if err := h.BridgeRespond(ctx, chatID, *msg.ID, nil,
-			fmt.Errorf("unimplemented terminal method: %s", method)); err != nil {
+			&api.RPCError{
+				Code:    api.RPCCodeMethodNotFound,
+				Message: "unimplemented terminal method: " + method,
+			}); err != nil {
 			slog.Error("chat bridge: terminal refusal could not be delivered; the turn may be wedged",
 				"method", method, "chat_id", chatID, "error", err)
 		}

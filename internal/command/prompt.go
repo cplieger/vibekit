@@ -364,14 +364,24 @@ const (
 	classThrottled
 )
 
-// throttleErrorData is the shape KAS puts in `error.data` on a mapped backend
-// error. retryErrorType is the field that distinguishes a throttle from any
-// other -32000, and requestId is what makes a report actionable upstream.
-type throttleErrorData struct {
+// mappedErrorData is the shape KAS puts in `error.data` on a mapped backend
+// error. Every KiroQError lands on -32000 with these fields, so the CLASS is
+// what distinguishes them, not the presence of the data.
+type mappedErrorData struct {
 	ErrorType      string `json:"errorType"`
 	RetryErrorType string `json:"retryErrorType"`
 	RequestID      string `json:"requestId"`
 }
+
+// retryErrorType values KAS assigns. Counted off the 24 getters in the 2.16.1
+// bundle: 16 classes return CLIENT_ERROR, 3 TRANSIENT, 3 THROTTLING, 2
+// SERVER_ERROR. Only the THROTTLING three are a rate limit, which is why the
+// classifier keys on this exact value and not on the mere presence of the data
+// block -- doing the latter labelled 21 of 24 error classes a throttle, telling
+// a user with a validation error to wait and try again.
+const (
+	kasRetryThrottling = "THROTTLING"
+)
 
 // classifyPromptFailure maps a prompt error onto its class.
 func classifyPromptFailure(err error) promptFailureClass {
@@ -394,39 +404,54 @@ func classifyPromptFailure(err error) promptFailureClass {
 		return classFatal
 	}
 	if re, ok := errors.AsType[*api.RPCError](err); ok {
-		switch re.Code {
-		case api.RPCCodeNotIdle:
-			return classBusy
-		case api.RPCCodeBridgeExited:
-			// KAS's mapped-backend-error code, which happens to share a number
-			// with vibekit's own bridge-exited constant (see its comment). A
-			// bridge exit never arrives here as an RPCError, so this is KAS's.
-			if throttleFromData(re) != nil {
-				return classThrottled
-			}
-			return classFatal
-		case api.RPCCodeInternal:
-			// -32603 is KAS's catch-all: a genuine internal fault, and also
-			// every validation failure and every auth failure. Retrying an auth
-			// failure is pure latency, so it is excluded by name.
-			if isAuthShaped(re) {
-				return classFatal
-			}
-			return classTransient
-		}
+		return classifyRPCFailure(re)
 	}
 	return classFatal
 }
 
-// throttleFromData decodes a mapped-error payload and returns it only when it
-// carries a retry classification, which is what marks it a throttle rather than
-// some other mapped backend failure.
-func throttleFromData(re *api.RPCError) *throttleErrorData {
+// classifyRPCFailure classifies an RPC error by its CODE. Split from its caller
+// so each stays inside the complexity ceiling, and because the two answer
+// different questions: which kind of failure is this, and what does this code
+// mean.
+func classifyRPCFailure(re *api.RPCError) promptFailureClass {
+	switch re.Code {
+	case api.RPCCodeNotIdle:
+		return classBusy
+	case api.RPCCodeBridgeExited:
+		// KAS's mapped-backend-error code, which happens to share a number with
+		// vibekit's own bridge-exited constant (see its comment). A bridge exit
+		// never arrives here as an RPCError, so this is KAS's.
+		//
+		// Every mapped error lands here, not just throttles, so the class has to
+		// come from retryErrorType. Nothing on this code is retried either way:
+		// KAS's own SDK ladder has already run (a real 429 on disk shows
+		// `attempts: 5`), and CLIENT_ERROR is definitionally not retryable. The
+		// class only decides what the user is told.
+		if d := mappedFromData(re); d != nil && d.RetryErrorType == kasRetryThrottling {
+			return classThrottled
+		}
+		return classFatal
+	case api.RPCCodeInternal:
+		// -32603 is KAS's catch-all: a genuine internal fault, and also every
+		// validation failure and every auth failure. Retrying an auth failure is
+		// pure latency, so it is excluded by name.
+		if isAuthShaped(re) {
+			return classFatal
+		}
+		return classTransient
+	}
+	return classFatal
+}
+
+// mappedFromData decodes a mapped-error payload. Returns nil when the error
+// carries none, which is every error that is not one of KAS's mapped backend
+// classes.
+func mappedFromData(re *api.RPCError) *mappedErrorData {
 	raw := re.ErrorData()
 	if len(raw) == 0 {
 		return nil
 	}
-	var d throttleErrorData
+	var d mappedErrorData
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return nil
 	}
@@ -458,22 +483,37 @@ func isAuthShaped(re *api.RPCError) bool {
 }
 
 // promptFailureReason renders a failure into something worth showing the user.
-// A throttle is the case that needs it: without this the user gets a bare
-// "Internal error" for a condition that has a name, a cause and a remedy.
+//
+// KAS's own message on a mapped error is `userFacingSessionErrorMessage`, which
+// is already written for a user, so this ADDS to it rather than replacing it.
+// An earlier revision invented prose for every mapped error and told a user with
+// a validation failure that they were being rate limited; the lesson is that the
+// only thing worth adding is what KAS's message cannot know.
+//
+// Two things qualify. A throttle earns the note that retrying immediately will
+// not help, because KAS has already spent its attempts and the user cannot see
+// that. And a request id earns inclusion because it is the handle for an
+// upstream report, and it is in `data` where nothing surfaces it.
 func promptFailureReason(err error) string {
-	if re, ok := errors.AsType[*api.RPCError](err); ok {
-		if d := throttleFromData(re); d != nil {
-			msg := "the model backend is rate limiting this account"
-			if d.ErrorType != "" {
-				msg += " (" + d.ErrorType + ")"
-			}
-			if d.RequestID != "" {
-				msg += "; request " + d.RequestID
-			}
-			return msg + ". kiro-cli already retried; wait a moment and resend."
-		}
+	re, ok := errors.AsType[*api.RPCError](err)
+	if !ok {
+		return err.Error()
 	}
-	return err.Error()
+	d := mappedFromData(re)
+	if d == nil {
+		return err.Error()
+	}
+	msg := re.Message
+	if msg == "" {
+		msg = err.Error()
+	}
+	if d.RetryErrorType == kasRetryThrottling {
+		msg += " kiro-cli already retried; waiting a moment before resending is the only thing that helps."
+	}
+	if d.RequestID != "" {
+		msg += " (request " + d.RequestID + ")"
+	}
+	return msg
 }
 
 // String names the class for logs. A number in a log line is a lookup the
