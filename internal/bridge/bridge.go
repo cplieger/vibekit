@@ -276,7 +276,30 @@ func (b *Bridge) initialize(ctx context.Context) error {
 		"backgroundProcesses":  true,
 		"knowledge":            true,
 		"secretStorage":        true,
-		"settings":             map[string]any{"codeIntelligence": map[string]any{"enabled": true}},
+		"settings": map[string]any{
+			"codeIntelligence": map[string]any{"enabled": true},
+			// _meta.kiro.settings.knowledge is the THIRD part of the knowledge
+			// gate, and without it the other two are decoration.
+			// isSettingEnabled(settings, "knowledge") treats an absent key as
+			// false, and that is the sole gate on KAS constructing its Knowledge
+			// TOOL. So before this key: chat.enableKnowledge made the index
+			// exist, _meta.kiro.knowledge told the agent WHAT was indexed, and
+			// no tool existed to read it. vibekit shipped the whole knowledge UI,
+			// the REST surface, the progress polling and a system-prompt listing
+			// over a store the agent could not query, silently in both
+			// directions (no error, no -32601). vibekit.md says "both are
+			// needed"; there are three.
+			"knowledge": map[string]any{"enabled": true},
+			// _meta.kiro.settings.workflows gates the agent's workflow TOOLS the
+			// same way: resolveWorkflows resolves an absent key to false, which
+			// removes the whole workflowChatTools array (run_workflow,
+			// inspect_workflow, update_workflow, validate_workflow, send_message)
+			// plus the workflow steering doc. vibekit drives the workflow surface
+			// from the CLIENT side (POST /api/runs, GET /api/recipes, the
+			// /docs/workflows tab, a per-run bridge), so the run half worked while
+			// the agent had no way to reach a workflow itself.
+			"workflows": map[string]any{"enabled": true},
+		},
 	}
 	if b.enableHooks {
 		kiroMeta["hooks"] = map[string]any{"enabled": true, "v2": true}
