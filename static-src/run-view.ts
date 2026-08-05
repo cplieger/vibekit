@@ -4,27 +4,21 @@
 // Opened from the History list (a review) or from the Workflows tab (a live,
 // launcher-owned tab whose close cancels the run).
 //
-// The controls are KAS's own verbs, routed through the server: Pause and Resume
-// on a live run, Cancel on either. A finished run offers none, so a review of a
-// completed or failed run is still read-only in practice — retry would have been
-// the verb a failure review wants and it is unreachable (see run_host.go). There
-// is no composer and no input bar in any state, because there is nobody to type
-// to.
+// Two flavours, one difference that matters: an OWNED tab (the Workflows tab's
+// Run button) carries controls and its close cancels the run; a REVIEW (a History
+// row) carries neither. Pause and Resume are KAS's own verbs, Cancel is on both
+// live statuses, and a finished run offers none in either flavour.
 //
-// The History page opens runs into this view, and it does NOT filter by status,
-// so a `running` or `paused` run reached from History gets controls too. That is
-// intended and the asymmetry is the point: History's opener is the non-owning
-// flavour, so you can pause or cancel a run from there while closing the tab
-// kills nothing. Before this, a live run in History was a dead end.
+// The flavour is the opener's, not the status's, and that is the whole design.
+// GET /api/sessions does not filter by status, so History genuinely lists running
+// and paused runs — but History is where finished work is READ. A tab that can
+// pause or cancel is a live surface, and the live surface is the Workflows tab.
+// An earlier revision let History's tabs carry controls because a live run there
+// was otherwise a dead end; the dead end is the honest answer, and the run is
+// reachable through the door that launched it.
 //
-// Known rough edge, deliberately not gated: Pause and Resume reach a run only
-// through its own `run:<id>` bridge, which an AGENT-launched run never has (KAS
-// parents those on the calling chat's session). Clicking Pause on one answers 409
-// naming the situation. The discriminator is on the wire — `parent_chat_id` set
-// means agent-launched, so a guaranteed 409 — but the run list carries it and
-// `_kiro/workflow/inspect` does not, and this view is also reachable by tab
-// restore with no row in hand. Threading it through for a hidden button was worse
-// than a clear refusal.
+// So there is no composer, no input bar, and for a review no controls either,
+// because there is nobody to type to and nothing here owns the work.
 //
 // The tree is rendered from KAS's own `state` shape, passed through verbatim by
 // GET /api/runs/{id}. vibekit deliberately does not re-model it: the
@@ -81,12 +75,22 @@ interface RunInspect {
  *  a closed tab simply stops matching, because the next open reassigns it. */
 let shownRun = "";
 
+/** Whether the run on screen was opened as a live, owned tab.
+ *
+ *  Controls render only for those. A run reached from History is a REVIEW even
+ *  when the run is still moving: History is where finished work is read, and a
+ *  tab you can act on belongs to the surface that launched the run. Set by the
+ *  opener rather than derived from status, because the same `running` run is
+ *  actionable through one door and a record through the other. */
+let shownRunOwned = false;
+
 /** Point the shared run view (one DOM element serves every run tab) at a run,
  *  and give its dock somewhere to render. The dock host is mounted ONCE with a
  *  dynamic match — the run on screen — so tab switches re-key it without
  *  re-mounting. */
-function showRun(workflowID: string): void {
+function showRun(workflowID: string, owned: boolean): void {
   shownRun = workflowID;
+  shownRunOwned = owned;
   const dock = document.getElementById("run-dock");
   if (dock !== null) {
     mountRunDecisionDock(dock, () => shownRun);
@@ -95,11 +99,18 @@ function showRun(workflowID: string): void {
   void load(workflowID);
 }
 
-/** Open a run REVIEW: read-only, closing the tab closes nothing. The history
- *  page's row opens these — a previous run has no process behind it. */
+/** Open a run REVIEW: read-only, closing the tab closes nothing. The History
+ *  page's row opens these.
+ *
+ *  Read-only even for a run that is still going. GET /api/sessions does not
+ *  filter by status, so History does list running and paused runs, and an earlier
+ *  revision let those carry controls on the reasoning that a live run in History
+ *  was otherwise a dead end. That is the wrong trade: History is where finished
+ *  work is read, and a tab that can pause or cancel is a live surface wearing a
+ *  record's clothes. The live door is the Workflows tab. */
 export function openRunView(workflowID: string, name: string): void {
   openRunTab(workflowID, name, () => {
-    showRun(workflowID);
+    showRun(workflowID, false);
   });
 }
 
@@ -113,7 +124,7 @@ export function openLiveRunView(workflowID: string, name: string): void {
     workflowID,
     name,
     () => {
-      showRun(workflowID);
+      showRun(workflowID, true);
     },
     {
       onClose: () => {
@@ -164,7 +175,7 @@ async function load(workflowID: string): Promise<void> {
       { className: "run-summary" },
       el("span", { className: "run-status" }, state.status ?? "unknown"),
       el("span", { className: "text-muted text-sm" }, state.workflowId),
-      buildRunControls(workflowID, state.status ?? ""),
+      shownRunOwned ? buildRunControls(workflowID, state.status ?? "") : null,
     ),
   );
 
