@@ -7,7 +7,8 @@ package translate
 //
 //	session_info_update  context-usage stats  <- v2 _kiro.dev/metadata
 //	                     + compaction status  <- v2 _kiro.dev/compaction/status
-//	usage_update         context-window usage (primary v3 channel)
+//	usage_update         DEAD on 2.16.1 — one bundle hit, no emit site
+//	                     (see persistUsage's note; session_info_update carries it)
 //	config_option_update live model/mode/effort catalog
 //
 // These handlers reshape the v3 payloads onto domain outputs (chat usage +

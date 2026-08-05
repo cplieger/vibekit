@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/buffer"
 )
 
 // maxBufferBytes caps the per-turn content buffer at 32 MiB. Prevents
@@ -64,6 +65,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 
 	totalLen := buf.Content.Len() + buf.Reasoning.Len()
 	if totalLen+len(text) > maxBufferBytes {
+		t.announceTruncation(ctx, chatID, buf, subtask, totalLen)
 		return
 	}
 	if isReasoning {
@@ -104,6 +106,37 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 			Seq:            seq,
 			AgentSubtaskID: subtask,
 			Refusal:        refusal,
+		}))
+}
+
+// announceTruncation says once, in both directions, that a turn outgrew the
+// buffer and the rest of it is being dropped.
+//
+// Dropping is the only option — the cap exists so one pathological turn cannot
+// OOM the process — but dropping SILENTLY was the defect: the reply stopped
+// mid-sentence with nothing in the transcript and nothing in the log to say why,
+// which reads as a hang or as the model giving up.
+//
+// Exactly once, because frames keep arriving after the cap is hit and a notice
+// per frame would be a worse defect than the silence it replaced. The marker goes
+// where the user is looking and the log line goes where an operator is.
+func (t *Translator) announceTruncation(
+	ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, subtask string, buffered int,
+) {
+	if !buf.MarkOverCap() {
+		return
+	}
+	const notice = "\n\n[Reply truncated: this turn exceeded vibekit's 32 MiB buffer.]"
+	buf.Content.WriteString(notice)
+	blockIndex, seq := buf.AppendTextDelta(notice, subtask)
+	slog.Warn("turn exceeded the assistant buffer cap; dropping the remainder",
+		"chat_id", chatID, "message_id", buf.MessageID, "buffered_bytes", buffered)
+	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
+		api.MessageChunkPayload{
+			MessageID:  buf.MessageID,
+			Delta:      notice,
+			BlockIndex: blockIndex,
+			Seq:        seq,
 		}))
 }
 

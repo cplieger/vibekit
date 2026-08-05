@@ -71,12 +71,62 @@ func chunkProcessed(t *testing.T, contentLen, reasoningLen int, text string) boo
 	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": api.ContentTypeText, "text": text},
 	}), false)
+	// The chunk's OWN text, not merely "some chunk was broadcast": crossing the
+	// cap now emits a one-off truncation notice, and counting that as processed
+	// would make these cases pass whether the text was dropped or not.
 	for _, e := range *events {
-		if e.Type == api.EventMessageChunk {
+		if e.Type != api.EventMessageChunk {
+			continue
+		}
+		if p, ok := e.Payload.(api.MessageChunkPayload); ok && p.Delta == text {
 			return true
 		}
 	}
 	return false
+}
+
+// truncationNotice reports whether crossing the cap announced itself, and how
+// many times. Silence here was the defect: the reply stopped mid-sentence with
+// nothing in the transcript to say why.
+func truncationNotices(t *testing.T, contentLen, chunks int) int {
+	t.Helper()
+	const chatID api.ChatID = "c1"
+	deps, events, _ := depsWithStore(t, chatID)
+	buf := deps.BufferStore().GetOrInit(chatID)
+	buf.Content.WriteString(strings.Repeat("a", contentLen))
+	buf.Started = true
+	buf.MessageID = "cap-mid"
+	tr := New(deps, withIDGenerator(func() string { return "cap-mid" }))
+	for range chunks {
+		tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+			"content": map[string]any{"type": api.ContentTypeText, "text": "a"},
+		}), false)
+	}
+	n := 0
+	for _, e := range *events {
+		if e.Type != api.EventMessageChunk {
+			continue
+		}
+		if p, ok := e.Payload.(api.MessageChunkPayload); ok && strings.Contains(p.Delta, "Reply truncated") {
+			n++
+		}
+	}
+	return n
+}
+
+// Crossing the cap must SAY so — once. Frames keep arriving after the cap is hit,
+// so a notice per frame would be a worse defect than the silence it replaced.
+func TestBufferCap_AnnouncesTruncationExactlyOnce(t *testing.T) {
+	if n := truncationNotices(t, maxBufferBytes, 5); n != 1 {
+		t.Errorf("five over-cap chunks produced %d truncation notices, want exactly 1", n)
+	}
+}
+
+// And it must stay silent while the turn is within the cap.
+func TestBufferCap_NoNoticeUnderTheCap(t *testing.T) {
+	if n := truncationNotices(t, 0, 3); n != 0 {
+		t.Errorf("three in-budget chunks produced %d truncation notices, want 0", n)
+	}
 }
 
 // TestBufferCap_BoundaryExactMaxIsProcessed pins that a chunk whose

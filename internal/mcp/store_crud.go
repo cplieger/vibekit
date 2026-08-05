@@ -121,15 +121,20 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 	}
 	existing := s.servers[idx]
 	rec := &Server{
-		ID:                existing.ID,
-		Transport:         in.Transport,
-		Name:              strings.TrimSpace(in.Name),
-		Command:           in.Command,
-		Args:              append([]string(nil), in.Args...),
-		Env:               mergeSecrets(in.Env, existing.Env),
-		URL:               in.URL,
-		Headers:           mergeSecrets(in.Headers, existing.Headers),
-		DisabledTools:     append([]string(nil), in.DisabledTools...),
+		ID:        existing.ID,
+		Transport: in.Transport,
+		Name:      strings.TrimSpace(in.Name),
+		Command:   in.Command,
+		Args:      append([]string(nil), in.Args...),
+		Env:       mergeSecrets(in.Env, existing.Env),
+		URL:       in.URL,
+		Headers:   mergeSecrets(in.Headers, existing.Headers),
+		// Both list fields go through preserveNilSlice: an omitted list means
+		// "unchanged", not "empty". DisabledTools used to take a raw copy while
+		// AutoApprove on the very next line preserved, so any PUT that left
+		// disabled_tools out silently re-enabled every tool the user had turned
+		// off — the more dangerous direction of the two.
+		DisabledTools:     preserveNilSlice(in.DisabledTools, existing.DisabledTools),
 		AutoApprove:       preserveNilSlice(in.AutoApprove, existing.AutoApprove),
 		OAuthClientID:     strings.TrimSpace(in.OAuthClientID),
 		OAuthClientSecret: mergeSecret(strings.TrimSpace(in.OAuthClientSecret), existing.OAuthClientSecret),
