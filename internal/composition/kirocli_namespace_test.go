@@ -141,8 +141,13 @@ func (e *nsEnv) plantOwnVersion() string {
 		e.t.Fatalf("MkdirAll(%s): %v", dir, err)
 	}
 	// Answers --version with the directory's own name (what selection probes)
-	// and exits 0 for every settings assertion.
-	e.writeScript(filepath.Join(dir, nsTool), "case \"$1\" in --version) printf 'kiro-cli "+nsVersion+"\\n' ;; esac\n")
+	// and exits 0 for every settings assertion. Both dispatchers are planted
+	// because kiro-cli-chat is Required: `kiro-cli acp` re-execs it through a
+	// PATH search, so a directory holding only the main binary is incomplete
+	// (see kirocli.go's Require comment).
+	script := "case \"$1\" in --version) printf 'kiro-cli " + nsVersion + "\\n' ;; esac\n"
+	e.writeScript(filepath.Join(dir, nsTool), script)
+	e.writeScript(filepath.Join(dir, nsTool+"-chat"), script)
 	// Written LAST, exactly as the install order requires: it is the sentinel
 	// that makes the directory a selection candidate at all.
 	if err := os.WriteFile(filepath.Join(dir, ".complete"), []byte(nsVersion+"\n"), 0o600); err != nil {

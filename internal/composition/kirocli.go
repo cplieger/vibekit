@@ -153,15 +153,38 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 		},
 		Root:    cfg.ToolsDir,
 		LinkDir: kiroLinkDir,
-		// Require is deliberately UNSET, and that is not an omission: the
-		// library always requires the release's primary artifact, and for
-		// vibekit that IS the whole required set. `kiro-cli acp` — the only
-		// invocation a chat bridge makes — is served by the main dispatcher, and
-		// no Go path here invokes `chat`, so a version directory with no sidecar
-		// is a COMPLETE install for this app. web-terminal-kiro requires the
-		// chat sidecar because `kiro-cli chat` IS its product; do not copy that
-		// set here without a Go caller that needs it.
-		Optional: []string{kirocli.Name + "-chat", kirocli.Name + "-term"},
+		// Require names the chat sidecar because `kiro-cli acp` IS the sidecar.
+		//
+		// This corrects a load-bearing wrong belief. The previous comment here
+		// said `acp` "is served by the main dispatcher, and no Go path here
+		// invokes `chat`, so a version directory with no sidecar is a COMPLETE
+		// install for this app". Both halves are false, measured against the
+		// pinned 2.16.0 install:
+		//
+		//	$ kiro-cli acp --help
+		//	Usage: kiro-cli-chat acp [OPTIONS]      <- not this binary
+		//	$ env -i PATH=<dir with ONLY kiro-cli> kiro-cli acp --help
+		//	error: No such file or directory (os error 2)
+		//
+		// kiro-cli is a multi-call binary and `acp` re-execs a SIBLING, resolved
+		// by a plain PATH search (not relative to its own executable). So the Go
+		// caller the old comment asked for does exist: every chat bridge is
+		// `bridge.startProcess` running `kiro-cli acp`, which is an invocation of
+		// this sidecar by another name. kiroPathEnv prepending the version
+		// directory is what makes that search land inside the verified install.
+		//
+		// Why this matters more than a stale comment: `--version` is answered by
+		// the MAIN binary, so a sidecar-less directory passed the boot probe,
+		// was published `.complete`, reported READY on /api/health and in the
+		// browser banner, and then failed at EVERY chat spawn. Requiring the
+		// sidecar makes such a directory not a selection candidate, which is the
+		// designed behaviour: readiness is withheld WITH A REASON and the
+		// install retries. It does not abort boot, so invariant 6 is untouched.
+		//
+		// -term stays Optional: nothing in this repo invokes it, and unlike
+		// `acp` no subcommand vibekit uses re-execs it.
+		Require:  []string{kirocli.Name + "-chat"},
+		Optional: []string{kirocli.Name + "-term"},
 		Assert:   kiroSettings(),
 		Purge:    kiroLegacyPurge(),
 		// Untrusted is deliberately left unset: it records that the install root

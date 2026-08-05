@@ -99,13 +99,16 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	if err := os.MkdirAll(versionDir, 0o750); err != nil {
 		t.Fatalf("create version dir: %v", err)
 	}
-	// vibekit's REQUIRED set has cardinality one: `kiro-cli acp` is served by the
-	// main dispatcher, so a directory with no sidecar is a complete install here.
-	// The fake answers --version with the pin (what selection probes) and exits 0
-	// for the settings calls.
+	// The required set is {kiro-cli, kiro-cli-chat}: `kiro-cli acp` re-execs the
+	// chat sidecar through a PATH search, so a directory with no sidecar is NOT a
+	// complete install (see kirocli.go's Require comment for the measurement, and
+	// the sibling test below for the negative case). The fake answers --version
+	// with the pin (what selection probes) and exits 0 for the settings calls.
 	script := "#!/bin/sh\ncase \"$1\" in --version) printf 'kiro-cli " + version + "\\n' ;; esac\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
-		t.Fatalf("write fake dispatcher: %v", err)
+	for _, name := range []string{"kiro-cli", "kiro-cli-chat"} {
+		if err := os.WriteFile(filepath.Join(versionDir, name), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
+			t.Fatalf("write fake %s: %v", name, err)
+		}
 	}
 	// Written LAST, exactly as the install order requires: it is the sentinel
 	// that makes the directory a selection candidate at all.
@@ -147,6 +150,57 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 	env := kiro.env()
 	if len(env) != 1 || !strings.HasPrefix(env[0], "PATH="+versionDir+string(os.PathListSeparator)) {
 		t.Errorf("env() = %v, want a single PATH entry leading with %q", env, versionDir)
+	}
+}
+
+// TestStartKiroCLIRejectsASidecarLessVersionDirectory is the negative half of
+// the required set, and it pins the defect that made the set wrong in the first
+// place. `--version` is answered by the MAIN binary, so a directory holding only
+// that binary passes the selection probe; before kiro-cli-chat was Required such
+// a directory was published .complete, reported READY, and then failed at every
+// single chat spawn because `kiro-cli acp` re-execs a sidecar that is not there.
+//
+// Readiness must stay WITHHELD here rather than the boot aborting: an incomplete
+// directory is simply not a selection candidate, so the install retries and the
+// reason names the phase. That is invariant 6's shape, not a violation of it.
+func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
+	const version = "9.9.9"
+	toolsDir := t.TempDir()
+	versionDir := filepath.Join(toolsDir, "kiro-cli-versions", version)
+	if err := os.MkdirAll(versionDir, 0o750); err != nil {
+		t.Fatalf("create version dir: %v", err)
+	}
+	script := "#!/bin/sh\ncase \"$1\" in --version) printf 'kiro-cli " + version + "\\n' ;; esac\nexit 0\n"
+	// Deliberately ONLY the main dispatcher.
+	if err := os.WriteFile(filepath.Join(versionDir, "kiro-cli"), []byte(script), 0o700); err != nil { // #nosec G306 -- a dispatcher fake must be executable
+		t.Fatalf("write fake dispatcher: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(versionDir, ".complete"), []byte(version+"\n"), 0o600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+
+	cfg := Config{
+		KiroCLIVersion:     version,
+		KiroCLISHA256:      strings.Repeat("a", 64),
+		KiroCLISHA256ARM64: strings.Repeat("b", 64),
+		ToolsDir:           toolsDir,
+	}
+	kiro := startKiroCLI(context.Background(), &cfg)
+	t.Cleanup(kiro.stop)
+
+	// A real download cannot succeed here (the digest is a fake), so the manager
+	// stays in its retry ladder. The assertion is that it never adopts the
+	// sidecar-less directory as a shortcut out of that ladder.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if ok, why := kiro.ready(); ok {
+			t.Fatalf("a sidecar-less version directory was adopted (readiness %v, reason %s); "+
+				"kiro-cli acp would fail at every chat spawn", ok, why)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := kiro.cliPath(); got != "" {
+		t.Errorf("cliPath() = %q, want empty: no version may be active", got)
 	}
 }
 
