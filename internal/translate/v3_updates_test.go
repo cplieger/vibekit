@@ -178,3 +178,41 @@ func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 		t.Errorf("a kindless session_info_update logged %q, want silence", out)
 	}
 }
+
+// TestMaterialPctDelta pins the gate that decides whether a context-percentage
+// move is worth a full transcript rewrite. The exact-inequality gate this
+// replaced meant KAS's per-model-response frames each rewrote the whole chat
+// file: roughly 40 load-Unmarshal-Marshal-fsync cycles for a 20-tool-call turn,
+// serialized on the per-chat mutex, on files measured up to 21 MB.
+//
+// Two properties have to hold together, which is why the tier cases are here
+// rather than folded into the epsilon cases: a move under one point is dropped
+// BECAUSE the ring cannot render it, and a move that crosses 80 or 95 is kept
+// even when it is tiny, because the tier is what the UI colours on. An
+// epsilon-only gate would round away exactly the crossing that matters.
+func TestMaterialPctDelta(t *testing.T) {
+	cases := map[string]struct {
+		old, new float64
+		want     bool
+	}{
+		"identical":                          {50, 50, false},
+		"sub-point up is not material":       {50, 50.4, false},
+		"sub-point down is not material":     {50, 49.6, false},
+		"exactly one point up":               {50, 51, true},
+		"exactly one point down":             {51, 50, true},
+		"large jump":                         {10, 90, true},
+		"tiny move crossing 80":              {79.9, 80.0, true},
+		"tiny move crossing 80 downward":     {80.0, 79.9, true},
+		"tiny move crossing 95":              {94.9, 95.0, true},
+		"tiny move inside the warning tier":  {85.0, 85.2, false},
+		"tiny move inside the critical tier": {96.0, 96.3, false},
+		"from zero is material":              {0, 1, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := materialPctDelta(tc.old, tc.new); got != tc.want {
+				t.Errorf("materialPctDelta(%v, %v) = %v, want %v", tc.old, tc.new, got, tc.want)
+			}
+		})
+	}
+}
