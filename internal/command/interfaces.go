@@ -75,6 +75,7 @@ type InfraDeps interface {
 	ResolveInsideWorkDir(rel string) (string, error)
 	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
 	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
+	AbandonInFlightTurn(ctx context.Context, chatID api.ChatID)
 }
 
 // Typed accessors on Dispatcher for narrow interface access.

@@ -291,6 +291,13 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	elapsed := time.Since(start)
 	if err != nil {
 		slog.Error("prompt failed", "chat_id", cmd.ChatID, keyError, err, "elapsed", elapsed)
+		// Finalize the turn before returning. Without this the assistant buffer
+		// survives with Started == true, so the NEXT prompt's ensureTurnStarted
+		// no-ops, emits no message_created, and extends this dead turn's blocks
+		// under this dead turn's message id: one persisted assistant message
+		// holding two turns' replies. The partial is persisted rather than
+		// dropped -- see AbandonInFlightTurn for why that direction.
+		deps.AbandonInFlightTurn(ctx, cmd.ChatID)
 		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodePromptFailed, Message: err.Error()}))
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
