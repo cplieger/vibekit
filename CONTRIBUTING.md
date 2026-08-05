@@ -219,13 +219,24 @@ export KIRO_CLI_SHA256=000000000000000000000000000000000000000000000000000000000
 export KIRO_CLI_SHA256_ARM64=0000000000000000000000000000000000000000000000000000000000000000
 V="$VIBEKIT_TOOLS_DIR/kiro-cli-versions/$KIRO_CLI_VERSION"
 mkdir -p "$V"
-cp /path/to/kiro-cli "$V/"
+cp /path/to/kiro-cli /path/to/kiro-cli-chat "$V/"
 printf '%s\n' "$KIRO_CLI_VERSION" >"$V/.complete"
 go run .
 ```
 
-Only the main dispatcher is required here, because `kiro-cli acp` is served by it;
-`kiro-cli-chat` and `kiro-cli-term` are optional and merely warn when absent.
+Both `kiro-cli` and `kiro-cli-chat` are required. kiro-cli is a multi-call binary
+and `kiro-cli acp` re-execs the chat sidecar, resolved by a plain PATH search:
+
+```console
+$ kiro-cli acp --help
+Usage: kiro-cli-chat acp [OPTIONS]
+$ env -i PATH=<a directory holding ONLY kiro-cli> kiro-cli acp --help
+error: No such file or directory (os error 2)
+```
+
+So a directory without the sidecar is not a usable install, even though
+`kiro-cli --version` (answered by the main binary) succeeds against it.
+`kiro-cli-term` is optional and merely warns when absent.
 `.complete` is what makes the directory a selection candidate, and the two
 per-boot gates still run against whatever you put there: `kiro-cli --version` must
 print the directory's own name, and `app.disableAutoupdates=true` must be
