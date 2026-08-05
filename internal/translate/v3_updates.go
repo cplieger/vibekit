@@ -337,14 +337,14 @@ const contextPctEpsilon = 1.0
 var contextPctTiers = [...]float64{80, 95}
 
 // materialPctDelta reports whether moving the stored context percentage from
-// old to new is worth persisting: a move of at least contextPctEpsilon, or any
+// prev to next is worth persisting: a move of at least contextPctEpsilon, or any
 // move that crosses a tier boundary.
-func materialPctDelta(old, new float64) bool {
-	if math.Abs(new-old) >= contextPctEpsilon {
+func materialPctDelta(prev, next float64) bool {
+	if math.Abs(next-prev) >= contextPctEpsilon {
 		return true
 	}
 	for _, tier := range contextPctTiers {
-		if (old < tier) != (new < tier) {
+		if (prev < tier) != (next < tier) {
 			return true
 		}
 	}

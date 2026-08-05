@@ -93,6 +93,11 @@ func TestClassifyPromptFailure(t *testing.T) {
 		},
 		"nil is fatal":         {err: nil, want: classFatal},
 		"plain error is fatal": {err: errors.New("something else"), want: classFatal},
+		// Untyped errors fail CLOSED even when their text looks retryable. The
+		// bridge layer is what types a retryable condition; matching on
+		// substrings here would make the classifier guess from prose.
+		"untyped not-idle text is fatal": {err: errors.New("agent is not idle right now"), want: classFatal},
+		"untyped internal text is fatal": {err: errors.New("Internal error"), want: classFatal},
 	}
 
 	for name, tc := range cases {
@@ -105,14 +110,22 @@ func TestClassifyPromptFailure(t *testing.T) {
 	}
 }
 
-// TestIsRetryablePromptError_NeverRetriesADeadBridgeOrAThrottle states the two
-// regressions this pass exists to prevent, in the predicate the retry loop
-// actually calls. Both were true before and both were wrong: a corpse cannot
-// answer, and KAS's own client already spent five adaptive attempts on the
-// throttle before handing it over, so a sixth from here only deepens it.
-func TestIsRetryablePromptError_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
+// retriesFor mirrors callPromptWithRetry's decision so the policy is asserted
+// through the same expression the retry loop evaluates. A helper rather than a
+// production predicate: the previous pass kept an IsRetryablePromptError wrapper
+// for readability, and punused correctly called it out as used in tests only.
+func retriesFor(err error) bool {
+	class := classifyPromptFailure(err)
+	return class == classBusy || class == classTransient
+}
+
+// TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle states the two regressions
+// this pass exists to prevent. Both were true before and both were wrong: a
+// corpse cannot answer, and KAS's own client already spent five adaptive
+// attempts on the throttle before handing it over, so a sixth only deepens it.
+func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 	dead := &api.TransportError{Err: api.ErrBridgeExited, Retryable: true}
-	if IsRetryablePromptError(dead) {
+	if retriesFor(dead) {
 		t.Error("a dead bridge is reported retryable; every attempt fails instantly against a closed done channel")
 	}
 
@@ -120,16 +133,16 @@ func TestIsRetryablePromptError_NeverRetriesADeadBridgeOrAThrottle(t *testing.T)
 		ErrorType:      "ThrottlingException",
 		RetryErrorType: "USER_REQUEST_RATE_EXCEEDED",
 	})
-	if IsRetryablePromptError(throttle) {
+	if retriesFor(throttle) {
 		t.Error("a throttle is reported retryable; kiro-cli already exhausted its own adaptive attempts")
 	}
 
 	// The two classes that SHOULD still retry, so the fix cannot be "return
 	// false for everything".
-	if !IsRetryablePromptError(fmt.Errorf("ACP error -32001: %w", api.ErrNotIdle)) {
+	if !retriesFor(fmt.Errorf("ACP error -32001: %w", api.ErrNotIdle)) {
 		t.Error("a busy session must still be retried")
 	}
-	if !IsRetryablePromptError(&api.TransportError{Err: errors.New("write to ACP"), Retryable: true}) {
+	if !retriesFor(&api.TransportError{Err: errors.New("write to ACP"), Retryable: true}) {
 		t.Error("a transient write failure must still be retried")
 	}
 }

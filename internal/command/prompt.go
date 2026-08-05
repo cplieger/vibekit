@@ -441,8 +441,15 @@ func throttleFromData(re *api.RPCError) *throttleErrorData {
 // both onto -32603, and no amount of retrying fixes an expired token.
 func isAuthShaped(re *api.RPCError) bool {
 	hay := re.Message + string(re.ErrorData())
-	for _, marker := range []string{"not logged in", "Unauthorized", "unauthorized",
-		"ExpiredToken", "AccessDenied", "credentials"} {
+	markers := []string{
+		"not logged in",
+		"Unauthorized",
+		"unauthorized",
+		"ExpiredToken",
+		"AccessDenied",
+		"credentials",
+	}
+	for _, marker := range markers {
 		if strings.Contains(hay, marker) {
 			return true
 		}
@@ -467,19 +474,6 @@ func promptFailureReason(err error) string {
 		}
 	}
 	return err.Error()
-}
-
-// IsRetryablePromptError reports whether a prompt error is worth another
-// attempt. Retained as the narrow predicate the retry loop needs; the class it
-// derives from is what carries the reasoning.
-func IsRetryablePromptError(err error) bool {
-	switch classifyPromptFailure(err) {
-	case classBusy, classTransient:
-		return true
-	case classFatal, classPipeDeath, classThrottled:
-		return false
-	}
-	return false
 }
 
 // String names the class for logs. A number in a log line is a lookup the

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -304,83 +303,6 @@ func newCmdReq(t *testing.T, body []byte) *http.Request {
 
 func newCmdRec() *httptest.ResponseRecorder {
 	return httptest.NewRecorder()
-}
-
-func TestIsRetryablePromptError(t *testing.T) {
-	tests := []struct {
-		err  error
-		want bool
-	}{
-		{nil, false},
-		// Untyped errors are non-retryable (fail-closed). The bridge
-		// layer should wrap retryable conditions as *TransportError.
-		{errors.New("not idle"), false},
-		{errors.New("Internal error"), false},
-		{errors.New("some other error"), false},
-		{errors.New("agent is not idle right now"), false},
-	}
-	for _, tt := range tests {
-		got := command.IsRetryablePromptError(tt.err)
-		if got != tt.want {
-			t.Errorf("IsRetryablePromptError(%v) = %v, want %v", tt.err, got, tt.want)
-		}
-	}
-}
-
-func TestIsRetryablePromptError_TypedRPCError(t *testing.T) {
-	tests := []struct {
-		err  error
-		name string
-		want bool
-	}{
-		{
-			name: "RPCError with not idle message but unknown code",
-			// The bridge layer now wraps "not idle" messages as
-			// api.ErrNotIdle before they reach the hub, so a raw
-			// RPCError with an unknown code is not retryable here.
-			err:  &api.RPCError{Code: -1, Message: "agent is not idle"},
-			want: false,
-		},
-		{
-			name: "RPCError with internal error code -32603",
-			err:  &api.RPCError{Code: -32603, Message: "something went wrong"},
-			want: true,
-		},
-		{
-			name: "RPCError with unrelated code and message",
-			err:  &api.RPCError{Code: -32600, Message: "invalid request"},
-			want: false,
-		},
-		{
-			name: "wrapped RPCError with not idle but unknown code",
-			// Same as above: bridge wraps these at the source now.
-			err:  fmt.Errorf("bridge: %w", &api.RPCError{Code: -1, Message: "not idle"}),
-			want: false,
-		},
-		{
-			name: "wrapped RPCError with internal error code",
-			err:  fmt.Errorf("call failed: %w", &api.RPCError{Code: -32603, Message: "timeout"}),
-			want: true,
-		},
-		{
-			name: "wrapped RPCError with unrelated error",
-			err:  fmt.Errorf("call failed: %w", &api.RPCError{Code: -32000, Message: "custom error"}),
-			want: false,
-		},
-		{
-			name: "ErrNotIdle sentinel from bridge",
-			err:  fmt.Errorf("ACP error -32001: %w", api.ErrNotIdle),
-			want: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := command.IsRetryablePromptError(tt.err)
-			if got != tt.want {
-				t.Errorf("IsRetryablePromptError(%v) = %v, want %v", tt.err, got, tt.want)
-			}
-		})
-	}
 }
 
 // --- Create hook ---
