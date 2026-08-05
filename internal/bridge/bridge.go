@@ -201,6 +201,12 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	return nil
 }
 
+// settingEnabled is the shape every _meta.kiro.settings entry takes. A helper
+// rather than three inline literals because KAS reads each one through the same
+// absent-key-means-false resolver, so the shape is a contract shared by all of
+// them rather than a coincidence repeated three times.
+func settingEnabled() map[string]any { return map[string]any{"enabled": true} }
+
 func (b *Bridge) initialize(ctx context.Context) error {
 	// Advertise fs read/write and terminal capabilities. kiro-cli routes
 	// file access and command execution through us when these are true.
@@ -280,7 +286,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 		"knowledge":            true,
 		"secretStorage":        true,
 		"settings": map[string]any{
-			"codeIntelligence": map[string]any{"enabled": true},
+			"codeIntelligence": settingEnabled(),
 			// _meta.kiro.settings.knowledge is the THIRD part of the knowledge
 			// gate, and without it the other two are decoration.
 			// isSettingEnabled(settings, "knowledge") treats an absent key as
@@ -292,7 +298,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 			// over a store the agent could not query, silently in both
 			// directions (no error, no -32601). vibekit.md says "both are
 			// needed"; there are three.
-			"knowledge": map[string]any{"enabled": true},
+			"knowledge": settingEnabled(),
 			// _meta.kiro.settings.workflows gates the agent's workflow TOOLS the
 			// same way: resolveWorkflows resolves an absent key to false, which
 			// removes the whole workflowChatTools array (run_workflow,
@@ -301,7 +307,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 			// from the CLIENT side (POST /api/runs, GET /api/recipes, the
 			// /docs/workflows tab, a per-run bridge), so the run half worked while
 			// the agent had no way to reach a workflow itself.
-			"workflows": map[string]any{"enabled": true},
+			"workflows": settingEnabled(),
 		},
 	}
 	if b.enableHooks {

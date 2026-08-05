@@ -152,29 +152,7 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 		return
 	}
 
-	if msg.ID != nil && h.handleFSRequest(ctx, chatID, msg) {
-		return
-	}
-	// KAS's own fs verbs (_kiro/fs/{stat,read_directory,delete}). Separate from
-	// handleFSRequest because they are a different rung of KAS's adapter ladder
-	// with different shapes — and because these execute rather than stage.
-	if msg.ID != nil && h.handleKiroFSRequest(ctx, chatID, msg) {
-		return
-	}
-	// v3 (KAS) host-mediated client requests (_kiro/auth/getAccessToken,
-	// _kiro/terminal/shell_type). No-op under v1/v2.
-	if msg.ID != nil && h.handleKiroClientRequest(ctx, chatID, msg) {
-		return
-	}
-	// v3 (KAS) credential storage (_kiro/secret/*). Must be answered: KAS
-	// rethrows a store/delete failure into the MCP connect path, and an
-	// UNANSWERED request wedges the turn.
-	if msg.ID != nil && h.handleKiroSecretRequest(ctx, chatID, msg) {
-		return
-	}
-	// Terminal requests from kiro-cli (terminal/create, terminal/output, etc.)
-	if msg.ID != nil && strings.HasPrefix(msg.Method, methodTermPrefix) {
-		h.handleTerminalRequest(ctx, chatID, msg.Method, msg)
+	if msg.ID != nil && h.routeInboundRequest(ctx, chatID, msg) {
 		return
 	}
 
@@ -225,6 +203,42 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 		slog.Debug("unhandled kiro extension",
 			"method", msg.Method, "chat_id", chatID)
 	}
+}
+
+// routeInboundRequest dispatches an A→C REQUEST (a frame carrying an id) to the
+// handler family that owns it, returning whether one claimed it.
+//
+// Split out of translateACPEvent so the request chain and the notification chain
+// are separately readable: every arm here owes a response on the wire, and
+// nothing below in the caller does. That is also why the caller's fallthrough is
+// a refusal rather than a log — see its comment.
+func (h *Hub) routeInboundRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
+	if h.handleFSRequest(ctx, chatID, msg) {
+		return true
+	}
+	// KAS's own fs verbs (_kiro/fs/{stat,read_directory,delete}). Separate from
+	// handleFSRequest because they are a different rung of KAS's adapter ladder
+	// with different shapes — and because these execute rather than stage.
+	if h.handleKiroFSRequest(ctx, chatID, msg) {
+		return true
+	}
+	// v3 (KAS) host-mediated client requests (_kiro/auth/getAccessToken,
+	// _kiro/terminal/shell_type).
+	if h.handleKiroClientRequest(ctx, chatID, msg) {
+		return true
+	}
+	// v3 (KAS) credential storage (_kiro/secret/*). Must be answered: KAS
+	// rethrows a store/delete failure into the MCP connect path, and an
+	// UNANSWERED request wedges the turn.
+	if h.handleKiroSecretRequest(ctx, chatID, msg) {
+		return true
+	}
+	// Terminal requests from kiro-cli (terminal/create, terminal/output, etc.).
+	if strings.HasPrefix(msg.Method, methodTermPrefix) {
+		h.handleTerminalRequest(ctx, chatID, msg.Method, msg)
+		return true
+	}
+	return false
 }
 
 // --- Session-update sub-dispatcher ---
