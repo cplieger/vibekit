@@ -49,8 +49,11 @@ func ignoreSubSession(fn func(context.Context, api.ChatID, json.RawMessage)) ses
 // translateACPEvent on first use (lazy init avoids a constructor).
 func (h *Hub) initDispatch() {
 	h.chatHandlers = map[string]chatHandler{
-		api.MethodSessionUpdate:     h.handleSessionUpdate,
-		api.MethodRequestPermission: h.translator.HandlePermissionRequest,
+		api.MethodSessionUpdate: h.handleSessionUpdate,
+		// Wrapped so a SCHEDULED run's request is refused on a short budget
+		// rather than parking the run forever (run_unattended.go). The wrapper
+		// is a no-op for every attended chat.
+		api.MethodRequestPermission: h.permissionWithUnattendedFloor(h.translator.HandlePermissionRequest),
 		// _kiro/mcp/elicitation (a request with an id). Routed here by method.
 		api.MethodElicitationCreate: h.translator.HandleElicitationCreate,
 		// _kiro/userInput (a request with an id, 2.14+): the agent's

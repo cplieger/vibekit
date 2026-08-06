@@ -93,6 +93,23 @@ var errRecipeBusy = errors.New("this recipe already has a live run")
 // *.workflow.json), and echoing it into `new` unchecked would let a client
 // point this endpoint at an arbitrary file.
 func (h *Hub) LaunchRun(ctx context.Context, source string, inputs map[string]string) (id, name string, err error) {
+	return h.launchRun(ctx, source, inputs, "")
+}
+
+// LaunchScheduledRun launches a run on behalf of a schedule, marking it
+// UNATTENDED for the duration.
+//
+// The mark is what gates the deny-fast permission floor, and it is set between
+// `new` and `invoke` — the earliest point the workflow id exists and still
+// before anything can execute, so no permission request can slip through
+// unmarked.
+func (h *Hub) LaunchScheduledRun(ctx context.Context, source, scheduleID string) (id, name string, err error) {
+	return h.launchRun(ctx, source, nil, scheduleID)
+}
+
+// launchRun is the shared body. scheduleID empty means an ordinary manual
+// launch, which is attended by definition and never gets the floor.
+func (h *Hub) launchRun(ctx context.Context, source string, inputs map[string]string, scheduleID string) (id, name string, err error) {
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
 
@@ -125,11 +142,15 @@ func (h *Hub) LaunchRun(ctx context.Context, source string, inputs map[string]st
 	// immediately, and a frame arriving before the map entry would find no
 	// bridge to answer through.
 	h.bridge.mgr.insert(runChatID(wfID), &sharedBridge{bridge: bridge, state: bridgeIdle})
+	if scheduleID != "" {
+		h.markUnattended(wfID, scheduleID)
+	}
 	go h.coord.Forward(runChatID(wfID), bridge)
 
 	if _, err := bridge.Call(cctx, methodKiroWorkflowInvoke, map[string]any{keyWorkflowID: wfID}); err != nil {
 		// The run was created but never started; nothing is executing. Tear the
 		// bridge down and surface the failure rather than leaving a zombie row.
+		h.clearUnattended(wfID)
 		h.coord.CloseBridge(runChatID(wfID))
 		return "", "", fmt.Errorf("workflow invoke: %w", err)
 	}
@@ -418,6 +439,7 @@ func (h *Hub) closeFinishedRunBridge(chatID api.ChatID, msg *api.RPCResponse) {
 		return
 	}
 	slog.Info("run finished, closing its bridge", "chat_id", chatID, "status", p.Status)
+	h.clearUnattended(workflowIDOf(chatID))
 	go h.coord.CloseBridge(chatID)
 }
 

@@ -9,14 +9,28 @@ import (
 	"time"
 )
 
+// mustStore opens a store in a temp dir.
+func mustStore(t *testing.T) *Store {
+	t.Helper()
+	s, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	return s
+}
+
 // fakeLauncher records launches and can be made to fail.
 type fakeLauncher struct {
 	sources []string
-	err     error
+	// schedules records the id each launch was attributed to, which is what lets
+	// a later denial land on the right row.
+	schedules []string
+	err       error
 }
 
-func (f *fakeLauncher) LaunchRun(_ context.Context, source string, _ map[string]string) (string, string, error) {
+func (f *fakeLauncher) LaunchScheduledRun(_ context.Context, source, scheduleID string) (string, string, error) {
 	f.sources = append(f.sources, source)
+	f.schedules = append(f.schedules, scheduleID)
 	if f.err != nil {
 		return "", "", f.err
 	}
@@ -62,6 +76,11 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	}
 	if got.LastResult != "started" {
 		t.Errorf("LastResult = %q", got.LastResult)
+	}
+	// The schedule's id must travel with the launch, or an unattended denial has
+	// no row to report itself on.
+	if len(l.schedules) != 1 || l.schedules[0] != "s1" {
+		t.Errorf("launch must carry the schedule id, got %v", l.schedules)
 	}
 }
 
@@ -247,4 +266,40 @@ func TestNewStore_RefusesAMalformedFile(t *testing.T) {
 // writeFile seeds a raw store file for the malformed-input test.
 func writeFile(dir, body string) error {
 	return os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o600)
+}
+
+// TestRecordOutcome_DoesNotMoveTheAnchor is the whole reason this is separate
+// from recordFire. An unattended denial lands minutes after the run started, and
+// moving the anchor then would push the next run out by however long the failure
+// took — a schedule that quietly drifts later every time it fails.
+func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
+	st := mustStore(t)
+	ctx := context.Background()
+	e := Entry{ID: "s1", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
+	if err := st.Put(ctx, &e); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	due := at(2026, time.August, 4, 2, 0)
+	if err := st.recordFire(ctx, "s1", due, "started"); err != nil {
+		t.Fatalf("recordFire: %v", err)
+	}
+
+	const reason = "failed: needed approval for Write with nobody watching"
+	if err := st.RecordOutcome(ctx, "s1", reason); err != nil {
+		t.Fatalf("RecordOutcome: %v", err)
+	}
+	got := st.List()[0]
+	if got.LastResult != reason {
+		t.Errorf("LastResult = %q, want the denial reason", got.LastResult)
+	}
+	if !got.Anchor.Equal(due) {
+		t.Errorf("anchor moved: got %v want %v — the next run would drift", got.Anchor, due)
+	}
+}
+
+func TestRecordOutcome_UnknownSchedule(t *testing.T) {
+	st := mustStore(t)
+	if err := st.RecordOutcome(context.Background(), "gone", "x"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
 }
