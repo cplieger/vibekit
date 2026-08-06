@@ -228,6 +228,30 @@ func TestKiroPathEnvLeadsWithTheVersionDirectory(t *testing.T) {
 	}
 }
 
+// TestKiroPathEnvWithNoInheritedPATHDoesNotWidenTheSearchPath pins the degenerate
+// case. Appending an empty inherited PATH would leave a trailing separator, and an
+// empty PATH element resolves to the CHILD'S CWD — cfg.WorkDir, the user's own
+// checkouts — so the overlay would widen the search path at exactly the moment it
+// has least information, instead of narrowing it to the verified install. Only
+// reachable from a bare `go run`, a test, or a deployment that clears the
+// environment, since the image always sets PATH; asserted anyway because the
+// symmetrical overlay in web-terminal-kiro guards it and the two must not diverge.
+func TestKiroPathEnvWithNoInheritedPATHDoesNotWidenTheSearchPath(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	got := kiroPathEnv("/config/tools/kiro-cli-versions/2.14.2")
+	if len(got) != 1 {
+		t.Fatalf("kiroPathEnv returned %v, want exactly one PATH entry", got)
+	}
+	want := "PATH=/config/tools/kiro-cli-versions/2.14.2"
+	if got[0] != want {
+		t.Errorf("overlay = %q, want %q: a trailing separator makes the child search its own cwd", got[0], want)
+	}
+	if strings.HasSuffix(got[0], string(os.PathListSeparator)) {
+		t.Error("the overlay ends in a path separator, so an empty element resolves to the child's cwd")
+	}
+}
+
 // TestKiroSettingsLeavesTheIntegrityGateToTheManager pins the one rule this list
 // must obey: app.disableAutoupdates is NOT in it. kirocli.Release() declares that
 // assertion Mandatory, so pinstall forces it Required and merges it in on top of

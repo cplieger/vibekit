@@ -235,7 +235,18 @@ func kiroPathEnv(entry string) []string {
 	if entry == "" {
 		return nil
 	}
-	return []string{"PATH=" + entry + string(os.PathListSeparator) + os.Getenv("PATH")}
+	if inherited := os.Getenv("PATH"); inherited != "" {
+		return []string{"PATH=" + entry + string(os.PathListSeparator) + inherited}
+	}
+	// No inherited PATH: return the version directory ALONE. Appending an empty
+	// value would leave a trailing separator, and an empty PATH element resolves
+	// to the child's cwd (cfg.WorkDir, the user's own checkouts), so the
+	// degenerate case would WIDEN the search path instead of narrowing it — the
+	// opposite of what leading with the version directory buys. The image always
+	// sets PATH, so this is only reachable from a bare `go run`, a test, or a
+	// deployment that clears the environment; web-terminal-kiro's sessionPathEnv
+	// already guards it, and the two overlays should not disagree.
+	return []string{"PATH=" + entry}
 }
 
 // kiroSettings is vibekit's kiro-cli settings set, re-asserted against the
