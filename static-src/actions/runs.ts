@@ -95,6 +95,15 @@ function runControl(verb: string, errorText: string) {
  *  resolves. The paused state arrives as a run_progress invalidation. */
 export const pauseRun = runControl("pause", "Couldn't pause the run");
 
+/** Reset a failed run's failed and aborted steps (plus their ancestors) and
+ *  re-drive it, keeping every completed step.
+ *
+ *  Unlike the other controls this one needs no live bridge: the server RE-HOSTS
+ *  the run, because retry is legal exactly when the run's own bridge has already
+ *  been closed. Offered only on a parentless run — an agent-parented run's
+ *  recovery is the agent's. */
+export const retryRun = runControl("retry", "Couldn't retry the run");
+
 /** Re-drive a paused run. Works even when the launching process is gone — KAS
  *  reloads the run from disk — which is why the button is offered on any paused
  *  run rather than only on one this browser started. */

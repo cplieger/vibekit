@@ -46,6 +46,22 @@ interface HistoryRow {
   run?: WorkflowRunRow;
 }
 
+/** The outcome word shown on a parentless run's row. Empty for a run that is
+ *  still moving — its live status already renders in the status slot, and
+ *  "succeeded"/"failed" is a claim only a finished run can make. */
+function runOutcomeLabel(status: string): string {
+  switch (status) {
+    case "completed":
+      return "succeeded";
+    case "failed":
+      return "failed — open to retry";
+    case "aborted":
+      return "aborted — open to retry";
+    default:
+      return "";
+  }
+}
+
 function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): HistoryRow[] {
   const rows: HistoryRow[] = [];
   for (const s of sessions) {
@@ -60,12 +76,18 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
     });
   }
   for (const r of runs) {
+    // A run's OUTCOME is stated only for a parentless (manually launched) run,
+    // because that is the only kind whose recovery is the user's: a failed one
+    // is a row to open and retry. An agent-parented run's failure is the
+    // agent's to handle, and labelling it here would invite an action this
+    // page deliberately does not offer.
+    const parentless = (r.parent_chat_id ?? "") === "";
     rows.push({
       key: `r:${r.workflow_id}`,
       kind: "run",
       title: r.name === "" ? "Untitled run" : r.name,
       updatedAt: r.updated_at,
-      detail: "",
+      detail: parentless ? runOutcomeLabel(r.status ?? "") : "",
       status: r.status ?? "",
       run: r,
     });
@@ -284,7 +306,8 @@ class HistoryController {
 /** Open a history row: a chat resumes, a run opens its read-only review. */
 function openRow(row: HistoryRow): void {
   if (row.kind === "run" && row.run !== undefined) {
-    openRunView(row.run.workflow_id, row.title);
+    // Only a parentless run offers Retry on its page (user decision).
+    openRunView(row.run.workflow_id, row.title, (row.run.parent_chat_id ?? "") === "");
     return;
   }
   if (row.session !== undefined) {

@@ -112,7 +112,9 @@ describe("history: previous chats and runs", () => {
   it("routes a run to the read-only run view, never to a chat", async () => {
     const c = await render({ sessions: [chatRow], runs: [runRow] });
     (c.querySelector('[data-key="r:wf_1"]') as HTMLElement).click();
-    expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline");
+    // The third argument is the parentless flag: this fixture has no
+    // parent_chat_id, so its page may offer Retry.
+    expect(openRunView).toHaveBeenCalledWith("wf_1", "feature-pipeline", true);
     expect(openPreviousSession).not.toHaveBeenCalled();
   });
 

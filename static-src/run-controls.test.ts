@@ -12,8 +12,8 @@ describe("run control gating", () => {
     expect(RUN_CONTROLS["running"]).toEqual(["pause", "cancel"]);
     expect(RUN_CONTROLS["paused"]).toEqual(["resume", "cancel"]);
     expect(RUN_CONTROLS["completed"]).toEqual([]);
-    expect(RUN_CONTROLS["failed"]).toEqual([]);
-    expect(RUN_CONTROLS["aborted"]).toEqual([]);
+    expect(RUN_CONTROLS["failed"]).toEqual(["retry"]);
+    expect(RUN_CONTROLS["aborted"]).toEqual(["retry"]);
   });
 
   // A terminal run must never offer cancel: there is nothing to stop, and the
@@ -24,17 +24,18 @@ describe("run control gating", () => {
     }
   });
 
-  // Retry is absent from every status, and that is the finding rather than an
-  // omission. KAS accepts retry only from failed or aborted, and vibekit closes a
-  // run's bridge on every terminal run_complete — so the moment retry becomes
-  // legal is the moment its carrier is gone. An earlier revision shipped it on
-  // `completed` (where KAS always throws) and then on failed/aborted (where the
-  // bridge is already closed); both were buttons that could only produce an
-  // error.
-  it("offers retry nowhere, because it is unreachable by construction", () => {
-    for (const status of RUN_STATUSES) {
-      expect(RUN_CONTROLS[status] ?? []).not.toContain("retry");
-    }
+  // Retry IS offered, and only where KAS accepts it. The carrier objection that
+  // kept it out is answered by re-hosting: retry is legal exactly when a run's
+  // own bridge has been closed, so RetryRun starts one rather than requiring one.
+  // A `completed` run still offers nothing — KAS throws there.
+  it("offers retry only on the terminal statuses that accept it", () => {
+    expect(RUN_CONTROLS["failed"]).toContain("retry");
+    expect(RUN_CONTROLS["aborted"]).toContain("retry");
+    expect(RUN_CONTROLS["completed"] ?? []).not.toContain("retry");
+    // Never on a live run: retry resets failed work, and a running one has none
+    // to reset yet.
+    expect(RUN_CONTROLS["running"] ?? []).not.toContain("retry");
+    expect(RUN_CONTROLS["paused"] ?? []).not.toContain("retry");
   });
 
   // Pause and resume are opposites and must never both be on offer, or the row

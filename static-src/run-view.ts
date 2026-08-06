@@ -30,7 +30,7 @@ import { apiGet } from "./api-client.js";
 import { el } from "@cplieger/reactive";
 import { openRunTab } from "./tabs.js";
 import { mountRunDecisionDock, rerenderDocks } from "./decision-dock.js";
-import { cancelRun, pauseRun, resumeRun } from "./actions/runs.js";
+import { cancelRun, pauseRun, resumeRun, retryRun } from "./actions/runs.js";
 import { RUN_CONTROLS, CONTROL_LABEL, type RunVerb } from "./run-controls.js";
 
 /** Verb → its action. Separate from run-controls.ts's table on purpose: that
@@ -40,6 +40,7 @@ const RUN_ACTION: Record<RunVerb, { dispatch: (id: string) => Promise<unknown> }
   pause: pauseRun,
   resume: resumeRun,
   cancel: cancelRun,
+  retry: retryRun,
 };
 
 /** One node of a run's state tree, as KAS reports it. Recursive: a sequence or
@@ -83,14 +84,18 @@ let shownRun = "";
  *  opener rather than derived from status, because the same `running` run is
  *  actionable through one door and a record through the other. */
 let shownRunOwned = false;
+/** Whether the shown run was launched manually (no parent chat). Only a
+ *  parentless run offers Retry; a parented one is the agent's to recover. */
+let shownRunParentless = false;
 
 /** Point the shared run view (one DOM element serves every run tab) at a run,
  *  and give its dock somewhere to render. The dock host is mounted ONCE with a
  *  dynamic match — the run on screen — so tab switches re-key it without
  *  re-mounting. */
-function showRun(workflowID: string, owned: boolean): void {
+function showRun(workflowID: string, owned: boolean, parentless: boolean): void {
   shownRun = workflowID;
   shownRunOwned = owned;
+  shownRunParentless = parentless;
   const dock = document.getElementById("run-dock");
   if (dock !== null) {
     mountRunDecisionDock(dock, () => shownRun);
@@ -108,9 +113,9 @@ function showRun(workflowID: string, owned: boolean): void {
  *  was otherwise a dead end. That is the wrong trade: History is where finished
  *  work is read, and a tab that can pause or cancel is a live surface wearing a
  *  record's clothes. The live door is the Workflows tab. */
-export function openRunView(workflowID: string, name: string): void {
+export function openRunView(workflowID: string, name: string, parentless = false): void {
   openRunTab(workflowID, name, () => {
-    showRun(workflowID, false);
+    showRun(workflowID, false, parentless);
   });
 }
 
@@ -124,7 +129,8 @@ export function openLiveRunView(workflowID: string, name: string): void {
     workflowID,
     name,
     () => {
-      showRun(workflowID, true);
+      // A launcher-owned run came from LaunchRun, which is always parentless.
+      showRun(workflowID, true, true);
     },
     {
       onClose: () => {
@@ -175,7 +181,7 @@ async function load(workflowID: string): Promise<void> {
       { className: "run-summary" },
       el("span", { className: "run-status" }, state.status ?? "unknown"),
       el("span", { className: "text-muted text-sm" }, state.workflowId),
-      shownRunOwned ? buildRunControls(workflowID, state.status ?? "") : null,
+      buildRunControls(workflowID, state.status ?? ""),
     ),
   );
 
@@ -208,7 +214,23 @@ async function load(workflowID: string): Promise<void> {
 /** The run's control row. Empty for an unknown status, which renders nothing
  *  rather than an empty container. */
 function buildRunControls(workflowID: string, status: string): HTMLElement | null {
-  const verbs = RUN_CONTROLS[status];
+  let verbs = RUN_CONTROLS[status];
+  // Two different gates, because the two doors mean different things.
+  //
+  // An OWNED tab (the launcher's) carries the status's live verbs. A REVIEW
+  // (opened from History) carries none of them — reaching a live run's controls
+  // is the launching tab's job. But RETRY is not a live verb: it acts on a
+  // finished run, and History is exactly where a failed one is found, so a
+  // review offers retry and nothing else.
+  //
+  // Both are further gated on the run being PARENTLESS (user decision): an
+  // agent-parented run's recovery is the agent's own, on a bridge it holds.
+  if (verbs !== undefined && !shownRunOwned) {
+    verbs = verbs.filter((v) => v === "retry");
+  }
+  if (verbs !== undefined && !shownRunParentless) {
+    verbs = verbs.filter((v) => v !== "retry");
+  }
   // Empty is as good as absent: a completed run offers nothing, and an empty
   // control row would be a visible container with no purpose.
   if (verbs === undefined || verbs.length === 0) {
