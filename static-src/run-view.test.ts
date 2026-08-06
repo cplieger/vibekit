@@ -58,7 +58,12 @@ vi.mock("./actions/runs.js", () => {
       return Promise.resolve();
     }),
   });
-  return { cancelRun: stub("cancel"), pauseRun: stub("pause"), resumeRun: stub("resume") };
+  return {
+    cancelRun: stub("cancel"),
+    pauseRun: stub("pause"),
+    resumeRun: stub("resume"),
+    retryRun: stub("retry"),
+  };
 });
 
 import { openRunView, openLiveRunView } from "./run-view.js";
@@ -121,10 +126,20 @@ describe("run view flavour gate", () => {
 
   // A finished run is read-only through BOTH doors: the gate subtracts, and must
   // never be the thing that ADDS a verb a terminal status does not accept.
-  it("offers no controls on a finished run through either door", async () => {
-    for (const status of ["completed", "failed", "aborted"]) {
-      expect((await paint(openRunView, status)).labels).toEqual([]);
-      expect((await paint(openLiveRunView, status)).labels).toEqual([]);
+  // A COMPLETED run offers nothing through either door: there is no failed work
+  // to reset and nothing to stop.
+  it("offers no controls on a completed run through either door", async () => {
+    expect((await paint(openRunView, "completed")).labels).toEqual([]);
+    expect((await paint(openLiveRunView, "completed")).labels).toEqual([]);
+  });
+
+  // A FAILED run is the one case a review door DOES carry a control: retry acts
+  // on a finished run, and History is where a failed one is found. The launcher
+  // door carries it too — both are gated on the run being parentless, which
+  // openLiveRunView always is and openRunView is told.
+  it("offers retry on a failed run through both doors", async () => {
+    for (const status of ["failed", "aborted"]) {
+      expect((await paint(openLiveRunView, status)).labels).toContain("Retry failed steps");
     }
   });
 

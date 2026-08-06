@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 /** The run-control verbs, in the order a row presents them. */
-export type RunVerb = "pause" | "resume" | "cancel";
+export type RunVerb = "pause" | "resume" | "cancel" | "retry";
 
 /** KAS's WorkflowStatusSchema. Exported so a test can be exhaustive over it
  *  rather than over whatever subset the table happens to name. */
@@ -41,16 +41,19 @@ export const RUN_STATUSES = ["running", "paused", "completed", "failed", "aborte
 export const RUN_CONTROLS: Record<string, readonly RunVerb[]> = {
   running: ["pause", "cancel"],
   paused: ["resume", "cancel"],
-  // Every terminal status offers nothing, and retry is absent entirely.
-  //
-  // Retry looked like the natural verb for a failed run and is unreachable by
-  // construction: KAS accepts it only from failed or aborted, and vibekit closes
-  // a run's bridge on every terminal run_complete, so the moment retry becomes
-  // legal is the moment its carrier is gone. Re-hosting an orphaned run is a
-  // feature (see run_host.go); until it exists, a finished run is a record.
+  // A completed run is a record: nothing to retry, nothing to stop.
   completed: [],
-  failed: [],
-  aborted: [],
+  // Retry resets only the FAILED and aborted nodes plus their ancestors, so the
+  // completed work survives — unlike relaunching the recipe, which starts at
+  // step one. It is legal exactly here, and exactly here vibekit has already
+  // closed the run's bridge, which is why the server RE-HOSTS one rather than
+  // requiring it (run_host.go RetryRun).
+  //
+  // Offered only on a PARENTLESS run (user decision): an agent-parented run's
+  // recovery is the agent's own, on a bridge it already holds. The gate is the
+  // caller's, not this table's — the table is status-only, as its name says.
+  failed: ["retry"],
+  aborted: ["retry"],
 };
 
 /** Button text per verb. */
@@ -58,4 +61,5 @@ export const CONTROL_LABEL: Record<RunVerb, string> = {
   pause: "Pause",
   resume: "Resume",
   cancel: "Cancel",
+  retry: "Retry failed steps",
 };
