@@ -259,7 +259,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 		Title:          tc.Title,
 		Kind:           tc.Kind,
 		Status:         tc.Status,
-		Input:          tc.RawInput,
+		Input:          redact.RawJSON(tc.RawInput),
 		AgentSubtaskID: tc.Meta.Kiro.AgentSubtaskID,
 		Locations:      tc.Locations,
 		Ts:             p.frameTS(tc.Meta.Kiro.Timestamp),

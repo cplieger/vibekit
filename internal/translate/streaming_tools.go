@@ -58,7 +58,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		Title:          tc.Title,
 		Kind:           tc.Kind,
 		Status:         tc.Status,
-		Input:          tc.RawInput,
+		Input:          redact.RawJSON(tc.RawInput),
 		SubSessionID:   subSessionID,
 		AgentSubtaskID: subtask,
 		Locations:      tc.Locations,
