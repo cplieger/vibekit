@@ -45,6 +45,21 @@ import (
 // user may have the run's page open and can still answer.
 const unattendedApprovalBudget = 180 * time.Second
 
+// logMsgUnattendedPermission is the message the unattended answer logs under.
+//
+// A CONSTANT because a homelab Loki rule alerts on it: a scheduled run refused a
+// permission is the app's one genuinely unattended failure, and the schedule row
+// only tells the user once they look. Changing this string breaks that rule
+// silently, so change both together.
+const logMsgUnattendedPermission = "unattended permission answered with no user present"
+
+// The two outcomes, as they appear in the log's `outcome` field. A homelab Loki
+// rule matches outcomeRefused, so these are values with a consumer, not labels.
+const (
+	outcomeRefused  = "refused"
+	outcomeApproved = "approved"
+)
+
 // workflowIDOf recovers a workflow id from its synthetic chat id. Empty for a
 // chat id that does not name a run.
 func workflowIDOf(chatID api.ChatID) string {
@@ -129,7 +144,7 @@ func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, sch
 	}
 	approve := scheduledAutoApprove(ctx, h.lifecycle.configDir)
 	outcome := api.PermissionOutcomeCancelled()
-	verb := "refusing"
+	verb := outcomeRefused
 	if approve {
 		opt := autoApproveOptionID(msgParams)
 		if opt == "" {
@@ -140,18 +155,21 @@ func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, sch
 				"chat_id", chatID, "tool", tool)
 		} else {
 			outcome = api.PermissionOutcomeSelected(opt)
-			verb = "approving"
+			verb = outcomeApproved
 		}
 	}
-	slog.Warn("unattended run: "+verb+" a permission nobody answered",
-		"chat_id", chatID, "tool", tool, "budget", unattendedApprovalBudget,
-		"auto_approve", approve)
+	// A FIXED message with the outcome as a field, not a message built from the
+	// verb: a Loki rule matches on the message, and a concatenated one cannot be
+	// matched reliably (see homelab apps/loki/rules/alerts.yaml vibekit_logs).
+	slog.Warn(logMsgUnattendedPermission,
+		"outcome", verb, "chat_id", chatID, "tool", tool,
+		"budget", unattendedApprovalBudget, "schedule_id", scheduleID)
 	if err := sb.Respond(ctx, requestID, outcome, nil); err != nil {
 		slog.Error("unattended permission answer failed", "chat_id", chatID, "error", err)
 		return
 	}
 	h.sse.pendingPerms.Remove(requestID)
-	if verb == "approving" {
+	if verb == outcomeApproved {
 		// An approval is not a failure: the run continues, so the schedule's
 		// outcome stays whatever the run itself reports.
 		return
