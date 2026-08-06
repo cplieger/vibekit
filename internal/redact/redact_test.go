@@ -146,3 +146,49 @@ func FuzzOutput_DelimitedSecretNeverSurvives(f *testing.F) {
 		}
 	})
 }
+
+// TestRawJSON_MasksAndStaysParseable is the pair of guarantees a tool call's
+// input needs: the credential is gone, and the document the UI decodes is still
+// valid JSON.
+func TestRawJSON_MasksAndStaysParseable(t *testing.T) {
+	in := json.RawMessage(`{"command":"curl -H \"Authorization: Bearer abcDEF012345_tokenvalue\" https://x"}`)
+	out := RawJSON(in)
+	if strings.Contains(string(out), "abcDEF012345_tokenvalue") {
+		t.Errorf("secret survived in tool input: %s", out)
+	}
+	var v any
+	if err := json.Unmarshal(out, &v); err != nil {
+		t.Errorf("redaction broke the input document: %v\n%s", err, out)
+	}
+}
+
+// TestRawJSON_PassesThroughUnchanged covers the common case: most tool inputs
+// carry no credential, and the original slice is handed back rather than copied.
+func TestRawJSON_PassesThroughUnchanged(t *testing.T) {
+	in := json.RawMessage(`{"path":"main.go","limit":100}`)
+	if got := RawJSON(in); string(got) != string(in) {
+		t.Errorf("clean input was altered:\n got %s\nwant %s", got, in)
+	}
+	if got := RawJSON(nil); got != nil {
+		t.Errorf("nil input must pass through, got %v", got)
+	}
+	if got := RawJSON(json.RawMessage{}); len(got) != 0 {
+		t.Errorf("empty input must pass through, got %v", got)
+	}
+}
+
+// TestRawJSON_UsesTheSameVocabularyAsOutput pins the "same code" contract: input
+// and output must never drift apart in what they mask, so a value redacted in one
+// is redacted in the other.
+func TestRawJSON_UsesTheSameVocabularyAsOutput(t *testing.T) {
+	for _, tt := range tokenCases {
+		t.Run(tt.name, func(t *testing.T) {
+			// Wrapped as a JSON string value, the way a real tool input carries it.
+			enc, err := json.Marshal(map[string]string{"arg": tt.in})
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			assertRedaction(t, string(RawJSON(enc)), tt.gone, nil)
+		})
+	}
+}

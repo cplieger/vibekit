@@ -19,7 +19,10 @@
 // lifted into a shared module if a second app needs it.
 package redact
 
-import "regexp"
+import (
+	"encoding/json"
+	"regexp"
+)
 
 // secretKVRe matches a JSON string key whose name looks secret-ish and
 // captures the `"key":` prefix (group 1) so the value can be replaced with a
@@ -75,4 +78,31 @@ func Output(s string) string {
 func Report(s string) string {
 	s = secretKVRe.ReplaceAllString(s, `${1}"`+Placeholder+`"`)
 	return secretTokenRe.ReplaceAllString(s, Placeholder)
+}
+
+// RawJSON masks credential-shaped tokens in a raw JSON document, for a tool
+// call's INPUT — the arguments the agent passed, which are persisted, re-served
+// and exported exactly like its output.
+//
+// Input is the likelier leak of the two: a credential in output means the agent
+// printed one, while a credential in input means it ran something like
+// `curl -H "Authorization: Bearer …"`, which is ordinary.
+//
+// Structurally safe for the same reason [Output] is, and it matters more here
+// because the result must stay parseable: every pattern matches a run of
+// characters that cannot contain a quote, so a replacement inside a string value
+// cannot unbalance the document. Nil and empty input pass through untouched.
+//
+// This is [Output] applied to bytes, not a second rule set — one redactor, one
+// vocabulary, so output and input cannot drift apart in what they mask.
+func RawJSON(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	out := Output(string(raw))
+	if out == string(raw) {
+		// Unchanged: hand back the original slice rather than a copy.
+		return raw
+	}
+	return json.RawMessage(out)
 }
