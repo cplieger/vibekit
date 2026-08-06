@@ -170,6 +170,17 @@ func (g *Generator) Generate(ctx context.Context) {
 	b.WriteString("- Shell commands execute in the workspace directory\n")
 	b.WriteString("- Git operations are available via the Git panel\n")
 
+	// Workflow-run recovery. The UI offers Retry only on a PARENTLESS run (one
+	// the user launched from the Workflows list); a run YOU launched is parented
+	// on this chat's session, so its recovery is yours and nothing surfaces a
+	// button for it. Without this the agent has the verbs and no reason to think
+	// of them, and a failed step in its own run reads as a dead end.
+	b.WriteString("- A workflow run you launched is yours to recover: on failure you can retry it ")
+	b.WriteString("(which resets only the failed and aborted steps plus their ancestors, keeping ")
+	b.WriteString("completed work) rather than relaunching from step one, and you can mark a wedged ")
+	b.WriteString("in-flight step completed or failed to let the run advance. Prefer retrying over ")
+	b.WriteString("relaunching when steps have already succeeded, and say which you chose and why\n")
+
 	content := []byte(b.String())
 	steeringFile := workspace.KiroSteeringPath("environment.md")
 
