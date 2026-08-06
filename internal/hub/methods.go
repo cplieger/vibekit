@@ -174,6 +174,17 @@ const (
 	// choose which terminal status a stop records would make the run history
 	// mean different things depending on which door was used.
 	methodKiroWorkflowPause = "_kiro/workflow/pause"
+
+	// methodKiroWorkflowRetry resets a finished run's FAILED and aborted nodes
+	// plus their ancestors, leaving completed work alone. Legal only from
+	// `failed`/`aborted`, and it rehydrates the run from disk, which is what
+	// lets vibekit re-host a run whose bridge was closed at terminal status.
+	methodKiroWorkflowRetry = "_kiro/workflow/retry"
+
+	// methodKiroWorkflowUpdate mutates a live run. vibekit narrows it to
+	// `set_step_status` (mark an in-flight step completed/failed so the run
+	// advances); `replace_remaining` is a plan editor and is not wired.
+	methodKiroWorkflowUpdate = "_kiro/workflow/update"
 )
 
 // v3 (KAS) hook-management method names. list/setEnabled/triggerHook are C→A

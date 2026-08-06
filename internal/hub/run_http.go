@@ -213,6 +213,44 @@ func (h *Hub) handleRunResume(w http.ResponseWriter, r *http.Request) {
 	h.runControlHandler(w, r, runVerbResume)
 }
 
+func (h *Hub) handleRunRetry(w http.ResponseWriter, r *http.Request) {
+	h.runControlHandler(w, r, runVerbRetry)
+}
+
+// handleRunStepStatus: POST /api/runs/{id}/step — mark an IN-FLIGHT step
+// completed or failed so a wedged run advances.
+//
+// Its own handler rather than a runVerb because it carries a body (which step,
+// which status) and the verb table's issue signature is id-only.
+func (h *Hub) handleRunStepStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		api.BadRequest(w, "missing workflow id")
+		return
+	}
+	var body struct {
+		NodeID string `json:"node_id"`
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		api.BadRequest(w, "invalid step-status payload")
+		return
+	}
+	if err := h.SetRunStepStatus(r.Context(), id, body.NodeID, body.Status); err != nil {
+		if errors.Is(err, errRunNotHosted) {
+			api.Conflict(w, err.Error())
+			return
+		}
+		api.BadRequest(w, err.Error())
+		return
+	}
+	api.Ok(w)
+}
+
 // runVerb describes one run-control verb: how to issue it, and which run
 // statuses it is legal from.
 //
@@ -251,6 +289,15 @@ var (
 		name:  "resume",
 		issue: (*Hub).ResumeRun,
 		from:  []string{"paused"},
+	}
+	// Retry's window is exactly the two statuses at which a run's own bridge has
+	// already been closed, which is why RetryRun re-hosts instead of requiring
+	// one. The gate still earns its place: it turns a click on an
+	// already-restarted run into a 409 naming the status.
+	runVerbRetry = runVerb{
+		name:  "retry",
+		issue: (*Hub).RetryRun,
+		from:  []string{"failed", "aborted"},
 	}
 )
 
