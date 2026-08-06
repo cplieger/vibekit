@@ -879,3 +879,44 @@ h3.section-title {
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   History search
+
+   Finds the CONVERSATION; the in-chat Ctrl-F finds the position within one.
+   The note under the box is not decoration: it states how many conversations
+   were read, so an empty result cannot imply the text is nowhere when the scan
+   was simply capped.
+   --------------------------------------------------------------------------- */
+
+.hist-search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-block-end: var(--sp-3);
+}
+
+.hist-search-input {
+  font: inherit;
+  width: 100%;
+  color: var(--c-text-primary);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+
+  &:focus-visible {
+    outline: none;
+    border-color: var(--c-accent);
+    background: color-mix(in oklch, var(--c-accent) 4%, var(--c-bg-secondary));
+  }
+
+  &::placeholder {
+    color: var(--c-text-tertiary);
+  }
+}
+
+.hist-search-note {
+  font-size: var(--fs-xs);
+  min-height: 1rem;
+}

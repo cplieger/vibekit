@@ -858,6 +858,17 @@
         <div class="page-content">
           <h2 class="page-title">History</h2>
           <p class="section-hint">Previous chats and workflow runs in this workspace, newest first. Click a chat to reopen it, or a run to review what it did.</p>
+          <div class="hist-search">
+            <label class="sr-only" for="hist-search-input">Search conversations</label>
+            <input
+              id="hist-search-input"
+              type="search"
+              class="hist-search-input"
+              placeholder="Search conversations…"
+              autocomplete="off"
+            >
+            <div id="hist-search-note" class="hist-search-note text-muted" role="status"></div>
+          </div>
           <div id="history-table" class="list-container">
             <div class="list-empty">No previous sessions in this workspace.</div>
           </div>

@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const dispatch = vi.fn();
 const openPreviousSession = vi.fn();
 const openRunView = vi.fn();
+const openChatTab = vi.fn();
+const searchDispatch = vi.fn(async () => ({ matches: [], scanned: 0, truncated: false }));
 
 vi.mock("./actions/chat.js", () => ({
   loadSessions: { dispatch, cancel: vi.fn() },
@@ -11,7 +13,12 @@ vi.mock("./actions/chat.js", () => ({
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
 }));
-vi.mock("./chat.js", () => ({ openPreviousSession }));
+vi.mock("./chat.js", () => ({ openPreviousSession, openChatTab }));
+// The cross-chat search action: unmocked it builds through actions/index.js,
+// which this suite stubs down to one symbol. The search MODE has its own tests.
+vi.mock("./actions/chat-search.js", () => ({
+  searchChats: { dispatch: searchDispatch, cancel: vi.fn() },
+}));
 vi.mock("./run-view.js", () => ({ openRunView }));
 vi.mock("./tabs.js", () => ({
   toggleHistoryView: (onShow: () => void) => {
@@ -144,5 +151,127 @@ describe("history: previous chats and runs", () => {
     const c = document.getElementById("history-table")!;
     expect(c.querySelectorAll("[data-key]")).toHaveLength(0);
     expect(c.textContent).toContain("No previous sessions in this workspace.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-chat search: a second MODE over the same container, not a filter of the
+// loaded list.
+// ---------------------------------------------------------------------------
+
+const match = (over: Record<string, unknown> = {}) => ({
+  id: "c-redis",
+  name: "Redis migration",
+  best: {
+    message_id: "m1",
+    turn_message_id: "m1",
+    excerpt: "we moved the cache to redis",
+    role: "user",
+    turn: 1,
+    offset: 0,
+  },
+  hits: 3,
+  score: 12,
+  updated_at: 5000,
+  ...over,
+});
+
+/** Mount the view with a search box present, then type a query. */
+async function search(
+  result: unknown,
+  query = "redis",
+): Promise<{ table: HTMLElement; note: HTMLElement }> {
+  document.body.innerHTML = `<div id="history-table"></div>
+    <input id="hist-search-input" /><div id="hist-search-note"></div>`;
+  dispatch.mockResolvedValue({ sessions: [], runs: [] });
+  searchDispatch.mockResolvedValue(result as never);
+  const { showHistoryView } = await import("./history.js");
+  showHistoryView();
+
+  const input = document.getElementById("hist-search-input") as HTMLInputElement;
+  input.value = query;
+  input.dispatchEvent(new Event("input"));
+  await vi.waitFor(() => {
+    if (searchDispatch.mock.calls.length === 0) {
+      throw new Error("not searched");
+    }
+  });
+  await vi.waitFor(() => {
+    if ((document.getElementById("hist-search-note")?.textContent ?? "") === "") {
+      throw new Error("no note yet");
+    }
+  });
+  return {
+    table: document.getElementById("history-table")!,
+    note: document.getElementById("hist-search-note")!,
+  };
+}
+
+describe("history: cross-chat search", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it("renders matching CHATS with their best line", async () => {
+    const { table } = await search({ matches: [match()], scanned: 12, truncated: false });
+    const row = table.querySelector("[data-search-chat]");
+    expect(row?.getAttribute("data-search-chat")).toBe("c-redis");
+    expect(row?.textContent).toContain("Redis migration");
+    expect(row?.textContent).toContain("we moved the cache to redis");
+    expect(row?.textContent).toContain("3 matches");
+  });
+
+  // A title-only match has no line to quote, and must not render an empty row
+  // that looks like a rendering bug.
+  it("explains a title-only match instead of showing an empty excerpt", async () => {
+    const titleOnly = match({
+      hits: 0,
+      best: { message_id: "", turn_message_id: "", excerpt: "", role: "", turn: 0, offset: 0 },
+    });
+    const { table } = await search({ matches: [titleOnly], scanned: 4, truncated: false });
+    expect(table.textContent).toContain("matches the conversation name");
+  });
+
+  it("opens the matched chat on click", async () => {
+    const { table } = await search({ matches: [match()], scanned: 3, truncated: false });
+    table.querySelector<HTMLElement>("[data-search-chat]")!.click();
+    expect(openChatTab).toHaveBeenCalledWith("c-redis", "Redis migration");
+    // Search results are chats that already exist; adopting a session is the
+    // OTHER door and must not fire here.
+    expect(openPreviousSession).not.toHaveBeenCalled();
+  });
+
+  // The honest-empty-state rule: without saying the scan was capped, "no
+  // matches" implies the text is nowhere.
+  it("says older conversations were not searched when the scan truncated", async () => {
+    const { note } = await search({ matches: [], scanned: 500, truncated: true });
+    expect(note.textContent).toContain("were not searched");
+  });
+
+  it("reports the scanned count on a clean empty result", async () => {
+    const { note } = await search({ matches: [], scanned: 7, truncated: false });
+    expect(note.textContent).toContain("7 conversations");
+    expect(note.textContent).not.toContain("were not searched");
+  });
+
+  it("surfaces a failed search rather than an empty list", async () => {
+    const { note } = await search(null);
+    expect(note.textContent).toContain("Search failed");
+  });
+
+  it("returns to the full list when the box is cleared", async () => {
+    const { table } = await search({ matches: [match()], scanned: 3, truncated: false });
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
+
+    const input = document.getElementById("hist-search-input") as HTMLInputElement;
+    input.value = "";
+    input.dispatchEvent(new Event("input"));
+    await vi.waitFor(() => {
+      if (table.querySelectorAll("[data-key]").length === 0) {
+        throw new Error("list not restored");
+      }
+    });
+    expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 });
