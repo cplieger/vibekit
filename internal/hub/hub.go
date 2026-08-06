@@ -115,12 +115,16 @@ type Hub struct {
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
 	schedules          *schedule.Store
-	sessionReaper      *kirosession.Reaper
-	sessionRefs        func(context.Context) (map[string]struct{}, bool)
-	lines              *buffer.LineTracker
-	agentTerms         *agentTerminals
-	hookStatus         *hookStatusCache
-	governance         *governanceCache
+	// unattendedRuns maps a SCHEDULED run's workflow id to the schedule that
+	// launched it, which gates the deny-fast permission floor and attributes a
+	// denial back to the row. See run_unattended.go.
+	unattendedRuns map[string]string
+	sessionReaper  *kirosession.Reaper
+	sessionRefs    func(context.Context) (map[string]struct{}, bool)
+	lines          *buffer.LineTracker
+	agentTerms     *agentTerminals
+	hookStatus     *hookStatusCache
+	governance     *governanceCache
 
 	// secrets holds the credential blobs KAS asks vibekit to persist on its
 	// behalf (_kiro/secret/*, bridge_v3_secret.go). ONE store for every
@@ -144,6 +148,9 @@ type Hub struct {
 	// of 24 pointer bytes, less dense than a string's 8 of 16.
 	acpArgs []string
 	ciBusy  atomic.Bool
+	// unattendedMu guards unattendedRuns. Non-pointer, so it sits in the tail
+	// with ciBusy rather than among the pointer fields.
+	unattendedMu sync.Mutex
 }
 
 // Option configures optional Hub parameters.

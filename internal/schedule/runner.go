@@ -20,10 +20,16 @@ const TickInterval = time.Minute
 // classified as missed and never run at all.
 const MissGrace = 3 * time.Minute
 
-// Launcher starts one workflow run. Hub satisfies this; the narrow interface is
-// what lets the runner be tested without a bridge or a subprocess.
+// Launcher starts one workflow run on behalf of a schedule. Hub satisfies this;
+// the narrow interface is what lets the runner be tested without a bridge or a
+// subprocess.
+//
+// The scheduleID travels with the launch so the host can attribute an UNATTENDED
+// run back to the row that asked for it. That attribution is what makes a
+// silent nightly failure visible: the host records the outcome against this id
+// when the run is denied a permission nobody was there to answer.
 type Launcher interface {
-	LaunchRun(ctx context.Context, source string, inputs map[string]string) (id, name string, err error)
+	LaunchScheduledRun(ctx context.Context, source, scheduleID string) (id, name string, err error)
 }
 
 // Runner fires due schedules. Construct with NewRunner and call Run in a
@@ -94,7 +100,7 @@ func (r *Runner) sweep(ctx context.Context) {
 // fire launches one run and records the outcome. The anchor advances either
 // way: a schedule whose launch keeps failing must not retry every tick.
 func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
-	runID, name, err := r.launcher.LaunchRun(ctx, e.Source, nil)
+	runID, name, err := r.launcher.LaunchScheduledRun(ctx, e.Source, e.ID)
 	result := "started"
 	if err != nil {
 		// An overlap is the expected, already-implemented refusal (one live run

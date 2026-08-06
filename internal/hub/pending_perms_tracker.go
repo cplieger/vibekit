@@ -26,6 +26,16 @@ func (t *pendingPermsTracker) Add(id int64, evt api.ServerEvent) {
 	t.mu.Unlock()
 }
 
+// Has reports whether a request is still unresolved. Read by the unattended
+// floor before it answers for an absent user: the ordinary response path removes
+// the entry, so absence means somebody already answered.
+func (t *pendingPermsTracker) Has(id int64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.perms[id]
+	return ok
+}
+
 // Remove deletes a resolved permission event.
 func (t *pendingPermsTracker) Remove(id int64) {
 	t.mu.Lock()

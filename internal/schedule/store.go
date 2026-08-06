@@ -160,6 +160,27 @@ func (s *Store) skipTo(ctx context.Context, id string, to time.Time) error {
 	return s.persistLocked(ctx)
 }
 
+// RecordOutcome overwrites a schedule's last result AFTER its run has started.
+//
+// Separate from recordFire because the interesting outcomes arrive late: a
+// scheduled run that parks on an unanswered permission is denied minutes after
+// it launched, and without this the row would still read "started" while the
+// schedule silently failed the same way every night.
+//
+// Deliberately does NOT touch the anchor: the slot already fired, and moving the
+// anchor here would shift the next run by however long the failure took.
+func (s *Store) RecordOutcome(ctx context.Context, id, result string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[id]
+	if !ok {
+		return ErrNotFound
+	}
+	e.LastResult = result
+	s.entries[id] = e
+	return s.persistLocked(ctx)
+}
+
 func (s *Store) persistLocked(ctx context.Context) error {
 	data, err := json.MarshalIndent(s.sortedLocked(), "", "  ")
 	if err != nil {
