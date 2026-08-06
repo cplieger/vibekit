@@ -182,23 +182,100 @@ func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
 	return h.hostedRunControl(ctx, workflowID, methodKiroWorkflowResume)
 }
 
-// There is deliberately NO RetryRun, and the missing piece is a CARRIER, not a
-// capability.
+// RetryRun re-hosts a finished run and resets its failed work.
 //
-// Retry is legal only from `failed` or `aborted` (KAS throws on the no-nodeId
-// branch otherwise), and `closeFinishedRunBridge` closes a run's bridge on every
-// terminal run_complete -- including those two. So the moment retry becomes legal
-// is the moment the connection that could carry it is gone, and a wired retry is
-// a button whose only outcome is a 409.
+// This is the re-hosting case, and it exists because retry's legality window and
+// vibekit's bridge lifetime are disjoint: retry is legal only from `failed` or
+// `aborted`, and `closeFinishedRunBridge` tears a run's bridge down on exactly
+// those statuses. So unlike every other control verb, retry cannot use the run's
+// own bridge -- there never is one when it is legal -- and it must create one.
 //
-// KAS's side would cope fine, and an earlier revision of this comment was wrong
-// to imply otherwise: `_kiro/workflow/retry` calls `rehydrateWorkflowFromDisk`
-// and then `runner.loadFromDisk`, so it registers the run itself. What vibekit
-// lacks is a process to send it on, because a registry is per-kiro-cli-process
-// and each bridge is its own. Building one is roughly `LaunchRun` minus `new` and
-// `invoke` -- a re-hosting feature with its own lifecycle and failure modes, and
-// a decision about who owns a bridge nobody launched. That is why it stays out:
-// the work is real, not because the wire refuses it.
+// KAS's side needs no help: `_kiro/workflow/retry` calls `rehydrateWorkflowFromDisk`
+// then `runner.loadFromDisk`, so it registers the run in the fresh process itself.
+// vibekit only has to supply the carrier: a bridge, registered under the run's
+// synthetic chat id so its lifecycle frames route, and no `new`/`invoke` because
+// the run already exists on disk.
+//
+// OWNERSHIP, which is what kept this out until the UX was settled: the user opens
+// the run's page and clicks Retry, so the user is the launcher and the run tab
+// owns the bridge exactly as it owns a freshly launched one. There is no
+// ambiguity about who owns a bridge nobody launched, because somebody did.
+//
+// Only reachable for a PARENTLESS run (user decision). An agent-parented run's
+// recovery is the agent's own: it reaches these verbs through KAS directly, on a
+// bridge it already has.
+func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
+	if workflowID == "" {
+		return errors.New("missing workflow id")
+	}
+	chatID := runChatID(workflowID)
+
+	// An already-hosted run needs no re-hosting: send on the bridge it has. This
+	// is not the expected path (retry's window implies a closed bridge) but a run
+	// aborted without a terminal frame can still be registered.
+	if sb := h.bridge.mgr.get(chatID); sb != nil {
+		_, err := sb.Call(ctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
+		return err
+	}
+
+	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
+	defer cancel()
+
+	bridge := h.bridge.mgr.factory()
+	if err := bridge.Start(cctx, &api.StartOpts{}); err != nil {
+		return fmt.Errorf("retry bridge start: %w", err)
+	}
+	// Register BEFORE the call, for the same reason LaunchRun does: retry's first
+	// lifecycle frame follows it immediately, and a frame arriving before the map
+	// entry would find no bridge to answer through.
+	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: bridge, state: bridgeIdle})
+	go h.coord.Forward(chatID, bridge)
+
+	if _, err := bridge.Call(cctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID}); err != nil {
+		// Nothing is executing: tear the bridge down rather than leaving a
+		// process hosting a run it failed to restart.
+		h.coord.CloseBridge(chatID)
+		return fmt.Errorf("workflow retry: %w", err)
+	}
+	slog.Info("workflow run retried", "workflow_id", workflowID)
+	return nil
+}
+
+// SetRunStepStatus marks an in-flight step completed or failed so a wedged run
+// can advance.
+//
+// Requires the run's own bridge and does NOT re-host, which is the honest
+// difference from RetryRun: this verb acts on a step that is IN FLIGHT, so a run
+// with no live bridge has no in-flight step to mark and the request is a
+// mistake rather than something to rehydrate for.
+func (h *Hub) SetRunStepStatus(ctx context.Context, workflowID, nodeID, status string) error {
+	if nodeID == "" {
+		return errors.New("missing node id")
+	}
+	if status != runStepCompleted && status != runStepFailed {
+		return fmt.Errorf("step status must be %q or %q", runStepCompleted, runStepFailed)
+	}
+	sb := h.bridge.mgr.get(runChatID(workflowID))
+	if sb == nil {
+		return errRunNotHosted
+	}
+	_, err := sb.Call(ctx, methodKiroWorkflowUpdate, map[string]any{
+		keyWorkflowID: workflowID,
+		"update": map[string]any{
+			"type":   "set_step_status",
+			"nodeId": nodeID,
+			"status": status,
+		},
+	})
+	return err
+}
+
+// The two step statuses a human may set. Narrowed deliberately: KAS's `update`
+// verb also carries `replace_remaining`, which is a plan editor and not proposed.
+const (
+	runStepCompleted = "completed"
+	runStepFailed    = "failed"
+)
 
 // hostedRunControl issues a verb that must run on the run's OWN bridge, and
 // refuses rather than falling back to the utility bridge.
