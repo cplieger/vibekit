@@ -26,7 +26,9 @@ import { reconcile } from "./reconcile.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { loadSessions } from "./actions/chat.js";
 import { registerCleanup } from "./actions/index.js";
-import { openPreviousSession } from "./chat.js";
+import { openPreviousSession, openChatTab } from "./chat.js";
+import { searchChats } from "./actions/chat-search.js";
+import type { ChatSearchMatch } from "./chat-search-types.js";
 import { openRunView } from "./run-view.js";
 import type { ResumableSessionRow, WorkflowRunRow } from "./types.js";
 
@@ -76,11 +78,15 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
 
 class HistoryController {
   private abort: AbortController | null = null;
+  private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  private searchWired = false;
+  private query = "";
 
   showView(): void {
     toggleHistoryView(
       () => {
-        void this.load();
+        this.wireSearch();
+        void this.refresh();
       },
       () => {
         this.teardown();
@@ -90,8 +96,120 @@ class HistoryController {
 
   teardown(): void {
     loadSessions.cancel();
+    searchChats.cancel();
     this.abort?.abort();
     this.abort = null;
+    if (this.searchTimer !== null) {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = null;
+    }
+  }
+
+  /** Wire the search box once; the element outlives a view close. */
+  private wireSearch(): void {
+    if (this.searchWired) {
+      return;
+    }
+    const input = document.getElementById("hist-search-input");
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    this.searchWired = true;
+    input.addEventListener("input", () => {
+      this.query = input.value.trim();
+      if (this.searchTimer !== null) {
+        clearTimeout(this.searchTimer);
+      }
+      this.searchTimer = setTimeout(() => {
+        this.searchTimer = null;
+        void this.refresh();
+      }, SEARCH_DEBOUNCE_MS);
+    });
+    // Escape clears back to the full list, the convention every search box has.
+    input.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Escape" && input.value !== "") {
+        e.stopPropagation();
+        input.value = "";
+        this.query = "";
+        void this.refresh();
+      }
+    });
+  }
+
+  /** Route to the list or to search, depending on the box. */
+  private async refresh(): Promise<void> {
+    if (this.query === "") {
+      this.setNote("");
+      await this.load();
+      return;
+    }
+    await this.runSearch(this.query);
+  }
+
+  private setNote(text: string): void {
+    const note = document.getElementById("hist-search-note");
+    if (note !== null) {
+      note.textContent = text;
+    }
+  }
+
+  /** Render matching CHATS for the current query. */
+  private async runSearch(q: string): Promise<void> {
+    const container = document.getElementById("history-table");
+    if (container === null) {
+      return;
+    }
+    loadSessions.cancel();
+    this.abort?.abort();
+    this.abort = new AbortController();
+    const { signal } = this.abort;
+
+    const res = await searchChats.dispatch(q);
+    // A newer keystroke already superseded this one, or the box was cleared.
+    if (signal.aborted || this.query !== q) {
+      return;
+    }
+    if (res === null) {
+      this.setNote("Search failed. Check your connection.");
+      return;
+    }
+    container.replaceChildren();
+    if (res.matches.length === 0) {
+      // Truncation must be stated: otherwise an empty result implies the text
+      // is nowhere, when older chats simply were not read.
+      this.setNote(
+        res.truncated
+          ? `No matches in the ${res.scanned} most recent conversations (older ones were not searched).`
+          : `No matches in ${res.scanned} conversations.`,
+      );
+      container.replaceChildren(
+        el("div", { className: "list-empty" }, "No matching conversations."),
+      );
+      return;
+    }
+    this.setNote(
+      res.truncated
+        ? `${res.matches.length} of the ${res.scanned} most recent conversations (older ones were not searched).`
+        : `${res.matches.length} matching conversations.`,
+    );
+    for (const m of res.matches) {
+      container.appendChild(buildMatchRow(m));
+    }
+    // One delegated listener per render, bound to this search's signal so the
+    // previous one is dropped rather than stacking.
+    container.addEventListener(
+      "click",
+      (e) => {
+        const rowEl = (e.target as HTMLElement).closest<HTMLElement>("[data-search-chat]");
+        const id = rowEl?.getAttribute("data-search-chat");
+        if (id === null || id === undefined) {
+          return;
+        }
+        const hit = res.matches.find((x) => x.id === id);
+        openChatTab(id, hit?.name ?? "Chat");
+      },
+      { signal },
+    );
   }
 
   async load(): Promise<void> {
@@ -206,6 +324,53 @@ function buildRow(row: HistoryRow): HTMLElement {
       "span",
       { className: "list-row-meta" },
       row.updatedAt > 0 ? new Date(row.updatedAt).toLocaleString() : "",
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cross-chat search.
+//
+// A SECOND mode over the same container, not a filter of the loaded list: the
+// list is the newest N sessions from KAS, while search reads every chat file
+// server-side. Filtering what happens to be on screen would answer a narrower
+// question than the box appears to ask.
+//
+// The in-chat search stays scoped to its own chat (user decision); this one
+// finds the conversation, and opening it hands over to that.
+// ---------------------------------------------------------------------------
+
+/** Debounce so a search is per-pause, not per-keystroke. */
+const SEARCH_DEBOUNCE_MS = 250;
+
+function buildMatchRow(m: ChatSearchMatch): HTMLElement {
+  const detail =
+    m.best.excerpt !== ""
+      ? m.best.excerpt
+      : // A title-only match has no line to quote; say why it matched instead.
+        "matches the conversation name";
+  const more = m.hits > 1 ? `${m.hits} matches` : m.hits === 1 ? "1 match" : "";
+  return el(
+    "div",
+    {
+      className: "list-row history-table-row",
+      role: "button",
+      tabindex: "0",
+      "data-search-chat": m.id,
+      "aria-label": `Open ${m.name}`,
+    },
+    el("span", { className: "history-kind history-kind-chat" }, "Chat"),
+    el(
+      "div",
+      { className: "list-row-title" },
+      el("span", { className: "list-row-name" }, m.name),
+      el("span", { className: "list-row-summary" }, detail),
+    ),
+    more !== "" ? el("span", { className: "history-status" }, more) : null,
+    el(
+      "span",
+      { className: "list-row-meta" },
+      m.updated_at > 0 ? new Date(m.updated_at).toLocaleString() : "",
     ),
   );
 }
