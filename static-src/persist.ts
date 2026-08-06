@@ -22,6 +22,9 @@ export interface AppSettings {
    *  the agent makes stages for user review before hitting disk.
    *  Per-chat toggle is on the chat prompt row (Supervised pill). */
   supervised_default?: boolean;
+  /** Approve (rather than refuse) a scheduled run's tool request when the
+   *  unattended budget expires. Off by default; see run_unattended.go. */
+  scheduled_auto_approve?: boolean;
   model_effort?: { last_model: string; effort: EffortLevel };
   /** Chat retention, owned end to end by vibekit (kiro-cli's own
    *  cleanup.periodDays is pinned to 0/never). Encoding: -1 = forever

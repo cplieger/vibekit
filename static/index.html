@@ -552,6 +552,15 @@
             </div>
 
             <div class="page-section">
+              <h3 class="section-title">Scheduled runs</h3>
+              <p class="section-hint">A scheduled workflow runs with nobody watching, so a tool request it raises has nobody to answer it. By default vibekit <strong>refuses</strong> such a request after 3 minutes and says so on the workflow's row — the run stops rather than parking forever and blocking every later run of that schedule. Turn this on to approve those requests instead. It is a separate decision from the Active policy above on purpose: approving something while you watch is not the same as approving it unattended at 3am. Approvals granted this way are one-shot and never persisted as a rule.</p>
+              <label class="perm-mode">
+                <input type="checkbox" id="scheduled-auto-approve-checkbox">
+                <span>Approve tool requests in scheduled runs instead of refusing them</span>
+              </label>
+            </div>
+
+            <div class="page-section">
               <div id="agent-ignore-section">
                 <h3 class="section-title">Agent ignore files</h3>
                 <p class="section-hint">Paths to gitignore-style files. The agent cannot <em>read</em> files matching these patterns (writes are still allowed, same as git). Good for keeping decrypted secrets (<code>.env.dec</code>), build artifacts, and other gitignored files out of the agent's context window. Relative entries resolve against the workspace root.</p>

@@ -23,6 +23,16 @@ const (
 	KeyNotifyAgentFinished  = "notify_agent_finished"
 	KeyNotifyPermission     = "notify_permission"
 	KeySupervisedDefault    = "supervised_default"
+
+	// KeyScheduledAutoApprove lets a SCHEDULED run's tool requests be approved
+	// automatically instead of refused after the unattended budget.
+	//
+	// Off by default, and deliberately its OWN switch rather than a read of the
+	// interactive auto-approve posture: "I approve this while watching" and
+	// "approve this unattended at 03:00" are different consents, so the second
+	// has to be chosen explicitly. Turning it on is informed; inheriting it
+	// would not be.
+	KeyScheduledAutoApprove = "scheduled_auto_approve"
 )
 
 // DefaultChatRetentionDays is the seeded default for chat_retention_days.
@@ -104,6 +114,7 @@ var KnownKeys = map[string]struct{}{
 	KeyNotifyAgentFinished:  {},
 	KeyNotifyPermission:     {},
 	KeySupervisedDefault:    {},
+	KeyScheduledAutoApprove: {},
 }
 
 // WarnUnknownKeys logs a warning for each top-level key in keys that
