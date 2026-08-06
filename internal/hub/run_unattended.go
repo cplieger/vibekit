@@ -14,12 +14,15 @@ package hub
 // and an agent-launched run is the agent's own, on its chat's bridge. Neither is
 // marked, so neither is ever auto-refused.
 //
-// DENY rather than approve, and that is the whole point. "I approve this while
-// watching" and "approve this unattended at 03:00" are different consents, and
-// inheriting the first as the second is how a scheduler quietly acquires
-// privileges nobody granted it. A workflow that needs a permission Cedar does not
-// already allow will not complete unattended, and that is the correct outcome:
-// the fix is a policy rule the user wrote on purpose.
+// DENY by default, with an explicit opt-out. "I approve this while watching" and
+// "approve this unattended at 03:00" are different consents, and INHERITING the
+// first as the second is how a scheduler quietly acquires privileges nobody
+// granted. A `scheduled_auto_approve` setting (Settings → Permissions, off by
+// default) is not that inheritance: it is a decision made on purpose about
+// unattended work, so it is offered rather than refused. With it off, a workflow
+// needing a permission Cedar does not already allow will not complete unattended
+// and the row says why; with it on, the budget still applies and the answer at
+// the deadline is approve instead of refuse.
 
 import (
 	"context"
@@ -29,6 +32,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/settings"
 )
 
 // unattendedApprovalBudget is how long a scheduled run's permission request
@@ -101,14 +105,16 @@ func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 		// AfterFunc parks no goroutine while waiting, and the timer is a no-op
 		// once the request has been answered: settle() checks the tracker, which
 		// the ordinary response path has already cleared.
+		params := msg.Params
 		time.AfterFunc(unattendedApprovalBudget, func() {
-			h.denyUnattendedPermission(chatID, requestID, scheduleID, tool)
+			h.answerUnattendedPermission(chatID, requestID, scheduleID, tool, params)
 		})
 	}
 }
 
-// denyUnattendedPermission refuses a still-pending request and records why.
-func (h *Hub) denyUnattendedPermission(chatID api.ChatID, requestID int64, scheduleID, tool string) {
+// answerUnattendedPermission settles a still-pending request for an absent
+// user: refuse by default, or approve when the operator opted in.
+func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
 	// Still pending? The tracker holds a request until it resolves, so its
 	// absence means the user (or a teardown) already answered.
 	if !h.sse.pendingPerms.Has(requestID) {
@@ -121,13 +127,35 @@ func (h *Hub) denyUnattendedPermission(chatID api.ChatID, requestID int64, sched
 	if sb == nil {
 		return
 	}
-	slog.Warn("unattended run: refusing a permission nobody answered",
-		"chat_id", chatID, "tool", tool, "budget", unattendedApprovalBudget)
-	if err := sb.Respond(ctx, requestID, api.PermissionOutcomeCancelled(), nil); err != nil {
-		slog.Error("unattended deny failed", "chat_id", chatID, "error", err)
+	approve := scheduledAutoApprove(ctx, h.lifecycle.configDir)
+	outcome := api.PermissionOutcomeCancelled()
+	verb := "refusing"
+	if approve {
+		opt := autoApproveOptionID(msgParams)
+		if opt == "" {
+			// Nothing to select: an allow option is what makes approval
+			// expressible, and inventing an id would answer with a choice the
+			// request never offered. Fall back to the refusal.
+			slog.Warn("unattended auto-approve: request offered no allow option, refusing instead",
+				"chat_id", chatID, "tool", tool)
+		} else {
+			outcome = api.PermissionOutcomeSelected(opt)
+			verb = "approving"
+		}
+	}
+	slog.Warn("unattended run: "+verb+" a permission nobody answered",
+		"chat_id", chatID, "tool", tool, "budget", unattendedApprovalBudget,
+		"auto_approve", approve)
+	if err := sb.Respond(ctx, requestID, outcome, nil); err != nil {
+		slog.Error("unattended permission answer failed", "chat_id", chatID, "error", err)
 		return
 	}
 	h.sse.pendingPerms.Remove(requestID)
+	if verb == "approving" {
+		// An approval is not a failure: the run continues, so the schedule's
+		// outcome stays whatever the run itself reports.
+		return
+	}
 
 	// Surface it. Without this the schedule row still reads "started" while the
 	// run fails the same way every night, which is exactly the silent-repeat
@@ -160,4 +188,37 @@ func permissionToolName(params json.RawMessage) string {
 		return p.ToolCall.Title
 	}
 	return p.ToolCall.Kind
+}
+
+// scheduledAutoApprove reads the opt-out. Absent or unreadable means OFF, so a
+// missing settings file can never widen what an unattended run may do.
+func scheduledAutoApprove(ctx context.Context, configDir string) bool {
+	var b bool
+	if !settings.FieldInto(ctx, configDir, settings.KeyScheduledAutoApprove, settings.KeyScheduledAutoApprove, &b) {
+		return false
+	}
+	return b
+}
+
+// autoApproveOptionID picks the request's allow-once option.
+//
+// `allow_always` is deliberately NOT chosen: it would persist a rule from an
+// automated answer, turning one unattended decision into a standing grant the
+// user never wrote. A one-shot approval expires with the turn.
+func autoApproveOptionID(params json.RawMessage) string {
+	var p struct {
+		Options []struct {
+			OptionID string `json:"optionId"`
+			Kind     string `json:"kind"`
+		} `json:"options"`
+	}
+	if json.Unmarshal(params, &p) != nil {
+		return ""
+	}
+	for _, o := range p.Options {
+		if o.Kind == "allow_once" {
+			return o.OptionID
+		}
+	}
+	return ""
 }

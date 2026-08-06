@@ -45,6 +45,16 @@ class PermissionsUIController {
         void patchSettings({ supervised_default: supCheckbox.checked });
       });
     }
+    // Whether a SCHEDULED run's tool request is approved or refused when nobody
+    // answers it. Its own switch rather than a read of the policy above, because
+    // approving while watching is a different consent from approving unattended.
+    const schedCheckbox = maybeEl<HTMLInputElement>("scheduled-auto-approve-checkbox");
+    if (schedCheckbox !== null) {
+      schedCheckbox.checked = initial.scheduled_auto_approve === true;
+      schedCheckbox.addEventListener("change", () => {
+        void patchSettings({ scheduled_auto_approve: schedCheckbox.checked });
+      });
+    }
     this.initAgentIgnoreUI(initial);
   }
 
