@@ -177,10 +177,6 @@ func WithSchedules(st *schedule.Store) Option {
 	return func(h *Hub) { h.schedules = st }
 }
 
-// Schedules exposes the store so the composition root can build the runner over
-// the same instance the REST handlers mutate.
-func (h *Hub) Schedules() *schedule.Store { return h.schedules }
-
 // WithPush wires the push notification service at construction time.
 func WithPush(p api.PushService) Option {
 	return func(h *Hub) { h.push = p }
