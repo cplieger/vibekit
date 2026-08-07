@@ -541,7 +541,7 @@ func TestKillGroup_ReapsTheWholeTree(t *testing.T) {
 	if err := killGroup(cmd.Process, syscall.SIGKILL); err != nil {
 		t.Fatalf("killGroup: %v", err)
 	}
-	_, _ = cmd.Process.Wait() // reap the head so its exit doesn't race the poll
+	_, _ = cmd.Process.Wait() // reap the head; the poll below is on the child
 
 	deadline := time.Now().Add(3 * time.Second)
 	for processAlive(childPID) {
@@ -570,9 +570,31 @@ func waitForPIDFile(t *testing.T, path string) int {
 	}
 }
 
-// processAlive reports whether pid exists, using the null signal (delivers
-// nothing, only checks permission). A zombie still answers alive, which is why
-// callers reap the head before polling its children.
+// processAlive reports whether pid is a live (non-zombie) process, read from
+// /proc/<pid>/stat.
+//
+// The null signal is NOT usable here. `kill(pid, 0)` answers "alive" for a
+// zombie, and the process this test polls is the bait shell's child: killGroup
+// takes the shell too, so the child is orphaned and reparented to PID 1 the
+// moment it dies, and it stays a zombie until whatever init the test happens to
+// run under collects it. Reaping the HEAD does not help — the head is the
+// child's parent, not the child's reaper. So a null-signal poll measures the
+// ambient reaper's latency rather than killGroup's reach: it needs an init that
+// reaps (it flakes on a loaded runner and fails outright in a container whose
+// PID 1 never reaps), and a zombie already proves the signal landed.
+//
+// The state field follows the last ')' — comm is parenthesized and may itself
+// contain spaces or parens, so the whole prefix has to be skipped from the
+// right rather than split on whitespace.
 func processAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)) // #nosec G304 -- pid from the test's own child
+	if err != nil {
+		return false // no /proc entry: reaped and gone
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 || i+2 >= len(s) {
+		return false
+	}
+	return s[i+2] != 'Z'
 }
