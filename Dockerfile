@@ -60,7 +60,7 @@ COPY . ./
 # runtime refresh re-runs the same check before every swap.
 ARG TOOL_CATALOG_URL=https://github.com/cplieger/tool-catalog/releases/latest/download/tool-catalog.json
 # renovate: datasource=go depName=github.com/cplieger/toolbelt/v2
-ARG TOOLBELT_TOOLCATALOG_VERSION=v2.4.2
+ARG TOOLBELT_TOOLCATALOG_VERSION=v2.4.3
 # hadolint ignore=DL3062
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
     go run "github.com/cplieger/toolbelt/v2/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
