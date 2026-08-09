@@ -107,7 +107,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # imports `render` from it (the reset primitives), and it is the peer the UI
 # package builds on; bundled into app.js by cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=3.4.2
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=3.5.0
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
