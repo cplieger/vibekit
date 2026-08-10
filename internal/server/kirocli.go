@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/pinstall"
+	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/webhttp"
 )

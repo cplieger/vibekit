@@ -10,7 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/pinstall"
+	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
