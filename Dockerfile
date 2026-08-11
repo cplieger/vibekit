@@ -180,17 +180,28 @@ ARG BUILD_VERSION=dev
 # time — a declared-incompatible pairing would close every shell attempt with
 # code 4002 while /api/health stays green and the rest of the app works, so the
 # outage reads as a shell bug rather than a version mismatch. Fail HERE instead.
-# Client constants come from the vendored artifact fetched above (published
-# source, frozen export shape); server constants come from the engine's public
-# Go API inside scripts/wirecheck (no source scraping on the Go half).
-# hadolint ignore=DL3062
+# Client constants come from the vendored artifact's PUBLISHED MANIFEST
+# (wire-compatibility.json, a package-root file the engine renders from its own
+# TypeScript constants); server constants come from the engine's public Go API
+# inside scripts/wirecheck. Neither half is scraped from source. This replaced a
+# `sed` extraction of wire-compatibility.ts, which is the practice the engine
+# published the manifest to end -- it breaks on any reformat of that line, and a
+# reformat is not a wire change, so the gate would have failed for the wrong
+# reason. The manifest is decoded by the engine's own terminal.ReadWireManifest,
+# so its schema has one home rather than one per consumer.
+# BUILT, not `go run`: the gate's exit code is its contract (0 compatible,
+# 1 floor violated, 2 the gate itself is broken), and `go run` discards it --
+# it prints "exit status 2" and exits 1 itself, collapsing "fix the gate" into
+# "bump a pin". Dropping the DL3062 ignore with it: that rule fires on an
+# unpinned `go run`/`go install <pkg>`, which is meaningless for a local path,
+# and `go build ./scripts/wirecheck` does not trip it. An unneeded ignore
+# suppresses a real future warning on this step.
 RUN --mount=type=cache,target=/root/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    WIRE_TS=static-src/node_modules/@cplieger/web-terminal-engine/src/wire-compatibility.ts && \
-    CLIENT_REV=$(sed -n 's|^export const WIRE_PROTOCOL_VERSION = \([0-9]\{1,\}\);.*|\1|p' "$WIRE_TS") && \
-    CLIENT_MIN_SERVER=$(sed -n 's|^export const MIN_SUPPORTED_SERVER_WIRE_VERSION = \([0-9]\{1,\}\);.*|\1|p' "$WIRE_TS") && \
-    : "${CLIENT_REV:?wire-floor-gate: WIRE_PROTOCOL_VERSION not found in the vendored engine artifact (source layout changed?)}" && \
-    : "${CLIENT_MIN_SERVER:?wire-floor-gate: MIN_SUPPORTED_SERVER_WIRE_VERSION not found in the vendored engine artifact (source layout changed?)}" && \
-    go run ./scripts/wirecheck -client-rev "$CLIENT_REV" -client-min-server "$CLIENT_MIN_SERVER"
+    --mount=type=tmpfs,target=/tmp/wirecheck-bin \
+    WIRE_MANIFEST=static-src/node_modules/@cplieger/web-terminal-engine/wire-compatibility.json && \
+    test -f "$WIRE_MANIFEST" || { echo "wire-floor-gate: $WIRE_MANIFEST missing from the vendored engine artifact (fix the gate, do not bump a pin)" >&2; exit 2; } && \
+    go build -o /tmp/wirecheck-bin/wirecheck ./scripts/wirecheck && \
+    /tmp/wirecheck-bin/wirecheck -manifest "$WIRE_MANIFEST"
 
 # hadolint ignore=DL3062
 RUN /tmp/package/lib/tsc --project static-src/tsconfig.build.json --noEmit && \

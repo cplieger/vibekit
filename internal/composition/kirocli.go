@@ -3,10 +3,9 @@ package composition
 import (
 	"context"
 	"log/slog"
-	"os"
 
-	"github.com/cplieger/pinstall"
-	"github.com/cplieger/pinstall/kirocli"
+	"github.com/cplieger/pinstall/v2"
+	"github.com/cplieger/pinstall/v2/kirocli"
 )
 
 // The layout facts vibekit brings to the install: where the convenience symlink
@@ -124,7 +123,7 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 	}()
 	return kiroRuntime{
 		cliPath: mgr.Path,
-		env:     func() []string { return kiroPathEnv(mgr.PathEntry()) },
+		env:     mgr.PathEnv,
 		ready:   mgr.Ready,
 		rescan:  mgr.Rescan,
 		stop:    cancel,
@@ -170,8 +169,9 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 		// by a plain PATH search (not relative to its own executable). So the Go
 		// caller the old comment asked for does exist: every chat bridge is
 		// `bridge.startProcess` running `kiro-cli acp`, which is an invocation of
-		// this sidecar by another name. kiroPathEnv prepending the version
-		// directory is what makes that search land inside the verified install.
+		// this sidecar by another name. pinstall's Manager.PathEnv prepending the
+		// version directory is what makes that search land inside the verified
+		// install.
 		//
 		// Why this matters more than a stale comment: `--version` is answered by
 		// the MAIN binary, so a sidecar-less directory passed the boot probe,
@@ -193,6 +193,13 @@ func kiroInstallConfig(cfg *Config) *pinstall.Config {
 		// observation. Claiming it here would be a guard with no producer, which
 		// reports every boot as clean while looking like a check;
 		// tests/shell/pins_export_test.sh asserts neither side claims it.
+		//
+		// TrustedUIDs is a different kind of statement and IS vibekit's to make:
+		// not an observation about what the tree turned out to be, but a fact
+		// about who the volume's access-control list names. Empty by default,
+		// so the custody check is fully enforcing unless an operator names a
+		// uid; see parseTrustedInstallUIDs for what setting one asserts.
+		TrustedUIDs: cfg.TrustedInstallUIDs,
 	}
 }
 
@@ -219,34 +226,6 @@ func kiroLegacyPurge() *pinstall.Purge {
 		StagePrefix: legacyStagePrefix,
 		Marker:      legacyPurgeMarker,
 	}
-}
-
-// kiroPathEnv returns the environment overlay that puts the active kiro-cli
-// version directory FIRST on PATH, or nil when no version is active.
-//
-// Leading is the point, not a detail. That directory holds only kiro-cli's own
-// dispatchers, so it shadows nothing else, while $TOOLS/bin is co-owned by the
-// toolbelt engine and $TOOLS/go/bin is GOPATH/bin, where a `go install` can land
-// anything — including a stale kiro-cli from a restored backup volume. With the
-// version directory first, a kiro-cli that looks for a sibling of its own
-// executable and one that looks for a bare name on PATH both land inside the
-// same verified install.
-func kiroPathEnv(entry string) []string {
-	if entry == "" {
-		return nil
-	}
-	if inherited := os.Getenv("PATH"); inherited != "" {
-		return []string{"PATH=" + entry + string(os.PathListSeparator) + inherited}
-	}
-	// No inherited PATH: return the version directory ALONE. Appending an empty
-	// value would leave a trailing separator, and an empty PATH element resolves
-	// to the child's cwd (cfg.WorkDir, the user's own checkouts), so the
-	// degenerate case would WIDEN the search path instead of narrowing it — the
-	// opposite of what leading with the version directory buys. The image always
-	// sets PATH, so this is only reachable from a bare `go run`, a test, or a
-	// deployment that clears the environment; web-terminal-kiro's sessionPathEnv
-	// already guards it, and the two overlays should not disagree.
-	return []string{"PATH=" + entry}
 }
 
 // kiroSettings is vibekit's kiro-cli settings set, re-asserted against the

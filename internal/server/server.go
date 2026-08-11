@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	"github.com/cplieger/pinstall"
+	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/toolbelt/v2/httpapi"
 	"github.com/cplieger/vibekit/internal/api"
@@ -63,7 +63,7 @@ type Server struct {
 	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
 	// log the unspoofable socket peer.
 	trustedProxies []*net.IPNet
-	// hostPolicy is the ALLOWED_HOSTS exact-match Host allowlist the
+	// hostPolicy is the WT_ALLOWED_HOSTS exact-match Host allowlist the
 	// security middleware applies before the CSRF check (anti-DNS-rebinding;
 	// see internal/composition parseAllowedHosts). Nil/inactive = any Host
 	// accepted.
@@ -184,7 +184,7 @@ func WithTrustedProxies(trusted []*net.IPNet) Option {
 }
 
 // WithHostPolicy sets the exact-match Host allowlist (parsed from
-// ALLOWED_HOSTS) that the security middleware applies before the CSRF
+// WT_ALLOWED_HOSTS) that the security middleware applies before the CSRF
 // check — the anti-DNS-rebinding gate. A nil or inactive policy is a
 // pass-through (any Host accepted, the backward-compatible default).
 func WithHostPolicy(p *webhttp.HostPolicy) Option {
@@ -272,47 +272,11 @@ func (s *Server) ListenAndServe() error {
 	idem := newIdempotencyCache(idempotencyTTL)
 	defer idem.stop()
 
-	// Middleware, outermost first: request-id access logging (webhttp.Logging,
-	// skipping the long-lived SSE stream so it doesn't log a single
-	// open-forever line), then panic recovery, then the security layer (dynamic
-	// CSP + stdlib CSRF), then the REST idempotency-dedup, then the mux.
 	// webhttp.NewServer's defaults match the former hand-rolled server exactly
 	// (ReadHeaderTimeout 10s, IdleTimeout 120s, MaxHeaderBytes 1 MiB, and
 	// Read/WriteTimeout left unset for the SSE, WebSocket, and streaming-zip
 	// responses).
-	//
-	// webhttp.WithClientIP adds a spoof-safe "client_ip" to every access line:
-	// with no trusted proxies it is the unspoofable socket peer; when
-	// TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
-	// resolved from a trusted X-Forwarded-For. It costs nothing on the skipped
-	// streaming paths.
-	handler := webhttp.Chain(mux,
-		webhttp.Logging(
-			webhttp.WithSkipPaths("/api/events"),
-			// The shell PTY at /api/shell/ws is silenced by RESPONSE, not by
-			// path: WithSkipUpgrades drops the record only when the response
-			// actually left HTTP framing (a recorded 101 — what the terminal
-			// engine's coder/websocket handshake does — or a bare hijack), so
-			// the open-forever line is gone while every handshake REFUSAL on
-			// the same path keeps its status, duration, request id and
-			// client_ip: the engine's 426 for a non-upgrade probe, the 400 for
-			// a malformed Sec-WebSocket-Key, the 403 from the host/CSRF layer,
-			// the 401 from auth. Those are exactly the lines read when a
-			// browser cannot attach a shell, and the path skip this replaced
-			// deleted them along with the noise.
-			webhttp.WithSkipUpgrades(),
-			// /api/health is probed every 30s (Docker HEALTHCHECK curl +
-			// Gatus). The fleet-standard ProbeLogLevel keeps healthy probes
-			// at Debug (out of the shipped stream) and surfaces a failing
-			// probe at Warn/Error — previously every probe logged at Info
-			// (~5,760 noise lines/day) while carrying no failure emphasis.
-			webhttp.ProbeLogLevel("/api/health"),
-			webhttp.WithClientIP(s.trustedProxies...),
-		),
-		webhttp.Recoverer(),
-		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
-		idem.middleware,
-	)
+	handler := webhttp.Chain(mux, s.middlewareStack(cspPolicy, idem)...)
 	srv := webhttp.NewServer(handler)
 	srv.Addr = ":" + port
 
@@ -336,8 +300,8 @@ func (s *Server) ListenAndServe() error {
 	// included) carries no auth of its own — the exact-Host allowlist is
 	// the gate that closes it (see internal/composition parseAllowedHosts).
 	if !s.hostPolicy.Active() {
-		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
-			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
+		slog.Warn("WT_ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
+			"hint", "set WT_ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
 	}
 
 	// webhttp.Run owns the serve/shutdown sequence (default 5s grace, matching
@@ -352,6 +316,65 @@ func (s *Server) ListenAndServe() error {
 	}))
 	s.ready.Store(false) // no-op on the signal path; covers a serve failure
 	return runErr
+}
+
+// middlewareStack returns the middleware wrapping the route mux, OUTERMOST
+// FIRST (webhttp.Chain's order): request-id access logging, then panic
+// recovery, then the security layer (dynamic CSP + the WT_ALLOWED_HOSTS host
+// allowlist + stdlib CSRF), then the canonical-path gate over the API surface,
+// then the REST idempotency dedup, then the mux.
+//
+// It is a method rather than an inline literal in ListenAndServe so the ORDER
+// is assertable without binding a port: the ordering is a security property
+// (see the canonicalAPIPath entry below and securityMiddleware's own doc), and
+// a test that hand-assembled the same list would only assert agreement with
+// itself.
+//
+// webhttp.WithClientIP adds a spoof-safe "client_ip" to every access line:
+// with no trusted proxies it is the unspoofable socket peer; when
+// WT_TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
+// resolved from a trusted X-Forwarded-For. It costs nothing on the skipped
+// streaming paths.
+func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
+	return []webhttp.Middleware{
+		webhttp.Logging(
+			// The long-lived SSE stream is skipped by path so it doesn't log a
+			// single open-forever line.
+			webhttp.WithSkipPaths("/api/events"),
+			// The shell PTY at /api/shell/ws is silenced by RESPONSE, not by
+			// path: WithSkipUpgrades drops the record only when the response
+			// actually left HTTP framing (a recorded 101 — what the terminal
+			// engine's coder/websocket handshake does — or a bare hijack), so
+			// the open-forever line is gone while every handshake REFUSAL on
+			// the same path keeps its status, duration, request id and
+			// client_ip: the engine's 426 for a non-upgrade probe, the 400 for
+			// a malformed Sec-WebSocket-Key, the 403 from the host/CSRF layer,
+			// the 401 from auth. Those are exactly the lines read when a
+			// browser cannot attach a shell, and the path skip this replaced
+			// deleted them along with the noise.
+			webhttp.WithSkipUpgrades(),
+			// /api/health is probed every 30s (Docker HEALTHCHECK curl +
+			// Gatus). The fleet-standard ProbeLogLevel keeps healthy probes
+			// at Debug (out of the shipped stream) and surfaces a failing
+			// probe at Warn/Error — previously every probe logged at Info
+			// (~5,760 noise lines/day) while carrying no failure emphasis.
+			webhttp.ProbeLogLevel("/api/health"),
+			webhttp.WithClientIP(s.trustedProxies...),
+		),
+		webhttp.Recoverer(),
+		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
+		// The canonical-path gate (requestpath.go) sits INSIDE the WT_ALLOWED_HOSTS
+		// allowlist and the CSRF check and OUTSIDE every route: the two
+		// request-authorization gates answer 403 and must not be shadowed by a
+		// 400 about spelling, so a rebound-Host or forged cross-origin request
+		// still reads as the refusal it is. Being outside the mux is what makes
+		// it work at all — ServeMux canonicalizes before it selects a pattern,
+		// so no handler can be reached to refuse for itself. Being outside the
+		// idempotency cache too means a refused spelling never mints a dedup
+		// entry a later well-formed retry would replay.
+		canonicalAPIPath,
+		idem.middleware,
+	}
 }
 
 // requirePOST returns true if r.Method is POST; otherwise it writes a
@@ -395,7 +418,7 @@ type healthBody struct {
 // or when kiro-cli is unavailable, which is how a failed or still-running
 // install surfaces to `docker ps`, monitoring and the client's degraded banner.
 //
-// The kiro-cli verdict is the install manager's (github.com/cplieger/pinstall,
+// The kiro-cli verdict is the install manager's (github.com/cplieger/pinstall/v2,
 // wired in internal/composition): it is VERSION-AWARE, where the check this
 // replaced only asked whether SOMETHING named kiro-cli was on PATH — so a binary
 // drifted from the pin, or one whose auto-update could not be switched off, now

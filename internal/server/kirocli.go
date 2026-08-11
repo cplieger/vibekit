@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/pinstall"
+	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/webhttp"
 )
@@ -91,30 +91,32 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// loopbackOnly admits only requests whose SOCKET PEER *and* Host header are both
-// loopback, via webhttp.LoopbackRequest — the shared two-legged conjunction,
-// which reads only RemoteAddr and Host and fails closed when either is
-// unparseable. Forwarded headers are deliberately ignored — they are
-// client-controlled, and this gate is the repair hook's only boundary on an
-// otherwise-unauthenticated port. The intended caller is an operator or an agent
-// INSIDE the container (`curl -X POST localhost:9847/api/kiro-cli/rescan`);
-// everything routed in from outside is refused, as is a DNS-rebound page whose
-// loopback socket peer carries an attacker Host.
+// loopbackOnly admits only requests whose SOCKET PEER and Host header are both
+// loopback AND which carry no proxy or browser provenance header, via
+// webhttp.LoopbackOnly.
 //
 // The gate matters because a rescan spawns bounded kiro-cli subprocesses (a
-// version probe plus the settings reassertion): leaving it reachable from the
-// LAN would hand an unauthenticated caller a process-spawn lever.
+// version probe plus the settings reassertion): leaving it reachable from the LAN
+// would hand an unauthenticated caller a process-spawn lever.
+//
+// The provenance deny is NEW here and is why this now uses the middleware rather
+// than the bare webhttp.LoopbackRequest predicate. The two legs alone are not
+// sufficient: a reverse proxy sharing this server's loopback interface (host
+// networking, a shared network namespace) rewrites Host to its upstream address
+// by default in both nginx and Apache, which satisfies the Host leg while the
+// proxy itself satisfies the peer leg — so a remote request passed both checks
+// and reached the process-spawn lever. web-terminal-kiro had closed that with its
+// own seven-header deny while this copy had not; the decision now lives once, in
+// webhttp.
+//
+// The refusal stays local: the repo's canonical error envelope, not the health
+// envelope the success and unready paths use, because this is a rejected request
+// rather than a readiness verdict and a caller keying on {"status":...} must not
+// read a 403 as one.
 func loopbackOnly(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !webhttp.LoopbackRequest(r) {
-			// The repo's canonical error envelope, not the health envelope the
-			// success and unready paths use: this is a rejected request, not a
-			// readiness verdict, and a caller keying on {"status":...} must not
-			// read a 403 as one.
-			api.WriteJSONStatus(w, http.StatusForbidden,
-				api.ErrorJSON("the kiro-cli repair hook is loopback-only; call it from inside the container"))
-			return
-		}
-		next.ServeHTTP(w, r)
+	refuse := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		api.WriteJSONStatus(w, http.StatusForbidden,
+			api.ErrorJSON("the kiro-cli repair hook is loopback-only; call it from inside the container"))
 	})
+	return webhttp.LoopbackOnly(refuse)(next)
 }
