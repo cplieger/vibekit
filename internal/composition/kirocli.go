@@ -3,6 +3,7 @@ package composition
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/pinstall/v2/kirocli"
@@ -52,7 +53,14 @@ type kiroRuntime struct {
 	// rescan re-derives the active version from disk without downloading, or nil
 	// when there is no manager. It backs the loopback repair hook.
 	rescan func(context.Context) (bool, error)
-	// stop cancels the background install.
+	// stop cancels the background install AND waits for it to finish, so a caller
+	// that reshapes or removes the tools tree afterwards cannot race the
+	// installer. Bare cancellation would return while EnsureWithRetry was still
+	// mid-attempt: the manager writes its state record and creates directories
+	// under ToolsDir on the way out of a cancelled attempt, which is invisible in
+	// production (nothing deletes that tree at shutdown) but makes any test that
+	// hands it a t.TempDir intermittently fail its own cleanup with "directory not
+	// empty".
 	stop func()
 }
 
@@ -115,7 +123,9 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 		return unavailableKiroRuntime()
 	}
 	ensureCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		// The error is already logged by EnsureWithRetry, with the attempt count
 		// and the in-container repair hint, and there is nothing here that could
 		// act on it: the server stays up either way.
@@ -126,9 +136,28 @@ func startKiroCLI(ctx context.Context, cfg *Config) kiroRuntime {
 		env:     mgr.PathEnv,
 		ready:   mgr.Ready,
 		rescan:  mgr.Rescan,
-		stop:    cancel,
+		stop: func() {
+			cancel()
+			// Bounded, because stop runs on the shutdown path: EnsureWithRetry
+			// honours cancellation promptly (its retry wait and its HTTP fetch both
+			// select on the context), so this returns in milliseconds in practice.
+			// The timeout exists so a library that ever stopped honouring it could
+			// not wedge shutdown — a slow exit beats a hung one, and beats a
+			// silently unbounded wait either way.
+			select {
+			case <-done:
+			case <-time.After(kiroStopGrace):
+				slog.Warn("the kiro-cli installer did not stop within the shutdown grace; continuing",
+					"grace", kiroStopGrace)
+			}
+		},
 	}
 }
+
+// kiroStopGrace bounds how long shutdown waits for the background install to
+// notice cancellation. Generous relative to the milliseconds it actually takes,
+// because expiring it means giving up on a guarantee rather than merely waiting.
+const kiroStopGrace = 5 * time.Second
 
 // kiroInstallConfig is vibekit's whole deployment of the kiro-cli release: the
 // pins from the entrypoint, the tools tree, and the local policy. The release

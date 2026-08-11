@@ -17,7 +17,7 @@ require (
 	github.com/cplieger/jsonx v1.4.0
 	github.com/cplieger/keyenc v1.0.1
 	github.com/cplieger/pathinside v1.0.0
-	github.com/cplieger/pinstall/v2 v2.3.0
+	github.com/cplieger/pinstall/v2 v2.3.1
 	github.com/cplieger/runesafe v1.4.0
 	github.com/cplieger/slogx v1.6.0
 	github.com/cplieger/ssrf/v3 v3.0.0
