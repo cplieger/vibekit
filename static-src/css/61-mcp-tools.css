@@ -433,30 +433,108 @@
   display: none;
 }
 
-/* Tab status dots (thinking/permission indicators) */
+/* ===== Tab status dots =====
+   The vocabulary and its implementation are SHARED with
+   @cplieger/web-terminal-ui's .wt-status-dot (css/30-tabs.css), so vibekit and
+   web-terminal-kiro read the same way: an animated state is a solid disc
+   carrying a glow BEAT plus a travelling WAVE, and a blocked-on-you state is a
+   still disc inside a HARD ring. Motion and edge quality are the two axes, so
+   the pair separates without relying on hue (WCAG 1.4.1).
+
+   9px, matching that vocabulary — the feather geometry below is tuned at this
+   size and the strip already borrows web-terminal-kiro's active-row fill. */
 .tab-status-dot {
-  width: 6px;
-  height: 6px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   flex-shrink: 0;
   margin-inline-start: var(--sp-1);
 }
 
-.tab-dot-thinking {
-  background: var(--c-accent);
-  animation: vk-breathe 1.5s ease-in-out infinite;
+/* The two ANIMATED states share this rule and both keyframes verbatim: same
+   disc, same beat, same wave, same period. Only --dot-color differs, so a
+   future change to any layer cannot land on one state and miss the other. */
+.tab-dot-thinking,
+.tab-dot-waiting {
+  position: relative;
+  background: var(--dot-color);
+
+  /* Own compositing layer. The overlay and the wave are compositor-driven
+     layers, and a nested layer's position snaps to DEVICE pixels independently
+     of its parent's fractional page position — at 9px that reads as the pulse
+     sitting visibly off-centre. Promoting the dot rasters disc, overlay and
+     wave in one frame of reference, so they snap together. */
+  transform: translateZ(0);
 }
 
+.tab-dot-thinking {
+  --dot-color: var(--c-accent);
+}
+
+/* Agent declared waiting_on_user (focus_update): it asked the user something
+   and the turn ended. Same beat as thinking, yellow instead of accent — and
+   distinct from the permission dot below by motion, not just by hue. */
+.tab-dot-waiting {
+  --dot-color: var(--c-yellow);
+}
+
+/* The glow beat, compositor-only. The disc itself never changes; this
+   pre-painted overlay carries the beat's bright peak and animates ONLY opacity,
+   so after one rasterization the GPU blends two static layers.
+
+   Geometry is load-bearing: a HARD-edged overlay at 9px shows any half-pixel
+   layer snap as an off-centre pulse, so this is a radial with a solid bright
+   core and a ~1px feather ending at the disc's rim — a snapped half-pixel then
+   falls inside the feather. The wave below has proven that property for the
+   same geometry all along.
+
+   It exists only in the animated states and resolves --dot-color at raster
+   time, so there is no previous-state paint left to re-pulse when a dot
+   changes status. */
+.tab-dot-thinking::before,
+.tab-dot-waiting::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--dot-color) 78%, #fff) 0 70%,
+    transparent 92%
+  );
+  opacity: 0;
+  animation: vk-dot-glow 1.2s ease-in-out infinite;
+  will-change: opacity;
+}
+
+/* The wave: a feathered radial BAND (not a hairline ring) that starts hugging
+   the disc's edge and travels outward, dissolving, re-emitted each cycle. Soft
+   on both edges, so it reads as light leaving the disc rather than an outline
+   shrinking in opacity; scaling the layer scales the feather with it, which is
+   what makes the wave dissipate as it grows. transform + opacity only, so it
+   composites — an animated box-shadow spread would repaint every frame. */
+.tab-dot-thinking::after,
+.tab-dot-waiting::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    transparent 44%,
+    var(--dot-color) 76%,
+    transparent 100%
+  );
+  animation: vk-dot-wave 1.2s linear infinite;
+}
+
+/* Permission / approval pending: a still disc inside a static HARD 2px ring
+   (web-terminal-ui's `input` state). The stillness plus the hard edge is the
+   message — the turn is mid-flight but blocked on you — and it is what
+   separates this from waiting's soft travelling wave at the same hue. */
 .tab-dot-permission {
   background: var(--c-yellow);
-}
-
-/* Agent declared waiting_on_user (focus_update): it asked the user
-   something and the turn ended. Amber like permission (both mean "needs
-   you"), pulsing to distinguish from the steady permission dot. */
-.tab-dot-waiting {
-  background: var(--c-yellow);
-  animation: vk-breathe 1.5s ease-in-out infinite;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-yellow) 30%, transparent);
 }
 
 /* Steady accent dot = unsaved changes on an editor tab. Editor tabs never
@@ -468,11 +546,38 @@
 
 /* The active tab's fill is accent-DERIVED, so an accent dot sits on nearly its
    own hue there and all but disappears. Lift the two accent dots toward the text
-   colour on that row only; the amber pair needs nothing, since amber on a violet
-   fill separates on hue as well as lightness. */
-.tab.active .tab-dot-thinking,
+   colour on that row only; the yellow pair needs nothing, since yellow on a
+   violet fill separates on hue as well as lightness. Thinking lifts through
+   --dot-color so the disc, the overlay and the wave all shift together. */
+.tab.active .tab-dot-thinking {
+  --dot-color: color-mix(in oklch, var(--c-accent), var(--c-text-primary) 55%);
+}
+
 .tab.active .tab-dot-dirty {
   background: color-mix(in oklch, var(--c-accent), var(--c-text-primary) 55%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Motion is what separates the animated states from permission's frozen ring;
+     with it removed, punch an inner hole (dot -> donut) and add a static ring so
+     they still differ from permission (solid ringed disc) and from dirty (bare
+     disc) by SHAPE, not hue alone (WCAG 1.4.1). The ring carries the same 30%
+     weight as permission's, from whichever hue the state supplied. */
+  .tab-dot-thinking,
+  .tab-dot-waiting {
+    box-shadow:
+      inset 0 0 0 2px var(--c-bg-secondary),
+      0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
+  }
+
+  /* The overlay and the wave disappear entirely rather than freezing mid-beat
+     or mid-travel (the beat lives on ::before, the wave on ::after). */
+  .tab-dot-thinking::before,
+  .tab-dot-waiting::before,
+  .tab-dot-thinking::after,
+  .tab-dot-waiting::after {
+    content: none;
+  }
 }
 
 /* Tooltip + confirm dialog moved to @cplieger/ui-primitives — see the

@@ -128,6 +128,53 @@
   }
 }
 
+/* The status-dot glow beat: base -> brighter -> base, then a rest until the next
+ * cycle — expressed as the OPACITY ENVELOPE of a pre-painted bright overlay, not
+ * as the disc's own colours. Animating background-color/border-color at every
+ * keyframe (what this replaced) repaints the disc every frame for the whole time
+ * an agent works; an opacity blend over two static layers costs compositing
+ * only. Shared verbatim with @cplieger/web-terminal-ui's wt-working-glow.
+ *
+ * Phase-locked with vk-dot-wave at 1.2s — change both or neither. */
+@keyframes vk-dot-glow {
+  0%,
+  70%,
+  100% {
+    opacity: 0;
+  }
+
+  35% {
+    opacity: 1;
+  }
+}
+
+/* The status-dot wave: one emission per cycle, launching off the disc's edge and
+ * dissolving by ~2.1x. Deliberately NOT vk-ping (which stays the sidebar/repo
+ * ping): the travel is LINEAR while the opacity is shaped separately, because an
+ * ease shared by both spends the slow opening on top of the disc — where the
+ * wave is indistinguishable from it — and then accelerates away exactly as the
+ * opacity collapses. Bright at birth (0.95 after a 12% ramp-in) so it holds
+ * usable weight across the travel instead of only while merged with the disc. */
+@keyframes vk-dot-wave {
+  0% {
+    transform: scale(1);
+    opacity: 0.15;
+  }
+
+  12% {
+    opacity: 0.95;
+  }
+
+  70% {
+    opacity: 0.45;
+  }
+
+  100% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
 @keyframes vk-bounce-dot {
   0%,
   80%,
