@@ -5,11 +5,11 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cplieger/envx"
+	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
@@ -210,42 +210,23 @@ func parseTrustedProxies(raw string) []*net.IPNet {
 // boot, the same warn-and-drop shape parseTrustedProxies and parseAllowedHosts
 // use. The count is reported and the values are NOT: a mis-wired compose could
 // put a secret on any key, and a warning is a durable, queryable log record.
+// pinstall.ParseIdentities returns a count rather than the refused text for that
+// exact reason, so the promise is now the library's to keep as well as this
+// function's.
 //
 // The name carries the WT_ prefix rather than VIBEKIT_ because it is not
 // vibekit's question — web-terminal-kiro installs kiro-cli through the same
 // library and reads the same variable, so one name lets one document answer it
-// for both. The knob is pinstall's in substance; if a third consumer appears,
-// the parser belongs in that library rather than copied a third time.
+// for both. The knob is pinstall's in substance, and so is the PARSING: the rule
+// this used to implement locally follows from Config.TrustedUIDs' contract, so it
+// now lives beside that field as pinstall.ParseIdentities and both consumers call
+// it. What stays here is what is genuinely vibekit's — the variable it reads and
+// the words its operator sees.
 func parseTrustedInstallUIDs(raw string) []int {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	var (
-		uids    []int
-		seen    = map[int]struct{}{}
-		invalid int
-	)
-	for entry := range strings.SplitSeq(raw, ",") {
-		field := strings.TrimSpace(entry)
-		if field == "" {
-			continue
-		}
-		uid, err := strconv.Atoi(field)
-		// Reject 0 and negatives: root is trusted by the library already, so 0
-		// grants nothing, and a negative is not an identity.
-		if err != nil || uid <= 0 {
-			invalid++
-			continue
-		}
-		if _, dup := seen[uid]; dup {
-			continue
-		}
-		seen[uid] = struct{}{}
-		uids = append(uids, uid)
-	}
-	if invalid > 0 {
+	uids, rejected := pinstall.ParseIdentities(raw)
+	if rejected > 0 {
 		slog.Warn("config: ignoring unusable WT_TRUSTED_INSTALL_UIDS entries (want whole numbers above 0)",
-			"invalid_count", invalid,
+			"invalid_count", rejected,
 			"hint", "list only numeric uids, comma-separated, each an account already at least as privileged as this server")
 	}
 	return uids
