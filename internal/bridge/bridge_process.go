@@ -26,6 +26,7 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	// Immutable after Start; read lock-free by SetModel / initialize.
 	b.agentEngine = opts.AgentEngine
 	b.enableHooks = opts.EnableHooks
+	b.secretStorage = opts.SecretStorage
 	b.extraArgs = opts.ExtraArgs
 	if opts.SessionID != "" && !api.ValidSessionID(opts.SessionID) {
 		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)

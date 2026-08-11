@@ -149,6 +149,23 @@ type StartOpts struct {
 	// re-asserting. Everything vibekit used to do to hold writes back — staging
 	// them, mirroring them, resolving them one at a time — is KAS's now.
 	Supervised bool
+	// SecretStorage declares `_meta.kiro.secretStorage` in the initialize
+	// handshake, opting into KAS's AcpSecretStorage so it asks this client to
+	// hold the MCP OAuth credentials it derives.
+	//
+	// It is a per-spawn value rather than a constant because declaring the
+	// capability is a COMMITMENT: KAS rethrows a client-side store failure into
+	// the MCP connect path, so a bridge that declares it with no credential
+	// store behind it turns every MCP OAuth connect into a failure. Set from
+	// whether the hub actually opened a store (internal/secretstore), which is
+	// best-effort — no configDir, or a mode that cannot be verified, leaves it
+	// nil. Undeclared, KAS keeps its own in-process copy and re-runs discovery
+	// and `POST /register` per spawn, which is the documented degradation and
+	// what vibekit did before the store existed.
+	//
+	// Set on BOTH chat bridges and the utility bridge: the capability rides the
+	// shared initialize, so whoever declares it must be able to answer.
+	SecretStorage bool
 }
 
 // ACPBridge manages a single kiro-cli ACP subprocess for one chat. Methods

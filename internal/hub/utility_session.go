@@ -186,7 +186,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	// per-request ctx is only used for the model pick above). Runs v3
 	// (KAS) like every chat bridge — without the engine it would default
 	// to v2, which vibekit can no longer talk to.
-	if err := bridge.Start(us.shutdownCtx, &api.StartOpts{Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &api.StartOpts{Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil}); err != nil {
 		return err
 	}
 	us.bridge = bridge
@@ -409,7 +409,9 @@ func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCRe
 		// connect an MCP server and never reach this. It is answered anyway
 		// because the secretStorage capability is declared by the SHARED
 		// bridge initialize: were KAS to ask, the default branch's refusal
-		// would be a store/delete rethrow rather than a clean miss.
+		// would be a store/delete rethrow rather than a clean miss. The
+		// declaration is conditional on us.secrets being non-nil, so a hub with
+		// no store never offers it here either.
 		_ = bridge.Respond(ctx, *msg.ID, secretGetResult(us.secrets, msg.Params), nil)
 	case msg.Method == methodKiroSecretStore:
 		result, err := secretStoreResult(ctx, us.secrets, msg.Params)

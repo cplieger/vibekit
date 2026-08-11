@@ -7,6 +7,11 @@
 // declaring `_meta.kiro.secretStorage` in initialize. Declining the capability
 // is what made every bridge spawn re-run `POST /register`.
 //
+// The declaration is CONDITIONAL on a store existing (api.StartOpts.SecretStorage).
+// Declaring it without one is worse than declining: KAS rethrows a store failure
+// into the MCP connect path, so every OAuth connect fails instead of merely
+// paying one DCR per spawn.
+//
 // Keys and values are opaque here; see internal/secretstore for the shape KAS
 // derives and why vibekit does not parse it. Values are never logged.
 //
@@ -110,6 +115,10 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 		return nil, &api.RPCError{Code: -32602, Message: "secret/store: key is required"}
 	}
 	if store == nil {
+		// Unreachable in normal operation: a hub with no store does not declare
+		// the capability, so KAS never asks. Reaching it means the peer called a
+		// method it was not offered, which is a protocol error and answered as
+		// one rather than reported as a successful write that never happened.
 		slog.Warn("v3 secret store: no store configured, credential not persisted", "key", p.Key)
 		return nil, &api.RPCError{Code: -32603, Message: "secret/store: no credential store configured"}
 	}
