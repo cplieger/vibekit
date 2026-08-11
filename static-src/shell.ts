@@ -22,7 +22,7 @@
 // MANIFEST.touch bundle (no page reset, no fonts, no @layer quarantine).
 // ---------------------------------------------------------------------------
 
-import { createTerminal } from "@cplieger/web-terminal-ui";
+import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-ui";
 import { presetTouch } from "@cplieger/web-terminal-ui/presets/touch";
 import type { TerminalHandle } from "@cplieger/web-terminal-ui";
 import { $ } from "./dom.js";
@@ -36,6 +36,15 @@ const SHELL_WS_PATH = "/api/shell/ws";
 // web font to fetch), unlike web-terminal-kiro's bundled Monaspace; 14px matches
 // the `.term` font-size the UI CSS sets.
 const SHELL_FONT_READY = "14px ui-monospace";
+
+// The scrollback store is built at MODULE load, not inside ensureTerminal, even
+// though the terminal itself stays lazy. Constructing it is what runs its orphan
+// sweep (expired entries, then the byte budget), and a store built only on first
+// panel open never sweeps for a user who does not open the shell — leaving old
+// snapshots sitting in this origin's localStorage indefinitely, which is the exact
+// accumulation the sweep exists to prevent. It opens no connection and touches no
+// DOM, so it costs a synchronous pass over this prefix's keys at boot.
+const shellScrollback = localScrollbackStorage({ prefix: "vibekit.shell-scrollback." });
 
 // The shell terminal recolored to vibekit's palette. The engine renderer reads
 // default fg/bg (and inverse) from --bg / --text, and the UI chrome reads
@@ -227,6 +236,20 @@ function ensureTerminal(): void {
     wsPath: SHELL_WS_PATH,
     fontReady: SHELL_FONT_READY,
     theme: SHELL_THEME,
+    // Restore the shell's scrollback from this device rather than pulling it back
+    // over the wire. The server holds the PTY across a reload, but the client
+    // comes back holding nothing, so a reopened panel refills its whole buffer
+    // frame by frame — visible as the history filling in, and worst on the phone,
+    // where iOS discards the tab and re-runs the page routinely.
+    //
+    // Keyed by the engine's own per-tab session id, so it matches across a reload
+    // and an iOS restore and NOT across a genuinely new tab (which should get a
+    // fresh terminal). A snapshot from a previous server process is DETECTED on the
+    // first resume and cleared behind the loading overlay (and discarded outright
+    // if that session is already gone), so a container restart cannot leave a
+    // previous shell's output on screen. The store is built at module load — see
+    // shellScrollback — and namespaced beside `vibekit.ui-state`.
+    persistScrollback: shellScrollback,
   });
 }
 
