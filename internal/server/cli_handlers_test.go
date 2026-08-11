@@ -271,3 +271,58 @@ func TestExecCLIRunner_RunStdoutCapped_Truncates(t *testing.T) {
 		t.Errorf("out = %q, want prefix %q", out, "ABCDEFGHIJ")
 	}
 }
+
+// TestHandleDiagnostics_TruncationCannotStrandAPartialSecret pins the
+// line-boundary rule on the capped dump.
+//
+// The cap cuts on a BYTE boundary, and redact.Report's secret-named-field rule
+// matches `"key": "value"` — it needs the CLOSING quote. So a cut landing inside a
+// value leaves `"apiKey": "AAAA` unterminated, the pattern does not match, and the
+// partial secret reaches the browser with its redaction anchor intact and its
+// terminator gone. Trimming to the last complete line before redacting is what
+// closes it; upstream hit the mirror image on a size-capped tail (KiroCrew #583).
+func TestHandleDiagnostics_TruncationCannotStrandAPartialSecret(t *testing.T) {
+	const secret = "SUPERSECRETTOKENVALUE0123456789"
+	// The cut must land INSIDE the apiKey value, which is the only state that
+	// tests anything: a cut at a line boundary leaves a well-formed document, and a
+	// cut before the line removes the secret for free. So the padding is sized
+	// EXACTLY, ending in a newline, and the value straddles the cap.
+	const tail = 35 // bytes of the apiKey line that survive the cut
+	prefix := `  "apiKey": "`
+	pad := strings.Repeat("p", diagnosticsMaxBytes-tail-1) + "\n"
+	stdout := pad + prefix + secret + `"`
+
+	// Guard the fixture rather than trusting the arithmetic: the surviving slice
+	// must end part-way through the secret, with no closing quote.
+	survives := stdout[:diagnosticsMaxBytes]
+	if !strings.HasPrefix(survives[len(pad):], prefix) || strings.HasSuffix(survives, `"`) {
+		t.Fatalf("fixture does not straddle the cap: survives=%q", survives[len(pad):])
+	}
+	leaked := survives[len(pad)+len(prefix):]
+	if len(leaked) < 12 {
+		t.Fatalf("fixture leaks only %d secret chars, too few to assert on", len(leaked))
+	}
+
+	f := &fakeCLIRunner{stdout: stdout}
+	rec := postDiagnostics(t, f)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body not JSON: %v", err)
+	}
+	report := got["report"]
+	if !strings.HasSuffix(report, "\n\n[truncated]") {
+		t.Fatalf("fixture did not truncate, so it tests nothing (len=%d, cap=%d)",
+			len(f.stdout), diagnosticsMaxBytes)
+	}
+	// Any prefix of the secret long enough to be a credential must be absent. The
+	// whole partial line is dropped, so no prefix survives at all.
+	// The exact prefix the cut would have stranded, plus shorter ones.
+	for _, n := range []int{len(leaked), 12, 8} {
+		if strings.Contains(report, secret[:n]) {
+			t.Errorf("report leaked a %d-char prefix of the secret across the cap", n)
+		}
+	}
+}
