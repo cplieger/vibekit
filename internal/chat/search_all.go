@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/parallel"
 )
 
 // The scan window, result cap and title boost are KiroCrew's
@@ -81,7 +82,7 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 	}
 
 	found := make([]Match, len(entries))
-	boundedParallel(ctx, entries, searchWorkers, func(idx int, ce chatEntry) {
+	parallel.Bounded(ctx, entries, searchWorkers, func(idx int, ce chatEntry) {
 		found[idx] = searchOneChat(ce, query)
 	})
 
