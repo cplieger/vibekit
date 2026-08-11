@@ -24,6 +24,7 @@ import type * as Shell from "./shell.js";
 interface Harness {
   mod: typeof Shell;
   createTerminal: ReturnType<typeof vi.fn>;
+  localScrollbackStorage: ReturnType<typeof vi.fn>;
   resetSpy: ReturnType<typeof vi.fn>;
   sendSpy: ReturnType<typeof vi.fn>;
   termFocus: ReturnType<typeof vi.fn>;
@@ -94,6 +95,9 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     },
   );
   const presetTouch = vi.fn(() => ["preset-feature"]);
+  // A sentinel, so the assertion below checks the panel hands the LIBRARY's
+  // localStorage store through rather than inventing storage of its own.
+  const localScrollbackStorage = vi.fn(() => ({ kind: "scrollback-store" }));
   const scrollEl = document.createElement("div");
   const getScrollEl = vi.fn(() => scrollEl);
   let runCb: ((cmd: string) => void) | null = null;
@@ -104,7 +108,10 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   // initShellPanel reads load().shell_h to restore a persisted height.
   const load = vi.fn(() => ({ shell_h: uiStateData.shell_h ?? 0 }));
 
-  vi.doMock("@cplieger/web-terminal-ui", () => ({ createTerminal }));
+  vi.doMock("@cplieger/web-terminal-ui", () => ({
+    createTerminal,
+    localScrollbackStorage,
+  }));
   vi.doMock("@cplieger/web-terminal-ui/presets/touch", () => ({ presetTouch }));
   vi.doMock("./messages.js", () => ({ getScrollEl }));
   vi.doMock("./code-blocks.js", () => ({ setShellRunCallback }));
@@ -125,6 +132,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   return {
     mod,
     createTerminal,
+    localScrollbackStorage,
     resetSpy,
     sendSpy,
     termFocus,
@@ -179,6 +187,31 @@ describe("shell.ts: lazy terminal creation", () => {
     expect(typeof opts.features).toBe("function");
     expect(opts.features?.()).toContain("preset-feature");
     expect(opts.layout).toBe("container");
+  });
+
+  it("persists the shell scrollback through the library's store, in vibekit's namespace", async () => {
+    // The server keeps the PTY across a reload but the client comes back holding
+    // nothing, so without this a reopened panel refills its whole buffer over the
+    // wire — visible as the history filling in, and routine on a phone where iOS
+    // discards the tab.
+    //
+    // It must be the LIBRARY's store: a hand-rolled one here would be another copy
+    // of the same logic across the consumers, and the part a copy omits is the
+    // orphan sweep, whose absence is invisible until the origin quota fills. The
+    // prefix keeps it in vibekit's own localStorage namespace, beside
+    // `vibekit.ui-state`.
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    // Built at MODULE load, not on first open: constructing the store is what runs
+    // its orphan sweep, and a user who never opens the shell would otherwise leave
+    // old snapshots in this origin's localStorage indefinitely.
+    expect(h.localScrollbackStorage).toHaveBeenCalledWith({
+      prefix: "vibekit.shell-scrollback.",
+    });
+    const [, opts] = h.createTerminal.mock.calls.at(0) as [HTMLElement, CreateTerminalOptions];
+    expect(opts.persistScrollback).toEqual({ kind: "scrollback-store" });
   });
 
   it("reuses the same terminal across close/reopen (no second WebSocket)", async () => {
