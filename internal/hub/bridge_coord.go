@@ -40,6 +40,13 @@ type BridgeCoordinator struct {
 	// sweep here: a rehydrated chat is exactly the moment its runs should heal,
 	// because the chat's process dying is what paused them. Nil in tests.
 	onSessionRehydrated func(api.ChatID)
+	// secretStorage reports whether the hub holds a credential store, read at
+	// SPAWN time rather than captured as a bool, because newBridgeCoordinator
+	// runs before NewHub opens the store — a snapshot here would be false for
+	// every bridge this process ever starts. It gates the
+	// `_meta.kiro.secretStorage` declaration: see api.StartOpts.SecretStorage
+	// for why declaring it without a store breaks an MCP connect.
+	secretStorage func() bool
 	// agentEngine is the kiro-cli agent engine for every bridge this
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
@@ -68,12 +75,22 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		replayProjection: h,
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
+		secretStorage:    func() bool { return h.secrets != nil },
 		onSessionRehydrated: func(chatID api.ChatID) {
 			ctx, cancel := h.hubContext()
 			defer cancel()
 			h.resumeRestartPausedRuns(ctx, chatID)
 		},
 	}
+}
+
+// hasSecretStorage reports whether this process holds a credential store, and
+// therefore whether a bridge may declare `_meta.kiro.secretStorage`. Nil-safe:
+// a coordinator built without the resolver (every test that does not exercise
+// the store) declares the capability off, which is the honest answer for a hub
+// that has no store either.
+func (bc *BridgeCoordinator) hasSecretStorage() bool {
+	return bc.secretStorage != nil && bc.secretStorage()
 }
 
 // resolveAgentEngine returns the kiro-cli agent engine, hard-pinned to v3
@@ -207,7 +224,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// Supervised is passed at creation and only here: the session/load path below
 	// does not repeat it, because KAS persists `autopilot` in its own session
 	// metadata and a loaded session already carries the value.
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -245,7 +262,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		bc.replayProjection.OpenReplayProjection(chatID)
 	}
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage()}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so whatever partial replay

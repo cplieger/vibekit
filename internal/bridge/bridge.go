@@ -80,10 +80,14 @@ type Bridge struct {
 	extraArgs   []string
 	nextID      atomic.Int64
 	enableHooks bool
-	stopOnce    sync.Once
-	mu          sync.Mutex
-	writeMu     sync.Mutex
-	pendingMu   sync.Mutex
+	// secretStorage gates the `_meta.kiro.secretStorage` declaration in
+	// initialize (StartOpts.SecretStorage). Immutable after Start, like
+	// enableHooks.
+	secretStorage bool
+	stopOnce      sync.Once
+	mu            sync.Mutex
+	writeMu       sync.Mutex
+	pendingMu     sync.Mutex
 }
 
 // Option configures a Bridge at construction time.
@@ -278,13 +282,21 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// COMMITMENT: KAS rethrows a client-side store/delete failure into the MCP
 	// connect path, so the handlers must answer on every bridge that declares
 	// it, the utility bridge included.
+	//
+	// Which is why it is CONDITIONAL rather than a literal true. The store is
+	// best-effort (no configDir, or a mode internal/secretstore cannot verify as
+	// 0600, leaves it nil), and declaring the capability over a nil store made
+	// every MCP OAuth connect fail on the -32603 from secretStoreResult — worse
+	// than not offering it, because undeclared merely costs one DCR per spawn.
+	// The hub reads its store per spawn (StartOpts.SecretStorage); a false here
+	// means KAS never asks, so the unanswerable request is never made.
 	kiroMeta := map[string]any{
 		"openExternalUrl":      true,
 		"infrastructureSafety": true,
 		"userInput":            true,
 		"backgroundProcesses":  true,
 		"knowledge":            true,
-		"secretStorage":        true,
+		"secretStorage":        b.secretStorage,
 		"settings": map[string]any{
 			"codeIntelligence": settingEnabled(),
 			// _meta.kiro.settings.knowledge is the THIRD part of the knowledge

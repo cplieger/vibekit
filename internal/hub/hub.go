@@ -269,8 +269,9 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 	h.agentTerms = newAgentTerminals()
 	if lc.configDir != "" {
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
-		// Best-effort: a store that cannot be opened leaves h.secrets nil,
-		// and the _kiro/secret/* handlers then answer "absent" — MCP OAuth
+		// Best-effort: a store that cannot be opened leaves h.secrets nil, and
+		// bridges then do NOT declare `_meta.kiro.secretStorage` (see
+		// api.StartOpts.SecretStorage), so KAS never asks and MCP OAuth
 		// re-registers per spawn as it did before the capability, rather than
 		// the hub refusing to construct over a credential cache.
 		secrets, err := secretstore.New(lc.configDir)
