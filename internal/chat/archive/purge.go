@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/parallel"
 )
 
 // purgeEntry is a chat file's (id, full path) pair gathered during a
@@ -56,7 +57,7 @@ func (s *Service) Purge(ctx context.Context, maxAge time.Duration) {
 	const maxWorkers = 8
 	var purgedCount, keptCount, errCount int32
 	var mu sync.Mutex
-	boundedParallel(ctx, valid, maxWorkers, func(_ int, entry purgeEntry) {
+	parallel.Bounded(ctx, valid, maxWorkers, func(_ int, entry purgeEntry) {
 		var counter *int32
 		switch s.purgeOne(entry, cutoff) {
 		case purgePurged:

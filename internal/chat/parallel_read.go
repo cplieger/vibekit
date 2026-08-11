@@ -5,9 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"sync"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/parallel"
 )
 
 // chatEntry is a chat file's (id, full path) pair gathered during a
@@ -15,35 +15,6 @@ import (
 type chatEntry struct {
 	id   string
 	path string
-}
-
-// boundedParallel dispatches fn over items with up to maxWorkers concurrent
-// goroutines. Workers stop early when ctx is cancelled. Storage-agnostic:
-// callers manage per-item results / counters via closure.
-func boundedParallel[T any](ctx context.Context, items []T, maxWorkers int, fn func(i int, item T)) {
-	if len(items) == 0 {
-		return
-	}
-	workers := min(len(items), maxWorkers)
-	work := make(chan int, len(items))
-	for i := range items {
-		work <- i
-	}
-	close(work)
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for range workers {
-		go func() {
-			defer wg.Done()
-			for idx := range work {
-				if ctx.Err() != nil {
-					return
-				}
-				fn(idx, items[idx])
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 // readHeadersParallel reads chat headers for each entry concurrently
@@ -72,7 +43,7 @@ func readHeadersParallel(
 	}
 	results := make([]result, len(valid))
 
-	boundedParallel(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
+	parallel.Bounded(ctx, valid, maxWorkers, func(idx int, ce chatEntry) {
 		h, err := readChatHeader(ce.path, "chat "+ce.id)
 		if err != nil {
 			// ENOENT is a concurrent delete: the chat is genuinely gone, so
