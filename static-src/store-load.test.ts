@@ -47,14 +47,17 @@ beforeEach(() => {
 describe("loadMessages pagination dedupe", () => {
   it("dedupes a boundary message by id when prepending an older page", async () => {
     seedSession("c1", [msg("m2", 2), msg("m3", 3)]);
-    // Older page overlaps at m2 (same-ms boundary re-return).
+    // The older page overlaps at m2. With the id cursor the server no longer
+    // re-returns a boundary message the way the old millisecond cursor could, but
+    // the client's id filter still has to make an overlapping or re-issued page
+    // harmless rather than a double render that also corrupts the msg index.
     mockApiGetTyped.mockResolvedValue({
       chat: { message_count: 3 },
       messages: [msg("m1", 1), msg("m2", 2)],
       has_more: false,
     });
 
-    const ok = await loadMessages("c1", 2);
+    const ok = await loadMessages("c1", "m3");
     expect(ok).toBe(true);
     const ids = (sessions.get("c1")?.messages ?? []).map((m) => m.id);
     // m2 appears once, not twice.

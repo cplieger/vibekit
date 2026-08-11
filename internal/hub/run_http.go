@@ -90,13 +90,13 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if workflow.IsUnknownMethod(err) {
 			slog.Warn("workflow inspect: engine not available on this kiro-cli",
-				"workflow_id", id, "detail", workflow.Details(err))
+				"workflow_id", id, "detail", api.RPCDetails(err))
 			api.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
 			return
 		}
 		slog.Warn("workflow inspect failed", "workflow_id", id,
-			"error", err, "detail", workflow.Details(err))
+			"error", err, "detail", api.RPCDetails(err))
 		api.NotFound(w, "workflow run not found")
 		return
 	}
@@ -146,7 +146,7 @@ func (h *Hub) handleRecipes(w http.ResponseWriter, r *http.Request) {
 	}
 	recipes, err := h.listRecipes(r.Context())
 	if err != nil {
-		slog.Warn("recipe list failed", "error", err, "detail", workflow.Details(err))
+		slog.Warn("recipe list failed", "error", err, "detail", api.RPCDetails(err))
 		api.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
@@ -172,23 +172,14 @@ func (h *Hub) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
 			api.Conflict(w, errRecipeBusy.Error())
 			return
 		}
-		slog.Warn("run launch failed", "source", req.Source, "error", err, "detail", workflow.Details(err))
+		slog.Warn("run launch failed", "source", req.Source, "error", err, "detail", api.RPCDetails(err))
 		// KAS's launch-time validation is precise (a bad input set, an
 		// unregistered agent) and the message names the problem; forward it
 		// rather than a generic sentinel, because the fix is the user's.
-		api.BadRequest(w, launchErrText(err))
+		api.BadRequest(w, api.RPCErrorText(err))
 		return
 	}
 	api.WriteJSON(w, api.RunLaunchedResponse{WorkflowID: id, Name: name})
-}
-
-// launchErrText picks the most specific text a launch failure carries: KAS's
-// error.data detail when present, the error string otherwise.
-func launchErrText(err error) string {
-	if d := workflow.Details(err); d != "" {
-		return d
-	}
-	return err.Error()
 }
 
 // handleRunCancel: POST /api/runs/{id}/cancel → ask the run to stop. The
@@ -315,7 +306,7 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 		status, err := h.runStatus(r.Context(), id)
 		if err != nil {
 			slog.Warn("run control: status read failed",
-				"verb", verb.name, "workflow_id", id, "error", err, "detail", workflow.Details(err))
+				"verb", verb.name, "workflow_id", id, "error", err, "detail", api.RPCDetails(err))
 			api.InternalError(w, errors.New(verb.name+" failed"))
 			return
 		}
@@ -340,7 +331,7 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 			return
 		}
 		slog.Warn("run control failed",
-			"verb", verb.name, "workflow_id", id, "error", err, "detail", workflow.Details(err))
+			"verb", verb.name, "workflow_id", id, "error", err, "detail", api.RPCDetails(err))
 		api.InternalError(w, errors.New(verb.name+" failed"))
 		return
 	}

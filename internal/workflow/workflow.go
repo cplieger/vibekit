@@ -31,9 +31,9 @@
 package workflow
 
 import (
-	"encoding/json"
-	"errors"
 	"strings"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // Node is one node of a run's state tree, decoded only as far as step
@@ -112,57 +112,6 @@ func IsUnknownMethod(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(Details(err), unknownMethodMarker) ||
+	return strings.Contains(api.RPCDetails(err), unknownMethodMarker) ||
 		strings.Contains(err.Error(), unknownMethodMarker)
-}
-
-// rpcDetailer is satisfied by an error carrying KAS's `error.data`.
-type rpcDetailer interface {
-	ErrorData() json.RawMessage
-}
-
-// Details extracts KAS's real error text.
-//
-// BOTH fields have to be read, and that is a measured requirement rather than
-// defensiveness. Counted over every engine-emitted frame in the probe logs: 127
-// `-32603` errors put the text in `error.data.details` or in `error.data` as a
-// Zod issue array and set `error.message` to the literal "Internal error", while
-// the 6 `-32602` and 4 `-32000` errors put it in `error.message` and carry no
-// `error.data` at all. Reading only `message` loses every internal error's cause;
-// reading only `data` loses every parameter-validation message.
-func Details(err error) string {
-	var d rpcDetailer
-	if !errors.As(err, &d) {
-		return ""
-	}
-	raw := d.ErrorData()
-	if len(raw) == 0 {
-		return ""
-	}
-	// The common shape: {"details": "…"}.
-	var obj struct {
-		Details string `json:"details"`
-	}
-	if json.Unmarshal(raw, &obj) == nil && obj.Details != "" {
-		return obj.Details
-	}
-	// The other shape: a Zod issue array. Its messages are what a caller wants.
-	var issues []struct {
-		Message string `json:"message"`
-		Path    []any  `json:"path"`
-	}
-	if json.Unmarshal(raw, &issues) == nil && len(issues) > 0 {
-		msgs := make([]string, 0, len(issues))
-		for _, is := range issues {
-			if is.Message != "" {
-				msgs = append(msgs, is.Message)
-			}
-		}
-		if len(msgs) > 0 {
-			return strings.Join(msgs, "; ")
-		}
-	}
-	// Neither shape parsed: the raw JSON still beats an empty string, because it
-	// is what KAS actually said.
-	return string(raw)
 }

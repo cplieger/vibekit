@@ -61,6 +61,11 @@ type Bridge struct {
 	notifCh      chan *api.RPCResponse
 	done         chan struct{}
 	models       atomic.Pointer[[]api.SessionModel]
+	// servedModels is every model id session/new advertised, UNFILTERED. models
+	// above drops end-of-life entries for the picker; this one must not, because
+	// it is the input to the entitlement check and a deprecated model the account
+	// can still use has to pass it.
+	servedModels atomic.Pointer[[]string]
 	cmd          *exec.Cmd
 	modelID      api.ModelID
 	sessionID    api.SessionID
@@ -174,6 +179,17 @@ func (b *Bridge) Modes() []api.SessionMode {
 // (never mutated after construction); callers MUST NOT mutate it.
 func (b *Bridge) Models() []api.SessionModel {
 	if p := b.models.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// ServedModels returns every model id this session advertised, including the
+// end-of-life entries Models filters out. Empty when the session advertised no
+// catalog, which callers must read as "entitlement unknowable" and allow.
+// The returned slice is frozen; callers MUST NOT mutate it.
+func (b *Bridge) ServedModels() []string {
+	if p := b.servedModels.Load(); p != nil {
 		return *p
 	}
 	return nil

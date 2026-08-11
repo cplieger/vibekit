@@ -254,3 +254,98 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		t.Errorf("chat.Model = %q, want new-model", c.Model)
 	}
 }
+
+// TestSwitchModel_RefusesAModelTheAccountDoesNotServe pins the entitlement gate.
+//
+// kiro-cli accepts a model id it cannot serve: the set_config_option succeeds and
+// only the SERVICE rejects it, mid-prompt, on every later turn. Before this gate
+// the id reached the wire, the fast path failed, and the fallback then tore down a
+// working bridge to respawn on the same rejected id.
+func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Model = "m-old"
+		c.ServedModelIDs = []string{"m-old", "m-other"}
+		return true
+	})
+
+	rec := postCmd(t, h, api.ClientCommand{
+		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Payload: json.RawMessage(`{"model":"m-unentitled"}`),
+	})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("code = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+
+	// Nothing changed: the refusal must not persist the model, and must not tear
+	// down or spawn a bridge on the way to failing.
+	c, _ := cs.Get(context.Background(), "c1")
+	if c.Model != "m-old" {
+		t.Errorf("chat.Model = %q, want the previous model preserved", c.Model)
+	}
+	if sb := h.coord.GetBridge("c1"); sb != nil {
+		t.Error("a bridge was created for a refused switch")
+	}
+}
+
+// TestSwitchModel_AllowsWhenEntitlementIsUnknowable pins both fail-open cases,
+// which are the ones that would turn this gate into an outage: a backend that
+// advertises no catalog must behave exactly as it did before the gate existed.
+func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
+	cases := []struct {
+		name   string
+		served []string
+	}{
+		{"no advertised set at all", nil},
+		{"an empty advertised set", []string{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, _ := newTestHub()
+			_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+				c.Name = "A"
+				c.Model = "m-old"
+				c.ServedModelIDs = tc.served
+				return true
+			})
+			rec := postCmd(t, h, api.ClientCommand{
+				Type: "switch_model", RequestID: "r1", ChatID: "c1",
+				Payload: json.RawMessage(`{"model":"m-anything"}`),
+			})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, want 200; body = %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes is the case that
+// decides whether this gate was safe to add at all.
+//
+// The picker's list (chat.AvailableModels, Bridge.Models) drops [Deprecated] and
+// [Legacy] entries for display. Validating against THAT list would refuse a model
+// the account can still run, converting a working session into a client-side
+// refusal — worse than the defect the gate prevents. The gate must read the
+// unfiltered served set, so a deprecated id present there is allowed.
+func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+		c.Name = "A"
+		c.Model = "m-old"
+		// The display list omits it; the served set does not. That divergence is
+		// exactly what applyModelConfigOptionLocked produces.
+		c.AvailableModels = []api.SessionModel{{ID: "m-old", Name: "Old"}}
+		c.ServedModelIDs = []string{"m-old", "m-deprecated"}
+		return true
+	})
+
+	rec := postCmd(t, h, api.ClientCommand{
+		Type: "switch_model", RequestID: "r1", ChatID: "c1",
+		Payload: json.RawMessage(`{"model":"m-deprecated"}`),
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (a deprecated model is hidden, not unentitled); body = %s",
+			rec.Code, rec.Body.String())
+	}
+}

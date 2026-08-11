@@ -394,9 +394,18 @@ type Chat struct {
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
 	ID                  string         `json:"id"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
-	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
-	Messages            []Message      `json:"messages"`
-	CurrentPlan         []PlanEntry    `json:"current_plan,omitempty"`
+	// ServedModelIDs is every model id this chat's last session advertised,
+	// UNFILTERED, which AvailableModels is not (it drops end-of-life entries for
+	// the picker). It is persisted for one reason: the `--model` launch flag is
+	// built BEFORE session/new returns a catalog, so at spawn time the previous
+	// session's advertised set is the only evidence about whether the stored model
+	// is still one the account can run. Empty means unknowable, and ModelServed
+	// then allows the send. Deliberately NOT on ChatHeader: the client validates
+	// nothing, it renders AvailableModels.
+	ServedModelIDs []string      `json:"served_model_ids,omitempty"`
+	AvailableModes []SessionMode `json:"available_modes,omitempty"`
+	Messages       []Message     `json:"messages"`
+	CurrentPlan    []PlanEntry   `json:"current_plan,omitempty"`
 	// PriorACPSessionIDs are the KAS sessions this chat USED to run on,
 	// oldest first. ACPSessionID is only the current one, and a chat
 	// routinely changes session: a failed session/load blanks it, a model

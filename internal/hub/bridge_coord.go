@@ -185,6 +185,25 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	if modelOverride != "" && modelOverride != modelAuto {
 		model = modelOverride
 	}
+	// Withhold a model the account cannot run, SILENTLY, and let the session take
+	// the backend's own default.
+	//
+	// This is the inherited-value case: `model` here comes from the persisted
+	// chat field (written from the client's cross-device `last_model`) or from a
+	// caller's override, not from a pick the user just made. kiro-cli accepts the
+	// `--model` flag either way and only the service rejects it, mid-prompt, on
+	// every later turn -- so a stale entitlement makes every turn of every new
+	// chat fail while the picker still shows the model as selected. Silence is
+	// right for a value nobody chose in this moment; an explicit pick is refused
+	// loudly instead, in cmdSwitchModel.
+	//
+	// The evidence is the LAST session's advertised set, because the launch flag
+	// is built before this session has one. Empty means unknowable and allows.
+	if !api.ModelServed(model, chat.ServedModelIDs) {
+		slog.Warn("withholding a model this account does not serve; using the backend default",
+			"chat_id", chatID, "model", model)
+		model = ""
+	}
 
 	// No mcpServers parameter. KAS reads the user's servers from its own
 	// hot-reloading config file, which vibekit renders (internal/mcp/kasfile.go).
@@ -353,11 +372,16 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	currentMode := bridge.CurrentMode()
 	modes := bridge.Modes()
 	models := bridge.Models()
+	served := bridge.ServedModels()
 	title := bridge.SessionTitle()
+	// requestedMode is the mode the chat asked for, read before the line below
+	// overwrites it with the mode the session actually got.
+	var requestedMode string
 	if err := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
+		requestedMode = c.CurrentModeID
 		c.RecordSession(string(newSessionID))
 		if newModelID != "" {
 			c.Model = string(newModelID)
@@ -365,6 +389,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 		c.CurrentModeID = currentMode
 		c.AvailableModes = modes
 		c.AvailableModels = models
+		c.ServedModelIDs = served
 		adoptKASTitle(c, title)
 		return true
 	}); err != nil {
@@ -374,6 +399,36 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 			"model", newModelID,
 			"error", err)
 	}
+	bc.reportModeNotApplied(ctx, chatID, requestedMode, currentMode)
+}
+
+// reportModeNotApplied tells the user when the session did not get the mode the
+// chat asked for.
+//
+// Storing the ACTUAL mode above is right: the mode pill must not claim a role the
+// agent is not running under. What was wrong is that it was the ONLY record of the
+// request, so a single transient `session/set_mode` failure (applyInitialMode
+// warns and continues, deliberately, so a mode problem never costs the user their
+// session) silently and permanently converted a chat pinned to `spec` into a
+// default-mode chat: at the next spawn the requested id now EQUALS the current
+// one, so applyInitialMode's own guard means no retry is ever attempted.
+//
+// A visible banner rather than an automatic retry, because the truthful pill plus
+// a named mismatch puts the choice back in front of a user who is present, and a
+// retry would need a second persisted mode field to remember an intent the record
+// no longer holds. This is not a privilege gate: tool authorization is Cedar's,
+// and the engine default is not the least constrained bundled mode.
+func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID api.ChatID, requested, actual string) {
+	if requested == "" || requested == actual {
+		return
+	}
+	slog.Error("session mode not applied; the chat's mode was reset to the session's",
+		"chat_id", chatID, "requested", requested, "actual", actual)
+	bc.broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
+		Code: api.ErrCodeModeNotApplied,
+		Message: "Could not start this chat in \"" + requested + "\" mode; it is running as \"" +
+			actual + "\". Pick the mode again to retry.",
+	}))
 }
 
 // GetBridge returns the bridge for chatID, or nil.

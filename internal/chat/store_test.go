@@ -655,6 +655,92 @@ func TestHandleOne_ReturnsChatAndMessages(t *testing.T) {
 	}
 }
 
+// TestHandleOne_PaginationSurvivesUnorderedTimestamps pins the two states that
+// made the previous `?before=<ts>` cursor lose a page, because both are reachable
+// on the real wire and neither is exotic.
+//
+// The cursor resolved a millisecond timestamp with sort.Search, which needs
+// Message.Ts to be non-decreasing across the slice. Nothing makes that true:
+// render order is array position, and translate.newEventMessage stamps Ts at
+// CONSTRUCTION, outside the per-chat lock AppendMessage takes, so two writers can
+// stamp in one order and append in the other. Separately,
+// projection.applySummary gives a compaction event its predecessor's exact Ts on
+// purpose, so a tie group always exists after a replayed compaction.
+//
+// Both cases assert the same property: paging back from the newest window returns
+// the messages immediately before it, in array order, with none skipped. Run
+// against the old cursor, the tie case returns "a" only (the whole tie group is
+// excluded at once) and the inverted case returns an arbitrary window.
+func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
+	cases := []struct {
+		name     string
+		msgs     []api.Message
+		beforeID string
+		wantIDs  []string
+	}{
+		{
+			// The cursor message SHARES its millisecond with the two before it,
+			// which is the state applySummary guarantees after a replayed
+			// compaction. A timestamp search lands on the FIRST message at that
+			// value, so it excludes b and c along with d and answers [a].
+			name: "a tie group holding the cursor is paged rather than skipped",
+			msgs: []api.Message{
+				{ID: "a", Role: api.RoleUser, Ts: 100},
+				{ID: "b", Role: api.RoleUser, Ts: 120},
+				{ID: "c", Role: api.RoleEvent, Ts: 120},
+				{ID: "d", Role: api.RoleAssistant, Ts: 120},
+				{ID: "e", Role: api.RoleUser, Ts: 130},
+			},
+			beforeID: "d",
+			wantIDs:  []string{"a", "b", "c"},
+		},
+		{
+			// Two writers stamped 120 and 119 and appended in the other order, so
+			// the slice is not non-decreasing and a binary search over it is
+			// undefined. Here it answers [a], dropping b.
+			name: "an inverted cursor is paged in array order",
+			msgs: []api.Message{
+				{ID: "a", Role: api.RoleUser, Ts: 100},
+				{ID: "b", Role: api.RoleUser, Ts: 120},
+				{ID: "c", Role: api.RoleEvent, Ts: 119},
+				{ID: "d", Role: api.RoleUser, Ts: 130},
+			},
+			beforeID: "c",
+			wantIDs:  []string{"a", "b"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := newTestStore(t)
+			_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+				c.Name = "A"
+				c.Messages = tc.msgs
+				return true
+			})
+			req := httptest.NewRequest(http.MethodGet,
+				"/api/chats/c1?before_id="+tc.beforeID, nil)
+			rec := httptest.NewRecorder()
+			NewRouter(s).handleOne(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			var got struct {
+				Messages []api.Message `json:"messages"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			ids := make([]string, 0, len(got.Messages))
+			for i := range got.Messages {
+				ids = append(ids, got.Messages[i].ID)
+			}
+			if !slices.Equal(ids, tc.wantIDs) {
+				t.Errorf("page = %v, want %v", ids, tc.wantIDs)
+			}
+		})
+	}
+}
+
 func TestHandleOne_Pagination(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -664,10 +750,10 @@ func TestHandleOne_Pagination(t *testing.T) {
 	}{
 		{"no_params_returns_all", "", []string{"a", "b", "c", "d", "e"}, false},
 		{"limit_clamps_window_and_flags_more", "?limit=2", []string{"d", "e"}, true},
-		{"before_exclusive_of_matching_ts", "?before=130", []string{"a", "b", "c"}, false},
-		{"before_past_newest_ts_returns_all", "?before=9999", []string{"a", "b", "c", "d", "e"}, false},
-		{"before_before_oldest_ts_returns_none", "?before=50", []string{}, false},
-		{"limit_and_before_combined", "?before=140&limit=2", []string{"c", "d"}, true},
+		{"before_id_is_exclusive_of_the_named_message", "?before_id=d", []string{"a", "b", "c"}, false},
+		{"before_id_unknown_returns_the_newest_window", "?before_id=nope", []string{"a", "b", "c", "d", "e"}, false},
+		{"before_id_oldest_returns_none", "?before_id=a", []string{}, false},
+		{"limit_and_before_id_combined", "?before_id=e&limit=2", []string{"c", "d"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -854,8 +940,8 @@ func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 		{"limit_zero", "?limit=0"},
 		{"limit_negative", "?limit=-5"},
 		{"limit_over_max", "?limit=10000"},
-		{"before_non_numeric", "?before=abc"},
-		{"before_negative", "?before=-1"},
+		{"before_id_unknown", "?before_id=nope"},
+		{"before_id_empty", "?before_id="},
 	}
 	for _, tc := range cases {
 		req := httptest.NewRequest(http.MethodGet, "/api/chats/c1"+tc.query, nil)

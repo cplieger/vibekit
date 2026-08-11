@@ -200,13 +200,30 @@ func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel st
 func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string) {
 	if r.Modes != nil {
 		b.currentMode = r.Modes.CurrentModeID
-		modes := make([]api.SessionMode, 0, len(r.Modes.AvailableModes))
-		for _, m := range r.Modes.AvailableModes {
-			modes = append(modes, api.SessionMode{
-				ID: m.ID, Name: m.Name, Description: m.Description, Source: m.Meta.Kiro.Source,
-			})
+		// ABSENT and PRESENT-BUT-EMPTY are different states and must not collapse.
+		// The gate above is on the modes BLOCK: a frame with no block at all says
+		// nothing about modes and leaves the previous list standing. A block
+		// carrying an EMPTY list used to replace that list with a zero-length one,
+		// which empties the mode picker for the rest of the session on a frame that
+		// reported no catalog rather than an empty catalog.
+		//
+		// This matters more the moment anything VALIDATES a mode id against the
+		// list: validating against an accidentally-empty list refuses every mode,
+		// which is the fail-closed-on-no-information shape upstream had to fix
+		// (KiroCrew #1542). Keeping the previous list is the "absent means attempt"
+		// half; the empty case is logged so it is visible rather than silent.
+		if len(r.Modes.AvailableModes) == 0 {
+			slog.Warn("session reported an empty mode list; keeping the previous catalog",
+				"current_mode", r.Modes.CurrentModeID)
+		} else {
+			modes := make([]api.SessionMode, 0, len(r.Modes.AvailableModes))
+			for _, m := range r.Modes.AvailableModes {
+				modes = append(modes, api.SessionMode{
+					ID: m.ID, Name: m.Name, Description: m.Description, Source: m.Meta.Kiro.Source,
+				})
+			}
+			b.modes.Store(&modes)
 		}
-		b.modes.Store(&modes)
 	}
 	b.sessionTitle = r.Meta.Title
 	b.applyModelConfigOptionLocked(r.ConfigOptions)
@@ -218,8 +235,18 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 // applyModelConfigOptionLocked sources the current model + catalog from
 // the v3 configOptions "model" select. currentValue is the active model
 // id; each option carries its rate multiplier under _meta.kiro.
-// [Deprecated]/[Legacy] entries are filtered (as the v2 models path did).
 // MUST be called with b.mu held.
+//
+// TWO lists come out of the one loop, and keeping them in one loop is the point:
+//
+//   - models is for DISPLAY, so [Deprecated]/[Legacy] entries are filtered out
+//     (as the v2 models path did). The picker should not offer an end-of-life
+//     model.
+//   - servedModels is every advertised id, unfiltered, and it is the only sound
+//     input to an ENTITLEMENT check. Validating a configured id against the
+//     display list would refuse a deprecated model the account can still use,
+//     turning a working session into a client-side refusal — which is worse than
+//     the defect the check exists to prevent.
 func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 	for i := range opts {
 		opt := &opts[i]
@@ -232,8 +259,13 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 			b.modelID = api.ModelID(current)
 		}
 		mdls := make([]api.SessionModel, 0, len(opt.Options))
+		served := make([]string, 0, len(opt.Options))
 		for _, c := range opt.Options {
-			if c.Value == "" || api.TagExcluded(c.Description, api.HiddenTags) {
+			if c.Value == "" {
+				continue
+			}
+			served = append(served, c.Value)
+			if api.TagExcluded(c.Description, api.HiddenTags) {
 				continue
 			}
 			mdls = append(mdls, api.SessionModel{
@@ -242,6 +274,7 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 			})
 		}
 		b.models.Store(&mdls)
+		b.servedModels.Store(&served)
 		return
 	}
 }

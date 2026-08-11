@@ -72,7 +72,12 @@ function logApiError(r: ApiErr, method: string, path: string): void {
     console.error("api: decode failed:", method, path, r.error);
     return;
   }
-  console.warn("api: non-ok", method, path, r.status);
+  // r.error carries the server's own message (the `{"error": …}` body every
+  // api.* helper writes). It used to be dropped here, so a non-2xx logged its
+  // status and nothing about the cause, and `collapse` then returned null — so
+  // the message existed on the wire and reached neither the console nor the
+  // caller.
+  console.warn("api: non-ok", method, path, r.status, r.error);
 }
 
 /** Collapse a @cplieger/fetch envelope to `data | null`, logging failures

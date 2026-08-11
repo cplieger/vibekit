@@ -151,6 +151,15 @@ const (
 	ErrCodeSpawnFailed       ErrorCode = "spawn_failed"
 	ErrCodeSwitchFailed      ErrorCode = "switch_failed"
 	ErrCodeCompactionFailed  ErrorCode = "compaction_failed"
+	// ErrCodeModeNotApplied means session/set_mode was refused at spawn, so the
+	// session is running a different mode from the one the chat asked for. The
+	// chat's record holds the ACTUAL mode (the pill must not lie), which is why
+	// this event is the only thing that names the request.
+	ErrCodeModeNotApplied ErrorCode = "mode_not_applied"
+	// ErrCodeModelNotServed means an explicitly-picked model is absent from the
+	// set this account's session advertises, so it was refused before the wire
+	// rather than accepted locally and rejected mid-prompt on every later turn.
+	ErrCodeModelNotServed ErrorCode = "model_not_served"
 )
 
 // ErrorPayload is the payload for type="error". Code lets clients react

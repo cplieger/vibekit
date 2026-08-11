@@ -94,6 +94,16 @@ describe("ERROR_ROUTES", () => {
     ["switch_failed", { surface: "send-error", level: "error", dismissible: false }],
     ["bridge_start_failed", { surface: "send-error", level: "error", dismissible: false }],
     ["prompt_failed", { surface: "send-error", level: "error", dismissible: false }],
+    // The chat runs, just not in the requested mode, and one click on the mode
+    // pill fixes it — so a dismissible warning banner rather than a send error.
+    ["mode_not_applied", { surface: "banner", level: "warning", dismissible: true }],
+    // A pick refused before it reached the wire: the send that carried it is what
+    // failed, same surface as switch_failed.
+    ["model_not_served", { surface: "send-error", level: "error", dismissible: false }],
+    // Empty-turn recovery could not respawn or resend. It was routed NOWHERE
+    // before, so it reached setLastError with no level and no banner on the one
+    // error whose meaning is "the automatic repair failed".
+    ["recovery_failed", { surface: "send-error", level: "error", dismissible: false }],
   ];
 
   it.each(expectedRoutes)(
@@ -103,7 +113,7 @@ describe("ERROR_ROUTES", () => {
     },
   );
 
-  it("contains exactly the seven known error codes", () => {
+  it("contains exactly the codes this table claims to route", () => {
     expect(Object.keys(ERROR_ROUTES).sort()).toEqual(expectedRoutes.map(([c]) => c).sort());
   });
 

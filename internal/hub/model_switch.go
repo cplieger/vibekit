@@ -16,6 +16,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -36,6 +37,11 @@ func resolveSwitchModel(chat *api.Chat, p api.SwitchModelCommand) (model string,
 // hubResponseOK is the canonical success response shape for hub
 // commands that go through the dedup cache via h.respond.
 var hubResponseOK = map[string]bool{"ok": true}
+
+// errModelNotServed is the 409 body for a pick this account cannot run. A
+// conflict rather than a bad request: the id is well-formed and was legal for
+// some account, so the refusal is about this session's entitlement state.
+var errModelNotServed = errors.New("that model is not available on this account")
 
 func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
 	if !h.requireChatID(w, cmd) {
@@ -62,8 +68,13 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 
 	model, isSwitch := resolveSwitchModel(chat, p)
 
-	// Try the fast path: in-session model swap on the running bridge.
+	// Refuse an unserved pick before anything else, then try the fast path: an
+	// in-session model swap on the running bridge. Both live under one isSwitch
+	// because both are only meaningful for a real change of model.
 	if isSwitch {
+		if h.refuseUnservedModel(ctx, w, cmd.ChatID, chat, model) {
+			return
+		}
 		if h.coord.TryFastModelSwitch(ctx, cmd.ChatID, model) {
 			h.coord.PersistModelSwitch(ctx, cmd.ChatID, model, chat.Usage.ContextSize)
 			h.respond(w, cmd.RequestID, hubResponseOK)
@@ -71,13 +82,26 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 		}
 	}
 
-	// Fallback: full bridge restart.
+	h.switchByRestart(ctx, w, cmd, chat, model, isSwitch)
+}
+
+// switchByRestart is the fallback when the in-session swap did not take: tear the
+// bridge down and let GetOrCreateBridge try session/load, then session/new.
+//
+// Extracted from cmdSwitchModel because it is the one coherent unit in it — the
+// dispatcher now reads validate, try fast, else restart — and because leaving it
+// inline put that function over the complexity ceiling once the entitlement gate
+// landed. No behaviour moved with it.
+func (h *Hub) switchByRestart(
+	ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand,
+	chat *api.Chat, model string, isSwitch bool,
+) {
 	h.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID)
 	h.coord.CloseBridge(cmd.ChatID)
 
 	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, model)
 	if err != nil {
-		h.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeSwitchFailed, Message: err.Error()}))
+		h.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeSwitchFailed, Message: api.RPCErrorText(err)}))
 		h.respondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -101,4 +125,42 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 	}
 
 	h.respond(w, cmd.RequestID, hubResponseOK)
+}
+
+// refuseUnservedModel is the LOUD half of the entitlement check: spawnBridge
+// withholds an inherited value silently, because nobody chose it in that moment,
+// while a pick the user just made must be refused rather than downgraded behind
+// their back.
+//
+// Without it the id reaches the wire, KAS accepts it, and the rejection arrives
+// mid-prompt on this and every later turn — after the fast path has already failed
+// and the fallback has torn down a working bridge to respawn on the same rejected
+// id.
+//
+// The live session's own advertised set is the evidence when a bridge exists, and
+// it is the UNFILTERED one: validating against the picker's list would refuse a
+// deprecated model the account can still use. An empty set means entitlement is
+// unknowable and api.ModelServed allows it.
+// It answers whether the request was REFUSED, having already written the response
+// and broadcast the banner, so the caller is one guard clause.
+func (h *Hub) refuseUnservedModel(
+	ctx context.Context, w http.ResponseWriter, chatID api.ChatID, chat *api.Chat, model string,
+) bool {
+	served := chat.ServedModelIDs
+	if sb := h.coord.GetBridge(chatID); sb != nil {
+		if live := sb.bridge.ServedModels(); len(live) > 0 {
+			served = live
+		}
+	}
+	if api.ModelServed(model, served) {
+		return false
+	}
+	slog.Warn("refusing a model switch this account does not serve",
+		"chat_id", chatID, "model", model)
+	h.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
+		Code:    api.ErrCodeModelNotServed,
+		Message: "\"" + model + "\" is not available on this account. Pick another model.",
+	}))
+	h.respondErr(w, http.StatusConflict, errModelNotServed)
+	return true
 }

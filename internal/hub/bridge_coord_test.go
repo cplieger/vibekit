@@ -7,6 +7,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -397,5 +398,75 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	want := []string{"sess_chatA", "sess_chatB"}
 	if !slices.Equal(got, want) {
 		t.Errorf("liveSessionIDs() = %v, want %v", got, want)
+	}
+}
+
+// TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied pins the visibility
+// half of the mode contract, and the reason it is needed is subtle enough to state.
+//
+// applyInitialMode warns and continues when session/set_mode is refused, so the
+// session runs the engine's default. persistNewSessionMetadata then writes the
+// ACTUAL mode onto the chat, which is right — the mode pill must not claim a role
+// the agent is not running under — but it was also the ONLY record of the request.
+// So one transient refusal silently and permanently converted a chat pinned to
+// "spec" into a default-mode chat: at the next spawn the requested id now EQUALS
+// the current one, so applyInitialMode's own guard means no retry is attempted and
+// nothing ever says why.
+func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
+	cases := []struct {
+		name       string
+		requested  string
+		actual     string
+		wantReport bool
+	}{
+		{"a refused mode is reported", "spec", "vibe", true},
+		{"the applied mode is not reported", "spec", "spec", false},
+		{"a chat that asked for nothing is not reported", "", "vibe", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cs, br := newTestHub()
+			br.mu.Lock()
+			br.currentMode = tc.actual
+			br.mu.Unlock()
+			_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+				c.Name = "A"
+				c.CurrentModeID = tc.requested
+				return true
+			})
+
+			_, since := h.sse.hub.Bounds()
+			h.coord.persistNewSessionMetadata(context.Background(), "c1", br)
+
+			// The record always holds the mode the session is really in.
+			c, _ := cs.Get(context.Background(), "c1")
+			if c.CurrentModeID != tc.actual {
+				t.Errorf("chat.CurrentModeID = %q, want the actual mode %q", c.CurrentModeID, tc.actual)
+			}
+
+			var reported bool
+			for _, e := range bufferedSince(h, since) {
+				var msg api.ServerEvent
+				if json.Unmarshal(e.Event.Data, &msg) != nil || msg.Type != api.EventError {
+					continue
+				}
+				// ServerEvent.Payload is an `any`, so round-trip it to read the
+				// typed payload back out.
+				raw, mErr := json.Marshal(msg.Payload)
+				if mErr != nil {
+					continue
+				}
+				var p api.ErrorPayload
+				if json.Unmarshal(raw, &p) == nil && p.Code == api.ErrCodeModeNotApplied {
+					reported = true
+					if !strings.Contains(p.Message, tc.requested) {
+						t.Errorf("message %q does not name the requested mode %q", p.Message, tc.requested)
+					}
+				}
+			}
+			if reported != tc.wantReport {
+				t.Errorf("mode_not_applied reported = %v, want %v", reported, tc.wantReport)
+			}
+		})
 	}
 }

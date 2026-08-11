@@ -99,8 +99,14 @@ type errorResponse struct {
 }
 
 // RespondErr writes a JSON error response with the given status code.
+//
+// The body goes through api.RPCErrorText rather than err.Error() because four of
+// the handlers reaching here (compact, mode, rewind, steer) forward a bridge Call
+// failure verbatim, and on a -32603 the error string is KAS's literal "Internal
+// error" while the cause sits unread in `error.data`. RPCErrorText is a no-op for
+// every ordinary Go error, so the one call covers both populations.
 func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
-	api.WriteJSONStatus(w, code, errorResponse{Error: err.Error()})
+	api.WriteJSONStatus(w, code, errorResponse{Error: api.RPCErrorText(err)})
 }
 
 // RequireChatID validates that cmd.ChatID is non-empty and writes a

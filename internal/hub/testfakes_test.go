@@ -28,6 +28,8 @@ type fakeBridge struct {
 	blockOn      map[string]chan struct{}
 	sessionID    string
 	modelID      string
+	currentMode  string
+	servedModels []string
 	sessionTitle string
 	calls        []string
 	// startOpts records the StartOpts of the most recent Start, so a test can
@@ -184,7 +186,14 @@ func (b *fakeBridge) ModelID() api.ModelID {
 	return api.ModelID(b.modelID)
 }
 
-func (b *fakeBridge) CurrentMode() string { return "" }
+// CurrentMode reports the mode the SESSION ended up in, which is not necessarily
+// the one StartOpts asked for: applyInitialMode warns and continues when
+// session/set_mode is refused. Settable so a test can simulate that divergence.
+func (b *fakeBridge) CurrentMode() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.currentMode
+}
 
 // SessionTitle reports KAS's own session title. The fake returns the value
 // tests set on it so the bridge_coord adoption guard can be exercised.
@@ -196,6 +205,15 @@ func (b *fakeBridge) SessionTitle() string {
 
 func (b *fakeBridge) Modes() []api.SessionMode   { return nil }
 func (b *fakeBridge) Models() []api.SessionModel { return nil }
+
+// ServedModels reports the ids this fake session advertises. Nil by default, which
+// api.ModelServed reads as "entitlement unknowable" and allows — so a test that
+// does not care about entitlement is unaffected, and one that does sets it.
+func (b *fakeBridge) ServedModels() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.servedModels
+}
 
 func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
 	b.mu.Lock()
