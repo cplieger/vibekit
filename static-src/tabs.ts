@@ -281,9 +281,11 @@ export function renameTab(id: string, name: string): void {
   emit();
 }
 
-/** Set a status indicator on a tab: "thinking" (pulsing accent dot),
- *  "permission" (amber dot), "waiting" (pulsing amber dot — the agent
- *  declared waiting_on_user and needs input), or "" to clear. */
+/** Set a status indicator on a tab: "thinking" (accent disc with the glow beat +
+ *  travelling wave), "permission" (still yellow disc in a hard ring), "waiting"
+ *  (the same beat + wave in yellow — the agent declared waiting_on_user and
+ *  needs input), or "" to clear. The visual vocabulary is shared with
+ *  @cplieger/web-terminal-ui's .wt-status-dot; see css/61-mcp-tools.css. */
 export function setTabStatus(id: string, status: "" | "thinking" | "permission" | "waiting"): void {
   const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`);
   if (el === null) {
