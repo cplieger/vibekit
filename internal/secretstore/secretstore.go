@@ -73,6 +73,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/vibekit/internal/fileutil"
 )
 
 // Bounds. The measured blobs are 90–211 bytes, so both limits are far above
@@ -146,11 +147,31 @@ func (s *Store) load() error {
 	if len(data) > maxFileBytes {
 		return fmt.Errorf("read %s: %d bytes exceeds the %d-byte bound", fileName, len(data), maxFileBytes)
 	}
-	// Tighten perms on a file written by an older build or copied in by hand.
-	if info, statErr := os.Stat(s.path); statErr == nil && info.Mode().Perm() != fileMode {
-		if chErr := os.Chmod(s.path, fileMode); chErr != nil {
-			slog.Warn("secretstore: tighten perms failed", "path", s.path, "error", chErr)
-		}
+	// The values here are OAuth client secrets, refresh and access tokens and PKCE
+	// verifiers, and the package doc is explicit that the base64 is an encoding,
+	// NOT encryption: the file's 0600 is its whole protection. os.Chmod only ASKS
+	// for that mode, so on a filesystem that stores 0660 for the request the old
+	// code tightened nothing and reported nothing. EnforceFileMode re-stats the
+	// descriptor it chmod'ed, and refuses a symlink at the name rather than
+	// tightening whatever the name points at this instant.
+	//
+	// POSTURE CHANGED (was warn-and-continue): an unverifiable mode FAILS the
+	// load. A group-readable token file is the exact exposure the 0600 exists to
+	// prevent, so continuing would mean writing every credential KAS hands us
+	// into a file we know we cannot protect. Failing here does not brick boot —
+	// hub treats a secretstore that will not open as best-effort, logs one ERROR
+	// and runs with h.secrets nil, which degrades MCP OAuth to the per-spawn DCR
+	// it did before this package existed. That is vibekit invariant 6's shape:
+	// remove the exposure, do not abort startup over persistent-volume state.
+	//
+	// What this does NOT do is delete the file. On a filesystem that widens every
+	// mode, removing it would destroy re-derivable credentials on every single
+	// boot with no path to recovery, trading a reported confidentiality problem
+	// for repeated silent data loss. The exposure of a file that was already wide
+	// when we found it is not ours to undo; growing it is.
+	if _, chErr := fileutil.EnforceFileMode(s.path, fileMode); chErr != nil {
+		return fmt.Errorf("refusing to use %s: its mode could not be verified as %#o, so the credentials in it may be readable by other users on this host: %w",
+			fileName, fileMode, chErr)
 	}
 	var f file
 	if uErr := json.Unmarshal(data, &f); uErr != nil {

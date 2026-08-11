@@ -695,10 +695,12 @@ func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("load did not tighten perms: got %v, want 0600", info.Mode().Perm())
 	}
-	// The chmod succeeded, so no perms-failure warning is logged. Pins
-	// the chErr != nil guard against a negation that would warn on success.
-	if strings.Contains(buf.String(), "tighten mcp.json perms failed") {
-		t.Errorf("chmod succeeded but warn logged; log=%q", buf.String())
+	// The enforcement succeeded, so no perms warning is logged. Pins the
+	// chErr != nil guard against a negation that would warn on success. The
+	// string must track the warning in load(): a stale one here asserts the
+	// absence of a message that can no longer be emitted, which passes forever.
+	if strings.Contains(buf.String(), "could not be made 0600") {
+		t.Errorf("mode enforcement succeeded but warn logged; log=%q", buf.String())
 	}
 }
 

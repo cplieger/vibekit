@@ -132,7 +132,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Loki. client_ip is the spoof-safe resolved client host from
 	// webhttp.ClientIP: the unspoofable socket peer when directly
 	// exposed, or the real client from a trusted X-Forwarded-For when
-	// TRUSTED_PROXIES is set. Single-user deployment, so cardinality on
+	// WT_TRUSTED_PROXIES is set. Single-user deployment, so cardinality on
 	// client_ip + user_agent is bounded.
 	slog.Info("login: request received",
 		"client_ip", webhttp.ClientIP(r, h.trusted...),

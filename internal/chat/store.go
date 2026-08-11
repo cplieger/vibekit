@@ -19,6 +19,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat/archive"
+	"github.com/cplieger/vibekit/internal/fileutil"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -77,24 +78,49 @@ type Store struct {
 const tombstoneTTL = 10 * time.Minute
 
 // NewStore opens (or creates) the chat directory at dir. Returns an error
-// if the directory cannot be created or its permissions cannot be
-// enforced — callers must fail startup rather than return a store whose
-// every op will fail.
+// if the directory cannot be created — callers must fail startup rather
+// than return a store whose every op will fail. A mode that cannot be
+// enforced is NOT one of those errors: it warns and continues, because
+// the container coming up is the operator's only way in to repair a
+// /config this process neither created nor owns.
 func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return nil, fmt.Errorf("chat store: mkdir %s: %w", dir, err)
 	}
-	// MkdirAll only sets perms on creation; enforce on a pre-existing dir
-	// in case a prior process or a user-mounted config volume left wider
-	// perms. A read-only bind mount may reject chmod; log and continue.
-	if err := os.Chmod(dir, dirMode); err != nil {
-		slog.Warn("chat store: chmod", "dir", dir, "error", err)
+	// MkdirAll only applies its mode on CREATION, and even then the mode is a
+	// request: a directory created under a setgid parent carries the bit whether
+	// or not it was asked for, and an inheritable group-write ACL stores 0770 for
+	// a 0o700 mkdir. So the enforcement covers both a pre-existing directory a
+	// user-mounted config volume left wide and a fresh one the kernel widened —
+	// and EnforceDirMode re-stats the descriptor it chmod'ed, which is the only
+	// thing that makes the mode below a fact rather than a request. It refuses a
+	// symlink or a non-directory at the name instead of chmod'ing through it.
+	//
+	// Warn-and-continue is KEPT, against this function's own doc claim that it
+	// fails when perms cannot be enforced: a chmod refused on a mounted volume
+	// (read-only, or owned by another uid while still writable by us) must not
+	// abort boot, because the operator's way IN to repair /config is the container
+	// coming up (vibekit invariant 6). The doc comment above is corrected to say
+	// what the code does.
+	stored, err := fileutil.EnforceDirMode(dir, dirMode)
+	mode := stored.String()
+	if err != nil {
+		slog.Warn("chat store: chat dir is not 0700 and could not be made 0700; chat content may be readable by other users on this host",
+			"dir", dir, "error", err)
+		// The mode is genuinely UNKNOWN on this branch — the open or the stat is
+		// what failed — so the breadcrumb must not print a zero FileMode as if it
+		// were an observation.
+		mode = "unverified"
 	}
-	// Startup breadcrumb so Loki can answer "did the store come up
-	// cleanly after restart?" without having to read the hub's wiring
-	// log. Matches the single-Info-line-on-init pattern used by other
-	// vibekit package constructors.
-	slog.Info("chat store: opened", "dir", dir, "mode", os.FileMode(dirMode).String())
+	// Startup breadcrumb so Loki can answer "did the store come up cleanly
+	// after restart?" without having to read the hub's wiring log. Matches the
+	// single-Info-line-on-init pattern used by other vibekit package
+	// constructors. The mode logged is the one the FILESYSTEM stored, read back
+	// from the handle — not the constant we asked for. The old line reported
+	// dirMode unconditionally, so it claimed 0700 on exactly the filesystems
+	// where that was false, which is the one case an operator needs this
+	// breadcrumb for.
+	slog.Info("chat store: opened", "dir", dir, "mode", mode)
 	s := &Store{
 		dir:       dir,
 		tombstone: make(map[api.ChatID]time.Time),

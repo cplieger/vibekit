@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/pinstall"
+	"github.com/cplieger/pinstall/v2"
 )
 
 // TestStartKiroCLIShapes pins the runtimes startKiroCLI can return for a
@@ -201,54 +201,6 @@ func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
 	}
 	if got := kiro.cliPath(); got != "" {
 		t.Errorf("cliPath() = %q, want empty: no version may be active", got)
-	}
-}
-
-// TestKiroPathEnvLeadsWithTheVersionDirectory pins the environment overlay every
-// spawned kiro-cli gets. Leading is the whole point: $TOOLS/bin is co-owned by
-// the toolbelt engine and $TOOLS/go/bin is GOPATH/bin, so a stale kiro-cli in
-// either would win bare-name resolution if the version directory came second.
-func TestKiroPathEnvLeadsWithTheVersionDirectory(t *testing.T) {
-	t.Setenv("PATH", "/config/tools/bin:/usr/bin")
-
-	if got := kiroPathEnv(""); got != nil {
-		t.Errorf("kiroPathEnv(\"\") = %v, want nil: no active version means no overlay", got)
-	}
-
-	got := kiroPathEnv("/config/tools/kiro-cli-versions/2.14.2")
-	if len(got) != 1 {
-		t.Fatalf("kiroPathEnv returned %v, want exactly one PATH entry", got)
-	}
-	want := "PATH=/config/tools/kiro-cli-versions/2.14.2" + string(os.PathListSeparator) + "/config/tools/bin:/usr/bin"
-	if got[0] != want {
-		t.Errorf("overlay = %q, want %q", got[0], want)
-	}
-	if !strings.HasPrefix(got[0], "PATH=/config/tools/kiro-cli-versions/2.14.2"+string(os.PathListSeparator)) {
-		t.Error("the version directory is not FIRST on PATH")
-	}
-}
-
-// TestKiroPathEnvWithNoInheritedPATHDoesNotWidenTheSearchPath pins the degenerate
-// case. Appending an empty inherited PATH would leave a trailing separator, and an
-// empty PATH element resolves to the CHILD'S CWD — cfg.WorkDir, the user's own
-// checkouts — so the overlay would widen the search path at exactly the moment it
-// has least information, instead of narrowing it to the verified install. Only
-// reachable from a bare `go run`, a test, or a deployment that clears the
-// environment, since the image always sets PATH; asserted anyway because the
-// symmetrical overlay in web-terminal-kiro guards it and the two must not diverge.
-func TestKiroPathEnvWithNoInheritedPATHDoesNotWidenTheSearchPath(t *testing.T) {
-	t.Setenv("PATH", "")
-
-	got := kiroPathEnv("/config/tools/kiro-cli-versions/2.14.2")
-	if len(got) != 1 {
-		t.Fatalf("kiroPathEnv returned %v, want exactly one PATH entry", got)
-	}
-	want := "PATH=/config/tools/kiro-cli-versions/2.14.2"
-	if got[0] != want {
-		t.Errorf("overlay = %q, want %q: a trailing separator makes the child search its own cwd", got[0], want)
-	}
-	if strings.HasSuffix(got[0], string(os.PathListSeparator)) {
-		t.Error("the overlay ends in a path separator, so an empty element resolves to the child's cwd")
 	}
 }
 

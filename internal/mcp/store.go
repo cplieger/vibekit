@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/fileutil"
 )
 
 // Compile-time interface assertions.
@@ -255,10 +256,21 @@ func (s *Store) load() error {
 	if err != nil {
 		return fmt.Errorf("read mcp.json: %w", err)
 	}
-	if info, statErr := os.Stat(s.path); statErr == nil && info.Mode().Perm() != 0o600 {
-		if chErr := os.Chmod(s.path, 0o600); chErr != nil {
-			slog.Warn("mcp: tighten mcp.json perms failed", "path", s.path, "error", chErr)
-		}
+	// mcp.json is plaintext API keys in env and header values (see the package
+	// doc), so its 0600 is the whole of its protection — and os.Chmod only ASKS
+	// for that mode. EnforceFileMode re-stats the descriptor it chmod'ed, so a
+	// filesystem that stores 0660 for the request is reported here instead of
+	// passing as success, and it refuses a symlink at the name rather than
+	// tightening whatever the name currently points at.
+	//
+	// Warn-and-continue, unchanged: load's error is fatal to New and therefore to
+	// startup, and a /config the operator reshaped must still boot so it can be
+	// repaired from the UI (vibekit invariant 6 — remove the exposure, do not
+	// brick boot on it). The warning names the consequence because it is now
+	// TRUE: today this line cannot fire on a widening filesystem at all.
+	if _, chErr := fileutil.EnforceFileMode(s.path, 0o600); chErr != nil {
+		slog.Warn("mcp: mcp.json is not 0600 and could not be made 0600; the API keys in it may be readable by other users on this host",
+			"path", s.path, "error", chErr)
 	}
 	var f file
 	if uErr := json.Unmarshal(data, &f); uErr != nil {

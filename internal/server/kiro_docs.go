@@ -190,12 +190,25 @@ func (s *Server) kiroRoots() []kiroRoot {
 	return roots
 }
 
-// dirSignature builds a cheap cache key from the mtimes of each root's category
-// directories. It detects a file added, removed or renamed (all of which move
-// the parent's mtime) and an EDIT to a file only if the editor replaced it. That
-// is the accepted limit: the page also refetches on the `settings_updated`
-// broadcast, and an in-place body edit changes no field this endpoint reads
-// except the description, which is a display string.
+// dirSignature builds a cheap cache key from each root's category directories:
+// the directory mtime AND its entry names.
+//
+// The entry names are load-bearing, not belt-and-braces. Linux stamps inode
+// timestamps from a COARSE clock (jiffy granularity, typically 1-4ms), so two
+// changes to one directory inside the same tick produce byte-identical mtimes —
+// measured on this host, writing two files back to back left the parent's mtime
+// identical to the nanosecond. An mtime-only signature therefore misses exactly
+// the case that matters here: the page refetches on the `settings_updated`
+// broadcast, which fires immediately after the write that changed the tree, so
+// "user adds a steering file, UI refetches" is precisely the sequence that lands
+// inside one tick. The stale list would then be served until some unrelated
+// change moved the mtime.
+//
+// So an added, removed or renamed file is detected by the name set regardless of
+// clock granularity, and a file REPLACED in place is still detected by the
+// mtime. An in-place body EDIT remains undetected, and that limit is still
+// accepted: it changes no field this endpoint reads except the description,
+// which is a display string.
 func dirSignature(roots []kiroRoot) string {
 	var b strings.Builder
 	for _, root := range roots {
@@ -209,7 +222,19 @@ func dirSignature(roots []kiroRoot) string {
 				b.WriteString(p + "=-;")
 				continue
 			}
-			b.WriteString(p + "=" + info.ModTime().UTC().Format("20060102150405.000000000") + ";")
+			b.WriteString(p + "=" + info.ModTime().UTC().Format("20060102150405.000000000"))
+			// os.ReadDir returns entries sorted by name, so the signature is
+			// stable for an unchanged directory. One getdents on a small
+			// directory is far cheaper than the ~200 file opens and
+			// front-matter parses this cache exists to avoid.
+			entries, dirErr := os.ReadDir(p)
+			if dirErr != nil {
+				b.WriteString("#?")
+			}
+			for _, e := range entries {
+				b.WriteString("#" + e.Name())
+			}
+			b.WriteString(";")
 		}
 	}
 	return b.String()

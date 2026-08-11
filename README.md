@@ -134,25 +134,38 @@ The image ships working defaults; most setups only choose the volumes and how to
 - **User:** the compose above runs as `1000:1000` (see the first-boot ownership note). Run as root (`user: "0:0"`) to skip managing host ownership.
 - **Health:** `GET /api/health` reports healthy once the server is up **and** the pinned `kiro-cli` is installed, runnable at that exact version, and has its auto-update switched off. Anything short of that answers `503` with the reason: `kiro-cli installing` during the first-boot download, `kiro-cli install retrying` between attempts, `kiro-cli unavailable` once they are exhausted, `kiro-cli required settings not enforced` when the pin could not be enforced. The web UI still starts in every one of those states (files, git, settings and the shell all work) and shows a banner; only chats wait. The install retries itself with backoff, so a failed download usually needs no action. To fix one by hand, repair `/config/tools/kiro-cli-versions` inside the container and run `curl -X POST localhost:9847/api/kiro-cli/rescan` (loopback only) to pick it up without a restart.
 
-### Behind a reverse proxy (`TRUSTED_PROXIES`)
+### Behind a reverse proxy (`WT_TRUSTED_PROXIES`)
 
 The access log and the login/logout audit logs record a `client_ip`. How that address is resolved depends on how you expose vibekit:
 
-- **Directly exposed** (no reverse proxy in front): leave `TRUSTED_PROXIES` unset. `client_ip` is the address of the connecting socket, which cannot be forged at this layer. Any `X-Forwarded-For` header a client sends is ignored.
-- **Behind a reverse proxy**: set `TRUSTED_PROXIES` to your proxy's address range so `client_ip` shows the real client instead of the proxy's own address. It is a comma-separated list of CIDRs (bare IPs are accepted as single hosts), for example:
+- **Directly exposed** (no reverse proxy in front): leave `WT_TRUSTED_PROXIES` unset. `client_ip` is the address of the connecting socket, which cannot be forged at this layer. Any `X-Forwarded-For` header a client sends is ignored.
+- **Behind a reverse proxy**: set `WT_TRUSTED_PROXIES` to your proxy's address range so `client_ip` shows the real client instead of the proxy's own address. It is a comma-separated list of CIDRs (bare IPs are accepted as single hosts), for example:
 
   ```yaml
   environment:
-    TRUSTED_PROXIES: "10.0.0.0/8,192.168.0.0/16"
+    WT_TRUSTED_PROXIES: "10.0.0.0/8,192.168.0.0/16"
   ```
 
-`X-Forwarded-For` is honored **only** when the connecting peer falls inside `TRUSTED_PROXIES`; otherwise the header is ignored and the socket peer is logged. List every proxy hop between the client and vibekit. This is spoof-safe by default: an empty, unset, or misconfigured value falls back to the unspoofable socket peer rather than trusting a client-supplied header.
+`X-Forwarded-For` is honored **only** when the connecting peer falls inside `WT_TRUSTED_PROXIES`; otherwise the header is ignored and the socket peer is logged. List every proxy hop between the client and vibekit. This is spoof-safe by default: an empty, unset, or misconfigured value falls back to the unspoofable socket peer rather than trusting a client-supplied header.
 
-### Host allowlist (`ALLOWED_HOSTS`)
+### Host allowlist (`WT_ALLOWED_HOSTS`)
 
-Set `ALLOWED_HOSTS` to the exact hostnames/IPs you browse vibekit at (comma-separated, e.g. `ALLOWED_HOSTS: "localhost,192.168.1.5,vibekit.example.com"`); a request with any other `Host` header is rejected with 403.
+Set `WT_ALLOWED_HOSTS` to the exact hostnames/IPs you browse vibekit at (comma-separated, e.g. `WT_ALLOWED_HOSTS: "localhost,192.168.1.5,vibekit.example.com"`); a request with any other `Host` header is rejected with 403.
 
 This blocks **DNS rebinding**: an attacker's page makes its own hostname resolve to your vibekit address, and because `Origin` and `Host` then agree, same-origin checks pass. The attack rides your own browser, so it reaches even a loopback- or LAN-bound deployment. An exact-`Host` allowlist breaks that chain. Requests made from the container itself (loopback socket peer with a loopback `Host`) are always admitted, so the image's healthcheck keeps working under any allowlist. Unset accepts every `Host` (and logs a startup warning); set it for any long-running deployment.
+
+### Trusted install uids (`WT_TRUSTED_INSTALL_UIDS`)
+
+Before installing kiro-cli, vibekit checks who can write each directory on the way to its install tree under `/config/tools`, and refuses to install when another identity can — what lands there is later executed by this container. Leave this **unset** (the default) and that check applies in full; that is the right setting for almost every deployment.
+
+Set it only when the check refuses a volume you know is safe — typically a shared or network mount whose permissions grant an account you control:
+
+```yaml
+environment:
+  WT_TRUSTED_INSTALL_UIDS: "3000"
+```
+
+Each uid you list is an assertion that the account is **already at least as privileged as this server**, so its write access gains it nothing. That is true of an administrator who already holds root on the host; it is false of an unprivileged account, and listing one of those hands it a way in instead of closing one. Entries that are not whole numbers above `0` are skipped with a warning naming the variable and how many were dropped, never their content. Sister app web-terminal-kiro reads the same variable for the same reason, which is why it carries no app-specific prefix.
 
 ### Extra browse roots (`VIBEKIT_BROWSE_ROOTS`)
 
@@ -187,8 +200,9 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `TRUSTED_PROXIES` | Reverse-proxy CIDRs whose `X-Forwarded-For` resolves `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy-trusted_proxies). | _(unset)_ |
-| `ALLOWED_HOSTS` | Exact hostnames/IPs vibekit answers for; anything else is rejected (anti-DNS-rebinding). See [Host allowlist](#host-allowlist-allowed_hosts). | _(unset)_ |
+| `WT_TRUSTED_PROXIES` | Reverse-proxy CIDRs whose `X-Forwarded-For` resolves `client_ip`. See [Behind a reverse proxy](#behind-a-reverse-proxy-wt_trusted_proxies). | _(unset)_ |
+| `WT_ALLOWED_HOSTS` | Exact hostnames/IPs vibekit answers for; anything else is rejected (anti-DNS-rebinding). See [Host allowlist](#host-allowlist-wt_allowed_hosts). | _(unset)_ |
+| `WT_TRUSTED_INSTALL_UIDS` | Numeric uids whose write access to the kiro-cli install tree does not refuse the install. See [Trusted install uids](#trusted-install-uids-wt_trusted_install_uids). | _(unset)_ |
 | `VIBEKIT_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). | _(unset)_ |
 | `VIBEKIT_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-vibekit_kiro_acp_args). | _(unset)_ |
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |

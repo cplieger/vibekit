@@ -238,6 +238,17 @@ func TestCorruptStoreMovedAside(t *testing.T) {
 // durability the disk does not have. KAS rethrows a store failure, so a Set
 // that reports success while the write failed would present as a credential
 // that silently reads back empty on the next spawn.
+//
+// The persist is broken by putting a DIRECTORY at the store's own path, not by
+// chmod'ing the parent unwritable. An unwritable directory is a DAC check, and
+// uid 0 bypasses DAC — so under root (which is how this suite runs in the
+// container) the write SUCCEEDED and the test failed on its own assertion,
+// pinning nothing. rename(2) is the mechanism that cannot be bypassed: it
+// refuses to replace an existing directory with a non-directory (EISDIR) for
+// root and non-root alike, and atomicfile commits every write with a rename, so
+// persistLocked fails at its rename phase for everyone. Gating the old shape on
+// os.Geteuid() would have skipped the rollback logic in the one environment the
+// suite usually runs in, which is close to not testing it at all.
 func TestPersistFailureRollsBack(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(dir)
@@ -248,14 +259,16 @@ func TestPersistFailureRollsBack(t *testing.T) {
 	if err := s.Set(ctx, realKey, "original"); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
-	// Make the directory unwritable so the atomic temp+rename cannot land.
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Skipf("chmod unsupported here: %v", err)
+	// Replace the store file with a directory so the atomic rename cannot land.
+	if err := os.Remove(s.path); err != nil {
+		t.Fatalf("remove store file: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if err := os.Mkdir(s.path, 0o700); err != nil {
+		t.Fatalf("mkdir in place of the store file: %v", err)
+	}
 
 	if err := s.Set(ctx, realKey, "replacement"); err == nil {
-		t.Fatal("Set() error = nil over an unwritable dir, want an error")
+		t.Fatal("Set() error = nil with a directory at the store path, want an error")
 	}
 	if v, _ := s.Get(realKey); v != "original" {
 		t.Errorf("Get() = %q after a failed Set, want %q (the failed write must roll back)", v, "original")
@@ -263,7 +276,7 @@ func TestPersistFailureRollsBack(t *testing.T) {
 
 	// Same for a failed delete.
 	if err := s.Delete(ctx, realKey); err == nil {
-		t.Fatal("Delete() error = nil over an unwritable dir, want an error")
+		t.Fatal("Delete() error = nil with a directory at the store path, want an error")
 	}
 	if v, ok := s.Get(realKey); !ok || v != "original" {
 		t.Errorf("Get() = (%q, %v) after a failed Delete, want (%q, true)", v, ok, "original")
