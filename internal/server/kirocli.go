@@ -114,7 +114,13 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 // rather than a readiness verdict and a caller keying on {"status":...} must not
 // read a 403 as one.
 func loopbackOnly(next http.Handler) http.Handler {
-	refuse := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	refuse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The request is USED, not discarded: this endpoint spawns no process but
+		// it does gate one, so a refusal is worth a correlatable record. Without
+		// this the 403 relied entirely on the access log, unlike the sibling app's
+		// loopback refusal, which passes the request into its writer.
+		slog.Warn("kiro-cli repair hook refused: not a loopback caller",
+			"remote", r.RemoteAddr, "host", r.Host)
 		api.WriteJSONStatus(w, http.StatusForbidden,
 			api.ErrorJSON("the kiro-cli repair hook is loopback-only; call it from inside the container"))
 	})

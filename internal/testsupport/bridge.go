@@ -44,6 +44,9 @@ func (*NopACPBridge) Modes() []api.SessionMode { return nil }
 // Models returns nil; implements api.ACPBridge.
 func (*NopACPBridge) Models() []api.SessionModel { return nil }
 
+// ServedModels returns nil (entitlement unknowable); implements api.ACPBridge.
+func (*NopACPBridge) ServedModels() []string { return nil }
+
 // SetModel is a no-op; implements api.ACPBridge.
 func (*NopACPBridge) SetModel(context.Context, string) error { return nil }
 

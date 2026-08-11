@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -31,7 +31,7 @@ func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, map[string]any{"chats": headers})
 }
 
-// handleOne serves GET /api/chats/{id}?before=<ts>&limit=<n> and routes
+// handleOne serves GET /api/chats/{id}?before_id=<id>&limit=<n> and routes
 // /api/chats/{id}/<sub-resource> requests to their handlers.
 func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/chats/")
@@ -79,12 +79,12 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	}
 
 	limit := parseLimitParam(r)
-	before := parseBeforeParam(r)
+	beforeID := r.URL.Query().Get("before_id")
 
 	msgs := c.Messages
 	end := len(msgs)
-	if before > 0 {
-		end = sort.Search(len(msgs), func(i int) bool { return msgs[i].Ts >= before })
+	if beforeID != "" {
+		end = indexOfMessage(msgs, beforeID)
 	}
 	start := max(end-limit, 0)
 	window := make([]api.Message, end-start)
@@ -103,7 +103,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // The timeline rail spans the whole session while the client's transcript store
 // holds a paginated window, so a rail assembled from resident turns would grow
 // markers as the reader scrolled up — exactly the progress read-out it claims
-// not to be. Without this route the client's only option is walking `?before=`
+// not to be. Without this route the client's only option is walking `?before_id=`
 // to the beginning of history and pulling every message body over the wire to
 // count turns.
 //
@@ -168,16 +168,38 @@ func parseLimitParam(r *http.Request) int {
 	return limit
 }
 
-// parseBeforeParam returns the validated ?before= cursor (a millisecond
-// timestamp), or 0 when absent or unparseable.
-func parseBeforeParam(r *http.Request) int64 {
-	var before int64
-	if v := r.URL.Query().Get("before"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			before = n
+// indexOfMessage returns the position of the message with the given id, which is
+// the exclusive upper bound of the page before it. It returns len(msgs) for an id
+// the chat does not hold, so an unknown cursor pages the newest window rather
+// than an empty one.
+//
+// This replaced a `?before=<ts>` cursor resolved with sort.Search over
+// Message.Ts, and the replacement is a correctness fix rather than a style
+// preference. Two things were wrong with the timestamp:
+//
+//   - Binary search needs the field to be non-decreasing across the slice, and
+//     nothing makes that true. Message order is ARRAY POSITION (nothing sorts a
+//     transcript for rendering), and translate.newEventMessage stamps Ts when it
+//     CONSTRUCTS a message, outside the per-chat lock AppendMessage takes — so two
+//     writers can stamp 101 and 102 and then append 102 first. On a slice that is
+//     not ordered, sort.Search returns an arbitrary index and the page is silently
+//     dropped or repeated. The client catches a repeat by id; nothing catches a drop.
+//   - Even on an ordered slice, Search returns the FIRST index at the boundary
+//     value, so a group of messages sharing a millisecond was excluded wholesale.
+//     Ties are reachable from the two writers above and one is created on purpose:
+//     projection.applySummary gives a compaction event its predecessor's Ts so the
+//     event sorts where it belongs.
+//
+// An id is exact, so neither failure exists, and it needs no ordering invariant at
+// all. Cost is a backwards scan of an already-materialised slice; the store loads
+// the whole chat for this request either way.
+func indexOfMessage(msgs []api.Message, id string) int {
+	for i := range slices.Backward(msgs) {
+		if msgs[i].ID == id {
+			return i
 		}
 	}
-	return before
+	return len(msgs)
 }
 
 // exportFormat is the requested export serialization.

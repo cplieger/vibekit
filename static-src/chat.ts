@@ -203,7 +203,7 @@ function setupLoadMore(chatID: string): void {
           if (oldest === undefined) {
             return;
           }
-          void loadMessages(chatID, oldest.ts).then(() => {
+          void loadMessages(chatID, oldest.id).then(() => {
             // Remove the load-more skeleton — scroll.ts watches for its
             // removal as the "load complete" signal (was previously done
             // inside the imperative prependMessages helper).

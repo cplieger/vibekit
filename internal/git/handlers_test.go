@@ -3054,3 +3054,81 @@ func TestHandleBranchName_CleanTreeUsesCommits(t *testing.T) {
 		t.Errorf("clean-tree prompt should carry the commit fallback; prompt:\n%s", cp.prompt)
 	}
 }
+
+// TestRepoDirForDelete_RefusesAnIntermediateSymlinkEscape pins the containment
+// check the DESTRUCTIVE caller needs.
+//
+// repoDir is deliberately lexical-only so a user can address a symlinked repo by
+// its link name, and its doc justifies that on the ground that this package
+// performs "read operations". handleRemove is the exception: it calls
+// os.RemoveAll. That unlinks a final symlink rather than following it, but the
+// kernel resolves every INTERMEDIATE component, so a lexically-clean
+// "link/victim" deletes outside the workspace. No `..`, not absolute, and the
+// dir == workDir guard does not fire.
+//
+// Both directions are asserted, because a fix that simply refused symlinks would
+// break the feature the lexical rule exists for.
+func TestRepoDirForDelete_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
+	outside := t.TempDir()
+	workDir := t.TempDir()
+
+	// The escape: a symlink inside the workspace pointing at a tree outside it,
+	// with a real victim directory under the target.
+	if err := os.MkdirAll(filepath.Join(outside, "victim"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(workDir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// The feature: a symlink inside the workspace pointing at a real repo, also
+	// outside it. Addressing THIS by its link name must keep working for reads,
+	// and resolving it for a delete must land on the resolved target rather than
+	// be refused for being a link.
+	realRepo := filepath.Join(outside, "realrepo")
+	if err := os.MkdirAll(realRepo, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realRepo, filepath.Join(workDir, "repolink")); err != nil {
+		t.Fatal(err)
+	}
+	// An ordinary repo directly inside the workspace: the common case.
+	if err := os.MkdirAll(filepath.Join(workDir, "plain"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Handler{workDir: workDir}
+
+	if got := h.repoDirForDelete("link/victim"); got != "" {
+		t.Errorf("repoDirForDelete(%q) = %q, want \"\" (it resolves outside the workspace)",
+			"link/victim", got)
+	}
+	// `..` falls back to workDir in the lexical resolver, so it arrives here as
+	// the root and the caller refuses it as "cannot remove workspace root" -- a
+	// different refusal from an escape, which is why it is not "" .
+	if got := h.repoDirForDelete("../escape"); got != workDir {
+		t.Errorf("repoDirForDelete(%q) = %q, want the workspace root %q", "../escape", got, workDir)
+	}
+	// A repo that does not exist is NOT an escape: its parent is the workspace, so
+	// it passes, and os.RemoveAll is a no-op on a missing path. Demanding existence
+	// here would add a TOCTOU between the check and the delete for no benefit.
+	if got := h.repoDirForDelete("nope"); got != filepath.Join(workDir, "nope") {
+		t.Errorf("repoDirForDelete(%q) = %q, want the lexical join", "nope", got)
+	}
+	// The lexical resolver still names it, which is what makes the escape
+	// reachable without this check and is why the test asserts on both.
+	if lexical := h.repoDir("link/victim"); lexical == "" {
+		t.Error("repoDir(\"link/victim\") = \"\", want the lexical join (the premise of this test)")
+	}
+
+	wantPlain := filepath.Join(workDir, "plain")
+	if got := h.repoDirForDelete("plain"); got != wantPlain {
+		t.Errorf("repoDirForDelete(%q) = %q, want %q", "plain", got, wantPlain)
+	}
+	// A symlinked repo stays addressable, and the LEXICAL path is returned so
+	// os.RemoveAll unlinks the link rather than deleting the repo it points at.
+	wantLink := filepath.Join(workDir, "repolink")
+	if got := h.repoDirForDelete("repolink"); got != wantLink {
+		t.Errorf("repoDirForDelete(%q) = %q, want %q (a symlinked repo stays addressable)",
+			"repolink", got, wantLink)
+	}
+}

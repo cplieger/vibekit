@@ -113,19 +113,44 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 			"chat_id", chatID, keyError, err2)
 		deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
 			Code:    api.ErrCodeRecoveryFailed,
-			Message: "Session refresh failed: " + err2.Error(),
+			Message: "Session refresh failed: " + api.RPCErrorText(err2),
 		}))
 		return resp
 	}
-	sb2.SetPrompting()
+	// Take the new bridge's prompt slot the same way CmdPrompt takes it, rather
+	// than asserting it with SetPrompting. GetOrCreateBridge leaves the bridge
+	// registered and IDLE, so between that return and this line a concurrent
+	// prompt can win the slot -- and an unconditional SetPrompting would then let
+	// the deferred release below flip that turn's slot to idle while it is still
+	// streaming. Losing the race means abandoning the retry, which is the right
+	// direction: the user's own new turn is live on this chat, and the empty turn
+	// it would have replaced is already recorded as interrupted.
+	if !sb2.TryAcquireForPrompt() {
+		slog.Warn("empty turn: another turn started during recovery, abandoning retry",
+			"chat_id", chatID)
+		return resp
+	}
 	defer sb2.ReleaseAfterPrompt()
+
+	// The retry needs its own cancellable context registered as the in-flight
+	// prompt, for the same reason CmdPrompt's does: session/cancel is a
+	// NOTIFICATION nothing acks, so the 10s grace budget is what unblocks a turn
+	// KAS never answers. Without BeginPromptCall, sb2.promptCancel is nil,
+	// ArmCancelGrace refuses, and an unanswered retry holds this chat in
+	// bridgePrompting until the bridge dies -- there is no prompt ceiling to
+	// catch it, deliberately, because a real turn can run for hours.
+	ctx, cancelRetry := context.WithCancel(ctx)
+	defer cancelRetry()
+	sb2.BeginPromptCall(cancelRetry)
+	defer sb2.EndPromptCall()
+
 	params[api.KeySessionID] = sb2.SessionID()
 	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
 		deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
 			Code:    api.ErrCodeRecoveryFailed,
-			Message: "Retry prompt failed: " + retryErr.Error(),
+			Message: "Retry prompt failed: " + api.RPCErrorText(retryErr),
 		}))
 		return resp
 	}
@@ -260,7 +285,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	defer cancel()
 	sb, err := deps.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
-		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeBridgeStartFailed, Message: err.Error()}))
+		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeBridgeStartFailed, Message: api.RPCErrorText(err)}))
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -506,15 +531,27 @@ func isAuthShaped(re *api.RPCError) bool {
 func promptFailureReason(err error) string {
 	re, ok := errors.AsType[*api.RPCError](err)
 	if !ok {
-		return err.Error()
+		return api.RPCErrorText(err)
 	}
 	d := mappedFromData(re)
 	if d == nil {
-		return err.Error()
+		// Not one of KAS's mapped backend classes, which is the overwhelming
+		// majority: 127 of 137 measured engine errors are a -32603 whose message
+		// is the literal "Internal error" and whose cause is in `error.data`.
+		// This used to return err.Error(), i.e. that literal, so the real cause
+		// was on the wire and the user was told nothing.
+		return api.RPCErrorText(err)
 	}
+	// A MAPPED error is the one case where `error.data` is NOT the text: it is the
+	// machine triplet (errorType / retryErrorType / requestId), and the prose is
+	// KAS's own userFacingSessionErrorMessage in `message`. So this branch keeps
+	// the message and adds to it, while the unmapped branch above goes through
+	// RPCErrorText to recover the details KAS puts in data. Reversing that is the
+	// regression TestPromptFailureReason_NamesAThrottle catches: it renders the
+	// triplet's raw JSON at the user.
 	msg := re.Message
 	if msg == "" {
-		msg = err.Error()
+		msg = api.RPCErrorText(err)
 	}
 	if d.RetryErrorType == kasRetryThrottling {
 		msg += " kiro-cli already retried; waiting a moment before resending is the only thing that helps."

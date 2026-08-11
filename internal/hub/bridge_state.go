@@ -174,12 +174,6 @@ func (sb *sharedBridge) shouldTripCancelGrace(gen uint64) (context.CancelFunc, b
 	return sb.promptCancel, true
 }
 
-func (sb *sharedBridge) SetPrompting() {
-	sb.mu.Lock()
-	sb.state = bridgePrompting
-	sb.mu.Unlock()
-}
-
 func (sb *sharedBridge) IsPrimed() bool {
 	sb.mu.Lock()
 	defer sb.mu.Unlock()

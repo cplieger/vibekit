@@ -454,7 +454,7 @@ async function loadUntilResident(s: TurnSummary): Promise<boolean> {
     if (oldest === undefined) {
       return false;
     }
-    await loadMessages(chatID, oldest.ts);
+    await loadMessages(chatID, oldest.id);
     const after = getActive();
     // No progress means another page cannot help; stop rather than loop.
     if (after === undefined || after.messages[0]?.id === oldest.id) {

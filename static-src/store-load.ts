@@ -114,13 +114,17 @@ export async function loadList(): Promise<boolean> {
   return true;
 }
 
-export async function loadMessages(chatID: string, before?: number, limit = 50): Promise<boolean> {
+export async function loadMessages(
+  chatID: string,
+  beforeID?: string,
+  limit = 50,
+): Promise<boolean> {
   msgControllers.get(chatID)?.abort();
   const controller = new AbortController();
   msgControllers.set(chatID, controller);
   const params = new URLSearchParams({ limit: String(limit) });
-  if (before !== undefined) {
-    params.set("before", String(before));
+  if (beforeID !== undefined) {
+    params.set("before_id", beforeID);
   }
   const d = await apiGetTyped(
     `/api/chats/${encodeURIComponent(chatID)}?${params.toString()}`,
@@ -140,12 +144,12 @@ export async function loadMessages(chatID: string, before?: number, limit = 50):
     msgControllers.delete(chatID);
     return false;
   }
-  if (before !== undefined) {
-    // Prepend older-page messages, deduped by id. The `before` cursor is an
-    // exclusive-ish timestamp; when several messages share a millisecond ts at
-    // a page boundary the server can re-return a boundary message, which would
-    // otherwise render twice (and corrupt the msg index). Keep the copy already
-    // in the store (the authoritative newer render) and drop any id we've seen.
+  if (beforeID !== undefined) {
+    // Prepend older-page messages, deduped by id. The cursor is a message ID and
+    // the server treats it as exclusive, so a boundary message cannot come back
+    // twice the way the old millisecond cursor allowed. The id filter STAYS
+    // anyway: it costs one Set, and it is what makes a re-issued or overlapping
+    // page harmless rather than a double render that also corrupts the msg index.
     const seen = new Set(session.messages.map((m) => m.id));
     const older = d.messages.filter((m) => !seen.has(m.id)).map(normalizeMessage);
     session.messages = [...older, ...session.messages];

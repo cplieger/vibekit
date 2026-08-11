@@ -6,8 +6,24 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/api"
 )
+
+// maxNotifyTextBytes bounds one backend-supplied string on its way into banner
+// copy. Every value these four handlers interpolate is chosen upstream: an agent
+// name and a config path from a local file KAS read, and two free-form provider
+// messages. None has a length bound on the wire, and all four land in a banner
+// and a log line, so they get the same treatment as an RPC error's text.
+const maxNotifyTextBytes = 512
+
+// notifyText prepares one upstream string for banner copy: runesafe's
+// single-line preset (C0/C1 controls, DEL, Bidi overrides and the paragraph
+// separators become spaces, so a mangled message cannot forge a log record or
+// reorder a sentence in a viewer) capped on a rune boundary.
+func notifyText(s string) string {
+	return runesafe.SanitizeSingleLineBounded(s, maxNotifyTextBytes)
+}
 
 // HandleAgentNotFound handles the _kiro/customAgent/not_found notification:
 // the requested agent (a mode id on v3) doesn't exist. Persists the
@@ -37,7 +53,7 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID api.ChatID,
 	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
 		Code:    api.ErrCodeAgentNotFound,
-		Message: "\"" + p.Requested + "\" not found — using \"" + p.Fallback + "\"",
+		Message: "\"" + notifyText(p.Requested) + "\" not found, using \"" + notifyText(p.Fallback) + "\"",
 	}))
 }
 
@@ -53,7 +69,7 @@ func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID api.Chat
 	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
 		Code:    api.ErrCodeAgentConfigError,
-		Message: p.Path + ": " + p.Error,
+		Message: notifyText(t.relPath(p.Path)) + ": " + notifyText(p.Error),
 	}))
 }
 
@@ -69,7 +85,7 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID api.ChatID, msg
 	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
 		Code:    api.ErrCodeRateLimit,
-		Message: p.Message,
+		Message: notifyText(p.Message),
 	}))
 }
 
@@ -90,6 +106,6 @@ func (t *Translator) HandleSystemNotify(ctx context.Context, chatID api.ChatID, 
 	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
 		Code:    api.ErrCodeRateLimit,
-		Message: p.Message,
+		Message: notifyText(p.Message),
 	}))
 }

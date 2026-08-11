@@ -35,7 +35,7 @@ const (
 // turns would grow markers as the reader scrolled up — which is precisely the
 // "progress read-out" the rail claims to be. This is the cheap projection that
 // makes the claim true, and it is why the route exists at all rather than the
-// client walking `?before=` to the beginning of history.
+// client walking `?before_id=` to the beginning of history.
 type TurnSummary struct {
 	// ID is the turn's opening message id. The client joins on it to map its
 	// own resident turns onto these absolute numbers, so the server stays the

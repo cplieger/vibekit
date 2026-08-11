@@ -73,8 +73,6 @@ type CommandBridge interface {
 	TryAcquireForPrompt() bool
 	// ReleaseAfterPrompt releases the prompt lock.
 	ReleaseAfterPrompt()
-	// SetPrompting sets the bridge state to prompting (for recovery).
-	SetPrompting()
 	// BeginPromptCall registers the cancel func of the in-flight prompt's
 	// context and returns the turn generation it belongs to. Paired with
 	// EndPromptCall in the prompt handler's defer.
@@ -170,7 +168,7 @@ type StartOpts struct {
 
 // ACPBridge manages a single kiro-cli ACP subprocess for one chat. Methods
 // are safe for concurrent use; Call and Notify serialize writes to the
-// subprocess stdin internally. IsPrompting/SetPrompting are wrappers' state;
+// subprocess stdin internally. The prompt-slot state is the wrapper's;
 // the bridge itself has no "busy" concept.
 type ACPBridge interface {
 	// Start launches a fresh kiro-cli ACP subprocess. If
@@ -213,6 +211,10 @@ type ACPBridge interface {
 	// deprecated/internal entries filtered out. Zero fallback: if
 	// kiro-cli returns nothing, the slice is empty.
 	Models() []SessionModel
+	// ServedModels returns every advertised model id, UNFILTERED — the input to
+	// the entitlement check, where Models' display filtering would refuse a
+	// deprecated model the account can still use. Empty means unknowable.
+	ServedModels() []string
 	// SetModel performs an in-session model swap via
 	// session/set_config_option (configId "model") — v3 has no
 	// session/set_model. ctx enables caller-driven cancellation of the

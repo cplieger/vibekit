@@ -289,7 +289,14 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "repo name required (cannot remove workspace root)")
 		return
 	}
-	dir := h.repoDir(body.Repo)
+	// The resolved variant, because this is the one handler that DELETES: see
+	// repoDirForDelete for the intermediate-symlink escape the lexical resolver
+	// cannot see. It answers "" for a path it will not vouch for.
+	dir := h.repoDirForDelete(body.Repo)
+	if dir == "" {
+		api.BadRequest(w, "that repo path is not inside the workspace")
+		return
+	}
 	if dir == h.workDir {
 		api.BadRequest(w, "cannot remove workspace root")
 		return
