@@ -107,7 +107,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/reactive && \
 # imports `render` from it (the reset primitives), and it is the peer the UI
 # package builds on; bundled into app.js by cmd/bundle.
 # renovate: datasource=npm depName=@cplieger/web-terminal-engine
-ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=3.10.0
+ARG CPLIEGER_WEB_TERMINAL_ENGINE_VERSION=3.10.1
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-engine/-/web-terminal-engine-${CPLIEGER_WEB_TERMINAL_ENGINE_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-engine --strip-components=1
@@ -120,7 +120,7 @@ RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-engine && \
 # app.js by cmd/bundle; its css/ bundle (MANIFEST.touch) is concatenated into
 # style.css by the same tool.
 # renovate: datasource=npm depName=@cplieger/web-terminal-ui
-ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=5.4.5
+ARG CPLIEGER_WEB_TERMINAL_UI_VERSION=5.4.6
 RUN mkdir -p static-src/node_modules/@cplieger/web-terminal-ui && \
     curl -fsSL "https://registry.npmjs.org/@cplieger/web-terminal-ui/-/web-terminal-ui-${CPLIEGER_WEB_TERMINAL_UI_VERSION}.tgz" \
       | tar -xz -C static-src/node_modules/@cplieger/web-terminal-ui --strip-components=1
