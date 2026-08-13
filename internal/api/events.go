@@ -58,6 +58,12 @@ const (
 	EventCodeReferences    EventType = "code_references"
 	EventCompactionStarted EventType = "compaction_started"
 	EventConnected         EventType = "connected"
+	// EventDecisionSettled retires an ask on every surface that did NOT answer
+	// it. The three *_needed events below are offered to every tab and to a
+	// watching run tab at once, while only the first answer is accepted, so
+	// something has to close the others — and it carries attribution, because a
+	// card that collapses for no stated reason reads as a lost click.
+	EventDecisionSettled   EventType = "decision_settled"
 	EventError             EventType = "error"
 	EventElicitationNeeded EventType = "elicitation_needed"
 	EventUserInputNeeded   EventType = "user_input_needed"

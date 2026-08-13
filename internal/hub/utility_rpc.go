@@ -131,7 +131,7 @@ func (us *utilitySession) configTemplateRaw(ctx context.Context) (json.RawMessag
 // so KAS skips its own per-command approval round-trip. hookTriggerMu
 // serializes concurrent triggers, whose shared expectingHookExec +
 // lastHookRun would otherwise cross outputs.
-func (us *utilitySession) triggerRunCommandHook(ctx context.Context, hookID, hookName, command string, timeoutSecs int) (hookRunResult, error) {
+func (us *utilitySession) triggerRunCommandHook(ctx context.Context, hookID, hookName, command string) (hookRunResult, error) {
 	us.hookTriggerMu.Lock()
 	defer us.hookTriggerMu.Unlock()
 
@@ -146,17 +146,12 @@ func (us *utilitySession) triggerRunCommandHook(ctx context.Context, hookID, hoo
 		"command":        command,
 		"approved":       true,
 	}
-	// Forward the hook file's own declared timeout. KAS destructures
-	// `{command, timeout, approved}` off these params and re-forwards timeout
-	// onto the executeHook callback (`...timeout != null ? {timeout} : {}`),
-	// which is the value runHookCommand then applies. Omitting it silently
-	// capped every Run-now at the 60s default, so a hook file declaring
-	// `timeout: 300` was killed at 60 with no signal that its own setting had
-	// been ignored. Zero means the file declared none, and KAS's own default
-	// then applies -- which is why this is conditional rather than always sent.
-	if timeoutSecs > 0 {
-		params["timeout"] = timeoutSecs
-	}
+	// No `timeout` param. KAS accepts one here and re-forwards it onto the
+	// executeHook callback, but the value would have to be the hook file's own
+	// declared cap and vibekit has no way to know it: the list reply's action
+	// carries only {type, command} (see the wire shapes in hooks.go), so every
+	// Run-now runs under the 60s default. Reading it out of the file at
+	// _meta.filePath is the only way to close that, and this is not the place.
 	raw, err := us.rawCall(ctx, "hooks trigger", methodKiroHooksTriggerHook, scopedParams(params))
 	if err != nil {
 		return hookRunResult{}, err

@@ -9,6 +9,10 @@
 // that what they built means what they intended, and it comes from the SERVER's
 // resolved next_run_at rather than a second implementation here, so the line
 // cannot disagree with what will actually fire.
+//
+// It carries the LAST outcome too, from the same record: an unattended schedule
+// is exactly the thing nobody watches, so a row that only ever promises a next
+// run can repeat the same failure nightly with nothing on screen saying so.
 
 import { el } from "@cplieger/reactive";
 import { LAST_DAY } from "./schedule-types.js";
@@ -89,8 +93,12 @@ export function describeSpec(spec: ScheduleSpec): string {
   }
 }
 
-/** formatNextRun renders the server's resolved next run in local time. */
-export function formatNextRun(iso: string | undefined): string {
+/**
+ * formatStamp renders one of the server's resolved timestamps in local time. One
+ * format for both the next run and the last one, so the two halves of the row
+ * read as the same kind of time.
+ */
+export function formatStamp(iso: string | undefined): string {
   if (iso === undefined || iso === "") {
     return "";
   }
@@ -107,14 +115,53 @@ export function formatNextRun(iso: string | undefined): string {
   });
 }
 
+/** The result the server records when a launch took. Every other value is a
+ *  failure sentence, and the ones vibekit writes carry this prefix. */
+const RESULT_STARTED = "started";
+const RESULT_FAILED = "failed: ";
+
+/**
+ * describeOutcome renders the row's last-run segment from the two fields the
+ * client already holds: the server's `last_result` sentence and `last_run_at`.
+ *
+ * This is the half of the row that makes a schedule failing the same way every
+ * night visible. The server writes one of two shapes — `started` when the launch
+ * took, or `failed: <why>` when it did not, including the unattended run that
+ * was denied an approval minutes later — and the `<why>` is kept in full because
+ * it is the actionable part (it names the permission rule to add). Anything else
+ * is passed through as written rather than reclassified here.
+ */
+export function describeOutcome(view: ScheduleView): string {
+  const result = view.last_result ?? "";
+  if (result === "") {
+    return "";
+  }
+  const when = formatStamp(view.last_run_at);
+  const stamp = when === "" ? "" : ` ${when}`;
+  if (result === RESULT_STARTED) {
+    return `last started${stamp}`;
+  }
+  if (result.startsWith(RESULT_FAILED)) {
+    return `last failed${stamp}: ${result.slice(RESULT_FAILED.length)}`;
+  }
+  return `last${stamp}: ${result}`;
+}
+
 /** summaryLine is what the row and the picker both show. */
 export function summaryLine(view: ScheduleView | undefined): string {
   if (!view?.enabled) {
     return "Not scheduled";
   }
-  const next = formatNextRun(view.next_run_at);
-  const desc = describeSpec(view.spec);
-  return next === "" ? desc : `${desc} — next ${next}`;
+  let line = describeSpec(view.spec);
+  const next = formatStamp(view.next_run_at);
+  if (next !== "") {
+    line += ` — next ${next}`;
+  }
+  // The outcome trails the rule and the next run, separated by the app's own
+  // middot: what will happen reads first, what happened last reads second, and a
+  // schedule that has never fired shows nothing rather than an empty segment.
+  const last = describeOutcome(view);
+  return last === "" ? line : `${line} · ${last}`;
 }
 
 interface PickerOptions {

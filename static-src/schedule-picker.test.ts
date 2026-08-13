@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { describeSpec, formatNextRun, summaryLine, defaultSpec } from "./schedule-picker.js";
+import {
+  describeSpec,
+  describeOutcome,
+  formatStamp,
+  summaryLine,
+  defaultSpec,
+} from "./schedule-picker.js";
 import { LAST_DAY } from "./schedule-types.js";
 import type { ScheduleView } from "./schedule-types.js";
 
@@ -69,27 +75,69 @@ describe("describeSpec", () => {
   });
 });
 
-describe("formatNextRun", () => {
+describe("formatStamp", () => {
   it("is empty for a missing or unparseable value", () => {
-    expect(formatNextRun(undefined)).toBe("");
-    expect(formatNextRun("")).toBe("");
-    expect(formatNextRun("not a date")).toBe("");
+    expect(formatStamp(undefined)).toBe("");
+    expect(formatStamp("")).toBe("");
+    expect(formatStamp("not a date")).toBe("");
   });
 
   it("renders a real timestamp", () => {
-    expect(formatNextRun("2026-08-10T09:00:00+02:00")).not.toBe("");
+    expect(formatStamp("2026-08-10T09:00:00+02:00")).not.toBe("");
+  });
+});
+
+const view = (over: Partial<ScheduleView>): ScheduleView => ({
+  id: "bundled://demo",
+  source: "bundled://demo",
+  spec: { freq: "daily", hour: 2, minute: 0 },
+  enabled: true,
+  ...over,
+});
+
+// The outcome is the only signal an unattended schedule has. Nobody watches a
+// 02:00 run, so a row that promised a next run and said nothing about the last
+// one let the same failure repeat every night in silence.
+describe("describeOutcome", () => {
+  it("says nothing for a schedule that has never fired", () => {
+    expect(describeOutcome(view({}))).toBe("");
+  });
+
+  it("reports a launch that took, with when", () => {
+    const out = describeOutcome(
+      view({ last_result: "started", last_run_at: "2026-08-10T02:00:00+02:00" }),
+    );
+    expect(out).toContain("last started");
+    expect(out).toContain(formatStamp("2026-08-10T02:00:00+02:00"));
+  });
+
+  // The reason is the actionable half — it names the fix — so it is kept whole
+  // rather than reduced to the word "failed".
+  it("leads with the word failed and keeps the reason", () => {
+    const out = describeOutcome(
+      view({
+        last_result: "failed: needed approval for fs_write with nobody watching",
+        last_run_at: "2026-08-10T02:00:00+02:00",
+      }),
+    );
+    expect(out).toContain("last failed");
+    expect(out).toContain("needed approval for fs_write with nobody watching");
+    // The server's prefix is not printed twice.
+    expect(out).not.toContain("failed: failed");
+  });
+
+  it("passes an unrecognised result through as written", () => {
+    expect(describeOutcome(view({ last_result: "cancelled by hand" }))).toBe(
+      "last: cancelled by hand",
+    );
+  });
+
+  it("drops the stamp when the server sent no last-run time", () => {
+    expect(describeOutcome(view({ last_result: "started" }))).toBe("last started");
   });
 });
 
 describe("summaryLine", () => {
-  const view = (over: Partial<ScheduleView>): ScheduleView => ({
-    id: "bundled://demo",
-    source: "bundled://demo",
-    spec: { freq: "daily", hour: 2, minute: 0 },
-    enabled: true,
-    ...over,
-  });
-
   it("reads 'Not scheduled' with no schedule", () => {
     expect(summaryLine(undefined)).toBe("Not scheduled");
   });
@@ -108,6 +156,34 @@ describe("summaryLine", () => {
     const line = summaryLine(view({ next_run_at: "2026-08-10T02:00:00+02:00" }));
     expect(line).toContain("Every day at 02:00");
     expect(line).toContain("next ");
+  });
+
+  // Rule, then what will happen, then what happened last. A failure has to be
+  // readable on the row itself: /docs/workflows is where a nightly schedule is
+  // looked at, and nothing else surfaces its outcome.
+  it("carries the rule, the next run and the last outcome in that order", () => {
+    const line = summaryLine(
+      view({
+        next_run_at: "2026-08-11T02:00:00+02:00",
+        last_result: "failed: needed approval for fs_write with nobody watching",
+        last_run_at: "2026-08-10T02:00:00+02:00",
+      }),
+    );
+    expect(line.indexOf("Every day at 02:00")).toBeLessThan(line.indexOf("next "));
+    expect(line.indexOf("next ")).toBeLessThan(line.indexOf("last failed"));
+    expect(line).toContain("needed approval for fs_write");
+  });
+
+  it("shows the outcome even when no next run resolved", () => {
+    expect(summaryLine(view({ last_result: "started", last_run_at: "" }))).toBe(
+      "Every day at 02:00 · last started",
+    );
+  });
+
+  // A disabled schedule reads "Not scheduled" and nothing else: its history is
+  // not what the row is for once it will not fire again.
+  it("stays 'Not scheduled' when disabled, outcome or not", () => {
+    expect(summaryLine(view({ enabled: false, last_result: "started" }))).toBe("Not scheduled");
   });
 });
 

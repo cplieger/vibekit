@@ -19,7 +19,11 @@ vi.mock(
   "../scroll.js",
   async () => (await import("../__test-helpers__/scroll-mock.js")).scrollMock,
 );
-vi.mock("../decision-dock.js", () => ({ pushDecision: vi.fn() }));
+const mockCollapseSettled = vi.fn();
+vi.mock("../decision-dock.js", () => ({
+  pushDecision: vi.fn(),
+  collapseSettledDecision: mockCollapseSettled,
+}));
 
 vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
 
@@ -231,5 +235,18 @@ describe("error handler", () => {
     fireSSE("error", "chat-1", { code: "mystery_code", message: "huh" });
     expect(get("chat-1")?.thinking).toBe(false);
     expect(mockSetLastError).toHaveBeenCalledWith("mystery_code: huh");
+  });
+});
+
+describe("decision_settled handler", () => {
+  it("hands the settled request to the dock, kind and attribution intact", () => {
+    fireSSE("decision_settled", "chat-1", {
+      kind: "user_input",
+      settled_by: "unattended",
+      request_id: 42,
+    });
+    // The handler routes and nothing else: the dock owns the queue, so the
+    // arguments arriving unchanged IS the contract.
+    expect(mockCollapseSettled).toHaveBeenCalledWith("chat-1", "user_input", 42, "unattended");
   });
 });

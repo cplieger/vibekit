@@ -202,12 +202,45 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The request has to BE pending: the handler claims it before answering, so
+	// a tracked entry is what makes the answer legal.
+	h.sse.pendingPerms.Add(42, api.NewEvent(api.EventPermissionNeeded, "c1",
+		api.PermissionNeededPayload{RequestID: 42}))
 	rec := postCmd(t, h, api.ClientCommand{
 		Type: "permission_response", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"request_id":42,"option_id":"allow"}`),
 	})
 	if rec.Code != http.StatusOK {
 		t.Errorf("code = %d", rec.Code)
+	}
+}
+
+// TestPermission_SecondAnswerIs409 is the cross-tab double answer, end to end
+// through the dispatcher: the first answer claims request 42, and the second
+// one — the other tab's, sent against a card the server has already resolved —
+// is refused instead of being forwarded and silently dropped by kiro-cli.
+func TestPermission_SecondAnswerIs409(t *testing.T) {
+	h, cs, _ := newTestHub()
+	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	if _, err := h.coord.GetOrCreateBridge(context.Background(), "c1", ""); err != nil {
+		t.Fatal(err)
+	}
+	h.sse.pendingPerms.Add(42, api.NewEvent(api.EventPermissionNeeded, "c1",
+		api.PermissionNeededPayload{RequestID: 42}))
+
+	answer := func(reqID string) int {
+		return postCmd(t, h, api.ClientCommand{
+			Type: "permission_response", RequestID: reqID, ChatID: "c1",
+			Payload: json.RawMessage(`{"request_id":42,"option_id":"allow"}`),
+		}).Code
+	}
+	if code := answer("r1"); code != http.StatusOK {
+		t.Fatalf("first answer: code = %d, want 200", code)
+	}
+	// A distinct client request id, or the idempotency cache would replay the
+	// first answer's 200 and the test would pass without reaching the handler.
+	if code := answer("r2"); code != http.StatusConflict {
+		t.Errorf("second answer: code = %d, want 409", code)
 	}
 }
 

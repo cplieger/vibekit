@@ -44,9 +44,43 @@ func (h *Hub) ClearPendingPermsForChat(chatID api.ChatID) {
 	h.clearPendingPermsForChat(chatID)
 }
 
-// RemovePendingPerm removes a single pending permission by request ID.
-func (h *Hub) RemovePendingPerm(requestID int64) {
-	h.sse.pendingPerms.Remove(requestID)
+// TakePendingPerm claims an unanswered decision so exactly one surface can
+// answer it, reporting false when something else got there first. The winning
+// take also announces itself (decision_settled), which retires the card every
+// OTHER surface is still showing.
+//
+// Every answer path goes through here, and the order is the contract: TAKE
+// first, then send the answer to kiro-cli. A handler that responded first and
+// retired the entry afterwards left a window in which a second tab read the same
+// request as pending and answered it too, and the agent server drops the second
+// answer without telling anyone — so which choice won was decided there, not
+// here. A caller that loses the race must not send its answer at all.
+//
+// Taking and announcing are ONE function on purpose: they are the same fact
+// ("this request is now settled") told to two audiences, and splitting them
+// would let a new answer path claim a request while leaving every other surface
+// showing a live card for it.
+func (h *Hub) TakePendingPerm(requestID int64, settledBy api.SettledBy) bool {
+	evt, ok := h.sse.pendingPerms.TakeIfPresent(requestID)
+	if !ok {
+		return false
+	}
+	kind, known := api.DecisionKindForEvent(evt.Type)
+	if !known {
+		// Only the three *_needed events are ever tracked, so this is a tracker
+		// misuse rather than something off the wire. The claim still stands (the
+		// caller may answer); what is skipped is an announcement whose kind no
+		// client could act on.
+		slog.Error("hub: tracked decision has no kind, cannot announce it",
+			"type", evt.Type, "request_id", requestID)
+		return true
+	}
+	h.emit(api.NewEvent(api.EventDecisionSettled, evt.ChatID, api.DecisionSettledPayload{
+		RequestID: requestID,
+		Kind:      kind,
+		SettledBy: settledBy,
+	}))
+	return true
 }
 
 // ConfigDir returns the configuration directory.

@@ -2,15 +2,16 @@ package hub
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// TestPendingPermsTracker_ConcurrentAddRemoveList exercises concurrent
-// Add, Remove, ClearForChat, and List operations. Under the race
+// TestPendingPermsTracker_ConcurrentAddTakeList exercises concurrent
+// Add, TakeIfPresent, ClearForChat, and List operations. Under the race
 // detector this catches missing or misused locks.
-func TestPendingPermsTracker_ConcurrentAddRemoveList(t *testing.T) {
+func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 	tracker := newPendingPermsTracker()
 	const N = 100
 
@@ -32,10 +33,10 @@ func TestPendingPermsTracker_ConcurrentAddRemoveList(t *testing.T) {
 		}
 	})
 
-	// Remover: remove entries for chat-1.
+	// Taker: claim entries for chat-1.
 	wg.Go(func() {
 		for i := range N {
-			tracker.Remove(int64(i))
+			tracker.TakeIfPresent(int64(i))
 		}
 	})
 
@@ -55,4 +56,53 @@ func TestPendingPermsTracker_ConcurrentAddRemoveList(t *testing.T) {
 	})
 
 	wg.Wait()
+}
+
+// TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest is the reason
+// TakeIfPresent exists. Two surfaces answer one request at the same instant —
+// two browser tabs, or a human racing the unattended floor's deadline — and
+// exactly one of them may be told to go ahead. The check-then-act pair this
+// replaced let both through, and kiro-cli then discarded the loser's answer
+// without telling anyone, so the winner was decided there rather than here.
+//
+// Every goroutine contends for ONE id, so the count is the assertion: any
+// number other than 1 is the bug, whichever side wins.
+func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
+	const answerers = 16
+	const rounds = 200
+
+	for round := range rounds {
+		tracker := newPendingPermsTracker()
+		id := int64(round)
+		want := api.ServerEvent{ChatID: "chat-1", Type: api.EventPermissionNeeded}
+		tracker.Add(id, want)
+
+		var wins atomic.Int64
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range answerers {
+			wg.Go(func() {
+				<-start
+				got, ok := tracker.TakeIfPresent(id)
+				if !ok {
+					return
+				}
+				wins.Add(1)
+				// The winner also gets the event, which is what tells the caller
+				// which kind of decision it just settled.
+				if got.Type != want.Type || got.ChatID != want.ChatID {
+					t.Errorf("winner got event %+v, want %+v", got, want)
+				}
+			})
+		}
+		close(start)
+		wg.Wait()
+
+		if n := wins.Load(); n != 1 {
+			t.Fatalf("round %d: %d answerers claimed one request, want exactly 1", round, n)
+		}
+		if _, ok := tracker.TakeIfPresent(id); ok {
+			t.Fatalf("round %d: request still claimable after being taken", round)
+		}
+	}
 }

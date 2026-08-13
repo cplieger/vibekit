@@ -27,7 +27,7 @@ import {
   isPermissionNeededEnabled,
   NOTIFY_TITLE,
 } from "../notify.js";
-import { pushDecision } from "../decision-dock.js";
+import { pushDecision, collapseSettledDecision } from "../decision-dock.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
 import { setLastError, clearLastError } from "../send-state.js";
@@ -211,6 +211,14 @@ onSSE("user_input_needed", (chatID, p) => {
       );
     },
   });
+});
+
+// The three asks above are offered to every surface at once and only the first
+// answer is accepted, so the server names the settled request and this retires
+// the card everywhere else. It is the whole client half of that: the dock owns
+// the queue, so the handler routes and interprets nothing.
+onSSE("decision_settled", (chatID, p) => {
+  collapseSettledDecision(chatID, p.kind, p.request_id, p.settled_by);
 });
 
 // --- Data-driven error classification (imported from error-routing.ts) ---

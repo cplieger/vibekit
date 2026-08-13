@@ -33,6 +33,8 @@ package api
 // started from the TUI arrives on no vibekit bridge at all and therefore receives
 // no live events — it is visible in the history inventory and nowhere else.
 
+import "encoding/json"
+
 // RunProgressKind is the KAS lifecycle kind behind a run_progress event.
 //
 // Seven of KAS's nine notification kinds. The other two are their own events
@@ -116,9 +118,6 @@ type RunLaunchedResponse struct {
 
 // Recipe is one launchable workflow definition, projected from
 // `_kiro/workflow/listRecipes` for GET /api/recipes.
-//
-// `plan` is deliberately not forwarded: the Workflows tab lists what CAN run,
-// and the node plan belongs to the run views that show what IS running.
 type Recipe struct {
 	// Inputs maps input name → declared type (`string`, `prompt`, `file`).
 	Inputs      map[string]string `json:"inputs,omitempty"`
@@ -126,8 +125,22 @@ type Recipe struct {
 	Description string            `json:"description,omitempty"`
 	// Source is the launch key: `bundled://<name>` or a workspace
 	// `*.workflow.json` path. Echoed back verbatim in RunLaunchRequest.
-	Source  string `json:"source"`
-	BuiltIn bool   `json:"built_in,omitempty"`
+	Source string `json:"source"`
+	// Plan is KAS's node plan for the recipe, forwarded VERBATIM. It is an array
+	// of node descriptors: `{nodeId, type, agentName, modelId?, effortLevel?}`
+	// for a step, and a nested `steps` / `branches` array for a sequence, repeat
+	// or parallel node. So it says what the recipe will do and on which model,
+	// which is what a reader needs BEFORE launching one.
+	//
+	// KAS sends it on every listRecipes reply whether or not a client reads it,
+	// so forwarding costs one field. Raw rather than modelled, for the reason
+	// stated at the top of this file: the node plan is KAS's structure, and a
+	// second representation of it here would be one more thing to keep in sync
+	// for no gain. Last of the pointer-bearing fields on purpose — a slice's
+	// len/cap words end the GC scan region, where a trailing string would extend
+	// it (the api.ToolCall.Checkpoint note records the same rule).
+	Plan    json.RawMessage `json:"plan,omitempty"`
+	BuiltIn bool            `json:"built_in,omitempty"`
 }
 
 // RecipesResponse is GET /api/recipes's reply.

@@ -65,7 +65,10 @@ func (h *Hub) scheduleViewOf(e *schedule.Entry) scheduleView {
 		v.LastRunAt = &t
 	}
 	if e.Enabled {
-		if next, err := schedule.NextRun(e.Spec, time.Now()); err == nil {
+		// Same derivation the runner uses (schedule.NextRunFrom), measured from
+		// the entry's anchor and floored at now so a stale anchor cannot render a
+		// next run that has already passed.
+		if next, err := schedule.NextRunFrom(e.Spec, e.Anchor, time.Now()); err == nil {
 			v.NextRunAt = &next
 		}
 	}

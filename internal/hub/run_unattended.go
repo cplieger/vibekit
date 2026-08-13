@@ -118,8 +118,9 @@ func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 		requestID := *msg.ID
 		tool := permissionToolName(msg.Params)
 		// AfterFunc parks no goroutine while waiting, and the timer is a no-op
-		// once the request has been answered: settle() checks the tracker, which
-		// the ordinary response path has already cleared.
+		// once the request has been answered: answerUnattendedPermission claims
+		// the request from the tracker, and the ordinary response path has
+		// already claimed it.
 		params := msg.Params
 		time.AfterFunc(unattendedApprovalBudget, func() {
 			h.answerUnattendedPermission(chatID, requestID, scheduleID, tool, params)
@@ -130,11 +131,6 @@ func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 // answerUnattendedPermission settles a still-pending request for an absent
 // user: refuse by default, or approve when the operator opted in.
 func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
-	// Still pending? The tracker holds a request until it resolves, so its
-	// absence means the user (or a teardown) already answered.
-	if !h.sse.pendingPerms.Has(requestID) {
-		return
-	}
 	ctx, cancel := h.hubContext()
 	defer cancel()
 
@@ -158,6 +154,19 @@ func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, sch
 			verb = outcomeApproved
 		}
 	}
+	// Claim the request, and give up when the claim fails. This is the load-
+	// bearing one: the floor races a human who has the run's page open, and the
+	// budget expires at a moment nobody chose. Before the claim was atomic, both
+	// answers went out — a Reject the user pressed at 179s and this Allow — and
+	// kiro-cli kept whichever arrived first, so the user's decision could be
+	// overruled by a timer with no trace of it anywhere.
+	//
+	// Taking it also retires the entry, so nothing below has to, and announces
+	// the answer as the MACHINE's: a card collapsing under a reader who was
+	// deciding must say that a deadline answered it, and which way.
+	if !h.TakePendingPerm(requestID, api.SettledByUnattended) {
+		return
+	}
 	// A FIXED message with the outcome as a field, not a message built from the
 	// verb: a Loki rule matches on the message, and a concatenated one cannot be
 	// matched reliably (see homelab apps/loki/rules/alerts.yaml vibekit_logs).
@@ -168,7 +177,6 @@ func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, sch
 		slog.Error("unattended permission answer failed", "chat_id", chatID, "error", err)
 		return
 	}
-	h.sse.pendingPerms.Remove(requestID)
 	if verb == outcomeApproved {
 		// An approval is not a failure: the run continues, so the schedule's
 		// outcome stays whatever the run itself reports.

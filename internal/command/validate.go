@@ -19,7 +19,11 @@ var (
 	errNoBridge             = errors.New("no bridge")
 	errRewindTargetNotFound = errors.New("rewind target is not a user message in this chat")
 	errBusy                 = errors.New("busy")
-	ErrChatNotFound         = errors.New("chat not found")
+	// errAlreadyAnswered is the 409 for a decision another surface settled
+	// first: a second tab, or the unattended floor's deadline. A code rather
+	// than prose because the client keys off it to explain the collapsed card.
+	errAlreadyAnswered = errors.New("already_answered")
+	ErrChatNotFound    = errors.New("chat not found")
 )
 
 // validChatID reports whether id is safe to use as a chat identifier.

@@ -159,6 +159,16 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
+	// Claim the request BEFORE answering it. Two tabs on one chat both see the
+	// card, and kiro-cli discards the second answer for a request id it has
+	// already resolved — silently, so the choice that won was decided there
+	// rather than here. Losing the take means somebody else answered, which is
+	// not this request's failure to report as one: 409 with a code the client
+	// can explain.
+	if !d.PendingPerms().TakePendingPerm(p.RequestID, api.SettledByUser) {
+		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
+		return
+	}
 	// A turn approval answers on the SAME reply, with per-file decisions in
 	// _meta. Built through one helper so the omitted-id-means-reject rule lives in
 	// exactly one place.
@@ -166,6 +176,5 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	if err := sb.Respond(ctx, p.RequestID, outcome, nil); err != nil {
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.PendingPerms().RemovePendingPerm(p.RequestID)
 	d.RespondOK(w, cmd.RequestID)
 }

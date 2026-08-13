@@ -80,6 +80,70 @@ type PermissionOption struct {
 	Kind     string `json:"kind"`
 }
 
+// DecisionKind names which of the three asks a settled decision was. All three
+// are request/response shaped and share one pending-request tracker, so one
+// event settles all three and the kind is what tells the client which card to
+// retire.
+type DecisionKind string
+
+// The three decision kinds, one per *_needed event that can be answered.
+const (
+	DecisionKindPermission  DecisionKind = "permission"
+	DecisionKindElicitation DecisionKind = "elicitation"
+	DecisionKindUserInput   DecisionKind = "user_input"
+)
+
+// SettledBy names what answered a decision. Attribution rather than a bare
+// "it's gone": a card vanishing with no reason reads as a bug, and the two cases
+// call for different reactions from the reader.
+type SettledBy string
+
+const (
+	// SettledByUser means a person answered through a vibekit client. A client
+	// that receives this while still showing the card is not that person — the
+	// answering client retires its own card before it sends the answer.
+	SettledByUser SettledBy = "user"
+	// SettledByUnattended means nobody answered, so vibekit answered for the
+	// absent user when the unattended floor's budget expired (see
+	// hub/run_unattended.go). Named explicitly because an operator reading the
+	// collapsed card needs to know a machine made this choice, and on which
+	// side it defaults.
+	SettledByUnattended SettledBy = "unattended"
+)
+
+// DecisionSettledPayload is the payload for type="decision_settled": the
+// request named here has been answered, and not by the surface reading this.
+//
+// It exists because a decision is offered on EVERY surface at once — every tab,
+// plus the run tab watching the same ask — while only one answer is accepted.
+// Without this event the losing surfaces keep a live-looking card for a question
+// that is closed, and clicking it achieves nothing.
+type DecisionSettledPayload struct {
+	Kind      DecisionKind `json:"kind"`
+	SettledBy SettledBy    `json:"settled_by"`
+	RequestID int64        `json:"request_id"`
+}
+
+// DecisionKindForEvent maps a tracked *_needed event to its decision kind,
+// reporting false for anything else.
+//
+// The tracker only ever holds those three events, so a false here is a tracker
+// misuse rather than a wire case — hence the bool instead of an empty-string
+// fallback: an unknown kind on the wire is a value the client cannot switch on,
+// and announcing nothing is better than announcing that.
+func DecisionKindForEvent(t EventType) (DecisionKind, bool) {
+	switch t {
+	case EventPermissionNeeded:
+		return DecisionKindPermission, true
+	case EventElicitationNeeded:
+		return DecisionKindElicitation, true
+	case EventUserInputNeeded:
+		return DecisionKindUserInput, true
+	default:
+		return "", false
+	}
+}
+
 // MessageChunkPayload is the payload for type="message_chunk" (assistant
 // streaming deltas). IsReasoning distinguishes reasoning deltas from
 // regular content deltas — both flow through the same SSE event but

@@ -35,6 +35,7 @@ import type {
   MCPDisconnectedPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
+  DecisionSettledPayload,
   OpenExternalURLPayload,
   CodeReferencesPayload,
   PermissionsChangedPayload,
@@ -81,6 +82,10 @@ export interface SSEPayloads {
   readonly policy_error: PolicyErrorPayload;
   readonly elicitation_needed: ElicitationNeededPayload;
   readonly user_input_needed: UserInputNeededPayload;
+  // One event retires any of the three asks above on the surfaces that did not
+  // answer it, which is every surface but one: they are all offered the same
+  // decision and only the first answer is accepted.
+  readonly decision_settled: DecisionSettledPayload;
   readonly error: ErrorPayload;
   readonly settings_updated: undefined;
   readonly mcp_config_changed: undefined;

@@ -36,10 +36,12 @@ import { activeSession } from "./store.js";
 import { buildPermissionCard } from "./permission.js";
 import { buildElicitationCard } from "./elicitation.js";
 import { buildUserInputCard } from "./user-input.js";
+import { info } from "./toast.js";
 import type {
   PermissionNeededPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
+  SettledBy,
 } from "./types.js";
 
 /** A permission ask, including the turn-approval variety (payload.files). */
@@ -175,6 +177,72 @@ export function dropDecisions(chatID: string): void {
   bump();
 }
 
+/** Retire a decision ANOTHER surface answered (`decision_settled`), and say who
+ *  answered it.
+ *
+ *  Every surface is offered the same ask — each tab, plus a run tab watching the
+ *  same run — and only the first answer is accepted, so on every other surface
+ *  the card outlives the question. It used to sit there looking live, and
+ *  clicking it achieved nothing: the server took the answer, the agent ignored
+ *  it for a request id it had already resolved, and nothing said so.
+ *
+ *  It does NOT call submit: the request is answered, and a second answer on one
+ *  id is exactly what this exists to prevent.
+ *
+ *  Attribution is only surfaced when the card was ON SCREEN, which `renderedKey`
+ *  is the record of. A card the reader never saw needs no explanation, and the
+ *  surface that DID answer reaches this with nothing to remove — `settle` splices
+ *  the entry before the answer goes out — so it never explains itself to the
+ *  person who just clicked. */
+export function collapseSettledDecision(
+  chatID: string,
+  kind: Decision["kind"],
+  requestID: number,
+  settledBy: SettledBy,
+): void {
+  const q = queues.get(chatID);
+  const i = q?.findIndex((d) => d.kind === kind && d.requestID === requestID) ?? -1;
+  if (q === undefined || i < 0) {
+    return;
+  }
+  q.splice(i, 1);
+  if (q.length === 0) {
+    queues.delete(chatID);
+  }
+  const key = decisionKey(chatID, kind, requestID);
+  if (hosts.some((h) => h.renderedKey === key)) {
+    // The toast announces itself into the shared live region (politely), so a
+    // second announce() call here would read the same sentence twice.
+    info(settledMessage(kind, settledBy));
+  }
+  bump();
+}
+
+/** What the reader is told about a card that collapsed under them. The two
+ *  causes call for different reactions, so they read differently: another window
+ *  means a person decided, and the unattended floor means a deadline did. */
+function settledMessage(kind: Decision["kind"], settledBy: SettledBy): string {
+  const subject = settledSubject(kind);
+  if (settledBy === "unattended") {
+    return `${subject} was answered automatically because nobody was watching.`;
+  }
+  return `${subject} was answered in another window.`;
+}
+
+function settledSubject(kind: Decision["kind"]): string {
+  switch (kind) {
+    case "permission":
+      return "The permission request";
+    case "elicitation":
+      return "The input request";
+    case "user_input":
+      return "The agent's question";
+    default:
+      kind satisfies never;
+      return "The request";
+  }
+}
+
 /** Answer a decision and retire it. The settle-once guard is here rather than
  *  in each card, because "answered already" is a property of the queue entry,
  *  not of the DOM that rendered it.
@@ -219,6 +287,12 @@ function matching(h: DockHost): Decision[] {
   return out;
 }
 
+/** Identity of one decision as a string, so "what is rendered" can be compared
+ *  against an event naming a decision this module may not be holding. */
+function decisionKey(chatID: string, kind: Decision["kind"], requestID: number): string {
+  return `${chatID}\u0000${kind}\u0000${String(requestID)}`;
+}
+
 function renderHost(h: DockHost): void {
   const mine = matching(h);
   const head = mine[0];
@@ -235,7 +309,7 @@ function renderHost(h: DockHost): void {
   // Rebuilding a card the user is filling in would discard their typing, so a
   // render for the same decision is a no-op. Only the depth line, which lives
   // outside the card, updates in place.
-  const key = `${head.chatID}\u0000${head.kind}\u0000${String(head.requestID)}`;
+  const key = decisionKey(head.chatID, head.kind, head.requestID);
   const depth = mine.length;
   if (key === h.renderedKey) {
     updateDepth(h, depth);

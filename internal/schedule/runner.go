@@ -72,7 +72,12 @@ func (r *Runner) sweep(ctx context.Context) {
 		if !e.Enabled {
 			continue
 		}
-		due, err := NextRun(e.Spec, e.Anchor)
+		// No floor: the runner is the one caller that must SEE a slot which has
+		// already gone, because the two branches below tell a slot it may still
+		// fire from one missed while the container was down. The REST view calls
+		// the same helper with `now` as the floor, which is what stops a row from
+		// naming a next run in the past.
+		due, err := NextRunFrom(e.Spec, e.Anchor, time.Time{})
 		if err != nil {
 			// A stored spec that cannot be computed would otherwise be
 			// retried every tick forever; say so once per tick and move on

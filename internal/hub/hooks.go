@@ -37,8 +37,14 @@ package hub
 //
 // Wire shapes verified live against kiro-cli acp v3 2.12.0:
 //   - list   {workspacePaths?} → {hooks:[{id:"<absPath>#hook-N", name,
-//              action:{type:"runCommand",command,timeout}|{type:"askAgent",prompt},
+//              action:{type:"runCommand",command}|{type:"askAgent",prompt},
 //              _meta:{trigger,source,matcher,filePath,enabled,disabledReason?}}]}
+//              The action carries NO timeout: KAS's projectHookForWire (the one
+//              projection behind both list and didChange, re-read on 2.16.2 and
+//              on the pinned 2.18.0) emits {type,command} or {type,prompt} and
+//              nothing else, while the hook FILE declares `timeout` as a sibling
+//              of `action`. So a per-hook timeout is only reachable by reading
+//              the file at _meta.filePath, never off this reply.
 //   - setEnabled {hookId, enabled} → {success, code?, error?}; PERSISTS the
 //              enabled flag into the .kiro/hooks/*.json file.
 //   - triggerHook {sessionId,hookId,hookName,hookActionType,command,approved}
@@ -71,10 +77,7 @@ const hookCallTimeout = 45 * time.Second
 
 // hookTriggerSlack is how much longer a triggerHook round-trip is allowed than
 // the command it carries. KAS awaits the executeHook callback for the whole
-// command, so the RPC deadline must be derived from the command's timeout rather
-// than fixed -- a fixed 90s was correct only while every command was capped at
-// the 60s default, and became wrong the moment a hook file's own declared
-// timeout started being forwarded.
+// command, so the RPC deadline is the command's cap plus this.
 //
 // Getting this backwards is not a slow request, it is a wedged utility bridge:
 // rawCall's timeout resets the SHARED session, while answerExecuteHook's command
@@ -109,7 +112,6 @@ type kasHookAction struct {
 	Type    string `json:"type"` // runCommand | askAgent
 	Command string `json:"command"`
 	Prompt  string `json:"prompt"`
-	Timeout int    `json:"timeout"`
 }
 
 type kasHookMeta struct {
@@ -166,7 +168,6 @@ type hookInfo struct {
 	Matcher        string `json:"matcher,omitempty"`
 	FilePath       string `json:"file_path,omitempty"`
 	DisabledReason string `json:"disabled_reason,omitempty"`
-	Timeout        int    `json:"timeout,omitempty"`
 	Enabled        bool   `json:"enabled"`
 }
 
@@ -281,7 +282,6 @@ func (h *Hub) toHookInfo(k *kasHook) hookInfo {
 	switch k.Action.Type {
 	case actionRunCommand:
 		info.Command = k.Action.Command
-		info.Timeout = k.Action.Timeout
 	case actionAskAgent:
 		info.Prompt = k.Action.Prompt
 	}
@@ -387,16 +387,16 @@ func (h *Hub) handleHookTrigger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := h.ensureUtility()
-	cctx, cancel := context.WithTimeout(r.Context(), hookTriggerDeadline(hook.Action.Timeout))
+	// The command runs under hookCommandTimeout, because that is the only cap
+	// reachable here: the hook's own declared timeout is not on the list reply
+	// (see the wire shapes at the top of this file), so there is nothing to
+	// derive a longer deadline from.
+	cctx, cancel := context.WithTimeout(r.Context(), hookCommandTimeout+hookTriggerSlack)
 	defer cancel()
 	// approved:true — the user's explicit "Run now" click is the consent, so
 	// we skip KAS's extra per-command approval round-trip. The command is the
 	// server-sourced hook command, not client input.
-	// hook.Action.Timeout is the hook file's own declared cap, already decoded
-	// into kasHookAction. Forwarding it is what makes a file-declared timeout
-	// mean anything on Run-now; without it every trigger was capped at KAS's
-	// 60s default regardless of what the file said.
-	run, err := u.session.triggerRunCommandHook(cctx, hook.ID, hook.Name, hook.Action.Command, hook.Action.Timeout)
+	run, err := u.session.triggerRunCommandHook(cctx, hook.ID, hook.Name, hook.Action.Command)
 	if err != nil {
 		h.writeHookErr(w, err)
 		return
@@ -404,27 +404,10 @@ func (h *Hub) handleHookTrigger(w http.ResponseWriter, r *http.Request) {
 	api.WriteJSON(w, hookTriggerResponse{Output: run.Output, ExitCode: run.ExitCode, Ran: run.Ran})
 }
 
-// hookTriggerDeadline is how long to wait for a triggerHook carrying a command
-// with the given declared timeout in seconds.
-//
-// Always the command cap plus slack, with no separate constant for the
-// no-declared-timeout case: that constant existed, went unread the moment this
-// became a derivation, and a named timeout nothing consults is exactly the kind
-// of thing a reader trusts and shouldn't.
-func hookTriggerDeadline(declaredSecs int) time.Duration {
-	return clampedHookCommandTimeout(declaredSecs) + hookTriggerSlack
-}
-
-// clampedHookCommandTimeout resolves a hook's declared timeout in seconds to the
-// wall-clock cap the command actually runs under: the default when the file
-// declares none, clamped to hookMaxCommandTimeout so a pathological file cannot
-// pin a runner.
-//
-// ONE function for a rule two call sites need, because they must agree by
-// construction. The request deadline is derived from the command cap, so if the
-// two computed it independently a change to one would silently make the RPC
-// shorter than the command it carries -- which is the failure this whole
-// timeout pass exists to fix, reintroduced one level up.
+// clampedHookCommandTimeout resolves the timeout KAS hands the executeHook
+// callback, in seconds, to the wall-clock cap the command actually runs under:
+// the default when the callback declares none, clamped to hookMaxCommandTimeout
+// so a pathological value cannot pin a runner.
 func clampedHookCommandTimeout(declaredSecs int) time.Duration {
 	if declaredSecs <= 0 {
 		return hookCommandTimeout
