@@ -24,12 +24,14 @@ import {
   type Server,
   type RuntimeStatus,
   type RuntimeState,
+  type Origin,
   type PrewarmState,
   type ServerDiscovery,
   type MCPPromptInfo,
   type MCPPromptArg,
   type MCPResourceInfo,
   servers,
+  unconfiguredNames,
   mcpState,
   statusSignalFor,
   prewarmSignalFor,
@@ -53,8 +55,10 @@ import { bindLoadingState, registerCleanup } from "./actions/index.js";
 // --- Section scaffold ---
 
 let sectionBody: HTMLDivElement | null = null;
+let foreignBody: HTMLDivElement | null = null;
 let emptyMsg: HTMLParagraphElement | null = null;
 let listBound = false;
+let foreignBound = false;
 // Held so the governance effect can disable the add affordance and toggle the
 // "disabled by your organization" notice when mcp_enabled is off.
 let addBtn: HTMLButtonElement | null = null;
@@ -113,9 +117,24 @@ function buildSectionScaffold(): void {
     "No integrations connected yet. Click + to search the official MCP registry or paste a config.",
   ) as HTMLParagraphElement;
   sectionBody = el("div", { className: "mcp-server-list" }) as HTMLDivElement;
+  // Read-only rows for servers the agent reported that this page does not
+  // configure. A separate container, not extra entries in the configured
+  // collection: that collection is keyed by a persisted server id these servers
+  // have none of, and every mutation path on it (edit, delete, toggle, prewarm
+  // mapping) addresses a record that does not exist for them.
+  foreignBody = el("div", { className: "mcp-server-list mcp-foreign-list" }) as HTMLDivElement;
 
-  section.replaceChildren(title, hint, actionRow, govDisabledMsg, emptyMsg, sectionBody);
+  section.replaceChildren(
+    title,
+    hint,
+    actionRow,
+    govDisabledMsg,
+    emptyMsg,
+    sectionBody,
+    foreignBody,
+  );
   bindServerList();
+  bindForeignList();
 }
 
 // applyGovernance reflects the org/account MCP policy into the section's held
@@ -185,6 +204,92 @@ function cleanupRow(id: string): void {
   }
 }
 
+/** Render the read-only rows for servers this page does not configure. One
+ *  effect over the name list plus one per-row effect, mirroring the configured
+ *  list's shape. */
+function bindForeignList(): void {
+  if (foreignBound || foreignBody === null) {
+    return;
+  }
+  foreignBound = true;
+  const host = foreignBody;
+  registerCleanup(
+    effect(() => {
+      const names = unconfiguredNames.value;
+      const rows = names.map((name) => mountForeignRow(name));
+      host.replaceChildren(...rows);
+      host.hidden = rows.length === 0;
+    }),
+  );
+}
+
+/** One read-only row: status dot, name, provenance chip, and the discovery
+ *  disclosure when the server advertises anything.
+ *
+ *  No toggle, no edit, no delete, and no Reconnect. There is no persisted record
+ *  behind the row, so every one of those affordances would address a server id
+ *  that does not exist; the row's job is to stop the page being silent about an
+ *  integration whose tools are in the agent's tool list. */
+function mountForeignRow(name: string): HTMLElement {
+  const dot = el("span", { className: "mcp-dot", role: "img" });
+  const nameEl = el("span", { className: "mcp-row-name" }, name);
+  const originChip = buildOriginChip();
+  const metaText = el("span", { className: "mcp-row-meta-text" });
+  const discoveryBox = el("div", { className: "mcp-discovery" }) as HTMLDivElement;
+  const body = el(
+    "div",
+    { className: "mcp-row-body" },
+    el("div", { className: "mcp-row-name-line" }, dot, nameEl),
+    el("div", { className: "mcp-row-meta" }, originChip, metaText),
+    discoveryBox,
+  );
+  const row = el("div", { className: "mcp-row mcp-row-readonly" }, body) as HTMLDivElement;
+
+  // The row is rebuilt whenever the name list changes, so its subscription dies
+  // with it; the enclosing list effect disposes nested effects on re-run.
+  effect(() => {
+    const st = statusSignalFor(name).value;
+    applyStatusDotForeign(dot, name, st);
+    applyOriginChip(originChip, st.origin);
+    metaText.textContent = renderForeignMeta(st);
+    renderDiscovery(discoveryBox, name, discoverySignalFor(name).value, true);
+  });
+  return row;
+}
+
+/** Status dot for a read-only row. Split from applyStatusDot because that one
+ *  reads the config record's `enabled` flag, and there is no record here — the
+ *  server's own reported state is the only input. */
+function applyStatusDotForeign(dot: HTMLSpanElement, name: string, st: RuntimeStatus): void {
+  dot.className = "mcp-dot";
+  const meta = STATUS_META[st.state] ?? STATUS_META.idle; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
+  dot.classList.add(meta.css);
+  if (isFailedWithError(st)) {
+    dot.title = `Failed to initialise: ${st.error}`;
+    dot.setAttribute("aria-label", `${name}: failed — ${st.error}`);
+    return;
+  }
+  dot.title = meta.title;
+  dot.setAttribute("aria-label", `${name}: ${meta.title.toLowerCase()}`);
+}
+
+/** Meta text for a read-only row. Exported for testing. */
+export function renderForeignMeta(st: RuntimeStatus): string {
+  if (isFailedWithError(st)) {
+    return `Failed to start — ${st.error}`;
+  }
+  switch (st.state) {
+    case "connected":
+      return "Connected — its tools are available to the agent";
+    case "needs_auth":
+      return "Waiting for sign-in";
+    case "disabled":
+      return "Disabled — the agent is not using it";
+    default:
+      return "Not connected";
+  }
+}
+
 function mountRow(s: Server, id: string): HTMLElement {
   const cleanups: (() => void)[] = [];
 
@@ -214,7 +319,12 @@ function mountRow(s: Server, id: string): HTMLElement {
   const nameEl = el("span", { className: "mcp-row-name" });
   const transportBadge = el("span", { className: "mcp-transport" });
   const nameLine = el("div", { className: "mcp-row-name-line" }, dot, nameEl, transportBadge);
-  const meta = el("div", { className: "mcp-row-meta" });
+  // The origin chip is a held element beside the meta text rather than part of
+  // it: renderMeta stays a pure string function (unit-testable, no DOM), and the
+  // chip keeps its own identity across effect runs so it is patched, not rebuilt.
+  const originChip = buildOriginChip();
+  const metaText = el("span", { className: "mcp-row-meta-text" });
+  const meta = el("div", { className: "mcp-row-meta" }, originChip, metaText);
   const body = el("div", { className: "mcp-row-body" }, nameLine, meta);
 
   const reconnectBtn = renderReconnectBtn(id, s);
@@ -260,7 +370,8 @@ function mountRow(s: Server, id: string): HTMLElement {
       transportBadge.className = `mcp-transport mcp-transport-${cur.transport}`;
       transportBadge.textContent = cur.transport;
       applyStatusDot(dot, cur, st);
-      meta.textContent = renderMeta(cur, st);
+      applyOriginChip(originChip, st.origin);
+      metaText.textContent = renderMeta(cur, st);
 
       // Reconnect only makes sense when a live bridge could hold this
       // server's connection: enabled and past the "idle" (no-bridge) state.
@@ -294,7 +405,43 @@ const STATUS_META: Readonly<Record<RuntimeState, { css: string; title: string }>
   needs_auth: { css: "oauth", title: "Needs authentication" },
   idle: { css: "idle", title: "Not connected — no chat is running" },
   failed: { css: "failed", title: "Failed to initialise" },
+  disabled: { css: "disabled", title: "Disabled" },
 };
+
+/** What each non-user origin says on the row. `user` has no entry: the config
+ *  list already owns that row, so a chip declaring the obvious would sit on
+ *  every row and mean nothing. */
+const ORIGIN_META: Readonly<Record<Exclude<Origin, "user">, { label: string; title: string }>> = {
+  power: {
+    label: "from a Power",
+    title:
+      "An installed Power contributed this server. Manage it where the Power is installed — this page cannot edit or remove it.",
+  },
+  unknown: {
+    label: "not managed here",
+    title:
+      "The agent reported this server, but it is not in this page's configuration. It comes from a config vibekit does not manage, so it cannot be edited or removed here.",
+  },
+};
+
+/** Build the (initially hidden) provenance chip. */
+function buildOriginChip(): HTMLSpanElement {
+  return el("span", { className: "mcp-origin", hidden: true });
+}
+
+/** Show or hide the provenance chip for an origin. Exported for testing. */
+export function applyOriginChip(chip: HTMLSpanElement, origin: Origin): void {
+  if (origin === "user") {
+    chip.hidden = true;
+    chip.textContent = "";
+    chip.removeAttribute("title");
+    return;
+  }
+  const meta = ORIGIN_META[origin];
+  chip.hidden = false;
+  chip.textContent = meta.label;
+  chip.title = meta.title;
+}
 
 /** Type-narrowing guard for the "failed" RuntimeStatus variant. */
 function isFailedWithError(
@@ -327,11 +474,11 @@ function renderMeta(s: Server, st: RuntimeStatus): string {
   if (!s.enabled) {
     return "Disabled";
   }
-  const origin = s.transport === "stdio" ? (s.command ?? "") : (s.url ?? "");
+  const source = s.transport === "stdio" ? (s.command ?? "") : (s.url ?? "");
   if (isFailedWithError(st)) {
-    return `${origin} — ${st.error}`;
+    return `${source} — ${st.error}`;
   }
-  return origin;
+  return source;
 }
 
 /** Add/update/remove the prewarm badge after the name. Returns the badge (or
@@ -703,16 +850,21 @@ export function initMCP(): void {
     mcpState.refetchServers();
   });
   onSSE("mcp_connected", (_chat, p) => {
-    mcpState.setStatus(p.server, { name: p.server, state: "connected" });
+    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "connected" });
     // Pull the newly-connected server's advertised prompts/resources (they
-    // ride /api/mcp/status, not the mcp_connected payload). Coalesced.
+    // ride /api/mcp/status, not the mcp_connected payload) — and, for a server
+    // this page does not configure, the origin that makes its row appear.
     mcpState.refetchStatus();
   });
   onSSE("mcp_oauth_needed", (_chat, p) => {
-    mcpState.setStatus(p.server, { name: p.server, state: "needs_auth", oauth_url: p.url });
+    mcpState.setStatusFromEvent(p.server, {
+      name: p.server,
+      state: "needs_auth",
+      oauth_url: p.url,
+    });
   });
   onSSE("mcp_failed", (_chat, p) => {
-    mcpState.setStatus(p.server, { name: p.server, state: "failed", error: p.error });
+    mcpState.setStatusFromEvent(p.server, { name: p.server, state: "failed", error: p.error });
   });
   onSSE("mcp_disconnected", (_chat, p) => {
     mcpState.deleteStatus(p.server);

@@ -87,8 +87,18 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ api.ChatID, msg *api
 				continue
 			}
 			t.MCP().RecordInitFailure(ctx, s.Name, s.ErrorMessage)
+		case "disabled":
+			// A vibekit-configured server's off state is already on its config
+			// row, which is what the MCP page renders it from — so the recorder
+			// drops this frame for one, exactly as the default arm used to. It
+			// keeps the frame only for a server vibekit never configured, where
+			// this is the ONLY evidence the server exists: without it, a Power's
+			// disabled server is invisible on a page that claims to list the
+			// agent's integrations.
+			t.MCP().RecordDisabled(ctx, s.Name)
 		default:
-			// connecting / disabled: no terminal state to record.
+			// connecting: transient, not terminal. Recording it would paint a row
+			// the same notification's next frame for this server replaces.
 		}
 	}
 	t.MCP().SignalReady()

@@ -144,6 +144,34 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 	}
 }
 
+// TestSequence_MCPStatus_RoutesDisabledToTheRecorder pins the amendment: the
+// "disabled" status reaches the recorder instead of falling into the default arm
+// that discarded it. Whether it produces a row is the recorder's call (only an
+// unconfigured server gets one) — but the frame has to arrive for that call to
+// be possible at all.
+func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
+	deps, _ := newEventCaptureDeps()
+	var disabled []string
+	tr := &Translator{deps: &mcpCaptureDeps{baseDeps: deps, disabled: &disabled}}
+
+	tr.HandleMCPStatus(context.Background(), "", &api.RPCResponse{
+		Params: mustJSON(t, map[string]any{
+			"servers": []map[string]any{
+				{"name": "off-server", "status": "disabled"},
+				// "connecting" is transient, not terminal: it must stay discarded,
+				// or a row would be painted that the next frame replaces.
+				{"name": "starting-server", "status": "connecting"},
+				// A nameless entry is unaddressable and skipped before the switch.
+				{"name": "", "status": "disabled"},
+			},
+		}),
+	})
+
+	if len(disabled) != 1 || disabled[0] != "off-server" {
+		t.Errorf("RecordDisabled calls = %v, want just [off-server]", disabled)
+	}
+}
+
 func TestSequence_MCPStatus_CapturesPromptsAndResources(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	var connected string
@@ -196,16 +224,21 @@ type mcpCaptureDeps struct {
 	connected *string
 	prompts   *[]api.MCPPromptInfo
 	resources *[]api.MCPResourceInfo
+	disabled  *[]string
 }
 
 func (d *mcpCaptureDeps) MCPRecorder() MCPRecorder {
-	return &captureMCPRecorder{connected: d.connected, prompts: d.prompts, resources: d.resources}
+	return &captureMCPRecorder{
+		connected: d.connected, prompts: d.prompts,
+		resources: d.resources, disabled: d.disabled,
+	}
 }
 
 type captureMCPRecorder struct {
 	connected *string
 	prompts   *[]api.MCPPromptInfo
 	resources *[]api.MCPResourceInfo
+	disabled  *[]string
 }
 
 func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, _ []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
@@ -222,7 +255,12 @@ func (r *captureMCPRecorder) RecordConnected(_ context.Context, name string, _ [
 func (*captureMCPRecorder) RecordOAuth(context.Context, string, string)       {}
 func (*captureMCPRecorder) RecordInitFailure(context.Context, string, string) {}
 func (*captureMCPRecorder) SignalReady()                                      {}
-func (*captureMCPRecorder) SetKnownTools(context.Context, string, []string)   {}
+
+func (r *captureMCPRecorder) RecordDisabled(_ context.Context, name string) {
+	if r.disabled != nil {
+		*r.disabled = append(*r.disabled, name)
+	}
+}
 
 func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	deps, events := newEventCaptureDeps()

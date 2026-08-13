@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,16 +21,37 @@ import (
 )
 
 // fakeMCPConfig implements api.MCPConfig for registry filter tests.
+//
+// The three sets are independent fields rather than one set plus derived views,
+// so a test can stage the case that matters: a name in `configured` but not
+// `enabled` is a server the user switched off, and a name in `all` but not
+// `configured` is a Power's. The fake does NOT auto-nest them, because a test
+// asserting the guard's precedence needs to be able to stage each boundary on
+// its own; newHubWithMCPConfig's helpers below build the nested shapes.
 type fakeMCPConfig struct {
-	enabled map[string]struct{}
-	mu      sync.Mutex
+	enabled    map[string]struct{}
+	configured map[string]struct{}
+	all        map[string]struct{}
+	mu         sync.Mutex
 }
 
 func (f *fakeMCPConfig) EnabledNames(_ context.Context) map[string]struct{} {
+	return f.copyOf(f.enabled)
+}
+
+func (f *fakeMCPConfig) ConfiguredNames(_ context.Context) map[string]struct{} {
+	return f.copyOf(f.configured)
+}
+
+func (f *fakeMCPConfig) AllNames(_ context.Context) map[string]struct{} {
+	return f.copyOf(f.all)
+}
+
+func (f *fakeMCPConfig) copyOf(src map[string]struct{}) map[string]struct{} {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make(map[string]struct{}, len(f.enabled))
-	for k := range f.enabled {
+	out := make(map[string]struct{}, len(src))
+	for k := range src {
 		out[k] = struct{}{}
 	}
 	return out
@@ -137,7 +159,14 @@ func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 }
 
 func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
-	cfg := &fakeMCPConfig{enabled: map[string]struct{}{"github": {}}}
+	cfg := enabledConfig("github")
+	// The two names below are vibekit's own, switched off — the only case the
+	// guard still drops. A name in NEITHER set is a different verdict entirely
+	// (see TestMCPRegistry_RecordsUnconfiguredServerWithOrigin).
+	cfg.configured["disabled-server"] = struct{}{}
+	cfg.all["disabled-server"] = struct{}{}
+	cfg.configured["another-disabled"] = struct{}{}
+	cfg.all["another-disabled"] = struct{}{}
 	h := newHubWithMCPConfig(cfg)
 	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil, nil)
 	h.mcpRegistry.recordConnected(context.Background(), "disabled-server", nil, nil, nil)
@@ -146,6 +175,154 @@ func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 || snap[0].Name != "github" {
 		t.Errorf("snapshot = %+v, want only github", snap)
+	}
+}
+
+// TestMCPRegistry_RecordsUnconfiguredServerWithOrigin is the T15 core: a server
+// vibekit never configured is RECORDED (not dropped like a user-disabled one),
+// carrying the origin that tells the UI the row is read-only. Before the guard
+// was narrowed, every one of these cases produced no row at all while the
+// server's tools sat in the agent's tool list.
+func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
+	cases := map[string]struct {
+		inAllNames bool
+		wantOrigin api.Origin
+	}{
+		"a power's server is named by the config file's powers block": {
+			inAllNames: true, wantOrigin: api.OriginPower,
+		},
+		"a server from a source vibekit cannot read is unattributable": {
+			inAllNames: false, wantOrigin: api.OriginUnknown,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := enabledConfig("mine")
+			if tc.inAllNames {
+				cfg.all["theirs"] = struct{}{}
+			}
+			h := newHubWithMCPConfig(cfg)
+			h.mcpRegistry.recordConnected(context.Background(), "theirs", []string{"do_thing"}, nil, nil)
+
+			snap := h.mcpRegistry.Snapshot()
+			if len(snap) != 1 {
+				t.Fatalf("snapshot = %+v, want the unconfigured server recorded", snap)
+			}
+			if snap[0].Name != "theirs" || snap[0].State != mcpStateConnected {
+				t.Errorf("snapshot[0] = %+v", snap[0])
+			}
+			if snap[0].Origin != tc.wantOrigin {
+				t.Errorf("origin = %q, want %q", snap[0].Origin, tc.wantOrigin)
+			}
+		})
+	}
+}
+
+// TestMCPRegistry_StampsUserOriginOnConfiguredServers pins the other side of the
+// same rule: the row for the user's own server must NOT claim a foreign origin,
+// or the UI would withhold its edit and delete affordances.
+func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
+	h := newHubWithMCPConfig(enabledConfig("github"))
+	ctx := context.Background()
+	h.mcpRegistry.recordConnected(ctx, "github", nil, nil, nil)
+	h.mcpRegistry.recordOAuth(ctx, "github", "https://oauth.example/auth")
+	if got := h.mcpRegistry.Snapshot()[0].Origin; got != api.OriginUser {
+		t.Errorf("origin after recordOAuth = %q, want %q", got, api.OriginUser)
+	}
+	h.mcpRegistry.recordInitFailure(ctx, "github", "boom")
+	if got := h.mcpRegistry.Snapshot()[0].Origin; got != api.OriginUser {
+		t.Errorf("origin after recordInitFailure = %q, want %q", got, api.OriginUser)
+	}
+}
+
+// TestMCPRegistry_RecordDisabled covers the amendment: KAS's "disabled" status
+// becomes a read-only row for a server vibekit never configured, and stays
+// discarded for one it did. The second half is what keeps the narrowed guard
+// from resurrecting a server the user switched off mid-session — the whole
+// reason the early return was kept rather than deleted.
+func TestMCPRegistry_RecordDisabled(t *testing.T) {
+	cases := map[string]struct {
+		cfg        func() *fakeMCPConfig
+		wantRow    bool
+		wantOrigin api.Origin
+	}{
+		"the user's own server, enabled: the config row already says off-or-on": {
+			cfg:     func() *fakeMCPConfig { return enabledConfig("mine") },
+			wantRow: false,
+		},
+		"the user's own server, switched off: must not gain a runtime row": {
+			cfg: func() *fakeMCPConfig {
+				c := enabledConfig()
+				c.configured["mine"] = struct{}{}
+				c.all["mine"] = struct{}{}
+				return c
+			},
+			wantRow: false,
+		},
+		"a power's server: the only evidence it exists": {
+			cfg: func() *fakeMCPConfig {
+				c := enabledConfig()
+				c.all["mine"] = struct{}{}
+				return c
+			},
+			wantRow: true, wantOrigin: api.OriginPower,
+		},
+		"an unattributable server: still shown, origin unknown": {
+			cfg:     func() *fakeMCPConfig { return enabledConfig() },
+			wantRow: true, wantOrigin: api.OriginUnknown,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHubWithMCPConfig(tc.cfg())
+			h.mcpRegistry.recordDisabled(context.Background(), "mine")
+
+			snap := h.mcpRegistry.Snapshot()
+			if !tc.wantRow {
+				if len(snap) != 0 {
+					t.Fatalf("snapshot = %+v, want no row", snap)
+				}
+				return
+			}
+			if len(snap) != 1 {
+				t.Fatalf("snapshot = %+v, want one row", snap)
+			}
+			if snap[0].State != mcpStateDisabled {
+				t.Errorf("state = %q, want %q", snap[0].State, mcpStateDisabled)
+			}
+			if snap[0].Origin != tc.wantOrigin {
+				t.Errorf("origin = %q, want %q", snap[0].Origin, tc.wantOrigin)
+			}
+		})
+	}
+}
+
+// TestMCPRegistry_StatusJSONCarriesOrigin pins origin onto the wire. It is not
+// omitempty on purpose: the client decides read-only from this field, so an
+// absent one would make it guess.
+func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
+	cfg := enabledConfig("mine")
+	cfg.all["theirs"] = struct{}{}
+	h := newHubWithMCPConfig(cfg)
+	h.mcpRegistry.recordConnected(context.Background(), "mine", nil, nil, nil)
+	h.mcpRegistry.recordConnected(context.Background(), "theirs", nil, nil, nil)
+
+	rec := httptest.NewRecorder()
+	h.mcpRegistry.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
+
+	raw := rec.Body.String()
+	if !strings.Contains(raw, `"origin":"user"`) || !strings.Contains(raw, `"origin":"power"`) {
+		t.Fatalf("body = %s, want both origins on the wire", raw)
+	}
+	var body struct {
+		Servers []statusServer `json:"servers"`
+	}
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatal(err)
+	}
+	// Alphabetical: mine, theirs.
+	if body.Servers[0].Origin != api.OriginUser || body.Servers[1].Origin != api.OriginPower {
+		t.Errorf("origins = %q / %q", body.Servers[0].Origin, body.Servers[1].Origin)
 	}
 }
 

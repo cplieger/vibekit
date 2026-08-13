@@ -36,12 +36,19 @@ func bridgeCalled(b *fakeBridge, method string) bool {
 	return slices.Contains(b.calls, method)
 }
 
+// enabledConfig stages names as the user's own, enabled servers: present in all
+// three sets, which is the nesting a real store produces for an enabled entry.
 func enabledConfig(names ...string) *fakeMCPConfig {
+	set := nameSet(names...)
+	return &fakeMCPConfig{enabled: set, configured: nameSet(names...), all: nameSet(names...)}
+}
+
+func nameSet(names ...string) map[string]struct{} {
 	set := make(map[string]struct{}, len(names))
 	for _, n := range names {
 		set[n] = struct{}{}
 	}
-	return &fakeMCPConfig{enabled: set}
+	return set
 }
 
 func TestReconnectMCPServer_FansOutToAllLiveBridges(t *testing.T) {

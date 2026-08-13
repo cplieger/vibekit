@@ -156,6 +156,10 @@ func MCPConfigContractTest(t *testing.T, newConfig func(t *testing.T) api.MCPCon
 func TestFakeMCPConfig_Contract(t *testing.T) {
 	MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
 		t.Helper()
-		return &fakeMCPConfig{enabled: map[string]struct{}{}}
+		return &fakeMCPConfig{
+			enabled:    map[string]struct{}{},
+			configured: map[string]struct{}{},
+			all:        map[string]struct{}{},
+		}
 	})
 }

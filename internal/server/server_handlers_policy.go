@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -36,13 +37,13 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	scope := r.URL.Query().Get("scope")
 	view := api.PolicyView{
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},
-		Capabilities:   policyfile.Capabilities(),
 		Available:      true,
 	}
 	if s.policy != nil {
 		rules, err := s.policy.PolicyList(r.Context(), scope)
 		if err == nil {
 			view.Rules = rules
+			view.Capabilities = pickerCapabilities(rules)
 			api.WriteJSON(w, view)
 			return
 		}
@@ -52,7 +53,49 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	// when no bridge can answer (e.g. not signed in).
 	view.Available = false
 	view.Rules = s.policyRulesFromFiles(scope)
+	view.Capabilities = pickerCapabilities(view.Rules)
 	api.WriteJSON(w, view)
+}
+
+// pickerCapabilities is what the capability dropdowns offer: vibekit's suggested
+// set UNION every capability the returned rules already use.
+//
+// The union is what keeps the picker from going stale. The suggested set is a
+// hand-copied snapshot of a list KAS does not expose, so it cannot learn about a
+// capability the agent server gains — but the rules KAS reports here CAN, and
+// they include every scope's baseline (kiro, administration, agent, session), not
+// just the two vibekit writes. So the day one rule anywhere uses a new
+// capability, it becomes selectable, with no vibekit release.
+//
+// Deliberately not a filter on what may be WRITTEN: a capability absent from
+// both the snapshot and the current rules is still writable (see SanitizeRule),
+// it just is not suggested.
+func pickerCapabilities(rules []api.PolicyRule) []string {
+	out := policyfile.Capabilities()
+	seen := make(map[string]struct{}, len(out)+len(rules))
+	for _, c := range out {
+		seen[c] = struct{}{}
+	}
+	added := false
+	for i := range rules {
+		c := rules[i].Capability
+		if c == "" {
+			continue
+		}
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+		added = true
+	}
+	if added {
+		// Sorted as ONE list, not suggestions-then-extras: the dropdown is
+		// alphabetical, and a reader looking for "hooks" should not have to know
+		// whether vibekit shipped knowing about it.
+		sort.Strings(out)
+	}
+	return out
 }
 
 // policyRulesFromFiles reads the user + workspace permissions.yaml directly

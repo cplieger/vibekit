@@ -5,8 +5,10 @@ package mcp
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"pgregory.net/rapid"
@@ -114,6 +116,81 @@ func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 	}
 	if _, ok := names["beta"]; ok {
 		t.Errorf("beta should be excluded: %+v", names)
+	}
+}
+
+// TestConfiguredNames_IncludesDisabled pins the set the hub's guard subtracts
+// EnabledNames from: without a disabled server here, the guard could not tell
+// "the user switched this off" from "vibekit never configured this", which are
+// the two cases needing opposite treatment.
+func TestConfiguredNames_IncludesDisabled(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_, _ = s.Create(ctx, &Server{Name: "alpha", Transport: TransportStdio, Command: "a", Enabled: true})
+	_, _ = s.Create(ctx, &Server{Name: "beta", Transport: TransportStdio, Command: "b", Enabled: false})
+
+	names := s.ConfiguredNames(ctx)
+	for _, want := range []string{"alpha", "beta"} {
+		if _, ok := names[want]; !ok {
+			t.Errorf("%q missing from ConfiguredNames: %+v", want, names)
+		}
+	}
+}
+
+// TestAllNames_IncludesThePowersBlock is the origin lookup: a Power's server is
+// named only in the `powers.mcpServers` block of the file vibekit renders but
+// never writes, and reading it is what separates OriginPower from
+// OriginUnknown.
+func TestAllNames_IncludesThePowersBlock(t *testing.T) {
+	tmp := t.TempDir()
+	kasPath := filepath.Join(tmp, "kas-mcp.json")
+	seed := `{"mcpServers":{},"powers":{"mcpServers":{"from-a-power":{"command":"x"}}}}`
+	if err := os.WriteFile(kasPath, []byte(seed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(context.Background(), tmp, nil, WithKASConfigPath(kasPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, _ = s.Create(ctx, &Server{Name: "mine", Transport: TransportStdio, Command: "a", Enabled: true})
+
+	all := s.AllNames(ctx)
+	if _, ok := all["from-a-power"]; !ok {
+		t.Errorf("the powers block's server is missing from AllNames: %+v", all)
+	}
+	if _, ok := all["mine"]; !ok {
+		t.Errorf("vibekit's own server is missing from AllNames: %+v", all)
+	}
+	if _, ok := s.ConfiguredNames(ctx)["from-a-power"]; ok {
+		t.Error("a Power's server must NOT appear in ConfiguredNames; the hub would read it as vibekit's own")
+	}
+}
+
+// TestAllNames_UnparseableFileDegradesToConfigured: a file a hand-edit made
+// unreadable must leave the server unattributable (OriginUnknown), never drop it
+// and never fail. Only the log records the problem.
+func TestAllNames_UnparseableFileDegradesToConfigured(t *testing.T) {
+	tmp := t.TempDir()
+	kasPath := filepath.Join(tmp, "kas-mcp.json")
+	s, err := New(context.Background(), tmp, nil, WithKASConfigPath(kasPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_, _ = s.Create(ctx, &Server{Name: "mine", Transport: TransportStdio, Command: "a", Enabled: true})
+	// Written AFTER Create so the store's own render does not overwrite it.
+	if err := os.WriteFile(kasPath, []byte(`{"powers": {"mcpServers": [not json`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	buf := captureSlog(t)
+	all := s.AllNames(ctx)
+	if _, ok := all["mine"]; !ok || len(all) != 1 {
+		t.Errorf("AllNames = %+v, want just the configured server", all)
+	}
+	if !strings.Contains(buf.String(), "unparseable") {
+		t.Errorf("no warning logged for the unreadable file: %s", buf.String())
 	}
 }
 

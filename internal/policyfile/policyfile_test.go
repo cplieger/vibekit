@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -162,9 +165,6 @@ func TestSaveRoundtripAndMode(t *testing.T) {
 }
 
 func TestSanitizeRule(t *testing.T) {
-	if _, err := SanitizeRule(&Rule{Capability: "nope", Effect: "ask"}); err == nil {
-		t.Error("unknown capability should error")
-	}
 	if _, err := SanitizeRule(&Rule{Capability: "shell", Effect: "yolo"}); err == nil {
 		t.Error("invalid effect should error")
 	}
@@ -181,6 +181,77 @@ func TestSanitizeRule(t *testing.T) {
 	}
 	if len(got.Match) != 2 || got.Match[0] != "a" || got.Match[1] != "b" {
 		t.Errorf("sanitized match = %v, want [a b]", got.Match)
+	}
+}
+
+// TestSanitizeRule_ForwardsUnrecognisedCapability is the T67 inversion. This
+// used to be a 400. The capability vocabulary is KAS's — it validates on load
+// and reports a rejection over _kiro/policy/error → the policy_error banner — so
+// refusing here only meant vibekit could not write a rule for any capability
+// newer than its own hand-copied list, which is exactly the rule a new
+// capability exists for.
+func TestSanitizeRule_ForwardsUnrecognisedCapability(t *testing.T) {
+	// "hooks" is the concrete case: an upstream security report asked for it, and
+	// under the old check vibekit would have refused the rule that uses it.
+	for _, capability := range []string{"hooks", "some_future_capability", "nope"} {
+		got, err := SanitizeRule(&Rule{Capability: capability, Effect: "deny"})
+		if err != nil {
+			t.Errorf("SanitizeRule(%q) = %v, want it forwarded to KAS", capability, err)
+			continue
+		}
+		if got.Capability != capability {
+			t.Errorf("capability = %q, want %q verbatim", got.Capability, capability)
+		}
+	}
+}
+
+// TestSanitizeRule_RejectsMalformedCapability pins the line the T67 change did
+// NOT cross. A vocabulary check is KAS's; a SHAPE check is vibekit's, same class
+// as the pattern checks. None of these is a capability KAS could ever have, so
+// writing one only puts a rule in a security policy file that the user has to
+// hand-edit out.
+func TestSanitizeRule_RejectsMalformedCapability(t *testing.T) {
+	cases := map[string]string{
+		"empty":                  "",
+		"whitespace only":        "   ",
+		"a control character":    "fs_\x00write",
+		"a newline (YAML break)": "fs_write\nshell",
+		"over the length cap":    strings.Repeat("a", maxCapabilityLen+1),
+	}
+	for name, capability := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := SanitizeRule(&Rule{Capability: capability, Effect: "ask"}); !errors.Is(err, ErrCapabilityShape) {
+				t.Errorf("err = %v, want ErrCapabilityShape", err)
+			}
+		})
+	}
+}
+
+// TestSanitizeRule_TrimsCapability: the trim has to happen before the rule is
+// written, because Signature is a byte comparison — " shell" and "shell" would
+// otherwise be two distinct rules the user cannot tell apart in the editor.
+func TestSanitizeRule_TrimsCapability(t *testing.T) {
+	got, err := SanitizeRule(&Rule{Capability: "  shell  ", Effect: "ask"})
+	if err != nil {
+		t.Fatalf("SanitizeRule: %v", err)
+	}
+	if got.Capability != "shell" {
+		t.Errorf("capability = %q, want %q", got.Capability, "shell")
+	}
+}
+
+// TestCapabilities_IsASuggestionNotAnAllowlist: the two are now decoupled, and a
+// test that only checked membership would not notice them being re-coupled.
+func TestCapabilities_IsASuggestionNotAnAllowlist(t *testing.T) {
+	suggested := Capabilities()
+	if !sort.StringsAreSorted(suggested) {
+		t.Errorf("Capabilities() not sorted: %v", suggested)
+	}
+	if slices.Contains(suggested, "hooks") {
+		t.Fatal("test assumes 'hooks' is NOT in the suggested set; pick another absent capability")
+	}
+	if _, err := SanitizeRule(&Rule{Capability: "hooks", Effect: "deny"}); err != nil {
+		t.Errorf("a capability outside the suggested set must still be writable: %v", err)
 	}
 }
 

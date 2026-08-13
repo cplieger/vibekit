@@ -61,6 +61,12 @@ import (
 // kasServerKey is the top-level key vibekit owns in KAS's config file.
 const kasServerKey = "mcpServers"
 
+// kasPowersKey is the top-level key KAS fills from installed Powers. vibekit
+// never writes it (readKASConfig preserves it verbatim) and reads it for one
+// reason: to tell a Power's server apart from a server vibekit cannot see at
+// all, so a runtime status row can say which.
+const kasPowersKey = "powers"
+
 // kasFileMaxBytes bounds the re-read of the existing file. The file is a handful
 // of server declarations; a larger one is not something to merge into.
 const kasFileMaxBytes = 4 << 20
@@ -211,6 +217,41 @@ func (s *Store) readKASConfig() map[string]json.RawMessage {
 	}
 	delete(doc, kasServerKey)
 	return doc
+}
+
+// powerNames returns the server names the file's `powers.mcpServers` block
+// declares. Empty when the file is absent, oversized, unparseable, or carries no
+// powers block — every one of which means "vibekit cannot attribute this name",
+// which is OriginUnknown rather than an error.
+//
+// This reads the file rather than caching it, and the call site is why that is
+// affordable: AllNames is consulted only for a name vibekit's own config does
+// NOT hold, so a status frame for a configured server (the overwhelming
+// majority) never reaches the disk. Caching instead would trade a rare
+// few-kilobyte read for a staleness window on exactly the event this exists to
+// observe — a Power installed mid-session.
+func (s *Store) powerNames() map[string]struct{} {
+	out := map[string]struct{}{}
+	// readKASConfig deletes the key vibekit owns and keeps the rest, so the
+	// powers block arrives here untouched.
+	raw, ok := s.readKASConfig()[kasPowersKey]
+	if !ok {
+		return out
+	}
+	var block struct {
+		MCPServers map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &block); err != nil {
+		slogWarnKAS("powers block unparseable; its servers will report an unknown origin", s.kasPath, err)
+		return out
+	}
+	for name := range block.MCPServers {
+		if name == "" {
+			continue
+		}
+		out[name] = struct{}{}
+	}
+	return out
 }
 
 // kasConfigPath is the file KAS reads for user-level MCP servers.

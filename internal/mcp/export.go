@@ -119,11 +119,40 @@ func mergeSecrets(patch, existing []KeyPair) []KeyPair {
 // EnabledNames satisfies api.MCPConfig, returning the set of enabled
 // server names for the hub's defensive filtering of init notifications.
 func (s *Store) EnabledNames(_ context.Context) map[string]struct{} {
+	return s.namesWhere(func(sv *Server) bool { return sv.Enabled })
+}
+
+// ConfiguredNames satisfies api.MCPConfig, returning every server name this
+// store holds regardless of its enabled flag. The hub subtracts EnabledNames
+// from it to identify the one case that still drops a status frame: a server
+// vibekit configured and the user switched off.
+func (s *Store) ConfiguredNames(_ context.Context) map[string]struct{} {
+	return s.namesWhere(func(*Server) bool { return true })
+}
+
+// AllNames satisfies api.MCPConfig: every name reachable through the config file
+// vibekit renders, which is its own servers plus the `powers.mcpServers` block
+// KAS reads out of the same file. A name in here that ConfiguredNames does not
+// hold came from an installed Power.
+//
+// The powers read happens outside the store lock — it is file I/O, and holding
+// the lock across it would let a slow disk block every CRUD call.
+func (s *Store) AllNames(ctx context.Context) map[string]struct{} {
+	out := s.powerNames()
+	for name := range s.ConfiguredNames(ctx) {
+		out[name] = struct{}{}
+	}
+	return out
+}
+
+// namesWhere collects the names of the stored servers matching keep. One helper
+// for the two name sets so they cannot drift in how they read the store.
+func (s *Store) namesWhere(keep func(*Server) bool) map[string]struct{} {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make(map[string]struct{}, len(s.servers))
 	for _, sv := range s.servers {
-		if sv.Enabled {
+		if keep(sv) {
 			out[sv.Name] = struct{}{}
 		}
 	}

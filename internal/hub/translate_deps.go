@@ -53,6 +53,10 @@ func (r *hubMCPRecorder) RecordInitFailure(ctx context.Context, serverName, errM
 	r.h.mcpRegistry.recordInitFailure(ctx, serverName, errMsg)
 }
 
+func (r *hubMCPRecorder) RecordDisabled(ctx context.Context, serverName string) {
+	r.h.mcpRegistry.recordDisabled(ctx, serverName)
+}
+
 func (r *hubMCPRecorder) SignalReady() {
 	r.h.mcpRegistry.signalReady()
 }

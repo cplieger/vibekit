@@ -17,42 +17,79 @@ describe("adaptStatus", () => {
     {
       name: "connected state preserves name",
       input: { name: "github", state: "connected" },
-      expected: { name: "github", state: "connected" },
+      expected: { name: "github", origin: "user", state: "connected" },
     },
     {
       name: "needs_auth with oauth_url preserves url",
       input: { name: "linear", state: "needs_auth", oauth_url: "https://auth.example.com" },
-      expected: { name: "linear", state: "needs_auth", oauth_url: "https://auth.example.com" },
+      expected: {
+        name: "linear",
+        origin: "user",
+        state: "needs_auth",
+        oauth_url: "https://auth.example.com",
+      },
     },
     {
       name: "needs_auth without oauth_url defaults to empty string",
       input: { name: "sentry", state: "needs_auth" },
-      expected: { name: "sentry", state: "needs_auth", oauth_url: "" },
+      expected: { name: "sentry", origin: "user", state: "needs_auth", oauth_url: "" },
     },
     {
       name: "failed with error preserves error",
       input: { name: "pg", state: "failed", error: "connection refused" },
-      expected: { name: "pg", state: "failed", error: "connection refused" },
+      expected: { name: "pg", origin: "user", state: "failed", error: "connection refused" },
     },
     {
       name: "failed without error defaults to empty string",
       input: { name: "redis", state: "failed" },
-      expected: { name: "redis", state: "failed", error: "" },
+      expected: { name: "redis", origin: "user", state: "failed", error: "" },
     },
     {
       name: "idle state",
       input: { name: "slack", state: "idle" },
-      expected: { name: "slack", state: "idle" },
+      expected: { name: "slack", origin: "user", state: "idle" },
     },
     {
       name: "unknown state falls through to idle",
       input: { name: "custom", state: "reconnecting" },
-      expected: { name: "custom", state: "idle" },
+      expected: { name: "custom", origin: "user", state: "idle" },
     },
     {
       name: "empty name preserved as-is",
       input: { name: "", state: "connected" },
-      expected: { name: "", state: "connected" },
+      expected: { name: "", origin: "user", state: "connected" },
+    },
+    // A server KAS reports as off. Only ever sent for one vibekit did not
+    // configure, so it must survive adaptation rather than degrading to idle:
+    // "off" and "no chat is running" are different rows.
+    {
+      name: "disabled state is a state of its own, not idle",
+      input: { name: "off-server", state: "disabled", origin: "power" },
+      expected: { name: "off-server", origin: "power", state: "disabled" },
+    },
+    // The origin drives whether the row gets edit affordances, so each value is
+    // pinned separately.
+    {
+      name: "a power's origin is carried through",
+      input: { name: "from-power", state: "connected", origin: "power" },
+      expected: { name: "from-power", origin: "power", state: "connected" },
+    },
+    {
+      name: "an unattributable origin is carried through",
+      input: { name: "mystery", state: "connected", origin: "unknown" },
+      expected: { name: "mystery", origin: "unknown", state: "connected" },
+    },
+    // Both fall back to "user", which is the safe direction: it cannot invent a
+    // read-only row for a server the config list owns and offers edits for.
+    {
+      name: "an absent origin falls back to user",
+      input: { name: "old-server", state: "connected" },
+      expected: { name: "old-server", origin: "user", state: "connected" },
+    },
+    {
+      name: "an unrecognised origin falls back to user",
+      input: { name: "weird", state: "connected", origin: "sideloaded" },
+      expected: { name: "weird", origin: "user", state: "connected" },
     },
   ] as const;
 

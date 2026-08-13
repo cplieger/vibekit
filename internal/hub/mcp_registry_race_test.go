@@ -13,7 +13,8 @@ func TestMCPRegistry_ConcurrentRecordClear(t *testing.T) {
 	h, _, _ := newTestHub()
 	reg := h.mcpRegistry
 
-	// mcpConfig == nil makes nameIsEnabled short-circuit to true.
+	// mcpConfig == nil makes originFor short-circuit to (OriginUser, true), so
+	// every record lands and this exercises the lock rather than the filter.
 	h.mcpConfig = nil
 
 	const N = 100
