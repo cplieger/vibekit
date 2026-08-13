@@ -15,12 +15,14 @@
 
 export type {
   // Enums
+  DecisionKind,
   ErrorCode,
   EventKind,
   ForgeKind,
   PlanStatus,
   Role,
   SafetyStatus,
+  SettledBy,
   StopReason,
   ToolKind,
   ToolStatus,
@@ -51,6 +53,7 @@ export type {
   ChatDeletedPayload,
   CodeReferencesPayload,
   ConnectedPayload,
+  DecisionSettledPayload,
   ElicitationNeededPayload,
   UserInputNeededPayload,
   UserInputOption,

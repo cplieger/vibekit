@@ -50,7 +50,16 @@ type ChatAccess interface {
 // and a `ChatInSupervisedMode` reader with no consumer went with the gate.
 type PendingPermAccess interface {
 	ClearPendingPermsForChat(chatID api.ChatID)
-	RemovePendingPerm(requestID int64)
+	// TakePendingPerm claims the request before its answer is sent, and reports
+	// false when another surface already answered it. It replaced a
+	// remove-after-responding call: two tabs could each answer one request, and
+	// the agent server discards the loser silently, so a handler must take the
+	// request FIRST and give up when the take fails.
+	//
+	// settledBy travels with the claim because the winning take is broadcast to
+	// the surfaces that lost, and their card says who answered. From a command
+	// handler that is always api.SettledByUser — a person clicked something.
+	TakePendingPerm(requestID int64, settledBy api.SettledBy) bool
 }
 
 // TerminalAccess is the interrupt's process half: a turn cancel must reach

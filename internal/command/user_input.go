@@ -51,6 +51,13 @@ func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWri
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
+	// Take before responding, as CmdPermission does: the agent advances on the
+	// FIRST answer it receives, so a second tab's answer is both discarded and
+	// invisible, and the question the user actually answered stops being knowable.
+	if !d.PendingPerms().TakePendingPerm(p.RequestID, api.SettledByUser) {
+		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
+		return
+	}
 	result := userInputResult{Action: p.Action}
 	if p.Action == api.UserInputActionAnswered {
 		result.Answer = p.Answer
@@ -58,6 +65,5 @@ func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
 		slog.Error("user input response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.PendingPerms().RemovePendingPerm(p.RequestID)
 	d.RespondOK(w, cmd.RequestID)
 }

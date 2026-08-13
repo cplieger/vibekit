@@ -30,7 +30,7 @@ import { runHook, setHookEnabled } from "./actions/hooks.js";
 import type { HookRunResult } from "./actions/hooks.js";
 import { openFile } from "./editor-openers.js";
 import { ICON_EDIT_14, ICON_PLAY } from "./icons.js";
-import { asObject, decodeArray, optNum, optStr, reqBool, reqStr } from "./validators.js";
+import { asObject, decodeArray, optStr, reqBool, reqStr } from "./validators.js";
 
 // --- Wire type + decoder (matches internal/hub/hooks.go hookInfo) ---
 
@@ -49,7 +49,6 @@ interface Hook {
   matcher?: string;
   file_path?: string;
   disabled_reason?: string;
-  timeout?: number;
   enabled: boolean;
 }
 
@@ -87,10 +86,6 @@ const decodeHook: Decoder<Hook> = (v) => {
   const reason = optStr(o, "disabled_reason", P);
   if (reason !== undefined) {
     out.disabled_reason = reason;
-  }
-  const timeout = optNum(o, "timeout", P);
-  if (timeout !== undefined) {
-    out.timeout = timeout;
   }
   return out;
 };

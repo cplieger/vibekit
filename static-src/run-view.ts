@@ -191,9 +191,16 @@ async function load(workflowID: string): Promise<void> {
   }
 
   // Captured outputs are the point of reviewing a finished run: they are what
-  // the steps produced. Empty strings are dropped — every node gets a key
-  // whether or not it captured anything.
-  const outputs = Object.entries(state.capturedOutputs ?? {}).filter(([, v]) => v.trim() !== "");
+  // the steps produced. An EMPTY one is RENDERED, not dropped, and that is the
+  // whole point of this block.
+  //
+  // A node gets a key only when it captured (KAS defaults captureOutput to true
+  // and omits the key when a step sets it false), and the captured value is that
+  // step's last assistant text. So an empty value is not "nothing to show": it
+  // says the step ran and finished without saying anything, which is the most
+  // diagnostic fact a finished run holds. Dropping it left the reader with no
+  // row at all and no way to tell that step from one that never ran.
+  const outputs = Object.entries(state.capturedOutputs ?? {});
   if (outputs.length > 0) {
     parts.push(el("h3", { className: "section-title" }, "Captured output"));
     for (const [node, value] of outputs) {
@@ -202,7 +209,13 @@ async function load(workflowID: string): Promise<void> {
           "div",
           { className: "run-output" },
           el("div", { className: "run-output-node" }, node),
-          el("pre", { className: "run-output-body" }, value),
+          value.trim() === ""
+            ? el(
+                "div",
+                { className: "run-output-empty text-muted text-sm" },
+                "Empty: this step's last assistant message carried no text.",
+              )
+            : el("pre", { className: "run-output-body" }, value),
         ),
       );
     }

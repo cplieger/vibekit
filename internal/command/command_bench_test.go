@@ -30,7 +30,7 @@ func (d *benchDeps) GetOrCreateBridge(context.Context, api.ChatID, string) (Brid
 }
 func (d *benchDeps) CloseBridge(api.ChatID)                              {}
 func (d *benchDeps) ClearPendingPermsForChat(api.ChatID)                 {}
-func (d *benchDeps) RemovePendingPerm(int64)                             {}
+func (d *benchDeps) TakePendingPerm(int64, api.SettledBy) bool           { return true }
 func (d *benchDeps) WorkDir() string                                     { return "/tmp" }
 func (d *benchDeps) ConfigDir() string                                   { return "/tmp" }
 func (d *benchDeps) ShutdownCtx() context.Context                        { return context.Background() }
@@ -83,7 +83,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.Broadcast(context.Background(), api.ServerEvent{})
 	d.CloseBridge("x")
 	d.ClearPendingPermsForChat("x")
-	d.RemovePendingPerm(0)
+	d.TakePendingPerm(0, api.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.CleanupChatState(context.Background(), "x")
@@ -131,7 +131,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.Broadcast(context.Background(), api.ServerEvent{})
 		d.CloseBridge("x")
 		d.ClearPendingPermsForChat("x")
-		d.RemovePendingPerm(0)
+		d.TakePendingPerm(0, api.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()
 		d.CleanupChatState(context.Background(), "x")

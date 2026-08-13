@@ -132,13 +132,15 @@ func TestToHookInfo(t *testing.T) {
 	h := &Hub{lifecycle: &lifecyclePlane{workDir: work}}
 	fp := filepath.Join(work, ".kiro", "hooks", "greet.json")
 
+	// No timeout in the fixture: KAS's list projection emits {type, command}
+	// only, so a case feeding one asserted a wire shape that cannot arrive.
 	cmd := h.toHookInfo(&kasHook{
 		ID:     fp + "#hook-0",
 		Name:   "greet",
-		Action: kasHookAction{Type: actionRunCommand, Command: "echo hi", Timeout: 60},
+		Action: kasHookAction{Type: actionRunCommand, Command: "echo hi"},
 		Meta:   kasHookMeta{Trigger: "Manual", Matcher: ".*", FilePath: fp, Enabled: true},
 	})
-	if cmd.ActionType != actionRunCommand || cmd.Command != "echo hi" || cmd.Timeout != 60 {
+	if cmd.ActionType != actionRunCommand || cmd.Command != "echo hi" {
 		t.Errorf("runCommand flatten wrong: %+v", cmd)
 	}
 	if cmd.Prompt != "" {

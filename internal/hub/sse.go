@@ -167,9 +167,18 @@ func (h *Hub) replayBounds() (floor, head uint64) {
 	return h.sse.hub.Bounds()
 }
 
-// replayPendingPermissions sends any unresolved permission_needed events to
+// replayPendingPermissions sends the unresolved permission_needed events to
 // a newly connected SSE client, so permission dialogs survive reconnects
 // even when the ring buffer has wrapped.
+//
+// EXPIRED requests are skipped. A reconnect can happen long after the request
+// was raised, and the agent server keeps one open for pendingPermTTL — so past
+// that point a replayed card is a card whose answer would go nowhere, and the
+// user reads a live question that has already been abandoned. The tracker owns
+// that judgment (it owns the clock): List returns only what is still
+// answerable, which is the same set TakeIfPresent will still accept an answer
+// for, so the card a client is shown and the answer the server will take cannot
+// disagree.
 func (h *Hub) replayPendingPermissions(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
 	for _, evt := range h.sse.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {

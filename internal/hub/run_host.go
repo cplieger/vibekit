@@ -482,13 +482,14 @@ func (h *Hub) recipeIdle(ctx context.Context, name string) error {
 	return nil
 }
 
-// kasRecipe is one listRecipes entry as KAS reports it (probe 26). `plan` is
-// deliberately not decoded — see api.Recipe.
+// kasRecipe is one listRecipes entry as KAS reports it (probe 26). `plan` rides
+// through as raw JSON — see api.Recipe.
 type kasRecipe struct {
 	Inputs      map[string]string `json:"inputs"`
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Source      string            `json:"source"`
+	Plan        json.RawMessage   `json:"plan"`
 	BuiltIn     bool              `json:"builtIn"`
 }
 
@@ -519,6 +520,7 @@ func (h *Hub) listRecipes(ctx context.Context) ([]api.Recipe, error) {
 			Description: r.Description,
 			Source:      r.Source,
 			Inputs:      r.Inputs,
+			Plan:        r.Plan,
 			BuiltIn:     r.BuiltIn,
 		})
 	}

@@ -21,6 +21,10 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 // for DOM the dock does not own are mocked.
 vi.mock("./editor-openers.js", () => ({ openFileGitDiff: vi.fn() }));
 vi.mock("./actions/permissions.js", () => ({ editNativeRule: { dispatch: vi.fn() } }));
+// The attribution toast is the observable half of a card collapsing under the
+// reader, so it is mocked to be asserted rather than to be silenced.
+const { mockToastInfo } = vi.hoisted(() => ({ mockToastInfo: vi.fn() }));
+vi.mock("./toast.js", () => ({ info: mockToastInfo }));
 
 import {
   mountDecisionDock,
@@ -28,6 +32,7 @@ import {
   rerenderDocks,
   pushDecision,
   dropDecisions,
+  collapseSettledDecision,
   _resetForTest,
 } from "./decision-dock.js";
 import { setSessions, setActive } from "./store.js";
@@ -95,6 +100,7 @@ function clickButton(label: string): void {
 
 beforeEach(() => {
   _resetForTest();
+  mockToastInfo.mockClear();
   document.body.innerHTML = `<div id="decision-dock" class="hidden"></div>`;
   setSessions([session("c1"), session("c2")]);
   setActive("c1");
@@ -367,5 +373,114 @@ describe("the run tab's dock", () => {
     expect(chatSubmit).not.toHaveBeenCalled();
     // The chat's own ask is still on screen, unharmed.
     expect(host().querySelector(".dock-card")).not.toBeNull();
+  });
+});
+
+describe("a decision another surface answered", () => {
+  // Every surface is offered the same ask and only the first answer is
+  // accepted, so on every other surface the card outlived the question: it sat
+  // there looking live, and clicking it achieved nothing.
+
+  function mountRunHost(run: () => string): HTMLElement {
+    const el = document.createElement("div");
+    el.id = "run-dock";
+    el.className = "hidden";
+    document.body.appendChild(el);
+    mountRunDecisionDock(el, run);
+    return el;
+  }
+
+  it("collapses the card and says a person answered elsewhere", () => {
+    const submit = pushPerm("c1", 1);
+    expect(host().querySelector(".dock-card")).not.toBeNull();
+
+    collapseSettledDecision("c1", "permission", 1, "user");
+
+    expect(host().classList.contains("hidden")).toBe(true);
+    expect(host().children.length).toBe(0);
+    // Never answered: a second answer on one request id is what this prevents.
+    expect(submit).not.toHaveBeenCalled();
+    expect(mockToastInfo).toHaveBeenCalledWith(
+      "The permission request was answered in another window.",
+    );
+  });
+
+  it("says a machine answered when the unattended floor did", () => {
+    // An operator reading a card that collapses under them has to learn that a
+    // deadline decided it, not a colleague.
+    pushDecision({
+      kind: "user_input",
+      chatID: "c1",
+      requestID: 3,
+      payload: { request_id: 3, question: "Which region?" },
+      submit: vi.fn(),
+    });
+    collapseSettledDecision("c1", "user_input", 3, "unattended");
+
+    expect(mockToastInfo).toHaveBeenCalledWith(
+      "The agent's question was answered automatically because nobody was watching.",
+    );
+  });
+
+  it("stays quiet about a card the reader never saw", () => {
+    const head = pushPerm("c1", 1);
+    pushPerm("c1", 2);
+
+    collapseSettledDecision("c1", "permission", 2, "user");
+
+    // The queued one leaves without a word; the head is untouched and its depth
+    // line drops back to nothing.
+    expect(mockToastInfo).not.toHaveBeenCalled();
+    expect(host().querySelectorAll(".dock-card").length).toBe(1);
+    expect(host().querySelector(".dock-depth")?.classList.contains("hidden")).toBe(true);
+    clickButton("Allow");
+    expect(head).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a request it is not holding", () => {
+    // The surface that DID answer arrives here with nothing to remove, because
+    // answering splices the entry before the answer goes out. It must not
+    // announce at itself, and must not disturb an unrelated ask.
+    pushPerm("c1", 1);
+    collapseSettledDecision("c1", "permission", 999, "user");
+    collapseSettledDecision("c-unknown", "permission", 1, "user");
+
+    expect(mockToastInfo).not.toHaveBeenCalled();
+    expect(host().querySelector(".dock-card")).not.toBeNull();
+  });
+
+  it("matches on kind as well as request id", () => {
+    // Request ids are per-bridge JSON-RPC ids, so one id can name a permission
+    // and an elicitation. Retiring the wrong card would drop an ask nobody
+    // answered.
+    const submit = pushPerm("c1", 1);
+    collapseSettledDecision("c1", "elicitation", 1, "user");
+
+    expect(host().querySelector(".dock-card")).not.toBeNull();
+    expect(mockToastInfo).not.toHaveBeenCalled();
+    clickButton("Allow");
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("retires the ask on the run tab too, from one event", () => {
+    // One decision, two renderings: the chat's dock and the run tab watching the
+    // same step. One answer has to clear both.
+    setSessions([session("c1")]);
+    setActive("c1");
+    const runHost = mountRunHost(() => "wf_9");
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      runID: "wf_9",
+      requestID: 30,
+      payload: perm({ request_id: 30 }),
+      submit: vi.fn(),
+    });
+    expect(runHost.classList.contains("hidden")).toBe(false);
+
+    collapseSettledDecision("c1", "permission", 30, "user");
+
+    expect(runHost.classList.contains("hidden")).toBe(true);
+    expect(host().classList.contains("hidden")).toBe(true);
   });
 });

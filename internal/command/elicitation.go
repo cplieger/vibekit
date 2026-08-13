@@ -42,6 +42,13 @@ func CmdElicitationResponse(d *Dispatcher, ctx context.Context, w http.ResponseW
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
+	// Take before responding, for the same reason CmdPermission does: an
+	// elicitation form open in two tabs can be submitted twice, and the second
+	// ElicitResult is dropped by the MCP server's caller without a word.
+	if !d.PendingPerms().TakePendingPerm(p.RequestID, api.SettledByUser) {
+		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
+		return
+	}
 	result := api.ElicitationResult{Action: p.Action}
 	// Content only travels on accept; decline/cancel carry no values.
 	if p.Action == api.ElicitationActionAccept {
@@ -50,6 +57,5 @@ func CmdElicitationResponse(d *Dispatcher, ctx context.Context, w http.ResponseW
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {
 		slog.Error("elicitation response failed", "chat_id", cmd.ChatID, keyError, err)
 	}
-	d.PendingPerms().RemovePendingPerm(p.RequestID)
 	d.RespondOK(w, cmd.RequestID)
 }

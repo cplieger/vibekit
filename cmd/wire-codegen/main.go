@@ -68,6 +68,7 @@ func main() {
 		wiregen.TypeRef[api.UserInputSubOption](),
 		wiregen.TypeRef[api.UserInputOption](),
 		wiregen.TypeRef[api.UserInputNeededPayload](),
+		wiregen.TypeRef[api.DecisionSettledPayload](),
 		wiregen.TypeRef[api.OpenExternalURLPayload](),
 		wiregen.TypeRef[api.CodeReferencesPayload](),
 		wiregen.TypeRef[api.AccountUsageBreakdown](),
@@ -125,6 +126,8 @@ func main() {
 		"StopReason": {}, "ErrorCode": {}, "Kind": {}, // forges.Kind → ForgeKind
 		"SafetyStatus":    {},
 		"RunProgressKind": {},
+		"DecisionKind":    {},
+		"SettledBy":       {},
 		"Transport":       {Values: []string{"stdio", "http", "sse"}},
 	}
 
@@ -147,6 +150,7 @@ func main() {
 		{EventType: "chat_updated", TypeName: "ChatHeader"},
 		{EventType: "code_references", TypeName: "CodeReferencesPayload"},
 		{EventType: "connected", TypeName: "ConnectedPayload"},
+		{EventType: "decision_settled", TypeName: "DecisionSettledPayload"},
 		{EventType: "elicitation_needed", TypeName: "ElicitationNeededPayload"},
 		{EventType: "user_input_needed", TypeName: "UserInputNeededPayload"},
 		{EventType: "error", TypeName: "ErrorPayload"},

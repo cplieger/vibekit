@@ -15,7 +15,7 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 
 interface RunInspectReply {
   workflowId: string;
-  state?: { workflowId: string; status?: string };
+  state?: { workflowId: string; status?: string; capturedOutputs?: Record<string, string> };
 }
 
 interface OpenedTab {
@@ -73,8 +73,16 @@ import { openRunView, openLiveRunView } from "./run-view.js";
 async function paint(
   door: (id: string, name: string) => void,
   status: string,
-): Promise<{ labels: string[]; tab: OpenedTab }> {
-  const reply: RunInspectReply = { workflowId: "wf_1", state: { workflowId: "wf_1", status } };
+  capturedOutputs?: Record<string, string>,
+): Promise<{ labels: string[]; tab: OpenedTab; body: HTMLElement }> {
+  const reply: RunInspectReply = {
+    workflowId: "wf_1",
+    state: {
+      workflowId: "wf_1",
+      status,
+      ...(capturedOutputs === undefined ? {} : { capturedOutputs }),
+    },
+  };
   m.reply.current = reply;
 
   document.body.replaceChildren();
@@ -99,7 +107,7 @@ async function paint(
   const labels = [...body.querySelectorAll(".run-controls button")].map((b) =>
     (b.textContent ?? "").trim(),
   );
-  return { labels, tab };
+  return { labels, tab, body };
 }
 
 beforeEach(() => {
@@ -161,5 +169,43 @@ describe("run view flavour gate", () => {
   it("drops the row when the same view switches from owned to review", async () => {
     expect((await paint(openLiveRunView, "running")).labels).toEqual(["Pause", "Cancel"]);
     expect((await paint(openRunView, "running")).labels).toEqual([]);
+  });
+});
+
+// A step only gets a capturedOutputs key when it captured, and the captured
+// value is its last assistant text. So an EMPTY value is a fact about the run,
+// not an absence — hiding it made a silent step indistinguishable from one that
+// never ran, on the surface whose whole job is reading a finished run.
+describe("run view captured output", () => {
+  it("renders an empty capture with its reason instead of dropping it", async () => {
+    const { body } = await paint(openRunView, "completed", { review: "   " });
+    const nodes = [...body.querySelectorAll(".run-output-node")].map((n) => n.textContent);
+    expect(nodes).toEqual(["review"]);
+    const empty = body.querySelector(".run-output-empty");
+    expect(empty?.textContent).toContain("last assistant message carried no text");
+    // The empty row replaces the body, never sits beside a blank one.
+    expect(body.querySelectorAll(".run-output-body")).toHaveLength(0);
+  });
+
+  it("still renders a non-empty capture verbatim", async () => {
+    const { body } = await paint(openRunView, "completed", { build: "ok\nshipped" });
+    expect(body.querySelector(".run-output-body")?.textContent).toBe("ok\nshipped");
+    expect(body.querySelector(".run-output-empty")).toBeNull();
+  });
+
+  it("shows an empty step beside a speaking one", async () => {
+    const { body } = await paint(openRunView, "completed", { build: "ok", review: "" });
+    expect(body.querySelectorAll(".run-output")).toHaveLength(2);
+    expect(body.querySelectorAll(".run-output-empty")).toHaveLength(1);
+  });
+
+  // No keys at all means no section: a run whose steps all declared
+  // captureOutput:false has nothing to say here, and an empty heading would
+  // claim otherwise.
+  it("omits the section when the run captured nothing", async () => {
+    const { body } = await paint(openRunView, "completed", {});
+    expect([...body.querySelectorAll(".section-title")].map((h) => h.textContent)).not.toContain(
+      "Captured output",
+    );
   });
 });
