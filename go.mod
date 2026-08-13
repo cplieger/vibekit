@@ -12,16 +12,16 @@ require (
 )
 
 require (
-	github.com/cplieger/atomicfile/v2 v2.9.0
+	github.com/cplieger/atomicfile/v2 v2.9.1
 	github.com/cplieger/envx/yamlenv v1.2.1
 	github.com/cplieger/jsonx v1.4.0
-	github.com/cplieger/keyenc v1.0.1
+	github.com/cplieger/keyenc v1.0.2
 	github.com/cplieger/pathinside v1.0.0
 	github.com/cplieger/pinstall/v2 v2.3.1
 	github.com/cplieger/runesafe v1.4.0
 	github.com/cplieger/slogx v1.6.0
-	github.com/cplieger/ssrf/v3 v3.0.0
-	github.com/cplieger/toolbelt/v2 v2.4.8
+	github.com/cplieger/ssrf/v3 v3.0.1
+	github.com/cplieger/toolbelt/v2 v2.4.10
 	github.com/cplieger/web-terminal-engine/v3 v3.10.1
 	github.com/cplieger/webhttp v1.23.0
 	github.com/cplieger/wiregen/v2 v2.0.3
