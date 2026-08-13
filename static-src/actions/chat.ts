@@ -440,79 +440,169 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
   error: false, // send-state.ts (blocked send button) is the surface
 });
 
-// --- chat.respond_permission ---
-// Scope is per-request (not per-chat): two pending permission requests in
-// the same chat are independent and should fire in parallel. Serializing
-// them behind the chat scope would delay the second response until the
-// first round-trips, which feels sluggish when the agent is waiting on
-// multiple permissions simultaneously.
+// --- the three interactive asks ---
+// Scope is per-request (not per-chat): two pending requests in the same chat
+// are independent and should fire in parallel. Serializing them behind the
+// chat scope would delay the second response until the first round-trips,
+// which feels sluggish when the agent is waiting on several at once.
 
-export const respondPermission = transportAction<{
-  chatID: string;
-  requestID: number;
-  optionID: string;
-  /** A TURN APPROVAL's per-action verdicts: KAS's action id → keep. Absent on
-   *  an ordinary tool permission. Every action the request offered must appear
-   *  — KAS restores whatever is not in the accepted set, so an omitted id is a
-   *  silent rollback rather than "no opinion". */
-  fileDecisions?: Record<string, boolean>;
-}>({
+/** The Go sentinel `errAlreadyAnswered` (internal/command/validate.go), served
+ *  as 409 `{"error":"already_answered"}`. Matched by value because there is no
+ *  generated constant for a command error body; if that string moves, this
+ *  breaks silently, so the two are named in each other's comments. */
+const ALREADY_ANSWERED = "already_answered";
+
+/** Answering an ask has THREE outcomes, not two: the answer landed, the request
+ *  was already settled by another surface, or the send failed.
+ *
+ *  `superseded` is NOT an error. The reader's intent — dispose of this pending
+ *  decision — was met; their particular choice simply did not win, and the agent
+ *  server accepts exactly one answer per request id (hub.TakePendingPerm is what
+ *  decides the winner). Reporting it through the error branch produced a
+ *  "Couldn't send permission response" toast beside the dock's own correct
+ *  "answered in another window", which reads as a failure to retry.
+ *
+ *  It is deliberately SILENT here. The surface that owns the explanation is the
+ *  one that was showing the superseded card, and decision-dock.ts already
+ *  announces it with attribution and only when the card was on screen. A toast
+ *  from this layer could only duplicate that or contradict it.
+ *
+ *  Why these three do not use `transportAction`: its generated run() throws on
+ *  every !ok, and the framework's notification vocabulary is success/error, so a
+ *  third outcome cannot be expressed through it. THAT is the real defect and it
+ *  belongs upstream in @cplieger/actions as a `superseded` branch defaulting to
+ *  silent. Until it exists these carry their own runner, which is the path the
+ *  package sanctions by exporting IDEMPOTENCY_COMMAND_FIELD "so consumer-authored
+ *  custom runners can share the wire convention instead of hand-copying the
+ *  literal". The cost, stated: they no longer share the adapter's error mapping,
+ *  so a change there will not reach them. */
+type DecisionAnswer = "answered" | "superseded";
+
+/** Sends one answer and classifies the outcome. The idempotency key is injected
+ *  at the command's TOP level, exactly where transportAction put it, so the wire
+ *  is unchanged by this refactor. (That field is inert against vibekit's own
+ *  transport — the server dedups on the envelope's request_id and on an
+ *  Idempotency-Key HEADER that transport.ts never sets — but preserving it keeps
+ *  this a behaviour-preserving change plus one new outcome.) */
+async function answerDecision(
+  cmd: { type: string; chat_id: string; payload: Record<string, unknown> },
+  signal: AbortSignal,
+  idempotencyKey: string | undefined,
+): Promise<DecisionAnswer> {
+  const withKey =
+    idempotencyKey !== undefined ? { ...cmd, [IDEMPOTENCY_COMMAND_FIELD]: idempotencyKey } : cmd;
+  // The cast and `reportSendState: false` both mirror the transport bridge in
+  // actions/boot.ts, which is the path transportAction took. The envelope's
+  // request_id is minted by transport.send, so an action-level command is
+  // legitimately looser than the `Command` union; and send-state is the prompt
+  // button's surface, which an ask's answer must not touch.
+  const r = await transportSend(withKey as Parameters<typeof transportSend>[0], {
+    signal,
+    reportSendState: false,
+  });
+  if (r.ok) {
+    return "answered";
+  }
+  if (r.status === 409 && r.error === ALREADY_ANSWERED) {
+    return "superseded";
+  }
+  throw new ActionError(r.error ?? `send failed (${String(r.status)})`, {
+    status: r.status,
+    ...(r.code !== undefined ? { code: r.code } : {}),
+  });
+}
+
+export const respondPermission = defineAction<
+  {
+    chatID: string;
+    requestID: number;
+    optionID: string;
+    /** A TURN APPROVAL's per-action verdicts: KAS's action id → keep. Absent on
+     *  an ordinary tool permission. Every action the request offered must appear
+     *  — KAS restores whatever is not in the accepted set, so an omitted id is a
+     *  silent rollback rather than "no opinion". */
+    fileDecisions?: Record<string, boolean>;
+  },
+  DecisionAnswer
+>({
   name: "chat.respond_permission",
   scope: ({ chatID, requestID }) => `perm:${chatID}:${String(requestID)}`,
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  command: ({ chatID, requestID, optionID, fileDecisions }) => ({
-    type: "permission_response",
-    chat_id: chatID,
-    payload:
-      fileDecisions !== undefined
-        ? { request_id: requestID, option_id: optionID, file_decisions: fileDecisions }
-        : { request_id: requestID, option_id: optionID },
-  }),
+  run: ({ chatID, requestID, optionID, fileDecisions }, signal, ctx) =>
+    answerDecision(
+      {
+        type: "permission_response",
+        chat_id: chatID,
+        payload:
+          fileDecisions !== undefined
+            ? { request_id: requestID, option_id: optionID, file_decisions: fileDecisions }
+            : { request_id: requestID, option_id: optionID },
+      },
+      signal,
+      ctx?.idempotencyKey,
+    ),
+  // Reached only by a REAL failure now: a superseded answer returns normally.
   error: "Couldn't send permission response",
 });
 
-export const respondElicitation = transportAction<{
-  chatID: string;
-  requestID: number;
-  action: "accept" | "decline" | "cancel";
-  content?: Record<string, unknown>;
-}>({
+export const respondElicitation = defineAction<
+  {
+    chatID: string;
+    requestID: number;
+    action: "accept" | "decline" | "cancel";
+    content?: Record<string, unknown>;
+  },
+  DecisionAnswer
+>({
   name: "chat.respond_elicitation",
   scope: ({ chatID, requestID }) => `elicit:${chatID}:${String(requestID)}`,
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  command: ({ chatID, requestID, action, content }) => ({
-    type: "elicitation_response",
-    chat_id: chatID,
-    payload:
-      action === "accept" && content !== undefined
-        ? { request_id: requestID, action, content }
-        : { request_id: requestID, action },
-  }),
+  run: ({ chatID, requestID, action, content }, signal, ctx) =>
+    answerDecision(
+      {
+        type: "elicitation_response",
+        chat_id: chatID,
+        payload:
+          action === "accept" && content !== undefined
+            ? { request_id: requestID, action, content }
+            : { request_id: requestID, action },
+      },
+      signal,
+      ctx?.idempotencyKey,
+    ),
   error: "Couldn't send elicitation response",
 });
 
-export const respondUserInput = transportAction<{
-  chatID: string;
-  requestID: number;
-  action: "answered" | "dismissed";
-  answer?: string;
-}>({
+export const respondUserInput = defineAction<
+  {
+    chatID: string;
+    requestID: number;
+    action: "answered" | "dismissed";
+    answer?: string;
+  },
+  DecisionAnswer
+>({
   name: "chat.respond_user_input",
   scope: ({ chatID, requestID }) => `user-input:${chatID}:${String(requestID)}`,
   idempotencyKey: true,
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
-  command: ({ chatID, requestID, action, answer }) => ({
-    type: "user_input_response",
-    chat_id: chatID,
-    payload:
-      action === "answered" && answer !== undefined
-        ? { request_id: requestID, action, answer }
-        : { request_id: requestID, action },
-  }),
+  run: ({ chatID, requestID, action, answer }, signal, ctx) =>
+    answerDecision(
+      {
+        type: "user_input_response",
+        chat_id: chatID,
+        payload:
+          action === "answered" && answer !== undefined
+            ? { request_id: requestID, action, answer }
+            : { request_id: requestID, action },
+      },
+      signal,
+      ctx?.idempotencyKey,
+    ),
   error: "Couldn't send your answer",
 });
