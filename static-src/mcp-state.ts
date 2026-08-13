@@ -7,7 +7,9 @@ import { registerCleanup } from "./actions/index.js";
 import {
   SignalMap,
   createCollection,
+  signal,
   type ReadonlySignal,
+  type Signal,
   type Collection,
 } from "@cplieger/reactive";
 import {
@@ -74,6 +76,14 @@ const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
     name: reqStr(s, "name", "$.mcp_status.server"),
     state: reqStr(s, "state", "$.mcp_status.server"),
   };
+  // Optional on the decode side even though the server always sends it: a
+  // decoder that REQUIRED it would reject the whole status response, blanking
+  // every row, if a server ever omitted it. adaptOrigin's fallback is the
+  // conservative answer for a missing value.
+  const origin = optStr(s, "origin", "$.mcp_status.server");
+  if (origin !== undefined) {
+    out.origin = origin;
+  }
   const oauthUrl = optStr(s, "oauth_url", "$.mcp_status.server");
   if (oauthUrl !== undefined) {
     out.oauth_url = oauthUrl;
@@ -246,13 +256,27 @@ export interface ServerDiscovery {
   resources: MCPResourceInfo[];
 }
 
-export type RuntimeState = "connected" | "needs_auth" | "idle" | "failed";
+export type RuntimeState = "connected" | "needs_auth" | "idle" | "failed" | "disabled";
+
+/** Where a server came from (`internal/api.Origin`).
+ *
+ *  `user` is a server this page's config list owns — its row carries every edit
+ *  affordance. `power` came from an installed Power, `unknown` from a config
+ *  vibekit cannot read; both are read-only, and the difference is only what the
+ *  row TELLS the reader. */
+export type Origin = "user" | "power" | "unknown";
 
 export type RuntimeStatus =
-  | { name: string; state: "connected" }
-  | { name: string; state: "needs_auth"; oauth_url: string }
-  | { name: string; state: "idle" }
-  | { name: string; state: "failed"; error: string };
+  | { name: string; origin: Origin; state: "connected" }
+  | { name: string; origin: Origin; state: "needs_auth"; oauth_url: string }
+  | { name: string; origin: Origin; state: "idle" }
+  | { name: string; origin: Origin; state: "failed"; error: string }
+  | { name: string; origin: Origin; state: "disabled" };
+
+/** A RuntimeStatus variant with the origin stripped — what an SSE frame can
+ *  express. Distributive on purpose: a plain `Omit<RuntimeStatus, "origin">`
+ *  collapses the union to its common members and loses `oauth_url` / `error`. */
+export type WithoutOrigin<T> = T extends unknown ? Omit<T, "origin"> : never;
 
 // --- Secret sentinel ---
 export const SECRET_MASK = "***";
@@ -262,6 +286,7 @@ export const SECRET_MASK = "***";
 interface WireRuntimeStatus {
   name: string;
   state: string;
+  origin?: string;
   oauth_url?: string;
   error?: string;
   tools?: string[];
@@ -269,17 +294,31 @@ interface WireRuntimeStatus {
   resources?: MCPResourceInfo[];
 }
 
+/** Narrow a wire origin string to the enum, defaulting to `user`.
+ *
+ *  The default is deliberate and it is the SAFE direction: `user` is the origin
+ *  of every row this page's config list already renders, so an unrecognised or
+ *  absent value cannot conjure a read-only row for a server the user owns. A
+ *  read-only row is only ever produced by the server naming `power` or
+ *  `unknown` explicitly. */
+function adaptOrigin(raw: string | undefined): Origin {
+  return raw === "power" || raw === "unknown" ? raw : "user";
+}
+
 /** Exported for testing: adapt a wire status to the domain type. */
 export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
+  const origin = adaptOrigin(w.origin);
   switch (w.state) {
     case "needs_auth":
-      return { name: w.name, state: "needs_auth", oauth_url: w.oauth_url ?? "" };
+      return { name: w.name, origin, state: "needs_auth", oauth_url: w.oauth_url ?? "" };
     case "failed":
-      return { name: w.name, state: "failed", error: w.error ?? "" };
+      return { name: w.name, origin, state: "failed", error: w.error ?? "" };
     case "connected":
-      return { name: w.name, state: "connected" };
+      return { name: w.name, origin, state: "connected" };
+    case "disabled":
+      return { name: w.name, origin, state: "disabled" };
     default:
-      return { name: w.name, state: "idle" };
+      return { name: w.name, origin, state: "idle" };
   }
 }
 
@@ -288,7 +327,7 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
 const statusMap = new SignalMap<RuntimeStatus>();
 
 function idleStatus(name: string): RuntimeStatus {
-  return { name, state: "idle" };
+  return { name, origin: "user", state: "idle" };
 }
 
 /** Reactive per-server runtime-status signal (created lazily as "idle"). Read
@@ -332,9 +371,24 @@ export function setPrewarm(id: string, state: "installing" | "done" | "failed"):
  *  field changes fire `signalFor(id)`, add/remove/reorder fire `ids`. */
 export const servers: Collection<Server> = createCollection<Server>((s) => s.id);
 
+/** Names /api/mcp/status reported that this page's config list does not hold —
+ *  a Power's server, or one from a config vibekit cannot read. Sorted.
+ *
+ *  It exists because the configured list is keyed by a persisted server id and
+ *  such a server has none: it is not in `mcp.json` at all. Without a second list
+ *  the page shows nothing for it while its tools sit in the agent's tool list,
+ *  which is the whole defect. Rows built from it are read-only — there is no
+ *  record to edit, enable or delete. */
+export const unconfiguredNames: Signal<string[]> = signal<string[]>([]);
+
 /** Snapshot of the configured servers (non-reactive). */
 export function configuredServers(): Server[] {
   return servers.items();
+}
+
+/** Element-wise equality for two sorted name lists. */
+function sameNames(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((n, i) => n === b[i]);
 }
 
 // --- MCP fetch controller (servers + status; no manual render callback) ---
@@ -356,6 +410,19 @@ class MCPStateController {
     statusMap.ensure(name, rs).value = rs;
   }
 
+  /** Set a server's runtime state from an SSE frame, keeping the origin already
+   *  known for it.
+   *
+   *  The SSE payloads carry no origin — only `/api/mcp/status` does — and a
+   *  server's provenance does not change while the process runs. Defaulting to
+   *  `user` here instead would flip a read-only row's chip on its first state
+   *  change and start offering edit affordances for a record that does not
+   *  exist, until the next status refetch put it back. */
+  setStatusFromEvent(name: string, next: WithoutOrigin<RuntimeStatus>): void {
+    const origin = statusMap.ensure(name, idleStatus(name)).peek().origin;
+    this.setStatus(name, { ...next, origin });
+  }
+
   deleteStatus(name: string): void {
     // Reset to idle (fires the signal so subscribed rows re-render) rather
     // than clear (which would orphan the row's subscription).
@@ -374,9 +441,11 @@ class MCPStateController {
   }
 
   private async doRefetchServers(): Promise<void> {
-    const signal = this.serversSlot.start();
-    const d = await apiGetTyped("/api/mcp", decodeMCPServersResponseLocal, signal);
-    if (signal.aborted) {
+    // Named `abort`, not `signal`: this module now imports reactive's `signal`
+    // factory, and shadowing it with an AbortSignal reads as the wrong thing.
+    const abort = this.serversSlot.start();
+    const d = await apiGetTyped("/api/mcp", decodeMCPServersResponseLocal, abort);
+    if (abort.aborted) {
       return;
     }
     servers.setAll(d?.servers ?? []);
@@ -394,16 +463,32 @@ class MCPStateController {
   }
 
   private async doRefetchStatus(): Promise<void> {
-    const signal = this.statusSlot.start();
-    const d = await apiGetTyped("/api/mcp/status", decodeMCPStatusResponseLocal, signal);
-    if (signal.aborted) {
+    const abort = this.statusSlot.start();
+    const d = await apiGetTyped("/api/mcp/status", decodeMCPStatusResponseLocal, abort);
+    if (abort.aborted) {
       return;
     }
+    const configured = new Set(servers.items().map((s) => s.name));
     const seen = new Set<string>();
+    const foreign: string[] = [];
     for (const s of d?.servers ?? []) {
       seen.add(s.name);
-      this.setStatus(s.name, adaptStatus(s));
+      const st = adaptStatus(s);
+      this.setStatus(s.name, st);
       this.setDiscovery(s.name, s.tools ?? [], s.prompts ?? [], s.resources ?? []);
+      // Both conditions, not either: the origin is the server's own judgment and
+      // the authority, but the two fetches are independent, so a name already on
+      // a configured row must never also get a read-only one (two rows for one
+      // server) while /api/mcp is mid-flight.
+      if (st.origin !== "user" && !configured.has(s.name)) {
+        foreign.push(s.name);
+      }
+    }
+    foreign.sort();
+    // Replace only on a real change: this fires on every status refetch, and an
+    // equal-but-new array would rebuild every read-only row for nothing.
+    if (!sameNames(unconfiguredNames.peek(), foreign)) {
+      unconfiguredNames.value = foreign;
     }
     // Servers with no reported status revert to idle (fires their signal).
     for (const s of servers.items()) {

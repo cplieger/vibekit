@@ -47,6 +47,13 @@ func TestHandlePolicyChanged(t *testing.T) {
 
 // TestHandlePolicyError pins that a _kiro/policy/error notification broadcasts
 // one policy_error event carrying the error list.
+//
+// This is the authority path the rule writer depends on. vibekit no longer
+// validates the capability VOCABULARY on write (see policyfile.SanitizeRule and
+// server's TestPolicyRuleUnrecognisedCapabilityRoundTrips): a rule naming a
+// capability KAS does not have is written, KAS rejects it on load, and the
+// rejection reaches the user as this event rendered as a banner. If this handler
+// stops broadcasting, a bad rule becomes silent.
 func TestHandlePolicyError(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)

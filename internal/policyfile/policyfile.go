@@ -91,9 +91,22 @@ const (
 	EffectAsk   = "ask"
 )
 
-// validCapabilities is the KAS VALID_CAPABILITIES set (verified against the
-// 2.12 bundle), including the meta capabilities (all/builtin/filesystem).
-var validCapabilities = map[string]struct{}{
+// suggestedCapabilities seeds the UI picker, and that is now its ONLY job.
+//
+// It is a hand-copied snapshot of KAS's VALID_CAPABILITIES, and there is no
+// discovery method to derive it from — VALID_CAPABILITIES is internal to KAS and
+// no `_kiro/*` method exposes it. So it goes stale by construction the day the
+// agent server gains a capability, and it used to drive TWO things: this picker
+// and rule VALIDATION. That second job made the staleness a refusal: a rule
+// naming a capability KAS had gained but this list had not was rejected with a
+// 400, so vibekit would refuse to write the very rule the new capability
+// existed for, and never offer it in the picker either.
+//
+// Validation is gone (see SanitizeRule) and the picker is no longer limited to
+// this set (see the view handler, which unions in every capability the rules KAS
+// reports already use). What is left is a suggestion list: being incomplete now
+// costs a dropdown entry, not a write.
+var suggestedCapabilities = map[string]struct{}{
 	"all": {}, "builtin": {}, "filesystem": {},
 	"fs_read": {}, "fs_write": {}, "shell": {},
 	"web_fetch": {}, "web_search": {}, "mcp": {},
@@ -101,36 +114,43 @@ var validCapabilities = map[string]struct{}{
 	"context": {}, "diagnostics": {}, "sandbox_network": {},
 }
 
-// Capabilities returns the writable capability set, sorted, for the UI
-// picker. The meta caps come first (broadest), then the concrete ones.
+// Capabilities returns the suggested capability set, sorted, for the UI picker.
+// It is a starting point, not a permitted set: a caller may write a rule naming
+// a capability that is not in here.
 func Capabilities() []string {
-	out := make([]string, 0, len(validCapabilities))
-	for c := range validCapabilities {
+	out := make([]string, 0, len(suggestedCapabilities))
+	for c := range suggestedCapabilities {
 		out = append(out, c)
 	}
 	sort.Strings(out)
 	return out
 }
 
+// maxCapabilityLen bounds a capability token. KAS's own names are under 16
+// characters; this is generous headroom, and its job is only to keep a
+// pathological value out of the file (see SanitizeRule).
+const maxCapabilityLen = 128
+
 // Errors surfaced to the HTTP edge.
+//
+// There is deliberately no "unknown capability" error. The capability VOCABULARY
+// is KAS's to define and KAS's to enforce: it validates on load and reports a
+// rejection over _kiro/policy/error, which vibekit already translates into the
+// policy_error SSE and renders as a banner. Duplicating that vocabulary here
+// bought nothing and cost the ability to write a rule for any capability newer
+// than this file.
 var (
-	ErrInvalidScope      = errors.New("scope must be user or workspace")
-	ErrInvalidCapability = errors.New("unknown capability")
-	ErrInvalidEffect     = errors.New("effect must be allow, deny, or ask")
-	ErrTooManyRules      = errors.New("policy file has too many rules")
-	ErrPatternTooLong    = errors.New("match/exclude pattern too long")
-	ErrPatternInvalid    = errors.New("match/exclude pattern contains invalid characters")
+	ErrInvalidScope    = errors.New("scope must be user or workspace")
+	ErrInvalidEffect   = errors.New("effect must be allow, deny, or ask")
+	ErrCapabilityShape = errors.New("capability must be a non-empty token with no control characters")
+	ErrTooManyRules    = errors.New("policy file has too many rules")
+	ErrPatternTooLong  = errors.New("match/exclude pattern too long")
+	ErrPatternInvalid  = errors.New("match/exclude pattern contains invalid characters")
 )
 
 // ValidScope reports whether scope is writable by vibekit.
 func ValidScope(scope string) bool {
 	return scope == ScopeUser || scope == ScopeWorkspace
-}
-
-// ValidCapability reports whether capability is a known KAS capability.
-func ValidCapability(capability string) bool {
-	_, ok := validCapabilities[capability]
-	return ok
 }
 
 // ValidEffect reports whether effect is allow/deny/ask.
@@ -235,14 +255,24 @@ func Save(ctx context.Context, path string, f *File) error {
 	return err
 }
 
-// SanitizeRule validates + normalizes a rule for writing. It trims and
-// de-dups match/exclude, enforces the length/count caps, and validates the
-// capability + effect. It does NOT default the effect — the caller applies
+// SanitizeRule validates + normalizes a rule for writing. It trims and de-dups
+// match/exclude, enforces the length/count caps, checks the effect, and checks
+// the capability's SHAPE. It does NOT default the effect — the caller applies
 // the conservative "default to ask" policy so the choice is explicit at the
 // edge.
+//
+// The split on capability is deliberate. Its VOCABULARY is not checked: an
+// unrecognised name is written through, because KAS's loader is the authority on
+// which capabilities exist and reports a rejection over _kiro/policy/error →
+// the policy_error banner. Its SHAPE is checked, in the same class as the
+// pattern checks below: an empty, oversized or control-character-bearing token
+// is not a capability KAS could ever have, so forwarding one only puts a rule in
+// a security policy file that the user then has to hand-edit out.
 func SanitizeRule(r *Rule) (Rule, error) {
-	if !ValidCapability(r.Capability) {
-		return Rule{}, fmt.Errorf("%w: %q", ErrInvalidCapability, r.Capability)
+	capability := strings.TrimSpace(r.Capability)
+	if capability == "" || len(capability) > maxCapabilityLen ||
+		!utf8.ValidString(capability) || strings.ContainsFunc(capability, isCtrl) {
+		return Rule{}, ErrCapabilityShape
 	}
 	if !ValidEffect(r.Effect) {
 		return Rule{}, ErrInvalidEffect
@@ -255,7 +285,7 @@ func SanitizeRule(r *Rule) (Rule, error) {
 	if err != nil {
 		return Rule{}, err
 	}
-	return Rule{Capability: r.Capability, Effect: r.Effect, Match: match, Exclude: exclude}, nil
+	return Rule{Capability: capability, Effect: r.Effect, Match: match, Exclude: exclude}, nil
 }
 
 func sanitizePatterns(in []string) ([]string, error) {

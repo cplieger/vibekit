@@ -46,6 +46,11 @@ type MCPRecorder interface {
 	RecordConnected(ctx context.Context, serverName string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo)
 	RecordOAuth(ctx context.Context, serverName, oauthURL string)
 	RecordInitFailure(ctx context.Context, serverName, errMsg string)
+	// RecordDisabled reports a server KAS says is off. The recorder keeps it
+	// only when vibekit never configured it — a configured server's off state is
+	// already on its config row, and this call must not resurrect one the user
+	// switched off. See hub's recordDisabled for the rule.
+	RecordDisabled(ctx context.Context, serverName string)
 	SignalReady()
 }
 

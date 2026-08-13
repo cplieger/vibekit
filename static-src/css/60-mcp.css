@@ -389,11 +389,50 @@
 }
 
 .mcp-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
+  min-width: 0;
+}
+
+.mcp-row-meta-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Provenance chip: shown only when the server is NOT this page's to manage
+   (a Power's, or from a config vibekit does not read). Same pill vocabulary as
+   the transport badge so the meta line reads as one row of facts. */
+.mcp-origin {
+  padding: 0.0625rem 0.375rem;
+  border-radius: 999rem;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  background: var(--c-bg-hover);
+  border: 1px solid var(--c-border);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* A row with no configuration behind it: no toggle and no action buttons, so it
+   is tinted back to read as informational rather than actionable. Mixed toward
+   the page background rather than to transparent — the list's own background is
+   the 1px row separator colour, which a translucent row would show through. */
+.mcp-row-readonly {
+  background: color-mix(in oklch, var(--c-bg-secondary) 65%, var(--c-bg-primary));
+}
+
+/* Sits below the configured list as its own rounded box; the gap keeps the two
+   from reading as one list with a mystery seam in it. */
+.mcp-foreign-list {
+  margin-block-start: var(--sp-2);
+}
+
+.mcp-foreign-list[hidden] {
+  display: none;
 }
 
 .mcp-row-actions {

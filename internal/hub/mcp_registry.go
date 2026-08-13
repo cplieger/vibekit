@@ -45,14 +45,20 @@ const (
 	mcpStateConnected mcpServerState = "connected"
 	mcpStateOAuth     mcpServerState = "needs_auth"
 	mcpStateFailed    mcpServerState = "failed"
+	mcpStateDisabled  mcpServerState = "disabled"
 )
 
 // mcpServerRuntime is the registry's per-server record. Prompts and
 // Resources are the discovery lists a connected server advertises (from
 // the _kiro/mcp/status notification); empty for non-connected servers.
+//
+// Origin says where the server came from, and it is the field that makes a row
+// for a server vibekit never configured safe to show: the MCP page has no config
+// entry to hang edit or delete on, so the row must declare itself read-only.
 type mcpServerRuntime struct {
 	Name      string
 	State     mcpServerState
+	Origin    api.Origin
 	OAuthURL  string
 	Error     string
 	Tools     []string
@@ -161,13 +167,15 @@ func (r *mcpRegistry) signalReady() {
 // Called from the _kiro/mcp/status handler when a server reports the
 // "connected" state. prompts/resources may be nil (server exposes none).
 func (r *mcpRegistry) recordConnected(ctx context.Context, name string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
-	if !r.nameIsEnabled(ctx, name) {
+	origin, ok := r.originFor(ctx, name)
+	if !ok {
 		return
 	}
 	r.mu.Lock()
 	r.servers[name] = &mcpServerRuntime{
 		Name:      name,
 		State:     mcpStateConnected,
+		Origin:    origin,
 		Tools:     tools,
 		Prompts:   prompts,
 		Resources: resources,
@@ -180,13 +188,15 @@ func (r *mcpRegistry) recordConnected(ctx context.Context, name string, tools []
 
 // recordOAuth marks a server as waiting for OAuth and broadcasts the URL.
 func (r *mcpRegistry) recordOAuth(ctx context.Context, name, url string) {
-	if !r.nameIsEnabled(ctx, name) {
+	origin, ok := r.originFor(ctx, name)
+	if !ok {
 		return
 	}
 	r.mu.Lock()
 	r.servers[name] = &mcpServerRuntime{
 		Name:     name,
 		State:    mcpStateOAuth,
+		Origin:   origin,
 		OAuthURL: url,
 	}
 	r.mu.Unlock()
@@ -197,21 +207,53 @@ func (r *mcpRegistry) recordOAuth(ctx context.Context, name, url string) {
 
 // recordInitFailure marks a server as having failed initialisation.
 // Broadcast mcp_failed so the client can render a red status and
-// surface the error message. Disabled servers are silently dropped —
-// the user has already chosen not to run them.
+// surface the error message. A server the user disabled is silently dropped —
+// they have already chosen not to run it.
 func (r *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string) {
-	if !r.nameIsEnabled(ctx, name) {
+	origin, ok := r.originFor(ctx, name)
+	if !ok {
 		return
 	}
 	r.mu.Lock()
 	r.servers[name] = &mcpServerRuntime{
-		Name:  name,
-		State: mcpStateFailed,
-		Error: errMsg,
+		Name:   name,
+		State:  mcpStateFailed,
+		Origin: origin,
+		Error:  errMsg,
 	}
 	r.mu.Unlock()
 
 	r.hub.Broadcast(ctx, api.NewEvent(api.EventMCPFailed, "", api.MCPFailedPayload{Server: name, Error: errMsg}))
+	r.signalChange()
+}
+
+// recordDisabled records a server KAS reports as "disabled". It is the one
+// record path whose whole population is servers vibekit did NOT configure.
+//
+// A configured server is dropped here, whichever way its own flag points. The
+// MCP page renders that server's off state from its config row's `enabled:
+// false`, so a runtime row saying the same thing is a second copy of one fact;
+// and for a server the user disabled mid-session, recording anything at all is
+// what the narrowed guard exists to keep from happening. An UNCONFIGURED server
+// has no config row, so this frame is the only evidence it exists — it becomes a
+// read-only row rather than being discarded.
+//
+// No SSE event: there is no mcp_disabled type, and a disabled server never
+// transitions on its own, so the row lands on the next /api/mcp/status read (the
+// MCP page's own load, or any sibling server connecting in the same
+// notification). signalChange still fires so the steering doc regenerates.
+func (r *mcpRegistry) recordDisabled(ctx context.Context, name string) {
+	origin, ok := r.originFor(ctx, name)
+	if !ok || origin == api.OriginUser {
+		return
+	}
+	r.mu.Lock()
+	r.servers[name] = &mcpServerRuntime{
+		Name:   name,
+		State:  mcpStateDisabled,
+		Origin: origin,
+	}
+	r.mu.Unlock()
 	r.signalChange()
 }
 
@@ -236,14 +278,43 @@ func (r *mcpRegistry) clearAll(ctx context.Context) {
 	r.signalChange()
 }
 
-// nameIsEnabled guards against spurious notifications for servers the
-// user has since disabled.
-func (r *mcpRegistry) nameIsEnabled(ctx context.Context, name string) bool {
-	if r.hub.mcpConfig == nil {
-		return true
+// originFor answers both questions a record path has about a name at once: may
+// this frame be recorded, and where did the server come from.
+//
+// It replaces a plain enabled check, and the narrowing is the whole point. That
+// check dropped every name outside EnabledNames, which conflated two opposite
+// situations: a server the user switched off (a stale frame, correctly dropped —
+// recording one would render a server the user disabled mid-session as
+// connected) and a server vibekit never configured at all. The second is not a
+// disabled server; it is an integration reaching the agent through a Power or a
+// config vibekit does not own, and dropping its frames left its tools in the
+// agent's tool list while the MCP page said nothing about where they came from.
+//
+// So exactly one case still returns false: the name is in vibekit's config and
+// not enabled. Everything else is recorded, tagged with the origin the caller
+// stamps on the record.
+//
+// A nil mcpConfig (test hubs) reports OriginUser for every name, which keeps the
+// pre-existing "no config means record it" behaviour and keeps recordDisabled's
+// drop rule intact for those hubs.
+func (r *mcpRegistry) originFor(ctx context.Context, name string) (api.Origin, bool) {
+	cfg := r.hub.mcpConfig
+	if cfg == nil {
+		return api.OriginUser, true
 	}
-	_, ok := r.hub.mcpConfig.EnabledNames(ctx)[name]
-	return ok
+	if _, ok := cfg.EnabledNames(ctx)[name]; ok {
+		return api.OriginUser, true
+	}
+	if _, ok := cfg.ConfiguredNames(ctx)[name]; ok {
+		return "", false
+	}
+	// Past ConfiguredNames, membership in AllNames can only come from the
+	// config file's powers block. This is the only branch that reads the file,
+	// so a configured server's frame never touches the disk.
+	if _, ok := cfg.AllNames(ctx)[name]; ok {
+		return api.OriginPower, true
+	}
+	return api.OriginUnknown, true
 }
 
 // statusServer is the JSON shape for /api/mcp/status entries.
@@ -256,10 +327,14 @@ type mcpStatusResponse struct {
 // must match that struct: handleStatus converts between them directly, so a
 // reorder here is a compile error rather than a silent field swap.
 type statusServer struct {
-	Name     string             `json:"name"`
-	State    api.MCPServerState `json:"state"`
-	OAuthURL string             `json:"oauth_url,omitempty"`
-	Error    string             `json:"error,omitempty"`
+	Name  string             `json:"name"`
+	State api.MCPServerState `json:"state"`
+	// Origin is where the server came from. Always sent (not omitempty): the
+	// client withholds edit affordances on anything but "user", and an absent
+	// field would make it guess.
+	Origin   api.Origin `json:"origin"`
+	OAuthURL string     `json:"oauth_url,omitempty"`
+	Error    string     `json:"error,omitempty"`
 	// Tools is the connected server's tool names. The per-tool deny editor reads
 	// them from here to offer suggestions; they were a persisted config field
 	// (`known_tools`) until the config file became KAS's.

@@ -10,26 +10,76 @@ import "context"
 // contract here avoids a cycle (hub → mcp) when mcp's RegisterRoutes
 // lives in the same package as its storage.
 
-// MCPConfig is the hub's view of the user's configured MCP servers.
-// The hub does not care about persistence or validation; it only needs
-// to know which ACP server configs to pass on bridge spawn and which
-// raw records to expose for pre-warm.
 // MCPConfig is the hub's view of the user's MCP server configuration.
 //
-// It has ONE member, and the two it used to have are the shape of the file
-// adoption. There is no ACPServers: vibekit no longer sends servers inline on
-// session/new — it renders KAS's own hot-reloading config file, and KAS merges
+// There is no ACPServers: vibekit no longer sends servers inline on session/new
+// — it renders KAS's own hot-reloading config file, and KAS merges
 // `client > file-based`, so an inline copy would silently outrank the file. And
 // no SetKnownTools: a connected server's tool names are runtime state that
 // arrives with its prompts and resources, so they live in the hub's registry
 // rather than being written back into a user-config file on every notification.
+//
+// The three name sets are nested — EnabledNames ⊆ ConfiguredNames ⊆ AllNames —
+// and each boundary answers a different question about a name KAS reports:
+//
+//	in EnabledNames                     the user's own server, running
+//	in ConfiguredNames, not enabled     the user's own server, switched off
+//	in AllNames, not configured         a Power's server (the powers block)
+//	in none of them                     a source vibekit cannot see
+//
+// One set alone cannot separate "the user turned this off" from "vibekit never
+// configured this", and those two need opposite treatment: the first is a stale
+// frame to drop, the second is an integration the MCP page would otherwise be
+// silent about while its tools sit in the agent's tool list.
 type MCPConfig interface {
 	// EnabledNames returns the set of enabled server names. Used by the
 	// hub to filter status notifications that belong to disabled entries
 	// (defensive — KAS reports a disabled server as "disabled" rather than
 	// as connected, but we don't trust the boundary).
 	EnabledNames(ctx context.Context) map[string]struct{}
+
+	// ConfiguredNames returns every server name vibekit's OWN config holds,
+	// enabled or disabled. The difference from EnabledNames is exactly the set
+	// of servers the user switched off, which is the only case the registry
+	// still drops a status frame for.
+	ConfiguredNames(ctx context.Context) map[string]struct{}
+
+	// AllNames returns every server name reachable through the config file
+	// vibekit renders: its own block plus the `powers.mcpServers` block KAS
+	// reads out of the same file and vibekit never writes. A name in here but
+	// not in ConfiguredNames came from an installed Power.
+	//
+	// Best-effort by construction: the powers block lives in a file a hand-edit
+	// can make unparseable, and a server may reach KAS through a config vibekit
+	// does not read at all. A name this set misses is reported as
+	// OriginUnknown, never dropped.
+	AllNames(ctx context.Context) map[string]struct{}
 }
+
+// Origin records where an MCP server came from, so a runtime status row can say
+// so and the UI can withhold the edit affordances for one vibekit does not own.
+//
+// The three values partition the name sets MCPConfig exposes: OriginUser is
+// ConfiguredNames, OriginPower is AllNames minus ConfiguredNames, and
+// OriginUnknown is everything KAS reports that neither set names.
+type Origin string
+
+// OriginUser, OriginPower, and OriginUnknown are the provenance values a
+// runtime MCP status row can carry.
+const (
+	// OriginUser is a server from vibekit's own config — the MCP page owns its
+	// row and every edit affordance on it.
+	OriginUser Origin = "user"
+	// OriginPower is a server an installed Power contributed via the
+	// `powers.mcpServers` block of the config file vibekit renders. vibekit
+	// cannot edit or delete it; the row is read-only.
+	OriginPower Origin = "power"
+	// OriginUnknown is a server KAS reports that vibekit cannot attribute: a
+	// workspace-level config it does not read, a block a future KAS adds, or a
+	// powers block that failed to parse. Read-only, same as OriginPower — the
+	// distinction is what the row TELLS the user, not what it lets them do.
+	OriginUnknown Origin = "unknown"
+)
 
 // --- SSE payloads ---
 //
@@ -119,13 +169,18 @@ type MCPResourceInfo struct {
 	MimeType    string `json:"mime_type,omitempty"`
 }
 
-// MCPServerState is the lifecycle status of one configured MCP server.
+// MCPServerState is the lifecycle status of one MCP server KAS reported.
 // Exported so the hub's mcpRegistry and the /api/mcp/status endpoint
 // share a single typed enum with compile-time safety.
 //
-// The four values are "idle" (configured but no bridge running),
-// "connected" (kiro-cli reported server_initialized), "needs_auth"
-// (kiro-cli sent oauth_request) and "failed" (kiro-cli sent
-// server_init_failure). They are declared as constants where they are
-// produced — the hub's mcpRegistry, which serves /api/mcp/status.
+// The five values are "idle" (configured but no bridge running), "connected"
+// (KAS reported the server initialised), "needs_auth" (KAS sent an
+// authorization URL), "failed" (KAS reported an init failure) and "disabled"
+// (KAS reports the server as off). They are declared as constants where they
+// are produced — the hub's mcpRegistry, which serves /api/mcp/status.
+//
+// "disabled" is only ever recorded for a server vibekit did NOT configure. A
+// configured server's off state is its config row's own `enabled: false`, which
+// the UI already renders, so recording a second copy of it would put a runtime
+// row beside a config row that disagrees with nothing.
 type MCPServerState string

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sort"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -133,13 +135,102 @@ func TestPolicyRuleInvalidScopeRejected(t *testing.T) {
 	}
 }
 
-func TestPolicyRuleInvalidCapabilityRejected(t *testing.T) {
+// TestPolicyRuleUnrecognisedCapabilityRoundTrips is the T67 inversion at the
+// HTTP edge: this used to be a 400. The rule is written verbatim and KAS's
+// loader is the authority — it validates on load and reports a rejection over
+// _kiro/policy/error, which vibekit already translates into the policy_error SSE
+// and renders as a banner (see translate's HandlePolicyError). The 400 meant
+// vibekit refused to write the rule a newly-added capability exists for.
+func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	home := t.TempDir()
+	work := t.TempDir()
 	t.Setenv("HOME", home)
-	s := &Server{workDir: t.TempDir()}
-	rec := postRules(t, s, policyRuleBody{Op: "add", Scope: "user", Capability: "bogus", Effect: "ask"})
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 (unknown capability)", rec.Code)
+	s := &Server{workDir: work}
+
+	// "hooks" is the real case: an upstream security report asked for it.
+	rec := postRules(t, s, policyRuleBody{
+		Op: "add", Scope: "user", Capability: "hooks", Effect: "deny",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (KAS is the authority on the vocabulary)", rec.Code)
+	}
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, home, work)
+	f, err := policyfile.Load(up)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(f.Rules) != 1 || f.Rules[0].Capability != "hooks" || f.Rules[0].Effect != "deny" {
+		t.Errorf("written rule = %+v, want the unrecognised capability persisted verbatim", f.Rules)
+	}
+}
+
+// TestPolicyRuleMalformedCapabilityRejected: dropping the vocabulary check did
+// not drop the shape check. An empty or control-character capability is not
+// something KAS could reject usefully — it is a malformed request, and writing it
+// leaves a rule the user has to hand-edit out of a security policy file.
+func TestPolicyRuleMalformedCapabilityRejected(t *testing.T) {
+	for name, capability := range map[string]string{
+		"empty":             "",
+		"control character": "fs_\x00write",
+		"newline":           "fs_write\nshell",
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			s := &Server{workDir: t.TempDir()}
+			rec := postRules(t, s, policyRuleBody{
+				Op: "add", Scope: "user", Capability: capability, Effect: "ask",
+			})
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400 (malformed, not merely unrecognised)", rec.Code)
+			}
+		})
+	}
+}
+
+// TestPickerCapabilities_UnionsInWhatTheRulesUse: the suggested set is a
+// hand-copied snapshot of a list KAS does not expose, so the rules KAS reports
+// are the only channel through which the picker can learn a new capability. A
+// capability in use anywhere — including the read-only kiro/administration/agent
+// baselines — becomes selectable with no vibekit release.
+func TestPickerCapabilities_UnionsInWhatTheRulesUse(t *testing.T) {
+	base := policyfile.Capabilities()
+	if slices.Contains(base, "hooks") {
+		t.Fatal("test assumes 'hooks' is absent from the suggested set")
+	}
+
+	got := pickerCapabilities([]api.PolicyRule{
+		{Capability: "hooks", Effect: "deny", Scope: "kiro"},
+		// Already suggested: must not be duplicated.
+		{Capability: "shell", Effect: "ask", Scope: "user"},
+		// Repeat of the new one: must not be duplicated either.
+		{Capability: "hooks", Effect: "ask", Scope: "user"},
+		// An empty capability is not an offer.
+		{Capability: "", Effect: "ask", Scope: "user"},
+	})
+
+	if !slices.Contains(got, "hooks") {
+		t.Errorf("picker = %v, want it to offer 'hooks'", got)
+	}
+	if len(got) != len(base)+1 {
+		t.Errorf("picker has %d entries, want %d (one new capability, no duplicates)", len(got), len(base)+1)
+	}
+	if !sort.StringsAreSorted(got) {
+		t.Errorf("picker not sorted: %v", got)
+	}
+	for _, c := range base {
+		if !slices.Contains(got, c) {
+			t.Errorf("picker dropped the suggested capability %q", c)
+		}
+	}
+}
+
+// TestPickerCapabilities_NoRulesIsTheSuggestedSet: a fresh install with no rules
+// must still populate the dropdown.
+func TestPickerCapabilities_NoRulesIsTheSuggestedSet(t *testing.T) {
+	got := pickerCapabilities(nil)
+	if !slices.Equal(got, policyfile.Capabilities()) {
+		t.Errorf("picker = %v, want the suggested set", got)
 	}
 }
 

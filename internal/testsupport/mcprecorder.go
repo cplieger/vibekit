@@ -22,5 +22,8 @@ func (*NopMCPRecorder) RecordOAuth(context.Context, string, string) {}
 // RecordInitFailure is a no-op; implements translate.MCPRecorder.
 func (*NopMCPRecorder) RecordInitFailure(context.Context, string, string) {}
 
+// RecordDisabled is a no-op; implements translate.MCPRecorder.
+func (*NopMCPRecorder) RecordDisabled(context.Context, string) {}
+
 // SignalReady is a no-op; implements translate.MCPRecorder.
 func (*NopMCPRecorder) SignalReady() {}
