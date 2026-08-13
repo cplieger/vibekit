@@ -1,0 +1,23 @@
+# Client-side keys the kiro-cli agent server reads that internal/kascap does
+# NOT account for: neither sent nor deliberately withheld.
+#
+# This is not a to-do list. Most entries are capabilities vibekit has no handler
+# for and should not claim. An entry leaves this file by gaining a table row in
+# either direction: send:true with an implementation, or send:false with a
+# because saying why not.
+#
+# Read from kiro-cli 2.18.0 by TestCapabilityCensus.
+# Regenerate: go test ./internal/kascap/ -run TestCapabilityCensus -update
+capability c2sViews
+capability findFiles
+capability helpDocs
+capability requirementsAnalysis
+capability specLinks
+capability specPhaseCheckpoints
+capability telemetry
+capability telemetryEnabled
+capability textSearch
+setting fta
+setting inlineAgents
+setting steeringSupervisor
+setting toolSearch
