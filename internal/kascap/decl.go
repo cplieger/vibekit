@@ -6,8 +6,9 @@
 // literal in internal/bridge, and a literal can express only the keys vibekit
 // DOES send:
 //
-//   - Which CALL carries a key. Everything rides initialize today, so the
-//     concept was invisible rather than settled.
+//   - Which CALL carries a key. Both doors are live: most keys ride initialize,
+//     and the ones KAS resolves per session ride session/new and session/load.
+//     A key on the wrong door resolves to its absent default in silence.
 //   - How KAS RESOLVES it. A client capability compared against true is not a
 //     settings entry read through isSettingEnabled, and treating one as the
 //     other costs a whole subsystem with nothing in any log to say so.
@@ -24,12 +25,13 @@ package kascap
 
 // door names the ACP call that carries a capability key.
 //
-// Every key vibekit declares today rides the connection door, which makes this
-// column look like ceremony. It is not: the two doors have different lifetimes
-// (one handshake per subprocess against one message per session), so a key's
-// door is a real property of the key rather than an accident of where the code
-// that sends it happens to sit. The column exists so a row can NAME its door
-// before a key moves, rather than the move being invisible.
+// The two doors have different lifetimes (one handshake per subprocess against
+// one message per session), so a key's door is a real property of the key rather
+// than an accident of where the code that sends it happens to sit. KAS decides
+// it: a key its initialize handler stores on clientMeta rides the connection,
+// and a key its session builders resolve out of the session call's own _meta
+// rides the session. Getting it wrong costs the whole feature and says nothing
+// anywhere, which is what happened to workflows.
 type door string
 
 const (
@@ -40,8 +42,12 @@ const (
 	// doorConnection is the initialize handshake, sent once per kiro-cli
 	// subprocess before any session exists.
 	doorConnection door = "connection"
-	// doorSession is the per-session door (session/new and session/load).
-	// Nothing rides it yet, so SessionMeta returns an empty map.
+	// doorSession is the per-session door, sent on BOTH session/new and
+	// session/load. Both, or a resumed chat quietly gets a different agent
+	// from a fresh one: KAS resolves a session key from the call's own _meta
+	// first and falls back to the value persisted at creation, so a session
+	// created before a key existed never gains it on load unless the client
+	// sends it there too.
 	doorSession door = "session"
 )
 
@@ -104,13 +110,21 @@ type decl struct {
 	// of its key teaches nothing and should be treated as missing.
 	because string
 
-	// env optionally names an environment variable that overrides send, so a
-	// capability can be flipped at runtime without a rebuild.
+	// env optionally names an environment variable an operator can set to stop
+	// vibekit sending this key, so a capability that misbehaves in a deployment
+	// can be switched off without waiting for a release.
 	//
-	// NOTHING READS THIS YET. The column is declared here so a row can carry
-	// the name, but build.go performs no lookup, so setting env on a row today
-	// changes no behaviour. TestEnvOverrideIsNotWiredYet fails the moment a row
-	// populates it, which is the signal to implement the lookup first.
+	// Read by buildDoor through envx.Bool, which means the fallback is this
+	// row's compiled send: unset or empty leaves the row alone, and a value
+	// envx cannot parse logs one Warn and leaves the row alone too. So a typo
+	// in a compose file cannot silently disable a capability.
+	//
+	// DISABLE-ONLY, and structurally rather than by convention: the column may
+	// sit only on a send:true row (TestEnvOverrideOnlyOnSentRows). A withheld
+	// row carries no wire value by design, so an operator who could turn one on
+	// would put a JSON null on the wire. It is also the honest shape for what
+	// this is: an off switch for a shipped capability, not a rollout gate for an
+	// unfinished one.
 	env string
 
 	// value is the wire value for an ungated row. Set explicitly on every such

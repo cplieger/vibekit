@@ -52,6 +52,12 @@ const (
 	methodSetMode     = api.MethodSetMode
 )
 
+// metaKeyKiro is the vendor namespace inside an ACP `_meta` object. Every
+// extension key on this wire hangs off it, on three different requests, and a
+// block written one level up or down is IGNORED rather than rejected — so the one
+// spelling is worth having in one place.
+const metaKeyKiro = "kiro"
+
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
 	lifecycleCtx context.Context
@@ -222,6 +228,20 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	return nil
 }
 
+// spawn packages this bridge's per-spawn facts for the kascap table's gated
+// rows. SecretStorage decides the secretStorage key's VALUE (the key is present
+// either way) and Hooks decides whether the hooks key is present AT ALL — two
+// different mechanisms, which is why one boolean would not do.
+//
+// Both fields are immutable after Start, so this reads them without the mutex,
+// and it is one method rather than a literal at each call site because the
+// connection door and the session door must describe the SAME spawn: a bridge
+// that declared a capability at initialize and then contradicted itself at
+// session/new would be a defect no test looks for.
+func (b *Bridge) spawn() kascap.Spawn {
+	return kascap.Spawn{SecretStorage: b.secretStorage, Hooks: b.enableHooks}
+}
+
 func (b *Bridge) initialize(ctx context.Context) error {
 	// The _meta.kiro block is DECLARED in internal/kascap rather than built
 	// here: which call carries each key, how KAS resolves it, whether an ABSENT
@@ -229,13 +249,10 @@ func (b *Bridge) initialize(ctx context.Context) error {
 	// rationale moved there verbatim, beside the declaration it belongs to,
 	// along with the semanticReview row this literal had no way to express.
 	//
-	// The two gates are this bridge's own, so they travel as a Spawn:
-	// SecretStorage decides secretStorage's VALUE (the key is present either
-	// way) and Hooks decides whether the hooks key is present AT ALL.
-	kiroMeta := kascap.Capabilities(kascap.Spawn{
-		SecretStorage: b.secretStorage,
-		Hooks:         b.enableHooks,
-	})
+	// This is the CONNECTION door. The session door is built from the same
+	// table by withSessionMeta (bridge_session.go); a key belongs to whichever
+	// one KAS reads it from, which is the table's door column.
+	kiroMeta := kascap.Capabilities(b.spawn())
 
 	// Advertise fs read/write and terminal capabilities. kiro-cli routes
 	// file access and command execution through us when these are true.
@@ -268,7 +285,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 				// same ladder one rung up, and claiming them would move reads
 				// and writes off fs/{read,write}_text_file — the rung that
 				// carries the supervised staging path.
-				"_meta": map[string]any{"kiro": map[string]any{
+				"_meta": map[string]any{metaKeyKiro: map[string]any{
 					"stat":          true,
 					"readDirectory": true,
 					"delete":        true,
@@ -295,7 +312,7 @@ func (b *Bridge) initialize(ctx context.Context) error {
 			// deliberately rather than lost by accident.
 			"terminal":    true,
 			"elicitation": map[string]any{"form": map[string]any{}},
-			"_meta":       map[string]any{"kiro": kiroMeta},
+			"_meta":       map[string]any{metaKeyKiro: kiroMeta},
 		},
 		"clientInfo": map[string]any{
 			"name": "vibekit", "title": "Vibekit for Kiro", "version": version.Build,

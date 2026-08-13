@@ -1558,13 +1558,20 @@ done
 		// contents were complete when they were not; and each key gates a
 		// different KAS subsystem, so a per-key assertion says which one broke.
 		//
-		// All three are read with an absent-key-means-false resolver on the
+		// All of them are read with an absent-key-means-false resolver on the
 		// KAS side, so dropping one costs a whole capability with nothing in any
 		// log to say so: codeIntelligence removes the native code tool,
 		// knowledge removes the Knowledge tool (leaving vibekit's whole
-		// knowledge UI with no retrieval half), and workflows removes the entire
-		// workflowChatTools array plus the workflow steering doc.
-		for _, key := range []string{"codeIntelligence", "knowledge", "workflows", "subagentOrchestration"} {
+		// knowledge UI with no retrieval half), subagentOrchestration downgrades
+		// the delegation tool, and goal makes typed /goal reach the model as
+		// prose instead of launching a run.
+		//
+		// `workflows` is deliberately NOT in this list any more: KAS resolves it
+		// per session, so it moved to the session door and is asserted by
+		// TestSessionNewCarriesWorkflowsAtSessionDoor. Asserting it here is what
+		// this test used to do while the key resolved absent-to-false on every
+		// session — a green assertion over a dead key.
+		for _, key := range []string{"codeIntelligence", "knowledge", "subagentOrchestration", "goal"} {
 			if !strings.Contains(got, `"`+key+`":{"enabled":true}`) {
 				t.Errorf("initialize missing the %s settings opt-in; got: %s", key, got)
 			}
@@ -1593,6 +1600,197 @@ done
 			t.Errorf("initialize missing base kiro capabilities; got: %s", got)
 		}
 	})
+}
+
+// --- The session door ---
+
+// envAgentWorkflows is the operator off switch for the workflows capability,
+// declared in internal/kascap/table.go. Named here as a literal because the
+// declaration is unexported and this package must not widen kascap's surface to
+// reach it. Every test below pins it EMPTY, which envx reads as unset: without
+// that the assertions depend on the ambient environment, and a machine carrying
+// the variable would fail them for a reason the diff does not show.
+const envAgentWorkflows = "VIBEKIT_AGENT_WORKFLOWS"
+
+// sessionDoorScript is a fake kiro-cli that appends EVERY request to
+// $RPC_CAPTURE, one JSON line each, so a test can pick out the session call
+// rather than matching anywhere in the stream. That distinction is the point:
+// initialize carries an _meta.kiro block of its own, so a substring search over
+// the whole capture would pass on the connection door's payload and prove
+// nothing about the session door.
+const sessionDoorScript = `#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$RPC_CAPTURE"
+  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$method" in
+    initialize)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    session/new|session/load)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_doortest","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
+      ;;
+    *)
+      if [ -n "$id" ]; then printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"; fi
+      ;;
+  esac
+done
+`
+
+// captureRequest starts a bridge against sessionDoorScript and returns the raw
+// request line for one method, failing when the method was never sent.
+//
+// Fails rather than returns empty on a miss, because "the call did not happen"
+// and "the call carried nothing" are different defects and only one of them is
+// about the session door.
+func captureRequest(t *testing.T, method string, opts *api.StartOpts) string {
+	t.Helper()
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
+		t.Fatalf("write fake script: %v", err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(envAgentWorkflows, "")
+	capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
+	t.Setenv("RPC_CAPTURE", capturePath)
+
+	b := New(scriptPath, dir)
+	if err := b.Start(context.Background(), opts); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	b.Stop()
+
+	data, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("read rpc capture: %v", err)
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+		if strings.Contains(line, `"method":"`+method+`"`) {
+			return line
+		}
+	}
+	t.Fatalf("no %s request in the capture; got:\n%s", method, data)
+	return ""
+}
+
+// metaKiroSettings digs _meta.kiro.settings out of a captured request by
+// walking the decoded JSON one level at a time.
+//
+// A walk rather than a substring match, because the failure this guards is a key
+// nested at the wrong depth: `settings` beside `kiro` instead of inside it, or
+// `_meta.settings` with no `kiro` at all. Both would satisfy a
+// strings.Contains(`"workflows":{"enabled":true}`) and both resolve to nothing on
+// the KAS side. Each missing level is named so a failure says which one broke.
+func metaKiroSettings(t *testing.T, line string) map[string]any {
+	t.Helper()
+	var req map[string]any
+	if err := json.Unmarshal([]byte(line), &req); err != nil {
+		t.Fatalf("captured request is not JSON: %v\n%s", err, line)
+	}
+	node := req
+	for _, level := range []string{"params", "_meta", "kiro", "settings"} {
+		next, ok := node[level].(map[string]any)
+		if !ok {
+			t.Fatalf("captured request has no %s object (%T); the session door's block is missing or misnested:\n%s",
+				level, node[level], line)
+		}
+		node = next
+	}
+	return node
+}
+
+// TestSessionNewCarriesWorkflowsAtSessionDoor pins that session/new carries the
+// workflows settings opt-in, at the exact depth KAS reads it from.
+//
+// This is the wire half of the defect the kascap row records. KAS resolves this
+// key ONLY per session — createNewSessionState calls resolveWorkflows over
+// parseSettings(kiroMeta?.settings) off this call's own _meta, with no
+// connection-level fallback — so while it rode initialize it resolved
+// absent-to-false on every session and the agent had no run_workflow,
+// inspect_workflow, update_workflow, validate_workflow or send_message tool, and
+// no workflow steering doc. Nothing logged it and no method 404'd, so a fixture
+// on this exact call is the only thing that notices.
+func TestSessionNewCarriesWorkflowsAtSessionDoor(t *testing.T) {
+	line := captureRequest(t, "session/new", &api.StartOpts{Model: "m"})
+	settings := metaKiroSettings(t, line)
+	got, ok := settings["workflows"].(map[string]any)
+	if !ok {
+		t.Fatalf(`session/new carried no workflows settings entry (%T). If %s is set to a false
+value in this environment that is the cause; otherwise the row left the session
+door. Captured:
+%s`, settings["workflows"], envAgentWorkflows, line)
+	}
+	// The object, not a bare true: isSettingEnabled returns val.enabled for an
+	// object and false for everything else, so `workflows: true` reads as
+	// DISABLED and looks correct in a diff.
+	if got["enabled"] != true {
+		t.Errorf("session/new sent workflows=%v, want {\"enabled\":true}", got)
+	}
+}
+
+// TestSessionLoadCarriesWorkflowsAtSessionDoor pins the same key on session/load.
+//
+// Not a duplicate of the test above. KAS resolves a session key from the call's
+// own _meta first and falls back to what the session persisted when it was
+// CREATED, so every session created before this row existed carries
+// workflowsEnabled false on disk. Sending it only on session/new would mean a
+// fresh chat has the workflow tools and a resumed one silently does not, which is
+// the worst shape of the two: it looks like the fix landed.
+func TestSessionLoadCarriesWorkflowsAtSessionDoor(t *testing.T) {
+	line := captureRequest(t, "session/load", &api.StartOpts{Model: "m", SessionID: "sess_resume_door"})
+	settings := metaKiroSettings(t, line)
+	got, ok := settings["workflows"].(map[string]any)
+	if !ok {
+		t.Fatalf(`session/load carried no workflows settings entry (%T); a resumed chat would
+lose a capability a fresh one has. Captured:
+%s`, settings["workflows"], line)
+	}
+	if got["enabled"] != true {
+		t.Errorf("session/load sent workflows=%v, want {\"enabled\":true}", got)
+	}
+}
+
+// TestSessionDoorOmitsMetaWhenDisabled pins the other half of the wiring: the
+// _meta key is absent entirely when the session door's projection is empty.
+//
+// Driven through the operator off switch, which is the only way to empty the
+// projection at runtime — and that makes this test do double duty, since it also
+// proves the env override reaches the real wire rather than only the projection
+// its own package tests. An empty `_meta.kiro` on a call that needs none is bytes
+// on every session start, and worse, it would read to the next person as though
+// the door carried something.
+func TestSessionDoorOmitsMetaWhenDisabled(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(sessionDoorScript), 0o755); err != nil {
+		t.Fatalf("write fake script: %v", err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(envAgentWorkflows, "false")
+	capturePath := filepath.Join(t.TempDir(), "rpc.jsonl")
+	t.Setenv("RPC_CAPTURE", capturePath)
+
+	b := New(scriptPath, dir)
+	if err := b.Start(context.Background(), &api.StartOpts{Model: "m"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	b.Stop()
+
+	data, err := os.ReadFile(capturePath)
+	if err != nil {
+		t.Fatalf("read rpc capture: %v", err)
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+		if !strings.Contains(line, `"method":"session/new"`) {
+			continue
+		}
+		if strings.Contains(line, `"_meta"`) {
+			t.Errorf("session/new carried an _meta key with the session door disabled:\n%s", line)
+		}
+		return
+	}
+	t.Fatalf("no session/new request in the capture; got:\n%s", data)
 }
 
 // --- _meta.title: the wire shape KAS actually sends ---
@@ -1952,16 +2150,25 @@ var initGateCases = []struct {
 // TestInitializeDeclaresExactly pins the exact bytes of every initialize
 // request vibekit can send, against a committed golden.
 //
-// It exists to make ONE claim falsifiable: the _meta.kiro block moved out of
-// this package into internal/kascap, and that move changed no byte on the
-// wire. The fixture was captured from the PRE-kascap code (the hand-built
-// literal that used to live in bridge.go) and has not been regenerated since.
-// That ordering is the whole evidentiary value — a golden captured after a
-// refactor only proves the refactor agrees with itself.
+// The fixture was originally captured from the PRE-kascap code, so that it
+// witnessed one claim nothing else could: moving the _meta.kiro block into
+// internal/kascap changed no byte on the wire. That claim is DISCHARGED and is
+// not re-checked here — the fixture has since been regenerated for the
+// capability-door change (workflows left this door for the session door, goal and
+// workspaceTrusted joined it), and a golden regenerated after a change proves
+// only that the change agrees with itself.
+//
+// What it pins now is the current connection-door contract, which is worth as
+// much: every failure mode this fixture exists for is silent on the wire. A
+// settings key dropped to a bare true resolves false, a capability renamed by a
+// KAS bump simply never matches, and a key nested one level wrong is ignored.
+// None of those produce an error, a log line or a -32601.
 //
 // The capture is the raw JSON-RPC line vibekit wrote to the subprocess's
 // stdin, not a re-marshalling of an intermediate map, so it cannot agree with
-// the code while disagreeing with the wire.
+// the code while disagreeing with the wire. The session door has its own
+// fixtures beside it: TestSessionNewCarriesWorkflowsAtSessionDoor and its
+// session/load twin.
 //
 // Two things make it deterministic and both are pinned elsewhere: the RPC id
 // is 1 because initialize is the first Call of a bridge's life (Call does

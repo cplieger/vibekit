@@ -11,9 +11,7 @@
 capability c2sViews
 capability findFiles
 capability helpDocs
-capability requirementsAnalysis
 capability specLinks
-capability specPhaseCheckpoints
 capability telemetry
 capability telemetryEnabled
 capability textSearch

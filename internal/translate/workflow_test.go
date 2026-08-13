@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/cplieger/slogx/capture"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -608,5 +609,89 @@ func TestStepToolCall_SharesTheStepsBlockKey(t *testing.T) {
 	}
 	if buf.ToolCalls[0].AgentSubtaskID != want {
 		t.Errorf("tool call subtask = %q, want %q", buf.ToolCalls[0].AgentSubtaskID, want)
+	}
+}
+
+// TestAgentLaunchedRun_IsRecorded pins the one durable trace an agent-launched
+// run gets in this tier, in both directions.
+//
+// The capability that makes the agent able to start a run
+// (_meta.kiro.settings.workflows, internal/kascap) creates runs nobody clicked,
+// and this tier has no run record, no supervisor and no host-lost detection. Two
+// slog lines are the whole mechanism, so a change that silently stops emitting
+// them takes the only evidence with it — which is exactly the class of loss a log
+// assertion catches and nothing else does.
+//
+// Both directions matter equally. Logging a manual run would dilute the class the
+// line exists to make greppable, and the origin test is real logic rather than a
+// formality: it reads `parentSessionId`, the only origin signal on this wire.
+//
+// slog's default logger is process-global, so no t.Parallel here.
+func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
+	const (
+		startMsg = "agent-launched workflow run started"
+		endMsg   = "agent-launched workflow run finished"
+	)
+	cases := []struct {
+		name       string
+		parent     string
+		wantLogged bool
+	}{
+		{"agent-launched run is recorded", testParent, true},
+		{"manual run is not", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := capture.Default(t)
+			var events []api.ServerEvent
+			tr := New(capturing(&events))
+			ctx := context.Background()
+
+			start := map[string]any{"workflowId": "wf_7", "workflowName": "publish-pr"}
+			done := map[string]any{
+				"workflowId": "wf_7",
+				"status":     "completed",
+				"finalState": map[string]any{"workflowName": "publish-pr"},
+			}
+			if c.parent != "" {
+				start["parentSessionId"] = c.parent
+				done["finalState"].(map[string]any)["parentSessionId"] = c.parent
+			}
+			tr.HandleRunStart(ctx, testChat, notif("_kiro/workflow/run_start", start))
+			tr.HandleRunComplete(ctx, testChat, notif("_kiro/workflow/run_complete", done))
+
+			// The events are unconditional; only the log line is gated. Asserting
+			// this keeps the origin gate from being "reads run_start" by accident.
+			if len(events) != 2 {
+				t.Fatalf("got %d SSE events, want 2 (started + finished) regardless of origin", len(events))
+			}
+			if !c.wantLogged {
+				if n := rec.Count("agent-launched"); n != 0 {
+					t.Errorf("a parentless run produced %d agent-origin log line(s), want 0", n)
+				}
+				return
+			}
+			for _, msg := range []string{startMsg, endMsg} {
+				if rec.CountExact(msg) != 1 {
+					t.Errorf("got %d %q lines, want 1", rec.CountExact(msg), msg)
+				}
+				for key, want := range map[string]string{
+					"workflow_id": "wf_7",
+					"origin":      "agent",
+					"recipe":      "publish-pr",
+				} {
+					if !rec.HasAttr(msg, key, want) {
+						got, _ := rec.AttrValue(msg, key)
+						t.Errorf("%q: %s = %q, want %q", msg, key, got, want)
+					}
+				}
+			}
+			// The terminal line carries the outcome, because terminal covers
+			// success, failure, cancel and a policy stop.
+			if !rec.HasAttr(endMsg, "status", "completed") {
+				got, _ := rec.AttrValue(endMsg, "status")
+				t.Errorf("%q: status = %q, want %q", endMsg, got, "completed")
+			}
+		})
 	}
 }

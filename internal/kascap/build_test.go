@@ -38,8 +38,15 @@ var spawnMatrix = []struct {
 // renderMatrix marshals one projection across the whole spawn matrix, one
 // compact JSON object per line. encoding/json sorts map keys, so the output is
 // deterministic without the test sorting anything itself.
+//
+// Spawn is no longer the only runtime input: an env-bearing row reads the
+// process environment, so the ambient environment is part of this fixture and
+// neutralizeEnvOverrides makes it an explicit one. Without that, a machine
+// carrying VIBEKIT_AGENT_WORKFLOWS=false fails both goldens for a reason the
+// diff does not explain.
 func renderMatrix(t *testing.T, build func(Spawn) map[string]any) string {
 	t.Helper()
+	neutralizeEnvOverrides(t)
 	var out strings.Builder
 	for _, tc := range spawnMatrix {
 		raw, err := json.Marshal(build(tc.spawn))
@@ -117,13 +124,18 @@ func TestInitializeDeclaresExactly(t *testing.T) {
 	checkGolden(t, initializeGoldenPath, renderMatrix(t, Capabilities))
 }
 
-// TestSessionDoorDeclaresExactly pins the session door's payload, which is
-// EMPTY today for every spawn.
+// TestSessionDoorDeclaresExactly pins the payload session/new and session/load
+// carry, for every spawn combination.
 //
-// An empty fixture is the point rather than a placeholder. The session door is
-// the concept T5 needs before it can move a key, and an empty golden is what
-// turns that move into a visible diff: whatever lands there first shows up here
-// as a line changing from {} to a payload, in the same review that adds it.
+// It went from four empty objects to a real payload when workflows moved here,
+// and that diff is what the empty fixture existed to produce. It now guards the
+// same silent failures the initialize golden does, plus one of its own: the
+// session door is the only door whose payload can be EMPTY, and an empty map is
+// the one value the caller must not send at all, so a row leaving this door has
+// to be a visible change here rather than a call that quietly stops carrying
+// _meta.
+//
+// internal/bridge holds the paired fixtures over the two real session requests.
 //
 // Regenerate with:
 //
