@@ -85,14 +85,28 @@ func validateHookPayload(cmd *api.ClientCommand) (p hookCreatePayload, safeName 
 	return p, safeName, 0, nil
 }
 
-// v1 hook schema (the standalone KAS/v3 .kiro/hooks/<name>.json shape).
-// The document wraps a single hook in a versioned envelope:
+// The standalone .kiro/hooks/<name>.json shape. The document wraps a single
+// hook in a versioned envelope:
 //
 //	{ "version": "v1", "hooks": [ { name, trigger, matcher?, action, timeout? } ] }
 //
 // trigger is PascalCase (see normalizeTrigger); action.type is "command"
 // (carries command) or "agent" (carries prompt). This replaces the old
 // embedded 2.x shape (a top-level hook object with when/then blocks).
+//
+// THREE INDEPENDENT v-NUMBERS COLLIDE HERE, so do not reconcile them:
+//
+//   - The AGENT ENGINE is v1/v2/v3, and vibekit is pinned to v3.
+//   - The HOOK ENGINE is v1/v2 and has NO v3. vibekit opts into v2 by
+//     declaring _meta.kiro.hooks={enabled:true,v2:true} (internal/kascap).
+//   - This DOCUMENT's "version" is "v1", and it is the current spelling.
+//
+// So `version: "v1"` beside a declared hook engine v2 is correct, not stale.
+// Bumping it to "v2" to match the engine makes every hook vibekit writes
+// unloadable: KAS's kasHookFileSchema declares this field as a LITERAL type
+// (`version: literalType("v1")`, read off 2.18.0), so any other value fails
+// validation outright rather than degrading. The engine version is negotiated
+// on the wire, not in the file. It is not the agent engine's v3 either.
 type hookAction struct {
 	Type    string `json:"type"`
 	Command string `json:"command,omitempty"`
