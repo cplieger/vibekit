@@ -1917,3 +1917,155 @@ initialize was:
 		}
 	}
 }
+
+// --- The initialize wire contract ---
+
+// initializeGoldenPath is the committed byte-for-byte capture of every
+// initialize request vibekit can put on the wire.
+const initializeGoldenPath = "testdata/initialize.golden"
+
+// initializeGoldenCmd is the regeneration command, quoted in every failure
+// message this fixture can produce.
+const initializeGoldenCmd = "UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly"
+
+// initGateCases is the COMPLETE matrix of runtime gates on the _meta.kiro
+// block: StartOpts.SecretStorage decides secretStorage's VALUE (the key is
+// present either way) and StartOpts.EnableHooks decides whether the hooks key
+// is present AT ALL. Those are two different mechanisms, which is why both
+// need a row rather than one shared "capabilities on/off" case. Nothing else
+// in the initialize payload varies at runtime, so these four rows are
+// exhaustive.
+//
+// The slice order IS the golden's line order. Reordering it rewrites the
+// fixture without changing the wire, which would destroy the fixture's value.
+var initGateCases = []struct {
+	name          string
+	secretStorage bool
+	enableHooks   bool
+}{
+	{"gates off", false, false},
+	{"secret storage only", true, false},
+	{"hooks only", false, true},
+	{"both gates on", true, true},
+}
+
+// TestInitializeDeclaresExactly pins the exact bytes of every initialize
+// request vibekit can send, against a committed golden.
+//
+// It exists to make ONE claim falsifiable: the _meta.kiro block moved out of
+// this package into internal/kascap, and that move changed no byte on the
+// wire. The fixture was captured from the PRE-kascap code (the hand-built
+// literal that used to live in bridge.go) and has not been regenerated since.
+// That ordering is the whole evidentiary value — a golden captured after a
+// refactor only proves the refactor agrees with itself.
+//
+// The capture is the raw JSON-RPC line vibekit wrote to the subprocess's
+// stdin, not a re-marshalling of an intermediate map, so it cannot agree with
+// the code while disagreeing with the wire.
+//
+// Two things make it deterministic and both are pinned elsewhere: the RPC id
+// is 1 because initialize is the first Call of a bridge's life (Call does
+// nextID.Add(1), and Start calls initialize before session/new), and
+// clientInfo.version is "dev" because version.Build only leaves its default
+// under the image build's -ldflags, which version.TestBuildDefaultsToDev pins.
+// Neither is masked; a change to either is a real wire change and should fail
+// here.
+//
+// Regenerate with:
+//
+//	UPDATE_GOLDEN=1 go test ./internal/bridge/ -run TestInitializeDeclaresExactly
+func TestInitializeDeclaresExactly(t *testing.T) {
+	// Fake kiro-cli that appends the raw initialize request to $INIT_CAPTURE
+	// and answers the rest of Start's handshake with the minimum KAS shape.
+	script := `#!/bin/sh
+while IFS= read -r line; do
+  id=$(echo "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  method=$(echo "$line" | sed -n 's/.*"method":"\([^"]*\)".*/\1/p')
+  case "$method" in
+    initialize)
+      printf '%s\n' "$line" >> "$INIT_CAPTURE"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"serverInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    session/new)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"sess_golden","modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default","description":"d"}]},"configOptions":[{"id":"model","currentValue":"m","options":[{"value":"m","name":"M","description":"x","_meta":{"kiro":{"rateMultiplier":1.0}}}]}]}}\n' "$id"
+      ;;
+    *)
+      if [ -n "$id" ]; then printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"; fi
+      ;;
+  esac
+done
+`
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "fake-kiro-cli")
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake script: %v", err)
+	}
+	t.Setenv("HOME", t.TempDir())
+
+	var got strings.Builder
+	for _, tc := range initGateCases {
+		capturePath := filepath.Join(t.TempDir(), "init.jsonl")
+		t.Setenv("INIT_CAPTURE", capturePath)
+		b := New(scriptPath, dir)
+		err := b.Start(context.Background(), &api.StartOpts{
+			Model:         "m",
+			SecretStorage: tc.secretStorage,
+			EnableHooks:   tc.enableHooks,
+		})
+		if err != nil {
+			t.Fatalf("%s: Start: %v", tc.name, err)
+		}
+		b.Stop()
+		data, err := os.ReadFile(capturePath)
+		if err != nil {
+			t.Fatalf("%s: read init capture: %v", tc.name, err)
+		}
+		if len(data) == 0 {
+			t.Fatalf("%s: captured no initialize request; an empty capture would pass forever", tc.name)
+		}
+		got.Write(data)
+	}
+
+	// Write-then-compare rather than write-and-return: the comparison below is
+	// what proves the write landed, so there is one code path either way.
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.MkdirAll(filepath.Dir(initializeGoldenPath), 0o750); err != nil {
+			t.Fatalf("create testdata dir: %v", err)
+		}
+		if err := os.WriteFile(initializeGoldenPath, []byte(got.String()), 0o600); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+		t.Logf("wrote %s (%d bytes, %d cases)", initializeGoldenPath, got.Len(), len(initGateCases))
+	}
+
+	want, err := os.ReadFile(initializeGoldenPath)
+	if err != nil {
+		t.Fatalf("read golden %s (regenerate with: %s): %v", initializeGoldenPath, initializeGoldenCmd, err)
+	}
+	if string(want) == got.String() {
+		return
+	}
+	wantLines := strings.Split(strings.TrimSuffix(string(want), "\n"), "\n")
+	gotLines := strings.Split(strings.TrimSuffix(got.String(), "\n"), "\n")
+	if len(wantLines) != len(gotLines) {
+		t.Fatalf(`initialize golden has %d request(s), the code produced %d.
+A case was added to or removed from initGateCases without regenerating.
+Regenerate with: %s`, len(wantLines), len(gotLines), initializeGoldenCmd)
+	}
+	for i := range wantLines {
+		if wantLines[i] == gotLines[i] {
+			continue
+		}
+		name := "case " + strconv.Itoa(i)
+		if i < len(initGateCases) {
+			name = initGateCases[i].name
+		}
+		t.Errorf(`initialize wire bytes changed for %q.
+This is a WIRE change, not a refactor. If it is deliberate, regenerate with:
+  %s
+--- want
+%s
++++ got
+%s`, name, initializeGoldenCmd, wantLines[i], gotLines[i])
+	}
+}
