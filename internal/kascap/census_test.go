@@ -203,9 +203,17 @@ func readSettingKeys(t *testing.T, src string) []string {
 	return slices.Compact(all)
 }
 
-// declaredKeys returns what the table accounts for on the connection door,
-// split by container. A withheld row counts as DECLARED: recording a deliberate
-// omission is the table's job, so such a key is not unclaimed.
+// declaredKeys returns what the table accounts for, split by container. A
+// withheld row counts as DECLARED: recording a deliberate omission is the
+// table's job, so such a key is not unclaimed.
+//
+// Deliberately door-BLIND. The read side of this census is a set of regexes over
+// the whole bundle and cannot tell which call a key was read from, so filtering
+// the declared side by door would report a key vibekit sends on the session door
+// as one it never considered — a permanent false finding in a fixture whose
+// entries are supposed to be decisions somebody still owes. Which door a key
+// belongs on is the goldens' question, and a key on the wrong one is
+// TestSessionDoorKeysAbsentFromConnectionDoor's.
 func declaredKeys() (capabilities, settings map[string]bool) {
 	capabilities = map[string]bool{
 		// The settings container is not a row; it is derived from the rows.
@@ -213,9 +221,6 @@ func declaredKeys() (capabilities, settings map[string]bool) {
 	}
 	settings = make(map[string]bool)
 	for _, row := range table {
-		if row.door != doorConnection {
-			continue
-		}
 		if row.resolver == resolverSetting {
 			settings[row.key] = true
 			continue

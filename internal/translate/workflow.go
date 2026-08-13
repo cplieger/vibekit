@@ -24,17 +24,28 @@ package translate
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
+
+// runOriginAgent labels a run KAS parented on a chat session, which is the
+// population that has no supervisor in this tier — see logAgentRun.
+const runOriginAgent = "agent"
 
 // kasRunStart mirrors _kiro/workflow/run_start. `nodeTree` and `inputs` are
 // deliberately not decoded: the client refetches `inspect`, whose `state.root`
 // carries the same tree WITH execution facts on it, so decoding the launch-time
 // copy would be a second representation that can only ever be staler.
+//
+// `parentSessionId` IS decoded, and it is the only origin signal on this wire.
+// KAS merges it into every lifecycle payload when the run has a parent, and
+// vibekit's own launch path (workflowNew) sends none, so a frame that carries one
+// is a run started from inside a session rather than from the Workflows tab.
 type kasRunStart struct {
-	WorkflowID   string `json:"workflowId"`
-	WorkflowName string `json:"workflowName"`
+	WorkflowID      string `json:"workflowId"`
+	WorkflowName    string `json:"workflowName"`
+	ParentSessionID string `json:"parentSessionId"`
 }
 
 // kasRunNode is the shape shared by the seven progress frames. Every field is
@@ -48,11 +59,52 @@ type kasRunNode struct {
 }
 
 // kasRunComplete mirrors _kiro/workflow/run_complete. `finalState` is the whole
-// run state and is not decoded — the client refetches rather than adopting a
-// snapshot from an event.
+// run state and is not adopted as client state — the client refetches rather than
+// rendering a snapshot from an event.
+//
+// TWO scalars are read out of it, for the LOG line only. This frame is the one
+// lifecycle notification that carries no `workflowName`, and its
+// `parentSessionId` sits inside the state rather than beside it, so the terminal
+// record can only name the run and its origin from here. Reading two strings is
+// not the thing the comment above forbids: nothing here reaches the client, and
+// the alternative was remembering every launched run's name in a map, which is
+// the store this record exists to avoid.
 type kasRunComplete struct {
 	WorkflowID string `json:"workflowId"`
 	Status     string `json:"status"`
+	FinalState struct {
+		WorkflowName    string `json:"workflowName"`
+		ParentSessionID string `json:"parentSessionId"`
+	} `json:"finalState"`
+}
+
+// logAgentRun writes the one durable trace an agent-launched run gets in this
+// tier, and does nothing for a run launched from the UI.
+//
+// T5 put run_workflow in the chat agent's hands, which creates runs nobody
+// clicked. There is no run record, no supervisor and no host-lost detection here
+// yet, so without this the only evidence such a run ever existed is a chat
+// transcript somebody has to open. Two append-only lines (launch and terminal),
+// correlated by workflow_id, are enough to answer "what did the agent start and
+// how did it end" from the log alone.
+//
+// Deliberately NOT a store, and deliberately not the supervisor: it holds no
+// state, so it cannot detect a run whose host died between the two lines. That
+// gap is real and stays open until the run record lands.
+//
+// Silent for a parentless run: a manual or scheduled run was launched by a person
+// looking at its page and already has a run id in hand, so logging it would only
+// dilute the class this line exists to make greppable.
+func logAgentRun(msg, workflowID, recipe, parentSessionID string, extra ...any) {
+	if parentSessionID == "" {
+		return
+	}
+	slog.Info(msg,
+		append([]any{
+			"workflow_id", workflowID,
+			"origin", runOriginAgent,
+			"recipe", recipe,
+		}, extra...)...)
 }
 
 // HandleRunStart translates _kiro/workflow/run_start → the run_started SSE.
@@ -65,6 +117,10 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID api.ChatID, msg 
 	if !ok || p.WorkflowID == "" {
 		return
 	}
+	// Re-fires on every resume, so this line can repeat for one run. Kept that
+	// way on purpose: each occurrence is a real launch of the run's remaining
+	// work, and de-duplicating it would need the state this record refuses.
+	logAgentRun("agent-launched workflow run started", p.WorkflowID, p.WorkflowName, p.ParentSessionID)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventRunStarted, chatID, api.RunStartedPayload{
 		WorkflowID: p.WorkflowID,
 		Name:       p.WorkflowName,
@@ -82,6 +138,10 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID api.ChatID, m
 	if !ok || p.WorkflowID == "" {
 		return
 	}
+	// Terminal covers success, failure, cancel and a policy stop, which is why
+	// the status travels on the line rather than being implied by its existence.
+	logAgentRun("agent-launched workflow run finished",
+		p.WorkflowID, p.FinalState.WorkflowName, p.FinalState.ParentSessionID, "status", p.Status)
 	t.steps.forgetRun(p.WorkflowID)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventRunFinished, chatID, api.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,

@@ -1,6 +1,10 @@
 package kascap
 
-import "maps"
+import (
+	"maps"
+
+	"github.com/cplieger/envx"
+)
 
 // settingsKey is the container every resolverSetting row lands in. KAS reads
 // _meta.kiro.settings as one object and resolves each member independently, so
@@ -15,20 +19,21 @@ const settingsKey = "settings"
 // a caller may hold or modify it without reaching back into this package.
 func Capabilities(s Spawn) map[string]any { return buildDoor(doorConnection, s) }
 
-// SessionMeta returns the _meta.kiro map for the session door.
+// SessionMeta returns the _meta.kiro map for the session door, ready to sit
+// under a session/new or session/load request's _meta.kiro.
 //
-// It is EMPTY today, because every key vibekit declares rides initialize. It is
-// not wired into session/new for that reason: sending an empty _meta.kiro there
-// would add bytes to a call that carries none today. The caller that sends it
-// arrives with the first row that needs it.
+// The caller sends it on BOTH verbs and only when it is NON-EMPTY, so a table
+// that declares no session key adds no bytes to a call that carries none. Like
+// Capabilities, the returned map is the caller's own.
 func SessionMeta(s Spawn) map[string]any { return buildDoor(doorSession, s) }
 
 // buildDoor projects the table onto one door.
 func buildDoor(d door, s Spawn) map[string]any {
 	out := make(map[string]any, len(table))
 	settings := make(map[string]any)
-	for _, row := range table {
-		if row.door != d || !row.send {
+	for i := range table {
+		row := &table[i]
+		if row.door != d || !sends(row) {
 			continue
 		}
 		value := row.value
@@ -49,6 +54,26 @@ func buildDoor(d door, s Spawn) map[string]any {
 		out[settingsKey] = settings
 	}
 	return out
+}
+
+// sends resolves a row's send at RUNTIME, applying its env override.
+//
+// A row with no env keeps its compiled send, so the common case reads no
+// environment at all. A row that names one hands the decision to envx.Bool with
+// the compiled send as the fallback, which is what makes the override
+// disable-only in practice: the column may only sit on a send:true row, so the
+// operator's reachable states are "still true" and "false".
+//
+// Read per build rather than once at init: nothing here caches, and a capability
+// projection is built once per bridge spawn, so the cost is one os.LookupEnv per
+// env-bearing row on a call that already starts a subprocess.
+//
+// Takes a pointer because decl is well past gocritic's hugeParam threshold.
+func sends(row *decl) bool {
+	if row.env == "" {
+		return row.send
+	}
+	return envx.Bool(row.env, row.send)
 }
 
 // cloneValue returns a value the caller can hold without aliasing the table.

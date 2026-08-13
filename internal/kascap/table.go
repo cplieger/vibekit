@@ -10,6 +10,12 @@ func enabled() map[string]any { return map[string]any{"enabled": true} }
 // an object carrying a v2 member and then checks that member (resolverObject).
 func hooksValue() map[string]any { return map[string]any{"enabled": true, "v2": true} }
 
+// envWorkflows is the operator off switch for the workflows row. Named after the
+// capability rather than the fix, because a variable an operator reads in a
+// compose file has to say what it controls; the VIBEKIT_ prefix is this app's
+// (WT_ is reserved for the two names web-terminal-kiro reads too).
+const envWorkflows = "VIBEKIT_AGENT_WORKFLOWS"
+
 // table is every capability key vibekit knows about, sent or withheld.
 //
 // Row order is presentation only. Both builders emit maps, and encoding/json
@@ -166,8 +172,9 @@ needed"; there are three.`,
 	},
 	{
 		key:      "workflows",
-		door:     doorConnection,
+		door:     doorSession,
 		resolver: resolverSetting,
+		env:      envWorkflows,
 		value:    enabled(),
 		send:     true,
 		because: `_meta.kiro.settings.workflows gates the agent's workflow TOOLS the
@@ -177,7 +184,106 @@ inspect_workflow, update_workflow, validate_workflow, send_message)
 plus the workflow steering doc. vibekit drives the workflow surface
 from the CLIENT side (POST /api/runs, GET /api/recipes, the
 /docs/workflows tab, a per-run bridge), so the run half worked while
-the agent had no way to reach a workflow itself.`,
+the agent had no way to reach a workflow itself.
+
+It rides the SESSION door, and that is the whole defect this row
+records. KAS resolves it per session, not per connection: the only
+readers are createNewSessionState, which calls resolveWorkflows(parsed2)
+over parseSettings(kiroMeta?.settings) off the session call's own _meta
+with NO persisted default, and hydrateSessionForLoad, which passes
+persisted.metadata.workflowsEnabled as that default. Nothing on the
+connection door reads settings.workflows at all (2.18.0: the
+isSettingEnabled(settings, "...") set is codeIntelligence, inlineAgents,
+knowledge, subagentOrchestration, toolSearch), so declaring it at
+initialize resolved absent-to-false on every session and cost the agent
+the entire workflow tool array with no error, no log and no -32601.
+
+Sent on session/load as well as session/new, because the persisted
+default only carries a value a PREVIOUS create put there: every session
+created before this row existed persisted workflowsEnabled false, so a
+resumed chat would keep losing the capability a fresh one has. The
+client value wins over the persisted one, which is what lets a load
+repair such a session.
+
+What makes the session door work at all: KiroSessionMetaSchema declares
+no settings field, but it ends in .passthrough(), so the key survives
+parseKiroMeta rather than being stripped. That is a property of somebody
+else's schema, which is why TestSessionNewCarriesWorkflowsAtSessionDoor
+pins the wire and the census pins the version it was read from.
+
+Carries an env override because it is the one row here that changes what
+the AGENT can do rather than what it can see, and it creates
+agent-origin workflow runs in a tier with no run supervisor. See the env
+column: VIBEKIT_AGENT_WORKFLOWS=false stops sending it.`,
+	},
+	{
+		key:      "goal",
+		door:     doorConnection,
+		resolver: resolverSetting,
+		value:    enabled(),
+		send:     true,
+		because: `_meta.kiro.settings.goal makes KAS's own /goal parser reachable.
+Two sites read it, both off the stored initialize block
+(isSettingEnabled(this.clientMeta?.settings ?? {}, "goal"), so this is a
+CONNECTION-door key even though its sibling workflows is not): the
+slash-command source that publishes /goal in available_commands_update,
+and the prompt path, where parseGoalCommand turns "/goal <text> [--max
+N]" into launchGoal — a bundled repeat workflow that iterates toward the
+goal until it self-declares success or the iteration budget runs out.
+
+Worth sending for one reason: without it, typed /goal reaches the MODEL
+as prose and the model answers as though it had run something, which is
+exactly the lie typed /compact used to tell. With it, the verb either
+launches a real run or is not offered.
+
+It is a muscle-memory fallback, not the affordance. vibekit does not
+decode available_commands_update and ships no palette, so /goal is
+discoverable only to a user who already knows it; the Workflows tab is
+where a run gets launched deliberately, with its recipe and inputs
+visible. Note the loop it starts is an ordinary workflow run parented on
+the calling session, so it lands in the same unsupervised population as
+an agent-launched run.`,
+	},
+	{
+		key:      "workspaceTrusted",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		value:    true,
+		send:     true,
+		because: `workspaceTrusted is the trust verdict every workspace-scoped read in
+KAS is gated on, and vibekit sends true because that is what it already
+gets: the mount is the user's own repository tree, the container hands the
+agent a root shell over it, and nothing about that is safer for the agent
+reading the repo's own steering files.
+
+What it gates, measured in 2.18.0: scanNestedAgentsMd returns an empty
+map outright when it is false (the only hard gate on the nested AGENTS.md
+walk); NodeSteeringDocumentSource and ProgressiveContextManager filter
+workspace-scoped docs and items out; executionAllowed(v2) is exactly
+this flag, so v2 hooks load but never fire
+("hooks.v2.executionDisabledUntrustedWorkspace");
+buildUntrustedAutoloadAskRules injects ask rules over the config
+directories; MCPConfigManager skips the workspace server files; and the
+agent-profile watcher is not started.
+
+Sending it changes NOTHING today, and that is deliberate rather than a
+happy accident: this version takes workspaceTrusted as a KiroAgent
+CONSTRUCTOR option and BOTH entry points hardcode it to true, so no
+client key by this name is read anywhere in the bundle — resolveCapabilities
+does not map it and neither clientMeta nor kiroMeta is ever its receiver.
+The row's value is therefore the record, not the mechanism: it states
+which side of the gate vibekit means to be on, in the one place a reader
+looks for that, so an upstream release that starts reading a client key
+finds vibekit's answer already written down instead of inheriting a
+default nobody chose. It is also the same gate that widens the
+untrusted-repository surface in a filed security report, which is the
+reason to want the answer visible as a line a human can flip rather than
+implied by silence.
+
+Harmless to send meanwhile: initialize reads _meta.kiro as a plain object
+(no schema, no strict()), so an unread key is ignored. If this row ever
+needs to be false, the WITHHOLDING is what expresses it — an absent key
+reads as false at every one of the sites above.`,
 	},
 	{
 		key:      "subagentOrchestration",
@@ -205,6 +311,103 @@ for the same work as a workflow step. So this key makes pipelines
 expressible, not cheap; real fan-out still belongs in a workflow
 run, and A4.2's tool-output cap is what bounds the damage when the
 agent chooses otherwise.`,
+	},
+	{
+		key:      "sessionEviction",
+		door:     doorSession,
+		resolver: resolverSetting,
+		send:     false,
+		because: `WITHHELD, pending a probe that prices it. sessionEviction is an
+opt-in disk budget: resolveSessionEviction reads {enabled, maxBytes} off
+the session call's own settings, and when enabled createNewSessionState
+fires checkStorageBudget, which calls runSessionEviction to DELETE the
+least recently modified sessions until the tree is under budget.
+
+The reason to withhold it is not cost, it is authority. vibekit already
+owns retention end to end: chat_retention_days drives its own reaper, and
+kiro-cli's competing purge is pinned off (cleanup.periodDays=0) for
+exactly this reason. Turning this on would install a SECOND retention
+authority with a different key (bytes, not age), a different unit of
+deletion (a KAS session, not a vibekit chat) and no knowledge of the
+chain: a chat's acp_session_id plus its prior_acp_session_ids are one
+session chain, retention keys on the whole chain, and an LRU that walks
+sessions by mtime would happily evict an earlier segment of a LIVE chat's
+chain. Nothing in this tier would notice, and the visible symptom would be
+a chat whose older turns stopped replaying.
+
+What a probe has to answer before this can flip: whether eviction
+respects a session vibekit still references, what the default budget is
+against a real /config volume, and whether the reaper and the budget can
+be expressed as one policy rather than two. Until then the disk is
+bounded by the reaper, which is the authority that knows about chains.`,
+	},
+	{
+		key:      "specPlan",
+		door:     doorSession,
+		resolver: resolverSetting,
+		send:     false,
+		because: `WITHHELD, pending a probe that prices it. specPlan is not a display
+toggle: resolveSpecPlan reads {enabled, workflow, skipClarification} per
+session, and enabling it flips the bundled prompt arms
+({{#specPlanEnabled}} blocks) from "explore and plan" to "MANDATORY: you
+MUST use spec-driven planning", adds subagent/create-spec to the agent's
+declared delegation set, and persists specPlanEnabled + specWorkflow onto
+the session record so the choice survives a reload.
+
+So it changes what the agent DOES on an ordinary prompt, and it points
+that behaviour at a spec surface vibekit does not have: /specs was
+deleted (the board's write side could not work, since every
+_kiro/spec/invoke verb drives a fire-and-forget turn with no ACP
+turn-end signal), and specs are documents on the /docs tab now. Sending
+this would make the agent produce and delegate against artifacts the UI
+can only browse, and it would do it two tiers before anything in vibekit
+can drive a spec.
+
+What a probe has to answer before this can flip: which spec artifacts a
+run actually writes and where, whether create-spec's turns are observable
+on this wire at all, and whether 'quick' or 'full' is the right workflow
+for a chat-first client. Note skipClarification defaults to TRUE, so a
+naive enable also silences the clarification round.`,
+	},
+	{
+		key:      "specPhaseCheckpoints",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+		because: `WITHHELD, pending a probe that prices it. specPhaseCheckpoints is a
+capability KAS lifts onto its agentContext at initialize
+(specPhaseCheckpoints: capabilities?.specPhaseCheckpoints) and reads as
+=== true when building the spec-mode prompt, where it selects a different
+workflow-selection process and injects a "# Phase Checkpoints" section.
+
+It is a promise about the CLIENT, not a feature request: declaring it
+tells the agent to stop at phase boundaries and expect the client to
+carry the user across them. vibekit has no spec surface to stop at, so
+the checkpoints would land as prose in a chat transcript and the agent
+would wait for an affordance that does not exist.
+
+Recorded rather than left absent because the census reads it off the
+bundle every version, and an unclaimed line invites somebody to claim it.
+The order is: a spec surface first, then this.`,
+	},
+	{
+		key:      "requirementsAnalysis",
+		door:     doorConnection,
+		resolver: resolverCapability,
+		send:     false,
+		because: `WITHHELD, pending a probe that prices it. requirementsAnalysis is the
+sibling of specPhaseCheckpoints on the same lift
+(requirementsAnalysis: capabilities?.requirementsAnalysis, also read off
+clientMeta) and the same === true gate in the spec-mode prompt builder,
+where it turns on a requirements-analysis step ahead of the plan.
+
+Same reasoning and the same blocker: it reshapes what a spec-mode turn
+produces, for a spec surface vibekit does not ship. Withholding leaves
+the prompt on the arm vibekit can actually render.
+
+Both spec capabilities are cheap to flip once there is somewhere for
+their output to go, and neither is a security decision, which is why they
+are recorded together as a pair rather than argued separately.`,
 	},
 	{
 		key:        "semanticReview",

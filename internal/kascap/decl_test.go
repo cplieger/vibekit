@@ -185,47 +185,153 @@ func TestSettingRowsCarryTheEnabledObject(t *testing.T) {
 	}
 }
 
-// TestEnvOverrideIsNotWiredYet is a tripwire, not an assertion about the
-// design. The env column is declared (a row can name an environment variable
-// that overrides send) but build.go performs NO lookup, so a populated env
-// today is a silent no-op. This test fails the moment a row populates it, which
-// is the point at which the lookup has to be implemented.
-func TestEnvOverrideIsNotWiredYet(t *testing.T) {
+// TestEnvOverrideOnlyOnSentRows pins what makes the env column disable-only.
+//
+// A withheld row carries no wire value (TestNoSendWithoutReason enforces that),
+// so an operator able to turn one ON would put a JSON null on the wire —
+// resolving false at every settings site and enabling nothing at every
+// capability site, for a key that now LOOKS declared. Restricting the column to
+// send:true rows makes that unreachable rather than merely discouraged.
+func TestEnvOverrideOnlyOnSentRows(t *testing.T) {
+	for _, row := range table {
+		if row.env == "" || row.send {
+			continue
+		}
+		t.Errorf(`%s is withheld but names env=%q. The override's fallback is the row's own
+send, so on a withheld row the only reachable change is turning it ON — and a
+withheld row has no value to send. Give the row a value and send:true, or drop
+the env name.`, rowID(row), row.env)
+	}
+}
+
+// TestEnvOverrideIsWired proves the lookup exists and decides the wire, across
+// every state an operator can put the variable in.
+//
+// The old tripwire in this slot asserted the opposite (that nothing read the
+// column) and was deleted with the lookup that replaced it. Its successor has to
+// exercise the projection rather than the column, because the failure that
+// matters is a name that reaches no code: a row could carry an env nobody reads
+// and every structural check above would still pass.
+//
+// The malformed case is the one worth having. envx.Bool falls back to the row's
+// compiled send and logs one Warn, so a typo in a compose file leaves the
+// capability ON. That fail direction is deliberate: the variable exists to
+// disable a capability on purpose, and a mistyped value is not a purpose.
+func TestEnvOverrideIsWired(t *testing.T) {
+	row := findRow(t, resolverSetting, "workflows")
+	if row.env == "" {
+		t.Fatalf("setting.workflows carries no env name; this test pins the lookup through it")
+	}
+	build := Capabilities
+	if row.door == doorSession {
+		build = SessionMeta
+	}
+
+	// Cannot be t.Parallel: every case sets a process-wide variable.
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{"unset leaves the compiled default", "", true},
+		{"false stops sending", "false", false},
+		{"0 stops sending", "0", false},
+		{"off stops sending", "off", false},
+		{"no stops sending", "no", false},
+		{"mixed case is tolerated", "FALSE", false},
+		{"surrounding space is tolerated", "  false  ", false},
+		{"true keeps sending", "true", true},
+		{"1 keeps sending", "1", true},
+		{"a typo keeps sending", "flase", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(row.env, tc.value)
+			settings, _ := build(Spawn{})[settingsKey].(map[string]any)
+			_, present := settings["workflows"]
+			if present != tc.want {
+				t.Errorf("%s=%q: workflows present = %v, want %v", row.env, tc.value, present, tc.want)
+			}
+		})
+	}
+}
+
+// findRow returns the one row with this identity, failing when it is absent so a
+// renamed key surfaces as a missing row rather than a vacuous pass.
+func findRow(t *testing.T, r resolver, key string) decl {
+	t.Helper()
+	for _, row := range table {
+		if row.resolver == r && row.key == key {
+			return row
+		}
+	}
+	t.Fatalf("no %s.%s row in the table", r, key)
+	return decl{}
+}
+
+// neutralizeEnvOverrides pins every env-bearing row to its compiled send for the
+// duration of the test, by setting each variable EMPTY (which envx reads as
+// unset).
+//
+// Any test that asserts on a projection needs this, because an env override
+// makes the payload depend on the ambient environment: a developer or runner
+// carrying VIBEKIT_AGENT_WORKFLOWS=false would fail a golden for a reason that
+// has nothing to do with the table. Driven off the table so a new env row is
+// covered without editing this helper. Callers must not use t.Parallel.
+func neutralizeEnvOverrides(t *testing.T) {
+	t.Helper()
 	for _, row := range table {
 		if row.env != "" {
-			t.Errorf(`%s sets env=%q, but nothing reads it: build.go performs no environment lookup,
-so this row's send is still decided at compile time. Implement the lookup in
-buildDoor (and delete this test) before relying on the override.`, rowID(row), row.env)
+			t.Setenv(row.env, "")
 		}
 	}
 }
 
-// TestCapabilitiesDoesNotAliasTheTable pins that a caller cannot corrupt the
-// table through a payload it was handed. The settings objects are built once at
-// package init, so without the clone in buildDoor one caller's mutation would
-// change every later handshake in the process.
-func TestCapabilitiesDoesNotAliasTheTable(t *testing.T) {
-	first := Capabilities(Spawn{})
-	settings, ok := first[settingsKey].(map[string]any)
-	if !ok {
-		t.Fatalf("no settings object in the payload; got %T", first[settingsKey])
-	}
-	knowledge, ok := settings["knowledge"].(map[string]any)
-	if !ok {
-		t.Fatalf("no knowledge settings object; got %T", settings["knowledge"])
-	}
-	knowledge["enabled"] = false
-	delete(settings, "workflows")
+// TestBuildersDoNotAliasTheTable pins that a caller cannot corrupt the table
+// through a payload it was handed. The settings objects are built once at package
+// init, so without the clone in buildDoor one caller's mutation would change
+// every later handshake in the process.
+//
+// Both doors, because both now carry a settings object and both build through the
+// same clone. A door tested on one side only would let a regression survive on
+// the other.
+func TestBuildersDoNotAliasTheTable(t *testing.T) {
+	neutralizeEnvOverrides(t)
+	for _, tc := range []struct {
+		name  string
+		build func(Spawn) map[string]any
+		key   string
+	}{
+		{"connection", Capabilities, "knowledge"},
+		{"session", SessionMeta, "workflows"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			first := settingsOf(t, tc.build(Spawn{}))
+			entry, ok := first[tc.key].(map[string]any)
+			if !ok {
+				t.Fatalf("no %s settings object; got %T", tc.key, first[tc.key])
+			}
+			entry["enabled"] = false
+			delete(first, tc.key)
 
-	second := Capabilities(Spawn{})
-	secondSettings, ok := second[settingsKey].(map[string]any)
+			second := settingsOf(t, tc.build(Spawn{}))
+			again, ok := second[tc.key].(map[string]any)
+			if !ok {
+				t.Fatalf("mutating one payload's settings object removed %s from the next one", tc.key)
+			}
+			if again["enabled"] != true {
+				t.Errorf("mutating one payload flipped the next one's %s setting to %v", tc.key, again["enabled"])
+			}
+		})
+	}
+}
+
+// settingsOf returns a payload's settings container, failing when it is absent —
+// which would otherwise make every assertion above pass over an empty map.
+func settingsOf(t *testing.T, payload map[string]any) map[string]any {
+	t.Helper()
+	settings, ok := payload[settingsKey].(map[string]any)
 	if !ok {
-		t.Fatalf("no settings object in the second payload; got %T", second[settingsKey])
+		t.Fatalf("no settings object in the payload; got %T", payload[settingsKey])
 	}
-	if _, present := secondSettings["workflows"]; !present {
-		t.Error("mutating one payload's settings object removed workflows from the next one")
-	}
-	if got := secondSettings["knowledge"].(map[string]any)["enabled"]; got != true {
-		t.Errorf("mutating one payload flipped the next one's knowledge setting to %v", got)
-	}
+	return settings
 }

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/kascap"
 )
 
 type sessionMode struct {
@@ -94,10 +95,30 @@ func validIdent(s string) bool {
 	return api.ValidIdent(s)
 }
 
+// withSessionMeta adds the session door's _meta.kiro block to a session/new or
+// session/load parameter map, and returns the map.
+//
+// One function used by both verbs, deliberately. KAS resolves a session key from
+// the call's own _meta and falls back to the value persisted when the session was
+// created, so a key sent only on session/new works until the first resume and
+// then silently stops for every session created before the key existed. Sending
+// it from one place makes the two calls agree by construction rather than by two
+// people remembering.
+//
+// Only when the map is NON-EMPTY: an empty _meta.kiro would add bytes to a call
+// that carries none, and the projection is empty whenever the table declares no
+// session-door row (or an operator disabled the only one).
+func (b *Bridge) withSessionMeta(params map[string]any) map[string]any {
+	if meta := kascap.SessionMeta(b.spawn()); len(meta) > 0 {
+		params["_meta"] = map[string]any{metaKeyKiro: meta}
+	}
+	return params
+}
+
 func (b *Bridge) newSession(ctx context.Context, mode string, supervised bool) error {
-	resp, err := b.Call(ctx, methodSessionNew, map[string]any{
+	resp, err := b.Call(ctx, methodSessionNew, b.withSessionMeta(map[string]any{
 		"cwd": b.workDir, "mcpServers": []any{},
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("session/new: %w", err)
 	}
@@ -170,9 +191,9 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 }
 
 func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string) error {
-	resp, err := b.Call(ctx, methodSessionLoad, map[string]any{
+	resp, err := b.Call(ctx, methodSessionLoad, b.withSessionMeta(map[string]any{
 		api.KeySessionID: acpSessionID, "cwd": b.workDir, "mcpServers": []any{},
-	})
+	}))
 	if err != nil {
 		return fmt.Errorf("session/load: %w", err)
 	}

@@ -194,6 +194,24 @@ Only the values are appended; nothing is interpreted as a shell command. Three f
 
 vibekit already passes `--model` and `--effort` itself, and anything you set here is a starting value: changing the model or reasoning effort in the UI still takes precedence afterwards. Flags are logged by count only, never by value, so a mistyped value cannot leak into the logs. Not applied to the small background helper vibekit uses for chat titles.
 
+### Agent-launched workflow runs (`VIBEKIT_AGENT_WORKFLOWS`)
+
+The chat agent can start a workflow run itself. It has the workflow tools (`run_workflow`, `inspect_workflow`, `update_workflow`, `validate_workflow`, `send_message`) and the workflow instructions, so a request like "run the publish workflow" starts the run instead of describing it. Runs you start yourself from **Workflows** on the `/docs` page are unaffected either way.
+
+Two rough edges on an agent-launched run, both cosmetic and both the first thing you will notice:
+
+- **Its progress notes replay as your own message.** A note the run posts back to the chat renders as a user bubble containing the note's text after a reload. The transcript is complete and nothing is lost; the attribution on those bubbles is wrong.
+- **Its controls are unreachable.** Pause, resume, and retry work on a run you started from the Workflows tab, but not on one the agent started. Stop still works, and the run's page shows its live state.
+
+To switch the capability off, set the variable to `false` (also `0`, `no`, or `off`):
+
+```yaml
+environment:
+  VIBEKIT_AGENT_WORKFLOWS: "false"
+```
+
+The agent then loses the workflow tools and answers about workflows in prose instead of starting one; everything you launch yourself keeps working. A value that cannot be read as a boolean logs a warning and leaves the capability **on**, so a typo cannot disable it by accident. Changing it takes effect on the next chat, so restart the container to apply it everywhere.
+
 ### Environment variable reference
 
 Every knob, including the ones detailed above. A malformed duration value logs a warning and falls back to its default.
@@ -205,6 +223,7 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 | `WT_TRUSTED_INSTALL_UIDS` | Numeric uids whose write access to the kiro-cli install tree does not refuse the install. See [Trusted install uids](#trusted-install-uids-wt_trusted_install_uids). | _(unset)_ |
 | `VIBEKIT_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). | _(unset)_ |
 | `VIBEKIT_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-vibekit_kiro_acp_args). | _(unset)_ |
+| `VIBEKIT_AGENT_WORKFLOWS` | Whether the chat agent can start workflow runs itself. Set `false` to withhold the workflow tools. See [Agent-launched workflow runs](#agent-launched-workflow-runs-vibekit_agent_workflows). | `true` |
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
 | `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
