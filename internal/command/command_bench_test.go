@@ -37,6 +37,7 @@ func (d *benchDeps) ShutdownCtx() context.Context                        { retur
 func (d *benchDeps) InflightAdd(int)                                     {}
 func (d *benchDeps) InflightDone()                                       {}
 func (d *benchDeps) CleanupChatState(context.Context, api.ChatID)        {}
+func (d *benchDeps) CloseChatState(context.Context, api.ChatID)          {}
 func (d *benchDeps) CancelChatRuns(context.Context, api.ChatID)          {}
 func (d *benchDeps) KillTurnTerminals(api.ChatID)                        {}
 func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool { return true }

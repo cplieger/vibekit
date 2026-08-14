@@ -313,6 +313,12 @@ func TestAdoptKASTitle(t *testing.T) {
 // sweeping anyway deletes them. Not sweeping only postpones reclaiming disk
 // until the next hourly tick. The control arm proves the orphan really was
 // reapable, so the incomplete arm is not passing vacuously.
+//
+// The control's keep-list names a session that EXISTS on disk, rather than being
+// empty. An empty keep-list is refused outright by the reaper now
+// (kirosession.Sweep) because it is indistinguishable from a misconfigured
+// store — that is a separate guard with its own test, and using it as the
+// control here would have made this test assert the opposite of it.
 func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -325,14 +331,19 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			sessionsDir := t.TempDir()
-			// An orphan old enough to clear the reaper's create-race guard.
-			orphan := filepath.Join(sessionsDir, "hash01", "sess_orphan")
-			if err := os.MkdirAll(orphan, 0o700); err != nil {
-				t.Fatalf("mkdir orphan: %v", err)
-			}
 			old := time.Now().Add(-24 * time.Hour)
-			if err := os.Chtimes(orphan, old, old); err != nil {
-				t.Fatalf("chtimes: %v", err)
+			// An orphan old enough to clear the reaper's create-race guard, plus
+			// a referenced sibling so the keep-list is non-empty and the sweep is
+			// discriminating rather than refusing.
+			orphan := filepath.Join(sessionsDir, "hash01", "sess_orphan")
+			kept := filepath.Join(sessionsDir, "hash01", "sess_ref")
+			for _, p := range []string{orphan, kept} {
+				if err := os.MkdirAll(p, 0o700); err != nil {
+					t.Fatalf("mkdir %s: %v", p, err)
+				}
+				if err := os.Chtimes(p, old, old); err != nil {
+					t.Fatalf("chtimes %s: %v", p, err)
+				}
 			}
 
 			// Wire the reaper at CONSTRUCTION, not after: New starts
@@ -343,7 +354,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 				WithSessionReaper(
 					kirosession.New(sessionsDir),
 					func(context.Context) (map[string]struct{}, bool) {
-						return map[string]struct{}{}, tc.complete
+						return map[string]struct{}{"sess_ref": {}}, tc.complete
 					},
 				))
 			cs.Bus = h
@@ -355,6 +366,9 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 			survived := err == nil
 			if survived != tc.wantSurvive {
 				t.Errorf("orphan survived = %v, want %v", survived, tc.wantSurvive)
+			}
+			if _, kErr := os.Stat(kept); kErr != nil {
+				t.Errorf("referenced session was reaped: %v", kErr)
 			}
 		})
 	}
@@ -466,6 +480,73 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 			}
 			if reported != tc.wantReport {
 				t.Errorf("mode_not_applied reported = %v, want %v", reported, tc.wantReport)
+			}
+		})
+	}
+}
+
+// Closing a chat must NOT reap its durable KAS session; deleting one must.
+//
+// Close shared the delete path, so the × on a tab reaped the chat's whole
+// session chain off disk. That broke its own stated contract twice: the chat
+// record survived with nothing left to `session/load`, and the History page —
+// which lists KAS's sessions, not vibekit's chat files — could only ever show
+// chats that were still open, which is exactly how it was reported ("it only
+// shows active chats, when i close them they are gone").
+//
+// The delete arm is the control: without it, a close-preserves assertion would
+// also pass if the reaper were simply unwired.
+func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
+	cases := []struct {
+		name        string
+		teardown    func(h *Hub, ctx context.Context, id api.ChatID)
+		wantSurvive bool
+	}{
+		{
+			name:        "close keeps the session on disk",
+			teardown:    func(h *Hub, ctx context.Context, id api.ChatID) { h.CloseChatState(ctx, id) },
+			wantSurvive: true,
+		},
+		{
+			name:        "delete reaps it (control)",
+			teardown:    func(h *Hub, ctx context.Context, id api.ChatID) { h.CleanupChatState(ctx, id) },
+			wantSurvive: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sessionsDir := t.TempDir()
+			sessDir := filepath.Join(sessionsDir, "hash01", "sess_owned")
+			if err := os.MkdirAll(sessDir, 0o700); err != nil {
+				t.Fatalf("mkdir session: %v", err)
+			}
+
+			cs := newFakeChatStore()
+			h := New("/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs,
+				WithSessionReaper(
+					kirosession.New(sessionsDir),
+					func(context.Context) (map[string]struct{}, bool) {
+						return map[string]struct{}{"sess_owned": {}}, true
+					},
+				))
+			cs.Bus = h
+			t.Cleanup(func() { h.Shutdown() })
+
+			ctx := context.Background()
+			if err := cs.Mutate(ctx, "c-owner", func(c *api.Chat, _ bool) bool {
+				c.Name = "owner"
+				c.RecordSession("sess_owned")
+				return true
+			}); err != nil {
+				t.Fatalf("seed chat: %v", err)
+			}
+
+			tc.teardown(h, ctx, "c-owner")
+
+			_, err := os.Stat(sessDir)
+			survived := err == nil
+			if survived != tc.wantSurvive {
+				t.Errorf("session survived = %v, want %v", survived, tc.wantSurvive)
 			}
 		})
 	}

@@ -92,8 +92,34 @@ func (r *Reaper) Reap(sessionID string) {
 // not evidence that a session is disposable: the guard below is a create-race
 // cushion, not a liveness test. Passing a partial set deletes user history, so
 // the caller skips the sweep rather than narrowing the set (hub.sweepSessionsOnce).
+//
+// PASSING AN EMPTY SET IS REFUSED while the tree holds sessions. A zero-
+// reference keep-list is indistinguishable from a misconfigured one, and the
+// two outcomes are wildly asymmetric: refusing costs some disk, proceeding
+// deletes every transcript on the volume. This is not hypothetical — it
+// happened. A dev build was run with KIRO_CONFIG_DIR pointed at a scratch
+// directory while KIRO_HOME was left unset, so the chat store was empty and
+// `workspace.KiroHome()` still resolved to the real `$HOME/.kiro`; the first
+// sweep at startup took ~450 sessions belonging to another application sharing
+// that home. The caller's "is the keep-list complete" flag did not help,
+// because an empty store is COMPLETE — it read every one of its zero files.
+//
+// The guard lives here rather than at the call site on purpose: this function
+// holds the RemoveAll, and a check in one caller does not protect the next one.
 func (r *Reaper) Sweep(referenced map[string]struct{}) int {
 	if r == nil {
+		return 0
+	}
+	if len(referenced) == 0 {
+		// Only a refusal when there is something to lose. An empty keep-list
+		// against an empty tree is an ordinary no-op on a fresh volume.
+		if n := r.countSessions(); n > 0 {
+			slog.Error("kirosession: REFUSING orphan sweep, keep-list is empty but sessions exist on disk",
+				"sessions_on_disk", n,
+				"sessions_dir", r.sessionsDir,
+				"hint", "the chat store and the Kiro home are pointing at different volumes; set KIRO_HOME under the same root as KIRO_CONFIG_DIR")
+			return 0
+		}
 		return 0
 	}
 	cutoff := time.Now().Add(-r.guard)
@@ -103,6 +129,41 @@ func (r *Reaper) Sweep(referenced map[string]struct{}) int {
 		slog.Info("kirosession: orphan sweep reaped sessions", "count", reaped)
 	}
 	return reaped
+}
+
+// countSessions counts `sess_*` entries under every workspace-hash directory,
+// without regard to age. It answers only "is there anything here to lose",
+// which is what the empty-keep-list guard needs.
+func (r *Reaper) countSessions() int {
+	hashes, err := os.ReadDir(r.sessionsDir)
+	if err != nil {
+		// Unreadable root: report a non-zero count so the guard errs toward
+		// refusing. A sweep could not enumerate anything to delete anyway.
+		if !errors.Is(err, os.ErrNotExist) {
+			return 1
+		}
+		return 0
+	}
+	n := 0
+	for _, h := range hashes {
+		// Skip "cli": it holds per-session SIDECARS, not sessions. Counting it
+		// as a workspace hash double-counted every session (each has a dir and
+		// a `sess_<id>.history`), which made the guard's log line lie about how
+		// much was at stake.
+		if !h.IsDir() || h.Name() == "cli" {
+			continue
+		}
+		entries, dErr := os.ReadDir(filepath.Join(r.sessionsDir, h.Name()))
+		if dErr != nil {
+			continue
+		}
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), sessionPrefix) {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // sweepSessionDirs reaps orphaned sessions/<hash>/sess_*/ directories.
