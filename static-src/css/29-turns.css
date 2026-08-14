@@ -42,8 +42,15 @@
 
   /* Outcome as a hairline down the leading edge. Present on the whole card
    * rather than only the footer so a turn taller than the viewport still
-   * declares its result while you read the middle of it. */
-  border-inline-start: 0.1875rem solid var(--c-border);
+   * declares its result while you read the middle of it.
+   *
+   * 1px, matching every other edge. It was 0.1875rem, which made the card
+   * visibly asymmetric — and on the COMMON case bought nothing for it, since a
+   * completed turn's leading edge resolves to the same `--c-border` as the
+   * other three, so the extra weight was carrying no signal at all. Colour is
+   * the whole channel; keeping the width uniform also means a turn changing
+   * outcome cannot reflow its own content. */
+  border-inline-start: 1px solid var(--c-border);
 
   &[data-outcome="running"] {
     border-inline-start-color: var(--c-accent);
@@ -97,8 +104,14 @@
   color: var(--c-text-secondary);
 }
 
-/* A dot, not an emoji: one shape, four colours, no font dependency. The
- * accessible name comes from aria-label, so colour is never the sole channel. */
+/* A dot, not an emoji: one shape, three colours, no font dependency. The
+ * accessible name comes from aria-label and the meaning from data-tooltip, so
+ * colour is never the sole channel.
+ *
+ * It appears ONLY when the outcome is worth a mark. A green dot on every
+ * completed turn was a marker on every row of the transcript, which is the
+ * definition of communicating nothing — "it worked" is the expected case, and
+ * the exception is the signal. Running, interrupted and failed keep theirs. */
 .turn-dot {
   width: 0.5rem;
   height: 0.5rem;
@@ -107,13 +120,13 @@
   background: var(--c-text-tertiary);
 }
 
+.turn-header[data-outcome="completed"] .turn-dot {
+  display: none;
+}
+
 .turn-header[data-outcome="running"] .turn-dot {
   background: var(--c-accent);
   animation: vk-breathe 1.4s var(--ease-standard) infinite;
-}
-
-.turn-header[data-outcome="completed"] .turn-dot {
-  background: var(--c-green);
 }
 
 .turn-header[data-outcome="interrupted"] .turn-dot {
@@ -126,13 +139,6 @@
 
 .turn-ts {
   font-variant-numeric: tabular-nums;
-}
-
-.turn-head-actions {
-  margin-inline-start: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
 }
 
 .turn-rewind {
@@ -257,9 +263,17 @@
  * bracketed. There is no separate status rail: the footer IS the rail. Moved
  * here from 61-mcp-tools.css, where it sat because the footer used to be a
  * per-message node rather than part of a card. */
+/* Two columns: the ledger on the left, the Rewind action on the right. Rewind
+   moved here from the header because this is where it reads correctly — the
+   footer closes the turn, so "Rewind" at the end of it means "go back to this
+   point", which is what it actually does. The file list spans both columns
+   beneath. Grid rather than a wrapper element so every `:scope >` selector the
+   footer's own JS uses keeps working. */
 .turn-footer {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
   font-size: var(--fs-sm);
   color: var(--c-text-tertiary);
   padding: var(--sp-1) var(--sp-3);
@@ -268,6 +282,29 @@
   border-top: 1px solid var(--c-border);
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);
+}
+
+.turn-footer > .turn-ledger-summary,
+.turn-footer > .turn-fold-summary {
+  grid-column: 1;
+}
+
+.turn-footer > .turn-rewind {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.turn-footer > .turn-ledger-files {
+  grid-column: 1 / -1;
+}
+
+/* Folded, the footer is one inline strip (glyph + the turn's concrete result)
+   sitting beside the header, so it goes back to a plain row. Rewind is hidden
+   in that state, so the second column has nothing to hold. */
+.turn[data-folded] > .turn-footer {
+  display: flex;
+  flex-direction: row;
 }
 
 .turn-footer[data-outcome="interrupted"] {
@@ -316,12 +353,20 @@
 /* Did it work: a glyph plus a colour, never colour alone — the footer's
  * aria-label and the summary text carry the same fact in words. A ring for a
  * clean turn, filled for a non-clean one, so the shape differs too. */
+/* Same rule as the header dot: the mark belongs to the exception, not to every
+ * row. A completed turn's cost line reads cleanly on its own, and hiding the
+ * glyph here is also what stops the folded row from carrying a second circle
+ * beside the header's. */
 .turn-ledger-glyph {
   width: 0.5rem;
   height: 0.5rem;
   flex-shrink: 0;
   border-radius: 50%;
   border: 1.5px solid var(--c-green);
+}
+
+.turn-footer[data-outcome="completed"] .turn-ledger-glyph {
+  display: none;
 }
 
 .turn-footer[data-outcome="running"] .turn-ledger-glyph {
@@ -627,19 +672,41 @@
 }
 
 /* Both bands lose their dividing rule and their rounding: there is one row now,
-   so a border between the halves would draw a line down the middle of it. */
+   so a border between the halves would draw a line down the middle of it.
+
+   They also both lose their TINT, and the row carries one instead. Two tinted
+   halves in an `auto` column meant the dark area's width was whatever the
+   footer's text happened to measure — "0.08 cr · 2.5s" and "0.12 cr · 11.4s"
+   are different widths, so consecutive folded rows disagreed with each other
+   for no reason a reader could act on. One surface has one width by
+   construction. */
+.turn[data-folded] {
+  background: var(--c-user-bubble);
+}
+
+.turn[data-folded] > .turn-header,
+.turn[data-folded] > .turn-footer {
+  background: none;
+}
+
 .turn[data-folded] > .turn-header {
   border-bottom: 0;
   border-start-end-radius: 0;
-  padding-block: var(--sp-1);
   min-width: 0;
 }
 
 .turn[data-folded] > .turn-footer {
   border-top: 0;
   border-end-start-radius: 0;
-  background: none;
-  padding-block: var(--sp-1);
+}
+
+/* One row, one vertical rhythm: both bands take the same block padding and
+   centre their own contents, so the request text and the ledger sit on a shared
+   baseline instead of each centring inside a differently-tall half. */
+.turn[data-folded] > .turn-header,
+.turn[data-folded] > .turn-footer {
+  padding-block: var(--sp-2);
+  align-items: center;
 }
 
 /* Folded, the header is ONE line: the meta row and the request sit side by side
@@ -673,7 +740,7 @@
 }
 
 .turn[data-folded] .turn-req-more,
-.turn[data-folded] .turn-head-actions,
+.turn[data-folded] .turn-rewind,
 .turn[data-folded] .turn-ledger-files {
   display: none;
 }

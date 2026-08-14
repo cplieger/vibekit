@@ -33,26 +33,41 @@ export function success(message: string): () => void {
   return toast.success(message);
 }
 
-/** Show an error-level toast. Sticky by default — users typically need time to
- *  read errors and may need to act on them. Click or press Escape to dismiss.
- *  Optionally accepts a retry config; the toast renders a button that invokes
- *  onClick + dismisses. */
+/** How long an error toast stays up. The library's default for `error` is 0
+ *  (sticky), which vibekit overrides: an error nobody dismisses never leaves,
+ *  so two or three of them stack and stay stacked for the rest of the session.
+ *  12s is well past a comfortable read for a one-line failure, and the stack
+ *  still pauses on hover/focus, so a user reading one is never cut off.
+ *
+ *  A RETRYABLE error keeps the sticky behaviour: its button is the only way to
+ *  take the offered action, and timing that out would silently discard it. */
+const ERROR_DURATION_MS = 12_000;
+
+/** Show an error-level toast. Auto-dismisses after 12s (paused on hover/focus);
+ *  click or press Escape to dismiss sooner. Optionally accepts a retry config;
+ *  the toast renders a button that invokes onClick + dismisses, and stays put
+ *  until answered. */
 export function error(message: string, retry?: ToastRetry): () => void {
-  return toast.error(message, retry);
+  return toast.show(
+    message,
+    retry !== undefined
+      ? { level: "error", retry }
+      : { level: "error", duration: ERROR_DURATION_MS },
+  );
 }
 
 /** Show a toast with explicit level + duration. Use durationMs=0 for a sticky
- *  toast that requires manual dismissal. Pass undefined to use the level
- *  default (4s for info/success, sticky for error). */
+ *  toast that requires manual dismissal. Pass undefined to use vibekit's level
+ *  default (4s for info/success, 12s for error — see error() above). */
 export function showToast(
   message: string,
   level: ToastLevel = "info",
   durationMs?: number,
 ): () => void {
-  return toast.show(
-    message,
-    durationMs !== undefined ? { level, duration: durationMs } : { level },
-  );
+  if (durationMs !== undefined) {
+    return toast.show(message, { level, duration: durationMs });
+  }
+  return level === "error" ? error(message) : toast.show(message, { level });
 }
 
 /** Test-only: clear all visible + queued toasts and remove the stack. */

@@ -78,10 +78,19 @@ function hostSend(bytes: Uint8Array): void {
 /** Reset the terminal to its default (clean) state: drop the client's local
  *  scrollback + screen (the handle's reset — the engine's own server-restart
  *  reset), then send Ctrl+L so the shell redraws a fresh prompt into the
- *  cleared window. */
+ *  cleared window.
+ *
+ *  The Ctrl+L is deferred one frame. Sent synchronously, the shell's redraw
+ *  raced the reset it was meant to follow: the PTY was fine and bash had already
+ *  re-emitted its prompt, but those bytes arrived while the local buffer was
+ *  still being torn down, so they were dropped and the window stayed blank until
+ *  the next keystroke forced a repaint. One frame is enough for reset() to
+ *  settle, and it keeps the clear feeling instant. */
 function hostReset(): void {
   handle?.reset();
-  hostSend(CTRL_L);
+  requestAnimationFrame(() => {
+    hostSend(CTRL_L);
+  });
 }
 
 let handle: TerminalHandle | null = null;

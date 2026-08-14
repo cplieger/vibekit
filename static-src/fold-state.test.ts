@@ -13,7 +13,7 @@ import {
 import type { Turn, TurnOutcome } from "./turns.js";
 
 function turn(id: string, outcome: TurnOutcome = "completed"): Turn {
-  return { id, n: 1, trigger: undefined, body: [], ts: 0, outcome };
+  return { id, n: 1, trigger: undefined, body: [], ts: 0, outcome, rewindTo: undefined };
 }
 
 /** A list of `n` completed turns, so index/total positioning is easy to state. */

@@ -123,9 +123,11 @@ function renderOptions(list: HTMLElement): void {
   const bundled = modes.filter((m) => !isCustomAgent(m));
   const workspace = modes.filter(isCustomAgent);
 
-  const items: HTMLElement[] = [
-    el("span", { className: "pill-role-hint" }, "Switch mode for this chat"),
-  ];
+  // No "Switch mode for this chat" heading: the pill's own tooltip says that,
+  // and a menu that opened from a control labelled with its purpose does not
+  // need to restate it in its first row. The "Custom agents" divider below IS
+  // needed — it separates two groups.
+  const items: HTMLElement[] = [];
   for (const m of bundled) {
     items.push(modeOption(m, currentMode));
   }

@@ -19,13 +19,13 @@
    the library's own reduced-motion block does. */
 
 :root {
-  /* --- z-index ladder: preserve vibekit's exact stacking (modal < popover <
-     toast < tooltip). These reproduce the pre-adoption values 1:1 so nothing
-     changes visually: .tab-context-menu was 999, .vk-toast-stack was 1000,
-     .vk-tooltip was 99999. Native <dialog> confirms sit in the top layer (no
-     z-index needed). */
-  --uip-z-popover: 999;
-  --uip-z-toast: 1000;
+  /* --- z-index ladder: preserve vibekit's exact ORDER (modal < popover <
+     toast < tooltip). The values are raised above the shell panel's fullscreen
+     9999: a popover anchored to a control on the page was rendering UNDER an
+     open panel, which is the one thing a popover must never do. Native <dialog>
+     confirms sit in the top layer (no z-index needed). */
+  --uip-z-popover: 10000;
+  --uip-z-toast: 10001;
   --uip-z-tooltip: 99999;
 
   /* --- toast motion: .vk-toast used `transition: opacity/transform
@@ -173,8 +173,20 @@
   font-size: var(--fs-xs);
   padding: 4px 8px;
   border-radius: 4px;
-  white-space: nowrap;
-  max-width: 20rem;
+
+  /* WRAPS. `nowrap` and `max-width` contradicted each other: nowrap forbids the
+   * break the max-width needs, so a long tooltip ignored the cap and ran off
+   * the viewport instead — which is exactly what a mode description does, since
+   * a custom agent's front-matter description is a paragraph. The clamp bounds
+   * the pathological case (some agent descriptions are many lines) so a tooltip
+   * can never become a wall of text. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 22rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
   box-shadow: 0 2px 8px oklch(0% 0 0deg / 40%);
   animation: vk-fade-in var(--dur-micro) var(--ease-enter) both;
 }

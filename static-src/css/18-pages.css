@@ -495,11 +495,23 @@ h3.section-title {
   color: var(--c-text-tertiary);
 }
 
+/* Row actions sit at the TRAILING edge, always. Without the auto margin they
+ * packed against whatever the row's label happened to measure, so the switches
+ * in Settings → Tools landed at a different x on every row and read as floating
+ * mid-row rather than belonging to a column. `align-items: center` keeps a
+ * 20px switch centred against a 36px icon button beside it. */
 .list-row-actions,
 .fb-actions,
 .editor-actions {
   display: flex;
+  align-items: center;
   gap: 0.125rem;
+}
+
+.list-row-actions {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  padding-inline-start: var(--sp-2);
 }
 
 .fb-actions,
@@ -896,6 +908,28 @@ h3.section-title {
   margin-block-end: var(--sp-3);
 }
 
+/* It is a SEARCH, not a filter: the server reads every chat file on disk, so it
+ * finds conversations the loaded list does not contain. That is why it carries a
+ * magnifier and not a funnel — a funnel would promise it only narrows what is
+ * already on screen.
+ *
+ * The icon is inline, reusing the git tab's filter-field shape rather than
+ * inventing a second one. Full-width and unadorned, the box read as an empty
+ * section panel; capped and icon-led, it reads as a control. */
+.hist-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  max-inline-size: 22rem;
+}
+
+.hist-search-icon {
+  position: absolute;
+  inset-inline-start: var(--sp-2);
+  color: var(--c-text-tertiary);
+  pointer-events: none;
+}
+
 .hist-search-input {
   font: inherit;
   width: 100%;
@@ -903,7 +937,8 @@ h3.section-title {
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-sm);
-  padding: var(--sp-2) var(--sp-3);
+  padding: var(--sp-1) var(--sp-2);
+  padding-inline-start: calc(var(--sp-2) + 14px + var(--sp-2));
 
   &:focus-visible {
     outline: none;
@@ -919,4 +954,41 @@ h3.section-title {
 .hist-search-note {
   font-size: var(--fs-xs);
   min-height: 1rem;
+}
+
+/* ==========================================================================
+   Canonical empty state
+
+   One shape for "this list has nothing in it", because there were five and a
+   reader had to learn each: `.list-empty` was a flush tinted strip, `.mcp-empty`
+   the same strip with more padding and centred text, `.repo-picker-empty`
+   centred with no tint, `.git-pr-empty` bare italic prose, and only
+   `.git-multirepo-empty` (the git repo page) had the dashed rounded card. The
+   dashed card wins: the border draws the boundary of the thing that is empty, so
+   it reads as a container awaiting content rather than as a sentence that failed
+   to load.
+
+   Italic is dropped everywhere. It was carrying "this is not real content",
+   which the dashed box now says structurally, and italic body text at --fs-sm is
+   the least legible combination in the app.
+
+   Composed empty states (an icon + headline + CTA, like the git one) keep their
+   own inner layout; they inherit only this shell.
+   ========================================================================== */
+
+.list-empty,
+.git-empty,
+.mcp-empty,
+.repo-picker-empty,
+.git-pr-empty,
+.forge-account-repos-empty,
+.git-multirepo-empty {
+  padding: var(--sp-4);
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-sm);
+  font-style: normal;
+  text-align: center;
+  background: none;
+  border: 1px dashed var(--c-border);
+  border-radius: var(--r);
 }

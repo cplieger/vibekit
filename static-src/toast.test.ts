@@ -65,14 +65,18 @@ describe("toast — basic rendering", () => {
     expect(document.querySelector('[aria-live="assertive"]')).not.toBeNull();
   });
 
-  it("info/success include a progress bar; error does not", () => {
-    info("a");
-    expect(toasts()[0]?.querySelector(".uip-toast-progress")).not.toBeNull();
+  // Every level now carries the countdown bar, because every level now has a
+  // finite duration — errors included (they auto-dismiss at 12s rather than
+  // stacking forever). A RETRYABLE error is the one sticky case, and a sticky
+  // toast has no countdown to draw.
+  it("all levels include a progress bar; a retryable error does not", () => {
+    for (const show of [info, success, error]) {
+      _resetForTest();
+      show("a");
+      expect(toasts()[0]?.querySelector(".uip-toast-progress")).not.toBeNull();
+    }
     _resetForTest();
-    success("b");
-    expect(toasts()[0]?.querySelector(".uip-toast-progress")).not.toBeNull();
-    _resetForTest();
-    error("c");
+    error("needs a decision", { label: "Retry", onClick: vi.fn() });
     expect(toasts()[0]?.querySelector(".uip-toast-progress")).toBeNull();
   });
 
@@ -95,10 +99,23 @@ describe("toast — auto-dismiss", () => {
     expect(toasts().length).toBe(0);
   });
 
-  it("error does not auto-dismiss (sticky)", () => {
+  // Errors used to be sticky forever, which meant two or three of them stacked
+  // and stayed for the rest of the session. 12s is past a comfortable read.
+  it("auto-dismisses a plain error after 12s", () => {
     error("fail");
     flushRaf();
-    vi.advanceTimersByTime(60000);
+    vi.advanceTimersByTime(11_000);
+    expect(toasts().length).toBe(1);
+    vi.advanceTimersByTime(2000);
+    expect(toasts().length).toBe(0);
+  });
+
+  // The exception: a retry button is the only route to the offered action, so
+  // timing it out would silently discard it.
+  it("a retryable error stays until answered", () => {
+    error("fail", { label: "Retry", onClick: vi.fn() });
+    flushRaf();
+    vi.advanceTimersByTime(60_000);
     expect(toasts().length).toBe(1);
   });
 
@@ -111,11 +128,13 @@ describe("toast — auto-dismiss", () => {
     expect(toasts().length).toBe(0);
   });
 
-  it("showToast(msg, 'error') with no duration is sticky", () => {
+  it("showToast(msg, 'error') with no duration uses the 12s error default", () => {
     showToast("explicit", "error");
     flushRaf();
-    vi.advanceTimersByTime(60000);
+    vi.advanceTimersByTime(11_000);
     expect(toasts().length).toBe(1);
+    vi.advanceTimersByTime(2000);
+    expect(toasts().length).toBe(0);
   });
 });
 

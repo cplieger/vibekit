@@ -103,26 +103,48 @@ function syncSchedule(row: HTMLElement, source: string): void {
   }
 }
 
-/** Open the recurrence picker anchored to a row's Schedule button. */
+/** Open the recurrence picker anchored to a row's Schedule button.
+ *
+ *  ONE popup per button, created on first use and toggled after that. It used to
+ *  construct a fresh `createPopup` on every click, so pressing Schedule three
+ *  times built three pickers stacked on the same anchor — each with its own Save
+ *  and Remove wired to the same recipe. The group only closes OTHER groups'
+ *  popovers; it cannot dedupe instances the caller keeps making. */
 function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
+  let popup: ReturnType<typeof createPopup> | null = null;
+  let open = false;
+
   btn.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
+    if (open && popup !== null) {
+      popup.hide();
+      open = false;
+      return;
+    }
     const view = schedules.get(source);
     const body = el("div", { className: "sched-popup" });
-    const popup = createPopup(body, { trigger: btn, group: "recipe-schedule" });
+    // Rebuilt per open rather than cached: the picker renders the CURRENT
+    // schedule, and a cached body would show whatever the set looked like the
+    // first time the button was pressed.
+    popup?.hide();
+    popup = createPopup(body, { trigger: btn, group: "recipe-schedule" });
+    const close = (): void => {
+      popup?.hide();
+      open = false;
+    };
     body.appendChild(
       buildSchedulePicker({
         spec: view?.spec ?? defaultSpec(),
         enabled: view?.enabled ?? false,
         onSave: (spec: ScheduleSpec) => {
-          popup.hide();
+          close();
           void (async () => {
             await saveSchedule.dispatch({ source, spec, enabled: true });
             await refreshSchedules();
           })();
         },
         onRemove: () => {
-          popup.hide();
+          close();
           void (async () => {
             if (view !== undefined) {
               await deleteSchedule.dispatch(view.id);
@@ -130,12 +152,11 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
             await refreshSchedules();
           })();
         },
-        onClose: () => {
-          popup.hide();
-        },
+        onClose: close,
       }),
     );
     popup.show();
+    open = true;
   });
 }
 

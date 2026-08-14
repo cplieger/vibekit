@@ -8,10 +8,20 @@
    handled globally in 40-a11y.css.
    ========================================================================== */
 
+/* Anchored top-right of the transcript but BELOW the toolbar, not over it. It
+   used to sit at the same `--sp-2` inset as the toolbar with z-index 60 against
+   the toolbar's 10, so opening search covered the File/Git/Shell/Docs/History
+   buttons entirely — measured: a 198px horizontal overlap at 1440px wide. That
+   is also why the feature read as "does nothing": it opened underneath the
+   chrome. The offset is derived from the toolbar's own metrics (its `--sp-3`
+   top inset + a `--btn-h` row + its 2×0.125rem padding) so the two cannot drift
+   apart. */
 .chat-find {
   position: absolute;
-  inset-block-start: var(--sp-2);
-  inset-inline-end: var(--sp-2);
+  inset-block-start: calc(
+    var(--sp-3) + var(--btn-h) + 0.25rem + var(--sp-2) + env(safe-area-inset-top, 0)
+  );
+  inset-inline-end: var(--sp-3);
   z-index: 60;
   display: flex;
   align-items: center;

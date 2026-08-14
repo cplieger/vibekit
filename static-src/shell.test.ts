@@ -226,7 +226,11 @@ describe("shell.ts: lazy terminal creation", () => {
 });
 
 describe("shell.ts: host-driven actions", () => {
-  it("the Reset button clears the local display via the handle and redraws with Ctrl+L", async () => {
+  // The Ctrl+L is deferred one frame so the shell's redraw cannot race the reset
+  // it follows — sent synchronously, the prompt bytes landed while the local
+  // buffer was still being torn down and the window stayed blank until the next
+  // keystroke. The reset itself stays synchronous, so the clear feels instant.
+  it("the Reset button clears via the handle immediately, then redraws with Ctrl+L next frame", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click(); // open so the terminal (and its handle) exists
@@ -234,6 +238,10 @@ describe("shell.ts: host-driven actions", () => {
     h.shellClearBtn.click();
 
     expect(h.resetSpy).toHaveBeenCalledTimes(1);
+    expect(h.sendSpy).not.toHaveBeenCalledWith(new Uint8Array([0x0c]));
+
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+
     expect(h.sendSpy).toHaveBeenCalledWith(new Uint8Array([0x0c]));
   });
 

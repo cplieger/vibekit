@@ -178,26 +178,6 @@
   }
 }
 
-/* No .msg-row-user / .msg-row-assistant: only the agent gets an avatar row,
- * and `row` is flex's default, so the surviving direction needs no rule. */
-
-.msg-avatar {
-  width: 1.5rem;
-  height: 1.5rem;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  /* The Kiro mark (messages.ts KIRO_AVATAR) is drawn in currentColor so it
-     follows the theme-split accent instead of a baked-in brand hex. */
-  color: var(--c-accent);
-}
-
-.msg-avatar .avatar-icon {
-  border-radius: var(--r);
-}
-
 .message {
   /* No max-width here. The old `max-width: 85%` lived on this SHARED rule, so
    * it capped assistant turns too and combined with the bubble tails to make a
