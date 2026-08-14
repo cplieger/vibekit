@@ -115,7 +115,7 @@ func (b *Bridge) withSessionMeta(params map[string]any) map[string]any {
 	return params
 }
 
-func (b *Bridge) newSession(ctx context.Context, mode string, supervised bool) error {
+func (b *Bridge) newSession(ctx context.Context, opts *api.StartOpts) error {
 	resp, err := b.Call(ctx, methodSessionNew, b.withSessionMeta(map[string]any{
 		"cwd": b.workDir, "mcpServers": []any{},
 	}))
@@ -140,9 +140,62 @@ func (b *Bridge) newSession(ctx context.Context, mode string, supervised bool) e
 	// When the chat asked for a specific role (a bundled mode or a
 	// workspace agent-as-mode) switch to it now — session/set_mode is
 	// legal on a just-created, idle session (verified on the wire).
-	b.applyInitialMode(ctx, sid, current, mode)
-	b.applySupervised(ctx, sid, supervised)
+	b.applyInitialMode(ctx, sid, current, opts.Mode)
+	b.applyInitialModel(ctx, opts.Model)
+	b.applyInitialEffort(ctx, sid, opts.Effort)
+	b.applySupervised(ctx, sid, opts.Supervised)
 	return nil
+}
+
+// applyInitialModel selects the chat's model on a freshly-created session.
+//
+// It cannot be a launch flag. kiro-cli REFUSES `--model` alongside
+// `--agent-engine=v3` and exits before answering initialize, so passing one
+// does not merely fail to take effect, it kills the bridge (see
+// bridge_process.go buildACPArgs for the measured error). session/new starts
+// on KAS's own default model, so this is the only door.
+//
+// Best-effort like applyInitialMode: a failure leaves the session on that
+// default and logs, rather than failing session creation — the alternative is
+// refusing to open a chat over a model preference.
+//
+// Only session/new needs it. KAS persists modelId in its own session metadata
+// alongside agentMode and effortLevel, so a session/load already carries the
+// choice and re-asserting it would be a round trip that changes nothing.
+func (b *Bridge) applyInitialModel(ctx context.Context, model string) {
+	if model == "" || model == api.ModelAuto {
+		return
+	}
+	b.mu.Lock()
+	current := string(b.modelID)
+	b.mu.Unlock()
+	if model == current {
+		return
+	}
+	if err := b.SetModel(ctx, model); err != nil {
+		slog.Warn("apply initial session model", "model", model, "error", err)
+	}
+}
+
+// applyInitialEffort sets the reasoning effort on a freshly-created session,
+// for the same reason applyInitialModel exists: `--effort` is refused with
+// `--agent-engine=v3` too, and it appeared in the same rejection line.
+//
+// An invalid level is dropped rather than sent. The value reaches the wire
+// either way, so validating here keeps a bad settings value from turning into
+// a failed config-option call on the session-creation path.
+func (b *Bridge) applyInitialEffort(ctx context.Context, sessionID, effort string) {
+	if effort == "" || !api.EffortLevel(effort).Valid() {
+		return
+	}
+	if _, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
+		api.KeySessionID: sessionID,
+		keyConfigID:      api.ConfigOptionEffort,
+		keyConfigValue:   effort,
+	}); err != nil {
+		slog.Warn("apply initial reasoning effort",
+			"effort", effort, "session_id", sessionID, "error", err)
+	}
 }
 
 // applySupervised turns KAS's turn-approval gate on for this session by setting
@@ -161,8 +214,8 @@ func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervis
 	}
 	if _, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
 		api.KeySessionID: sessionID,
-		"configId":       api.ConfigOptionAutopilot,
-		"value":          false,
+		keyConfigID:      api.ConfigOptionAutopilot,
+		keyConfigValue:   false,
 	}); err != nil {
 		slog.Error("supervised mode not applied; this session will NOT ask before writing",
 			"session_id", sessionID, "error", err)

@@ -186,7 +186,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	// per-request ctx is only used for the model pick above). Runs v3
 	// (KAS) like every chat bridge — without the engine it would default
 	// to v2, which vibekit can no longer talk to.
-	if err := bridge.Start(us.shutdownCtx, &api.StartOpts{Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &api.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil}); err != nil {
 		return err
 	}
 	us.bridge = bridge

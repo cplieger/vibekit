@@ -928,7 +928,11 @@ done
 	}
 
 	// Start: accessors populated.
-	if err := b.Start(context.Background(), &api.StartOpts{Model: "m"}); err != nil {
+	// No Model is requested, so the session/new result is the only model source
+	// and "sonnet" is the value under test. A requested model would legitimately
+	// override it via session/set_config_option — see
+	// TestNewSession_AppliesRequestedModelAndEffort.
+	if err := b.Start(context.Background(), &api.StartOpts{}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if id := b.SessionID(); id != "lifecycle-001" {
@@ -1236,7 +1240,7 @@ func TestStartProcess_NilLifecycleCtxFallsBackToBackground(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := New(bogus, t.TempDir())
 	t.Cleanup(b.Stop)
-	err := b.startProcess("", "", "")
+	err := b.startProcess("")
 	if err == nil {
 		t.Fatal("startProcess with a nonexistent binary returned nil error, want a start failure")
 	}
@@ -1248,7 +1252,7 @@ func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
 	b := New(bogus, t.TempDir())
 	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
-	_ = b.startProcess("", "", "")
+	_ = b.startProcess("")
 	if b.cmd == nil {
 		t.Fatal("b.cmd is nil; startProcess did not reach CommandContext")
 	}
@@ -1892,7 +1896,7 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 	// lifecycleCtx is what CommandContext binds to, which is the path Cancel
 	// fires from.
 	b.lifecycleCtx = ctx
-	if err := b.startProcess("", "model", ""); err != nil {
+	if err := b.startProcess(""); err != nil {
 		t.Fatalf("startProcess: %v", err)
 	}
 	t.Cleanup(func() {

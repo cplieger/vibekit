@@ -128,7 +128,7 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 // takes the last spelling of a repeated flag) and vibekit's own switch_model /
 // set_effort still win afterwards over session/set_config_option.
 func TestBuildACPArgsPrecedesExtraArgs(t *testing.T) {
-	derived := buildACPArgs("v3", "some-model", "high")
+	derived := buildACPArgs("v3")
 	extra := []string{"-v"}
 	full := append(slices.Clone(derived), extra...)
 

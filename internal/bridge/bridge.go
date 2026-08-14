@@ -58,6 +58,13 @@ const (
 // spelling is worth having in one place.
 const metaKeyKiro = "kiro"
 
+// session/set_config_option param keys. Named because three call sites spell
+// them: the model, the reasoning effort and the supervised-mode autopilot.
+const (
+	keyConfigID    = "configId"
+	keyConfigValue = "value"
+)
+
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
 	lifecycleCtx context.Context
@@ -216,8 +223,8 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	b.mu.Unlock()
 	_, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
 		api.KeySessionID: sessionID,
-		"configId":       api.ConfigOptionModel,
-		"value":          modelID,
+		keyConfigID:      api.ConfigOptionModel,
+		keyConfigValue:   modelID,
 	})
 	if err != nil {
 		return err

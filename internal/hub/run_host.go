@@ -191,7 +191,7 @@ func (h *Hub) launchRun(ctx context.Context, source string, inputs map[string]st
 	// session/new-time notifications land there are drained once Forward
 	// starts.
 	bridge := h.bridge.mgr.factory()
-	if sErr := bridge.Start(cctx, &api.StartOpts{}); sErr != nil {
+	if sErr := bridge.Start(cctx, &api.StartOpts{Lifetime: h.lifecycle.shutdownCtx}); sErr != nil {
 		return "", "", fmt.Errorf("run bridge start: %w", sErr)
 	}
 
@@ -306,7 +306,7 @@ func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
 	defer cancel()
 
 	bridge := h.bridge.mgr.factory()
-	if err := bridge.Start(cctx, &api.StartOpts{}); err != nil {
+	if err := bridge.Start(cctx, &api.StartOpts{Lifetime: h.lifecycle.shutdownCtx}); err != nil {
 		return fmt.Errorf("retry bridge start: %w", err)
 	}
 	// Register BEFORE the call, for the same reason LaunchRun does: retry's first
