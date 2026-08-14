@@ -695,3 +695,40 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 		})
 	}
 }
+
+// TestRunComplete_ReadsTopLevelParentSessionID pins the PRIMARY origin field on
+// the terminal frame.
+//
+// The notification bridge merges `parentSessionId` top-level into every lifecycle
+// payload when the run has a parent, and upstream treats that as the primary
+// source with the copy inside `finalState` as a back-compat fallback. The case
+// above sends both, so it passes whichever one is decoded; this one sends ONLY the
+// top-level field, which is the shape a bundle that dropped the state copy would
+// produce. Without the top-level decode the terminal line disappears while the
+// launch line still prints — silently, since nothing else observes it.
+//
+// slog's default logger is process-global, so no t.Parallel here.
+func TestRunComplete_ReadsTopLevelParentSessionID(t *testing.T) {
+	const endMsg = "agent-launched workflow run finished"
+	rec := capture.Default(t)
+	var events []api.ServerEvent
+	tr := New(capturing(&events))
+
+	tr.HandleRunComplete(context.Background(), testChat, notif("_kiro/workflow/run_complete", map[string]any{
+		"workflowId":      "wf_9",
+		"status":          "completed",
+		"parentSessionId": testParent,
+		// finalState deliberately carries NO parentSessionId: only workflowName,
+		// which genuinely has no top-level counterpart on this frame.
+		"finalState": map[string]any{"workflowName": "publish-pr"},
+	}))
+
+	if rec.CountExact(endMsg) != 1 {
+		t.Fatalf("got %d %q lines, want 1; a top-level parentSessionId is the primary origin signal",
+			rec.CountExact(endMsg), endMsg)
+	}
+	if !rec.HasAttr(endMsg, "recipe", "publish-pr") {
+		got, _ := rec.AttrValue(endMsg, "recipe")
+		t.Errorf("%q: recipe = %q, want %q (still the one field only finalState carries)", endMsg, got, "publish-pr")
+	}
+}
