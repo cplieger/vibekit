@@ -60,6 +60,19 @@ const (
 	outcomeApproved = "approved"
 )
 
+// logMsgRunOverran is the message a run cancelled at its own repeat interval logs
+// under. A CONSTANT for the same reason as logMsgUnattendedPermission: a homelab
+// Loki rule matches this string, and it is the ONLY signal that a schedule stopped
+// producing rather than merely running long. Changing it breaks that rule
+// silently, so change both together.
+const logMsgRunOverran = "scheduled run still going when its next slot came due; cancelling"
+
+// outcomeOverran is what the schedule's row reads afterwards. Written for the
+// person looking at the Workflows tab, not for a matcher: it has to say what
+// happened AND what to do, because the row is where they will look first.
+const outcomeOverran = "failed: still running when its next slot came due, so it was cancelled — " +
+	"give the schedule a longer interval, or make the workflow finish inside it"
+
 // workflowIDOf recovers a workflow id from its synthetic chat id. Empty for a
 // chat id that does not name a run.
 func workflowIDOf(chatID api.ChatID) string {

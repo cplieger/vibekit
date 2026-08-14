@@ -28,8 +28,14 @@ const MissGrace = 3 * time.Minute
 // run back to the row that asked for it. That attribution is what makes a
 // silent nightly failure visible: the host records the outcome against this id
 // when the run is denied a permission nobody was there to answer.
+// The deadline is the instant this run's own NEXT slot comes due, and it is
+// computed here because it is a property of the SCHEDULE rather than of the run:
+// a scheduled run may take up to its own repeat interval and no longer. The
+// interval IS the number, which is what makes this bound a rule rather than a
+// timeout somebody had to pick. Zero means unbounded (a spec whose next slot
+// cannot be computed), and the host is expected to treat it that way.
 type Launcher interface {
-	LaunchScheduledRun(ctx context.Context, source, scheduleID string) (id, name string, err error)
+	LaunchScheduledRun(ctx context.Context, source, scheduleID string, deadline time.Time) (id, name string, err error)
 }
 
 // Runner fires due schedules. Construct with NewRunner and call Run in a
@@ -105,7 +111,28 @@ func (r *Runner) sweep(ctx context.Context) {
 // fire launches one run and records the outcome. The anchor advances either
 // way: a schedule whose launch keeps failing must not retry every tick.
 func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
-	runID, name, err := r.launcher.LaunchScheduledRun(ctx, e.Source, e.ID)
+	// Bound the run by its own repeat interval: the next slot after the one that
+	// just fired. Measured from `due` rather than from now so a late fire inside
+	// the grace window does not extend the run's budget past the slot it would
+	// collide with.
+	//
+	// An uncomputable next slot yields NO bound rather than a launch failure. The
+	// run still being launched is the point: refusing to run because the bound
+	// cannot be derived would turn a display-level defect into an outage.
+	//
+	// DEFENSIVE, and unreachable through the store today: Put validates the spec
+	// (an unknown frequency is rejected there), so every persisted entry can name
+	// its next slot. Left in because NextRun returns an error and swallowing it
+	// silently is how an unbounded run would become invisible if a future
+	// frequency ever parses but cannot be projected. Deliberately not tested —
+	// reaching it needs a state the store refuses to hold.
+	deadline, dErr := NextRun(e.Spec, due)
+	if dErr != nil {
+		slog.Warn("schedule cannot name its next slot, so its run is unbounded",
+			"id", e.ID, "source", e.Source, "error", dErr)
+		deadline = time.Time{}
+	}
+	runID, name, err := r.launcher.LaunchScheduledRun(ctx, e.Source, e.ID, deadline)
 	result := "started"
 	if err != nil {
 		// An overlap is the expected, already-implemented refusal (one live run

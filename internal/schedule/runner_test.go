@@ -25,12 +25,18 @@ type fakeLauncher struct {
 	// schedules records the id each launch was attributed to, which is what lets
 	// a later denial land on the right row.
 	schedules []string
+	// deadlines records the run bound each launch carried, so a test can assert
+	// the interval was derived rather than merely passed.
+	deadlines []time.Time
 	err       error
 }
 
-func (f *fakeLauncher) LaunchScheduledRun(_ context.Context, source, scheduleID string) (string, string, error) {
+func (f *fakeLauncher) LaunchScheduledRun(
+	_ context.Context, source, scheduleID string, deadline time.Time,
+) (string, string, error) {
 	f.sources = append(f.sources, source)
 	f.schedules = append(f.schedules, scheduleID)
+	f.deadlines = append(f.deadlines, deadline)
 	if f.err != nil {
 		return "", "", f.err
 	}
@@ -81,6 +87,38 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 	// no row to report itself on.
 	if len(l.schedules) != 1 || l.schedules[0] != "s1" {
 		t.Errorf("launch must carry the schedule id, got %v", l.schedules)
+	}
+}
+
+// TestSweep_BoundsTheRunByItsOwnInterval pins the run bound to the schedule's
+// INTERVAL rather than to a constant.
+//
+// The whole argument for this bound is that nobody has to pick a number: a
+// scheduled run may take until its next slot and no longer. So the assertion is
+// against NextRun's own answer for the fixture's daily 02:00 spec — exactly 24h
+// after the slot that fired — and a hardcoded duration here would let the
+// production side drift to any value that happened to match one fixture.
+//
+// Measured from DUE, not from now: the fire is 30s late inside the grace window,
+// and a bound measured from now would push the run 30s past the slot it is meant
+// not to collide with.
+func TestSweep_BoundsTheRunByItsOwnInterval(t *testing.T) {
+	due := at(2026, time.August, 4, 2, 0)
+	st, l, r := newFixture(t, due.Add(30*time.Second))
+	r.sweep(context.Background())
+
+	if len(l.deadlines) != 1 {
+		t.Fatalf("expected one launch, got %d", len(l.deadlines))
+	}
+	want, err := NextRun(st.List()[0].Spec, due)
+	if err != nil {
+		t.Fatalf("NextRun: %v", err)
+	}
+	if !l.deadlines[0].Equal(want) {
+		t.Errorf("run bound = %v, want the next slot %v (the interval IS the number)", l.deadlines[0], want)
+	}
+	if !l.deadlines[0].Equal(due.Add(24 * time.Hour)) {
+		t.Errorf("a daily schedule must bound its run at 24h after the slot, got %v", l.deadlines[0].Sub(due))
 	}
 }
 

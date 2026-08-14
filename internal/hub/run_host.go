@@ -103,8 +103,71 @@ func (h *Hub) LaunchRun(ctx context.Context, source string, inputs map[string]st
 // `new` and `invoke` — the earliest point the workflow id exists and still
 // before anything can execute, so no permission request can slip through
 // unmarked.
-func (h *Hub) LaunchScheduledRun(ctx context.Context, source, scheduleID string) (id, name string, err error) {
-	return h.launchRun(ctx, source, nil, scheduleID)
+// The deadline bounds the run by its own repeat interval (see schedule.Launcher).
+// It is armed AFTER the launch succeeds, so a run that never started leaves no
+// timer behind, and it is deliberately not threaded through launchRun: a manual
+// launch has no interval to be bounded by, and passing a value only one caller
+// ever sets would put schedule policy in the shared body.
+func (h *Hub) LaunchScheduledRun(ctx context.Context, source, scheduleID string, deadline time.Time) (id, name string, err error) {
+	id, name, err = h.launchRun(ctx, source, nil, scheduleID)
+	if err != nil {
+		return "", "", err
+	}
+	h.armRunDeadline(id, scheduleID, deadline)
+	return id, name, nil
+}
+
+// armRunDeadline cancels a scheduled run that is still going when its next slot
+// comes due. Nothing to arm for a zero or already-passed deadline.
+//
+// AfterFunc rather than a goroutine, for the same reason the unattended floor
+// uses it: it parks nothing while waiting, and a run that ends first makes the
+// callback a no-op rather than something that has to be cancelled.
+func (h *Hub) armRunDeadline(workflowID, scheduleID string, deadline time.Time) {
+	if workflowID == "" || deadline.IsZero() {
+		return
+	}
+	if d := time.Until(deadline); d > 0 {
+		time.AfterFunc(d, func() { h.cancelOverrunRun(workflowID, scheduleID) })
+	}
+}
+
+// cancelOverrunRun is the deadline's callback: stop the run and say why.
+//
+// This is what makes "the next slot runs fresh" true. Without it a wedged run
+// holds the recipe forever under the single-run rule, every later slot is refused
+// as an overlap, and the schedule silently stops producing — the one failure the
+// launch-failure alert deliberately cannot distinguish from a merely long run,
+// because only this side knows the interval.
+//
+// scheduleForRun is the liveness gate, and it is exact rather than approximate:
+// clearUnattended runs on a terminal run_complete, so a run still marked
+// unattended had not finished at its deadline. That is the fact being recorded, so
+// a run that completes microseconds later does not make the record wrong — it
+// overran, and the check is the evidence.
+func (h *Hub) cancelOverrunRun(workflowID, scheduleID string) {
+	if _, live := h.scheduleForRun(workflowID); !live {
+		return
+	}
+	ctx, cancel := h.hubContext()
+	defer cancel()
+
+	// ERROR rather than Warn: a schedule that stopped producing is the app's one
+	// genuinely unattended failure, and a homelab Loki rule keys on this message.
+	slog.Error(logMsgRunOverran, "workflow_id", workflowID, "schedule_id", scheduleID)
+	if err := h.CancelRun(ctx, workflowID); err != nil {
+		// Report it anyway. The run overran whether or not the cancel landed, and
+		// a schedule row that stays on "started" is the silence this exists to end.
+		slog.Error("could not cancel an overrunning scheduled run",
+			"workflow_id", workflowID, "schedule_id", scheduleID, "error", err)
+	}
+	if h.schedules == nil || scheduleID == "" {
+		return
+	}
+	if err := h.schedules.RecordOutcome(ctx, scheduleID, outcomeOverran); err != nil {
+		slog.Warn("could not record the schedule's outcome",
+			"schedule_id", scheduleID, "error", err)
+	}
 }
 
 // launchRun is the shared body. scheduleID empty means an ordinary manual
