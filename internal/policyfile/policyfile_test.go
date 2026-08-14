@@ -185,11 +185,12 @@ func TestSanitizeRule(t *testing.T) {
 }
 
 // TestSanitizeRule_ForwardsUnrecognisedCapability is the T67 inversion. This
-// used to be a 400. The capability vocabulary is KAS's — it validates on load
-// and reports a rejection over _kiro/policy/error → the policy_error banner — so
-// refusing here only meant vibekit could not write a rule for any capability
-// newer than its own hand-copied list, which is exactly the rule a new
-// capability exists for.
+// used to be a 400. The capability vocabulary is KAS's — it validates on load and
+// SKIPS an unrecognised rule as non-fatal, reporting it on
+// _kiro/policy/changed's errors array rather than on _kiro/policy/error (which is
+// fatal-only); see SanitizeRule's doc comment. So refusing here only meant
+// vibekit could not write a rule for any capability newer than its own
+// hand-copied list, which is exactly the rule a new capability exists for.
 func TestSanitizeRule_ForwardsUnrecognisedCapability(t *testing.T) {
 	// "hooks" is the concrete case: an upstream security report asked for it, and
 	// under the old check vibekit would have refused the rule that uses it.

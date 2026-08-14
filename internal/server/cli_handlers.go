@@ -58,8 +58,15 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	// the command ended, and trimming its last line would discard real content.
 	body := string(out)
 	if truncated {
+		// No newline anywhere means the whole capped dump is ONE partial line, so
+		// there is no complete line to keep — and keeping the byte-cut tail is
+		// exactly the stranded-secret case this trim exists to close. Dropping it
+		// is the rule applied without exception; the "[truncated]" marker below
+		// still tells the reader why the report is short.
 		if nl := strings.LastIndexByte(body, '\n'); nl >= 0 {
 			body = body[:nl]
+		} else {
+			body = ""
 		}
 	}
 	// Sanitize (ANSI + hidden Unicode) then best-effort redact obvious

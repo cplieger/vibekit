@@ -136,10 +136,11 @@ func TestPolicyRuleInvalidScopeRejected(t *testing.T) {
 }
 
 // TestPolicyRuleUnrecognisedCapabilityRoundTrips is the T67 inversion at the
-// HTTP edge: this used to be a 400. The rule is written verbatim and KAS's
-// loader is the authority — it validates on load and reports a rejection over
-// _kiro/policy/error, which vibekit already translates into the policy_error SSE
-// and renders as a banner (see translate's HandlePolicyError). The 400 meant
+// HTTP edge: this used to be a 400. The rule is written verbatim and KAS's loader
+// is the authority — it validates on load and SKIPS an unrecognised rule as
+// non-fatal, reporting it on _kiro/policy/changed's errors array (translated to
+// the permissions_changed SSE and rendered from payload.errors), NOT on
+// _kiro/policy/error, which KAS emits only for fatal errors. The 400 meant
 // vibekit refused to write the rule a newly-added capability exists for.
 func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	home := t.TempDir()

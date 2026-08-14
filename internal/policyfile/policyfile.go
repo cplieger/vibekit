@@ -134,11 +134,22 @@ const maxCapabilityLen = 128
 // Errors surfaced to the HTTP edge.
 //
 // There is deliberately no "unknown capability" error. The capability VOCABULARY
-// is KAS's to define and KAS's to enforce: it validates on load and reports a
-// rejection over _kiro/policy/error, which vibekit already translates into the
-// policy_error SSE and renders as a banner. Duplicating that vocabulary here
-// bought nothing and cost the ability to write a rule for any capability newer
-// than this file.
+// is KAS's to define and KAS's to enforce, and duplicating it here bought nothing
+// while costing the ability to write a rule for any capability newer than this
+// file.
+//
+// How KAS reports one, read off 2.18.0, because the obvious guess is wrong: an
+// unrecognised capability is NOT fatal. validateRule returns
+// `{rule: null, warning: "Skipping rule N in <source>: unknown capability …"}`,
+// so that ONE rule is dropped and the rest of the file still loads — unlike a bad
+// effect, which throws PolicyParseError and fails the whole file (vibekit cannot
+// write that: ValidEffect gates it). Because the entry is `fatal: false`, it does
+// NOT arrive on _kiro/policy/error, which KAS emits only `if (hasFatalErrors)`.
+// It rides _kiro/policy/changed instead, with `status: "success"` and the warning
+// in that notification's `errors` array — which vibekit decodes
+// (translate/policy.go) into the permissions_changed SSE, and the client renders
+// from `payload.errors` in permissions-ui.ts. So the user IS told; the channel is
+// just not the one named "error".
 var (
 	ErrInvalidScope    = errors.New("scope must be user or workspace")
 	ErrInvalidEffect   = errors.New("effect must be allow, deny, or ask")
@@ -263,8 +274,9 @@ func Save(ctx context.Context, path string, f *File) error {
 //
 // The split on capability is deliberate. Its VOCABULARY is not checked: an
 // unrecognised name is written through, because KAS's loader is the authority on
-// which capabilities exist and reports a rejection over _kiro/policy/error →
-// the policy_error banner. Its SHAPE is checked, in the same class as the
+// which capabilities exist and reports the skip on _kiro/policy/changed's
+// `errors` array (see the Errors block above — it is non-fatal, so it does not
+// reach _kiro/policy/error). Its SHAPE is checked, in the same class as the
 // pattern checks below: an empty, oversized or control-character-bearing token
 // is not a capability KAS could ever have, so forwarding one only puts a rule in
 // a security policy file that the user then has to hand-edit out.

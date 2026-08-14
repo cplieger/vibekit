@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -249,6 +250,17 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 	if err != nil {
 		api.BadRequest(w, err.Error())
 		return
+	}
+	// vibekit does not own the capability vocabulary (see policyfile.SanitizeRule),
+	// so an unrecognised name is written through for KAS to judge. KAS then SKIPS
+	// that one rule as non-fatal and says so on _kiro/policy/changed, which reaches
+	// the user in the permissions panel — but nothing on this side records having
+	// written it, so a rule that silently does nothing has no server-side trace to
+	// correlate against. One line closes that; the write still goes through.
+	if !slices.Contains(policyfile.Capabilities(), rule.Capability) {
+		slog.Warn("writing a policy rule naming a capability vibekit does not recognise; "+
+			"kiro-cli decides whether it loads",
+			"capability", rule.Capability, "effect", rule.Effect, "scope", body.Scope)
 	}
 	if rule.Effect == policyfile.EffectAllow && body.GuardResource != "" &&
 		!s.guardAllowRule(w, r, &rule, body.GuardResource) {
