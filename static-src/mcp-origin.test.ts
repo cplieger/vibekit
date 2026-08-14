@@ -7,11 +7,15 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 // The status fetch is the only input to the read-only name list, so it is the
 // one thing mocked. Everything else in mcp-state.ts runs for real.
 const statusResponse = { servers: [] as Record<string, unknown>[] };
+// The replacement must carry the REAL signature, generic parameter included:
+// tsconfig.test.json type-checks this file, and vi.mock's factory is checked
+// against Partial<typeof module>, so a loosened `(v: unknown) => unknown` decoder
+// or an unparameterised Promise<unknown> return fails to assign.
 vi.mock(import("./api-client.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    apiGetTyped: async (path: string, decode: (v: unknown) => unknown) =>
+    apiGetTyped: async <T>(path: string, decode: Decoder<T>): Promise<T | null> =>
       path === "/api/mcp/status" ? decode(statusResponse) : null,
   };
 });
@@ -21,12 +25,17 @@ vi.mock(import("./actions/index.js"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    registerCleanup: () => {
-      /* noop: the singleton cleanup registry is process-wide */
-    },
+    // registerCleanup returns its UNREGISTER function, so a bare `() => {}` is
+    // the wrong shape as well as the wrong arity.
+    registerCleanup:
+      (_fn: () => void): (() => void) =>
+      () => {
+        /* noop: the singleton cleanup registry is process-wide */
+      },
   };
 });
 
+import type { Decoder } from "./api-client.js";
 import { applyOriginChip, renderForeignMeta } from "./mcp-ui.js";
 import { mcpState, servers, statusSignalFor, unconfiguredNames } from "./mcp-state.js";
 import type { Origin, RuntimeStatus, Server } from "./mcp-state.js";
