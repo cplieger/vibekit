@@ -275,8 +275,11 @@ export type RuntimeStatus =
 
 /** A RuntimeStatus variant with the origin stripped — what an SSE frame can
  *  express. Distributive on purpose: a plain `Omit<RuntimeStatus, "origin">`
- *  collapses the union to its common members and loses `oauth_url` / `error`. */
-export type WithoutOrigin<T> = T extends unknown ? Omit<T, "origin"> : never;
+ *  collapses the union to its common members and loses `oauth_url` / `error`.
+ *
+ *  Not exported: its only use is setStatusFromEvent's parameter below, and a
+ *  caller passes an object literal rather than naming the type. */
+type WithoutOrigin<T> = T extends unknown ? Omit<T, "origin"> : never;
 
 // --- Secret sentinel ---
 export const SECRET_MASK = "***";
