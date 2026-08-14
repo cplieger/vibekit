@@ -24,51 +24,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/procgroup"
 )
 
 // keySignal is the wire key for a terminating signal in an ACP terminal
 // exit status (KAS zTerminalExitStatus {exitCode?, signal?}).
 const keySignal = "signal"
-
-// killGroup signals a terminal's whole process group, falling back to the head
-// alone when the child is not its own group leader.
-//
-// Agent terminals are the agent's own commands, so they are routinely TREES —
-// a build tool, a test runner, a dev server — and unlike the bridge there is no
-// stdin-EOF channel to reclaim them, because an agent-chosen command need never
-// read stdin. Signalling the head alone therefore strands the children: measured
-// on the shape any build tool produces (a shell with two children), 2 spawned and
-// 2 survived a head-only kill.
-//
-// The pgid == pid guard is load-bearing, not defensive. Without Setpgid the child
-// inherits VIBEKIT'S OWN process group, so Kill(-pgid, sig) would signal vibekit
-// itself. The guard restricts the group form to when the child really is its own
-// leader, which is exactly when Setpgid succeeded. A command that setsid()s on
-// purpose still escapes the group; that is accepted, since a command which
-// deliberately daemonizes is asking to outlive its terminal.
-func killGroup(p *os.Process, sig syscall.Signal) error {
-	pgid, err := syscall.Getpgid(p.Pid)
-	if err == nil && ownsProcessGroup(p.Pid, pgid) {
-		if gErr := syscall.Kill(-pgid, sig); gErr == nil {
-			return nil
-		}
-	}
-	// Not its own leader (Setpgid did not take, so the group is OURS and the
-	// group form would signal vibekit), Getpgid failed (already reaped), or the
-	// group signal failed — fall back to the head, which is exactly today's
-	// behaviour.
-	return p.Signal(sig)
-}
-
-// ownsProcessGroup reports whether pid is the leader of pgid, i.e. whether
-// Setpgid took and the group contains only this command's tree.
-//
-// Extracted as a pure function on purpose: this comparison is the guard that
-// keeps Kill(-pgid, …) off vibekit's own process group, and pinning it by
-// actually signalling a non-leader would deliver that signal to the test
-// binary. Table-test the decision here; the tree-kill integration is covered
-// separately against a real Setpgid child.
-func ownsProcessGroup(pid, pgid int) bool { return pgid == pid }
 
 // agentTerminal is one headless subprocess spawned by kiro-cli.
 type agentTerminal struct {
@@ -203,7 +164,7 @@ func (at *agentTerminals) KillForTurn(chatID api.ChatID) {
 	at.mu.Unlock()
 	for _, term := range doomed {
 		if term.cmd.Process != nil {
-			if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
+			if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
 				slog.Debug("hub: turn terminal kill failed", "chat_id", chatID, "error", err)
 			}
 		}
@@ -225,7 +186,7 @@ func (at *agentTerminals) KillForChat(chatID api.ChatID) {
 		if ok {
 			delete(at.terms, id)
 			if term.cmd.Process != nil {
-				if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
+				if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
 					slog.Debug("hub: agent terminal kill failed", "id", id, "error", err)
 				}
 			}
@@ -356,13 +317,14 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	stop := context.AfterFunc(h.lifecycle.shutdownCtx, cmdCancel)
 	cmd := exec.CommandContext(cmdCtx, params.Command, params.Args...) // #nosec G204 -- agent-controlled
 	// Own process group, so every teardown path can signal the whole tree
-	// rather than just the head. See killGroup for why the head alone is not
-	// enough here and why it IS enough for the bridge.
+	// rather than just the head. See procgroup.Kill for why the head alone is
+	// not enough — for an agent terminal or, since kiro-cli 2.18.0, for the
+	// bridge either.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Graceful shutdown: SIGTERM on context cancel, escalate to SIGKILL
 	// after 2s. Matches the cplieger Go apps' consistent subprocess
 	// management pattern (fclones, bridge, subflux/ffmpeg).
-	cmd.Cancel = func() error { return killGroup(cmd.Process, syscall.SIGTERM) }
+	cmd.Cancel = func() error { return procgroup.Kill(cmd.Process, syscall.SIGTERM) }
 	cmd.WaitDelay = 2 * time.Second
 	if env := termEnv(params.Env); env != nil {
 		cmd.Env = env
@@ -604,7 +566,7 @@ func (h *Hub) termRelease(ctx context.Context, chatID api.ChatID, msg *api.RPCRe
 	}
 	term, ok := h.agentTerms.release(params.TerminalID)
 	if ok && term.cmd.Process != nil {
-		if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
+		if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
 			slog.Warn("terminal release: kill failed", "term_id", params.TerminalID, "error", err)
 		}
 	}
@@ -664,7 +626,7 @@ func (h *Hub) termKill(ctx context.Context, chatID api.ChatID, msg *api.RPCRespo
 		return
 	}
 	if term.cmd.Process != nil {
-		if err := killGroup(term.cmd.Process, syscall.SIGKILL); err != nil {
+		if err := procgroup.Kill(term.cmd.Process, syscall.SIGKILL); err != nil {
 			slog.Warn("terminal kill failed", "term_id", params.TerminalID, "error", err)
 		}
 	}

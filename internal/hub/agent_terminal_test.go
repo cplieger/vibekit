@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/procgroup"
 )
 
 func TestRingBuffer(t *testing.T) {
@@ -482,33 +483,6 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 
 // --- R2: process-group teardown for agent terminals ---
 
-// TestOwnsProcessGroup pins the guard that keeps the group-kill form off
-// vibekit's own process group.
-//
-// Without Setpgid a child inherits vibekit's group, so `Kill(-pgid, sig)` would
-// signal vibekit itself. This comparison is the only thing preventing that, and
-// it cannot be pinned by actually signalling a non-leader (the signal would land
-// on the test binary), which is why the decision is a pure function.
-func TestOwnsProcessGroup(t *testing.T) {
-	cases := []struct {
-		name string
-		pid  int
-		pgid int
-		want bool
-	}{
-		{name: "own leader: Setpgid took, group is the command's tree", pid: 4242, pgid: 4242, want: true},
-		{name: "inherited group: Setpgid absent, group is vibekit's", pid: 4242, pgid: 17, want: false},
-		{name: "inherited group where vibekit is the leader", pid: 4242, pgid: 1, want: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := ownsProcessGroup(tc.pid, tc.pgid); got != tc.want {
-				t.Errorf("ownsProcessGroup(%d, %d) = %v, want %v", tc.pid, tc.pgid, got, tc.want)
-			}
-		})
-	}
-}
-
 // TestKillGroup_ReapsTheWholeTree is the R2 regression: a head-only kill strands
 // an agent terminal's children.
 //
@@ -529,7 +503,7 @@ func TestKillGroup_ReapsTheWholeTree(t *testing.T) {
 		t.Fatalf("start bait: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = killGroup(cmd.Process, syscall.SIGKILL)
+		_ = procgroup.Kill(cmd.Process, syscall.SIGKILL)
 		_, _ = cmd.Process.Wait()
 	})
 
@@ -538,7 +512,7 @@ func TestKillGroup_ReapsTheWholeTree(t *testing.T) {
 		t.Fatalf("bait child %d not alive before the kill; the test proves nothing", childPID)
 	}
 
-	if err := killGroup(cmd.Process, syscall.SIGKILL); err != nil {
+	if err := procgroup.Kill(cmd.Process, syscall.SIGKILL); err != nil {
 		t.Fatalf("killGroup: %v", err)
 	}
 	_, _ = cmd.Process.Wait() // reap the head; the poll below is on the child
