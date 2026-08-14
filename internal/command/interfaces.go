@@ -31,6 +31,10 @@ type ChatAccess interface {
 	ChatStore() api.ChatStore
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	CleanupChatState(ctx context.Context, chatID api.ChatID)
+	// CloseChatState is the close path's teardown: same in-memory cleanup,
+	// but it leaves the chat's durable KAS session on disk so the chat can be
+	// reopened and so History can still list it.
+	CloseChatState(ctx context.Context, chatID api.ChatID)
 	// CancelChatRuns cancels every non-terminal workflow run this chat's
 	// sessions launched. Part of the tab-close contract: closing the tab kills
 	// the work, and a run is durable state a dead process does NOT stop — KAS

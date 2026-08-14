@@ -104,11 +104,24 @@ func (h *Hub) InflightDone() {
 }
 
 // CleanupChatState tears down all in-memory state for a chat that is being
-// permanently deleted (the delete / promote / discard paths), reaping the
-// chat's checkpoints too. The archive path uses OnChatArchiving, which runs
-// the same teardown but preserves checkpoints (archive is reversible).
+// permanently deleted (the delete path), reaping the chat's durable KAS session
+// state too.
 func (h *Hub) CleanupChatState(ctx context.Context, chatID api.ChatID) {
 	h.cleanupChatState(ctx, chatID, true)
+}
+
+// CloseChatState tears down a chat's in-memory state WITHOUT touching its
+// durable KAS session.
+//
+// This is the close path, and the distinction is the whole point: closing a tab
+// kills the process, not the history. Close used to share the delete path, so
+// the × on a tab reaped the chat's whole session chain off disk — which
+// contradicted its own contract ("the chat RECORD is untouched … reopening it
+// session/loads everything back") and cost the user the transcript twice over:
+// the reopened chat had no session to load, and the History page, which lists
+// KAS's sessions, could only ever show chats that were still open.
+func (h *Hub) CloseChatState(ctx context.Context, chatID api.ChatID) {
+	h.cleanupChatState(ctx, chatID, false)
 }
 
 // MCPWaitForReady blocks until MCP servers are ready or timeout.

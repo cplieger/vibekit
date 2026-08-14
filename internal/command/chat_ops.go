@@ -143,7 +143,7 @@ func CmdCloseChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 		}
 	}
 	d.Chat().CancelChatRuns(ctx, cmd.ChatID)
-	d.Chat().CleanupChatState(ctx, cmd.ChatID)
+	d.Chat().CloseChatState(ctx, cmd.ChatID)
 	d.RespondOK(w, cmd.RequestID)
 }
 

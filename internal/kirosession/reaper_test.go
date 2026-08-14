@@ -132,3 +132,72 @@ func TestNilReaperSafe(t *testing.T) {
 		t.Errorf("nil reaper Sweep = %d, want 0", n)
 	}
 }
+
+// An EMPTY keep-list against a populated tree is refused, not obeyed.
+//
+// This is the incident test. A dev build ran with KIRO_CONFIG_DIR pointed at a
+// scratch directory while KIRO_HOME was left unset, so the chat store was empty
+// while the session store still resolved to the real `$HOME/.kiro` shared with
+// another application. The startup sweep received a keep-list of zero refs,
+// treated it as authoritative, and deleted ~450 sessions belonging to that other
+// app. The caller's completeness flag could not catch it: an empty store IS
+// complete, having successfully read all zero of its files.
+//
+// Every session here is old enough to be past the guard, so without the refusal
+// this test would reap all four.
+func TestSweepRefusesEmptyKeepListAgainstPopulatedTree(t *testing.T) {
+	root := t.TempDir()
+	old := 30 * time.Minute
+	for _, id := range []string{"sess_a", "sess_b", "sess_c"} {
+		makeSession(t, root, "otherapp", id, old)
+	}
+	makeSession(t, root, "second_hash", "sess_d", old)
+
+	for _, keep := range []map[string]struct{}{nil, {}} {
+		if n := New(root).Sweep(keep); n != 0 {
+			t.Errorf("Sweep(%v) reaped %d, want 0 — an empty keep-list must be refused", keep, n)
+		}
+	}
+
+	for _, p := range []string{
+		filepath.Join(root, "otherapp", "sess_a"),
+		filepath.Join(root, "otherapp", "sess_b"),
+		filepath.Join(root, "otherapp", "sess_c"),
+		filepath.Join(root, "second_hash", "sess_d"),
+	} {
+		if !exists(t, p) {
+			t.Errorf("%s was deleted by a zero-reference sweep", p)
+		}
+	}
+}
+
+// The refusal is scoped to "there is something to lose". A fresh volume has an
+// empty keep-list AND an empty tree, which is an ordinary no-op — refusing there
+// would be indistinguishable from working, but returning early on a populated
+// tree only is what keeps the guard honest rather than a blanket disable.
+func TestSweepEmptyKeepListOnEmptyTreeIsOrdinaryNoop(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cli"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if n := New(root).Sweep(map[string]struct{}{}); n != 0 {
+		t.Errorf("reaped %d on an empty tree, want 0", n)
+	}
+}
+
+// countSessions is what the guard keys on, so it must see sessions across every
+// workspace-hash directory — the bug deleted across ten of them.
+func TestCountSessionsSpansWorkspaceHashes(t *testing.T) {
+	root := t.TempDir()
+	makeSession(t, root, "h1", "sess_1", 0)
+	makeSession(t, root, "h1", "sess_2", 0)
+	makeSession(t, root, "h2", "sess_3", 0)
+	// A bare-uuid v2 file is not a session and must not inflate the count.
+	if err := os.WriteFile(filepath.Join(root, "cli", "1111-2222.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := New(root).countSessions(); got != 3 {
+		t.Errorf("countSessions() = %d, want 3", got)
+	}
+}
