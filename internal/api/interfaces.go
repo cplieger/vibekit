@@ -119,6 +119,25 @@ type Hub interface {
 // config file, which vibekit renders — passing them on session/new would OUTRANK
 // that file and freeze the set for the session's lifetime.
 type StartOpts struct {
+	// Lifetime bounds the kiro-cli SUBPROCESS. Cancelling it closes the
+	// process's stdin and signals its tree; nil leaves the process owned
+	// solely by Stop().
+	//
+	// It is deliberately NOT Start's ctx, which bounds only the startup
+	// handshake. Conflating the two is a defect with a measured signature:
+	// CmdPrompt runs a turn under a per-turn context and cancels it on
+	// handler return, so a bridge that took its lifetime from there had its
+	// stdin closed and its head signalled the moment the FIRST prompt
+	// finished. vibekit could not see that either — kiro-cli passes its stdio
+	// down to kiro-cli-chat and node, so all three hold the write end of the
+	// stdout pipe and the head's death never reaches the readLoop as EOF.
+	// The bridge stayed registered and healthy-looking (measured 105 s) while
+	// every write to it returned "file already closed", which is what made
+	// every model switch fall back to a restart, and each abandoned child
+	// tree leaked ~250 MB.
+	//
+	// Pass the hub's shutdown context, not a request or turn context.
+	Lifetime    context.Context
 	SessionID   string
 	Model       string
 	Effort      string
@@ -174,8 +193,11 @@ type ACPBridge interface {
 	// Start launches a fresh kiro-cli ACP subprocess. If
 	// StartOpts.SessionID is empty, a new ACP session is created
 	// (session/new). If populated, the existing session is resumed
-	// (session/load). Exactly one call per bridge instance. ctx enables
-	// caller-driven cancellation of the startup handshake.
+	// (session/load). Exactly one call per bridge instance.
+	//
+	// ctx bounds the startup handshake ONLY. The subprocess's own lifetime
+	// comes from StartOpts.Lifetime, so a caller may pass a request-scoped
+	// ctx here without killing the bridge when that request returns.
 	Start(ctx context.Context, opts *StartOpts) error
 	// Stop kills the subprocess. NotifCh closes. Must be called at most
 	// once per bridge instance.

@@ -93,6 +93,21 @@ func (bc *BridgeCoordinator) hasSecretStorage() bool {
 	return bc.secretStorage != nil && bc.secretStorage()
 }
 
+// processLifetimeCtx returns the context that bounds a spawned kiro-cli
+// subprocess: the hub's shutdown context, so a bridge outlives the turn that
+// happened to create it and still dies with the hub.
+//
+// It must never be the caller's ctx. Every spawn here is reached from a command
+// handler, and CmdPrompt's is a per-turn context it cancels on return — see
+// api.StartOpts.Lifetime for what that measured like. Nil-safe for tests that
+// build a coordinator without a lifecycle plane.
+func (bc *BridgeCoordinator) processLifetimeCtx() context.Context {
+	if bc.lifecycle == nil || bc.lifecycle.shutdownCtx == nil {
+		return context.Background()
+	}
+	return bc.lifecycle.shutdownCtx
+}
+
 // resolveAgentEngine returns the kiro-cli agent engine, hard-pinned to v3
 // (KAS). vibekit is v3-only: the v2 (_kiro.dev/*) wire and its handlers
 // were removed, so a stray KIRO_AGENT_ENGINE=v1/v2 is deliberately
@@ -243,7 +258,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// Supervised is passed at creation and only here: the session/load path below
 	// does not repeat it, because KAS persists `autopilot` in its own session
 	// metadata and a loaded session already carries the value.
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -281,7 +296,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		bc.replayProjection.OpenReplayProjection(chatID)
 	}
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage()}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage()}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so whatever partial replay

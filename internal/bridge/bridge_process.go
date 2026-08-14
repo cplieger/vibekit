@@ -15,14 +15,22 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/procgroup"
 )
 
 // Start launches the kiro-cli subprocess and either creates a new ACP
 // session (acpSessionID == "") or loads an existing one. Exactly one call
-// per bridge instance. mcpServers is the ACP mcpServers array (enabled
-// user-configured MCP servers); pass nil for an empty set.
+// per bridge instance.
+//
+// ctx bounds the startup handshake only; opts.Lifetime bounds the subprocess.
 func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
-	b.lifecycleCtx = ctx
+	// The subprocess outlives this call. Start's ctx bounds the handshake
+	// below; opts.Lifetime bounds the process. See api.StartOpts.Lifetime for
+	// what taking the process lifetime from a turn context measured like.
+	b.lifecycleCtx = opts.Lifetime
+	if b.lifecycleCtx == nil {
+		b.lifecycleCtx = context.WithoutCancel(ctx)
+	}
 	// Immutable after Start; read lock-free by SetModel / initialize.
 	b.agentEngine = opts.AgentEngine
 	b.enableHooks = opts.EnableHooks
@@ -31,7 +39,10 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	if opts.SessionID != "" && !api.ValidSessionID(opts.SessionID) {
 		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
 	}
-	if err := b.startProcess(opts.AgentEngine, opts.Model, opts.Effort); err != nil {
+	if opts.Model != "" && !validIdent(opts.Model) {
+		return fmt.Errorf("invalid model identifier: %q", opts.Model)
+	}
+	if err := b.startProcess(opts.AgentEngine); err != nil {
 		return err
 	}
 	if err := b.initialize(ctx); err != nil {
@@ -42,7 +53,7 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	if opts.SessionID != "" {
 		err = b.loadSession(ctx, opts.SessionID, opts.Model)
 	} else {
-		err = b.newSession(ctx, opts.Mode, opts.Supervised)
+		err = b.newSession(ctx, opts)
 	}
 	if err != nil {
 		b.Stop()
@@ -74,10 +85,16 @@ func (b *Bridge) Stop() {
 			b.stdin.Close()
 		}
 		if b.cmd != nil && b.cmd.Process != nil {
-			// Demote the expected case (process already exited after
-			// stdin close) to Debug so every graceful teardown doesn't
-			// emit an ERROR line.
-			if err := b.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			// The GROUP, not the head. kiro-cli passes its stdio down, so the
+			// stdin close above reaches the whole chain and is what lets it exit
+			// gracefully — but on kiro-cli 2.18.0 that no longer reclaims the
+			// tree, and a head-only kill left `kiro-cli-chat` plus its `node`
+			// child alive at ~250 MB, reparented to init, on every model switch,
+			// tab close and idle cull. See procgroup.Kill.
+			//
+			// Demote the expected case (process already exited after stdin
+			// close) to Debug so every graceful teardown doesn't emit an ERROR.
+			if err := procgroup.Kill(b.cmd.Process, syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
 				slog.Error("kill kiro-cli", "error", err)
 			}
 			// Wait releases the OS process entry so repeated chat
@@ -90,16 +107,24 @@ func (b *Bridge) Stop() {
 }
 
 // buildACPArgs assembles the kiro-cli `acp` invocation arguments. Kept
-// pure (no process side effects) so the arg shaping — including the
-// kiro-cli >=2.6 `--effort` flag and its validation — is unit-testable.
+// pure (no process side effects) so the arg shaping is unit-testable.
 //
-// The arg set is fixed (engine + model + effort): vibekit passes no
-// permission/trust flags. Tool-call authorization on v3 (KAS) is owned
-// by kiro-cli's native Cedar policy engine, which ignores the legacy
-// --trust-all-tools / --trust-tools flags (confirmed inert on the v3
-// acp wire — the permission prompt fires regardless), so vibekit no
-// longer emits them.
-func buildACPArgs(engine, model, effort string) []string {
+// The arg set is the engine and nothing else. vibekit passes no
+// permission/trust flags: tool-call authorization on v3 (KAS) is owned by
+// kiro-cli's native Cedar policy engine, which ignores the legacy
+// --trust-all-tools / --trust-tools flags (confirmed inert on the v3 acp
+// wire — the permission prompt fires regardless).
+//
+// It carries NO --model and NO --effort either, because kiro-cli REFUSES both
+// alongside --agent-engine=v3 and exits before it answers initialize:
+//
+//	error: the following arguments are not supported with --agent-engine=v3: --model, --effort
+//
+// Measured against 2.17.0 and 2.18.0; `-v` is the only other flag v3 accepts.
+// So a launch flag was never how a v3 session got its model, and emitting one
+// killed the process: see bridge_session.go applyInitialModel /
+// applyInitialEffort for the config-option path that replaces it.
+func buildACPArgs(engine string) []string {
 	// The agent engine determines which ACP methods the agent registers.
 	// Default to v3 (KAS); vibekit is v3-only. v3 requires the host to
 	// answer the _kiro/auth/getAccessToken + _kiro/terminal/shell_type
@@ -107,22 +132,10 @@ func buildACPArgs(engine, model, effort string) []string {
 	if engine == "" {
 		engine = api.AgentEngineV3
 	}
-	args := []string{"acp", "--agent-engine", engine}
-	if model != "" && model != api.ModelAuto {
-		args = append(args, "--model", model)
-	}
-	// kiro-cli >=2.6 accepts an initial effort at launch. Validate
-	// defensively — the value flows into exec args.
-	if effort != "" && api.EffortLevel(effort).Valid() {
-		args = append(args, "--effort", effort)
-	}
-	return args
+	return []string{"acp", "--agent-engine", engine}
 }
 
-func (b *Bridge) startProcess(engine, model, effort string) error {
-	if !validIdent(model) {
-		return fmt.Errorf("invalid model identifier: %q", model)
-	}
+func (b *Bridge) startProcess(engine string) error {
 	if b.cliPath == "" {
 		// The install manager has no active version: either the first-boot
 		// install is still running or it failed with nothing on the volume to
@@ -137,16 +150,20 @@ func (b *Bridge) startProcess(engine, model, effort string) error {
 	// set_effort commands still win afterwards via session/set_config_option.
 	// Already filtered (see acp_args.go) — never trust this slice to be safe
 	// because it came through StartOpts.
-	args := append(buildACPArgs(engine, model, effort), b.extraArgs...)
-	// Lifecycle is owned by Stop(), not by a context. The
-	// lifecycleCtx is a belt-and-braces kill signal: if the hub
-	// shuts down and Stop() races or panics, the OS-level context
-	// cancellation kills the subprocess.
+	args := append(buildACPArgs(engine), b.extraArgs...)
+	// Normal teardown is owned by Stop(). lifecycleCtx is the hub's shutdown
+	// context: a belt-and-braces kill so a bridge cannot outlive the process
+	// if Stop() races or panics. Start guarantees it is non-nil, and it is
+	// never a request or turn context — see api.StartOpts.Lifetime.
 	ctx := b.lifecycleCtx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	b.cmd = exec.CommandContext(ctx, b.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
+	// Own process group, so teardown can reclaim the whole tree. Closing stdin
+	// first is still what gives kiro-cli a chance to exit on its own, but it is
+	// no longer sufficient: see procgroup.Kill for the 2.18.0 measurement.
+	b.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if len(b.extraEnv) > 0 {
 		// Appended LAST, so the active version directory wins PATH resolution
 		// over anything the inherited environment puts ahead of it. A nil Env
@@ -157,26 +174,28 @@ func (b *Bridge) startProcess(engine, model, effort string) error {
 	// Default CommandContext behavior is immediate SIGKILL; Cancel + WaitDelay
 	// (Go 1.20+) escalate to SIGKILL only after a 5s SIGTERM grace period,
 	// giving kiro-cli a chance to flush its own state. Stop() (called for
-	// normal teardown) still uses Process.Kill directly so chat-switch and
-	// tab-close teardown remain instantaneous; this path only fires if Stop
-	// races or panics during hub shutdown.
+	// normal teardown) goes straight to SIGKILL so chat-switch and tab-close
+	// teardown remain instantaneous; this path only fires if Stop races or
+	// panics during hub shutdown.
 	//
-	// Closing stdin FIRST is what makes the grace period mean anything, and it
-	// is the whole reason Stop() reclaims the tree. vibekit spawns
-	// `kiro-cli acp` on pipes and the head passes its stdio down, so the tree
-	// (kiro-cli -> kiro-cli-chat -> node, ~300 MB) shares one session with no
-	// setsid() and closing our write end delivers EOF to the entire chain. A
-	// bare head SIGTERM does not: WaitDelay's SIGKILL escalation targets the
-	// head only, so the children keep running with nobody holding their stdin.
-	// Measured on kiro-cli 2.16.0: signal-without-close leaked 2/2 trials at
-	// ~250 MB each, while close-then-signal leaked 0/2. Signal errors are
-	// returned; a Close error is not, because a second Close is the expected
-	// case when Stop() already ran.
+	// Closing stdin FIRST is what makes the grace period mean anything: vibekit
+	// spawns `kiro-cli acp` on pipes and the head passes its stdio down, so the
+	// tree (kiro-cli -> kiro-cli-chat -> node, ~300 MB) shares one session and
+	// closing our write end delivers EOF to the entire chain, letting kiro-cli
+	// exit on its own terms.
+	//
+	// The signal then goes to the GROUP rather than the head. Closing stdin
+	// used to be enough by itself — measured on kiro-cli 2.16.0,
+	// signal-without-close leaked 2/2 trials at ~250 MB each while
+	// close-then-signal leaked 0/2 — and on 2.18.0 it is not: one ordinary
+	// teardown left `kiro-cli-chat` alive at 33 MB with its `node` child at
+	// 218 MB, reparented to init. Signal errors are returned; a Close error is
+	// not, because a second Close is the expected case when Stop() already ran.
 	b.cmd.Cancel = func() error {
 		if b.stdin != nil {
 			_ = b.stdin.Close()
 		}
-		return b.cmd.Process.Signal(syscall.SIGTERM)
+		return procgroup.Kill(b.cmd.Process, syscall.SIGTERM)
 	}
 	b.cmd.WaitDelay = 5 * time.Second
 	stdin, err := b.cmd.StdinPipe()
