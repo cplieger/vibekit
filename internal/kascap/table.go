@@ -192,9 +192,14 @@ readers are createNewSessionState, which calls resolveWorkflows(parsed2)
 over parseSettings(kiroMeta?.settings) off the session call's own _meta
 with NO persisted default, and hydrateSessionForLoad, which passes
 persisted.metadata.workflowsEnabled as that default. Nothing on the
-connection door reads settings.workflows at all (2.18.0: the
-isSettingEnabled(settings, "...") set is codeIntelligence, inlineAgents,
-knowledge, subagentOrchestration, toolSearch), so declaring it at
+connection door reads settings.workflows at all — on 2.18.0 the literal
+isSettingEnabled key set is codeIntelligence, goal, inlineAgents,
+knowledge, subagentOrchestration, toolSearch and _providerPowers, and
+workflows is absent from every isSettingEnabled AND every
+isFeatureEnabled call in the bundle (the latter matters because a
+connection-door closure bridges initialize's settings onto the feature-flag
+provider, so a key read that way WOULD be connection-scoped) — so
+declaring it at
 initialize resolved absent-to-false on every session and cost the agent
 the entire workflow tool array with no error, no log and no -32601.
 
