@@ -288,6 +288,13 @@ class Elements {
     return byId("history-btn");
   }
 
+  // Transcript search. The Ctrl+F overlay's toolbar trigger — the hotkey used
+  // to be the only door, which left the feature undiscoverable and unreachable
+  // without a keyboard.
+  get findBtn(): HTMLButtonElement {
+    return byId("find-btn");
+  }
+
   // Kiro configuration browser (the book icon's page)
   get docsBtn(): HTMLButtonElement {
     return byId("docs-btn");

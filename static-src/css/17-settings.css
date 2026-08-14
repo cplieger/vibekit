@@ -160,6 +160,17 @@
   margin-block-end: var(--sp-3);
 }
 
+/* An unconnected provider has no accounts and no slot content, but both
+ * containers were still in the flow at height 0 — and a flex `gap` applies
+ * between zero-height siblings just the same. That put 16px of dead space under
+ * a 36px header inside a 70px box, so the logo/name/+ row read as stuck to the
+ * top of an oversized card. Removing empty children from the flow leaves the
+ * symmetric block padding to centre the header by itself. */
+.forge-kind-section > .forge-account-list:empty,
+.forge-kind-section > .forge-kind-slot:empty {
+  display: none;
+}
+
 .forge-kind-header {
   display: flex;
   align-items: center;
@@ -364,12 +375,7 @@
   transform: rotate(90deg);
 }
 
-.forge-account-repos-empty {
-  padding: var(--sp-2) var(--sp-3);
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-}
+/* Shell is the canonical empty state in 18-pages.css. */
 
 .forge-account-repos-list {
   list-style: none;
@@ -1025,12 +1031,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.repo-picker-empty {
-  padding: var(--sp-4);
-  text-align: center;
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-}
+/* Shell is the canonical empty state in 18-pages.css. */
 
 /* --- Pull request panel (inside the git view) --- */
 
@@ -1070,11 +1071,7 @@
   text-decoration: underline;
 }
 
-.git-pr-empty {
-  font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
-  font-style: italic;
-}
+/* Shell is the canonical empty state in 18-pages.css. */
 
 .git-pr-skeleton {
   font-size: var(--fs-sm);

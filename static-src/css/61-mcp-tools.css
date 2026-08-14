@@ -427,8 +427,41 @@
   height: 100vh !important;
   max-height: none !important;
   border-radius: 0;
+
+  /* Geometry SNAPS. The panel's base rule transitions `height`, so entering
+   * fullscreen used to tween 16rem → 100vh while `position: fixed` applied
+   * instantly — the "opens downwards" motion. A docked height and a viewport
+   * height are not the same kind of measurement, so interpolating between them
+   * animates the wrong property; the state change is a fade instead. */
+  transition: none !important;
+  animation: vk-shell-fs-in var(--dur-standard) var(--ease-enter) both;
+}
+
+/* Leaving is its own class because the panel has already left the fullscreen
+ * state by the time CSS could react to the class being dropped (agent-terminal.ts
+ * holds it for one animation). */
+.shell-panel.shell-fullscreen-leaving {
+  animation: vk-shell-fs-out var(--dur-exit) var(--ease-exit) both;
 }
 /* stylelint-enable declaration-no-important */
+
+/* A fade with a whisper of scale, so the surface reads as arriving rather than
+ * growing. Kept small: the panel covers the viewport, and a large scale on a
+ * full-screen surface is nauseating. */
+@keyframes vk-shell-fs-in {
+  from {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
+@keyframes vk-shell-fs-out {
+  to {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
 .shell-panel.shell-fullscreen .shell-resize {
   display: none;
 }

@@ -28,6 +28,15 @@
   transition: transform var(--dur-micro) var(--ease-micro);
 }
 
+/* An EXPANDED pill is exempt. The expanded card is a CHILD of the pill button
+ * (deliberately — the pattern is inline growth, not a floating popup), so the
+ * press transform scaled the open menu along with its trigger and every click
+ * inside the menu made the whole card jump. With the menu open the menu itself
+ * is the feedback, so there is nothing for a press scale to confirm. */
+.pill.pill-expanded:active {
+  transform: none;
+}
+
 /* ==========================================================================
    Canonical keyframe library (vk-* prefix)
    ========================================================================== */

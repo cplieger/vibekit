@@ -41,6 +41,18 @@ export interface Turn {
   /** Turn start — the trigger's timestamp, else the first body message's. */
   ts: number;
   outcome: TurnOutcome;
+  /** The NEXT turn's trigger — what a rewind from this turn's footer addresses.
+   *
+   *  Rewind reverts to the state right AFTER this turn: KAS drops the message
+   *  it is given plus everything following, so keeping turn N means addressing
+   *  turn N+1's user message. That is why the target lives on the previous
+   *  turn rather than its own — the footer says "go back to here", and here is
+   *  the line below it.
+   *
+   *  Undefined on the last turn (nothing after it to discard, so no button)
+   *  and when the next turn has no trigger (an agent-initiated turn has no
+   *  user message, and KAS refuses to revert to anything else). */
+  rewindTo: Message | undefined;
 }
 
 /** Per-turn ledger inputs, summed across the turn's body messages.
@@ -90,6 +102,7 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
         body: m.role === "user" ? [] : [m],
         ts: m.ts,
         outcome: "completed",
+        rewindTo: undefined,
       });
       continue;
     }
@@ -101,6 +114,10 @@ export function projectTurns(messages: readonly Message[], thinking: boolean): T
       continue;
     }
     t.outcome = deriveOutcome(t, thinking && i === turns.length - 1);
+    // Rewinding from turn i means discarding turn i+1 onward, so the target is
+    // the NEXT turn's trigger. The last turn gets none, which is what removes
+    // its button.
+    t.rewindTo = turns[i + 1]?.trigger;
   }
   return turns;
 }

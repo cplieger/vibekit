@@ -106,9 +106,11 @@
     </nav>
 
     <main id="chat-area">
-      <div id="global-progress" class="global-progress" aria-hidden="true"></div>
       <div class="chat-toolbar">
         <span id="toolbar-title" class="toolbar-title"></span>
+        <button type="button" id="find-btn" class="icon-btn" data-tooltip="Search this chat (Ctrl+F)" aria-label="Search this chat">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        </button>
         <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
         </button>
@@ -120,7 +122,7 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         </button>
         <button type="button" id="docs-btn" class="icon-btn" data-tooltip="Kiro docs" aria-label="Kiro docs">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4.5A2.5 2.5 0 014.5 2H9a2 2 0 012 2v16a1.5 1.5 0 00-1.5-1.5H4.5A2.5 2.5 0 012 16z"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a2 2 0 00-2 2v16a1.5 1.5 0 011.5-1.5h5A2.5 2.5 0 0022 16z"/></svg>
+          <svg class="icon-book" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6.5v13.5"/><path d="M2 4.5A2.5 2.5 0 014.5 2H9a3 3 0 013 3v1"/><path d="M2 4.5V16A2.5 2.5 0 004.5 18.5H9a3 3 0 013 1.5"/><path d="M22 4.5A2.5 2.5 0 0019.5 2H15a3 3 0 00-3 3v1"/><path d="M22 4.5V16A2.5 2.5 0 0119.5 18.5H15a3 3 0 00-3 1.5"/></svg>
         </button>
         <button type="button" id="history-btn" class="icon-btn" data-tooltip="History" aria-label="History">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -171,7 +173,7 @@
             <ul id="attachment-row" class="attachment-row hidden" aria-label="Attachments"></ul>
             <ul id="queued-row" class="queued-row hidden" aria-label="Prompts queued to send"></ul>
             <div class="prompt-pills">
-              <button id="context-indicator" class="pill pill-context pill-expandable" type="button" aria-label="Context usage">
+              <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage — tokens, credits and turns for this chat" aria-label="Context usage">
                 <svg class="context-ring" viewBox="0 0 20 20" width="16" height="16">
                   <circle cx="10" cy="10" r="8" fill="none" stroke="var(--c-border)" stroke-width="2.5"/>
                   <circle id="context-ring-fill" cx="10" cy="10" r="8" fill="none" stroke="var(--c-green)"
@@ -202,7 +204,7 @@
                 <span id="ctx-model-pill">auto</span>
                 <span id="model-switch-list" class="pill-expand-content pill-model-list hidden"></span>
               </button>
-              <button id="role-pill" class="pill pill-role pill-expandable" type="button" aria-label="Agent role">
+              <button id="role-pill" class="pill pill-role pill-expandable" type="button" data-tooltip="Switch mode for this chat" aria-label="Agent role">
                 <span id="role-pill-icon" class="pill-role-icon"></span>
                 <span id="role-pill-label" class="pill-role-label">Default</span>
                 <span id="role-list" class="pill-expand-content pill-role-list hidden"></span>
@@ -866,16 +868,21 @@
       <div id="history-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">History</h2>
-          <p class="section-hint">Previous chats and workflow runs in this workspace, newest first. Click a chat to reopen it, or a run to review what it did.</p>
           <div class="hist-search">
             <label class="sr-only" for="hist-search-input">Search conversations</label>
-            <input
-              id="hist-search-input"
-              type="search"
-              class="hist-search-input"
-              placeholder="Search conversations…"
-              autocomplete="off"
-            >
+            <span class="hist-search-field">
+              <svg class="hist-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7"/>
+                <path d="M21 21l-4.35-4.35"/>
+              </svg>
+              <input
+                id="hist-search-input"
+                type="search"
+                class="hist-search-input"
+                placeholder="Search conversations…"
+                autocomplete="off"
+              >
+            </span>
             <div id="hist-search-note" class="hist-search-note text-muted" role="status"></div>
           </div>
           <div id="history-table" class="list-container">

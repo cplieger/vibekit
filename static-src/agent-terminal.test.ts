@@ -161,7 +161,13 @@ describe("per-terminal isolation", () => {
 });
 
 describe("fullscreen toggle", () => {
-  it("mirrors the panel class onto aria-pressed (initialized false at wiring)", () => {
+  // Entering is immediate. LEAVING holds the fullscreen class for one exit
+  // animation (CSS cannot transition an element out of a state it has already
+  // left), so aria-pressed flips at once — the control's state is the user's
+  // intent, not the animation's progress — and the class drops when the fade
+  // ends. The timeout is the fallback for reduced motion and suspended
+  // renderers, where animationend may never fire.
+  it("mirrors the panel class onto aria-pressed, holding the class for the exit fade", async () => {
     const btn = document.getElementById("shell-fullscreen-btn") as HTMLButtonElement;
     const panel = document.getElementById("shell-panel")!;
     expect(btn.getAttribute("aria-pressed")).toBe("false");
@@ -171,7 +177,28 @@ describe("fullscreen toggle", () => {
     expect(btn.getAttribute("aria-pressed")).toBe("true");
 
     btn.click();
-    expect(panel.classList.contains("shell-fullscreen")).toBe(false);
     expect(btn.getAttribute("aria-pressed")).toBe("false");
+    expect(panel.classList.contains("shell-fullscreen-leaving")).toBe(true);
+
+    panel.dispatchEvent(new Event("animationend"));
+    expect(panel.classList.contains("shell-fullscreen")).toBe(false);
+    expect(panel.classList.contains("shell-fullscreen-leaving")).toBe(false);
+  });
+
+  // Without the timeout a renderer that never fires animationend would strand
+  // the panel fullscreen with the button already reading "off".
+  it("drops the fullscreen class even if animationend never fires", async () => {
+    vi.useFakeTimers();
+    try {
+      const btn = document.getElementById("shell-fullscreen-btn") as HTMLButtonElement;
+      const panel = document.getElementById("shell-panel")!;
+      btn.click();
+      btn.click();
+      expect(panel.classList.contains("shell-fullscreen")).toBe(true);
+      vi.advanceTimersByTime(300);
+      expect(panel.classList.contains("shell-fullscreen")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

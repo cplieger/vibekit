@@ -622,6 +622,19 @@ function findInputFocused(): boolean {
  *  (or refocuses) the in-chat find widget when the chat view is active. A
  *  second Ctrl-F while the find field already has focus falls through to the
  *  browser's native find (the escape hatch). */
+/** Open the transcript search from a control rather than the hotkey.
+ *
+ *  Ctrl+F was the ONLY way in, which made a whole feature undiscoverable — and
+ *  on a tablet with no keyboard, unreachable. The toolbar button calls this.
+ *  Guarded the same way the hotkey is: search only means something over a
+ *  visible transcript. */
+export function openChatFind(): void {
+  if (!chatFindActiveContext()) {
+    return;
+  }
+  openFindInChat();
+}
+
 export function handleFindHotkey(e: KeyboardEvent): void {
   if (e.key.toLowerCase() !== "f" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) {
     return;

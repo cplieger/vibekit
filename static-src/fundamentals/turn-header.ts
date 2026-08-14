@@ -38,6 +38,16 @@ const OUTCOME_LABEL: Record<TurnOutcome, string> = {
   failed: "Failed",
 };
 
+/** Hover text for the dot. Says what the state MEANS rather than repeating the
+ *  one-word label, because the complaint the tooltip answers was "I have no
+ *  idea what this represents". */
+const OUTCOME_TOOLTIP: Record<TurnOutcome, string> = {
+  running: "This turn is still running",
+  completed: "This turn finished normally",
+  interrupted: "This turn was interrupted before it finished",
+  failed: "This turn failed",
+};
+
 /** Above this many characters, assume the text overflows three lines when the
  *  environment cannot measure (happy-dom has no layout, so `scrollHeight` is
  *  0 there). Deliberately generous: a false positive shows an unnecessary
@@ -60,14 +70,13 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   row.appendChild(el("span", { className: "turn-n" }, `#${String(d.n)}`));
   row.appendChild(el("span", { className: "turn-dot", role: "img" }));
   row.appendChild(el("time", { className: "turn-ts" }));
-  // Action slot: messages.ts mounts the per-turn Rewind here. Kept as an
-  // explicit element so the header owns its own layout and the action does not
-  // have to know the row's structure.
+  // Action slot: Rewind lives in the FOOTER now (it means "go back to after
+  // this turn", which reads correctly at the card's close and did not at its
+  // top), so the header's meta row carries no actions and needs no slot.
   // Match count, filled while a search is active. A fold should ADVERTISE what
   // is inside it rather than hiding it, which is the whole bargain that makes
   // collapse acceptable.
   row.appendChild(el("span", { className: "turn-hit-count" }));
-  row.appendChild(el("div", { className: "turn-head-actions" }));
   header.appendChild(row);
 
   const req = el("div", { className: "turn-req" });
@@ -101,6 +110,11 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
   const dot = header.querySelector<HTMLElement>(":scope > .turn-head-row > .turn-dot");
   if (dot !== null) {
     dot.setAttribute("aria-label", OUTCOME_LABEL[d.outcome]);
+    // A visible dot with no explanation is a puzzle, so it carries its meaning
+    // on hover like every other status affordance in the app. The CSS hides it
+    // outright on a completed turn — see 29-turns.css — because "it worked" is
+    // the expected case and a marker on every row communicates nothing.
+    dot.setAttribute("data-tooltip", OUTCOME_TOOLTIP[d.outcome]);
   }
 
   const time = header.querySelector<HTMLTimeElement>(":scope > .turn-head-row > .turn-ts");

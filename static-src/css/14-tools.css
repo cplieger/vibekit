@@ -235,28 +235,13 @@
   text-align: center;
 }
 
-.tool-toggle {
-  background: none;
-  border: none;
-  color: var(--c-text-tertiary);
-  cursor: pointer;
-  line-height: 0;
-  padding: var(--sp-1);
-  min-width: var(--btn-h);
-  min-height: var(--btn-h);
-  border-radius: var(--r);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition:
-    background var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
-
-  &:hover {
-    background: var(--c-bg-tertiary);
-    color: var(--c-text-primary);
-  }
-}
+/* `.tool-toggle` used to be an ICON BUTTON and this rule sized it like one:
+ * a 36px `--btn-h` box. It is a `.toggle` SWITCH now (2.25rem x 1.25rem,
+ * 18-pages.css), and the leftover min-height stretched every switch to the full
+ * row height — a tall grey pill instead of a thin track. Deleted rather than
+ * narrowed: there is no icon-button `.tool-toggle` left to style. The switch's
+ * only tool-specific rule is `flex: none`, further down this file.
+ */
 
 /* .tool-details is a uip-disclosure-region: the primitive drives the height
  * 0↔auto (inline) and marks the collapsed region aria-hidden + inert. This
@@ -783,6 +768,19 @@
 .action-pill {
   min-width: var(--btn-h);
   line-height: 0;
+  /* An icon-plus-label pill needs the gap and the horizontal padding that
+   * `.btn` gets. Without them "Update all" rendered as `⟳Update all` with the
+   * glyph welded to the first letter and the text flush against the right
+   * border. The uniform `--sp-2` from the shared base is only right for the
+   * icon-ONLY variant, which `min-width` above still covers. */
+  gap: var(--sp-2);
+  padding-inline: var(--sp-3);
+}
+
+/* The icon-only case keeps the square padding: nothing to separate, and the
+ * wider inline padding would make a 36px button oblong. */
+.action-pill:not(:has(> :not(svg))) {
+  padding-inline: var(--sp-2);
 }
 
 .btn,
@@ -932,14 +930,7 @@
   text-decoration: underline;
 }
 
-.git-empty,
-.list-empty {
-  padding: var(--sp-2);
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-sm);
-  font-style: italic;
-  background: var(--c-bg-secondary);
-}
+/* Shell is the canonical empty state in 18-pages.css. */
 
 .git-commit-area {
   display: flex;

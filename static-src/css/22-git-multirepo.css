@@ -75,6 +75,8 @@
 /* Centered empty state: fills the available vertical space below the
  * tab toolbar so the icon + message sit at the visual center of the
  * tab body, not stuck at the top. */
+/* Inherits the canonical empty-state shell (18-pages.css); these are the
+   composed-state extras only: it fills its pane and stacks icon/title/hint. */
 .git-multirepo-empty {
   flex: 1;
   min-height: 30vh;
@@ -83,11 +85,6 @@
   align-items: center;
   justify-content: center;
   gap: var(--sp-2);
-  padding: var(--sp-5) var(--sp-4);
-  text-align: center;
-  color: var(--c-text-tertiary);
-  border: 1px dashed var(--c-border);
-  border-radius: var(--r);
 }
 
 .git-multirepo-empty-icon {

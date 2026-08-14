@@ -59,7 +59,7 @@ import { initAgentTerminals } from "./agent-terminal.js";
 import { initTooltips } from "./tooltip.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
-import { handleFindHotkey } from "./find-in-chat.js";
+import { handleFindHotkey, openChatFind } from "./find-in-chat.js";
 import { forceSettingsTab, loadSettingsTabData } from "./settings-tabs.js";
 import { forceGitTab } from "./git-tabs.js";
 import { loadGitRepos } from "./git.js";
@@ -177,6 +177,9 @@ function init(): void {
   initChatAttach();
   initTaskListPill();
   // Wire toolbar history button. Hidden when retention is 0 (nothing kept).
+  $.findBtn.addEventListener("click", () => {
+    openChatFind();
+  });
   $.docsBtn.addEventListener("click", () => {
     void import("./docs.js")
       .then(({ showDocsView }) => {
@@ -235,6 +238,7 @@ function init(): void {
   // browser's native find before it opens — but only when the chat view is the
   // active context (see find-in-chat.ts; native find is left alone elsewhere).
   document.addEventListener("keydown", handleFindHotkey, true);
+  document.addEventListener("keydown", focusComposerOnTyping);
 
   // Action-framework global: live-log every action error to the
   // browser console so failures are visible in DevTools regardless of
@@ -263,66 +267,6 @@ function init(): void {
       inst.error,
     );
   });
-
-  // Global progress indicator: the 2px sweep stripe at the top of the chat
-  // area, shown only for genuinely slow foreground work (B1). Three rules
-  // keep it calm — the old raw pendingCount edge-toggle lit it on every
-  // view/tab switch and every background poll:
-  //   - background/advisory actions never drive it (name filter below);
-  //   - it appears only after 150ms of continuous pending work, so fast
-  //     actions never flash it (design-system skeleton timing);
-  //   - once shown it stays visible >= 300ms, so it never flickers.
-  const progressEl = document.getElementById("global-progress");
-  if (progressEl !== null) {
-    const SHOW_DELAY_MS = 150;
-    const MIN_VISIBLE_MS = 300;
-    // Advisory background actions: the git-badge poll family (fires every
-    // 15s with zero user interaction) and the conflicts prefetch dispatched
-    // on every chat activation. User-initiated conflict work
-    // (conflicts.open_diff) still drives the bar.
-    const PROGRESS_IGNORE = /^(?:git-badge\.|conflicts\.load$)/;
-    const pendingIds = new Set<string>();
-    let showTimer: ReturnType<typeof setTimeout> | undefined;
-    let hideTimer: ReturnType<typeof setTimeout> | undefined;
-    let shownAt = 0;
-    subscribeToActions((inst) => {
-      if (PROGRESS_IGNORE.test(inst.name)) {
-        return;
-      }
-      if (inst.status === "pending") {
-        pendingIds.add(inst.id);
-      } else {
-        pendingIds.delete(inst.id);
-      }
-      if (pendingIds.size > 0) {
-        if (hideTimer !== undefined) {
-          clearTimeout(hideTimer);
-          hideTimer = undefined;
-        }
-        if (showTimer === undefined && !progressEl.classList.contains("active")) {
-          showTimer = setTimeout(() => {
-            showTimer = undefined;
-            shownAt = Date.now();
-            progressEl.classList.add("active");
-          }, SHOW_DELAY_MS);
-        }
-      } else {
-        if (showTimer !== undefined) {
-          clearTimeout(showTimer);
-          showTimer = undefined;
-        }
-        if (progressEl.classList.contains("active") && hideTimer === undefined) {
-          hideTimer = setTimeout(
-            () => {
-              hideTimer = undefined;
-              progressEl.classList.remove("active");
-            },
-            Math.max(0, MIN_VISIBLE_MS - (Date.now() - shownAt)),
-          );
-        }
-      }
-    });
-  }
 
   // Register the service worker unconditionally at boot (independent of the
   // push opt-in): an active SW with a fetch handler is a PWA install-criteria
@@ -821,5 +765,54 @@ function applyInitialRoute(): void {
 onPopState((route: Route) => {
   applyRoute(route);
 });
+
+/** Redirect a bare keystroke to the composer, so a fresh chat can be typed into
+ *  without clicking the box first.
+ *
+ *  Opening a new chat left focus on `<body>`, so the first characters a user
+ *  typed went nowhere — the classic "I typed my prompt and it vanished". This is
+ *  the message-app convention (Slack, Discord, iMessage all do it).
+ *
+ *  Deliberately narrow. It only fires for a plain printable character with no
+ *  modifier, and it bails whenever focus already sits somewhere that wants keys:
+ *  any input/textarea/select/contenteditable, the terminal surface, or an open
+ *  dialog. Modifier chords are untouched, so Ctrl+F, Cmd+K and every browser
+ *  shortcut still work — including the transcript search whose own handler runs
+ *  on the capture phase ahead of this one. */
+function focusComposerOnTyping(e: KeyboardEvent): void {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) {
+    return;
+  }
+  // A single printable character. `key.length === 1` excludes Enter, Escape,
+  // Tab, the arrows and the F-keys without enumerating them.
+  if (e.key.length !== 1) {
+    return;
+  }
+  const active = document.activeElement;
+  if (active instanceof HTMLElement) {
+    if (
+      active instanceof HTMLInputElement ||
+      active instanceof HTMLTextAreaElement ||
+      active instanceof HTMLSelectElement ||
+      active.isContentEditable ||
+      active.closest("#shell-panel, dialog[open], .wt-root") !== null
+    ) {
+      return;
+    }
+  }
+  // Only when a transcript is actually on screen; typing on Settings or the file
+  // browser must not yank focus into a composer the user cannot see.
+  const chatView = document.getElementById("chat-view");
+  if (chatView === null || chatView.classList.contains("hidden")) {
+    return;
+  }
+  const input = $.promptInput;
+  if (input.disabled) {
+    return;
+  }
+  // Focus and let the SAME keystroke land in the box: preventing the default and
+  // appending by hand would drop dead keys and IME composition.
+  input.focus();
+}
 
 document.addEventListener("DOMContentLoaded", init);

@@ -338,14 +338,7 @@
   overflow: hidden;
 }
 
-.mcp-empty {
-  padding: var(--sp-4);
-  background: var(--c-bg-secondary);
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-sm);
-  font-style: italic;
-  text-align: center;
-}
+/* Shell is the canonical empty state in 18-pages.css. */
 
 /* Notice shown when org governance disables MCP (mcp_enabled=false); the add
    affordance is disabled alongside it. */
