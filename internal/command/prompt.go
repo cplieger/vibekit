@@ -551,7 +551,16 @@ func promptFailureReason(err error) string {
 	// triplet's raw JSON at the user.
 	msg := re.Message
 	if msg == "" {
-		msg = api.RPCErrorText(err)
+		// NOT RPCErrorText here. On a mapped error `data` is the machine triplet,
+		// which parses as neither of RPCDetails' two shapes, so it would fall
+		// through to that function's raw-JSON fallback and print
+		// {"errorType":…,"requestId":…} at the user — the exact rendering the
+		// comment above names as the regression. errorType is the one token in the
+		// triplet a person can read.
+		msg = d.ErrorType
+		if msg == "" {
+			msg = "the model backend refused the request"
+		}
 	}
 	if d.RetryErrorType == kasRetryThrottling {
 		msg += " kiro-cli already retried; waiting a moment before resending is the only thing that helps."

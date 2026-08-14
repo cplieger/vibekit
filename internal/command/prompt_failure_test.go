@@ -209,6 +209,29 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 		t.Errorf("a validation error was given throttle advice: %q", reason)
 	}
 
+	// A mapped error with an EMPTY message must not fall back to the raw triplet.
+	// `data` is machine fields here, so RPCDetails parses it as neither of its two
+	// shapes and would return the JSON verbatim — the rendering this function's
+	// own comment names as the regression. The cases above cannot reach that
+	// branch, because KAS normally fills `message`.
+	blank := rpcErr(t, api.RPCCodeBridgeExited, "", mappedErrorData{
+		ErrorType:      "ClientThrottleError",
+		RetryErrorType: "THROTTLING",
+		RequestID:      "req-11",
+	})
+	got = promptFailureReason(blank)
+	for _, leak := range []string{"{", "retryErrorType", "\"requestId\""} {
+		if strings.Contains(got, leak) {
+			t.Errorf("empty-message mapped error leaked the raw triplet (%q) at the user: %q", leak, got)
+		}
+	}
+	if !strings.Contains(got, "ClientThrottleError") {
+		t.Errorf("reason %q does not name the errorType, the one readable token in the triplet", got)
+	}
+	if !strings.Contains(got, "req-11") {
+		t.Errorf("reason %q dropped the request id", got)
+	}
+
 	// Anything else falls through verbatim: inventing prose for an error we do
 	// not understand would hide the only text there is.
 	plain := errors.New("some other failure")

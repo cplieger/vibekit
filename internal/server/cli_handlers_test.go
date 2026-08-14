@@ -95,8 +95,15 @@ func TestHandleDiagnostics_StdoutOnlyAndShape(t *testing.T) {
 
 // TestHandleDiagnostics_OversizeCappedAndMarked verifies an oversize
 // diagnostics dump is capped at diagnosticsMaxBytes and marked "[truncated]".
+//
+// The fixture is LINE-oriented on purpose. Its subject is the cap, and a
+// newline-free fixture would instead pin the line-boundary trim's no-newline
+// branch — where the correct answer is an empty body, not a byte-cut one — so it
+// would assert the opposite of
+// TestHandleDiagnostics_TruncatedDropsPartialLineWithNoNewline below.
 func TestHandleDiagnostics_OversizeCappedAndMarked(t *testing.T) {
-	f := &fakeCLIRunner{stdout: strings.Repeat("A", diagnosticsMaxBytes+5000)}
+	line := strings.Repeat("A", 63) + "\n"
+	f := &fakeCLIRunner{stdout: strings.Repeat(line, (diagnosticsMaxBytes+5000)/len(line))}
 	rec := postDiagnostics(t, f)
 
 	if rec.Code != http.StatusOK {
@@ -111,8 +118,38 @@ func TestHandleDiagnostics_OversizeCappedAndMarked(t *testing.T) {
 	if !strings.HasSuffix(report, marker) {
 		t.Fatalf("report missing %q suffix (len=%d)", marker, len(report))
 	}
-	if body := strings.TrimSuffix(report, marker); len(body) != diagnosticsMaxBytes {
-		t.Errorf("capped body len = %d, want %d", len(body), diagnosticsMaxBytes)
+	// Capped, then trimmed back to the last complete line, so the body is at most
+	// the cap and within one line of it.
+	body := strings.TrimSuffix(report, marker)
+	if len(body) > diagnosticsMaxBytes {
+		t.Errorf("capped body len = %d, want <= %d", len(body), diagnosticsMaxBytes)
+	}
+	if len(body) < diagnosticsMaxBytes-len(line) {
+		t.Errorf("capped body len = %d, want within one line of %d", len(body), diagnosticsMaxBytes)
+	}
+}
+
+// TestHandleDiagnostics_TruncatedDropsPartialLineWithNoNewline pins the branch
+// the line-boundary trim exists for: a capped dump containing no newline at all
+// is one partial line, so nothing survives it. Handing the byte-cut tail to
+// redact.Report is the stranded-secret case (an unterminated `"apiKey": "abc123`
+// does not match the secret-named-field rule), so an empty body is the correct
+// answer rather than a lossy one.
+func TestHandleDiagnostics_TruncatedDropsPartialLineWithNoNewline(t *testing.T) {
+	f := &fakeCLIRunner{stdout: strings.Repeat("A", diagnosticsMaxBytes+5000)}
+	rec := postDiagnostics(t, f)
+
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body not JSON: %v", err)
+	}
+	report := got["report"]
+	const marker = "\n\n[truncated]"
+	if !strings.HasSuffix(report, marker) {
+		t.Fatalf("report missing %q suffix (len=%d)", marker, len(report))
+	}
+	if body := strings.TrimSuffix(report, marker); body != "" {
+		t.Errorf("no-newline capped body = %d bytes, want 0 (whole dump is one partial line)", len(body))
 	}
 }
 
