@@ -55,11 +55,31 @@ var (
 	clientMetaReadRe = regexp.MustCompile(`\bclientMeta\??\.([A-Za-z_$][A-Za-z0-9_$]*)`)
 
 	// settingEnabledRe is the direct settings gate, absent-means-false.
-	settingEnabledRe = regexp.MustCompile(`isSettingEnabled\(settings,\s*"([^"]+)"\)`)
+	//
+	// Anchored on the CALLEE and the quoted key, not on the first argument. That
+	// argument varies by site — `settings`, `this.clientMeta?.settings ?? {}`,
+	// `parsedProviderSettings.data` — and the bundle mixes quote styles, so the
+	// old `isSettingEnabled\(settings,\s*"…"` form silently saw only 5 of the 7
+	// literal gates. It missed the `goal` gate and `_providerPowers` entirely,
+	// which is a large part of why four newly-declared keys had never appeared in
+	// unclaimed.txt.
+	settingEnabledRe = regexp.MustCompile(`isSettingEnabled\([^,()]*,\s*["']([A-Za-z_$][A-Za-z0-9_$]*)["']\)`)
 
 	// settingResolverRe is the resolver family, which reads the same block but
 	// applies a per-key default instead.
 	settingResolverRe = regexp.MustCompile(`parsed2\.data\.([A-Za-z_$][A-Za-z0-9_$]*)\?\.enabled`)
+
+	// settingDestructureRe is the resolver family's SECOND spelling. A resolver
+	// with a compound value (resolveSpecPlan, resolveSessionEviction) binds the
+	// member to a local before reading it, so `?.enabled` never follows the member
+	// access and settingResolverRe cannot see it.
+	//
+	// Anchored on the binding statement rather than a bare `parsed2.data.X`: an
+	// unrelated persisted-state parse reuses the local name `parsed2`, so the bare
+	// form additionally reports files, syncedAt, tools and version as settings
+	// keys. Measured against 2.18.0, this form adds exactly specPlan and
+	// sessionEviction.
+	settingDestructureRe = regexp.MustCompile(`const setting = parsed2\.data\.([A-Za-z_$][A-Za-z0-9_$]*)`)
 
 	// absentTrueResolverRe is settingResolverRe's inverse-default subset: a
 	// resolver whose fallback chain ends in a literal true, so an ABSENT key
@@ -154,6 +174,15 @@ func keysIn(re *regexp.Regexp, src string) []string {
 // a regex over a 21 MB third-party bundle, and the way each one dies is by
 // matching nothing after an upstream reshape — which would quietly turn the
 // census into a file of zero findings that passes forever.
+//
+// It catches a source that matches NOTHING. It does NOT catch one that matches a
+// SUBSET, and that is the failure this census actually had: settingEnabledRe was
+// anchored on a first argument that only 5 of 7 gate sites use, so it stayed
+// comfortably non-empty while missing the `goal` and `_providerPowers` gates.
+// A subset match is invisible to any self-check here, because the file has no
+// independent idea of how many keys there should be — the only real defence is
+// re-reading the patterns against the bundle on a version bump, which is what the
+// version pin forces.
 func requireNonEmpty(t *testing.T, source string, keys []string) []string {
 	t.Helper()
 	if len(keys) == 0 {
@@ -192,13 +221,22 @@ The bounded window below is only trustworthy while that binding is unique.`, ini
 	return slices.Compact(all)
 }
 
-// readSettingKeys returns every _meta.kiro.settings key the agent server reads,
-// across both the direct gate and the resolver family.
+// readSettingKeys returns the _meta.kiro.settings keys the agent server reads
+// through the three STATIC shapes: the direct isSettingEnabled gate, a resolver
+// reading `?.enabled` inline, and a resolver that destructures first.
+//
+// It cannot see a DYNAMICALLY keyed read, and that limit is inherent rather than
+// a pattern to fix: `isSettingEnabled(initSettings, feature)` bridges the
+// initialize settings block onto the feature-flag provider with a variable key,
+// so which keys flow through it is decided by the caller, not by this file. Such
+// a key is only visible where it is finally consulted as a literal, which for
+// every current case is one of the three shapes below.
 func readSettingKeys(t *testing.T, src string) []string {
 	t.Helper()
 	direct := requireNonEmpty(t, "isSettingEnabled calls", keysIn(settingEnabledRe, src))
 	resolved := requireNonEmpty(t, "settings resolvers", keysIn(settingResolverRe, src))
-	all := slices.Concat(direct, resolved)
+	destructured := requireNonEmpty(t, "destructuring resolvers", keysIn(settingDestructureRe, src))
+	all := slices.Concat(direct, resolved, destructured)
 	slices.Sort(all)
 	return slices.Compact(all)
 }

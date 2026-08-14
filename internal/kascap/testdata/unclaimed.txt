@@ -15,6 +15,7 @@ capability specLinks
 capability telemetry
 capability telemetryEnabled
 capability textSearch
+setting _providerPowers
 setting fta
 setting inlineAgents
 setting steeringSupervisor

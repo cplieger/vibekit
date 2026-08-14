@@ -129,7 +129,7 @@ type decl struct {
 
 	// value is the wire value for an ungated row. Set explicitly on every such
 	// row rather than derived from the resolver, so the table never sends a
-	// nil that JSON renders as null; TestSendRowsCarryAValue enforces it.
+	// nil that JSON renders as null; TestDeclIsWellFormed enforces it.
 	// A gated row leaves this nil and its gate supplies the value.
 	value any
 

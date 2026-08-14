@@ -23,6 +23,7 @@ package translate
 // so it is recorded here. See StepSessions below.
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 
@@ -62,17 +63,26 @@ type kasRunNode struct {
 // run state and is not adopted as client state — the client refetches rather than
 // rendering a snapshot from an event.
 //
-// TWO scalars are read out of it, for the LOG line only. This frame is the one
-// lifecycle notification that carries no `workflowName`, and its
-// `parentSessionId` sits inside the state rather than beside it, so the terminal
-// record can only name the run and its origin from here. Reading two strings is
-// not the thing the comment above forbids: nothing here reaches the client, and
-// the alternative was remembering every launched run's name in a map, which is
-// the store this record exists to avoid.
+// `workflowName` IS read out of the state, for the LOG line only, because this is
+// the one lifecycle notification that carries no top-level `workflowName`.
+// Reading it is not the thing the comment above forbids: nothing here reaches the
+// client, and the alternative was remembering every launched run's name in a map,
+// which is the store this record exists to avoid.
+//
+// `parentSessionId` is read from BOTH places, top level first. The notification
+// bridge merges it top-level into EVERY lifecycle payload when the run has a
+// parent (createWorkflowNotificationBridge spreads `{...event.payload,
+// parentSessionId}` for all nine kinds, run_complete included), and upstream
+// treats that as the primary source with the copy inside the state as a
+// back-compat fallback. Decoding only the fallback is what this frame used to do,
+// and it is value-identical today — but the day the state copy goes away, the
+// terminal log line would silently stop while the launch line kept printing,
+// which is the exact asymmetry the two-line record exists to prevent.
 type kasRunComplete struct {
-	WorkflowID string `json:"workflowId"`
-	Status     string `json:"status"`
-	FinalState struct {
+	WorkflowID      string `json:"workflowId"`
+	Status          string `json:"status"`
+	ParentSessionID string `json:"parentSessionId"`
+	FinalState      struct {
 		WorkflowName    string `json:"workflowName"`
 		ParentSessionID string `json:"parentSessionId"`
 	} `json:"finalState"`
@@ -140,8 +150,8 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID api.ChatID, m
 	}
 	// Terminal covers success, failure, cancel and a policy stop, which is why
 	// the status travels on the line rather than being implied by its existence.
-	logAgentRun("agent-launched workflow run finished",
-		p.WorkflowID, p.FinalState.WorkflowName, p.FinalState.ParentSessionID, "status", p.Status)
+	logAgentRun("agent-launched workflow run finished", p.WorkflowID, p.FinalState.WorkflowName,
+		cmp.Or(p.ParentSessionID, p.FinalState.ParentSessionID), "status", p.Status)
 	t.steps.forgetRun(p.WorkflowID)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventRunFinished, chatID, api.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
