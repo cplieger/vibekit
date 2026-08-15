@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -24,7 +23,7 @@ func TestHandlePolicyChanged(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandlePolicyChanged(context.Background(), api.ChatID("c1"), &api.RPCResponse{
+	tr.HandlePolicyChanged(t.Context(), api.ChatID("c1"), &api.RPCResponse{
 		Params: mustJSON(t, map[string]any{"sessionId": "sess-1", "status": "success"}),
 	})
 
@@ -58,7 +57,7 @@ func TestHandlePolicyError(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandlePolicyError(context.Background(), api.ChatID("c1"), &api.RPCResponse{
+	tr.HandlePolicyError(t.Context(), api.ChatID("c1"), &api.RPCResponse{
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess-1",
 			"errors": []map[string]any{
@@ -86,8 +85,8 @@ func TestHandlePolicyError(t *testing.T) {
 func TestHandlePolicyMalformedNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
-	tr.HandlePolicyChanged(context.Background(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")})
-	tr.HandlePolicyError(context.Background(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")})
+	tr.HandlePolicyChanged(t.Context(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")})
+	tr.HandlePolicyError(t.Context(), api.ChatID("c1"), &api.RPCResponse{Params: []byte("{")})
 	if len(*events) != 0 {
 		t.Errorf("malformed params produced %d events, want 0", len(*events))
 	}

@@ -40,7 +40,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -122,7 +122,7 @@ func Capabilities() []string {
 	for c := range suggestedCapabilities {
 		out = append(out, c)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -337,8 +337,8 @@ func isCtrl(r rune) bool { return r < 0x20 || r == 0x7f }
 func Signature(r *Rule) string {
 	m := append([]string(nil), r.Match...)
 	e := append([]string(nil), r.Exclude...)
-	sort.Strings(m)
-	sort.Strings(e)
+	slices.Sort(m)
+	slices.Sort(e)
 	var b strings.Builder
 	b.WriteString(r.Capability)
 	b.WriteByte('|')

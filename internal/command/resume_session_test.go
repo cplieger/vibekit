@@ -1,7 +1,6 @@
 package command
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -47,7 +46,7 @@ func resumeReq(t *testing.T, chatID api.ChatID, sessionID, name string) *api.Cli
 func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	d := newTestDispatcher(t, store)
-	ctx := context.Background()
+	ctx := t.Context()
 	w := httptest.NewRecorder()
 
 	CmdResumeSession(d, ctx, w, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
@@ -83,7 +82,7 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 // chat whose history silently changed.
 func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := store.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "Existing"
 		c.RecordSession("sess_original")
@@ -137,12 +136,12 @@ func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 			d := newTestDispatcher(t, store)
 			w := httptest.NewRecorder()
 
-			CmdResumeSession(d, context.Background(), w, resumeReq(t, "c1", sid, ""))
+			CmdResumeSession(d, t.Context(), w, resumeReq(t, "c1", sid, ""))
 
 			if w.Code != http.StatusBadRequest {
 				t.Errorf("status = %d for session id %q, want 400", w.Code, sid)
 			}
-			if _, ok := store.Get(context.Background(), "c1"); ok {
+			if _, ok := store.Get(t.Context(), "c1"); ok {
 				t.Errorf("a chat was created for invalid session id %q", sid)
 			}
 		})

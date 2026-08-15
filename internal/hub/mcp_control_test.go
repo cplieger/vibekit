@@ -6,7 +6,6 @@ package hub
 // /api/mcp/status snapshot.
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -56,7 +55,7 @@ func TestReconnectMCPServer_FansOutToAllLiveBridges(t *testing.T) {
 	b1 := insertLiveBridge(t, h, "c1")
 	b2 := insertLiveBridge(t, h, "c2")
 
-	n := h.reconnectMCPServer(context.Background(), "everything")
+	n := h.reconnectMCPServer(t.Context(), "everything")
 	if n != 2 {
 		t.Fatalf("targeted = %d, want 2", n)
 	}
@@ -69,7 +68,7 @@ func TestReconnectMCPServer_FansOutToAllLiveBridges(t *testing.T) {
 
 func TestReconnectMCPServer_NoBridgesIsNoOp(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
-	if n := h.reconnectMCPServer(context.Background(), "everything"); n != 0 {
+	if n := h.reconnectMCPServer(t.Context(), "everything"); n != 0 {
 		t.Fatalf("targeted = %d, want 0", n)
 	}
 }
@@ -78,7 +77,7 @@ func TestGetMCPPrompt_CallsBridgeAndReturnsResult(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	b := insertLiveBridge(t, h, "c1")
 
-	res, err := h.getMCPPrompt(context.Background(), "everything", "simple-prompt", nil)
+	res, err := h.getMCPPrompt(t.Context(), "everything", "simple-prompt", nil)
 	if err != nil {
 		t.Fatalf("getMCPPrompt: %v", err)
 	}
@@ -95,7 +94,7 @@ func TestGetMCPResource_CallsBridge(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
 	b := insertLiveBridge(t, h, "c1")
 
-	if _, err := h.getMCPResource(context.Background(), "everything", "demo://x"); err != nil {
+	if _, err := h.getMCPResource(t.Context(), "everything", "demo://x"); err != nil {
 		t.Fatalf("getMCPResource: %v", err)
 	}
 	if !bridgeCalled(b, methodV3MCPGetResource) {
@@ -105,7 +104,7 @@ func TestGetMCPResource_CallsBridge(t *testing.T) {
 
 func TestMCPFetch_NoLiveBridgeErrors(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("everything"))
-	_, err := h.getMCPPrompt(context.Background(), "everything", "p", nil)
+	_, err := h.getMCPPrompt(t.Context(), "everything", "p", nil)
 	if !errors.Is(err, errNoLiveBridge) {
 		t.Fatalf("err = %v, want errNoLiveBridge", err)
 	}
@@ -178,7 +177,7 @@ func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	prompts := []api.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
 	resources := []api.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
-	h.mcpRegistry.recordConnected(context.Background(), "everything", nil, prompts, resources)
+	h.mcpRegistry.recordConnected(t.Context(), "everything", nil, prompts, resources)
 
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {

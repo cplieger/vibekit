@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -27,7 +26,7 @@ func FuzzBuildHistory(f *testing.F) {
 		}
 
 		chatID := api.ChatID("fuzz-history-1")
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create chat with messages of various roles.
 		err = s.Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {

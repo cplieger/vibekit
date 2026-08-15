@@ -33,7 +33,7 @@ const accountUsageCallTimeout = 45 * time.Second
 // AccountUsage fetches account/subscription usage via the utility bridge
 // and parses the KAS getUsage result into the domain shape. Lazily
 // constructs the utility bridge (same pattern as UtilityPrompt) so the
-// footer works even when no chat is open. Satisfies api.AccountUsageProvider.
+// footer works even when no chat is open. Satisfies server.AccountUsageProvider.
 func (h *Hub) AccountUsage(ctx context.Context) (*api.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()

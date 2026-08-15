@@ -274,7 +274,7 @@ func TestExecCLIRunner_RunStdoutCapped_SeparatesStderr(t *testing.T) {
 		t.Skip("sh not available")
 	}
 	r := &execCLIRunner{cliPath: func() string { return sh }}
-	out, truncated, err := r.RunStdoutCapped(context.Background(), 1024, "-c", "printf OUT; printf ERRLINE 1>&2")
+	out, truncated, err := r.RunStdoutCapped(t.Context(), 1024, "-c", "printf OUT; printf ERRLINE 1>&2")
 	if err != nil {
 		t.Fatalf("RunStdoutCapped: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestExecCLIRunner_RunStdoutCapped_Truncates(t *testing.T) {
 		t.Skip("sh not available")
 	}
 	r := &execCLIRunner{cliPath: func() string { return sh }}
-	out, truncated, err := r.RunStdoutCapped(context.Background(), 10, "-c", "printf ABCDEFGHIJKLMNOPQRST")
+	out, truncated, err := r.RunStdoutCapped(t.Context(), 10, "-c", "printf ABCDEFGHIJKLMNOPQRST")
 	if err != nil {
 		t.Fatalf("RunStdoutCapped: %v", err)
 	}

@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -30,7 +29,7 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 
 	t.Run("Broadcast_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
-		d.Broadcast(context.Background(), api.ServerEvent{Type: "test_event", ChatID: "chat-1"})
+		d.Broadcast(t.Context(), api.ServerEvent{Type: "test_event", ChatID: "chat-1"})
 	})
 
 	t.Run("ParentACPSession_empty_for_unknown_chat", func(t *testing.T) {
@@ -46,7 +45,7 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 		if r == nil {
 			t.Fatal("MCPRecorder() returned nil")
 		}
-		r.RecordConnected(context.Background(), "test-server", nil, nil, nil)
+		r.RecordConnected(t.Context(), "test-server", nil, nil, nil)
 		r.SignalReady()
 	})
 
@@ -57,7 +56,7 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
-		d.NotifyPush(context.Background(), "test body", api.PushKindPermission)
+		d.NotifyPush(t.Context(), "test body", api.PushKindPermission)
 	})
 
 	t.Run("BufferStore_non_nil", func(t *testing.T) {

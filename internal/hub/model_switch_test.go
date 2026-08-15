@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -35,7 +34,7 @@ func TestSwitchModel_ChatNotFound(t *testing.T) {
 // model_switched event (see TestSwitchModel_BareRestart_NoEvent).
 func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old-acp"
 		c.Model = "m-old"
@@ -50,7 +49,7 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	// session/load succeeded: acp_session_id is preserved (same session
 	// reloaded with new model), bridge is primed (no transcript replay).
 	if c.ACPSessionID == "" {
@@ -70,7 +69,7 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 
 func TestSwitchModel_WithModelOverride(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "claude-opus"
 		c.ACPSessionID = "old-acp"
@@ -85,7 +84,7 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	// The model on the chat should have changed from the override.
 	if c.Model == "claude-opus" {
 		t.Errorf("chat.Model = %q, want it to change from claude-opus", c.Model)
@@ -98,7 +97,7 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 // commands don't touch Usage — see TestSwitchModel_BareRestart_NoEvent).
 func TestSwitchModel_PreservesContextSize(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old"
 		c.Model = "m-old"
@@ -113,7 +112,7 @@ func TestSwitchModel_PreservesContextSize(t *testing.T) {
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
 
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	if c.Usage.ContextSize != 200000 {
 		t.Errorf("context_size = %d, want 200000 (preserved)", c.Usage.ContextSize)
 	}
@@ -128,7 +127,7 @@ func TestSwitchModel_PreservesContextSize(t *testing.T) {
 // counters. Those side effects are reserved for a real model change.
 func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old"
 		c.Model = "m-same"
@@ -146,7 +145,7 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 0 {
 		t.Errorf("bare restart should not emit model_switched event, got %+v", c.Messages)
 	}
@@ -162,7 +161,7 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("code = %d, body = %s", rec2.Code, rec2.Body.String())
 	}
-	c2, _ := cs.Get(context.Background(), "c1")
+	c2, _ := cs.Get(t.Context(), "c1")
 	if len(c2.Messages) != 0 {
 		t.Errorf("same-model restart should not emit model_switched event, got %+v", c2.Messages)
 	}
@@ -177,7 +176,7 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 // persistModelSwitch before bridge.Start rejected it downstream.
 func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		return true
@@ -191,7 +190,7 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 		t.Fatalf("code = %d, want 400", rec.Code)
 	}
 
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "m-old" {
 		t.Errorf("chat.Model = %q, want unchanged m-old", c.Model)
 	}
@@ -203,13 +202,13 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 // Fast path: in-session model switch (set_config_option) succeeds, bridge stays alive.
 func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "old-model"
 		return true
 	})
 	// Create a bridge first so the fast path has something to call.
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "old-model")
+	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "old-model")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -249,7 +248,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		t.Errorf("session/set_config_option not called on bridge; calls = %v", calls)
 	}
 	// Chat model should be updated.
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "new-model" {
 		t.Errorf("chat.Model = %q, want new-model", c.Model)
 	}
@@ -263,7 +262,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 // working bridge to respawn on the same rejected id.
 func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		c.ServedModelIDs = []string{"m-old", "m-other"}
@@ -280,7 +279,7 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 
 	// Nothing changed: the refusal must not persist the model, and must not tear
 	// down or spawn a bridge on the way to failing.
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	if c.Model != "m-old" {
 		t.Errorf("chat.Model = %q, want the previous model preserved", c.Model)
 	}
@@ -303,7 +302,7 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+			_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Model = "m-old"
 				c.ServedModelIDs = tc.served
@@ -330,7 +329,7 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 // unfiltered served set, so a deprecated id present there is allowed.
 func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		// The display list omits it; the served set does not. That divergence is

@@ -1,10 +1,8 @@
 package hub
 
 import (
-	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -21,13 +19,13 @@ func TestGetBridge_ReturnsNilForUnknown(t *testing.T) {
 
 func TestGetOrCreateBridge_ReusesExisting(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb1, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	sb1, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("first create error = %v", err)
 	}
-	sb2, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	sb2, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("second create error = %v", err)
 	}
@@ -38,7 +36,7 @@ func TestGetOrCreateBridge_ReusesExisting(t *testing.T) {
 
 func TestGetOrCreateBridge_MissingChatIsError(t *testing.T) {
 	h, _, _ := newTestHub()
-	_, err := h.coord.GetOrCreateBridge(context.Background(), "no-chat", "")
+	_, err := h.coord.GetOrCreateBridge(t.Context(), "no-chat", "")
 	if err == nil {
 		t.Fatal("expected error for missing chat")
 	}
@@ -49,9 +47,9 @@ func TestGetOrCreateBridge_MissingChatIsError(t *testing.T) {
 
 func TestCloseBridge_RemovesAndStops(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +63,4 @@ func TestCloseBridge_RemovesAndStops(t *testing.T) {
 	if !fb.stopped {
 		t.Error("bridge.Stop not called")
 	}
-	// Give forward() a moment to exit.
-	time.Sleep(10 * time.Millisecond)
 }

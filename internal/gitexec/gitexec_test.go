@@ -1,7 +1,6 @@
 package gitexec
 
 import (
-	"context"
 	"testing"
 )
 
@@ -65,7 +64,7 @@ func TestScrubAuth(t *testing.T) {
 func TestCmd(t *testing.T) {
 	t.Parallel()
 
-	ctx := context.Background()
+	ctx := t.Context()
 	cmd := Cmd(ctx, "/tmp", "status")
 
 	if cmd.Dir != "/tmp" {

@@ -116,7 +116,7 @@ func assertRejectsBadChatIDs(t *testing.T, fn func(id api.ChatID) error) {
 
 func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
-	err := s.Mutate(context.Background(), "c1", func(c *api.Chat, exists bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, exists bool) bool {
 		if exists {
 			t.Error("exists = true on fresh chat")
 		}
@@ -127,7 +127,7 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mutate error = %v", err)
 	}
-	got, ok := s.Get(context.Background(), "c1")
+	got, ok := s.Get(t.Context(), "c1")
 	if !ok {
 		t.Fatal("Get returned false for created chat")
 	}
@@ -144,16 +144,16 @@ func TestMutate_CreatesChatAndBroadcasts(t *testing.T) {
 
 func TestMutate_UpdatesChatAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	// Second Mutate should broadcast chat_updated.
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, exists bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, exists bool) bool {
 		if !exists {
 			t.Error("exists = false on existing chat")
 		}
 		c.Name = "B"
 		return true
 	})
-	got, _ := s.Get(context.Background(), "c1")
+	got, _ := s.Get(t.Context(), "c1")
 	if got.Name != "B" {
 		t.Errorf("name = %q", got.Name)
 	}
@@ -164,11 +164,11 @@ func TestMutate_UpdatesChatAndBroadcasts(t *testing.T) {
 
 func TestMutate_AbortDoesNotBroadcast(t *testing.T) {
 	s, b := newTestStore(t)
-	err := s.Mutate(context.Background(), "c1", func(*api.Chat, bool) bool { return false })
+	err := s.Mutate(t.Context(), "c1", func(*api.Chat, bool) bool { return false })
 	if err != nil {
 		t.Fatalf("Mutate error = %v", err)
 	}
-	if _, ok := s.Get(context.Background(), "c1"); ok {
+	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("chat created despite abort")
 	}
 	if len(b.events) != 0 {
@@ -179,7 +179,7 @@ func TestMutate_AbortDoesNotBroadcast(t *testing.T) {
 func TestMutate_RejectsBadChatID(t *testing.T) {
 	s, _ := newTestStore(t)
 	assertRejectsBadChatIDs(t, func(id api.ChatID) error {
-		return s.Mutate(context.Background(), id, func(*api.Chat, bool) bool { return true })
+		return s.Mutate(t.Context(), id, func(*api.Chat, bool) bool { return true })
 	})
 }
 
@@ -208,7 +208,7 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster
 			for i := range N {
 				go func(i int) {
 					defer wg.Done()
-					b.Broadcast(context.Background(), api.ServerEvent{
+					b.Broadcast(t.Context(), api.ServerEvent{
 						Type:   "test_event",
 						ChatID: api.ChatID(fmt.Sprintf("c%d", i)),
 					})
@@ -229,7 +229,7 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster
 		b := newBroadcaster()
 		const N = 200
 		for i := range N {
-			b.Broadcast(context.Background(), api.ServerEvent{
+			b.Broadcast(t.Context(), api.ServerEvent{
 				Type:   "order_test",
 				ChatID: api.ChatID(fmt.Sprintf("%d", i)),
 			})
@@ -298,7 +298,7 @@ func TestChatIDPattern(t *testing.T) {
 
 func TestGet_MissingChat(t *testing.T) {
 	s, _ := newTestStore(t)
-	if _, ok := s.Get(context.Background(), "nonexistent"); ok {
+	if _, ok := s.Get(t.Context(), "nonexistent"); ok {
 		t.Error("Get returned true for missing chat")
 	}
 }
@@ -307,15 +307,15 @@ func TestGet_MissingChat(t *testing.T) {
 
 func TestList_SortsByUpdatedAtDesc(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	// Nudge the wall clock between mutations so the UpdatedAt ms
 	// timestamps don't collide on fast machines and the sort order
 	// is deterministic.
 	time.Sleep(2 * time.Millisecond)
-	_ = s.Mutate(context.Background(), "b", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	_ = s.Mutate(t.Context(), "b", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
 	time.Sleep(2 * time.Millisecond)
-	_ = s.Mutate(context.Background(), "a", func(c *api.Chat, _ bool) bool { return true }) // bump updated_at
-	headers := s.List(context.Background())
+	_ = s.Mutate(t.Context(), "a", func(c *api.Chat, _ bool) bool { return true }) // bump updated_at
+	headers := s.List(t.Context())
 	if len(headers) != 2 {
 		t.Fatalf("len = %d, want 2", len(headers))
 	}
@@ -326,7 +326,7 @@ func TestList_SortsByUpdatedAtDesc(t *testing.T) {
 
 func TestList_IgnoresNonChatFiles(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	// Non-.json file → skipped by the suffix filter.
 	if err := os.WriteFile(filepath.Join(s.dir, "random.txt"), []byte("garbage"), 0o600); err != nil {
 		t.Fatal(err)
@@ -336,7 +336,7 @@ func TestList_IgnoresNonChatFiles(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(s.dir, "bad.id.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	headers := s.List(context.Background())
+	headers := s.List(t.Context())
 	if len(headers) != 1 || headers[0].ID != "a" {
 		t.Errorf("headers = %+v", headers)
 	}
@@ -344,7 +344,7 @@ func TestList_IgnoresNonChatFiles(t *testing.T) {
 
 func TestList_SkipsMalformedChatFile(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "good", func(c *api.Chat, _ bool) bool { c.Name = "ok"; return true })
+	_ = s.Mutate(t.Context(), "good", func(c *api.Chat, _ bool) bool { c.Name = "ok"; return true })
 	// Drop a file that matches chatIDPattern but isn't valid JSON.
 	// List must log and skip it, not panic or return a zero-value
 	// header that confuses clients.
@@ -352,7 +352,7 @@ func TestList_SkipsMalformedChatFile(t *testing.T) {
 	if err := os.WriteFile(badPath, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	headers := s.List(context.Background())
+	headers := s.List(t.Context())
 	if len(headers) != 1 || headers[0].ID != "good" {
 		t.Errorf("List() = %+v, want only the good chat", headers)
 	}
@@ -362,15 +362,15 @@ func TestList_SkipsMalformedChatFile(t *testing.T) {
 
 func TestAppendMessage_AddsAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	b.reset()
 
 	msg := &api.Message{ID: "m1", Role: api.RoleUser, Content: "hi"}
-	if err := s.AppendMessage(context.Background(), "c1", msg); err != nil {
+	if err := s.AppendMessage(t.Context(), "c1", msg); err != nil {
 		t.Fatalf("AppendMessage error = %v", err)
 	}
 
-	got, _ := s.Get(context.Background(), "c1")
+	got, _ := s.Get(t.Context(), "c1")
 	if len(got.Messages) != 1 || got.Messages[0].Content != "hi" {
 		t.Errorf("messages = %+v", got.Messages)
 	}
@@ -394,7 +394,7 @@ func TestAppendMessage_AddsAndBroadcasts(t *testing.T) {
 
 func TestAppendMessage_NoOpOnMissingChat(t *testing.T) {
 	s, b := newTestStore(t)
-	err := s.AppendMessage(context.Background(), "nonexistent", &api.Message{ID: "m1", Role: api.RoleUser})
+	err := s.AppendMessage(t.Context(), "nonexistent", &api.Message{ID: "m1", Role: api.RoleUser})
 	if err != nil {
 		t.Errorf("error on missing chat: %v", err)
 	}
@@ -407,15 +407,15 @@ func TestAppendMessage_NoOpOnMissingChat(t *testing.T) {
 
 func TestUpdateMessage_MutatesInPlace(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.AppendMessage(context.Background(), "c1", &api.Message{ID: "m1", Role: api.RoleAssistant, Content: "old"})
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.AppendMessage(t.Context(), "c1", &api.Message{ID: "m1", Role: api.RoleAssistant, Content: "old"})
 	b.reset()
 
-	err := s.UpdateMessage(context.Background(), "c1", "m1", func(m *api.Message) { m.Content = "new" })
+	err := s.UpdateMessage(t.Context(), "c1", "m1", func(m *api.Message) { m.Content = "new" })
 	if err != nil {
 		t.Fatalf("UpdateMessage error = %v", err)
 	}
-	got, _ := s.Get(context.Background(), "c1")
+	got, _ := s.Get(t.Context(), "c1")
 	if got.Messages[0].Content != "new" {
 		t.Errorf("content = %q", got.Messages[0].Content)
 	}
@@ -436,10 +436,10 @@ func TestUpdateMessage_MutatesInPlace(t *testing.T) {
 
 func TestUpdateMessage_NoOpOnMissingMessage(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	b.reset()
 
-	_ = s.UpdateMessage(context.Background(), "c1", "nonexistent", func(*api.Message) {})
+	_ = s.UpdateMessage(t.Context(), "c1", "nonexistent", func(*api.Message) {})
 	if evs := b.snapshot(); len(evs) != 0 {
 		t.Errorf("events: %+v", evs)
 	}
@@ -449,13 +449,13 @@ func TestUpdateMessage_NoOpOnMissingMessage(t *testing.T) {
 
 func TestDelete_RemovesFileAndBroadcasts(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	b.reset()
 
-	if err := s.Delete(context.Background(), "c1"); err != nil {
+	if err := s.Delete(t.Context(), "c1"); err != nil {
 		t.Fatalf("Delete error = %v", err)
 	}
-	if _, ok := s.Get(context.Background(), "c1"); ok {
+	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("chat still exists after delete")
 	}
 	if len(b.events) != 1 || b.events[0].Type != "chat_deleted" {
@@ -465,7 +465,7 @@ func TestDelete_RemovesFileAndBroadcasts(t *testing.T) {
 
 func TestDelete_MissingChatIsNoOp(t *testing.T) {
 	s, b := newTestStore(t)
-	if err := s.Delete(context.Background(), "nonexistent"); err != nil {
+	if err := s.Delete(t.Context(), "nonexistent"); err != nil {
 		t.Errorf("error on missing chat: %v", err)
 	}
 	// Still broadcasts (so multi-device sees the delete even if stale).
@@ -478,8 +478,8 @@ func TestDelete_MissingChatIsNoOp(t *testing.T) {
 
 func TestDelete_TombstonesChatID(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(context.Background(), "c1")
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Delete(t.Context(), "c1")
 	if !s.isTombstoned("c1") {
 		t.Error("tombstone not set after Delete")
 	}
@@ -487,14 +487,14 @@ func TestDelete_TombstonesChatID(t *testing.T) {
 
 func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(context.Background(), "c1")
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Delete(t.Context(), "c1")
 	b.reset()
 
 	// Simulate a late handler racing the delete — it tries to Mutate
 	// the just-deleted id. The call must return nil (no error, no
 	// resurrection) so the caller treats it as a benign no-op.
-	err := s.Mutate(context.Background(), "c1", func(c *api.Chat, exists bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, exists bool) bool {
 		c.Name = "resurrected"
 		c.Messages = append(c.Messages, api.Message{Role: api.RoleUser, Content: "ghost"})
 		return true
@@ -502,7 +502,7 @@ func TestMutate_RefusesToCreateTombstonedChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mutate on tombstoned chat returned error: %v", err)
 	}
-	if _, ok := s.Get(context.Background(), "c1"); ok {
+	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("chat was resurrected despite tombstone")
 	}
 	// No chat_created / chat_updated event should have been emitted.
@@ -520,23 +520,23 @@ func TestMutate_UpdatingExistingChatIsNotBlockedByTombstone(t *testing.T) {
 	// verify the code path: once the chat exists, tombstone is
 	// irrelevant because we never consult it.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(context.Background(), "c1")
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Delete(t.Context(), "c1")
 	// Tombstone is now live for c1. Re-Create via a different id
 	// shouldn't be affected.
-	err := s.Mutate(context.Background(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	err := s.Mutate(t.Context(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
 	if err != nil {
 		t.Fatalf("unrelated chat blocked by unrelated tombstone: %v", err)
 	}
-	if _, ok := s.Get(context.Background(), "c2"); !ok {
+	if _, ok := s.Get(t.Context(), "c2"); !ok {
 		t.Error("c2 was not created")
 	}
 }
 
 func TestAppendMessage_OnTombstonedChatIsNoOp(t *testing.T) {
 	s, b := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(context.Background(), "c1")
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Delete(t.Context(), "c1")
 	b.reset()
 
 	// Mutate's tombstone check runs before the mutator when the chat
@@ -545,11 +545,11 @@ func TestAppendMessage_OnTombstonedChatIsNoOp(t *testing.T) {
 	// first. This test pins that path: after Delete, AppendMessage must
 	// produce no events and not resurrect the chat even though the
 	// mutator would have happily returned false anyway.
-	err := s.AppendMessage(context.Background(), "c1", &api.Message{Role: api.RoleUser, Content: "ghost"})
+	err := s.AppendMessage(t.Context(), "c1", &api.Message{Role: api.RoleUser, Content: "ghost"})
 	if err != nil {
 		t.Fatalf("AppendMessage error: %v", err)
 	}
-	if _, ok := s.Get(context.Background(), "c1"); ok {
+	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("chat was recreated via AppendMessage after delete")
 	}
 	for _, e := range b.snapshot() {
@@ -563,7 +563,7 @@ func TestAppendMessage_OnTombstonedChatIsNoOp(t *testing.T) {
 
 func TestBuildHistory_FormatsAllRoles(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Messages = []api.Message{
 			{Role: api.RoleUser, Content: "hello"},
 			{
@@ -579,7 +579,7 @@ func TestBuildHistory_FormatsAllRoles(t *testing.T) {
 		}
 		return true
 	})
-	got := s.BuildHistory(context.Background(), "c1")
+	got := s.BuildHistory(t.Context(), "c1")
 	want := "User: hello\n" +
 		"Assistant: thinking\n  [tool: grep status=completed]\n  [tool: edit status=failed]\n" +
 		"[cancelled] user aborted\n" +
@@ -591,15 +591,15 @@ func TestBuildHistory_FormatsAllRoles(t *testing.T) {
 
 func TestBuildHistory_EmptyChatReturnsEmptyString(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if got := s.BuildHistory(context.Background(), "c1"); got != "" {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	if got := s.BuildHistory(t.Context(), "c1"); got != "" {
 		t.Errorf("BuildHistory on empty-message chat = %q, want empty", got)
 	}
 }
 
 func TestBuildHistory_EmptyForMissingChat(t *testing.T) {
 	s, _ := newTestStore(t)
-	if s.BuildHistory(context.Background(), "nonexistent") != "" {
+	if s.BuildHistory(t.Context(), "nonexistent") != "" {
 		t.Error("expected empty string")
 	}
 }
@@ -608,7 +608,7 @@ func TestBuildHistory_EmptyForMissingChat(t *testing.T) {
 
 func TestHandleList_ReturnsHeaders(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "One"
 		c.Messages = []api.Message{{ID: "m1", Role: api.RoleUser, Content: "x"}}
 		return true
@@ -633,7 +633,7 @@ func TestHandleList_ReturnsHeaders(t *testing.T) {
 
 func TestHandleOne_ReturnsChatAndMessages(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "One"
 		c.Messages = []api.Message{
 			{ID: "m1", Role: api.RoleUser, Content: "a", Ts: 100},
@@ -712,7 +712,7 @@ func TestHandleOne_PaginationSurvivesUnorderedTimestamps(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
-			_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+			_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Messages = tc.msgs
 				return true
@@ -758,7 +758,7 @@ func TestHandleOne_Pagination(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
-			_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+			_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Messages = []api.Message{
 					{ID: "a", Role: api.RoleUser, Content: "1", Ts: 100},
@@ -829,7 +829,7 @@ func TestStoreSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	_ = s1.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s1.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "Saved"
 		c.ACPSessionID = "acp-1"
 		c.Messages = []api.Message{{ID: "m1", Role: api.RoleUser, Content: "hi"}}
@@ -841,7 +841,7 @@ func TestStoreSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore reopen: %v", err)
 	}
-	got, ok := s2.Get(context.Background(), "c1")
+	got, ok := s2.Get(t.Context(), "c1")
 	if !ok {
 		t.Fatal("chat not found after reopen")
 	}
@@ -914,7 +914,7 @@ func TestHandleOne_RejectsEmptyOrLeadingSlashPath(t *testing.T) {
 
 func TestHandleOne_BaseRejectsNonGET(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
 		req := httptest.NewRequest(method, "/api/chats/c1", nil)
 		rec := httptest.NewRecorder()
@@ -927,7 +927,7 @@ func TestHandleOne_BaseRejectsNonGET(t *testing.T) {
 
 func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = []api.Message{{ID: "m1", Role: api.RoleUser, Content: "x", Ts: 100}}
 		return true
@@ -958,7 +958,7 @@ func TestHandleOne_IgnoresInvalidQueryParams(t *testing.T) {
 
 func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	mux := http.NewServeMux()
 	s.RegisterRoutes(mux)
@@ -987,7 +987,7 @@ func TestRegisterRoutes_WiresListAndOneHandlers(t *testing.T) {
 
 func TestMutate_SerializesSameChatConcurrentAppends(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	const N = 50
 	var wg sync.WaitGroup
@@ -995,13 +995,13 @@ func TestMutate_SerializesSameChatConcurrentAppends(t *testing.T) {
 	for i := range N {
 		go func(i int) {
 			defer wg.Done()
-			_ = s.AppendMessage(context.Background(), "c1", &api.Message{
+			_ = s.AppendMessage(t.Context(), "c1", &api.Message{
 				ID: fmt.Sprintf("m%d", i), Role: api.RoleUser, Content: "x",
 			})
 		}(i)
 	}
 	wg.Wait()
-	got, _ := s.Get(context.Background(), "c1")
+	got, _ := s.Get(t.Context(), "c1")
 	if len(got.Messages) != N {
 		t.Errorf("concurrent appends: len = %d, want %d (per-chat mutex should serialize)", len(got.Messages), N)
 	}
@@ -1011,8 +1011,8 @@ func TestMutate_DifferentChatsAreIndependent(t *testing.T) {
 	// Two chats should not block each other. We assert completion of
 	// N mutations on each chat runs to success with no deadlock.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Mutate(context.Background(), "b", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	_ = s.Mutate(t.Context(), "a", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "b", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
 
 	const N = 20
 	var wg sync.WaitGroup
@@ -1020,16 +1020,16 @@ func TestMutate_DifferentChatsAreIndependent(t *testing.T) {
 	for i := range N {
 		go func(i int) {
 			defer wg.Done()
-			_ = s.AppendMessage(context.Background(), "a", &api.Message{ID: fmt.Sprintf("a%d", i), Role: api.RoleUser, Content: "x"})
+			_ = s.AppendMessage(t.Context(), "a", &api.Message{ID: fmt.Sprintf("a%d", i), Role: api.RoleUser, Content: "x"})
 		}(i)
 		go func(i int) {
 			defer wg.Done()
-			_ = s.AppendMessage(context.Background(), "b", &api.Message{ID: fmt.Sprintf("b%d", i), Role: api.RoleUser, Content: "x"})
+			_ = s.AppendMessage(t.Context(), "b", &api.Message{ID: fmt.Sprintf("b%d", i), Role: api.RoleUser, Content: "x"})
 		}(i)
 	}
 	wg.Wait()
-	a, _ := s.Get(context.Background(), "a")
-	b, _ := s.Get(context.Background(), "b")
+	a, _ := s.Get(t.Context(), "a")
+	b, _ := s.Get(t.Context(), "b")
 	if len(a.Messages) != N || len(b.Messages) != N {
 		t.Errorf("independent chats: a=%d b=%d want %d each", len(a.Messages), len(b.Messages), N)
 	}
@@ -1058,15 +1058,15 @@ func TestIsTombstoned_ExpiredEntryIsPrunedAndReturnsFalse(t *testing.T) {
 
 func TestMutate_ExpiredTombstoneDoesNotBlockRecreation(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = s.Delete(context.Background(), "c1")
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Delete(t.Context(), "c1")
 
 	// Age the tombstone past its TTL.
 	s.tombMu.Lock()
 	s.tombstone["c1"] = time.Now().Add(-2 * tombstoneTTL)
 	s.tombMu.Unlock()
 
-	err := s.Mutate(context.Background(), "c1", func(c *api.Chat, exists bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, exists bool) bool {
 		if exists {
 			t.Error("exists = true after expired tombstone")
 		}
@@ -1076,7 +1076,7 @@ func TestMutate_ExpiredTombstoneDoesNotBlockRecreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Mutate after tombstone expiry: %v", err)
 	}
-	got, ok := s.Get(context.Background(), "c1")
+	got, ok := s.Get(t.Context(), "c1")
 	if !ok || got.Name != "reborn" {
 		t.Errorf("expected recreation, got ok=%v chat=%+v", ok, got)
 	}
@@ -1120,16 +1120,16 @@ func TestDelete_MissingChatDoesNotTombstone(t *testing.T) {
 	// tombstoning a phantom id would block a future legitimate
 	// create on that id for 10 minutes.
 	s, _ := newTestStore(t)
-	_ = s.Delete(context.Background(), "never-existed")
+	_ = s.Delete(t.Context(), "never-existed")
 	if s.isTombstoned("never-existed") {
 		t.Error("phantom delete tombstoned a chat that never existed")
 	}
 	// Creating a new chat with that id must succeed.
-	err := s.Mutate(context.Background(), "never-existed", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	err := s.Mutate(t.Context(), "never-existed", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	if err != nil {
 		t.Fatalf("Mutate after phantom delete: %v", err)
 	}
-	if _, ok := s.Get(context.Background(), "never-existed"); !ok {
+	if _, ok := s.Get(t.Context(), "never-existed"); !ok {
 		t.Error("chat not created after phantom delete")
 	}
 }
@@ -1177,7 +1177,7 @@ func TestGet_RejectsOversizeChatFile(t *testing.T) {
 	if err := os.Truncate(path, int64(maxChatFileBytes)+1); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
-	if _, ok := s.Get(context.Background(), "big"); ok {
+	if _, ok := s.Get(t.Context(), "big"); ok {
 		t.Error("Get on oversize chat file returned ok=true, want false")
 	}
 }
@@ -1186,7 +1186,7 @@ func TestList_SkipsOversizeChatFile(t *testing.T) {
 	// The same guardrail must keep one oversize file from erasing the
 	// sidebar for every other chat. List should log-and-skip, not fail.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "good", func(c *api.Chat, _ bool) bool { c.Name = "ok"; return true })
+	_ = s.Mutate(t.Context(), "good", func(c *api.Chat, _ bool) bool { c.Name = "ok"; return true })
 	path := filepath.Join(s.dir, "big.json")
 	f, err := os.Create(path)
 	if err != nil {
@@ -1196,7 +1196,7 @@ func TestList_SkipsOversizeChatFile(t *testing.T) {
 	if err := os.Truncate(path, int64(maxChatFileBytes)+1); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
-	headers := s.List(context.Background())
+	headers := s.List(t.Context())
 	if len(headers) != 1 || headers[0].ID != "good" {
 		t.Errorf("List() = %+v, want only the good chat (oversize skipped)", headers)
 	}
@@ -1216,7 +1216,7 @@ func TestMutate_PropagatesParseErrorDoesNotOverwrite(t *testing.T) {
 	if err := os.WriteFile(badPath, []byte(garbage), 0o600); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	err := s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "would-stomp-history"
 		return true
 	})
@@ -1241,7 +1241,7 @@ func TestMutate_RefusesMutatorReassigningChatID(t *testing.T) {
 	// allowing concurrent writes under mismatched locks. Mutate must
 	// refuse and surface the error so the broken caller is visible.
 	s, _ := newTestStore(t)
-	err := s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	err := s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.ID = "c2" // broken mutator
 		c.Name = "stolen"
 		return true
@@ -1253,10 +1253,10 @@ func TestMutate_RefusesMutatorReassigningChatID(t *testing.T) {
 		t.Errorf("error = %q, want mention of reassigned id", err.Error())
 	}
 	// Neither chat should have been written.
-	if _, ok := s.Get(context.Background(), "c1"); ok {
+	if _, ok := s.Get(t.Context(), "c1"); ok {
 		t.Error("c1 was written despite mutator reassigning id")
 	}
-	if _, ok := s.Get(context.Background(), "c2"); ok {
+	if _, ok := s.Get(t.Context(), "c2"); ok {
 		t.Error("c2 was written via the reassigned id")
 	}
 }
@@ -1269,13 +1269,13 @@ func TestUpdateMessage_NoOpOnMissingChat(t *testing.T) {
 	// must early-return from its mutator when the chat doesn't exist
 	// so no ghost file is written and no broadcast is emitted.
 	s, b := newTestStore(t)
-	err := s.UpdateMessage(context.Background(), "never-existed", "m1", func(m *api.Message) {
+	err := s.UpdateMessage(t.Context(), "never-existed", "m1", func(m *api.Message) {
 		m.Content = "ghost"
 	})
 	if err != nil {
 		t.Errorf("UpdateMessage on missing chat = %v, want nil", err)
 	}
-	if _, ok := s.Get(context.Background(), "never-existed"); ok {
+	if _, ok := s.Get(t.Context(), "never-existed"); ok {
 		t.Error("UpdateMessage resurrected a never-existed chat")
 	}
 	if evs := b.snapshot(); len(evs) != 0 {
@@ -1324,7 +1324,7 @@ func TestDelete_RejectsBadChatID(t *testing.T) {
 	// every invalid id produces an error AND zero broadcasts.
 	s, b := newTestStore(t)
 	assertRejectsBadChatIDs(t, func(id api.ChatID) error {
-		return s.Delete(context.Background(), id)
+		return s.Delete(t.Context(), id)
 	})
 	// Defensive assertion: rejected ids never emit chat_deleted.
 	// A broken refactor that moves pathFor after os.Remove would
@@ -1341,13 +1341,13 @@ func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 	// can distinguish "chat gone" (no-op) from "filesystem broken"
 	// (surface to operator).
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	if err := os.Chmod(s.dir, 0o500); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(s.dir, 0o700) })
 
-	err := s.Delete(context.Background(), "c1")
+	err := s.Delete(t.Context(), "c1")
 	if err == nil {
 		t.Fatal("Delete on readonly parent dir = nil error, want EACCES")
 	}
@@ -1363,7 +1363,7 @@ func TestDelete_SurfacesNonENOENTChatRemoveError(t *testing.T) {
 
 func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "Named Chat"
 		c.Messages = []api.Message{
 			{ID: "m1", Role: api.RoleUser, Content: "hi"},
@@ -1389,7 +1389,7 @@ func TestHandleExport_JSONFormatReturnsChatJSON(t *testing.T) {
 
 func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "Named Chat"
 		c.Messages = []api.Message{
 			{ID: "m1", Role: api.RoleUser, Content: "hi"},
@@ -1420,7 +1420,7 @@ func TestHandleExport_MarkdownIsDefaultFormat(t *testing.T) {
 
 func TestHandleExport_RejectsUnsupportedFormat(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export?format=xml", nil)
 	rec := httptest.NewRecorder()
@@ -1433,7 +1433,7 @@ func TestHandleExport_RejectsUnsupportedFormat(t *testing.T) {
 
 func TestHandleExport_FallsBackToChatIDWhenNameEmpty(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { return true })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chats/c1/export", nil)
 	rec := httptest.NewRecorder()
@@ -1460,7 +1460,7 @@ func TestHandleExport_NotFoundForMissingChat(t *testing.T) {
 
 func TestHandleExport_RejectsNonGET(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		req := httptest.NewRequest(method, "/api/chats/c1/export", nil)
 		rec := httptest.NewRecorder()
@@ -1486,7 +1486,7 @@ func TestHandleExport_SanitisesAdversarialChatName(t *testing.T) {
 	// break the Content-Disposition header via string concatenation.
 	// mime.FormatMediaType + safeExportName now handle all of these.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "evil\"; filename=\"spoof"
 		return true
 	})
@@ -1563,14 +1563,14 @@ func TestMutate_RejectsInvalidUTF8(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, b := newTestStore(t)
-			err := s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+			err := s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 				tc.mutate(c)
 				return true
 			})
 			if !errors.Is(err, errInvalidUTF8) {
 				t.Fatalf("Mutate = %v, want errInvalidUTF8", err)
 			}
-			if _, ok := s.Get(context.Background(), "c1"); ok {
+			if _, ok := s.Get(t.Context(), "c1"); ok {
 				t.Error("invalid-UTF8 chat was persisted; the mutation must abort before save")
 			}
 			if n := len(b.snapshot()); n != 0 {

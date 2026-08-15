@@ -61,7 +61,7 @@ func TestUtilityBridge_StopAndRestart(t *testing.T) {
 	h, _, _ := newTestHub()
 
 	// Manually set up a utility runtime with a started session.
-	s := &utilitySession{shutdownCtx: context.Background(), started: true, bridge: newFakeBridge()}
+	s := &utilitySession{shutdownCtx: t.Context(), started: true, bridge: newFakeBridge()}
 	h.lifecycle.mu.Lock()
 	h.bridge.utility = &utilityRuntime{session: s, agent: newUtilityAgent(s)}
 	h.lifecycle.mu.Unlock()
@@ -77,6 +77,7 @@ func TestUtilityBridge_StopAndRestart(t *testing.T) {
 
 // agentForDrainTest builds an agent over a preset started session, for
 // exercising drainResponse directly.
+// context.Background() rather than t.Context(): no *testing.T is in scope here.
 func agentForDrainTest(bridge api.ACPBridge) *utilityAgent {
 	s := &utilitySession{shutdownCtx: context.Background(), bridge: bridge, started: true, gen: 1}
 	return newUtilityAgent(s)
@@ -85,7 +86,7 @@ func agentForDrainTest(bridge api.ACPBridge) *utilityAgent {
 func TestDrainUtilityResponse_NilResponse(t *testing.T) {
 	_, _, _ = newTestHub()
 	ua := agentForDrainTest(newFakeBridge())
-	_, err := ua.drainResponse(context.Background(), sessionLease{gen: 1}, nil)
+	_, err := ua.drainResponse(t.Context(), sessionLease{gen: 1}, nil)
 	if err == nil {
 		t.Error("expected error for nil response")
 	}
@@ -101,7 +102,7 @@ func TestDrainUtilityResponse_ChannelClose(t *testing.T) {
 	close(chunks)
 
 	resp := &api.RPCResponse{Result: json.RawMessage(`{}`)}
-	result, err := ua.drainResponse(context.Background(), sessionLease{gen: 1, chunks: chunks}, resp)
+	result, err := ua.drainResponse(t.Context(), sessionLease{gen: 1, chunks: chunks}, resp)
 	if err != nil {
 		t.Fatalf("drainResponse on closed channel: %v", err)
 	}
@@ -144,7 +145,7 @@ func BenchmarkUtilityBridge_DrainResponse(b *testing.B) {
 				ua := agentForDrainTest(newFakeBridge())
 
 				resp := &api.RPCResponse{Result: json.RawMessage(`{}`)}
-				result, _ := ua.drainResponse(context.Background(), sessionLease{gen: 1, chunks: ch}, resp)
+				result, _ := ua.drainResponse(b.Context(), sessionLease{gen: 1, chunks: ch}, resp)
 				_ = result
 			}
 		})
@@ -240,7 +241,7 @@ func TestCheapestModel_RapidInvariants(t *testing.T) {
 			}
 		}
 
-		ctx := context.Background()
+		ctx := t.Context()
 		result := cheapestModel(ctx, catalog)
 
 		if result == "" {
@@ -273,6 +274,7 @@ func TestCheapestModel_RapidInvariants(t *testing.T) {
 // newTestUtilityRuntime builds a utility runtime whose factory hands out
 // a fresh fakeBridge on each call (so a recycle visibly swaps the
 // instance) and whose model catalog is empty.
+// context.Background() rather than t.Context(): no *testing.T is in scope here.
 func newTestUtilityRuntime() *utilityRuntime {
 	return newUtilityRuntime(
 		context.Background(),
@@ -305,7 +307,7 @@ func TestUtilityPrompt_RecyclesAtPromptCap(t *testing.T) {
 	u.agent.promptCount = maxUtilityPrompts // exact boundary
 	defer u.session.Stop()
 
-	if _, err := u.agent.UtilityPrompt(context.Background(), "p", ""); err != nil {
+	if _, err := u.agent.UtilityPrompt(t.Context(), "p", ""); err != nil {
 		t.Fatalf("UtilityPrompt error = %v, want nil", err)
 	}
 
@@ -323,7 +325,7 @@ func TestUtilityPrompt_IncrementsPromptCount(t *testing.T) {
 	u := newTestUtilityRuntime()
 	defer u.session.Stop()
 
-	if _, err := u.agent.UtilityPrompt(context.Background(), "p", ""); err != nil {
+	if _, err := u.agent.UtilityPrompt(t.Context(), "p", ""); err != nil {
 		t.Fatalf("UtilityPrompt error = %v, want nil", err)
 	}
 
@@ -426,7 +428,7 @@ func TestForwardChunk_NonBlockingDropsWhenFull(t *testing.T) {
 func TestUtilityPrompt_DrainsStaleResponseChAtStart(t *testing.T) {
 	u := newTestUtilityRuntime()
 	defer u.session.Stop()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Warm up so the bridge + responseCh exist and are empty.
 	if _, err := u.agent.UtilityPrompt(ctx, "warmup", ""); err != nil {
@@ -456,7 +458,7 @@ func TestUtilityPrompt_DrainsStaleResponseChAtStart(t *testing.T) {
 func TestUtilityAgent_PromptCountResetOnRestart(t *testing.T) {
 	u := newTestUtilityRuntime()
 	defer u.session.Stop()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if _, err := u.agent.UtilityPrompt(ctx, "p1", ""); err != nil {
 		t.Fatalf("p1: %v", err)
@@ -488,7 +490,7 @@ func TestAccountUsage_CallHasTimeout(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroGetUsage: json.RawMessage(`{"success":true,"message":"managed by admin"}`),
 	}
-	if _, err := h.AccountUsage(context.Background()); err != nil {
+	if _, err := h.AccountUsage(t.Context()); err != nil {
 		t.Fatalf("AccountUsage: %v", err)
 	}
 	if !br.callHadDeadline(methodKiroGetUsage) {
@@ -501,7 +503,7 @@ func TestAccountUsage_CallHasTimeout(t *testing.T) {
 func TestPolicyList_CallHasTimeout(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{"rules":[]}`, `{}`)
-	if _, err := h.PolicyList(context.Background(), ""); err != nil {
+	if _, err := h.PolicyList(t.Context(), ""); err != nil {
 		t.Fatalf("PolicyList: %v", err)
 	}
 	if !br.callHadDeadline(methodV3PermissionsList) {
@@ -514,7 +516,7 @@ func TestPolicyList_CallHasTimeout(t *testing.T) {
 func TestPolicyExplain_CallHasTimeout(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{}`, `{"capability":"fs_write","effect":"ask"}`)
-	if _, err := h.PolicyExplain(context.Background(), api.PolicyExplainRequest{Capability: "fs_write"}); err != nil {
+	if _, err := h.PolicyExplain(t.Context(), api.PolicyExplainRequest{Capability: "fs_write"}); err != nil {
 		t.Fatalf("PolicyExplain: %v", err)
 	}
 	if !br.callHadDeadline(methodV3PermissionsExplain) {
@@ -529,7 +531,7 @@ func TestPolicyExplain_CallHasTimeout(t *testing.T) {
 func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 	h, _, _ := newTestHub()
 	u := h.ensureUtility()
-	if _, err := u.agent.UtilityPrompt(context.Background(), "warm", ""); err != nil {
+	if _, err := u.agent.UtilityPrompt(t.Context(), "warm", ""); err != nil {
 		t.Fatalf("warm: %v", err)
 	}
 	victim, ok := u.session.bridge.(*fakeBridge)
@@ -572,7 +574,7 @@ func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
 	h, _, _ := newTestHub()
 	u := h.ensureUtility()
-	if _, err := u.agent.UtilityPrompt(context.Background(), "warm", ""); err != nil {
+	if _, err := u.agent.UtilityPrompt(t.Context(), "warm", ""); err != nil {
 		t.Fatalf("warm: %v", err)
 	}
 	u.session.mu.Lock()
@@ -611,7 +613,7 @@ func TestUtilityPrompt_RecyclesAtByteBudget(t *testing.T) {
 	u.agent.promptBytes = maxUtilityPromptBytes // exact boundary
 	defer u.session.Stop()
 
-	if _, err := u.agent.UtilityPrompt(context.Background(), "p", ""); err != nil {
+	if _, err := u.agent.UtilityPrompt(t.Context(), "p", ""); err != nil {
 		t.Fatalf("UtilityPrompt error = %v, want nil", err)
 	}
 
@@ -629,7 +631,7 @@ func TestUtilityPrompt_RecyclesAtByteBudget(t *testing.T) {
 func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 	br := newFakeBridge()
 	u := newUtilityRuntime(
-		context.Background(),
+		t.Context(),
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
@@ -639,7 +641,7 @@ func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 	defer u.session.Stop()
 
 	for _, effort := range []api.EffortLevel{api.EffortLow, api.EffortLow, api.EffortMedium} {
-		if _, err := u.agent.UtilityPrompt(context.Background(), "p", effort); err != nil {
+		if _, err := u.agent.UtilityPrompt(t.Context(), "p", effort); err != nil {
 			t.Fatalf("UtilityPrompt(%s) error = %v, want nil", effort, err)
 		}
 	}
@@ -663,7 +665,7 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 	br := newFakeBridge()
 	br.callErrs = map[string]error{api.MethodSetConfigOption: fmt.Errorf("no such config option")}
 	u := newUtilityRuntime(
-		context.Background(),
+		t.Context(),
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
@@ -673,7 +675,7 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 	defer u.session.Stop()
 
 	for range 2 {
-		if _, err := u.agent.UtilityPrompt(context.Background(), "p", api.EffortMedium); err != nil {
+		if _, err := u.agent.UtilityPrompt(t.Context(), "p", api.EffortMedium); err != nil {
 			t.Fatalf("UtilityPrompt error = %v, want nil (effort failure must not fail the task)", err)
 		}
 	}
@@ -742,7 +744,7 @@ func TestUtilityLiveSessionID(t *testing.T) {
 	if got := u.session.liveSessionID(); got != "" {
 		t.Errorf("liveSessionID before start = %q, want empty", got)
 	}
-	if _, err := u.agent.UtilityPrompt(context.Background(), "p", ""); err != nil {
+	if _, err := u.agent.UtilityPrompt(t.Context(), "p", ""); err != nil {
 		t.Fatalf("UtilityPrompt error = %v", err)
 	}
 	if got := u.session.liveSessionID(); got == "" {
@@ -764,7 +766,7 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	release := make(chan struct{})
 	br.blockOn = map[string]chan struct{}{api.MethodPrompt: release}
 	u := newUtilityRuntime(
-		context.Background(),
+		t.Context(),
 		func() api.ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
@@ -777,7 +779,7 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	turnDone := make(chan struct{})
 	go func() {
 		defer close(turnDone)
-		_, _ = u.agent.UtilityPrompt(context.Background(), "slow", "")
+		_, _ = u.agent.UtilityPrompt(t.Context(), "slow", "")
 	}()
 	// Wait until the turn's Call is actually in flight.
 	deadline := time.Now().Add(2 * time.Second)
@@ -789,7 +791,7 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	}
 
 	// An RPC read must complete while the turn is still blocked.
-	rpcCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	rpcCtx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	if _, err := u.session.accountUsageRaw(rpcCtx); err != nil {
 		t.Fatalf("accountUsageRaw during an in-flight turn: %v", err)

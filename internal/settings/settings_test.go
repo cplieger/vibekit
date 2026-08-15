@@ -13,7 +13,7 @@ func TestReadBytes_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	resetCache(t, dir)
 
-	data, err := ReadBytes(context.Background(), dir)
+	data, err := ReadBytes(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestReadBytes_MissingFile(t *testing.T) {
 }
 
 func TestReadBytes_EmptyConfigDir(t *testing.T) {
-	data, err := ReadBytes(context.Background(), "")
+	data, err := ReadBytes(t.Context(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestReadBytes_ValidFile(t *testing.T) {
 	content := []byte(`{"key":"value"}`)
 	writeSettings(t, dir, content)
 
-	data, err := ReadBytes(context.Background(), dir)
+	data, err := ReadBytes(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestField_StringKey(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{"name":"alice","age":30}`))
 
-	val, ok := Field[string](context.Background(), dir, "name", "test")
+	val, ok := Field[string](t.Context(), dir, "name", "test")
 	if !ok || val != "alice" {
 		t.Fatalf("got (%q, %v), want (\"alice\", true)", val, ok)
 	}
@@ -77,7 +77,7 @@ func TestField_BoolKey(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{"enabled":true}`))
 
-	val, ok := Field[bool](context.Background(), dir, "enabled", "test")
+	val, ok := Field[bool](t.Context(), dir, "enabled", "test")
 	if !ok || !val {
 		t.Fatalf("got (%v, %v), want (true, true)", val, ok)
 	}
@@ -88,7 +88,7 @@ func TestField_MissingKey(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{"other":"value"}`))
 
-	val, ok := Field[string](context.Background(), dir, "missing", "test")
+	val, ok := Field[string](t.Context(), dir, "missing", "test")
 	if ok {
 		t.Fatalf("expected ok=false for missing key, got val=%q", val)
 	}
@@ -99,7 +99,7 @@ func TestField_InvalidJSON(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`not json`))
 
-	val, ok := Field[string](context.Background(), dir, "key", "test")
+	val, ok := Field[string](t.Context(), dir, "key", "test")
 	if ok {
 		t.Fatalf("expected ok=false for invalid JSON, got val=%q", val)
 	}
@@ -110,7 +110,7 @@ func TestField_TypeMismatch(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{"count":"not a number"}`))
 
-	val, ok := Field[int](context.Background(), dir, "count", "test")
+	val, ok := Field[int](t.Context(), dir, "count", "test")
 	if ok {
 		t.Fatalf("expected ok=false for type mismatch, got val=%d", val)
 	}
@@ -122,7 +122,7 @@ func TestFieldInto_Success(t *testing.T) {
 	writeSettings(t, dir, []byte(`{"items":["a","b","c"]}`))
 
 	var items []string
-	ok := FieldInto(context.Background(), dir, "items", "test", &items)
+	ok := FieldInto(t.Context(), dir, "items", "test", &items)
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
@@ -136,10 +136,10 @@ func TestReadBytes_MtimeCache(t *testing.T) {
 	resetCache(t, dir)
 
 	writeSettings(t, dir, []byte(`{"v":1}`))
-	data1, _ := ReadBytes(context.Background(), dir)
+	data1, _ := ReadBytes(t.Context(), dir)
 
 	// Second read should return cached data.
-	data2, _ := ReadBytes(context.Background(), dir)
+	data2, _ := ReadBytes(t.Context(), dir)
 	if string(data1) != string(data2) {
 		t.Fatalf("cache miss: got %q then %q", data1, data2)
 	}
@@ -165,7 +165,7 @@ func writeSettings(t *testing.T, dir string, content []byte) {
 // is invalidated across a read -> delete -> recreate sequence: the second
 // read must see the new file contents, not a stale cached parse.
 func TestField_GenInvalidationAfterDeleteRecreate(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, Filename)
 
@@ -194,7 +194,7 @@ func TestField_GenInvalidationAfterDeleteRecreate(t *testing.T) {
 // different-size config.json is treated as a cache MISS and re-read. The
 // mtime is pinned to a fixed whole second so only the size differs.
 func TestReadBytes_SizeChangeBypassesMtimeCache(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, Filename)
 	fixed := time.Unix(1700000000, 0)
@@ -232,7 +232,7 @@ func TestReadBytes_SizeChangeBypassesMtimeCache(t *testing.T) {
 // the first returned map and observing the mutation on the second call (a
 // re-parse would not carry it).
 func TestParsedMap_CacheReuse(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	dir := t.TempDir()
 	path := filepath.Join(dir, Filename)
 	if err := os.WriteFile(path, []byte(`{"x":"1"}`), 0o600); err != nil {

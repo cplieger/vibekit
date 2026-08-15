@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"context"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -12,7 +11,7 @@ import (
 // slice under a single mutex — this verifies no panics or races.
 func TestStore_CreateDeleteConcurrent(t *testing.T) {
 	dir := t.TempDir()
-	ctx := context.Background()
+	ctx := t.Context()
 	s, err := New(ctx, dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatal(err)

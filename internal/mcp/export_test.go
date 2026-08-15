@@ -4,7 +4,6 @@ package mcp
 // secret-preserving merge.
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -103,14 +102,14 @@ func TestMergeSecrets_MaskedWithNoPriorValueBecomesEmpty(t *testing.T) {
 
 func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 	tmp := t.TempDir()
-	s, err := New(context.Background(), tmp, nil, WithKASConfigPath(filepath.Join(tmp, "kas-mcp.json")))
+	s, err := New(t.Context(), tmp, nil, WithKASConfigPath(filepath.Join(tmp, "kas-mcp.json")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = s.Create(context.Background(), &Server{Name: "alpha", Transport: TransportStdio, Command: "a", Enabled: true})
-	_, _ = s.Create(context.Background(), &Server{Name: "beta", Transport: TransportStdio, Command: "b", Enabled: false})
+	_, _ = s.Create(t.Context(), &Server{Name: "alpha", Transport: TransportStdio, Command: "a", Enabled: true})
+	_, _ = s.Create(t.Context(), &Server{Name: "beta", Transport: TransportStdio, Command: "b", Enabled: false})
 
-	names := s.EnabledNames(context.Background())
+	names := s.EnabledNames(t.Context())
 	if _, ok := names["alpha"]; !ok {
 		t.Errorf("alpha missing from EnabledNames: %+v", names)
 	}
@@ -125,7 +124,7 @@ func TestEnabledNames_ReturnsOnlyEnabled(t *testing.T) {
 // the two cases needing opposite treatment.
 func TestConfiguredNames_IncludesDisabled(t *testing.T) {
 	s := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	_, _ = s.Create(ctx, &Server{Name: "alpha", Transport: TransportStdio, Command: "a", Enabled: true})
 	_, _ = s.Create(ctx, &Server{Name: "beta", Transport: TransportStdio, Command: "b", Enabled: false})
 
@@ -148,11 +147,11 @@ func TestAllNames_IncludesThePowersBlock(t *testing.T) {
 	if err := os.WriteFile(kasPath, []byte(seed), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), tmp, nil, WithKASConfigPath(kasPath))
+	s, err := New(t.Context(), tmp, nil, WithKASConfigPath(kasPath))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	_, _ = s.Create(ctx, &Server{Name: "mine", Transport: TransportStdio, Command: "a", Enabled: true})
 
 	all := s.AllNames(ctx)
@@ -173,11 +172,11 @@ func TestAllNames_IncludesThePowersBlock(t *testing.T) {
 func TestAllNames_UnparseableFileDegradesToConfigured(t *testing.T) {
 	tmp := t.TempDir()
 	kasPath := filepath.Join(tmp, "kas-mcp.json")
-	s, err := New(context.Background(), tmp, nil, WithKASConfigPath(kasPath))
+	s, err := New(t.Context(), tmp, nil, WithKASConfigPath(kasPath))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	_, _ = s.Create(ctx, &Server{Name: "mine", Transport: TransportStdio, Command: "a", Enabled: true})
 	// Written AFTER Create so the store's own render does not overwrite it.
 	if err := os.WriteFile(kasPath, []byte(`{"powers": {"mcpServers": [not json`), 0o600); err != nil {

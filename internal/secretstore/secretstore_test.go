@@ -1,7 +1,6 @@
 package secretstore
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -30,7 +29,7 @@ func newStore(t *testing.T) *Store {
 // that takes MCP OAuth from one DCR per bridge spawn to zero.
 func TestRoundTripAcrossProcesses(t *testing.T) {
 	dir := t.TempDir()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	first, err := New(dir)
 	if err != nil {
@@ -63,7 +62,7 @@ func TestFileIs0600(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if err := s.Set(context.Background(), realKey, "v"); err != nil {
+	if err := s.Set(t.Context(), realKey, "v"); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
 	info, err := os.Stat(s.path)
@@ -111,7 +110,7 @@ func TestGetMissIsNotAnError(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	s := newStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := s.Set(ctx, realKey, "v"); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
@@ -132,7 +131,7 @@ func TestDelete(t *testing.T) {
 // disk churn.
 func TestDeleteAbsentDoesNotWrite(t *testing.T) {
 	s := newStore(t)
-	if err := s.Delete(context.Background(), "never-stored"); err != nil {
+	if err := s.Delete(t.Context(), "never-stored"); err != nil {
 		t.Fatalf("Delete(absent) error = %v", err)
 	}
 	if _, err := os.Stat(s.path); !errors.Is(err, os.ErrNotExist) {
@@ -141,7 +140,7 @@ func TestDeleteAbsentDoesNotWrite(t *testing.T) {
 }
 
 func TestBounds(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("value over limit", func(t *testing.T) {
 		s := newStore(t)
@@ -229,7 +228,7 @@ func TestCorruptStoreMovedAside(t *testing.T) {
 		t.Errorf("stat moved-aside file: %v, want it preserved", err)
 	}
 	// The store is usable afterwards.
-	if err := s.Set(context.Background(), realKey, "v"); err != nil {
+	if err := s.Set(t.Context(), realKey, "v"); err != nil {
 		t.Errorf("Set() after corrupt recovery error = %v, want nil", err)
 	}
 }
@@ -255,7 +254,7 @@ func TestPersistFailureRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := s.Set(ctx, realKey, "original"); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
@@ -294,7 +293,7 @@ func TestOnDiskShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	if err := s.Set(context.Background(), realKey, "blob"); err != nil {
+	if err := s.Set(t.Context(), realKey, "blob"); err != nil {
 		t.Fatalf("Set() error = %v", err)
 	}
 	data, err := os.ReadFile(s.path)
@@ -368,7 +367,7 @@ func FuzzKeysAndValues(f *testing.F) {
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
-		ctx := context.Background()
+		ctx := t.Context()
 		setErr := s.Set(ctx, key, value)
 		if setErr != nil {
 			if _, ok := s.Get(key); ok {

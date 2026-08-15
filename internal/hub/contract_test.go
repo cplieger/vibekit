@@ -5,7 +5,6 @@ package hub
 // and real implementations to catch drift.
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -24,7 +23,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -35,7 +34,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Start_with_existing_session", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{SessionID: "existing-sess", Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{SessionID: "existing-sess", Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -46,11 +45,11 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Call_returns_response", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
-		resp, err := b.Call(context.Background(), "session/prompt", nil)
+		resp, err := b.Call(t.Context(), "session/prompt", nil)
 		if err != nil {
 			t.Fatalf("Call: %v", err)
 		}
@@ -61,29 +60,29 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
-		if err := b.Notify(context.Background(), "session/update", nil); err != nil {
+		if err := b.Notify(t.Context(), "session/update", nil); err != nil {
 			t.Errorf("Notify: %v", err)
 		}
 	})
 
 	t.Run("Respond_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
-		if err := b.Respond(context.Background(), 1, map[string]string{"ok": "true"}, nil); err != nil {
+		if err := b.Respond(t.Context(), 1, map[string]string{"ok": "true"}, nil); err != nil {
 			t.Errorf("Respond: %v", err)
 		}
 	})
 
 	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		ch := b.NotifCh()
@@ -103,7 +102,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 
 	t.Run("ModelID_returns_value", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()

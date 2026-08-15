@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +38,7 @@ func TestScanKiroDirFS_AgentsDedupPreferMd(t *testing.T) {
 		"agents/bar.json": {Data: []byte(`{"name":"bar"}`)},
 		"agents/baz.md":   {Data: []byte("# baz")},
 	}
-	agents := filterType(scanKiroDirFS(context.Background(), fsys, "ws/.kiro"), "agent")
+	agents := filterType(scanKiroDirFS(t.Context(), fsys, "ws/.kiro"), "agent")
 	if len(agents) != 3 {
 		t.Fatalf("got %d agents, want 3 (foo paired -> 1): %+v", len(agents), agents)
 	}
@@ -64,7 +63,7 @@ func TestScanKiroDirFS_SkillsAreSubdirs(t *testing.T) {
 		"skills/beta/SKILL.md":  {Data: []byte("# beta")},
 		"skills/loose.md":       {Data: []byte("# not a skill")},
 	}
-	skills := filterType(scanKiroDirFS(context.Background(), fsys, "ws/.kiro"), "skill")
+	skills := filterType(scanKiroDirFS(t.Context(), fsys, "ws/.kiro"), "skill")
 	if len(skills) != 2 {
 		t.Fatalf("got %d skills, want 2 (subdirs only, flat .md ignored): %+v", len(skills), skills)
 	}
@@ -87,7 +86,7 @@ func TestScanKiroDirFS_SteeringInclusion(t *testing.T) {
 		"steering/match.md":  {Data: []byte("---\ninclusion: fileMatch\nfileMatchPattern: \"**/*.go\"\n---\n")},
 		"steering/crlf.md":   {Data: []byte("\ufeff---\r\ninclusion: manual\r\n---\r\n# body")},
 	}
-	steer := filterType(scanKiroDirFS(context.Background(), fsys, "ws/.kiro"), "steering")
+	steer := filterType(scanKiroDirFS(t.Context(), fsys, "ws/.kiro"), "steering")
 	byName := indexByName(steer)
 	if got := byName["always"].Inclusion; got != "always" {
 		t.Errorf("always.md inclusion = %q, want always", got)
@@ -113,7 +112,7 @@ func TestScanKiroDirFS_Caps(t *testing.T) {
 	for i := range 15 {
 		fsys[fmt.Sprintf("agents/a%02d.json", i)] = &fstest.MapFile{Data: []byte("{}")}
 	}
-	items := scanKiroDirFS(context.Background(), fsys, "ws/.kiro")
+	items := scanKiroDirFS(t.Context(), fsys, "ws/.kiro")
 	if n := len(filterType(items, "steering")); n != maxSteeringPerDir {
 		t.Errorf("steering count = %d, want %d (capped)", n, maxSteeringPerDir)
 	}
@@ -137,7 +136,7 @@ func TestScanSteering_CapsOversizeRead(t *testing.T) {
 	fsys := fstest.MapFS{
 		"steering/huge.md": {Data: append([]byte(head), big...)},
 	}
-	steer := filterType(scanKiroDirFS(context.Background(), fsys, "ws/.kiro"), "steering")
+	steer := filterType(scanKiroDirFS(t.Context(), fsys, "ws/.kiro"), "steering")
 	if len(steer) != 1 {
 		t.Fatalf("got %d steering items, want 1", len(steer))
 	}

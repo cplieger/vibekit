@@ -18,6 +18,8 @@ import (
 
 func newRoutedService(t *testing.T) (*Service, *http.ServeMux) {
 	t.Helper()
+	// Not t.Context(): the service context must outlive the t.Cleanup(s.Close)
+	// teardown, and t.Context() is already cancelled when cleanup funcs run.
 	s := New(context.Background(), t.TempDir(), "mailto:test@example.com")
 	t.Cleanup(s.Close)
 	mux := http.NewServeMux()

@@ -48,7 +48,7 @@ func TestStartKiroCLIShapes(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			cfg := tc.cfg
-			kiro := startKiroCLI(context.Background(), &cfg)
+			kiro := startKiroCLI(t.Context(), &cfg)
 			defer kiro.stop()
 
 			if got := kiro.cliPath(); got != tc.wantPath {
@@ -122,6 +122,9 @@ func TestStartKiroCLIAdoptsACompleteVersionDirectory(t *testing.T) {
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
 		ToolsDir:           toolsDir,
 	}
+	// Not t.Context(): this context governs the background install manager and
+	// must outlive the t.Cleanup(kiro.stop) teardown below — t.Context() is
+	// already cancelled by the time cleanup funcs run.
 	kiro := startKiroCLI(context.Background(), &cfg)
 	t.Cleanup(kiro.stop)
 
@@ -185,6 +188,9 @@ func TestStartKiroCLIRejectsASidecarLessVersionDirectory(t *testing.T) {
 		KiroCLISHA256ARM64: strings.Repeat("b", 64),
 		ToolsDir:           toolsDir,
 	}
+	// Not t.Context(): this context governs the background install manager and
+	// must outlive the t.Cleanup(kiro.stop) teardown below — t.Context() is
+	// already cancelled by the time cleanup funcs run.
 	kiro := startKiroCLI(context.Background(), &cfg)
 	t.Cleanup(kiro.stop)
 

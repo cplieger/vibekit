@@ -21,22 +21,39 @@ import (
 
 const port = "9847"
 
+// SteeringGenerator generates steering files for kiro-cli. Declared here, at
+// the only consumer, rather than in the api hub: one consumer means the hub
+// would carry a contract nothing else reads. *steering.Generator satisfies it.
+type SteeringGenerator interface {
+	Generate(ctx context.Context)
+	CustomPath() string
+}
+
+// AccountUsageProvider fetches account/subscription-level usage (plan,
+// credits, quota) via the KAS _kiro/account/getUsage request on a live bridge.
+// Narrow by design so this package can serve GET /api/account/usage without
+// depending on the full Hub surface; the concrete *hub.Hub satisfies it via
+// the utility bridge. Declared at the consumer for the same reason as above.
+type AccountUsageProvider interface {
+	AccountUsage(ctx context.Context) (*api.AccountUsage, error)
+}
+
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
 	forges        api.RouteHandler
 	mcpConfig     api.RouteHandler
 	chats         api.ChatStore
-	git           api.GitHandler
+	git           api.RouteHandler
 	gitAI         api.RouteHandler
-	files         api.FileHandler
-	auth          api.AuthHandler
+	files         api.RouteHandler
+	auth          api.RouteHandler
 	push          api.PushService
 	mcpStatus     api.RouteHandler
 	utilityPrompt api.UtilityPrompter
-	accountUsage  api.AccountUsageProvider
+	accountUsage  AccountUsageProvider
 	policy        api.PolicyProvider
 	hub           api.Hub
-	steering      api.SteeringGenerator
+	steering      SteeringGenerator
 	mcpRegistry   api.RouteHandler
 	staticFS      fs.FS
 	// kiroDocs memoizes the document-oriented .kiro inventory behind a
@@ -82,7 +99,7 @@ type Server struct {
 type Option func(*Server)
 
 // WithSteering sets the steering generator used to produce environment.md for kiro-cli.
-func WithSteering(g api.SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
+func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
 
 // WithHub sets the hub that manages bridge processes and SSE broadcasts.
 func WithHub(h api.Hub) Option { return func(s *Server) { s.hub = h } }
@@ -91,16 +108,16 @@ func WithHub(h api.Hub) Option { return func(s *Server) { s.hub = h } }
 func WithChats(c api.ChatStore) Option { return func(s *Server) { s.chats = c } }
 
 // WithGit sets the git handler for non-AI git HTTP endpoints.
-func WithGit(g api.GitHandler) Option { return func(s *Server) { s.git = g } }
+func WithGit(g api.RouteHandler) Option { return func(s *Server) { s.git = g } }
 
 // WithGitAI sets the route handler for AI-assisted git operations.
 func WithGitAI(r api.RouteHandler) Option { return func(s *Server) { s.gitAI = r } }
 
 // WithFiles sets the file handler for workspace file read/write endpoints.
-func WithFiles(f api.FileHandler) Option { return func(s *Server) { s.files = f } }
+func WithFiles(f api.RouteHandler) Option { return func(s *Server) { s.files = f } }
 
 // WithAuth sets the auth handler for login, logout, and whoami endpoints.
-func WithAuth(a api.AuthHandler) Option { return func(s *Server) { s.auth = a } }
+func WithAuth(a api.RouteHandler) Option { return func(s *Server) { s.auth = a } }
 
 // WithPush sets the push service used for Web Push notification delivery.
 func WithPush(p api.PushService) Option { return func(s *Server) { s.push = p } }
@@ -128,7 +145,7 @@ func WithUtilityPrompt(p api.UtilityPrompter) Option {
 
 // WithAccountUsage sets the provider for account/subscription usage,
 // served at GET /api/account/usage (sidebar footer).
-func WithAccountUsage(p api.AccountUsageProvider) Option {
+func WithAccountUsage(p AccountUsageProvider) Option {
 	return func(s *Server) { s.accountUsage = p }
 }
 

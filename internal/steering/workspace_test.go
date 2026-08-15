@@ -1,7 +1,6 @@
 package steering
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,7 @@ import (
 func TestWriteWorkspace_Empty(t *testing.T) {
 	dir := t.TempDir()
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir, nil)
 	if !strings.Contains(b.String(), "Empty.") {
 		t.Error("expected 'Empty.' for empty workspace")
 	}
@@ -27,7 +26,7 @@ func TestWriteWorkspace_WithFiles(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch"), 0o644)
 
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir, nil)
 	out := b.String()
 	if !strings.Contains(out, "go.mod") {
 		t.Error("missing go.mod in notable files")
@@ -43,7 +42,7 @@ func TestWriteWorkspace_WithGitRepo(t *testing.T) {
 	os.MkdirAll(filepath.Join(repoDir, ".git"), 0o755)
 
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir, nil)
 	out := b.String()
 	if !strings.Contains(out, "myrepo") {
 		t.Error("missing git repo")
@@ -59,7 +58,7 @@ func TestWriteWorkspace_WithDirs(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "docs"), 0o755)
 
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir, nil)
 	out := b.String()
 	if !strings.Contains(out, "src") {
 		t.Error("missing src directory")
@@ -76,7 +75,7 @@ func TestWriteWorkspace_OmitsEmptySectionHeaders(t *testing.T) {
 			t.Fatal(err)
 		}
 		var b strings.Builder
-		writeWorkspace(context.Background(), &b, dir, nil)
+		writeWorkspace(t.Context(), &b, dir, nil)
 		out := b.String()
 		if strings.Contains(out, "### Git repositories") {
 			t.Errorf("Git repositories header emitted with zero repos:\n%s", out)
@@ -90,7 +89,7 @@ func TestWriteWorkspace_OmitsEmptySectionHeaders(t *testing.T) {
 		// Only a README (a file, not a dir) -> dirs empty, isRoot false.
 		mustWriteFile(t, filepath.Join(dir, "README.md"), "A workspace readme line\n")
 		var b strings.Builder
-		writeWorkspace(context.Background(), &b, dir, nil)
+		writeWorkspace(t.Context(), &b, dir, nil)
 		out := b.String()
 		if strings.Contains(out, "### Directories") {
 			t.Errorf("Directories header emitted with zero dirs:\n%s", out)
@@ -125,7 +124,7 @@ func TestWriteWorkspace_RendersGroupedSteering(t *testing.T) {
 		t.Fatal(err)
 	}
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir, nil)
 	out := b.String()
 	checks := []string{
 		"Always-loaded steering",
@@ -153,7 +152,7 @@ func TestWriteWorkspace_OmitsProtocolWhenNoSteering(t *testing.T) {
 	}
 	// Repo exists but has no .kiro/steering/.
 	var b strings.Builder
-	writeWorkspace(context.Background(), &b, dir, nil)
+	writeWorkspace(t.Context(), &b, dir, nil)
 	out := b.String()
 	if strings.Contains(out, "Per-repo .kiro protocol") {
 		t.Errorf("protocol section emitted with no per-repo steering\n--- output ---\n%s", out)
@@ -578,7 +577,7 @@ func TestClassifyEntries(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("x"), 0o644)
 
 	entries, _ := os.ReadDir(dir)
-	repos, dirs := classifyEntries(context.Background(), entries, dir)
+	repos, dirs := classifyEntries(t.Context(), entries, dir)
 
 	wantRepos := []string{".kiro", "repo1"}
 	if len(repos) != 2 || repos[0] != wantRepos[0] || repos[1] != wantRepos[1] {

@@ -252,31 +252,7 @@ type ACPBridge interface {
 // invocation is a new bridge.
 type ACPBridgeFactory func() ACPBridge
 
-// --- Services ---
-
-// SteeringGenerator generates steering files for kiro-cli.
-type SteeringGenerator interface {
-	Generate(ctx context.Context)
-	CustomPath() string
-}
-
 // --- HTTP ---
-
-// GitHandler registers git-related HTTP routes under /api/git/*.
-type GitHandler interface {
-	RouteHandler
-}
-
-// FileHandler registers file browsing and editing routes under /api/file/*
-// and /api/files/*.
-type FileHandler interface {
-	RouteHandler
-}
-
-// AuthHandler registers /api/whoami, /api/login, /api/logout.
-type AuthHandler interface {
-	RouteHandler
-}
 
 // RouteHandler is the minimal contract for any component that wires its
 // own routes under a sub-tree of /api/*. Used by the MCP config store,
@@ -318,15 +294,6 @@ type PushService interface {
 // level. Best-effort — a model with no effort config ignores it.
 type UtilityPrompter interface {
 	UtilityPrompt(ctx context.Context, prompt string, effort EffortLevel) (string, error)
-}
-
-// AccountUsageProvider fetches account/subscription-level usage (plan,
-// credits, quota) via the KAS _kiro/account/getUsage request on a live
-// bridge. Narrow interface so the server can serve GET /api/account/usage
-// without depending on the full Hub surface; the concrete *hub.Hub
-// satisfies it via the utility bridge.
-type AccountUsageProvider interface {
-	AccountUsage(ctx context.Context) (*AccountUsage, error)
 }
 
 // --- Pending Changes ---

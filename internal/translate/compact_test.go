@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -27,7 +26,7 @@ func summarizationInfo(t *testing.T, status, summary string) json.RawMessage {
 // EventKind matches.
 func eventMsgsByKind(t *testing.T, store *testsupport.InMemoryChatStore, chatID api.ChatID, kind api.EventKind) []api.Message {
 	t.Helper()
-	c, ok := store.Get(context.Background(), chatID)
+	c, ok := store.Get(t.Context(), chatID)
 	if !ok {
 		return nil
 	}
@@ -79,7 +78,7 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 			deps, events, store := depsWithStore(t, "c1")
 			tr := New(deps)
 
-			tr.HandleSessionInfoUpdate(context.Background(), "c1", summarizationInfo(t, status, ""), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, ""), "")
 
 			if msgs := eventMsgsByKind(t, store, "c1", api.EventCompactFailed); len(msgs) != 0 {
 				t.Errorf("EventCompactFailed messages = %d, want 0 (cancel is benign)", len(msgs))
@@ -93,7 +92,7 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 			if len(*events) != 0 {
 				t.Errorf("broadcasts = %d, want 0 (cancel is a silent no-op)", len(*events))
 			}
-			if c, _ := store.Get(context.Background(), "c1"); c.CompactionWatermark != "" {
+			if c, _ := store.Get(t.Context(), "c1"); c.CompactionWatermark != "" {
 				t.Errorf("CompactionWatermark = %q, want empty (no compaction occurred)", c.CompactionWatermark)
 			}
 		})
@@ -108,7 +107,7 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(deps, withIDGenerator(func() string { return "evt-1" }))
 
-	tr.HandleSessionInfoUpdate(context.Background(), "c1", summarizationInfo(t, "success", "history summary"), "")
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), "")
 
 	msgs := eventMsgsByKind(t, store, "c1", api.EventCompacted)
 	if len(msgs) != 1 {
@@ -117,7 +116,7 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	if msgs[0].Content != "history summary" {
 		t.Errorf("EventCompacted content = %q, want %q", msgs[0].Content, "history summary")
 	}
-	c, _ := store.Get(context.Background(), "c1")
+	c, _ := store.Get(t.Context(), "c1")
 	if c.CompactionWatermark != "evt-1" {
 		t.Errorf("CompactionWatermark = %q, want %q (must equal the compacted event id)", c.CompactionWatermark, "evt-1")
 	}
@@ -137,7 +136,7 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSessionInfoUpdate(context.Background(), "c1", summarizationInfo(t, "error", ""), "")
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), "")
 
 	msgs := eventMsgsByKind(t, store, "c1", api.EventCompactFailed)
 	if len(msgs) != 1 {
@@ -165,7 +164,7 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSessionInfoUpdate(context.Background(), "c1", summarizationInfo(t, "running", ""), "")
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "running", ""), "")
 
 	if n := countCompactionStarted(events); n != 1 {
 		t.Errorf("compaction_started broadcasts = %d, want 1", n)

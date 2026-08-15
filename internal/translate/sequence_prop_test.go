@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -35,7 +34,7 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 				payload := mustJSONRapid(map[string]any{
 					"content": map[string]any{"type": "text", "text": rapid.String().Draw(rt, "text")},
 				})
-				tr.HandleAssistantChunk(context.Background(), chatID, payload, false)
+				tr.HandleAssistantChunk(t.Context(), chatID, payload, false)
 
 			case actToolCall:
 				id := rapid.StringMatching(`[a-z]{4,8}`).Draw(rt, "toolID")
@@ -47,7 +46,7 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 					"status":     "in_progress",
 					"content":    []any{},
 				})
-				tr.HandleToolCall(context.Background(), chatID, payload, "")
+				tr.HandleToolCall(t.Context(), chatID, payload, "")
 
 			case actToolCallUpdate:
 				if len(toolIDs) == 0 {
@@ -59,13 +58,13 @@ func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 					"status":     "completed",
 					"content":    []any{},
 				})
-				tr.HandleToolCallUpdate(context.Background(), chatID, payload, "")
+				tr.HandleToolCallUpdate(t.Context(), chatID, payload, "")
 
 			case actPlan:
 				payload := mustJSONRapid(map[string]any{
 					"entries": []any{},
 				})
-				tr.HandlePlan(context.Background(), chatID, payload)
+				tr.HandlePlan(t.Context(), chatID, payload)
 			}
 		}
 

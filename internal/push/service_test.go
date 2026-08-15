@@ -5,7 +5,6 @@ package push
 // loadPreferences, and the Close contract.
 
 import (
-	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -18,7 +17,7 @@ import (
 
 func TestNew_GeneratesKeys(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 
 	if s.PublicKey() == "" {
 		t.Fatal("public key is empty")
@@ -38,7 +37,7 @@ func TestNew_GeneratesKeys(t *testing.T) {
 // TestNew_ClientTimeout pins the 10-second HTTP client timeout New
 // configures (an integer-division slip would zero it out).
 func TestNew_ClientTimeout(t *testing.T) {
-	s := New(context.Background(), t.TempDir(), testSubject)
+	s := New(t.Context(), t.TempDir(), testSubject)
 	defer s.Close()
 
 	if s.client.Timeout != 10*time.Second {
@@ -48,7 +47,7 @@ func TestNew_ClientTimeout(t *testing.T) {
 
 func TestSubscribeUnsubscribe(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 
 	sub := api.PushSubscription{Endpoint: "https://push.example.com/1"}
@@ -68,7 +67,7 @@ func TestSubscribeUnsubscribe(t *testing.T) {
 
 func TestSubscribe_OverwritesDuplicate(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 
 	sub1 := api.PushSubscription{Endpoint: "https://push.example.com/1"}
@@ -116,7 +115,7 @@ func TestSubscribe_HostLogging(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := New(context.Background(), t.TempDir(), testSubject)
+			s := New(t.Context(), t.TempDir(), testSubject)
 			defer s.Close() // drain writeLoop before TempDir cleanup
 
 			// Install capture AFTER New so its "push: ready" line is excluded.
@@ -138,7 +137,7 @@ func TestSubscribe_HostLogging(t *testing.T) {
 
 func TestSetPreferences(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 
 	// Defaults: both true.
 	s.mu.Lock()
@@ -185,7 +184,7 @@ func TestLoadPreferences(t *testing.T) {
 				}
 			}
 
-			s := New(context.Background(), dir, "mailto:test@example.com")
+			s := New(t.Context(), dir, "mailto:test@example.com")
 
 			s.mu.Lock()
 			af, pn := s.prefs[api.PushKindAgentFinished], s.prefs[api.PushKindPermission]
@@ -202,7 +201,7 @@ func TestLoadPreferences(t *testing.T) {
 // internal context.
 func TestClose_CancelsInternalContext(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 
 	select {
 	case <-s.ctx.Done():
@@ -225,7 +224,7 @@ func TestClose_CancelsInternalContext(t *testing.T) {
 // tolerate that without panic.
 func TestClose_IsIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	s.Close()
 	s.Close() // must not panic
 }

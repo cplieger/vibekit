@@ -2,7 +2,6 @@ package settings
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,7 +30,7 @@ func FuzzSettingsField(f *testing.F) {
 		delete(globalCaches, dir)
 		globalCacheMu.Unlock()
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Must not panic regardless of input, across representative target types.
 		Field[bool](ctx, dir, key, "fuzz")
@@ -73,7 +72,7 @@ func FuzzSettingsReadBytes(f *testing.F) {
 		delete(globalCaches, dir)
 		globalCacheMu.Unlock()
 
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Must not panic regardless of content.
 		got, err := ReadBytes(ctx, dir)

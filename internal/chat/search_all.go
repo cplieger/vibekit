@@ -13,13 +13,14 @@ package chat
 // per-chat scan fanned out over the existing bounded-parallel reader.
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -92,11 +93,11 @@ func (s *Store) SearchAll(ctx context.Context, query string) SearchAllResult {
 			matches = append(matches, found[i])
 		}
 	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].Score != matches[j].Score {
-			return matches[i].Score > matches[j].Score
-		}
-		return matches[i].UpdatedAt > matches[j].UpdatedAt
+	slices.SortStableFunc(matches, func(a, b Match) int {
+		return cmp.Or(
+			cmp.Compare(b.Score, a.Score),
+			cmp.Compare(b.UpdatedAt, a.UpdatedAt),
+		)
 	})
 	if len(matches) > maxChatResults {
 		matches = matches[:maxChatResults]
@@ -173,7 +174,7 @@ func (s *Store) newestEntries(ctx context.Context) (entries []chatEntry, truncat
 			mtim: mtim,
 		})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].mtim > all[j].mtim })
+	slices.SortFunc(all, func(a, b stamped) int { return cmp.Compare(b.mtim, a.mtim) })
 	if len(all) > maxChatsScanned {
 		all = all[:maxChatsScanned]
 		truncated = true

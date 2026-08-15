@@ -5,12 +5,13 @@
 package forges
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -85,11 +86,11 @@ func (m *Manager) List(ctx context.Context) []ConfiguredForge {
 	for _, f := range m.forges {
 		out = append(out, *f)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Kind != out[j].Kind {
-			return out[i].Kind < out[j].Kind
-		}
-		return out[i].Host < out[j].Host
+	slices.SortStableFunc(out, func(a, b ConfiguredForge) int {
+		return cmp.Or(
+			cmp.Compare(a.Kind, b.Kind),
+			cmp.Compare(a.Host, b.Host),
+		)
 	})
 	return out
 }

@@ -22,7 +22,7 @@ func newCacheForTest(t *testing.T, build func(context.Context) steering.ForgeSna
 	t.Setenv("HOME", home)
 	steer := steering.New(t.TempDir(), t.TempDir())
 	steer.SetForgeSnapshot(func() steering.ForgeSnapshot { return steering.ForgeSnapshot{} })
-	c := newForgeSnapshotCache(context.Background(), steer, build)
+	c := newForgeSnapshotCache(t.Context(), steer, build)
 	steer.SetForgeSnapshot(c.snapshot)
 	return c, filepath.Join(home, ".kiro", "steering", "environment.md")
 }

@@ -1,7 +1,6 @@
 package forges
 
 import (
-	"context"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -18,7 +17,7 @@ func TestGHAuthHosts_DecodesRealShape(t *testing.T) {
 	dir := stubPath(t)
 	stubCLI(t, dir, "gh", "echo '"+ghStatusFixture+"'")
 
-	hosts, err := ghAuthHosts(context.Background())
+	hosts, err := ghAuthHosts(t.Context())
 	if err != nil {
 		t.Fatalf("ghAuthHosts: %v", err)
 	}
@@ -37,7 +36,7 @@ func TestGHAuthHosts_ParsesOutputOnNonZeroExit(t *testing.T) {
 	offline := `{"hosts":{"github.com":[{"state":"error","active":true,"host":"github.com","login":"alice"}]}}`
 	stubCLI(t, dir, "gh", "echo '"+offline+"'; echo 'connection error' >&2; exit 1")
 
-	hosts, err := ghAuthHosts(context.Background())
+	hosts, err := ghAuthHosts(t.Context())
 	if err != nil {
 		t.Fatalf("ghAuthHosts: %v", err)
 	}
@@ -53,7 +52,7 @@ func TestGHAuthHosts_ActiveAccountWins(t *testing.T) {
 	multi := `{"hosts":{"github.com":[{"active":false,"login":"old"},{"active":true,"login":"current"}]}}`
 	stubCLI(t, dir, "gh", "echo '"+multi+"'")
 
-	hosts, err := ghAuthHosts(context.Background())
+	hosts, err := ghAuthHosts(t.Context())
 	if err != nil {
 		t.Fatalf("ghAuthHosts: %v", err)
 	}
@@ -67,7 +66,7 @@ func TestGHAuthHosts_NotLoggedIn(t *testing.T) {
 	dir := stubPath(t)
 	stubCLI(t, dir, "gh", `echo "You are not logged into any GitHub hosts." >&2; exit 1`)
 
-	hosts, err := ghAuthHosts(context.Background())
+	hosts, err := ghAuthHosts(t.Context())
 	if err != nil {
 		t.Fatalf("ghAuthHosts: %v", err)
 	}
@@ -80,7 +79,7 @@ func TestGHAuthHosts_NotLoggedIn(t *testing.T) {
 // (the manager turns it into a cli_missing row).
 func TestGHAuthHosts_NotInstalled(t *testing.T) {
 	stubPath(t) // empty PATH
-	_, err := ghAuthHosts(context.Background())
+	_, err := ghAuthHosts(t.Context())
 	if !errors.Is(err, ErrNotInstalled) {
 		t.Errorf("want ErrNotInstalled, got %v", err)
 	}
@@ -107,7 +106,7 @@ func TestTeaLogins_DecodesRealShape(t *testing.T) {
 	writeFixture(t, fixture, teaListFixture)
 	stubCLI(t, dir, "tea", "cat "+fixture)
 
-	logins, err := teaLogins(context.Background())
+	logins, err := teaLogins(t.Context())
 	if err != nil {
 		t.Fatalf("teaLogins: %v", err)
 	}
@@ -128,7 +127,7 @@ func TestTeaLogins_EmptyList(t *testing.T) {
 	dir := stubPath(t)
 	stubCLI(t, dir, "tea", "echo '[]'")
 
-	logins, err := teaLogins(context.Background())
+	logins, err := teaLogins(t.Context())
 	if err != nil {
 		t.Fatalf("teaLogins: %v", err)
 	}
@@ -150,7 +149,7 @@ func TestTeaHelperToken_ParsesAndCaches(t *testing.T) {
 printf 'protocol=https\nhost=`+host+`\nusername=alice\npassword=tok123\n'`)
 
 	for i := range 2 {
-		tok, err := teaHelperToken(context.Background(), host)
+		tok, err := teaHelperToken(t.Context(), host)
 		if err != nil {
 			t.Fatalf("teaHelperToken call %d: %v", i+1, err)
 		}

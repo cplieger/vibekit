@@ -31,18 +31,18 @@ import (
 
 // Compile-time interface satisfaction checks.
 var (
-	_ api.ChatStore         = (*chat.Store)(nil)
-	_ api.ACPBridge         = (*bridge.Bridge)(nil)
-	_ api.Broadcaster       = (*hub.Hub)(nil)
-	_ api.Hub               = (*hub.Hub)(nil)
-	_ api.SteeringGenerator = (*steering.Generator)(nil)
-	_ api.GitHandler        = (*git.Handler)(nil)
-	_ api.FileHandler       = (*filehandler.Handler)(nil)
-	_ api.AuthHandler       = (*auth.Handler)(nil)
-	_ api.PushService       = (*pushPkg.Service)(nil)
-	_ api.MCPConfig         = (*mcpPkg.Store)(nil)
-	_ api.RouteHandler      = (*mcpPkg.Store)(nil)
-	_ api.RouteHandler      = (*mcpPkg.RegistryProxy)(nil)
+	_ api.ChatStore            = (*chat.Store)(nil)
+	_ api.ACPBridge            = (*bridge.Bridge)(nil)
+	_ api.Broadcaster          = (*hub.Hub)(nil)
+	_ api.Hub                  = (*hub.Hub)(nil)
+	_ server.SteeringGenerator = (*steering.Generator)(nil)
+	_ api.RouteHandler         = (*git.Handler)(nil)
+	_ api.RouteHandler         = (*filehandler.Handler)(nil)
+	_ api.RouteHandler         = (*auth.Handler)(nil)
+	_ api.PushService          = (*pushPkg.Service)(nil)
+	_ api.MCPConfig            = (*mcpPkg.Store)(nil)
+	_ api.RouteHandler         = (*mcpPkg.Store)(nil)
+	_ api.RouteHandler         = (*mcpPkg.RegistryProxy)(nil)
 )
 
 // requiredToolsList is the same required-tools.txt the image build

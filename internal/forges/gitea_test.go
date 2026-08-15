@@ -1,7 +1,6 @@
 package forges
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,7 +38,7 @@ func TestGiteaAPI_TokenNotInErrorOnHTTPError(t *testing.T) {
 	defer srv.Close()
 
 	p := newGiteaWithToken(t, "leak.example")
-	ctx := context.Background()
+	ctx := t.Context()
 
 	assertNoToken := func(t *testing.T, op string, err error) {
 		t.Helper()
@@ -76,7 +75,7 @@ func TestGiteaAPI_TokenNotInErrorOnTransportError(t *testing.T) {
 	srv.Close() // force connection-refused on the next request
 
 	p := newGiteaWithToken(t, "leak.example")
-	_, err := p.apiGet(context.Background(), srvURL+"/api/v1/repos/o/r/pulls/1")
+	_, err := p.apiGet(t.Context(), srvURL+"/api/v1/repos/o/r/pulls/1")
 	if err == nil {
 		t.Fatal("expected a transport error against a closed server, got nil")
 	}
@@ -96,7 +95,7 @@ func TestGiteaAPI_SuccessReturnsBody(t *testing.T) {
 	defer srv.Close()
 
 	p := newGiteaWithToken(t, "leak.example")
-	out, err := p.apiGet(context.Background(), srv.URL+"/api/v1/users/alice")
+	out, err := p.apiGet(t.Context(), srv.URL+"/api/v1/users/alice")
 	if err != nil {
 		t.Fatalf("apiGet: %v", err)
 	}

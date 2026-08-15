@@ -8,7 +8,6 @@ package mcp
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -85,8 +84,8 @@ func TestHandleCollection_POST_createsAndPersists(t *testing.T) {
 	if got.ID == "" || got.Name != "gh" {
 		t.Errorf("POST response = %+v, want non-empty ID + Name=gh", got)
 	}
-	if len(s.List(context.Background())) != 1 {
-		t.Errorf("store after POST has %d servers, want 1", len(s.List(context.Background())))
+	if len(s.List(t.Context())) != 1 {
+		t.Errorf("store after POST has %d servers, want 1", len(s.List(t.Context())))
 	}
 }
 
@@ -197,7 +196,7 @@ func TestHandleCollection_POST_oversize_is413(t *testing.T) {
 
 func TestHandleOne_GET_returnsMaskedSecrets(t *testing.T) {
 	s, mux := newRoutedStore(t)
-	orig, err := s.Create(context.Background(), &Server{
+	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
 		Env: []KeyPair{{Name: "TOKEN", Value: "secret-abc"}},
 	})
@@ -322,7 +321,7 @@ func TestHandleOne_ErrorPaths(t *testing.T) {
 
 			path := tc.path
 			if tc.needServer {
-				orig, err := s.Create(context.Background(), &Server{
+				orig, err := s.Create(t.Context(), &Server{
 					Transport: TransportStdio, Name: "x", Command: "bash",
 				})
 				if err != nil {
@@ -333,7 +332,7 @@ func TestHandleOne_ErrorPaths(t *testing.T) {
 				}
 			}
 			if tc.needConflict {
-				orig, err := s.Create(context.Background(), &Server{
+				orig, err := s.Create(t.Context(), &Server{
 					Transport: TransportStdio, Name: "alpha", Command: "bash",
 				})
 				if err != nil {
@@ -373,7 +372,7 @@ func TestHandleOne_ErrorPaths(t *testing.T) {
 
 func TestHandleOne_PUT_updatesAndRespectsMask(t *testing.T) {
 	s, mux := newRoutedStore(t)
-	orig, err := s.Create(context.Background(), &Server{
+	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
 		Env: []KeyPair{{Name: "TOKEN", Value: "secret-abc"}},
 	})
@@ -390,7 +389,7 @@ func TestHandleOne_PUT_updatesAndRespectsMask(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if len(raw) != 1 || len(raw[0].Env) != 1 || raw[0].Env[0].Value != "secret-abc" {
 		t.Errorf("PUT with mask clobbered secret: got %+v, want secret-abc",
 			raw[0].Env)
@@ -399,7 +398,7 @@ func TestHandleOne_PUT_updatesAndRespectsMask(t *testing.T) {
 
 func TestHandleOne_PATCH_togglesEnabled(t *testing.T) {
 	s, mux := newRoutedStore(t)
-	orig, err := s.Create(context.Background(), &Server{
+	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash", Enabled: true,
 	})
 	if err != nil {
@@ -412,7 +411,7 @@ func TestHandleOne_PATCH_togglesEnabled(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	got := s.Get(context.Background(), orig.ID)
+	got := s.Get(t.Context(), orig.ID)
 	if got == nil || got.Enabled {
 		t.Errorf("PATCH did not disable the server: %+v", got)
 	}
@@ -420,7 +419,7 @@ func TestHandleOne_PATCH_togglesEnabled(t *testing.T) {
 
 func TestHandleOne_DELETE_removes(t *testing.T) {
 	s, mux := newRoutedStore(t)
-	orig, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "x", Command: "bash"})
+	orig, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "x", Command: "bash"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -430,7 +429,7 @@ func TestHandleOne_DELETE_removes(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("DELETE status = %d", rec.Code)
 	}
-	if s.Get(context.Background(), orig.ID) != nil {
+	if s.Get(t.Context(), orig.ID) != nil {
 		t.Error("DELETE did not remove server")
 	}
 }
@@ -445,7 +444,7 @@ func TestHandleOne_DELETE_persistFailure_is500(t *testing.T) {
 		t.Skip("root bypasses 0o500; Delete never fails")
 	}
 	s, mux := newRoutedStore(t)
-	orig, err := s.Create(context.Background(), &Server{
+	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
 	})
 	if err != nil {
@@ -472,7 +471,7 @@ func TestHandleOne_DELETE_persistFailure_is500(t *testing.T) {
 		t.Errorf("DELETE 500 body leaked filesystem path: %q", body)
 	}
 	// Server must still hold the record (rollback on persist failure).
-	if s.Get(context.Background(), orig.ID) == nil {
+	if s.Get(t.Context(), orig.ID) == nil {
 		t.Error("DELETE rollback failed: record disappeared despite 500")
 	}
 }

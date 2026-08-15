@@ -20,7 +20,7 @@ import (
 )
 
 // Compile-time interface assertion.
-var _ api.AuthHandler = (*Handler)(nil)
+var _ api.RouteHandler = (*Handler)(nil)
 
 // Config holds per-instance timeout configuration. Tests construct
 // a Handler with short timeouts directly via WithConfig; production

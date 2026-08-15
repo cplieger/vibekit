@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -47,13 +46,13 @@ func TestHandleSessionInfoUpdate_FocusAdoptsTitleAndStatus(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSessionInfoUpdate(context.Background(), "c1", focusFrame(t, map[string]any{
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title":       "Photo organizer CLI setup",
 		"description": "Planning module layout and creating the stub main.",
 		"status":      "in_progress",
 	}), "")
 
-	c, ok := store.Get(context.Background(), "c1")
+	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
 		t.Fatal("chat c1 missing")
 	}
@@ -72,12 +71,12 @@ func TestHandleSessionInfoUpdate_FocusStatusOnly(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSessionInfoUpdate(context.Background(), "c1", focusFrame(t, map[string]any{
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"description": "Step 1 complete.",
 		"status":      "completed",
 	}), "")
 
-	c, _ := store.Get(context.Background(), "c1")
+	c, _ := store.Get(t.Context(), "c1")
 	if c.Name != "A" {
 		t.Errorf("chat name = %q, want the seeded name untouched", c.Name)
 	}
@@ -92,11 +91,11 @@ func TestHandleSessionInfoUpdate_FocusDropsSubagent(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSessionInfoUpdate(context.Background(), "c1", focusFrame(t, map[string]any{
+	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title": "Sub focus", "status": "in_progress",
 	}), "sub-1")
 
-	c, _ := store.Get(context.Background(), "c1")
+	c, _ := store.Get(t.Context(), "c1")
 	if c.Name != "A" {
 		t.Errorf("chat name = %q, want untouched", c.Name)
 	}
@@ -125,7 +124,7 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			if tc.userMsg != "" {
-				if err := store.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+				if err := store.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 					c.Messages = append(c.Messages, api.Message{ID: "m1", Role: api.RoleUser, Content: tc.userMsg})
 					return true
 				}); err != nil {
@@ -134,9 +133,9 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 			}
 			tr := New(deps)
 
-			tr.HandleSessionInfoUpdate(context.Background(), "c1", focusFrame(t, map[string]any{"title": tc.title}), "")
+			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{"title": tc.title}), "")
 
-			c, _ := store.Get(context.Background(), "c1")
+			c, _ := store.Get(t.Context(), "c1")
 			if tc.adopt && c.Name != tc.title {
 				t.Errorf("chat name = %q, want adopted title %q", c.Name, tc.title)
 			}

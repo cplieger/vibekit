@@ -81,7 +81,7 @@ func TestHandleSSE_EmitsConnectedHandshake(t *testing.T) {
 	h.emit(api.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 	h.emit(api.ServerEvent{Type: "chat_updated", ChatID: "c3"})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
@@ -143,7 +143,7 @@ func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	h.emit(api.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 	h.emit(api.ServerEvent{Type: "chat_updated", ChatID: "c3"})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	req.Header.Set("Last-Event-ID", "1") // skip event 1 only
@@ -172,7 +172,7 @@ func TestHandleSSE_ReplaysNewestBeyondClientBuffer(t *testing.T) {
 		h.emit(api.ServerEvent{Type: "chat_updated", ChatID: api.ChatID(fmt.Sprintf("c%d", i))})
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/api/events", nil).WithContext(ctx)
 	req.Header.Set("Last-Event-ID", "1")

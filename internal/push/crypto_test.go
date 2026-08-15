@@ -4,7 +4,6 @@ package push
 // derivation, and a full encrypt/decrypt round-trip.
 
 import (
-	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
@@ -21,7 +20,7 @@ import (
 
 func TestVAPIDHeader(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, testSubject)
+	s := New(t.Context(), dir, testSubject)
 
 	header, err := s.vapidHeader("https://fcm.googleapis.com/fcm/send/abc123")
 	if err != nil {
@@ -85,7 +84,7 @@ func decodeBigInt(b []byte) *big.Int {
 // back toward RFC's 24h ceiling doesn't slip past review.
 func TestVAPIDHeader_ExpWithin12h(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, testSubject)
+	s := New(t.Context(), dir, testSubject)
 	before := time.Now().Unix()
 	header, err := s.vapidHeader("https://fcm.googleapis.com/fcm/send/x")
 	if err != nil {

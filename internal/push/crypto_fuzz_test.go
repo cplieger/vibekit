@@ -1,7 +1,6 @@
 package push
 
 import (
-	"context"
 	"encoding/base64"
 	"strings"
 	"testing"
@@ -23,7 +22,7 @@ func FuzzVAPIDHeader(f *testing.F) {
 	f.Add("https://example.com/path?query=1#frag")
 
 	dir := f.TempDir()
-	s := New(context.Background(), dir, "mailto:fuzz@example.com")
+	s := New(f.Context(), dir, "mailto:fuzz@example.com")
 
 	f.Fuzz(func(t *testing.T, endpoint string) {
 		hdr, err := s.vapidHeader(endpoint)

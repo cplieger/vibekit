@@ -311,12 +311,10 @@ func TestCall_ReturnsBridgeExitedAfterStop(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		r, e := b.Call(context.Background(), "x", nil)
+		r, e := b.Call(t.Context(), "x", nil)
 		done <- result{r, e}
 	}()
-	// Give Call time to register in b.pending and park on
-	// select{ch, b.done}.
-	time.Sleep(10 * time.Millisecond)
+	waitPending(t, b, 1)
 	b.Stop()
 	select {
 	case r := <-done:
@@ -350,7 +348,7 @@ func respondBridge(t *testing.T) (*Bridge, *os.File) {
 func TestRespond_SuccessResult(t *testing.T) {
 	b, pr := respondBridge(t)
 	result := map[string]string{"content": "hello"}
-	if err := b.Respond(context.Background(), 42, result, nil); err != nil {
+	if err := b.Respond(t.Context(), 42, result, nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = b.stdin.Close() // signal EOF so the read below terminates
@@ -381,7 +379,7 @@ func TestRespond_SuccessResult(t *testing.T) {
 
 func TestRespond_GenericError(t *testing.T) {
 	b, pr := respondBridge(t)
-	if err := b.Respond(context.Background(), 7, nil, errors.New("something broke")); err != nil {
+	if err := b.Respond(t.Context(), 7, nil, errors.New("something broke")); err != nil {
 		t.Fatal(err)
 	}
 	_ = b.stdin.Close()
@@ -412,7 +410,7 @@ func TestRespond_GenericError(t *testing.T) {
 func TestRespond_TypedRPCError(t *testing.T) {
 	b, pr := respondBridge(t)
 	rpcErr := &api.RPCError{Code: -32001, Message: "custom error"}
-	if err := b.Respond(context.Background(), 99, nil, rpcErr); err != nil {
+	if err := b.Respond(t.Context(), 99, nil, rpcErr); err != nil {
 		t.Fatal(err)
 	}
 	_ = b.stdin.Close()
@@ -457,12 +455,11 @@ func TestCall_HappyPath(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		r, e := b.Call(context.Background(), "test/method", map[string]string{"key": "val"})
+		r, e := b.Call(t.Context(), "test/method", map[string]string{"key": "val"})
 		done <- result{r, e}
 	}()
 
-	// Give Call time to register in b.pending.
-	time.Sleep(10 * time.Millisecond)
+	waitPending(t, b, 1)
 
 	// Simulate readLoop dispatching a successful response.
 	b.pendingMu.Lock()
@@ -509,11 +506,11 @@ func TestCall_ErrorResponse(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		r, e := b.Call(context.Background(), "test/method", nil)
+		r, e := b.Call(t.Context(), "test/method", nil)
 		done <- result{r, e}
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	waitPending(t, b, 1)
 
 	b.pendingMu.Lock()
 	var id int64
@@ -562,11 +559,11 @@ func TestCall_BridgeExitedSentinel(t *testing.T) {
 	}
 	done := make(chan result, 1)
 	go func() {
-		r, e := b.Call(context.Background(), "test/method", nil)
+		r, e := b.Call(t.Context(), "test/method", nil)
 		done <- result{r, e}
 	}()
 
-	time.Sleep(10 * time.Millisecond)
+	waitPending(t, b, 1)
 
 	// Simulate readLoop drain: send bridgeExitedResp to the pending channel.
 	b.pendingMu.Lock()
@@ -721,7 +718,7 @@ done
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -732,7 +729,7 @@ done
 
 	t.Run("Start_with_existing_session", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{SessionID: "existing-sess", Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{SessionID: "existing-sess", Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -743,11 +740,11 @@ done
 
 	t.Run("Call_returns_response", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
-		resp, err := b.Call(context.Background(), "session/prompt", nil)
+		resp, err := b.Call(t.Context(), "session/prompt", nil)
 		if err != nil {
 			t.Fatalf("Call: %v", err)
 		}
@@ -758,18 +755,18 @@ done
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
-		if err := b.Notify(context.Background(), "session/update", nil); err != nil {
+		if err := b.Notify(t.Context(), "session/update", nil); err != nil {
 			t.Errorf("Notify: %v", err)
 		}
 	})
 
 	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		ch := b.NotifCh()
@@ -787,7 +784,7 @@ done
 
 	t.Run("ModelID_returns_value", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -932,7 +929,7 @@ done
 	// and "sonnet" is the value under test. A requested model would legitimately
 	// override it via session/set_config_option — see
 	// TestNewSession_AppliesRequestedModelAndEffort.
-	if err := b.Start(context.Background(), &api.StartOpts{}); err != nil {
+	if err := b.Start(t.Context(), &api.StartOpts{}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if id := b.SessionID(); id != "lifecycle-001" {
@@ -1005,11 +1002,11 @@ func TestBridgeRPC_ErrorClassification(t *testing.T) {
 			}
 			done := make(chan result, 1)
 			go func() {
-				r, e := b.Call(context.Background(), "test/method", nil)
+				r, e := b.Call(t.Context(), "test/method", nil)
 				done <- result{r, e}
 			}()
 
-			time.Sleep(10 * time.Millisecond)
+			waitPending(t, b, 1)
 
 			// Inject error response.
 			b.pendingMu.Lock()
@@ -1067,7 +1064,7 @@ func BenchmarkBridgeRespond(b *testing.B) {
 		notifCh: make(chan *api.RPCResponse, 16),
 	}
 
-	ctx := context.Background()
+	ctx := b.Context()
 	// Typical tool result payload (~500 bytes).
 	result := map[string]any{
 		"content": strings.Repeat("x", 400),
@@ -1136,6 +1133,28 @@ func readLoopBridge(r io.Reader) *Bridge {
 
 // runLoadSession drives loadSession against an injected RPC response: it
 // spawns loadSession, waits for the pending request to register, sends
+// waitPending polls until Call has registered at least n pending requests.
+// This is the state the tests below need before they reach into b.pending to
+// inject a response: an empty map leaves ch nil, and a send on a nil channel
+// blocks forever, so the test fails as an unexplained "Call did not return"
+// timeout instead of naming the real cause. Deadline-bounded, fails closed.
+func waitPending(t *testing.T, b *Bridge, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		b.pendingMu.Lock()
+		got := len(b.pending)
+		b.pendingMu.Unlock()
+		if got >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("bridge registered %d pending requests, want >=%d within 2s", got, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // resp on the matching pending channel, and returns loadSession's error.
 func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *api.RPCResponse) error {
 	t.Helper()
@@ -1148,7 +1167,7 @@ func runLoadSession(t *testing.T, b *Bridge, fallback string, resp *api.RPCRespo
 
 	done := make(chan error, 1)
 	go func() {
-		done <- b.loadSession(context.Background(), "acp-session-xyz", fallback)
+		done <- b.loadSession(t.Context(), "acp-session-xyz", fallback)
 	}()
 
 	var ch chan *api.RPCResponse
@@ -1250,6 +1269,9 @@ func TestStartProcess_NilLifecycleCtxFallsBackToBackground(t *testing.T) {
 func TestStartProcess_SetsWaitDelayToFiveSeconds(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := New(bogus, t.TempDir())
+	// Not t.Context(): lifecycleCtx is what CommandContext binds the subprocess
+	// to, and it must outlive the t.Cleanup(b.Stop) teardown below —
+	// t.Context() is already cancelled by the time cleanup funcs run.
 	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
 	_ = b.startProcess("")
@@ -1407,7 +1429,7 @@ func TestNotify_GoodCtxValidParamsWritesFrame(t *testing.T) {
 	w := &captureWriter{}
 	b.stdin = w
 
-	if err := b.Notify(context.Background(), "session/update", map[string]any{"k": "v"}); err != nil {
+	if err := b.Notify(t.Context(), "session/update", map[string]any{"k": "v"}); err != nil {
 		t.Fatalf("Notify(good ctx, valid params) err = %v, want nil", err)
 	}
 	if !w.wrote() {
@@ -1422,7 +1444,7 @@ func TestNotify_MarshalErrorReturnsErrNoWrite(t *testing.T) {
 	w := &captureWriter{}
 	b.stdin = w
 
-	err := b.Notify(context.Background(), "session/update", map[string]any{"bad": make(chan int)})
+	err := b.Notify(t.Context(), "session/update", map[string]any{"bad": make(chan int)})
 	if err == nil {
 		t.Errorf("Notify(unmarshalable params) err = nil, want a marshal error")
 	}
@@ -1536,7 +1558,7 @@ done
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
 		b := New(scriptPath, dir)
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "m", EnableHooks: enableHooks}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "m", EnableHooks: enableHooks}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -1660,7 +1682,7 @@ func captureRequest(t *testing.T, method string, opts *api.StartOpts) string {
 	t.Setenv("RPC_CAPTURE", capturePath)
 
 	b := New(scriptPath, dir)
-	if err := b.Start(context.Background(), opts); err != nil {
+	if err := b.Start(t.Context(), opts); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -1776,7 +1798,7 @@ func TestSessionDoorOmitsMetaWhenDisabled(t *testing.T) {
 	t.Setenv("RPC_CAPTURE", capturePath)
 
 	b := New(scriptPath, dir)
-	if err := b.Start(context.Background(), &api.StartOpts{Model: "m"}); err != nil {
+	if err := b.Start(t.Context(), &api.StartOpts{Model: "m"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -1889,6 +1911,9 @@ func TestCancelClosesStdinSoTheTreeSeesEOF(t *testing.T) {
 		t.Fatalf("write bait script: %v", err)
 	}
 
+	// Not t.Context(): this context is the subprocess lifetime and the cancel
+	// below fires from inside t.Cleanup, which runs after t.Context() is
+	// already cancelled.
 	ctx, cancel := context.WithCancel(context.Background())
 	b := New(scriptPath, dir)
 	// Start's ACP handshake never completes (the bait speaks no ACP), so drive
@@ -2004,7 +2029,7 @@ done
 				t.Fatalf("reset log: %v", err)
 			}
 			b := New(scriptPath, dir)
-			if err := b.Start(context.Background(), tc.opts); err != nil {
+			if err := b.Start(t.Context(), tc.opts); err != nil {
 				t.Fatalf("Start: %v", err)
 			}
 			b.Stop()
@@ -2089,7 +2114,7 @@ done
 	}
 
 	b := New(scriptPath, dir)
-	if err := b.Start(context.Background(), &api.StartOpts{Model: "m"}); err != nil {
+	if err := b.Start(t.Context(), &api.StartOpts{Model: "m"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -2218,7 +2243,7 @@ done
 		capturePath := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capturePath)
 		b := New(scriptPath, dir)
-		err := b.Start(context.Background(), &api.StartOpts{
+		err := b.Start(t.Context(), &api.StartOpts{
 			Model:         "m",
 			SecretStorage: tc.secretStorage,
 			EnableHooks:   tc.enableHooks,

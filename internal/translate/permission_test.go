@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -50,7 +49,7 @@ func TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID(t *testing.T) {
 			},
 		}),
 	}
-	tr.HandlePermissionRequest(context.Background(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", msg)
 
 	got, ok := findPermissionNeeded(t, events)
 	if !ok {
@@ -83,7 +82,7 @@ func TestHandlePermissionRequest_MissingIDDropped(t *testing.T) {
 			"toolCall":  map[string]any{"toolCallId": "tc", "title": "x", "kind": "edit"},
 		}),
 	}
-	tr.HandlePermissionRequest(context.Background(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", msg)
 
 	if _, ok := findPermissionNeeded(t, events); ok {
 		t.Fatal("permission_needed broadcast for a request with no id (should be dropped)")
@@ -144,7 +143,7 @@ func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 			{"path": "/work/src/b.ts", "toolCallId": "act-2"},
 		}),
 	}
-	tr.HandlePermissionRequest(context.Background(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", msg)
 
 	got, ok := findPermissionNeeded(t, events)
 	if !ok {
@@ -183,7 +182,7 @@ func TestHandlePermissionRequest_SharedActionIDPreserved(t *testing.T) {
 			{"path": "/work/new.py", "toolCallId": "ren-1"},
 		}),
 	}
-	tr.HandlePermissionRequest(context.Background(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", msg)
 
 	got, _ := findPermissionNeeded(t, events)
 	if len(got.Files) != 2 {
@@ -220,7 +219,7 @@ func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 			},
 		}),
 	}
-	tr.HandlePermissionRequest(context.Background(), "c1", msg)
+	tr.HandlePermissionRequest(t.Context(), "c1", msg)
 
 	got, ok := findPermissionNeeded(t, events)
 	if !ok {

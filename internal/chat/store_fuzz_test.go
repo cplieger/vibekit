@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -22,7 +21,7 @@ func FuzzStore_MutateGetRoundTrip(f *testing.F) {
 		}
 
 		chatID := api.ChatID("fuzz-chat-1")
-		ctx := context.Background()
+		ctx := t.Context()
 
 		// Create chat with fuzzed name.
 		err = s.Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {

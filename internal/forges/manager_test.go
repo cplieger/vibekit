@@ -1,7 +1,6 @@
 package forges
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,7 +40,7 @@ func TestManagerList_AggregatesConfiguredForges(t *testing.T) {
 	stubCLI(t, dir, "glab", "exit 0")
 	seedGLabConfig(t, tmp, "hosts:\n    gitlab.com:\n        token: glpat-tok\n        user: bob\n")
 
-	list := NewManager().List(context.Background())
+	list := NewManager().List(t.Context())
 
 	byHost := make(map[string]ConfiguredForge, len(list))
 	for _, f := range list {
@@ -88,7 +87,7 @@ func TestManagerList_SkipsTokenlessGLabEntries(t *testing.T) {
 		"hosts:\n    gitlab.com:\n        token: glpat-tok\n        user: alice\n"+
 			"    tokenless.example:\n        user: nobody\n")
 
-	list := NewManager().List(context.Background())
+	list := NewManager().List(t.Context())
 
 	var hasGitLab bool
 	for _, f := range list {
@@ -116,7 +115,7 @@ func TestManagerList_SortsByKindThenHost(t *testing.T) {
 	stubCLI(t, dir, "glab", "exit 0")
 	seedGLabConfig(t, tmp, "hosts:\n    aaa.example:\n        token: t3\n        user: carol\n")
 
-	list := NewManager().List(context.Background())
+	list := NewManager().List(t.Context())
 
 	got := make([]string, len(list))
 	for i, f := range list {
@@ -149,7 +148,7 @@ func TestManagerRefresh_CLIMissingRows(t *testing.T) {
 	writeFixture(t, filepath.Join(tmp, "tea", "config.yml"), "logins:\n- name: x\n")
 	seedGLabConfig(t, tmp, "hosts:\n    gitlab.com:\n        token: glpat-tok\n        user: bob\n")
 
-	list := NewManager().List(context.Background())
+	list := NewManager().List(t.Context())
 
 	byID := make(map[string]ConfiguredForge, len(list))
 	for _, f := range list {
@@ -187,7 +186,7 @@ func TestManagerRefresh_NoConfigsNoRows(t *testing.T) {
 	setConfigHomeTemp(t)
 	stubPath(t) // empty PATH, empty config home
 
-	if list := NewManager().List(context.Background()); len(list) != 0 {
+	if list := NewManager().List(t.Context()); len(list) != 0 {
 		t.Errorf("want empty list, got %+v", list)
 	}
 }

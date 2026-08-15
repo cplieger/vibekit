@@ -19,7 +19,7 @@ import (
 
 func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	_, before := h.sse.hub.Bounds()
 	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello "}}`)
@@ -40,7 +40,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 
 func TestTranslateACPEvent_SecondChunkReusesMessageID(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent("c1", newChunkMsg(t, "one"))
 	firstID := h.bridge.assistantBufs.GetOrInit("c1").MessageID
@@ -167,7 +167,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+			_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 			if tc.setup != nil {
 				tc.setup(h)
 			}
@@ -185,7 +185,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 
 func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	raw := json.RawMessage(`{"sessionUpdate":"plan","entries":[{"content":"step 1","priority":"high","status":"pending"}]}`)
 	h.translateACPEvent("c1", &api.RPCResponse{
@@ -193,7 +193,7 @@ func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	})
 
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
 		t.Fatalf("messages = %+v", c.Messages)
 	}
@@ -205,7 +205,7 @@ func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
 
 func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	_, before := h.sse.hub.Bounds()
 	// v3 wire shape: the correlation id is on the JSON-RPC envelope (msg.ID)
@@ -233,7 +233,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 
 func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Each of these must be a silent no-op, not a panic.
 	bad := []*api.RPCResponse{
@@ -286,7 +286,7 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 	for _, p := range payloads {
 		b.Run(p.name, func(b *testing.B) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(context.Background(), "bench", func(c *api.Chat, _ bool) bool {
+			_ = cs.Mutate(b.Context(), "bench", func(c *api.Chat, _ bool) bool {
 				c.Name = "bench"
 				return true
 			})
@@ -332,7 +332,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "fuzz", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(f.Context(), "fuzz", func(c *api.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})
@@ -384,7 +384,7 @@ func FuzzTranslateMCP(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "fuzz", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(f.Context(), "fuzz", func(c *api.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})
@@ -422,7 +422,7 @@ func FuzzHandleSessionUpdate(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "fuzz", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(f.Context(), "fuzz", func(c *api.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})
@@ -524,7 +524,7 @@ func captureSubSession(t *testing.T, h *Hub, chatID api.ChatID, sessionID string
 		"update":    update,
 	})
 	msg := &api.RPCResponse{Method: "session/update", Params: params}
-	h.handleSessionUpdate(context.Background(), chatID, msg)
+	h.handleSessionUpdate(t.Context(), chatID, msg)
 	return got, called
 }
 
@@ -593,7 +593,7 @@ func dispatchUpdate(t *testing.T, h *Hub, kind api.ACPUpdateKind, extra map[stri
 	update := map[string]any{"sessionUpdate": string(kind)}
 	maps.Copy(update, extra)
 	params := mustJSON(t, map[string]any{"sessionId": "", "update": mustJSON(t, update)})
-	h.handleSessionUpdate(context.Background(), "c1",
+	h.handleSessionUpdate(t.Context(), "c1",
 		&api.RPCResponse{Method: "session/update", Params: params})
 	return called
 }

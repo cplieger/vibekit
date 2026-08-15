@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,7 +35,7 @@ func TestLoad_ModeIsVerifiedNotRequested(t *testing.T) {
 	}
 
 	buf := captureSlog(t)
-	if _, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
+	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	fi, err := os.Lstat(path)
@@ -88,7 +87,7 @@ func TestLoad_EnforcesTheModeOnAHandleNotAPathname(t *testing.T) {
 	}
 
 	buf := captureSlog(t)
-	if _, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
+	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
 		t.Fatalf("New: %v (a refused mode enforcement must not fail the store at this site)", err)
 	}
 

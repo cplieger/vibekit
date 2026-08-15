@@ -94,7 +94,7 @@ func TestOldestChatMTime(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := newTestStore(t)
 			wantTime := tc.setup(t, s)
-			got, ok := archive.OldestChatMTime(context.Background(), s.dir)
+			got, ok := archive.OldestChatMTime(t.Context(), s.dir)
 			if ok != tc.wantOK {
 				t.Fatalf("OldestChatMTime ok=%v, want %v", ok, tc.wantOK)
 			}
@@ -108,6 +108,37 @@ func TestOldestChatMTime(t *testing.T) {
 }
 
 // --- PurgeScheduler ---
+
+// waitForRetentionConsults polls until the scheduler has consulted its
+// retention callback at least n times, which is proof its loop processed a
+// trigger. The negative assertions below (a young chat was NOT purged) fail
+// OPEN on a bare sleep: a slow goroutine lets them pass for the wrong reason,
+// so they would never catch a regression that purges too eagerly. A positive
+// signal that the pass actually ran is what makes them mean anything.
+func waitForRetentionConsults(t *testing.T, calls *atomic.Int32, n int32) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := calls.Load()
+		if got >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("retention callback consulted %d times, want >=%d within 2s", got, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// countingRetention returns a fixed-retention callback plus the counter it
+// bumps, so a test can wait for a purge pass rather than guess at one.
+func countingRetention(d time.Duration) (func() time.Duration, *atomic.Int32) {
+	var calls atomic.Int32
+	return func() time.Duration {
+		calls.Add(1)
+		return d
+	}, &calls
+}
 
 // waitForPurge polls for the chat file to disappear, with a timeout.
 func waitForPurge(t *testing.T, path string, timeout time.Duration) bool {
@@ -129,26 +160,21 @@ func TestPurgeScheduler_TriggerWithZeroRetentionIsNoOp(t *testing.T) {
 		calls.Add(1)
 		return 0
 	}
-	p := NewPurgeScheduler(context.Background(), s, retention)
+	p := NewPurgeScheduler(t.Context(), s, retention)
 	p.Start()
 	defer p.Stop()
 
 	p.Trigger()
-	// Give the goroutine time to process.
-	time.Sleep(50 * time.Millisecond)
-
-	if got := calls.Load(); got == 0 {
-		t.Error("retention callback not invoked")
-	}
+	waitForRetentionConsults(t, &calls, 1)
 }
 
 func TestPurgeScheduler_TriggerRunsPurgeWhenRetentionPositive(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
+	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
 	p.Start()
 	defer p.Stop()
 
@@ -161,15 +187,16 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 	// A fresh chat (not yet expired) should not be purged
 	// but the scheduler should schedule a future purge.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 
-	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
+	retention, calls := countingRetention(24 * time.Hour)
+	p := NewPurgeScheduler(t.Context(), s, retention)
 	p.Start()
 	defer p.Stop()
 
-	// Give the goroutine time to process.
-	time.Sleep(50 * time.Millisecond)
+	// Wait for a pass to actually run before asserting it kept the file.
+	waitForRetentionConsults(t, calls, 1)
 
 	// The file should still exist (not expired yet).
 	if _, err := os.Stat(chatPath); err != nil {
@@ -179,28 +206,30 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 
 func TestPurgeScheduler_TriggerWithNoChatsIsNoOp(t *testing.T) {
 	s, _ := newTestStore(t)
-	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
+	retention, calls := countingRetention(24 * time.Hour)
+	p := NewPurgeScheduler(t.Context(), s, retention)
 	p.Start()
 	defer p.Stop()
 
 	p.Trigger()
-	// Give the goroutine time to process — no crash, no panic.
-	time.Sleep(50 * time.Millisecond)
+	// Prove the pass ran on an empty store — no crash, no panic.
+	waitForRetentionConsults(t, calls, 1)
 }
 
 func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
+	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
 	// Stop before Start — the goroutine never runs.
 	p.Stop()
 	p.Trigger()
 
-	// Give time for any spurious processing.
-	time.Sleep(50 * time.Millisecond)
+	// No wait is needed and none would add anything: Stop closed stopCh, and
+	// Trigger returns on that check before touching triggerCh, so there is no
+	// goroutine that could purge. A sleep here would only slow the suite.
 
 	// Stop must have short-circuited: the aged-out file survives.
 	if _, err := os.Stat(chatPath); err != nil {
@@ -210,11 +239,11 @@ func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 
 func TestPurgeScheduler_StartInvokesTrigger(t *testing.T) {
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
+	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
 	defer p.Stop()
 
 	p.Start()
@@ -228,9 +257,10 @@ func TestPurgeScheduler_CollapsesConcurrentTriggers(t *testing.T) {
 	// Multiple rapid Trigger calls should collapse into a single
 	// evaluation, not queue N sequential purge passes.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return 24 * time.Hour })
+	retention, calls := countingRetention(24 * time.Hour)
+	p := NewPurgeScheduler(t.Context(), s, retention)
 	p.Start()
 	defer p.Stop()
 
@@ -238,23 +268,24 @@ func TestPurgeScheduler_CollapsesConcurrentTriggers(t *testing.T) {
 	for range 10 {
 		p.Trigger()
 	}
-	// Give the goroutine time to process — no crash, no panic.
-	time.Sleep(50 * time.Millisecond)
+	// Prove at least one pass ran — no crash, no panic. The collapse itself is
+	// the buffered-1 triggerCh's contract, not something a count can pin here.
+	waitForRetentionConsults(t, calls, 1)
 }
 
 func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 	// With retention=1s and an entry already aged past retention,
 	// the scheduler must purge expired entries and keep fresh ones.
 	s, _ := newTestStore(t)
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
 	// A second chat with fresh activity, which must survive.
-	_ = s.Mutate(context.Background(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	_ = s.Mutate(t.Context(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
 	c2Path := filepath.Join(s.dir, "c2.json")
 
-	p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return time.Second })
+	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return time.Second })
 	p.Start()
 	defer p.Stop()
 
@@ -297,13 +328,13 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	t.Run("OldEntriesPurged", func(t *testing.T) {
 		// Any entry older than retention must be purged after Trigger.
 		s, _ := newTestStore(t)
-		_ = s.Mutate(context.Background(), "old1", func(c *api.Chat, _ bool) bool { c.Name = "Old"; return true })
+		_ = s.Mutate(t.Context(), "old1", func(c *api.Chat, _ bool) bool { c.Name = "Old"; return true })
 		chatPath := filepath.Join(s.dir, "old1.json")
 		// Age it well past retention (stamp + mtime).
 		ageChat(t, s, "old1", 72*time.Hour)
 
 		retention := 24 * time.Hour
-		p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return retention })
+		p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return retention })
 		p.Start()
 		defer p.Stop()
 
@@ -316,17 +347,18 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	t.Run("YoungEntriesPreserved", func(t *testing.T) {
 		// Any entry younger than retention must NOT be purged.
 		s, _ := newTestStore(t)
-		_ = s.Mutate(context.Background(), "young1", func(c *api.Chat, _ bool) bool { c.Name = "Young"; return true })
+		_ = s.Mutate(t.Context(), "young1", func(c *api.Chat, _ bool) bool { c.Name = "Young"; return true })
 		chatPath := filepath.Join(s.dir, "young1.json")
 		// Fresh activity, so the retention window has not elapsed.
 
-		retention := 48 * time.Hour
-		p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return retention })
+		retention, calls := countingRetention(48 * time.Hour)
+		p := NewPurgeScheduler(t.Context(), s, retention)
 		p.Start()
 		defer p.Stop()
 
 		p.Trigger()
-		time.Sleep(100 * time.Millisecond)
+		// A pass must have run, or "not purged" proves nothing.
+		waitForRetentionConsults(t, calls, 1)
 
 		if _, err := os.Stat(chatPath); err != nil {
 			t.Errorf("young entry was purged: %v", err)
@@ -336,19 +368,25 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	t.Run("StopPreventsAllPurges", func(t *testing.T) {
 		// After Stop(), no purge should occur regardless of pending triggers.
 		s, _ := newTestStore(t)
-		_ = s.Mutate(context.Background(), "stop1", func(c *api.Chat, _ bool) bool { c.Name = "Stop"; return true })
+		_ = s.Mutate(t.Context(), "stop1", func(c *api.Chat, _ bool) bool { c.Name = "Stop"; return true })
 		chatPath := filepath.Join(s.dir, "stop1.json")
 		ageChat(t, s, "stop1", 72*time.Hour)
 
 		retention := 24 * time.Hour
-		p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return retention })
+		p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return retention })
 		// Stop before Start — the goroutine never runs.
 		p.Stop()
 		p.Start() // Start after Stop should be a no-op.
 
 		// Trigger after stop should be no-op.
 		p.Trigger()
-		time.Sleep(100 * time.Millisecond)
+		// Start did launch a goroutine; wait for it to observe stopCh and exit,
+		// which is the deterministic version of "nothing will purge now".
+		select {
+		case <-p.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatal("scheduler goroutine did not exit after Stop-then-Start")
+		}
 
 		if _, err := os.Stat(chatPath); err != nil {
 			t.Errorf("entry purged after Stop: %v", err)
@@ -358,12 +396,12 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 	t.Run("NoDuplicatePurgeCallbacks", func(t *testing.T) {
 		// Each entry should be purged exactly once (no double-fire).
 		s, _ := newTestStore(t)
-		_ = s.Mutate(context.Background(), "dup1", func(c *api.Chat, _ bool) bool { c.Name = "Dup"; return true })
+		_ = s.Mutate(t.Context(), "dup1", func(c *api.Chat, _ bool) bool { c.Name = "Dup"; return true })
 		chatPath := filepath.Join(s.dir, "dup1.json")
 		ageChat(t, s, "dup1", 72*time.Hour)
 
-		retention := 24 * time.Hour
-		p := NewPurgeScheduler(context.Background(), s, func() time.Duration { return retention })
+		retention, calls := countingRetention(24 * time.Hour)
+		p := NewPurgeScheduler(t.Context(), s, retention)
 		p.Start()
 		defer p.Stop()
 
@@ -374,9 +412,11 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		if !waitForPurge(t, chatPath, 2*time.Second) {
 			t.Error("entry not purged")
 		}
-		// After purge, re-triggering should not panic.
+		// After purge, re-triggering should not panic. Wait for the extra pass
+		// rather than sleeping past it, so the "no panic" claim is witnessed.
+		before := calls.Load()
 		p.Trigger()
-		time.Sleep(50 * time.Millisecond)
+		waitForRetentionConsults(t, calls, before+1)
 	})
 }
 
@@ -389,7 +429,7 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 // that cannot be read.
 func TestPurge_AgesFromUpdatedAtNotMtime(t *testing.T) {
 	s, _ := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// keep: recent activity, but a backdated mtime.
 	_ = s.Mutate(ctx, "keep", func(c *api.Chat, _ bool) bool { c.Name = "K"; return true })

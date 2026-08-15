@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -36,7 +35,7 @@ func row(id, title, updated string, workflow bool) kasSessionRow {
 // discriminator is just a different field.
 func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
 	h := &Hub{chatStore: testsupport.NewInMemoryChatStore()}
-	got := h.toResumable(h.claimedSessions(context.Background()), []kasSessionRow{
+	got := h.toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		row("sess_a", "A real conversation", "2026-08-02T10:00:00.000Z", false),
 		row("sess_wf", "workflow step 3", "2026-08-02T11:00:00.000Z", true),
 		row("sess_b", "Another conversation", "2026-08-02T12:00:00.000Z", false),
@@ -62,7 +61,7 @@ func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
 // hide the bug until a timezone or precision difference appeared.
 func TestToResumable_NewestFirst(t *testing.T) {
 	h := &Hub{chatStore: testsupport.NewInMemoryChatStore()}
-	got := h.toResumable(h.claimedSessions(context.Background()), []kasSessionRow{
+	got := h.toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		row("old", "older", "2026-08-01T10:00:00.000Z", false),
 		row("new", "newer", "2026-08-02T10:00:00.000Z", false),
 		row("mid", "middle", "2026-08-01T22:00:00.000Z", false),
@@ -89,7 +88,7 @@ func TestToResumable_NewestFirst(t *testing.T) {
 // retired sessions back to the user as separate resumable conversations.
 func TestToResumable_MarksSessionsAChatAlreadyOwns(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := store.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "Owned"
 		c.RecordSession("sess_retired")
@@ -148,7 +147,7 @@ func TestParseKASTime(t *testing.T) {
 // cannot say which conversation started it.
 func TestWorkflowRunAttribution(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := store.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "Launcher"
 		c.RecordSession("sess_launched_from") // retired below
@@ -191,7 +190,7 @@ func TestStepSessionsAreNotRuns(t *testing.T) {
 		rows = append(rows, r)
 	}
 
-	got := h.toResumable(h.claimedSessions(context.Background()), rows)
+	got := h.toResumable(h.claimedSessions(t.Context()), rows)
 	if len(got) != 1 {
 		t.Fatalf("got %d entries, want 1: 76 step sessions leaked into the chat list", len(got))
 	}

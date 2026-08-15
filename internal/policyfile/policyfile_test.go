@@ -1,14 +1,12 @@
 package policyfile
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -145,7 +143,7 @@ func TestSaveRoundtripAndMode(t *testing.T) {
 		{Capability: "fs_write", Effect: "ask", Match: []string{"src/**"}},
 		{Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}},
 	}}
-	if err := Save(context.Background(), path, in); err != nil {
+	if err := Save(t.Context(), path, in); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	fi, err := os.Stat(path)
@@ -245,7 +243,7 @@ func TestSanitizeRule_TrimsCapability(t *testing.T) {
 // test that only checked membership would not notice them being re-coupled.
 func TestCapabilities_IsASuggestionNotAnAllowlist(t *testing.T) {
 	suggested := Capabilities()
-	if !sort.StringsAreSorted(suggested) {
+	if !slices.IsSorted(suggested) {
 		t.Errorf("Capabilities() not sorted: %v", suggested)
 	}
 	if slices.Contains(suggested, "hooks") {

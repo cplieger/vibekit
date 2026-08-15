@@ -21,7 +21,7 @@ func TestPurge_RetentionCutoff(t *testing.T) {
 	olderPath := writeAgedChat(t, dir, "older", 25*time.Hour)
 	newerPath := writeAgedChat(t, dir, "newer", 23*time.Hour)
 
-	svc.Purge(context.Background(), 24*time.Hour)
+	svc.Purge(t.Context(), 24*time.Hour)
 
 	if exists(t, olderPath) {
 		t.Errorf("file older than cutoff (25h > 24h) survived: %s", olderPath)
@@ -68,7 +68,7 @@ func TestPurge_SkipsNonChatFiles(t *testing.T) {
 		t.Fatalf("mkdir skipdir: %v", err)
 	}
 
-	svc.Purge(context.Background(), 24*time.Hour)
+	svc.Purge(t.Context(), 24*time.Hour)
 
 	if exists(t, chatPath) {
 		t.Errorf("valid old chat was not purged: %s", chatPath)
@@ -93,7 +93,7 @@ func TestPurge_EmptyAndMissingDir(t *testing.T) {
 	t.Run("empty chat dir", func(t *testing.T) {
 		var rec purgeRecorder
 		svc, _, _ := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
-		svc.Purge(context.Background(), 24*time.Hour)
+		svc.Purge(t.Context(), 24*time.Hour)
 		if got := rec.sorted(); len(got) != 0 {
 			t.Errorf("onPurge fired %v on empty dir, want none", got)
 		}
@@ -103,7 +103,7 @@ func TestPurge_EmptyAndMissingDir(t *testing.T) {
 		var rec purgeRecorder
 		dir := t.TempDir() // never created
 		svc := New(newFakeStore(dir), WithOnPurge(rec.recordPurge))
-		svc.Purge(context.Background(), 24*time.Hour)
+		svc.Purge(t.Context(), 24*time.Hour)
 		if got := rec.sorted(); len(got) != 0 {
 			t.Errorf("onPurge fired %v on missing dir, want none", got)
 		}
@@ -116,7 +116,7 @@ func TestPurge_NilOnPurgeCallback(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t)
 	chatPath := writeAgedChat(t, dir, "nocb", 48*time.Hour)
 
-	svc.Purge(context.Background(), 24*time.Hour)
+	svc.Purge(t.Context(), 24*time.Hour)
 
 	if exists(t, chatPath) {
 		t.Errorf("old chat survived purge with nil callback: %s", chatPath)
@@ -131,7 +131,7 @@ func TestPurgeScheduler_InitialEvaluationPurges(t *testing.T) {
 		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	writeAgedChat(t, dir, "sched1", 48*time.Hour)
 
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 24 * time.Hour })
 	sched.Start()
 	defer sched.Stop()
@@ -149,7 +149,7 @@ func TestPurgeScheduler_ReArmsAndProcessesSecondTrigger(t *testing.T) {
 		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	writeAgedChat(t, dir, "first", 48*time.Hour)
 
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 24 * time.Hour })
 	sched.Start()
 	defer sched.Stop()
@@ -175,7 +175,7 @@ func TestPurgeScheduler_ZeroRetentionSkipsPurge(t *testing.T) {
 		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	chatPath := writeAgedChat(t, dir, "keepforever", 9000*time.Hour)
 
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 0 })
 	sched.Start()
 	sched.Stop() // waits for the loop goroutine to finish its cycle and exit
@@ -194,7 +194,7 @@ func TestPurgeScheduler_ZeroRetentionSkipsPurge(t *testing.T) {
 // goroutine (its done channel closes) and is safe to call more than once.
 func TestPurgeScheduler_StopClosesDone(t *testing.T) {
 	svc, _, _ := newPurgeTestService(t)
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 24 * time.Hour })
 	sched.Start()
 	sched.Stop()
@@ -233,7 +233,7 @@ func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
 // no-op once the scheduler is stopped.
 func TestPurgeScheduler_TriggerAfterStopIsNoop(t *testing.T) {
 	svc, _, _ := newPurgeTestService(t)
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 24 * time.Hour })
 	sched.Start()
 	sched.Stop()
@@ -244,7 +244,7 @@ func TestPurgeScheduler_TriggerAfterStopIsNoop(t *testing.T) {
 // (it must not block waiting on a goroutine that never launched).
 func TestPurgeScheduler_StopWithoutStart(t *testing.T) {
 	svc, _, _ := newPurgeTestService(t)
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 24 * time.Hour })
 	sched.Stop()
 }
@@ -254,7 +254,7 @@ func TestPurgeScheduler_StopWithoutStart(t *testing.T) {
 func TestOldestChatMTime(t *testing.T) {
 	t.Run("missing dir returns false", func(t *testing.T) {
 		dir := t.TempDir() // never created
-		if _, ok := OldestChatMTime(context.Background(), dir); ok {
+		if _, ok := OldestChatMTime(t.Context(), dir); ok {
 			t.Error("ok = true for missing chat dir, want false")
 		}
 	})
@@ -264,7 +264,7 @@ func TestOldestChatMTime(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		if _, ok := OldestChatMTime(context.Background(), dir); ok {
+		if _, ok := OldestChatMTime(t.Context(), dir); ok {
 			t.Error("ok = true for empty chat dir, want false")
 		}
 	})
@@ -282,7 +282,7 @@ func TestOldestChatMTime(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat oldest: %v", err)
 		}
-		got, ok := OldestChatMTime(context.Background(), dir)
+		got, ok := OldestChatMTime(t.Context(), dir)
 		if !ok {
 			t.Fatal("ok = false, want true")
 		}
@@ -311,7 +311,7 @@ func TestOldestChatMTime(t *testing.T) {
 		if err != nil {
 			t.Fatalf("stat chat: %v", err)
 		}
-		got, ok := OldestChatMTime(context.Background(), dir)
+		got, ok := OldestChatMTime(t.Context(), dir)
 		if !ok {
 			t.Fatal("ok = false, want true")
 		}
@@ -366,7 +366,7 @@ func TestPurge_SkipsVanishedEntryWithoutAborting(t *testing.T) {
 	}
 	realOld := writeAgedChat(t, dir, "realold", 48*time.Hour)
 
-	svc.Purge(context.Background(), 24*time.Hour)
+	svc.Purge(t.Context(), 24*time.Hour)
 
 	if exists(t, realOld) {
 		t.Errorf("a genuinely-old chat was not purged when a vanished sibling entry was present: %s", realOld)
@@ -386,7 +386,7 @@ func TestPurgeScheduler_RescheduleWithZeroRetentionDoesNotPurge(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
 	chatPath := writeAgedChat(t, dir, "keepforever", 9000*time.Hour)
 
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 0 })
 	timer, _ := sched.purgeAndReschedule()
 	if timer != nil {
@@ -409,7 +409,7 @@ func TestPurgeScheduler_NextWaitZeroRetentionReturnsFalse(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t)
 	writeAgedChat(t, dir, "present", 1*time.Hour)
 
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 24 * time.Hour })
 
 	if _, ok := sched.nextWait(0); ok {
@@ -425,7 +425,7 @@ func TestPurgeScheduler_NextWaitPositiveRetentionReturnsTrue(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t)
 	writeAgedChat(t, dir, "present", 1*time.Hour)
 
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 24 * time.Hour })
 
 	if _, ok := sched.nextWait(24 * time.Hour); !ok {
@@ -444,7 +444,7 @@ func TestPurgeScheduler_NextWaitFloorsAtMinWait(t *testing.T) {
 	// result must clamp to the minWait floor.
 	writeAgedChat(t, dir, "ancient", 100*time.Hour)
 
-	sched := NewPurgeScheduler(context.Background(), svc,
+	sched := NewPurgeScheduler(t.Context(), svc,
 		func() time.Duration { return 1 * time.Hour })
 
 	wait, ok := sched.nextWait(1 * time.Hour)
@@ -485,7 +485,7 @@ func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 		t.Fatalf("chtimes: %v", err)
 	}
 
-	svc.Purge(context.Background(), 24*time.Hour)
+	svc.Purge(t.Context(), 24*time.Hour)
 
 	if exists(t, chatPath) {
 		t.Fatalf("expired chat survived the purge: %s", chatPath)
@@ -518,7 +518,7 @@ func TestPurge_NeverPurgesALiveChat(t *testing.T) {
 	openPath := writeAgedChat(t, dir, "open", 72*time.Hour)
 	abandonedPath := writeAgedChat(t, dir, "abandoned", 72*time.Hour)
 
-	svc.Purge(context.Background(), 24*time.Hour)
+	svc.Purge(t.Context(), 24*time.Hour)
 
 	if !exists(t, openPath) {
 		t.Error("a LIVE chat was purged for being old — retention deleted work in progress")
@@ -539,7 +539,7 @@ func TestPurge_WithoutTheLivePredicateStillPurges(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
 	p := writeAgedChat(t, dir, "old", 72*time.Hour)
 
-	svc.Purge(context.Background(), 24*time.Hour)
+	svc.Purge(t.Context(), 24*time.Hour)
 
 	if exists(t, p) {
 		t.Error("purge did nothing with no live predicate wired")
@@ -578,7 +578,7 @@ func TestPurgeScheduler_AlwaysArmsATimer(t *testing.T) {
 			if tc.aged {
 				writeAgedChat(t, dir, "aged", 48*time.Hour)
 			}
-			sched := NewPurgeScheduler(context.Background(), svc,
+			sched := NewPurgeScheduler(t.Context(), svc,
 				func() time.Duration { return tc.retention })
 
 			timer, timerC := sched.purgeAndReschedule()
@@ -608,7 +608,7 @@ func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 	// the ceiling, which is the case the cap exists for.
 	writeAgedChat(t, dir, "fresh", 0)
 	retention := 30 * 24 * time.Hour
-	sched := NewPurgeScheduler(context.Background(), svc, func() time.Duration { return retention })
+	sched := NewPurgeScheduler(t.Context(), svc, func() time.Duration { return retention })
 
 	natural, ok := sched.nextWait(retention)
 	if !ok {

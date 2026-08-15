@@ -8,7 +8,6 @@ package hub
 // seeded with canned results.
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -29,7 +28,7 @@ func TestPolicyList(t *testing.T) {
 		`{"capability":"fs_write","effect":"allow","match":["/x/**"],"scope":"user","source":"/u/permissions.yaml"},`+
 		`{"capability":"shell","effect":"deny","match":["sudo *"],"scope":"user","source":"/u/permissions.yaml"}]}`, `{}`)
 
-	rules, err := h.PolicyList(context.Background(), "user")
+	rules, err := h.PolicyList(t.Context(), "user")
 	if err != nil {
 		t.Fatalf("PolicyList: %v", err)
 	}
@@ -51,7 +50,7 @@ func TestPolicyList(t *testing.T) {
 func TestPolicyListOmitsEmptyScope(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{"rules":[]}`, `{}`)
-	if _, err := h.PolicyList(context.Background(), ""); err != nil {
+	if _, err := h.PolicyList(t.Context(), ""); err != nil {
 		t.Fatalf("PolicyList: %v", err)
 	}
 	if _, hasScope := br.paramsFor(methodV3PermissionsList)["scope"]; hasScope {
@@ -65,7 +64,7 @@ func TestPolicyExplainMapsCamelCase(t *testing.T) {
 		`"isExplicitAsk":true,"matchedRule":{"capability":"fs_write","match":["/x/**"],"effect":"ask"},`+
 		`"scope":"workspace","source":"/w/permissions.yaml"}`)
 
-	res, err := h.PolicyExplain(context.Background(), api.PolicyExplainRequest{Capability: "fs_write", Resource: "/x/y"})
+	res, err := h.PolicyExplain(t.Context(), api.PolicyExplainRequest{Capability: "fs_write", Resource: "/x/y"})
 	if err != nil {
 		t.Fatalf("PolicyExplain: %v", err)
 	}
@@ -85,7 +84,7 @@ func TestPolicyExplainMapsCamelCase(t *testing.T) {
 func TestPolicyExplainRequiresTarget(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{}`, `{}`)
-	if _, err := h.PolicyExplain(context.Background(), api.PolicyExplainRequest{}); err == nil {
+	if _, err := h.PolicyExplain(t.Context(), api.PolicyExplainRequest{}); err == nil {
 		t.Error("PolicyExplain with no capability/toolId should error")
 	}
 }

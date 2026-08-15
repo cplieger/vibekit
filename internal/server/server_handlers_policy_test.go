@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"sort"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -69,7 +68,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	t.Setenv("HOME", home)
 	// Seed a user file so the fallback has something to read.
 	up, _ := policyfile.PathFor(policyfile.ScopeUser, home, work)
-	if err := policyfile.Save(context.Background(), up, &policyfile.File{
+	if err := policyfile.Save(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"sudo *"}}},
 	}); err != nil {
 		t.Fatal(err)
@@ -216,7 +215,7 @@ func TestPickerCapabilities_UnionsInWhatTheRulesUse(t *testing.T) {
 	if len(got) != len(base)+1 {
 		t.Errorf("picker has %d entries, want %d (one new capability, no duplicates)", len(got), len(base)+1)
 	}
-	if !sort.StringsAreSorted(got) {
+	if !slices.IsSorted(got) {
 		t.Errorf("picker not sorted: %v", got)
 	}
 	for _, c := range base {
@@ -241,7 +240,7 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	t.Setenv("HOME", home)
 	// Seed a deny rule.
 	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
-	if err := policyfile.Save(context.Background(), wp, &policyfile.File{
+	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}}},
 	}); err != nil {
 		t.Fatal(err)
@@ -319,7 +318,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 		work := t.TempDir()
 		t.Setenv("HOME", home)
 		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
-		if err := policyfile.Save(context.Background(), wp, &policyfile.File{
+		if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 			Rules: []policyfile.Rule{
 				{Capability: "shell", Effect: "ask", Match: []string{"rm *"}},
 				{Capability: "fs_read", Effect: "allow", Match: []string{"src/**"}},

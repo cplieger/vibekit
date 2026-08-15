@@ -58,7 +58,7 @@ func newFixture(t *testing.T, now time.Time) (*Store, *fakeLauncher, *Runner) {
 		Enabled: true,
 		Anchor:  at(2026, time.August, 3, 12, 0),
 	}
-	if err := st.Put(context.Background(), &e); err != nil {
+	if err := st.Put(t.Context(), &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	l := &fakeLauncher{}
@@ -71,7 +71,7 @@ func newFixture(t *testing.T, now time.Time) (*Store, *fakeLauncher, *Runner) {
 func TestSweep_FiresADueSlot(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	st, l, r := newFixture(t, due.Add(30*time.Second))
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 
 	if len(l.sources) != 1 {
 		t.Fatalf("expected one launch, got %d", len(l.sources))
@@ -105,7 +105,7 @@ func TestSweep_FiresADueSlot(t *testing.T) {
 func TestSweep_BoundsTheRunByItsOwnInterval(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	st, l, r := newFixture(t, due.Add(30*time.Second))
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 
 	if len(l.deadlines) != 1 {
 		t.Fatalf("expected one launch, got %d", len(l.deadlines))
@@ -127,7 +127,7 @@ func TestSweep_BoundsTheRunByItsOwnInterval(t *testing.T) {
 func TestSweep_SkipsASlotMissedWhileOffline(t *testing.T) {
 	now := at(2026, time.August, 4, 9, 0) // 7h after the 02:00 slot
 	st, l, r := newFixture(t, now)
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 
 	if len(l.sources) != 0 {
 		t.Errorf("a slot missed while offline must not fire: %v", l.sources)
@@ -152,7 +152,7 @@ func TestSweep_SkipsASlotMissedWhileOffline(t *testing.T) {
 // TestSweep_DoesNotFireBeforeDue keeps a schedule from running early.
 func TestSweep_DoesNotFireBeforeDue(t *testing.T) {
 	_, l, r := newFixture(t, at(2026, time.August, 4, 1, 59))
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 	if len(l.sources) != 0 {
 		t.Errorf("fired before its due time: %v", l.sources)
 	}
@@ -163,9 +163,9 @@ func TestSweep_DoesNotFireBeforeDue(t *testing.T) {
 func TestSweep_FiresOnlyOncePerSlot(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	_, l, r := newFixture(t, due.Add(10*time.Second))
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 	r.now = func() time.Time { return due.Add(70 * time.Second) }
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 
 	if len(l.sources) != 1 {
 		t.Errorf("expected exactly one launch across two ticks, got %d", len(l.sources))
@@ -178,10 +178,10 @@ func TestSweep_SkipsDisabled(t *testing.T) {
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	e := st.List()[0]
 	e.Enabled = false
-	if err := st.Put(context.Background(), &e); err != nil {
+	if err := st.Put(t.Context(), &e); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 	if len(l.sources) != 0 {
 		t.Errorf("a disabled schedule must not fire: %v", l.sources)
 	}
@@ -193,7 +193,7 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	due := at(2026, time.August, 4, 2, 0)
 	st, l, r := newFixture(t, due.Add(30*time.Second))
 	l.err = errors.New("this recipe already has a live run")
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 
 	got := st.List()[0]
 	if !got.Anchor.Equal(due) {
@@ -202,7 +202,7 @@ func TestSweep_AdvancesPastAFailedLaunch(t *testing.T) {
 	if got.LastResult == "started" {
 		t.Errorf("a failed launch must not record success")
 	}
-	r.sweep(context.Background())
+	r.sweep(t.Context())
 	if len(l.sources) != 1 {
 		t.Errorf("a failed launch must not be retried on the next tick, got %d attempts", len(l.sources))
 	}
@@ -224,7 +224,7 @@ func TestStore_RoundTripsAndRejects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := st.Put(ctx, &Entry{ID: "a", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 1}, Enabled: true}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestStore_PutPreservesHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	e := Entry{ID: "a", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 1}, Enabled: true}
 	if err := st.Put(ctx, &e); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -312,7 +312,7 @@ func writeFile(dir, body string) error {
 // took — a schedule that quietly drifts later every time it fails.
 func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 	st := mustStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	e := Entry{ID: "s1", Source: "bundled://x", Spec: Spec{Freq: FreqDaily, Hour: 2}, Enabled: true}
 	if err := st.Put(ctx, &e); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -337,7 +337,7 @@ func TestRecordOutcome_DoesNotMoveTheAnchor(t *testing.T) {
 
 func TestRecordOutcome_UnknownSchedule(t *testing.T) {
 	st := mustStore(t)
-	if err := st.RecordOutcome(context.Background(), "gone", "x"); !errors.Is(err, ErrNotFound) {
+	if err := st.RecordOutcome(t.Context(), "gone", "x"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
 	}
 }

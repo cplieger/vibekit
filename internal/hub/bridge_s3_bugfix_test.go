@@ -32,13 +32,13 @@ func hubWithBridge(t *testing.T, workDir string, br api.ACPBridge) *Hub {
 	factory := func() api.ACPBridge { return br }
 	h := New(workDir, factory, cs)
 	cs.Bus = h
-	if err := cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	if err := cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}

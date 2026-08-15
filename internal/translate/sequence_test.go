@@ -28,7 +28,7 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 	chatID := api.ChatID("c1")
 
 	// First chunk: should create message + emit chunk
-	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "Hello"},
 	}), false)
 
@@ -45,7 +45,7 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 
 	// Second chunk: should only emit chunk (no duplicate message_created)
 	*events = nil
-	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": " world"},
 	}), false)
 
@@ -64,13 +64,13 @@ func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 	chatID := api.ChatID("c1")
 
 	// Start a streaming turn first (tool calls require an active buffer)
-	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "Let me check..."},
 	}), false)
 	*events = nil
 
 	// Tool call
-	tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 		"tool_call_id": "tc1",
 		"title":        "readFile",
 		"kind":         "read",
@@ -95,10 +95,10 @@ func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 	chatID := api.ChatID("c1")
 
 	// Start turn + add tool call
-	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "x"},
 	}), false)
-	tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 		"tool_call_id": "tc1",
 		"title":        "readFile",
 		"kind":         "read",
@@ -107,7 +107,7 @@ func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 	*events = nil
 
 	// Update tool call status
-	tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"tool_call_id": "tc1",
 		"status":       "completed",
 	}), "")
@@ -131,7 +131,7 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 	tr := &Translator{deps: wrapper}
 
 	// v3 consolidated MCP status: a "connected" server records a connection.
-	tr.HandleMCPStatus(context.Background(), "", &api.RPCResponse{
+	tr.HandleMCPStatus(t.Context(), "", &api.RPCResponse{
 		Params: mustJSON(t, map[string]any{
 			"servers": []map[string]any{
 				{"name": "github", "status": "connected"},
@@ -154,7 +154,7 @@ func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 	var disabled []string
 	tr := &Translator{deps: &mcpCaptureDeps{baseDeps: deps, disabled: &disabled}}
 
-	tr.HandleMCPStatus(context.Background(), "", &api.RPCResponse{
+	tr.HandleMCPStatus(t.Context(), "", &api.RPCResponse{
 		Params: mustJSON(t, map[string]any{
 			"servers": []map[string]any{
 				{"name": "off-server", "status": "disabled"},
@@ -180,7 +180,7 @@ func TestSequence_MCPStatus_CapturesPromptsAndResources(t *testing.T) {
 	wrapper := &mcpCaptureDeps{baseDeps: deps, connected: &connected, prompts: &prompts, resources: &resources}
 	tr := &Translator{deps: wrapper}
 
-	tr.HandleMCPStatus(context.Background(), "", &api.RPCResponse{
+	tr.HandleMCPStatus(t.Context(), "", &api.RPCResponse{
 		Params: mustJSON(t, map[string]any{
 			"servers": []map[string]any{
 				{
@@ -268,7 +268,7 @@ func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	chatID := api.ChatID("c-reason")
 
 	// Send a reasoning chunk (isReasoning=true)
-	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "thinking..."},
 	}), true)
 
@@ -294,7 +294,7 @@ func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	}
 
 	// Send a regular text chunk (isReasoning=false)
-	tr.HandleAssistantChunk(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "answer"},
 	}), false)
 

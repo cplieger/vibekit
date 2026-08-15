@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -50,7 +49,7 @@ func TestHandleSafetyStatusChanged_Blocked(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status":            "blocked",
 		"detail":            "\U0001F6E1\uFE0F fs_write blocked",
 		"toolId":            "fs_write",
@@ -79,7 +78,7 @@ func TestHandleSafetyStatusChanged_IdleForwarded(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "idle",
 	})})
 
@@ -95,7 +94,7 @@ func TestHandleSafetyStatusChanged_UnknownDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "quantum-entangled",
 	})})
 
@@ -108,7 +107,7 @@ func TestHandleSafetyStatusChanged_UnknownDropped(t *testing.T) {
 func TestHandleSafetyStatusChanged_MalformedNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
-	tr.HandleSafetyStatusChanged(context.Background(), "c1", &api.RPCResponse{Params: []byte("{")})
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: []byte("{")})
 	if got := safetyStatusPayloads(t, events); len(got) != 0 {
 		t.Fatalf("want no broadcast for malformed params, got %+v", got)
 	}
@@ -120,7 +119,7 @@ func TestHandleSafetyPropertiesChanged_ObjectForm(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyPropertiesChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 		"sessionId": "",
 		"reason":    "formalized",
 		"properties": []map[string]any{
@@ -148,7 +147,7 @@ func TestHandleSafetyPropertiesChanged_StringForm(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyPropertiesChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 		"properties": []any{"no public S3 buckets", ""},
 	})})
 
@@ -170,7 +169,7 @@ func TestHandleSafetyPropertiesChanged_EmptyDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyPropertiesChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 		"properties": []any{},
 	})})
 
@@ -186,7 +185,7 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
 		tr := New(deps)
-		tr.HandleSafetyPropertiesChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 			"sessionId":  "sess-sub",
 			"properties": []any{"no public S3 buckets"},
 		})})
@@ -198,7 +197,7 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
 		tr := New(deps)
-		tr.HandleSafetyPropertiesChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 			"sessionId":  "sess-parent",
 			"properties": []any{"no public S3 buckets"},
 		})})
@@ -212,7 +211,7 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 // EventKind is infra_safety_blocked.
 func infraBlockMessages(t *testing.T, store *testsupport.InMemoryChatStore, chatID api.ChatID) []api.Message {
 	t.Helper()
-	c, ok := store.Get(context.Background(), chatID)
+	c, ok := store.Get(t.Context(), chatID)
 	if !ok {
 		return nil
 	}
@@ -232,7 +231,7 @@ func depsWithStore(t *testing.T, chatID api.ChatID) (*baseDeps, *[]api.ServerEve
 	deps, events := newEventCaptureDeps()
 	store := testsupport.NewInMemoryChatStore()
 	deps.store = store
-	if err := store.Mutate(context.Background(), chatID, func(c *api.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if err := store.Mutate(t.Context(), chatID, func(c *api.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 	return deps, events, store
@@ -247,7 +246,7 @@ func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status":            "blocked",
 		"detail":            "\U0001F6E1\uFE0F fs_write blocked",
 		"toolId":            "fs_write",
@@ -277,7 +276,7 @@ func TestHandleSafetyStatusChanged_BlockedFallsBackToDetail(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "blocked",
 		"detail": "policy violation",
 	})})
@@ -297,7 +296,7 @@ func TestHandleSafetyStatusChanged_NonBlockedNoPersist(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			tr := New(deps)
 
-			tr.HandleSafetyStatusChanged(context.Background(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+			tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
 				"status": status,
 			})})
 

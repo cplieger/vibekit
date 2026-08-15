@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -16,7 +15,7 @@ func TestStubDeps_Contract(t *testing.T) {
 	// Verify interface satisfaction at compile time.
 	var _ Deps = d
 
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// ChatStore must be non-nil.
 	if d.ChatStore() == nil {
@@ -51,7 +50,7 @@ func TestStubDeps_Contract(t *testing.T) {
 // assertions to catch drift between baseDeps and the Deps interface.
 func TestBaseDeps_FullContract(t *testing.T) {
 	d := newBaseDeps()
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("ChatStore_non_nil", func(t *testing.T) {
 		if d.ChatStore() == nil {

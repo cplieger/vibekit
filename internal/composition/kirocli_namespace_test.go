@@ -23,7 +23,6 @@ package composition
 // the two engines apart.
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -255,7 +254,7 @@ func TestToolbeltKiroCLIFootprintSurvivesABoot(t *testing.T) {
 	own := env.plantOwnVersion()
 	mgr := env.manager()
 
-	if err := mgr.Ensure(context.Background()); err != nil {
+	if err := mgr.Ensure(t.Context()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 
@@ -298,7 +297,7 @@ func TestInstallRootIsOutsideTheToolbeltNamespace(t *testing.T) {
 	env := newNSEnv(t)
 	own := env.plantOwnVersion()
 	mgr := env.manager()
-	if err := mgr.Ensure(context.Background()); err != nil {
+	if err := mgr.Ensure(t.Context()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if mgr.PathEntry() != own {
@@ -339,7 +338,7 @@ func TestLegacySweepSparesToolbeltSymlinks(t *testing.T) {
 	residue := env.plantLegacyResidue()
 	own := env.plantOwnVersion()
 
-	if err := env.manager().Ensure(context.Background()); err != nil {
+	if err := env.manager().Ensure(t.Context()); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 
@@ -373,7 +372,7 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 	env.plantOwnVersion()
 	residue := env.plantLegacyResidue(nsTool + "-chat")
 
-	if err := env.manager().Ensure(context.Background()); err != nil {
+	if err := env.manager().Ensure(t.Context()); err != nil {
 		t.Fatalf("first Ensure: %v", err)
 	}
 	for _, p := range residue {
@@ -389,7 +388,7 @@ func TestLegacySweepRunsOncePerVolume(t *testing.T) {
 	// Plant the sweep's own targets again, in the shape it removes. Only a second
 	// pass could take them.
 	replanted := env.plantLegacyResidue(nsTool + "-chat")
-	if err := env.manager().Ensure(context.Background()); err != nil {
+	if err := env.manager().Ensure(t.Context()); err != nil {
 		t.Fatalf("second Ensure: %v", err)
 	}
 	for _, p := range replanted {

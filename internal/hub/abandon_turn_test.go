@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -23,7 +22,7 @@ import (
 // pass even if the buffer were left behind.
 func TestAbandonInFlightTurn_ReleasesTheBuffer(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Start a turn the way streaming does, then abandon it.
 	buf := h.bridge.assistantBufs.GetOrInit("c1")
@@ -52,7 +51,7 @@ func TestAbandonInFlightTurn_ReleasesTheBuffer(t *testing.T) {
 // codebase has already paid for once.
 func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	const partial = "the model got this far before the pipe died"
 	buf := h.bridge.assistantBufs.GetOrInit("c1")
@@ -94,7 +93,7 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 // every transcript that ever saw a transient error.
 func TestAbandonInFlightTurn_NoBufferIsANoOp(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
-	ctx := context.Background()
+	ctx := t.Context()
 
 	before, ok := h.chatStore.Get(ctx, "c1")
 	if !ok {

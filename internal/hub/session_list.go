@@ -34,11 +34,12 @@ package hub
 // tag ("local"). Do not treat them as the same field.
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -179,7 +180,11 @@ func (h *Hub) toResumable(claimed map[string]api.ChatID, rows []kasSessionRow) [
 			ChatID:      string(claimed[row.SessionID]),
 		})
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	// Stable: ties must keep insertion order or the session list reshuffles
+	// between polls.
+	slices.SortStableFunc(out, func(a, b api.ResumableSession) int {
+		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
+	})
 	return out
 }
 
@@ -266,6 +271,10 @@ func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]api.ChatID) (
 			ParentChatID: string(claimed[r.ParentSessionID]),
 		})
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].UpdatedAt > out[j].UpdatedAt })
+	// Stable: ties must keep insertion order or the run list reshuffles
+	// between polls.
+	slices.SortStableFunc(out, func(a, b api.WorkflowRun) int {
+		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
+	})
 	return out, nil
 }

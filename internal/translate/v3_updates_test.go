@@ -2,7 +2,6 @@ package translate
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -43,9 +42,9 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 		{"value": "model-c", "name": "Model C"}, // no _meta at all
 	})
 
-	tr.HandleConfigOptionUpdate(context.Background(), "c1", raw)
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", raw)
 
-	c, ok := store.Get(context.Background(), "c1")
+	c, ok := store.Get(t.Context(), "c1")
 	if !ok {
 		t.Fatal("chat c1 missing after config_option_update")
 	}
@@ -146,7 +145,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 			defer restore()
 
 			deps, _, _ := depsWithStore(t, "c1")
-			New(deps).HandleSessionInfoUpdate(context.Background(), "c1", infoKindFrame(t, tt.kind), "")
+			New(deps).HandleSessionInfoUpdate(t.Context(), "c1", infoKindFrame(t, tt.kind), "")
 
 			out := buf.String()
 			gotWarn := strings.Contains(out, "level=WARN") && strings.Contains(out, "UNKNOWN kind")
@@ -171,7 +170,7 @@ func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 	defer restore()
 
 	deps, _, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(context.Background(), "c1",
+	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
 		json.RawMessage(`{"_meta":{"kiro":{}}}`), "")
 
 	if out := buf.String(); out != "" {

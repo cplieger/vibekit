@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"slices"
 	"testing"
 
@@ -17,9 +16,9 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 	h := New("/tmp/work", func() api.ACPBridge { return br }, cs, WithACPArgs(want))
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	if _, err := h.coord.GetOrCreateBridge(context.Background(), "c1", ""); err != nil {
+	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)
 	}
 	opts := br.lastStartOpts()
@@ -47,7 +46,7 @@ func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 	h.mcpRegistry.signalReady()
 
 	u := h.ensureUtility()
-	if _, err := u.session.acquire(context.Background()); err != nil {
+	if _, err := u.session.acquire(t.Context()); err != nil {
 		t.Fatalf("acquire utility session: %v", err)
 	}
 	defer u.session.Stop()
@@ -69,9 +68,9 @@ func TestACPArgsUnsetIsEmpty(t *testing.T) {
 	h := New("/tmp/work", func() api.ACPBridge { return br }, cs)
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	if _, err := h.coord.GetOrCreateBridge(context.Background(), "c1", ""); err != nil {
+	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)
 	}
 	if opts := br.lastStartOpts(); opts != nil && len(opts.ExtraArgs) != 0 {

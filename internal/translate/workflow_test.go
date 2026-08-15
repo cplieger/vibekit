@@ -155,11 +155,11 @@ func TestRunNotifications_NineBecomeThree(t *testing.T) {
 			msg := notif("_kiro/workflow/"+c.method, c.params)
 			switch c.method {
 			case "run_start":
-				tr.HandleRunStart(context.Background(), testChat, msg)
+				tr.HandleRunStart(t.Context(), testChat, msg)
 			case "run_complete":
-				tr.HandleRunComplete(context.Background(), testChat, msg)
+				tr.HandleRunComplete(t.Context(), testChat, msg)
 			default:
-				tr.RunProgressHandler(c.wantKind)(context.Background(), testChat, msg)
+				tr.RunProgressHandler(c.wantKind)(t.Context(), testChat, msg)
 			}
 			if len(events) != 1 {
 				t.Fatalf("%s: got %d events, want 1", c.method, len(events))
@@ -196,7 +196,7 @@ func TestRunStart_CarriesTheName(t *testing.T) {
 	t.Parallel()
 	var events []api.ServerEvent
 	tr := New(capturing(&events))
-	tr.HandleRunStart(context.Background(), testChat,
+	tr.HandleRunStart(t.Context(), testChat,
 		notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "publish-pr"}))
 	p, ok := events[0].Payload.(api.RunStartedPayload)
 	if !ok {
@@ -213,7 +213,7 @@ func TestRunNotifications_IgnoreFramesWithNoWorkflowID(t *testing.T) {
 	t.Parallel()
 	var events []api.ServerEvent
 	tr := New(capturing(&events))
-	ctx := context.Background()
+	ctx := t.Context()
 	tr.HandleRunStart(ctx, testChat, notif("_kiro/workflow/run_start", map[string]any{}))
 	tr.HandleRunComplete(ctx, testChat, notif("_kiro/workflow/run_complete", map[string]any{}))
 	tr.RunProgressHandler(api.RunProgressNodeStart)(ctx, testChat,
@@ -234,7 +234,7 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	if _, ok := tr.steps.lookup("sess_new"); ok {
 		t.Fatal("registry is not empty before node_start")
 	}
-	tr.RunProgressHandler(api.RunProgressNodeStart)(context.Background(), testChat,
+	tr.RunProgressHandler(api.RunProgressNodeStart)(t.Context(), testChat,
 		notif("_kiro/workflow/node_start", map[string]any{
 			"workflowId": "wf_1", "nodeId": "build", "sessionId": "sess_new",
 		}))
@@ -247,7 +247,7 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	}
 	// A node_start without a sessionId (the continuation/resume path) records
 	// nothing rather than an entry keyed on "".
-	tr.RunProgressHandler(api.RunProgressNodeStart)(context.Background(), testChat,
+	tr.RunProgressHandler(api.RunProgressNodeStart)(t.Context(), testChat,
 		notif("_kiro/workflow/node_start", map[string]any{"workflowId": "wf_1", "nodeId": "next"}))
 	if _, ok := tr.steps.lookup(""); ok {
 		t.Error("a node_start with no sessionId recorded an empty-keyed entry")
@@ -266,7 +266,7 @@ func TestRunComplete_ForgetsTheRunsStepSessions(t *testing.T) {
 	tr.RecordStepSession("sess_b", "wf_1", "b")
 	tr.RecordStepSession("sess_c", "wf_2", "c")
 
-	tr.HandleRunComplete(context.Background(), testChat,
+	tr.HandleRunComplete(t.Context(), testChat,
 		notif("_kiro/workflow/run_complete", map[string]any{"workflowId": "wf_1", "status": "completed"}))
 
 	for _, id := range []string{"sess_a", "sess_b"} {
@@ -348,7 +348,7 @@ func TestWorkflowMeta_SubtaskID(t *testing.T) {
 func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "m1" }))
-	ctx := context.Background()
+	ctx := t.Context()
 	buf := deps.bufStore.GetOrInit(testChat)
 
 	chunk := func(text string, wf map[string]any) json.RawMessage {
@@ -402,7 +402,7 @@ func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
 func TestStepChunk_TwoIterationsDoNotShareABlock(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "m1" }))
-	ctx := context.Background()
+	ctx := t.Context()
 	buf := deps.bufStore.GetOrInit(testChat)
 
 	for _, iter := range []string{"iter-0", "iter-1"} {
@@ -475,7 +475,7 @@ func TestSessionInfoUpdate_StepMeteringCountsCreditsOnly(t *testing.T) {
 			deps := newBaseDeps()
 			deps.store = store
 			tr := New(deps)
-			tr.HandleSessionInfoUpdate(context.Background(), testChat, infoFrame(c.step), "")
+			tr.HandleSessionInfoUpdate(t.Context(), testChat, infoFrame(c.step), "")
 
 			if store.chat.Usage.Credits != 0.25 {
 				t.Errorf("credits = %v, want 0.25 (real spend is the user's either way)", store.chat.Usage.Credits)
@@ -509,7 +509,7 @@ func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 	store := &usageStore{}
 	deps := newBaseDeps()
 	deps.store = store
-	New(deps).HandleSessionInfoUpdate(context.Background(), testChat, raw, "")
+	New(deps).HandleSessionInfoUpdate(t.Context(), testChat, raw, "")
 	if store.mutateCalls != 0 {
 		t.Errorf("a step's context_usage reached the chat (%d mutations), want 0", store.mutateCalls)
 	}
@@ -574,7 +574,7 @@ func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
 func TestStepToolCall_SharesTheStepsBlockKey(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "m1" }))
-	ctx := context.Background()
+	ctx := t.Context()
 	buf := deps.bufStore.GetOrInit(testChat)
 
 	wf := map[string]any{"workflowId": "wf_1", "nodeId": "build", "nodePath": []string{"wf_1", "build"}}
@@ -645,7 +645,7 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 			rec := capture.Default(t)
 			var events []api.ServerEvent
 			tr := New(capturing(&events))
-			ctx := context.Background()
+			ctx := t.Context()
 
 			start := map[string]any{"workflowId": "wf_7", "workflowName": "publish-pr"}
 			done := map[string]any{
@@ -714,7 +714,7 @@ func TestRunComplete_ReadsTopLevelParentSessionID(t *testing.T) {
 	var events []api.ServerEvent
 	tr := New(capturing(&events))
 
-	tr.HandleRunComplete(context.Background(), testChat, notif("_kiro/workflow/run_complete", map[string]any{
+	tr.HandleRunComplete(t.Context(), testChat, notif("_kiro/workflow/run_complete", map[string]any{
 		"workflowId":      "wf_9",
 		"status":          "completed",
 		"parentSessionId": testParent,

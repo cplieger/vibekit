@@ -23,10 +23,10 @@ import (
 
 func TestNew_PersistsAndReloadsKeys(t *testing.T) {
 	dir := t.TempDir()
-	s1 := New(context.Background(), dir, "mailto:test@example.com")
+	s1 := New(t.Context(), dir, "mailto:test@example.com")
 	key1 := s1.PublicKey()
 
-	s2 := New(context.Background(), dir, "mailto:test@example.com")
+	s2 := New(t.Context(), dir, "mailto:test@example.com")
 	if s2.PublicKey() != key1 {
 		t.Error("reloaded key differs from original")
 	}
@@ -34,13 +34,13 @@ func TestNew_PersistsAndReloadsKeys(t *testing.T) {
 
 func TestSubscriptionPersistence(t *testing.T) {
 	dir := t.TempDir()
-	s1 := New(context.Background(), dir, "mailto:test@example.com")
+	s1 := New(t.Context(), dir, "mailto:test@example.com")
 	s1.Subscribe(api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/a"})
 	s1.Subscribe(api.PushSubscription{Endpoint: "https://updates.push.services.mozilla.com/b"})
 	s1.flushSaves()
 	s1.Close()
 
-	s2 := New(context.Background(), dir, "mailto:test@example.com")
+	s2 := New(t.Context(), dir, "mailto:test@example.com")
 	if !s2.HasSubscribers() {
 		t.Error("subscriptions not persisted")
 	}
@@ -66,7 +66,7 @@ func TestLoadSubs_DropsDisallowedEndpoints(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "push-subs.json"), data, 0o600); err != nil {
 		t.Fatalf("write subs: %v", err)
 	}
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	s.mu.Lock()
 	_, okOk := s.subs["https://fcm.googleapis.com/fcm/send/ok"]
 	_, badOk := s.subs["http://localhost:6379/SHUTDOWN"]
@@ -119,7 +119,7 @@ func TestLoadSubs_DropsDisallowedHostLogged(t *testing.T) {
 // persist-failure warning.
 func TestLoadKeys_PersistSuccessNoWarn(t *testing.T) {
 	capLog := capture.Default(t)
-	s := New(context.Background(), t.TempDir(), testSubject)
+	s := New(t.Context(), t.TempDir(), testSubject)
 	defer s.Close()
 
 	if capLog.CountExact("push: persist VAPID keys failed") > 0 {
@@ -157,7 +157,7 @@ func TestSaveSubsAsync_CtxGuard(t *testing.T) {
 		return &Service{
 			subs:   map[string]api.PushSubscription{},
 			saveCh: make(chan saveRequest, 1),
-			ctx:    context.Background(), // service ctx active so the send path is taken
+			ctx:    t.Context(), // service ctx active so the send path is taken
 		}
 	}
 
@@ -173,7 +173,7 @@ func TestSaveSubsAsync_CtxGuard(t *testing.T) {
 
 	t.Run("active_guard_queues_save", func(t *testing.T) {
 		s := newSvc()
-		s.saveSubsAsync(context.Background())
+		s.saveSubsAsync(t.Context())
 		if n := len(s.saveCh); n != 1 {
 			t.Errorf("saveSubsAsync(active) queued %d requests, want 1", n)
 		}
@@ -187,7 +187,7 @@ func TestSaveSubs_CtxGuard(t *testing.T) {
 	const ep = "https://fcm.googleapis.com/fcm/send/savesubs"
 
 	t.Run("cancelled_guard_skips_write", func(t *testing.T) {
-		s := New(context.Background(), t.TempDir(), testSubject)
+		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		s.mu.Lock()
 		s.subs[ep] = api.PushSubscription{Endpoint: ep}
@@ -205,14 +205,14 @@ func TestSaveSubs_CtxGuard(t *testing.T) {
 	})
 
 	t.Run("active_guard_writes", func(t *testing.T) {
-		s := New(context.Background(), t.TempDir(), testSubject)
+		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		s.mu.Lock()
 		s.subs[ep] = api.PushSubscription{Endpoint: ep}
 		s.mu.Unlock()
 		_ = os.Remove(s.subsPath())
 
-		s.saveSubs(context.Background())
+		s.saveSubs(t.Context())
 
 		if _, err := os.Stat(s.subsPath()); err != nil {
 			t.Errorf("saveSubs(active) did not write %s: %v", s.subsPath(), err)
@@ -224,7 +224,7 @@ func TestSaveSubs_CtxGuard(t *testing.T) {
 // holds per-subscriber auth secrets and must never be world-readable.
 func TestSaveSubs_Perm0o600(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 	// Use an allowed endpoint so the file survives a future reload.
 	s.Subscribe(api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/perm-check"})
@@ -241,7 +241,7 @@ func TestSaveSubs_Perm0o600(t *testing.T) {
 
 func TestDecodeVAPIDPrivateKey(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 
 	priv, err := s.decodeVAPIDPrivateKey()
 	if err != nil {
@@ -263,7 +263,7 @@ func TestDecodeVAPIDPrivateKey(t *testing.T) {
 
 func TestDecodeVAPIDPrivateKey_InvalidBase64(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 
 	s.keys.PrivateKey = "not$valid$base64!!"
 
@@ -274,7 +274,7 @@ func TestDecodeVAPIDPrivateKey_InvalidBase64(t *testing.T) {
 
 func TestDecodeVAPIDPrivateKey_WrongLength(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 
 	// Valid base64 but only 16 bytes; P-256 requires 32.
 	s.keys.PrivateKey = base64.RawURLEncoding.EncodeToString(make([]byte, 16))
@@ -295,7 +295,7 @@ func TestVAPIDHeader_InvalidKeyPropagatesError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "vapid-keys.json"), []byte(badKeys), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	if s.vapidPriv != nil {
 		t.Fatal("vapidPriv should be nil for invalid key")
 	}

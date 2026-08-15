@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"maps"
 	"testing"
 
@@ -38,7 +37,7 @@ func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
 	deps.onSetGovernance = func(g api.GovernanceStatePayload) { cp := g; cached = &cp }
 	tr := New(deps)
 
-	tr.HandleGovernanceState(context.Background(), api.ChatID("c1"),
+	tr.HandleGovernanceState(t.Context(), api.ChatID("c1"),
 		govMsg(t, "sess-parent", map[string]any{"isEnterprise": false}))
 
 	if len(*events) != 1 {
@@ -86,7 +85,7 @@ func TestHandleGovernanceState_SubagentSkipped(t *testing.T) {
 	deps.parent = "sess-parent"
 	tr := New(deps)
 
-	tr.HandleGovernanceState(context.Background(), api.ChatID("c1"),
+	tr.HandleGovernanceState(t.Context(), api.ChatID("c1"),
 		govMsg(t, "sess-subagent", nil))
 
 	if len(*events) != 0 || cached {
@@ -101,7 +100,7 @@ func TestHandleGovernanceState_Malformed(t *testing.T) {
 	deps.onSetGovernance = func(api.GovernanceStatePayload) { cached = true }
 	tr := New(deps)
 
-	tr.HandleGovernanceState(context.Background(), "c1", &api.RPCResponse{Params: []byte("{")})
+	tr.HandleGovernanceState(t.Context(), "c1", &api.RPCResponse{Params: []byte("{")})
 
 	if len(*events) != 0 || cached {
 		t.Errorf("malformed governance should be dropped: events=%d cached=%v", len(*events), cached)
