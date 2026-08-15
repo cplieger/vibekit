@@ -28,13 +28,37 @@
   transition: transform var(--dur-micro) var(--ease-micro);
 }
 
-/* An EXPANDED pill is exempt. The expanded card is a CHILD of the pill button
- * (deliberately — the pattern is inline growth, not a floating popup), so the
- * press transform scaled the open menu along with its trigger and every click
- * inside the menu made the whole card jump. With the menu open the menu itself
- * is the feedback, so there is nothing for a press scale to confirm. */
+/* An expanded pill presses its OWN CONTENT, not its subtree.
+ *
+ * The expanded card is a DOM child of the pill button (deliberately — the
+ * pattern is inline growth, not a floating popup), so a transform on the pill
+ * scaled the open menu along with its trigger. The scale moves onto the pill's
+ * children instead and the popover is restored to its own scale, which the
+ * open-state rule in 15-input.css already owns. Each child scales about its own
+ * centre, so nothing reflows and the icon-to-label gap is unchanged.
+ *
+ * A counter-scale on the popover was the other candidate and cannot work in
+ * CSS: cancelling the parent's scale needs the child to scale about the same
+ * absolute point, and expressing the pill's centre inside the popover's
+ * coordinate space needs the pill's measured width and height.
+ *
+ * Residual, accepted: a press inside the open card activates the button too, by
+ * ordinary event propagation, so the trigger's icon and label give their 6%
+ * press when a menu row is clicked. The card itself stays still, which is what
+ * the jumping complaint was about. Suppressing even that needs `:has()` with a
+ * descendant `:active`, which overruns both the specificity and pseudo-class
+ * ceilings this stylesheet is linted against. */
 .pill.pill-expanded:active {
   transform: none;
+}
+
+.pill.pill-expanded:active > * {
+  transform: scale(0.94);
+  transition: transform var(--dur-micro) var(--ease-micro);
+}
+
+.pill.pill-expanded:active > .pill-expand-content {
+  transform: scale(1);
 }
 
 /* ==========================================================================
