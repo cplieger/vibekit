@@ -23,6 +23,15 @@
   overflow-y: auto;
   overscroll-behavior: contain;
 
+  /* The column's side inset lives HERE, outside the `--content-max-w` cap, and
+   * is the same `--sp-4` `.bottom-bar` uses (19-files.css) — so the transcript
+   * and the composer resolve to the same measure at every width. It used to be
+   * padding on `#messages` itself, which is border-box, so the cap paid for it
+   * and every turn card came out 2rem narrower than the prompt box. Keep the
+   * two values equal; the timeline rail stays outside this gutter rather than
+   * taking a bite out of it (29-turns.css). */
+  padding-inline: var(--sp-4);
+
   /* Smooth user-initiated scrolls (scroll-to-bottom click, keyboard
    * navigation). Streaming auto-scroll calls scrollTo with
    * behavior:"instant" which overrides this — small per-chunk deltas
@@ -44,7 +53,7 @@
 }
 
 [id="messages"] {
-  padding: var(--sp-4);
+  padding-block: var(--sp-4);
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);

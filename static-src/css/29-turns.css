@@ -499,7 +499,18 @@
 
 .turn-rail {
   position: absolute;
-  inset-block: var(--sp-3);
+
+  /* Starts BELOW the chat toolbar, not at the top of the transcript. The
+   * toolbar is anchored to the same corner with z-index 10 against this rail's
+   * 4, so a rail beginning at `--sp-3` put its first two markers underneath it:
+   * measured at 1440 wide, marker #1 (y 12..36) sat inside the toolbar's
+   * 12..54 band and was invisible and unclickable. The offset is derived from
+   * the toolbar's own metrics, exactly as `.chat-find` derives its own
+   * (24-find.css), so the three cannot drift apart. */
+  inset-block: calc(
+      var(--sp-3) + var(--btn-h) + 0.25rem + var(--sp-2) + env(safe-area-inset-top, 0)
+    )
+    var(--sp-3);
   inset-inline-end: var(--sp-1);
   z-index: 4;
   display: flex;
@@ -633,22 +644,24 @@
   border-top: 1px dashed var(--c-border);
 }
 
-/* Hidden below the mobile breakpoint: there is no room, and there is no overlay
- * substitute. Mobile navigates by CONTENT through transcript search, which is
- * what a reader on a phone is actually looking for. That trade is accepted
- * rather than patched. */
-@media (width <= 40rem) {
+/* Shown only when the chat area is wide enough to hold the rail BESIDE the
+ * content column, never inside it. The transcript and the composer share one
+ * measure (`--sp-4` of side inset plus the `--content-max-w` cap), so the rail
+ * gets the space left over and nothing else: at 55.5rem of chat area the column
+ * has stopped growing and the leftover gutter is 2.75rem, which clears the
+ * rail's 2rem by 0.75rem. Below that there is no room, so it hides — the same
+ * trade already accepted on phones, where content search is how a reader
+ * navigates. This replaces a viewport-keyed hide at 40rem plus an inline-end
+ * padding reservation on `#messages`: the reservation sat INSIDE the cap, so it
+ * bought the rail's column out of the transcript's own width, leaving every
+ * turn card 1.75rem narrower than the prompt box and off its axis.
+ *
+ * Keyed on the `chat-area` container (12-chat.css), not the viewport, because
+ * the sidebar's width is what decides how much of the window the transcript
+ * actually gets. */
+@container chat-area (width < 55.5rem) {
   .turn-rail {
     display: none;
-  }
-}
-
-/* Reserve the rail's column so a narrow-but-not-mobile viewport cannot let a
- * marker sit on top of the transcript. On a wide screen the centred content
- * column already leaves a gutter and this padding is invisible. */
-@media (width > 40rem) {
-  [id="messages"] {
-    padding-inline-end: calc(var(--sp-4) + 1.75rem);
   }
 }
 
