@@ -156,6 +156,13 @@ class Elements {
   }
 
   // Status popup
+  //
+  // The card is the dot's SIBLING (see 15-input.css .pill-slot), so it
+  // inherits nothing from the dot: status.ts writes --status-color onto the
+  // card itself.
+  get statusCard(): HTMLElement {
+    return byId("status-card");
+  }
   get stWs(): HTMLElement {
     return byId("st-ws");
   }
