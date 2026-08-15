@@ -162,6 +162,17 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* Form controls take the page's typeface. The UA sheet gives every button,
+     input and select a font of its own (Chromium on Linux: Arial at
+     13.3333px), so 109 controls on the chat page rendered in a different
+     family from the text around them, most visibly the pill labels beside a
+     system-ui transcript. Family only, deliberately: several icon buttons are
+     sized against the UA font-size, and `font: inherit` would move them. Zero
+     specificity, so a control that asks for --font-mono keeps it. */
+  :where(button, input, select, textarea) {
+    font-family: inherit;
+  }
+
   [id="app"] {
     display: grid;
     grid-template-columns: 1fr;
