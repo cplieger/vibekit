@@ -73,13 +73,13 @@ func decisionCases(t *testing.T) []struct {
 		run  func(*Dispatcher, http.ResponseWriter)
 	}{
 		{name: "permission", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdPermission(d, context.Background(), w, perm)
+			CmdPermission(d, t.Context(), w, perm)
 		}},
 		{name: "elicitation", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdElicitationResponse(d, context.Background(), w, elicit)
+			CmdElicitationResponse(d, t.Context(), w, elicit)
 		}},
 		{name: "user_input", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdUserInputResponse(d, context.Background(), w, input)
+			CmdUserInputResponse(d, t.Context(), w, input)
 		}},
 	}
 }

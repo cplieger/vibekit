@@ -1,7 +1,6 @@
 package forges
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,7 +16,7 @@ func TestCLILogin_GH_PipesTokenAndSetsUpGit(t *testing.T) {
 	rec := filepath.Join(t.TempDir(), "rec")
 	stubCLI(t, dir, "gh", recordingScript(rec))
 
-	if err := cliLogin(context.Background(), KindGitHub, "github.com", "gho_secret"); err != nil {
+	if err := cliLogin(t.Context(), KindGitHub, "github.com", "gho_secret"); err != nil {
 		t.Fatalf("cliLogin: %v", err)
 	}
 
@@ -45,7 +44,7 @@ func TestCLILogin_GLab(t *testing.T) {
 	rec := filepath.Join(t.TempDir(), "rec")
 	stubCLI(t, dir, "glab", recordingScript(rec))
 
-	if err := cliLogin(context.Background(), KindGitLab, "gitlab.com", "glpat-secret"); err != nil {
+	if err := cliLogin(t.Context(), KindGitLab, "gitlab.com", "glpat-secret"); err != nil {
 		t.Fatalf("cliLogin: %v", err)
 	}
 
@@ -72,7 +71,7 @@ func TestCLILogin_Tea_TokenViaEnvNotArgv(t *testing.T) {
 	rec := filepath.Join(t.TempDir(), "rec")
 	stubCLI(t, dir, "tea", recordingScript(rec))
 
-	if err := cliLogin(context.Background(), KindGitea, "gitea.example.com", "tea_secret"); err != nil {
+	if err := cliLogin(t.Context(), KindGitea, "gitea.example.com", "tea_secret"); err != nil {
 		t.Fatalf("cliLogin: %v", err)
 	}
 
@@ -105,7 +104,7 @@ func TestCLILogin_Tea_ScrubsStaleStoreEntry(t *testing.T) {
 	dir := stubPath(t)
 	stubCLI(t, dir, "tea", "exit 0")
 
-	if err := cliLogin(context.Background(), KindGitea, "gitea.example.com", "newtok"); err != nil {
+	if err := cliLogin(t.Context(), KindGitea, "gitea.example.com", "newtok"); err != nil {
 		t.Fatalf("cliLogin: %v", err)
 	}
 
@@ -129,10 +128,10 @@ func TestCLILogout_GH_And_GLab(t *testing.T) {
 	stubCLI(t, dir, "gh", recordingScript(recGH))
 	stubCLI(t, dir, "glab", recordingScript(recGLab))
 
-	if err := cliLogout(context.Background(), KindGitHub, "github.com"); err != nil {
+	if err := cliLogout(t.Context(), KindGitHub, "github.com"); err != nil {
 		t.Fatalf("gh logout: %v", err)
 	}
-	if err := cliLogout(context.Background(), KindGitLab, "gitlab.com"); err != nil {
+	if err := cliLogout(t.Context(), KindGitLab, "gitlab.com"); err != nil {
 		t.Fatalf("glab logout: %v", err)
 	}
 
@@ -156,7 +155,7 @@ func TestCLILogout_Tea_ResolvesNameFromURL(t *testing.T) {
 "login delete") printf 'deleted:%s\n' "$3" >> `+rec+` ;;
 esac`)
 
-	if err := cliLogout(context.Background(), KindGitea, "gitea.example.com"); err != nil {
+	if err := cliLogout(t.Context(), KindGitea, "gitea.example.com"); err != nil {
 		t.Fatalf("cliLogout: %v", err)
 	}
 	if got := readRecord(t, rec); !strings.Contains(got, "deleted:myforge") {
@@ -175,7 +174,7 @@ func TestCLILogout_Tea_NoMatchingLogin_NoOp(t *testing.T) {
 "login delete") printf 'deleted:%s\n' "$3" >> `+rec+` ;;
 esac`)
 
-	if err := cliLogout(context.Background(), KindGitea, "unknown.example"); err != nil {
+	if err := cliLogout(t.Context(), KindGitea, "unknown.example"); err != nil {
 		t.Fatalf("cliLogout: %v", err)
 	}
 	if got := readRecord(t, rec); got != "" {
@@ -189,17 +188,17 @@ func TestCLILogout_NotLoggedIn_Idempotent(t *testing.T) {
 	dir := stubPath(t)
 	stubCLI(t, dir, "gh", `echo "you are not logged in to any hosts" >&2; exit 1`)
 
-	if err := cliLogout(context.Background(), KindGitHub, "github.com"); err != nil {
+	if err := cliLogout(t.Context(), KindGitHub, "github.com"); err != nil {
 		t.Errorf("cliLogout on not-logged-in should be nil, got %v", err)
 	}
 }
 
 // TestCLILogin_EmptyToken_And_MissingHost pins the validation prelude.
 func TestCLILogin_EmptyToken_And_MissingHost(t *testing.T) {
-	if err := cliLogin(context.Background(), KindGitHub, "github.com", ""); err == nil {
+	if err := cliLogin(t.Context(), KindGitHub, "github.com", ""); err == nil {
 		t.Error("empty token should error")
 	}
-	if err := cliLogin(context.Background(), KindGitea, "", "tok"); err == nil {
+	if err := cliLogin(t.Context(), KindGitea, "", "tok"); err == nil {
 		t.Error("gitea without a host should error (no default host)")
 	}
 }
@@ -211,7 +210,7 @@ func TestCLILogin_EmptyToken_And_MissingHost(t *testing.T) {
 func TestErrSentinelsAliasCliexec(t *testing.T) {
 	dir := stubPath(t) // empty PATH: no CLIs
 	_ = dir
-	err := cliLogin(context.Background(), KindGitHub, "github.com", "tok")
+	err := cliLogin(t.Context(), KindGitHub, "github.com", "tok")
 	if !errors.Is(err, ErrNotInstalled) {
 		t.Errorf("missing CLI should map to forges.ErrNotInstalled, got %v", err)
 	}

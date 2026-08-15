@@ -63,7 +63,7 @@ var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","
 
 func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 	tr := New(newBaseDeps(), withIDGenerator(func() string { return "stub-msg-id" }))
-	ctx := context.Background()
+	ctx := b.Context()
 	chatID := api.ChatID("bench-chat")
 
 	b.ResetTimer()
@@ -77,7 +77,7 @@ func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 	deps := newBaseDeps()
 	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
-	ctx := context.Background()
+	ctx := b.Context()
 	chatID := api.ChatID("bench-chunk")
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
@@ -99,7 +99,7 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 func BenchmarkTranslator_FullTurn(b *testing.B) {
 	deps := newBaseDeps()
 	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
-	ctx := context.Background()
+	ctx := b.Context()
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
 	toolCallPL := toolCallPayload
@@ -127,7 +127,7 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	deps := newBaseDeps()
 	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
-	ctx := context.Background()
+	ctx := b.Context()
 	chatID := api.ChatID("bench-usage")
 	raw := json.RawMessage(`{"size":100000,"used":42500}`)
 

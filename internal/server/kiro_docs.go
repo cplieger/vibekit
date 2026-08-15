@@ -34,6 +34,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io/fs"
@@ -42,7 +43,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 
@@ -455,15 +456,12 @@ func specFileRank(p string) int {
 
 // sortSpecDocs groups by feature, then applies specFileRank, then lexical.
 func sortSpecDocs(docs []kiroDoc) {
-	sort.SliceStable(docs, func(i, j int) bool {
-		if docs[i].Group != docs[j].Group {
-			return docs[i].Group < docs[j].Group
-		}
-		ri, rj := specFileRank(docs[i].Path), specFileRank(docs[j].Path)
-		if ri != rj {
-			return ri < rj
-		}
-		return docs[i].Path < docs[j].Path
+	slices.SortStableFunc(docs, func(a, b kiroDoc) int {
+		return cmp.Or(
+			cmp.Compare(a.Group, b.Group),
+			cmp.Compare(specFileRank(a.Path), specFileRank(b.Path)),
+			cmp.Compare(a.Path, b.Path),
+		)
 	})
 }
 

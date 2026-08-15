@@ -28,9 +28,10 @@
 package hub
 
 import (
+	"cmp"
 	"context"
 	"net/http"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -131,7 +132,7 @@ func (r *mcpRegistry) Snapshot() []mcpServerRuntime {
 	for _, v := range r.servers {
 		out = append(out, *v)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	slices.SortFunc(out, func(a, b mcpServerRuntime) int { return cmp.Compare(a.Name, b.Name) })
 	return out
 }
 

@@ -5,7 +5,6 @@ package hub
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,7 +30,7 @@ func TestPrompt_AutoCreatesChatAndPersistsUserMessage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	c, ok := cs.Get(context.Background(), "c-test-1")
+	c, ok := cs.Get(t.Context(), "c-test-1")
 	if !ok {
 		t.Fatal("chat not created")
 	}
@@ -89,7 +88,7 @@ func TestCreateChat_Idempotent(t *testing.T) {
 	if code := post("r2"); code != http.StatusOK {
 		t.Errorf("second create code = %d", code)
 	}
-	c, _ := cs.Get(context.Background(), "c-dup")
+	c, _ := cs.Get(t.Context(), "c-dup")
 	if c.Name != "X" {
 		t.Errorf("name = %q", c.Name)
 	}
@@ -97,7 +96,7 @@ func TestCreateChat_Idempotent(t *testing.T) {
 
 func TestDeleteChat_IsUserOnly(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c-del", func(c *api.Chat, _ bool) bool { c.Name = "to-delete"; return true })
+	_ = cs.Mutate(t.Context(), "c-del", func(c *api.Chat, _ bool) bool { c.Name = "to-delete"; return true })
 
 	rec := postCmd(t, h, api.ClientCommand{
 		Type: "delete_chat", RequestID: "r-del", ChatID: "c-del",
@@ -105,7 +104,7 @@ func TestDeleteChat_IsUserOnly(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d", rec.Code)
 	}
-	if _, ok := cs.Get(context.Background(), "c-del"); ok {
+	if _, ok := cs.Get(t.Context(), "c-del"); ok {
 		t.Error("chat still exists after delete")
 	}
 }
@@ -133,8 +132,8 @@ func TestIdempotentReplay(t *testing.T) {
 	if rec1.Body.String() != rec2.Body.String() {
 		t.Errorf("replay body mismatch: %q vs %q", rec1.Body.String(), rec2.Body.String())
 	}
-	if len(cs.List(context.Background())) != 1 {
-		t.Errorf("chats = %d, want 1", len(cs.List(context.Background())))
+	if len(cs.List(t.Context())) != 1 {
+		t.Errorf("chats = %d, want 1", len(cs.List(t.Context())))
 	}
 }
 
@@ -150,9 +149,9 @@ func TestCancel_NoBridgeIsOK(t *testing.T) {
 
 func TestCancel_NotifiesBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,8 +180,8 @@ func TestPermission_RequiresBridge(t *testing.T) {
 
 func TestPermission_InvalidPayloadIs400(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +196,8 @@ func TestPermission_InvalidPayloadIs400(t *testing.T) {
 
 func TestPermission_ForwardsToBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,8 +220,8 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 // is refused instead of being forwarded and silently dropped by kiro-cli.
 func TestPermission_SecondAnswerIs409(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.GetOrCreateBridge(context.Background(), "c1", ""); err != nil {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
 	h.sse.pendingPerms.Add(42, api.NewEvent(api.EventPermissionNeeded, "c1",
@@ -277,7 +276,7 @@ func TestCommand_RejectsInvalidChatID(t *testing.T) {
 
 func TestPrompt_RejectsOversizedText(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// 513 KiB — exceeds maxPromptBytes. Cap is smaller than the 1 MiB
 	// JSON body limit so the check fires cleanly with a 413.
@@ -299,7 +298,7 @@ func TestPrompt_RejectsOversizedText(t *testing.T) {
 
 func TestPrompt_RejectsBadMessageID(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Control characters, newlines, and overlong strings must all
 	// be rejected so the id can't smuggle through SSE framing or
@@ -588,7 +587,7 @@ func TestPrompt_ShellInterception_HappyPath(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	c, ok := cs.Get(context.Background(), "c-sh")
+	c, ok := cs.Get(t.Context(), "c-sh")
 	if !ok {
 		t.Fatal("chat not created by shell interception")
 	}
@@ -637,7 +636,7 @@ func TestPrompt_ShellInterception_ExitCodeAppended(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	c, _ := cs.Get(context.Background(), "c-fail")
+	c, _ := cs.Get(t.Context(), "c-fail")
 	if len(c.Messages) != 2 {
 		t.Fatalf("messages = %d, want 2", len(c.Messages))
 	}
@@ -684,8 +683,8 @@ func TestShellCappedBuffer(t *testing.T) {
 
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -802,7 +801,7 @@ func TestBuildPromptBlocks(t *testing.T) {
 				tc.setupFile(h.lifecycle.workDir)
 			}
 
-			got := command.BuildPromptBlocks(context.Background(), tc.text, tc.attachments, h.ResolveInsideWorkDir)
+			got := command.BuildPromptBlocks(t.Context(), tc.text, tc.attachments, h.ResolveInsideWorkDir)
 			if len(got) != tc.wantLen {
 				t.Fatalf("blocks = %d, want %d", len(got), tc.wantLen)
 			}

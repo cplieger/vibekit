@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -94,7 +93,7 @@ func pickerCapabilities(rules []api.PolicyRule) []string {
 		// Sorted as ONE list, not suggestions-then-extras: the dropdown is
 		// alphabetical, and a reader looking for "hooks" should not have to know
 		// whether vibekit shipped knowing about it.
-		sort.Strings(out)
+		slices.Sort(out)
 	}
 	return out
 }

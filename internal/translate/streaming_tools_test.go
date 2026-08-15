@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"slices"
 	"testing"
 
@@ -72,7 +71,7 @@ func primeToolCall(t *testing.T) (*Translator, *lineRec, *lineDeps, *[]api.Serve
 	deps, rec, events := newLineCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "tc-mid" }))
 	chatID := api.ChatID("c1")
-	tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"title":      "readFile",
 		"kind":       "read",
@@ -141,7 +140,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
 		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		chatID := api.ChatID("c1")
-		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, hookAsk), "")
+		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, hookAsk), "")
 		if hasToolCallEvent(events) {
 			t.Error("hook-ask tool call broadcast a tool_call event; want suppressed (hooks.showStatus off)")
 		}
@@ -154,7 +153,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: true}
 		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, hookAsk), "")
+		tr.HandleToolCall(t.Context(), api.ChatID("c1"), mustJSON(t, hookAsk), "")
 		if !hasToolCallEvent(events) {
 			t.Error("hook-ask tool call suppressed while hooks.showStatus on; want shown")
 		}
@@ -164,7 +163,7 @@ func TestHandleToolCall_HookAskSuppression(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &hookStatusDeps{baseDeps: base, enabled: false}
 		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), api.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"title":      "readFile",
 			"kind":       "read",
@@ -183,7 +182,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 	t.Run("WithDiffRecordsLineChanges", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
 		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), api.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-diff",
 			"title":      "writeFile",
 			"kind":       "edit",
@@ -199,7 +198,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 	t.Run("WithoutDiffSkipsLineTracker", func(t *testing.T) {
 		deps, rec, _ := newLineCaptureDeps()
 		tr := New(deps, withIDGenerator(func() string { return "id" }))
-		tr.HandleToolCall(context.Background(), api.ChatID("c1"), mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), api.ChatID("c1"), mustJSON(t, map[string]any{
 			"toolCallId": "tc-nodiff",
 			"title":      "readFile",
 			"kind":       "read",
@@ -215,7 +214,7 @@ func TestHandleToolCall_DiffGate(t *testing.T) {
 // update overwrites the in-flight tool call's status.
 func TestToolCallUpdate_StatusApplied(t *testing.T) {
 	tr, _, _, events, chatID := primeToolCall(t)
-	tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "completed",
 	}), "")
@@ -242,7 +241,7 @@ func TestToolCallUpdate_TerminalStatusEmitsWorkingLabel(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tr, _, _, events, chatID := primeToolCall(t)
-			tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 				"toolCallId": "tc-1",
 				"status":     tt.status,
 			}), "")
@@ -258,7 +257,7 @@ func TestToolCallUpdate_TerminalStatusEmitsWorkingLabel(t *testing.T) {
 // the tool call's Output.
 func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
 	tr, _, _, events, chatID := primeToolCall(t)
-	tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "in_progress",
 		"content": []map[string]any{
@@ -280,7 +279,7 @@ func TestToolCallUpdate_OutputAppendedWhenContentPresent(t *testing.T) {
 func TestToolCallUpdate_LocationsGate(t *testing.T) {
 	t.Run("LocationsSetWhenPresent", func(t *testing.T) {
 		tr, _, _, events, chatID := primeToolCall(t)
-		tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
 			"locations":  []map[string]any{{"path": "f.go", "line": 5}},
@@ -295,7 +294,7 @@ func TestToolCallUpdate_LocationsGate(t *testing.T) {
 	})
 	t.Run("EmptyLocationsNotAssigned", func(t *testing.T) {
 		tr, _, _, events, chatID := primeToolCall(t)
-		tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
 			"locations":  []map[string]any{}, // decodes to a non-nil empty slice
@@ -314,7 +313,7 @@ func TestToolCallUpdate_LocationsGate(t *testing.T) {
 // no diffs does not invoke the LineTracker.
 func TestToolCallUpdate_NoDiffSkipsLineTracker(t *testing.T) {
 	tr, rec, _, events, chatID := primeToolCall(t)
-	tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "in_progress",
 	}), "")
@@ -334,7 +333,7 @@ func TestToolCallUpdate_IndexBoundaryGuard(t *testing.T) {
 	buf := deps.bufStore.GetOrInit(chatID)
 	buf.ToolCallIndex["tc-1"] = len(buf.ToolCalls)
 	*events = nil
-	tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "completed",
 	}), "")
@@ -350,7 +349,7 @@ func TestToolCallUpdate_IndexBoundaryGuard(t *testing.T) {
 // through the LineTracker.
 func TestToolCallUpdate_DiffPresentRecordsAndAppends(t *testing.T) {
 	tr, rec, deps, _, chatID := primeToolCall(t)
-	tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 		"toolCallId": "tc-1",
 		"status":     "in_progress",
 		"content": []map[string]any{
@@ -381,7 +380,7 @@ func TestToolCallUpdate_SubSessionGate(t *testing.T) {
 		tr, _, deps, _, chatID := primeToolCall(t)
 		buf := deps.bufStore.GetOrInit(chatID)
 		idx := buf.ToolCallIndex["tc-1"]
-		tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
 		}), "sub-9")
@@ -394,7 +393,7 @@ func TestToolCallUpdate_SubSessionGate(t *testing.T) {
 		buf := deps.bufStore.GetOrInit(chatID)
 		idx := buf.ToolCallIndex["tc-1"]
 		buf.ToolCalls[idx].SubSessionID = "existing"
-		tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"status":     "in_progress",
 		}), "sub-9")
@@ -446,7 +445,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
 		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		chatID := api.ChatID("c1")
-		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-new",
 			"title":      "writeFile",
 			"kind":       "edit",
@@ -468,7 +467,7 @@ func TestHandleToolCall_IsNewFileFlag(t *testing.T) {
 		deps, _, _ := newLineCaptureDeps()
 		tr := New(deps, withIDGenerator(func() string { return "id" }))
 		chatID := api.ChatID("c2")
-		tr.HandleToolCall(context.Background(), chatID, mustJSON(t, map[string]any{
+		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-existing",
 			"title":      "writeFile",
 			"kind":       "edit",
@@ -525,7 +524,7 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tr, _, _, events, chatID := primeToolCall(t)
-			tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 				"toolCallId": "tc-1",
 				"status":     "completed",
 				"_meta":      map[string]any{"kiro": map[string]any{"checkpoint": tt.checkpoint}},
@@ -553,7 +552,7 @@ func TestToolCallUpdate_CheckpointFromWire(t *testing.T) {
 func TestToolCallUpdate_CheckpointMergeIsPerField(t *testing.T) {
 	tr, _, _, events, chatID := primeToolCall(t)
 	send := func(cp map[string]any) {
-		tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, map[string]any{
+		tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
 			"toolCallId": "tc-1",
 			"_meta":      map[string]any{"kiro": map[string]any{"checkpoint": cp}},
 		}), "")
@@ -591,7 +590,7 @@ func TestToolCallUpdate_CheckpointAbsentStaysNil(t *testing.T) {
 			if tt.meta != nil {
 				frame["_meta"] = tt.meta
 			}
-			tr.HandleToolCallUpdate(context.Background(), chatID, mustJSON(t, frame), "")
+			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, frame), "")
 			tc, ok := lastToolCallUpdate(t, events)
 			if !ok {
 				t.Fatal("no tool_call_update event emitted")

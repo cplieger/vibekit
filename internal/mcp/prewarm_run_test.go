@@ -8,7 +8,6 @@ package mcp
 // internal/mcp/prewarm/run_test.go.
 
 import (
-	"context"
 	"slices"
 	"testing"
 
@@ -22,7 +21,7 @@ import (
 // pre-warming).
 func TestEnabledServers_FeedsPrewarmLister(t *testing.T) {
 	store := newTestStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	if _, err := store.Create(ctx, &Server{
 		Transport: TransportStdio, Name: "on", Command: "npx",

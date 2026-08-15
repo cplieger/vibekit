@@ -2,13 +2,14 @@ package hub
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -240,7 +241,7 @@ func captureTerminalEvents(t *testing.T, h *Hub) []ringEvent {
 			})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].eventID < out[j].eventID })
+	slices.SortFunc(out, func(a, b ringEvent) int { return cmp.Compare(a.eventID, b.eventID) })
 	return out
 }
 

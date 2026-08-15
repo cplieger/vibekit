@@ -61,8 +61,8 @@ func hubForFSTest(t *testing.T, workDir string) (*Hub, *respondingBridge) {
 	factory := func() api.ACPBridge { return br }
 	h := New(workDir, factory, cs)
 	cs.Bus = h
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.GetOrCreateBridge(context.Background(), "c1", "")
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestRespondFSRead_Success(t *testing.T) {
 		Method: api.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "hello.txt"}),
 	}
-	h.respondFSRead(context.Background(), "c1", msg)
+	h.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
 	res, ok := br.response.result.(map[string]any)
@@ -212,7 +212,7 @@ func TestRespondFSRead_MissingPath(t *testing.T) {
 		Method: api.MethodFSRead,
 		Params: mustJSON(t, map[string]any{}),
 	}
-	h.respondFSRead(context.Background(), "c1", msg)
+	h.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err == nil {
@@ -232,7 +232,7 @@ func TestRespondFSRead_LineLimitWindow(t *testing.T) {
 		Method: api.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "file.txt", "line": 2, "limit": 2}),
 	}
-	h.respondFSRead(context.Background(), "c1", msg)
+	h.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
 	res, ok := br.response.result.(map[string]any)
@@ -254,7 +254,7 @@ func TestRespondFSRead_SizeCapRejects(t *testing.T) {
 		Method: api.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "big.txt"}),
 	}
-	h.respondFSRead(context.Background(), "c1", msg)
+	h.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err == nil || !strings.Contains(br.response.err.Error(), "cap") {
@@ -273,7 +273,7 @@ func TestRespondFSWrite_Success(t *testing.T) {
 		Method: api.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": "written"}),
 	}
-	h.respondFSWrite(context.Background(), "c1", msg)
+	h.respondFSWrite(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err != nil {
@@ -297,7 +297,7 @@ func TestRespondFSWrite_CreatesParentDirs(t *testing.T) {
 		Method: api.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "nested/deeply/out.txt", "content": "ok"}),
 	}
-	h.respondFSWrite(context.Background(), "c1", msg)
+	h.respondFSWrite(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err != nil {
@@ -329,7 +329,7 @@ func TestRespondFSWrite_RejectsSymlinkEscape(t *testing.T) {
 		Method: api.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "escape.txt", "content": "HIJACKED"}),
 	}
-	h.respondFSWrite(context.Background(), "c1", msg)
+	h.respondFSWrite(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err == nil {
@@ -355,7 +355,7 @@ func TestRespondFSWrite_CapRejects(t *testing.T) {
 		Method: api.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": huge}),
 	}
-	h.respondFSWrite(context.Background(), "c1", msg)
+	h.respondFSWrite(t.Context(), "c1", msg)
 	<-br.done
 
 	if br.response.err == nil || !strings.Contains(br.response.err.Error(), "cap") {
@@ -369,7 +369,7 @@ func TestHandleFSRequest_ReturnsFalseForNonFSMethod(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	id := int64(9)
 	msg := &api.RPCResponse{ID: &id, Method: "session/update", Params: json.RawMessage(`{}`)}
-	if h.handleFSRequest(context.Background(), "c1", msg) {
+	if h.handleFSRequest(t.Context(), "c1", msg) {
 		t.Error("handleFSRequest claimed non-fs method")
 	}
 }
@@ -386,7 +386,7 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 		Method: api.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "hi.txt"}),
 	}
-	if !h.handleFSRequest(context.Background(), "c1", msg) {
+	if !h.handleFSRequest(t.Context(), "c1", msg) {
 		t.Fatal("handleFSRequest returned false for fs/read_text_file")
 	}
 	<-br.done
@@ -407,7 +407,7 @@ func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
 		Method: api.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "ghost.txt"}),
 	}
-	h.respondFSRead(context.Background(), "c1", msg)
+	h.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 	if br.response.err == nil {
 		t.Errorf("respondFSRead(missing file) err = nil, want a not-found error")
@@ -429,7 +429,7 @@ func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
 		Method: api.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "exact.txt"}),
 	}
-	h.respondFSRead(context.Background(), "c1", msg)
+	h.respondFSRead(t.Context(), "c1", msg)
 	<-br.done
 	if br.response.err != nil {
 		t.Fatalf("respondFSRead(exact cap) err = %v, want nil (boundary is strict >)", br.response.err)
@@ -460,7 +460,7 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 			Method: api.MethodFSWrite,
 			Params: mustJSON(t, map[string]any{"path": "dir-target", "content": "x"}),
 		}
-		h.respondFSWrite(context.Background(), "c1", msg)
+		h.respondFSWrite(t.Context(), "c1", msg)
 		select {
 		case <-br.done:
 		case <-time.After(3 * time.Second):
@@ -483,7 +483,7 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 			Method: api.MethodFSWrite,
 			Params: mustJSON(t, map[string]any{"path": "ok.txt", "content": "hello"}),
 		}
-		h.respondFSWrite(context.Background(), "c1", msg)
+		h.respondFSWrite(t.Context(), "c1", msg)
 		select {
 		case <-br.done:
 		case <-time.After(3 * time.Second):
@@ -513,7 +513,7 @@ func TestRespondBridge_NoErrorLogOnSuccess(t *testing.T) {
 	msg := &api.RPCResponse{ID: &id, Method: api.MethodFSRead, Params: mustJSON(t, map[string]any{})}
 
 	logs := captureLogs(t)
-	h.respondBridge(context.Background(), "c1", msg, map[string]any{"ok": true}, nil)
+	h.respondBridge(t.Context(), "c1", msg, map[string]any{"ok": true}, nil)
 	if got := logs.String(); strings.Contains(got, "fs response write failed") {
 		t.Errorf("unexpected respond-failure error log on success: %s", got)
 	}

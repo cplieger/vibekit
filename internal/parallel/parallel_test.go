@@ -8,7 +8,7 @@ import (
 )
 
 func TestBoundedParallel_EmptyItems(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	var called atomic.Int32
 	Bounded(ctx, []int{}, 4, func(_, _ int) {
 		called.Add(1)
@@ -19,7 +19,7 @@ func TestBoundedParallel_EmptyItems(t *testing.T) {
 }
 
 func TestBoundedParallel_ConcurrencyBound(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	const maxWorkers = 3
 	items := make([]int, 20)
 
@@ -44,7 +44,7 @@ func TestBoundedParallel_ConcurrencyBound(t *testing.T) {
 }
 
 func TestBoundedParallel_ContextCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	items := make([]int, 100)
 	var processed atomic.Int32
 
@@ -102,7 +102,7 @@ func TestBounded_SlowItemDoesNotStallTheRest(t *testing.T) {
 		close(slowReleased)
 	}()
 
-	Bounded(context.Background(), items, maxWorkers, func(i, _ int) {
+	Bounded(t.Context(), items, maxWorkers, func(i, _ int) {
 		if i == slowIdx {
 			<-slowReleased
 			return

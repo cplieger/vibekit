@@ -11,7 +11,6 @@ package hub
 // Shared fixtures live in shared_test.go.
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -99,7 +98,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 // discoverable on the /docs Skills tab instead.
 func TestTranslateV3_AvailableCommandsUpdateIsIgnored(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
 
 	msg := &api.RPCResponse{
@@ -124,7 +123,7 @@ func TestTranslateV3_AvailableCommandsUpdateIsIgnored(t *testing.T) {
 
 func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
 
 	msg := &api.RPCResponse{
@@ -144,7 +143,7 @@ func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 
 func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	summary := "summary text"
 
 	msg := &api.RPCResponse{
@@ -161,7 +160,7 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	chat, _ := cs.Get(context.Background(), "c1")
+	chat, _ := cs.Get(t.Context(), "c1")
 	if len(chat.Messages) != 1 {
 		t.Fatalf("messages = %d, want 1", len(chat.Messages))
 	}
@@ -177,7 +176,7 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 
 func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	msg := &api.RPCResponse{
 		Method: api.MethodSessionUpdate,
@@ -191,7 +190,7 @@ func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	chat, _ := cs.Get(context.Background(), "c1")
+	chat, _ := cs.Get(t.Context(), "c1")
 	if chat.Usage.ContextPct != 25 {
 		t.Errorf("context_pct = %v, want 25", chat.Usage.ContextPct)
 	}
@@ -201,7 +200,7 @@ func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 
 func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.CurrentModeID = "nonexistent"
 		return true
@@ -216,7 +215,7 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 
-	c, _ := cs.Get(context.Background(), "c1")
+	c, _ := cs.Get(t.Context(), "c1")
 	if c.CurrentModeID != "vibe" {
 		t.Errorf("current_mode_id = %q, want vibe", c.CurrentModeID)
 	}
@@ -226,7 +225,7 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 
 func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
 	msg := &api.RPCResponse{
 		Method: "_kiro/customAgent/config_error",
@@ -242,7 +241,7 @@ func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 
 func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
 	msg := &api.RPCResponse{
 		Method: "_kiro/error/rate_limit",

@@ -3,11 +3,12 @@
 package git
 
 import (
+	"cmp"
 	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/fileutil"
@@ -71,7 +72,7 @@ func discoverRepos(ctx context.Context, workDir string) []repoEntry {
 		})
 	}
 	_ = g.Wait()
-	sort.Slice(found, func(i, j int) bool { return found[i].Name < found[j].Name })
+	slices.SortFunc(found, func(a, b repoEntry) int { return cmp.Compare(a.Name, b.Name) })
 	repos = append(repos, found...)
 	return repos
 }

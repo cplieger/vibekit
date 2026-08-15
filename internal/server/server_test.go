@@ -440,7 +440,7 @@ func BenchmarkScanKiroDirFS(b *testing.B) {
 		name := string(rune('0'+count/10)) + string(rune('0'+count%10)) + "_docs"
 		b.Run(name, func(b *testing.B) {
 			m := makeDocs(count)
-			ctx := context.Background()
+			ctx := b.Context()
 			b.ResetTimer()
 			for range b.N {
 				_ = scanKiroDirFS(ctx, m, "test/.kiro")
@@ -475,7 +475,7 @@ func FuzzScanKiroDirFS(f *testing.F) {
 			m["skills/"+skillName] = &fstest.MapFile{Mode: fs.ModeDir}
 		}
 
-		items := scanKiroDirFS(context.Background(), m, "prefix/.kiro")
+		items := scanKiroDirFS(t.Context(), m, "prefix/.kiro")
 
 		for _, item := range items {
 			if strings.Contains(item.Path, "\x00") {
@@ -719,7 +719,7 @@ func TestScanKiroDirFS_returnsAllSections(t *testing.T) {
 		"agents/baz.md":       &fstest.MapFile{Data: []byte("# Baz")},
 	}
 
-	items := scanKiroDirFS(context.Background(), mfs, "P/.kiro")
+	items := scanKiroDirFS(t.Context(), mfs, "P/.kiro")
 
 	if !hasKiroConfigItem(items, "steering", "foo") {
 		t.Errorf("scanKiroDirFS missing steering item 'foo'; got %+v", items)

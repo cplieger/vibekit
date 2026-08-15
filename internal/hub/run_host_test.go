@@ -6,7 +6,6 @@ package hub
 // bookkeeping, not KAS's behaviour.
 
 import (
-	"context"
 	"encoding/json"
 	"os/exec"
 	"strings"
@@ -68,7 +67,7 @@ func TestRunChatID_Namespace(t *testing.T) {
 func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	h.runDispatch(context.Background(), "run:wf_1",
+	h.runDispatch(t.Context(), "run:wf_1",
 		runNotif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "publish"}))
 
 	events := bufferedEvents(h)
@@ -90,7 +89,7 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 func TestRunDispatch_StepContentIsDropped(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	h.runDispatch(context.Background(), "run:wf_1", runNotif(api.MethodSessionUpdate, map[string]any{
+	h.runDispatch(t.Context(), "run:wf_1", runNotif(api.MethodSessionUpdate, map[string]any{
 		"sessionId": "sess_step",
 		"update": map[string]any{
 			"sessionUpdate": "agent_message_chunk",
@@ -121,7 +120,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 		"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
 	})
 	msg.ID = &id
-	h.runDispatch(context.Background(), "run:wf_1", msg)
+	h.runDispatch(t.Context(), "run:wf_1", msg)
 
 	found := false
 	for _, e := range bufferedEvents(h) {
@@ -147,7 +146,7 @@ func TestRunDispatch_UnknownRequestIsRefused(t *testing.T) {
 	id := int64(3)
 	msg := runNotif("_kiro/spec/getTaskStatuses", map[string]any{})
 	msg.ID = &id
-	h.runDispatch(context.Background(), "run:wf_1", msg)
+	h.runDispatch(t.Context(), "run:wf_1", msg)
 
 	if got := br.respondCount(); got != 1 {
 		t.Fatalf("unknown request got %d responses, want 1 refusal", got)
@@ -166,7 +165,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
 	}
 
-	id, name, err := h.LaunchRun(context.Background(), "bundled://publish", nil)
+	id, name, err := h.LaunchRun(t.Context(), "bundled://publish", nil)
 	if err != nil {
 		t.Fatalf("LaunchRun: %v", err)
 	}
@@ -200,7 +199,7 @@ func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
 	}
-	if _, _, err := h.LaunchRun(context.Background(), "/etc/passwd", nil); err == nil {
+	if _, _, err := h.LaunchRun(t.Context(), "/etc/passwd", nil); err == nil {
 		t.Fatal("an unlisted source launched")
 	}
 	if !strings.Contains(br.lastCall(), "listRecipes") {
@@ -216,7 +215,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
 		methodKiroWorkflowList:        json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","status":"running"}]}`),
 	}
-	_, _, err := h.LaunchRun(context.Background(), "bundled://publish", nil)
+	_, _, err := h.LaunchRun(t.Context(), "bundled://publish", nil)
 	if err == nil || !strings.Contains(err.Error(), "live run") {
 		t.Fatalf("err = %v, want the single-run refusal", err)
 	}
@@ -224,7 +223,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 	br.callResults[methodKiroWorkflowList] = json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","status":"completed"}]}`)
 	br.callResults[methodKiroWorkflowNew] = json.RawMessage(`{"workflowId":"wf_2"}`)
 	br.callResults[methodKiroWorkflowInvoke] = json.RawMessage(`{}`)
-	if _, _, err := h.LaunchRun(context.Background(), "bundled://publish", nil); err != nil {
+	if _, _, err := h.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
 		t.Fatalf("a terminal run blocked a relaunch: %v", err)
 	}
 }

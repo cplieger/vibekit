@@ -192,7 +192,7 @@ func TestToHookInfo(t *testing.T) {
 
 func TestRunHookCommand(t *testing.T) {
 	h := &Hub{lifecycle: &lifecyclePlane{workDir: t.TempDir()}}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	t.Run("captures output, exit 0", func(t *testing.T) {
 		res := h.runHookCommand(ctx, "printf 'hello world'", 0)

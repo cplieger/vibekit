@@ -115,7 +115,7 @@ func TestToken_NoResolver(t *testing.T) {
 		"nil resolver":   NewCLISource(nil, nil),
 		"empty resolver": NewCLISource(func() string { return "" }, nil),
 	} {
-		if _, err := src.Token(context.Background()); !errors.Is(err, errCLIUnavailable) {
+		if _, err := src.Token(t.Context()); !errors.Is(err, errCLIUnavailable) {
 			t.Errorf("%s: err = %v, want errCLIUnavailable", name, err)
 		}
 	}
@@ -126,7 +126,7 @@ func TestToken_SuccessAndCache(t *testing.T) {
 	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
 	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(time.Hour).Format(time.RFC3339Nano)), nil)
 
-	res, err := src.Token(context.Background())
+	res, err := src.Token(t.Context())
 	if err != nil {
 		t.Fatalf("Token: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestToken_SuccessAndCache(t *testing.T) {
 	}
 
 	// Second call within the leeway window: served from cache.
-	if _, err := src.Token(context.Background()); err != nil {
+	if _, err := src.Token(t.Context()); err != nil {
 		t.Fatalf("cached Token: %v", err)
 	}
 	if calls != 1 {
@@ -154,7 +154,7 @@ func TestToken_NearExpiryReinvokes(t *testing.T) {
 	src.runCommand = fakeRun(&calls, envelope(time.Now().Add(time.Minute).Format(time.RFC3339Nano)), nil)
 
 	for range 2 {
-		if _, err := src.Token(context.Background()); err != nil {
+		if _, err := src.Token(t.Context()); err != nil {
 			t.Fatalf("Token: %v", err)
 		}
 	}
@@ -168,14 +168,14 @@ func TestToken_UnparseableExpiryVendsButNeverCaches(t *testing.T) {
 	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
 	src.runCommand = fakeRun(&calls, envelope("not-a-timestamp"), nil)
 
-	res, err := src.Token(context.Background())
+	res, err := src.Token(t.Context())
 	if err != nil {
 		t.Fatalf("Token: %v", err)
 	}
 	if res["expiresAt"] != "not-a-timestamp" {
 		t.Errorf("expiresAt = %v, want verbatim pass-through", res["expiresAt"])
 	}
-	if _, err := src.Token(context.Background()); err != nil {
+	if _, err := src.Token(t.Context()); err != nil {
 		t.Fatalf("second Token: %v", err)
 	}
 	if calls != 2 {
@@ -188,7 +188,7 @@ func TestToken_CLIFailureWrapped(t *testing.T) {
 	src := NewCLISource(func() string { return "/fake/kiro-cli" }, nil)
 	src.runCommand = fakeRun(&calls, "", errors.New("exit status 1"))
 
-	_, err := src.Token(context.Background())
+	_, err := src.Token(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "get-kas-token") {
 		t.Fatalf("err = %v, want wrapped get-kas-token failure", err)
 	}

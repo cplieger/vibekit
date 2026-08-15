@@ -294,12 +294,22 @@ func (s *Store) load() error {
 	return nil
 }
 
-func (s *Store) notifyChange(ctx context.Context) {
+// notifyChange fires the change callback on a fresh goroutine, parented on the
+// STORE's lifetime rather than the caller's request context. Every caller is an
+// HTTP mutation handler, so a request-scoped parent cancelled the callback the
+// moment the handler returned — and the production callback runs MCP prewarm,
+// which is exactly the fire-and-forget work that must survive the response.
+// This is the use the ctx field was stored for.
+func (s *Store) notifyChange(context.Context) {
 	s.mu.RLock()
 	cb := s.onChange
 	s.mu.RUnlock()
 	if cb == nil {
 		return
+	}
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	go cb(ctx)
 }

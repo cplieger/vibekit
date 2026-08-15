@@ -35,6 +35,7 @@ func writeSettings(t *testing.T, dir, content string) {
 // readDebugFlag is a test helper that exercises the same code path as
 // Install: settings.Field[bool] for the "debug_logs" key. Returns
 // (value, ok) matching the settings.Field contract.
+// context.Background() rather than t.Context(): no *testing.T is in scope here.
 func readDebugFlag(dir string) (bool, bool) {
 	return settings.Field[bool](context.Background(), dir, "debug_logs", "debug_logs")
 }
@@ -158,7 +159,7 @@ func TestInstall_WithDebugTrue_SetsDebugLevel(t *testing.T) {
 	dir := t.TempDir()
 	writeSettings(t, dir, `{"debug_logs":true}`)
 
-	Install(context.Background(), dir)
+	Install(t.Context(), dir)
 
 	if got := snapshotLevel(); got != slog.LevelDebug {
 		t.Errorf("after Install(context.Background(), debug=true) level = %v, want %v", got, slog.LevelDebug)
@@ -170,7 +171,7 @@ func TestInstall_WithDebugFalse_SetsInfoLevel(t *testing.T) {
 	dir := t.TempDir()
 	writeSettings(t, dir, `{"debug_logs":false}`)
 
-	Install(context.Background(), dir)
+	Install(t.Context(), dir)
 
 	if got := snapshotLevel(); got != slog.LevelInfo {
 		t.Errorf("after Install(context.Background(), debug=false) level = %v, want %v", got, slog.LevelInfo)
@@ -181,7 +182,7 @@ func TestInstall_WithMissingSettings_DefaultsToInfo(t *testing.T) {
 	restoreDefaultLogger(t)
 	dir := t.TempDir() // no config.json written
 
-	Install(context.Background(), dir)
+	Install(t.Context(), dir)
 
 	if got := snapshotLevel(); got != slog.LevelInfo {
 		t.Errorf("after Install(context.Background(), no config.json) level = %v, want %v (must not silently enable debug)", got, slog.LevelInfo)
@@ -193,7 +194,7 @@ func TestInstall_WithCorruptSettings_DefaultsToInfo(t *testing.T) {
 	dir := t.TempDir()
 	writeSettings(t, dir, "{not json")
 
-	Install(context.Background(), dir)
+	Install(t.Context(), dir)
 
 	if got := snapshotLevel(); got != slog.LevelInfo {
 		t.Errorf("after Install(context.Background(), corrupt config.json) level = %v, want %v (must fail safe)", got, slog.LevelInfo)
@@ -205,7 +206,7 @@ func TestInstall_ReplacesSlogDefault(t *testing.T) {
 	prev := slog.Default()
 	dir := t.TempDir()
 
-	Install(context.Background(), dir)
+	Install(t.Context(), dir)
 
 	if slog.Default() == prev {
 		t.Error("Install did not replace slog.Default; runtime level toggling will not work")
@@ -216,7 +217,7 @@ func TestSetDebug_On_SwitchesToDebug(t *testing.T) {
 	restoreDefaultLogger(t)
 	dir := t.TempDir()
 	writeSettings(t, dir, `{"debug_logs":false}`)
-	Install(context.Background(), dir)
+	Install(t.Context(), dir)
 	if snapshotLevel() != slog.LevelInfo {
 		t.Fatalf("precondition: expected Info before SetDebug(true)")
 	}
@@ -232,7 +233,7 @@ func TestSetDebug_Off_SwitchesToInfo(t *testing.T) {
 	restoreDefaultLogger(t)
 	dir := t.TempDir()
 	writeSettings(t, dir, `{"debug_logs":true}`)
-	Install(context.Background(), dir)
+	Install(t.Context(), dir)
 	if snapshotLevel() != slog.LevelDebug {
 		t.Fatalf("precondition: expected Debug before SetDebug(false)")
 	}
@@ -248,7 +249,7 @@ func TestSetDebug_TogglesIdempotent(t *testing.T) {
 	// Invariant: calling SetDebug with the same value twice leaves the
 	// level in the same state (no drift from repeated calls).
 	restoreDefaultLogger(t)
-	Install(context.Background(), t.TempDir())
+	Install(t.Context(), t.TempDir())
 
 	SetDebug(true)
 	SetDebug(true)

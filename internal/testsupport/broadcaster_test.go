@@ -1,7 +1,6 @@
 package testsupport
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -10,12 +9,12 @@ import (
 
 func TestNopBroadcaster_NoPanic(t *testing.T) {
 	var b NopBroadcaster
-	b.Broadcast(context.Background(), api.ServerEvent{})
+	b.Broadcast(t.Context(), api.ServerEvent{})
 }
 
 func TestCaptureBroadcaster_SnapshotAndReset(t *testing.T) {
 	var c CaptureBroadcaster
-	ctx := context.Background()
+	ctx := t.Context()
 
 	c.Broadcast(ctx, api.ServerEvent{Type: "test1"})
 	c.Broadcast(ctx, api.ServerEvent{Type: "test2"})
@@ -36,7 +35,7 @@ func TestCaptureBroadcaster_SnapshotAndReset(t *testing.T) {
 
 func TestCaptureBroadcaster_ConcurrentSafety(t *testing.T) {
 	var c CaptureBroadcaster
-	ctx := context.Background()
+	ctx := t.Context()
 	var wg sync.WaitGroup
 	for range 10 {
 		wg.Go(func() {

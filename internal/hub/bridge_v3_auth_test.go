@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -66,7 +65,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 		// handleKiroClientRequest must claim the method (return true) so it
 		// never falls through to the unhandled-extension debug log.
 		h, _, _ := newTestHub()
-		if !h.handleKiroClientRequest(context.Background(), "c1", openExternalURLMsg(t, 3, "https://x.example")) {
+		if !h.handleKiroClientRequest(t.Context(), "c1", openExternalURLMsg(t, 3, "https://x.example")) {
 			t.Fatal("handleKiroClientRequest should handle _kiro/openExternalUrl")
 		}
 	})

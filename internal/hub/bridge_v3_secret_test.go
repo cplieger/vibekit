@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -56,7 +55,7 @@ func TestSecretGetMissIsExplicitNull(t *testing.T) {
 // spawn: the get that follows a store must return the same blob.
 func TestSecretStoreThenGet(t *testing.T) {
 	store := newSecretStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	blob := `{"client_id":"probe-client-1","client_secret":"s3cret"}`
 
 	result, err := secretStoreResult(ctx, store, rawParams(t, map[string]string{"key": probeKey, "value": blob}))
@@ -77,7 +76,7 @@ func TestSecretStoreThenGet(t *testing.T) {
 // issues speculatively.
 func TestSecretDelete(t *testing.T) {
 	store := newSecretStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := store.Set(ctx, probeKey, "v"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -98,7 +97,7 @@ func TestSecretDelete(t *testing.T) {
 // alternative is a credential filed where nothing will look for it.
 func TestSecretStoreRejectsBadParams(t *testing.T) {
 	store := newSecretStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	cases := []struct {
 		name   string
@@ -132,12 +131,12 @@ func TestSecretNilStoreDegradesRatherThanFails(t *testing.T) {
 		t.Errorf("Value = %q, want nil", *got.Value)
 	}
 	// A delete against no store succeeds: the key is already absent.
-	if _, err := secretDeleteResult(context.Background(), nil, rawParams(t, map[string]string{"key": probeKey})); err != nil {
+	if _, err := secretDeleteResult(t.Context(), nil, rawParams(t, map[string]string{"key": probeKey})); err != nil {
 		t.Errorf("secretDeleteResult(nil store) error = %v, want nil", err)
 	}
 	// A store, though, must NOT claim success it cannot deliver — KAS would
 	// then believe the credential is durable.
-	if _, err := secretStoreResult(context.Background(), nil, rawParams(t, map[string]string{"key": probeKey, "value": "v"})); err == nil {
+	if _, err := secretStoreResult(t.Context(), nil, rawParams(t, map[string]string{"key": probeKey, "value": "v"})); err == nil {
 		t.Error("secretStoreResult(nil store) error = nil, want an error")
 	}
 }
@@ -166,7 +165,7 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 			msg := &api.RPCResponse{Method: tc.method, ID: &id}
 			// No bridge is registered, so respondBridge logs and drops the
 			// write; the return value is the whole contract under test.
-			if got := h.handleKiroSecretRequest(context.Background(), "c1", msg); got != tc.want {
+			if got := h.handleKiroSecretRequest(t.Context(), "c1", msg); got != tc.want {
 				t.Errorf("handleKiroSecretRequest(%q) = %v, want %v", tc.method, got, tc.want)
 			}
 		})
@@ -179,7 +178,7 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 // was declared.
 func TestSecretStoreIsSharedAcrossBridges(t *testing.T) {
 	store := newSecretStore(t)
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Bridge A stores a registration.
 	if _, err := secretStoreResult(ctx, store, rawParams(t, map[string]string{"key": probeKey, "value": "reg"})); err != nil {

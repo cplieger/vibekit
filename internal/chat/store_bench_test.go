@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -17,7 +16,7 @@ func BenchmarkStore_AppendMessage(b *testing.B) {
 	}
 
 	chatID := api.ChatID("bench-chat")
-	ctx := context.Background()
+	ctx := b.Context()
 
 	// Create chat with 10 pre-existing messages.
 	err = s.Mutate(ctx, chatID, func(c *api.Chat, _ bool) bool {

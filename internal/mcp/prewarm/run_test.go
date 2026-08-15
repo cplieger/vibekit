@@ -35,7 +35,7 @@ func npxServer() ServerInfo {
 // If dedup ever broke, this test would flake by occasionally seeing
 // running[pkg] disappear (installOne's defer would fire).
 func TestRun_DedupsAgainstInFlight(t *testing.T) {
-	p := NewRunner(context.Background(), fakeLister{servers: []ServerInfo{npxServer()}})
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxServer()}})
 
 	// Pre-seed the in-flight set so Run's dedup branch returns without
 	// ever spawning a goroutine.
@@ -43,7 +43,7 @@ func TestRun_DedupsAgainstInFlight(t *testing.T) {
 	p.running["@scope/pkg"] = struct{}{}
 	p.mu.Unlock()
 
-	p.Run(context.Background())
+	p.Run(t.Context())
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -58,7 +58,7 @@ func TestRun_DedupsAgainstInFlight(t *testing.T) {
 // TestRun_IgnoresServersWithoutNpxPackage: disabled servers, non-npx
 // commands, and HTTP-transport servers never schedule installs.
 func TestRun_IgnoresServersWithoutNpxPackage(t *testing.T) {
-	p := NewRunner(context.Background(), fakeLister{servers: []ServerInfo{
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{
 		// Disabled — ExtractNpxPackage returns "" (the store also filters
 		// these out upstream; both gates are load-bearing).
 		{
@@ -80,7 +80,7 @@ func TestRun_IgnoresServersWithoutNpxPackage(t *testing.T) {
 	// exercise the enumeration + ExtractNpxPackage gating path.
 	p.Disabled.Store(true)
 
-	p.Run(context.Background())
+	p.Run(t.Context())
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -94,7 +94,7 @@ func TestRun_IgnoresServersWithoutNpxPackage(t *testing.T) {
 func TestNewRunner_initialisesEmpty(t *testing.T) {
 	lister := fakeLister{}
 
-	p := NewRunner(context.Background(), lister)
+	p := NewRunner(t.Context(), lister)
 
 	if p.Lister == nil {
 		t.Error("lister not wired through")
@@ -113,10 +113,10 @@ func TestNewRunner_initialisesEmpty(t *testing.T) {
 // TestRun_DisabledShortCircuits: once npm is missing, subsequent Runs
 // return immediately without log spam or enumeration.
 func TestRun_DisabledShortCircuits(t *testing.T) {
-	p := NewRunner(context.Background(), fakeLister{servers: []ServerInfo{npxServer()}})
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxServer()}})
 	p.Disabled.Store(true)
 
-	p.Run(context.Background())
+	p.Run(t.Context())
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -135,12 +135,12 @@ func TestRun_SkipsWhenNpmMissingButDoesNotLatch(t *testing.T) {
 	// t.Setenv restores the prior value at test end.
 	t.Setenv("PATH", "")
 
-	p := NewRunner(context.Background(), fakeLister{servers: []ServerInfo{npxServer()}})
+	p := NewRunner(t.Context(), fakeLister{servers: []ServerInfo{npxServer()}})
 	if p.Disabled.Load() {
 		t.Fatal("new runner starts disabled; expected enabled")
 	}
 
-	p.Run(context.Background())
+	p.Run(t.Context())
 
 	p.mu.Lock()
 	gotDisabled := p.Disabled.Load()
@@ -156,7 +156,7 @@ func TestRun_SkipsWhenNpmMissingButDoesNotLatch(t *testing.T) {
 
 	// A second Run (still no npm) must again skip cleanly and STILL not
 	// latch — proving re-probe semantics rather than one-shot disable.
-	p.Run(context.Background())
+	p.Run(t.Context())
 	p.mu.Lock()
 	stillNotLatched := !p.Disabled.Load()
 	running2 := len(p.running)

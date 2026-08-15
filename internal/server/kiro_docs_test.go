@@ -51,7 +51,7 @@ func TestScanKiroDocs_FoldedDescriptionSurvives(t *testing.T) {
 	fsys := fstest.MapFS{
 		"agents/twin.md": {Data: []byte("---\nname: twin\ndescription: >\n  Even-cycle twin of the\n  other reviewer.\nmodel: claude-opus-5\ntools: [read, write]\n---\n")},
 	}
-	docs := scanKiroDocsFS(context.Background(), fsys, "ws/.kiro")
+	docs := scanKiroDocsFS(t.Context(), fsys, "ws/.kiro")
 	d, ok := findDoc(docs, "twin")
 	if !ok {
 		t.Fatalf("agent row missing: %+v", docs)
@@ -79,7 +79,7 @@ func TestScanKiroDocs_Steering(t *testing.T) {
 		// Recursive: a nested steering doc must still be found.
 		"steering/nested/deep.md": {Data: []byte("---\ndescription: Nested\n---\n")},
 	}
-	steer := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catSteering)
+	steer := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catSteering)
 	if len(steer) != 4 {
 		t.Fatalf("got %d steering rows, want 4: %+v", len(steer), steer)
 	}
@@ -109,7 +109,7 @@ func TestScanKiroDocs_SkillWithoutInclusionReportsNone(t *testing.T) {
 	fsys := fstest.MapFS{
 		"skills/plain/SKILL.md": {Data: []byte("---\nname: plain\ndescription: No mode declared\n---\n")},
 	}
-	skills := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catSkill)
+	skills := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catSkill)
 	p, ok := findDoc(skills, "plain")
 	if !ok {
 		t.Fatal("plain row missing")
@@ -135,7 +135,7 @@ func TestScanKiroDocs_SkillsAreManifestsOnly(t *testing.T) {
 		"skills/judgement/judgement-agent-guide.md": {Data: []byte("# Guide\n")},
 		"skills/nomanifest/notes.md":                {Data: []byte("# Notes\n")},
 	}
-	skills := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catSkill)
+	skills := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catSkill)
 	if len(skills) != 2 {
 		t.Fatalf("got %d skill rows, want 2 (one per directory, manifests only): %+v", len(skills), skills)
 	}
@@ -169,7 +169,7 @@ func TestScanKiroDocs_AgentsDedupePreferMd(t *testing.T) {
 		"agents/pair.json": {Data: []byte(`{"name":"pair"}`)},
 		"agents/only.json": {Data: []byte(`{"name":"only"}`)},
 	}
-	agents := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catAgent)
+	agents := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catAgent)
 	if len(agents) != 2 {
 		t.Fatalf("got %d agent rows, want 2 (the pair collapses): %+v", len(agents), agents)
 	}
@@ -197,7 +197,7 @@ func TestScanKiroDocs_SpecsGroupAndOrder(t *testing.T) {
 		"specs/beta/requirements.md":  {Data: []byte("# Requirements — Beta\n")},
 		"specs/beta/tasks.md":         {Data: []byte("# Tasks — Beta\n")},
 	}
-	specs := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catSpec)
+	specs := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catSpec)
 	if len(specs) != 5 {
 		t.Fatalf("got %d spec rows, want 5: %+v", len(specs), specs)
 	}
@@ -232,7 +232,7 @@ func TestScanKiroDocs_HooksExpandEnvelope(t *testing.T) {
 			{"name":"Second","trigger":"SessionStart","action":{"type":"agent","prompt":"do a thing"}}
 		]}`)},
 	}
-	hooks := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catHook)
+	hooks := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catHook)
 	if len(hooks) != 2 {
 		t.Fatalf("got %d hook rows, want 2 (one envelope, two hooks): %+v", len(hooks), hooks)
 	}
@@ -258,7 +258,7 @@ func TestScanKiroDocs_HookFieldsAreSanitized(t *testing.T) {
 			{"name":"Bad\nName","trigger":"PostFileSave","action":{"type":"command","command":"a` + "`" + `b"}}
 		]}`)},
 	}
-	hooks := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catHook)
+	hooks := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catHook)
 	if len(hooks) != 1 {
 		t.Fatalf("got %d hook rows, want 1", len(hooks))
 	}
@@ -279,7 +279,7 @@ func TestScanKiroDocs_UnclaimedMarkdownGetsNoRow(t *testing.T) {
 		"scripts/notes.md":    {Data: []byte("# Notes\n")},
 		"steering/claimed.md": {Data: []byte("---\ndescription: Claimed\n---\n")},
 	}
-	docs := scanKiroDocsFS(context.Background(), fsys, "ws/.kiro")
+	docs := scanKiroDocsFS(t.Context(), fsys, "ws/.kiro")
 	if len(docs) != 1 {
 		t.Fatalf("got %d rows, want 1 (only the steering doc is claimed): %+v", len(docs), docs)
 	}
@@ -293,7 +293,7 @@ func TestScanKiroDocs_PerCategoryCap(t *testing.T) {
 	for i := range maxDocsPerCategory + 25 {
 		fsys[fmt.Sprintf("steering/s%04d.md", i)] = &fstest.MapFile{Data: []byte("---\ndescription: x\n---\n")}
 	}
-	steer := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catSteering)
+	steer := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catSteering)
 	if len(steer) != maxDocsPerCategory {
 		t.Errorf("steering count = %d, want %d (capped)", len(steer), maxDocsPerCategory)
 	}
@@ -319,7 +319,7 @@ func TestScanKiroDocs_OversizeReadStillClassifies(t *testing.T) {
 	head := "---\ninclusion: manual\ndescription: Head still parses\n---\n"
 	big := strings.Repeat("x", int(steeringReadCap)+(1<<20))
 	fsys := fstest.MapFS{"steering/huge.md": {Data: []byte(head + big)}}
-	steer := docsByCategory(scanKiroDocsFS(context.Background(), fsys, "ws/.kiro"), catSteering)
+	steer := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro"), catSteering)
 	if len(steer) != 1 {
 		t.Fatalf("got %d rows, want 1", len(steer))
 	}
@@ -363,7 +363,7 @@ func TestCollectKiroDocs_CachesOnSignature(t *testing.T) {
 	writeFile(t, dir, ".kiro/steering/a.md", "---\ndescription: A\n---\n")
 	srv := &Server{workDir: dir, kiroDocs: &docsCache{}}
 
-	first := srv.collectKiroDocs(context.Background())
+	first := srv.collectKiroDocs(t.Context())
 	if len(first) != 1 {
 		t.Fatalf("first scan returned %d rows, want 1", len(first))
 	}
@@ -373,7 +373,7 @@ func TestCollectKiroDocs_CachesOnSignature(t *testing.T) {
 	}
 
 	// Same tree: the cached slice comes back and the signature is unchanged.
-	second := srv.collectKiroDocs(context.Background())
+	second := srv.collectKiroDocs(t.Context())
 	if len(second) != 1 || srv.kiroDocs.sig != sigAfterFirst {
 		t.Errorf("second scan changed the cache: rows=%d sig-changed=%v", len(second), srv.kiroDocs.sig != sigAfterFirst)
 	}
@@ -381,7 +381,7 @@ func TestCollectKiroDocs_CachesOnSignature(t *testing.T) {
 	// A new file moves the directory mtime, so the signature must change and
 	// the row must appear.
 	writeFile(t, dir, ".kiro/steering/b.md", "---\ndescription: B\n---\n")
-	third := srv.collectKiroDocs(context.Background())
+	third := srv.collectKiroDocs(t.Context())
 	if len(third) != 2 {
 		t.Errorf("after adding a doc got %d rows, want 2 (the signature must invalidate)", len(third))
 	}
@@ -393,7 +393,7 @@ func TestCollectKiroDocs_NilCacheStillScans(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, ".kiro/steering/a.md", "---\ndescription: A\n---\n")
 	srv := &Server{workDir: dir}
-	if docs := srv.collectKiroDocs(context.Background()); len(docs) != 1 {
+	if docs := srv.collectKiroDocs(t.Context()); len(docs) != 1 {
 		t.Errorf("got %d rows with no cache wired, want 1", len(docs))
 	}
 }
@@ -405,7 +405,7 @@ func TestCollectKiroDocs_PerRepoTreeCounts(t *testing.T) {
 	writeFile(t, dir, ".kiro/steering/root.md", "---\ndescription: Root\n---\n")
 	writeFile(t, dir, "myrepo/.kiro/steering/repo.md", "---\ndescription: Repo\n---\n")
 	srv := &Server{workDir: dir, kiroDocs: &docsCache{}}
-	docs := srv.collectKiroDocs(context.Background())
+	docs := srv.collectKiroDocs(t.Context())
 	if len(docs) != 2 {
 		t.Fatalf("got %d rows, want 2: %+v", len(docs), docs)
 	}

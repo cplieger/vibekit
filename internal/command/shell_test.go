@@ -230,7 +230,7 @@ func TestHandleShellInterception_BusyReturns409(t *testing.T) {
 	cmd := &api.ClientCommand{Type: "prompt", RequestID: "r1", ChatID: "c1"}
 	p := &api.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
-	HandleShellInterception(d, deps, context.Background(), w, cmd, p)
+	HandleShellInterception(d, deps, t.Context(), w, cmd, p)
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (busy)", w.Code)

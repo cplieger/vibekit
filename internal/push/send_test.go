@@ -26,7 +26,7 @@ import (
 func TestSendFailureLogBoundsEndpoint(t *testing.T) {
 	rec := capture.Default(t)
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close() // wait for writeLoop to drain before TempDir cleanup
 
 	// The control bytes make the endpoint an invalid request URL, so the
@@ -35,7 +35,7 @@ func TestSendFailureLogBoundsEndpoint(t *testing.T) {
 	hostile := "https://evil.example/\x1b]0;pwned\x07/" + strings.Repeat("x", 100)
 	s.Subscribe(pushSubscriptionWithValidKeys(t, hostile))
 
-	s.Send(context.Background(), "t", "b", api.PushKindAgentFinished)
+	s.Send(t.Context(), "t", "b", api.PushKindAgentFinished)
 
 	got, ok := rec.AttrValue("push: send failed", "endpoint")
 	if !ok {
@@ -54,7 +54,7 @@ func TestSendFailureLogBoundsEndpoint(t *testing.T) {
 
 func TestSend_PreferenceFiltering(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 	// Subscribe so Send actually reaches the preflight stage;
 	// without subs the early-exit wouldn't prove the gate ran.
@@ -69,7 +69,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		api.PushKindAgentFinished: false,
 		api.PushKindPermission:    true,
 	})
-	s.Send(context.Background(), "title", "body", api.PushKindAgentFinished)
+	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
 	s.mu.Lock()
 	_, afRecorded := s.lastPush[api.PushKindAgentFinished]
 	s.mu.Unlock()
@@ -82,7 +82,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		api.PushKindAgentFinished: true,
 		api.PushKindPermission:    false,
 	})
-	s.Send(context.Background(), "title", "body", api.PushKindPermission)
+	s.Send(t.Context(), "title", "body", api.PushKindPermission)
 	s.mu.Lock()
 	_, pnRecorded := s.lastPush[api.PushKindPermission]
 	s.mu.Unlock()
@@ -93,7 +93,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 
 func TestSend_Debounce(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 
 	// Set lastPush[agent_finished] to now to trigger debounce.
@@ -110,7 +110,7 @@ func TestSend_Debounce(t *testing.T) {
 	before := s.lastPush[api.PushKindAgentFinished]
 	s.mu.Unlock()
 
-	s.Send(context.Background(), "title", "body", api.PushKindAgentFinished)
+	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
 
 	// lastPush should not have been updated (debounced).
 	s.mu.Lock()
@@ -128,7 +128,7 @@ func TestSend_Debounce(t *testing.T) {
 // independent.
 func TestSend_DebouncePerType(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 
 	// Mark agent_finished as just-sent.
@@ -140,7 +140,7 @@ func TestSend_DebouncePerType(t *testing.T) {
 	// its own last-push timestamp (not blocked by the agent_finished
 	// window).
 	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(context.Background(), "title", "body", api.PushKindPermission)
+	s.Send(t.Context(), "title", "body", api.PushKindPermission)
 
 	s.mu.Lock()
 	permTimestamp := s.lastPush[api.PushKindPermission]
@@ -154,10 +154,10 @@ func TestSend_DebouncePerType(t *testing.T) {
 // with no persisted debounce side-effect.
 func TestSend_UnknownKindRejected(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(context.Background(), "title", "body", "what-is-this")
+	s.Send(t.Context(), "title", "body", "what-is-this")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.lastPush["what-is-this"]; ok {
@@ -167,13 +167,13 @@ func TestSend_UnknownKindRejected(t *testing.T) {
 
 func TestSend_UnhealthySkips(t *testing.T) {
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	s.mu.Lock()
 	s.healthy = false
 	s.mu.Unlock()
 
 	// Should return immediately without panicking.
-	s.Send(context.Background(), "title", "body", api.PushKindAgentFinished)
+	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
 }
 
 func TestSend_StatusCodePruning(t *testing.T) {
@@ -194,12 +194,12 @@ func TestSend_StatusCodePruning(t *testing.T) {
 			defer srv.Close()
 
 			dir := t.TempDir()
-			s := New(context.Background(), dir, "mailto:test@example.com")
+			s := New(t.Context(), dir, "mailto:test@example.com")
 			defer s.Close() // wait for writeLoop to drain before TempDir cleanup
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
-			s.Send(context.Background(), "title", "body", api.PushKindAgentFinished)
+			s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
 
 			if tt.wantPruned && s.HasSubscribers() {
 				t.Errorf("Send did not prune subscription after %d", tt.status)
@@ -222,7 +222,7 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	s := New(context.Background(), dir, "mailto:test@example.com")
+	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close() // wait for writeLoop to drain before TempDir cleanup
 	s.client = srv.Client()
 	s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
@@ -232,7 +232,7 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	body := strings.Repeat("x", 4000)
 
 	// Send should not panic or error — it truncates internally.
-	s.Send(context.Background(), title, body, api.PushKindAgentFinished)
+	s.Send(t.Context(), title, body, api.PushKindAgentFinished)
 
 	// Verify the subscriber wasn't pruned (201 = success).
 	if !s.HasSubscribers() {
@@ -268,10 +268,10 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 
 	t.Run("small_does_not_warn", func(t *testing.T) {
 		// total=4 bytes is well under the cap.
-		s := New(context.Background(), t.TempDir(), testSubject)
+		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(context.Background(), "aa", "bb", api.PushKindAgentFinished)
+		s.Send(t.Context(), "aa", "bb", api.PushKindAgentFinished)
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q for a 4-byte payload; want no warn", warnMsg)
 		}
@@ -279,10 +279,10 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 
 	t.Run("oversize_warns_with_total_bytes", func(t *testing.T) {
 		// title=10, body=4000, total=4010 — over the cap.
-		s := New(context.Background(), t.TempDir(), testSubject)
+		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(context.Background(), strings.Repeat("a", 10), strings.Repeat("b", 4000),
+		s.Send(t.Context(), strings.Repeat("a", 10), strings.Repeat("b", 4000),
 			api.PushKindAgentFinished)
 		got, ok := capLog.AttrValue(warnMsg, "bytes")
 		if !ok {
@@ -297,10 +297,10 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		// The marshaled payload size is what matters: the ~22-byte JSON
 		// envelope counts toward the cap. title=978 + body=2000 marshals to
 		// exactly pushBodyCap (3000), which is not over, so Send must not warn.
-		s := New(context.Background(), t.TempDir(), testSubject)
+		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(context.Background(), strings.Repeat("a", 978), strings.Repeat("b", 2000),
+		s.Send(t.Context(), strings.Repeat("a", 978), strings.Repeat("b", 2000),
 			api.PushKindAgentFinished)
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q at exactly the marshaled cap; want no warn", warnMsg)
@@ -313,13 +313,13 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 // the guard (and fails later decoding p256dh), while pushBodyCap+1 is
 // rejected as too large before any work.
 func TestPush_PayloadSizeBoundary(t *testing.T) {
-	s := &Service{ctx: context.Background()}
+	s := &Service{ctx: t.Context()}
 	sub := api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/size"}
 	sub.Keys.P256dh = "###not-base64###" // invalid → "decode p256dh" once past the guard
 	sub.Keys.Auth = "AAAA"
 
 	t.Run("exactly_cap_passes_size_guard", func(t *testing.T) {
-		_, err := s.push(context.Background(), sub, make([]byte, pushBodyCap))
+		_, err := s.push(t.Context(), sub, make([]byte, pushBodyCap))
 		if err == nil {
 			t.Fatalf("push(payload=%d) err = nil, want a downstream error", pushBodyCap)
 		}
@@ -333,7 +333,7 @@ func TestPush_PayloadSizeBoundary(t *testing.T) {
 	})
 
 	t.Run("over_cap_rejected", func(t *testing.T) {
-		_, err := s.push(context.Background(), sub, make([]byte, pushBodyCap+1))
+		_, err := s.push(t.Context(), sub, make([]byte, pushBodyCap+1))
 		if err == nil || !strings.Contains(err.Error(), "payload too large") {
 			t.Errorf("push(payload=%d) err = %v, want payload-too-large", pushBodyCap+1, err)
 		}
@@ -346,7 +346,7 @@ func TestPush_PayloadSizeBoundary(t *testing.T) {
 // and panic). Each call reaches the forced transport error, proving it
 // traversed the body assembly without panicking.
 func TestPush_BodyCapacityStaysPositive(t *testing.T) {
-	s := New(context.Background(), t.TempDir(), testSubject)
+	s := New(t.Context(), t.TempDir(), testSubject)
 	defer s.Close()
 	s.client = &http.Client{Transport: errRoundTripper{}}
 	sub := pushSubscriptionWithValidKeys(t, "https://fcm.googleapis.com/fcm/send/cap")
@@ -363,7 +363,7 @@ func pushExpectNoPanic(t *testing.T, s *Service, sub api.PushSubscription, paylo
 				label, len(payload), r)
 		}
 	}()
-	_, err := s.push(context.Background(), sub, payload)
+	_, err := s.push(t.Context(), sub, payload)
 	if err == nil {
 		t.Errorf("push(%s) err = nil, want forced transport error", label)
 		return
@@ -396,13 +396,13 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			s := New(context.Background(), t.TempDir(), testSubject)
+			s := New(t.Context(), t.TempDir(), testSubject)
 			defer s.Close()
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 			capLog := capture.Default(t)
-			s.Send(context.Background(), "title", "body", api.PushKindAgentFinished)
+			s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
 
 			if got := capLog.CountExact("push: unexpected status") > 0; got != tc.wantUnexpec {
 				t.Errorf("status %d: logged unexpected-status = %v, want %v",
@@ -432,14 +432,14 @@ func TestPush_MergesCancelledServiceCtx(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	s := New(context.Background(), t.TempDir(), testSubject)
+	s := New(t.Context(), t.TempDir(), testSubject)
 	defer s.Close()
 	s.client = srv.Client()
 	sub := pushSubscriptionWithValidKeys(t, srv.URL)
 
 	s.cancel() // cancel the service ctx
 
-	callerCtx, callerCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	callerCtx, callerCancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer callerCancel()
 
 	_, err := s.push(callerCtx, sub, []byte(`{"title":"t","body":"b"}`))

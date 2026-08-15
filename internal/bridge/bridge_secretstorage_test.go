@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +52,7 @@ done
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
 		b := New(scriptPath, dir)
-		if err := b.Start(context.Background(), &api.StartOpts{Model: "m", SecretStorage: secretStorage}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Model: "m", SecretStorage: secretStorage}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()

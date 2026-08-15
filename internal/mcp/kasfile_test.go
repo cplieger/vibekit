@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -45,7 +44,7 @@ func newIsolatedStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	dir := t.TempDir()
 	kas := filepath.Join(dir, "kas", "mcp.json")
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(kas))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kas))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -65,7 +64,7 @@ func TestNew_DefaultKASPathIsUnderKiroHome(t *testing.T) {
 	workspace.SetKiroHomeForTest(t, filepath.Join(home, ".kiro"))
 
 	dir := t.TempDir()
-	s, err := New(context.Background(), dir, nil)
+	s, err := New(t.Context(), dir, nil)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -89,7 +88,7 @@ func TestWriteKASConfig_StdioShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	if _, err := s.Create(context.Background(), srv); err != nil {
+	if _, err := s.Create(t.Context(), srv); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -129,7 +128,7 @@ func TestWriteKASConfig_RemoteCarriesOAuth(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 	srv.OAuthClientSecret = "shh"
-	if _, err := s.Create(context.Background(), srv); err != nil {
+	if _, err := s.Create(t.Context(), srv); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -158,7 +157,7 @@ func TestWriteKASConfig_NoTypeHint(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewServer(%s): %v", tr, err)
 		}
-		if _, err := s.Create(context.Background(), srv); err != nil {
+		if _, err := s.Create(t.Context(), srv); err != nil {
 			t.Fatalf("Create(%s): %v", tr, err)
 		}
 	}
@@ -186,11 +185,11 @@ func TestWriteKASConfig_DisabledServerStaysWithFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	created, err := s.Create(context.Background(), srv)
+	created, err := s.Create(t.Context(), srv)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := s.SetEnabled(context.Background(), created.ID, false); err != nil {
+	if _, err := s.SetEnabled(t.Context(), created.ID, false); err != nil {
 		t.Fatalf("SetEnabled: %v", err)
 	}
 
@@ -214,7 +213,7 @@ func TestWriteKASConfig_PreservesForeignKeys(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(kas))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(kas))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

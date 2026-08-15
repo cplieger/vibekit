@@ -1,7 +1,6 @@
 package push
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -13,7 +12,7 @@ import (
 func TestSubscriptionLifecycle_RapidInvariants(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		dir := t.TempDir()
-		svc := New(context.Background(), dir, "mailto:test@example.com")
+		svc := New(t.Context(), dir, "mailto:test@example.com")
 		defer svc.Close()
 
 		// Track expected state.

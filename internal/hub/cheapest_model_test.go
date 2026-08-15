@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -123,7 +122,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := cheapestModel(ctx, tc.models); got != tc.want {
@@ -168,7 +167,7 @@ func BenchmarkCheapestModel(b *testing.B) {
 		return ms
 	}
 
-	ctx := context.Background()
+	ctx := b.Context()
 	for _, size := range []int{5, 20, 100} {
 		catalog := makeModels(size)
 		b.Run(fmt.Sprintf("catalog_%d", size), func(b *testing.B) {

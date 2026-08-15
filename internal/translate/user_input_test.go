@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"encoding/json"
 	"strconv"
 	"testing"
@@ -36,7 +35,7 @@ func TestHandleUserInput(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
 		tr := New(deps)
-		tr.HandleUserInput(context.Background(), "c1", userInputMsg(t, &reqID, map[string]any{
+		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, &reqID, map[string]any{
 			"sessionId":  "sess_1",
 			"toolCallId": "tc-9",
 			"question":   "Which approach?",
@@ -82,7 +81,7 @@ func TestHandleUserInput(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
 		tr := New(deps)
-		tr.HandleUserInput(context.Background(), "c1", userInputMsg(t, &reqID, map[string]any{
+		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, &reqID, map[string]any{
 			"sessionId": "sess_1",
 			"question":  "Describe the goal",
 		}))
@@ -101,7 +100,7 @@ func TestHandleUserInput(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
 		tr := New(deps)
-		tr.HandleUserInput(context.Background(), "c1", userInputMsg(t, nil, map[string]any{
+		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, nil, map[string]any{
 			"question": "unanswerable",
 		}))
 		if len(*events) != 0 || len(deps.pendingAdds) != 0 {

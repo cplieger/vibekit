@@ -82,7 +82,7 @@ func TestIsGitRepo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			tt.setup(t, dir)
-			got := IsGitRepo(context.Background(), dir)
+			got := IsGitRepo(t.Context(), dir)
 			if got != tt.want {
 				t.Errorf("IsGitRepo(%s) = %v, want %v", tt.name, got, tt.want)
 			}

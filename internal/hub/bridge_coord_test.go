@@ -84,7 +84,7 @@ func (p *recordingPush) Send(_ context.Context, _, body string, _ api.PushKind) 
 // bridge's ModelID.
 func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
-	ctx := context.Background()
+	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-chat"
@@ -111,7 +111,7 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 // A successful in-session SetModel returns true.
 func TestTryFastModelSwitch_SucceedsReturnsTrue(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := context.Background()
+	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.GetOrCreateBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)
@@ -169,7 +169,7 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	h := New("/tmp/push", func() api.ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
-	ctx := context.Background()
+	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
@@ -190,7 +190,7 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 // PrimeIfNeeded logs nothing when the prime Call succeeds.
 func TestPrimeIfNeeded_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := context.Background()
+	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = []api.Message{{Role: api.RoleUser, Content: "hi"}}
@@ -213,7 +213,7 @@ func TestPrimeIfNeeded_NoErrorLogOnSuccess(t *testing.T) {
 // and cancel-event appends both succeed.
 func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := context.Background()
+	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	buf := h.bridge.assistantBufs.GetOrInit("c1")
@@ -236,7 +236,7 @@ func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 // PersistModelSwitch logs nothing when the event append succeeds.
 func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
-	ctx := context.Background()
+	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
@@ -443,17 +443,17 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 			br.mu.Lock()
 			br.currentMode = tc.actual
 			br.mu.Unlock()
-			_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+			_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 				c.Name = "A"
 				c.CurrentModeID = tc.requested
 				return true
 			})
 
 			_, since := h.sse.hub.Bounds()
-			h.coord.persistNewSessionMetadata(context.Background(), "c1", br)
+			h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
 
 			// The record always holds the mode the session is really in.
-			c, _ := cs.Get(context.Background(), "c1")
+			c, _ := cs.Get(t.Context(), "c1")
 			if c.CurrentModeID != tc.actual {
 				t.Errorf("chat.CurrentModeID = %q, want the actual mode %q", c.CurrentModeID, tc.actual)
 			}
@@ -532,7 +532,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			cs.Bus = h
 			t.Cleanup(func() { h.Shutdown() })
 
-			ctx := context.Background()
+			ctx := t.Context()
 			if err := cs.Mutate(ctx, "c-owner", func(c *api.Chat, _ bool) bool {
 				c.Name = "owner"
 				c.RecordSession("sess_owned")

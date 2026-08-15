@@ -54,17 +54,25 @@ func (c *cachedBoolField) get() bool {
 	if c.path == "" {
 		return c.defaultVal
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
 
+	// The lock is never held across the stat, the read or the unmarshal. This
+	// is consulted per tool call, so a slow or hung filesystem would block
+	// every caller behind one reader. Two concurrent misses may both read the
+	// file, which is benign for a cache: they derive the same answer, and each
+	// stores the (mtime, size) it actually observed.
 	info, err := os.Stat(c.path)
 	if err != nil {
 		return c.defaultVal
 	}
-	if c.valid && info.ModTime().Equal(c.mtime) && info.Size() == c.size {
-		return c.value
+
+	c.mu.Lock()
+	valid, mtime, size, cached := c.valid, c.mtime, c.size, c.value
+	c.mu.Unlock()
+	if valid && info.ModTime().Equal(mtime) && info.Size() == size {
+		return cached
 	}
-	// Cache miss — re-read and parse.
+
+	// Cache miss — re-read and parse outside the lock.
 	data, err := os.ReadFile(c.path) // #nosec G304 -- fixed path
 	if err != nil {
 		return c.defaultVal
@@ -73,21 +81,21 @@ func (c *cachedBoolField) get() bool {
 	if json.Unmarshal(data, &raw) != nil {
 		return c.defaultVal
 	}
-	v, ok := raw[c.key]
-	if !ok {
-		c.value = c.defaultVal
-	} else {
-		var parsed bool
-		if json.Unmarshal(v, &parsed) != nil {
-			c.value = c.defaultVal
-		} else {
-			c.value = parsed
+	parsed := c.defaultVal
+	if v, ok := raw[c.key]; ok {
+		var b bool
+		if json.Unmarshal(v, &b) == nil {
+			parsed = b
 		}
 	}
-	c.mtime = info.ModTime()
-	c.size = info.Size()
-	c.valid = true
-	return c.value
+
+	// Pair the parsed value with the (mtime, size) stat'ed above. If the file
+	// changed in between, the pairing is stale in the safe direction: the next
+	// call stats a different mtime and re-reads.
+	c.mu.Lock()
+	c.value, c.mtime, c.size, c.valid = parsed, info.ModTime(), info.Size(), true
+	c.mu.Unlock()
+	return parsed
 }
 
 // hookStatusCache caches the hooks.showStatus setting from

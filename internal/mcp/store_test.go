@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -16,7 +17,7 @@ import (
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	dir := t.TempDir()
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -25,7 +26,7 @@ func newTestStore(t *testing.T) *Store {
 
 func TestCreate_ValidStdio(t *testing.T) {
 	s := newTestStore(t)
-	got, err := s.Create(context.Background(), &Server{
+	got, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio,
 		Name:      "github",
 		Command:   "npx",
@@ -43,7 +44,7 @@ func TestCreate_ValidStdio(t *testing.T) {
 		t.Error("expected timestamps")
 	}
 	// List returns masked.
-	list := s.List(context.Background())
+	list := s.List(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("List len = %d", len(list))
 	}
@@ -54,14 +55,14 @@ func TestCreate_ValidStdio(t *testing.T) {
 
 func TestCreate_NameConflict(t *testing.T) {
 	s := newTestStore(t)
-	_, err := s.Create(context.Background(), &Server{
+	_, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "foo", Command: "bash", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
 	// Case-insensitive conflict check.
-	_, err = s.Create(context.Background(), &Server{
+	_, err = s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "FOO", Command: "bash", Enabled: true,
 	})
 	if err != ErrNameConflict {
@@ -71,14 +72,14 @@ func TestCreate_NameConflict(t *testing.T) {
 
 func TestUpdate_PreservesSecretsWithMask(t *testing.T) {
 	s := newTestStore(t)
-	orig, _ := s.Create(context.Background(), &Server{
+	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
 		Env:     []KeyPair{{Name: "TOKEN", Value: "real-secret"}},
 		Enabled: true,
 	})
 
 	// PUT with the mask as the value — should preserve the stored secret.
-	_, err := s.Update(context.Background(), orig.ID, &Server{
+	_, err := s.Update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
 		Env:     []KeyPair{{Name: "TOKEN", Value: SecretMask}},
 		Enabled: true,
@@ -86,7 +87,7 @@ func TestUpdate_PreservesSecretsWithMask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("expected 1 enabled, got %d", len(raw))
 	}
@@ -97,12 +98,12 @@ func TestUpdate_PreservesSecretsWithMask(t *testing.T) {
 
 func TestUpdate_ReplacesSecretWithNewValue(t *testing.T) {
 	s := newTestStore(t)
-	orig, _ := s.Create(context.Background(), &Server{
+	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
 		Env:     []KeyPair{{Name: "TOKEN", Value: "old-secret"}},
 		Enabled: true,
 	})
-	_, err := s.Update(context.Background(), orig.ID, &Server{
+	_, err := s.Update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx",
 		Env:     []KeyPair{{Name: "TOKEN", Value: "new-secret"}},
 		Enabled: true,
@@ -110,7 +111,7 @@ func TestUpdate_ReplacesSecretWithNewValue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if raw[0].Env[0].Value != "new-secret" {
 		t.Errorf("secret not replaced; got %q", raw[0].Env[0].Value)
 	}
@@ -118,22 +119,22 @@ func TestUpdate_ReplacesSecretWithNewValue(t *testing.T) {
 
 func TestSetEnabled_TogglesAndPersists(t *testing.T) {
 	s := newTestStore(t)
-	orig, _ := s.Create(context.Background(), &Server{
+	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash", Enabled: true,
 	})
-	got, err := s.SetEnabled(context.Background(), orig.ID, false)
+	got, err := s.SetEnabled(t.Context(), orig.ID, false)
 	if err != nil {
 		t.Fatalf("SetEnabled: %v", err)
 	}
 	if got.Enabled {
 		t.Error("expected disabled")
 	}
-	if len(s.EnabledRaw(context.Background())) != 0 {
+	if len(s.EnabledRaw(t.Context())) != 0 {
 		t.Error("disabled server leaked into EnabledRaw")
 	}
 	// Second set to same value is a true no-op: the idempotent branch
 	// returns early before persist or timestamp updates.
-	_, err = s.SetEnabled(context.Background(), orig.ID, false)
+	_, err = s.SetEnabled(t.Context(), orig.ID, false)
 	if err != nil {
 		t.Errorf("idempotent set: %v", err)
 	}
@@ -141,24 +142,24 @@ func TestSetEnabled_TogglesAndPersists(t *testing.T) {
 
 func TestDelete_RemovesAndIsIdempotent(t *testing.T) {
 	s := newTestStore(t)
-	orig, _ := s.Create(context.Background(), &Server{
+	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
 	})
-	if err := s.Delete(context.Background(), orig.ID); err != nil {
+	if err := s.Delete(t.Context(), orig.ID); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if len(s.List(context.Background())) != 0 {
+	if len(s.List(t.Context())) != 0 {
 		t.Error("server not removed")
 	}
 	// Second delete is a no-op.
-	if err := s.Delete(context.Background(), orig.ID); err != nil {
+	if err := s.Delete(t.Context(), orig.ID); err != nil {
 		t.Errorf("idempotent delete: %v", err)
 	}
 }
 
 func TestPersist_FileIs0600(t *testing.T) {
 	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{
+	_, _ = s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
 	})
 	info, err := os.Stat(s.path)
@@ -173,11 +174,11 @@ func TestPersist_FileIs0600(t *testing.T) {
 func TestOnChangeFires(t *testing.T) {
 	dir := t.TempDir()
 	var calls atomic.Int32
-	s, err := New(context.Background(), dir, func(context.Context) { calls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	_, _ = s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
+	_, _ = s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
 	waitForCounter(t, &calls, 1)
 }
 
@@ -195,11 +196,11 @@ func TestLoad_ReadsExistingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	list := s.List(context.Background())
+	list := s.List(t.Context())
 	if len(list) != 1 || list[0].Name != "x" {
 		t.Fatalf("unexpected list: %#v", list)
 	}
@@ -208,7 +209,7 @@ func TestLoad_ReadsExistingFile(t *testing.T) {
 		t.Error("env not masked on load")
 	}
 	// Raw value is preserved on disk.
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if raw[0].Env[0].Value != "v" {
 		t.Errorf("raw value lost; got %q", raw[0].Env[0].Value)
 	}
@@ -221,11 +222,11 @@ func TestLoad_CorruptFileStartsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
 	}
-	if len(s.List(context.Background())) != 0 {
+	if len(s.List(t.Context())) != 0 {
 		t.Error("corrupt file should load empty")
 	}
 }
@@ -263,22 +264,22 @@ func TestParseTransport(t *testing.T) {
 // backward-compat guarantee that adding sse doesn't rewrite stored entries.
 func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 	dir := t.TempDir()
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if _, err := s.Create(context.Background(), &Server{
+	if _, err := s.Create(t.Context(), &Server{
 		Transport: TransportSSE, Name: "legacy", URL: "https://mcp.example/sse",
 		Enabled: true,
 	}); err != nil {
 		t.Fatalf("Create sse: %v", err)
 	}
 	// Reload from the same directory: the transport must stay "sse".
-	reloaded, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	reloaded, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("reload New: %v", err)
 	}
-	list := reloaded.List(context.Background())
+	list := reloaded.List(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("reloaded list len = %d, want 1", len(list))
 	}
@@ -294,7 +295,7 @@ func TestCreate_SSERoundTripsFromDisk(t *testing.T) {
 // transport-agnostic, and SSE must not regress that parity.
 func TestSSE_SecretRoundTrip(t *testing.T) {
 	s := newTestStore(t)
-	orig, err := s.Create(context.Background(), &Server{
+	orig, err := s.Create(t.Context(), &Server{
 		Transport:         TransportSSE,
 		Name:              "sse-secret",
 		URL:               "https://mcp.example/sse",
@@ -307,7 +308,7 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 	}
 
 	// Read is masked.
-	got := s.Get(context.Background(), orig.ID)
+	got := s.Get(t.Context(), orig.ID)
 	if got == nil {
 		t.Fatal("Get returned nil")
 	}
@@ -319,7 +320,7 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 	}
 
 	// Update resubmitting the mask preserves both stored secrets.
-	if _, err := s.Update(context.Background(), orig.ID, &Server{
+	if _, err := s.Update(t.Context(), orig.ID, &Server{
 		Transport:         TransportSSE,
 		Name:              "sse-secret",
 		URL:               "https://mcp.example/sse",
@@ -329,7 +330,7 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("EnabledRaw len = %d, want 1", len(raw))
 	}
@@ -343,9 +344,9 @@ func TestSSE_SecretRoundTrip(t *testing.T) {
 
 func TestEnabledNames_DefensiveFilter(t *testing.T) {
 	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "on", Command: "bash", Enabled: true})
-	_, _ = s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "off", Command: "bash", Enabled: false})
-	names := s.EnabledNames(context.Background())
+	_, _ = s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "on", Command: "bash", Enabled: true})
+	_, _ = s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "off", Command: "bash", Enabled: false})
+	names := s.EnabledNames(t.Context())
 	if _, ok := names["on"]; !ok {
 		t.Error("on missing")
 	}
@@ -360,7 +361,7 @@ func TestCreate_IDNotNameCollides(t *testing.T) {
 	// server named "status" or "registry" and collide with the
 	// /api/mcp/status and /api/mcp/registry/search routes.
 	s := newTestStore(t)
-	got, err := s.Create(context.Background(), &Server{
+	got, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "status", Command: "bash",
 	})
 	if err != nil {
@@ -393,13 +394,13 @@ func waitForCounter(t *testing.T, c *atomic.Int32, want int32) {
 func TestSetOnChange_ReplacesCallback(t *testing.T) {
 	dir := t.TempDir()
 	var firstCalls, secondCalls atomic.Int32
-	s, err := New(context.Background(), dir, func(context.Context) { firstCalls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, func(context.Context) { firstCalls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 
 	// First mutation fires the original callback.
-	if _, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
 		t.Fatalf("Create a: %v", err)
 	}
 	waitForCounter(t, &firstCalls, 1)
@@ -408,7 +409,7 @@ func TestSetOnChange_ReplacesCallback(t *testing.T) {
 	s.SetOnChange(func(context.Context) { secondCalls.Add(1) })
 
 	// Second mutation fires only the replacement.
-	if _, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "b", Command: "bash"}); err != nil {
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "b", Command: "bash"}); err != nil {
 		t.Fatalf("Create b: %v", err)
 	}
 	waitForCounter(t, &secondCalls, 1)
@@ -420,23 +421,28 @@ func TestSetOnChange_ReplacesCallback(t *testing.T) {
 
 func TestSetOnChange_NilIsNoop(t *testing.T) {
 	dir := t.TempDir()
-	var calls atomic.Int32
-	s, err := New(context.Background(), dir, func(context.Context) { calls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	// Absence is provable inside a bubble and only observable outside one. The
+	// 50ms sleep this replaces failed OPEN: a notifier goroutine slower than
+	// the sleep left calls==0 and the test passed for the wrong reason.
+	// synctest.Wait returns when every goroutine in the bubble is durably
+	// blocked, so a spawned callback has necessarily run by then.
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		s, err := New(t.Context(), dir, func(context.Context) { calls.Add(1) }, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
 
-	s.SetOnChange(nil) // detach
+		s.SetOnChange(nil) // detach
 
-	if _, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	// No deterministic wait because we assert absence; give the
-	// notifier goroutine a beat.
-	time.Sleep(50 * time.Millisecond)
-	if got := calls.Load(); got != 0 {
-		t.Errorf("SetOnChange(nil) did not detach callback: calls = %d, want 0", got)
-	}
+		if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		synctest.Wait()
+		if got := calls.Load(); got != 0 {
+			t.Errorf("SetOnChange(nil) did not detach callback: calls = %d, want 0", got)
+		}
+	})
 }
 
 // F3: Create and Update must propagate DisabledTools. Previously both
@@ -444,7 +450,7 @@ func TestSetOnChange_NilIsNoop(t *testing.T) {
 // persisted it, so the deny list never reached kiro-cli.
 func TestCreate_PersistsDisabledTools(t *testing.T) {
 	s := newTestStore(t)
-	got, err := s.Create(context.Background(), &Server{
+	got, err := s.Create(t.Context(), &Server{
 		Transport:     TransportStdio,
 		Name:          "gh",
 		Command:       "npx",
@@ -457,7 +463,7 @@ func TestCreate_PersistsDisabledTools(t *testing.T) {
 	if len(got.DisabledTools) != 1 || got.DisabledTools[0] != "delete_repo" {
 		t.Errorf("Create dropped DisabledTools: got %+v, want [delete_repo]", got.DisabledTools)
 	}
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if len(raw) != 1 {
 		t.Fatalf("EnabledRaw len = %d, want 1", len(raw))
 	}
@@ -468,13 +474,13 @@ func TestCreate_PersistsDisabledTools(t *testing.T) {
 
 func TestUpdate_PersistsDisabledTools(t *testing.T) {
 	s := newTestStore(t)
-	orig, err := s.Create(context.Background(), &Server{
+	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := s.Update(context.Background(), orig.ID, &Server{
+	if _, err := s.Update(t.Context(), orig.ID, &Server{
 		Transport:     TransportStdio,
 		Name:          "gh",
 		Command:       "npx",
@@ -483,7 +489,7 @@ func TestUpdate_PersistsDisabledTools(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if len(raw[0].DisabledTools) != 2 {
 		t.Errorf("Update dropped DisabledTools: got %+v", raw[0].DisabledTools)
 	}
@@ -492,7 +498,7 @@ func TestUpdate_PersistsDisabledTools(t *testing.T) {
 // F4: Update error branches — lowest-covered function in the suite.
 func TestUpdate_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 	s := newTestStore(t)
-	_, err := s.Update(context.Background(), "does-not-exist", &Server{
+	_, err := s.Update(t.Context(), "does-not-exist", &Server{
 		Transport: TransportStdio, Name: "x", Command: "bash",
 	})
 	if err != ErrNotFound {
@@ -502,20 +508,20 @@ func TestUpdate_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 
 func TestUpdate_RejectsInvalidShape(t *testing.T) {
 	s := newTestStore(t)
-	orig, err := s.Create(context.Background(), &Server{
+	orig, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "ok", Command: "bash", Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	// Change to HTTP without URL — must fail Validate.
-	if _, err := s.Update(context.Background(), orig.ID, &Server{
+	if _, err := s.Update(t.Context(), orig.ID, &Server{
 		Transport: TransportHTTP, Name: "ok", URL: "",
 	}); err == nil {
 		t.Errorf("Update(invalid) = nil, want validation error")
 	}
 	// Original record must be untouched on validation failure.
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if len(raw) != 1 || raw[0].Command != "bash" {
 		t.Errorf("Update rollback failed on validation error: %+v", raw)
 	}
@@ -523,15 +529,15 @@ func TestUpdate_RejectsInvalidShape(t *testing.T) {
 
 func TestUpdate_RejectsRenameToExistingName(t *testing.T) {
 	s := newTestStore(t)
-	a, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "alpha", Command: "bash"})
+	a, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "alpha", Command: "bash"})
 	if err != nil {
 		t.Fatalf("Create alpha: %v", err)
 	}
-	if _, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "beta", Command: "bash"}); err != nil {
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "beta", Command: "bash"}); err != nil {
 		t.Fatalf("Create beta: %v", err)
 	}
 	// Rename alpha → BETA (case-insensitive collision).
-	if _, err := s.Update(context.Background(), a.ID, &Server{
+	if _, err := s.Update(t.Context(), a.ID, &Server{
 		Transport: TransportStdio, Name: "BETA", Command: "bash",
 	}); err != ErrNameConflict {
 		t.Errorf("Update rename-to-conflict = %v, want ErrNameConflict", err)
@@ -543,8 +549,8 @@ func TestUpdate_RenameToOwnNameAllowed(t *testing.T) {
 	// hasNameLocked check correctly ignores the target record via
 	// ignoreID).
 	s := newTestStore(t)
-	a, _ := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "alpha", Command: "bash"})
-	if _, err := s.Update(context.Background(), a.ID, &Server{
+	a, _ := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "alpha", Command: "bash"})
+	if _, err := s.Update(t.Context(), a.ID, &Server{
 		Transport: TransportStdio, Name: "alpha", Command: "zsh",
 	}); err != nil {
 		t.Errorf("Update same-name rename = %v, want nil", err)
@@ -554,15 +560,15 @@ func TestUpdate_RenameToOwnNameAllowed(t *testing.T) {
 // F5: not-found branches on Get / SetEnabled / Delete.
 func TestGet_ReturnsNilForUnknownID(t *testing.T) {
 	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
-	if got := s.Get(context.Background(), "does-not-exist"); got != nil {
+	_, _ = s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
+	if got := s.Get(t.Context(), "does-not-exist"); got != nil {
 		t.Errorf("Get(unknown) = %+v, want nil", got)
 	}
 }
 
 func TestSetEnabled_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 	s := newTestStore(t)
-	if _, err := s.SetEnabled(context.Background(), "does-not-exist", true); err != ErrNotFound {
+	if _, err := s.SetEnabled(t.Context(), "does-not-exist", true); err != ErrNotFound {
 		t.Errorf("SetEnabled(unknown) = %v, want ErrNotFound", err)
 	}
 }
@@ -570,7 +576,7 @@ func TestSetEnabled_ReturnsErrNotFoundForUnknownID(t *testing.T) {
 func TestDelete_UnknownIDReturnsNoError(t *testing.T) {
 	// Documented behaviour: "No-op if not found." Make it explicit.
 	s := newTestStore(t)
-	if err := s.Delete(context.Background(), "does-not-exist"); err != nil {
+	if err := s.Delete(t.Context(), "does-not-exist"); err != nil {
 		t.Errorf("Delete(unknown) = %v, want nil", err)
 	}
 }
@@ -578,13 +584,13 @@ func TestDelete_UnknownIDReturnsNoError(t *testing.T) {
 // F10: List and Get must return deep copies so callers can't mutate the store.
 func TestList_ReturnsDeepCopy(t *testing.T) {
 	s := newTestStore(t)
-	_, _ = s.Create(context.Background(), &Server{
+	_, _ = s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "a", Command: "bash",
 		Args:    []string{"-c", "echo"},
 		Env:     []KeyPair{{Name: "K", Value: "v"}},
 		Enabled: true,
 	})
-	list := s.List(context.Background())
+	list := s.List(t.Context())
 	if len(list) != 1 {
 		t.Fatalf("List len = %d", len(list))
 	}
@@ -595,7 +601,7 @@ func TestList_ReturnsDeepCopy(t *testing.T) {
 	list[0].Env[0].Name = "HIJACKED"
 
 	// Re-read and verify the store is untouched.
-	refresh := s.List(context.Background())
+	refresh := s.List(t.Context())
 	if refresh[0].Name != "a" {
 		t.Errorf("List returned shallow copy (Name mutated): %q", refresh[0].Name)
 	}
@@ -609,17 +615,17 @@ func TestList_ReturnsDeepCopy(t *testing.T) {
 
 func TestGet_ReturnsDeepCopy(t *testing.T) {
 	s := newTestStore(t)
-	orig, _ := s.Create(context.Background(), &Server{
+	orig, _ := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "a", Command: "bash",
 		Env: []KeyPair{{Name: "K", Value: "v"}},
 	})
-	got := s.Get(context.Background(), orig.ID)
+	got := s.Get(t.Context(), orig.ID)
 	if got == nil {
 		t.Fatal("Get returned nil")
 	}
 	got.Env[0].Name = "HIJACKED"
 
-	refresh := s.Get(context.Background(), orig.ID)
+	refresh := s.Get(t.Context(), orig.ID)
 	if refresh.Env[0].Name != "K" {
 		t.Errorf("Get returned shallow Env: %q", refresh.Env[0].Name)
 	}
@@ -635,11 +641,11 @@ func TestLoad_CorruptFilePreservedAside(t *testing.T) {
 	}
 
 	buf := captureSlog(t)
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New should tolerate corrupt file, got: %v", err)
 	}
-	if len(s.List(context.Background())) != 0 {
+	if len(s.List(t.Context())) != 0 {
 		t.Error("corrupt file should load empty")
 	}
 	// The original file should have been moved to a .corrupt.<ts> sibling.
@@ -685,7 +691,7 @@ func TestLoad_ReenforcesTightPermsOnDrift(t *testing.T) {
 	}
 
 	buf := captureSlog(t)
-	if _, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
+	if _, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json"))); err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -712,12 +718,12 @@ func TestLoad_NullServersPreservesNonNilInvariant(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"version":1,"servers":null}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	// After load, the next persist should emit "servers":[], not "servers":null.
-	if _, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "x", Command: "bash"}); err != nil {
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "x", Command: "bash"}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	data, err := os.ReadFile(path)
@@ -751,38 +757,38 @@ func breakPersist(t *testing.T, s *Store) {
 func TestCreate_RollsBackOnPersistFailure(t *testing.T) {
 	s := newTestStore(t)
 	// Seed one record so we can assert the count stays at 1.
-	if _, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"}); err != nil {
 		t.Fatalf("seed Create: %v", err)
 	}
 	breakPersist(t, s)
 
-	if _, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "b", Command: "bash"}); err == nil {
+	if _, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "b", Command: "bash"}); err == nil {
 		t.Fatal("Create against read-only dir succeeded; expected persist error")
 	}
-	if got := len(s.List(context.Background())); got != 1 {
+	if got := len(s.List(t.Context())); got != 1 {
 		t.Errorf("Create rollback failed: len(List) = %d, want 1", got)
 	}
 }
 
 func TestUpdate_RollsBackOnPersistFailure(t *testing.T) {
 	s := newTestStore(t)
-	orig, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "a", Command: "bash", Enabled: true})
+	orig, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash", Enabled: true})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	breakPersist(t, s)
 
-	if _, err := s.Update(context.Background(), orig.ID, &Server{
+	if _, err := s.Update(t.Context(), orig.ID, &Server{
 		Transport: TransportStdio, Name: "a", Command: "zsh", Enabled: true,
 	}); err == nil {
 		t.Fatal("Update succeeded on read-only dir")
 	}
 	// In-memory record must still show the original command.
-	got := s.Get(context.Background(), orig.ID)
+	got := s.Get(t.Context(), orig.ID)
 	if got == nil {
 		t.Fatal("Get returned nil after rollback; record disappeared")
 	}
-	raw := s.EnabledRaw(context.Background())
+	raw := s.EnabledRaw(t.Context())
 	if len(raw) != 1 || raw[0].Command != "bash" {
 		t.Errorf("Update rollback: EnabledRaw[0].Command = %q, want %q", raw[0].Command, "bash")
 	}
@@ -790,16 +796,16 @@ func TestUpdate_RollsBackOnPersistFailure(t *testing.T) {
 
 func TestSetEnabled_RollsBackOnPersistFailure(t *testing.T) {
 	s := newTestStore(t)
-	orig, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "a", Command: "bash", Enabled: true})
+	orig, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash", Enabled: true})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	breakPersist(t, s)
 
-	if _, err := s.SetEnabled(context.Background(), orig.ID, false); err == nil {
+	if _, err := s.SetEnabled(t.Context(), orig.ID, false); err == nil {
 		t.Fatal("SetEnabled succeeded on read-only dir")
 	}
-	got := s.Get(context.Background(), orig.ID)
+	got := s.Get(t.Context(), orig.ID)
 	if got == nil || !got.Enabled {
 		t.Errorf("SetEnabled rollback failed: Get(%s).Enabled = %v, want true", orig.ID, got.Enabled)
 	}
@@ -807,16 +813,16 @@ func TestSetEnabled_RollsBackOnPersistFailure(t *testing.T) {
 
 func TestDelete_RollsBackOnPersistFailure(t *testing.T) {
 	s := newTestStore(t)
-	orig, err := s.Create(context.Background(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
+	orig, err := s.Create(t.Context(), &Server{Transport: TransportStdio, Name: "a", Command: "bash"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	breakPersist(t, s)
 
-	if err := s.Delete(context.Background(), orig.ID); err == nil {
+	if err := s.Delete(t.Context(), orig.ID); err == nil {
 		t.Fatal("Delete succeeded on read-only dir")
 	}
-	if s.Get(context.Background(), orig.ID) == nil {
+	if s.Get(t.Context(), orig.ID) == nil {
 		t.Error("Delete rollback failed: record disappeared despite persist error")
 	}
 }
@@ -841,11 +847,11 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	s, err := New(context.Background(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+	s, err := New(t.Context(), dir, nil, WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 	if err != nil {
 		t.Fatalf("New must tolerate rename failure, got: %v", err)
 	}
-	if got := len(s.List(context.Background())); got != 0 {
+	if got := len(s.List(t.Context())); got != 0 {
 		t.Errorf("corrupt file with failed rename still loaded %d servers, want 0", got)
 	}
 	// The corrupt file should remain (rename failed), not vanish.
@@ -861,7 +867,7 @@ func TestLoad_CorruptFileRenameFailureDoesNotError(t *testing.T) {
 
 func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
-	created, err := s.Create(context.Background(), &Server{
+	created, err := s.Create(t.Context(), &Server{
 		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "abc123", Enabled: true,
 	})
@@ -870,7 +876,7 @@ func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 	}
 	// Update keeps the OAuthClientID — it's a non-secret config value
 	// that round-trips verbatim (no SecretMask treatment).
-	updated, err := s.Update(context.Background(), created.ID, &Server{
+	updated, err := s.Update(t.Context(), created.ID, &Server{
 		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "abc123", Enabled: true,
 	})
@@ -884,11 +890,11 @@ func TestUpdate_PreservesOAuthClientID(t *testing.T) {
 
 func TestUpdate_ChangesOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
-	created, _ := s.Create(context.Background(), &Server{
+	created, _ := s.Create(t.Context(), &Server{
 		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "old-id", Enabled: true,
 	})
-	updated, err := s.Update(context.Background(), created.ID, &Server{
+	updated, err := s.Update(t.Context(), created.ID, &Server{
 		Transport: TransportHTTP, Name: "slack", URL: "https://slack.example/mcp",
 		OAuthClientID: "new-id", Enabled: true,
 	})
@@ -902,7 +908,7 @@ func TestUpdate_ChangesOAuthClientID(t *testing.T) {
 
 func TestCreate_RejectsOAuthClientIDOnStdio(t *testing.T) {
 	s := newTestStore(t)
-	_, err := s.Create(context.Background(), &Server{
+	_, err := s.Create(t.Context(), &Server{
 		Transport: TransportStdio, Name: "x", Command: "true",
 		OAuthClientID: "should-not-work",
 		Enabled:       true,
@@ -917,7 +923,7 @@ func TestCreate_RejectsOAuthClientIDOnStdio(t *testing.T) {
 
 func TestCreate_RejectsOversizedOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
-	_, err := s.Create(context.Background(), &Server{
+	_, err := s.Create(t.Context(), &Server{
 		Transport:     TransportHTTP,
 		Name:          "x",
 		URL:           "https://example.com/mcp",
@@ -934,7 +940,7 @@ func TestCreate_RejectsOversizedOAuthClientID(t *testing.T) {
 
 func TestCreate_RejectsControlCharsInOAuthClientID(t *testing.T) {
 	s := newTestStore(t)
-	_, err := s.Create(context.Background(), &Server{
+	_, err := s.Create(t.Context(), &Server{
 		Transport:     TransportHTTP,
 		Name:          "x",
 		URL:           "https://example.com/mcp",

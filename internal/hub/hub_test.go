@@ -66,7 +66,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	h := New("/tmp/work", factory, cs)
 	cs.Bus = h
 
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Register the bridge directly so we don't have to drive a full
 	// cmdPrompt flow; we're testing Shutdown ordering, not prompt
@@ -81,7 +81,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	callDone := make(chan struct{})
 	go func() {
 		defer h.lifecycle.inflight.Done()
-		_, _ = hb.Call(context.Background(), "session/prompt", nil)
+		_, _ = hb.Call(t.Context(), "session/prompt", nil)
 		close(callDone)
 	}()
 

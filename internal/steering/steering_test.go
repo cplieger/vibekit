@@ -2,7 +2,6 @@ package steering
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -257,7 +256,7 @@ func TestGenerate_WritesCompleteSteeringFile(t *testing.T) {
 		return MCPSnapshot{Servers: []api.MCPSnapshotServer{{Name: "github"}}}
 	})
 
-	g.Generate(context.Background())
+	g.Generate(t.Context())
 
 	steeringPath := filepath.Join(home, ".kiro", "steering", "environment.md")
 	out, err := os.ReadFile(steeringPath)
@@ -303,7 +302,7 @@ func TestGenerate_NoMCPSnapshotOmitsSection(t *testing.T) {
 
 	g := New(workDir, configDir)
 	// Deliberately do NOT call SetMCPSnapshot.
-	g.Generate(context.Background())
+	g.Generate(t.Context())
 
 	out, _ := os.ReadFile(filepath.Join(home, ".kiro", "steering", "environment.md"))
 	if strings.Contains(string(out), "Connected integrations") {
@@ -322,7 +321,7 @@ func TestGenerate_EmptyMCPSnapshotOmitsSection(t *testing.T) {
 
 	g := New(workDir, configDir)
 	g.SetMCPSnapshot(func() MCPSnapshot { return MCPSnapshot{} })
-	g.Generate(context.Background())
+	g.Generate(t.Context())
 
 	out, _ := os.ReadFile(filepath.Join(home, ".kiro", "steering", "environment.md"))
 	if strings.Contains(string(out), "Connected integrations") {
@@ -343,7 +342,7 @@ func TestGenerate_RendersForgeSection(t *testing.T) {
 			{Kind: "github", Host: "github.com", User: "alice"},
 		}}
 	})
-	g.Generate(context.Background())
+	g.Generate(t.Context())
 
 	out, err := os.ReadFile(steeringPath)
 	if err != nil {
@@ -369,7 +368,7 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 	configDir := t.TempDir()
 
 	g := New(workDir, configDir)
-	g.Generate(context.Background())
+	g.Generate(t.Context())
 
 	steeringPath := filepath.Join(home, ".kiro", "steering", "environment.md")
 	old := time.Now().Add(-time.Hour)
@@ -379,7 +378,7 @@ func TestGenerate_IdempotentSkipsRewrite(t *testing.T) {
 
 	// Second Generate must be a no-op — content is identical, so the
 	// file is never rewritten and the stamped mtime survives.
-	g.Generate(context.Background())
+	g.Generate(t.Context())
 
 	info, err := os.Stat(steeringPath)
 	if err != nil {
@@ -404,7 +403,7 @@ func TestGenerate_LogsWroteOnSuccess(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	g := New(workDir, configDir)
-	g.Generate(context.Background())
+	g.Generate(t.Context())
 
 	if _, err := os.Stat(steeringPath); err != nil {
 		t.Fatalf("Generate did not write file: %v", err)
@@ -434,7 +433,7 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2 * n)
 	for range n {
-		go func() { defer wg.Done(); g.Generate(context.Background()) }()
+		go func() { defer wg.Done(); g.Generate(t.Context()) }()
 		go func() {
 			defer wg.Done()
 			g.SetMCPSnapshot(func() MCPSnapshot {

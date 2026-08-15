@@ -1,12 +1,13 @@
 package chat
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -121,8 +122,8 @@ func (s *Store) listOnce(ctx context.Context) ([]api.ChatHeader, bool) {
 	// no per-chat lock needed because readChatHeader is read-only and
 	// writes use atomic temp+rename (readers always see a complete file).
 	headers, complete := readHeadersParallel(ctx, valid)
-	sort.Slice(headers, func(i, j int) bool {
-		return headers[i].UpdatedAt > headers[j].UpdatedAt
+	slices.SortFunc(headers, func(a, b api.ChatHeader) int {
+		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	slog.Debug("chat list: scan complete",
 		"dir", s.dir,

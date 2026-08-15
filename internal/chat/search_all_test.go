@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -11,7 +10,7 @@ import (
 // seedChat writes one chat file into a store's dir.
 func seedChat(t *testing.T, s *Store, id, name string, msgs []api.Message) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	if err := s.Mutate(ctx, api.ChatID(id), func(c *api.Chat, _ bool) bool {
 		c.Name = name
 		c.Messages = msgs
@@ -81,7 +80,7 @@ func TestSearchAll(t *testing.T) {
 	seedChat(t, s, "c-bbbbbbbb", "Grocery list", []api.Message{
 		msg("m2", api.RoleUser, "nothing relevant here at all"),
 	})
-	ctx := context.Background()
+	ctx := t.Context()
 
 	got := s.SearchAll(ctx, "redis")
 	if len(got.Matches) != 1 {
@@ -113,7 +112,7 @@ func TestSearchAll_EmptyQuery(t *testing.T) {
 	s, _ := newTestStore(t)
 	seedChat(t, s, "c-aaaaaaaa", "Redis", []api.Message{msg("m1", api.RoleUser, "redis")})
 	for _, q := range []string{"", "   "} {
-		got := s.SearchAll(context.Background(), q)
+		got := s.SearchAll(t.Context(), q)
 		if len(got.Matches) != 0 {
 			t.Errorf("query %q returned %d matches", q, len(got.Matches))
 		}
@@ -139,7 +138,7 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 	seedChat(t, s, "c-bbbbbbbb", "Assorted debugging", many)
 	seedChat(t, s, "c-aaaaaaaa", "Redis migration", []api.Message{msg("m1", api.RoleUser, "moved the cache")})
 
-	got := s.SearchAll(context.Background(), "redis")
+	got := s.SearchAll(t.Context(), "redis")
 	if len(got.Matches) < 2 {
 		t.Fatalf("expected both chats to match, got %+v", got.Matches)
 	}

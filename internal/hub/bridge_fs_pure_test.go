@@ -21,7 +21,7 @@ import (
 func TestCurrentMessageCount(t *testing.T) {
 	t.Parallel()
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Messages = []api.Message{
 			{Role: api.RoleUser, Content: "a"},
@@ -31,10 +31,10 @@ func TestCurrentMessageCount(t *testing.T) {
 		return true
 	})
 
-	if got := h.currentMessageCount(context.Background(), "c1"); got != 3 {
+	if got := h.currentMessageCount(t.Context(), "c1"); got != 3 {
 		t.Errorf("currentMessageCount(existing) = %d, want 3", got)
 	}
-	if got := h.currentMessageCount(context.Background(), "no-such-chat"); got != 0 {
+	if got := h.currentMessageCount(t.Context(), "no-such-chat"); got != 0 {
 		t.Errorf("currentMessageCount(missing) = %d, want 0", got)
 	}
 }

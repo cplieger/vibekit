@@ -16,7 +16,7 @@ import (
 )
 
 // Compile-time interface assertion.
-var _ api.GitHandler = (*Handler)(nil)
+var _ api.RouteHandler = (*Handler)(nil)
 
 // Option configures a Handler at construction time.
 type Option func(*Handler)

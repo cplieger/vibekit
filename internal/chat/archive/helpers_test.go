@@ -5,7 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -116,7 +116,7 @@ func idsToSortedStrings(ids []api.ChatID) []string {
 	for i, id := range ids {
 		out[i] = string(id)
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

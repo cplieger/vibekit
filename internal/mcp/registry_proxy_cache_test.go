@@ -6,7 +6,6 @@ package mcp
 // ~800-line ceiling.
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -117,7 +116,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				_, _, _ = cache.GetOrFetch(context.Background(), "bench-key", func() ([]byte, error) {
+				_, _, _ = cache.GetOrFetch(b.Context(), "bench-key", func() ([]byte, error) {
 					return payload, nil
 				})
 			}
@@ -129,7 +128,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 		b.ReportAllocs()
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
-				_, _, _ = cache.GetOrFetch(context.Background(), "sf-key", func() ([]byte, error) {
+				_, _, _ = cache.GetOrFetch(b.Context(), "sf-key", func() ([]byte, error) {
 					return payload, nil
 				})
 			}
@@ -144,7 +143,7 @@ func BenchmarkRegistryCacheGetOrFetch(b *testing.B) {
 			for pb.Next() {
 				key := fmt.Sprintf("key-%d", i)
 				i++
-				_, _, _ = cache.GetOrFetch(context.Background(), key, func() ([]byte, error) {
+				_, _, _ = cache.GetOrFetch(b.Context(), key, func() ([]byte, error) {
 					return payload, nil
 				})
 			}

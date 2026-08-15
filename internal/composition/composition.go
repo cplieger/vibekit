@@ -524,7 +524,10 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 			// no lsp tool is enabled+installed). Async — job callbacks
 			// must not block (fired under the queue lock).
 			if j != nil && j.State == toolbelt.JobDone {
-				go h.EnsureCodeIntelligence(context.Background())
+				// The hub's shutdown context, not Background: this goroutine
+				// writes lsp.json, and a Background parent meant SIGTERM
+				// abandoned it mid-write instead of unwinding it.
+				go h.EnsureCodeIntelligence(h.ShutdownCtx())
 			}
 		},
 		OnJobOutput: func(jobID string, lines []string) {
@@ -561,7 +564,8 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 		}
 		return false
 	})
-	go h.EnsureCodeIntelligence(context.Background())
+	// Shutdown context, not Background — see the OnJobChanged spawn above.
+	go h.EnsureCodeIntelligence(h.ShutdownCtx())
 	return toolsEngine, nil
 }
 

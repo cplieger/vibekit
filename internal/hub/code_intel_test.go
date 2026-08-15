@@ -1,7 +1,6 @@
 package hub
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +17,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 
 	t.Run("not wired is a no-op", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		h.EnsureCodeIntelligence(context.Background())
+		h.EnsureCodeIntelligence(t.Context())
 	})
 
 	t.Run("existing config is a no-op", func(t *testing.T) {
@@ -28,7 +27,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 		}
 		gateCalled := false
 		h.SetCodeIntelligence(cfgPath, func() bool { gateCalled = true; return true })
-		h.EnsureCodeIntelligence(context.Background())
+		h.EnsureCodeIntelligence(t.Context())
 		if gateCalled {
 			t.Error("gate consulted although lsp.json already exists")
 		}
@@ -40,7 +39,7 @@ func TestEnsureCodeIntelligence_Guards(t *testing.T) {
 	t.Run("closed gate is a no-op", func(t *testing.T) {
 		h, _, _ := newTestHub()
 		h.SetCodeIntelligence(cfgPath, func() bool { return false })
-		h.EnsureCodeIntelligence(context.Background())
+		h.EnsureCodeIntelligence(t.Context())
 		if h.ciBusy.Load() {
 			t.Error("in-flight guard left set on the closed-gate path")
 		}

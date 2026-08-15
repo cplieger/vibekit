@@ -44,7 +44,7 @@ func BenchmarkCountLineDelta_RepresentativePayloads(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				countLineDelta(context.Background(), from, to)
+				countLineDelta(b.Context(), from, to)
 			}
 		})
 	}
@@ -62,7 +62,7 @@ func repeatLines(n int) []byte {
 func TestCountLineDelta_ProductGateUsesMultiplication(t *testing.T) {
 	const lines = 5000 // 5000*5000 = 25,000,000 > lcsCellCap (16,777,216)
 	buf := repeatLines(lines)
-	added, removed := countLineDelta(context.Background(), buf, buf)
+	added, removed := countLineDelta(t.Context(), buf, buf)
 	if added != lines || removed != lines {
 		t.Errorf("countLineDelta(%d identical lines) = (%d,%d), want (%d,%d): the product gate must exceed the cap and return (m,n)",
 			lines, added, removed, lines, lines)
@@ -76,7 +76,7 @@ func TestCountLineDelta_ProductGateUsesMultiplication(t *testing.T) {
 func TestCountLineDelta_ProductCapIsExclusive(t *testing.T) {
 	const lines = 4096 // 4096*4096 = 16,777,216 == lcsCellCap exactly
 	buf := repeatLines(lines)
-	added, removed := countLineDelta(context.Background(), buf, buf)
+	added, removed := countLineDelta(t.Context(), buf, buf)
 	if added != 0 || removed != 0 {
 		t.Errorf("countLineDelta(%d identical lines) = (%d,%d), want (0,0): product==cap is not > cap, so LCS runs and finds zero changes",
 			lines, added, removed)
@@ -120,7 +120,7 @@ func TestCountLineDelta_EmptyInputs(t *testing.T) {
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			gotAdd, gotRemove := countLineDelta(context.Background(), []byte(tt.from), []byte(tt.to))
+			gotAdd, gotRemove := countLineDelta(t.Context(), []byte(tt.from), []byte(tt.to))
 			if gotAdd != tt.wantAdd || gotRemove != tt.wantRemove {
 				t.Errorf("countLineDelta(%q,%q) = (%d,%d), want (%d,%d)",
 					tt.from, tt.to, gotAdd, gotRemove, tt.wantAdd, tt.wantRemove)
@@ -135,7 +135,7 @@ func TestCountLineDelta_ReorderIsNotUnchanged(t *testing.T) {
 	// approach would return (0,0) here.
 	from := []byte("a\nb\n")
 	to := []byte("b\na\n")
-	add, remove := countLineDelta(context.Background(), from, to)
+	add, remove := countLineDelta(t.Context(), from, to)
 	if add != 1 || remove != 1 {
 		t.Errorf("countLineDelta(reorder) = (%d,%d), want (1,1)", add, remove)
 	}
@@ -184,11 +184,11 @@ func TestCountLineDelta_DegradedFallbackForExtremelyLargeInputs(t *testing.T) {
 	// branch for free.
 	const n = 5_000
 	big := bytes.Repeat([]byte("a\n"), n)
-	add, remove := countLineDelta(context.Background(), big, nil)
+	add, remove := countLineDelta(t.Context(), big, nil)
 	if add != 0 || remove != n {
 		t.Errorf("countLineDelta(big, nil) = (%d, %d), want (0, %d)", add, remove, n)
 	}
-	add, remove = countLineDelta(context.Background(), nil, big)
+	add, remove = countLineDelta(t.Context(), nil, big)
 	if add != n || remove != 0 {
 		t.Errorf("countLineDelta(nil, big) = (%d, %d), want (%d, 0)", add, remove, n)
 	}
@@ -197,7 +197,7 @@ func TestCountLineDelta_DegradedFallbackForExtremelyLargeInputs(t *testing.T) {
 	// fallback reports everything as changed in both directions.
 	a := bytes.Repeat([]byte("a\n"), n)
 	b := bytes.Repeat([]byte("b\n"), n)
-	add, remove = countLineDelta(context.Background(), a, b)
+	add, remove = countLineDelta(t.Context(), a, b)
 	if add != n || remove != n {
 		t.Errorf("countLineDelta(oversized, oversized) = (%d, %d), want (%d, %d)", add, remove, n, n)
 	}
@@ -233,7 +233,7 @@ func BenchmarkCountLineDelta(b *testing.B) {
 		b.Run(fmt.Sprintf("%d_lines", size), func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				countLineDelta(context.Background(), from, to)
+				countLineDelta(b.Context(), from, to)
 			}
 		})
 	}
@@ -245,7 +245,7 @@ func BenchmarkCountLineDelta(b *testing.B) {
 	b.Run("near_cap_fallback", func(b *testing.B) {
 		b.ReportAllocs()
 		for range b.N {
-			countLineDelta(context.Background(), from, to)
+			countLineDelta(b.Context(), from, to)
 		}
 	})
 }
@@ -258,7 +258,7 @@ func TestCountLineDelta_RapidInvariants(t *testing.T) {
 		fromBytes := []byte(strings.Join(from, "\n"))
 		toBytes := []byte(strings.Join(to, "\n"))
 
-		added, removed := countLineDelta(context.Background(), fromBytes, toBytes)
+		added, removed := countLineDelta(t.Context(), fromBytes, toBytes)
 
 		// Invariant 1: non-negativity.
 		if added < 0 || removed < 0 {
@@ -276,7 +276,7 @@ func TestCountLineDelta_RapidInvariants(t *testing.T) {
 		}
 
 		// Invariant 3: symmetry — swap(from,to) swaps (added,removed).
-		added2, removed2 := countLineDelta(context.Background(), toBytes, fromBytes)
+		added2, removed2 := countLineDelta(t.Context(), toBytes, fromBytes)
 		if added2 != removed || removed2 != added {
 			t.Fatalf("symmetry: delta(%q,%q)=(%d,%d) but delta(%q,%q)=(%d,%d)",
 				fromBytes, toBytes, added, removed,
@@ -284,7 +284,7 @@ func TestCountLineDelta_RapidInvariants(t *testing.T) {
 		}
 
 		// Invariant 4: identity — countLineDelta(x,x) == (0,0).
-		selfAdd, selfRem := countLineDelta(context.Background(), fromBytes, fromBytes)
+		selfAdd, selfRem := countLineDelta(t.Context(), fromBytes, fromBytes)
 		if selfAdd != 0 || selfRem != 0 {
 			t.Fatalf("identity: delta(x,x)=(%d,%d), want (0,0)", selfAdd, selfRem)
 		}
@@ -297,7 +297,7 @@ func FuzzCountLineDelta(f *testing.F) {
 	f.Add([]byte("x\n"), []byte(""))
 	f.Add([]byte("same\n"), []byte("same\n"))
 	f.Fuzz(func(t *testing.T, from, to []byte) {
-		added, removed := countLineDelta(context.Background(), from, to)
+		added, removed := countLineDelta(t.Context(), from, to)
 		if added < 0 || removed < 0 {
 			t.Fatalf("negative delta: added=%d removed=%d", added, removed)
 		}

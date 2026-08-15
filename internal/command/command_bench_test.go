@@ -76,19 +76,19 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	if d.ShutdownCtx() == nil {
 		t.Error("ShutdownCtx() returned nil")
 	}
-	if !d.MCPWaitForReady(context.Background(), time.Millisecond) {
+	if !d.MCPWaitForReady(t.Context(), time.Millisecond) {
 		t.Error("MCPWaitForReady returned false")
 	}
 
 	// No-op methods must not panic.
-	d.Broadcast(context.Background(), api.ServerEvent{})
+	d.Broadcast(t.Context(), api.ServerEvent{})
 	d.CloseBridge("x")
 	d.ClearPendingPermsForChat("x")
 	d.TakePendingPerm(0, api.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
-	d.CleanupChatState(context.Background(), "x")
-	d.PrimeIfNeeded(context.Background(), "x", nil)
+	d.CleanupChatState(t.Context(), "x")
+	d.PrimeIfNeeded(t.Context(), "x", nil)
 }
 
 // TestBenchDeps_Contract documents which methods intentionally return nil
@@ -129,19 +129,19 @@ func TestBenchDeps_Contract(t *testing.T) {
 
 	// --- No-panic on zero-value calls ---
 	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
-		d.Broadcast(context.Background(), api.ServerEvent{})
+		d.Broadcast(t.Context(), api.ServerEvent{})
 		d.CloseBridge("x")
 		d.ClearPendingPermsForChat("x")
 		d.TakePendingPerm(0, api.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()
-		d.CleanupChatState(context.Background(), "x")
-		d.PrimeIfNeeded(context.Background(), "x", nil)
+		d.CleanupChatState(t.Context(), "x")
+		d.PrimeIfNeeded(t.Context(), "x", nil)
 		if d.IsEmptyTurn(nil, "x") {
 			t.Error("IsEmptyTurn should be false")
 		}
-		d.EmitTurnEndedWithStats(context.Background(), "x", nil, 0, 0)
-		if _, err := d.GetOrCreateBridge(context.Background(), "x", ""); err != nil {
+		d.EmitTurnEndedWithStats(t.Context(), "x", nil, 0, 0)
+		if _, err := d.GetOrCreateBridge(t.Context(), "x", ""); err != nil {
 			t.Errorf("GetOrCreateBridge returned error: %v", err)
 		}
 		if _, err := d.ResolveInsideWorkDir(""); err != nil {

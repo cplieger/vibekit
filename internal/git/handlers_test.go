@@ -571,7 +571,7 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 		"GIT_CONFIG_COUNT":       "",
 		"GIT_CONFIG_PARAMETERS":  "",
 	}
-	cmd := gitExec(context.Background(), t.TempDir(), "status")
+	cmd := gitExec(t.Context(), t.TempDir(), "status")
 
 	// Build a map of cmd.Env entries; later duplicates (our appends)
 	// overwrite inherited values in the map lookup, matching the
@@ -1176,12 +1176,12 @@ func behindRepo(t *testing.T) string {
 // indicator in the git panel).
 func TestAheadBehind_ReportsUpstreamDivergence(t *testing.T) {
 	work := behindRepo(t) // HEAD at C1, origin/main at C2 -> behind 1, ahead 0
-	if ahead, behind := aheadBehind(context.Background(), work); ahead != 0 || behind != 1 {
+	if ahead, behind := aheadBehind(t.Context(), work); ahead != 0 || behind != 1 {
 		t.Fatalf("aheadBehind on a behind-by-one work tree = (%d, %d), want (0, 1)", ahead, behind)
 	}
 	// A local commit on top of C1 leaves the work tree both ahead and behind.
 	writeCommit(t, work, "local.txt", "local\n", "local commit")
-	if ahead, behind := aheadBehind(context.Background(), work); ahead != 1 || behind != 1 {
+	if ahead, behind := aheadBehind(t.Context(), work); ahead != 1 || behind != 1 {
 		t.Fatalf("aheadBehind after a local commit = (%d, %d), want (1, 1)", ahead, behind)
 	}
 }
@@ -1335,7 +1335,7 @@ func TestParseGitStatus_UnquotesSpecialFilenames(t *testing.T) {
 	const renamedTo = "rénamed doc.md"
 	runGit(t, dir, "mv", "README.md", renamedTo)
 
-	files := parseGitStatus(context.Background(), dir)
+	files := parseGitStatus(t.Context(), dir)
 
 	byPath := make(map[string]gitFile, len(files))
 	for _, f := range files {
@@ -1441,7 +1441,7 @@ func TestSplitTrackedUntracked_ParsesFixture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workDir, "new.txt"), []byte("new\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 
 	tracked, untracked := splitTrackedUntracked(ctx, workDir, []string{"README.md", "new.txt"})
 	if len(tracked) != 1 || tracked[0] != "README.md" {
@@ -2370,7 +2370,7 @@ func TestGitShowCmd_MissingPathInRealRepo(t *testing.T) {
 	skipNoGit(t)
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
-	out, err := gitShowCmd(context.Background(), dir, refHEAD, "does-not-exist.txt")
+	out, err := gitShowCmd(t.Context(), dir, refHEAD, "does-not-exist.txt")
 	if !errors.Is(err, ErrPathNotInRef) {
 		t.Errorf("err = %v, want ErrPathNotInRef", err)
 	}
@@ -2616,7 +2616,7 @@ func TestCollectStatus_RemoteSet(t *testing.T) {
 	initFixtureRepo(t, dir)
 	const url = "https://example.com/x.git"
 	runGit(t, dir, "remote", "add", "origin", url)
-	st := collectStatus(context.Background(), dir, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+	st := collectStatus(t.Context(), dir, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
 	if st.Remote != url {
 		t.Errorf("Remote = %q, want %q", st.Remote, url)
 	}
@@ -2631,7 +2631,7 @@ func TestCollectStatus_StashCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGit(t, dir, "stash")
-	st := collectStatus(context.Background(), dir, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+	st := collectStatus(t.Context(), dir, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
 	if st.Stashes != 1 {
 		t.Errorf("Stashes = %d, want 1", st.Stashes)
 	}
@@ -2666,7 +2666,7 @@ func TestCollectStatus_HasGH(t *testing.T) {
 		repo := mkRepo(t)
 		t.Setenv("PATH", t.TempDir()) // empty bin dir: gh not found
 		freshHasGH(t)
-		st := collectStatus(context.Background(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+		st := collectStatus(t.Context(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
 		if st.HasGH {
 			t.Errorf("HasGH = true with gh absent")
 		}
@@ -2681,7 +2681,7 @@ func TestCollectStatus_HasGH(t *testing.T) {
 		}
 		t.Setenv("PATH", binDir)
 		freshHasGH(t)
-		st := collectStatus(context.Background(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+		st := collectStatus(t.Context(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
 		if !st.HasGH {
 			t.Errorf("HasGH = false with gh present")
 		}
@@ -2718,7 +2718,7 @@ func TestDiscoverRepos_EntryCapBoundary(t *testing.T) {
 		}
 	}
 	buf := captureLogs(t)
-	_ = discoverRepos(context.Background(), workDir)
+	_ = discoverRepos(t.Context(), workDir)
 	if strings.Contains(buf.String(), "entry count exceeds cap") {
 		t.Errorf("cap warning fired at exactly maxRepoEntries")
 	}
@@ -2805,7 +2805,7 @@ func TestGetRecentCommits_ReturnsHistoryForRealRepo(t *testing.T) {
 	runGit(t, dir, "add", "f.txt")
 	runGit(t, dir, "commit", "-q", "-m", "seed commit subject")
 
-	got := getRecentCommits(context.Background(), dir, 10)
+	got := getRecentCommits(t.Context(), dir, 10)
 	if !strings.Contains(got, "seed commit subject") {
 		t.Errorf("getRecentCommits(repo with a commit) = %q, want it to contain the commit subject", got)
 	}
@@ -2815,7 +2815,7 @@ func TestGetRecentCommits_ReturnsHistoryForRealRepo(t *testing.T) {
 
 	// A non-repo directory makes the git command error, so the sentinel
 	// is the correct result.
-	if got := getRecentCommits(context.Background(), t.TempDir(), 10); got != "No commit history available" {
+	if got := getRecentCommits(t.Context(), t.TempDir(), 10); got != "No commit history available" {
 		t.Errorf("getRecentCommits(non-repo dir) = %q, want the sentinel", got)
 	}
 }

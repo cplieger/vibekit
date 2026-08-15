@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -18,6 +19,8 @@ func newPromptingBridge(t *testing.T) (*sharedBridge, context.Context, uint64) {
 	if !sb.tryAcquireForPrompt() {
 		t.Fatalf("fresh bridge must be acquirable")
 	}
+	// Not t.Context(): cancel runs from t.Cleanup, by which point t.Context()
+	// is already cancelled, so the prompt context must have its own root.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	gen := sb.BeginPromptCall(cancel)
@@ -43,14 +46,22 @@ func TestArmCancelGrace_UnblocksAnUnackedCancel(t *testing.T) {
 // turn ended within the grace, so the timer must be disarmed rather than firing
 // into a finished turn.
 func TestArmCancelGrace_AckedCancelLeavesContextAlone(t *testing.T) {
-	sb, ctx, gen := newPromptingBridge(t)
-	sb.ArmCancelGrace(gen, testGrace)
-	sb.releaseAfterPrompt() // KAS answered; the prompt handler's defer runs.
+	// A fake clock makes "the timer did NOT fire" exact. On a real clock this
+	// assertion was only probabilistic: sleeping 4x the grace and finding the
+	// context alive is evidence, not proof, and a loaded machine could return
+	// either verdict. Inside the bubble the advance is complete by definition,
+	// and synctest.Wait drains every goroutine the timer could have woken.
+	synctest.Test(t, func(t *testing.T) {
+		sb, ctx, gen := newPromptingBridge(t)
+		sb.ArmCancelGrace(gen, testGrace)
+		sb.releaseAfterPrompt() // KAS answered; the prompt handler's defer runs.
 
-	time.Sleep(4 * testGrace)
-	if ctx.Err() != nil {
-		t.Errorf("context cancelled after the turn already ended: %v", ctx.Err())
-	}
+		time.Sleep(4 * testGrace)
+		synctest.Wait()
+		if ctx.Err() != nil {
+			t.Errorf("context cancelled after the turn already ended: %v", ctx.Err())
+		}
+	})
 }
 
 // TestShouldTripCancelGrace_RefusesANewerTurn is the generation guard, tested at
@@ -66,7 +77,7 @@ func TestShouldTripCancelGrace_RefusesANewerTurn(t *testing.T) {
 	if !sb.tryAcquireForPrompt() {
 		t.Fatalf("bridge must be acquirable again after release")
 	}
-	_, nextCancel := context.WithCancel(context.Background())
+	_, nextCancel := context.WithCancel(t.Context())
 	defer nextCancel()
 	nextGen := sb.BeginPromptCall(nextCancel)
 	if nextGen == gen {
@@ -112,12 +123,17 @@ func TestArmCancelGrace_RefusesWhenNoPromptInFlight(t *testing.T) {
 // TestEndPromptCall_DisarmsTheTimer covers the prompt handler's own defer path,
 // which forgets the cancel func without changing the bridge state.
 func TestEndPromptCall_DisarmsTheTimer(t *testing.T) {
-	sb, ctx, gen := newPromptingBridge(t)
-	sb.ArmCancelGrace(gen, testGrace)
-	sb.EndPromptCall()
+	// Same negative-timer assertion as above; see that comment for why the
+	// bubble is what makes it a proof rather than an observation.
+	synctest.Test(t, func(t *testing.T) {
+		sb, ctx, gen := newPromptingBridge(t)
+		sb.ArmCancelGrace(gen, testGrace)
+		sb.EndPromptCall()
 
-	time.Sleep(4 * testGrace)
-	if ctx.Err() != nil {
-		t.Errorf("context cancelled after EndPromptCall disarmed the budget: %v", ctx.Err())
-	}
+		time.Sleep(4 * testGrace)
+		synctest.Wait()
+		if ctx.Err() != nil {
+			t.Errorf("context cancelled after EndPromptCall disarmed the budget: %v", ctx.Err())
+		}
+	})
 }

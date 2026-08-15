@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -71,7 +71,7 @@ func newHubWithMCPConfig(cfg api.MCPConfig) *Hub {
 
 func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "github", nil, nil, nil)
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {
 		t.Fatalf("snapshot = %+v, want 1 server", snap)
@@ -83,8 +83,8 @@ func TestMCPRegistry_RecordConnectedPopulatesSnapshot(t *testing.T) {
 
 func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "linear", nil, nil, nil)
-	h.mcpRegistry.recordOAuth(context.Background(), "linear", "https://oauth.example/auth")
+	h.mcpRegistry.recordConnected(t.Context(), "linear", nil, nil, nil)
+	h.mcpRegistry.recordOAuth(t.Context(), "linear", "https://oauth.example/auth")
 
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {
@@ -101,7 +101,7 @@ func TestMCPRegistry_RecordOAuthOverridesState(t *testing.T) {
 func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	_, before := h.sse.hub.Bounds()
-	h.mcpRegistry.recordInitFailure(context.Background(), "broken", "connection refused")
+	h.mcpRegistry.recordInitFailure(t.Context(), "broken", "connection refused")
 
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 || snap[0].Name != "broken" {
@@ -128,11 +128,11 @@ func TestMCPRegistry_RecordInitFailureRecordsError(t *testing.T) {
 
 func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "b", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "a", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "b", nil, nil, nil)
 
 	_, before := h.sse.hub.Bounds()
-	h.mcpRegistry.clearAll(context.Background())
+	h.mcpRegistry.clearAll(t.Context())
 
 	if len(h.mcpRegistry.Snapshot()) != 0 {
 		t.Error("clearAll left entries in registry")
@@ -152,7 +152,7 @@ func TestMCPRegistry_ClearAllEmitsDisconnect(t *testing.T) {
 func TestMCPRegistry_ClearAllOnEmptyNoEvents(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	_, before := h.sse.hub.Bounds()
-	h.mcpRegistry.clearAll(context.Background())
+	h.mcpRegistry.clearAll(t.Context())
 	if _, head := h.sse.hub.Bounds(); head != before {
 		t.Error("clearAll on empty registry emitted events")
 	}
@@ -168,9 +168,9 @@ func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 	cfg.configured["another-disabled"] = struct{}{}
 	cfg.all["another-disabled"] = struct{}{}
 	h := newHubWithMCPConfig(cfg)
-	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "disabled-server", nil, nil, nil)
-	h.mcpRegistry.recordInitFailure(context.Background(), "another-disabled", "x")
+	h.mcpRegistry.recordConnected(t.Context(), "github", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "disabled-server", nil, nil, nil)
+	h.mcpRegistry.recordInitFailure(t.Context(), "another-disabled", "x")
 
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 || snap[0].Name != "github" {
@@ -202,7 +202,7 @@ func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 				cfg.all["theirs"] = struct{}{}
 			}
 			h := newHubWithMCPConfig(cfg)
-			h.mcpRegistry.recordConnected(context.Background(), "theirs", []string{"do_thing"}, nil, nil)
+			h.mcpRegistry.recordConnected(t.Context(), "theirs", []string{"do_thing"}, nil, nil)
 
 			snap := h.mcpRegistry.Snapshot()
 			if len(snap) != 1 {
@@ -223,7 +223,7 @@ func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 // or the UI would withhold its edit and delete affordances.
 func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
 	h := newHubWithMCPConfig(enabledConfig("github"))
-	ctx := context.Background()
+	ctx := t.Context()
 	h.mcpRegistry.recordConnected(ctx, "github", nil, nil, nil)
 	h.mcpRegistry.recordOAuth(ctx, "github", "https://oauth.example/auth")
 	if got := h.mcpRegistry.Snapshot()[0].Origin; got != api.OriginUser {
@@ -275,7 +275,7 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			h := newHubWithMCPConfig(tc.cfg())
-			h.mcpRegistry.recordDisabled(context.Background(), "mine")
+			h.mcpRegistry.recordDisabled(t.Context(), "mine")
 
 			snap := h.mcpRegistry.Snapshot()
 			if !tc.wantRow {
@@ -304,8 +304,8 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 	cfg := enabledConfig("mine")
 	cfg.all["theirs"] = struct{}{}
 	h := newHubWithMCPConfig(cfg)
-	h.mcpRegistry.recordConnected(context.Background(), "mine", nil, nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "theirs", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "mine", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "theirs", nil, nil, nil)
 
 	rec := httptest.NewRecorder()
 	h.mcpRegistry.handleStatus(rec, httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil))
@@ -328,15 +328,15 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 
 func TestMCPRegistry_SnapshotIsStableAlphabetically(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "zulu", nil, nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "alpha", nil, nil, nil)
-	h.mcpRegistry.recordConnected(context.Background(), "mike", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "zulu", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "alpha", nil, nil, nil)
+	h.mcpRegistry.recordConnected(t.Context(), "mike", nil, nil, nil)
 
 	names := make([]string, 0)
 	for _, s := range h.mcpRegistry.Snapshot() {
 		names = append(names, s.Name)
 	}
-	if !sort.StringsAreSorted(names) {
+	if !slices.IsSorted(names) {
 		t.Errorf("snapshot not sorted: %v", names)
 	}
 }
@@ -352,10 +352,10 @@ func TestMCPRegistry_OnChangeFiresOutsideLock(t *testing.T) {
 		mu.Unlock()
 		done <- struct{}{}
 	})
-	h.mcpRegistry.recordConnected(context.Background(), "a", nil, nil, nil)
-	h.mcpRegistry.recordOAuth(context.Background(), "a", "url")
-	h.mcpRegistry.recordInitFailure(context.Background(), "a", "err")
-	h.mcpRegistry.clearAll(context.Background())
+	h.mcpRegistry.recordConnected(t.Context(), "a", nil, nil, nil)
+	h.mcpRegistry.recordOAuth(t.Context(), "a", "url")
+	h.mcpRegistry.recordInitFailure(t.Context(), "a", "err")
+	h.mcpRegistry.clearAll(t.Context())
 
 	// With debounced onChange, rapid-fire mutations coalesce into
 	// fewer callbacks. Wait for at least one callback to confirm
@@ -387,8 +387,8 @@ drained:
 
 func TestMCPRegistry_HandleStatusReturnsJSON(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	h.mcpRegistry.recordConnected(context.Background(), "github", nil, nil, nil)
-	h.mcpRegistry.recordInitFailure(context.Background(), "broken", "no auth")
+	h.mcpRegistry.recordConnected(t.Context(), "github", nil, nil, nil)
+	h.mcpRegistry.recordInitFailure(t.Context(), "broken", "no auth")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/mcp/status", nil)
 	rec := httptest.NewRecorder()
@@ -426,7 +426,7 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 		b.Run(fmt.Sprintf("servers=%d", n), func(b *testing.B) {
 			h := newHubWithMCPConfig(nil)
 			for i := range n {
-				h.mcpRegistry.recordConnected(context.Background(), fmt.Sprintf("server-%02d", i), nil, nil, nil)
+				h.mcpRegistry.recordConnected(b.Context(), fmt.Sprintf("server-%02d", i), nil, nil, nil)
 			}
 			b.ResetTimer()
 			for range b.N {
@@ -442,7 +442,7 @@ func TestRealMCPConfig_Contract(t *testing.T) {
 	MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
 		t.Helper()
 		dir := t.TempDir()
-		s, err := mcp.New(context.Background(), dir, nil, mcp.WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
+		s, err := mcp.New(t.Context(), dir, nil, mcp.WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
 		if err != nil {
 			t.Fatalf("mcp.New: %v", err)
 		}

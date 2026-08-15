@@ -1,7 +1,6 @@
 package ignore
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,7 +52,7 @@ func TestIgnoreMatcher_NoSettingsFileIsNoOp(t *testing.T) {
 	work := t.TempDir()
 	m := NewMatcher(dir, work)
 
-	if m.Matches(context.Background(), "any/path", false) {
+	if m.Matches(t.Context(), "any/path", false) {
 		t.Error("Matches on empty setup = true, want false (no-op matcher)")
 	}
 }
@@ -79,13 +78,13 @@ func TestIgnoreMatcher_FreshInstallDefaultFiltersGitignored(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if !m.Matches(context.Background(), ".env.dec", false) {
+	if !m.Matches(t.Context(), ".env.dec", false) {
 		t.Error("fresh install: .env.dec should be filtered by the default .gitignore (agent read filter off?)")
 	}
-	if !m.Matches(context.Background(), "secrets/api.key", false) {
+	if !m.Matches(t.Context(), "secrets/api.key", false) {
 		t.Error("fresh install: files under a gitignored secrets/ dir should be filtered")
 	}
-	if m.Matches(context.Background(), "src/main.go", false) {
+	if m.Matches(t.Context(), "src/main.go", false) {
 		t.Error("fresh install: a non-ignored path must still be readable")
 	}
 }
@@ -101,7 +100,7 @@ func TestIgnoreMatcher_FreshInstallDefaultHonorsKiroignore(t *testing.T) {
 	writeIgnoreFile(t, filepath.Join(work, ".kiroignore"), "*.secret\n")
 
 	m := NewMatcher(dir, work)
-	if !m.Matches(context.Background(), "creds.secret", false) {
+	if !m.Matches(t.Context(), "creds.secret", false) {
 		t.Error("fresh install: *.secret from the default .kiroignore should be filtered")
 	}
 }
@@ -112,7 +111,7 @@ func TestIgnoreMatcher_EmptyListIsNoOp(t *testing.T) {
 	writeIgnoreSettings(t, dir, nil)
 	m := NewMatcher(dir, work)
 
-	if m.Matches(context.Background(), ".env.dec", false) {
+	if m.Matches(t.Context(), ".env.dec", false) {
 		t.Error("Matches with empty list = true, want false")
 	}
 }
@@ -139,7 +138,7 @@ func TestIgnoreMatcher_BasenameRuleMatchesAnywhere(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := m.Matches(context.Background(), tt.path, false); got != tt.want {
+			if got := m.Matches(t.Context(), tt.path, false); got != tt.want {
 				t.Errorf("Matches(%q) = %v, want %v", tt.path, got, tt.want)
 			}
 		})
@@ -155,10 +154,10 @@ func TestIgnoreMatcher_AnchoredRuleOnlyAtRoot(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if !m.Matches(context.Background(), "node", false) {
+	if !m.Matches(t.Context(), "node", false) {
 		t.Error(`anchored "/node" should match root "node"`)
 	}
-	if m.Matches(context.Background(), "src/node", false) {
+	if m.Matches(t.Context(), "src/node", false) {
 		t.Error(`anchored "/node" should NOT match "src/node"`)
 	}
 }
@@ -187,7 +186,7 @@ func TestIgnoreMatcher_AnchoredDirCoversDescendants(t *testing.T) {
 		{"other/secrets.md", false}, // anchored — no float
 	}
 	for _, tt := range cases {
-		if got := m.Matches(context.Background(), tt.path, false); got != tt.want {
+		if got := m.Matches(t.Context(), tt.path, false); got != tt.want {
 			t.Errorf("Matches(%q) = %v, want %v (anchored dir covers descendants)", tt.path, got, tt.want)
 		}
 	}
@@ -202,13 +201,13 @@ func TestIgnoreMatcher_DirOnlyRuleSkipsFiles(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if m.Matches(context.Background(), "build", false) {
+	if m.Matches(t.Context(), "build", false) {
 		t.Error(`dir-only "build/" should NOT match file "build"`)
 	}
-	if !m.Matches(context.Background(), "build", true) {
+	if !m.Matches(t.Context(), "build", true) {
 		t.Error(`dir-only "build/" SHOULD match directory "build"`)
 	}
-	if !m.Matches(context.Background(), "src/build", true) {
+	if !m.Matches(t.Context(), "src/build", true) {
 		t.Error(`dir-only "build/" should match nested directory`)
 	}
 }
@@ -222,10 +221,10 @@ func TestIgnoreMatcher_NegationResurrects(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if !m.Matches(context.Background(), ".env.dec", false) {
+	if !m.Matches(t.Context(), ".env.dec", false) {
 		t.Error(`"*.dec" should match ".env.dec"`)
 	}
-	if m.Matches(context.Background(), ".env.example.dec", false) {
+	if m.Matches(t.Context(), ".env.example.dec", false) {
 		t.Error(`"!.env.example.dec" should resurrect ".env.example.dec"`)
 	}
 }
@@ -240,7 +239,7 @@ func TestIgnoreMatcher_NegationOrderMatters(t *testing.T) {
 	writeIgnoreSettings(t, dir, []string{".gitignore"})
 
 	m := NewMatcher(dir, work)
-	if !m.Matches(context.Background(), ".env", false) {
+	if !m.Matches(t.Context(), ".env", false) {
 		t.Error(`"*.env" after "!/.env.example" should still match ".env"`)
 	}
 }
@@ -256,7 +255,7 @@ func TestIgnoreMatcher_LeadingDotSlashAndSlashStripped(t *testing.T) {
 	m := NewMatcher(dir, work)
 
 	for _, p := range []string{"secret.key", "./secret.key", "/secret.key"} {
-		if !m.Matches(context.Background(), p, false) {
+		if !m.Matches(t.Context(), p, false) {
 			t.Errorf("Matches(%q) = false, want true (leading-slash normalization)", p)
 		}
 	}
@@ -271,10 +270,10 @@ func TestIgnoreMatcher_CommentsAndBlankLinesIgnored(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if !m.Matches(context.Background(), "secret", false) {
+	if !m.Matches(t.Context(), "secret", false) {
 		t.Error(`rule after blanks/comments should still apply`)
 	}
-	if m.Matches(context.Background(), "comment", false) {
+	if m.Matches(t.Context(), "comment", false) {
 		t.Error(`"# comment" content should not become a rule`)
 	}
 }
@@ -287,7 +286,7 @@ func TestIgnoreMatcher_MissingIgnoreFileSilentlySkipped(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if m.Matches(context.Background(), "anything", false) {
+	if m.Matches(t.Context(), "anything", false) {
 		t.Error("missing ignore file should produce a no-op matcher, not crash or match-all")
 	}
 }
@@ -312,7 +311,7 @@ func TestIgnoreMatcher_OversizedFileSkipped(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if m.Matches(context.Background(), "literal", false) {
+	if m.Matches(t.Context(), "literal", false) {
 		t.Error("oversized ignore file should be skipped entirely; 'literal' must not be blocked")
 	}
 }
@@ -329,10 +328,10 @@ func TestIgnoreMatcher_AbsoluteAndRelativePathsBothResolved(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if !m.Matches(context.Background(), "relfile", false) {
+	if !m.Matches(t.Context(), "relfile", false) {
 		t.Error("relative ignore entry should resolve against workDir")
 	}
-	if !m.Matches(context.Background(), "absfile", false) {
+	if !m.Matches(t.Context(), "absfile", false) {
 		t.Error("absolute ignore entry should be honoured as-is")
 	}
 }
@@ -347,10 +346,10 @@ func TestIgnoreMatcher_ReloadOnMTimeChange(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if !m.Matches(context.Background(), "first", false) {
+	if !m.Matches(t.Context(), "first", false) {
 		t.Fatal("initial rule should match")
 	}
-	if m.Matches(context.Background(), "second", false) {
+	if m.Matches(t.Context(), "second", false) {
 		t.Fatal("second rule should not yet match")
 	}
 
@@ -361,10 +360,10 @@ func TestIgnoreMatcher_ReloadOnMTimeChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !m.Matches(context.Background(), "second", false) {
+	if !m.Matches(t.Context(), "second", false) {
 		t.Error("matcher did not pick up the new rule after mtime bump")
 	}
-	if m.Matches(context.Background(), "first", false) {
+	if m.Matches(t.Context(), "first", false) {
 		t.Error("old rule should be gone after reload")
 	}
 }
@@ -378,10 +377,10 @@ func TestIgnoreMatcher_ReloadOnSettingsFileListChange(t *testing.T) {
 	writeIgnoreSettings(t, dir, []string{"a.ignore"})
 
 	m := NewMatcher(dir, work)
-	if !m.Matches(context.Background(), "from-a", false) {
+	if !m.Matches(t.Context(), "from-a", false) {
 		t.Fatal("baseline match failed")
 	}
-	if m.Matches(context.Background(), "from-b", false) {
+	if m.Matches(t.Context(), "from-b", false) {
 		t.Fatal("not yet added")
 	}
 
@@ -389,10 +388,10 @@ func TestIgnoreMatcher_ReloadOnSettingsFileListChange(t *testing.T) {
 	writeIgnoreFile(t, second, "from-b\n")
 	writeIgnoreSettings(t, dir, []string{"a.ignore", "b.ignore"})
 
-	if !m.Matches(context.Background(), "from-b", false) {
+	if !m.Matches(t.Context(), "from-b", false) {
 		t.Error("new file added to list should take effect on next Matches")
 	}
-	if !m.Matches(context.Background(), "from-a", false) {
+	if !m.Matches(t.Context(), "from-a", false) {
 		t.Error("pre-existing rules should survive list expansion")
 	}
 }
@@ -405,7 +404,7 @@ func TestIgnoreMatcher_InvalidSettingsSilentlyNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewMatcher(dir, work)
-	if m.Matches(context.Background(), "x", false) {
+	if m.Matches(t.Context(), "x", false) {
 		t.Error("corrupt settings should degrade to no-op matcher, not match-all")
 	}
 }
@@ -418,7 +417,7 @@ func TestIgnoreMatcher_WrongTypeForListSilentlyNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewMatcher(dir, work)
-	if m.Matches(context.Background(), "x", false) {
+	if m.Matches(t.Context(), "x", false) {
 		t.Error("wrong-type setting should degrade to no-op matcher")
 	}
 }
@@ -434,7 +433,7 @@ func TestIgnoreMatcher_EmptyStringsInListDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewMatcher(dir, work)
-	if m.Matches(context.Background(), "x", false) {
+	if m.Matches(t.Context(), "x", false) {
 		t.Error("empty entries should not produce fallback match-all behaviour")
 	}
 }
@@ -468,7 +467,7 @@ func TestIgnoreMatcher_DirOnlyAnchoredCoversDescendants(t *testing.T) {
 		{"other/file", false, false},           // unrelated file
 	}
 	for _, tt := range cases {
-		if got := m.Matches(context.Background(), tt.path, tt.isDir); got != tt.want {
+		if got := m.Matches(t.Context(), tt.path, tt.isDir); got != tt.want {
 			t.Errorf("Matches(%q, isDir=%v) = %v, want %v", tt.path, tt.isDir, got, tt.want)
 		}
 	}
@@ -498,7 +497,7 @@ func TestIgnoreMatcher_DirOnlyBasenameCoversDescendants(t *testing.T) {
 		{"source/README.md", false, false},
 	}
 	for _, tt := range cases {
-		if got := m.Matches(context.Background(), tt.path, tt.isDir); got != tt.want {
+		if got := m.Matches(t.Context(), tt.path, tt.isDir); got != tt.want {
 			t.Errorf("Matches(%q, isDir=%v) = %v, want %v", tt.path, tt.isDir, got, tt.want)
 		}
 	}
@@ -517,10 +516,10 @@ func TestIgnoreMatcher_DirOnlyRespectsNegationOrder(t *testing.T) {
 
 	m := NewMatcher(dir, work)
 
-	if !m.Matches(context.Background(), "private/api.key", false) {
+	if !m.Matches(t.Context(), "private/api.key", false) {
 		t.Error("private/api.key should remain ignored under dir-only block")
 	}
-	if m.Matches(context.Background(), "private/README.md", false) {
+	if m.Matches(t.Context(), "private/README.md", false) {
 		t.Error("!/private/README.md should resurrect private/README.md")
 	}
 }
@@ -544,14 +543,14 @@ func TestIgnoreMatcher_MalformedGlobPatternDoesNotCrash(t *testing.T) {
 	// Malformed patterns must not match their literals nor
 	// blanket-match — filepath.Match returns ErrBadPattern, which
 	// segMatch folds into no-match.
-	if m.Matches(context.Background(), "[unclosed", false) {
+	if m.Matches(t.Context(), "[unclosed", false) {
 		t.Error("Matches(\"[unclosed\") = true; malformed pattern must not match literally")
 	}
-	if m.Matches(context.Background(), "whatever", false) {
+	if m.Matches(t.Context(), "whatever", false) {
 		t.Error("Matches(\"whatever\") = true; malformed pattern must not blanket-match")
 	}
 	// Well-formed patterns after the bad one must still apply.
-	if !m.Matches(context.Background(), "normal", false) {
+	if !m.Matches(t.Context(), "normal", false) {
 		t.Error("Matches(\"normal\") = false; valid rule after malformed one should still apply")
 	}
 }
@@ -572,7 +571,7 @@ func TestIgnoreMatcher_DeletedIgnoreFileTriggersReload(t *testing.T) {
 	writeIgnoreSettings(t, dir, []string{".gitignore"})
 	m := NewMatcher(dir, work)
 
-	if !m.Matches(context.Background(), "ignored", false) {
+	if !m.Matches(t.Context(), "ignored", false) {
 		t.Fatal("baseline load failed — ignored should match")
 	}
 
@@ -582,7 +581,7 @@ func TestIgnoreMatcher_DeletedIgnoreFileTriggersReload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if m.Matches(context.Background(), "ignored", false) {
+	if m.Matches(t.Context(), "ignored", false) {
 		t.Error("Matches(ignored) = true after ignore file deleted; matcher did not reload")
 	}
 }
@@ -608,7 +607,7 @@ func TestIgnoreMatcher_ExactCapFileIsParsed(t *testing.T) {
 	writeIgnoreSettings(t, configDir, []string{ignorePath})
 
 	m := NewMatcher(configDir, workDir)
-	if !m.Matches(context.Background(), "secret", false) {
+	if !m.Matches(t.Context(), "secret", false) {
 		t.Errorf("Matches(\"secret\") with exactly-cap ignore file = false, want true")
 	}
 }
@@ -628,7 +627,7 @@ func TestIgnoreMatcher_ConfigDeletedDoesNotPanic(t *testing.T) {
 	writeIgnoreSettings(t, configDir, []string{ignorePath})
 
 	m := NewMatcher(configDir, workDir)
-	ctx := context.Background()
+	ctx := t.Context()
 	// First refresh caches a non-zero settings mtime.
 	if !m.Matches(ctx, "secret", false) {
 		t.Fatalf("setup: first Matches(\"secret\") = false, want true")
@@ -678,7 +677,7 @@ func TestIgnoreMatcher_ConfigSizeChangeBypassesFastPath(t *testing.T) {
 	size1 := info1.Size()
 
 	m := NewMatcher(configDir, workDir)
-	ctx := context.Background()
+	ctx := t.Context()
 	if !m.Matches(ctx, "foo", false) {
 		t.Fatalf("setup: Matches(\"foo\") with v1 = false, want true")
 	}
@@ -750,12 +749,12 @@ func BenchmarkIgnoreMatcherMatches(b *testing.B) {
 				writeIgnoreSettingsB(b, dir, []string{".gitignore"})
 				m := NewMatcher(dir, work)
 				// Prime the cache so we benchmark rule evaluation, not I/O.
-				m.Matches(context.Background(), pVal, false)
+				m.Matches(b.Context(), pVal, false)
 
 				b.ReportAllocs()
 				b.ResetTimer()
 				for range b.N {
-					m.Matches(context.Background(), pVal, false)
+					m.Matches(b.Context(), pVal, false)
 				}
 			})
 		}

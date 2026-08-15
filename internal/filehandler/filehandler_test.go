@@ -12,7 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -492,7 +492,7 @@ func TestListFiles_Root_ListsMounts(t *testing.T) {
 		t.Error("synthetic root must not be writable")
 	}
 	wantNames := []string{strings.TrimPrefix(dirA, "/"), strings.TrimPrefix(dirB, "/")}
-	sort.Strings(wantNames)
+	slices.Sort(wantNames)
 	if len(resp.Files) != 2 {
 		t.Fatalf("files = %+v, want exactly the 2 mounts", resp.Files)
 	}
@@ -1621,7 +1621,7 @@ func TestCtxReader_Read(t *testing.T) {
 	cancelledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	expiredCtx, expiredCancel := context.WithDeadline(context.Background(), time.Now().Add(-1*time.Second))
+	expiredCtx, expiredCancel := context.WithDeadline(t.Context(), time.Now().Add(-1*time.Second))
 	defer expiredCancel()
 
 	sentinel := errors.New("inner io failure")
@@ -1649,14 +1649,14 @@ func TestCtxReader_Read(t *testing.T) {
 		},
 		{
 			name:    "live_context_forwards_read",
-			ctx:     context.Background(),
+			ctx:     t.Context(),
 			inner:   strings.NewReader("hello"),
 			wantN:   5,
 			wantErr: nil,
 		},
 		{
 			name:    "live_context_forwards_inner_error",
-			ctx:     context.Background(),
+			ctx:     t.Context(),
 			inner:   &errReader{err: sentinel},
 			wantN:   0,
 			wantErr: sentinel,
@@ -2114,7 +2114,7 @@ func (s *discardStatusRecorder) Write(p []byte) (int, error) {
 func TestAction_Mkdir_InsideMount(t *testing.T) {
 	h, dir, _ := testDir(t)
 	l := locAt(h, filepath.Join(dir, "a", "b"))
-	err := actionMkdir(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionMkdir(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err != nil {
 		t.Fatalf("actionMkdir(%q) = %v, want nil (paths inside a mount must be creatable)", l.abs, err)
 	}
@@ -2131,7 +2131,7 @@ func TestAction_Mkdir_PropagatesError(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "afile", "sub")) // "afile" is a file -> MkdirAll ENOTDIR
-	err := actionMkdir(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionMkdir(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionMkdir(%q) = nil, want non-nil (MkdirAll under a regular file must error)", l.abs)
 	}
@@ -2148,7 +2148,7 @@ func TestAction_Touch_InsideMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "x", "y"))
-	err := actionTouch(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionTouch(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err != nil {
 		t.Fatalf("actionTouch(%q) = %v, want nil (paths inside a mount must be touchable)", l.abs, err)
 	}
@@ -2165,7 +2165,7 @@ func TestAction_Touch_PropagatesOpenError(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "pfile", "child")) // parent is a file -> OpenFile ENOTDIR
-	err := actionTouch(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionTouch(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionTouch(%q) = nil, want non-nil (OpenFile under a regular file must error)", l.abs)
 	}
@@ -2182,7 +2182,7 @@ func TestAction_Delete_InsideMount(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "p", "q"))
-	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionDelete(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err != nil {
 		t.Fatalf("actionDelete(%q) = %v, want nil (paths inside a mount must be deletable)", l.abs, err)
 	}
@@ -2199,7 +2199,7 @@ func TestAction_Delete_PropagatesRemoveError(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := locAt(h, filepath.Join(dir, "escape", "leaf")) // traverses an escaping symlink
-	err := actionDelete(context.Background(), httptest.NewRecorder(), fileAction{}, l, h)
+	err := actionDelete(t.Context(), httptest.NewRecorder(), fileAction{}, l, h)
 	if err == nil {
 		t.Fatalf("actionDelete(%q) = nil, want non-nil (RemoveAll through an escaping symlink must error)", l.abs)
 	}
@@ -2213,7 +2213,7 @@ func TestAction_Delete_PropagatesRemoveError(t *testing.T) {
 func TestAction_Rename_PropagatesError(t *testing.T) {
 	h, dir, _ := testDir(t)
 	l := locAt(h, filepath.Join(dir, "ghost.txt")) // source does not exist
-	err := actionRename(context.Background(), httptest.NewRecorder(),
+	err := actionRename(t.Context(), httptest.NewRecorder(),
 		fileAction{Name: "renamed.txt"}, l, h)
 	if err == nil {
 		t.Fatalf("actionRename(%q -> renamed.txt) = nil, want non-nil (renaming a missing source must error)", l.abs)
@@ -2228,7 +2228,7 @@ func TestAction_Rename_PropagatesError(t *testing.T) {
 func TestAction_Move_PropagatesError(t *testing.T) {
 	h, dir, _ := testDir(t)
 	l := locAt(h, filepath.Join(dir, "ghost.txt")) // source does not exist
-	err := actionMove(context.Background(), httptest.NewRecorder(),
+	err := actionMove(t.Context(), httptest.NewRecorder(),
 		fileAction{Dest: filepath.Join(dir, "moved.txt")}, l, h)
 	if err == nil {
 		t.Fatalf("actionMove(%q) = nil, want non-nil (moving a missing source must error)", l.abs)
@@ -2251,7 +2251,7 @@ func TestStreamCopy_AtExactCap(t *testing.T) {
 	srcLoc := locAt(h, filepath.Join(dir, "in"))
 	destLoc := locAt(h, filepath.Join(dir, "out"))
 
-	n, err := streamCopy(context.Background(), srcLoc, destLoc, int64(len(src)))
+	n, err := streamCopy(t.Context(), srcLoc, destLoc, int64(len(src)))
 	if err != nil {
 		t.Fatalf("streamCopy(size == cap) error = %v, want nil (a file exactly at the cap is not oversize)", err)
 	}
@@ -2280,7 +2280,7 @@ func TestStreamCopy_PropagatesRenameError(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "destdir", "keep"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	n, err := streamCopy(context.Background(),
+	n, err := streamCopy(t.Context(),
 		locAt(h, filepath.Join(dir, "src")), locAt(h, filepath.Join(dir, "destdir")), maxCopySize)
 	if err == nil {
 		t.Fatalf("streamCopy(dest is a non-empty dir) = (n=%d, nil), want non-nil error (rename over a directory must fail)", n)
@@ -2306,7 +2306,7 @@ func TestListEntries_KeepsDotfiles_HidesSensitive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := listEntries(context.Background(), entries, tmp)
+	got := listEntries(t.Context(), entries, tmp)
 	names := map[string]bool{}
 	for _, f := range got {
 		names[f.Name] = true
@@ -2382,7 +2382,7 @@ func TestWriteOneUpload_PropagatesError(t *testing.T) {
 	}
 	h, dir, _ := testDir(t)
 	dest := locAt(h, filepath.Join(dir, "missing-dir", "x.txt")) // parent does not exist
-	n, err := writeOneUpload(context.Background(), dest, fhs[0])
+	n, err := writeOneUpload(t.Context(), dest, fhs[0])
 	if err == nil {
 		t.Fatalf("writeOneUpload(dest with missing parent) = (n=%d, nil), want non-nil error", n)
 	}

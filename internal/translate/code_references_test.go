@@ -1,7 +1,6 @@
 package translate
 
 import (
-	"context"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -64,7 +63,7 @@ func TestHandleCodeReferences_HappyPath(t *testing.T) {
 	chatID := api.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
-	tr.HandleCodeReferences(context.Background(), chatID, codeRefMsg(t, "", []map[string]any{
+	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
 		{"licenseName": "MIT", "repository": "github.com/foo/bar", "url": "https://github.com/foo/bar"},
 	}))
 
@@ -92,7 +91,7 @@ func TestHandleCodeReferences_DropsEmptyLicense(t *testing.T) {
 	chatID := api.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
-	tr.HandleCodeReferences(context.Background(), chatID, codeRefMsg(t, "", []map[string]any{
+	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
 		{"licenseName": "", "repository": "github.com/x/y", "url": "https://github.com/x/y"},
 	}))
 
@@ -113,7 +112,7 @@ func TestHandleCodeReferences_NoTurnInFlight(t *testing.T) {
 	chatID := api.ChatID("c1")
 	// No startedBuf: buffer is absent / not started.
 
-	tr.HandleCodeReferences(context.Background(), chatID, codeRefMsg(t, "", []map[string]any{
+	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", []map[string]any{
 		{"licenseName": "Apache-2.0", "repository": "github.com/a/b", "url": "https://github.com/a/b"},
 	}))
 
@@ -137,7 +136,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 		chatID := api.ChatID("c1")
 		startedBuf(deps, chatID, "m-1")
 
-		tr.HandleCodeReferences(context.Background(), chatID, codeRefMsg(t, "sess-sub", []map[string]any{
+		tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "sess-sub", []map[string]any{
 			{"licenseName": "MIT", "repository": "r", "url": "https://example.com"},
 		}))
 		if n := countCodeRefEvents(events); n != 0 {
@@ -151,7 +150,7 @@ func TestHandleCodeReferences_SkipsSubagentFanout(t *testing.T) {
 		chatID := api.ChatID("c1")
 		startedBuf(deps, chatID, "m-1")
 
-		tr.HandleCodeReferences(context.Background(), chatID, codeRefMsg(t, "sess-parent", []map[string]any{
+		tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "sess-parent", []map[string]any{
 			{"licenseName": "MIT", "repository": "r", "url": "https://example.com"},
 		}))
 		if n := countCodeRefEvents(events); n != 1 {
@@ -170,8 +169,8 @@ func TestHandleCodeReferences_DedupAcrossNotifications(t *testing.T) {
 	startedBuf(deps, chatID, "m-1")
 
 	ref := []map[string]any{{"licenseName": "MIT", "repository": "r", "url": "https://example.com"}}
-	tr.HandleCodeReferences(context.Background(), chatID, codeRefMsg(t, "", ref))
-	tr.HandleCodeReferences(context.Background(), chatID, codeRefMsg(t, "", ref))
+	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", ref))
+	tr.HandleCodeReferences(t.Context(), chatID, codeRefMsg(t, "", ref))
 
 	if n := countCodeRefEvents(events); n != 2 {
 		t.Fatalf("broadcast count = %d, want 2 (one per notification)", n)
@@ -197,7 +196,7 @@ func TestHandleCodeReferences_MalformedParamsNoop(t *testing.T) {
 	chatID := api.ChatID("c1")
 	startedBuf(deps, chatID, "m-1")
 
-	tr.HandleCodeReferences(context.Background(), chatID, &api.RPCResponse{Params: []byte("{")})
+	tr.HandleCodeReferences(t.Context(), chatID, &api.RPCResponse{Params: []byte("{")})
 	if n := countCodeRefEvents(events); n != 0 {
 		t.Errorf("broadcast count = %d, want 0 (malformed params)", n)
 	}
