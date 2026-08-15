@@ -337,7 +337,7 @@ export const switchModel = defineAction<
 // 2xx, "queued" on 409 (the prompt drains when the in-flight turn
 // ends), or null (= caller's "failed") on any other error.
 //
-// `error: false`: the send-state.ts blocked-button is the canonical
+// `error: false`: the send-state.ts error-button is the canonical
 // error surface for prompt sends specifically. transport.send
 // reportSendState defaults to true here so setLastError fires; we
 // don't want a toast on top.
@@ -429,7 +429,7 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
     // grace window for the race where the POST died right at accept),
     // the send succeeded: report "sent" instead of a false failure.
     if (r.status === 0 && r.code !== "cancelled" && (await promptEchoed(chatID, messageID))) {
-      clearLastError(); // transport already painted the blocked state
+      clearLastError(); // transport already painted the error state
       return "sent";
     }
     throw new ActionError(r.error ?? "send failed", {
@@ -437,7 +437,7 @@ export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chat
       ...(r.code !== undefined ? { code: r.code } : {}),
     });
   },
-  error: false, // send-state.ts (blocked send button) is the surface
+  error: false, // send-state.ts (the send button's error face) is the surface
 });
 
 // --- the three interactive asks ---

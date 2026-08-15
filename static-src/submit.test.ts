@@ -10,19 +10,30 @@
 //   - a 409 (a turn starting underneath the send) steers rather than buffering
 //   - nothing appears on screen until the server's own frame says so
 //   - attachments degrade to path references, because a steer is a plain string
+//   - a failed send is RECOVERABLE in place: the stale error clears on the next
+//     attempt and the text goes back in the box
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Declared via vi.hoisted so they exist when the hoisted vi.mock factories run.
-const { mockSendPromptTo, mockSteer, mockTakeAttachments, mockAddAttachment, mockTypedCommand } =
-  vi.hoisted(() => ({
-    mockSendPromptTo: vi.fn(),
-    mockSteer: vi.fn(),
-    mockTakeAttachments: vi.fn(() => [] as unknown[]),
-    mockAddAttachment: vi.fn(),
-    mockTypedCommand: vi.fn(() => false),
-  }));
+const {
+  mockSendPromptTo,
+  mockSteer,
+  mockTakeAttachments,
+  mockAddAttachment,
+  mockTypedCommand,
+  mockClearLastError,
+  mockRestorePromptText,
+} = vi.hoisted(() => ({
+  mockSendPromptTo: vi.fn(),
+  mockSteer: vi.fn(),
+  mockTakeAttachments: vi.fn(() => [] as unknown[]),
+  mockAddAttachment: vi.fn(),
+  mockTypedCommand: vi.fn(() => false),
+  mockClearLastError: vi.fn(),
+  mockRestorePromptText: vi.fn(),
+}));
 
 vi.mock("./chat-commands.js", () => ({ sendPromptTo: mockSendPromptTo }));
 vi.mock("./actions/chat.js", () => ({ steerChat: { dispatch: mockSteer } }));
@@ -31,6 +42,10 @@ vi.mock("./attachments.js", () => ({
   takeAttachments: mockTakeAttachments,
   addAttachment: mockAddAttachment,
 }));
+// Both are mocked for the same reason the others are: they own real DOM, and
+// send-state's module-level effect paints the send button on import.
+vi.mock("./send-state.js", () => ({ clearLastError: mockClearLastError }));
+vi.mock("./prompt-input.js", () => ({ restorePromptText: mockRestorePromptText }));
 
 import { submitPrompt } from "./submit.js";
 import { setSessions, setActive, setThinking, steerCount } from "./store.js";
@@ -72,6 +87,13 @@ function steeredText(call = 0): string {
   return (mockSteer.mock.calls[call]?.[0] as { text: string } | undefined)?.text ?? "";
 }
 
+/** The message id the send primitive was called with on the Nth dispatch. */
+function sentMessageID(call = 0): string {
+  return (
+    (mockSendPromptTo.mock.calls[call]?.[2] as { messageID: string } | undefined)?.messageID ?? ""
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockTakeAttachments.mockReturnValue([]);
@@ -89,14 +111,23 @@ describe("submitPrompt on an idle chat", () => {
     expect(mockSteer).not.toHaveBeenCalled();
   });
 
-  it("restores attachments to the input when the send hard-fails", async () => {
+  it("restores the text and the attachments to the input when the send hard-fails", async () => {
     resetStore("c1");
     mockTakeAttachments.mockReturnValue([{ path: "a.ts" }, { path: "b.ts" }]);
     mockSendPromptTo.mockResolvedValue("failed");
 
     expect(await submitPrompt("c1", "hello")).toBe("failed");
+    expect(mockRestorePromptText).toHaveBeenCalledWith("hello");
     expect(mockAddAttachment).toHaveBeenCalledWith("a.ts");
     expect(mockAddAttachment).toHaveBeenCalledWith("b.ts");
+  });
+
+  it("keeps the input untouched when the send succeeds", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("sent");
+
+    await submitPrompt("c1", "hello");
+    expect(mockRestorePromptText).not.toHaveBeenCalled();
   });
 
   it("lets a typed command through without minting a send or a steer", async () => {
@@ -146,14 +177,101 @@ describe("submitPrompt during a turn", () => {
     expect(steerCount("c1")).toBe(0);
   });
 
-  it("reports failure and restores attachments when the steer is refused", async () => {
+  it("reports failure and restores the text and attachments when the steer is refused", async () => {
     resetStore("c1");
     setThinking("c1", true);
     mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
     mockSteer.mockResolvedValue(undefined);
 
     expect(await submitPrompt("c1", "hello")).toBe("failed");
+    expect(mockRestorePromptText).toHaveBeenCalledWith("hello");
     expect(mockAddAttachment).toHaveBeenCalledWith("a.ts");
+  });
+});
+
+// A failure sets a signal nothing on the failure path ever clears (no
+// turn_ended is emitted for a prompt that died at session/prompt), so without
+// this the stale reason decorates every later send in the thread.
+describe("retrying in the same thread", () => {
+  it("clears the previous failure before each new attempt", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "first try");
+    expect(mockClearLastError).toHaveBeenCalledTimes(1);
+
+    mockSendPromptTo.mockResolvedValue("sent");
+    expect(await submitPrompt("c1", "second try")).toBe("sent");
+    expect(mockClearLastError).toHaveBeenCalledTimes(2);
+    // The retry is an ordinary send: no special path, no cancel, no new chat.
+    expect(mockSendPromptTo).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears it for a typed command too, which is also an attempt", async () => {
+    resetStore("c1");
+    mockTypedCommand.mockReturnValue(true);
+
+    await submitPrompt("c1", "/compact");
+    expect(mockClearLastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not clear it when the guards refuse the submit outright", async () => {
+    resetStore("c1");
+    await submitPrompt("", "hello");
+    await submitPrompt("c1", "");
+    expect(mockClearLastError).not.toHaveBeenCalled();
+  });
+
+  // The server persists the user row BEFORE the ACP call and never rolls it
+  // back, so a retry under a fresh id appends a second identical row and hands
+  // KAS a second messageId. This is what keeps one failed prompt to one row.
+  it("retries a failed send under the id that attempt already used", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "same text");
+    const first = sentMessageID(0);
+    expect(first).not.toBe("");
+
+    mockSendPromptTo.mockResolvedValue("sent");
+    await submitPrompt("c1", "same text");
+    expect(sentMessageID(1)).toBe(first);
+  });
+
+  it("keeps the id stable across repeated retries of the same text", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "same text");
+    await submitPrompt("c1", "same text");
+    await submitPrompt("c1", "same text");
+    expect(sentMessageID(1)).toBe(sentMessageID(0));
+    expect(sentMessageID(2)).toBe(sentMessageID(0));
+  });
+
+  it("mints a fresh id once the text is edited — a different message earns a different row", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "first wording");
+    await submitPrompt("c1", "second wording");
+    expect(sentMessageID(1)).not.toBe(sentMessageID(0));
+  });
+
+  it("mints a fresh id for the same text on a different chat", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "same text");
+    await submitPrompt("c2", "same text");
+    expect(sentMessageID(1)).not.toBe(sentMessageID(0));
+  });
+
+  it("forgets the failed id after a send succeeds", async () => {
+    resetStore("c1");
+    mockSendPromptTo.mockResolvedValue("failed");
+    await submitPrompt("c1", "same text");
+    mockSendPromptTo.mockResolvedValue("sent");
+    await submitPrompt("c1", "same text");
+    // A third send of identical text is a NEW message, not a retry of the one
+    // that already landed.
+    await submitPrompt("c1", "same text");
+    expect(sentMessageID(2)).not.toBe(sentMessageID(1));
   });
 });
 

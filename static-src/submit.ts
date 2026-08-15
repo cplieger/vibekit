@@ -33,8 +33,33 @@ import { newMessageID } from "./transport.js";
 import { takeAttachments, addAttachment, type AttachedFile } from "./attachments.js";
 import { isThinking } from "./store.js";
 import { steerChat } from "./actions/chat.js";
+import { clearLastError } from "./send-state.js";
+import { restorePromptText } from "./prompt-input.js";
 
 export type SubmitResult = "sent" | "steered" | "failed";
+
+/** The last failed attempt, so a retry of the SAME text on the SAME chat reuses
+ *  its message id.
+ *
+ *  Required, not tidy: `appendUserMessage` persists the user row BEFORE the ACP
+ *  call and nothing rolls it back (`AbandonInFlightTurn` deliberately keeps the
+ *  partial), so a retry under a fresh id appends a second identical user row and
+ *  hands KAS a second messageId. Reusing the id makes the retry idempotent
+ *  server-side — `hasMessageID` no-ops the append — which is the same reason the
+ *  retired prompt queue re-sent under the id it first used.
+ *
+ *  One slot is enough: there is one composer, so only the most recent failure can
+ *  be sitting in it. A different chat or edited text is a different message and
+ *  earns a fresh id. */
+let lastFailed: { chatID: string; text: string; messageID: string } | undefined;
+
+/** The id to send under: the failed attempt's when this is a retry of it. */
+function messageIDFor(chatID: string, text: string): string {
+  if (lastFailed?.chatID === chatID && lastFailed.text === text) {
+    return lastFailed.messageID;
+  }
+  return newMessageID();
+}
 
 /**
  * User-facing submit. Sends a prompt on an idle chat and a steer on a busy one.
@@ -45,14 +70,21 @@ export type SubmitResult = "sent" | "steered" | "failed";
  * there; this steers instead, because the message belongs in the turn that just
  * started rather than in the one after it.
  *
- * On a hard failure the attachments go back to the input row so the user's files
- * are not silently dropped; the send button surfaces the error through
- * send-state.
+ * On a hard failure the text AND the attachments go back to the input row, so a
+ * retry is one keystroke rather than a retype; the send button surfaces the
+ * error through send-state, and the retry travels under the failed attempt's own
+ * message id so it lands on the user row that attempt already persisted.
  */
 export async function submitPrompt(chatID: string, text: string): Promise<SubmitResult> {
   if (chatID === "" || text === "") {
     return "failed";
   }
+  // A new attempt IS the retry, so the previous failure's report goes now rather
+  // than outliving the thing it described. Without this the error signal is
+  // sticky for the life of the chat (nothing on the failure path emits the
+  // turn_ended that clears it) and every later send inherits a stale tooltip.
+  // Ahead of the typed-command branch on purpose: a command is an attempt too.
+  clearLastError();
   // Typed commands vibekit owns are intercepted BEFORE anything else: before the
   // attachments are taken and before a message id is minted. A command is not a
   // prompt, so it must not consume an attachment or leave a user bubble behind.
@@ -60,7 +92,7 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
     return "sent";
   }
   const attachments = takeAttachments();
-  const messageID = newMessageID();
+  const messageID = messageIDFor(chatID, text);
 
   if (isThinking(chatID)) {
     return steer(chatID, text, messageID, attachments);
@@ -75,7 +107,9 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
     return steer(chatID, text, messageID, attachments);
   }
   if (result === "failed") {
-    restoreAttachmentsToInput(attachments);
+    recordFailure(chatID, text, messageID, attachments);
+  } else {
+    lastFailed = undefined;
   }
   return result === "sent" ? "sent" : "failed";
 }
@@ -98,9 +132,10 @@ async function steer(
     messageID,
   });
   if (ok === undefined) {
-    restoreAttachmentsToInput(attachments);
+    recordFailure(chatID, text, messageID, attachments);
     return "failed";
   }
+  lastFailed = undefined;
   return "steered";
 }
 
@@ -124,7 +159,21 @@ function withAttachmentPaths(text: string, attachments: readonly unknown[]): str
   return lines.length === 0 ? text : `${text}\n\n${lines.join("\n")}`;
 }
 
-function restoreAttachmentsToInput(attachments: readonly unknown[]): void {
+/** Put a failed send back where the user left it and remember its id.
+ *
+ *  The text goes in the box and the attachment pills back on the row, because
+ *  the prompt input clears itself the moment Send fires (it cannot know the
+ *  outcome yet) and without this a throttled turn costs the message as well as
+ *  the turn. The id is kept so the retry lands on the row the failed attempt
+ *  already persisted rather than a second copy of it. */
+function recordFailure(
+  chatID: string,
+  text: string,
+  messageID: string,
+  attachments: readonly unknown[],
+): void {
+  lastFailed = { chatID, text, messageID };
+  restorePromptText(text);
   for (const a of attachments) {
     const path = (a as AttachedFile).path;
     if (typeof path === "string" && path !== "") {

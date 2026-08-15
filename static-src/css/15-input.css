@@ -894,13 +894,15 @@
     }
   }
 
-  &:where(.blocked) {
+  /* Something failed. Yellow so the face differs from Send by more than the
+     glyph, and still CLICKABLE — the tooltip names the failure and the click is
+     the retry, so this must not read as a dead control. */
+  &:where(.failed) {
     background: var(--c-yellow);
 
     /* on-accent, not black: the yellow fill is pastel in dark mode (dark ink)
        and deep in light mode (white ink), same inversion as the accent. */
     color: var(--c-on-accent);
-    cursor: default;
 
     & svg {
       transform: none;
@@ -908,8 +910,7 @@
     }
 
     &:hover {
-      background: var(--c-yellow);
-      filter: none;
+      background: color-mix(in srgb, var(--c-yellow) 85%, var(--c-text-primary));
     }
   }
 
@@ -928,14 +929,6 @@
 
 [id="context-indicator"] {
   anchor-name: --context-indicator;
-}
-
-/* When the input is disabled (queued / blocked), grey it out so the
-   user can see at a glance that typing is locked. */
-[id="prompt-input"]:disabled {
-  background: var(--c-bg-secondary);
-  color: var(--c-text-tertiary);
-  cursor: not-allowed;
 }
 
 .spinner {
