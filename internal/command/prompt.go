@@ -335,9 +335,17 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		// holding two turns' replies. The partial is persisted rather than
 		// dropped -- see AbandonInFlightTurn for why that direction.
 		deps.AbandonInFlightTurn(ctx, cmd.ChatID)
+		// ONE rendering of the cause on both channels. The SSE frame and this
+		// POST's error body land on the same send-button tooltip and the client
+		// paints whichever arrives last, so handing the raw error to RespondErr
+		// meant RPCErrorText's fallback -- the machine triplet
+		// {"errorType":...,"retryErrorType":"THROTTLING",...} -- overwrote the
+		// prose promptFailureReason exists to produce. The chain is already in the
+		// log line above; what travels to the user is the reason.
+		reason := promptFailureReason(err)
 		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID,
-			api.ErrorPayload{Code: api.ErrCodePromptFailed, Message: promptFailureReason(err)}))
-		d.RespondErr(w, http.StatusInternalServerError, err)
+			api.ErrorPayload{Code: api.ErrCodePromptFailed, Message: reason}))
+		d.RespondErr(w, http.StatusInternalServerError, errors.New(reason))
 		return
 	}
 	slog.Info("prompt complete", "chat_id", cmd.ChatID, "elapsed", elapsed)

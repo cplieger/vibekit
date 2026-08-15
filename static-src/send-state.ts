@@ -10,11 +10,17 @@
 // so it auto-tracks every dependency. A single `effect` pushes the value to
 // prompt-input.ts on any change — no manual recompute call anywhere.
 //
-// The state machine replaces the old error-card inline rendering: any reason
-// the user shouldn't submit surfaces as a single blocked state on the send
-// button with a tooltip explaining why.
-//
 // Precedence: disconnected > lastError > streaming > idle.
+//
+// The top two rungs report an `error`, which is an ADVISORY state: the button
+// changes face and explains itself, and the composer stays usable so the next
+// Send is the retry. Neither rung earns a lock. A failed prompt leaves the
+// server idle, so the chat is immediately promptable; and a dropped SSE stream
+// says nothing about the command POST, which travels its own connection and
+// usually still lands (the reconnect replay then catches the transcript up).
+// prompt-input.ts's header carries the full reasoning. The state used to be
+// `blocked` and disabled the textarea, which turned one throttled turn into a
+// dead thread.
 //
 // There used to be a `queued` state between streaming and idle, and its removal
 // is the point rather than a simplification: a prompt typed mid-turn is a STEER
@@ -35,10 +41,10 @@ const lastError = signal("");
 
 const sendState = computed<SendState>(() => {
   if (sseStatus.value === "disconnected") {
-    return { kind: "blocked", reason: "Disconnected from the server. Reconnecting…" };
+    return { kind: "error", reason: "Disconnected from the server. Reconnecting…" };
   }
   if (lastError.value !== "") {
-    return { kind: "blocked", reason: lastError.value };
+    return { kind: "error", reason: lastError.value };
   }
   const session = activeSession.value;
   if (session === undefined) {
@@ -54,12 +60,13 @@ effect(() => {
   setSendState(sendState.value);
 });
 
-// Clear a sticky send-error when the active chat changes. `lastError` is a
-// global block, but it's raised for one chat, and the errors that set it
-// (prompt_failed / bridge_start_failed — see handlers/turn.ts) emit NO
-// turn_ended to clear it. Without this, a failure on one chat would wedge the
-// send button (and the textarea) on EVERY chat until an SSE reconnect;
-// switching chats — or opening a New Chat — is the natural in-app retry.
+// Clear a stale send-error when the active chat changes. `lastError` is global
+// but it is raised for one chat, and the errors that set it (prompt_failed /
+// bridge_start_failed — see handlers/turn.ts) emit no turn_ended to clear it, so
+// without this one chat's failure decorates the button on EVERY chat. It is no
+// longer the escape hatch it once was: the composer stays live through an error
+// now, and submit.ts clears the error on the next attempt, so retrying in place
+// is the retry.
 let lastErrorActiveID = "";
 effect(() => {
   const id = activeSession.value?.id ?? "";

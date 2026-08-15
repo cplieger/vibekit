@@ -56,7 +56,7 @@ beforeEach(() => {
 });
 
 describe("send-state precedence", () => {
-  it("orders disconnected > lastError > streaming > queued > idle", () => {
+  it("orders disconnected > lastError > streaming > idle", () => {
     const id = "c1";
     setSessions([makeSession(id)]);
     setActive(id);
@@ -66,7 +66,7 @@ describe("send-state precedence", () => {
     setSSEStatus("disconnected");
     flushSync();
     expect(lastPushed()).toEqual({
-      kind: "blocked",
+      kind: "error",
       reason: "Disconnected from the server. Reconnecting…",
     });
 
@@ -74,7 +74,7 @@ describe("send-state precedence", () => {
     // lastError) → lastError now wins.
     setSSEStatus("connecting");
     flushSync();
-    expect(lastPushed()).toEqual({ kind: "blocked", reason: "boom" });
+    expect(lastPushed()).toEqual({ kind: "error", reason: "boom" });
 
     // Clear the error → STREAMING wins. Cancelling the turn is what the one
     // control has to guarantee, so nothing below it may take the button.
@@ -88,6 +88,28 @@ describe("send-state precedence", () => {
     setThinking(id, false);
     flushSync();
     expect(lastPushed()).toEqual({ kind: "idle" });
+  });
+
+  // Every failure rung reports `error`, never a state that locks the composer.
+  // A failed prompt leaves the server idle and a dropped SSE stream says nothing
+  // about the command POST, so the next Send is the retry in both cases. The two
+  // rungs used to push `blocked`, which disabled the textarea and turned one
+  // throttled turn into a dead thread.
+  it("reports every failure as the advisory error state", () => {
+    const id = "c1";
+    setSessions([makeSession(id)]);
+    setActive(id);
+    setSSEStatus("connected");
+    flushSync();
+
+    setLastError('{"errorType":"ClientThrottleError","retryErrorType":"THROTTLING"}');
+    flushSync();
+    expect(lastPushed()?.kind).toBe("error");
+
+    clearLastError();
+    setSSEStatus("disconnected");
+    flushSync();
+    expect(lastPushed()?.kind).toBe("error");
   });
 
   // Outstanding steers must NOT reach the button. They are server state about
@@ -140,7 +162,7 @@ describe("send-state disconnected override", () => {
     setSSEStatus("disconnected");
     flushSync();
     expect(lastPushed()).toEqual({
-      kind: "blocked",
+      kind: "error",
       reason: "Disconnected from the server. Reconnecting…",
     });
   });

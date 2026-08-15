@@ -203,9 +203,10 @@ export function updateContextBar(opts: ContextBarUpdate): void {
   contextBar.update(opts);
 }
 
-// The send button / textarea `disabled` state (and the "context nearly full"
-// placeholder) has a single owner: prompt-input.ts, which reads the
-// `sendDisabled` signal from context-ui.ts. status.ts used to write those DOM
-// props too (setInputDisabled), which fought prompt-input's send-state machine
-// on every turn boundary — last-writer-wins left the disable unreliable. That
-// second writer is gone.
+// The send button's face (and the "context nearly full" placeholder) has a
+// single owner: prompt-input.ts, which reads the `contextFull` signal written by
+// context-ui.ts. status.ts used to write the `disabled` DOM props too
+// (setInputDisabled), which fought prompt-input's send-state machine on every
+// turn boundary — last-writer-wins left the state unreliable. That second writer
+// is gone, and so is the disable itself: nothing may lock the composer (see
+// prompt-input.ts's header).

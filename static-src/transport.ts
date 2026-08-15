@@ -5,9 +5,9 @@
 // dedupe retries. The dispatcher receives typed ServerEvents from SSE.
 //
 // Errors surface through send-state.ts (which drives the send-button
-// blocked state + tooltip). There is no inline error card; the button is
-// the single error surface. 409 busy is a handshake, not an error —
-// callers handle it locally by queueing the prompt.
+// error face + tooltip). There is no inline error card; the button is
+// the single error surface, and it stays clickable so the next Send is the
+// retry. 409 busy is a handshake, not an error — callers steer instead.
 //
 // Reconnect model:
 //   - EventSource's native auto-reconnect covers transient drops with
@@ -114,7 +114,7 @@ interface SendOptions {
   /** Timeout in ms. Defaults to 15 minutes. */
   timeoutMs?: number;
   /** When true (default), failures call setLastError() so the prompt
-   *  send button shows a blocked state with the error tooltip. The
+   *  send button shows its error face with the reason as the tooltip. The
    *  action framework adapter (transportAction) passes false because
    *  it owns the error surface via toast — letting both fire produces
    *  duplicate user feedback for one failure. */

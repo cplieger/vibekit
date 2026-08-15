@@ -2,18 +2,34 @@
 // Prompt input: form submit, keydown (Enter, ↑/↓ history), send button,
 // iOS viewport fix.
 //
-// Four send-button states driven by send-state.ts:
-//   idle    → send icon, input enabled, click submits
-//   busy    → stop icon (pulse), input enabled, click cancels the turn
-//   blocked → alert icon, input disabled, tooltip explains why
+// Three send-button states driven by send-state.ts:
+//   idle      → send icon, click submits
+//   streaming → stop icon (pulse), click cancels the turn
+//   error     → alert icon, tooltip names the failure, click RETRIES
 //
-// There is no `queued` state: a prompt typed during a turn is a steer, sent
-// straight away, so nothing waits on the button. Steers awaiting the agent show
-// on the chip row (pending-steers.ts).
+// NOTHING HERE DISABLES THE COMPOSER, and that is the whole point of the
+// module. The retired fourth state (`blocked`) set `disabled` on the button AND
+// the textarea, and every failure routed to it: a 429 throttle, a 5xx, a dead
+// POST, a failed bridge start, a dropped SSE stream. None of those means the
+// user may not send. A failed prompt leaves the server IDLE (CmdPrompt's
+// deferred ReleaseAfterPrompt runs on the error path too), so the chat is
+// promptable again the moment the error arrives — and pressing Send again is
+// exactly what the user wants at that moment. Disabling the textarea also made
+// the pending text unrecoverable and left switching chats as the only way out.
 //
-// The send button IS the error surface. Whenever the user can't submit,
-// the button shows why via icon + tooltip. No inline error cards, no
-// toasts.
+// The rule: the composer stays live unless the process behind it is gone, and
+// no state this module can observe proves that. A dropped SSE stream does not
+// (the stream and the command POST are different connections, the POST usually
+// still lands, and the reconnect replay catches the transcript up). A full
+// context does not (kiro-cli compacts on the next turn). What a real failure
+// earns is the error surface, not a lock.
+//
+// There is no `queued` state either: a prompt typed during a turn is a steer,
+// sent straight away, so nothing waits on the button. Steers awaiting the agent
+// show on the chip row (pending-steers.ts).
+//
+// The send button IS the error surface. Whenever something failed, the button
+// says what via icon + tooltip. No inline error cards, no toasts.
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
@@ -24,40 +40,56 @@ import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
 import { signal, effect } from "@cplieger/reactive";
 
-// Single source of truth for the "context (nearly) full → block the next
-// prompt" state, scoped to the ACTIVE chat (the prompt bar is shared). The
-// VALUE is computed and written by context-ui.ts (refreshContextUI); this
-// module owns the send button/textarea, so it holds the signal and is the sole
-// reader/writer of the resulting `disabled` DOM props + placeholder. Keeping
-// the signal here (rather than importing it from context-ui) keeps the
-// send-state → prompt-input import chain free of the heavy status/context-ui
-// modules, so the transport/actions graph never loads them.
-export const sendDisabled = signal(false);
+// Single source of truth for the "context (nearly) full" state, scoped to the
+// ACTIVE chat (the prompt bar is shared). The VALUE is computed and written by
+// context-ui.ts (refreshContextUI); this module owns the send button/textarea,
+// so it holds the signal and is the sole reader/writer of the resulting
+// placeholder + tooltip. ADVISORY ONLY — it changes what the bar says and never
+// whether a send is allowed, because kiro-cli compacts on the next turn and
+// refusing the send left the user nothing to do about it. Keeping the signal
+// here (rather than importing it from context-ui) keeps the send-state →
+// prompt-input import chain free of the heavy status/context-ui modules, so the
+// transport/actions graph never loads them.
+export const contextFull = signal(false);
 
-/** Placeholder / tooltip shown while `sendDisabled` is true. Module-local:
+/** Placeholder / tooltip shown while `contextFull` is true. Module-local:
  *  only prompt-input.ts renders it. */
-const SEND_DISABLED_REASON =
+const CONTEXT_FULL_REASON =
   "Context nearly full. kiro-cli will compact automatically on the next turn.";
+
+/** Appended to every error tooltip. A fixed suffix rather than a test against
+ *  the reason's wording: deciding whether a message already implies "resend"
+ *  means matching keywords against upstream prose, and one redundant sentence in
+ *  the throttle case is cheaper than a classifier that reads it wrong. */
+const RETRY_HINT = "Send again to retry.";
 
 type Submit = (text: string) => void;
 type Cancel = () => void;
 
 export type SendState =
-  { kind: "idle" } | { kind: "streaming" } | { kind: "blocked"; reason: string };
+  { kind: "idle" } | { kind: "streaming" } | { kind: "error"; reason: string };
 
 type SendKind = SendState["kind"];
 
 const STATE_ICON: Record<SendKind, string> = {
   idle: ICON_SEND,
   streaming: ICON_CANCEL,
-  blocked: ICON_ALERT,
+  error: ICON_ALERT,
 };
 
 const DEFAULT_TOOLTIP: Record<SendKind, string> = {
   idle: "Send",
   streaming: "Cancel this turn",
-  blocked: "Cannot send right now",
+  // Unreachable in practice (send-state only builds an error with a non-empty
+  // reason), present because the record is exhaustive over the union.
+  error: RETRY_HINT,
 };
+
+/** The reason a state carries, "" for the states that carry none. Doubles as
+ *  the dedupe key: two errors differing only in reason are different states. */
+function reasonOf(s: SendState): string {
+  return s.kind === "error" ? s.reason : "";
+}
 
 let initialized = false;
 
@@ -116,39 +148,39 @@ class PromptInputController {
 
   private applyButtonState(): void {
     const k = this.state.kind;
-    // Context-full (the sole `sendDisabled` signal from context-ui.ts) is an
-    // orthogonal disable that only applies while idle — blocked owns its own
-    // disable, and typing-ahead during a streaming turn (which STEERS) must
-    // stay allowed. This is the single place the send-button/textarea
-    // `disabled` + placeholder are written.
-    const ctxFull = k === "idle" && sendDisabled.value;
+    // Context-full is advisory and only says anything while idle: text typed
+    // mid-turn is a STEER (it does not size the next prompt), and after a
+    // failure the error is the more useful thing to report. It writes the
+    // placeholder and the tooltip; it does NOT refuse a send.
+    const ctxFull = k === "idle" && contextFull.value;
+    const reason = reasonOf(this.state);
     $.sendBtn.replaceChildren(iconEl(STATE_ICON[k]));
-    const tooltip = ctxFull
-      ? SEND_DISABLED_REASON
-      : this.state.kind === "blocked"
-        ? this.state.reason
-        : DEFAULT_TOOLTIP[k];
+    const tooltip =
+      reason !== ""
+        ? `${reason} ${RETRY_HINT}`
+        : ctxFull
+          ? CONTEXT_FULL_REASON
+          : DEFAULT_TOOLTIP[k];
     $.sendBtn.setAttribute("data-tooltip", tooltip);
     $.sendBtn.setAttribute("aria-label", tooltip);
     $.sendBtn.classList.toggle("streaming", k === "streaming");
-    $.sendBtn.classList.toggle("blocked", k === "blocked");
+    $.sendBtn.classList.toggle("failed", k === "error");
 
     // ONE button, two meanings: type=button while streaming so a click cannot
     // fire the form — clicking always CANCELS during a turn, while Enter still
     // submits (the keydown dispatches the form event directly). Two gestures,
     // one rule each; the label never decides.
     $.sendBtn.type = k === "streaming" ? "button" : "submit";
-    $.sendBtn.disabled = k === "blocked" || ctxFull;
-    $.promptInput.disabled = k === "blocked" || ctxFull;
-    $.promptInput.placeholder = ctxFull ? SEND_DISABLED_REASON : "Message Kiro...";
+    // Written unconditionally rather than left alone, so nothing that ever set
+    // them can leave the composer stuck off. See the module header for why no
+    // observable state earns a lock.
+    $.sendBtn.disabled = false;
+    $.promptInput.disabled = false;
+    $.promptInput.placeholder = ctxFull ? CONTEXT_FULL_REASON : "Message Kiro...";
   }
 
   setSendState(next: SendState): void {
-    if (
-      this.state.kind === next.kind &&
-      (this.state.kind !== "blocked" ||
-        (next as { kind: "blocked"; reason: string }).reason === this.state.reason)
-    ) {
+    if (this.state.kind === next.kind && reasonOf(this.state) === reasonOf(next)) {
       return;
     }
     this.state = next;
@@ -175,12 +207,12 @@ class PromptInputController {
       }
     });
 
-    // One effect keeps the disable state in sync with the context-full signal
-    // (runs once immediately for the initial paint, then on every change).
-    // setSendState() calls applyButtonState directly for send-state kind
-    // changes (this.state isn't a signal), so both inputs stay in sync.
+    // One effect keeps the tooltip/placeholder in sync with the context-full
+    // signal (runs once immediately for the initial paint, then on every
+    // change). setSendState() calls applyButtonState directly for send-state
+    // kind changes (this.state isn't a signal), so both inputs stay in sync.
     effect(() => {
-      void sendDisabled.value;
+      void contextFull.value;
       this.applyButtonState();
     });
 
@@ -188,10 +220,9 @@ class PromptInputController {
       e.preventDefault();
       // Enter is defined independently of the label, and submit.ts decides what
       // it means: a prompt on an idle chat, a steer into a turn already running.
-      // Only a hard block refuses input.
-      if (this.state.kind === "blocked") {
-        return;
-      }
+      // Nothing here refuses it. A previous send having failed is precisely when
+      // the user wants to press this again, so the retry is the plain path
+      // rather than a special one.
       const text = input.value.trim();
       if (text === "") {
         return;
@@ -273,6 +304,23 @@ const instance = new PromptInputController();
 /** Called by send-state.ts whenever inputs change. */
 export function setSendState(next: SendState): void {
   instance.setSendState(next);
+}
+
+/** Put a failed send's text back in the box, so retrying is not retyping.
+ *
+ *  submit.ts calls this on its failure paths, beside the attachment restore it
+ *  already did. Only writes into an EMPTY box: the send is asynchronous, so the
+ *  user may already be typing the next thing, and their live draft outranks text
+ *  they watched fail. */
+export function restorePromptText(text: string): void {
+  if (text === "") {
+    return;
+  }
+  const input = $.promptInput;
+  if (input.value !== "") {
+    return;
+  }
+  input.value = text;
 }
 
 export function initPromptInput(onSubmit: Submit, onCancel: Cancel): void {
