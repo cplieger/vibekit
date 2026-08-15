@@ -18,6 +18,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -299,6 +300,19 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	}
 	if params.Command == "" {
 		respondErr(ctx, h, chatID, msg, "command is required")
+		return
+	}
+	// Screen the requested environment BEFORE anything is created, so the refusal
+	// needs no teardown (unlike the cwd check below, which already holds a ctx).
+	// See agent_terminal_env.go: an agent-supplied variable wins over the process
+	// environment, and a few names redirect execution rather than carry data, so
+	// this is what stops an approved command running something else.
+	if blocked := screenAgentEnv(params.Env, operatorAllowedEnv()); len(blocked) > 0 {
+		slog.Warn("refused an agent terminal that redirects execution through the environment",
+			"chat_id", chatID, "command", params.Command, "variables", strings.Join(blocked, ","))
+		respondErr(ctx, h, chatID, msg, "refusing to set "+strings.Join(blocked, ", ")+
+			": these variables change what a program executes, so they are not accepted from the agent."+
+			" Pass the setting on the command itself, or have the operator allow the name via "+envAllowVar)
 		return
 	}
 

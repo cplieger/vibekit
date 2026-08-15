@@ -212,6 +212,23 @@ environment:
 
 The agent then loses the workflow tools and answers about workflows in prose instead of starting one; everything you launch yourself keeps working. A value that cannot be read as a boolean logs a warning and leaves the capability **on**, so a typo cannot disable it by accident. Changing it takes effect on the next chat, so restart the container to apply it everywhere.
 
+### Agent environment variables (`VIBEKIT_ALLOW_AGENT_ENV`)
+
+When the agent runs a command, it can also ask for environment variables to be set for it. Most are ordinary — `CGO_ENABLED`, `GOFLAGS`, `TERM`. A few are not: they don't carry data, they change what a program *executes*. `LD_PRELOAD` loads code into any program that starts. `GIT_SSH_COMMAND` replaces the command git runs. `BASH_ENV` runs a script before your script.
+
+vibekit refuses those, because approving a command is meant to approve **that** command. Otherwise you could approve a harmless `tar -xf backup.tar` and get something else, since the agent's variables take precedence over vibekit's own.
+
+The refusal names the variable, so the agent can retry without it. The list is kiro-cli's own, so an agent behaves the same here as it does in the terminal, and a value that cannot do harm is still accepted — `GIT_PAGER=cat` and `PAGER=` are the normal way to stop git paging, and they keep working.
+
+If you genuinely need one (a profiler that preloads a library, a vendored `NODE_PATH`), name it:
+
+```yaml
+environment:
+  VIBEKIT_ALLOW_AGENT_ENV: "LD_PRELOAD,NODE_PATH"
+```
+
+Comma-separated, one entry per variable name, and it grants only the names you list. This applies to what the **agent** asks for; variables you set on the container yourself are unaffected.
+
 ### Environment variable reference
 
 Every knob, including the ones detailed above. A malformed duration value logs a warning and falls back to its default.
@@ -224,6 +241,7 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 | `VIBEKIT_BROWSE_ROOTS` | Extra file-browser grants, colon-separated absolute paths. See [Extra browse roots](#extra-browse-roots-vibekit_browse_roots). | _(unset)_ |
 | `VIBEKIT_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-vibekit_kiro_acp_args). | _(unset)_ |
 | `VIBEKIT_AGENT_WORKFLOWS` | Whether the chat agent can start workflow runs itself. Set `false` to withhold the workflow tools. See [Agent-launched workflow runs](#agent-launched-workflow-runs-vibekit_agent_workflows). | `true` |
+| `VIBEKIT_ALLOW_AGENT_ENV` | Environment variable names the agent may set for its own commands despite redirecting execution, comma-separated. See [Agent environment variables](#agent-environment-variables-vibekit_allow_agent_env). | _(unset)_ |
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
 | `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
