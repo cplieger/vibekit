@@ -471,8 +471,39 @@
 
 /* --- Expandable pill system --- */
 
-.pill-expandable {
+/* The positioning parent, and the reason the press scale needs no exception:
+ * the card is a SIBLING of the trigger here, not a child of it, so pressing
+ * the pill (03-base.css) cannot scale the open menu. It also keeps the card's
+ * buttons out of the trigger button — a <button> inside a <button> is invalid
+ * HTML and flattens under assistive tech. Sized by the pill, so the card's
+ * `bottom: 100%` still measures the pill's own height. The sidebar status dot
+ * uses .popup-anchor (10-shell-app.css) for the same job. */
+.pill-slot {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* The pill row runs out of width on a phone, and the slot is an extra flex
+ * layer between the row and the pill: a pill's own automatic minimum size no
+ * longer reaches the row, so nothing could shrink and the row overflowed by
+ * ~27px at 390px wide. Elasticity is restored ONLY where a label can
+ * ellipsize (`#ctx-model-pill`, `.pill-role-label`), because padding does not
+ * shrink — squeezing an icon-only pill drifts its glyph off centre instead of
+ * shortening anything. Measured at 390px: the row ends on the same pixel it
+ * did before the slot existed. */
+.pill-slot:has(> .pill-model),
+.pill-slot:has(> .pill-role) {
+  min-width: 0;
+}
+
+/* A hidden trigger takes its slot with it. Without this the empty slot still
+ * counts as a flex item and the pill row keeps its gap (the task-list pill is
+ * hidden until the agent files a plan), and an open card would outlive the
+ * button that owns it. Scoped to the trigger: the card carries `hidden` too,
+ * until pill-expand.ts swaps it for the attribute. */
+.pill-slot:has(> .pill.hidden) {
+  display: none;
 }
 
 .pill-expand-content {

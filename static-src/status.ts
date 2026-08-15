@@ -188,7 +188,10 @@ export function setStatus(s: ConnectionStatus): void {
   if (style.cls) {
     dot.classList.add(style.cls);
   }
-  dot.style.setProperty("--status-color", style.color);
+  // The expanded card tints its border and background from --status-color. It
+  // is the dot's sibling, not its child (15-input.css .pill-slot), so the
+  // value lands on the card: on the dot it would reach nothing.
+  $.statusCard.style.setProperty("--status-color", style.color);
   dot.setAttribute("aria-label", `Connection: ${s}`);
   $.stWs.textContent = s;
 

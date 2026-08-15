@@ -1,20 +1,22 @@
 // ---------------------------------------------------------------------------
-// Expandable pills: click/keyboard to expand a pill into a floating
-// detail card anchored to the pill's position. Only one pill can be
-// expanded at a time. Click outside, click the pill, or press Escape
-// to collapse.
+// Expandable pills: click/keyboard to expand a pill into a detail card
+// anchored to the pill's position. Only one pill can be expanded at a time.
+// Click outside, click the pill, or press Escape to collapse.
 //
 // The popup lifecycle — outside-click dismissal, Escape, single-open
 // coordination, trigger ARIA (aria-expanded / aria-haspopup), and the
 // enter/leave state classes with transition-end settling — is
 // @cplieger/ui-primitives' createPopup: the non-positioning popup primitive,
-// which is exactly this pattern's shape. The card is IN-FLOW inside the pill
-// (vibekit.md mandates the expandable-pill pattern over floating popups for
-// pill-row controls), so popover's placement engine is deliberately not
-// involved. This module keeps only the pill-specific glue: the toggle
-// wiring, the .pill-expanded skin class, and the legacy hidden-class
-// normalization. Enter/exit motion stays in 15-input.css, keyed off the
-// library's is-open class on .pill-expand-content.
+// which is exactly this pattern's shape. The card is a SIBLING of the pill
+// inside .pill-slot, which positions it (vibekit.md mandates the
+// expandable-pill pattern over floating popups for pill-row controls, so
+// popover's placement engine is deliberately not involved). Sibling rather
+// than child for two reasons: the pill's press scale would otherwise shrink
+// its own open card, and a card nested in the trigger puts interactive
+// content inside a <button>. This module keeps only the pill-specific glue:
+// the toggle wiring, the .pill-expanded skin class, and the legacy
+// hidden-class normalization. Enter/exit motion stays in 15-input.css, keyed
+// off the library's is-open class on .pill-expand-content.
 // ---------------------------------------------------------------------------
 
 import { closePopupGroup, createPopup } from "@cplieger/ui-primitives/popup";
@@ -66,8 +68,10 @@ export function makeExpandable(
     "click",
     (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // Clicks on the card's CONTENT don't toggle (buttons/inputs inside the
-      // expanded card must work); a click on the card element itself does.
+      // A card OUTSIDE the pill (every consumer today, see the header) sends
+      // no click here at all. The guard stays for a consumer that nests its
+      // card: clicks on the card's CONTENT must not toggle, because the
+      // buttons and inputs inside an expanded card have to work.
       if (contentEl.contains(target) && target !== contentEl) {
         return;
       }

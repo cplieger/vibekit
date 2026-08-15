@@ -23,7 +23,7 @@ import {
 import { loadList } from "./store-load.js";
 import { computed, effect } from "@cplieger/reactive";
 import { dispatch } from "./bus.js";
-import { $ } from "./dom.js";
+import { $, byId } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
 import { initRolePicker } from "./role-picker.js";
 import * as transport from "./transport.js";
@@ -627,21 +627,17 @@ function setupInput(): void {
   // argument so a future run tab's bottom bar can host one too.
   mountDecisionDock($.decisionDock);
 
-  // Expandable pills: context and status dot.
-  const ctxExpand = $.contextIndicator.querySelector<HTMLElement>(".pill-expand-content");
-  if (ctxExpand !== null) {
-    makeExpandable($.contextIndicator, ctxExpand);
-  }
-  const statusExpand = $.statusDot.querySelector<HTMLElement>(".pill-expand-content");
-  if (statusExpand !== null) {
-    // Fetch account/subscription usage lazily when the popup opens (it
-    // changes slowly and may be rate-limited); loadAccountUsage throttles.
-    makeExpandable($.statusDot, statusExpand, {
-      onExpand: () => {
-        loadAccountUsage();
-      },
-    });
-  }
+  // Expandable pills: context and status dot. Each card is its trigger's
+  // SIBLING (see 15-input.css .pill-slot), so it is looked up by id rather
+  // than queried inside the button.
+  makeExpandable($.contextIndicator, byId("context-card"));
+  // Fetch account/subscription usage lazily when the popup opens (it changes
+  // slowly and may be rate-limited); loadAccountUsage throttles.
+  makeExpandable($.statusDot, $.statusCard, {
+    onExpand: () => {
+      loadAccountUsage();
+    },
+  });
 }
 
 // ============================================================
