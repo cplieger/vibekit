@@ -15,6 +15,8 @@ import { attachPathToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { installDropZone } from "./drop-zone.js";
+import { installImagePaste } from "./image-paste.js";
+import { $ } from "./dom.js";
 
 // Upload glyph (Lucide upload). 32px to suit the drop-overlay; the down-arrow
 // ICON_DOWNLOAD in icons.ts is the inverse and not interchangeable here.
@@ -46,22 +48,30 @@ export function initChatAttach(): void {
     return overlay;
   };
 
+  const uploadAndAttach = (files: FileList): void => {
+    void upload.dispatch(
+      { files, targetDir: "." },
+      {
+        onSuccess: (paths) => {
+          for (const p of paths) {
+            attachPathToActiveChat(p);
+          }
+        },
+      },
+    );
+  };
+
   installDropZone({
     container: chatView,
     get overlay() {
       return getOverlay();
     },
-    onDrop: (files) => {
-      void upload.dispatch(
-        { files, targetDir: "." },
-        {
-          onSuccess: (paths) => {
-            for (const p of paths) {
-              attachPathToActiveChat(p);
-            }
-          },
-        },
-      );
-    },
+    onDrop: uploadAndAttach,
   });
+
+  // A pasted screenshot is the same journey as a dropped one: upload to the
+  // workspace root, attach the path. The composer is where the cursor is when
+  // the user pastes, so the listener lives on the textarea rather than the
+  // document (a document listener would also fire for the shell and the editor).
+  installImagePaste($.promptInput, uploadAndAttach);
 }

@@ -177,6 +177,41 @@
   color: var(--c-accent);
 }
 
+/* A policy refusal is amber, not red: the tool did not break, it was not run.
+   The shield badge carries the same distinction in shape, because tint alone is
+   one channel (WCAG 1.4.1). */
+.tool-icon.is-denied {
+  color: var(--c-yellow);
+}
+
+/* The rule that refused the call. Presented as label/value pairs rather than
+   prose so the capability and the source file can be copied out of it. */
+.tool-denial {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  margin-block-end: var(--sp-2);
+  border-inline-start: 2px solid var(--c-yellow);
+  background: var(--c-bg-tertiary);
+  border-radius: var(--r);
+}
+
+.tool-denial-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+  font-size: var(--fs-sm);
+}
+
+.tool-denial-row > span {
+  color: var(--c-text-secondary);
+  flex: 0 0 5.5rem;
+}
+
+.tool-denial-row > code {
+  overflow-wrap: anywhere;
+}
+
 .tool-outcome-badge {
   position: absolute;
   inset-block-end: -0.15rem;

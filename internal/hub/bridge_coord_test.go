@@ -70,7 +70,7 @@ func (p *recordingPush) HasSubscribers() bool                 { return true }
 func (p *recordingPush) SetPreferences(map[api.PushKind]bool) {}
 func (p *recordingPush) ReloadPreferences(context.Context)    {}
 func (p *recordingPush) Close()                               {}
-func (p *recordingPush) Send(_ context.Context, _, body string, _ api.PushKind) {
+func (p *recordingPush) Send(_ context.Context, _, body string, _ api.PushKind, _ api.ChatID) {
 	select {
 	case p.sends <- body:
 	default:

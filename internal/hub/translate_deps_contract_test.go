@@ -56,7 +56,7 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
-		d.NotifyPush(t.Context(), "test body", api.PushKindPermission)
+		d.NotifyPush(t.Context(), "test body", api.PushKindPermission, "")
 	})
 
 	t.Run("BufferStore_non_nil", func(t *testing.T) {

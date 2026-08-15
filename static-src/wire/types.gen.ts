@@ -1174,6 +1174,20 @@ export interface ToolCall {
  * extend the GC scan region past a slice's non-pointer len/cap words.
  */
   checkpoint?: ToolCheckpoint;
+  /**
+ * Disclosed names the skill or steering document a `disclose_context` call
+ * loaded, from _meta.kiro.disclosedContext. Nil on every other tool call.
+ * This is the only signal that a skill's body actually reached the model, so
+ * it is what the transcript renders instead of a generic tool card.
+ */
+  disclosed?: ToolDisclosed;
+  /**
+ * Denial is KAS's structured reason for a call the Cedar policy refused,
+ * from _meta.kiro.policyDenial. Nil unless the policy denied it. Present so a
+ * refusal reads as a refusal rather than a tool failure, and names the rule
+ * responsible, since the user owns the policy.
+ */
+  denial?: ToolDenial;
   input?: unknown;
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
@@ -1232,6 +1246,34 @@ export interface ToolCheckpoint {
 }
 
 /**
+ * ToolDenial is the policy verdict that refused a tool call.
+ * //
+ * Rule is the matched rule, and it is the load-bearing field: a denial that
+ * names its rule is one click from editing it, which is what makes "configure
+ * permissions however you like" actionable. Scope and Source say WHERE the rule
+ * lives (user or workspace `permissions.yaml`), so the user knows which file to
+ * open.
+ */
+export interface ToolDenial {
+  rule?: ToolDenialRule;
+  capability: string;
+  resource: string;
+  scope: string;
+  source: string;
+}
+
+/**
+ * ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny" or
+ * "ask" (an unanswered ask that timed out reaches here as a denial).
+ */
+export interface ToolDenialRule {
+  capability: string;
+  effect: string;
+  match?: string[];
+  exclude?: string[];
+}
+
+/**
  * ToolDiff is a before/after text change from a write tool call. Sent
  * by kiro-cli in tool_call notifications for edit operations. Path is
  * workspace-relative (absolute paths from kiro-cli are normalised via
@@ -1242,6 +1284,16 @@ export interface ToolDiff {
   path: string;
   old_text?: string;
   new_text: string;
+}
+
+/**
+ * ToolDisclosed identifies a skill or steering document loaded into context by
+ * the agent's own `disclose_context` call. Type is "skill" or "steering".
+ */
+export interface ToolDisclosed {
+  type: string;
+  display_name: string;
+  uri: string;
 }
 
 /**

@@ -14,18 +14,37 @@ import { routeForPath } from "../editor-types.js";
  *  edits with the stale snapshot. The manual Retry button (retryable:
  *  "network") is kept so the user can consciously re-save, but auto-retry
  *  is intentionally omitted. */
+export interface SaveFileResult {
+  ok?: boolean;
+  error?: string;
+  /** Present only on a refused stale write: the file's CURRENT content, so the
+   *  caller can show what changed rather than telling the user to reload. */
+  content?: string;
+  content_hash?: string;
+}
+
 export const saveFile = apiAction<
-  { path: string; content: string },
-  { ok?: boolean; error?: string }
+  { path: string; content: string; expectedHash?: string },
+  SaveFileResult
 >({
   name: "editor.save_file",
   scope: (args) => "file:" + args.path,
   retryable: retryNetwork,
-  request: ({ path, content }) => ({
+  request: ({ path, content, expectedHash }) => ({
     method: "PUT",
     path: routeForPath(path).writeURL,
-    body: { content },
+    // expected_hash is the digest the file had when this buffer loaded it. The
+    // server refuses the write with 409 when the file changed since, which is
+    // the routine case here rather than an exotic one: the agent writes to the
+    // same tree the editor reads.
+    body: expectedHash === undefined ? { content } : { content, expected_hash: expectedHash },
   }),
+  // A 409 is the stale-write refusal, and its body carries the current content.
+  // Resolved as a SUCCESS payload (the same seam tools.ts uses for its
+  // has_dependents cascade) so the caller can branch on `error` and show the
+  // difference; every other status keeps the default error mapping.
+  decodeError: (info) =>
+    info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
   error: false,
 });
 

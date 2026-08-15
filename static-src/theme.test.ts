@@ -4,8 +4,12 @@
 // @cplieger/ui-primitives' createTheme; these tests cover vibekit's contract on
 // top of it: the theme lives in the `theme` field of the vibekit.ui-state blob
 // (read-modify-write, siblings preserved — the no-migration invariant), the
-// toggle stays strictly 2-state (dark <-> light, never "system"), and an unset
-// field resolves the OS preference without persisting anything.
+// toggle CYCLES three states (light -> dark -> system), and an unset field
+// resolves the OS preference without persisting anything.
+//
+// The third state is the point: with a 2-state toggle, "follow the OS" was only
+// ever the value of an unset field, so one click made it unreachable without
+// clearing localStorage.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import { initThemeToggle } from "./theme.js";
@@ -16,6 +20,7 @@ function setupButton(): HTMLButtonElement {
     '<button id="theme-btn">' +
     '<svg class="theme-icon-dark"></svg>' +
     '<svg class="theme-icon-light hidden"></svg>' +
+    '<svg class="theme-icon-system hidden"></svg>' +
     "</button>";
   return document.getElementById("theme-btn") as HTMLButtonElement;
 }
@@ -59,7 +64,8 @@ describe("initThemeToggle", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
-  it("toggle flips 2-state and persists into the blob, preserving sibling fields", () => {
+  it("cycles dark -> system -> light and persists each into the blob, preserving siblings", () => {
+    stubMatchMedia(true); // OS = dark, so "system" resolves dark
     localStorage.setItem(
       LS_UI_STATE_KEY,
       JSON.stringify({ theme: "dark", shell_open: true, fb_path: "/x", tab_order: ["a", "b"] }),
@@ -68,19 +74,44 @@ describe("initThemeToggle", () => {
     initThemeToggle();
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
 
-    btn.click(); // dark -> light
-    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    btn.click(); // dark -> system
     let blob = readBlob();
-    expect(blob["theme"]).toBe("light");
+    expect(blob["theme"]).toBe("system");
+    // Siblings survive the read-modify-write, which is the no-migration invariant.
     expect(blob["shell_open"]).toBe(true);
     expect(blob["fb_path"]).toBe("/x");
     expect(blob["tab_order"]).toEqual(["a", "b"]);
 
-    btn.click(); // light -> dark (never "system")
-    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    btn.click(); // system -> light
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     blob = readBlob();
-    expect(blob["theme"]).toBe("dark");
+    expect(blob["theme"]).toBe("light");
     expect(blob["shell_open"]).toBe(true);
+  });
+
+  // The regression this group fixed: "system" must survive a reload. It used to
+  // round-trip to null through ui-state's coercion, which put the user back in
+  // the two concrete states with no way to ask for the OS preference again.
+  it("a stored system choice survives a reload and still follows the OS", () => {
+    stubMatchMedia(true); // OS = dark
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ theme: "system" }));
+    setupButton();
+    initThemeToggle();
+
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    // Still stored as the choice, not flattened to the theme it resolved to.
+    expect(readBlob()["theme"]).toBe("system");
+  });
+
+  // The label is the only thing that distinguishes "system" from the concrete
+  // theme it landed on, since the resolved appearance is identical.
+  it("names the resolved theme while following the OS", () => {
+    stubMatchMedia(false); // OS = light
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ theme: "system" }));
+    const btn = setupButton();
+    initThemeToggle();
+
+    expect(btn.getAttribute("aria-label")).toContain("now light");
   });
 
   it("resolves the OS preference when the theme field is absent, without persisting it", () => {
@@ -95,15 +126,21 @@ describe("initThemeToggle", () => {
     expect(blob["shell_open"]).toBe(true);
   });
 
-  it("first toggle from an unset (OS-followed) state pins a concrete theme", () => {
+  it("first toggle from an unset state pins a concrete theme without changing appearance", () => {
     stubMatchMedia(false); // OS = light
-    // No blob at all.
+    // No blob at all, so the choice reads as "system".
     const btn = setupButton();
     initThemeToggle();
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(readBlob()["theme"]).toBeUndefined();
 
-    btn.click(); // resolved light -> dark, now pinned + persisted
+    // system -> light: the same appearance, now a stored choice rather than a
+    // followed one. That is the cycle's order, not a no-op.
+    btn.click();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(readBlob()["theme"]).toBe("light");
+
+    btn.click(); // light -> dark
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(readBlob()["theme"]).toBe("dark");
   });

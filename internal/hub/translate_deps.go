@@ -67,8 +67,8 @@ func (h *Hub) PendingPermsAdd(requestID int64, evt api.ServerEvent) {
 }
 
 // NotifyPush sends a push notification.
-func (h *Hub) NotifyPush(ctx context.Context, body string, kind api.PushKind) {
-	h.coord.NotifyPush(ctx, body, kind)
+func (h *Hub) NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID) {
+	h.coord.NotifyPush(ctx, body, kind, chatID)
 }
 
 // BufferStore returns the buffer store for streaming handlers.

@@ -1,6 +1,14 @@
 package command
 
-import "testing"
+import (
+	"encoding/base64"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/cplieger/vibekit/internal/api"
+)
 
 // kasSupportedDocumentMIMEs mirrors KAS's SUPPORTED_DOCUMENT_MIME_TYPES
 // (src/document-types.ts in the @kiro/agent bundle, verified against KAS
@@ -46,4 +54,123 @@ func TestUnsupportedDocExtsDisjointFromDocumentExts(t *testing.T) {
 			t.Errorf("extension %q is in both documentExts and unsupportedDocExts", ext)
 		}
 	}
+}
+
+// kasImageExtensions mirrors KAS's IMAGE_EXTENSIONS (verified against the
+// 2.18.1 bundle's acp-server.js, beside MAX_IMAGE_SIZE = 10 MiB). It is the set
+// KAS's own image read tool accepts, which is what makes the path-reference
+// fallback work for an image that cannot be inlined.
+var kasImageExtensions = map[string]bool{
+	".png":  true,
+	".jpg":  true,
+	".jpeg": true,
+	".gif":  true,
+	".webp": true,
+}
+
+// TestImageExtsMatchesKAS pins imageExts to KAS's own image extension set in
+// BOTH directions, and the two directions fail differently.
+//
+// An extension here that KAS does not know is one whose path-reference fallback
+// cannot be read either, so the attachment is unreachable by both routes. An
+// extension KAS accepts that is missing here silently costs the user the inline
+// channel, sending a path where a picture was meant.
+//
+// Note this is NOT the same list as utils-url.ts's INLINE_IMAGE_EXT, which also
+// carries svg and avif because a browser renders those. Two consumers, two
+// answers; do not unify them.
+func TestImageExtsMatchesKAS(t *testing.T) {
+	for ext := range imageExts {
+		if !kasImageExtensions[ext] {
+			t.Errorf("imageExts has %q, which KAS's IMAGE_EXTENSIONS does not: "+
+				"neither the inline block nor the path-reference fallback can be read", ext)
+		}
+	}
+	for ext := range kasImageExtensions {
+		if _, ok := imageExts[ext]; !ok {
+			t.Errorf("KAS accepts %q but imageExts omits it, so it degrades to a path "+
+				"reference when it could have been shown to the model", ext)
+		}
+	}
+}
+
+// TestImageExtsExcludesUnviewableFormats pins the two exclusions that look like
+// oversights. KAS omits both, and an SVG is XML rather than pixels, so inlining
+// one hands a vision model markup to look at.
+func TestImageExtsExcludesUnviewableFormats(t *testing.T) {
+	for _, ext := range []string{".svg", ".avif", ".bmp", ".tiff"} {
+		if _, ok := imageExts[ext]; ok {
+			t.Errorf("imageExts must not carry %q: KAS does not accept it as an image", ext)
+		}
+	}
+}
+
+// TestAttachmentBlock_ImageInlinesAsImageBlock pins the wire shape measured off
+// the bundle: `{type:"image", data:<base64>, mimeType:<mime>}` and NO uri.
+//
+// The uri assertion is the load-bearing one. KAS's toDataUrl returns a present
+// uri INSTEAD of building the base64 data URL, so shipping one would replace the
+// bytes with a path the model cannot fetch — a silent failure with no error on
+// either side.
+func TestAttachmentBlock_ImageInlinesAsImageBlock(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "shot.png")
+	pixels := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01}
+	if err := os.WriteFile(abs, pixels, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+
+	block, spent := attachmentBlock(api.Attachment{Path: abs, Name: "shot.png"},
+		resolve, MaxInlineTurnBytes)
+
+	if got := block[keyType]; got != "image" {
+		t.Fatalf("block type = %v, want image", got)
+	}
+	if got := block["mimeType"]; got != "image/png" {
+		t.Errorf("mimeType = %v, want image/png", got)
+	}
+	if got, want := block["data"], base64.StdEncoding.EncodeToString(pixels); got != want {
+		t.Errorf("data = %v, want the base64 of the file bytes", got)
+	}
+	if _, ok := block["uri"]; ok {
+		t.Error("block carries a uri; KAS's toDataUrl would return it instead of the bytes")
+	}
+	if spent != len(pixels) {
+		t.Errorf("spent = %d, want %d (the image is charged against the turn budget)",
+			spent, len(pixels))
+	}
+}
+
+// TestAttachmentBlock_ImageDegradesToPathReference covers the two failures that
+// must not lose the attachment: over the turn's cumulative budget, and over the
+// per-file cap. Both fall back to a path the agent can read with its image tool.
+func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "big.png")
+	if err := os.WriteFile(abs, make([]byte, 4096), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+
+	t.Run("over_turn_budget", func(t *testing.T) {
+		block, spent := attachmentBlock(api.Attachment{Path: abs}, resolve, 10)
+		if got := block[keyType]; got != api.ContentTypeText {
+			t.Errorf("block type = %v, want text (a path reference)", got)
+		}
+		if spent != 0 {
+			t.Errorf("spent = %d, want 0 for a block that inlined nothing", spent)
+		}
+	})
+
+	t.Run("path_escapes_workspace", func(t *testing.T) {
+		deny := func(string) (string, error) { return "", errors.New("escapes") }
+		block, spent := attachmentBlock(api.Attachment{Path: abs}, deny, MaxInlineTurnBytes)
+		if got := block[keyType]; got != api.ContentTypeText {
+			t.Errorf("block type = %v, want text", got)
+		}
+		if spent != 0 {
+			t.Errorf("spent = %d, want 0", spent)
+		}
+	})
 }

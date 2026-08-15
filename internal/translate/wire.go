@@ -76,6 +76,23 @@ type ACPKiroMeta struct {
 		// is deliberately NOT decoded: persisting whole file bodies per
 		// tool call would bloat every chat file, and the snapshot URIs
 		// address the same bytes on demand.
+		// DisclosedContext identifies the skill or steering document a
+		// `disclose_context` call loaded. KAS persists it (its own comment: "the
+		// resolved skill/steering document. Persisted so the loaded item's type
+		// and source file survive a session reload"), which is what makes it
+		// worth decoding rather than deriving from the tool title.
+		//
+		// This is how a skill's body actually reaches the model on this platform:
+		// the AGENT activates it, under a standing instruction to check for a
+		// match before answering, so a client-side trigger matcher would be a
+		// second and worse guesser competing with that judgement. Decoding this
+		// is what makes the activation visible instead of a generic tool card.
+		DisclosedContext *ACPDisclosedContext `json:"disclosedContext,omitempty"`
+		// PolicyDenial is KAS's structured reason for a tool call the Cedar
+		// policy refused, persisted so the explanation survives a reload. Without
+		// it a refusal is indistinguishable from a broken command, and the two
+		// want opposite reactions: edit the rule, or debug the tool.
+		PolicyDenial   *ACPPolicyDenial   `json:"policyDenial,omitempty"`
 		Checkpoint     *ACPCheckpointMeta `json:"checkpoint"`
 		Kind           string             `json:"kind"`
 		AgentSubtaskID string             `json:"agentSubtaskId"`
@@ -112,6 +129,36 @@ type ACPKiroMeta struct {
 		Workflow *ACPWorkflowMeta `json:"workflow"`
 		HookAsk  json.RawMessage  `json:"hookAsk,omitempty"`
 	} `json:"kiro"`
+}
+
+// ACPDisclosedContext is _meta.kiro.disclosedContext on a disclose_context call.
+type ACPDisclosedContext struct {
+	// Type is "skill" or "steering".
+	Type        string `json:"type"`
+	DisplayName string `json:"displayName"`
+	URI         string `json:"uri"`
+}
+
+// ACPPolicyDenial is _meta.kiro.policyDenial on a tool call Cedar refused.
+//
+// MatchedRule is the rule that produced the verdict, which is the part worth
+// surfacing: a denial that names its rule is one click from the rule, and the
+// user owns the policy. `effect` on the outer object is always "deny", so it is
+// not decoded; the inner rule's effect can be deny or ask.
+type ACPPolicyDenial struct {
+	MatchedRule *ACPPolicyRule `json:"matchedRule"`
+	Capability  string         `json:"capability"`
+	Resource    string         `json:"resource"`
+	Scope       string         `json:"scope"`
+	Source      string         `json:"source"`
+}
+
+// ACPPolicyRule is the matched rule inside a policy denial.
+type ACPPolicyRule struct {
+	Capability string   `json:"capability"`
+	Effect     string   `json:"effect"`
+	Match      []string `json:"match,omitempty"`
+	Exclude    []string `json:"exclude,omitempty"`
 }
 
 // ACPWorkflowMeta is the _meta.kiro.workflow block on a step session's frames.

@@ -73,6 +73,11 @@ export interface FileState {
   /** Live editor-buffer content. Reactive so `dirty` can derive from it. */
   current: Signal<string>;
   loaded: boolean;
+  /** Digest of the bytes this buffer LOADED, from the read response. Sent back on
+   *  save so the server can refuse a write over an external change. Empty when
+   *  unknown (a source that did not supply one), which degrades to the old
+   *  write-unconditionally behaviour rather than blocking the save. */
+  loadedHash: string;
   error: string;
   mode: Signal<FileMode>;
   /** Dirty flag: true when `current` differs from `original`. Derived
@@ -145,6 +150,7 @@ class EditorState {
       original,
       current,
       loaded: false,
+      loadedHash: "",
       error: "",
       mode,
       dirty,

@@ -2523,3 +2523,91 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 		})
 	}
 }
+
+// TestWriteFile_StaleWriteGuard pins the guard that stops the editor silently
+// discarding an agent's work.
+//
+// The scenario is routine rather than exotic in this app: the file a user has
+// open in the editor is in the same tree the agent writes to, so "changed since
+// you loaded it" happens whenever the agent touches that file mid-edit. Before
+// this, the PUT overwrote unconditionally and the agent's version was gone with
+// no trace.
+//
+// A DIGEST rather than an mtime, because this repo measured that Linux stamps
+// inode timestamps from a coarse clock: two writes inside one tick are
+// byte-identical in mtime, which is exactly the rapid agent write the guard
+// exists to catch.
+func TestWriteFile_StaleWriteGuard(t *testing.T) {
+	dir := t.TempDir()
+	h, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	target := filepath.Join(dir, "note.md")
+	if err := os.WriteFile(target, []byte("original\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read it the way the editor does, to learn the hash.
+	rec := getReq(t, h, "/api/file?path="+target)
+	var read struct {
+		Content     string `json:"content"`
+		ContentHash string `json:"content_hash"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &read); err != nil {
+		t.Fatalf("decode read: %v", err)
+	}
+	if read.ContentHash == "" {
+		t.Fatal("read returned no content_hash, so a client has nothing to send back")
+	}
+
+	t.Run("matching hash writes", func(t *testing.T) {
+		body := `{"content":"mine\n","expected_hash":"` + read.ContentHash + `"}`
+		rec := putReq(t, h, "/api/file?path="+target, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		got, _ := os.ReadFile(target)
+		if string(got) != "mine\n" {
+			t.Errorf("file = %q, want the written content", got)
+		}
+	})
+
+	t.Run("stale hash is refused and returns the current content", func(t *testing.T) {
+		// The file now says "mine\n"; save against the ORIGINAL hash, as an editor
+		// that loaded before the change would.
+		body := `{"content":"clobber\n","expected_hash":"` + read.ContentHash + `"}`
+		rec := putReq(t, h, "/api/file?path="+target, body)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409", rec.Code)
+		}
+		var out struct {
+			Error       string `json:"error"`
+			Content     string `json:"content"`
+			ContentHash string `json:"content_hash"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode conflict: %v", err)
+		}
+		// The current content rides the refusal so the client can show what
+		// changed instead of asking the user to reload and compare by eye.
+		if out.Content != "mine\n" {
+			t.Errorf("conflict content = %q, want the on-disk bytes", out.Content)
+		}
+		if out.ContentHash == "" || out.ContentHash == read.ContentHash {
+			t.Error("conflict must carry the NEW hash so the next save can succeed")
+		}
+		if got, _ := os.ReadFile(target); string(got) != "mine\n" {
+			t.Errorf("file = %q, the refused write must not have landed", got)
+		}
+	})
+
+	t.Run("omitted hash still writes", func(t *testing.T) {
+		// Optional by design: every non-editor writer and any older client keeps
+		// working rather than being blocked by a guard it does not know about.
+		rec := putReq(t, h, "/api/file?path="+target, `{"content":"unguarded\n"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	})
+}

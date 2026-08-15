@@ -341,6 +341,7 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/events", h.handleSSE)
 	mux.Handle("/api/command", h.dispatcher)
 	mux.HandleFunc("/api/shell/ws", h.handleShellWS)
+	mux.HandleFunc("POST /api/shell/restart", h.handleShellRestart)
 	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
 	h.registerKnowledgeRoutes(mux)
 	h.registerHooksRoutes(mux)

@@ -242,6 +242,24 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   // isSafeUrl just rejected.
   if (attrName === "src" && node.tagName === "IMG") {
     node.setAttribute(attrName, rewriteWorkspaceImageSrc(value));
+    // Name the file when it fails to load. The browser's default broken-image
+    // icon identifies nothing, and "the picture did not appear" is the
+    // characteristic failure of the agent's screenshot loop — the one fact
+    // worth having then is which path was asked for. Swapping to text also
+    // avoids leaving a broken-icon-sized hole mid-transcript.
+    node.addEventListener(
+      "error",
+      () => {
+        const src = node.getAttribute("src") ?? "";
+        const alt = node.getAttribute("alt") ?? "";
+        const shown = alt !== "" ? alt : decodeURIComponent(src.replace(/^.*[?&]path=/, ""));
+        const miss = document.createElement("span");
+        miss.className = "img-missing";
+        miss.textContent = `Image not available: ${shown}`;
+        node.replaceWith(miss);
+      },
+      { once: true },
+    );
     return;
   }
   if (attrName === "class" && node.tagName === "CODE") {

@@ -19,7 +19,7 @@ export interface UIState {
   shell_h: number;
   editor_files: string[];
   fb_path: string;
-  theme: "dark" | "light" | null;
+  theme: "dark" | "light" | "system" | null;
   dismissed_banners: string[];
   /** Per-chat, per-turn fold overrides: chat id → turn's opening message id →
    *  open. Absent means "follow the automatic rule", which is why the value is a
@@ -75,7 +75,14 @@ function sanitize(d: unknown): UIState {
         : e.shell_h,
     editor_files: strArray(o["editor_files"]) ?? e.editor_files,
     fb_path: typeof o["fb_path"] === "string" ? o["fb_path"] : e.fb_path,
-    theme: o["theme"] === "dark" || o["theme"] === "light" ? o["theme"] : null,
+    // "system" is a real stored CHOICE, not the absence of one: it means the
+    // user asked to follow the OS. Dropping it here is what made Auto
+    // unreachable after one toggle click, since the value round-tripped to null
+    // and the toggle only ever wrote the two concrete themes.
+    theme:
+      o["theme"] === "dark" || o["theme"] === "light" || o["theme"] === "system"
+        ? o["theme"]
+        : null,
     dismissed_banners: strArray(o["dismissed_banners"]) ?? e.dismissed_banners,
     turn_folds: foldMap(o["turn_folds"]) ?? e.turn_folds,
   };

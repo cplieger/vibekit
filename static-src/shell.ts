@@ -29,6 +29,8 @@ import { $ } from "./dom.js";
 import { getScrollEl } from "./messages.js";
 import { setShellRunCallback } from "./code-blocks.js";
 import * as uiState from "./ui-state.js";
+import { confirm as confirmDialog } from "./confirm.js";
+import { restartShell } from "./actions/shell.js";
 
 const SHELL_WS_PATH = "/api/shell/ws";
 // Awaited by the kernel before the first server resize so the PTY is sized
@@ -60,11 +62,6 @@ const SHELL_THEME: Readonly<Record<string, string>> = {
   "--border": "var(--c-border)",
 };
 
-// Ctrl+L (form feed): the terminal-native "clear screen and redraw the prompt".
-// The shell's line editor intercepts it and repaints, which — after we reset the
-// local buffer below — refills the window with a fresh prompt.
-const CTRL_L = new Uint8Array([0x0c]);
-
 const encoder = new TextEncoder();
 
 /** Send bytes to the PTY through the kernel's sanitizing, scroll-snapping
@@ -75,22 +72,34 @@ function hostSend(bytes: Uint8Array): void {
   handle?.send(bytes);
 }
 
-/** Reset the terminal to its default (clean) state: drop the client's local
- *  scrollback + screen (the handle's reset — the engine's own server-restart
- *  reset), then send Ctrl+L so the shell redraws a fresh prompt into the
- *  cleared window.
+/** Kill the PTY and get a fresh one.
  *
- *  The Ctrl+L is deferred one frame. Sent synchronously, the shell's redraw
- *  raced the reset it was meant to follow: the PTY was fine and bash had already
- *  re-emitted its prompt, but those bytes arrived while the local buffer was
- *  still being torn down, so they were dropped and the window stayed blank until
- *  the next keystroke forced a repaint. One frame is enough for reset() to
- *  settle, and it keeps the clear feeling instant. */
-function hostReset(): void {
+ *  This replaced a Reset button that dropped the local scrollback and sent
+ *  Ctrl+L: a screen clear, which Ctrl+L already does from the keyboard and the
+ *  context menu offers anyway. It could not help with the failure that actually
+ *  strands this panel — a wedged foreground process, or a child that exited and
+ *  left a handler the server can never start again. A restart covers both, and
+ *  a fresh shell arrives with a clear screen, so nothing was lost by having one
+ *  button instead of two.
+ *
+ *  Confirmed, because unlike the clear it destroys whatever is running.
+ *
+ *  The local reset runs after the server has replaced the PTY, so the client's
+ *  scrollback is dropped in the same gesture; the engine's own reconnect then
+ *  draws the new shell's first prompt. */
+async function hostRestart(): Promise<void> {
+  const ok = await confirmDialog(
+    "Restart the shell? Anything running in it is killed.",
+    "Restart",
+    "normal",
+  );
+  if (!ok) {
+    return;
+  }
+  if ((await restartShell.dispatch()) === null) {
+    return; // the action framework toasts the failure
+  }
   handle?.reset();
-  requestAnimationFrame(() => {
-    hostSend(CTRL_L);
-  });
 }
 
 let handle: TerminalHandle | null = null;
@@ -114,9 +123,9 @@ export function initShellPanel(): void {
   $.shellToggleBtn.addEventListener("click", () => {
     setShellOpen(false);
   });
-  // Reset button reverts the terminal to a clean prompt.
-  $.shellClearBtn.addEventListener("click", () => {
-    hostReset();
+  // Restart button kills the PTY and gets a fresh one.
+  $.shellRestartBtn.addEventListener("click", () => {
+    void hostRestart();
   });
 
   // Code-block "run in shell" → type the command into the live terminal.

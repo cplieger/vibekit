@@ -209,8 +209,8 @@ class Elements {
   get shellToggleBtn(): HTMLButtonElement {
     return byId("shell-toggle-btn");
   }
-  get shellClearBtn(): HTMLButtonElement {
-    return byId("shell-clear-btn");
+  get shellRestartBtn(): HTMLButtonElement {
+    return byId("shell-restart-btn");
   }
   get shellFullscreenBtn(): HTMLButtonElement {
     return byId("shell-fullscreen-btn");

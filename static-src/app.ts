@@ -93,6 +93,7 @@ import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
 import "./handlers/run.js";
 import "./handlers/steer.js";
+import { initPushMessages } from "./handlers/push-message.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
@@ -277,6 +278,10 @@ function init(): void {
       console.warn("sw: registration failed", err);
     });
   }
+  // The other half of the push channel: the worker posts here to route a
+  // notification click and to toast a push that arrived while this page was
+  // focused (where it shows no OS notification at all).
+  initPushMessages();
 
   void checkAuthAndStart();
 }

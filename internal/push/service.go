@@ -33,6 +33,20 @@ const (
 	pushResponseCap = 64 << 10 // 64 KiB — vendors return tiny bodies
 	pushBodyCap     = 3000     // title+body ceiling; pre-pad room under 4096 record
 	pushFanOutLimit = 3        // max concurrent push sends per notification
+
+	pushMaxAttempts = 3 // total tries for a retryable delivery failure
+)
+
+// Retry timing for a retryable delivery failure (429 or 5xx). Vars, not
+// consts, so a test can collapse the ladder instead of sleeping through it
+// (the fleet's usual delay-override pattern).
+//
+// The budget is the notification's USEFULNESS window, not a generous transport
+// allowance: a permission ask is moot once answered and "agent finished" is
+// moot an hour later, so a delivery landing after this is worse than none.
+var (
+	pushRetryBudget = 60 * time.Second
+	pushRetryBase   = 1 * time.Second
 )
 
 type vapidKeys struct {

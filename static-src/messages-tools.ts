@@ -112,6 +112,12 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     if (tc.locations !== undefined && tc.locations.length > 0) {
       opts.locations = tc.locations;
     }
+    if (tc.disclosed !== undefined) {
+      opts.disclosed = tc.disclosed;
+    }
+    if (tc.denial !== undefined) {
+      opts.denial = tc.denial;
+    }
     const card = buildToolCard(opts);
     toolEls.set(tc.id, card);
 
@@ -184,6 +190,11 @@ function applyStatusUpdate(
     fileBasename: card.dataset["filename"] ?? "",
     diffSources: null,
     mcp: null,
+    // Both come from the DOM on this path: applyOutcome reads
+    // dataset.denied for the refusal state, and a disclosed card's claim was
+    // already written at build time.
+    disclosed: null,
+    denial: null,
   });
   const done = isToolDone(status);
   if (done) {

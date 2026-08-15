@@ -331,3 +331,105 @@ describe("the search-hit seam", () => {
     expect(link?.textContent).toContain("a.ts:42");
   });
 });
+
+describe("disclose_context and policy denials", () => {
+  // The agent activating a skill is the moment its body enters the prompt, so
+  // the card names the DOCUMENT rather than the tool that fetched it. This is
+  // the only signal in the transcript that a skill reached the model at all.
+  it("names the skill a disclose_context call loaded", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t1",
+      title: "disclose_context",
+      kind: "other",
+      status: "completed",
+      live: false,
+      disclosed: { type: "skill", display_name: "code-review", uri: "file:///x/code-review" },
+    });
+    expect(card.dataset["title"]).toBe("Loaded skill: code-review");
+    expect(card.dataset["disclosed"]).toBe("skill");
+  });
+
+  it("distinguishes a steering document from a skill", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t2",
+      title: "disclose_context",
+      kind: "other",
+      status: "completed",
+      live: false,
+      disclosed: { type: "steering", display_name: "vibekit", uri: "file:///x/vibekit.md" },
+    });
+    expect(card.dataset["title"]).toBe("Loaded steering: vibekit");
+  });
+
+  // A refusal is not a failure: the command never ran, so sending the reader to
+  // debug the tool is the wrong instruction. The state, the badge shape and the
+  // accessible name all have to say policy.
+  it("renders a policy denial as its own state, not a failure", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t3",
+      title: "executeBash",
+      kind: "execute",
+      status: "failed",
+      live: false,
+      denial: {
+        capability: "shell",
+        resource: "rm -rf /",
+        scope: "workspace",
+        source: "/workspace/.kiro/permissions.yaml",
+        rule: { capability: "shell", effect: "deny", match: ["rm *"] },
+      },
+    });
+    expect(card.dataset["outcome"]).toBe("denied");
+    expect(card.dataset["denied"]).toBe("1");
+    expect(card.querySelector(".tool-icon")?.classList.contains("is-denied")).toBe(true);
+    expect(card.getAttribute("aria-label")).toContain("blocked by security policy");
+  });
+
+  // The rule and its file are the actionable half: the user owns the policy, so a
+  // refusal that names what fired is one step from changing it.
+  it("shows the matched rule and where it lives", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t4",
+      title: "executeBash",
+      kind: "execute",
+      status: "failed",
+      live: false,
+      denial: {
+        capability: "shell",
+        resource: "curl evil.example",
+        scope: "user",
+        source: "/root/.kiro/permissions.yaml",
+        rule: {
+          capability: "shell",
+          effect: "deny",
+          match: ["curl *"],
+          exclude: ["curl localhost*"],
+        },
+      },
+    });
+    const text = card.querySelector(".tool-denial")?.textContent ?? "";
+    expect(text).toContain("shell");
+    expect(text).toContain("curl *");
+    expect(text).toContain("!curl localhost*");
+    expect(text).toContain("/root/.kiro/permissions.yaml");
+  });
+
+  // An ordinary failure must keep reading as a failure; the denial state is
+  // additive, not a reclassification of every red card.
+  it("leaves an ordinary failure alone", async () => {
+    const { buildToolCard } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t5",
+      title: "executeBash",
+      kind: "execute",
+      status: "failed",
+      live: false,
+    });
+    expect(card.dataset["outcome"]).toBe("fail");
+    expect(card.querySelector(".tool-denial")).toBeNull();
+  });
+});

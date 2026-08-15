@@ -247,7 +247,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   showReadMode();
   $.editorEditBtn.disabled = true;
 
-  const d = await apiGet<{ content?: string; error?: string }>(
+  const d = await apiGet<{ content?: string; content_hash?: string; error?: string }>(
     routeForPath(state.path).readURL,
     signal,
   );
@@ -268,6 +268,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   }
   state.original.value = d.content ?? "";
   state.current.value = state.original.value;
+  state.loadedHash = d.content_hash ?? "";
   state.loaded = true;
   state.error = "";
   const parsed = parseConflicts(state.current.value);

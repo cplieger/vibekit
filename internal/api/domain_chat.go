@@ -180,11 +180,53 @@ type ToolCall struct {
 	// below to keep govet fieldalignment happy: a trailing pointer would
 	// extend the GC scan region past a slice's non-pointer len/cap words.
 	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
+	// Disclosed names the skill or steering document a `disclose_context` call
+	// loaded, from _meta.kiro.disclosedContext. Nil on every other tool call.
+	// This is the only signal that a skill's body actually reached the model, so
+	// it is what the transcript renders instead of a generic tool card.
+	Disclosed *ToolDisclosed `json:"disclosed,omitempty"`
+	// Denial is KAS's structured reason for a call the Cedar policy refused,
+	// from _meta.kiro.policyDenial. Nil unless the policy denied it. Present so a
+	// refusal reads as a refusal rather than a tool failure, and names the rule
+	// responsible, since the user owns the policy.
+	Denial     *ToolDenial     `json:"denial,omitempty"`
 	Input      json.RawMessage `json:"input,omitempty"`
 	Locations  []ToolLocation  `json:"locations,omitempty"`
 	Diffs      []ToolDiff      `json:"diffs,omitempty"`
 	DurationMs int             `json:"duration_ms,omitempty"`
 	Ts         int64           `json:"ts"`
+}
+
+// ToolDisclosed identifies a skill or steering document loaded into context by
+// the agent's own `disclose_context` call. Type is "skill" or "steering".
+type ToolDisclosed struct {
+	Type        string `json:"type"`
+	DisplayName string `json:"display_name"`
+	URI         string `json:"uri"`
+}
+
+// ToolDenial is the policy verdict that refused a tool call.
+//
+// Rule is the matched rule, and it is the load-bearing field: a denial that
+// names its rule is one click from editing it, which is what makes "configure
+// permissions however you like" actionable. Scope and Source say WHERE the rule
+// lives (user or workspace `permissions.yaml`), so the user knows which file to
+// open.
+type ToolDenial struct {
+	Rule       *ToolDenialRule `json:"rule,omitempty"`
+	Capability string          `json:"capability"`
+	Resource   string          `json:"resource"`
+	Scope      string          `json:"scope"`
+	Source     string          `json:"source"`
+}
+
+// ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny" or
+// "ask" (an unanswered ask that timed out reaches here as a denial).
+type ToolDenialRule struct {
+	Capability string   `json:"capability"`
+	Effect     string   `json:"effect"`
+	Match      []string `json:"match,omitempty"`
+	Exclude    []string `json:"exclude,omitempty"`
 }
 
 // ToolCheckpoint is KAS's pre/post-image mapping for one file write,

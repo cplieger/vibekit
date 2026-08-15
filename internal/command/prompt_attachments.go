@@ -51,7 +51,37 @@ var unsupportedDocExts = map[string]bool{
 	".odp":  true,
 }
 
-// MaxDocumentBytes caps the size of ONE document attachment (10 MiB).
+// imageExts maps an image extension to the MIME type vibekit sends when
+// inlining an attachment as an ACP `image` content block.
+//
+// Measured against KAS 2.18.1's extractContentFromPrompt (acp-server.js): the
+// image branch pushes `{data, mimeType, dataUrl: toDataUrl(block)}`
+// UNCONDITIONALLY. That is the material difference from the document branch,
+// which gates on isSupportedDocumentMimeType with no else — so a document with
+// an off-list MIME is silently dropped while an image is not. There is no MIME
+// allowlist to stay a subset of here.
+//
+// The extension set mirrors KAS's own IMAGE_EXTENSIONS (the set its image read
+// tool accepts, alongside MAX_IMAGE_SIZE = 10 MiB, which MaxDocumentBytes
+// already matches). Deliberately NOT svg or avif: KAS excludes both, and an SVG
+// is XML a vision model cannot see as a picture. Do not "unify" this with
+// utils-url.ts's INLINE_IMAGE_EXT, which is wider on purpose — that list is
+// what a BROWSER can render inline, a different consumer with a different
+// answer.
+//
+// A block carrying `uri` is not what we want: toDataUrl returns the uri INSTEAD
+// of the base64 data URL when present, which would hand the model a path it
+// cannot fetch. Send data + mimeType only.
+var imageExts = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+}
+
+// MaxDocumentBytes caps the size of ONE document or image attachment (10 MiB),
+// which is also KAS's own MAX_IMAGE_SIZE.
 const MaxDocumentBytes = 10 * 1024 * 1024
 
 // MaxInlineTurnBytes caps the total document bytes one prompt may inline.
@@ -107,11 +137,18 @@ func BuildPromptBlocks(ctx context.Context, text string, attachments []api.Attac
 func attachmentBlock(att api.Attachment, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
 	displayName := filepath.Base(att.Path)
 	ext := strings.ToLower(filepath.Ext(att.Path))
-	mime, isDoc := documentExts[ext]
 
 	// Inline a supported document as an embedded resource block.
-	if isDoc {
+	if mime, isDoc := documentExts[ext]; isDoc {
 		return inlineResourceBlock(att, displayName, mime, resolve, budget)
+	}
+	// Inline an image as an `image` content block. KAS advertises
+	// promptCapabilities.image:true on v3, so this is the sanctioned channel
+	// for putting a picture in front of the model; the path-reference branch
+	// below only tells it a file exists, costing a tool call to look at a
+	// screenshot the user already chose to show it.
+	if mime, isImg := imageExts[ext]; isImg {
+		return inlineImageBlock(att, displayName, mime, resolve, budget)
 	}
 
 	// Path-reference branch: validate containment, then hand the agent the
@@ -140,38 +177,9 @@ func attachmentBlock(att api.Attachment, resolve func(string) (string, error), b
 // error, or oversize) it returns a descriptive text block instead so the
 // agent is never left silently dropping the attachment.
 func inlineResourceBlock(att api.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
-	abs, err := resolve(att.Path)
-	if err != nil {
-		slog.Warn("attachment: path escapes workspace",
-			"path", displayName, keyError, err)
-		return api.TextBlock("Attached file (invalid path): " + displayName), 0
-	}
-	info, err := os.Stat(abs)
-	if err != nil {
-		slog.Warn("attachment: stat failed", "path", displayName, keyError, err)
-		return api.TextBlock("Attached file (unreadable): " + displayName), 0
-	}
-	if info.Size() > MaxDocumentBytes {
-		slog.Warn("attachment: too large",
-			"path", displayName, "size", info.Size())
-		return api.TextBlock("Attached file (too large for inline): " + displayName), 0
-	}
-	// The turn's cumulative allowance, checked BEFORE the read so an over-budget
-	// set costs no allocation. Degrading to a path reference is the same
-	// fail-closed direction every other branch here takes: the agent still learns
-	// the file exists and can open it with its file tools, which is strictly
-	// better than a session wedged by history it cannot drop.
-	if int(info.Size()) > budget {
-		slog.Warn("attachment: turn inline budget exhausted, sending a path reference",
-			"path", displayName, "size", info.Size(), "remaining", budget)
-		return api.TextBlock("Attached file: " + att.Path +
-			" (not inlined: this turn's attachment budget is spent — read it with your file tools)"), 0
-	}
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		slog.Warn("attachment: read failed",
-			"path", displayName, keyError, err)
-		return api.TextBlock("Attached file (unreadable): " + displayName), 0
+	abs, data, fallback := readForInline(att, displayName, resolve, budget)
+	if fallback != nil {
+		return fallback, 0
 	}
 	return map[string]any{
 		keyType: "resource",
@@ -181,4 +189,73 @@ func inlineResourceBlock(att api.Attachment, displayName, mime string, resolve f
 			"blob":     base64.StdEncoding.EncodeToString(data),
 		},
 	}, len(data)
+}
+
+// inlineImageBlock reads an image attachment from disk and returns an ACP
+// `image` content block. Failure degrades to the same descriptive text blocks
+// the document path uses, which for an image is a genuine fallback rather than
+// a consolation prize: KAS has an image read tool over the same extension set,
+// so the agent can still open it — it just costs a tool call.
+//
+// The block carries `data` and `mimeType` and deliberately no `uri`: KAS's
+// toDataUrl returns a present uri INSTEAD of building the base64 data URL, so
+// including one would replace the bytes with a path the model cannot fetch.
+func inlineImageBlock(att api.Attachment, displayName, mime string, resolve func(string) (string, error), budget int) (block map[string]any, spentBytes int) {
+	_, data, fallback := readForInline(att, displayName, resolve, budget)
+	if fallback != nil {
+		return fallback, 0
+	}
+	return map[string]any{
+		keyType:    "image",
+		"data":     base64.StdEncoding.EncodeToString(data),
+		"mimeType": mime,
+	}, len(data)
+}
+
+// readForInline runs the gauntlet every inlined attachment must pass — path
+// containment, stat, the per-file cap, the turn's cumulative budget, then the
+// read — and returns either the bytes or the text block to send instead.
+//
+// It is shared by the document and image paths because the gauntlet is the same
+// for both, and a second copy of it is a second place for the budget accounting
+// to drift. Every failure degrades to a path reference in the same fail-closed
+// direction: the agent still learns the file exists and can open it with its
+// file tools, which is strictly better than a session wedged by history it
+// cannot drop.
+func readForInline(
+	att api.Attachment,
+	displayName string,
+	resolve func(string) (string, error),
+	budget int,
+) (abs string, data []byte, fallback map[string]any) {
+	abs, err := resolve(att.Path)
+	if err != nil {
+		slog.Warn("attachment: path escapes workspace",
+			"path", displayName, keyError, err)
+		return "", nil, api.TextBlock("Attached file (invalid path): " + displayName)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		slog.Warn("attachment: stat failed", "path", displayName, keyError, err)
+		return "", nil, api.TextBlock("Attached file (unreadable): " + displayName)
+	}
+	if info.Size() > MaxDocumentBytes {
+		slog.Warn("attachment: too large",
+			"path", displayName, "size", info.Size())
+		return "", nil, api.TextBlock("Attached file (too large for inline): " + displayName)
+	}
+	// Checked BEFORE the read so an over-budget set costs no allocation.
+	if int(info.Size()) > budget {
+		slog.Warn("attachment: turn inline budget exhausted, sending a path reference",
+			"path", displayName, "size", info.Size(), "remaining", budget)
+		return "", nil, api.TextBlock("Attached file: " + att.Path +
+			" (not inlined: this turn's attachment budget is spent — read it with your file tools)")
+	}
+	data, err = os.ReadFile(abs)
+	if err != nil {
+		slog.Warn("attachment: read failed",
+			"path", displayName, keyError, err)
+		return "", nil, api.TextBlock("Attached file (unreadable): " + displayName)
+	}
+	return abs, data, nil
 }

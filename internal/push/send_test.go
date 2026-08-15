@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestSendFailureLogBoundsEndpoint(t *testing.T) {
 	hostile := "https://evil.example/\x1b]0;pwned\x07/" + strings.Repeat("x", 100)
 	s.Subscribe(pushSubscriptionWithValidKeys(t, hostile))
 
-	s.Send(t.Context(), "t", "b", api.PushKindAgentFinished)
+	s.Send(t.Context(), "t", "b", api.PushKindAgentFinished, "")
 
 	got, ok := rec.AttrValue("push: send failed", "endpoint")
 	if !ok {
@@ -69,7 +70,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		api.PushKindAgentFinished: false,
 		api.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
+	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, "")
 	s.mu.Lock()
 	_, afRecorded := s.lastPush[api.PushKindAgentFinished]
 	s.mu.Unlock()
@@ -82,7 +83,7 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		api.PushKindAgentFinished: true,
 		api.PushKindPermission:    false,
 	})
-	s.Send(t.Context(), "title", "body", api.PushKindPermission)
+	s.Send(t.Context(), "title", "body", api.PushKindPermission, "")
 	s.mu.Lock()
 	_, pnRecorded := s.lastPush[api.PushKindPermission]
 	s.mu.Unlock()
@@ -110,7 +111,7 @@ func TestSend_Debounce(t *testing.T) {
 	before := s.lastPush[api.PushKindAgentFinished]
 	s.mu.Unlock()
 
-	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
+	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, "")
 
 	// lastPush should not have been updated (debounced).
 	s.mu.Lock()
@@ -140,7 +141,7 @@ func TestSend_DebouncePerType(t *testing.T) {
 	// its own last-push timestamp (not blocked by the agent_finished
 	// window).
 	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(t.Context(), "title", "body", api.PushKindPermission)
+	s.Send(t.Context(), "title", "body", api.PushKindPermission, "")
 
 	s.mu.Lock()
 	permTimestamp := s.lastPush[api.PushKindPermission]
@@ -157,7 +158,7 @@ func TestSend_UnknownKindRejected(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(t.Context(), "title", "body", "what-is-this")
+	s.Send(t.Context(), "title", "body", "what-is-this", "")
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.lastPush["what-is-this"]; ok {
@@ -173,7 +174,7 @@ func TestSend_UnhealthySkips(t *testing.T) {
 	s.mu.Unlock()
 
 	// Should return immediately without panicking.
-	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
+	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, "")
 }
 
 func TestSend_StatusCodePruning(t *testing.T) {
@@ -199,7 +200,7 @@ func TestSend_StatusCodePruning(t *testing.T) {
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
-			s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
+			s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, "")
 
 			if tt.wantPruned && s.HasSubscribers() {
 				t.Errorf("Send did not prune subscription after %d", tt.status)
@@ -232,7 +233,7 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	body := strings.Repeat("x", 4000)
 
 	// Send should not panic or error — it truncates internally.
-	s.Send(t.Context(), title, body, api.PushKindAgentFinished)
+	s.Send(t.Context(), title, body, api.PushKindAgentFinished, "")
 
 	// Verify the subscriber wasn't pruned (201 = success).
 	if !s.HasSubscribers() {
@@ -244,11 +245,11 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	// delivers it instead of rejecting an oversize record. Sizing on the raw
 	// title+body length — as this code once did — left the ~22-byte envelope
 	// over the cap and the notification was silently dropped.
-	gotTitle, gotBody, truncated := fitToCap(title, body)
+	gotTitle, gotBody, truncated := fitToCap(title, body, "")
 	if !truncated {
 		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if n := marshaledLen(gotTitle, gotBody); n > pushBodyCap {
+	if n := marshaledLen(gotTitle, gotBody, ""); n > pushBodyCap {
 		t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 	}
 	if !strings.HasSuffix(gotBody, "...") {
@@ -271,7 +272,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "aa", "bb", api.PushKindAgentFinished)
+		s.Send(t.Context(), "aa", "bb", api.PushKindAgentFinished, "")
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q for a 4-byte payload; want no warn", warnMsg)
 		}
@@ -283,7 +284,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		defer s.Close()
 		capLog := capture.Default(t)
 		s.Send(t.Context(), strings.Repeat("a", 10), strings.Repeat("b", 4000),
-			api.PushKindAgentFinished)
+			api.PushKindAgentFinished, "")
 		got, ok := capLog.AttrValue(warnMsg, "bytes")
 		if !ok {
 			t.Fatalf("Send did not warn %q for a 4010-byte payload", warnMsg)
@@ -301,7 +302,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		defer s.Close()
 		capLog := capture.Default(t)
 		s.Send(t.Context(), strings.Repeat("a", 978), strings.Repeat("b", 2000),
-			api.PushKindAgentFinished)
+			api.PushKindAgentFinished, "")
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q at exactly the marshaled cap; want no warn", warnMsg)
 		}
@@ -319,7 +320,7 @@ func TestPush_PayloadSizeBoundary(t *testing.T) {
 	sub.Keys.Auth = "AAAA"
 
 	t.Run("exactly_cap_passes_size_guard", func(t *testing.T) {
-		_, err := s.push(t.Context(), sub, make([]byte, pushBodyCap))
+		_, _, err := s.push(t.Context(), sub, make([]byte, pushBodyCap))
 		if err == nil {
 			t.Fatalf("push(payload=%d) err = nil, want a downstream error", pushBodyCap)
 		}
@@ -333,7 +334,7 @@ func TestPush_PayloadSizeBoundary(t *testing.T) {
 	})
 
 	t.Run("over_cap_rejected", func(t *testing.T) {
-		_, err := s.push(t.Context(), sub, make([]byte, pushBodyCap+1))
+		_, _, err := s.push(t.Context(), sub, make([]byte, pushBodyCap+1))
 		if err == nil || !strings.Contains(err.Error(), "payload too large") {
 			t.Errorf("push(payload=%d) err = %v, want payload-too-large", pushBodyCap+1, err)
 		}
@@ -363,7 +364,7 @@ func pushExpectNoPanic(t *testing.T, s *Service, sub api.PushSubscription, paylo
 				label, len(payload), r)
 		}
 	}()
-	_, err := s.push(t.Context(), sub, payload)
+	_, _, err := s.push(t.Context(), sub, payload)
 	if err == nil {
 		t.Errorf("push(%s) err = nil, want forced transport error", label)
 		return
@@ -375,19 +376,42 @@ func pushExpectNoPanic(t *testing.T, s *Service, sub api.PushSubscription, paylo
 	}
 }
 
-// TestSend_ResultStatusLogging pins the per-result logging: a >=400
-// status that isn't 410/404 logs "unexpected status"; a 2xx does not.
-// The fan-out wait (g.Wait always returns nil) and a clean body drain
-// never log.
+// TestSend_ResultStatusLogging pins the DISPOSITION each push-service status
+// maps onto, which is what decides whether a notification is retried, dropped
+// or the subscription forgotten.
+//
+// The vocabulary is deliberately three messages rather than one generic
+// "unexpected status", because the three outcomes need different reactions: a
+// permanent failure is vibekit's bug to fix (error level, with a hint naming
+// whose bug it is), a retryable one is the push service's weather (warn, then
+// try again), and an invalidated subscription is routine (info, prune).
+//
+// The retry ladder is collapsed to microseconds here so the 5xx case exercises
+// the give-up path without sleeping through a real backoff.
 func TestSend_ResultStatusLogging(t *testing.T) {
+	restoreBase, restoreBudget := pushRetryBase, pushRetryBudget
+	pushRetryBase, pushRetryBudget = time.Microsecond, time.Second
+	t.Cleanup(func() { pushRetryBase, pushRetryBudget = restoreBase, restoreBudget })
+
 	cases := []struct {
-		name        string
-		status      int
-		wantUnexpec bool
+		name   string
+		status int
+		want   string // the log message this status must produce
+		absent string // and one it must not
 	}{
-		{"400_logs_unexpected", http.StatusBadRequest, true},
-		{"500_logs_unexpected", http.StatusInternalServerError, true},
-		{"201_no_unexpected", http.StatusCreated, false},
+		// 400 and 401 are the same disposition by different doors: a malformed
+		// request and a VAPID mismatch are both ours, and neither is helped by
+		// trying again.
+		{"400_permanent", http.StatusBadRequest, "push: permanent delivery failure", "push: retryable status"},
+		{"401_permanent", http.StatusUnauthorized, "push: permanent delivery failure", "push: retryable status"},
+		{"413_permanent", http.StatusRequestEntityTooLarge, "push: permanent delivery failure", "push: retryable status"},
+		// 429 is the row the old code got wrong: a rate limit was logged and
+		// abandoned exactly like a permanent refusal.
+		{"429_retryable", http.StatusTooManyRequests, "push: retryable status", "push: permanent delivery failure"},
+		{"500_retryable", http.StatusInternalServerError, "push: retryable status", "push: permanent delivery failure"},
+		{"503_retryable", http.StatusServiceUnavailable, "push: retryable status", "push: permanent delivery failure"},
+		{"410_prunes", http.StatusGone, "push: subscription invalidated", "push: permanent delivery failure"},
+		{"404_prunes", http.StatusNotFound, "push: subscription invalidated", "push: permanent delivery failure"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -402,13 +426,16 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 			capLog := capture.Default(t)
-			s.Send(t.Context(), "title", "body", api.PushKindAgentFinished)
+			s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, "")
 
-			if got := capLog.CountExact("push: unexpected status") > 0; got != tc.wantUnexpec {
-				t.Errorf("status %d: logged unexpected-status = %v, want %v",
-					tc.status, got, tc.wantUnexpec)
+			if capLog.CountExact(tc.want) == 0 {
+				t.Errorf("status %d: did not log %q", tc.status, tc.want)
 			}
-			// g.Wait always returns nil → the fan-out error is never logged.
+			if capLog.CountExact(tc.absent) > 0 {
+				t.Errorf("status %d: logged %q, which is the wrong disposition",
+					tc.status, tc.absent)
+			}
+			// g.Wait always returns nil, so the fan-out error is never logged.
 			if capLog.CountExact("push: fan-out wait") > 0 {
 				t.Errorf("status %d: logged %q though g.Wait() returns nil",
 					tc.status, "push: fan-out wait")
@@ -419,6 +446,117 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 					tc.status, "push: drain response body")
 			}
 		})
+	}
+}
+
+// TestSend_RetriesThenSucceeds pins the point of the whole classification: a
+// notification that would have been lost to one 429 is delivered.
+//
+// It also pins the attempt CAP, because a retry loop with no ceiling on a
+// service that answers 429 forever is a goroutine leak wearing a fix's clothes.
+func TestSend_RetriesThenSucceeds(t *testing.T) {
+	restoreBase, restoreBudget := pushRetryBase, pushRetryBudget
+	pushRetryBase, pushRetryBudget = time.Microsecond, time.Second
+	t.Cleanup(func() { pushRetryBase, pushRetryBudget = restoreBase, restoreBudget })
+
+	t.Run("429_then_201_delivers", func(t *testing.T) {
+		var attempts atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if attempts.Add(1) == 1 {
+				w.Header().Set("Retry-After", "0") // 0 is ignored; own backoff applies
+				w.WriteHeader(http.StatusTooManyRequests)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+		}))
+		defer srv.Close()
+
+		s := New(context.Background(), t.TempDir(), testSubject)
+		defer s.Close()
+		s.client = srv.Client()
+		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
+
+		capLog := capture.Default(t)
+		s.Send(context.Background(), "title", "body", api.PushKindAgentFinished, "")
+
+		if got := attempts.Load(); got != 2 {
+			t.Errorf("attempts = %d, want 2 (one 429 then one success)", got)
+		}
+		if capLog.CountExact("push: delivered after retry") == 0 {
+			t.Error("a delivery that needed a retry was not reported as one")
+		}
+	})
+
+	t.Run("persistent_429_stops_at_the_cap", func(t *testing.T) {
+		var attempts atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts.Add(1)
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer srv.Close()
+
+		s := New(context.Background(), t.TempDir(), testSubject)
+		defer s.Close()
+		s.client = srv.Client()
+		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
+
+		capLog := capture.Default(t)
+		s.Send(context.Background(), "title", "body", api.PushKindAgentFinished, "")
+
+		if got := attempts.Load(); got != int32(pushMaxAttempts) {
+			t.Errorf("attempts = %d, want pushMaxAttempts (%d)", got, pushMaxAttempts)
+		}
+		if capLog.CountExact("push: giving up, attempts exhausted") == 0 {
+			t.Error("gave up without saying so")
+		}
+	})
+
+	t.Run("a_retry_past_the_budget_is_not_made", func(t *testing.T) {
+		// Retry-After longer than the notification is useful for: the delay is
+		// honoured as a REFUSAL rather than by sleeping through it.
+		var attempts atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			attempts.Add(1)
+			w.Header().Set("Retry-After", "3600")
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+
+		s := New(context.Background(), t.TempDir(), testSubject)
+		defer s.Close()
+		s.client = srv.Client()
+		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
+
+		capLog := capture.Default(t)
+		s.Send(context.Background(), "title", "body", api.PushKindAgentFinished, "")
+
+		if got := attempts.Load(); got != 1 {
+			t.Errorf("attempts = %d, want 1 (the retry lands past the budget)", got)
+		}
+		if capLog.CountExact("push: giving up, retry would land past the notification's usefulness") == 0 {
+			t.Error("dropped a notification without naming the budget as the reason")
+		}
+	})
+}
+
+// TestParseRetryAfter covers both legal header forms plus the values a caller
+// must treat as "no instruction": absent, unparseable, zero, and a date that
+// has already passed. Each of those must yield 0 so the caller stays on its own
+// backoff schedule rather than retrying immediately or waiting forever.
+func TestParseRetryAfter(t *testing.T) {
+	past := time.Now().Add(-time.Hour).UTC().Format(http.TimeFormat)
+	future := time.Now().Add(30 * time.Second).UTC().Format(http.TimeFormat)
+
+	if got := parseRetryAfter("12"); got != 12*time.Second {
+		t.Errorf("seconds form: got %v, want 12s", got)
+	}
+	if got := parseRetryAfter(future); got <= 0 || got > 31*time.Second {
+		t.Errorf("date form: got %v, want a positive delay under ~30s", got)
+	}
+	for _, in := range []string{"", "soon", "0", "-5", past} {
+		if got := parseRetryAfter(in); got != 0 {
+			t.Errorf("parseRetryAfter(%q) = %v, want 0", in, got)
+		}
 	}
 }
 
@@ -442,7 +580,7 @@ func TestPush_MergesCancelledServiceCtx(t *testing.T) {
 	callerCtx, callerCancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer callerCancel()
 
-	_, err := s.push(callerCtx, sub, []byte(`{"title":"t","body":"b"}`))
+	_, _, err := s.push(callerCtx, sub, []byte(`{"title":"t","body":"b"}`))
 	if err == nil {
 		t.Fatalf("push with cancelled service ctx returned nil error")
 	}
@@ -498,11 +636,11 @@ func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
 	title := "Vibekit"
 	body := strings.Repeat("x", 4000)
 
-	gotTitle, gotBody, truncated := fitToCap(title, body)
+	gotTitle, gotBody, truncated := fitToCap(title, body, "")
 	if !truncated {
 		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if n := marshaledLen(gotTitle, gotBody); n != pushBodyCap {
+	if n := marshaledLen(gotTitle, gotBody, ""); n != pushBodyCap {
 		t.Errorf("marshaled payload = %d bytes, want exactly %d: the trim must spend the whole budget, marker included", n, pushBodyCap)
 	}
 	if !strings.HasSuffix(gotBody, pushTruncMarker) {
@@ -523,7 +661,7 @@ func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
 func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 	t.Run("body keeps newlines, loses other control runes", func(t *testing.T) {
 		body := "a\x1bb\nc" + strings.Repeat("x", 4000)
-		gotTitle, gotBody, truncated := fitToCap("Vibekit", body)
+		gotTitle, gotBody, truncated := fitToCap("Vibekit", body, "")
 		if !truncated {
 			t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 		}
@@ -533,21 +671,21 @@ func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 		if strings.Contains(gotBody, "\x1b") {
 			t.Error("body kept a raw ESC; the sanitize half of the trim did not run")
 		}
-		if n := marshaledLen(gotTitle, gotBody); n > pushBodyCap {
+		if n := marshaledLen(gotTitle, gotBody, ""); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 		}
 	})
 
 	t.Run("title loses newlines", func(t *testing.T) {
 		title := "a\x1bb\nc" + strings.Repeat("y", 4000)
-		gotTitle, gotBody, truncated := fitToCap(title, "")
+		gotTitle, gotBody, truncated := fitToCap(title, "", "")
 		if !truncated {
 			t.Fatalf("fitToCap reported no truncation for a %d-byte title", len(title))
 		}
 		if strings.ContainsAny(gotTitle, "\n\r\x1b") {
 			t.Errorf("title kept a record-forging rune: %q", gotTitle[:min(len(gotTitle), 10)])
 		}
-		if n := marshaledLen(gotTitle, gotBody); n > pushBodyCap {
+		if n := marshaledLen(gotTitle, gotBody, ""); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 		}
 	})

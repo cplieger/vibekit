@@ -567,12 +567,12 @@ func (bc *BridgeCoordinator) effortForModel(ctx context.Context, model string) s
 }
 
 // NotifyPush sends a push notification if the push service is configured.
-func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind api.PushKind) {
+func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID) {
 	if bc.push == nil || !bc.push.HasSubscribers() {
 		return
 	}
 	bc.lifecycle.inflight.Go(func() {
-		bc.push.Send(ctx, push.DefaultTitle, body, kind)
+		bc.push.Send(ctx, push.DefaultTitle, body, kind, chatID)
 	})
 }
 
@@ -632,7 +632,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	}
 
 	if stopReason != stopReasonCancelled {
-		bc.NotifyPush(ctx, "Agent finished", api.PushKindAgentFinished)
+		bc.NotifyPush(ctx, "Agent finished", api.PushKindAgentFinished, chatID)
 	}
 }
 

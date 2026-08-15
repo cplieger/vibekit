@@ -42,7 +42,7 @@ type StreamingAccess interface {
 type PermissionAccess interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	ChatStore() api.ChatStore
-	NotifyPush(ctx context.Context, body string, kind api.PushKind)
+	NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID)
 	ParentACPSession(chatID api.ChatID) string
 	PendingPermsAdd(requestID int64, evt api.ServerEvent)
 }

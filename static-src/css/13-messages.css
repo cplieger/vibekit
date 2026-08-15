@@ -443,6 +443,20 @@
       max-width: 100%;
       border-radius: var(--r);
     }
+
+    /* Replaces an image that failed to load, naming the file it asked for.
+       Reads as a note rather than an error: the agent's frame being absent is
+       usually a stale path, not a fault the reader must act on. */
+    & .img-missing {
+      display: inline-block;
+      padding: var(--sp-1) var(--sp-2);
+      border: 1px dashed var(--c-border);
+      border-radius: var(--r);
+      color: var(--c-text-secondary);
+      font-size: var(--fs-sm);
+      font-family: var(--font-mono);
+      overflow-wrap: anywhere;
+    }
   }
 
   /* `.message.system` no longer styles the load-more affordance — that became a

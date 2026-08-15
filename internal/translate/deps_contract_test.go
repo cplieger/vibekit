@@ -88,7 +88,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
-		d.NotifyPush(ctx, "test body", api.PushKindPermission)
+		d.NotifyPush(ctx, "test body", api.PushKindPermission, "")
 	})
 
 	t.Run("BufferStore_non_nil", func(t *testing.T) {

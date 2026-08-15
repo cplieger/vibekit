@@ -52,12 +52,12 @@ func (d *baseDeps) SetGovernance(g api.GovernanceStatePayload) {
 		d.onSetGovernance(g)
 	}
 }
-func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)           {}
-func (d *baseDeps) PendingPermsRemove(int64)                         {}
-func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind) {}
-func (d *baseDeps) BufferStore() BufferAccess                        { return d.bufStore }
-func (d *baseDeps) LineTracker() LineRecorder                        { return d.lineTracker }
-func (d *baseDeps) IsHookStatusEnabled() bool                        { return false }
+func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)                       {}
+func (d *baseDeps) PendingPermsRemove(int64)                                     {}
+func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind, api.ChatID) {}
+func (d *baseDeps) BufferStore() BufferAccess                                    { return d.bufStore }
+func (d *baseDeps) LineTracker() LineRecorder                                    { return d.lineTracker }
+func (d *baseDeps) IsHookStatusEnabled() bool                                    { return false }
 
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 

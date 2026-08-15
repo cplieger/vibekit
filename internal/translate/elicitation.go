@@ -62,5 +62,5 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID api.Cha
 	t.deps.Broadcast(ctx, evt)
 	t.deps.PendingPermsAdd(reqID, evt)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID, api.WorkingLabelPayload{Label: api.WorkingLabelInput}))
-	t.deps.NotifyPush(ctx, "Input needed", api.PushKindPermission)
+	t.deps.NotifyPush(ctx, "Input needed", api.PushKindPermission, chatID)
 }

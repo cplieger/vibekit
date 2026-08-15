@@ -59,7 +59,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID api.ChatID, msg
 	t.deps.Broadcast(ctx, evt)
 	t.deps.PendingPermsAdd(reqID, evt)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID, api.WorkingLabelPayload{Label: api.WorkingLabelInput}))
-	t.deps.NotifyPush(ctx, "The agent has a question", api.PushKindPermission)
+	t.deps.NotifyPush(ctx, "The agent has a question", api.PushKindPermission, chatID)
 }
 
 // wireUserInputOption / wireUserInputSubOption are KAS's `_kiro/userInput` option

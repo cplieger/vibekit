@@ -63,6 +63,8 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		AgentSubtaskID: subtask,
 		Locations:      tc.Locations,
 		Diffs:          diffs,
+		Disclosed:      disclosedFrom(tc.Meta.Kiro.DisclosedContext),
+		Denial:         denialFrom(tc.Meta.Kiro.PolicyDenial),
 		Ts:             time.Now().UnixMilli(),
 	}
 	buf.ToolCalls = append(buf.ToolCalls, call)
@@ -175,6 +177,54 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 		}
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
+	mergeToolMeta(tc, tu)
+}
+
+// mergeToolMeta folds a tool_call_update's disclosure and denial metadata into
+// the buffered call. Late adoption, for the same reason as the checkpoint fold: a
+// denial in particular is decided when the call is ATTEMPTED, so it can arrive on
+// the update rather than the create. Never overwrites a value already held.
+func mergeToolMeta(tc *api.ToolCall, tu *ACPToolCallUpdateWire) {
+	if tc.Disclosed == nil {
+		tc.Disclosed = disclosedFrom(tu.Meta.Kiro.DisclosedContext)
+	}
+	if tc.Denial == nil {
+		tc.Denial = denialFrom(tu.Meta.Kiro.PolicyDenial)
+	}
+}
+
+// disclosedFrom maps KAS's disclosedContext block onto the domain type. Returns
+// nil for every tool call that is not a disclose_context, which is nearly all of
+// them.
+func disclosedFrom(in *ACPDisclosedContext) *api.ToolDisclosed {
+	if in == nil {
+		return nil
+	}
+	return &api.ToolDisclosed{Type: in.Type, DisplayName: in.DisplayName, URI: in.URI}
+}
+
+// denialFrom maps KAS's policyDenial block onto the domain type. The outer
+// `effect` is always the literal "deny" so it is dropped; the matched rule's own
+// effect is kept, because an "ask" rule that nobody answered also arrives here.
+func denialFrom(in *ACPPolicyDenial) *api.ToolDenial {
+	if in == nil {
+		return nil
+	}
+	out := &api.ToolDenial{
+		Capability: in.Capability,
+		Resource:   in.Resource,
+		Scope:      in.Scope,
+		Source:     in.Source,
+	}
+	if in.MatchedRule != nil {
+		out.Rule = &api.ToolDenialRule{
+			Capability: in.MatchedRule.Capability,
+			Effect:     in.MatchedRule.Effect,
+			Match:      in.MatchedRule.Match,
+			Exclude:    in.MatchedRule.Exclude,
+		}
+	}
+	return out
 }
 
 // mergeCheckpoint folds a tool_call_update's _meta.kiro.checkpoint into the
