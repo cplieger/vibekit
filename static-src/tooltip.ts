@@ -3,9 +3,8 @@
 //
 // The hand-rolled delegated TooltipController was replaced by the library's
 // `initTooltips`, configured to keep vibekit's existing `data-tooltip`
-// attribute and its cold/warm delay grouping (first tooltip in a cold group
-// waits 1000ms; peers show instantly while warm; 500ms cooldown). So every
-// existing `data-tooltip="…"` in the HTML/TS keeps working unchanged.
+// attribute. So every existing `data-tooltip="…"` in the HTML/TS keeps working
+// unchanged.
 //
 // What the library adds over the old copy: a shared placement engine (flip
 // below when there is no room above, viewport clamp, visualViewport-aware for
@@ -21,6 +20,15 @@
 
 import { initTooltips as uipInitTooltips } from "@cplieger/ui-primitives/tooltip";
 
+/** Hover time every tooltip waits out, matching a native `title`: Firefox's
+ *  `ui.tooltipDelay` default is 500ms and the Windows mouse-hover time is
+ *  400ms. ONE value for every hover, cold or warm — a native tooltip has no
+ *  concept of a warm group, and the warm path was what made vibekit's tooltips
+ *  read as instant: the group stayed warm for `cooldown + delayCold` after a
+ *  show, so every neighbouring pill and toolbar button popped with no delay
+ *  once one had. */
+const HOVER_DELAY_MS = 500;
+
 /** Install the delegated tooltip controller once. Idempotent (the library
  *  guards re-initialization internally).
  *
@@ -31,8 +39,11 @@ import { initTooltips as uipInitTooltips } from "@cplieger/ui-primitives/tooltip
 export function initTooltips(): void {
   uipInitTooltips({
     attribute: "data-tooltip",
-    delayCold: 1000,
-    delayWarm: 0,
-    cooldown: 500,
+    // Both delays restate what ui-primitives 3.0.1 makes the default
+    // (`delayWarm` follows `delayCold`, 500ms). The pin is still 3.0.0, whose
+    // defaults are 1000/0 — the instant-peer shape — so the values have to be
+    // passed to get the behavior. Drop both lines when the pin reaches 3.0.1.
+    delayCold: HOVER_DELAY_MS,
+    delayWarm: HOVER_DELAY_MS,
   });
 }
