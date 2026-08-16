@@ -1166,6 +1166,51 @@ func TestHandleDownload_File(t *testing.T) {
 	}
 }
 
+// TestHandleDownload_SVGIsAttachment pins the one download header that is a
+// SECURITY control rather than a convenience.
+//
+// mime.TypeByExtension(".svg") is "image/svg+xml", and an SVG document rendered
+// at a same-origin URL executes its own script with this origin's privileges —
+// which would mean access to vibekit's cookies and its whole same-origin API
+// surface. Every `<img src=…>` pointed at this route is safe on its own (an SVG
+// referenced AS AN IMAGE may not fetch, script, or reach the embedding document),
+// but the file browser also renders a real anchor to this URL, and CSP does not
+// close the gap: `frame-src` falls back to `default-src 'self'`, which PERMITS a
+// same-origin frame.
+//
+// `Content-Disposition: attachment` is the whole control. It was untested, and a
+// plausible future change — "serve images inline so the viewer can use them" —
+// would have silently turned the existing download anchor into stored XSS. The
+// `<img>` path needs no `inline` to work, which is exactly why relaxing this
+// would buy nothing.
+func TestHandleDownload_SVGIsAttachment(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	const svg = `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`
+	if err := os.WriteFile(filepath.Join(dir, "arch.svg"), []byte(svg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := getReq(t, h, "/api/file/download?path="+prefix+"/arch.svg")
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	// The type is script-capable, which is precisely why the disposition matters.
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/svg+xml") {
+		t.Errorf("Content-Type = %q, want image/svg+xml*", ct)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment") {
+		t.Errorf("Content-Disposition = %q, want to start with attachment", cd)
+	}
+	if strings.Contains(cd, "inline") {
+		t.Errorf("Content-Disposition = %q, must never be inline for image/svg+xml", cd)
+	}
+	// The bytes are served verbatim; nothing sanitizes them, and nothing should —
+	// inertness comes from HOW the response is consumed, not from rewriting it.
+	if got := rec.Body.String(); got != svg {
+		t.Errorf("body = %q, want the file verbatim", got)
+	}
+}
+
 func TestHandleDownload_UnknownExtension(t *testing.T) {
 	h, dir, prefix := testDir(t)
 	if err := os.WriteFile(filepath.Join(dir, "blob"), []byte{0x01, 0x02}, 0o644); err != nil {

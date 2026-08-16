@@ -317,36 +317,35 @@ func importName(raw string, req *importRequest) (string, error) {
 	return clean, nil
 }
 
-// sanitizeName folds a raw name into nameRe's charset: anything outside it
-// becomes "-", and the result is trimmed to start with a letter. Capped at 64
-// to match nameRe's own bound.
+// sanitizeName folds a raw name into the shared grammar: anything outside
+// NameAllowedRune becomes "-", the result is trimmed to open on a lead rune, and
+// it is capped at NameMaxLen.
+//
+// This is a REPAIRER, not a rejector — it is what lets a README's `@scope/pkg`
+// install instead of erroring — but its charset and its bound are validate.go's,
+// not its own. It used to restate both as a switch and a literal 64, with three
+// comments claiming they matched a regexp that no longer exists; that regexp was
+// the third copy D81 exists to end. TestSanitizeNameAlwaysValid asserts the postcondition mechanically: every
+// output ValidateName accepts.
 func sanitizeName(raw string) string {
 	var b strings.Builder
 	b.Grow(len(raw))
 	for _, r := range raw {
-		switch {
-		case isASCIILetter(r), r >= '0' && r <= '9', r == '_', r == '-':
+		if NameAllowedRune(r) {
 			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
+			continue
 		}
+		b.WriteByte('-')
 	}
-	out := strings.TrimFunc(b.String(), func(r rune) bool { return !isASCIILetter(r) })
-	// TrimFunc only strips the ends, so the leading rune is now a letter (or the
-	// string is empty). Trailing separators went with it, which is the shape the
-	// name regex wants anyway.
-	if len(out) > 64 {
-		out = out[:64]
+	out := strings.TrimFunc(b.String(), func(r rune) bool { return !NameLeadRune(r) })
+	// TrimFunc only strips the ends, so the leading rune is now a lead rune (or
+	// the string is empty). Trailing separators went with it, which is the shape
+	// the grammar wants anyway. The cap is applied last and is byte-safe: every
+	// kept rune is single-byte ASCII by NameAllowedRune's construction.
+	if len(out) > NameMaxLen {
+		out = out[:NameMaxLen]
 	}
 	return out
-}
-
-// isASCIILetter reports whether r is one of the characters nameRe accepts in a
-// leading position. Deliberately ASCII-only, matching nameRe: the name becomes
-// the agent's tool prefix, and a non-ASCII prefix is not something the tool
-// namespace accepts.
-func isASCIILetter(r rune) bool {
-	return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z'
 }
 
 // classifyOAuthKeys runs the same three-way classification over a server's

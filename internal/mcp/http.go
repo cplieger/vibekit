@@ -50,7 +50,7 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 	req, err := parseImportBody(raw)
 	if err != nil {
 		slog.Debug("mcp: import parse failed", "error", err)
-		api.BadRequest(w, err.Error())
+		writeValidationErr(w, err)
 		return
 	}
 	results, err := s.ImportServers(r.Context(), req.servers)
@@ -196,6 +196,33 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 			api.ErrorJSON("persist failed"))
 	default:
 		slog.Debug("mcp: http bad request", "error", err)
-		api.BadRequest(w, err.Error())
+		writeValidationErr(w, err)
 	}
+}
+
+// validationErrorBody is the 400 a failed Validate produces.
+//
+// `error` is what it always was — the joined message text — so a client that only
+// reads that field keeps working unchanged, which matters because the paste
+// panel's parse errors and the store's non-validation 400s still arrive with
+// nothing else. `fields` is the addition: one entry per failure, carrying the
+// wire field name so the form can mark three inputs instead of printing three
+// sentences above one box.
+type validationErrorBody struct {
+	Error  string       `json:"error"`
+	Fields []FieldError `json:"fields,omitempty"`
+}
+
+// writeValidationErr answers a 400, carrying the per-field breakdown when the
+// error has one. An error with no field attribution (a paste parse failure, a
+// store precondition) gets the plain envelope, so a field list on the wire always
+// means "these inputs are wrong" rather than "here is an empty array".
+func writeValidationErr(w http.ResponseWriter, err error) {
+	fields := FieldErrors(err)
+	if len(fields) == 0 {
+		api.BadRequest(w, err.Error())
+		return
+	}
+	api.WriteJSONStatus(w, http.StatusBadRequest,
+		validationErrorBody{Error: err.Error(), Fields: fields})
 }

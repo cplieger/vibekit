@@ -1,0 +1,9 @@
+# 2026/08/16 09:07:22.182713 [TestValidateNameIsTheRunePredicates] [rapid] draw name: "0"
+# 2026/08/16 09:07:22.182716 [TestValidateNameIsTheRunePredicates] ValidateName("0") ok=true, the rune predicates say false: the validator and the predicates are no longer one grammar
+# 
+v0.4.8#2666511141542963912
+0x5555555555555
+0x0
+0x38e38e38e38e4
+0x2
+0x0

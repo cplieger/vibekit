@@ -1,0 +1,16 @@
+# 2026/08/16 09:08:10.583991 [TestValidateNameIsTheRunePredicates] [rapid] draw mixed: false
+# 2026/08/16 09:08:10.583997 [TestValidateNameIsTheRunePredicates] [rapid] draw length: 1
+# 2026/08/16 09:08:10.584000 [TestValidateNameIsTheRunePredicates] [rapid] draw runes: []int32{48}
+# 2026/08/16 09:08:10.584009 [TestValidateNameIsTheRunePredicates] ValidateName("0") ok=true, the rune predicates say false: the validator and the predicates are no longer one grammar
+# 
+v0.4.8#10790935233997844181
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1
+0x0
+0x6b74f03291620
+0x4
+0x0

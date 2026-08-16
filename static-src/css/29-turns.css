@@ -234,6 +234,16 @@
   color: var(--c-accent);
 }
 
+/* The request's attachment pills. The pill itself is the composer's component
+   verbatim (`.attachment-pill` and friends, 15-input.css) so the two homes cannot
+   drift apart; only the ROW's own padding is overridden, because the composer's
+   row sits against the textarea while this one sits inside a header that already
+   has its own gutter. */
+.turn-req-attachments {
+  padding: 0;
+  margin: 0;
+}
+
 .turn-req-more:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: 2px;
@@ -768,7 +778,12 @@
 .turn[data-folded] .turn-req-more,
 .turn[data-folded] .turn-rewind,
 .turn[data-folded] .turn-copy-req,
-.turn[data-folded] .turn-ledger-files {
+.turn[data-folded] .turn-ledger-files,
+/* Folded, `.turn-req` lays out as a ROW, so a pill row would sit beside the
+   prompt text and push the one line the fold exists to show off the end. Same
+   call as Copy above: the fold is a navigation surface, expanding is what offers
+   the detail. */
+.turn[data-folded] .turn-req-attachments {
   display: none;
 }
 

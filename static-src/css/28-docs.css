@@ -15,38 +15,63 @@
    shell this copies. Do not add an inner scroller here: two nested scrollers
    is the bug 19-files.css documents for the files view. */
 
-/* A docs row is two lines (name row, then the description) rather than the
-   single centred line .list-row assumes, so the flex axis flips. */
+/* A docs row is an activation SURFACE beside a control slot, and the two are
+   siblings rather than parent and child: the delete button cannot sit inside the
+   thing that opens the document (interactive content inside a role=button is
+   invalid and gets flattened by assistive tech — the defect pill-expand.ts
+   documents). So the row is a horizontal flex container, and the two-line stack
+   lives on the surface. */
 .docs-row {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--sp-1);
+  cursor: pointer;
+}
+
+/* The surface carries the two lines (name row, then the description) that
+   .list-row's single centred line does not assume, so its own axis is the column
+   one the row used to have. */
+.docs-row-surface {
+  display: flex;
   flex-direction: column;
   align-items: stretch;
   gap: 0.125rem;
-  cursor: pointer;
-  position: relative;
-
-  /* Room for the trailing edit glyph, which is absolutely positioned so it
-     stays vertically centred against a one- OR two-line row. */
-  padding-right: var(--sp-5);
+  flex: 1 1 auto;
+  min-width: 0;
 
   &:focus-visible {
     outline: 2px solid var(--c-accent);
     outline-offset: -2px;
   }
+}
 
-  & > .list-row-btn {
-    position: absolute;
-    right: var(--sp-2);
-    top: 50%;
-    translate: 0 -50%;
-    color: var(--c-text-tertiary);
-    opacity: 0;
-    transition: opacity var(--dur-micro) var(--ease-micro);
-  }
+/* The trailing controls. Reveal on row hover / control focus, so a resting list
+   stays quiet; a keyboard user reaches the delete by Tab, which is why
+   focus-within is part of the condition rather than hover alone. */
+.docs-row-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--ease-micro);
+}
 
-  &:hover > .list-row-btn,
-  &:focus-visible > .list-row-btn {
-    opacity: 1;
-  }
+.docs-row:hover > .docs-row-controls,
+.docs-row:focus-within > .docs-row-controls {
+  opacity: 1;
+}
+
+/* A read-only row has no controls to reveal, so its badge is always visible —
+   an affordance that appears on hover and then refuses is the click-then-fail
+   this gate exists to remove. */
+.docs-row-controls:has(> .docs-badge-link) {
+  opacity: 1;
+}
+
+.docs-row-delete:hover {
+  color: var(--c-red);
 }
 
 /* The first line: name, git letter, then the metadata badges pushed right. */
@@ -130,6 +155,15 @@
   background: color-mix(in oklch, var(--c-yellow) 18%, transparent);
   border-color: color-mix(in oklch, var(--c-yellow) 40%, transparent);
   color: var(--c-yellow);
+}
+
+/* An aliased entry: editable, but its delete would remove the file it points
+   at. Deliberately quiet — this is not a warning, it is the absence of one
+   control with a reason attached. */
+.docs-badge-link {
+  background: var(--c-bg-tertiary);
+  color: var(--c-text-tertiary);
+  font-style: italic;
 }
 
 /* --- Git status letter -------------------------------------------------- */

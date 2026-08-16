@@ -2,16 +2,17 @@
 // Attachment pill row: files attached to the next prompt.
 //
 // Instead of injecting file paths into the textarea, attachments appear
-// as removable pills in a row below the input. On submit, the list is
+// as pills in a row below the input: the body opens the file in its own
+// viewer tab, the `×` removes it. On submit, the list is
 // sent alongside the prompt text. The server classifies each by
 // extension: supported document types (PDF, DOCX, XLSX, DOC, XLS, CSV)
 // are inlined as ACP embedded `resource` blocks; everything else becomes
 // a path reference the agent reads via fs_read.
 // ---------------------------------------------------------------------------
 
-import { el, createCollection, bindList, effect } from "@cplieger/reactive";
+import { createCollection, bindList, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
-import { badgeForExt } from "./file-extensions.js";
+import { buildAttachmentPill } from "./attachment-pill.js";
 
 /** One attached file. */
 export interface AttachedFile {
@@ -72,20 +73,12 @@ function ensureBound(): void {
   }
   bound = true;
   const row = $.attachmentRow;
-  bindList(row, attached, { mount: (att) => buildAttachmentPill(att) });
+  bindList(row, attached, {
+    mount: (att) => buildAttachmentPill(att, { onRemove: removeAttachment }),
+  });
   effect(() => {
     row.classList.toggle("hidden", attached.ids.value.length === 0);
   });
-}
-
-// Extension → icon derived from the file-extensions registry.
-function iconFor(name: string): string {
-  const dot = name.lastIndexOf(".");
-  if (dot === -1) {
-    return "📎";
-  }
-  const ext = name.slice(dot + 1).toLowerCase();
-  return badgeForExt(ext) || "📎";
 }
 
 /** Split a workspace path into the record the pill row renders. */
@@ -195,23 +188,6 @@ export function dropAttachments(chatID: string): void {
   }
 }
 
-function buildAttachmentPill(att: AttachedFile): HTMLElement {
-  const icon = el("span", { className: "attachment-icon" }, iconFor(att.name));
-
-  const label = el("span", { className: "attachment-name" }, att.name);
-
-  const close = el(
-    "button",
-    {
-      type: "button",
-      className: "attachment-close",
-      "aria-label": `Remove ${att.name}`,
-    },
-    "×",
-  );
-  close.addEventListener("click", () => {
-    removeAttachment(att.path);
-  });
-
-  return el("li", { className: "attachment-pill", title: att.path }, icon, label, close);
-}
+// buildAttachmentPill lives in attachment-pill.ts. A sent turn's header draws
+// the same pill, and that consumer is a pure `fundamentals/` view which must not
+// reach a module that touches `$` — see the header comment there.

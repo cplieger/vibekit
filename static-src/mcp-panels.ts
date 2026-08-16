@@ -14,7 +14,13 @@ import {
   collectKeyPairs,
 } from "./mcp-pairs.js";
 import { buildChip } from "./chip.js";
-import { importServers, saveServer, searchRegistry } from "./actions/mcp.js";
+import {
+  type ValidationField,
+  importServers,
+  saveServer,
+  searchRegistry,
+  validationFieldsOf,
+} from "./actions/mcp.js";
 import { getToolsStatus } from "./actions/tools.js";
 import { installToolAndWait } from "./tools.js";
 import { bindLoadingState } from "./actions/index.js";
@@ -121,6 +127,88 @@ function setMode(mode: AddMode, existing: Server | null): void {
   PANEL_MODES[mode](existing);
 }
 
+// --- Validation failures ---
+//
+// The server accumulates across independent checks, so one response can name
+// three bad fields. Printing three sentences above one box would leave the user
+// hunting for which inputs they were about, so the field attribution is spent on
+// MARKING the inputs and the messages sit under them as a list.
+
+/** Wire field name -> the form input that holds it. The wire names are the ones
+ *  the server already put in its messages (`oauth_client_secret`, `headers`), so
+ *  this is a lookup rather than a translation. A field with no input here (a
+ *  `transport` refusal on the raw-paste panel, say) still gets its message
+ *  printed; only the mark is skipped. */
+const FIELD_INPUT_IDS: Readonly<Record<string, readonly string[]>> = {
+  name: ["mcp-remote-name", "mcp-npm-name"],
+  url: ["mcp-remote-url"],
+  command: ["mcp-npm-pkg"],
+  args: ["mcp-npm-pkg"],
+  transport: ["mcp-remote-transport"],
+  headers: ["mcp-remote-headers"],
+  env: ["mcp-npm-env"],
+  oauth_client_id: ["mcp-remote-oauth-client-id"],
+  oauth_client_secret: ["mcp-remote-oauth-client-secret"],
+};
+
+const CLS_FIELD_INVALID = "field-invalid";
+
+/** Drop every mark a previous submit left. Runs at the top of each submit, so a
+ *  field the user has since fixed stops claiming to be wrong. */
+function clearFieldMarks(): void {
+  for (const node of document.querySelectorAll<HTMLElement>("." + CLS_FIELD_INVALID)) {
+    node.classList.remove(CLS_FIELD_INVALID);
+    node.removeAttribute("aria-invalid");
+  }
+}
+
+/** Mark the inputs the server named, and return the message lines to print. */
+function markInvalidFields(fields: readonly ValidationField[]): string[] {
+  const lines: string[] = [];
+  for (const f of fields) {
+    lines.push(f.message);
+    for (const id of FIELD_INPUT_IDS[f.field] ?? []) {
+      const node = document.getElementById(id);
+      if (node === null) {
+        continue;
+      }
+      node.classList.add(CLS_FIELD_INVALID);
+      node.setAttribute("aria-invalid", "true");
+    }
+  }
+  return lines;
+}
+
+/** Render a dispatch failure into an inline error element.
+ *
+ *  A validation failure lists every field the server named; anything else (a
+ *  parse error, a name conflict, a network death) keeps the single-message shape
+ *  it always had, which is why the field list is absent rather than empty on
+ *  those paths. */
+function showSubmitError(
+  errEl: HTMLElement,
+  err: { message: string; cause?: unknown } | undefined,
+  fallback: string,
+): void {
+  const fields = validationFieldsOf(err);
+  errEl.replaceChildren();
+  if (fields.length > 1) {
+    const lines = markInvalidFields(fields);
+    errEl.appendChild(el("span", {}, `${String(lines.length)} problems to fix:`));
+    const list = el("ul", { className: "mcp-error-list" });
+    for (const line of lines) {
+      list.appendChild(el("li", {}, line));
+    }
+    errEl.appendChild(list);
+  } else {
+    if (fields.length === 1) {
+      markInvalidFields(fields);
+    }
+    errEl.textContent = err !== undefined ? err.message : fallback;
+  }
+  errEl.classList.remove("hidden");
+}
+
 // --- Submit helpers ---
 
 async function submitServer(
@@ -129,7 +217,8 @@ async function submitServer(
   saveBtn: HTMLButtonElement | null,
 ): Promise<boolean> {
   errEl.classList.add("hidden");
-  errEl.textContent = "";
+  errEl.replaceChildren();
+  clearFieldMarks();
 
   if (session.editing.id !== "") {
     body.disabled_tools = session.disabledToolsList;
@@ -153,8 +242,7 @@ async function submitServer(
   ).outcome;
 
   if (o.status !== "success") {
-    errEl.textContent = o.status === "error" ? o.error.message : "Save failed.";
-    errEl.classList.remove("hidden");
+    showSubmitError(errEl, o.status === "error" ? o.error : undefined, "Save failed.");
     return false;
   }
   closeModal($.mcpModal);
@@ -453,6 +541,7 @@ function initRawPanel(_existing: Server | null): void {
 }
 
 function showPasteError(err: HTMLParagraphElement, msg: string): void {
+  err.replaceChildren();
   err.textContent = msg;
   err.classList.remove("hidden");
 }
@@ -462,6 +551,7 @@ async function submitPaste(
   err: HTMLParagraphElement,
   saveBtn: HTMLButtonElement,
 ): Promise<void> {
+  clearFieldMarks();
   const unbind = bindLoadingState("mcp.import_servers", saveBtn, { pendingClass: "btn-loading" });
   const o = await importServers.dispatch(block, {
     onSettled: () => {
@@ -469,7 +559,10 @@ async function submitPaste(
     },
   }).outcome;
   if (o.status !== "success") {
-    showPasteError(err, o.status === "error" ? o.error.message : "Connect failed.");
+    // A pasted block is the case D80 exists for: several fields wrong at once,
+    // none of them typed here. The textarea holds every one of them, so there is
+    // no input to mark — the list under the box IS the answer.
+    showSubmitError(err, o.status === "error" ? o.error : undefined, "Connect failed.");
     return;
   }
   closeModal($.mcpModal);

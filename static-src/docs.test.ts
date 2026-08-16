@@ -167,13 +167,102 @@ describe("row rendering", () => {
   });
 
   it("is a keyboard-operable button", () => {
+    // The three assertions are unchanged; they moved from the ROW onto the
+    // activation SURFACE, because the row now also holds a delete button and a
+    // button cannot contain one (D65's sibling-slot restructure).
     const row = _renderRowForTest({
       category: "steering",
       name: "actions",
       path: "workspace/.kiro/steering/actions.md",
     });
-    expect(row.getAttribute("role")).toBe("button");
-    expect(row.getAttribute("tabindex")).toBe("0");
-    expect(row.getAttribute("aria-label")).toBe("Open actions");
+    const surface = row.querySelector<HTMLElement>(".docs-row-surface");
+    expect(surface?.getAttribute("role")).toBe("button");
+    expect(surface?.getAttribute("tabindex")).toBe("0");
+    expect(surface?.getAttribute("aria-label")).toBe("Open actions");
+  });
+});
+
+// D65 / D67a: the delete affordance and the provenance gate that decides it.
+describe("row affordances", () => {
+  it("gives a writable row a delete button", () => {
+    const row = _renderRowForTest({
+      category: "steering",
+      name: "actions",
+      path: "workspace/.kiro/steering/actions.md",
+    });
+    const del = row.querySelector<HTMLButtonElement>(".docs-row-delete");
+    expect(del).not.toBeNull();
+    expect(del?.getAttribute("aria-label")).toBe("Delete actions");
+  });
+
+  it("gives an asserted read-only row neither an edit glyph nor a delete", () => {
+    const row = _renderRowForTest({
+      category: "steering",
+      name: "locked",
+      path: "workspace/.kiro/steering/locked.md",
+      read_only: true,
+    });
+    expect(row.querySelector(".docs-row-delete")).toBeNull();
+    expect(row.querySelector(".list-row-btn")).toBeNull();
+  });
+
+  it("makes no read-only claim, because the surface still opens the file", () => {
+    // D67a is withdrawn. The badge that used to sit here said "read-only" while
+    // the activation surface opened a file the editor could save — the row and
+    // its own control contradicted each other. A row states what it can back up.
+    const row = _renderRowForTest({
+      category: "steering",
+      name: "locked",
+      path: "workspace/.kiro/steering/locked.md",
+      read_only: true,
+    });
+    expect(row.textContent).not.toContain("read-only");
+    expect(row.querySelector(".docs-badge-readonly")).toBeNull();
+  });
+
+  it("keeps a symlinked row's edit and withholds only its delete", () => {
+    // The two questions are separate: editing through a link writes the target
+    // (which is what following a link means), while deleting through it removes a
+    // file listed under its own name elsewhere on the page.
+    const row = _renderRowForTest({
+      category: "steering",
+      name: "alias",
+      path: "workspace/.kiro/steering/alias.md",
+      delete_protected: true,
+    });
+    expect(row.querySelector(".docs-row-delete")).toBeNull();
+    expect(row.querySelector(".list-row-btn")).not.toBeNull();
+    const badge = row.querySelector(".docs-badge-link");
+    expect(badge?.textContent).toBe("link");
+    expect(badge?.getAttribute("data-tooltip")).toContain("delete is disabled");
+  });
+
+  it("treats absent provenance fields as unrestricted", () => {
+    // The direction matters as much as the value: a restriction is asserted by the
+    // server, never inferred from a field failing to arrive.
+    const row = _renderRowForTest({
+      category: "hook",
+      name: "h",
+      path: "workspace/.kiro/hooks/h.json",
+    });
+    expect(row.querySelector(".docs-row-delete")).not.toBeNull();
+    expect(row.querySelector(".list-row-btn")).not.toBeNull();
+  });
+
+  it("keeps the delete OUTSIDE the activation surface", () => {
+    // Nesting an interactive control inside a role=button is invalid HTML and
+    // gets flattened by assistive tech — the defect pill-expand.ts documents.
+    // The two are siblings, which is what makes both reachable.
+    const row = _renderRowForTest({
+      category: "agent",
+      name: "a",
+      path: "workspace/.kiro/agents/a.md",
+    });
+    const surface = row.querySelector<HTMLElement>(".docs-row-surface");
+    const del = row.querySelector<HTMLButtonElement>(".docs-row-delete");
+    expect(surface?.getAttribute("role")).toBe("button");
+    expect(del).not.toBeNull();
+    expect(surface?.contains(del ?? null)).toBe(false);
+    expect(surface?.querySelector("button")).toBeNull();
   });
 });

@@ -124,6 +124,28 @@
   border-color: var(--c-accent);
 }
 
+/* The pill BODY: a sibling of the `×`, never its parent, because a button
+   cannot contain a button. It carries no chrome of its own — the `<li>` already
+   draws the pill — so it only has to be a hit target and take a focus ring. */
+.attachment-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.attachment-open:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
 .attachment-icon {
   font-size: 0.85em;
 }
@@ -813,6 +835,35 @@
 .pill-role-name {
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Which tree a custom agent came from. Quiet and pushed right: it answers a
+   question the reader has only when two rows share a name. */
+.pill-role-scope {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+/* A workspace agent shadowing a same-named global or bundled one. Tinted, not
+   quiet: this is the row that tells the reader which of two definitions a run
+   will use, and it is the one thing about the collision that is not obvious. */
+.pill-role-shadow {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  padding: 0.0625rem var(--sp-1);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklch, var(--c-yellow) 18%, transparent);
+  color: var(--c-yellow);
+}
+
+/* With a scope chip present the shadow marker follows it, so the auto margin
+   must not push the shadow to the edge as well. */
+.pill-role-scope + .pill-role-shadow {
+  margin-inline-start: 0;
 }
 
 /* Effort row: pinned at the top of the model expand list. Five tier

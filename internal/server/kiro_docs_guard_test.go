@@ -279,10 +279,10 @@ func TestKiroDocsGuard_ConsultsTheSharedSensitiveDenylist(t *testing.T) {
 	g := &rootGuard{dir: "/config", category: "test"}
 	// Inside the root, so the escape check passes and the denylist is what has
 	// to refuse it. This is exactly the arrangement layer 1 does not cover.
-	if g.allow("home/.aws/sso/cache/token.md") {
+	if g.allow("home/.aws/sso/cache/token.md").allowed {
 		t.Error("a sensitive path inside the scanned root was admitted")
 	}
-	if g.allow("chats/abc.md") {
+	if g.allow("chats/abc.md").allowed {
 		t.Error("the chat store was admitted")
 	}
 }

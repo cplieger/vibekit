@@ -43,14 +43,14 @@ type testPush struct {
 
 var _ api.PushService = (*testPush)(nil)
 
-func (p *testPush) RegisterRoutes(*http.ServeMux)                                  {}
-func (p *testPush) Subscribe(api.PushSubscription)                                 {}
-func (p *testPush) Unsubscribe(string)                                             {}
-func (p *testPush) Send(context.Context, string, string, api.PushKind, api.ChatID) {}
-func (p *testPush) HasSubscribers() bool                                           { return false }
-func (p *testPush) SetPreferences(prefs map[api.PushKind]bool)                     { p.prefs = prefs }
-func (p *testPush) ReloadPreferences(context.Context)                              {}
-func (p *testPush) Close()                                                         {}
+func (p *testPush) RegisterRoutes(*http.ServeMux)                                       {}
+func (p *testPush) Subscribe(api.PushSubscription)                                      {}
+func (p *testPush) Unsubscribe(string)                                                  {}
+func (p *testPush) Send(context.Context, string, string, api.PushKind, api.PushSubject) {}
+func (p *testPush) HasSubscribers() bool                                                { return false }
+func (p *testPush) SetPreferences(prefs map[api.PushKind]bool)                          { p.prefs = prefs }
+func (p *testPush) ReloadPreferences(context.Context)                                   {}
+func (p *testPush) Close()                                                              {}
 
 func TestSafeKiroSetting(t *testing.T) {
 	tests := []struct {

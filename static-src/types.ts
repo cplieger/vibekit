@@ -31,6 +31,7 @@ export type {
   AccountUsage,
   AccountUsageBreakdown,
   ApprovalFile,
+  Attachment,
   ChatHeader,
   FileChange,
   Message,

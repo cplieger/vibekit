@@ -361,6 +361,9 @@ class Elements {
   get editorMarkdown(): HTMLDivElement {
     return byId("editor-markdown");
   }
+  get editorImage(): HTMLDivElement {
+    return byId("editor-image");
+  }
   get editorDiffPane(): HTMLDivElement {
     return byId("editor-diff-pane");
   }
@@ -504,6 +507,9 @@ class Elements {
   }
   get notifySubOptions(): HTMLDivElement {
     return byId("notify-sub-options");
+  }
+  get notifyPRStatusToggle(): HTMLInputElement {
+    return byId("notify-pr-status-toggle");
   }
   get notifyFinishedToggle(): HTMLInputElement {
     return byId("notify-finished-toggle");

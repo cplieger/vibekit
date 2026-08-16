@@ -457,6 +457,55 @@
       font-family: var(--font-mono);
       overflow-wrap: anywhere;
     }
+
+    /* A workspace audio file the agent presented with `![](…)`. The native
+       player's own chrome is the whole widget; only its width is ours. */
+    & .media-audio {
+      display: block;
+      width: 100%;
+      max-width: 24rem;
+      margin-block: var(--sp-2);
+    }
+
+    /* The download affordance for a presented file that is neither image nor
+       audio. Styled as a chip rather than a prose link so it reads as an object
+       in the transcript, which is what it is. */
+    & .media-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: var(--sp-1) var(--sp-2);
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
+      color: var(--c-text-primary);
+      font-size: var(--fs-sm);
+      text-decoration: none;
+    }
+
+    & .media-download:hover {
+      background: var(--c-bg-hover);
+      border-color: var(--c-accent);
+    }
+
+    /* A rendered ```svg fence. The figure is the block; the image inside it is
+       inert by specification (see svg-block.ts) and carries no interactivity, so
+       there is nothing to hover and no cursor to change. */
+    & .svg-figure {
+      margin: var(--sp-3) 0;
+    }
+
+    & .svg-diagram {
+      /* An SVG has no intrinsic pixel size to preserve, so a cap is the only
+         thing stopping it claiming the full column. */
+      max-width: 100%;
+      height: auto;
+      /* A diagram authored for a light page on a dark surface is unreadable
+         otherwise, and the source is not ours to restyle. */
+      background: var(--c-bg-secondary);
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
+      padding: var(--sp-2);
+    }
   }
 
   /* `.message.system` no longer styles the load-more affordance — that became a

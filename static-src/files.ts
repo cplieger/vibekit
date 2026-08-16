@@ -11,6 +11,7 @@ import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
 import { toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
 import { openChange } from "./navigate.js";
+import { fileDownloadURL } from "./utils-url.js";
 import {
   initGitStatusStore,
   onGitStatusChange,
@@ -798,8 +799,14 @@ function downloadSelected(): void {
   // ever becomes an issue, disable the button briefly via setTimeout.
   const singleName = names.length === 1 ? names[0] : undefined;
   if (singleName !== undefined && state.entryMap.get(singleName)?.isDir !== true) {
+    // A same-origin anchor to this route, and it is safe for exactly one reason:
+    // the server answers `Content-Disposition: attachment`, so a `.svg` — which
+    // arrives as `Content-Type: image/svg+xml` and is script-capable when
+    // navigated to — is SAVED rather than rendered as a document on vibekit's
+    // origin. The `download` attribute is the same instruction from this side.
+    // Never turn this into a "view in a tab" affordance.
     const a = el("a", {
-      href: `/api/file/download?path=${encodeURIComponent(joinPath(state.currentPath, singleName))}`,
+      href: fileDownloadURL(joinPath(state.currentPath, singleName)),
       download: singleName,
       rel: "noopener",
     });

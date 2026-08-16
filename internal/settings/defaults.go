@@ -20,6 +20,7 @@ const (
 	KeyLastModel            = "last_model"
 	KeyNotificationsEnabled = "notifications_enabled"
 	KeyNotifyAgentFinished  = "notify_agent_finished"
+	KeyNotifyPRStatus       = "notify_pr_status"
 	KeySupervisedDefault    = "supervised_default"
 
 	// KeyScheduledAutoApprove lets a SCHEDULED run's tool requests be approved
@@ -137,6 +138,7 @@ var KnownKeys = map[string]struct{}{
 	KeyLastModel:            {},
 	KeyNotificationsEnabled: {},
 	KeyNotifyAgentFinished:  {},
+	KeyNotifyPRStatus:       {},
 	KeySupervisedDefault:    {},
 	KeyScheduledAutoApprove: {},
 }

@@ -197,6 +197,11 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 			Role:    api.RoleUser,
 			Ts:      time.Now().UnixMilli(),
 			Content: p.Text,
+			// The attachments belong on the RECORD, not only on the outbound
+			// prompt: BuildPromptBlocks folds each one into a content block, and
+			// for an image or a document the path never reaches Content, so a
+			// turn read back later has no way to say what was attached.
+			Attachments: p.Attachments,
 		}
 		c.Messages = append(c.Messages, userMsg)
 		// The text just left the composer, so the draft holding it is spent.

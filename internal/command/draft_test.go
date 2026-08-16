@@ -191,3 +191,79 @@ func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
 		t.Errorf("draft = %q, want cleared by the send", c.Draft)
 	}
 }
+
+// The attachments have to reach the RECORD, not only the outbound prompt.
+// BuildPromptBlocks consumes PromptCommand.Attachments on the way to KAS and
+// folds each one into a content block — a document becomes a `resource`, an image
+// becomes an `image`, and only the leftover case becomes an "Attached file: …"
+// text line. So for the two inlined kinds the path never appears in Content at
+// all, and a turn read back later had no way to say what was attached: the client
+// could not linkify what was not there, and the sent request rendered as text
+// only. Stamping them on the user message is what lets a turn header draw them.
+func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEmptyChat(t, store, "c1")
+	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
+
+	atts := []api.Attachment{
+		{Path: "out/shot.png", Name: "shot.png"},
+		{Path: "docs/spec.pdf", Name: "spec.pdf"},
+	}
+	err := appendUserMessage(deps, t.Context(), "c1", &api.PromptCommand{
+		Text:        "have a look at these",
+		MessageID:   "m-1",
+		Attachments: atts,
+	})
+	if err != nil {
+		t.Fatalf("appendUserMessage: %v", err)
+	}
+
+	c, ok := store.Get(t.Context(), "c1")
+	if !ok {
+		t.Fatal("chat vanished")
+	}
+	if len(c.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(c.Messages))
+	}
+	got := c.Messages[0]
+	if got.Role != api.RoleUser {
+		t.Errorf("role = %q, want user", got.Role)
+	}
+	if len(got.Attachments) != len(atts) {
+		t.Fatalf("attachments = %#v, want %#v", got.Attachments, atts)
+	}
+	for i, want := range atts {
+		if got.Attachments[i] != want {
+			t.Errorf("attachment %d = %#v, want %#v", i, got.Attachments[i], want)
+		}
+	}
+	// The image path is deliberately absent from the text: that is the whole
+	// reason the field exists rather than the client re-reading Content.
+	if strings.Contains(got.Content, "out/shot.png") {
+		t.Errorf("content = %q, unexpectedly carries the attachment path", got.Content)
+	}
+}
+
+// A prompt with no attachments must persist none, so `omitempty` keeps the field
+// off the wire and off disk for the overwhelmingly common case.
+func TestAppendUserMessage_NoAttachmentsPersistsNone(t *testing.T) {
+	store := testsupport.NewInMemoryChatStore()
+	seedEmptyChat(t, store, "c1")
+	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
+
+	err := appendUserMessage(deps, t.Context(), "c1", &api.PromptCommand{
+		Text:      "just a question",
+		MessageID: "m-1",
+	})
+	if err != nil {
+		t.Fatalf("appendUserMessage: %v", err)
+	}
+
+	c, _ := store.Get(t.Context(), "c1")
+	if len(c.Messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(c.Messages))
+	}
+	if c.Messages[0].Attachments != nil {
+		t.Errorf("attachments = %#v, want nil", c.Messages[0].Attachments)
+	}
+}

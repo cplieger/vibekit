@@ -888,6 +888,23 @@
   color: var(--c-red) !important;
 }
 
+/* Several problems at once: the server accumulates across independent checks, so
+   one response can name three bad fields. The list is what makes them
+   individually readable; the marks below are what say WHICH inputs. */
+.mcp-error-list {
+  list-style: disc;
+  margin: 0.25rem 0 0;
+  padding-inline-start: 1.1rem;
+}
+
+/* The mark on a named input. Border AND the aria-invalid state, never colour
+   alone: a red outline is one channel and fails WCAG 1.4.1 for the same reason a
+   bare coloured dot does, so the message list beside it carries the text. */
+.field-invalid {
+  border-color: var(--c-red);
+  box-shadow: 0 0 0 1px var(--c-red);
+}
+
 /* Mobile: single-column pair rows so name+value don't get squeezed. */
 @media (width <= 30rem) {
   .mcp-pair-row {

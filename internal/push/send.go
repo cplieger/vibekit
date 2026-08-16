@@ -28,30 +28,29 @@ import (
 // Using a struct instead of map[string]string gives compile-time key safety
 // and enables json's cached struct encoder.
 //
-// ChatID is the notification's SUBJECT, and the service worker derives two
-// things from it that it cannot derive from title and body: the OS coalescing
-// tag (one tray slot per chat, so an ask on one chat cannot silently replace
-// the finished note on another) and the click target. It carries the id rather
-// than a URL deliberately — the client owns the route vocabulary (router.ts),
-// so a path assembled here would be a second copy of it. Empty for a
-// workspace-global notification, which then coalesces under a constant tag.
+// api.PushSubject is EMBEDDED, so its fields land flat on the wire and there is
+// one definition of the subject rather than a copy here. It is also what makes
+// fitToCap correct by construction: every subject field is charged against the
+// cap because the whole struct is what gets marshaled, so adding a subject field
+// cannot under-count the payload by exactly the amount that makes the vendor
+// reject it.
 type pushPayload struct {
-	Title  string     `json:"title"`
-	Body   string     `json:"body"`
-	ChatID api.ChatID `json:"chat_id,omitempty"`
+	Title string `json:"title"`
+	Body  string `json:"body"`
+	api.PushSubject
 }
 
 // Send delivers a push notification to all subscribers.
-// notifyType is KindAgentFinished or KindPermission; the service
-// checks per-type preferences and debounces rapid notifications on a
-// per-type basis (so a permission push doesn't suppress the agent-
-// finished push that follows within 5s). Oversize payloads are
-// truncated with a Warn breadcrumb so an accidentally-chatty caller
+// The service checks per-kind preferences and debounces rapid
+// notifications per KIND AND SUBJECT, so a permission push does not
+// suppress the agent-finished push that follows within 5s and one pull
+// request settling does not swallow another's verdict. Oversize payloads
+// are truncated with a Warn breadcrumb so an accidentally-chatty caller
 // doesn't get silently rejected by the push vendor.
 //
-// chatID names the notification's subject; see pushPayload. Pass "" for a
-// workspace-global notification with no single chat behind it.
-func (s *Service) Send(ctx context.Context, title, body string, notifyType api.PushKind, chatID api.ChatID) {
+// subject names what the notification is about; see api.PushSubject. Pass a zero
+// value for a workspace-global notification with nothing single behind it.
+func (s *Service) Send(ctx context.Context, title, body string, notifyType api.PushKind, subject api.PushSubject) {
 	slog.Debug("push: send", "kind", string(notifyType))
 	// Trim against the *marshaled* size, not the raw title+body length. The
 	// JSON envelope (~22 bytes for {"title":...,"body":...}) plus any
@@ -59,16 +58,16 @@ func (s *Service) Send(ctx context.Context, title, body string, notifyType api.P
 	// check leaves the encoded payload over the cap and push() rejects —
 	// drops — it. fitToCap guarantees the marshaled payload fits, so an
 	// oversize notification is delivered truncated instead of vanishing.
-	if t, b, truncated := fitToCap(title, body, chatID); truncated {
+	if t, b, truncated := fitToCap(title, body, subject); truncated {
 		slog.Warn("push: payload too large, truncating",
 			"bytes", len(title)+len(body), "cap", pushBodyCap)
 		title, body = t, b
 	}
-	subs := s.preflightSend(notifyType)
+	subs := s.preflightSend(notifyType, subject)
 	if subs == nil {
 		return
 	}
-	payload, err := json.Marshal(pushPayload{Title: title, Body: body, ChatID: chatID})
+	payload, err := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject})
 	if err != nil {
 		slog.Error("push: marshal payload", "error", err)
 		return
@@ -285,12 +284,17 @@ func parseRetryAfter(h string) time.Duration {
 }
 
 // preflightSend evaluates every pre-send gate (healthy, preference,
-// unknown-kind, per-type debounce) under a single mu hold, records
+// unknown-kind, per-subject debounce) under a single mu hold, records
 // the new debounce timestamp, and returns the subscriber snapshot to
 // POST to — or nil if the send should be dropped. Holding mu across
 // the decision + stamp closes the TOCTOU between "should send" and
 // "record last-push".
-func (s *Service) preflightSend(notifyType api.PushKind) []api.PushSubscription {
+//
+// The window is per kind AND subject. A kind-only window meant the second of two
+// pull requests settling in one poll was dropped inside five seconds while the
+// poller had already advanced its state for it, so that notification was never
+// sent at all — see pushDebounceKey.
+func (s *Service) preflightSend(notifyType api.PushKind, subject api.PushSubject) []api.PushSubscription {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.healthy {
@@ -307,16 +311,34 @@ func (s *Service) preflightSend(notifyType api.PushKind) []api.PushSubscription 
 	if !enabled {
 		return nil
 	}
-	if last, ok := s.lastPush[notifyType]; ok && time.Since(last) < pushDebounce {
-		slog.Debug("push: debounced", "kind", string(notifyType))
+	key := debounceKey(notifyType, subject)
+	if last, ok := s.lastPush[key]; ok && time.Since(last) < pushDebounce {
+		slog.Debug("push: debounced", "kind", string(notifyType), "subject", key.subject)
 		return nil
 	}
-	s.lastPush[notifyType] = time.Now()
+	s.pruneDebounceLocked()
+	s.lastPush[key] = time.Now()
 	subs := make([]api.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
 	return subs
+}
+
+// pruneDebounceLocked drops entries whose window has expired. Caller holds mu.
+//
+// An expired entry cannot suppress anything, so this changes no decision — it only
+// keeps the map from growing with every distinct chat and pull request a long-lived
+// process notifies about.
+func (s *Service) pruneDebounceLocked() {
+	if len(s.lastPush) < debounceHighWater {
+		return
+	}
+	for k, at := range s.lastPush {
+		if time.Since(at) >= pushDebounce {
+			delete(s.lastPush, k)
+		}
+	}
 }
 
 // pruneStale deletes the listed endpoints from s.subs and persists
@@ -487,12 +509,12 @@ const pushTruncMarker = "..."
 // is asked for a cap strictly below its current length, and the Capped pair
 // never returns more than the cap it was given — so that field strictly
 // shrinks, and an empty title+body marshals well under the cap.
-func fitToCap(title, body string, chatID api.ChatID) (fitTitle, fitBody string, truncated bool) {
-	if marshaledLen(title, body, chatID) <= pushBodyCap {
+func fitToCap(title, body string, subject api.PushSubject) (fitTitle, fitBody string, truncated bool) {
+	if marshaledLen(title, body, subject) <= pushBodyCap {
 		return title, body, false
 	}
-	for marshaledLen(title, body, chatID) > pushBodyCap {
-		over := marshaledLen(title, body, chatID) - pushBodyCap
+	for marshaledLen(title, body, subject) > pushBodyCap {
+		over := marshaledLen(title, body, subject) - pushBodyCap
 		switch {
 		case len(body) > over:
 			body, _ = runesafe.SanitizeCapped(body, len(body)-over, pushTruncMarker)
@@ -510,11 +532,13 @@ func fitToCap(title, body string, chatID api.ChatID) (fitTitle, fitBody string, 
 // marshaledLen is the byte length of the JSON-encoded notification payload.
 // Marshaling three strings cannot fail, so the error is intentionally dropped.
 //
-// chatID is charged against the cap like any other field: it is short, but
-// leaving it out would under-count the payload by exactly the amount that makes
-// the vendor reject it, which is the failure fitToCap exists to prevent.
-func marshaledLen(title, body string, chatID api.ChatID) int {
-	p, _ := json.Marshal(pushPayload{Title: title, Body: body, ChatID: chatID})
+// The subject is charged against the cap like any other field: its fields are
+// short, but leaving them out would under-count the payload by exactly the amount
+// that makes the vendor reject it, which is the failure fitToCap exists to
+// prevent. Embedding api.PushSubject in pushPayload is what makes that automatic
+// rather than a thing each new subject field has to remember.
+func marshaledLen(title, body string, subject api.PushSubject) int {
+	p, _ := json.Marshal(pushPayload{Title: title, Body: body, PushSubject: subject})
 	return len(p)
 }
 

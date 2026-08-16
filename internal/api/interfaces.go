@@ -281,7 +281,7 @@ type PushService interface {
 	RouteHandler
 	Subscribe(sub PushSubscription)
 	Unsubscribe(endpoint string)
-	Send(ctx context.Context, title, body string, notifyType PushKind, chatID ChatID)
+	Send(ctx context.Context, title, body string, notifyType PushKind, subject PushSubject)
 	HasSubscribers() bool
 	SetPreferences(prefs map[PushKind]bool)
 	// ReloadPreferences re-reads notification toggles from disk,

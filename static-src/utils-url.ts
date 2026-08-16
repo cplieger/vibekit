@@ -2,6 +2,8 @@
 // URL safety utilities.
 // ---------------------------------------------------------------------------
 
+import { isViewableImage } from "./file-extensions.js";
+
 /** URL safety predicate: blocks javascript:, vbscript:, data:, file: schemes.
  *  Strips internal whitespace before checking to prevent bypass via embedded
  *  tabs/newlines (e.g. "java\tscript:alert(1)"). */
@@ -19,11 +21,19 @@ export function isSafeUrl(url: string): boolean {
   );
 }
 
-/** Image extensions the inline-image rewrite will point at the file route.
- *  A closed list, because the rewrite exists to render pictures — sending an
- *  arbitrary workspace path through it would turn any `![](…)` the model writes
- *  into a file read. */
-const INLINE_IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
+/** The route that serves a workspace file's BYTES.
+ *
+ *  `/api/file` returns a JSON `{content}` envelope and refuses a binary with a
+ *  415 (a NUL in the first 8 KiB), so it can never serve a picture. This one
+ *  streams through the mount's confined `os.Root` with `Content-Disposition:
+ *  attachment` — which is a SECURITY control, not a convenience: the response
+ *  carries `Content-Type: image/svg+xml` for an `.svg`, and that is
+ *  script-capable if it is ever NAVIGATED to rather than rendered in an `<img>`.
+ *  Never hand this URL to an anchor the user is invited to open in a tab, an
+ *  `<iframe>`, or `window.open`. */
+export function fileDownloadURL(path: string): string {
+  return `/api/file/download?path=${encodeURIComponent(path)}`;
+}
 
 /** Rewrite a workspace-absolute image `src` to the byte-serving file route.
  *
@@ -40,8 +50,8 @@ const INLINE_IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|avif)$/i;
  */
 export function rewriteWorkspaceImageSrc(src: string): string {
   const trimmed = src.trim();
-  if (!trimmed.startsWith("/workspace/") || !INLINE_IMAGE_EXT.test(trimmed)) {
+  if (!trimmed.startsWith("/workspace/") || !isViewableImage(trimmed)) {
     return src;
   }
-  return `/api/file/download?path=${encodeURIComponent(trimmed)}`;
+  return fileDownloadURL(trimmed);
 }

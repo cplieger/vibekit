@@ -57,6 +57,7 @@ import {
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
 import { isSafeUrl, rewriteWorkspaceImageSrc } from "./utils-url.js";
+import { mediaElementFor } from "./media-block.js";
 import { latexToMathML } from "./mathml.js";
 import { el } from "@cplieger/reactive";
 
@@ -285,6 +286,18 @@ function set_attr_dom(data: DomRendererData, attr: Attr, value: string): void {
   // Rewritten AFTER the safety gate so the rewrite can never launder a scheme
   // isSafeUrl just rejected.
   if (attrName === "src" && node.tagName === "IMG") {
+    // The FILE-ROLE swap, and it has to happen here rather than at add_token:
+    // the tag is chosen when `![` opens and the path only arrives when `)`
+    // closes, so this is the first moment the role is knowable. `![clip](x.mp3)`
+    // rendered a broken `<img>` before this.
+    const swapped = mediaElementFor(value, node.getAttribute("alt") ?? "");
+    if (swapped !== null) {
+      node.replaceWith(swapped);
+      // Re-point the node stack, or end_token would close a node no longer in
+      // the document and any later emission would land on the departed `<img>`.
+      data.nodes[data.index] = swapped;
+      return;
+    }
     node.setAttribute(attrName, rewriteWorkspaceImageSrc(value));
     // Name the file when it fails to load. The browser's default broken-image
     // icon identifies nothing, and "the picture did not appear" is the

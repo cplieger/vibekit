@@ -13,6 +13,10 @@ export interface AppSettings {
   last_model?: string;
   notifications_enabled?: boolean;
   notify_agent_finished?: boolean;
+  /** CI on a pull request the connected identity opened turned green or red.
+   *  Keyed like agent_finished (both are switchable channels); the poller behind
+   *  it is server-side because a client poll cannot fire with the tab closed. */
+  notify_pr_status?: boolean;
   // No notify_permission: the permission ask is a floor, not a preference.
   // See the "no notify_permission key" note in internal/settings/defaults.go.
   agent_ignore_files?: string[];

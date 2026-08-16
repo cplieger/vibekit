@@ -101,6 +101,16 @@ export interface ApprovalFile {
 }
 
 /**
+ * Attachment is a file attached to a prompt. The server reads the file
+ * and decides whether to send it as a document content block (PDF, DOCX,
+ * etc.) or a text path reference based on the extension.
+ */
+export interface Attachment {
+  path: string;
+  name: string;
+}
+
+/**
  * Block is one entry in an assistant message's chronological content
  * array. Position in Message.Blocks IS the order in which the agent
  * emitted the block — text → tool → text → tool, etc. — so the client
@@ -624,6 +634,19 @@ export interface Message {
  */
   refusal?: RefusalInfo;
   plan?: PlanEntry[];
+  /**
+ * Attachments are the files the user attached to THIS prompt, stamped on
+ * the user message so a sent turn can render them as pills in its header.
+ * It has to live on the record: BuildPromptBlocks consumes
+ * PromptCommand.Attachments on the way OUT to KAS and folds each one into a
+ * content block, so by the time the turn is read back there is nothing to
+ * recover the list from — an image or a document does not even leave its
+ * path in Content. Absent on every message persisted before this field
+ * existed, and on every turn opened by a steer (`_session/steer` takes a
+ * plain string, so a mid-turn send has no structured attachment list to
+ * carry).
+ */
+  attachments?: Attachment[];
   /**
  * TurnCredits / TurnElapsedMs complete the turn footer summary alongside
  * ChangedFiles (above). The values also ride the turn_ended SSE for the

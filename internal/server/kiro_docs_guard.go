@@ -38,23 +38,71 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/filehandler"
 )
 
-// pathGuard reports whether the scan may read one entry, named by its path
+// docVerdict is the guard's answer about one entry: whether the scan may read it,
+// and whether a row built from it may offer a DELETE.
+//
+// The second field is here rather than in a second pass because the FIRST field
+// already required the resolution that answers it. rootGuard.allow calls
+// EvalSymlinks to decide the escape question; noticing that the resolved path
+// differs from the joined one costs a comparison, and a separate resolver would be
+// a second copy of the same syscall chain.
+//
+// # There is no writability bit here, and there was: D67a is WITHDRAWN
+//
+// It claimed a symlinked entry could not be saved, because internal/filehandler
+// opens with syscall.O_NOFOLLOW. That is not what happens. resolvePath calls
+// EvalSymlinks and returns the RESOLVED path as loc.abs (filehandler/paths.go), and
+// writeFile applies O_NOFOLLOW to that already-canonical target — so the flag
+// refuses a symlink PLANTED at the final component between resolution and open, not
+// a link the user deliberately followed. Saving an aliased steering doc works
+// today, and `resolved != full` was therefore not a writability test at all: it also
+// marked every file beneath an in-root symlinked DIRECTORY read-only, and those
+// writes work for exactly the same reason.
+type docVerdict struct {
+	allowed bool
+	// deleteProtected marks an entry whose DELETE must not be offered.
+	//
+	// True when the entry's OWN final component is a symlink, and the precision
+	// matters: `resolved != full` is the test D67a used, and it is true for every
+	// file beneath an in-root symlinked DIRECTORY as well. Those are not the same
+	// case. Deleting `steering/inner.md` where `steering` links to `elsewhere`
+	// removes `elsewhere/inner.md`, which IS the file the row names — one row, one
+	// file, nothing surprising. Deleting `steering/alias.md` where the FILE links to
+	// `shared/canonical.md` removes canonical.md, and canonical.md is its own row on
+	// the same page: a second entry the reader never touched silently disappears.
+	//
+	// That is why this bit survived the withdrawal while the read-only one did not.
+	// The delete route canonicalizes exactly as the write route does, so editing
+	// through a link writes the target — which is what following a link MEANS — while
+	// deleting through it destroys a file the user was addressing by another name.
+	//
+	// It is an advisory for the page, not a boundary: the delete route still runs
+	// resolveOrForbid, mount confinement, the sensitive-path list, the
+	// protected-directory check and the mount-root refusal, none of which trust
+	// anything the client was told.
+	deleteProtected bool
+}
+
+// pathGuard reports what the scan may do with one entry, named by its path
 // WITHIN the fs.FS being walked.
 //
 // A function rather than a method on the walker so the fs.FS seam survives: the
 // scanners stay testable with fstest.MapFS (which cannot express a symlink
 // escaping a real root) while production passes a guard closed over the real
-// directory. A nil guard admits everything, which is what the MapFS tests want.
-type pathGuard func(rel string) bool
+// directory. A nil guard admits everything with every affordance, which is what the
+// MapFS tests want: absent provenance means unrestricted, and a restriction is
+// asserted rather than inferred (the same default direction as api.Origin's).
+type pathGuard func(rel string) docVerdict
 
 func (g pathGuard) allows(rel string) bool {
-	return g == nil || g(rel)
+	return g == nil || g(rel).allowed
 }
 
 // rootGuard is the production guard for one `.kiro` tree.
@@ -78,32 +126,57 @@ func newRootGuard(dir, category string) pathGuard {
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		slog.Warn("kiro docs: root not resolvable, skipping", "dir", dir, "error", err)
-		return func(string) bool { return false }
+		return func(string) docVerdict { return docVerdict{} }
 	}
 	g := &rootGuard{dir: resolved, category: category}
 	return g.allow
 }
 
-func (g *rootGuard) allow(rel string) bool {
+func (g *rootGuard) allow(rel string) docVerdict {
 	full := filepath.Join(g.dir, rel)
 	resolved, err := filepath.EvalSymlinks(full)
 	if err != nil {
 		// A dangling symlink, a path component that vanished mid-walk, or a
 		// permission wall. Unreadable either way, and refusing costs nothing
 		// the read would not have failed on anyway.
-		return false
+		return docVerdict{}
 	}
 	if !g.inRoot(resolved) {
 		slog.Warn("kiro docs: refusing a link out of the scanned tree",
 			"category", g.category, "path", rel, "root", g.dir)
-		return false
+		return docVerdict{}
 	}
 	if filehandler.IsSensitive(resolved) {
 		slog.Warn("kiro docs: refusing a path on the sensitive denylist",
 			"category", g.category, "path", rel)
-		return false
+		return docVerdict{}
 	}
-	return true
+	// A link that STAYS inside the root passes both refusals above and is listed,
+	// which is correct — the operator arranged it and the content is theirs. It
+	// remains editable (the write resolves to the target, which is what following
+	// the link means); what it cannot offer is the delete that would unlink a file
+	// listed under its own name elsewhere on the page. See
+	// docVerdict.deleteProtected.
+	return docVerdict{allowed: true, deleteProtected: finalComponentIsLink(full)}
+}
+
+// finalComponentIsLink reports whether the last component of full is itself a
+// symlink, which is the only shape whose delete removes a DIFFERENT row's file.
+//
+// One extra Lstat per document, alongside the EvalSymlinks chain allow already runs;
+// the alternative was reusing `resolved != full`, which cannot distinguish a linked
+// file from a file under a linked directory and so withheld the delete from every
+// document in a reshaped tree.
+//
+// An unreadable entry withholds the affordance. That is the safe direction for a
+// destructive control, and it costs nothing real: allow has already resolved this
+// path successfully, so an error here means the tree changed mid-walk.
+func finalComponentIsLink(full string) bool {
+	fi, err := os.Lstat(full)
+	if err != nil {
+		return true
+	}
+	return fi.Mode()&os.ModeSymlink != 0
 }
 
 // inRoot reports whether an already-resolved absolute path is the root or sits
@@ -125,11 +198,20 @@ var errRefused = errors.New("kiro docs: path refused by the scan guard")
 // readGuardedFS is readCappedFS with the guard in front of it. Every read the
 // docs scan performs goes through here; readCappedFS is left unwrapped because
 // the ENTITY scanner (kiro_config.go) shares it and takes no guard.
-func readGuardedFS(root fs.FS, name string, guard pathGuard) ([]byte, error) {
-	if !guard.allows(name) {
-		return nil, errRefused
+//
+// It returns the verdict alongside the bytes so the caller building the row does
+// not have to ask the guard a second time — that second call would repeat the
+// EvalSymlinks chain for every one of the ~200 documents in this workspace.
+func readGuardedFS(root fs.FS, name string, guard pathGuard) ([]byte, docVerdict, error) {
+	v := docVerdict{allowed: true}
+	if guard != nil {
+		v = guard(name)
 	}
-	return readCappedFS(root, name)
+	if !v.allowed {
+		return nil, v, errRefused
+	}
+	data, err := readCappedFS(root, name)
+	return data, v, err
 }
 
 // readGuardedDir is fs.ReadDir with the guard in front of it, for the three

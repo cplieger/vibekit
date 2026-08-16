@@ -6,7 +6,7 @@
 // the show* helpers.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// The editor's import graph is heavy; only the four surfaces in .editor-body and
+// The editor's import graph is heavy; only the read surfaces in .editor-body and
 // the gutter matter here, so dom.ts is a stub over real elements. Hoisted with
 // the mock: vi.mock's factory runs before module-level statements.
 const { surfaces } = vi.hoisted(() => ({
@@ -15,6 +15,7 @@ const { surfaces } = vi.hoisted(() => ({
     editorCode: document.createElement("code"),
     editorContent: document.createElement("textarea"),
     editorMarkdown: document.createElement("div"),
+    editorImage: document.createElement("div"),
     editorDiffPane: document.createElement("div"),
     editorGutter: document.createElement("pre"),
   },

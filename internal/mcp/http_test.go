@@ -510,3 +510,112 @@ func TestHandleCollection_POST_persistFailure_is500(t *testing.T) {
 		t.Errorf("POST 500 body leaked filesystem detail: %q", body)
 	}
 }
+
+// --- D80: the 400 carries a per-field breakdown ---
+
+// decodeValidation400 reads the validation envelope off a 400 recorder.
+func decodeValidation400(t *testing.T, rec *httptest.ResponseRecorder) validationErrorBody {
+	t.Helper()
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+	var got validationErrorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode 400 body %q: %v", rec.Body.String(), err)
+	}
+	return got
+}
+
+// TestPost_ValidationErrorNamesEveryBadField is the wire half of D80: one
+// response, three fields, so the form can mark three inputs.
+func TestPost_ValidationErrorNamesEveryBadField(t *testing.T) {
+	_, mux := newRoutedStore(t)
+	rec := doJSON(t, mux, http.MethodPost, "/api/mcp", map[string]any{
+		"name":      "1bad name",
+		"transport": "http",
+		"url":       "ftp://example.test/mcp",
+		"headers":   []map[string]string{{"name": "bad header", "value": "x"}},
+	})
+	got := decodeValidation400(t, rec)
+	if got.Error == "" {
+		t.Error("the 400 carries no message text; a client reading only `error` would show nothing")
+	}
+	want := map[string]bool{"name": false, "url": false, "headers": false}
+	for _, f := range got.Fields {
+		if _, known := want[f.Field]; !known {
+			t.Errorf("unexpected field %q in the breakdown", f.Field)
+			continue
+		}
+		want[f.Field] = true
+		if f.Msg == "" {
+			t.Errorf("field %q carries no message", f.Field)
+		}
+	}
+	for field, seen := range want {
+		if !seen {
+			t.Errorf("field %q missing from the breakdown: %+v", field, got.Fields)
+		}
+	}
+}
+
+// TestImport_ValidationErrorNamesEveryBadField is the case the item calls
+// load-bearing: a pasted block, several fields wrong, none of them typed.
+func TestImport_ValidationErrorNamesEveryBadField(t *testing.T) {
+	_, mux := newRoutedStore(t)
+	rec := doJSON(t, mux, http.MethodPost, "/api/mcp/import", map[string]any{
+		"mcpServers": map[string]any{
+			"broken": map[string]any{
+				"url":     "ftp://example.test/mcp",
+				"headers": map[string]any{"bad header": "x"},
+			},
+		},
+	})
+	got := decodeValidation400(t, rec)
+	if len(got.Fields) < 2 {
+		t.Fatalf("a pasted block with two bad fields reported %d: %+v", len(got.Fields), got.Fields)
+	}
+	seen := map[string]bool{}
+	for _, f := range got.Fields {
+		seen[f.Field] = true
+	}
+	for _, field := range []string{"url", "headers"} {
+		if !seen[field] {
+			t.Errorf("field %q missing from a pasted block's breakdown: %+v", field, got.Fields)
+		}
+	}
+}
+
+// TestNonValidation400CarriesNoFieldList pins the negative: a parse failure has
+// no field to attribute, so `fields` is ABSENT rather than an empty array. A
+// caller can therefore read the presence of the list as "these inputs are wrong".
+func TestNonValidation400CarriesNoFieldList(t *testing.T) {
+	_, mux := newRoutedStore(t)
+	rec := doJSON(t, mux, http.MethodPost, "/api/mcp/import", map[string]any{
+		"mcpServers": map[string]any{"x": map[string]any{"comand": "npx"}},
+	})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"fields"`) {
+		t.Errorf("a parse failure carried a field list: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "comand") {
+		t.Errorf("the unknown-key message lost the key it names: %s", rec.Body.String())
+	}
+}
+
+// TestNameConflictStillRoutesTo409 is the sentinel guard at the HTTP boundary:
+// errors.Is has to keep reaching a sentinel through the join, or every store
+// precondition would answer 400 with a field list.
+func TestNameConflictStillRoutesTo409(t *testing.T) {
+	_, mux := newRoutedStore(t)
+	body := map[string]any{"name": "dup", "transport": "stdio", "command": "bash"}
+	if rec := doJSON(t, mux, http.MethodPost, "/api/mcp", body); rec.Code != http.StatusOK {
+		t.Fatalf("first create status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	body["command"] = "sh"
+	rec := doJSON(t, mux, http.MethodPost, "/api/mcp", body)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("duplicate-name create status = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+}

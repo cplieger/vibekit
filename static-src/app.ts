@@ -50,6 +50,8 @@ import { initShellPanel } from "./shell.js";
 import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
 import { openFile } from "./editor-openers.js";
+import { openAtLine } from "./navigate.js";
+import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initFileBrowser, loadFileBrowser, restoreFileBrowser } from "./files.js";
 import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
@@ -182,6 +184,11 @@ function init(): void {
   initFileBrowser();
   initFilePicker();
   initChatAttach();
+  // One opener for BOTH pill homes — the composer's staged row and a sent turn's
+  // header. Injected here because attachment-pill.ts is a leaf and one of its
+  // consumers is a pure `fundamentals/` view; routed through navigate.ts because
+  // a clicked path is that module's subject.
+  initAttachmentPillCallbacks({ open: openAtLine });
   initTaskListPill();
   // Wire toolbar history button. Hidden when retention is 0 (nothing kept).
   $.findBtn.addEventListener("click", () => {

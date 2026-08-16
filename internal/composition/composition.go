@@ -47,6 +47,15 @@ type App struct {
 	// stopKiro cancels the background kiro-cli install, so a shutdown during a
 	// first-boot download or a retry backoff does not wait it out.
 	stopKiro func()
+	// stopPRPoller stops the PR-status poller and waits for its goroutine.
+	//
+	// It exists because Build's ctx is context.Background() in production
+	// (main.go), so a loop handed that context is not stopped by anything: the
+	// poller kept waking once a minute after App.Shutdown had closed the push
+	// service it consults. Holding the cancel here is what makes the component's
+	// documented "shutdown is context cancellation" contract true rather than
+	// merely masked by runMain exiting the process straight afterwards.
+	stopPRPoller func()
 }
 
 // Build constructs all services and wires them together. staticFS is
@@ -188,6 +197,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	go forgeCache.refresh()
 	forgesHTTP.SetOnChange(func() { go forgeCache.refresh() })
 
+	stopPRPoller := startPRStatusPoller(ctx, forgesManager, gitHandler, pushSvc)
+
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return nil, err
@@ -254,6 +265,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		mcpPrewarm:     mcpPrewarm,
 		tools:          toolsEngine,
 		stopKiro:       kiro.stop,
+		stopPRPoller:   stopPRPoller,
 	}, nil
 }
 
@@ -274,15 +286,38 @@ func (a *App) Run() error {
 }
 
 // Shutdown stops background services in reverse order.
+//
+// Every member is treated as optional. One already is (tools is nil on the
+// root-integrity degraded boot, and Close is not nil-receiver safe), and the rest
+// share the reason: a shutdown that panics on a service which was never started
+// takes the ordered teardown of the ones that WERE started down with it. It is also
+// what lets the lifecycle be asserted through this function rather than through a
+// cancel a test made up.
 func (a *App) Shutdown() {
-	a.stopKiro()
-	a.purgeScheduler.Stop()
-	a.mcpPrewarm.Stop()
-	// nil on the root-integrity degraded boot; Close is not nil-receiver safe.
+	// Before the rest: the poller consults the push service the Hub owns, so
+	// stopping it first is what keeps a sweep from reaching into a closed one.
+	callIfSet(a.stopPRPoller)
+	callIfSet(a.stopKiro)
+	if a.purgeScheduler != nil {
+		a.purgeScheduler.Stop()
+	}
+	if a.mcpPrewarm != nil {
+		a.mcpPrewarm.Stop()
+	}
 	if a.tools != nil {
 		a.tools.Close()
 	}
-	a.Hub.Shutdown()
+	if a.Hub != nil {
+		a.Hub.Shutdown()
+	}
+}
+
+// callIfSet runs fn when it is set. Two of App's members are functions rather than
+// objects, so their nil check cannot be a method call on a nil receiver.
+func callIfSet(fn func()) {
+	if fn != nil {
+		fn()
+	}
 }
 
 // sweepStaleTemps removes orphan temp files left by SIGKILL between
@@ -665,4 +700,64 @@ func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Lau
 		return
 	}
 	go schedule.NewRunner(st, l).Run(ctx)
+}
+
+// startPRStatusPoller starts the CI-flip notifier and returns its stop function.
+//
+// The repo resolver is the join this root owns: git answers which repositories are
+// checked out and where their origins point, forges answers which of those hosts
+// has a connected account, and neither package should reach into the other. The
+// lookup runs per SWEEP rather than once here, so a repo cloned after boot and a
+// forge logged into after boot both start being watched without a restart.
+func startPRStatusPoller(ctx context.Context, mgr *forgesPkg.Manager,
+	gitHandler *git.Handler, notifier forgesPkg.PRNotifier,
+) (stop func()) {
+	repos := func(rctx context.Context) []forgesPkg.PRRepo {
+		remotes := gitHandler.RepoRemotes(rctx)
+		if len(remotes) == 0 {
+			return nil
+		}
+		origins := make([]forgesPkg.RepoOrigin, 0, len(remotes))
+		for _, r := range remotes {
+			origins = append(origins, forgesPkg.RepoOrigin{Host: r.Host, Slug: r.Slug})
+		}
+		return forgesPkg.MatchRepoForges(mgr.List(rctx), origins)
+	}
+	poller := forgesPkg.NewPRStatusPoller(forgesPkg.NewManagerPRSource(mgr, repos), notifier)
+	return runBackground(ctx, "pr status poller", poller.Run)
+}
+
+// backgroundStopGrace bounds how long a stop function waits for its goroutine.
+//
+// The wait itself is the point — an unwaited cancel lets a sweep already inside a
+// forge subprocess keep going after Shutdown returned, which is the shape of the
+// leak this replaced. The BOUND is the counterweight: cancellation reaches the
+// subprocess through its context, so a sweep unwinds in milliseconds, and anything
+// that does not is a bug to log rather than a shutdown to hang on.
+const backgroundStopGrace = 5 * time.Second
+
+// runBackground starts fn on a cancellable child of ctx and returns the function
+// that stops it.
+//
+// It exists because "shutdown is context cancellation" is only true when someone
+// holds the cancel. Production passes context.Background() into Build, so a loop
+// given that context directly has no owner: the process exiting is what stopped it,
+// which makes the component's contract untestable and false for any caller that
+// shuts services down without exiting.
+func runBackground(ctx context.Context, name string, fn func(context.Context)) (stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn(ctx)
+	}()
+	return func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(backgroundStopGrace):
+			slog.Warn("background loop did not stop within the shutdown grace",
+				"loop", name, "grace", backgroundStopGrace)
+		}
+	}
 }

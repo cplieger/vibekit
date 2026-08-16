@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/cplieger/keyenc"
@@ -46,6 +47,12 @@ type BridgeCoordinator struct {
 	// `_meta.kiro.secretStorage` declaration: see api.StartOpts.SecretStorage
 	// for why declaring it without a store breaks an MCP connect.
 	secretStorage func() bool
+	// chatStatus reads a chat's last self-declared status, which is what the
+	// agent-finished push body says instead of a fixed literal. A FUNCTION rather
+	// than the cache itself so the coordinator keeps taking no dependency on the
+	// SSE plane's internals, and nil-safe for tests that build a coordinator
+	// without one.
+	chatStatus func(api.ChatID) api.ChatStatusPayload
 	// agentEngine is the kiro-cli agent engine for every bridge this
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
@@ -72,6 +79,7 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		preBridgeSpawn: h.preBridgeSpawn,
 		// h implements replayProjector via load_projection.go.
 		replayProjection: h,
+		chatStatus:       h.sse.chatStatus.Get,
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
 		secretStorage:    func() bool { return h.secrets != nil },
@@ -548,13 +556,20 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 // on the chat record now (api.Chat.Effort), read straight off the chat at spawn
 // and written by CmdSetEffort, so the launch flag needs no settings read.
 
-// NotifyPush sends a push notification if the push service is configured.
+// NotifyPush sends a push notification about one CHAT if the push service is
+// configured.
+//
+// It keeps its chat-id parameter rather than taking an api.PushSubject: every
+// caller here is chat-scoped (a turn ended, a permission ask, an agent question),
+// so the conversion belongs at this one boundary instead of at each of them. A
+// notification with no chat behind it — the PR poller's — does not come through
+// here at all; it calls push.Send with its own subject.
 func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID) {
 	if bc.push == nil || !bc.push.HasSubscribers() {
 		return
 	}
 	bc.lifecycle.inflight.Go(func() {
-		bc.push.Send(ctx, push.DefaultTitle, body, kind, chatID)
+		bc.push.Send(ctx, push.DefaultTitle, body, kind, api.ChatSubject(chatID))
 	})
 }
 
@@ -567,6 +582,10 @@ func (bc *BridgeCoordinator) TakeBuffer(chatID api.ChatID) (*buffer.Buffer, bool
 // and broadcasts turn_ended with the credit delta and elapsed time.
 func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
 	stopReason := extractStopReason(resp)
+	// Read BEFORE the turn_ended broadcast below: emit() clears the chat's status
+	// as that event goes out, so a read at the push site always finds nothing. See
+	// statusDescription.
+	statusDesc := bc.statusDescription(chatID)
 
 	var changedFiles map[string]*api.FileChange
 	var refusal *api.RefusalInfo
@@ -617,8 +636,51 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	}
 
 	if stopReason != stopReasonCancelled {
-		bc.NotifyPush(ctx, "Agent finished", api.PushKindAgentFinished, chatID)
+		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), api.PushKindAgentFinished, chatID)
 	}
+}
+
+// agentFinishedBody is what the agent-finished notification SAYS.
+//
+// It was the fixed literal "Agent finished", which tells a reader nothing about
+// which of three background chats just came back. The agent's own one-line
+// self-description is already server-side, in memory, on the Hub, keyed by the
+// chat id this method is handed: `chat_status` arrives on KAS's focus_update
+// channel (the model's update_session_information tool). So no new wire field, no
+// new call site — a read at the push site.
+//
+// ORDERING IS THE TRAP, and it is why the caller reads the description early
+// rather than here. The status cache is cleared at turn end by design (so a bare
+// replay cannot resurrect a stale "in_progress"), and the clear runs inside emit()
+// as the turn_ended event goes out — the broadcast that sits between the top of
+// EmitTurnEndedWithStats and this push. Reading the cache at the push site would
+// therefore always find the entry already gone and always fall back to the
+// literal, silently. So the read happens before the broadcast and travels here as
+// a string.
+//
+// EMPTY IS LEGITIMATE. An agent need never call update_session_information, so the
+// description is often "" and the literal is the honest fallback rather than a
+// defensive branch. Length needs no cap: fitToCap trims the body against the
+// marshaled payload cap and logs a Warn, so an oversize description is delivered
+// truncated rather than dropped.
+func (bc *BridgeCoordinator) statusDescription(chatID api.ChatID) string {
+	if bc.chatStatus == nil {
+		return ""
+	}
+	return bc.chatStatus(chatID).Description
+}
+
+// defaultAgentFinishedBody is the body for a turn whose agent never declared what
+// it was doing.
+const defaultAgentFinishedBody = "Agent finished"
+
+// agentFinishedBodyFrom picks the body from a chat's self-declared description.
+// Split out from the cache read so the choice is testable without a Hub.
+func agentFinishedBodyFrom(description string) string {
+	if d := strings.TrimSpace(description); d != "" {
+		return d
+	}
+	return defaultAgentFinishedBody
 }
 
 // persistTurn commits the finalized assistant turn to the chat file.

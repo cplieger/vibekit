@@ -6,7 +6,7 @@
 import { $ } from "./dom.js";
 import { renderDiffModeUI } from "./editor-diff.js";
 import { renderConflictModeUI } from "./editor-conflict.js";
-import { renderEditModeUI, showReadMode } from "./editor-ui.js";
+import { renderEditModeUI, renderImageModeUI, showReadMode } from "./editor-ui.js";
 import type { FileState } from "./editor-types.js";
 
 // --- restoreUI (dispatches to mode-specific renderers) ---
@@ -39,6 +39,9 @@ export function restoreUI(state: FileState): void {
       return;
     case "conflict":
       renderConflictModeUI(state);
+      return;
+    case "image":
+      renderImageModeUI(state);
       return;
     case "edit":
       renderEditModeUI(state);

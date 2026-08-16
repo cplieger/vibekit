@@ -747,3 +747,61 @@ describe("appendChunk snapshot-seq gating", () => {
     expect(msg?.content).toBe("after clear");
   });
 });
+
+// mergeMessage is a field-by-field ALLOWLIST: an unlisted field is silently
+// dropped on the second ingest of the same id, and a user message with
+// attachments is ingested at least twice — once from the prompt's own
+// message_appended and again on any chat refetch or reconnect replay. So the
+// clause is what makes the turn header's pills survive a reload, not decoration.
+describe("Store message attachments (merge allowlist)", () => {
+  const atts = [
+    { path: "out/shot.png", name: "shot.png" },
+    { path: "docs/spec.pdf", name: "spec.pdf" },
+  ];
+
+  it("keeps the attachments on first ingest", () => {
+    resetStore("chat-att1");
+    appendMessage("chat-att1", {
+      id: "m-1",
+      role: "user",
+      ts: 1,
+      content: "look at these",
+      attachments: atts,
+    });
+    expect(get("chat-att1")?.messages[0]?.attachments).toEqual(atts);
+  });
+
+  it("survives a re-ingest of the same id that omits them", () => {
+    resetStore("chat-att2");
+    appendMessage("chat-att2", {
+      id: "m-1",
+      role: "user",
+      ts: 1,
+      content: "look at these",
+      attachments: atts,
+    });
+    // A refetch or replay of the same row without the field must not erase it —
+    // the exact shape the allowlist exists to get right.
+    upsertMessage("chat-att2", { id: "m-1", role: "user", ts: 1, content: "look at these" });
+    expect(get("chat-att2")?.messages[0]?.attachments).toEqual(atts);
+  });
+
+  it("adopts a non-empty incoming list over an existing one", () => {
+    resetStore("chat-att3");
+    appendMessage("chat-att3", { id: "m-1", role: "user", ts: 1, content: "x", attachments: [] });
+    upsertMessage("chat-att3", {
+      id: "m-1",
+      role: "user",
+      ts: 1,
+      content: "x",
+      attachments: atts,
+    });
+    expect(get("chat-att3")?.messages[0]?.attachments).toEqual(atts);
+  });
+
+  it("leaves a message with none alone", () => {
+    resetStore("chat-att4");
+    appendMessage("chat-att4", { id: "m-1", role: "user", ts: 1, content: "just a question" });
+    expect(get("chat-att4")?.messages[0]?.attachments).toBeUndefined();
+  });
+});

@@ -24,9 +24,27 @@ type PushState =
   | { kind: "registered"; registration: ServiceWorkerRegistration }
   | { kind: "failed"; error: string };
 
+/** The push kinds the user can switch off, keyed by their WIRE value (matching
+ *  `api.PushKind`) and paired with the settings key that carries each one.
+ *
+ *  Derived from the server's registry rather than restated: a kind with a settings
+ *  key is configurable, and `permission` deliberately has none — an ask blocks the
+ *  turn and has no per-tab marker, so a channel that could go dark on its own
+ *  would stall every later turn with nothing on screen to say why. That absence is
+ *  why this map exists as a map and not as an exhaustive record over PushKind. */
+export const KEYED_PUSH_KINDS: Readonly<Record<string, string>> = {
+  agent_finished: "notify_agent_finished",
+  pr_status: "notify_pr_status",
+};
+
 let swRegistration: ServiceWorkerRegistration | null = null;
 let enabled = false;
-let agentFinished = true;
+/** Per-kind enabled state for the KEYED kinds only. Defaults match the server's
+ *  registry (both DefaultOn), so a config.json that predates a kind behaves the
+ *  same way the server does. */
+const kindEnabled = new Map<string, boolean>(
+  Object.keys(KEYED_PUSH_KINDS).map((kind) => [kind, true]),
+);
 let notifyUICallback: (() => void) | null = null;
 let pushState: PushState = { kind: "idle" };
 
@@ -58,8 +76,15 @@ registerCleanup(() => {
 export function areNotificationsEnabled(): boolean {
   return enabled;
 }
+/** Whether a KEYED kind is on. Answers true for any kind not in
+ *  KEYED_PUSH_KINDS, because the only such kind is the permission floor and its
+ *  answer is always yes — see the note below on why there is no getter for it. */
+export function isKindEnabled(kind: string): boolean {
+  return kindEnabled.get(kind) ?? true;
+}
+
 export function isAgentFinishedEnabled(): boolean {
-  return agentFinished;
+  return isKindEnabled("agent_finished");
 }
 
 // There is no per-kind getter for the permission ask, and adding one back is
@@ -71,21 +96,47 @@ export function isAgentFinishedEnabled(): boolean {
 export function setNotificationsEnabled(v: boolean): void {
   enabled = v;
 }
-export function setAgentFinishedEnabled(v: boolean): void {
-  agentFinished = v;
+
+/** Set one KEYED kind's state. A kind outside KEYED_PUSH_KINDS is ignored rather
+ *  than added, so nothing can create an off switch for the permission floor by
+ *  passing its name. */
+export function setKindEnabled(kind: string, v: boolean): void {
+  if (!(kind in KEYED_PUSH_KINDS)) {
+    return;
+  }
+  kindEnabled.set(kind, v);
 }
+
+// There is no setAgentFinishedEnabled. It was the per-kind setter when there was
+// one keyed kind; setKindEnabled is the same function with the kind as an argument,
+// so keeping a named wrapper for one member would be a second door onto one room.
+// isAgentFinishedEnabled stays, because handlers/turn.ts asks about exactly that
+// kind on the foreground-notification path.
 
 export function setNotifyUICallback(fn: () => void): void {
   notifyUICallback = fn;
 }
 
-export function restoreNotifications(s: {
-  notifications_enabled?: boolean;
-  notify_agent_finished?: boolean;
-}): void {
+/** Apply the persisted preferences.
+ *
+ *  The per-kind values are read through KEYED_PUSH_KINDS, so adding a kind is one
+ *  entry there rather than a declared parameter field plus a line in this body. An
+ *  absent value keeps the default (on), matching the server's registry for a
+ *  config.json that predates the kind.
+ *
+ *  The lookup is BY KEY — the settings key comes from KEYED_PUSH_KINDS at runtime —
+ *  so the body indexes a widened view of the payload. That widening is the one cast
+ *  here, and it is safe in the direction that matters: every read compares against
+ *  `false`, so a field of some other type cannot be misread as an off switch, and a
+ *  key that is absent keeps the default. Narrowing to a declared interface instead
+ *  would mean listing every kind's field here as well as in KEYED_PUSH_KINDS. */
+export function restoreNotifications(s: object): void {
+  const flags = s as Readonly<Record<string, unknown>>;
   const wasEnabled = enabled;
-  enabled = s.notifications_enabled === true;
-  agentFinished = s.notify_agent_finished !== false;
+  enabled = flags["notifications_enabled"] === true;
+  for (const [kind, settingsKey] of Object.entries(KEYED_PUSH_KINDS)) {
+    kindEnabled.set(kind, flags[settingsKey] !== false);
+  }
 
   if (enabled) {
     autoSubscribe();

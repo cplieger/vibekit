@@ -517,6 +517,13 @@ function mergeMessage(existing: Message, incoming: Message): Message {
   if (incoming.code_references !== undefined && incoming.code_references.length > 0) {
     merged.code_references = incoming.code_references;
   }
+  // The allowlist is exhaustive by construction: an unlisted field is silently
+  // dropped on the second ingest of the same id, and a user message with
+  // attachments is ingested twice — once from the prompt's own message_appended
+  // and again from a chat refetch or the reconnect replay.
+  if (incoming.attachments !== undefined && incoming.attachments.length > 0) {
+    merged.attachments = incoming.attachments;
+  }
   if (incoming.refusal !== undefined) {
     merged.refusal = incoming.refusal;
   }

@@ -75,7 +75,13 @@ export function unsavedDiffSource(oldContent: string, newContent: string): DiffS
 export type FileMode =
   | { kind: "edit"; editing: boolean }
   | { kind: "diff"; diffSource: DiffSource }
-  | { kind: "conflict"; conflict: ConflictFile; editing: true };
+  | { kind: "conflict"; conflict: ConflictFile; editing: true }
+  // A variant rather than an early branch in `open()`, because `restoreUI`
+  // switches exhaustively on this discriminant: adding a member makes tsc point
+  // at every site that has to handle it, which an `if` at the entry point does
+  // not. It carries no payload — the path is the whole input, and the bytes come
+  // from the file route rather than from a loaded buffer.
+  | { kind: "image" };
 
 export interface FileState {
   path: string;

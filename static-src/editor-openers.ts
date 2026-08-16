@@ -19,6 +19,7 @@ import {
   routeForPath,
   freshState,
 } from "./editor-types.js";
+import { isViewableImage } from "./file-extensions.js";
 import {
   showReadMode,
   applyPendingLine,
@@ -38,6 +39,14 @@ registerCleanup(() => activeLoadController?.abort());
 // --- Public openers ---
 
 export function openFile(path: string, line?: number): void {
+  // An image opens in image mode, not edit mode: `/api/file` refuses a binary
+  // with a 415 and caps the read at 2 MB, so the text path could only ever show
+  // that error. `.svg` lands here too, which is the point — it is DISPLAYED in
+  // an `<img>`, where it is inert, and never offered as a link on this origin.
+  if (isViewableImage(path)) {
+    open(path, { mode: { kind: "image" } });
+    return;
+  }
   const opts: OpenOpts = { mode: { kind: "edit", editing: false } };
   if (line !== undefined) {
     opts.line = line;
@@ -210,9 +219,19 @@ export function activateFile(path: string): void {
   $.editorError.classList.add("hidden");
   $.editorHighlight.parentElement?.scrollTo(0, 0);
 
+  const m = state.mode.value;
+  // An image has no text buffer, so there is nothing for `loadFile` to fetch
+  // (the JSON route would answer 415) and no lines for the agent-line gutter to
+  // mark. Both are skipped rather than tolerated: the surface paints from the
+  // path alone, and `loaded` is set so a re-activation does not try again.
+  if (m.kind === "image") {
+    state.loaded = true;
+    restoreUI(state);
+    return;
+  }
+
   void fetchAgentLines(path);
 
-  const m = state.mode.value;
   if (m.kind === "diff" && m.diffSource.fromGit && !state.loaded) {
     $.editorCode.textContent = "Loading diff...";
     showReadMode();

@@ -138,6 +138,17 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 		ct = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ct)
+	// `attachment` is a SECURITY CONTROL on this route, not a UX preference, and
+	// the case that makes it one is SVG: mime.TypeByExtension(".svg") is
+	// "image/svg+xml", which a browser will execute script from if the response is
+	// NAVIGATED to as a document. Every `<img src=…>` pointed here is safe on its
+	// own (an SVG referenced as an image may not fetch or script), but the file
+	// browser also offers a real same-origin anchor to this URL, and CSP does not
+	// close the hole — `frame-src` falls back to `default-src 'self'`, which
+	// PERMITS a same-origin frame. `attachment` is what makes the browser save the
+	// bytes instead of rendering them as a document with this origin's privileges.
+	// Do not relax it to `inline` for images: that turns the existing download
+	// anchor into stored XSS. TestHandleDownload_SVGIsAttachment pins it.
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, name))
 	// Revalidate on every impression. ServeContent supplies Last-Modified but
 	// no freshness directive, and a validator with no explicit lifetime gets

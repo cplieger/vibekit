@@ -19,6 +19,7 @@ import { el } from "@cplieger/reactive";
 import { linkifyPaths } from "../linkify.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_COPY } from "../icons.js";
+import { buildAttachmentPill, type AttachmentRef } from "../attachment-pill.js";
 import type { TurnOutcome } from "../turns.js";
 
 export interface TurnHeaderData {
@@ -29,6 +30,9 @@ export interface TurnHeaderData {
   ts: number;
   /** The user's request. Undefined for a turn the user did not ask for. */
   request: string | undefined;
+  /** Files the user attached to this request. Drawn as the composer's own pill,
+   *  read-only (a sent attachment cannot be un-sent), and OUTSIDE the clamp. */
+  attachments: readonly AttachmentRef[];
 }
 
 /** Human label per outcome, used for the dot's accessible name (the dot itself
@@ -115,6 +119,11 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
     setExpanded(header, !isExpanded(header));
   });
   req.append(more);
+  // Inside `.turn-req` but a SIBLING of `.turn-req-text`, so the three-line
+  // clamp cannot hide it: the attachments are part of how a reader identifies
+  // which request this was, which is the same reason the action row sits outside
+  // the clamp. Empty and hidden until there is something to draw.
+  req.appendChild(el("ul", { className: "turn-req-attachments attachment-row hidden" }));
   header.appendChild(req);
 
   updateTurnHeader(header, d);
@@ -180,6 +189,11 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     copy.hidden = d.request === undefined;
   }
 
+  // Ahead of the request-text branch, which returns early for an
+  // agent-initiated turn: the row has to be reachable on every path, or a
+  // repaint could leave pills describing a request that is no longer here.
+  syncAttachments(header, d.attachments);
+
   const text = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-text");
   const more = header.querySelector<HTMLButtonElement>(":scope > .turn-req > .turn-req-more");
   if (text === null || more === null) {
@@ -208,6 +222,35 @@ export function updateTurnHeader(header: HTMLElement, d: TurnHeaderData): void {
     setExpanded(header, false);
   }
   syncClampAffordance(text, more, body);
+}
+
+/** Draw the request's attachment pills, rebuilding only when the LIST changed.
+ *
+ *  The guard is correctness rather than economy: `updateTurnHeader` runs on every
+ *  repaint, including each streaming chunk, and a blind `replaceChildren` would
+ *  destroy a pill the user is tabbed onto several times a second. Compared
+ *  against the DOM directly — each pill carries its path as its `title` — so
+ *  there is no second copy of the list to keep in sync. */
+function syncAttachments(header: HTMLElement, atts: readonly AttachmentRef[]): void {
+  const row = header.querySelector<HTMLElement>(":scope > .turn-req > .turn-req-attachments");
+  if (row === null) {
+    return;
+  }
+  row.classList.toggle("hidden", atts.length === 0);
+  if (row.children.length === atts.length) {
+    let same = true;
+    for (const [i, att] of atts.entries()) {
+      if (row.children[i]?.getAttribute("title") !== att.path) {
+        same = false;
+        break;
+      }
+    }
+    if (same) {
+      return;
+    }
+  }
+  // No `onRemove`: a sent attachment cannot be un-sent, so the pill has no `×`.
+  row.replaceChildren(...atts.map((att) => buildAttachmentPill(att)));
 }
 
 function isExpanded(header: HTMLElement): boolean {

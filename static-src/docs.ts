@@ -27,7 +27,9 @@ import { onSSE } from "./bus.js";
 import { $, maybeViewTransition } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
-import { ICON_EDIT } from "./icons.js";
+import { ICON_EDIT, ICON_TRASH } from "./icons.js";
+import { confirm as confirmDialog } from "./confirm.js";
+import { deleteDoc } from "./actions/docs.js";
 import { initGitStatusStore, onGitStatusChange, statusFor } from "./git-status-store.js";
 import { describeStatus } from "./git-types.js";
 import { openFile } from "./editor-openers.js";
@@ -55,6 +57,26 @@ interface KiroDoc {
   action?: string;
   tools?: string[];
   steering_override?: boolean;
+  /** The row is not writable, so it renders without the edit or delete
+   *  affordance. Absent means writable — a restriction is ASSERTED by the server,
+   *  never inferred from a missing field (same direction as `mcp-state.ts`'s
+   *  `adaptOrigin`).
+   *
+   *  NOTHING SETS IT TODAY. It briefly meant "reached through a symlink, so the
+   *  save would fail with ELOOP", and that premise was false: the server resolves
+   *  the link and applies `O_NOFOLLOW` to the canonical target, so the save
+   *  succeeds. The field stays as the provenance channel because it is the right
+   *  shape for a real writability source; what went is the wrong derivation. */
+  read_only?: boolean;
+  /** The row's DELETE must not be offered, but its edit still may be.
+   *
+   *  A separate field because it is a separate question. The server sets it when
+   *  the entry's own final component is a symlink: the delete route canonicalizes
+   *  the path, so removing the alias removes the file it points at — which is
+   *  listed as its own row on this same page. Editing through a link writes the
+   *  target, which is what following a link means; deleting through it destroys a
+   *  row the reader never touched. */
+  delete_protected?: boolean;
 }
 
 /** Tab order is fixed: the page always reads Steering · Skills · Agents ·
@@ -412,6 +434,89 @@ function splitRepoPath(path: string): { repo: string; rel: string } {
   return { repo: parent, rel: afterKiro };
 }
 
+/** A row's affordances follow from its provenance, and there are TWO rules
+ *  because there are two questions.
+ *
+ *  `read_only` gates both controls: a row that cannot be written cannot be edited
+ *  or deleted. `delete_protected` gates only the delete, and the split is what
+ *  keeps the row honest — one flag made the page hide the pencil and show a
+ *  "read-only" badge while its own activation surface opened a file the editor
+ *  could save. */
+function isReadOnly(doc: KiroDoc): boolean {
+  return doc.read_only === true;
+}
+
+/** Delete the document behind a row, after a confirm.
+ *
+ *  The confirm is not ceremony: there is no undo path for a `.kiro` file — no
+ *  trash, no snapshot — so the dialog IS the guard. */
+async function deleteRow(doc: KiroDoc): Promise<void> {
+  const ok = await confirmDialog(
+    `Delete ${doc.name}? This cannot be undone.`,
+    "Delete",
+    "destructive",
+  );
+  if (!ok) {
+    return;
+  }
+  const res = await deleteDoc.dispatch({ path: doc.path, name: doc.name });
+  if (res === null) {
+    return; // the action reported it; the row stays until the refetch says otherwise
+  }
+  loadDocs();
+}
+
+/** The row's trailing control slot.
+ *
+ *  The whole row used to BE the button, with a decorative pencil inside it. A
+ *  delete control cannot live in that shape: it would nest an interactive
+ *  element inside a `<button>`, which is invalid HTML and gets flattened by
+ *  assistive tech — the same defect `pill-expand.ts` documents. So the
+ *  activation surface and the controls are SIBLINGS, which is the shape the pill
+ *  work already established here. */
+function rowControls(doc: KiroDoc): HTMLElement {
+  const slot = el("span", { className: "docs-row-controls" });
+  if (isReadOnly(doc)) {
+    // Neither control, and no claim either. The badge that used to sit here said
+    // "read-only" while the activation surface opened a file the editor could
+    // save; a row states what it can back up or it states nothing.
+    return slot;
+  }
+  slot.appendChild(
+    // Decorative: the activation surface beside it is the open control.
+    el("span", { className: "list-row-btn", "aria-hidden": "true" }, iconEl(ICON_EDIT)),
+  );
+  if (doc.delete_protected === true) {
+    // Editable, so the pencil above stays. The delete is withheld and SAID,
+    // because an absent control with no reason reads as a bug: this row is an
+    // alias, and deleting it would remove the file it points at — which is listed
+    // under its own name on this same page.
+    const badge = el("span", { className: "docs-badge docs-badge-link" }, "link");
+    badge.setAttribute(
+      "data-tooltip",
+      "A symlink. Editing it writes the file it points to; deleting it would remove that file, so delete is disabled here",
+    );
+    slot.appendChild(badge);
+    return slot;
+  }
+  const del = el("button", {
+    type: "button",
+    className: "icon-btn docs-row-delete",
+    "aria-label": `Delete ${doc.name}`,
+  }) as HTMLButtonElement;
+  del.setAttribute("data-tooltip", "Delete");
+  del.appendChild(iconEl(ICON_TRASH));
+  del.addEventListener("click", (e: MouseEvent) => {
+    // The activation surface is a sibling, not an ancestor, so this cannot
+    // bubble into an open — but the row is a flex container users click on, and
+    // stopping here keeps the two controls independent whatever the layout does.
+    e.stopPropagation();
+    void deleteRow(doc);
+  });
+  slot.appendChild(del);
+  return slot;
+}
+
 function docRow(doc: KiroDoc): HTMLElement {
   const name = el("span", { className: "list-row-name" }, doc.name);
   const children: HTMLElement[] = [name];
@@ -429,37 +534,39 @@ function docRow(doc: KiroDoc): HTMLElement {
   children.push(meta);
 
   const sub = subtitleFor(doc);
-  const row = el(
+  const surfaceChildren: HTMLElement[] = [el("div", { className: "docs-row-top" }, ...children)];
+  if (sub !== "") {
+    surfaceChildren.push(el("div", { className: "docs-row-sub" }, sub));
+  }
+  // The activation surface: everything that identifies the document. It keeps
+  // role=button and the keyboard contract; the controls sit outside it.
+  const surface = el(
     "div",
     {
-      className: "list-row docs-row",
+      className: "docs-row-surface",
       role: "button",
       tabindex: "0",
       "aria-label": `Open ${doc.name}`,
-      "data-path": doc.path,
     },
-    el("div", { className: "docs-row-top" }, ...children),
-    // Decorative: the whole row is the button.
-    el("span", { className: "list-row-btn", "aria-hidden": "true" }, iconEl(ICON_EDIT)),
+    ...surfaceChildren,
   );
-  if (sub !== "") {
-    row.insertBefore(
-      el("div", { className: "docs-row-sub" }, sub),
-      row.querySelector(".list-row-btn"),
-    );
-  }
-
   const open = (): void => {
     openFile(doc.path);
   };
-  row.addEventListener("click", open);
-  row.addEventListener("keydown", (e: KeyboardEvent) => {
+  surface.addEventListener("click", open);
+  surface.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       open();
     }
   });
-  return row;
+
+  return el(
+    "div",
+    { className: "list-row docs-row", "data-path": doc.path },
+    surface,
+    rowControls(doc),
+  );
 }
 
 /** A skeleton matching the real row shape. Skipped when the panel already holds

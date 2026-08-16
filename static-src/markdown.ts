@@ -29,6 +29,7 @@ import type { Parser } from "./smd-parser.js";
 import { domRenderer } from "./smd-renderer.js";
 import { linkifyPaths } from "./linkify.js";
 import { decorateCodeBlocks, decorateStreamingCodeTail } from "./code-blocks.js";
+import { renderSvgBlock } from "./svg-block.js";
 
 /** Incremental-write flush throttle while streaming: buffered deltas are
  *  fed to the append-only streaming parser at most once per interval.
@@ -66,21 +67,33 @@ function nextTick(fn: () => void): void {
   }
 }
 
-/** Decorate a freshly-completed block. Idempotent. */
-function decorate(block: HTMLElement): void {
+/** Decorate a freshly-completed block. Idempotent. Returns the element now
+ *  standing in the document, which is not always the one passed in — an `svg`
+ *  fence is REPLACED by its rendered diagram. */
+function decorate(block: HTMLElement): HTMLElement {
   if (block.tagName === "PRE") {
+    // Ahead of decorateCodeBlocks: a converted diagram is no longer a code
+    // block, so it must not collect a language label, a Copy button or
+    // highlighting for source the reader can no longer see.
+    const diagram = renderSvgBlock(block);
+    if (diagram !== null) {
+      return diagram;
+    }
     if (block.parentElement !== null) {
       decorateCodeBlocks(block.parentElement);
     }
-    return;
+    return block;
   }
   linkifyPaths(block);
+  return block;
 }
 
 /** Decorate + tag for the per-block entry animation. */
 function decorateAndAnimate(block: HTMLElement): void {
-  decorate(block);
-  block.setAttribute("data-vk-block-enter", "");
+  // The tag goes on whatever decorate left in the document: setting it on a
+  // `<pre>` that has just been replaced by a diagram would animate a detached
+  // node and leave the visible one un-faded.
+  decorate(block).setAttribute("data-vk-block-enter", "");
 }
 
 export interface MarkdownStream {

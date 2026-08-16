@@ -42,6 +42,9 @@ func main() {
 		wiregen.TypeRef[api.Block](),
 		wiregen.TypeRef[api.CodeReference](),
 		wiregen.TypeRef[api.RefusalInfo](),
+		// Declared BEFORE Message, which references it: the generator emits in
+		// order.
+		wiregen.TypeRef[api.Attachment](),
 		wiregen.TypeRef[api.Message](),
 		wiregen.TypeRef[api.MeteringItem](),
 		wiregen.TypeRef[api.Usage](),

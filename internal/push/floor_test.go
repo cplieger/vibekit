@@ -67,20 +67,20 @@ func TestKeylessKindIsPermissionOnly(t *testing.T) {
 // lives in a function that takes its table.
 func TestValidateKindRegistry_RejectsAForgottenKey(t *testing.T) {
 	cases := map[string]struct {
-		entries []kindEntry
+		entries []KindPref
 		wantErr string
 	}{
 		"the live table": {entries: kindRegistry},
 		"another kind forgot its key": {
-			entries: []kindEntry{{api.PushKindAgentFinished, "", true}},
+			entries: []KindPref{{api.PushKindAgentFinished, "", true}},
 			wantErr: "only the permission floor may omit one",
 		},
 		"the floor is not default-on": {
-			entries: []kindEntry{{api.PushKindPermission, "", false}},
+			entries: []KindPref{{api.PushKindPermission, "", false}},
 			wantErr: "must be DefaultOn",
 		},
 		"an unknown kind": {
-			entries: []kindEntry{{api.PushKind("notify_smoke_signal"), "notify_smoke", true}},
+			entries: []KindPref{{api.PushKind("notify_smoke_signal"), "notify_smoke", true}},
 			wantErr: "invalid PushKind",
 		},
 	}

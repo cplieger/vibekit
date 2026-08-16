@@ -732,6 +732,10 @@ function headerData(t: Turn): TurnHeaderData {
     // An empty prompt is not a request; fall through to the system-trigger
     // rendering rather than showing a blank header band.
     request: request !== undefined && request.trim() !== "" ? request : undefined,
+    // Read off the trigger message, where the server stamped them. Not derived
+    // from the request text: an image or a document attachment never appears in
+    // Content at all, so there is nothing there to parse back out.
+    attachments: t.trigger?.attachments ?? [],
   };
 }
 

@@ -971,6 +971,9 @@ export function initMCP(): void {
     });
   });
   onSSE("mcp_failed", (_chat, p) => {
+    // Read the PREVIOUS state before writing the new one: the toast fires on the
+    // transition into `failed`, not on the frame. See announceMCPFailure.
+    announceMCPFailure(p.server, p.error, statusSignalFor(p.server).peek().state);
     mcpState.setStatusFromEvent(p.server, { name: p.server, state: "failed", error: p.error });
   });
   onSSE("mcp_disconnected", (_chat, p) => {
@@ -1000,4 +1003,43 @@ function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed
     setPrewarm(server.id, state);
     return;
   }
+}
+
+// --- Broken-server notice ---
+//
+// A toast when a server turns out to be broken, and NO proactive probing. Not
+// every chat uses an MCP server, so an MCP problem must not block or complicate
+// the chat flow, and a health page is a different surface. What arrives here is
+// the failure kiro-cli already reported (`_kiro/mcp/status` carrying
+// `_kiro.dev/mcp/server_init_failure`), so the state, the reason and the delivery
+// mechanism all existed and only the notice did not.
+//
+// This joins the one existing `mcp_failed` consumer rather than adding a second
+// subscription to the same event: that handler already holds both the server name
+// and the reason, and it is where the previous state can still be read.
+
+/** DEDUPE IS REQUIRED, and it keys on the state TRANSITION rather than on the
+ *  frame. Each bridge emits its own `_kiro/mcp/status` on connect and
+ *  `recordInitFailure` broadcasts unconditionally, so a reconnect storm is a
+ *  broadcast storm; without this a wedged server would produce one toast per
+ *  bridge per reconnect. Leaving `failed` re-arms it, which is what keeps the
+ *  next genuine failure audible. */
+export function announceMCPFailure(server: string, reason: string, prevState: RuntimeState): void {
+  if (prevState === "failed") {
+    return;
+  }
+  showToast(mcpFailureText(server, reason), "error");
+}
+
+/** The captured reason, not a generic message: `error` is kiro-cli's own text and
+ *  it is what separates "command not found" from a handshake timeout. It CAN be
+ *  empty (adaptStatus defaults a missing one to ""), so the fallback still names
+ *  the server — a toast that says only "an integration failed" sends the reader
+ *  looking for which one. */
+export function mcpFailureText(server: string, reason: string): string {
+  const trimmed = reason.trim();
+  if (trimmed === "") {
+    return `Integration "${server}" failed to start.`;
+  }
+  return `Integration "${server}" failed to start: ${trimmed}`;
 }

@@ -8,9 +8,31 @@ import {
   initTurnHeaderCallbacks,
   type TurnHeaderData,
 } from "./turn-header.js";
+import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
-  return { n: 1, outcome: "completed", ts: 0, request: "short request", ...over };
+  return {
+    n: 1,
+    outcome: "completed",
+    ts: 0,
+    request: "short request",
+    attachments: [],
+    ...over,
+  };
+}
+
+function attachmentRow(h: HTMLElement): HTMLElement {
+  const r = h.querySelector<HTMLElement>(".turn-req-attachments");
+  if (r === null) {
+    throw new Error("no .turn-req-attachments");
+  }
+  return r;
+}
+
+function attachmentPaths(h: HTMLElement): (string | null)[] {
+  return [...attachmentRow(h).querySelectorAll(".attachment-pill")].map((p) =>
+    p.getAttribute("title"),
+  );
 }
 
 function text(h: HTMLElement): HTMLElement {
@@ -213,5 +235,88 @@ describe("updateTurnHeader", () => {
   it("leaves the time empty rather than rendering the epoch", () => {
     const h = buildTurnHeader(data({ ts: 0 }));
     expect(h.querySelector(".turn-ts")?.textContent).toBe("");
+  });
+});
+
+// The files the user attached, drawn as the composer's own pill so a sent request
+// is identifiable by what went with it. The server stamps them on the user
+// message because BuildPromptBlocks consumes them on the way out — an image or a
+// document attachment never appears in the request text, so there is nothing to
+// parse back out of it.
+describe("the request's attachments", () => {
+  const shot = { path: "out/shot.png", name: "shot.png" };
+  const spec = { path: "docs/spec.md", name: "spec.md" };
+
+  it("renders one pill per attachment", () => {
+    const h = buildTurnHeader(data({ attachments: [shot, spec] }));
+    expect(attachmentPaths(h)).toEqual(["out/shot.png", "docs/spec.md"]);
+    expect(attachmentRow(h).classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the row when the request carried none", () => {
+    const h = buildTurnHeader(data());
+    expect(attachmentPaths(h)).toEqual([]);
+    expect(attachmentRow(h).classList.contains("hidden")).toBe(true);
+  });
+
+  // The clamp is scoped to `.turn-req-text`. A pill inside it would vanish
+  // whenever a long prompt folded to three lines — and the attachments are part
+  // of how a reader identifies which request this was.
+  it("sits inside .turn-req but OUTSIDE the clamped text", () => {
+    const h = buildTurnHeader(data({ request: LONG, attachments: [shot] }));
+    expect(h.querySelector(".turn-req > .turn-req-attachments")).not.toBeNull();
+    expect(text(h).querySelector(".attachment-pill")).toBeNull();
+    expect(text(h).hasAttribute("data-clamped")).toBe(true);
+    expect(attachmentPaths(h)).toEqual(["out/shot.png"]);
+  });
+
+  it("stays clickable, opening the attachment it names", () => {
+    const opened: string[] = [];
+    initAttachmentPillCallbacks({
+      open: (p) => {
+        opened.push(p);
+      },
+    });
+    const h = buildTurnHeader(data({ attachments: [shot, spec] }));
+    const bodies = [...attachmentRow(h).querySelectorAll<HTMLButtonElement>(".attachment-open")];
+    expect(bodies).toHaveLength(2);
+    for (const b of bodies) {
+      b.click();
+    }
+    expect(opened).toEqual(["out/shot.png", "docs/spec.md"]);
+  });
+
+  // A sent attachment cannot be un-sent, so the header's pill carries no `×` —
+  // unlike the composer's, which is the same component with a remover passed in.
+  it("offers no remove control", () => {
+    const h = buildTurnHeader(data({ attachments: [shot] }));
+    expect(attachmentRow(h).querySelector(".attachment-close")).toBeNull();
+  });
+
+  // updateTurnHeader runs on every repaint, streaming chunks included. Rebuilding
+  // the row each time would destroy a pill the user is tabbed onto.
+  it("keeps the same pill elements across a repaint with the same list", () => {
+    const h = buildTurnHeader(data({ attachments: [shot, spec] }));
+    const before = [...attachmentRow(h).children];
+    updateTurnHeader(h, data({ attachments: [shot, spec], outcome: "failed" }));
+    expect([...attachmentRow(h).children]).toEqual(before);
+  });
+
+  it("rebuilds when the list actually changes", () => {
+    const h = buildTurnHeader(data({ attachments: [shot] }));
+    updateTurnHeader(h, data({ attachments: [shot, spec] }));
+    expect(attachmentPaths(h)).toEqual(["out/shot.png", "docs/spec.md"]);
+    updateTurnHeader(h, data({ attachments: [] }));
+    expect(attachmentPaths(h)).toEqual([]);
+    expect(attachmentRow(h).classList.contains("hidden")).toBe(true);
+  });
+
+  // The row is synced ahead of the request-text branch, which returns early for an
+  // agent-initiated turn — otherwise a repaint could leave pills describing a
+  // request that is no longer there.
+  it("clears the row even when the trigger becomes a system one", () => {
+    const h = buildTurnHeader(data({ attachments: [shot] }));
+    updateTurnHeader(h, data({ request: undefined, attachments: [] }));
+    expect(attachmentPaths(h)).toEqual([]);
   });
 });

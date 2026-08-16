@@ -54,6 +54,7 @@ vi.mock("./tabs-drag.js", () => ({
 
 import {
   openTab,
+  openEditorView,
   closeTab,
   activateTab,
   renameTab,
@@ -113,6 +114,61 @@ describe("openTab", () => {
     for (const id of expectHas) {
       expect(hasTab(id)).toBe(true);
     }
+  });
+});
+
+// Editor tabs are MULTI-INSTANCE, and nothing else makes them so: openTab dedupes
+// on spec.id alone, and openEditorView derives that id from the path. That is the
+// whole mechanism behind "N attachments open N tabs" — attachments.test.ts pins
+// the other half, that each pill asks for its own path.
+describe("openEditorView (multi-instance by path)", () => {
+  const noop = (): void => undefined;
+
+  // renderDOM is RAF-deferred, same as the keyboard suite below.
+  function renderedTabIDs(): Promise<string[]> {
+    return new Promise<string[]>((resolve) => {
+      requestAnimationFrame(() => {
+        const list = document.getElementById("tab-list");
+        resolve(
+          [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])].map(
+            (n) => n.dataset["tabId"] ?? "",
+          ),
+        );
+      });
+    });
+  }
+
+  it("opens one tab per distinct path", async () => {
+    for (const p of ["src/a.ts", "docs/b.md", "out/shot.png"]) {
+      openEditorView(p, noop);
+    }
+    expect(hasTab("editor:src/a.ts")).toBe(true);
+    expect(hasTab("editor:docs/b.md")).toBe(true);
+    expect(hasTab("editor:out/shot.png")).toBe(true);
+    expect(getActiveTabId()).toBe("editor:out/shot.png");
+    expect(await renderedTabIDs()).toEqual([
+      "editor:src/a.ts",
+      "editor:docs/b.md",
+      "editor:out/shot.png",
+    ]);
+  });
+
+  // Two pills for one file is the same file: re-activate, never a second tab.
+  it("re-activates rather than duplicating when the same path opens twice", async () => {
+    openEditorView("src/a.ts", noop);
+    openEditorView("docs/b.md", noop);
+    openEditorView("src/a.ts", noop);
+    expect(getActiveTabId()).toBe("editor:src/a.ts");
+    expect(await renderedTabIDs()).toEqual(["editor:src/a.ts", "editor:docs/b.md"]);
+  });
+
+  // The path travels in the ROUTE, never parsed back out of the id.
+  it("names the tab by basename while the id keeps the whole path", async () => {
+    openEditorView("a/b/c.ts", noop);
+    expect(await renderedTabIDs()).toEqual(["editor:a/b/c.ts"]);
+    const tab = document.querySelector('[data-tab-id="editor:a/b/c.ts"]');
+    expect(tab?.textContent).toContain("c.ts");
+    expect(tab?.textContent).not.toContain("a/b");
   });
 });
 

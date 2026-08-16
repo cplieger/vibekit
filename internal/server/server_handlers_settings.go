@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/logctl"
+	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
 )
 
@@ -206,19 +207,32 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 // syncPushPreferences reads notification preference toggles from the settings
 // patch and forwards them to the push service.
 //
-// PushKindPermission is seeded true and has no branch that can lower it: there
-// is no notify_permission key to read, so this write path cannot silence a
-// turn-blocking ask however the body was assembled. See the "no
-// notify_permission key" note in internal/settings/defaults.go.
+// It DERIVES the kind set from push.Kinds() rather than naming the kinds here.
+// This used to be a hand-written map with both kinds spelled out and a single
+// `if` reading one key, which made it a THIRD copy of the kind set beside
+// api.pushKinds and push.kindRegistry — so a newly added kind's toggle persisted
+// to config.json and then never reached the running service until the next SSE
+// reconnect happened to call ReloadPreferences.
+//
+// PushKindPermission has no branch that can lower it: its registry entry declares
+// no settings key, so the loop below cannot find a value to read for it and this
+// write path cannot silence a turn-blocking ask however the body was assembled.
+// See the "no notify_permission key" note in internal/settings/defaults.go.
 func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
-	prefs := map[api.PushKind]bool{
-		api.PushKindAgentFinished: true,
-		api.PushKindPermission:    true,
-	}
-	if v, ok := patch[settings.KeyNotifyAgentFinished]; ok {
-		var af bool
-		if json.Unmarshal(v, &af) == nil {
-			prefs[api.PushKindAgentFinished] = af
+	kinds := push.Kinds()
+	prefs := make(map[api.PushKind]bool, len(kinds))
+	for _, k := range kinds {
+		prefs[k.Kind] = k.DefaultOn
+		if k.SettingsKey == "" {
+			continue // an unconfigurable floor: no key, so nothing to read
+		}
+		v, ok := patch[k.SettingsKey]
+		if !ok {
+			continue
+		}
+		var on bool
+		if json.Unmarshal(v, &on) == nil {
+			prefs[k.Kind] = on
 		}
 	}
 	s.push.SetPreferences(prefs)

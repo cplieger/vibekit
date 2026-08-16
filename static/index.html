@@ -313,6 +313,16 @@
                     <p class="section-hint">Notify when the agent completes a response and no device has the app in the foreground.</p>
                   </div>
                 </div>
+                <div class="section-option">
+                  <label class="toggle">
+                    <input type="checkbox" id="notify-pr-status-toggle" aria-label="Pull request checks" checked>
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <div>
+                    <span class="section-option-label">Pull request checks</span>
+                    <p class="section-hint">Notify when CI on a pull request you opened turns green or red. Checked every minute while you have an open pull request in a repository checked out here, and every five minutes otherwise. Coverage follows what each host reports: GitHub sends both outcomes, GitLab reports a failure but cannot report a recovery, and Gitea or Codeberg report neither.</p>
+                  </div>
+                </div>
                 <div class="section-option section-option-fixed">
                   <div>
                     <span class="section-option-label">Permission needed</span>
@@ -806,6 +816,7 @@
             <pre id="editor-highlight" class="editor-highlight"><code id="editor-code"></code></pre>
             <textarea id="editor-content" class="editor-content hidden" spellcheck="false" aria-label="File editor"></textarea>
             <div id="editor-markdown" class="editor-markdown hidden"></div>
+            <div id="editor-image" class="editor-image hidden"></div>
             <div id="editor-diff-pane" class="editor-diff-pane hidden"></div>
           </div>
           <div class="editor-toolbar bottom-bar">

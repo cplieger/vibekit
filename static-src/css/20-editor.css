@@ -96,6 +96,30 @@
   color: var(--c-text-primary);
 }
 
+/* The image read surface. Same grid slot as the markdown surface — it is the
+   other non-text read view — and the gutter column is hidden alongside it. */
+.editor-image {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  /* Top-aligned, horizontally centred: a tall screenshot is READ from the top,
+     so centring it vertically would hide its first rows behind a scroll. */
+  place-content: start center;
+  padding: var(--sp-4);
+  background: var(--c-bg-primary);
+  /* No overflow of its own: `.editor-body` is the scroller, and a nested one
+     would compete with it — the same rule the markdown surface follows. */
+}
+
+/* Width-fit only, and never upscaled: a 32px icon stretched to the pane tells
+   the reader less about the file than its real size does, and a tall screenshot
+   should scroll rather than shrink to illegibility. */
+.editor-image-el {
+  max-width: 100%;
+  height: auto;
+}
+
 /* The document's YAML front-matter, rendered rather than stripped: for a
    steering doc the inclusion mode and fileMatchPattern are the facts a reader
    came for. Set apart from the prose because it is metadata about the file, not

@@ -371,6 +371,17 @@ type Message struct {
 	// render the distinct refusal callout (chip + rewind / switch-model CTAs).
 	Refusal *RefusalInfo `json:"refusal,omitempty"`
 	Plan    []PlanEntry  `json:"plan,omitempty"`
+	// Attachments are the files the user attached to THIS prompt, stamped on
+	// the user message so a sent turn can render them as pills in its header.
+	// It has to live on the record: BuildPromptBlocks consumes
+	// PromptCommand.Attachments on the way OUT to KAS and folds each one into a
+	// content block, so by the time the turn is read back there is nothing to
+	// recover the list from — an image or a document does not even leave its
+	// path in Content. Absent on every message persisted before this field
+	// existed, and on every turn opened by a steer (`_session/steer` takes a
+	// plain string, so a mid-turn send has no structured attachment list to
+	// carry).
+	Attachments []Attachment `json:"attachments,omitempty"`
 	// TurnCredits / TurnElapsedMs complete the turn footer summary alongside
 	// ChangedFiles (above). The values also ride the turn_ended SSE for the
 	// live render; omitempty drops the zero cases (a read-only turn has none).

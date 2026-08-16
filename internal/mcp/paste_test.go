@@ -592,8 +592,8 @@ func TestTranslate_NameIsAdjustedAndReported(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	got := req.servers[0].Name
-	if !nameRe.MatchString(got) {
-		t.Fatalf("name %q does not satisfy the store's name rule", got)
+	if err := ValidateName(got); err != nil {
+		t.Fatalf("name %q does not satisfy the store's name rule: %v", got, err)
 	}
 	if got != "acme-my-server" {
 		t.Errorf("name = %q, want %q", got, "acme-my-server")
@@ -697,8 +697,8 @@ func FuzzParseImportBody(f *testing.F) {
 			t.Fatal("a successful parse must yield at least one server")
 		}
 		for i, sv := range req.servers {
-			if !nameRe.MatchString(sv.Name) {
-				t.Errorf("servers[%d].Name = %q, which the store will reject", i, sv.Name)
+			if err := ValidateName(sv.Name); err != nil {
+				t.Errorf("servers[%d].Name = %q, which the store will reject: %v", i, sv.Name, err)
 			}
 			if !sv.Transport.Valid() {
 				t.Errorf("servers[%d].Transport = %q", i, sv.Transport)
