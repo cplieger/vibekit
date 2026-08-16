@@ -95,6 +95,124 @@ func TestParseTokenEnvelope(t *testing.T) {
 	}
 }
 
+// TestParseTokenEnvelope_ErrorTextIsSafeForALog covers the two properties of
+// the quoted upstream text that the fuzz target cannot state: what replaces
+// a masked credential, and that the text is safe in a log line at all. The
+// error reaches slog (hub's "v3 auth: token unavailable") and a JSON-RPC
+// frame, so a raw newline in it forges a log record and a C0 introducer
+// writes terminal escapes.
+func TestParseTokenEnvelope_ErrorTextIsSafeForALog(t *testing.T) {
+	const tok = "secret-tok-value"
+	cases := []struct {
+		name       string
+		in         string
+		wantSubstr string // must appear
+		denySubstr string // must not appear ("" = no deny check)
+	}{
+		{
+			name:       "error payload carrying token material is masked",
+			in:         `{"kind":"error","data":{"reason":"refresh failed","accessToken":"` + tok + `"}}`,
+			wantSubstr: "[redacted]",
+			denySubstr: tok,
+		},
+		{
+			name:       "error payload reason survives the mask",
+			in:         `{"kind":"error","data":{"reason":"refresh failed","accessToken":"` + tok + `"}}`,
+			wantSubstr: "refresh failed",
+		},
+		{
+			name:       "unexpected kind equal to the token is masked",
+			in:         `{"kind":"` + tok + `","data":{"accessToken":"` + tok + `"}}`,
+			wantSubstr: "[redacted]",
+			denySubstr: tok,
+		},
+		{
+			name:       "an ordinary unexpected kind is still reported",
+			in:         `{"kind":"somethingElse","data":{}}`,
+			wantSubstr: "somethingElse",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseTokenEnvelope([]byte(tc.in))
+			if err == nil {
+				t.Fatalf("want an error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Errorf("err = %q, want containing %q", err, tc.wantSubstr)
+			}
+			if tc.denySubstr != "" && strings.Contains(err.Error(), tc.denySubstr) {
+				t.Errorf("err = %q, must not contain %q", err, tc.denySubstr)
+			}
+		})
+	}
+
+	t.Run("control characters cannot forge a log record", func(t *testing.T) {
+		// A raw newline plus an ESC introducer inside the kind.
+		_, err := parseTokenEnvelope([]byte(`{"kind":"a\nb\u001b[2Jc","data":{}}`))
+		if err == nil {
+			t.Fatal("want an error, got nil")
+		}
+		// %q would escape a surviving control rune, so assert on the
+		// unquoted verdict: runesafe replaced each one with a space.
+		for _, bad := range []string{"\n", "\x1b"} {
+			if strings.Contains(err.Error(), bad) {
+				t.Errorf("err = %q, still carries %q", err, bad)
+			}
+		}
+		if !strings.Contains(err.Error(), "a b [2Jc") {
+			t.Errorf("err = %q, want the sanitized kind", err)
+		}
+	})
+
+	t.Run("an oversize kind is bounded", func(t *testing.T) {
+		_, err := parseTokenEnvelope([]byte(`{"kind":"` + strings.Repeat("k", 4096) + `","data":{}}`))
+		if err == nil {
+			t.Fatal("want an error, got nil")
+		}
+		// The whole message, not just the quoted part: this is what reaches
+		// the log attribute. diagCap plus this package's own prefix, the two
+		// quotes, and the elision marker outside the cap.
+		if n := len(err.Error()); n > diagCap+64 {
+			t.Errorf("error is %d bytes for a 4096-byte kind, want <= %d", n, diagCap+64)
+		}
+		if !strings.Contains(err.Error(), "...") {
+			t.Errorf("err = %q, want the elision marker proving truncation", err)
+		}
+	})
+
+	// The ordering guard. Sanitizing must run BEFORE the mask, not after:
+	// encoding/json reads an invalid UTF-8 byte as U+FFFD, and the sanitizer
+	// normalizes the raw byte the same way, so a mask applied first finds
+	// nothing and sanitizing then assembles the decoded token out of raw
+	// bytes that never contained it. Field names are deliberately mis-cased
+	// because encoding/json matches them case-insensitively, which is how
+	// the fuzzer reached this shape. Collapsing diagnostic back onto
+	// runesafe.SanitizeSingleLineBounded reopens it.
+	t.Run("invalid UTF-8 cannot reconstruct the token past the mask", func(t *testing.T) {
+		raw := []byte("{\"kind\":\"error\",\"dAtA\":{\"ACCessToken\":\"\xd2000000\"}}")
+		var probe struct {
+			Data struct {
+				AccessToken string `json:"accessToken"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			t.Fatalf("fixture no longer decodes, so it pins nothing: %v", err)
+		}
+		tok := probe.Data.AccessToken
+		if !strings.HasPrefix(tok, "\uFFFD") {
+			t.Fatalf("fixture decoded to %q, want a U+FFFD prefix — the point of the case", tok)
+		}
+		_, err := parseTokenEnvelope(raw)
+		if err == nil {
+			t.Fatal("want an error, got nil")
+		}
+		if strings.Contains(err.Error(), tok) {
+			t.Errorf("err = %q reconstructs the decoded token %q", err, tok)
+		}
+	})
+}
+
 func TestTokenResult_OmitsEmptyOptionalFields(t *testing.T) {
 	d := &tokenData{AccessToken: "a", ExpiresAt: "e"}
 	res := d.result()
@@ -204,6 +322,11 @@ func FuzzParseTokenEnvelope(f *testing.F) {
 	f.Add([]byte(`{"kind":"getKasToken","data":"x"}`))
 	f.Add([]byte(`plain text`))
 	f.Add([]byte(`{}`))
+	// The two shapes that put a credential in the quoted text. Both were
+	// live leaks: the error payload is echoed whole, and the kind
+	// discriminator is echoed verbatim.
+	f.Add([]byte(`{"kind":"error","data":{"reason":"nope","accessToken":"secret-tok-value"}}`))
+	f.Add([]byte(`{"kind":"secret-tok-value","data":{"accessToken":"secret-tok-value"}}`))
 	f.Fuzz(func(t *testing.T, out []byte) {
 		d, err := parseTokenEnvelope(out)
 		if err == nil {

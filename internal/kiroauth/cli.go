@@ -29,8 +29,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/cplieger/runesafe"
 )
 
 // cliTimeout bounds one get-kas-token invocation. Matches the reference
@@ -55,11 +58,81 @@ var errCLIUnavailable = errors.New("kiro-cli is not available yet (install pendi
 // without WithKiroCLIPath — tests, or a mis-assembled composition).
 var ErrNoSource = errors.New("no kiro-cli token source configured")
 
+// diagCap bounds one piece of upstream CLI text folded into an error. The
+// error reaches a slog attribute (hub's "v3 auth: token unavailable") and a
+// JSON-RPC error frame back to KAS, so the bound and the sanitizing belong
+// at construction rather than at either sink.
+const diagCap = 200
+
+// tokenMask replaces a credential in text bound for a log line.
+const tokenMask = "[redacted]"
+
 // tokenEnvelope is the get-kas-token stdout shape: a kind discriminator
 // plus a kind-specific data payload.
 type tokenEnvelope struct {
 	Kind string          `json:"kind"`
 	Data json.RawMessage `json:"data"`
+}
+
+// accessToken best-effort reads the payload's accessToken value, whatever
+// kind the envelope claims to be. "" when the payload is not an object or
+// carries no such field.
+//
+// Read independently of kind on purpose: the value is a credential wherever
+// it appears, so what must be kept out of an error message cannot be
+// decided by trusting the discriminator that sits beside it.
+func (e *tokenEnvelope) accessToken() string {
+	var d struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if json.Unmarshal(e.Data, &d) != nil {
+		return ""
+	}
+	return d.AccessToken
+}
+
+// diagnostic renders untrusted CLI text for an error message: the
+// envelope's own access-token value masked out, then sanitized and bounded.
+//
+// The mask is exact rather than pattern-based — the value comes from the
+// same payload being quoted, so no guess about token shape is involved.
+// Both quoted fields can carry it. The kind discriminator is arbitrary
+// upstream text, and the error payload is echoed whole, which the fuzz
+// target refuses to accept on the say-so of a comment about what the CLI
+// emits.
+//
+// Masking runs on BOTH sides of the sanitizer, because the raw payload and
+// the decoded token are different representations of the same bytes and
+// each pass closes a gap the other cannot reach:
+//
+//   - Before. A token carrying a rune the sanitizer rewrites (a bidi
+//     override, U+2028) stops matching once that rune becomes a space, so
+//     the tail of the credential would survive in the text.
+//   - After. encoding/json reads an invalid UTF-8 byte as U+FFFD, and the
+//     sanitizer normalizes the raw byte the same way, so sanitizing can
+//     CONSTRUCT the decoded token out of raw bytes that never contained it.
+//     A mask that ran only before it then finds nothing to mask. Pinned by
+//     testdata/fuzz/FuzzParseTokenEnvelope/c0be6b2e9525c1d8 and by
+//     TestParseTokenEnvelope_ErrorTextIsSafeForALog's ordering case.
+//
+// Capping comes last for the same ordering reason: a token straddling the
+// cap boundary must be gone before the cut, not sliced in half by it.
+// Sanitizing at all is the other half of the job — this text lands in a log
+// line, where a raw newline forges a record and a C0/C1 introducer writes
+// terminal escapes.
+func (e *tokenEnvelope) diagnostic(s string) string {
+	tok := e.accessToken()
+	mask := func(in string) string {
+		if tok == "" {
+			return in
+		}
+		return strings.ReplaceAll(in, tok, tokenMask)
+	}
+	safe := mask(runesafe.SanitizeSingleLine(mask(s)))
+	if len(safe) <= diagCap {
+		return safe
+	}
+	return runesafe.CapBytes(safe, diagCap) + "..."
 }
 
 // tokenData is the getKasToken payload. AuthMethod and Provider ride the
@@ -173,7 +246,8 @@ func (d *tokenData) result() map[string]any {
 
 // parseTokenEnvelope decodes get-kas-token stdout. A kind:"error" envelope
 // is the CLI's logged-out / refresh-failed verdict; its data is a reason
-// object safe to fold into the error (it never carries token material).
+// object, echoed through diagnostic so that a payload carrying token
+// material cannot put a credential in a log line.
 func parseTokenEnvelope(out []byte) (*tokenData, error) {
 	var env tokenEnvelope
 	if err := json.Unmarshal(out, &env); err != nil {
@@ -190,9 +264,9 @@ func parseTokenEnvelope(out []byte) (*tokenData, error) {
 		}
 		return &data, nil
 	case "error":
-		return nil, fmt.Errorf("kiro-cli reports auth unavailable (log in again): %s", truncate(string(env.Data), 200))
+		return nil, fmt.Errorf("kiro-cli reports auth unavailable (log in again): %s", env.diagnostic(string(env.Data)))
 	default:
-		return nil, fmt.Errorf("kiro-cli get-kas-token: unexpected envelope kind %q", env.Kind)
+		return nil, fmt.Errorf("kiro-cli get-kas-token: unexpected envelope kind %q", env.diagnostic(env.Kind))
 	}
 }
 
@@ -211,11 +285,4 @@ func execGetToken(ctx context.Context, cliPath string, env []string) ([]byte, er
 		return nil, fmt.Errorf("exec: %w", err)
 	}
 	return out, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

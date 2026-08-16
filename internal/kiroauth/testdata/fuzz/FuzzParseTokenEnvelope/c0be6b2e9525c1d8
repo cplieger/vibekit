@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"kind\":\"error\",\"dAtA\":{\"ACCessToken\":\"\xd2000000\"}}")
