@@ -6,10 +6,10 @@
 // card is built entirely in TS (index.html carries an empty one), so this file
 // also stands in for a markup test of it.
 //
-// The goal row gets the most attention, for one reason: its failure mode is
-// silent. A row that sends `/goal` as prose reaches the model, which answers as
-// though it ran — so the assertion that matters is a negative one (nothing was
-// sent through the prompt path) alongside the positive launch.
+// The goal row gets the most attention, because it is the one row whose output is
+// consumed by a PARSER rather than by a handler of ours. So these tests run KAS's
+// own parser (transcribed below) over the exact string the row sends, instead of
+// restating that parser's conclusions in assertions of their own.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { uploadLimitHint } from "./upload-policy.js";
@@ -21,6 +21,7 @@ const {
   setSupervisedDispatch,
   launchDispatch,
   recipesDispatch,
+  submitPrompt,
   sendPromptTo,
   transportSend,
   toastError,
@@ -32,6 +33,7 @@ const {
   setSupervisedDispatch: vi.fn(),
   launchDispatch: vi.fn(),
   recipesDispatch: vi.fn(),
+  submitPrompt: vi.fn(),
   sendPromptTo: vi.fn(),
   transportSend: vi.fn(),
   toastError: vi.fn(),
@@ -40,6 +42,7 @@ const {
 
 let activeID = "";
 let supervised: boolean | undefined;
+let thinking = false;
 
 vi.mock("./store.js", () => ({
   activeSession: {
@@ -48,6 +51,7 @@ vi.mock("./store.js", () => ({
       return activeID === "" ? undefined : { id: activeID, supervised_mode: supervised };
     },
   },
+  isThinking: (id: string) => id === activeID && thinking,
 }));
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker }));
@@ -59,12 +63,48 @@ vi.mock("./actions/runs.js", () => ({
   launchRun: { dispatch: launchDispatch },
   loadRecipes: { dispatch: recipesDispatch },
 }));
-// The two paths a "send some text" mistake would take. Mocked so that a row
-// reaching either is observable rather than a network error.
+// The composer's send path. submit.ts is the ONE module allowed to decide
+// prompt-versus-steer, so the goal row goes through it; the two lower-level
+// senders stay mocked so a row that bypassed it is observable rather than a
+// network error.
+vi.mock("./submit.js", () => ({ submitPrompt }));
 vi.mock("./chat-commands.js", () => ({ sendPromptTo }));
 vi.mock("./transport.js", () => ({ send: transportSend, newMessageID: () => "m-1" }));
 
 import type * as ChatOptionsModule from "./chat-options.js";
+
+/** KAS's `parseGoalCommand`, transcribed verbatim from the 2.18.1 bundle
+ *  (`node_modules/@kiro/agent/dist/server/acp-server.js`, offset 19305949).
+ *
+ *  The row's entire contract is "this function accepts what we send, and reads
+ *  back what the user typed", so the tests RUN it. Asserting the composed string
+ *  against a hand-written expectation would only pin our own reading of the
+ *  regex; the failure mode being guarded against is that reading being wrong.
+ *
+ *  On the prompt path a null return means the text falls through to the MODEL as
+ *  prose (`session/prompt`, offset 21305522, calls this before invoking it), so
+ *  null is never an acceptable answer for anything this row sends. */
+function parseGoalCommand(userText: string): { description: string; maxIterations: number } | null {
+  const trimmed = userText.trim();
+  if (!trimmed.startsWith("/goal ") && trimmed !== "/goal") {
+    return null;
+  }
+  const body = trimmed.slice(6).trim();
+  if (body === "") {
+    return null;
+  }
+  const maxMatch = /\s+--max\s+(\d+)$/.exec(body);
+  let maxIterations = 5;
+  let description = body;
+  if (maxMatch?.[1] !== undefined) {
+    maxIterations = Math.min(Math.max(parseInt(maxMatch[1], 10), 1), 200);
+    description = body.slice(0, maxMatch.index).trim();
+  }
+  if (description === "") {
+    return null;
+  }
+  return { description, maxIterations };
+}
 
 /** The minimum composer DOM initChatOptions touches, plus a fresh module state.
  *
@@ -99,6 +139,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   activeID = "c-active";
   supervised = false;
+  thinking = false;
+  // Left armed on purpose. Nothing on the goal path should reach the recipe list
+  // any more, and a resolved reply means a regression that did would proceed far
+  // enough to be caught by the explicit negative rather than dying in an
+  // unhandled rejection somewhere unrelated.
   recipesDispatch.mockResolvedValue({
     recipes: [
       { name: "publish", source: "bundled://publish" },
@@ -194,113 +239,173 @@ describe("start a tangent", () => {
 });
 
 describe("set a goal", () => {
-  // The launch key is the RECIPE's own source, never a hand-built string:
-  // POST /api/runs re-resolves the source against a fresh listRecipes and refuses
-  // anything absent from it, so a fabricated `bundled://goal` would be a launch
-  // that can only fail on a build whose recipe set does not include one.
-  it("launches the goal recipe with its declared inputs", async () => {
-    const { card } = await mountMenu();
+  /** Open the goal form on the row. */
+  function openForm(card: HTMLElement): HTMLFormElement {
     clickRow(card, "Set a goal");
-    await vi.waitFor(() => {
-      expect(card.querySelector(".chat-opt-form")).not.toBeNull();
-    });
-    const input = card.querySelector<HTMLInputElement>(".chat-opt-input");
-    expect(input?.getAttribute("aria-label")).toBe("Goal input goal");
-    input!.value = "get the suite green";
-    card
-      .querySelector<HTMLFormElement>(".chat-opt-form")
-      ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const form = card.querySelector<HTMLFormElement>(".chat-opt-form");
+    if (form === null) {
+      throw new Error("the goal row opened no form");
+    }
+    return form;
+  }
 
-    expect(launchDispatch).toHaveBeenCalledTimes(1);
-    const [body] = launchDispatch.mock.calls[0] as [{ source: string; inputs: unknown }];
-    expect(body.source).toBe("bundled://goal");
-    expect(body.inputs).toEqual({ goal: "get the suite green" });
+  function field(form: HTMLFormElement, label: string): HTMLInputElement {
+    const input = form.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`);
+    if (input === null) {
+      throw new Error(`the goal form has no ${label} field`);
+    }
+    return input;
+  }
+
+  /** Fill the form and submit it. Returns the text the row sent, or undefined
+   *  when it sent nothing at all. */
+  function setGoal(card: HTMLElement, objective: string, cap = ""): string | undefined {
+    const form = openForm(card);
+    field(form, "Goal").value = objective;
+    field(form, "Max iterations").value = cap;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const call = submitPrompt.mock.calls[0] as [string, string] | undefined;
+    return call?.[1];
+  }
+
+  // The exact string, with the parse it has to survive. Both halves matter: a
+  // composed command that KAS's parser returns null for reaches the model as
+  // prose, and one it parses into the wrong objective silently sets a different
+  // goal from the one that was typed.
+  it("sends the objective alone when no cap is given", async () => {
+    const { card } = await mountMenu();
+    const sent = setGoal(card, "make the test suite pass");
+    expect(sent).toBe("/goal make the test suite pass");
+    expect(submitPrompt).toHaveBeenCalledWith("c-active", "/goal make the test suite pass");
+    // No suffix, so KAS's own default applies rather than a number vibekit
+    // restates. 5 here is the parser's value, read back out of the parser.
+    expect(parseGoalCommand(sent as string)).toEqual({
+      description: "make the test suite pass",
+      maxIterations: 5,
+    });
   });
 
-  // THE assertion for this row. `/goal` has a real parser upstream, but the TUI
-  // drives it as a structured command call — so text in the composer is prose to
-  // the model, which answers as though it ran. That is the `/compact` failure, and
-  // it is invisible without a negative assertion.
-  //
-  // Two halves. Nothing reaches either send path (a prompt or a transport
-  // command), and the goal TEXT lands in the recipe's declared input rather than
-  // being decorated into a slash command anywhere.
-  it("sends no prompt and composes no slash command", async () => {
+  it("appends the cap as the last thing in the command", async () => {
     const { card } = await mountMenu();
-    clickRow(card, "Set a goal");
-    await vi.waitFor(() => {
-      expect(card.querySelector(".chat-opt-form")).not.toBeNull();
+    const sent = setGoal(card, "make the test suite pass", "5");
+    expect(sent).toBe("/goal make the test suite pass --max 5");
+    // The regex is anchored at the end (`/\s+--max\s+(\d+)$/`), so a suffix that
+    // is not last is not a cap at all — it becomes part of the objective.
+    expect(sent as string).toMatch(/ --max 5$/);
+    expect(parseGoalCommand(sent as string)).toEqual({
+      description: "make the test suite pass",
+      maxIterations: 5,
     });
-    card.querySelector<HTMLInputElement>(".chat-opt-input")!.value = "ship it";
-    card
-      .querySelector<HTMLFormElement>(".chat-opt-form")
-      ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
 
+  // Clamped by vibekit rather than left to KAS: the same arithmetic
+  // (`Math.min(Math.max(n, 1), 200)`), applied before the string is built, so the
+  // suffix is always a value the parser keeps. `-3` never reaches the regex as a
+  // cap in any case — `\d+` cannot match a sign — so passing it through would
+  // silently append it to the objective instead.
+  it.each([
+    ["0", 1],
+    ["-3", 1],
+    ["1", 1],
+    ["7", 7],
+    ["200", 200],
+    ["201", 200],
+    ["9000", 200],
+  ])("clamps a cap of %s to %i", async (typed, want) => {
+    const { card } = await mountMenu();
+    const sent = setGoal(card, "ship it", typed);
+    expect(sent).toBe(`/goal ship it --max ${want}`);
+    expect(parseGoalCommand(sent as string)?.maxIterations).toBe(want);
+  });
+
+  // A cap that is not a whole number is DROPPED, not forwarded. `--max soon`
+  // fails the `\d+` match, so KAS would read "ship it --max soon" as the whole
+  // objective — the goal statement silently gains two words of vibekit's UI.
+  it.each([
+    ["a word", "soon"],
+    ["a fraction", "5.5"],
+    ["whitespace", "   "],
+    ["a numeral with units", "5 iterations"],
+  ])("ignores %s as a cap", async (_desc, typed) => {
+    const { card } = await mountMenu();
+    const sent = setGoal(card, "ship it", typed);
+    expect(sent).toBe("/goal ship it");
+    expect(parseGoalCommand(sent as string)?.description).toBe("ship it");
+  });
+
+  // The recipe route is GONE, and this is what keeps it gone. It could not set the
+  // iteration bound at all: the bundled recipe's repeat node is written
+  // maxIterations 200 and launchGoal applies the user's number by mutating that
+  // node on a clone, so a launch by source ran to 200 whatever was asked for.
+  it("launches no run and fetches no recipe", async () => {
+    const { card } = await mountMenu();
+    setGoal(card, "ship it", "5");
+    expect(recipesDispatch).not.toHaveBeenCalled();
+    expect(launchDispatch).not.toHaveBeenCalled();
+    expect(openLiveRunView).not.toHaveBeenCalled();
+  });
+
+  // The command goes through submit.ts, which is the one module allowed to decide
+  // prompt-versus-steer. Reaching the lower-level senders directly would skip that
+  // decision and the shared send lifecycle with it.
+  it("sends through the composer's own send path", async () => {
+    const { card } = await mountMenu();
+    setGoal(card, "ship it");
+    expect(submitPrompt).toHaveBeenCalledTimes(1);
     expect(sendPromptTo).not.toHaveBeenCalled();
     expect(transportSend).not.toHaveBeenCalled();
-    const [body] = launchDispatch.mock.calls[0] as [
-      { source: string; inputs: Record<string, string> },
-    ];
-    // The text is the input's VALUE, verbatim. `bundled://goal` legitimately
-    // contains "/goal", so a substring scan of the whole body would be a check
-    // that can only pass by accident; the values are where prose would hide.
-    expect(Object.values(body.inputs)).toEqual(["ship it"]);
-    for (const v of Object.values(body.inputs)) {
-      expect(v.startsWith("/")).toBe(false);
+  });
+
+  // A bare `/goal` is exactly the input parseGoalCommand returns null for, so it
+  // would fall through to the model as prose. Refused here instead, where there is
+  // something to say about it.
+  it.each([
+    ["empty", ""],
+    ["whitespace only", "   "],
+  ])("refuses a %s objective rather than sending an unparseable command", async (_d, objective) => {
+    const { card } = await mountMenu();
+    expect(setGoal(card, objective)).toBeUndefined();
+    expect(submitPrompt).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  // Mid-turn, Send means STEER (submit.ts), and `_session/steer` is not the prompt
+  // path — parseGoalCommand has exactly one call site in the 2.18.1 bundle and it
+  // is `session/prompt`. So a steered command is prose to the running turn, which
+  // is the failure this row exists to avoid.
+  it("refuses while a turn is running", async () => {
+    thinking = true;
+    const { card } = await mountMenu();
+    expect(setGoal(card, "ship it")).toBeUndefined();
+    expect(submitPrompt).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses when no chat is active", async () => {
+    activeID = "";
+    const { card } = await mountMenu();
+    expect(setGoal(card, "ship it")).toBeUndefined();
+    expect(submitPrompt).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  // There is no clear verb, upstream or here. parseGoalCommand takes the whole
+  // body as the objective, so `/goal clear` launches a goal whose objective is the
+  // word "clear" — a control offering it would misfire silently rather than do
+  // nothing. Stopping a goal is cancelling its run.
+  it("offers no clear verb and composes none", async () => {
+    const { card } = await mountMenu();
+    const form = openForm(card);
+    expect(Array.from(form.querySelectorAll("button")).map((b) => b.textContent)).toEqual([
+      "Set goal",
+    ]);
+    expect((card.textContent ?? "").toLowerCase()).not.toContain("clear");
+    for (const btn of Array.from(card.querySelectorAll<HTMLButtonElement>(".chat-opt-btn"))) {
+      btn.click();
     }
-  });
-
-  // Owned rather than a review, so the tab carries the run's own Pause / Resume /
-  // Cancel: this is the surface that started the run, and a run reached from
-  // History is deliberately read-only.
-  it("opens the run as a launcher-owned tab", async () => {
-    launchDispatch.mockImplementation(
-      (_body: unknown, opts: { onSuccess?: (r: unknown) => void }) => {
-        opts.onSuccess?.({ workflow_id: "wf_9", name: "goal" });
-        return Promise.resolve(null);
-      },
-    );
-    const { card } = await mountMenu();
-    clickRow(card, "Set a goal");
-    await vi.waitFor(() => {
-      expect(card.querySelector(".chat-opt-form")).not.toBeNull();
-    });
-    card
-      .querySelector<HTMLFormElement>(".chat-opt-form")
-      ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    expect(openLiveRunView).toHaveBeenCalledWith("wf_9", "goal");
-  });
-
-  // Nothing is invented. A recipe that declares no inputs has nothing to collect,
-  // so no field is fabricated for it and the launch goes straight out — which is
-  // also what would happen if this build's goal recipe declared no iteration cap.
-  it("launches immediately when the recipe declares no inputs", async () => {
-    recipesDispatch.mockResolvedValue({
-      recipes: [{ name: "goal", source: "bundled://goal" }],
-    });
-    const { card } = await mountMenu();
-    clickRow(card, "Set a goal");
-    await vi.waitFor(() => {
-      expect(launchDispatch).toHaveBeenCalledTimes(1);
-    });
-    expect(card.querySelector(".chat-opt-form")).toBeNull();
-    const [body] = launchDispatch.mock.calls[0] as [{ inputs: unknown }];
-    expect(body.inputs).toEqual({});
-  });
-
-  // The honest degradation. The goal recipe is RESOLVED from the live list rather
-  // than assumed, so a build whose list has no goal in it says so instead of
-  // posting a launch that can only be refused.
-  it("says so when the build has no goal recipe", async () => {
-    recipesDispatch.mockResolvedValue({
-      recipes: [{ name: "publish", source: "bundled://publish" }],
-    });
-    const { card } = await mountMenu();
-    clickRow(card, "Set a goal");
-    await vi.waitFor(() => {
-      expect(toastError).toHaveBeenCalledTimes(1);
-    });
-    expect(launchDispatch).not.toHaveBeenCalled();
+    for (const call of submitPrompt.mock.calls as [string, string][]) {
+      expect(parseGoalCommand(call[1])?.description).not.toBe("clear");
+    }
   });
 
   // Inline, not a modal — the Workflows tab's idiom. A second click closes the
@@ -308,11 +413,20 @@ describe("set a goal", () => {
   it("toggles the inline form rather than stacking one per click", async () => {
     const { card } = await mountMenu();
     clickRow(card, "Set a goal");
-    await vi.waitFor(() => {
-      expect(card.querySelectorAll(".chat-opt-form")).toHaveLength(1);
-    });
+    expect(card.querySelectorAll(".chat-opt-form")).toHaveLength(1);
     clickRow(card, "Set a goal");
     expect(card.querySelectorAll(".chat-opt-form")).toHaveLength(0);
+  });
+
+  // The card outlives every chat switch (it is built once at init), so the chat id
+  // has to be read when the form is submitted rather than when it was built.
+  it("sends to the chat that is active at submit time", async () => {
+    const { card } = await mountMenu();
+    const form = openForm(card);
+    field(form, "Goal").value = "ship it";
+    activeID = "c-other";
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    expect(submitPrompt).toHaveBeenCalledWith("c-other", "/goal ship it");
   });
 });
 

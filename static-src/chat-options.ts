@@ -24,17 +24,15 @@
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
-import { activeSession } from "./store.js";
+import { activeSession, isThinking } from "./store.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { iconEl } from "./icon-el.js";
 import { setSupervised } from "./actions/chat.js";
 import { openFilePicker } from "./files-picker.js";
 import { uploadLimitHint } from "./upload-policy.js";
 import { openTangentChat } from "./chat.js";
-import { loadRecipes, launchRun } from "./actions/runs.js";
-import { openLiveRunView } from "./run-view.js";
+import { submitPrompt } from "./submit.js";
 import * as toast from "./toast.js";
-import type { Recipe } from "./types.js";
 
 // Row glyphs. Local constants rather than icons.ts entries: each is used once,
 // by this module, and `icons.ts` is the shared vocabulary.
@@ -45,17 +43,17 @@ const ICON_GOAL =
 const ICON_TANGENT =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>';
 
-/** The recipe NAME and source vibekit looks for when the goal row is used.
+/** KAS's own clamp on the goal loop's iteration budget, mirrored here rather
+ *  than invented: `parseGoalCommand` runs
+ *  `Math.min(Math.max(parseInt(n, 10), 1), 200)`.
  *
- *  A LOOKUP key, never a launch key. The source POSTed is always the one the
- *  recipe row itself reported, because `POST /api/runs` re-resolves the source
- *  against a fresh `listRecipes` and refuses anything absent from it — so a
- *  hand-built `bundled://goal` would be a launch that can only ever fail on a
- *  build whose recipe set does not include one. Resolving instead means the row
- *  works whatever the list says, and says so plainly when there is no goal
- *  recipe in it. */
-const GOAL_RECIPE_NAME = "goal";
-const GOAL_RECIPE_SOURCE = "bundled://goal";
+ *  Mirrored so the field can bound its own control and the composed suffix is
+ *  always a value the parser keeps. KAS's DEFAULT is deliberately not mirrored:
+ *  an unset cap omits the suffix entirely, so the default that applies is
+ *  whatever KAS's parser says it is rather than a number vibekit restates and
+ *  can drift from. */
+const GOAL_MAX_FLOOR = 1;
+const GOAL_MAX_CEILING = 200;
 
 let bound = false;
 
@@ -148,85 +146,111 @@ function tangentRow(): HTMLElement {
   });
 }
 
-/** Set a goal: launch the goal workflow and open its run tab.
+/** Set a goal: send the command KAS's own parser claims.
  *
- *  NOT a typed `/goal`. That verb has a real parser upstream and a real
- *  iterating state machine behind it, but the TUI drives it as a structured
- *  command call, so text in the composer is prose to the model whatever the
- *  connection declares — the `/compact` failure exactly. A deterministic verb
- *  has to own its handler and call its own endpoint, and the endpoint here is
- *  `POST /api/runs`, which exists end to end today.
+ *  A typed `/goal` is NOT the `/compact` failure shape, and the difference is the
+ *  whole reason this row sends text. `/compact` reached the model because nothing
+ *  parsed it. `/goal` is intercepted on the prompt path BEFORE the model is
+ *  invoked: with `_meta.kiro.settings.goal` declared (vibekit declares it —
+ *  `internal/kascap/table.go`), `session/prompt` runs `parseGoalCommand(userText)`
+ *  and, on a match, `launchGoal(...)` and returns `end_turn` without ever calling
+ *  the model.
  *
- *  Inputs are collected inline, in an expanding row section rather than a modal —
- *  the same idiom the Workflows tab uses — and they are the recipe's OWN declared
- *  inputs, read off the wire. Nothing is invented: a recipe that declares no
- *  iteration cap gets no cap field, and a recipe that declares nothing at all
- *  launches with nothing. */
+ *  Why not the bundled recipe, which this row used to launch: the recipe's own
+ *  repeat node is written `maxIterations: 200`, and `launchGoal` applies the
+ *  user's bound by MUTATING that node on a clone before handing the inline
+ *  workflow to `_kiro/workflow/new`. Loading the recipe by source instead runs the
+ *  unmutated node, so every goal launched that way iterated up to 200 whatever
+ *  the user asked for. The cap is only reachable through the parser.
+ *
+ *  The run KAS starts is parented on the CALLING session, so its frames arrive on
+ *  this chat's topic and it renders in this chat. That is the right home for a
+ *  goal set from this chat's composer, and it is why there is no launcher-owned
+ *  run tab here.
+ *
+ *  There is no clear verb, and its absence is measured rather than an omission:
+ *  `parseGoalCommand` returns null only for a bare `/goal` and otherwise takes
+ *  the whole body as the objective, so `/goal clear` would launch a goal whose
+ *  objective is the word "clear". Stopping a goal is cancelling its run, which
+ *  the run surface already does. */
 function goalRow(): HTMLElement {
   return actionRow({
     icon: ICON_GOAL,
     name: "Set a goal",
-    hint: "Run the goal workflow: the agent iterates until it reports success",
-    onClick: (row) => {
-      void openGoalForm(row);
-    },
+    hint: "The agent iterates toward it until it reports success",
+    onClick: openGoalForm,
   });
 }
 
-/** Resolve the goal recipe and render its input form into `row`. */
-async function openGoalForm(row: HTMLElement): Promise<void> {
+/** Toggle the inline goal form on the row. */
+function openGoalForm(row: HTMLElement): void {
   const existing = row.querySelector(".chat-opt-form");
   if (existing !== null) {
     existing.remove();
     return;
   }
-  const d = await loadRecipes.dispatch(undefined);
-  if (d === null) {
-    // loadRecipes carries its own error toast.
-    return;
-  }
-  const recipe = d.recipes.find(
-    (r) => r.name === GOAL_RECIPE_NAME || r.source === GOAL_RECIPE_SOURCE,
-  );
-  if (recipe === undefined) {
-    toast.error("This build has no goal workflow available");
-    return;
-  }
-  const declared = Object.keys(recipe.inputs ?? {});
-  if (declared.length === 0) {
-    // The recipe takes nothing, so there is nothing to collect and no field to
-    // fabricate. Launch it.
-    launch(recipe, {});
-    return;
-  }
-  row.appendChild(goalForm(recipe, declared));
+  row.appendChild(goalForm());
 }
 
-/** The inline input form: one field per DECLARED input, in declared order. */
-function goalForm(recipe: Recipe, declared: string[]): HTMLElement {
-  const fields = new Map<string, HTMLInputElement>();
-  const form = el("form", { className: "chat-opt-form" });
-  for (const key of declared) {
-    const input = el("input", {
-      type: "text",
-      className: "chat-opt-input",
-      placeholder: recipe.inputs?.[key] ?? "string",
-      "aria-label": `Goal input ${key}`,
-    }) as HTMLInputElement;
-    fields.set(key, input);
-    form.appendChild(el("label", { className: "chat-opt-input-label" }, key, input));
-  }
-  form.appendChild(el("button", { type: "submit", className: "btn-small" }, "Launch"));
+/** The inline form: the objective, and an optional cap on the loop.
+ *
+ *  Inline rather than a modal, the same idiom the Workflows tab uses for a
+ *  recipe's inputs. */
+function goalForm(): HTMLElement {
+  const description = el("input", {
+    type: "text",
+    className: "chat-opt-input",
+    placeholder: "Make the test suite pass",
+    "aria-label": "Goal",
+  }) as HTMLInputElement;
+  // Deliberately a text field with a numeric keypad rather than type="number".
+  // A number input sanitizes a non-numeric value to "" and lets the browser
+  // refuse an out-of-range one before submit, which would put the bounds in the
+  // browser's hands — and they are KAS's bounds, applied to a suffix KAS parses.
+  // Owning them here is what makes the clamp and the drop below real rather than
+  // decorative, on every engine and for a pasted or autofilled value.
+  const cap = el("input", {
+    type: "text",
+    className: "chat-opt-input",
+    inputMode: "numeric",
+    "aria-label": "Max iterations",
+  }) as HTMLInputElement;
+
+  const form = el(
+    "form",
+    { className: "chat-opt-form" },
+    el("label", { className: "chat-opt-input-label" }, "Goal", description),
+    el("label", { className: "chat-opt-input-label" }, "Max iterations (optional)", cap),
+    el("button", { type: "submit", className: "btn-small" }, "Set goal"),
+  );
+
   form.addEventListener("submit", (e: Event) => {
     e.preventDefault();
-    const inputs: Record<string, string> = {};
-    for (const [key, field] of fields) {
-      if (field.value !== "") {
-        inputs[key] = field.value;
-      }
+    // Resolved at SUBMIT time, never captured when the card was built: the card
+    // is built once at init and outlives every chat switch.
+    const id = activeSession.peek()?.id ?? "";
+    if (id === "") {
+      toast.error("Open a chat first, then set a goal in it");
+      return;
+    }
+    const objective = description.value.trim();
+    if (objective === "") {
+      // Refused here rather than sent: a bare `/goal` is exactly what
+      // parseGoalCommand returns null for, so it would fall through to the model
+      // as prose — the failure this row exists to avoid.
+      toast.error("Describe the goal before setting it");
+      return;
+    }
+    if (isThinking(id)) {
+      // Send means STEER mid-turn (submit.ts), and `_session/steer` is not the
+      // prompt path: parseGoalCommand has exactly one call site and it is
+      // `session/prompt`, so a steered command reaches the running turn as prose.
+      toast.error("Wait for this turn to finish, then set the goal");
+      return;
     }
     form.remove();
-    launch(recipe, inputs);
+    collapseAll();
+    void submitPrompt(id, goalCommand(objective, cap.value));
   });
   form.addEventListener("keydown", (e: KeyboardEvent) => {
     // Escape closes the form without closing the whole card, so a mistyped goal
@@ -240,21 +264,26 @@ function goalForm(recipe: Recipe, declared: string[]): HTMLElement {
   return form;
 }
 
-/** Launch the goal run and open it as a LAUNCHER-OWNED run tab.
+/** Compose exactly what `parseGoalCommand` accepts.
  *
- *  Owned rather than a review, so the tab carries the run's own Pause / Resume /
- *  Cancel: this is the surface that started the run, and a run reached from
- *  History is deliberately read-only. */
-function launch(recipe: Recipe, inputs: Record<string, string>): void {
-  collapseAll();
-  void launchRun.dispatch(
-    { source: recipe.source, inputs },
-    {
-      onSuccess: (r) => {
-        openLiveRunView(r.workflow_id, r.name);
-      },
-    },
-  );
+ *  Its shape is `/\s+--max\s+(\d+)$/` against the body, so the suffix must be
+ *  LAST and must be digits — anything else is read as part of the objective. That
+ *  is why a cap that is not a whole number is DROPPED rather than passed through:
+ *  `--max soon` would silently become the tail of the goal statement.
+ *
+ *  An absent cap omits the suffix, so KAS's own default applies. */
+function goalCommand(objective: string, cap: string): string {
+  const command = `/goal ${objective}`;
+  const raw = cap.trim();
+  if (raw === "") {
+    return command;
+  }
+  const n = Number(raw);
+  if (!Number.isInteger(n)) {
+    return command;
+  }
+  const bounded = Math.min(Math.max(n, GOAL_MAX_FLOOR), GOAL_MAX_CEILING);
+  return `${command} --max ${bounded}`;
 }
 
 /** The supervised switch: the one resident that is a SWITCH rather than an

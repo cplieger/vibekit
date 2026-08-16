@@ -1073,7 +1073,7 @@
 }
 
 /* The goal row's inline input collection: an expanding row section, not a
- * modal — the Workflows tab's idiom, so a launch form looks the same in both
+ * modal — the Workflows tab's idiom, so an input form looks the same in both
  * places it exists. */
 .chat-opt-form {
   display: flex;
