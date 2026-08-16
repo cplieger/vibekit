@@ -282,6 +282,34 @@ export const resumeSession = transportAction<
   error: "Couldn't resume that session",
 });
 
+// --- chat.fork ---
+// Open a TANGENT off another chat: a new chat that starts with the parent's real
+// conversation behind it and then diverges.
+//
+// The server calls KAS's own `session/fork` on the parent's live session and
+// binds the returned session id to the new chat, so the transcript arrives from
+// the session/load replay and nothing is copied client-side. The reply's
+// `outcome` names which path ran — `forked` (the session was branched) or
+// `primed` (the fork was refused, so the parent's transcript is injected into a
+// fresh session instead). The tangent opens either way, so the client does not
+// branch on it; it is there so a report about a vague answer can say which.
+
+export const forkChat = transportAction<
+  { chatID: string; parentChatID: string; title?: string },
+  { ok: boolean }
+>({
+  name: "chat.fork",
+  networkMode: "always",
+  command: ({ chatID, parentChatID, title }) => ({
+    type: "fork_chat",
+    chat_id: chatID,
+    payload: { parent_chat_id: parentChatID, ...(title === undefined ? {} : { title }) },
+  }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: "Couldn't start a tangent",
+});
+
 // --- chat.cancel_turn ---
 //
 // No scope: cancel must fire immediately, not queue behind an in-flight

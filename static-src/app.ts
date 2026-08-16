@@ -76,7 +76,6 @@ import {
   switchSession,
   sendPrompt,
   installStoreSubscribers,
-  initTranscriptContextMenu,
 } from "./chat.js";
 import { initModelSwitcher } from "./model-switcher.js";
 import { makeExpandable } from "./pill-expand.js";
@@ -181,7 +180,6 @@ function init(): void {
   initUI();
   initShellPanel();
   setCopyCallback((text) => void copyClipboard.dispatch(text, { silent: true }));
-  initTranscriptContextMenu();
   initEditor();
   initFileBrowser();
   initFilePicker();

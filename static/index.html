@@ -228,16 +228,24 @@
                 </button>
                 <span id="role-list" class="pill-expand-content pill-role-list hidden"></span>
               </span>
-              <button id="attach-btn" class="pill" type="button" data-tooltip="Attach file" aria-label="Attach file">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-                <span class="pill-label">Attach</span>
-              </button>
-              <!-- Chat options: the set-once, per-chat switches (supervised
-                   mode first). A menu rather than more pills — a pill earns
-                   its slot by changing per message; a set-once mode does not. -->
+              <!-- Chat actions: the composer's tray for everything that acts on
+                   THIS chat without changing per message — attach a file, start
+                   a goal run, branch a tangent, and the supervised switch. A
+                   menu rather than four more pills: a pill earns its slot by
+                   changing per message (model, mode), and four that do not
+                   would grow the row without bound on a phone.
+
+                   `+` because three of the four ADD something to the chat, and
+                   it is the conventional composer glyph for such a tray. The
+                   tooltip and the aria-label say "Chat actions" — one wording
+                   for both, so the accessible name cannot drift from the visible
+                   one, and it is the wording that stays true for the switch too.
+
+                   Every row is appended by chat-options.ts; the card is
+                   deliberately empty here. -->
               <span class="pill-slot">
-                <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat options" aria-label="Chat options">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat actions" aria-label="Chat actions">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 </button>
                 <span id="chat-options-card" class="pill-expand-content chat-options-card hidden"></span>
               </span>

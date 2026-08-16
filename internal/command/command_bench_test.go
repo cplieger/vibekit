@@ -43,6 +43,7 @@ func (d *benchDeps) KillTurnTerminals(api.ChatID)                        {}
 func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool { return true }
 func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)         { return "", nil }
 func (d *benchDeps) PrimeIfNeeded(context.Context, api.ChatID, Bridge)   {}
+func (d *benchDeps) PrimeFromChat(api.ChatID, api.ChatID)                {}
 func (d *benchDeps) IsEmptyTurn(*api.RPCResponse, api.ChatID) bool       { return false }
 func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPCResponse, float64, float64) {
 }

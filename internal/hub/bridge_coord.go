@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cplieger/keyenc"
@@ -53,6 +54,19 @@ type BridgeCoordinator struct {
 	// SSE plane's internals, and nil-safe for tests that build a coordinator
 	// without one.
 	chatStatus func(api.ChatID) api.ChatStatusPayload
+	// primeFrom notes which chat's transcript should prime a chat's FIRST
+	// session, for the tangent whose session/fork was refused (command/fork.go).
+	// Consumed by the next spawn and deleted there, so it is a handoff between
+	// the fork command and one launch rather than state anything can read twice.
+	//
+	// Not persisted, deliberately. It describes the launch of one session; after
+	// a restart the tangent has its own conversation and the parent's history is
+	// no longer owed to it. Bounded by the same fact: a note only exists between
+	// a fork refusal and that chat's first prompt.
+	//
+	// Sits among the pointer fields for govet fieldalignment; its mutex is a
+	// non-pointer and stays at the end of the struct.
+	primeFrom map[api.ChatID]api.ChatID
 	// agentEngine is the kiro-cli agent engine for every bridge this
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
@@ -61,7 +75,36 @@ type BridgeCoordinator struct {
 	// Set on the CHAT spawns below and deliberately NOT threaded to the utility
 	// bridge, whose work is title generation and catalog fetches — an
 	// `--effort max` there would spend real credits on a two-word summary.
-	acpArgs []string
+	acpArgs     []string
+	primeFromMu sync.Mutex
+}
+
+// PrimeFromChat records that chatID's first session should be primed with
+// sourceChatID's transcript. See BridgeCoordinator.primeFrom.
+func (bc *BridgeCoordinator) PrimeFromChat(chatID, sourceChatID api.ChatID) {
+	if chatID == "" || sourceChatID == "" || chatID == sourceChatID {
+		return
+	}
+	bc.primeFromMu.Lock()
+	defer bc.primeFromMu.Unlock()
+	if bc.primeFrom == nil {
+		bc.primeFrom = make(map[api.ChatID]api.ChatID, 1)
+	}
+	bc.primeFrom[chatID] = sourceChatID
+}
+
+// takePrimeFrom claims and clears a chat's prime note. Claiming rather than
+// reading: the note is spent by the session it primes, so a later bridge for the
+// same chat must not re-inject a history that session has already read.
+func (bc *BridgeCoordinator) takePrimeFrom(chatID api.ChatID) api.ChatID {
+	bc.primeFromMu.Lock()
+	defer bc.primeFromMu.Unlock()
+	src, ok := bc.primeFrom[chatID]
+	if !ok {
+		return ""
+	}
+	delete(bc.primeFrom, chatID)
+	return src
 }
 
 // newBridgeCoordinator constructs a BridgeCoordinator from the Hub's
@@ -271,13 +314,20 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
 
 	sb.primed = false
-	// There is no rewind degrade path any more. It existed because a rewind
-	// FORKED a session, and a failed fork left a second chat showing a
-	// truncated transcript the fresh session knew nothing about — so its history
-	// had to be re-injected as an invisible priming prompt. A rewind reverts the
-	// session it is already in, so there is no fork to fail and no history to
-	// re-inject. primeReason keeps its model-switch member, which is a real
-	// recovery path.
+	// There is no rewind degrade path. It existed because a rewind FORKED a
+	// session, and a failed fork left a second chat showing a truncated
+	// transcript the fresh session knew nothing about. A rewind reverts the
+	// session it is already in, so there is nothing to re-inject.
+	//
+	// A TANGENT's refused fork is the same SHAPE and a different operation, and
+	// it does need the injection: this session has never seen the conversation
+	// the user opened it from, and that conversation lives in another chat. The
+	// note is claimed here rather than read at prime time so it is spent by
+	// exactly one session (see takePrimeFrom).
+	if src := bc.takePrimeFrom(chatID); src != "" {
+		sb.primeReason = primeReasonFork
+		sb.primeFrom = src
+	}
 	sb.state = bridgeIdle
 
 	return sb, nil
@@ -522,25 +572,38 @@ func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
 // PrimeIfNeeded sends the chat history as an ephemeral priming prompt on
 // the current bridge.
 func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatID, sb *sharedBridge) {
-	history := bc.chatStore.BuildHistory(ctx, chatID)
-	if history == "" {
-		return
-	}
-
 	// Preambles live in translate (PrimePreamble*) because the focus-title
 	// derivation filter must recognise a title KAS derives from this prime
 	// text — one definition keeps the filter and the prime in lockstep.
+	//
+	// The reason decides the preamble AND whose history is read. Every reason but
+	// the tangent's primes a session with its OWN chat's transcript; a tangent
+	// whose fork was refused has no transcript of its own yet and needs the
+	// parent's, which is why the source is read off the bridge rather than assumed
+	// to be chatID.
 	var prime string
+	source := chatID
 	switch sb.primeReason {
 	case primeReasonSwitch:
-		prime = translate.PrimePreambleSwitch + history
+		prime = translate.PrimePreambleSwitch
 	case primeReasonReload:
-		prime = translate.PrimePreambleReload + history
+		prime = translate.PrimePreambleReload
+	case primeReasonFork:
+		prime = translate.PrimePreambleTangent
+		if sb.primeFrom != "" {
+			source = sb.primeFrom
+		}
 	default:
 		return
 	}
 
-	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason)
+	history := bc.chatStore.BuildHistory(ctx, source)
+	if history == "" {
+		return
+	}
+	prime += history
+
+	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason, "history_from", source)
 	_, err := sb.bridge.Call(ctx, api.MethodPrompt, command.SessionParams(sb, map[string]any{
 		"prompt": []map[string]any{api.TextBlock(prime)},
 	}))

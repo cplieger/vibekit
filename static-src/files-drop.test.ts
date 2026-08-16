@@ -5,17 +5,11 @@
 // (which is now filtered before any bytes leave).
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  MAX_UPLOAD_FILES,
-  MAX_UPLOAD_TOTAL_BYTES,
-  UPLOADS_DIR,
-  uploadLimitHint,
-} from "./upload-policy.js";
+import { MAX_UPLOAD_FILES, MAX_UPLOAD_TOTAL_BYTES, UPLOADS_DIR } from "./upload-policy.js";
 
 const dispatch = vi.fn();
 const attachPathToActiveChat = vi.fn();
 const toastError = vi.fn();
-const openFilePicker = vi.fn();
 
 vi.mock("./actions/files.js", () => ({
   upload: {
@@ -33,13 +27,11 @@ vi.mock("./actions/files.js", () => ({
 }));
 vi.mock("./chat.js", () => ({ attachPathToActiveChat }));
 vi.mock("./toast.js", () => ({ error: toastError, success: vi.fn(), info: vi.fn() }));
-vi.mock("./files-picker.js", () => ({ openFilePicker }));
 
 /** The minimum composer DOM initChatAttach touches. */
 function mountComposer(): HTMLDivElement {
   document.body.innerHTML = `
     <div id="chat-view"></div>
-    <button id="attach-btn" data-tooltip="Attach file"></button>
     <textarea id="prompt-input"></textarea>
   `;
   return document.getElementById("chat-view") as HTMLDivElement;
@@ -172,23 +164,7 @@ describe("the composer's upload pre-flight", () => {
   });
 });
 
-describe("the composer's upload limit hint", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // D8b: the cap used to be discoverable only as a server 413, which drop and
-  // paste reach without the user consciously choosing a file.
-  //
-  // Asserted against uploadLimitHint rather than a copied numeral: a literal
-  // here is a second statement of the limit that can disagree with the one the
-  // pre-flight enforces, which is the class of defect the hint just had.
-  it("states the cap on the attach button", async () => {
-    mountComposer();
-    const { initChatAttach } = await import("./files-drop.js");
-    initChatAttach();
-    const tooltip = document.getElementById("attach-btn")?.dataset["tooltip"] ?? "";
-    expect(tooltip).toContain(uploadLimitHint().toLowerCase());
-    expect(tooltip).not.toContain("\u2014");
-  });
-});
+// The upload-limit hint's test moved to chat-options.test.ts with the control it
+// annotates: the standalone attach pill is gone, and the explicit attach door is
+// now a row in the chat-actions menu. Drop and paste, which this file covers,
+// carry the limit on the drop overlay instead.

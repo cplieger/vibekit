@@ -23,6 +23,16 @@ type BridgeAccess interface {
 	GetOrCreateBridge(ctx context.Context, chatID api.ChatID, model string) (Bridge, error)
 	CloseBridge(chatID api.ChatID)
 	PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b Bridge)
+	// PrimeFromChat notes that chatID's FIRST session should be primed with
+	// another chat's transcript. The tangent's fallback (command/fork.go): a
+	// refused session/fork leaves the new chat with no inherited session, so the
+	// parent's history has to reach the model some other way.
+	//
+	// A note rather than a field on the chat record, because it describes one
+	// session's launch and not the chat: it is consumed by the next spawn and
+	// does not survive a restart, which is correct — by then the tangent has its
+	// own conversation and is owed nothing from its parent.
+	PrimeFromChat(chatID, sourceChatID api.ChatID)
 }
 
 // ChatAccess provides chat store and broadcast operations needed by

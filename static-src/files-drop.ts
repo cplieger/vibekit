@@ -3,14 +3,14 @@
 // into the workspace uploads folder, with their paths auto-attached to the
 // prompt input.
 //
-// The paperclip button opens the file picker (files-picker.ts) instead of
-// an OS file dialog. The user picks an existing workspace file OR clicks
-// "Upload here" inside the picker to upload from the OS. Either way, the
-// path ends up in the prompt input.
+// The THIRD door — an explicit "attach a file" click — is not here any more. It
+// was a standalone paperclip pill in the composer row; it is now a row in the
+// chat-actions menu (chat-options.ts), which calls the same openFilePicker.
+// Drop and paste stay, because they are gestures on the chat view and the
+// textarea rather than a control in the pill row.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { openFilePicker } from "./files-picker.js";
 import { upload, partialUploadOf } from "./actions/files.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
@@ -27,17 +27,7 @@ const ICON_UPLOAD =
   '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
 
 export function initChatAttach(): void {
-  const attachBtn = byId<HTMLButtonElement>("attach-btn");
   const chatView = byId<HTMLDivElement>("chat-view");
-
-  attachBtn.addEventListener("click", () => {
-    openFilePicker();
-  });
-
-  // The limit used to be discoverable only as a server 413, which drop and
-  // paste reach without the user consciously choosing a file. Stated where the
-  // choice is made rather than in a banner nobody reads.
-  attachBtn.dataset["tooltip"] = `Attach file (${uploadLimitHint().toLowerCase()})`;
 
   // Create the overlay lazily on first use.
   let overlay: HTMLDivElement | null = null;

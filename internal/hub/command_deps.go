@@ -145,6 +145,12 @@ func (h *Hub) PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b command.Br
 	h.coord.PrimeIfNeeded(ctx, chatID, sb)
 }
 
+// PrimeFromChat notes that a chat's first session should be primed with another
+// chat's transcript — the tangent's fork-refused fallback.
+func (h *Hub) PrimeFromChat(chatID, sourceChatID api.ChatID) {
+	h.coord.PrimeFromChat(chatID, sourceChatID)
+}
+
 // IsEmptyTurn checks if a prompt response is an empty turn.
 func (h *Hub) IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool {
 	return h.isEmptyTurn(resp, chatID)

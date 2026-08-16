@@ -39,7 +39,6 @@ import {
   TAB_VIEWS,
 } from "./tabs.js";
 import { submitPrompt } from "./submit.js";
-import { showContextMenu } from "./context-menu.js";
 import { chatSkeleton } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { showModelPicker, hideModelPicker } from "./picker.js";
@@ -62,6 +61,7 @@ import { isRetentionEnabled } from "./retention.js";
 import {
   closeChat as closeChatAction,
   deleteChat as deleteChatAction,
+  forkChat,
   resumeSession,
   setMode,
 } from "./actions/chat.js";
@@ -362,94 +362,45 @@ export function createSession(initialPrompt?: string): void {
   }
 }
 
-/** Open a side conversation off `parentChatID`, seeded with a transcript
- *  selection: a real chat, opened as a SUB-TAB under the one it came from.
+/** Open a TANGENT off `parentChatID`: a real chat that starts with the parent's
+ *  whole conversation behind it, opened as a SUB-TAB under the one it came from.
  *
- *  Four things it is, each load-bearing:
+ *  The context is the parent's REAL context, not a copy of it. `chat.fork` calls
+ *  KAS's own `session/fork`, and the new chat is created already bound to the
+ *  session it returns, so the transcript arrives from the session/load replay
+ *  and nothing is copied here. Nothing syncs the two afterwards either: one JSON
+ *  file per chat, one SSE topic per chat, and no cross-chat write path.
  *
- *    - A real PERSISTED chat, because the seeded prompt is what creates the
- *      server record. So closing it leaves it in History like any other chat, and
+ *  Five things it is, each load-bearing:
+ *
+ *    - A real PERSISTED chat, created by the fork command rather than by a first
+ *      prompt. So closing it leaves it in History like any other chat, and
  *      invariant 3 holds — the bridge it gets has a chat file behind it.
  *    - It OWNS its bridge: the tab keeps the default `owns`, so its × tears the
- *      side chat down rather than orphaning a process.
- *    - No shared parent context beyond the selection. The selection seeds the
- *      first prompt and that is the whole inheritance, plus the parent's model
- *      and mode so the answer comes from the same agent that produced the text.
- *    - The name is the server's 80-char truncation of that first prompt, which is
- *      why nothing here names it: the store effect renames the tab on the echo.
- */
-export function openSideChat(parentChatID: string, selection: string): void {
-  const seed = selection.trim();
-  if (seed === "") {
+ *      tangent down rather than orphaning a process. `owns: false` would be
+ *      wrong — a forked session is genuinely this tab's own work, not a view
+ *      over someone else's.
+ *    - A SUB-TAB of its parent, and promotable out of that with `promoteTab`
+ *      (the tab context menu's "Promote to its own tab"), which clears
+ *      `parentId`. Until then the parent's close cascade takes it with it.
+ *    - It inherits model, mode and effort from the parent — read SERVER-side off
+ *      the parent's record, because the record is the truth about all three and a
+ *      tab's projection can be stale. Nothing is dispatched from here for them.
+ *    - Nothing seeds a first prompt. There is no selection to seed one from: with
+ *      the whole conversation inherited, a selected phrase chooses nothing.
+ *
+ *  The name is left to the ordinary precedence (the agent's focus title, else the
+ *  first prompt's truncation), which is why nothing here names it. */
+export function openTangentChat(parentChatID: string): void {
+  if (parentChatID === "" || get(parentChatID) === undefined) {
     return;
   }
-  const parent = get(parentChatID);
-  const model = parent?.model ?? getLastModel();
+  const model = get(parentChatID)?.model ?? getLastModel();
   const id = seedLocalChat(model);
   setActive(id);
   openChatTab(id, NEW_CHAT_NAME, { parentId: parentChatID });
-  const mode = parent?.current_mode_id ?? "";
-  if (mode !== "") {
-    // Same shape as role-picker's selectMode: the chat has no bridge yet, so the
-    // server persists the choice and applies it at session/new.
-    void setMode.dispatch({ chatID: id, modeID: mode });
-  }
   setCurrentModel(model);
-  sendPrompt(seed);
-}
-
-/** Wire the transcript's right-click menu: one entry, on a non-empty selection.
- *
- *  The selection is read HERE rather than in the item's action, because opening
- *  the menu focuses its first item and that can collapse the selection. An empty
- *  selection (or one outside the transcript) is left to the native menu, the same
- *  way a non-chat tab is.
- *
- *  One entry and nothing else, by decision: no floating selection toolbar and no
- *  Copy or Quote, which are copy-and-paste with extra steps. Code blocks already
- *  have their own copy button, so a second door would disagree with the first. */
-export function initTranscriptContextMenu(): void {
-  $.messages.addEventListener("contextmenu", (e) => {
-    const chatID = getActiveId();
-    if (chatID === "") {
-      return;
-    }
-    const sel = window.getSelection();
-    const text = sel === null ? "" : sel.toString().trim();
-    if (text === "" || !selectionInside(sel, $.messages)) {
-      return;
-    }
-    e.preventDefault();
-    showContextMenu(
-      [
-        {
-          label: "Ask in a side conversation",
-          action: () => {
-            openSideChat(chatID, text);
-          },
-        },
-      ],
-      { x: e.clientX, y: e.clientY },
-    );
-  });
-}
-
-/** Whether the WHOLE selection lies inside `host`.
- *
- *  Both endpoints, not just the anchor: a drag that starts in the transcript and
- *  ends outside it passes an anchor-only check, so `sel.toString()` seeded a side
- *  conversation with page text the reader never selected from the conversation —
- *  and reversing the drag direction flipped the verdict on the same range, since
- *  the anchor is wherever the gesture began. */
-function selectionInside(sel: Selection | null, host: HTMLElement): boolean {
-  if (sel === null) {
-    return false;
-  }
-  return nodeInside(sel.anchorNode, host) && nodeInside(sel.focusNode, host);
-}
-
-function nodeInside(node: Node | null, host: HTMLElement): boolean {
-  return node !== null && (node === host || host.contains(node));
+  void forkChat.dispatch({ chatID: id, parentChatID });
 }
 
 export function switchSession(id: string): void {

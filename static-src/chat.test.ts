@@ -7,10 +7,10 @@
 // chat (mirrors role-picker's selectMode).
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { setModeDispatch, submitPromptMock, showContextMenuMock, messagesEl } = vi.hoisted(() => ({
+const { setModeDispatch, forkDispatch, submitPromptMock, messagesEl } = vi.hoisted(() => ({
   setModeDispatch: vi.fn(),
+  forkDispatch: vi.fn(),
   submitPromptMock: vi.fn(),
-  showContextMenuMock: vi.fn(),
   messagesEl: document.createElement("div"),
 }));
 
@@ -82,9 +82,9 @@ vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
 vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
 vi.mock("./submit.js", () => ({ submitPrompt: submitPromptMock }));
-vi.mock("./context-menu.js", () => ({ showContextMenu: showContextMenuMock }));
-// $.messages is a real element so the transcript context-menu listener can be
-// driven; nothing else in chat.ts touches the DOM on these paths.
+// $.messages is a real element so a listener registered on it could be driven.
+// Nothing in chat.ts registers one any more — see "no transcript context menu"
+// below, which is what that element is here to witness.
 vi.mock("./dom.js", () => ({
   $: { messages: messagesEl, promptInput: { focus: () => undefined } },
 }));
@@ -95,15 +95,11 @@ vi.mock("./actions/chat.js", () => ({
   deleteChat: { dispatch: vi.fn() },
   restoreChat: { dispatch: vi.fn() },
   setMode: { dispatch: setModeDispatch },
+  forkChat: { dispatch: forkDispatch },
 }));
 
-import {
-  createPlannerSession,
-  openChatTab,
-  openSideChat,
-  openPreviousSession,
-  initTranscriptContextMenu,
-} from "./chat.js";
+import * as chatModule from "./chat.js";
+import { createPlannerSession, openChatTab, openTangentChat, openPreviousSession } from "./chat.js";
 import { openTab } from "./tabs.js";
 import { get, removeChat, upsertHeader, markGhostChat, isGhostChat } from "./store.js";
 import { loadMessages } from "./store-load.js";
@@ -251,8 +247,8 @@ describe("openChatTab onClose retention gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The side conversation: a real chat opened as a sub-tab of the one it came
-// from, seeded with a transcript selection.
+// The tangent: a real chat opened as a sub-tab of the one it came from, whose
+// context is the parent's REAL context via a session fork.
 // ---------------------------------------------------------------------------
 
 function lastSpec(): {
@@ -265,141 +261,93 @@ function lastSpec(): {
   return vi.mocked(openTab).mock.calls.at(-1)?.[0] as never;
 }
 
-describe("openSideChat", () => {
+describe("openTangentChat", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     activeId = "";
+    vi.mocked(get).mockReturnValue({ model: "parent-model" } as never);
   });
 
   it("opens the new chat as a sub-tab of its parent", () => {
-    openSideChat("c-parent", "the selected text");
+    openTangentChat("c-parent");
     const spec = lastSpec();
     expect(spec.parentId).toBe("c-parent");
     expect(spec.kind).toBe("chat");
     expect(spec.id).not.toBe("c-parent");
   });
 
-  // Invariant 3: a live bridge implies a live chat record. The seeded prompt is
-  // what creates that record, and it is also what names the chat (the server's
-  // 80-char first-prompt truncation), so nothing here names it.
-  it("seeds the selection as the first prompt, which is what persists the chat", () => {
-    openSideChat("c-parent", "  the selected text  ");
-    expect(submitPromptMock).toHaveBeenCalledTimes(1);
-    const [chatID, text] = submitPromptMock.mock.calls[0] as [string, string];
-    expect(chatID).toBe(lastSpec().id);
-    expect(text).toBe("the selected text");
+  // The fork is what persists the chat AND what carries the context, so it must
+  // fire for the NEW chat naming the parent. Without the parent id the server
+  // has nothing to fork.
+  it("dispatches chat.fork for the new chat, naming its parent", () => {
+    openTangentChat("c-parent");
+    expect(forkDispatch).toHaveBeenCalledTimes(1);
+    const arg = forkDispatch.mock.calls[0]?.[0] as { chatID: string; parentChatID: string };
+    expect(arg.chatID).toBe(lastSpec().id);
+    expect(arg.parentChatID).toBe("c-parent");
   });
 
-  // It OWNS its bridge, so the tab keeps the default `owns` and its close
-  // tears the side chat down like any other chat tab.
+  // A selection chooses nothing once the whole conversation is inherited, so
+  // there is no seeded prompt any more. This is the assertion that fails if the
+  // old selection-seeding path is reintroduced.
+  it("seeds no prompt: the fork carries the context, not a quoted phrase", () => {
+    openTangentChat("c-parent");
+    expect(submitPromptMock).not.toHaveBeenCalled();
+  });
+
+  // It OWNS its bridge, so the tab keeps the default `owns` and its close tears
+  // the tangent down like any other chat tab. `owns: false` would be wrong — a
+  // forked session is this tab's own work, not a view over another chat's.
   it("owns its bridge", () => {
-    openSideChat("c-parent", "text");
+    openTangentChat("c-parent");
     expect(lastSpec().owns).toBeUndefined();
     expect(lastSpec().onClose).toBeTypeOf("function");
   });
 
-  // No shared parent context beyond the selection — plus the model and mode, so
-  // the answer comes from the same agent that produced the text.
-  it("inherits the parent's model and mode and nothing else", () => {
+  // Model rides the local seed so the tab and picker read right immediately; mode
+  // and effort are the SERVER's to copy off the parent record, which is why no
+  // set_mode is dispatched here any more.
+  it("seeds the parent's model locally and leaves mode to the server", () => {
     vi.mocked(get).mockReturnValue({ model: "parent-model", current_mode_id: "plan" } as never);
-    openSideChat("c-parent", "text");
-    const arg = setModeDispatch.mock.calls[0]?.[0] as { chatID: string; modeID: string };
-    expect(arg.modeID).toBe("plan");
-    expect(arg.chatID).toBe(lastSpec().id);
+    openTangentChat("c-parent");
     expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).toMatchObject({
       model: "parent-model",
     });
-  });
-
-  it("sends no set_mode when the parent has no mode yet", () => {
-    vi.mocked(get).mockReturnValue({ model: "m", current_mode_id: "" } as never);
-    openSideChat("c-parent", "text");
     expect(setModeDispatch).not.toHaveBeenCalled();
   });
 
-  it("does nothing for an empty selection", () => {
-    openSideChat("c-parent", "   \n  ");
+  it("does nothing when the parent is unknown", () => {
+    vi.mocked(get).mockReturnValue(undefined);
+    openTangentChat("c-parent");
     expect(openTab).not.toHaveBeenCalled();
-    expect(submitPromptMock).not.toHaveBeenCalled();
+    expect(forkDispatch).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for an empty parent id", () => {
+    openTangentChat("");
+    expect(openTab).not.toHaveBeenCalled();
+    expect(forkDispatch).not.toHaveBeenCalled();
   });
 });
 
-describe("the transcript context menu", () => {
-  function rightClick(): void {
-    messagesEl.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
-  }
+// The transcript's right-click entry is GONE with the selection it read. A
+// tangent inherits the whole conversation, so "I selected these words" does not
+// mean "branch this conversation", and a menu entry that silently inherited
+// everything from a phrase-scoped gesture was misleading. The `+` menu is the
+// door.
+describe("no transcript context menu", () => {
+  it("exports no initTranscriptContextMenu", () => {
+    expect(chatModule).not.toHaveProperty("initTranscriptContextMenu");
+  });
 
-  function selectText(text: string, anchorInside: boolean, focusInside = anchorInside): void {
-    // getSelection is the only browser API this path reads, and happy-dom's
-    // Selection cannot be driven from a detached node — so it is stubbed with
-    // exactly the members the handler uses. BOTH endpoints, because a range has
-    // two and the anchor is merely wherever the drag began.
-    const outside = document.createElement("p");
-    vi.spyOn(window, "getSelection").mockReturnValue({
-      toString: () => text,
-      anchorNode: anchorInside ? messagesEl : outside,
-      focusNode: focusInside ? messagesEl : outside,
-    } as never);
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
+  // The listener is what the export wired, so its absence is the behavioural
+  // half: a right-click on the transcript is the native menu's again. Asserting
+  // on defaultPrevented rather than on a mock, because there is no longer a
+  // context-menu module for this file to mock.
+  it("leaves a transcript right-click to the native menu", () => {
     activeId = "c-active";
-    messagesEl.replaceChildren();
-  });
-
-  it("offers one entry, and the selection reaches the seeded prompt", () => {
-    initTranscriptContextMenu();
-    selectText("  quoted from the transcript  ", true);
-    rightClick();
-    expect(showContextMenuMock).toHaveBeenCalledTimes(1);
-    const items = showContextMenuMock.mock.calls[0]?.[0] as {
-      label: string;
-      action: () => void;
-    }[];
-    // One entry and nothing else: no floating toolbar, no Copy or Quote.
-    expect(items).toHaveLength(1);
-    items[0]?.action();
-    expect(submitPromptMock).toHaveBeenCalledTimes(1);
-    expect(submitPromptMock.mock.calls[0]?.[1]).toBe("quoted from the transcript");
-    expect(lastSpec().parentId).toBe("c-active");
-  });
-
-  // An empty selection leaves the native menu alone, the same way a non-chat tab
-  // does.
-  it("leaves the native menu for an empty selection", () => {
-    initTranscriptContextMenu();
-    selectText("", true);
-    rightClick();
-    expect(showContextMenuMock).not.toHaveBeenCalled();
-  });
-
-  it("leaves the native menu for a selection outside the transcript", () => {
-    initTranscriptContextMenu();
-    selectText("something else on the page", false);
-    rightClick();
-    expect(showContextMenuMock).not.toHaveBeenCalled();
-  });
-
-  // A range that crosses the transcript boundary would seed the side chat with
-  // page text the reader never selected from the conversation. Both drag
-  // directions, because checking only the anchor made the verdict depend on
-  // which end the gesture started at — the same range, two answers.
-  it.each([
-    { desc: "starting inside and ending outside", anchor: true, focus: false },
-    { desc: "starting outside and ending inside", anchor: false, focus: true },
-  ])("leaves the native menu for a selection $desc", ({ anchor, focus }) => {
-    initTranscriptContextMenu();
-    selectText("half the transcript and half the page", anchor, focus);
-    rightClick();
-    expect(showContextMenuMock).not.toHaveBeenCalled();
-  });
-
-  it("does nothing when no chat is active", () => {
-    activeId = "";
-    initTranscriptContextMenu();
-    selectText("text", true);
-    rightClick();
-    expect(showContextMenuMock).not.toHaveBeenCalled();
+    const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    messagesEl.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
   });
 });

@@ -28,10 +28,18 @@
   transition: transform var(--dur-micro) var(--ease-micro);
 }
 
-/* An expanded pill presses exactly like a collapsed one: the rule above is the
- * only press rule, open or closed. That holds because the expanded card is a
- * SIBLING of the pill inside .pill-slot rather than a child of it (15-input.css
- * "Expandable pill system"), so scaling the pill cannot reach the open menu.
+/* An expanded pill presses exactly like a collapsed one: this is the only rule
+ * that SCALES anything, open or closed. That holds because the expanded card is
+ * a SIBLING of the pill inside .pill-slot rather than a child of it
+ * (15-input.css "Expandable pill system"), so scaling the pill cannot reach the
+ * open menu.
+ *
+ * The `transition` declared above does NOT win for `.pill`, and naming
+ * transform here is not what animates the scale. `:where(…):active` scores
+ * (0,1,0), the same as a bare `.pill`, and both files are unlayered — so the
+ * later file in MANIFEST takes the property. `transform` is therefore listed in
+ * `.pill`'s own transition (15-input.css), and a member of the list above that
+ * carries its own `transition` must do the same or its press will not animate.
  *
  * The three exceptions this replaces pressed the pill's CHILDREN while pinning
  * the pill itself to `transform: none` — the only way to keep the open card

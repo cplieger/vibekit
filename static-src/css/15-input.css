@@ -389,22 +389,13 @@
   container-name: pill-row;
 }
 
-/* Optional text labels on Attach / Autopilot pills. Shown
- * when the pill row is wide enough to fit them; hidden via container
- * query at < 24rem so the pills stay compact on mobile. */
-.pill-label {
-  font-size: var(--fs-xs);
-  white-space: nowrap;
-  max-width: 6rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-@container pill-row (width < 24rem) {
-  .pill-label {
-    display: none;
-  }
-}
+/* There is no `.pill-label` rule. It styled the optional text label on the
+ * Attach and Autopilot pills, and both are gone — Autopilot with the staged-write
+ * store, Attach into the chat-actions menu — so the rule and its
+ * `@container pill-row (width < 24rem)` hide had no emitter left. The two pills
+ * that still carry a label use their own classes (`.pill-role-label`, and the
+ * model pill's `#ctx-model-pill`), each with its own ellipsis handling, because
+ * the slot layer's `min-width: 0` is scoped to exactly those two. */
 
 .pill {
   display: inline-flex;
@@ -422,10 +413,17 @@
   font-size: var(--fs-xs);
   cursor: pointer;
   white-space: nowrap;
+  /* `transform` belongs in THIS list, not in the press rule's own. The
+   * universal press (03-base.css) is `:where(… .pill …):active`, which scores
+   * (0,1,0) — exactly what `.pill` scores — and both stylesheets are unlayered,
+   * so the later file in MANIFEST wins the tie on `transition`. That is this
+   * rule. Without transform named here the scale still applied and animated
+   * neither way: a one-frame snap on press and on release. */
   transition:
     background var(--dur-micro),
     color var(--dur-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    border-color var(--dur-micro) var(--ease-micro),
+    transform var(--dur-micro) var(--ease-micro);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -969,27 +967,141 @@
   background: var(--c-accent-subtle);
 }
 
-/* The chat options card: the set-once switches menu. */
+/* The press's SECOND channel, shared by every pill.
+ *
+ * The universal scale is 0.96, and the narrowest control in this row is an
+ * icon-only pill about 30px wide: ~1.2px of travel, which does not read as a
+ * press even once it animates (the transition fix above). Colour is the honest
+ * lever here, and it is the one `.pill` already animates for hover — so a press
+ * reads as one step PAST hover rather than as a new vocabulary. A bigger scale
+ * factor on the narrow pill was the alternative and was rejected: it makes one
+ * pill press differently from its five neighbours to compensate for its width.
+ *
+ * Declares no `transition` of its own on purpose. `.pill`'s list above already
+ * covers background, border-color and transform, and a second list here would
+ * re-create exactly the shadowing that broke the scale.
+ *
+ * Placed AFTER the aria-pressed rule so a toggled-on pill presses too: both
+ * score (0,2,0), so source order is the whole tiebreak. */
+.pill:active {
+  background: var(--c-bg-hover);
+  border-color: var(--c-text-tertiary);
+}
+
+/* The chat actions card: attach / goal / tangent, then the supervised switch.
+ *
+ * `white-space: normal` overrides .pill-expand-content's nowrap, which is right
+ * for a one-line detail card and wrong here: every row carries a hint sentence,
+ * and nowrap made the card as wide as its longest one. */
 .chat-options-card {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
-  min-width: 16rem;
-  padding: var(--sp-3);
+  gap: var(--sp-1);
+  min-width: 18rem;
+  max-width: 22rem;
+  padding: var(--sp-2);
   text-align: start;
+  white-space: normal;
+  align-items: stretch;
 }
 
+/* An ACTION row wraps its button so the goal row's inline form can be a sibling
+ * of that button rather than a child of it — the same reason the expand card is
+ * the pill's sibling: a form holding an input and a submit button inside a
+ * <button> is invalid HTML and flattens under assistive tech. */
+.chat-opt-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* Shared geometry for a row that acts (button) and a row that switches (label).
+ * Split into a @mixin-less common block because the two elements cannot share a
+ * selector: one is a <button>, the other a <label> wrapping a checkbox. */
+.chat-opt-btn,
 .chat-opt-row {
   display: flex;
   gap: var(--sp-2);
   align-items: flex-start;
   cursor: pointer;
+  text-align: start;
+  border-radius: 0.5rem;
+  padding: var(--sp-1);
+}
 
+.chat-opt-btn {
+  border: 1px solid transparent;
+  background: none;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+  transition:
+    background var(--dur-micro),
+    border-color var(--dur-micro) var(--ease-micro);
+
+  &:hover {
+    background: var(--c-bg-tertiary);
+  }
+
+  /* Not a member of the universal press list (03-base.css): scaling a
+   * full-width menu row reads as the card wobbling rather than the row
+   * depressing, so the press is the fill alone. */
+  &:active {
+    background: var(--c-bg-hover);
+  }
+}
+
+.chat-opt-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-block-start: 0.125rem;
+  color: var(--c-text-tertiary);
+}
+
+.chat-opt-row {
   & input {
     margin-block-start: 0.125rem;
     flex-shrink: 0;
     cursor: pointer;
   }
+
+  &:hover {
+    background: var(--c-bg-tertiary);
+  }
+}
+
+/* The goal row's inline input collection: an expanding row section, not a
+ * modal — the Workflows tab's idiom, so a launch form looks the same in both
+ * places it exists. */
+.chat-opt-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border-radius: 0.5rem;
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+}
+
+.chat-opt-input-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.chat-opt-input {
+  width: 100%;
+  padding: 0.25rem var(--sp-2);
+  border: 1px solid var(--c-border);
+  border-radius: 0.375rem;
+  background: var(--c-bg-secondary);
+  color: var(--c-text-primary);
+  font: inherit;
+  font-size: var(--fs-xs);
 }
 
 .chat-opt-text {
