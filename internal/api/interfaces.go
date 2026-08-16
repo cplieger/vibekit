@@ -47,6 +47,20 @@ type ChatStore interface {
 	// Mutate is the single write primitive: load → apply → save →
 	// broadcast chat_created / chat_updated.
 	Mutate(ctx context.Context, id ChatID, mutate func(c *Chat, exists bool) bool) error
+	// SetDraft persists the chat's unsent composer text (Chat.Draft).
+	//
+	// Its own method rather than a Mutate call because a draft save is not
+	// ACTIVITY and must not be recorded as any. Mutate stamps UpdatedAt on
+	// every write and the retention purge ages a chat from exactly that field,
+	// so a debounced autosave firing while the user types would push the purge
+	// cutoff out by a whole retention window each time — a chat holding an
+	// abandoned draft would never be purged, and a draft can hold a
+	// credential. It also broadcasts nothing: Draft is not on ChatHeader, so
+	// the frame would carry no draft and only cost every client a re-render.
+	//
+	// A no-op (nil error) for a chat that does not exist: a chat is a server
+	// record from its first prompt onward, and typing must not create one.
+	SetDraft(ctx context.Context, id ChatID, text string) error
 	// Delete removes the chat file and broadcasts chat_deleted.
 	Delete(ctx context.Context, id ChatID) error
 	// AppendMessage appends msg to the chat's messages.

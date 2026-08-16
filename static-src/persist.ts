@@ -8,7 +8,6 @@
 import { showSaving, showSaved, showError } from "./save-indicator.js";
 import { patchAppSettings, loadSettings as loadSettingsAction } from "./actions/settings.js";
 import { registerCleanup } from "./actions/index.js";
-import type { EffortLevel } from "./model-switcher.js";
 
 export interface AppSettings {
   last_model?: string;
@@ -26,7 +25,10 @@ export interface AppSettings {
   /** Approve (rather than refuse) a scheduled run's tool request when the
    *  unattended budget expires. Off by default; see run_unattended.go. */
   scheduled_auto_approve?: boolean;
-  model_effort?: { last_model: string; effort: EffortLevel };
+  // There is no model_effort. Reasoning effort is per-chat, on the chat record
+  // beside model, mode and supervised (Session.effort); it used to be one global
+  // setting shaped {last_model, effort}, so two chats could not disagree and
+  // switching models discarded the previous model's level.
   /** Chat retention, owned end to end by vibekit (kiro-cli's own
    *  cleanup.periodDays is pinned to 0/never). Encoding: -1 = forever
    *  (close keeps the chat, never purged — "backups"), 0 = off (delete on

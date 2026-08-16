@@ -12,7 +12,6 @@ import (
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/push"
-	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -258,7 +257,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// Supervised is passed at creation and only here: the session/load path below
 	// does not repeat it, because KAS persists `autopilot` in its own session
 	// metadata and a loaded session already carries the value.
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: chat.Effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -542,29 +541,12 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	}
 }
 
-// modelEffortSetting is the typed representation of the model_effort
-// config key (vibekit-managed). Read at session start to seed the
-// acp --effort launch flag.
-type modelEffortSetting struct {
-	LastModel string `json:"last_model"`
-	Effort    string `json:"effort"`
-}
-
-// effortForModel returns the persisted effort level for model, or "" if
-// none is stored or the stored model differs. The result seeds the
-// kiro-cli >=2.6 `acp --effort` launch flag (StartOpts.Effort), so a new
-// session starts at the user's chosen effort without a post-start
-// /effort dispatch. Mid-session changes still go through CmdSetEffort.
-func (bc *BridgeCoordinator) effortForModel(ctx context.Context, model string) string {
-	var me modelEffortSetting
-	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyModelEffort, "effort_for_model", &me) {
-		return ""
-	}
-	if me.LastModel != model {
-		return ""
-	}
-	return me.Effort
-}
+// There is no effortForModel and no modelEffortSetting. Effort was one GLOBAL
+// `model_effort` setting shaped `{last_model, effort}`, so it was keyed by the
+// LAST model rather than by the chat: two chats could not disagree, and
+// switching models discarded the previous model's level outright. It is a field
+// on the chat record now (api.Chat.Effort), read straight off the chat at spawn
+// and written by CmdSetEffort, so the launch flag needs no settings read.
 
 // NotifyPush sends a push notification if the push service is configured.
 func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID) {

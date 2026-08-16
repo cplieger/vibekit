@@ -66,7 +66,7 @@ const encoder = new TextEncoder();
 
 /** Send bytes to the PTY through the kernel's sanitizing, scroll-snapping
  *  funnel (the v4 handle's supported host path). Used by the code-block
- *  "run in shell" action. No-op until the terminal is created (first panel
+ *  "type in shell" action. No-op until the terminal is created (first panel
  *  open) and after teardown — `handle` is null then. */
 function hostSend(bytes: Uint8Array): void {
   handle?.send(bytes);
@@ -128,9 +128,12 @@ export function initShellPanel(): void {
     void hostRestart();
   });
 
-  // Code-block "run in shell" → type the command into the live terminal.
+  // Code-block "type in shell" → the command lands at the prompt and WAITS.
+  // No trailing newline: pressing Enter is the confirmation, and until then the
+  // line is editable in place like anything else the user typed. handle.send
+  // snaps the view to the bottom, so the typed command is visible.
   setShellRunCallback((cmd: string) => {
-    hostSend(encoder.encode(`${cmd}\n`));
+    hostSend(encoder.encode(cmd));
   });
 
   initShellResize();

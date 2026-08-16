@@ -163,11 +163,23 @@ func userMessageIndex(messages []api.Message, id string) int {
 	return -1
 }
 
-// CmdSetEffort applies a reasoning-effort level to the active session. On
-// v3 (KAS) effort is a session config option, so this dispatches
-// session/set_config_option (configId "effortLevel"). Vibekit owns
-// persistence of the effort level; a new session's initial effort is
-// seeded at acp launch via StartOpts.Effort instead.
+// CmdSetEffort sets the chat's reasoning-effort level. On v3 (KAS) effort is a
+// session config option, so a running session is switched in place via
+// session/set_config_option (configId "effortLevel"); the level is then
+// persisted ON THE CHAT and applied to any later session at launch through
+// StartOpts.Effort.
+//
+// Effort is PER-CHAT (the fourth composer setting to be, beside model, mode and
+// supervised). It used to be one global `model_effort` setting keyed by the LAST
+// model, which meant two chats could not disagree and switching models silently
+// discarded the previous model's choice.
+//
+// A chat with no bridge is NOT a 409 any more, which is the other half of the
+// same move: the persisted level is enough, exactly as CmdSetMode's is, and the
+// client no longer needs an empty-chat branch that writes a global setting
+// instead. Auto-create mirrors CmdSetMode for the same reason — a fresh chat is
+// client-side only until its first prompt, so without it every pick before the
+// first message 404'd and the control rolled back.
 func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
@@ -179,18 +191,32 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 		return
 	}
 
-	bridge := deps.GetBridge(cmd.ChatID)
-	if bridge == nil {
-		d.RespondErr(w, http.StatusConflict, errNoBridge)
-		return
+	// Switch live first (fail fast) when a bridge is running, so a refusal is
+	// reported rather than persisted as a level the session never took.
+	if bridge := deps.GetBridge(cmd.ChatID); bridge != nil {
+		if _, err := bridge.Call(ctx, api.MethodSetConfigOption, SessionParams(bridge, map[string]any{
+			"configId": api.ConfigOptionEffort,
+			"value":    string(p.Level),
+		})); err != nil {
+			slog.Warn("set_effort: bridge call failed", "chat", cmd.ChatID, keyError, err)
+			d.RespondErr(w, http.StatusBadGateway, err)
+			return
+		}
 	}
 
-	if _, err := bridge.Call(ctx, api.MethodSetConfigOption, SessionParams(bridge, map[string]any{
-		"configId": api.ConfigOptionEffort,
-		"value":    string(p.Level),
-	})); err != nil {
-		slog.Warn("set_effort: bridge call failed", "chat", cmd.ChatID, keyError, err)
-		d.RespondErr(w, http.StatusBadGateway, err)
+	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+		if !exists {
+			c.Name = api.DefaultChatName
+			c.Effort = string(p.Level)
+			return true
+		}
+		if c.Effort == string(p.Level) {
+			return false
+		}
+		c.Effort = string(p.Level)
+		return true
+	}); err != nil {
+		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
 

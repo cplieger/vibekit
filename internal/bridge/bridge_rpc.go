@@ -1,11 +1,11 @@
 package bridge
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
@@ -23,6 +23,15 @@ var bridgeExitedResp = &api.RPCResponse{
 	Error: &api.RPCError{Code: api.RPCCodeBridgeExited, Message: "ACP bridge exited"},
 }
 
+// frameTooLargeResp is the second pointer-identity sentinel, pushed into every
+// pending channel when an oversize stdout frame was dropped. Separate from
+// bridgeExitedResp because the two mean opposite things about the process: this
+// one leaves it running and the session usable, so Call must translate it to a
+// NON-retryable error rather than the retryable dead-bridge one.
+var frameTooLargeResp = &api.RPCResponse{
+	Error: &api.RPCError{Code: api.RPCCodeInternal, Message: api.ErrFrameTooLarge.Error()},
+}
+
 func (b *Bridge) sendNotif(msg *api.RPCResponse) {
 	select {
 	case b.notifCh <- msg:
@@ -33,11 +42,21 @@ func (b *Bridge) sendNotif(msg *api.RPCResponse) {
 func (b *Bridge) readLoop() {
 	defer b.drainPendingAndClose()
 	var tracker parseErrTracker
-	for b.stdout.Scan() {
-		line := b.stdout.Bytes()
+	for {
+		line, dropped, err := b.stdout.readFrame()
+		if dropped > 0 {
+			b.reportDroppedFrame(dropped)
+		}
+		if err != nil {
+			b.logReadError(err)
+			break
+		}
+		if dropped > 0 {
+			continue // the frame's bytes are gone; there is nothing to parse
+		}
 		var msg api.RPCResponse
-		if err := json.Unmarshal(line, &msg); err != nil {
-			if b.recordParseError(&tracker, len(line), err) {
+		if uErr := json.Unmarshal(line, &msg); uErr != nil {
+			if b.recordParseError(&tracker, len(line), uErr) {
 				return
 			}
 			continue
@@ -45,7 +64,6 @@ func (b *Bridge) readLoop() {
 		tracker.Reset()
 		b.dispatch(&msg)
 	}
-	b.logScanError()
 	// Reap the subprocess and unblock any Call waiters that
 	// arrived between the drain and this point. Async because
 	// Stop waits for cmd.Wait, which is downstream of this
@@ -55,6 +73,35 @@ func (b *Bridge) readLoop() {
 	go b.Stop()
 }
 
+// reportDroppedFrame is what makes an oversize frame a visible loss rather than
+// a silent one, and it is the half of the port Crew did not need.
+//
+// The dropped bytes are gone, so the bridge cannot know whether they were a
+// notification (transcript content, nothing pending) or the RESPONSE to one of
+// our own requests: the id was inside them. So it assumes the worse case and
+// fails every pending request. Continuing instead would leave a pending
+// session/prompt Call waiting forever, because Call has no client-side deadline
+// by design, and that is strictly worse than the whole-bridge death this change
+// replaces.
+//
+// Failing them is also how the user hears about it: the prompt path finalizes
+// through its ordinary failure route (AbandonInFlightTurn plus
+// error{prompt_failed}) carrying api.ErrFrameTooLarge's wording. The process and
+// the ACP session both stay alive, so the chat is immediately promptable. One
+// large tool result now kills the TURN instead of the SESSION.
+//
+// A frame dropped while nothing is pending surfaces in this log line only. That
+// is the residual: notifications arrive during a turn, so in practice a prompt
+// Call is pending, but nothing on the wire re-sends a lost notification and
+// vibekit cannot invent its content.
+func (b *Bridge) reportDroppedFrame(dropped int) {
+	failed := b.failPending(frameTooLargeResp)
+	slog.Error("ACP read: frame exceeds the size cap; dropped it and failed the pending requests",
+		"cap", scannerLineCap,
+		"dropped_bytes", dropped,
+		"failed_requests", failed)
+}
+
 // drainPendingAndClose unblocks any in-flight Call waiters so a dead
 // worker does not permanently wedge the bridge, then closes notifCh.
 // Using bridgeExitedResp's pointer identity lets Call translate the
@@ -62,16 +109,29 @@ func (b *Bridge) readLoop() {
 // drain path and the done-channel race-guard on the same sentinel.
 // Runs as readLoop's deferred cleanup.
 func (b *Bridge) drainPendingAndClose() {
+	b.failPending(bridgeExitedResp)
+	close(b.notifCh)
+}
+
+// failPending hands resp to every waiting Call and clears the map, returning how
+// many waiters it answered. Two callers with different sentinels: the exit drain
+// above, and the oversize-frame report which keeps the bridge alive.
+//
+// The non-blocking send is deliberate — every pending channel is buffered with
+// capacity 1 and a Call that already left through ctx.Done or b.done deregisters
+// itself, so a full or abandoned channel must not stall this loop.
+func (b *Bridge) failPending(resp *api.RPCResponse) int {
 	b.pendingMu.Lock()
+	n := len(b.pending)
 	for id, ch := range b.pending {
 		select {
-		case ch <- bridgeExitedResp:
+		case ch <- resp:
 		default:
 		}
 		delete(b.pending, id)
 	}
 	b.pendingMu.Unlock()
-	close(b.notifCh)
+	return n
 }
 
 // recordParseError feeds an unmarshal failure to the parse-error tracker
@@ -122,17 +182,17 @@ func (b *Bridge) dispatch(msg *api.RPCResponse) {
 	}
 }
 
-// logScanError reports a scanner failure after the read loop ends. A
-// clean EOF leaves Err() nil and logs nothing; an oversized line gets a
-// distinct message naming the scanner cap.
-func (b *Bridge) logScanError() {
-	err := b.stdout.Err()
-	if err == nil {
+// logReadError reports the error that ended the read loop. A clean EOF is the
+// ordinary teardown and logs nothing; an exhausted drain budget gets a distinct
+// message, because that one says the stream stopped being newline-delimited JSON
+// rather than that the process went away.
+func (b *Bridge) logReadError(err error) {
+	if err == nil || errors.Is(err, io.EOF) {
 		return
 	}
-	if errors.Is(err, bufio.ErrTooLong) {
-		slog.Error("ACP read: JSON line exceeds scanner cap; reaping bridge",
-			"cap", scannerLineCap)
+	if errors.Is(err, errFrameDrainExhausted) {
+		slog.Error("ACP read: a single frame never terminated within the drain budget; reaping bridge",
+			"budget_bytes", oversizeDrainCap)
 		return
 	}
 	slog.Error("ACP read", "error", err)
@@ -173,6 +233,12 @@ func (b *Bridge) Call(ctx context.Context, method string, params any) (*api.RPCR
 	case resp := <-ch:
 		if resp == bridgeExitedResp {
 			return nil, &api.TransportError{Err: errBridgeExited, Retryable: true}
+		}
+		if resp == frameTooLargeResp {
+			// NOT retryable: the same prompt would very likely produce the same
+			// oversize payload, so retries buy a re-run of an expensive turn and
+			// the same failure. See api.ErrFrameTooLarge.
+			return nil, &api.TransportError{Err: api.ErrFrameTooLarge, Retryable: false}
 		}
 		if resp.Error != nil {
 			// Classify "not idle" at the bridge layer so callers can

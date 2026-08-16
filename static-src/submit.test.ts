@@ -21,7 +21,8 @@ const {
   mockSendPromptTo,
   mockSteer,
   mockTakeAttachments,
-  mockAddAttachment,
+  mockAddAttachmentTo,
+  mockAttachmentGeneration,
   mockTypedCommand,
   mockClearLastError,
   mockRestorePromptText,
@@ -29,7 +30,8 @@ const {
   mockSendPromptTo: vi.fn(),
   mockSteer: vi.fn(),
   mockTakeAttachments: vi.fn(() => [] as unknown[]),
-  mockAddAttachment: vi.fn(),
+  mockAddAttachmentTo: vi.fn(),
+  mockAttachmentGeneration: vi.fn(() => 0),
   mockTypedCommand: vi.fn(() => false),
   mockClearLastError: vi.fn(),
   mockRestorePromptText: vi.fn(),
@@ -40,7 +42,8 @@ vi.mock("./actions/chat.js", () => ({ steerChat: { dispatch: mockSteer } }));
 vi.mock("./typed-commands.js", () => ({ handleTypedCommand: mockTypedCommand }));
 vi.mock("./attachments.js", () => ({
   takeAttachments: mockTakeAttachments,
-  addAttachment: mockAddAttachment,
+  addAttachmentTo: mockAddAttachmentTo,
+  attachmentGeneration: mockAttachmentGeneration,
 }));
 // Both are mocked for the same reason the others are: they own real DOM, and
 // send-state's module-level effect paints the send button on import.
@@ -97,6 +100,7 @@ function sentMessageID(call = 0): string {
 beforeEach(() => {
   vi.clearAllMocks();
   mockTakeAttachments.mockReturnValue([]);
+  mockAttachmentGeneration.mockReturnValue(0);
   mockTypedCommand.mockReturnValue(false);
   mockSteer.mockResolvedValue({});
 });
@@ -114,12 +118,31 @@ describe("submitPrompt on an idle chat", () => {
   it("restores the text and the attachments to the input when the send hard-fails", async () => {
     resetStore("c1");
     mockTakeAttachments.mockReturnValue([{ path: "a.ts" }, { path: "b.ts" }]);
+    mockAttachmentGeneration.mockReturnValue(7);
     mockSendPromptTo.mockResolvedValue("failed");
 
     expect(await submitPrompt("c1", "hello")).toBe("failed");
     expect(mockRestorePromptText).toHaveBeenCalledWith("hello");
-    expect(mockAddAttachment).toHaveBeenCalledWith("a.ts");
-    expect(mockAddAttachment).toHaveBeenCalledWith("b.ts");
+    // The generation the send took with it rides the restore, so a chat closed
+    // while the request was in flight can refuse it.
+    expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 7);
+    expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "b.ts", 7);
+  });
+
+  it("hands back the generation read BEFORE the send, not the one after it", async () => {
+    // A close during the request is exactly what bumps it, so reading the token
+    // again on the failure path would compare the new state against itself and
+    // restore into a chat that had just forgotten its files.
+    resetStore("c1");
+    mockTakeAttachments.mockReturnValue([{ path: "a.ts" }]);
+    mockAttachmentGeneration.mockReturnValue(3);
+    mockSendPromptTo.mockImplementation(async () => {
+      mockAttachmentGeneration.mockReturnValue(4); // the chat was closed meanwhile
+      return "failed";
+    });
+
+    await submitPrompt("c1", "hello");
+    expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 3);
   });
 
   it("keeps the input untouched when the send succeeds", async () => {
@@ -185,7 +208,7 @@ describe("submitPrompt during a turn", () => {
 
     expect(await submitPrompt("c1", "hello")).toBe("failed");
     expect(mockRestorePromptText).toHaveBeenCalledWith("hello");
-    expect(mockAddAttachment).toHaveBeenCalledWith("a.ts");
+    expect(mockAddAttachmentTo).toHaveBeenCalledWith("c1", "a.ts", 0);
   });
 });
 

@@ -16,6 +16,8 @@
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg, 0.75rem);
+  /* Positioning context for the top-edge resize handle, which is absolute. */
+  position: relative;
   transition:
     border-color var(--dur-micro),
     box-shadow var(--dur-micro) var(--ease-micro);
@@ -25,6 +27,48 @@
     box-shadow: 0 0 0 1px var(--c-accent);
     background: color-mix(in srgb, var(--c-accent) 3%, var(--c-bg-secondary));
   }
+
+  /* Live resize drag: the pointer must track 1:1, not ease behind it. */
+  &.resizing {
+    transition: none;
+  }
+}
+
+/* --- Composer resize handle (top edge) --- */
+
+.composer-resize {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0.1875rem;
+  cursor: ns-resize;
+  background: transparent;
+  z-index: 1;
+  /* The box's own rounding, so hovering the handle cannot paint square corners
+     over the accent-lit border beneath it. */
+  border-radius: var(--r-lg, 0.75rem) var(--r-lg, 0.75rem) 0 0;
+
+  /* Touch drags must fire pointermove, not pan/scroll the page. */
+  touch-action: none;
+  transition: background var(--dur-micro) var(--ease-micro);
+}
+
+/* Design system: ~24px minimum hit target (WCAG 2.5.8); the visual bar stays
+   3px. Symmetric like the shell handle's, so the downward half stops inside the
+   textarea's own top padding: growing it further would swallow clicks meant to
+   place the caret on the first line of text, and the upward half lands in the
+   bottom bar's padding rather than on the transcript. */
+.composer-resize::before {
+  content: "";
+  position: absolute;
+  inset: -0.625rem 0;
+}
+
+.composer-resize:hover,
+.composer-resize:focus-visible,
+.composer-resize.dragging {
+  background: var(--c-accent);
 }
 
 [id="prompt-input"] {
@@ -37,7 +81,12 @@
   font-size: var(--fs-md);
   font-family: var(--font-sans);
   resize: none;
-  max-height: 12.5rem;
+  /* A CEILING the drag handle raises, not a fixed height: field-sizing keeps the
+     box at its content's size underneath, so a one-line message stays one line
+     however tall the ceiling is. `resize: none` stays — the native grabber
+     cannot be clamped against the transcript or persisted, so the handle
+     replaces it rather than sitting beside it. */
+  max-height: var(--composer-h, 12.5rem);
   field-sizing: content;
   min-height: 2.5rem;
   line-height: 1.4;

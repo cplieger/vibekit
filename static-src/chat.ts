@@ -20,6 +20,8 @@ import {
   activeSession,
   removeChat,
   tabStatusFor,
+  markGhostChat,
+  isGhostChat,
 } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
 import { effect, el } from "@cplieger/reactive";
@@ -42,7 +44,14 @@ import { chatSkeleton } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { showModelPicker, hideModelPicker } from "./picker.js";
 import { mountChatView, setLoadMore, scrollToBottom, loadTurnRail } from "./messages.js";
-import { addAttachment, clearAttachments } from "./attachments.js";
+import { addAttachment } from "./attachments.js";
+import {
+  saveComposerState,
+  restoreComposerState,
+  seedComposerDraft,
+  flushComposerDraft,
+  dropComposerState,
+} from "./composer-state.js";
 import { setCurrentModel, getLastModel } from "./session-context.js";
 import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
@@ -98,6 +107,11 @@ export function openChatTab(
         activateChatView(id);
       },
       onClose: () => {
+        // The draft belongs to the CHAT, not to the tab, so a pending save goes
+        // out before the teardown dispatch: a close that keeps the record keeps
+        // the unsent text with it, and a delete's tombstone then drops the save
+        // rather than racing it.
+        flushComposerDraft();
         // There is no archive step any more: a closed chat is just a chat that
         // stopped being in a tab, and "archived" is computed from its age
         // against the retention window. So closing a tab persists nothing.
@@ -120,6 +134,9 @@ export function openChatTab(
           // delete_chat implies the same teardown server-side.
           deleteChat(id);
         }
+        // Local only: a close that kept the record kept its draft with it, and
+        // reopening the chat seeds the text back from the server.
+        dropComposerState(id);
       },
     },
     opts,
@@ -134,9 +151,13 @@ function deleteChat(id: string): void {
 }
 
 function activateChatView(id: string): void {
+  // Save-then-restore against the shared composer, the same pair activateFile
+  // runs against the shared editor textarea. The save MUST precede setActive:
+  // it reads the outgoing chat's id, which nothing can recover afterwards.
+  saveComposerState();
   setActive(id);
   hideModelPicker();
-  clearAttachments();
+  restoreComposerState(id);
   ensureBound();
   const session = get(id);
   if (session === undefined) {
@@ -152,6 +173,7 @@ function activateChatView(id: string): void {
 
   if (session.message_count === 0 && session.messages.length === 0) {
     showModelPicker(session.model, applyLocalModel);
+    seedEmptyChatDraft(id);
   } else {
     // Hydrate messages from the server, then render. Defer the skeleton by
     // 150ms so a fast (cached) open never flashes it: skeletonTiming appends
@@ -186,6 +208,11 @@ function activateChatView(id: string): void {
         $.messages.appendChild(retry);
         return;
       }
+      // The chat's record is in now, so its stored draft can be adopted. Only
+      // matters when this device holds none for the chat — after a reload — and
+      // it deliberately loses to a draft the user has started typing since the
+      // activation.
+      seedComposerDraft(id);
       const fresh = get(id);
       if (fresh !== undefined) {
         setupLoadMore(id);
@@ -197,6 +224,32 @@ function activateChatView(id: string): void {
     });
   }
   refreshContextUI(session);
+}
+
+/** Fetch a message-less chat's record so its stored draft can be adopted.
+ *
+ *  The draft rides the single-chat GET (deliberately, so it travels on neither
+ *  the list nor a chat_updated frame), and the branch above skips that GET for a
+ *  chat with no messages — which is exactly the chat that can still hold one. A
+ *  record is auto-created by `set_mode` or `set_effort` before the first prompt,
+ *  so the user can pick a mode, type half a message, reload, and come back to a
+ *  persisted zero-message chat whose draft the server is holding. Without this
+ *  the box came back empty, which defeats the reason the draft is server-side at
+ *  all.
+ *
+ *  A GHOST chat is skipped: its id exists nowhere but this tab, so the GET would
+ *  404 on every New chat click. The re-check after the await is the same guard
+ *  the loaded branch uses — the user can switch chats while it is in flight, and
+ *  the seed writes into the shared composer. */
+function seedEmptyChatDraft(id: string): void {
+  if (isGhostChat(id)) {
+    return;
+  }
+  void loadMessages(id).then((ok) => {
+    if (ok && getActiveId() === id) {
+      seedComposerDraft(id);
+    }
+  });
 }
 
 // --- Pagination ---
@@ -287,6 +340,9 @@ function seedLocalChat(model: string): string {
     updated_at: Date.now(),
     message_count: 0,
   });
+  // Nothing on the server answers to this id yet, so nothing should ask it about
+  // the chat. The first frame naming it clears the mark (store.upsertHeader).
+  markGhostChat(id);
   return id;
 }
 

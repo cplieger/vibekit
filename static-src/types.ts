@@ -206,6 +206,28 @@ export interface Session {
    *  boundary because that is when KAS clears its own buffer. */
   steers?: PendingSteer[];
   supervised_mode?: boolean;
+  /** Reasoning-effort level ("low".."max", "" = the engine default). The
+   *  fourth per-chat composer setting, beside model, mode and supervised; it
+   *  used to be one global `model_effort` setting keyed by the last model, so
+   *  two chats could not disagree. */
+  effort?: string;
+  /** The SERVER's copy of the composer draft, from the single-chat GET. A SEED
+   *  only: composer-state.ts holds the live working copy, adopts this once per
+   *  chat and thereafter ignores it, because a fetch can land after the user has
+   *  started typing the next message. It rides that GET rather than the header so
+   *  it stays off the list endpoint and off every chat_updated frame; a chat with
+   *  a record but no messages therefore needs its own fetch to get one, which is
+   *  what activateChatView's empty branch does (`set_mode` and `set_effort` both
+   *  auto-create the record before the first prompt, so a persisted empty chat
+   *  can genuinely hold a draft). */
+  draft?: string;
+  /** This chat exists nowhere but this tab's memory: a client-minted id whose
+   *  record the server has not acknowledged. Cleared the moment a server frame
+   *  names it (upsertHeader's re-sync branch), and gone with the row when the tab
+   *  closes. What it buys is not asking the server about a chat it has never
+   *  heard of — a GET on a ghost id 404s, and the empty-chat draft fetch would
+   *  fire one on every New chat click. */
+  ghost?: boolean;
   compaction_watermark?: string;
 }
 

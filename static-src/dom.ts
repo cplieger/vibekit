@@ -93,6 +93,17 @@ class Elements {
   get promptInput(): HTMLTextAreaElement {
     return byId("prompt-input");
   }
+  /** The bordered box holding the textarea, the pill rows and the resize
+   *  handle. Registered because the handle's drag writes --composer-h here (the
+   *  textarea's max-height consumes it) while the pill rows read the box's
+   *  focus-within state. */
+  get promptBox(): HTMLDivElement {
+    return byId("prompt-box");
+  }
+  /** The composer's top-edge resize handle (a keyboard role=separator). */
+  get composerResize(): HTMLDivElement {
+    return byId("composer-resize");
+  }
   get attachmentRow(): HTMLUListElement {
     return byId("attachment-row");
   }

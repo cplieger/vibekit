@@ -74,12 +74,19 @@ func TestKnownKeys_CoversFrontendSettings(t *testing.T) {
 		"agent_ignore_files",
 		"debug_logs",
 		"supervised_default",
-		"model_effort",
+		"scheduled_auto_approve",
+		"chat_retention_days",
 	}
 	for _, k := range frontendKeys {
 		if _, ok := KnownKeys[k]; !ok {
 			t.Errorf("KnownKeys missing %q (declared in static-src/persist.ts AppSettings)", k)
 		}
+	}
+	// model_effort is deliberately absent from both sides now: reasoning effort
+	// is per-chat, on the chat record (api.Chat.Effort). A key here with no
+	// frontend writer and no server reader would only invite one back.
+	if _, ok := KnownKeys["model_effort"]; ok {
+		t.Error("KnownKeys still declares model_effort; effort moved to the chat record")
 	}
 }
 

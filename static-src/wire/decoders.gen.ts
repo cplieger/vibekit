@@ -4,7 +4,7 @@ import { asObject, reqStr, reqNum, reqBool, optStr, optNum, optBool, reqOneOf, d
 import type { AccountUsage, AccountUsageBreakdown, ApprovalFile, Block, CatalogInfo, ChatDeletedPayload, ChatHeader, Check, CodeReference, CodeReferencesPayload, ConfiguredForge, ConnectedPayload, DecisionSettledPayload, DeviceFlowResponse, ElicitationNeededPayload, ElicitationPropertySchema, ElicitationRequestSchema, ErrorPayload, FileChange, GovernanceFeatures, GovernanceStatePayload, Inventory, Issue, Job, JobResponse, JobsResponse, Label, MCPConnectedPayload, MCPDisconnectedPayload, MCPFailedPayload, MCPOAuthPayload, Message, MessageChunkPayload, MeteringItem, OpenExternalURLPayload, PR, PermissionNeededPayload, PermissionOption, PermissionsChangedPayload, PlanEntry, PolicyErrorItem, PolicyErrorPayload, PolicyExplainResult, PolicyRule, PolicyRuleCore, PolicyView, PollResult, Recipe, RecipesResponse, RefusalInfo, Release, RemoveResponse, Repo, RunFinishedPayload, RunLaunchRequest, RunLaunchedResponse, RunProgressPayload, RunStartedPayload, SafetyPropertiesPayload, SafetyProperty, SafetyStatusPayload, SearchHit, SearchResponse, SessionMode, SessionModel, SteerClearedPayload, SteerInjectedPayload, SteerQueuedPayload, SystemTool, ToolCall, ToolCallPayload, ToolCallUpdatePayload, ToolCheckpoint, ToolDenial, ToolDenialRule, ToolDiff, ToolDisclosed, ToolInfo, ToolJobChangedPayload, ToolJobOutputPayload, ToolLocation, TurnEndedPayload, TurnStatePayload, Usage, User, UserInputNeededPayload, UserInputOption, UserInputSubOption, WhoamiResponse } from "./types.gen.js";
 
 const DECISION_KINDS = ["permission", "elicitation", "user_input"] as const;
-const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "stream_timeout", "spawn_failed", "switch_failed", "compaction_failed", "mode_not_applied", "model_not_served"] as const;
+const ERROR_CODES = ["recovery_failed", "bridge_start_failed", "prompt_failed", "agent_not_found", "agent_config_error", "rate_limit", "stream_timeout", "spawn_failed", "switch_failed", "compaction_failed", "mode_not_applied", "model_not_served", "auth_token_unavailable"] as const;
 const EVENT_KINDS = ["interrupted", "cancelled", "model_switched", "compacted", "compaction_failed", "infra_safety_blocked"] as const;
 const FORGE_KINDS = ["github", "gitlab", "gitea", "codeberg"] as const;
 const PLAN_STATUSS = ["pending", "in_progress", "completed"] as const;
@@ -130,6 +130,8 @@ export const decodeChatHeader: Decoder<ChatHeader> = (v) => {
   if (acpSessionId !== undefined) out.acp_session_id = acpSessionId;
   const currentModeId = o["current_mode_id"] === null ? undefined : optStr(o, "current_mode_id", "$.chat_header");
   if (currentModeId !== undefined) out.current_mode_id = currentModeId;
+  const effort = o["effort"] === null ? undefined : optStr(o, "effort", "$.chat_header");
+  if (effort !== undefined) out.effort = effort;
   const compactionWatermark = o["compaction_watermark"] === null ? undefined : optStr(o, "compaction_watermark", "$.chat_header");
   if (compactionWatermark !== undefined) out.compaction_watermark = compactionWatermark;
   if (o["available_models"] !== undefined && o["available_models"] !== null) out.available_models = decodeArray(o["available_models"], decodeSessionModel, "$.chat_header.available_models");

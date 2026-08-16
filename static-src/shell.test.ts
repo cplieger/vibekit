@@ -281,7 +281,10 @@ describe("shell.ts: host-driven actions", () => {
     expect(h.resetSpy).not.toHaveBeenCalled();
   });
 
-  it("run-in-shell types the command into the terminal through the send funnel", async () => {
+  // The command lands at the prompt and WAITS. No trailing newline anywhere on
+  // this path: send() writes raw bytes, so one would be Enter and the click
+  // would execute rather than type. Pressing Enter is the user's confirmation.
+  it("types the command with NO trailing newline, so it waits at the prompt", async () => {
     const h = await setup();
     h.mod.initShellPanel(); // registers the run callback
     h.shellBtn.click(); // open so the terminal (and its handle) exists
@@ -290,7 +293,10 @@ describe("shell.ts: host-driven actions", () => {
     expect(runCb).not.toBeNull();
     runCb?.("echo hi");
 
-    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi\n"));
+    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi"));
+    const sent = h.sendSpy.mock.calls[0]?.[0] as Uint8Array;
+    expect(sent.at(-1)).not.toBe(0x0a);
+    expect(sent.at(-1)).not.toBe(0x0d);
   });
 });
 

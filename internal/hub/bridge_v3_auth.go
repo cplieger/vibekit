@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/url"
+	"sync/atomic"
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/kiroauth"
@@ -122,14 +123,64 @@ func isSafeExternalURL(u string) bool {
 	return parsed.Scheme == "http" || parsed.Scheme == "https"
 }
 
+// authTokenLatch remembers the last outcome of vending a KAS access token.
+//
+// It exists so readiness can report a dead sign-in without probing identity.
+// /api/health is a lock and two field reads per request and must stay that way —
+// asking kiro-cli whether it still holds a token is a subprocess spawn, and
+// kiroauth.Token can block up to 15s on an SSO-OIDC refresh under a mutex, so a
+// probe on the health path would turn a monitor's poll into a process launch.
+// The vend already happens on the session-creation critical path, so the fact is
+// free to observe there; nothing else has to go looking for it.
+//
+// NOT sticky. It clears on the next success, because the failure this serves is
+// an expired SSO refresh chain and the sign-in that fixes it is exactly what
+// makes the latch stale. A latch that only ever set would keep reporting a
+// signed-out runtime after the user signed back in.
+//
+// It holds the outcome and not the reason: kiro-cli's own error text goes to the
+// log line and to the SSE error frame at the vend site, both of which already
+// have it, and the readiness envelope must not carry it — /api/health is
+// unauthenticated and that text can name a path on the volume, which is the same
+// reason kiroReasonText serves fixed literals.
+type authTokenLatch struct {
+	failed atomic.Bool
+}
+
+// record folds one vend outcome in. A nil error clears.
+func (l *authTokenLatch) record(err error) {
+	l.failed.Store(err != nil)
+}
+
+// AuthTokenUnavailable reports whether the last attempt to vend a KAS access
+// token failed. The readiness handler's sign-in leg (internal/server) reads
+// this; it is one atomic load and spawns nothing.
+func (h *Hub) AuthTokenUnavailable() bool {
+	if h.authLatch == nil {
+		return false
+	}
+	return h.authLatch.failed.Load()
+}
+
 // respondKiroAccessToken vends the get-kas-token result. On failure it
 // returns a JSON-RPC error so KAS surfaces a clear auth failure rather
-// than hanging.
+// than hanging, and broadcasts the failure so the browser can offer a
+// sign-in: KAS's own answer to this error is to run unauthenticated, which
+// looks like a session that opens and then fails every turn.
 func (h *Hub) respondKiroAccessToken(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	result, err := h.kiroAccessTokenResult(ctx)
 	if err != nil {
 		slog.Error("v3 auth: token unavailable", "chat_id", chatID, "error", err)
 		h.respondBridge(ctx, chatID, msg, nil, err)
+		// The message is kiro-cli's own text, not a rendering of it: it names
+		// which leg of the login chain is dead (expired refresh token, no
+		// profile, a missing binary), and no wording invented here could be more
+		// specific. Broadcast AFTER the RPC error so the agent's request is never
+		// waiting on a client fan-out.
+		h.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
+			Code:    api.ErrCodeAuthTokenUnavailable,
+			Message: err.Error(),
+		}))
 		return
 	}
 	h.respondBridge(ctx, chatID, msg, result, nil)
@@ -138,8 +189,18 @@ func (h *Hub) respondKiroAccessToken(ctx context.Context, chatID api.ChatID, msg
 // kiroAccessTokenResult vends the result for the v3 _kiro/auth/getAccessToken
 // host request by asking kiro-cli for its current token (see
 // kiroauth.CLISource). Shared by the chat-bridge responder and the utility
-// bridge (answerHostRequest) so the wire keys live in exactly one place.
+// bridge (answerHostRequest) so the wire keys live in exactly one place — which
+// is also why the latch is written HERE rather than in the responder above:
+// both callers vend through this function, so both outcomes reach readiness.
 func (h *Hub) kiroAccessTokenResult(ctx context.Context) (map[string]any, error) {
+	result, err := h.vendKiroAccessToken(ctx)
+	if h.authLatch != nil {
+		h.authLatch.record(err)
+	}
+	return result, err
+}
+
+func (h *Hub) vendKiroAccessToken(ctx context.Context) (map[string]any, error) {
 	if h.kiroToken == nil {
 		return nil, kiroauth.ErrNoSource
 	}

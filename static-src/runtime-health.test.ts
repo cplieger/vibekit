@@ -14,6 +14,12 @@ vi.mock("./banner-stack.js", () => ({
 const { mockOpenSetting } = vi.hoisted(() => ({ mockOpenSetting: vi.fn() }));
 vi.mock("./settings-highlight.js", () => ({ openSetting: mockOpenSetting }));
 
+// The sign-in CTA's destination. Mocked like the two above: a call into it is a
+// command at this module's boundary, and the real one reads #login-modal out of
+// the DOM registry.
+const { mockShowLoginModal } = vi.hoisted(() => ({ mockShowLoginModal: vi.fn() }));
+vi.mock("./modals.js", () => ({ showLoginModal: mockShowLoginModal }));
+
 import { checkRuntimeHealth } from "./runtime-health.js";
 import { apiGetOrError } from "./api-client.js";
 import { showBanner, clearBannerCodes } from "./banner-stack.js";
@@ -44,7 +50,10 @@ describe("runtime-health: degraded banner reconciliation", () => {
     expect(message).toContain("restart the container");
     expect(level).toBe("error");
     expect(dismissible).toBe(false);
-    expect(mockedClear).not.toHaveBeenCalled();
+    // The sibling family is retired rather than left stacked: the health
+    // envelope reports ONE reason, so the other family's banner is stale the
+    // moment this one is true.
+    expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_signed_out"]);
   });
 
   // D115: every one of these states tells the reader to go and look at
@@ -92,7 +101,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
     expect(message).toContain(wantText);
     expect(level).toBe(wantLevel);
     expect(dismissible).toBe(false);
-    expect(mockedClear).not.toHaveBeenCalled();
+    expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_signed_out"]);
   });
 
   it("clears the banner when health is ok", async () => {
@@ -104,7 +113,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
     });
     await checkRuntimeHealth();
     expect(mockedShow).not.toHaveBeenCalled();
-    expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded"]);
+    expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded", "runtime_signed_out"]);
   });
 
   it("does not show the banner for a startup/shutdown 503", async () => {
@@ -117,7 +126,7 @@ describe("runtime-health: degraded banner reconciliation", () => {
     });
     await checkRuntimeHealth();
     expect(mockedShow).not.toHaveBeenCalled();
-    expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded"]);
+    expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded", "runtime_signed_out"]);
   });
 
   it("does not show the banner on a plain network failure (no body)", async () => {
@@ -130,5 +139,72 @@ describe("runtime-health: degraded banner reconciliation", () => {
     await checkRuntimeHealth();
     expect(mockedShow).not.toHaveBeenCalled();
     expect(mockedClear).toHaveBeenCalled();
+  });
+});
+
+// D106. The second reason family, and the reason it is a family of its own: a
+// signed-out runtime is not an install state, so it must not inherit the install
+// copy — which would tell the reader to restart the container, the one action
+// that cannot help.
+describe("runtime-health: the sign-in family", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("banners a signed-out runtime under its own code with a sign-in CTA", async () => {
+    mockedGet.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      data: null,
+      error: "HTTP 503",
+      body: { status: "unready", reason: "sign-in required" },
+    });
+    await checkRuntimeHealth();
+
+    expect(mockedShow).toHaveBeenCalledTimes(1);
+    const [chatID, code, message, level, dismissible, link] = mockedShow.mock.calls[0]!;
+    expect(chatID).toBe("*");
+    // Its own code, so clearing one family cannot silently drop the other.
+    expect(code).toBe("runtime_signed_out");
+    expect(message).toContain("signed out");
+    // The install family's remedy must not appear here.
+    expect(message).not.toContain("restart the container");
+    expect(level).toBe("error");
+    expect(dismissible).toBe(false);
+    expect(link?.label).toBe("Sign in");
+    // Not Run Diagnostics: the diagnostics panel can only report what the
+    // banner already says, and signing in is the whole remedy.
+    link?.onClick?.();
+    expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
+    expect(mockOpenSetting).not.toHaveBeenCalled();
+    // The install family's banner is retired, not stacked.
+    expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded"]);
+  });
+
+  it("does not read a kiro-cli install reason as a sign-in one", async () => {
+    mockedGet.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      data: null,
+      error: "HTTP 503",
+      body: { status: "unready", reason: "kiro-cli installing" },
+    });
+    await checkRuntimeHealth();
+    expect(mockedShow.mock.calls[0]?.[1]).toBe("runtime_degraded");
+    expect(mockedShow.mock.calls[0]?.[5]?.label).toBe("Run diagnostics");
+  });
+
+  it("clears the sign-in banner once a token vends again", async () => {
+    mockedGet.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { status: "ok" },
+      error: "",
+    });
+    await checkRuntimeHealth();
+    expect(mockedShow).not.toHaveBeenCalled();
+    // Both families clear together on a healthy probe: the latch is not sticky,
+    // so a recovered sign-in reports ok and the banner must not outlive it.
+    expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded", "runtime_signed_out"]);
   });
 });

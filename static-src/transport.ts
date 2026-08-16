@@ -41,6 +41,7 @@ type CommandType =
   | "permission_response"
   | "elicitation_response"
   | "set_effort"
+  | "set_draft"
   | "set_mode"
   | "rewind_chat";
 
@@ -87,6 +88,9 @@ export type TypedCommand =
       payload: { request_id: number; action: string; content?: Record<string, unknown> };
     }
   | { type: "set_effort"; chat_id: string; request_id: string; payload: { level: string } }
+  // The composer text typed and not sent. An empty string is a real value: it
+  // is how a sent or abandoned draft is cleared.
+  | { type: "set_draft"; chat_id: string; payload: { text: string } }
   | { type: "set_mode"; chat_id: string; payload: { mode_id: string } }
   // Addresses a USER MESSAGE, not a turn ordinal: KAS's revertMultiple takes a
   // messageId and refuses a non-user one.

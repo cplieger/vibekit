@@ -228,6 +228,13 @@ const (
 	// set this account's session advertises, so it was refused before the wire
 	// rather than accepted locally and rejected mid-prompt on every later turn.
 	ErrCodeModelNotServed ErrorCode = "model_not_served"
+	// ErrCodeAuthTokenUnavailable means kiro-cli could not vend a KAS access
+	// token for the _kiro/auth/getAccessToken host request. Distinct from every
+	// other code here because the answer is a SIGN-IN rather than a retry: KAS
+	// runs unauthenticated without that token, so sessions still open and every
+	// service-backed surface (the model registry, turns) fails. In practice this
+	// is an expired SSO refresh chain after a week away, not a first boot.
+	ErrCodeAuthTokenUnavailable ErrorCode = "auth_token_unavailable" //nolint:gosec // G101: an SSE error code, not a credential
 )
 
 // ErrorPayload is the payload for type="error". Code lets clients react

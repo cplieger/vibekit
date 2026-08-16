@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -69,4 +70,97 @@ func TestHandleOpenExternalURL(t *testing.T) {
 			t.Fatal("handleKiroClientRequest should handle _kiro/openExternalUrl")
 		}
 	})
+}
+
+// TestAuthTokenLatchTracksTheLastVend pins the latch's two halves. It has to
+// SET, or readiness cannot report a signed-out runtime; and it has to CLEAR on
+// the next success, because the failure it serves is an expired SSO refresh chain
+// and signing back in is exactly what makes the latch stale. A set-only latch
+// would keep reporting unready after the user fixed it, with nothing on the wire
+// to say otherwise.
+func TestAuthTokenLatchTracksTheLastVend(t *testing.T) {
+	h, _, _ := newTestHub()
+
+	if h.AuthTokenUnavailable() {
+		t.Error("a hub that has never vended a token must not report a dead sign-in")
+	}
+
+	// A hub with no token source is the ErrNoSource path, which is the same
+	// failure shape as an expired login as far as readiness is concerned.
+	if _, err := h.kiroAccessTokenResult(t.Context()); err == nil {
+		t.Fatal("kiroAccessTokenResult with no source should fail")
+	}
+	if !h.AuthTokenUnavailable() {
+		t.Error("a failed vend must latch, or /api/health has nothing to report")
+	}
+
+	h.authLatch.record(nil)
+	if h.AuthTokenUnavailable() {
+		t.Error("a successful vend must clear the latch: the sign-in that fixes this is what makes it stale")
+	}
+}
+
+// TestAuthTokenLatchIsNilSafe covers the composition-root ordering: the readiness
+// option is handed h.AuthTokenUnavailable as a method value, and a hub built
+// without the latch (a test double, a partially-wired composition) must read as
+// signed-in rather than panicking inside a health probe.
+func TestAuthTokenLatchIsNilSafe(t *testing.T) {
+	h := &Hub{}
+	if h.AuthTokenUnavailable() {
+		t.Error("a hub with no latch must not report a dead sign-in")
+	}
+	// The vend path must also survive it, since the latch is written there.
+	if _, err := h.kiroAccessTokenResult(t.Context()); err == nil {
+		t.Fatal("expected the no-source error")
+	}
+}
+
+// TestAccessTokenFailureBroadcastsTheAuthError pins the client half of D106: the
+// failure used to exist only as one slog line and a JSON-RPC error to KAS, and
+// KAS's answer to that error is to run UNAUTHENTICATED — the session opens and
+// every service-backed surface behind it fails, with nothing on screen saying
+// why. The frame carries the distinct code static-src/handlers/error-routing.ts
+// routes to the sign-in banner.
+func TestAccessTokenFailureBroadcastsTheAuthError(t *testing.T) {
+	h, _, _ := newTestHub()
+	_, before := h.sse.hub.Bounds()
+
+	// kiroToken is nil on a test hub, so the vend fails with ErrNoSource.
+	id := int64(7)
+	h.respondKiroAccessToken(t.Context(), "c1", &api.RPCResponse{
+		Method: methodKiroGetAccessToken,
+		ID:     &id,
+	})
+
+	events := bufferedSince(h, before)
+	wantSubset(t, extractTypes(t, events), string(api.EventError))
+
+	var found bool
+	for _, e := range events {
+		var msg api.ServerEvent
+		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
+			t.Fatalf("unmarshal event: %v", err)
+		}
+		if msg.Type != api.EventError {
+			continue
+		}
+		raw, err := json.Marshal(msg.Payload)
+		if err != nil {
+			t.Fatalf("remarshal payload: %v", err)
+		}
+		var p api.ErrorPayload
+		if err := json.Unmarshal(raw, &p); err != nil {
+			t.Fatalf("unmarshal error payload: %v", err)
+		}
+		if p.Code != api.ErrCodeAuthTokenUnavailable {
+			t.Errorf("code = %q, want %q", p.Code, api.ErrCodeAuthTokenUnavailable)
+		}
+		if p.Message == "" {
+			t.Error("the frame must carry kiro-cli's own reason: no wording invented here is more specific")
+		}
+		found = true
+	}
+	if !found {
+		t.Error("no error event was broadcast for a failed token vend")
+	}
 }

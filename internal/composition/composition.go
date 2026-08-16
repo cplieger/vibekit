@@ -240,6 +240,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithCLIPath(kiro.cliPath),
 		server.WithKiroReady(kiro.ready),
 		server.WithKiroRescan(kiro.rescan),
+		server.WithAuthUnavailable(h.AuthTokenUnavailable),
 		server.WithConfigDir(cfg.ConfigDir),
 		server.WithWorkDir(cfg.WorkDir),
 		server.WithTrustedProxies(cfg.TrustedProxies),

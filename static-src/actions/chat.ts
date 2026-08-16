@@ -115,6 +115,39 @@ export const setSupervised = transportAction<
   error: "Couldn't update supervised mode",
 });
 
+// --- chat.set_draft ---
+
+/** Persist the composer text the user has typed into a chat and not sent.
+ *
+ *  Server-side rather than localStorage so a draft follows the user across
+ *  devices and joins the state that is already per-chat and canonical. Dispatched
+ *  on a 600ms debounce and flushed on blur, on a chat switch and on unload, so it
+ *  is the highest-frequency mutation in the app and is deliberately quiet:
+ *
+ *    - `success: false` / `error: false` — the decision says draft saving is
+ *      user-transparent. A toast every 600ms of typing would be the loudest
+ *      thing in the UI, and a failed draft save costs nothing the user can act
+ *      on: the live textarea still holds the text and the next keystroke retries.
+ *    - `scope` per chat so dispatches serialize, which is what removes the need
+ *      for a generation counter to stop an older save landing after a newer one.
+ *    - no optimism, because there is nothing to render: the composer IS the
+ *      view of this value.
+ *
+ *  Not retryable on purpose. A retry would re-send text the next debounce is
+ *  about to supersede. */
+export const setDraft = transportAction<{ chatID: string; text: string }>({
+  name: "chat.set_draft",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID, text }) => ({
+    type: "set_draft",
+    chat_id: chatID,
+    payload: { text },
+  }),
+  success: false,
+  error: false,
+});
+
 // --- chat.compact ---
 
 /** compactChat summarizes the conversation through KAS's NATIVE verb.

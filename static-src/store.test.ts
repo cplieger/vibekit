@@ -21,6 +21,8 @@ import {
   setName,
   activeSession,
   getActiveId,
+  markGhostChat,
+  isGhostChat,
 } from "./store.js";
 import type { Session } from "./types.js";
 import { effect, flushSync } from "@cplieger/reactive";
@@ -257,6 +259,59 @@ describe("activeSession reactivity (two-tier tracking + batch)", () => {
     expect(count).toBe(1);
 
     dispose();
+  });
+});
+
+// A client-minted chat exists nowhere but this tab until the server says
+// otherwise, and asking the server about it 404s. The mark is what lets a caller
+// skip that question, so what matters is that it CLEARS the moment the record is
+// real — a mark left standing would go on suppressing a fetch the chat has since
+// earned.
+describe("ghost chats (a client-minted id the server has not acknowledged)", () => {
+  const header = (id: string) => ({
+    id,
+    name: id,
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      turn_count: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
+    created_at: 0,
+    updated_at: 0,
+    message_count: 0,
+  });
+
+  it("clears the mark when a server frame names the chat", () => {
+    setSessions([makeSession("g1")]);
+    markGhostChat("g1");
+    expect(isGhostChat("g1")).toBe(true);
+
+    upsertHeader(header("g1"));
+    expect(isGhostChat("g1")).toBe(false);
+  });
+
+  it("keeps the mark across writes that are not a server re-sync", () => {
+    setSessions([makeSession("g2")]);
+    markGhostChat("g2");
+    setName("g2", "renamed locally");
+    setThinking("g2", true);
+    expect(isGhostChat("g2")).toBe(true);
+  });
+
+  it("reports no ghost for an id with no row, which is nothing to ask about", () => {
+    setSessions([]);
+    markGhostChat("nothing");
+    expect(isGhostChat("nothing")).toBe(false);
+  });
+
+  it("does not survive the row: a reload's list is all persisted chats", () => {
+    setSessions([makeSession("g3")]);
+    markGhostChat("g3");
+    setSessions([makeSession("g3")]); // what loadList does
+    expect(isGhostChat("g3")).toBe(false);
   });
 });
 

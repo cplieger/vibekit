@@ -498,6 +498,65 @@
   }
 }
 
+/* The OAuth loopback relay: the rescue box for a sign-in whose redirect landed
+   on the wrong machine. Sits under the sign-in pill on a needs_auth row, and is
+   collapsed by default so a local-browser sign-in sees one line, not a form. */
+.mcp-relay {
+  align-self: stretch;
+  margin-block-start: var(--sp-1);
+  font-size: var(--fs-xs);
+
+  & > summary {
+    color: var(--c-text-tertiary);
+    cursor: pointer;
+    width: fit-content;
+
+    &:hover {
+      color: var(--c-text-secondary);
+    }
+  }
+}
+
+.mcp-relay-help {
+  margin-block: var(--sp-1) var(--sp-2);
+  color: var(--c-text-tertiary);
+  line-height: var(--lh-normal);
+}
+
+.mcp-relay-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  /* The address is long and the button must stay reachable on a phone, so the
+     row wraps rather than letting the input squeeze the button off the edge. */
+  flex-wrap: wrap;
+}
+
+.mcp-relay-input {
+  flex: 1 1 16rem;
+  min-width: 0;
+  font-family: var(--ff-mono);
+  font-size: var(--fs-xs);
+}
+
+.mcp-relay-note {
+  margin-block-start: var(--sp-2);
+  color: var(--c-text-tertiary);
+  line-height: var(--lh-normal);
+
+  &:empty {
+    display: none;
+  }
+}
+
+.mcp-relay-err {
+  color: var(--c-red);
+}
+
+.mcp-relay-ok {
+  color: var(--c-green);
+}
+
 .mcp-drift-banner {
   display: flex;
   align-items: center;

@@ -125,6 +125,10 @@ type Hub struct {
 	agentTerms     *agentTerminals
 	hookStatus     *hookStatusCache
 	governance     *governanceCache
+	// authLatch remembers the last outcome of vending a KAS access token, so
+	// readiness can report a dead sign-in without asking kiro-cli (see
+	// bridge_v3_auth.go).
+	authLatch *authTokenLatch
 
 	// secrets holds the credential blobs KAS asks vibekit to persist on its
 	// behalf (_kiro/secret/*, bridge_v3_secret.go). ONE store for every
@@ -248,6 +252,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		chatStore:    chatStore,
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
 		governance:   newGovernanceCache(),
+		authLatch:    &authTokenLatch{},
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
 	}

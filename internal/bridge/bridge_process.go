@@ -224,9 +224,10 @@ func (b *Bridge) startProcess(engine string) error {
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 	b.stdin = stdin
-	b.stdout = bufio.NewScanner(stdoutPipe)
-	// Line cap must fit fsWriteCap worst-case; see scannerLineCap.
-	b.stdout.Buffer(make([]byte, 0, 64*1024), scannerLineCap)
+	// A frameReader rather than a bufio.Scanner: an oversize frame has to be
+	// survivable, and ErrTooLong is terminal for the Scanner that raised it.
+	// See bridge_frame.go.
+	b.stdout = newFrameReader(bufio.NewReaderSize(stdoutPipe, stdoutBufSize))
 	if startErr := b.cmd.Start(); startErr != nil {
 		_ = stdin.Close()
 		_ = stdoutPipe.Close()

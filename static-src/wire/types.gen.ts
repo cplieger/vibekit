@@ -2,7 +2,7 @@
 
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
-export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "stream_timeout" | "spawn_failed" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served";
+export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "stream_timeout" | "spawn_failed" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served" | "auth_token_unavailable";
 
 export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "compaction_failed" | "infra_safety_blocked";
 
@@ -191,6 +191,14 @@ export interface ChatHeader {
   model?: string;
   acp_session_id?: string;
   current_mode_id?: string;
+  /**
+ * Effort mirrors Chat's. Carried here because the effort control reads the
+ * ACTIVE chat's level, and an empty chat never fetches its full record (the
+ * client shows the model picker instead of loading messages), so the header
+ * is the only path that reaches every chat. Chat.Draft is deliberately NOT
+ * mirrored — see the comment on that field.
+ */
+  effort?: string;
   id: string;
   compaction_watermark?: string;
   available_models?: SessionModel[];

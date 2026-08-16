@@ -25,6 +25,8 @@ vi.mock("./store.js", () => ({
     activeId = id;
   }),
   upsertHeader: vi.fn(),
+  markGhostChat: vi.fn(),
+  isGhostChat: vi.fn(() => false),
   contextSizeFor: vi.fn(() => 0),
   defaultUsage: vi.fn(() => ({
     context_pct: 0,
@@ -64,7 +66,17 @@ vi.mock("./messages.js", () => ({
   // future test does exercise that path.
   loadTurnRail: vi.fn(),
 }));
-vi.mock("./attachments.js", () => ({ addAttachment: vi.fn(), clearAttachments: vi.fn() }));
+vi.mock("./attachments.js", () => ({ addAttachment: vi.fn() }));
+// The composer's per-chat state owns real DOM (the textarea) and a debounced
+// action dispatch; chat.ts only has to call its save/restore pair in the right
+// order, which the mock records.
+vi.mock("./composer-state.js", () => ({
+  saveComposerState: vi.fn(),
+  restoreComposerState: vi.fn(),
+  seedComposerDraft: vi.fn(),
+  flushComposerDraft: vi.fn(),
+  dropComposerState: vi.fn(),
+}));
 vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
 vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
@@ -89,10 +101,13 @@ import {
   createPlannerSession,
   openChatTab,
   openSideChat,
+  openPreviousSession,
   initTranscriptContextMenu,
 } from "./chat.js";
 import { openTab } from "./tabs.js";
-import { get, removeChat, upsertHeader } from "./store.js";
+import { get, removeChat, upsertHeader, markGhostChat, isGhostChat } from "./store.js";
+import { loadMessages } from "./store-load.js";
+import { seedComposerDraft } from "./composer-state.js";
 import { isRetentionEnabled } from "./retention.js";
 import { closeChat, deleteChat } from "./actions/chat.js";
 
@@ -100,6 +115,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(get).mockReturnValue(undefined);
   vi.mocked(isRetentionEnabled).mockReturnValue(false);
+  vi.mocked(isGhostChat).mockReturnValue(false);
+  vi.mocked(loadMessages).mockResolvedValue(true);
   activeId = "";
 });
 
@@ -112,6 +129,86 @@ describe("createPlannerSession", () => {
     // createSession() sets the new chat active synchronously, so the dispatch
     // targets a real (non-empty) chat id.
     expect(arg.chatID).not.toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Activating a chat with NO messages. It still takes the model-picker branch, so
+// it never called loadMessages — and the draft rides that single-chat GET, on
+// purpose (it must travel on neither the list nor a chat_updated frame). A chat
+// can be PERSISTED with zero messages, because set_mode and set_effort both
+// auto-create the record before the first prompt, so a mode pick plus half a
+// typed message plus a reload came back to an empty box with the draft sitting on
+// the server: the exact case server-side drafts exist for.
+// ---------------------------------------------------------------------------
+
+describe("the draft of a chat with no messages", () => {
+  /** A persisted zero-message chat. `model` is empty so the context-size branch
+   *  above it (which calls setModel) stays out of the way. */
+  function emptyChat(): never {
+    return {
+      id: "c-empty",
+      model: "",
+      message_count: 0,
+      messages: [],
+      usage: { context_size: 0 },
+    } as never;
+  }
+
+  /** Activate through the History row path, the one exported caller that reaches
+   *  activateChatView for a chat the store already holds. */
+  function activate(): void {
+    openPreviousSession({ chat_id: "c-empty", session_id: "s1", title: "t", updated_at: 1 });
+  }
+
+  it("fetches the record so the stored draft can be adopted", async () => {
+    vi.mocked(get).mockReturnValue(emptyChat());
+    activate();
+    await vi.waitFor(() => {
+      expect(seedComposerDraft).toHaveBeenCalledWith("c-empty");
+    });
+    expect(loadMessages).toHaveBeenCalledWith("c-empty");
+  });
+
+  it("asks nothing about a ghost chat, whose id the server has never seen", async () => {
+    // Every New chat click lands here, and a GET on a client-minted id 404s.
+    vi.mocked(get).mockReturnValue(emptyChat());
+    vi.mocked(isGhostChat).mockReturnValue(true);
+    activate();
+    await Promise.resolve();
+    expect(loadMessages).not.toHaveBeenCalled();
+    expect(seedComposerDraft).not.toHaveBeenCalled();
+  });
+
+  it("seeds nothing when the fetch fails", async () => {
+    vi.mocked(get).mockReturnValue(emptyChat());
+    vi.mocked(loadMessages).mockResolvedValue(false);
+    activate();
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledWith("c-empty");
+    });
+    expect(seedComposerDraft).not.toHaveBeenCalled();
+  });
+
+  it("seeds nothing once the user has moved to another chat", async () => {
+    // The composer is shared, so a seed landing after a switch would write the
+    // outgoing chat's draft into the incoming chat's box.
+    vi.mocked(get).mockReturnValue(emptyChat());
+    vi.mocked(loadMessages).mockImplementation(async () => {
+      activeId = "c-other";
+      return true;
+    });
+    activate();
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledWith("c-empty");
+    });
+    expect(seedComposerDraft).not.toHaveBeenCalled();
+  });
+
+  it("marks a client-minted chat as a ghost when it is seeded", () => {
+    createPlannerSession();
+    const id = (vi.mocked(upsertHeader).mock.calls.at(-1)?.[0] as { id: string }).id;
+    expect(markGhostChat).toHaveBeenCalledWith(id);
   });
 });
 

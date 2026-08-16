@@ -162,7 +162,12 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 		fn(ctx, chatID, msg)
 		return
 	}
-	if _, ok := h.noopMethods[msg.Method]; ok {
+	// The noop table is keyed by METHOD only, so the id test is what keeps it
+	// from swallowing a REQUEST. Every member is a notification today, but a
+	// future request-shaped method added to that map would otherwise return here
+	// and never be answered, which is the exact wedge the refusal below exists to
+	// prevent — and it would be invisible, because a noop logs nothing.
+	if _, ok := h.noopMethods[msg.Method]; ok && msg.ID == nil {
 		return
 	}
 	// An unrecognised REQUEST must be answered. KAS calls its ext-methods with

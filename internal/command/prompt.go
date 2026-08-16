@@ -199,6 +199,10 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 			Content: p.Text,
 		}
 		c.Messages = append(c.Messages, userMsg)
+		// The text just left the composer, so the draft holding it is spent.
+		// Cleared HERE rather than only by the client's own set_draft: if that
+		// POST is lost, a reload would put the sent message back in the box.
+		c.Draft = ""
 		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(p.Text, 80)
 			if name != p.Text {

@@ -32,12 +32,18 @@ const decodeChatGetResponseLocal: Decoder<{
   chat: ChatHeader;
   messages: Message[];
   has_more: boolean;
+  draft: string;
 }> = (v) => {
   const o = asObject(v, "$.chat_get");
   return {
     chat: decodeChatHeader(o["chat"]),
     messages: decodeArray(o["messages"], decodeMessage, "$.chat_get.messages"),
     has_more: reqBool(o, "has_more", "$.chat_get"),
+    // `draft` rides this response rather than the header, so it stays off the
+    // list endpoint and off every chat_updated frame. Optional-tolerant: a
+    // server that predates the field, or a proxy that strips it, must not fail
+    // the whole chat load.
+    draft: typeof o["draft"] === "string" ? o["draft"] : "",
   };
 };
 
@@ -86,6 +92,7 @@ export async function loadList(): Promise<boolean> {
       available_modes: h.available_modes ?? [],
       available_models: h.available_models ?? [],
       supervised_mode: h.supervised_mode ?? false,
+      effort: h.effort ?? "",
       usage: h.usage,
       message_count: h.message_count,
       messages: existing?.messages ?? [],
@@ -162,6 +169,13 @@ export async function loadMessages(
   session.has_more = d.has_more;
   rebuildMsgIndex(chatID, session.messages);
   msgControllers.delete(chatID);
+  // Park the server's draft on the session so the composer can adopt it. Only on
+  // the newest page: an older page fetch is a scroll-up, not an open. This module
+  // deliberately does not reach into the composer — chat.ts owns that call, right
+  // where it already sequences the rest of the activation.
+  if (beforeID === undefined) {
+    session.draft = d.draft;
+  }
   emitMessages();
   return true;
 }

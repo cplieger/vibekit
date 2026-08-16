@@ -339,6 +339,25 @@ function getMsgIndex(sessionID: string, messages: Message[]): Map<string, number
   return mi;
 }
 
+/** Mark a chat as existing only in this tab's memory (see Session.ghost).
+ *
+ *  Called by the one site that mints a client-side chat id. Not folded into
+ *  upsertHeader: that function's whole contract is a SERVER-authoritative
+ *  re-sync, and the seeding path borrows it to lay down the first row. */
+export function markGhostChat(id: string): void {
+  const s = get(id);
+  if (s === undefined || s.ghost === true) {
+    return;
+  }
+  sessions.update(id, (cur) => ({ ...cur, ghost: true }));
+}
+
+/** Whether the server has yet to acknowledge this chat. False for a chat it has
+ *  never heard of either — an id with no row is nothing to ask about. */
+export function isGhostChat(id: string): boolean {
+  return get(id)?.ghost === true;
+}
+
 // --- SSE-driven mutations ---
 export function upsertHeader(h: ChatHeader): void {
   const existing = get(h.id);
@@ -355,9 +374,13 @@ export function upsertHeader(h: ChatHeader): void {
         available_modes: h.available_modes ?? [],
         available_models: h.available_models ?? [],
         supervised_mode: h.supervised_mode ?? false,
+        effort: h.effort ?? "",
         usage: h.usage,
         message_count: Math.max(s.message_count, h.message_count),
       };
+      // A server frame naming this chat is the acknowledgement the ghost mark was
+      // waiting for: the record exists, so it can be asked about.
+      delete next.ghost;
       if (h.compaction_watermark !== undefined) {
         next.compaction_watermark = h.compaction_watermark;
       } else {
@@ -376,6 +399,7 @@ export function upsertHeader(h: ChatHeader): void {
     available_modes: h.available_modes ?? [],
     available_models: h.available_models ?? [],
     supervised_mode: h.supervised_mode ?? false,
+    effort: h.effort ?? "",
     usage: h.usage,
     message_count: h.message_count,
     messages: [],
@@ -608,6 +632,18 @@ export function setSupervisedMode(chatID: string, enabled: boolean): void {
     return;
   }
   sessions.update(chatID, (cur) => ({ ...cur, supervised_mode: enabled }));
+}
+
+/** Set the chat's reasoning-effort level. Per-chat like model, mode and
+ *  supervised; the effort control renders from here rather than from a module
+ *  signal, so a tab switch reads the new chat's level instead of carrying the
+ *  previous one over. */
+export function setEffort(chatID: string, effort: string): void {
+  const s = get(chatID);
+  if (s === undefined || (s.effort ?? "") === effort) {
+    return;
+  }
+  sessions.update(chatID, (cur) => ({ ...cur, effort }));
 }
 
 /** Set session model and notify subscribers. Used by switchModel. The

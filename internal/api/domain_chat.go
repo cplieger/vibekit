@@ -438,10 +438,35 @@ type SessionModel struct {
 
 // Chat is the full persisted chat. Serialized as <dir>/<id>.json.
 type Chat struct {
-	Name                string         `json:"name"`
-	Model               string         `json:"model,omitempty"`
-	ACPSessionID        string         `json:"acp_session_id,omitempty"`
-	CurrentModeID       string         `json:"current_mode_id,omitempty"`
+	Name          string `json:"name"`
+	Model         string `json:"model,omitempty"`
+	ACPSessionID  string `json:"acp_session_id,omitempty"`
+	CurrentModeID string `json:"current_mode_id,omitempty"`
+	// Effort is the chat's reasoning-effort level ("low".."max"), the fourth
+	// composer setting to live here beside Model, CurrentModeID and
+	// SupervisedMode. It used to be one global `model_effort` setting keyed by
+	// the LAST model, so switching models discarded the previous model's choice
+	// and two chats could not disagree at all. Applied at session/new through
+	// StartOpts.Effort and live through CmdSetEffort.
+	//
+	// A plain string, not EffortLevel: this is persisted state, so a value
+	// written by a different build must decode rather than throw. The command
+	// boundary validates with EffortLevel.Valid().
+	Effort string `json:"effort,omitempty"`
+	// Draft is the composer text typed but not sent, so switching chat tabs
+	// stops bleeding one chat's half-written message into another.
+	//
+	// Server-side rather than localStorage because it then follows the user
+	// across devices and joins the state that is already per-chat and
+	// canonical. Deliberately NOT on ChatHeader: a debounced autosave would
+	// otherwise put the draft in a chat_updated frame every 600ms of typing,
+	// which every connected client would re-render and which would race the
+	// caret of the tab that typed it. The single-chat GET carries it instead.
+	//
+	// Retention rides chat_retention_days with no second TTL: the draft is a
+	// field in the one chat file the purge deletes. Store.SetDraft is what keeps
+	// that honest — it does not touch UpdatedAt, which the purge ages from.
+	Draft               string         `json:"draft,omitempty"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
 	ID                  string         `json:"id"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
@@ -531,6 +556,7 @@ func (c *Chat) Header() ChatHeader {
 		ACPSessionID:        c.ACPSessionID,
 		PriorACPSessionIDs:  c.PriorACPSessionIDs,
 		CurrentModeID:       c.CurrentModeID,
+		Effort:              c.Effort,
 		AvailableModes:      c.AvailableModes,
 		AvailableModels:     c.AvailableModels,
 		Usage:               c.Usage,
@@ -546,10 +572,16 @@ func (c *Chat) Header() ChatHeader {
 // by fieldalignment packing, not Chat's field order; both structs
 // serialise to JSON independently so the visual mismatch is harmless.
 type ChatHeader struct {
-	Name                string         `json:"name"`
-	Model               string         `json:"model,omitempty"`
-	ACPSessionID        string         `json:"acp_session_id,omitempty"`
-	CurrentModeID       string         `json:"current_mode_id,omitempty"`
+	Name          string `json:"name"`
+	Model         string `json:"model,omitempty"`
+	ACPSessionID  string `json:"acp_session_id,omitempty"`
+	CurrentModeID string `json:"current_mode_id,omitempty"`
+	// Effort mirrors Chat's. Carried here because the effort control reads the
+	// ACTIVE chat's level, and an empty chat never fetches its full record (the
+	// client shows the model picker instead of loading messages), so the header
+	// is the only path that reaches every chat. Chat.Draft is deliberately NOT
+	// mirrored — see the comment on that field.
+	Effort              string         `json:"effort,omitempty"`
 	ID                  string         `json:"id"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`

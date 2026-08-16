@@ -38,6 +38,7 @@ import { fixIOSViewport } from "./platform.js";
 import { ICON_SEND, ICON_CANCEL, ICON_ALERT } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { collapseAll } from "./pill-expand.js";
+import { setComposerValue } from "./composer-value.js";
 import { signal, effect } from "@cplieger/reactive";
 
 // Single source of truth for the "context (nearly) full" state, scoped to the
@@ -93,11 +94,26 @@ function reasonOf(s: SendState): string {
 
 let initialized = false;
 
+/** How long after `compositionend` an Enter is still treated as the IME's
+ *  commit key rather than a send.
+ *
+ *  Ported from Crew's guard verbatim, and it is not belt-and-braces with the
+ *  `isComposing` / keyCode legs: on several IMEs the commit Enter arrives just
+ *  AFTER composition ended, with `isComposing` already false and no 229. The
+ *  tail is the only thing that covers that ordering. */
+const IME_TAIL_MS = 50;
+
 class PromptInputController {
   // History cycling state
   private idx = -1;
   private draft = "";
   private lastActiveID = "";
+
+  // IME composition state. `composing` is the first leg of the three-way guard
+  // below; `imeTimer` is the compositionend tail that keeps it true a moment
+  // longer.
+  private composing = false;
+  private imeTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Send-button state
   private state: SendState = { kind: "idle" };
@@ -119,6 +135,42 @@ class PromptInputController {
     const saved = this.draft;
     this.exitCycling();
     this.setInputValue(el, saved);
+  }
+
+  /** Whether this keystroke belongs to an IME composition, so Enter must reach
+   *  the browser (committing the candidate) instead of sending the prompt.
+   *
+   *  Three legs, and each covers a case the others miss, which is why this is a
+   *  port of Crew's predicate rather than a reinvention of it:
+   *
+   *    - `this.composing` — set by compositionstart and held through the
+   *      compositionend tail. The only leg that survives an Enter delivered
+   *      after composition ended.
+   *    - `e.isComposing` — the platform's own answer, read straight off the
+   *      native KeyboardEvent (there is no synthetic-event wrapper here).
+   *      Authoritative when the browser sets it, and it is sometimes FALSE on
+   *      exactly the Enter that commits the candidate.
+   *    - `e.keyCode === 229` — the "processed by the IME" sentinel. Deprecated
+   *      but still what several Android and Windows IMEs report for that final
+   *      Enter, which is the reason the leg exists.
+   *
+   *  Vibekit's shell terminal is deliberately out of scope: @cplieger/web-terminal-ui
+   *  owns everything above the raw stream, IME included. */
+  private isComposing(e: KeyboardEvent): boolean {
+    // eslint-disable-next-line @typescript-eslint/no-deprecated -- keyCode 229 is the whole reason to port this guard: the IME's commit Enter reports it when isComposing is already false.
+    return this.composing || e.isComposing || e.keyCode === 229;
+  }
+
+  /** Drop composition state. Blur and Escape.
+   *
+   *  Defensive rather than decorative: a browser that never delivers
+   *  compositionend (some Android IMEs, when the field loses focus mid-candidate)
+   *  would otherwise leave the flag stuck true and disable Enter for the rest of
+   *  the page's life — a worse failure than the bug being fixed. */
+  private resetIME(): void {
+    clearTimeout(this.imeTimer);
+    this.imeTimer = undefined;
+    this.composing = false;
   }
 
   private userPrompts(): string[] {
@@ -154,6 +206,18 @@ class PromptInputController {
     return !el.value.slice(pos).includes("\n");
   }
 
+  /** Show a value in the box WITHOUT announcing it.
+   *
+   *  History cycling is navigation, not editing: the displayed prompt is a
+   *  preview of something already sent, and `this.draft` holds what the user
+   *  actually typed until they leave the cycle. So no `input` event — the
+   *  module's own listener treats one as leaving the cycle, and the per-chat
+   *  draft layer would record the old prompt as the new draft.
+   *
+   *  The corollary belongs to that layer and is why it reads its own map rather
+   *  than this element: while a history item is on screen the textarea is not the
+   *  draft, so a save that read `.value` here sent the old prompt to the server
+   *  and overwrote the real one with it. */
   private setInputValue(el: HTMLTextAreaElement, v: string): void {
     el.value = v;
     el.setSelectionRange(v.length, v.length);
@@ -242,7 +306,24 @@ class PromptInputController {
       }
       this.exitCycling();
       onSubmit(text);
-      input.value = "";
+      setComposerValue("");
+    });
+
+    // Composition listeners live beside the other input listeners, on the same
+    // element. compositionstart clears any pending tail so back-to-back
+    // compositions cannot have a stale timer flip the flag false mid-candidate.
+    input.addEventListener("compositionstart", () => {
+      clearTimeout(this.imeTimer);
+      this.imeTimer = undefined;
+      this.composing = true;
+    });
+    input.addEventListener("compositionend", () => {
+      this.composing = true;
+      clearTimeout(this.imeTimer);
+      this.imeTimer = setTimeout(() => {
+        this.composing = false;
+        this.imeTimer = undefined;
+      }, IME_TAIL_MS);
     });
 
     input.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -251,7 +332,26 @@ class PromptInputController {
         this.exitCycling();
       }
 
+      // Escape drops composition state UNCONDITIONALLY, ahead of the
+      // history-cycling branch below. That branch is guarded on `idx !== -1`, so
+      // a reset placed inside it would only ever fire while cycling history —
+      // the wrong condition entirely. No stopPropagation here either: the
+      // cycling branch stops it because it consumes the key, while a plain
+      // Escape still has to reach the global handler that collapses pills and
+      // closes the dock.
+      if (e.key === "Escape") {
+        this.resetIME();
+      }
+
       if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
+        // A composing Enter falls THROUGH to the browser, which commits the IME
+        // candidate. The check has to sit inside this branch rather than as an
+        // early return at the top of the handler: an early return would also
+        // break ArrowUp/ArrowDown history navigation during composition, which
+        // is not the bug.
+        if (this.isComposing(e)) {
+          return;
+        }
         e.preventDefault();
         form.dispatchEvent(new Event("submit"));
         return;
@@ -304,6 +404,15 @@ class PromptInputController {
     input.addEventListener("focus", () => {
       collapseAll();
     });
+    // The composer had no blur listener at all. It earns one now: a browser that
+    // drops compositionend (some Android IMEs, when the field loses focus
+    // mid-candidate) must not leave the flag stuck true and Enter disabled for
+    // the rest of the page's life. The draft layer keeps its OWN blur listener
+    // for its own concern; see the note above setComposerValue for why this
+    // module does not import it.
+    input.addEventListener("blur", () => {
+      this.resetIME();
+    });
 
     fixIOSViewport(input);
   }
@@ -330,7 +439,10 @@ export function restorePromptText(text: string): void {
   if (input.value !== "") {
     return;
   }
-  input.value = text;
+  // Announced, not just assigned: the draft layer recorded "" when the submit
+  // cleared the box, and without the event a reload would lose text the user can
+  // see sitting there.
+  setComposerValue(text);
 }
 
 export function initPromptInput(onSubmit: Submit, onCancel: Cancel): void {

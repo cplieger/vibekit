@@ -90,10 +90,15 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	window := make([]api.Message, end-start)
 	copy(window, msgs[start:end])
 
+	// `draft` rides here as its own field rather than on the header, which is
+	// what keeps the composer autosave off the SSE fan-out and off the list
+	// response: this is the one request a client makes when it opens a chat it
+	// has no local draft for, which is exactly when it needs the server's copy.
 	api.WriteJSON(w, map[string]any{
 		"chat":     rt.store.header(r.Context(), c),
 		"messages": window,
 		"has_more": start > 0,
+		"draft":    c.Draft,
 	})
 }
 

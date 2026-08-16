@@ -49,6 +49,12 @@ vi.mock("../notify.js", () => ({
 const mockOpenSetting = vi.fn();
 vi.mock("../settings-highlight.js", () => ({ openSetting: mockOpenSetting }));
 
+// The sign-in CTA's destination. Mocked for the same reason banner-stack is: a
+// call into it is a command at the handler's boundary, and the real module wires
+// a whoami poll at import.
+const mockShowLoginModal = vi.fn();
+vi.mock("../modals.js", () => ({ showLoginModal: mockShowLoginModal }));
+
 vi.mock("../git.js", () => ({ refreshGitBadge: vi.fn() }));
 
 const mockShowBanner = vi.fn();
@@ -102,11 +108,13 @@ describe("ERROR_ROUTES", () => {
       surface: string;
       level: string;
       dismissible: boolean;
-      setting?: { tab: string; control: string; label: string };
+      action?:
+        | { kind: "setting"; tab: string; control: string; label: string }
+        | { kind: "sign-in"; label: string };
     },
   ][] = [
     ["agent_not_found", { surface: "banner", level: "error", dismissible: true }],
-    // The one routed error that also names a setting: the payload carries a
+    // A routed error that also names a Settings control: the payload carries a
     // .kiro/agents path, so the banner links at Custom instructions (D115).
     [
       "agent_config_error",
@@ -114,11 +122,25 @@ describe("ERROR_ROUTES", () => {
         surface: "banner",
         level: "error",
         dismissible: false,
-        setting: {
+        action: {
+          kind: "setting",
           tab: "instructions",
           control: "steering-input",
           label: "Open custom instructions",
         },
+      },
+    ],
+    // D106: the runtime is running UNAUTHENTICATED, so the session opened and
+    // everything behind it will fail. The only fix is signing in, and there is no
+    // Settings control for that — which is why the action is a discriminated
+    // union rather than a Settings jump with a stretched meaning.
+    [
+      "auth_token_unavailable",
+      {
+        surface: "banner",
+        level: "error",
+        dismissible: false,
+        action: { kind: "sign-in", label: "Sign in" },
       },
     ],
     ["rate_limit", { surface: "banner", level: "warning", dismissible: true }],
@@ -278,12 +300,44 @@ describe("error handler", () => {
     expect(mockOpenSetting).toHaveBeenCalledWith("instructions", "steering-input");
   });
 
-  it("passes no banner action for a routed error that names no setting", () => {
+  it("passes no banner action for a routed error that names none", () => {
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
     fireSSE("error", "chat-1", { code: "compaction_failed", message: "nope" });
     expect(mockShowBanner.mock.calls[0]?.[5]).toBeUndefined();
     expect(mockOpenSetting).not.toHaveBeenCalled();
+  });
+
+  // D106. Before this the auth failure existed only as one server log line and a
+  // JSON-RPC error to KAS, and KAS's answer to that error is to run
+  // unauthenticated — the chat opens and every turn fails with nothing on screen
+  // saying the runtime is signed out.
+  it("routes the auth failure to a non-dismissible banner with a sign-in CTA", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", {
+      code: "auth_token_unavailable",
+      message: "kiro-cli: refresh token expired",
+    });
+
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      "chat-1",
+      "auth_token_unavailable",
+      // kiro-cli's own reason travels through: it names which leg of the login
+      // chain is dead, and no wording invented client-side is more specific.
+      "kiro-cli: refresh token expired",
+      "error",
+      false,
+      expect.objectContaining({ label: "Sign in" }),
+    );
+    const link = mockShowBanner.mock.calls[0]?.[5] as
+      { label: string; onClick: () => void } | undefined;
+    link?.onClick();
+    expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
+    // Not a Settings jump: the login modal is not in Settings at all.
+    expect(mockOpenSetting).not.toHaveBeenCalled();
+    // And not the send-error surface: it is not this send that is broken.
+    expect(mockSetLastError).not.toHaveBeenCalled();
   });
 
   it("routes a send-error-class error to setLastError", () => {

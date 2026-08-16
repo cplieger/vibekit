@@ -165,6 +165,26 @@ export function extractLang(pre: HTMLElement, code: HTMLElement | null): string 
   return "";
 }
 
+/** Whether a finished fence earns the button that types it into the shell.
+ *
+ *  SINGLE LINE ONLY, and the test is for a line terminator rather than a line
+ *  COUNT. `handle.send` writes raw bytes to the PTY, so a newline anywhere in
+ *  the payload runs the text before it the instant the PTY sees it — which is
+ *  exactly what typing-not-running exists to prevent. A count cannot express
+ *  that: it ignores blank lines, so "echo a\n\necho b" counts two and
+ *  "echo a\n" counts one, while both carry a terminator that executes. `\r` is
+ *  in the class on purpose: a lone CR is Enter to a PTY just as much as LF is,
+ *  and a fence pasted from a CRLF source carries them.
+ *
+ *  A multi-line block is not refused, only demoted: Copy is on every block
+ *  unconditionally (wrapBlock), so the user pastes it into the terminal
+ *  themselves and the terminal's own bracketed-paste handling applies.
+ *
+ *  There is deliberately no command denylist. Nothing executes until a
+ *  keystroke, so a word filter gates nothing that Enter does not already gate,
+ *  and the four words it matched (sudo|ssh|scp|rsync) were never a boundary
+ *  anyway: `env sudo`, `$(which sudo)`, `doas`, `pkexec` and a workspace shell
+ *  function that runs ssh internally all passed it. */
 export function isRunnableShell(lang: string, text: string): boolean {
   if (!SHELL_LANGS.has(lang)) {
     return false;
@@ -176,14 +196,7 @@ export function isRunnableShell(lang: string, text: string): boolean {
   if (trimmed.startsWith("#!")) {
     return false;
   }
-  const lineCount = trimmed.split("\n").filter((l) => l.trim() !== "").length;
-  if (lineCount > 3) {
-    return false;
-  }
-  if (/\b(sudo|ssh|scp|rsync)\b/.test(trimmed)) {
-    return false;
-  }
-  return true;
+  return !/[\r\n]/.test(trimmed);
 }
 
 function makeCopyButton(getText: () => string): HTMLButtonElement {
@@ -206,6 +219,11 @@ function makeCopyButton(getText: () => string): HTMLButtonElement {
   return btn;
 }
 
+/** The button that puts the command at the shell prompt.
+ *
+ *  The copy says TYPE rather than RUN because that is what the click does: the
+ *  command lands at the prompt with the cursor after it and waits for Enter,
+ *  which is the confirmation. */
 function makeRunButton(text: string): HTMLButtonElement {
   const btn = el("button", { className: "code-act-btn" }, iconEl(ICON_PLAY)) as HTMLButtonElement;
   if (shellRunCb === null) {
@@ -213,8 +231,8 @@ function makeRunButton(text: string): HTMLButtonElement {
     btn.setAttribute("aria-label", "Shell not available");
     btn.disabled = true;
   } else {
-    btn.setAttribute("data-tooltip", "Run in shell");
-    btn.setAttribute("aria-label", "Run in shell");
+    btn.setAttribute("data-tooltip", "Type in shell");
+    btn.setAttribute("aria-label", "Type in shell, without running it");
     btn.addEventListener("click", () => {
       shellRunCb?.(text.trim());
     });

@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
+import { setComposerValue } from "./composer-value.js";
 import { createPlannerSession } from "./chat.js";
 
 export function applyShareTarget(): void {
@@ -14,7 +15,11 @@ export function applyShareTarget(): void {
 
   const sharedText = params.get("prompt");
   if (sharedText !== null && sharedText !== "") {
-    $.promptInput.value = sharedText;
+    // Announced, not assigned: the per-chat draft layer is already wired by the
+    // time this runs (setupInput precedes it), and a silent write leaves it
+    // holding nothing — so nothing schedules a save and a user who opens a
+    // shared prompt and reloads before typing loses the text they were handed.
+    setComposerValue(sharedText);
     $.promptInput.focus();
   }
 

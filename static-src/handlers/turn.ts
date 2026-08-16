@@ -26,10 +26,11 @@ import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
-import { showBanner, onTurnEnded } from "../banner-stack.js";
+import { showBanner, onTurnEnded, type BannerLink } from "../banner-stack.js";
 import { openSetting } from "../settings-highlight.js";
+import { showLoginModal } from "../modals.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
-import { ERROR_ROUTES } from "./error-routing.js";
+import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
 
@@ -228,6 +229,28 @@ onSSE("decision_settled", (chatID, p) => {
 
 // --- Data-driven error classification (imported from error-routing.ts) ---
 
+/** Turn a route's declared action into the banner's link. The table stays data;
+ *  this is the one place that knows how each kind is performed. */
+function bannerLinkFor(action: ErrorAction | undefined): BannerLink | undefined {
+  if (action === undefined) {
+    return undefined;
+  }
+  switch (action.kind) {
+    case "setting":
+      return {
+        label: action.label,
+        onClick: () => {
+          openSetting(action.tab, action.control);
+        },
+      };
+    case "sign-in":
+      return { label: action.label, onClick: showLoginModal };
+    default:
+      action satisfies never;
+      return undefined;
+  }
+}
+
 onSSE("error", (chatID, p) => {
   // Unfreeze thinking so send-state can settle correctly.
   setThinking(chatID, false);
@@ -249,25 +272,10 @@ onSSE("error", (chatID, p) => {
   }
   switch (route.surface) {
     case "banner": {
-      // A routed banner that names a setting carries a jump to it, so the
-      // message and the control are one click apart instead of the reader
-      // having to hunt the panel the prose named.
-      const s = route.setting;
-      showBanner(
-        chatID,
-        code,
-        msg,
-        route.level,
-        route.dismissible,
-        s === undefined
-          ? undefined
-          : {
-              label: s.label,
-              onClick: () => {
-                openSetting(s.tab, s.control);
-              },
-            },
-      );
+      // A routed banner that names an action carries a jump to it, so the
+      // message and the thing that fixes it are one click apart instead of the
+      // reader having to hunt the panel the prose named.
+      showBanner(chatID, code, msg, route.level, route.dismissible, bannerLinkFor(route.action));
       break;
     }
     case "send-error":

@@ -171,7 +171,13 @@
                than a composer feature because a workflow-run tab has no
                composer and still has to be able to ask. -->
           <div id="decision-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
-          <div class="prompt-box">
+          <div id="prompt-box" class="prompt-box">
+            <!-- Top-edge drag handle: raises the message box's CEILING (the
+                 textarea keeps auto-growing with its content under it), persisted
+                 per device. A bare div here; composer-resize.ts sets the
+                 role=separator contract so the markup carries no a11y state that
+                 could drift from the behaviour. -->
+            <div id="composer-resize" class="composer-resize"></div>
             <textarea id="prompt-input" placeholder="Message Kiro..." rows="1" aria-label="Message" autofocus></textarea>
             <ul id="attachment-row" class="attachment-row hidden" aria-label="Attachments"></ul>
             <ul id="queued-row" class="queued-row hidden" aria-label="Prompts queued to send"></ul>
@@ -1194,6 +1200,19 @@
       </button>
       <button type="button" id="filepicker-attach" class="btn-save" disabled>Attach</button>
     </div>
+  </div>
+
+  <!-- Keyboard shortcut reference sheet. Rows are built from keys.ts's registry
+       by shortcuts.ts; opened by `?` (see keys.ts, above the modifier gate). -->
+  <div id="shortcuts-modal" class="shortcuts-card hidden" data-modal>
+    <div class="modal-header-row">
+      <span id="shortcuts-modal-title" class="modal-title">Keyboard shortcuts</span>
+      <button type="button" id="shortcuts-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <p class="shortcuts-note">Cmd works wherever Ctrl is shown.</p>
+    <div id="shortcuts-list" class="shortcuts-list"></div>
   </div>
 
   <script type="module" src="/app.js"></script>

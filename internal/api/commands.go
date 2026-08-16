@@ -27,6 +27,7 @@ const (
 	CmdRewindChat          CommandType = "rewind_chat"
 	CmdCompact             CommandType = "compact"
 	CmdSetEffort           CommandType = "set_effort"
+	CmdSetDraft            CommandType = "set_draft"
 	CmdSetMode             CommandType = "set_mode"
 	CmdCreateHook          CommandType = "create_hook"
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
@@ -169,6 +170,18 @@ type RewindChatCommand struct {
 // Applies a reasoning effort level to the active session.
 type SetEffortCommand struct {
 	Level EffortLevel `json:"level"` // "low" | "medium" | "high" | "xhigh" | "max"
+}
+
+// SetDraftCommand is the payload for type="set_draft": the composer text the
+// user has typed into this chat and not sent.
+//
+// Text is capped at MaxDraftBytes and may be empty — an empty draft is how a
+// sent or abandoned message is cleared, so it is a value rather than a missing
+// field. The command is a NO-OP on a chat that is not a server record yet
+// (every chat is client-side until its first prompt); auto-creating one would
+// put a row in every client's sidebar for a chat nobody has sent anything to.
+type SetDraftCommand struct {
+	Text string `json:"text"`
 }
 
 // SetModeCommand is the payload for type="set_mode". ModeID is the id of

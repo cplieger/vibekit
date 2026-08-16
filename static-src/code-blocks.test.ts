@@ -37,33 +37,51 @@ describe("isRunnableShell", () => {
       text: "#!/usr/bin/env bash\nls",
       expected: false,
     },
+    // Any embedded terminator is a refusal: send() writes raw bytes, so the
+    // newline executes the line before it the moment the PTY reads it.
     { name: "4-line script rejected", lang: "bash", text: "a\nb\nc\nd", expected: false },
-    { name: "3-line script accepted", lang: "bash", text: "a\nb\nc", expected: true },
-    { name: "sudo command rejected", lang: "bash", text: "sudo apt install foo", expected: false },
-    { name: "ssh command rejected", lang: "bash", text: "ssh user@host", expected: false },
+    { name: "3-line script rejected", lang: "bash", text: "a\nb\nc", expected: false },
+    { name: "2-line block rejected", lang: "bash", text: "cd /tmp\nls -la", expected: false },
     {
-      name: "scp command rejected",
-      lang: "bash",
-      text: "scp file.txt host:/tmp/",
-      expected: false,
-    },
-    { name: "rsync command rejected", lang: "bash", text: "rsync -av src/ dest/", expected: false },
-    {
-      name: "dangerous command mid-line rejected",
-      lang: "sh",
-      text: "echo hi && sudo rm -rf /",
-      expected: false,
-    },
-    {
-      name: "text with blank lines counts only non-empty",
+      name: "blank lines between commands do not make it single-line",
       lang: "bash",
       text: "a\n\nb\n\nc",
+      expected: false,
+    },
+    {
+      name: "CRLF single line rejected (the CR is Enter to a PTY too)",
+      lang: "bash",
+      text: "echo hi\r\necho bye",
+      expected: false,
+    },
+    {
+      name: "a lone CR rejected",
+      lang: "bash",
+      text: "echo hi\rrm -rf /tmp/x",
+      expected: false,
+    },
+    {
+      name: "trailing newline trimmed away, still single-line",
+      lang: "bash",
+      text: "echo hi\n",
       expected: true,
     },
     {
-      name: "3 non-empty lines with trailing newline accepted",
+      name: "trailing CRLF trimmed away, still single-line",
       lang: "bash",
-      text: "a\nb\nc\n",
+      text: "echo hi\r\n",
+      expected: true,
+    },
+    // The four-word denylist is GONE: nothing executes until a keystroke, so
+    // the words gated nothing Enter does not already gate.
+    { name: "sudo command offered", lang: "bash", text: "sudo apt install foo", expected: true },
+    { name: "ssh command offered", lang: "bash", text: "ssh user@host", expected: true },
+    { name: "scp command offered", lang: "bash", text: "scp file.txt host:/tmp/", expected: true },
+    { name: "rsync command offered", lang: "bash", text: "rsync -av src/ dest/", expected: true },
+    {
+      name: "a destructive one-liner is offered, not filtered",
+      lang: "sh",
+      text: "echo hi && sudo rm -rf /",
       expected: true,
     },
   ];
@@ -266,5 +284,23 @@ describe("decorateStreamingCodeTail: a fence that has not closed", () => {
     const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
     buttons[1]?.click();
     expect(run).toHaveBeenCalledWith("echo hi");
+  });
+
+  it("labels the shell button as typing, not running", () => {
+    setShellRunCallback(vi.fn());
+    const { root } = fixture("bash", "echo hi");
+    decorateCodeBlocks(root);
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
+    expect(buttons[1]?.getAttribute("data-tooltip")).toBe("Type in shell");
+    expect(buttons[1]?.getAttribute("aria-label")).toBe("Type in shell, without running it");
+  });
+
+  it("gives a multi-line block Copy only", () => {
+    setShellRunCallback(vi.fn());
+    const { root } = fixture("bash", "cd /tmp\nls -la");
+    decorateCodeBlocks(root);
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>(".code-act-btn")];
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.getAttribute("data-tooltip")).toBe("Copy");
   });
 });

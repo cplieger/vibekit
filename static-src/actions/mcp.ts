@@ -305,3 +305,38 @@ export const getResourceContent = apiAction<{ server: string; uri: string }, MCP
   }),
   error: "Couldn't load resource",
 });
+
+// --- mcp.relay_oauth_callback ---
+//
+// Rescue a sign-in whose redirect landed on the wrong machine. KAS binds its
+// OAuth redirect listener on the CONTAINER's localhost, so a browser reaching
+// vibekit from a phone or another laptop is sent to its own localhost, where
+// nothing is listening. The user pastes that dead address here and the server
+// replays it inward. Server contract and its validation:
+// `internal/hub/mcp_oauth_relay.go`.
+
+/** Result of POST /api/mcp/oauth-relay: the loopback listener's HTTP status. */
+export interface OAuthRelayResult {
+  status: number;
+}
+
+export const relayOAuthCallback = apiAction<
+  { server: string; redirect_url: string },
+  OAuthRelayResult
+>({
+  name: "mcp.relay_oauth_callback",
+  // Deliberately NO retry, matching deleteServer's reasoning: an authorization
+  // code is single-use, so a replay of a request that may already have been
+  // delivered spends it against a listener that will refuse the second copy.
+  // The server latches the attempt for the same reason.
+  scope: (args) => "mcp-oauth-relay:" + args.server,
+  request: ({ server, redirect_url }) => ({
+    method: "POST",
+    path: `${MCP_API}/oauth-relay`,
+    body: { server, redirect_url },
+  }),
+  // The panel shows the refusal inline, beside the box the address was pasted
+  // into: every rejection names which part of the address was wrong, and that
+  // belongs next to the field rather than in a toast that outlives it.
+  error: false,
+});

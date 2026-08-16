@@ -27,6 +27,9 @@ import (
 // cannot round-trip through JSON (the storage format).
 var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 
+// errDraftTooLarge is returned when a composer draft exceeds api.MaxDraftBytes.
+var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
+
 // Compile-time interface assertion.
 var _ api.ChatStore = (*Store)(nil)
 
@@ -252,7 +255,7 @@ func (s *Store) Mutate(ctx context.Context, chatID api.ChatID, mutate func(c *ap
 	if err := validateChatUTF8(c); err != nil {
 		return err
 	}
-	if err := s.save(c); err != nil {
+	if err := s.save(chatID, c); err != nil {
 		return err
 	}
 	s.broadcastMutation(ctx, chatID, c, exists)
@@ -260,12 +263,16 @@ func (s *Store) Mutate(ctx context.Context, chatID api.ChatID, mutate func(c *ap
 	return nil
 }
 
-// validateChatUTF8 returns errInvalidUTF8 if the chat name or any message
-// content is not valid UTF-8 — content that would not round-trip through
-// the JSON storage format. Extracted from Mutate so the single write path
-// stays within the cognitive-complexity ceiling without changing behaviour.
+// validateChatUTF8 returns errInvalidUTF8 if the chat name, the composer draft
+// or any message content is not valid UTF-8 — content that would not round-trip
+// through the JSON storage format. Extracted from Mutate so the single write
+// path stays within the cognitive-complexity ceiling without changing
+// behaviour.
 func validateChatUTF8(c *api.Chat) error {
 	if !utf8.ValidString(c.Name) {
+		return errInvalidUTF8
+	}
+	if !utf8.ValidString(c.Draft) {
 		return errInvalidUTF8
 	}
 	for i := range c.Messages {
@@ -289,6 +296,58 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID api.ChatID, c *api
 		evt = api.EventChatCreated
 	}
 	s.broadcast.Broadcast(ctx, api.NewEvent(evt, chatID, s.header(ctx, c)))
+}
+
+// SetDraft persists the chat's unsent composer text. See api.ChatStore for why
+// this is not a Mutate call: it must leave UpdatedAt alone (the retention purge
+// ages a chat from it) and it broadcasts nothing.
+//
+// Deliberately silent on a missing chat. A chat only becomes a server record on
+// its first prompt, so a draft typed into a brand-new chat has nowhere to land
+// yet, and creating the file here would put a row in every client's sidebar for
+// a conversation nobody has started. The client keeps that draft locally until
+// the first prompt creates the record.
+func (s *Store) SetDraft(ctx context.Context, chatID api.ChatID, text string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Defensive: the command boundary already answers 413 above this cap and 400
+	// on invalid UTF-8, but the store owns what reaches the file, and a draft
+	// that cannot round-trip through JSON would make the chat unloadable.
+	if len(text) > api.MaxDraftBytes {
+		return errDraftTooLarge
+	}
+	if !utf8.ValidString(text) {
+		return errInvalidUTF8
+	}
+	m := s.lock(chatID)
+	m.Lock()
+	defer m.Unlock()
+	c, err := s.load(chatID)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	// Before the draft is touched, and before the no-change shortcut below: this
+	// chat file claims to be a different chat, so nothing about it can be
+	// persisted under this id's lock. Mutate refuses the same disagreement when a
+	// mutator causes it; the file is the other way to reach it, and the loud
+	// refusal is what stops an autosave for c1 from writing the whole object over
+	// c2. Checking here rather than only in writeChat also means a draft that
+	// happens to equal what is already stored is reported instead of returning
+	// nil through the shortcut, so the corruption surfaces on the first keystroke.
+	if c.ID != string(chatID) {
+		slog.Error("chat draft: chat file holds another chat's id",
+			"chat_id", chatID, "stored_id", c.ID)
+		return errChatIDMismatch(chatID, c.ID)
+	}
+	if c.Draft == text {
+		return nil
+	}
+	c.Draft = text
+	return s.writeChat(chatID, c)
 }
 
 // DeleteFamily and PromoteRewind are GONE with the rewind-branch family. Both

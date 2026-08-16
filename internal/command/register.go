@@ -22,6 +22,7 @@ func RegisterDefaults(d *Dispatcher) {
 	d.Register(api.CmdRewindChat, wrap(d, CmdRewindChat))
 	d.Register(api.CmdCompact, wrap(d, CmdCompact))
 	d.Register(api.CmdSetEffort, wrap(d, CmdSetEffort))
+	d.Register(api.CmdSetDraft, wrap(d, CmdSetDraft))
 	d.Register(api.CmdSetMode, wrap(d, CmdSetMode))
 	d.Register(api.CmdSetSupervisedMode, wrap(d, CmdSetSupervisedMode))
 	d.Register(api.CmdSteer, wrap(d, CmdSteer))

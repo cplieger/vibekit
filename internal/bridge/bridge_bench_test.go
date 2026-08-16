@@ -26,12 +26,14 @@ func BenchmarkReadLoop_Notifications(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for range b.N {
-		r := strings.NewReader(lineStr + "\n")
-		sc := bufio.NewScanner(r)
-		sc.Buffer(make([]byte, 0, 4096), scannerLineCap)
-		for sc.Scan() {
+		fr := newFrameReader(bufio.NewReaderSize(strings.NewReader(lineStr+"\n"), stdoutBufSize))
+		for {
+			line, _, rerr := fr.readFrame()
+			if rerr != nil {
+				break
+			}
 			var resp api.RPCResponse
-			if err := json.Unmarshal(sc.Bytes(), &resp); err != nil {
+			if err := json.Unmarshal(line, &resp); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -72,12 +74,14 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for range b.N {
-				r := strings.NewReader(data)
-				sc := bufio.NewScanner(r)
-				sc.Buffer(make([]byte, 0, 4096), scannerLineCap)
-				for sc.Scan() {
+				fr := newFrameReader(bufio.NewReaderSize(strings.NewReader(data), stdoutBufSize))
+				for {
+					line, _, rerr := fr.readFrame()
+					if rerr != nil {
+						break
+					}
 					var resp api.RPCResponse
-					if err := json.Unmarshal(sc.Bytes(), &resp); err != nil {
+					if err := json.Unmarshal(line, &resp); err != nil {
 						b.Fatal(err)
 					}
 				}
