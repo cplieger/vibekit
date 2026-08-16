@@ -73,15 +73,17 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 	}
 	dir := a.repoDir(body.Repo)
 
-	// Check for staged changes.
-	diff, err := gitCmd(r.Context(), dir, "diff", "--cached", "--stat")
+	// Check for staged changes. --no-textconv here too, even though --stat
+	// prints no content: the flag is what stops the textconv PROGRAM being
+	// run, not merely its output being shown.
+	diff, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--cached", "--stat")
 	if err != nil || strings.TrimSpace(diff) == "" {
 		writeGitError(w, KindNoStaged, "")
 		return
 	}
 
 	// Get the full diff, capped at 8KB.
-	fullDiff, dErr := gitCmd(r.Context(), dir, "diff", "--cached")
+	fullDiff, dErr := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--cached")
 	if dErr != nil {
 		fullDiff = diff
 	}
@@ -135,10 +137,10 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get the diff between current branch and base.
-	diff, err := gitCmd(r.Context(), dir, "diff", base+"...HEAD")
+	diff, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", base+"...HEAD")
 	if err != nil || strings.TrimSpace(diff) == "" {
 		// Try origin/main if local main doesn't exist.
-		diff, err = gitCmd(r.Context(), dir, "diff", "origin/"+base+"...HEAD")
+		diff, err = gitCmd(r.Context(), dir, "diff", "--no-textconv", "origin/"+base+"...HEAD")
 		if err != nil || strings.TrimSpace(diff) == "" {
 			writeGitError(w, KindNoChanges, "against "+base)
 			return
@@ -235,7 +237,7 @@ func uncommittedContext(ctx context.Context, dir string) string {
 	}
 	// Combined staged + unstaged diff against HEAD, capped small: branch
 	// naming needs the gist, not the whole change.
-	diff, dErr := gitCmd(ctx, dir, "diff", "HEAD")
+	diff, dErr := gitCmd(ctx, dir, "diff", "--no-textconv", "HEAD")
 	if dErr != nil {
 		diff = ""
 	}

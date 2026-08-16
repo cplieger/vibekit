@@ -96,7 +96,8 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// this app's long-lived kiro-cli consumer, and resolving once per process
 	// would pin every chat to whatever was installed first.
 	bridgeFactory := func() api.ACPBridge {
-		return bridge.New(kiro.cliPath(), cfg.WorkDir, bridge.WithEnv(kiro.env()))
+		return bridge.New(kiro.cliPath(), cfg.WorkDir,
+			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
 	}
 
 	mcpStore, err := mcpPkg.New(ctx, cfg.ConfigDir, nil)

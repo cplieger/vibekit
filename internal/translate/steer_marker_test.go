@@ -17,7 +17,7 @@ func feed(chunks []string) (emitted, carry string) {
 	var out strings.Builder
 	for _, c := range chunks {
 		var emit string
-		emit, carry = stripSteerAcks(carry, c)
+		emit, carry, _ = stripSteerAcks(carry, c)
 		out.WriteString(emit)
 	}
 	return out.String(), carry
@@ -99,7 +99,7 @@ func TestStripSteerAcks_WithholdsOnlyTheCandidate(t *testing.T) {
 		{in: "no candidate at all", wantEmit: "no candidate at all", wantCarry: ""},
 	}
 	for _, tt := range tests {
-		emit, carry := stripSteerAcks("", tt.in)
+		emit, carry, _ := stripSteerAcks("", tt.in)
 		if emit != tt.wantEmit || carry != tt.wantCarry {
 			t.Errorf("%q: got (%q, %q), want (%q, %q)", tt.in, emit, carry, tt.wantEmit, tt.wantCarry)
 		}
@@ -119,7 +119,7 @@ func TestStripSteerAcks_RemovesEveryMarkerInAChunk(t *testing.T) {
 // machinery shows, rather than the response disappearing.
 func TestStripSteerAcks_ReleasesAnOverlongCandidate(t *testing.T) {
 	open := "[STEERING steer-1: " + strings.Repeat("x", maxSteerCarry+1)
-	emit, carry := stripSteerAcks("", open)
+	emit, carry, _ := stripSteerAcks("", open)
 	if carry != "" {
 		t.Errorf("carry = %d bytes, want it released at the bound", len(carry))
 	}
@@ -177,4 +177,134 @@ func TestFlushSteerCarry_EmptyCarryTouchesNothing(t *testing.T) {
 	if len(buf.Blocks) != 0 {
 		t.Errorf("flush of an empty carry created %d blocks", len(buf.Blocks))
 	}
+}
+
+// --- The marker's CONTENT, which used to be thrown away ---
+
+// feedAcks is feed's sibling for the extraction half: it accumulates the
+// acknowledgements across chunks, which is what the live caller does one
+// broadcast at a time.
+func feedAcks(chunks []string) (emitted, carry string, acks []steerAck) {
+	var out strings.Builder
+	for _, c := range chunks {
+		var emit string
+		var got []steerAck
+		emit, carry, got = stripSteerAcks(carry, c)
+		out.WriteString(emit)
+		acks = append(acks, got...)
+	}
+	return out.String(), carry, acks
+}
+
+func TestStripSteerAcks_LiftsTheIDAndTheAgentsStatement(t *testing.T) {
+	_, _, acks := feedAcks([]string{"Done. " + ack})
+	if len(acks) != 1 {
+		t.Fatalf("got %d acks, want 1: %+v", len(acks), acks)
+	}
+	if acks[0].SteerID != "steer-abc123" {
+		t.Errorf("SteerID = %q, want steer-abc123", acks[0].SteerID)
+	}
+	if acks[0].Text != "adjusted the approach" {
+		t.Errorf("Text = %q, want the agent's own sentence", acks[0].Text)
+	}
+}
+
+// One ack per marker, in order, so two steers answered in one response do not
+// collapse onto one chip or land on each other's.
+func TestStripSteerAcks_LiftsEveryMarkerInOrder(t *testing.T) {
+	in := "a [STEERING steer-1: rebased onto main instead] b [STEERING steer-2: skipped the rename] c"
+	emit, carry, acks := feedAcks([]string{in})
+	if want := "a  b  c"; emit != want || carry != "" {
+		t.Errorf("emitted %q carry %q, want %q and no carry", emit, carry, want)
+	}
+	if len(acks) != 2 {
+		t.Fatalf("got %d acks, want 2: %+v", len(acks), acks)
+	}
+	if acks[0].SteerID != "steer-1" || acks[0].Text != "rebased onto main instead" {
+		t.Errorf("first ack = %+v", acks[0])
+	}
+	if acks[1].SteerID != "steer-2" || acks[1].Text != "skipped the rename" {
+		t.Errorf("second ack = %+v", acks[1])
+	}
+}
+
+// The marker can be cut at any byte, so the ack must be reported exactly once
+// and only when the marker CLOSES. Reporting on a partial would put a truncated
+// sentence on the chip; reporting twice would fire the broadcast twice.
+func TestStripSteerAcks_ReportsAnAckOnceAcrossEverySplit(t *testing.T) {
+	full := "Here is the work. " + ack + " And a closing line."
+	for i := 1; i < len(full); i++ {
+		_, carry, acks := feedAcks([]string{full[:i], full[i:]})
+		if carry != "" {
+			t.Fatalf("split at %d: carry left over: %q", i, carry)
+		}
+		if len(acks) != 1 {
+			t.Fatalf("split at %d: got %d acks, want exactly 1", i, len(acks))
+		}
+		if acks[0].SteerID != "steer-abc123" || acks[0].Text != "adjusted the approach" {
+			t.Fatalf("split at %d: ack = %+v", i, acks[0])
+		}
+	}
+}
+
+// A marker the model opens and never closes yields NO ack. The over-bound
+// release emits the text as prose, and inventing a verdict from a half-written
+// sentence would be worse than showing nothing.
+func TestStripSteerAcks_UnclosedMarkerYieldsNoAck(t *testing.T) {
+	cases := map[string][]string{
+		"still open":     {"[STEERING steer-1: I was about to"},
+		"over bound":     {"[STEERING steer-1: " + strings.Repeat("x", maxSteerCarry+1)},
+		"never a marker": {"[STEERING is the feature name]"},
+	}
+	for name, chunks := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, acks := feedAcks(chunks); len(acks) != 0 {
+				t.Errorf("got %d acks, want none: %+v", len(acks), acks)
+			}
+		})
+	}
+}
+
+// The body is rendered as a label, and KAS's own shape leaves it with the
+// separator's space in front. Trimming here rather than at the renderer keeps
+// every consumer honest about what the agent said.
+func TestStripSteerAcks_TrimsTheAgentsStatement(t *testing.T) {
+	_, _, acks := feedAcks([]string{"[STEERING steer-1:   \n padded answer \t ]"})
+	if len(acks) != 1 {
+		t.Fatalf("got %d acks, want 1", len(acks))
+	}
+	if acks[0].Text != "padded answer" {
+		t.Errorf("Text = %q, want it trimmed", acks[0].Text)
+	}
+}
+
+// The invariant the original doc asserts and a third return value must not
+// break: the emitted text plus the carry account for every byte that was not
+// part of a matched marker.
+func FuzzStripSteerAcks_AccountsForEveryByte(f *testing.F) {
+	f.Add("Done. " + ack)
+	f.Add("[STEERING steer-1: a][STEERING steer-2: b]")
+	f.Add("prose [STEERING with no id]")
+	f.Add("[STEERING steer-1: unclosed")
+	f.Fuzz(func(t *testing.T, in string) {
+		emit, carry, acks := stripSteerAcks("", in)
+		if !strings.HasSuffix(in, carry) {
+			t.Fatalf("carry %q is not a suffix of the input", carry)
+		}
+		consumed := len(emit) + len(carry)
+		for _, a := range acks {
+			// A matched marker is `[STEERING ` + id + `: ` + body + `]`, so its
+			// span is at least the two captured groups plus the fixed literals.
+			if a.SteerID == "" {
+				t.Errorf("ack with an empty id: %+v", a)
+			}
+			if consumed+len(a.SteerID)+len(a.Text) > len(in) {
+				t.Fatalf("acks claim more bytes than the input holds: emit=%d carry=%d acks=%+v in=%d",
+					len(emit), len(carry), acks, len(in))
+			}
+		}
+		if consumed > len(in) {
+			t.Fatalf("emit+carry = %d bytes from a %d byte input", consumed, len(in))
+		}
+	})
 }

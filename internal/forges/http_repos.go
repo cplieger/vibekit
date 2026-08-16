@@ -99,7 +99,8 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// handlePRAction serves the per-PR action endpoints: merge and close.
+// handlePRAction serves the per-PR action endpoints: merge, close,
+// reopen and rerun. All four are POST-only.
 func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
@@ -107,31 +108,83 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p F
 		api.BadRequest(w, "invalid PR number")
 		return
 	}
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
 	switch op {
 	case "merge":
-		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w, http.MethodPost)
-			return
-		}
-		method := MergeMethod(r.URL.Query().Get(fieldMethod))
-		if err := p.MergePR(r.Context(), repo, number, method); err != nil {
-			h.writeOpsError(w, err)
-			return
-		}
-		api.Ok(w)
+		h.handlePRMerge(w, r, p, repo, number)
 	case stateClose:
-		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w, http.MethodPost)
-			return
-		}
-		if err := p.ClosePR(r.Context(), repo, number); err != nil {
-			h.writeOpsError(w, err)
-			return
-		}
-		api.Ok(w)
+		h.writeOpResult(w, p.ClosePR(r.Context(), repo, number))
+	case "reopen":
+		h.writeOpResult(w, p.ReopenPR(r.Context(), repo, number))
+	case "rerun":
+		h.handlePRRerun(w, r, p, repo, number)
 	default:
 		api.NotFound(w, "unknown PR action")
 	}
+}
+
+// handlePRMerge merges a PR. The merge strategy, the head-commit pin and
+// the auto-merge arm all travel as query parameters, following the
+// ?method= convention this route already carried.
+func (h *HTTPHandler) handlePRMerge(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string, number int) {
+	q := r.URL.Query()
+	headSHA, ok := headPinOrBadRequest(w, q.Get(fieldHeadSHA))
+	if !ok {
+		return
+	}
+	opts := MergeOptions{
+		Method:  MergeMethod(q.Get(fieldMethod)),
+		HeadSHA: headSHA,
+		Auto:    queryTrue(q.Get(fieldAuto)),
+	}
+	h.writeOpResult(w, p.MergePR(r.Context(), repo, number, opts))
+}
+
+// handlePRRerun re-runs a PR's failed CI, pinned to the head commit the
+// caller's row displayed.
+//
+// The pin travels and is validated exactly as the merge's does, because it
+// serves the same purpose on an action with comparable consequences: a re-run
+// can trigger a deployment, so acting on a commit other than the one whose red
+// status the caller was looking at is a wrong action rather than a slow one.
+func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, p ForgeOps, repo string, number int) {
+	headSHA, ok := headPinOrBadRequest(w, r.URL.Query().Get(fieldHeadSHA))
+	if !ok {
+		return
+	}
+	h.writeOpResult(w, p.RerunFailedChecks(r.Context(), repo, number, headSHA))
+}
+
+// headPinOrBadRequest validates a head_sha query parameter, answering 400 and
+// returning false when it is present but not an object id. Absent stays legal:
+// a forge that reported no head SHA leaves the action unpinned.
+//
+// The pin reaches a subprocess argv and a JSON body, so it is checked at this
+// one boundary rather than at each provider.
+func headPinOrBadRequest(w http.ResponseWriter, raw string) (headSHA string, ok bool) {
+	if raw != "" && !isHexSHA(raw) {
+		api.BadRequest(w, "invalid head_sha")
+		return "", false
+	}
+	return raw, true
+}
+
+// writeOpResult answers a mutation: 200 {"ok":true} or the mapped error.
+func (h *HTTPHandler) writeOpResult(w http.ResponseWriter, err error) {
+	if err != nil {
+		h.writeOpsError(w, err)
+		return
+	}
+	api.Ok(w)
+}
+
+// queryTrue reads a boolean query parameter. Both spellings the client
+// could plausibly send count as true; everything else is false.
+func queryTrue(v string) bool {
+	return v == "1" || v == "true"
 }
 
 func (h *HTTPHandler) handleIssues(w http.ResponseWriter, r *http.Request, p ForgeOps, repo, tail string) {

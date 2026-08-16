@@ -101,7 +101,7 @@ func (z *zipStream) add(l loc, zipName string) bool {
 	}
 	// Sensitive paths are hidden from listings; keep them out of
 	// archives too when a directory walk reaches one.
-	if isSensitive(l.abs) {
+	if IsSensitive(l.abs) {
 		return true
 	}
 	f, err := l.m.root.Open(l.rel())

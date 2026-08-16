@@ -265,6 +265,24 @@ interface UploadArgs {
   targetDir: string;
 }
 
+/** The paths a failed upload batch DID write, carried on the rejection's
+ *  `cause`. A partially-failed batch is not rolled back, so the caller can
+ *  still attach what landed. Read it with partialUploadOf rather than by
+ *  casting: the cause of a rejection is `unknown` by contract. */
+interface PartialUpload {
+  uploaded: string[];
+}
+
+/** Recover the partial batch from a rejected upload's error. Returns [] for
+ *  every other failure shape, so callers need no branch. */
+export function partialUploadOf(cause: unknown): string[] {
+  if (typeof cause !== "object" || cause === null || !("uploaded" in cause)) {
+    return [];
+  }
+  const { uploaded } = cause;
+  return Array.isArray(uploaded) ? uploaded.filter((p): p is string => typeof p === "string") : [];
+}
+
 export const upload = defineAction<UploadArgs, string[]>({
   name: "files.upload",
   scope: "upload",
@@ -281,8 +299,11 @@ export const upload = defineAction<UploadArgs, string[]>({
         onComplete: (paths) => {
           resolve(paths);
         },
-        onError: (msg) => {
-          reject(new ActionError(msg));
+        onError: (msg, uploaded) => {
+          // cause carries the partial batch: the upload is not rolled back, so
+          // a caller that attaches paths still wants the ones that landed.
+          const partial: PartialUpload = { uploaded };
+          reject(new ActionError(msg, { cause: partial }));
         },
       });
     });

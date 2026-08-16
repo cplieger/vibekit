@@ -70,9 +70,11 @@ func TestCmd(t *testing.T) {
 	if cmd.Dir != "/tmp" {
 		t.Errorf("Cmd.Dir = %q, want /tmp", cmd.Dir)
 	}
-	// Args now include the prepended -c protocol.ext.allow=never
-	// hardening flags. Shape: [git -c protocol.ext.allow=never status].
-	wantArgs := []string{"git", "-c", "protocol.ext.allow=never", "status"}
+	// Args include the prepended -c hardening pairs, before the subcommand.
+	// Shape: [git -c protocol.ext.allow=never -c core.fsmonitor= status].
+	wantArgs := []string{
+		"git", "-c", "protocol.ext.allow=never", "-c", "core.fsmonitor=", "status",
+	}
 	if len(cmd.Args) != len(wantArgs) {
 		t.Errorf("Cmd.Args length = %d, want %d (%v)", len(cmd.Args), len(wantArgs), cmd.Args)
 	} else {
@@ -120,6 +122,61 @@ func TestCmd(t *testing.T) {
 			t.Errorf("env %s = %q must not be set by Cmd (would disable credential helpers from ~/.gitconfig)", k, got)
 		}
 	}
+}
+
+// core.fsmonitor names a command git runs on status and diff, and a repo's own
+// .git/config can set it. A command-line -c always beats gitconfig, so clearing
+// it centrally is what makes it unreachable — on EVERY subcommand, since the
+// caller's argv is what varies and the hardening is not per call site.
+//
+// Asserted as a POSITION rather than mere membership: the pairs must precede the
+// subcommand, because `git status -c x=y` is not a config flag at all, it is an
+// argument to status.
+func TestCmd_ClearsConfigDrivenExecution(t *testing.T) {
+	t.Parallel()
+
+	for _, sub := range []string{"status", "diff", "log", "commit", "push"} {
+		t.Run(sub, func(t *testing.T) {
+			t.Parallel()
+			args := Cmd(t.Context(), "/tmp", sub, "--porcelain").Args
+			var found bool
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] != "-c" || args[i+1] != "core.fsmonitor=" {
+					continue
+				}
+				found = true
+				if idx := indexOf(args, sub); idx >= 0 && idx < i {
+					t.Errorf("core.fsmonitor= at %d is after the subcommand at %d: %v", i, idx, args)
+				}
+			}
+			if !found {
+				t.Errorf("Args = %v, want a `-c core.fsmonitor=` pair", args)
+			}
+		})
+	}
+}
+
+// A refused subcommand must not gain the hardening flags: it never launches git
+// at all, so a flag there would only make the rigged-to-fail command look like a
+// real invocation.
+func TestCmd_RefusedSubcommandGetsNoHardening(t *testing.T) {
+	t.Parallel()
+
+	args := Cmd(t.Context(), "/tmp", "cat-file", "-p", "HEAD").Args
+	for _, a := range args {
+		if a == "core.fsmonitor=" || a == "protocol.ext.allow=never" {
+			t.Errorf("Args = %v, want no hardening on the refusal path", args)
+		}
+	}
+}
+
+func indexOf(hay []string, needle string) int {
+	for i, s := range hay {
+		if s == needle {
+			return i
+		}
+	}
+	return -1
 }
 
 // splitEnvVar splits "KEY=VALUE" into [KEY, VALUE]. Handles empty values.

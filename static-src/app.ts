@@ -408,16 +408,19 @@ function initPostAuth(): void {
   initPostAuthUI();
 }
 
-/** Reopen singleton tabs (Settings / Source Control / Files) that were open
- *  last session, without activating them, so restoreTabState() can restore
- *  their saved order and active state (B7). Chat tabs are reopened by the
- *  boot loop and editor tabs by restoreAll(); singletons were previously
- *  never reopened, so `hasTab(saved.active_view)` was always false for them
- *  and their position in the saved order was silently dropped.
- *  TODO(B7): History is still not restored — its data loader is
- *  module-internal (history.ts exports only a toggle-style opener, which
- *  would close the tab when fired from onShow of an already-active tab).
- *  Export a plain loader from that module and add it here. */
+/** Reopen the singleton tabs (Settings / Source Control / Kiro docs / History /
+ *  Files) that were open last session, without activating them, so
+ *  restoreTabState() can restore their saved order and active state (B7). Chat
+ *  tabs are reopened by the boot loop and editor tabs by restoreAll();
+ *  singletons were previously never reopened, so `hasTab(saved.active_view)` was
+ *  always false for them and their position in the saved order was silently
+ *  dropped.
+ *
+ *  Each `onShow` must be a plain LOADER, never the module's toggle-style opener:
+ *  a toggle fired from the onShow of an already-open, already-active tab closes
+ *  the tab it was meant to fill. The docs and History cases reach theirs through
+ *  a lazy import, because those two modules are lazy everywhere else and a static
+ *  import here would pull them into the main bundle. */
 function restoreSingletonTabs(): void {
   for (const id of getSavedTabState().tab_order) {
     switch (id) {
@@ -462,6 +465,39 @@ function restoreSingletonTabs(): void {
                 .then(({ forceDocsTab, loadDocs }) => {
                   forceDocsTab("steering");
                   loadDocs();
+                })
+                .catch(() => {
+                  /* noop */
+                });
+            },
+          },
+          { activate: false },
+        );
+        break;
+      case "__history__":
+        openTab(
+          {
+            id,
+            name: "History",
+            kind: "history",
+            view: TAB_VIEWS.history,
+            route: { kind: "history" },
+            onShow: () => {
+              void import("./history.js")
+                .then(({ loadHistoryView }) => {
+                  loadHistoryView();
+                })
+                .catch(() => {
+                  /* noop */
+                });
+            },
+            // Unlike the docs case, this one needs a close hook: the page holds a
+            // dispatch, an AbortController and a debounce timer, and the toggle
+            // path tears them down through its own onClose.
+            onClose: () => {
+              void import("./history.js")
+                .then(({ teardownHistoryView }) => {
+                  teardownHistoryView();
                 })
                 .catch(() => {
                   /* noop */

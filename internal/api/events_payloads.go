@@ -525,9 +525,24 @@ type SteerQueuedPayload struct {
 
 // SteerInjectedPayload is the payload for type="steer_injected": the model has
 // now READ the steer. This is the moment the chip stops being a promise.
+//
+// It is broadcast TWICE for a steer the agent answers, and the two frames carry
+// different halves. KAS's own steering channel produces the first, when the model
+// reads the steer, with Text and no Ack. The second comes off the assistant TEXT
+// stream when the agent's `[STEERING steer-<id>: …]` acknowledgement marker
+// closes (translate/steer_marker.go), with Ack and no Text: reading a steer and
+// acting on it are separate moments, so they cannot share one frame, and the
+// client merges both onto the chip by SteerID.
 type SteerInjectedPayload struct {
 	SteerID string `json:"steer_id"`
 	Text    string `json:"text"`
+	// Ack is the agent's own statement of what it did about the steer, lifted
+	// out of the acknowledgement marker KAS asks it to emit and which vibekit
+	// hides from the transcript as machinery. That statement is strictly better
+	// information than a check glyph, so the chip carries it: "read" becomes
+	// "read: rebased onto main instead". Empty on the read frame, and empty when
+	// the agent closed its response without a marker.
+	Ack string `json:"ack,omitempty"`
 }
 
 // SteerClearedPayload is the payload for type="steer_cleared": the steers named

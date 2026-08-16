@@ -674,7 +674,12 @@ export interface OpenExternalURLPayload {
   url: string;
 }
 
-/** PR represents a pull/merge request. */
+/**
+ * PR represents a pull/merge request. CheckStatus and MergeBlocked carry
+ * no omitempty: their empty value is meaningful (the forge reported no CI
+ * state / nothing blocks this merge), so the client must receive it
+ * rather than infer it from an absent field.
+ */
 export interface PR {
   title: string;
   body?: string;
@@ -683,11 +688,36 @@ export interface PR {
   source_branch: string;
   target_branch: string;
   url?: string;
+  /**
+ * HeadSHA is the head commit of the source branch: the value a merge
+ * pins itself to, so a push landing between the read and the click
+ * fails the merge instead of landing unreviewed code.
+ */
+  head_sha?: string;
+  /**
+ * CheckStatus is the folded CI state of HeadSHA. One of "" (the forge
+ * reported no checks), "pending", "passing", "failing".
+ */
+  check_status: string;
+  /**
+ * MergeBlocked names why the forge refuses a merge, or "" when
+ * nothing does. One of "draft", "conflicts", "checks_failing",
+ * "checks_running", "behind", "blocked", "unknown".
+ */
+  merge_blocked: string;
   number: number;
+  checks_total?: number;
+  checks_failing?: number;
   created_at?: number;
   updated_at?: number;
   mergeable?: boolean;
   draft?: boolean;
+  /**
+ * AutoMergeArmed reports that the forge will merge this PR itself
+ * once its requirements are met, so the row offers a read-out
+ * rather than arming it twice.
+ */
+  auto_merge_armed?: boolean;
 }
 
 /** PermissionNeededPayload is the payload for type="permission_needed". */
@@ -1109,10 +1139,27 @@ export interface SteerClearedPayload {
 /**
  * SteerInjectedPayload is the payload for type="steer_injected": the model has
  * now READ the steer. This is the moment the chip stops being a promise.
+ * //
+ * It is broadcast TWICE for a steer the agent answers, and the two frames carry
+ * different halves. KAS's own steering channel produces the first, when the model
+ * reads the steer, with Text and no Ack. The second comes off the assistant TEXT
+ * stream when the agent's `[STEERING steer-<id>: …]` acknowledgement marker
+ * closes (translate/steer_marker.go), with Ack and no Text: reading a steer and
+ * acting on it are separate moments, so they cannot share one frame, and the
+ * client merges both onto the chip by SteerID.
  */
 export interface SteerInjectedPayload {
   steer_id: string;
   text: string;
+  /**
+ * Ack is the agent's own statement of what it did about the steer, lifted
+ * out of the acknowledgement marker KAS asks it to emit and which vibekit
+ * hides from the transcript as machinery. That statement is strictly better
+ * information than a check glyph, so the chip carries it: "read" becomes
+ * "read: rebased onto main instead". Empty on the read frame, and empty when
+ * the agent closed its response without a marker.
+ */
+  ack?: string;
 }
 
 /**

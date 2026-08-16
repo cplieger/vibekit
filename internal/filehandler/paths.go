@@ -105,7 +105,7 @@ func (h *Handler) enforce(clean string) (*mount, error) {
 	if m == nil {
 		return nil, errOutsideRoots
 	}
-	if isSensitive(clean) {
+	if IsSensitive(clean) {
 		return nil, errors.New("access denied: protected path")
 	}
 	return m, nil

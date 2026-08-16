@@ -119,11 +119,17 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 	// changes for the file in a single unified-diff output. Untracked
 	// files have no HEAD entry; fall back to `--no-index` against
 	// /dev/null, which renders the file as all-additions.
-	out, err := gitCmd(r.Context(), dir, "diff", "HEAD", "--", file)
+	//
+	// --no-textconv on both: a repo's diff.<driver>.textconv is a command git
+	// runs to render a path it selected via .gitattributes. The --no-index
+	// call needs it just as much, and less obviously — "outside the index"
+	// does not mean outside the attributes, which are read from the working
+	// tree either way.
+	out, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", "HEAD", "--", file)
 	if err != nil || strings.TrimSpace(out) == "" {
 		// `--no-index` exits non-zero when there's a diff (not an
 		// error condition). Capture combined output regardless.
-		out2, _ := gitCmd(r.Context(), dir, "diff", "--no-index", "--", "/dev/null", file)
+		out2, _ := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--no-index", "--", "/dev/null", file)
 		if strings.TrimSpace(out2) != "" {
 			out = out2
 		}

@@ -9,9 +9,9 @@ import (
 // enforce must deny exactly the paths the policy blocks — anything
 // outside the granted mounts (allow-list, deny-by-default) or a
 // sensitive path — and allow everything else. The oracle reuses the
-// real mountFor and isSensitive functions (the policy sources of
+// real mountFor and IsSensitive functions (the policy sources of
 // truth), so the property catches a broken composition (wrong combine,
-// inverted check, missing isSensitive call, wrong prefix match) rather
+// inverted check, missing IsSensitive call, wrong prefix match) rather
 // than restating a single copied expression.
 func FuzzEnforce(f *testing.F) {
 	f.Add("/workspace/file.txt")
@@ -39,12 +39,12 @@ func FuzzEnforce(f *testing.F) {
 		m, err := h.enforce(path)
 
 		granted := h.mountFor(path) != nil
-		blocked := !granted || isSensitive(path)
+		blocked := !granted || IsSensitive(path)
 
 		// Security invariant: anything the policy blocks must be denied.
 		if blocked && err == nil {
 			t.Fatalf("enforce(%q) = nil, want denial (granted=%v sensitive=%v)",
-				path, granted, isSensitive(path))
+				path, granted, IsSensitive(path))
 		}
 		// No-over-block invariant: a denial must be backed by the policy.
 		if !blocked && err != nil {

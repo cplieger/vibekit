@@ -163,6 +163,13 @@ export interface PendingSteer {
    *  waiting for the next node boundary. This is the distinction the chip row
    *  exists to show, and the reason `steer_injected` is its own event. */
   injected: boolean;
+  /** What the agent said it DID about the steer, from the acknowledgement
+   *  marker KAS asks it to close its response with. Arrives later than
+   *  `injected` and on a different channel (the text stream, not the steering
+   *  one), because reading a steer and acting on it are separate moments.
+   *  Absent until the marker closes, and absent for good if the agent never
+   *  emits one. */
+  ack?: string;
   /** Present only when KAS classified the message as a system notification
    *  instead of a user steer, which it decides by sniffing the text. vibekit
    *  refuses to SEND such a message, so a severity here means the notice came

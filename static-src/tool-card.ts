@@ -250,6 +250,16 @@ function buildHeader(
   return header;
 }
 
+/** What a caller may state. `ToolStatus` is the tool wire enum; `aborted` is the
+ *  one run-level status with no tool counterpart, admitted because the History
+ *  page states a run's verdict through this same writer and a stopped run is
+ *  neither a success nor a failure of the work. */
+type OutcomeStatus = ToolStatus | "aborted";
+
+/** The verdicts the vocabulary paints. Not the wire enums: `pending` and
+ *  `in_progress` are one thing to a reader, and a refusal is its own state. */
+type OutcomeState = "ok" | "fail" | "warn" | "denied" | "running";
+
 /** Paint a card's outcome onto its glyph, and give the card an accessible name.
  *
  *  ONE writer for the whole vocabulary, which is the point: the outcome used to
@@ -263,7 +273,7 @@ function buildHeader(
  *  and a programmatic name is not visible text. */
 export function applyOutcome(
   node: HTMLElement,
-  status: ToolStatus,
+  status: OutcomeStatus,
   displayTitle: string,
   info: ToolRenderInfo,
 ): void {
@@ -273,16 +283,18 @@ export function applyOutcome(
   // what they need is the rule. Read from the dataset as well as the info so the
   // update path (which only has the DOM) reaches the same verdict.
   const denied = info.denial !== null || node.dataset["denied"] === "1";
-  const state = denied
+  const state: OutcomeState = denied
     ? "denied"
-    : isToolDone(status)
-      ? status === "failed"
-        ? "fail"
-        : "ok"
-      : "running";
+    : status === "aborted"
+      ? "warn"
+      : isToolDone(status)
+        ? status === "failed"
+          ? "fail"
+          : "ok"
+        : "running";
   node.dataset["outcome"] = state;
   if (icon !== null) {
-    icon.classList.remove("is-ok", "is-fail", "is-running", "is-denied");
+    icon.classList.remove("is-ok", "is-fail", "is-warn", "is-running", "is-denied");
     icon.classList.add(`is-${state}`);
     // The shape half. Rebuilt rather than toggled so a re-render cannot stack
     // two badges on one glyph.
@@ -292,9 +304,7 @@ export function applyOutcome(
         el(
           "span",
           { className: "tool-outcome-badge", "aria-hidden": "true" },
-          // A shield for a refusal: distinct in SHAPE, not only in tint, for the
-          // same WCAG 1.4.1 reason the check and cross are shapes.
-          state === "denied" ? "\u26D4" : state === "ok" ? "\u2713" : "\u2717",
+          OUTCOME_BADGE[state],
         ),
       );
     }
@@ -303,14 +313,28 @@ export function applyOutcome(
   node.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
 }
 
+/** The shape half of the vocabulary, one glyph per settled state.
+ *
+ *  A shield for a refusal and a triangle for a stop are distinct in SHAPE, not
+ *  only in tint, for the same WCAG 1.4.1 reason the check and cross are shapes —
+ *  which matters twice over here, because both are amber. */
+const OUTCOME_BADGE: Readonly<Record<Exclude<OutcomeState, "running">, string>> = {
+  ok: "\u2713",
+  fail: "\u2717",
+  warn: "\u26A0",
+  denied: "\u26D4",
+};
+
 /** The word the accessible name uses. Deliberately not the wire enum: "pending"
  *  and "in_progress" both mean the same thing to a listener. */
-function outcomeWord(state: string): string {
+function outcomeWord(state: OutcomeState): string {
   switch (state) {
     case "ok":
       return "succeeded";
     case "fail":
       return "failed";
+    case "warn":
+      return "aborted";
     case "denied":
       return "blocked by security policy";
     default:

@@ -223,6 +223,41 @@ describe("outcome is a glyph, not a word", () => {
     expect(card.getAttribute("aria-label")).toContain("auth.go");
     expect(card.getAttribute("aria-label")).toContain("failed");
   });
+
+  // `aborted` has no tool counterpart — it is a run-level status, admitted to
+  // this vocabulary so the History page states a run's verdict through the same
+  // writer instead of growing a second one.
+  it("paints an aborted subject amber with a warning triangle, not as a failure", async () => {
+    const { buildToolCard, applyOutcome } = await import("./tool-card.js");
+    const card = buildToolCard({
+      id: "t4a",
+      title: "executePwsh",
+      kind: "execute",
+      status: "completed",
+      live: false,
+    });
+    applyOutcome(card, "aborted", "Open feature-pipeline", {
+      kind: "other",
+      writesFile: false,
+      filePath: "",
+      fileBasename: "",
+      diffSources: null,
+      mcp: null,
+      disclosed: null,
+      denial: null,
+    });
+    const icon = card.querySelector(".tool-icon");
+    expect(icon?.classList.contains("is-warn")).toBe(true);
+    // Stopped is not broken: the failure tint must be gone, not merely joined.
+    expect(icon?.classList.contains("is-fail")).toBe(false);
+    expect(icon?.classList.contains("is-ok")).toBe(false);
+    // Amber is shared with a policy refusal, so the SHAPE is what separates them.
+    expect(icon?.querySelector(".tool-outcome-badge")?.textContent).toBe("\u26A0");
+    // Rebuilt, not stacked: the check from the first paint is gone.
+    expect(icon?.querySelectorAll(".tool-outcome-badge")).toHaveLength(1);
+    expect(card.dataset["outcome"]).toBe("warn");
+    expect(card.getAttribute("aria-label")).toBe("Open feature-pipeline, aborted");
+  });
 });
 
 describe("the depth ladder", () => {

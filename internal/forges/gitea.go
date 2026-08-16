@@ -158,21 +158,30 @@ func (p *giteaProvider) ListPRs(ctx context.Context, repo string, state ListStat
 	return p.parsePRs(out)
 }
 
+// parsePRs decodes Gitea's own PR objects. `tea pulls list -o json`
+// passes the API shape through rather than the --fields vocabulary, so
+// this one decoder serves both the list and the single-PR view.
+//
+// CheckStatus is deliberately left empty for every Gitea row: the PR
+// object carries no CI state, and the alternatives were both worse than
+// an absent chip — one extra statuses request per PR (the N-call fan-out
+// this work rejects) or a chip inferred from `mergeable`, which would be
+// a guess presented as a fact.
 func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
 	var raw []struct {
-		Base      struct{ Ref string }   `json:"base"`
-		Title     string                 `json:"title"`
-		Body      string                 `json:"body"`
-		State     string                 `json:"state"`
-		User      struct{ Login string } `json:"user"`
-		Head      struct{ Ref string }   `json:"head"`
-		HTMLURL   string                 `json:"html_url"`
-		CreatedAt string                 `json:"created_at"`
-		UpdatedAt string                 `json:"updated_at"`
-		Number    int                    `json:"number"`
-		Mergeable bool                   `json:"mergeable"`
-		Draft     bool                   `json:"draft"`
-		Merged    bool                   `json:"merged"`
+		Base      struct{ Ref string }      `json:"base"`
+		Title     string                    `json:"title"`
+		Body      string                    `json:"body"`
+		State     string                    `json:"state"`
+		User      struct{ Login string }    `json:"user"`
+		Head      struct{ Ref, Sha string } `json:"head"`
+		HTMLURL   string                    `json:"html_url"`
+		CreatedAt string                    `json:"created_at"`
+		UpdatedAt string                    `json:"updated_at"`
+		Number    int                       `json:"number"`
+		Mergeable bool                      `json:"mergeable"`
+		Draft     bool                      `json:"draft"`
+		Merged    bool                      `json:"merged"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("tea pulls: decode: %w", err)
@@ -193,6 +202,8 @@ func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
 			SourceBranch: r.Head.Ref,
 			TargetBranch: r.Base.Ref,
 			URL:          r.HTMLURL,
+			HeadSHA:      r.Head.Sha,
+			MergeBlocked: giteaMergeBlock(r.Mergeable, r.Draft),
 			CreatedAt:    parseRFC3339Millis(r.CreatedAt),
 			UpdatedAt:    parseRFC3339Millis(r.UpdatedAt),
 			Mergeable:    r.Mergeable,
@@ -200,6 +211,20 @@ func (p *giteaProvider) parsePRs(data []byte) ([]PR, error) {
 		})
 	}
 	return prs, nil
+}
+
+// giteaMergeBlock names what a Gitea PR object can actually support.
+// `mergeable` is one bit with no cause behind it, so an unmergeable PR
+// reports blockUnknown: the row then says the forge refuses the merge
+// without inventing conflicts, checks or protection as the reason.
+func giteaMergeBlock(mergeable, draft bool) string {
+	if draft {
+		return blockDraft
+	}
+	if !mergeable {
+		return blockUnknown
+	}
+	return ""
 }
 
 // CreatePR opens a new pull request via tea pr create.
@@ -252,32 +277,87 @@ func (p *giteaProvider) viewPR(ctx context.Context, repo string, number int) (*P
 	return &prs[0], nil
 }
 
-func (p *giteaProvider) MergePR(ctx context.Context, repo string, number int, method MergeMethod) error {
+// giteaMergeBody is the Gitea merge-API request. Both new fields are
+// omitted unless asked for, so an instance that predates
+// merge_when_checks_succeed still sees the body it has always seen.
+type giteaMergeBody struct {
+	Do                     string `json:"Do"`
+	HeadCommitID           string `json:"head_commit_id,omitempty"`
+	MergeWhenChecksSucceed bool   `json:"merge_when_checks_succeed,omitempty"`
+}
+
+// giteaMergeRequestBody renders the merge request body for opts.
+func giteaMergeRequestBody(opts MergeOptions) ([]byte, error) {
 	style := string(MergeCommit)
-	switch method {
+	switch opts.Method {
 	case MergeSquash:
 		style = string(MergeSquash)
 	case MergeRebase:
 		style = string(MergeRebase)
 	}
+	body, err := json.Marshal(giteaMergeBody{
+		Do:                     style,
+		HeadCommitID:           opts.HeadSHA,
+		MergeWhenChecksSucceed: opts.Auto,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gitea merge: encode body: %w", err)
+	}
+	return body, nil
+}
+
+// MergePR merges a PR through the Gitea API.
+//
+// tea gained a `pulls merge` verb, but it exposes only --style/--title/
+// --message: no head-commit flag and no auto-merge flag. The API carries
+// both (head_commit_id, merge_when_checks_succeed), and this call was
+// already on the API path, so the pin and the arming are body fields
+// rather than a new dependency on the CLI's feature set.
+func (p *giteaProvider) MergePR(ctx context.Context, repo string, number int, opts MergeOptions) error {
 	owner, name, err := ParseRepo(repo)
 	if err != nil {
 		return err
 	}
-	// tea doesn't have a direct merge command yet; use the API.
+	body, err := giteaMergeRequestBody(opts)
+	if err != nil {
+		return err
+	}
 	endpoint := fmt.Sprintf("https://%s/api/v1/repos/%s/%s/pulls/%d/merge", p.host, owner, name, number)
-	body := fmt.Sprintf(`{"Do":%q}`, style)
-	return p.apiPostJSON(ctx, endpoint, []byte(body))
+	return p.apiPostJSON(ctx, endpoint, body)
 }
 
 func (p *giteaProvider) ClosePR(ctx context.Context, repo string, number int) error {
+	return p.setPRState(ctx, repo, number, stateClosed)
+}
+
+// ReopenPR reopens a closed PR. It goes through the same PATCH ClosePR
+// uses rather than `tea pulls reopen`, so the pair shares one token path
+// and one failure shape.
+func (p *giteaProvider) ReopenPR(ctx context.Context, repo string, number int) error {
+	return p.setPRState(ctx, repo, number, stateOpen)
+}
+
+// setPRState PATCHes a PR's state field.
+func (p *giteaProvider) setPRState(ctx context.Context, repo string, number int, state string) error {
 	owner, name, err := ParseRepo(repo)
 	if err != nil {
 		return err
 	}
+	body, err := json.Marshal(map[string]string{"state": state})
+	if err != nil {
+		return fmt.Errorf("gitea pr state: encode body: %w", err)
+	}
 	endpoint := fmt.Sprintf("https://%s/api/v1/repos/%s/%s/pulls/%d", p.host, owner, name, number)
-	body := []byte(`{"state":"closed"}`)
 	return p.apiPatchJSON(ctx, endpoint, body)
+}
+
+// RerunFailedChecks is not available on Gitea or Forgejo: tea has no CI
+// verb at all, and the Actions re-run endpoints are not part of the
+// stable public API the rest of this file talks to. Returning the
+// sentinel lets the client hide the control instead of offering one that
+// always fails.
+func (p *giteaProvider) RerunFailedChecks(_ context.Context, _ string, _ int, _ string) error {
+	return fmt.Errorf("%w: re-running CI is not available on gitea/forgejo", ErrNotSupported)
 }
 
 func (p *giteaProvider) ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error) {

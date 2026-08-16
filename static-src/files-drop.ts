@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
-// Chat-input drag-drop: drop files onto the chat view to upload them to
-// the workspace root and auto-attach their paths to the prompt input.
+// Chat-input drag-drop and paste: hand files to the chat view and they upload
+// into the workspace uploads folder, with their paths auto-attached to the
+// prompt input.
 //
 // The paperclip button opens the file picker (files-picker.ts) instead of
 // an OS file dialog. The user picks an existing workspace file OR clicks
@@ -10,12 +11,19 @@
 
 import { el } from "@cplieger/reactive";
 import { openFilePicker } from "./files-picker.js";
-import { upload } from "./actions/files.js";
+import { upload, partialUploadOf } from "./actions/files.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { installDropZone } from "./drop-zone.js";
-import { installImagePaste } from "./image-paste.js";
+import { installComposerPaste } from "./composer-paste.js";
+import {
+  preflightUploads,
+  preflightMessage,
+  uploadLimitHint,
+  UPLOADS_DIR,
+} from "./upload-policy.js";
+import * as toast from "./toast.js";
 import { $ } from "./dom.js";
 
 // Upload glyph (Lucide upload). 32px to suit the drop-overlay; the down-arrow
@@ -31,6 +39,11 @@ export function initChatAttach(): void {
     openFilePicker();
   });
 
+  // The limit used to be discoverable only as a server 413, which drop and
+  // paste reach without the user consciously choosing a file. Stated where the
+  // choice is made rather than in a banner nobody reads.
+  attachBtn.dataset["tooltip"] = `Attach file (${uploadLimitHint().toLowerCase()})`;
+
   // Create the overlay lazily on first use.
   let overlay: HTMLDivElement | null = null;
   const getOverlay = (): HTMLDivElement => {
@@ -42,6 +55,7 @@ export function initChatAttach(): void {
       { className: "chat-drop-overlay hidden" },
       iconEl(ICON_UPLOAD),
       el("span", null, "Drop files to upload"),
+      el("span", { className: "chat-drop-limit" }, uploadLimitHint()),
     ) as HTMLDivElement;
     chatView.style.position = "relative";
     chatView.appendChild(overlay);
@@ -49,11 +63,33 @@ export function initChatAttach(): void {
   };
 
   const uploadAndAttach = (files: FileList): void => {
+    // Pre-flight before any bytes leave: an over-cap file can only end in a
+    // 413, and a dropped folder is a batch nobody chose. Rejections are said
+    // out loud, because a silently shortened batch reads as a lost file.
+    const { accepted, rejected } = preflightUploads(Array.from(files));
+    const skipped = preflightMessage(rejected);
+    if (skipped !== "") {
+      toast.error(skipped);
+    }
+    if (accepted.length === 0) {
+      return;
+    }
+    const dt = new DataTransfer();
+    for (const f of accepted) {
+      dt.items.add(f);
+    }
     void upload.dispatch(
-      { files, targetDir: "." },
+      { files: dt.files, targetDir: UPLOADS_DIR },
       {
         onSuccess: (paths) => {
           for (const p of paths) {
+            attachPathToActiveChat(p);
+          }
+        },
+        onError: (err) => {
+          // A partial batch is not rolled back, so attach what landed. The
+          // action's own toast already names the failure.
+          for (const p of partialUploadOf(err.cause)) {
             attachPathToActiveChat(p);
           }
         },
@@ -69,9 +105,10 @@ export function initChatAttach(): void {
     onDrop: uploadAndAttach,
   });
 
-  // A pasted screenshot is the same journey as a dropped one: upload to the
-  // workspace root, attach the path. The composer is where the cursor is when
-  // the user pastes, so the listener lives on the textarea rather than the
-  // document (a document listener would also fire for the shell and the editor).
-  installImagePaste($.promptInput, uploadAndAttach);
+  // A pasted screenshot, file or oversized text block is the same journey as a
+  // dropped one: upload to the uploads folder, attach the path. The composer is
+  // where the cursor is when the user pastes, so the listener lives on the
+  // textarea rather than the document (a document listener would also fire for
+  // the shell and the editor).
+  installComposerPaste($.promptInput, uploadAndAttach);
 }

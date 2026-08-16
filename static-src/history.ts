@@ -19,7 +19,7 @@
 //     so a run opens the read-only run view rather than a chat.
 // ---------------------------------------------------------------------------
 
-import { toggleHistoryView } from "./tabs.js";
+import { toggleHistoryView, hasTab } from "./tabs.js";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
@@ -30,6 +30,10 @@ import { openPreviousSession, openChatTab } from "./chat.js";
 import { searchChats } from "./actions/chat-search.js";
 import type { ChatSearchMatch } from "./chat-search-types.js";
 import { openRunView } from "./run-view.js";
+import { applyOutcome } from "./tool-card.js";
+import type { ToolRenderInfo } from "./tool-schema.js";
+import { ICON_TAB_RUN } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import type { ResumableSessionRow, WorkflowRunRow } from "./types.js";
 
 /** A chat row and a run row share the list, so they share a shape. */
@@ -39,32 +43,78 @@ interface HistoryRow {
   kind: "chat" | "run";
   title: string;
   updatedAt: number;
-  /** Secondary line: the agent's focus for a chat, the status for a run. */
+  /** Secondary line: the agent's focus for a chat. Empty on a run, whose outcome
+   *  is the glyph's to state and whose status is the status slot's. */
   detail: string;
   status: string;
+  /** The verdict this row states as a glyph, or null when there is none to
+   *  state: any chat, an agent-parented run, and a run that is still moving. */
+  outcome: RunVerdict | null;
   session?: ResumableSessionRow;
   run?: WorkflowRunRow;
 }
 
-/** The outcome word shown on a parentless run's row. Empty for a run that is
- *  still moving — its live status already renders in the status slot, and
- *  "succeeded"/"failed" is a claim only a finished run can make. */
-function runOutcomeLabel(status: string): string {
+/** The run statuses that carry a verdict. Two are `ToolStatus` members and the
+ *  third is the member `applyOutcome` was widened by, so these pass straight
+ *  into the shared outcome vocabulary with no translation table here. */
+type RunVerdict = "completed" | "failed" | "aborted";
+
+/** A run's verdict, or null for a run with none to state.
+ *
+ *  Exhaustive over `RUN_STATUSES` (run-controls.ts): `running` and `paused`
+ *  return null because their live status already renders in the status slot and
+ *  a verdict is a claim only a settled run can make. An unknown status returns
+ *  null for a different reason — it degrades to the status word rather than
+ *  being guessed into a green check. */
+function runVerdict(status: string): RunVerdict | null {
   switch (status) {
     case "completed":
-      return "succeeded";
     case "failed":
-      return "failed — open to retry";
     case "aborted":
-      return "aborted — open to retry";
+      return status;
     default:
-      return "";
+      return null;
   }
+}
+
+/** What `applyOutcome` needs from a caller that has no tool call behind it, the
+ *  same stub shape `messages-tools.ts` passes on its own DOM-only path. Two
+ *  fields reach the output and both matter: an empty `fileBasename` keeps the
+ *  accessible name to the row's own label, and a null `denial` keeps the row
+ *  from being repainted as a policy refusal. */
+const ROW_RENDER_INFO: ToolRenderInfo = {
+  kind: "other",
+  writesFile: false,
+  filePath: "",
+  fileBasename: "",
+  diffSources: null,
+  mcp: null,
+  disclosed: null,
+  denial: null,
+};
+
+/** Whether a session's chat is open in a tab ON THIS DEVICE.
+ *
+ *  Ownership is the server's fact and travels as `chat_id`; "open here" is this
+ *  device's, held in localStorage, which is why the predicate lives on the
+ *  client and reuses the tab store's own `hasTab` rather than a second one. A
+ *  chat tab's id IS its chat id, so no mapping is needed. */
+function isOpenHere(s: ResumableSessionRow): boolean {
+  const chatID = s.chat_id ?? "";
+  return chatID !== "" && hasTab(chatID);
 }
 
 function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): HistoryRow[] {
   const rows: HistoryRow[] = [];
   for (const s of sessions) {
+    // A chat already open here is not history: its tab is one click away in the
+    // strip, so listing it offers a second door to a room the user is standing
+    // in. An owned-but-CLOSED session stays listed — reopening one is what this
+    // page exists for. Filtered here rather than at build time so the dropped
+    // key never reaches reconcile or the click lookup that closes over `rows`.
+    if (isOpenHere(s)) {
+      continue;
+    }
     rows.push({
       key: `s:${s.session_id}`,
       kind: "chat",
@@ -72,6 +122,7 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
       updatedAt: s.updated_at,
       detail: s.description ?? "",
       status: s.status ?? "",
+      outcome: null,
       session: s,
     });
   }
@@ -87,8 +138,9 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
       kind: "run",
       title: r.name === "" ? "Untitled run" : r.name,
       updatedAt: r.updated_at,
-      detail: parentless ? runOutcomeLabel(r.status ?? "") : "",
+      detail: "",
       status: r.status ?? "",
+      outcome: parentless ? runVerdict(r.status ?? "") : null,
       run: r,
     });
   }
@@ -104,11 +156,18 @@ class HistoryController {
   private searchWired = false;
   private query = "";
 
+  /** Wire the search box and load, the body every path that opens this page
+   *  shares. Separate from showView() because the tab-restore path already has
+   *  the tab and must not toggle it. */
+  mount(): void {
+    this.wireSearch();
+    void this.refresh();
+  }
+
   showView(): void {
     toggleHistoryView(
       () => {
-        this.wireSearch();
-        void this.refresh();
+        this.mount();
       },
       () => {
         this.teardown();
@@ -329,9 +388,11 @@ function buildRow(row: HistoryRow): HTMLElement {
     row.detail !== "" ? el("span", { className: "list-row-summary" }, row.detail) : null,
   );
   // A status is shown only when it says something. KAS reports `idle` for every
-  // settled session, which is noise; `failed` and `waiting_on_user` are not.
-  const showStatus = row.status !== "" && row.status !== "idle";
-  return el(
+  // settled session, which is noise; `failed` and `waiting_on_user` are not. A
+  // row with a verdict is the third case: the glyph IS its outcome channel, so
+  // the word beside it would be a second rendering of one fact.
+  const showStatus = row.status !== "" && row.status !== "idle" && row.outcome === null;
+  const node = el(
     "div",
     {
       className: "list-row history-table-row",
@@ -343,12 +404,24 @@ function buildRow(row: HistoryRow): HTMLElement {
     kindChip,
     title,
     showStatus ? el("span", { className: "history-status" }, row.status.replace(/_/g, " ")) : null,
+    // The glyph the verdict is painted onto. `.tool-icon` is the DOM contract of
+    // the shared outcome vocabulary (a relative box for the composited badge),
+    // and the run's own icon is what carries the tint.
+    row.outcome !== null ? el("span", { className: "tool-icon" }, iconEl(ICON_TAB_RUN)) : null,
     el(
       "span",
       { className: "list-row-meta" },
       row.updatedAt > 0 ? new Date(row.updatedAt).toLocaleString() : "",
     ),
   );
+  if (row.outcome !== null) {
+    // ONE writer for the vocabulary: tint, shape and word all come from
+    // tool-card.ts, so a run row and a tool card cannot spell the same verdict
+    // differently. The subject is the row's own label, so the accessible name it
+    // composes still opens with what a click does ("Open X, succeeded").
+    applyOutcome(node, row.outcome, `Open ${row.title}`, ROW_RENDER_INFO);
+  }
+  return node;
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +508,21 @@ registerCleanup(() => {
 
 export function showHistoryView(): void {
   historyCtrl.showView();
+}
+
+/** Load (or reload) the page's data without touching the tab.
+ *
+ *  The tab-restore path needs this and cannot use showHistoryView(): that one
+ *  toggles, so firing it from the `onShow` of an already-open, already-active
+ *  tab would hit `hasTab && active` and CLOSE the tab it was meant to fill. */
+export function loadHistoryView(): void {
+  historyCtrl.mount();
+}
+
+/** Cancel the page's in-flight work. The restore path passes this as its tab's
+ *  `onClose`; the module-level cleanup above covers app teardown, not a close. */
+export function teardownHistoryView(): void {
+  historyCtrl.teardown();
 }
 
 // A run starting or finishing changes this list, and a workflow with twenty steps

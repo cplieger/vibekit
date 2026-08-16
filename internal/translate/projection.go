@@ -51,7 +51,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/redact"
 )
 
 // replayInfoMeta decodes the `_meta.kiro` block of a replayed
@@ -237,8 +236,13 @@ func (p *Projection) ingestAgentText(raw json.RawMessage, thinking bool) {
 	// its own log on every restart-resume and model-switch fallback, and the
 	// marker it never scrubbed is stored in that log. Without this, a marker the
 	// live stream hid would reappear the first time the chat was resumed.
+	// The acknowledgements the filter lifts out are DISCARDED here, unlike on the
+	// live path. A Projection rebuilds a transcript and has no Broadcast, and the
+	// chip row it would feed is per-turn state a resume has already cleared —
+	// KAS clears its steering buffer at every turn boundary, so there is no chip
+	// left for a replayed ack to land on.
 	prev, _ := p.buf.SteerCarry()
-	text, carry := stripSteerAcks(prev, c.Content.Text)
+	text, carry, _ := stripSteerAcks(prev, c.Content.Text)
 	p.buf.SetSteerCarry(carry, sub)
 	if text == "" {
 		return
@@ -259,7 +263,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 		Title:          tc.Title,
 		Kind:           tc.Kind,
 		Status:         tc.Status,
-		Input:          redact.RawJSON(tc.RawInput),
+		Input:          tc.RawInput,
 		AgentSubtaskID: tc.Meta.Kiro.AgentSubtaskID,
 		Locations:      tc.Locations,
 		Ts:             p.frameTS(tc.Meta.Kiro.Timestamp),
@@ -301,7 +305,7 @@ func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 	}
 	for _, item := range tu.Content {
 		if item.Type == ContentTypeContent && item.Content.Text != "" {
-			tc.Output += redact.Output(api.SanitizeOutput(item.Content.Text)) + "\n"
+			tc.Output += api.SanitizeOutput(item.Content.Text) + "\n"
 		}
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)

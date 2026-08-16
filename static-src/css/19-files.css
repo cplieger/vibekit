@@ -61,6 +61,14 @@
   transition: opacity var(--dur-standard);
 }
 
+/* The upload limit, secondary to the drop instruction above it: the reader
+   needs the instruction to act and the number only to avoid a 413. */
+.chat-drop-limit {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-normal);
+  opacity: 0.75;
+}
+
 /* Global upload progress bar. Same open/close model as .shell-panel: the
    element stays display:flex for its lifetime and collapses to a hidden
    zero-height state, so the dismiss animates on every engine (the former

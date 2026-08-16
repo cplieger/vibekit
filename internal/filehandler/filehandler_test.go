@@ -257,7 +257,7 @@ func TestWriteFile_SymlinkedParent_Blocked(t *testing.T) {
 	}
 }
 
-// --- isSensitive tests (direct coverage) ---
+// --- IsSensitive tests (direct coverage) ---
 
 func TestIsSensitive(t *testing.T) {
 	tests := []struct {
@@ -280,8 +280,8 @@ func TestIsSensitive(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isSensitive(tc.path); got != tc.want {
-				t.Errorf("isSensitive(%q) = %v, want %v", tc.path, got, tc.want)
+			if got := IsSensitive(tc.path); got != tc.want {
+				t.Errorf("IsSensitive(%q) = %v, want %v", tc.path, got, tc.want)
 			}
 		})
 	}
@@ -305,9 +305,9 @@ func TestIsProtectedDir(t *testing.T) {
 		{"/workspace", false},
 		{"/workspace/repo", false},
 		// Note: a path below a sensitive dir prefix still matches
-		// because callers already ran it through isSensitive (which
+		// because callers already ran it through IsSensitive (which
 		// would also block it). isProtectedDir is the defense for
-		// the CONTAINER case, not a substitute for isSensitive.
+		// the CONTAINER case, not a substitute for IsSensitive.
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {
@@ -695,7 +695,7 @@ func TestAction_SecurityRejections(t *testing.T) {
 		},
 		{
 			// isProtectedDir on delete: the container of a sensitive
-			// tree is not deletable even though isSensitive only
+			// tree is not deletable even though IsSensitive only
 			// matches its contents.
 			name:              "delete/protected_dir",
 			action:            "delete",
@@ -1944,7 +1944,7 @@ func FuzzResolvePath(f *testing.F) {
 		}
 
 		// Assertion 4: the result is never a sensitive path.
-		if isSensitive(result.abs) {
+		if IsSensitive(result.abs) {
 			t.Errorf("resolvePath(%q) = %q is a sensitive path", input, result.abs)
 		}
 	})
@@ -1982,9 +1982,9 @@ func FuzzIsSensitive(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		result := isSensitive(input)
+		result := IsSensitive(input)
 
-		// Assertion 1: if isSensitive returns true, the input must match
+		// Assertion 1: if IsSensitive returns true, the input must match
 		// at least one sensitivePrefixes entry (directory prefix or exact file).
 		if result {
 			matched := false
@@ -2000,7 +2000,7 @@ func FuzzIsSensitive(f *testing.F) {
 				}
 			}
 			if !matched {
-				t.Errorf("isSensitive(%q) = true but no sensitivePrefixes entry matches", input)
+				t.Errorf("IsSensitive(%q) = true but no sensitivePrefixes entry matches", input)
 			}
 		}
 
@@ -2009,10 +2009,10 @@ func FuzzIsSensitive(f *testing.F) {
 			for _, sp := range sensitivePrefixes {
 				if sp.IsDir {
 					if strings.HasPrefix(input, sp.Path) {
-						t.Errorf("isSensitive(%q) = false but matches dir prefix %q", input, sp.Path)
+						t.Errorf("IsSensitive(%q) = false but matches dir prefix %q", input, sp.Path)
 					}
 				} else if input == sp.Path {
-					t.Errorf("isSensitive(%q) = false but matches exact path %q", input, sp.Path)
+					t.Errorf("IsSensitive(%q) = false but matches exact path %q", input, sp.Path)
 				}
 			}
 		}
@@ -2481,10 +2481,11 @@ func TestHandleFile_RejectionListsEveryPermittedMethod(t *testing.T) {
 // Security regression: the container's HOME tree (/config/home/) holds the
 // real credential stores — the AWS SSO token + OAuth client secret
 // (~/.aws/sso/cache), git SSH keys (~/.ssh), the forge PAT
-// (~/.config/gh/hosts.yml), and ~/.gitconfig — and /config/mcp.json holds
-// MCP env/header/oauth secrets in cleartext. A prior audit found these
+// (~/.config/gh/hosts.yml), and ~/.gitconfig — and /config/mcp.json plus
+// /config/mcp-secrets.json hold MCP env/header/oauth secrets and the OAuth
+// refresh tokens and PKCE verifiers in cleartext. A prior audit found these
 // browsable/readable/downloadable because sensitivePrefixes omitted them.
-// Pins that every access path (isSensitive predicate, resolvePath, HTTP
+// Pins that every access path (IsSensitive predicate, resolvePath, HTTP
 // read, HTTP download) now refuses them. The handler mounts "/config"
 // at the POLICY level (temp-dir backed), so the rejection exercises
 // the sensitive layer — not the mount match — and fires on the lexical
@@ -2497,14 +2498,15 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 		"config/home/.config/gh/hosts.yml",                   // forge PAT / OAuth token
 		"config/home/.gitconfig",                             // git identity / credential config
 		"config/mcp.json",                                    // MCP secrets, cleartext
+		"config/mcp-secrets.json",                            // MCP OAuth refresh tokens + PKCE verifiers
 	}
 	h := testHandlerAt(t, "/config")
 	for _, p := range credPaths {
 		t.Run(p, func(t *testing.T) {
 			abs := filepath.Clean("/" + p)
-			// isSensitive is the predicate enforce relies on.
-			if !isSensitive(abs) {
-				t.Errorf("isSensitive(%q) = false, want true (credential store must be protected)", abs)
+			// IsSensitive is the predicate enforce relies on.
+			if !IsSensitive(abs) {
+				t.Errorf("IsSensitive(%q) = false, want true (credential store must be protected)", abs)
 			}
 			// resolvePath gates every read/write/download/action.
 			if _, err := h.resolvePath(p); err == nil {

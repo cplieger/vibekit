@@ -229,6 +229,31 @@ environment:
 
 Comma-separated, one entry per variable name, and it grants only the names you list. This applies to what the **agent** asks for; variables you set on the container yourself are unaffected.
 
+### Credentials in the container environment (`VIBEKIT_ALLOW_BRIDGE_ENV`)
+
+The other direction. Whatever you put in the container's `environment:` is inherited by kiro-cli and by everything it runs, so a `GITHUB_TOKEN` you added for some unrelated reason is a credential every agent turn can read and use.
+
+vibekit drops credential-shaped names on the way down and logs which ones, by name only. Two shapes cover almost everything: a name ending in `_TOKEN` or `_SECRET`, plus the AWS long-term credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`). Ordinary variables are untouched, including `AWS_REGION` and `AWS_PROFILE` and every build variable your toolchain reads.
+
+This is a second line rather than a wall. The right answer is still to keep credentials out of the container environment: forge tokens belong in `gh` / `glab` / `tea`'s own stores, which is where the git panel puts them.
+
+If you have a variable whose name merely reads like a credential, name it:
+
+```yaml
+environment:
+  VIBEKIT_ALLOW_BRIDGE_ENV: "BUILDKITE_AGENT_TOKEN"
+```
+
+### Runtime profiles
+
+`GET /debug/pprof/` serves Go's standard runtime profiles, behind the same loopback check as the `kiro-cli` repair hook (`POST /api/kiro-cli/rescan`): the socket peer and the `Host` header must both be loopback, and requests carrying proxy or browser headers are refused. So it is reachable from inside the container and nowhere else, which also means a browser tab gets a 403 and `curl` is how you read it:
+
+```sh
+docker exec vibekit curl -s 'http://127.0.0.1:9847/debug/pprof/goroutine?debug=2'
+```
+
+The goroutine dump is the useful one: every stack, what it is waiting on, and how long. `heap`, `allocs`, `block`, `mutex` and `threadcreate` are there too. The CPU profile and the execution trace are deliberately absent, because both hold the server for their whole sample window.
+
 ### Environment variable reference
 
 Every knob, including the ones detailed above. A malformed duration value logs a warning and falls back to its default.
@@ -242,6 +267,7 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 | `VIBEKIT_KIRO_ACP_ARGS` | Extra `kiro-cli acp` launch flags for chats, whitespace-separated. See [Extra kiro-cli launch flags](#extra-kiro-cli-launch-flags-vibekit_kiro_acp_args). | _(unset)_ |
 | `VIBEKIT_AGENT_WORKFLOWS` | Whether the chat agent can start workflow runs itself. Set `false` to withhold the workflow tools. See [Agent-launched workflow runs](#agent-launched-workflow-runs-vibekit_agent_workflows). | `true` |
 | `VIBEKIT_ALLOW_AGENT_ENV` | Environment variable names the agent may set for its own commands despite redirecting execution, comma-separated. See [Agent environment variables](#agent-environment-variables-vibekit_allow_agent_env). | _(unset)_ |
+| `VIBEKIT_ALLOW_BRIDGE_ENV` | Credential-shaped names to inherit into kiro-cli anyway, comma-separated. See [Credentials in the container environment](#credentials-in-the-container-environment-vibekit_allow_bridge_env). | _(unset)_ |
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
 | `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |

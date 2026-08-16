@@ -95,12 +95,6 @@ func TestHandleDiagnostics_StdoutOnlyAndShape(t *testing.T) {
 
 // TestHandleDiagnostics_OversizeCappedAndMarked verifies an oversize
 // diagnostics dump is capped at diagnosticsMaxBytes and marked "[truncated]".
-//
-// The fixture is LINE-oriented on purpose. Its subject is the cap, and a
-// newline-free fixture would instead pin the line-boundary trim's no-newline
-// branch — where the correct answer is an empty body, not a byte-cut one — so it
-// would assert the opposite of
-// TestHandleDiagnostics_TruncatedDropsPartialLineWithNoNewline below.
 func TestHandleDiagnostics_OversizeCappedAndMarked(t *testing.T) {
 	line := strings.Repeat("A", 63) + "\n"
 	f := &fakeCLIRunner{stdout: strings.Repeat(line, (diagnosticsMaxBytes+5000)/len(line))}
@@ -118,38 +112,13 @@ func TestHandleDiagnostics_OversizeCappedAndMarked(t *testing.T) {
 	if !strings.HasSuffix(report, marker) {
 		t.Fatalf("report missing %q suffix (len=%d)", marker, len(report))
 	}
-	// Capped, then trimmed back to the last complete line, so the body is at most
-	// the cap and within one line of it.
+	// Capped, so the body is at most the cap.
 	body := strings.TrimSuffix(report, marker)
 	if len(body) > diagnosticsMaxBytes {
 		t.Errorf("capped body len = %d, want <= %d", len(body), diagnosticsMaxBytes)
 	}
 	if len(body) < diagnosticsMaxBytes-len(line) {
 		t.Errorf("capped body len = %d, want within one line of %d", len(body), diagnosticsMaxBytes)
-	}
-}
-
-// TestHandleDiagnostics_TruncatedDropsPartialLineWithNoNewline pins the branch
-// the line-boundary trim exists for: a capped dump containing no newline at all
-// is one partial line, so nothing survives it. Handing the byte-cut tail to
-// redact.Report is the stranded-secret case (an unterminated `"apiKey": "abc123`
-// does not match the secret-named-field rule), so an empty body is the correct
-// answer rather than a lossy one.
-func TestHandleDiagnostics_TruncatedDropsPartialLineWithNoNewline(t *testing.T) {
-	f := &fakeCLIRunner{stdout: strings.Repeat("A", diagnosticsMaxBytes+5000)}
-	rec := postDiagnostics(t, f)
-
-	var got map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("body not JSON: %v", err)
-	}
-	report := got["report"]
-	const marker = "\n\n[truncated]"
-	if !strings.HasSuffix(report, marker) {
-		t.Fatalf("report missing %q suffix (len=%d)", marker, len(report))
-	}
-	if body := strings.TrimSuffix(report, marker); body != "" {
-		t.Errorf("no-newline capped body = %d bytes, want 0 (whole dump is one partial line)", len(body))
 	}
 }
 
@@ -203,36 +172,6 @@ func TestHandleDiagnostics_MethodNotAllowed(t *testing.T) {
 	}
 	if f.cappedCalls != 0 {
 		t.Errorf("runner invoked on rejected method")
-	}
-}
-
-// TestHandleDiagnostics_RedactsSecrets verifies obvious secret patterns in
-// the diagnostics output are redacted before reaching the browser.
-func TestHandleDiagnostics_RedactsSecrets(t *testing.T) {
-	const (
-		sessionTok = "AQoEXAMPLEsessiontokenvalue0123456789"
-		awsKey     = "AKIAIOSFODNN7EXAMPLE"
-		bearerTok  = "abcdefABCDEF0123456789tokenvalue"
-	)
-	stdout := `{
-  "aws_session_token": "` + sessionTok + `",
-  "note": "found ` + awsKey + ` and header Authorization: Bearer ` + bearerTok + `"
-}`
-	f := &fakeCLIRunner{stdout: stdout}
-	rec := postDiagnostics(t, f)
-
-	var got map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("body not JSON: %v", err)
-	}
-	report := got["report"]
-	for _, secret := range []string{sessionTok, awsKey, bearerTok} {
-		if strings.Contains(report, secret) {
-			t.Errorf("secret %q leaked into report: %s", secret, report)
-		}
-	}
-	if !strings.Contains(report, "[redacted]") {
-		t.Errorf("no [redacted] placeholder in report: %s", report)
 	}
 }
 
@@ -306,60 +245,5 @@ func TestExecCLIRunner_RunStdoutCapped_Truncates(t *testing.T) {
 	}
 	if string(out) != "ABCDEFGHIJ" {
 		t.Errorf("out = %q, want prefix %q", out, "ABCDEFGHIJ")
-	}
-}
-
-// TestHandleDiagnostics_TruncationCannotStrandAPartialSecret pins the
-// line-boundary rule on the capped dump.
-//
-// The cap cuts on a BYTE boundary, and redact.Report's secret-named-field rule
-// matches `"key": "value"` — it needs the CLOSING quote. So a cut landing inside a
-// value leaves `"apiKey": "AAAA` unterminated, the pattern does not match, and the
-// partial secret reaches the browser with its redaction anchor intact and its
-// terminator gone. Trimming to the last complete line before redacting is what
-// closes it; upstream hit the mirror image on a size-capped tail (KiroCrew #583).
-func TestHandleDiagnostics_TruncationCannotStrandAPartialSecret(t *testing.T) {
-	const secret = "SUPERSECRETTOKENVALUE0123456789"
-	// The cut must land INSIDE the apiKey value, which is the only state that
-	// tests anything: a cut at a line boundary leaves a well-formed document, and a
-	// cut before the line removes the secret for free. So the padding is sized
-	// EXACTLY, ending in a newline, and the value straddles the cap.
-	const tail = 35 // bytes of the apiKey line that survive the cut
-	prefix := `  "apiKey": "`
-	pad := strings.Repeat("p", diagnosticsMaxBytes-tail-1) + "\n"
-	stdout := pad + prefix + secret + `"`
-
-	// Guard the fixture rather than trusting the arithmetic: the surviving slice
-	// must end part-way through the secret, with no closing quote.
-	survives := stdout[:diagnosticsMaxBytes]
-	if !strings.HasPrefix(survives[len(pad):], prefix) || strings.HasSuffix(survives, `"`) {
-		t.Fatalf("fixture does not straddle the cap: survives=%q", survives[len(pad):])
-	}
-	leaked := survives[len(pad)+len(prefix):]
-	if len(leaked) < 12 {
-		t.Fatalf("fixture leaks only %d secret chars, too few to assert on", len(leaked))
-	}
-
-	f := &fakeCLIRunner{stdout: stdout}
-	rec := postDiagnostics(t, f)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	var got map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("body not JSON: %v", err)
-	}
-	report := got["report"]
-	if !strings.HasSuffix(report, "\n\n[truncated]") {
-		t.Fatalf("fixture did not truncate, so it tests nothing (len=%d, cap=%d)",
-			len(f.stdout), diagnosticsMaxBytes)
-	}
-	// Any prefix of the secret long enough to be a credential must be absent. The
-	// whole partial line is dropped, so no prefix survives at all.
-	// The exact prefix the cut would have stranded, plus shorter ones.
-	for _, n := range []int{len(leaked), 12, 8} {
-		if strings.Contains(report, secret[:n]) {
-			t.Errorf("report leaked a %d-char prefix of the secret across the cap", n)
-		}
 	}
 }

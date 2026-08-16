@@ -155,13 +155,54 @@ describe("files.upload", () => {
 
   it("toasts error on upload failure", async () => {
     vi.mocked(uploadFiles).mockImplementation(({ onError }) => {
-      onError!("Network error");
+      onError!("Network error", []);
     });
     const { upload } = await import("./files.js");
     const files = { length: 1, item: () => null, 0: new File([""], "x") } as unknown as FileList;
     const r = await upload.dispatch({ files, targetDir: "/" });
     expect(r).toBeNull();
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Upload failed"), undefined);
+  });
+
+  it("carries the partial batch to the caller, which is not rolled back", async () => {
+    vi.mocked(uploadFiles).mockImplementation(({ onError }) => {
+      onError!("3 of 5 uploaded, then big.zip failed: upload too large", [
+        "/workspace/uploads/a.txt",
+        "/workspace/uploads/b.txt",
+        "/workspace/uploads/c.txt",
+      ]);
+    });
+    const { upload, partialUploadOf } = await import("./files.js");
+    const files = { length: 5, item: () => null } as unknown as FileList;
+    let seen: string[] = [];
+    await upload.dispatch(
+      { files, targetDir: "/workspace/uploads" },
+      {
+        onError: (err) => {
+          seen = partialUploadOf(err.cause);
+        },
+      },
+    );
+    expect(seen).toEqual([
+      "/workspace/uploads/a.txt",
+      "/workspace/uploads/b.txt",
+      "/workspace/uploads/c.txt",
+    ]);
+    expect(toast.error).toHaveBeenCalledWith(
+      expect.stringContaining("then big.zip failed"),
+      undefined,
+    );
+  });
+});
+
+describe("partialUploadOf", () => {
+  it("returns nothing for every other failure shape, so callers need no branch", async () => {
+    const { partialUploadOf } = await import("./files.js");
+    expect(partialUploadOf(undefined)).toEqual([]);
+    expect(partialUploadOf(null)).toEqual([]);
+    expect(partialUploadOf(new Error("boom"))).toEqual([]);
+    expect(partialUploadOf({ uploaded: "not-a-list" })).toEqual([]);
+    expect(partialUploadOf({ uploaded: ["a", 7, "b"] })).toEqual(["a", "b"]);
   });
 });
 

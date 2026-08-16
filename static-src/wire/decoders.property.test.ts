@@ -264,13 +264,22 @@ const prArb = fc.record({
   source_branch: fc.string({ minLength: 1 }),
   target_branch: fc.string({ minLength: 1 }),
   number: posInt,
+  // check_status and merge_blocked are REQUIRED on the wire (no
+  // omitempty in Go): their empty value is meaningful, so the server
+  // always sends them and the decoder always demands them.
+  check_status: fc.string(),
+  merge_blocked: fc.string(),
   body: optField(fc.string()),
   author: optField(fc.string()),
   url: optField(fc.string()),
+  head_sha: optField(fc.string()),
+  checks_total: optField(posInt),
+  checks_failing: optField(posInt),
   created_at: optField(posInt),
   updated_at: optField(posInt),
   mergeable: optField(fc.boolean()),
   draft: optField(fc.boolean()),
+  auto_merge_armed: optField(fc.boolean()),
 });
 
 const permissionOptionArb = fc.record({

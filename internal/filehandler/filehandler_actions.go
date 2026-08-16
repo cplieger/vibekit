@@ -120,10 +120,10 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 }
 
 func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, _ *Handler) error {
-	// Mirror of actionMkdir; also checks isSensitive so a creation of
+	// Mirror of actionMkdir; also checks IsSensitive so a creation of
 	// an exact-match sensitive file (e.g. /config/push-subs.json)
 	// is refused before it ever hits the filesystem.
-	if isSensitive(l.abs) || isProtectedDir(l.abs) {
+	if IsSensitive(l.abs) || isProtectedDir(l.abs) {
 		slog.Warn("filehandler: touch blocked on protected path", "path", l.abs)
 		api.Forbidden(w, "refusing to touch protected path")
 		return errHandled
@@ -151,7 +151,7 @@ func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc,
 		return refuseMountPoint(w, "delete", l)
 	}
 	// Layered guard: the mount-point check stops `/config` but would
-	// let `/config/chats` through because isSensitive only matches the
+	// let `/config/chats` through because IsSensitive only matches the
 	// files inside. The isProtectedDir helper closes that gap by
 	// blocking the container directories of every sensitive path too.
 	if isProtectedDir(l.abs) {
@@ -168,7 +168,7 @@ func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc,
 
 func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
 	// Source-side guards. Renaming a granted root would shadow the
-	// mount; renaming a protected container (isSensitive on the source
+	// mount; renaming a protected container (IsSensitive on the source
 	// leaves /config/chats — no trailing slash — through because the
 	// sensitive prefix is /config/chats/) could move the entire chat
 	// store onto a fresh name and orphan the server's view of its
@@ -221,7 +221,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	// any other bare-directory sensitive prefix name) on cold boot
 	// is also refused; a destination naming a granted root is the
 	// mount-shadowing variant of the same attack.
-	if isSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
+	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filehandler: rename blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		api.Forbidden(w, "rename target is protected")
@@ -244,7 +244,7 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l l
 	// path gate. Keeps the per-action pattern uniform with rename
 	// and move. Cross-mount copies are fine: the stream reads from
 	// the source mount's root and writes through the destination's.
-	if isSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
+	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filehandler: copy blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		api.Forbidden(w, "copy target is protected")
@@ -355,7 +355,7 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 	}
 	// Destination guard mirrors actionRename: sensitive files,
 	// protected directories, and granted roots are off-limits.
-	if isSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
+	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filehandler: move blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		api.Forbidden(w, "move target is protected")

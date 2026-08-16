@@ -235,8 +235,13 @@ func (s *Server) ListenAndServe() error {
 	// (see WithKiroRescan): with no pins in the environment there is nothing to
 	// rescan, so the route is absent rather than answering a misleading 503.
 	if s.kiroRescan != nil {
-		mux.Handle("POST "+kiroRescanPath, loopbackOnly(http.HandlerFunc(s.handleKiroRescan)))
+		mux.Handle("POST "+kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
 	}
+	// Runtime profiles, same loopback gate. Unconditional unlike the repair hook
+	// above: that route depends on this server owning the install, while a
+	// goroutine dump is a property of the process and is always answerable. See
+	// pprof.go for which profiles are mounted and which are deliberately not.
+	mux.Handle("GET "+pprofPath, pprofHandler())
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
 	// Tools REST surface: the toolbelt httpapi projection, mounted at

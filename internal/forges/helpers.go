@@ -34,7 +34,51 @@ const (
 	fieldMethod    = "method"
 	fieldRepo      = "repo"
 	fieldURL       = "url"
+	fieldHeadSHA   = "head_sha"
+	fieldAuto      = "auto"
 )
+
+// PR.CheckStatus vocabulary: the folded CI verdict for a PR's head
+// commit. The empty string is a fourth, meaningful value — the forge
+// reported no checks — and is never rendered as a passing state.
+const (
+	checkPending = "pending"
+	checkPassing = "passing"
+	checkFailing = "failing"
+)
+
+// PR.MergeBlocked vocabulary: why the forge refuses a merge. Each value
+// names one cause; blockUnknown is for a forge that reports the refusal
+// without a reason, which is honest where a guess would not be.
+const (
+	blockDraft         = "draft"
+	blockConflicts     = "conflicts"
+	blockChecksFailing = "checks_failing"
+	blockChecksRunning = "checks_running"
+	blockBehind        = "behind"
+	blockProtected     = "blocked"
+	blockUnknown       = "unknown"
+)
+
+// isHexSHA reports whether s is a plausible git object id: 7 to 64 hex
+// digits. The head-commit pin arrives as a query parameter and travels
+// into a subprocess argv and a JSON body, so it is validated at that
+// boundary rather than handed to the forge to reject.
+func isHexSHA(s string) bool {
+	if len(s) < 7 || len(s) > 64 {
+		return false
+	}
+	for i := range len(s) {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		case c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // parseRFC3339Millis parses an RFC 3339 timestamp string into Unix
 // milliseconds. Returns 0 on parse failure (caller decides whether

@@ -697,6 +697,27 @@ a.git-pr-row-title:hover {
   border: 1px solid var(--c-border);
   border-radius: 999px;
   color: var(--c-text-tertiary);
+  white-space: nowrap;
+}
+
+/* CI check chip states. Colour is the second channel, not the only one:
+ * each chip also carries its own words ("checks passed", "2 failing",
+ * "checks running"), so the state survives a colour-blind reader and a
+ * monochrome screenshot. Tokens are the same --c-green/red/yellow trio the
+ * git status letters use, so the app has one status palette. */
+.git-pr-check-pass {
+  color: var(--c-green);
+  border-color: color-mix(in oklch, var(--c-green), transparent 60%);
+}
+
+.git-pr-check-fail {
+  color: var(--c-red);
+  border-color: color-mix(in oklch, var(--c-red), transparent 60%);
+}
+
+.git-pr-check-pending {
+  color: var(--c-yellow);
+  border-color: color-mix(in oklch, var(--c-yellow), transparent 60%);
 }
 
 .git-pr-row-sub {

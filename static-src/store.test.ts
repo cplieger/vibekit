@@ -434,6 +434,41 @@ describe("Store steer projection", () => {
     expect(get("chat-1")?.steers?.[0]?.severity).toBe("error");
   });
 
+  // Two steer_injected frames, one id: KAS's read frame carries the text, the
+  // agent's acknowledgement marker carries what it did. Each field is adopted
+  // only from the frame that has it, or the second would blank the first's text.
+  it("records the agent's acknowledgement without losing the steer's text", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
+    markSteerInjected("chat-1", "steer-1", "use tabs instead");
+    markSteerInjected("chat-1", "steer-1", "", "switched the file to tabs");
+    expect(get("chat-1")?.steers?.[0]).toEqual({
+      id: "steer-1",
+      text: "use tabs instead",
+      injected: true,
+      ack: "switched the file to tabs",
+    });
+  });
+
+  // A read frame after an ack frame must not erase the ack: SSE reconnect
+  // replays every unanswered frame, so the two can arrive in either order.
+  it("keeps an acknowledgement when a read frame is replayed after it", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    markSteerInjected("chat-1", "steer-1", "", "did the thing");
+    markSteerInjected("chat-1", "steer-1", "one");
+    expect(get("chat-1")?.steers?.[0]?.ack).toBe("did the thing");
+  });
+
+  // An ack frame carries no text, so an id this client never saw has nothing to
+  // label a chip with. Creating a blank chip that reads only "read: did X" names
+  // no message and cannot be matched to anything the user wrote.
+  it("ignores an acknowledgement for a steer it never saw", () => {
+    resetStore("chat-1");
+    markSteerInjected("chat-1", "steer-unknown", "", "did something");
+    expect(get("chat-1")?.steers).toBeUndefined();
+  });
+
   it("ignores an empty id rather than creating an unaddressable entry", () => {
     resetStore("chat-1");
     recordSteerQueued("chat-1", { id: "", text: "nowhere" });

@@ -246,23 +246,44 @@ export function recordSteerQueued(
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
 }
 
-/** Mark a steer as read by the model.
+/** Mark a steer as read by the model, and record what it did about it.
  *
  *  Tolerates an id it has never seen by CREATING the entry: `steer_injected` can
  *  legitimately arrive without its `steer_queued` — another device sent the
  *  steer, or this one connected mid-turn — and dropping it would leave the
- *  transcript with no sign that the agent was redirected. */
-export function markSteerInjected(id: string, steerID: string, text: string): void {
+ *  transcript with no sign that the agent was redirected.
+ *
+ *  TWO FRAMES, one id. KAS's steering channel sends the read frame (text, no
+ *  ack); the agent's acknowledgement marker on the text stream sends the ack
+ *  frame (ack, no text) once it has acted. So each field is adopted only when
+ *  the frame carries it, or the second frame would blank the first's text.
+ *
+ *  An ack frame for an id this client has never seen is IGNORED rather than
+ *  creating an entry: with no text there is nothing to label the chip with, and
+ *  a blank chip carrying only a verdict names no message. */
+export function markSteerInjected(id: string, steerID: string, text: string, ack?: string): void {
   const s = get(id);
   if (s === undefined || steerID === "") {
     return;
   }
   const existing = s.steers ?? [];
   const at = existing.findIndex((e) => e.id === steerID);
-  const next =
-    at >= 0
-      ? existing.map((e, i) => (i === at ? { ...e, injected: true } : e))
-      : [...existing, { id: steerID, text, injected: true }];
+  if (at < 0) {
+    if (text === "") {
+      return;
+    }
+    const entry: PendingSteer = {
+      id: steerID,
+      text,
+      injected: true,
+      ...(ack !== undefined && ack !== "" ? { ack } : {}),
+    };
+    sessions.update(id, (cur) => ({ ...cur, steers: [...existing, entry] }));
+    return;
+  }
+  const next = existing.map((e, i) =>
+    i === at ? { ...e, injected: true, ...(ack !== undefined && ack !== "" ? { ack } : {}) } : e,
+  );
   sessions.update(id, (cur) => ({ ...cur, steers: next }));
 }
 

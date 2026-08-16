@@ -230,6 +230,39 @@
   color: var(--c-text-secondary);
 }
 
+/* What the agent said it did about the steer, from its own acknowledgement
+   marker. Present only on a read chip, so it is styled as the settled half of
+   the row: the green the read state already established, one step down in
+   weight from the message itself, and given the remaining width because the
+   message above it is the part the reader wrote and already knows. */
+.queued-ack {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--c-green) 70%, var(--c-text-secondary));
+}
+
+/* A chip carrying two facts needs room for both, and only that chip does: the
+   width is widened on the ack's presence rather than on the read state, so a
+   read chip the agent never answered stays the size of every other one. */
+.queued-prompt:has(> .queued-ack) {
+  max-width: min(30rem, 100%);
+}
+
+/* The separator is a border rather than a glyph so it cannot be read aloud or
+   selected as text: the accessible name already spells the relationship out. */
+.queued-ack::before {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 0.7em;
+  margin-inline-end: 0.375rem;
+  vertical-align: -0.05em;
+  background: color-mix(in srgb, var(--c-green) 35%, transparent);
+}
+
 .queued-cancel {
   position: relative;
   display: inline-flex;

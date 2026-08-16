@@ -184,6 +184,14 @@
   color: var(--c-yellow);
 }
 
+/* Stopped rather than finished (a cancelled or aborted workflow run). Amber for
+   the same reason a refusal is: the work did not fail, it did not complete. That
+   makes SHAPE the only thing separating the two, which is exactly what the
+   triangle-versus-shield badge pair is for. */
+.tool-icon.is-warn {
+  color: var(--c-yellow);
+}
+
 /* The rule that refused the call. Presented as label/value pairs rather than
    prose so the capability and the source file can be copied out of it. */
 .tool-denial {

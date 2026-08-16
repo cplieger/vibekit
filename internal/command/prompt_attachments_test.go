@@ -174,3 +174,41 @@ func TestAttachmentBlock_ImageDegradesToPathReference(t *testing.T) {
 		}
 	})
 }
+
+// A .txt attachment takes the path-reference branch, and D6's large-paste spill
+// rests entirely on that: a paste over the threshold is written as a .txt in the
+// uploads folder and attached like any other file, so the agent reads it with
+// its file tools instead of receiving an opaque base64 blob.
+//
+// Do NOT add .txt to documentExts to "improve" this. TestDocumentExtsSubsetOfKAS
+// would still pass (KAS's allowlist covers text/plain), so nothing would fail —
+// the spilled paste would just silently become base64 the model cannot skim, and
+// it would start spending the turn's inline budget.
+func TestAttachmentBlock_TextFileTakesPathReference(t *testing.T) {
+	dir := t.TempDir()
+	abs := filepath.Join(dir, "paste-2026-08-16T01-42-33.txt")
+	if err := os.WriteFile(abs, []byte("a pasted log\nsecond line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolve := func(string) (string, error) { return abs, nil }
+
+	block, spent := attachmentBlock(api.Attachment{Path: abs, Name: filepath.Base(abs)},
+		resolve, MaxInlineTurnBytes)
+
+	if got := block[keyType]; got != api.ContentTypeText {
+		t.Fatalf("block type = %v, want text (a path reference)", got)
+	}
+	wantText := "Attached file: " + abs
+	if got := block["text"]; got != wantText {
+		t.Errorf("text = %v, want %q", got, wantText)
+	}
+	if spent != 0 {
+		t.Errorf("spent = %d, want 0: a path reference inlines nothing and so costs no budget", spent)
+	}
+	if _, isDoc := documentExts[".txt"]; isDoc {
+		t.Error(".txt is in documentExts; a spilled paste would arrive as base64 instead of a readable file")
+	}
+	if unsupportedDocExts[".txt"] {
+		t.Error(".txt is in unsupportedDocExts; it would carry a misleading binary-format note")
+	}
+}

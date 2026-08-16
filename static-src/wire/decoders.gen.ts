@@ -514,6 +514,8 @@ export const decodePR: Decoder<PR> = (v) => {
     state: reqStr(o, "state", "$.pr"),
     source_branch: reqStr(o, "source_branch", "$.pr"),
     target_branch: reqStr(o, "target_branch", "$.pr"),
+    check_status: reqStr(o, "check_status", "$.pr"),
+    merge_blocked: reqStr(o, "merge_blocked", "$.pr"),
     number: reqNum(o, "number", "$.pr"),
   };
   const body = o["body"] === null ? undefined : optStr(o, "body", "$.pr");
@@ -522,6 +524,12 @@ export const decodePR: Decoder<PR> = (v) => {
   if (author !== undefined) out.author = author;
   const url = o["url"] === null ? undefined : optStr(o, "url", "$.pr");
   if (url !== undefined) out.url = url;
+  const headSha = o["head_sha"] === null ? undefined : optStr(o, "head_sha", "$.pr");
+  if (headSha !== undefined) out.head_sha = headSha;
+  const checksTotal = o["checks_total"] === null ? undefined : optNum(o, "checks_total", "$.pr");
+  if (checksTotal !== undefined) out.checks_total = checksTotal;
+  const checksFailing = o["checks_failing"] === null ? undefined : optNum(o, "checks_failing", "$.pr");
+  if (checksFailing !== undefined) out.checks_failing = checksFailing;
   const createdAt = o["created_at"] === null ? undefined : optNum(o, "created_at", "$.pr");
   if (createdAt !== undefined) out.created_at = createdAt;
   const updatedAt = o["updated_at"] === null ? undefined : optNum(o, "updated_at", "$.pr");
@@ -530,6 +538,8 @@ export const decodePR: Decoder<PR> = (v) => {
   if (mergeable !== undefined) out.mergeable = mergeable;
   const draft = o["draft"] === null ? undefined : optBool(o, "draft", "$.pr");
   if (draft !== undefined) out.draft = draft;
+  const autoMergeArmed = o["auto_merge_armed"] === null ? undefined : optBool(o, "auto_merge_armed", "$.pr");
+  if (autoMergeArmed !== undefined) out.auto_merge_armed = autoMergeArmed;
   return out;
 };
 
@@ -907,6 +917,8 @@ export const decodeSteerInjectedPayload: Decoder<SteerInjectedPayload> = (v) => 
     steer_id: reqStr(o, "steer_id", "$.steer_injected_payload"),
     text: reqStr(o, "text", "$.steer_injected_payload"),
   };
+  const ack = o["ack"] === null ? undefined : optStr(o, "ack", "$.steer_injected_payload");
+  if (ack !== undefined) out.ack = ack;
   return out;
 };
 

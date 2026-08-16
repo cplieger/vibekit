@@ -407,3 +407,90 @@ describe("a11y: failed tool aria-expanded", () => {
     vi.doUnmock("./actions/index.js");
   });
 });
+
+describe("a11y: History row accessible names", () => {
+  // A history row is a role=button whose name says what a click does ("Open X").
+  // A settled parentless run also states its OUTCOME, and that outcome is a
+  // glyph — so the word has exactly one home, the row's accessible name, and
+  // must not be duplicated as visible text beside the glyph it replaced.
+  it("a settled run row names the outcome once, in the accessible name only", async () => {
+    vi.resetModules();
+    const noop = (): void => {
+      /* noop */
+    };
+    vi.doMock("./actions/chat.js", () => ({
+      loadSessions: {
+        dispatch: () =>
+          Promise.resolve({
+            sessions: [],
+            runs: [
+              { workflow_id: "wf_a11y", name: "nightly-sweep", status: "failed", updated_at: 1 },
+            ],
+          }),
+        cancel: noop,
+      },
+    }));
+    vi.doMock("./actions/chat-search.js", () => ({
+      searchChats: { dispatch: noop, cancel: noop },
+    }));
+    vi.doMock("./actions/index.js", () => ({ registerCleanup: noop }));
+    vi.doMock("./chat.js", () => ({ openPreviousSession: noop, openChatTab: noop }));
+    vi.doMock("./run-view.js", () => ({ openRunView: noop }));
+    vi.doMock("./tabs.js", () => ({
+      toggleHistoryView: (onShow: () => void) => {
+        onShow();
+      },
+      hasTab: () => false,
+    }));
+    vi.doMock("@cplieger/ui-primitives/skeleton", () => ({
+      skeletonTiming: () => ({ cancel: noop }),
+    }));
+    vi.doMock("./editor-openers.js", () => ({ openFileDiff: noop }));
+    vi.doMock("./navigate.js", () => ({ openChange: noop, openAtLine: noop }));
+    vi.doMock("./scroll.js", () => ({
+      setUserScrolledUp: noop,
+      preserveReadingPosition: (fn: () => void) => {
+        fn();
+      },
+    }));
+    vi.doMock("./tool-group.js", () => ({ trackInProgress: noop }));
+
+    const host = document.createElement("div");
+    host.id = "history-table";
+    document.body.appendChild(host);
+
+    const { showHistoryView } = await import("./history.js");
+    showHistoryView();
+    await vi.waitFor(() => {
+      if (host.querySelector("[data-key]") === null) {
+        throw new Error("not rendered");
+      }
+    });
+
+    const row = host.querySelector<HTMLElement>('[data-key="r:wf_a11y"]')!;
+    expect(row.getAttribute("role")).toBe("button");
+    expect(row.getAttribute("tabindex")).toBe("0");
+    // The name still opens with the action, then states the verdict.
+    expect(row.getAttribute("aria-label")).toBe("Open nightly-sweep, failed");
+    // The glyph carrying it is decorative: the name already says the word.
+    expect(row.querySelector(".tool-outcome-badge")?.getAttribute("aria-hidden")).toBe("true");
+    expect(row.textContent).not.toContain("failed");
+
+    document.body.removeChild(host);
+    for (const m of [
+      "./actions/chat.js",
+      "./actions/chat-search.js",
+      "./actions/index.js",
+      "./chat.js",
+      "./run-view.js",
+      "./tabs.js",
+      "@cplieger/ui-primitives/skeleton",
+      "./editor-openers.js",
+      "./navigate.js",
+      "./scroll.js",
+      "./tool-group.js",
+    ]) {
+      vi.doUnmock(m);
+    }
+  });
+});

@@ -103,7 +103,7 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 			break
 		}
 		name := e.Name()
-		if isSensitive(filepath.Join(resolved, name)) {
+		if IsSensitive(filepath.Join(resolved, name)) {
 			continue
 		}
 		info, err := e.Info()

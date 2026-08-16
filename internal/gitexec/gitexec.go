@@ -168,6 +168,37 @@ func firstSubcommand(args []string) string {
 // fix: it blocks ext:: explicitly without throwing out the rest
 // of the user's git config.
 //
+// # What git will still execute for a repo nobody here wrote, and why
+//
+// Loading gitconfig FILES means loading a REPO's `.git/config` too, and
+// several config keys name a command git then runs. The two with no
+// legitimate use on this surface are neutralised on the command line
+// above (core.fsmonitor) and per call site (diff.<driver>.textconv, via
+// --no-textconv on the diff family). Two classes are deliberately left
+// live, and neither is closed by anything in this package:
+//
+//   - `filter.<driver>.clean` / `.smudge` CANNOT be disabled. git offers
+//     no --no-filter flag and no wildcard config form (`filter.*.clean=`
+//     is not a thing git reads), so a repo carrying both a .gitconfig
+//     entry and a .gitattributes line that selects the driver still runs
+//     that command on a checkout, a stage, or `git diff` of a filtered
+//     path. Clearing GIT_CONFIG_COUNT does not touch it — that only
+//     blocks INLINE config from a parent process, and this one is on
+//     disk. The exposure is real and stated rather than papered over:
+//     opening an untrusted repo in this app can execute code from it.
+//
+//   - HOOKS stay ON, deliberately. `git commit` and `git push` run
+//     pre-commit, commit-msg and pre-push, which is what makes the git
+//     panel's commit equivalent to the user's own — this fleet's repos
+//     use hooks for formatting and secret scanning, and a UI that
+//     silently skipped them would produce commits CI then rejects.
+//     Nothing here passes --no-verify or core.hooksPath.
+//
+// Both classes require a repo already checked out into the workspace,
+// which is a decision the user made, so the answer is not to break the
+// tooling for every ordinary repo — it is to know that this is what
+// "open somebody else's repo" costs.
+//
 // The first non-flag arg in `args` must be one of allowedSubcommands;
 // otherwise Cmd returns a command rigged to fail without launching
 // git. This local guarantee satisfies CodeQL's go/command-injection
@@ -193,6 +224,15 @@ func Cmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	// `[protocol "ext"] allow = always` cannot re-enable ext::.
 	hardenedArgs := append([]string{
 		"-c", "protocol.ext.allow=never",
+		// core.fsmonitor names a command git runs on status and diff — the
+		// two subcommands the git panel calls most — and an empty value is
+		// the documented "no monitor" setting. It is cleared CENTRALLY
+		// rather than per call site because it is a config key, so it costs
+		// nothing on the subcommands that ignore it, and because there is
+		// no legitimate use for it here at all: this container has no
+		// fsmonitor daemon, so any value present came from a repo's own
+		// .git/config.
+		"-c", "core.fsmonitor=",
 	}, args...)
 	cmd := exec.CommandContext(ctx, "git", hardenedArgs...)
 	cmd.Dir = dir

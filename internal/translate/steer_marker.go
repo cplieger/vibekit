@@ -47,16 +47,52 @@ const maxSteerCarry = 8 << 10
 // at the first `]` — because what vibekit hides must be exactly what KAS treats
 // as an acknowledgement. A looser pattern here would eat real text; a stricter
 // one would leave machinery on screen.
-var steerAckRe = regexp.MustCompile(`(?s)\[STEERING steer-[^\s:]+: .+?\]`)
+//
+// The two groups do not change what matches; they name the two halves the strip
+// used to throw away. The BODY is the agent's own statement of what it did about
+// the steer, which is strictly better information than a check glyph, so it is
+// extracted rather than discarded (see steerAck).
+var steerAckRe = regexp.MustCompile(`(?s)\[STEERING (steer-[^\s:]+): (.+?)\]`)
+
+// steerAck is one acknowledgement lifted out of the text: which steer, and what
+// the agent says it did about it.
+//
+// Hidden from the transcript and surfaced on the steer's own chip instead. The
+// marker is machinery in the prose and a fact about the steer, so its home is
+// the row that already tracks that steer rather than the reply.
+type steerAck struct {
+	SteerID string
+	Text    string
+}
 
 // stripSteerAcks removes complete acknowledgement markers from carry+incoming
-// and returns the text safe to emit plus the bytes still withheld.
+// and returns the text safe to emit, the bytes still withheld, and the
+// acknowledgements it lifted out, in the order they appeared.
 //
 // The returned carry is always a suffix of the input, so nothing is invented and
 // nothing is lost: every byte is either emitted, withheld for the next call, or
-// part of a marker that was matched in full.
-func stripSteerAcks(carry, incoming string) (emit, newCarry string) {
-	buf := steerAckRe.ReplaceAllString(carry+incoming, "")
+// part of a marker that was matched in full — and a matched marker's content now
+// leaves through acks rather than being dropped.
+func stripSteerAcks(carry, incoming string) (emit, newCarry string, acks []steerAck) {
+	joined := carry + incoming
+	buf := joined
+	if matches := steerAckRe.FindAllStringSubmatchIndex(joined, -1); matches != nil {
+		var b strings.Builder
+		last := 0
+		for _, m := range matches {
+			b.WriteString(joined[last:m[0]])
+			acks = append(acks, steerAck{
+				SteerID: joined[m[2]:m[3]],
+				// Trimmed because the body is rendered as a label, and the
+				// marker's own separator leaves it with leading space in the
+				// shapes KAS produces.
+				Text: strings.TrimSpace(joined[m[4]:m[5]]),
+			})
+			last = m[1]
+		}
+		b.WriteString(joined[last:])
+		buf = b.String()
+	}
 	// Every complete marker is gone, so any candidate left is still open. Hold
 	// from the first one that could still become a marker; a `[` that cannot is
 	// ordinary text and must not delay the rest of the sentence behind it.
@@ -68,15 +104,15 @@ func stripSteerAcks(carry, incoming string) (emit, newCarry string) {
 		at := i + j
 		if couldBecomeSteerAck(buf[at:]) {
 			if len(buf)-at > maxSteerCarry {
-				return buf, ""
+				return buf, "", acks
 			}
 			// `[` is ASCII, so this is a rune boundary and neither side can be a
 			// torn code point.
-			return buf[:at], buf[at:]
+			return buf[:at], buf[at:], acks
 		}
 		i = at + 1
 	}
-	return buf, ""
+	return buf, "", acks
 }
 
 // couldBecomeSteerAck reports whether s, which starts at a `[`, might still turn

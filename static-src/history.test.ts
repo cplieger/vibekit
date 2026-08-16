@@ -2,13 +2,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const dispatch = vi.fn();
+const cancelSessions = vi.fn();
 const openPreviousSession = vi.fn();
 const openRunView = vi.fn();
 const openChatTab = vi.fn();
 const searchDispatch = vi.fn(async () => ({ matches: [], scanned: 0, truncated: false }));
 
 vi.mock("./actions/chat.js", () => ({
-  loadSessions: { dispatch, cancel: vi.fn() },
+  loadSessions: { dispatch, cancel: cancelSessions },
 }));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
@@ -20,14 +21,30 @@ vi.mock("./actions/chat-search.js", () => ({
   searchChats: { dispatch: searchDispatch, cancel: vi.fn() },
 }));
 vi.mock("./run-view.js", () => ({ openRunView }));
-vi.mock("./tabs.js", () => ({
-  toggleHistoryView: (onShow: () => void) => {
-    onShow();
-  },
-}));
+const toggleHistoryView = vi.fn((onShow: () => void) => {
+  onShow();
+});
+const hasTab = vi.fn((_id: string) => false);
+vi.mock("./tabs.js", () => ({ toggleHistoryView, hasTab }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
   skeletonTiming: () => ({ cancel: vi.fn() }),
 }));
+// The row's outcome glyph comes from tool-card.ts (the one writer of that
+// vocabulary), which reaches the editor and scroll subgraphs. Stub the four
+// leaves it needs so this suite keeps testing the real glyph without staging the
+// whole app: mocking tool-card itself would test the mock.
+const noop = (): void => {
+  /* noop */
+};
+vi.mock("./editor-openers.js", () => ({ openFileDiff: noop }));
+vi.mock("./navigate.js", () => ({ openChange: noop, openAtLine: noop }));
+vi.mock("./scroll.js", () => ({
+  setUserScrolledUp: noop,
+  preserveReadingPosition: (fn: () => void) => {
+    fn();
+  },
+}));
+vi.mock("./tool-group.js", () => ({ trackInProgress: noop }));
 
 const chatRow = {
   session_id: "sess_chat",
@@ -56,6 +73,9 @@ const runRow = {
   updated_at: 2500,
 };
 
+/** A parentless run at the given status; parentless is what scopes the glyph. */
+const runAt = (status: string) => ({ ...runRow, status });
+
 async function render(payload: unknown): Promise<HTMLElement> {
   document.body.innerHTML = `<div id="history-table"></div>`;
   dispatch.mockResolvedValue(payload);
@@ -73,6 +93,10 @@ describe("history: previous chats and runs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    hasTab.mockReturnValue(false);
+    toggleHistoryView.mockImplementation((onShow: () => void) => {
+      onShow();
+    });
   });
 
   it("merges chats and runs into ONE list, newest first", async () => {
@@ -157,6 +181,197 @@ describe("history: previous chats and runs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A chat already open HERE is not history. The server only knows ownership (it
+// tags such a session with `chat_id` rather than omitting it); "open here" is
+// this device's localStorage, which is why the predicate is the client's and
+// reuses the tab store's own hasTab rather than a second one.
+// ---------------------------------------------------------------------------
+
+describe("history: chats already open in a tab here", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    hasTab.mockReturnValue(false);
+    toggleHistoryView.mockImplementation((onShow: () => void) => {
+      onShow();
+    });
+  });
+
+  it("drops a tagged session whose chat is open here", async () => {
+    hasTab.mockImplementation((id: string) => id === "c-existing");
+    const c = await render({ sessions: [chatRow, ownedRow], runs: [] });
+    expect(c.querySelector('[data-key="s:sess_owned"]')).toBeNull();
+    // Only that row goes. The rest of the list is untouched.
+    expect(c.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
+    expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
+    expect(hasTab).toHaveBeenCalledWith("c-existing");
+  });
+
+  it("keeps a tagged session whose chat is NOT open here", async () => {
+    // Owned but closed is exactly the case this page exists for: reopening it.
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    expect(c.querySelector('[data-key="s:sess_owned"]')).not.toBeNull();
+  });
+
+  it("never asks the tab store about an unowned session", async () => {
+    // No `chat_id` means no vibekit chat owns it, so there is no tab it could be.
+    const c = await render({ sessions: [chatRow], runs: [] });
+    expect(c.querySelector('[data-key="s:sess_chat"]')).not.toBeNull();
+    expect(hasTab).not.toHaveBeenCalled();
+  });
+
+  it("leaves runs alone — a run is not a chat and owns no tab", async () => {
+    hasTab.mockReturnValue(true);
+    const c = await render({ sessions: [], runs: [runRow] });
+    expect(c.querySelector('[data-key="r:wf_1"]')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A parentless run's outcome is a GLYPH, painted through tool-card.ts's
+// applyOutcome (the one writer of that vocabulary). Exhaustive over
+// RUN_STATUSES, plus the two junk values a `status?: string` wire field carries.
+// ---------------------------------------------------------------------------
+
+describe("history: a run's outcome is a glyph, not a word", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    hasTab.mockReturnValue(false);
+    toggleHistoryView.mockImplementation((onShow: () => void) => {
+      onShow();
+    });
+  });
+
+  const settled = [
+    { status: "completed", cls: "is-ok", badge: "\u2713", word: "succeeded" },
+    { status: "failed", cls: "is-fail", badge: "\u2717", word: "failed" },
+    { status: "aborted", cls: "is-warn", badge: "\u26A0", word: "aborted" },
+  ] as const;
+
+  for (const s of settled) {
+    it(`paints ${s.status} as a tinted glyph plus a shape, never the word`, async () => {
+      const c = await render({ sessions: [], runs: [runAt(s.status)] });
+      const row = c.querySelector('[data-key="r:wf_1"]')!;
+      const icon = row.querySelector(".tool-icon")!;
+      expect(icon.classList.contains(s.cls)).toBe(true);
+      // Tint alone is one channel and fails WCAG 1.4.1, so the shape is not
+      // optional: check / cross / warning triangle.
+      expect(icon.querySelector(".tool-outcome-badge")?.textContent).toBe(s.badge);
+      // The word is in the accessible name and nowhere else, and the row's own
+      // "Open X" label survives in front of it.
+      expect(row.getAttribute("aria-label")).toBe(`Open feature-pipeline, ${s.word}`);
+      expect(row.textContent).not.toContain(s.word);
+      expect(row.textContent).not.toContain(s.status);
+      // The glyph REPLACES the status slot rather than joining it.
+      expect(row.querySelector(".history-status")).toBeNull();
+    });
+  }
+
+  for (const status of ["running", "paused"] as const) {
+    it(`leaves a ${status} run its status slot and gives it no glyph`, async () => {
+      const c = await render({ sessions: [], runs: [runAt(status)] });
+      const row = c.querySelector('[data-key="r:wf_1"]')!;
+      expect(row.querySelector(".tool-icon")).toBeNull();
+      expect(row.querySelector(".history-status")?.textContent).toBe(status);
+      expect(row.getAttribute("aria-label")).toBe("Open feature-pipeline");
+    });
+  }
+
+  it("guesses no verdict from a status it does not know", async () => {
+    // `status` is a plain string on the wire, so an unrecognised value is
+    // reachable. It must fall through to the status word, not to a green check.
+    const c = await render({ sessions: [], runs: [runAt("quiesced")] });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.querySelector(".tool-icon")).toBeNull();
+    expect(row.querySelector(".history-status")?.textContent).toBe("quiesced");
+  });
+
+  it("shows neither glyph nor status when the run reports no status at all", async () => {
+    const c = await render({ sessions: [], runs: [runAt("")] });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.querySelector(".tool-icon")).toBeNull();
+    expect(row.querySelector(".history-status")).toBeNull();
+  });
+
+  it("scopes the glyph to a PARENTLESS run", async () => {
+    // An agent-parented run's outcome is the agent's to handle, so this page
+    // states no verdict on it — the same scoping the word had.
+    const c = await render({
+      sessions: [],
+      runs: [{ ...runRow, parent_chat_id: "c-owner" }],
+    });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.querySelector(".tool-icon")).toBeNull();
+    expect(row.querySelector(".history-status")?.textContent).toBe("completed");
+  });
+
+  it("gives a chat row no outcome glyph", async () => {
+    const c = await render({ sessions: [failedRow], runs: [] });
+    const row = c.querySelector('[data-key="s:sess_failed"]')!;
+    expect(row.querySelector(".tool-icon")).toBeNull();
+    expect(row.querySelector(".history-status")?.textContent).toBe("failed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The tab-restore path. It needs a plain loader because the toggle-style opener
+// would CLOSE the already-active tab it was fired from.
+// ---------------------------------------------------------------------------
+
+describe("history: the tab-restore loader", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    hasTab.mockReturnValue(false);
+    toggleHistoryView.mockImplementation((onShow: () => void) => {
+      onShow();
+    });
+  });
+
+  async function restore(): Promise<HTMLElement> {
+    document.body.innerHTML = `<div id="history-table"></div>`;
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
+    const { loadHistoryView } = await import("./history.js");
+    loadHistoryView();
+    await vi.waitFor(() => {
+      if (document.querySelectorAll("#history-table [data-key]").length === 0) {
+        throw new Error("not rendered");
+      }
+    });
+    return document.getElementById("history-table")!;
+  }
+
+  it("fills the page without going through the tab toggle", async () => {
+    const c = await restore();
+    expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
+    // The toggle is the thing that would have closed a restored, active tab.
+    expect(toggleHistoryView).not.toHaveBeenCalled();
+  });
+
+  it("is a reload when fired again, never a close", async () => {
+    const c = await restore();
+    const { loadHistoryView } = await import("./history.js");
+    loadHistoryView();
+    await vi.waitFor(() => {
+      if (dispatch.mock.calls.length < 2) {
+        throw new Error("not reloaded");
+      }
+    });
+    expect(toggleHistoryView).not.toHaveBeenCalled();
+    expect(c.querySelectorAll("[data-key]")).toHaveLength(1);
+  });
+
+  it("tears the page's in-flight work down on close", async () => {
+    await restore();
+    const { teardownHistoryView } = await import("./history.js");
+    cancelSessions.mockClear();
+    teardownHistoryView();
+    expect(cancelSessions).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Cross-chat search: a second MODE over the same container, not a filter of the
 // loaded list.
 // ---------------------------------------------------------------------------
@@ -213,6 +428,10 @@ describe("history: cross-chat search", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    hasTab.mockReturnValue(false);
+    toggleHistoryView.mockImplementation((onShow: () => void) => {
+      onShow();
+    });
   });
 
   it("renders matching CHATS with their best line", async () => {
