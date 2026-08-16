@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/web-terminal-engine/v3/terminal"
+	"github.com/cplieger/web-terminal-engine/v4/terminal"
 )
 
 // TestRun_delegatesToTheEngineRule pins that the gate's verdict IS the
