@@ -13,9 +13,31 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/schedule"
 )
+
+// maxLogFieldBytes bounds one caller-supplied string on its way into a log
+// attribute. A schedule id arrives in a JSON body or a path segment and is
+// checked only for emptiness, so it has no length of its own to respect.
+const maxLogFieldBytes = 256
+
+// logField prepares one untrusted string for a slog attribute: runesafe's
+// single-line preset (C0/C1 controls, DEL, Bidi overrides and the paragraph
+// separators become spaces) capped on a rune boundary.
+//
+// The single-line part is the point. A schedule id is client-chosen and reaches
+// these two log lines unconstrained, so a newline in it forges a whole log
+// record downstream in Loki — the reader cannot tell an injected line from one
+// the server wrote. The recurrence frequency is enum-checked by Spec.Validate
+// before it gets here and the recipe name comes from the workspace rather than
+// the request, but both are routed through the same helper: a reader of this
+// handler should not have to prove which of four attributes is safe, and the
+// cost is one call.
+func logField(s string) string {
+	return runesafe.SanitizeSingleLineBounded(s, maxLogFieldBytes)
+}
 
 // scheduleView is one row as the client sees it: the stored entry plus the
 // resolved next run, which the server computes so the UI never reimplements the
@@ -88,6 +110,7 @@ func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		Spec    schedule.Spec `json:"spec"`
 		Enabled bool          `json:"enabled"`
 	}
+	api.LimitBody(w, r, api.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		api.BadRequest(w, "invalid schedule payload")
 		return
@@ -109,8 +132,8 @@ func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, err.Error())
 		return
 	}
-	slog.Info("schedule saved", "id", entry.ID, "recipe", recipe.Name,
-		"freq", entry.Spec.Freq, "enabled", entry.Enabled)
+	slog.Info("schedule saved", "id", logField(entry.ID), "recipe", logField(recipe.Name),
+		"freq", logField(string(entry.Spec.Freq)), "enabled", entry.Enabled)
 	api.WriteJSON(w, h.scheduleViewOf(&entry))
 }
 
@@ -125,6 +148,6 @@ func (h *Hub) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
 		api.ServerError(w, "could not delete schedule", err)
 		return
 	}
-	slog.Info("schedule deleted", "id", id)
+	slog.Info("schedule deleted", "id", logField(id))
 	api.WriteJSON(w, map[string]any{"ok": true})
 }
