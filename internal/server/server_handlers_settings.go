@@ -205,6 +205,11 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 
 // syncPushPreferences reads notification preference toggles from the settings
 // patch and forwards them to the push service.
+//
+// PushKindPermission is seeded true and has no branch that can lower it: there
+// is no notify_permission key to read, so this write path cannot silence a
+// turn-blocking ask however the body was assembled. See the "no
+// notify_permission key" note in internal/settings/defaults.go.
 func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 	prefs := map[api.PushKind]bool{
 		api.PushKindAgentFinished: true,
@@ -214,12 +219,6 @@ func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 		var af bool
 		if json.Unmarshal(v, &af) == nil {
 			prefs[api.PushKindAgentFinished] = af
-		}
-	}
-	if v, ok := patch[settings.KeyNotifyPermission]; ok {
-		var pn bool
-		if json.Unmarshal(v, &pn) == nil {
-			prefs[api.PushKindPermission] = pn
 		}
 	}
 	s.push.SetPreferences(prefs)

@@ -21,6 +21,9 @@ type baseDeps struct {
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
 	// assert the hub-side cache write (mirrors onBroadcast).
 	onSetGovernance func(api.GovernanceStatePayload)
+	// scheduledRuns are the workflow ids IsScheduledRun answers true for, so a
+	// test can stage a scheduled run without a hub or a scheduler.
+	scheduledRuns map[string]bool
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
@@ -41,7 +44,10 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
 }
 func (d *baseDeps) ChatStore() api.ChatStore           { return d.store }
 func (d *baseDeps) ParentACPSession(api.ChatID) string { return d.parent }
-func (d *baseDeps) WorkDir() string                    { return "/tmp" }
+func (d *baseDeps) IsScheduledRun(workflowID string) bool {
+	return d.scheduledRuns[workflowID]
+}
+func (d *baseDeps) WorkDir() string { return "/tmp" }
 func (d *baseDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]any) error {
 	return nil
 }

@@ -323,6 +323,20 @@ func (s *Store) indexLocked(id ServerID) int {
 	return -1
 }
 
+// findByNameLocked returns the stored record whose name matches, or nil. Uses
+// the same case-insensitive rule as hasNameLocked — the no-op path and the
+// conflict path must agree about which record they are talking about, or a
+// "GitHub" re-paste would compare against nothing and then collide with
+// "github".
+func (s *Store) findByNameLocked(name string) *Server {
+	for _, sv := range s.servers {
+		if strings.EqualFold(sv.Name, name) {
+			return sv
+		}
+	}
+	return nil
+}
+
 func (s *Store) hasNameLocked(name string, ignoreID ServerID) bool {
 	for _, sv := range s.servers {
 		if sv.ID == ignoreID {

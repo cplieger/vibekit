@@ -341,9 +341,18 @@ type Message struct {
 	// extended-thinking models emit it as a parallel stream alongside
 	// Content. Persisted on the same message so the one-message-per-turn
 	// invariant holds; rendered above the content bubble in the UI.
-	Reasoning string     `json:"reasoning,omitempty"`
-	EventKind EventKind  `json:"event_kind,omitempty"`
-	ID        string     `json:"id"`
+	Reasoning string    `json:"reasoning,omitempty"`
+	EventKind EventKind `json:"event_kind,omitempty"`
+	ID        string    `json:"id"`
+	// TurnModel is the model that answered this turn, stamped on the final
+	// assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
+	// below. It belongs on the MESSAGE and not only on the Chat because the
+	// chat's Model is the CURRENT one: a footer reading that at render time
+	// would relabel every historical turn the moment the user switched models.
+	// Absent on every message persisted before this field existed, and the
+	// client renders nothing rather than "unknown". (Grouped with the strings
+	// above for govet fieldalignment, not for logical order.)
+	TurnModel string     `json:"turn_model,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// Blocks is the chronologically-ordered content array — text / tool_use /
 	// thinking blocks in the order the agent emitted them, each stamped with an

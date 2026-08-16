@@ -118,7 +118,11 @@ func searchOneChat(ce chatEntry, query string) Match {
 		}
 		return Match{}
 	}
-	hits := SearchChat(c.Messages, query)
+	// Case-INSENSITIVE, always. The match-case toggle belongs to the in-chat
+	// search, which is a different question on a different endpoint; a
+	// cross-chat "which conversation was that in" is asked from memory, and
+	// memory does not remember capitalisation.
+	hits := SearchChat(c.Messages, query, false)
 	// A chat whose TITLE names the subject is a result even when its body never
 	// repeats the word — dropping it on content hits alone would make the title
 	// boost unreachable in exactly the case it exists for.
@@ -237,7 +241,7 @@ func docChars(msgs []api.Message) int {
 func titleHits(name, query string) int {
 	// parseSearchQuery already separates filters from free text, so the list
 	// of filter keys lives in ONE place.
-	text := strings.TrimSpace(parseSearchQuery(query).text)
+	text := strings.TrimSpace(parseSearchQuery(query, false).text)
 	if text == "" {
 		return 0
 	}

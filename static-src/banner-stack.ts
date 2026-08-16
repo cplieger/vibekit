@@ -23,12 +23,24 @@ import { el, createCollection, bindList, computed } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import type { BannerLevel } from "./types.js";
 
-/** Optional clickable link rendered inside a banner (e.g. the
- *  open_external_url "Open sign-in page" affordance). Only http/https
- *  hrefs are rendered; anything else is dropped. */
+/** Optional clickable affordance rendered inside a banner. Two shapes, and the
+ *  distinction is not cosmetic:
+ *
+ *   - `href` is an EXTERNAL navigation (the open_external_url "Open sign-in
+ *     page" affordance). The URL is server-supplied and untrusted, so it goes
+ *     through isSafeURL and only http/https renders; it opens in a new tab.
+ *   - `onClick` is an IN-APP jump (a deep link to a Settings control). It
+ *     renders a button and carries no URL at all, which is the point: a relative
+ *     path like `/settings/permissions?highlight=x` throws inside isSafeURL's
+ *     `new URL()` and would be silently dropped, and laundering an internal
+ *     navigation through the guard that exists for untrusted URLs — then opening
+ *     it in a new tab — is the wrong shape for jumping across your own app.
+ *
+ *  Exactly one of the two is used; `onClick` wins if both are set. */
 export interface BannerLink {
   readonly label: string;
-  readonly href: string;
+  readonly href?: string;
+  readonly onClick?: () => void;
 }
 
 interface BannerEntry {
@@ -124,9 +136,16 @@ function clearDismiss(chatID: string, code: string): void {
   }
 }
 
-/** Build a safe banner link anchor, or null when the href is unsafe. */
-function buildBannerLink(link: BannerLink): HTMLAnchorElement | null {
-  if (!isSafeURL(link.href)) {
+/** Build the banner's affordance: a button for an in-app jump, an anchor for a
+ *  safe external URL, or null when neither is available (an unsafe href is
+ *  dropped rather than rendered inert). */
+function buildBannerLink(link: BannerLink): HTMLElement | null {
+  if (link.onClick !== undefined) {
+    const btn = el("button", { type: "button", className: "banner-link" }, link.label);
+    btn.addEventListener("click", link.onClick);
+    return btn;
+  }
+  if (link.href === undefined || !isSafeURL(link.href)) {
     return null;
   }
   return el(
@@ -138,7 +157,7 @@ function buildBannerLink(link: BannerLink): HTMLAnchorElement | null {
       rel: "noopener noreferrer",
     },
     link.label,
-  ) as HTMLAnchorElement;
+  );
 }
 
 /** Insert/replace the banner link on an existing banner node, before the

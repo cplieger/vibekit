@@ -82,6 +82,10 @@ const sampleView: PolicyView = {
   available: true,
   writable_scopes: ["user", "workspace"],
   capabilities: ["fs_read", "fs_write", "shell", "web_fetch"],
+  // Empty here on purpose: this fixture has no relaxation checkbox in its DOM,
+  // so the switch is out of scope for these tests. permissions-relax.test.ts
+  // owns it.
+  relax_capabilities: [],
   rules: [
     {
       capability: "fs_write",

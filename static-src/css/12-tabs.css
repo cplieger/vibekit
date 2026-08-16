@@ -25,6 +25,26 @@
   display: none;
 }
 
+/* Pin marker. The span rides every row so renderDOM toggles one class rather
+   than adding and removing a node; only a pinned row reveals it. */
+.tab .tab-pin {
+  display: none;
+}
+
+.tab.tab-pinned .tab-pin {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  color: var(--c-text-tertiary);
+}
+
+/* On the active row the fill is accent-derived, so the tertiary grey drops out
+   of it. Inherit the row's own colour there, as the sub-tab arrow does. */
+.tab.tab-pinned.active .tab-pin {
+  color: inherit;
+  opacity: 0.7;
+}
+
 .tab-context-menu {
   position: fixed;
   z-index: 999;

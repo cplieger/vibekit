@@ -20,19 +20,14 @@ import {
   tabStatusFor,
   clearSteers,
 } from "../store.js";
-import {
-  notifyIfHidden,
-  setBadge,
-  isAgentFinishedEnabled,
-  isPermissionNeededEnabled,
-  NOTIFY_TITLE,
-} from "../notify.js";
+import { notifyIfHidden, setBadge, isAgentFinishedEnabled, NOTIFY_TITLE } from "../notify.js";
 import { pushDecision, collapseSettledDecision } from "../decision-dock.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
 import { showBanner, onTurnEnded } from "../banner-stack.js";
+import { openSetting } from "../settings-highlight.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
 import { ERROR_ROUTES } from "./error-routing.js";
 import { refreshTurnRail } from "../turn-rail.js";
@@ -134,8 +129,12 @@ onSSE("turn_ended", (chatID, p) => {
   // double-rendered on SSE replay and vanished on refresh. Unconditional (not
   // active-gated): a background turn's footer is then present on switch, and
   // the server persists the same fields so it survives reload.
-  const summary: { credits?: number; elapsedMs?: number; changedFiles?: typeof p.changed_files } =
-    {};
+  const summary: {
+    credits?: number;
+    elapsedMs?: number;
+    changedFiles?: typeof p.changed_files;
+    model?: string;
+  } = {};
   if (p.credits_delta !== undefined) {
     summary.credits = p.credits_delta;
   }
@@ -145,18 +144,28 @@ onSSE("turn_ended", (chatID, p) => {
   if (p.changed_files !== undefined) {
     summary.changedFiles = p.changed_files;
   }
+  // Which model served the turn. Live half of the pair; the same value is
+  // persisted on the message so the footer survives a reload.
+  if (p.model !== undefined) {
+    summary.model = p.model;
+  }
   setTurnSummary(chatID, summary);
 });
 
+// The three asks below notify unconditionally, gated only by the master
+// notifications switch inside notifyIfHidden. Each one BLOCKS the turn until it
+// is answered and none has a per-tab marker of its own, so a per-kind mute
+// stalled every later turn of that chat with nothing on screen to say why. What
+// relaxes the interruptions is the Settings -> Permissions workspace
+// relaxation, which stops the asks from being raised at all.
+
 onSSE("permission_needed", (chatID, p) => {
-  if (isPermissionNeededEnabled()) {
-    notifyAndBadge(
-      NOTIFY_TITLE,
-      p.files !== undefined && p.files.length > 0
-        ? "Review this turn's changes"
-        : "Permission needed",
-    );
-  }
+  notifyAndBadge(
+    NOTIFY_TITLE,
+    p.files !== undefined && p.files.length > 0
+      ? "Review this turn's changes"
+      : "Permission needed",
+  );
   pushDecision({
     kind: "permission",
     chatID,
@@ -174,9 +183,7 @@ onSSE("permission_needed", (chatID, p) => {
 });
 
 onSSE("elicitation_needed", (chatID, p) => {
-  if (isPermissionNeededEnabled()) {
-    notifyAndBadge(NOTIFY_TITLE, "Input requested by a tool");
-  }
+  notifyAndBadge(NOTIFY_TITLE, "Input requested by a tool");
   pushDecision({
     kind: "elicitation",
     chatID,
@@ -194,9 +201,7 @@ onSSE("elicitation_needed", (chatID, p) => {
 });
 
 onSSE("user_input_needed", (chatID, p) => {
-  if (isPermissionNeededEnabled()) {
-    notifyAndBadge(NOTIFY_TITLE, "The agent has a question");
-  }
+  notifyAndBadge(NOTIFY_TITLE, "The agent has a question");
   pushDecision({
     kind: "user_input",
     chatID,
@@ -243,9 +248,28 @@ onSSE("error", (chatID, p) => {
     return;
   }
   switch (route.surface) {
-    case "banner":
-      showBanner(chatID, code, msg, route.level, route.dismissible);
+    case "banner": {
+      // A routed banner that names a setting carries a jump to it, so the
+      // message and the control are one click apart instead of the reader
+      // having to hunt the panel the prose named.
+      const s = route.setting;
+      showBanner(
+        chatID,
+        code,
+        msg,
+        route.level,
+        route.dismissible,
+        s === undefined
+          ? undefined
+          : {
+              label: s.label,
+              onClick: () => {
+                openSetting(s.tab, s.control);
+              },
+            },
+      );
       break;
+    }
     case "send-error":
       setLastError(`${code}: ${msg}`);
       break;

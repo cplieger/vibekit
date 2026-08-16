@@ -21,6 +21,7 @@ import {
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
   ICON_TAB_DOCS,
+  ICON_PIN_FILLED,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import * as uiState from "./ui-state.js";
@@ -77,6 +78,17 @@ export interface TabSpec {
    *  view is, so a future one is a two-field opt-in rather than a second
    *  mechanism. */
   parentId?: string | undefined;
+  /** Pinned: this tab sorts ahead of every unpinned one and stays reachable when
+   *  the strip is long. Persisted per device beside `tab_order`.
+   *
+   *  Pinning a TAB inverts the flaw that kills pinning a message: it is a
+   *  present-tense judgement rather than a prediction, because you know right now
+   *  which conversation matters. It is also the whole feature — no folders, no
+   *  tags, nothing to maintain.
+   *
+   *  Meaningful on a top-level tab only. A sub-tab's position is its parent's,
+   *  the same rule that denies it a drag handle. */
+  pinned?: boolean | undefined;
   /** Whether closing this tab tears down what it shows. Default true.
    *
    *  `owns: false` makes the tab a VIEW: closing it dismisses the view and
@@ -197,6 +209,7 @@ function insertSpec(spec: TabSpec): void {
   const parent = spec.parentId;
   if (parent === undefined) {
     state.tabs.push(spec);
+    applyPinOrder();
     return;
   }
   const pIdx = state.tabs.findIndex((t) => t.id === parent);
@@ -204,6 +217,7 @@ function insertSpec(spec: TabSpec): void {
     // An orphan (parent already closed) behaves as top-level rather than
     // vanishing: a tab nobody can see is worse than a tab in the wrong place.
     state.tabs.push(spec);
+    applyPinOrder();
     return;
   }
   let at = pIdx + 1;
@@ -211,6 +225,91 @@ function insertSpec(spec: TabSpec): void {
     at++;
   }
   state.tabs.splice(at, 0, spec);
+}
+
+/** Group `state.tabs` into [parent, ...its whole descendant tree] runs, in array
+ *  order. Shared by the pin partition, which must move a parent and everything
+ *  under it as one unit — splitting them would put a child under a stranger.
+ *
+ *  Membership is tested against every tab already IN a group, not just each
+ *  group's first element. A sub-tab can itself have one (the transcript menu
+ *  parents a side conversation on the ACTIVE chat, which may already be a side
+ *  conversation), and matching only the head made such a grandchild an orphan
+ *  top-level group — so pinning any other tab could sort it away from the tab its
+ *  own `parentId` names. */
+function tabGroups(): TabSpec[][] {
+  const groups: TabSpec[][] = [];
+  for (const t of state.tabs) {
+    const owner =
+      t.parentId === undefined
+        ? undefined
+        : groups.findLast((g) => g.some((m) => m.id === t.parentId));
+    if (owner === undefined) {
+      // A top-level tab, or an orphan — which behaves as top-level here for the
+      // same reason insertSpec treats it that way.
+      groups.push([t]);
+      continue;
+    }
+    owner.push(t);
+  }
+  return groups;
+}
+
+/** Reorder `state.tabs` so every pinned group precedes every unpinned one,
+ *  stably and with each parent's children still behind it.
+ *
+ *  In the ARRAY, not in the render, because two mechanisms read DOM order back as
+ *  the truth: a drop reads the new order out of the strip (tabs-drag.ts), and the
+ *  keyboard arrows walk `el.parentElement.children`. A render-time sort would
+ *  make both disagree with what is stored.
+ *
+ *  This is also what makes a pinned tab undraggable below an unpinned one, and
+ *  why the drag subsystem needed no change: every drop commits through
+ *  reorderTabs, which re-partitions, so an illegal drop snaps back. A snap-back
+ *  is honest — the alternative was clamping the drop indicator mid-drag inside a
+ *  subsystem whose index arithmetic is correctness-sensitive. */
+function applyPinOrder(): void {
+  const groups = tabGroups();
+  const pinned = groups.filter((g) => g[0]?.pinned === true);
+  if (pinned.length === 0 || pinned.length === groups.length) {
+    return;
+  }
+  state.tabs = [...pinned, ...groups.filter((g) => g[0]?.pinned !== true)].flat();
+}
+
+/** Pin or unpin a top-level tab. No-op on a sub-tab: its position is its
+ *  parent's, exactly as with drag. */
+export function setTabPinned(id: string, pinned: boolean): void {
+  const tab = state.tabs.find((t) => t.id === id);
+  if (tab === undefined || tab.parentId !== undefined || (tab.pinned ?? false) === pinned) {
+    return;
+  }
+  tab.pinned = pinned;
+  applyPinOrder();
+  emit();
+}
+
+/** Promote a sub-tab to a top-level tab.
+ *
+ *  Persistence is FREE: the persistence subscriber derives `tab_order` from
+ *  `tabs.filter(t => t.parentId === undefined)` on every emit, so clearing the
+ *  field is the whole storage story. Nothing is sent to the server either — a
+ *  side conversation is already its own chat record with its own bridge, so there
+ *  is nothing to copy.
+ *
+ *  The DOM node is DISCARDED rather than reused, which is the one non-obvious
+ *  part. `attachTabInteraction` decides draggability once, at element creation,
+ *  and renderDOM keeps the existing node for a tab it already knows — so a
+ *  promoted tab would keep its indent and, worse, never get a drag handle. */
+export function promoteTab(id: string): void {
+  const tab = state.tabs.find((t) => t.id === id);
+  if (tab?.parentId === undefined) {
+    return;
+  }
+  tab.parentId = undefined;
+  document.querySelector(`[data-tab-id="${CSS.escape(id)}"]`)?.remove();
+  applyPinOrder();
+  emit();
 }
 
 /** Activate an existing tab. */
@@ -227,7 +326,10 @@ export function activateTab(id: string): void {
 
 /** Close a tab. Activates the neighbor or fires onEmpty if none remain.
  *  Pass `{ skipOnClose: true }` when the chat is already deleted remotely
- *  to avoid re-dispatching the delete action against a stale session. */
+ *  to avoid re-dispatching the delete action against a stale session.
+ *
+ *  `skipOnClose` is a fact about `id` ALONE and never travels down the cascade —
+ *  see the children loop below. */
 export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === id);
   if (idx < 0) {
@@ -244,8 +346,16 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   //
   // Children first so a child's own teardown never runs against a parent that
   // has already gone.
+  //
+  // WITHOUT opts, deliberately. `skipOnClose` means "this id was already deleted
+  // remotely", which is true of the root and of nothing else: a child is its own
+  // persisted chat with its own bridge, and its `onClose` is what cancels its
+  // turn and tears that bridge down. Forwarding the flag left the child's tab
+  // gone from the UI while its process kept running with no surface to stop it.
+  // A child that owns nothing still skips its teardown — through its own
+  // ownership check below, which is where that decision belongs.
   for (const child of childrenOf(id)) {
-    closeTab(child.id, opts);
+    closeTab(child.id);
   }
 
   // `owns: false` tears down nothing: the tab is a view, and dismissing a view
@@ -329,8 +439,13 @@ export function setTabDirty(id: string, dirty: boolean): void {
 function reorderTabs(order: string[]): void {
   const byID = new Map(state.tabs.map((t) => [t.id, t]));
   const next: TabSpec[] = [];
-  /** Take a tab, then immediately its children — so a persisted or dragged
-   *  order that names only top-level ids still reproduces the full strip. */
+  /** Take a tab, then immediately its whole descendant tree — so a persisted or
+   *  dragged order that names only top-level ids still reproduces the full strip.
+   *
+   *  Recursive for the same reason tabGroups matches on membership: a direct-
+   *  children walk left a grandchild in `byID`, and the defensive sweep below
+   *  then appended it to the END of the strip, away from its parent. Terminates
+   *  on the byID guard even if two specs ever named each other as parent. */
   const take = (id: string): void => {
     const t = byID.get(id);
     if (t === undefined) {
@@ -339,8 +454,8 @@ function reorderTabs(order: string[]): void {
     next.push(t);
     byID.delete(id);
     for (const c of childrenOf(id)) {
-      if (byID.delete(c.id)) {
-        next.push(c);
+      if (byID.has(c.id)) {
+        take(c.id);
       }
     }
   };
@@ -358,6 +473,9 @@ function reorderTabs(order: string[]): void {
     next.push(t);
   }
   state.tabs = next;
+  // The one funnel for BOTH a drag drop and the boot restore, so the pinned-first
+  // rule holds for both without either knowing about it.
+  applyPinOrder();
   emit();
 }
 
@@ -441,6 +559,12 @@ function registerModuleSubscribers(): void {
       // Top-level ids ONLY. A sub-tab's position is derived from its parent, so
       // persisting it would let a restore place a child away from its parent.
       tab_order: state.tabs.filter((t) => t.parentId === undefined).map((t) => t.id),
+      // Pins are their own list rather than a prefix of tab_order: the order
+      // already encodes where a pinned tab sits, but not that it is pinned, and
+      // an unpin has to be able to leave the tab where it is.
+      pinned_tabs: state.tabs
+        .filter((t) => t.parentId === undefined && t.pinned === true)
+        .map((t) => t.id),
       active_view: state.active,
     });
   });
@@ -480,8 +604,22 @@ function registerModuleSubscribers(): void {
  *  boot-loop opens have already re-saved an intermediate state. */
 export function restoreTabState(): void {
   const saved = capturedUIState();
+  // Stamp the pins BEFORE the reorder. The partition runs inside reorderTabs, so
+  // a pin applied after it would be recorded without moving its tab, and the
+  // strip would come back out of order until the next mutation.
+  const pins = new Set(saved.pinned_tabs);
+  let pinned = false;
+  for (const t of state.tabs) {
+    if (t.parentId === undefined && pins.has(t.id)) {
+      t.pinned = true;
+      pinned = true;
+    }
+  }
   if (saved.tab_order.length > 0) {
     reorderTabs(saved.tab_order);
+  } else if (pinned) {
+    applyPinOrder();
+    emit();
   }
   if (saved.active_view !== "" && hasTab(saved.active_view)) {
     activateTab(saved.active_view);
@@ -634,6 +772,9 @@ function renderDOM(): void {
     // parent_chat_id made the indent a chat-only feature and coupled the tab
     // module to chat state; `parentId` is generic and any kind can carry it.
     el.classList.toggle("tab-child", tab.parentId !== undefined);
+    // Pin marker, from the spec like the indent. Toggled here rather than only at
+    // creation so pinning an already-rendered tab shows immediately.
+    el.classList.toggle("tab-pinned", tab.pinned === true);
     prev = el;
   }
 }
@@ -680,20 +821,51 @@ function createTabEl(tab: TabSpec): HTMLElement {
 
   const statusDot = el("span", { className: "tab-status-dot hidden" });
 
-  node.append(icon, name, statusDot, close);
+  // The pin marker rides every row and CSS reveals it under `.tab-pinned`, so
+  // renderDOM toggles one class instead of adding and removing a node. The glyph
+  // is decorative; the .sr-only word beside it is what a screen reader hears,
+  // because colour and shape alone are one channel.
+  const pin = el(
+    "span",
+    { className: "tab-pin" },
+    iconEl(ICON_PIN_FILLED),
+    el("span", { className: "sr-only" }, "Pinned"),
+  );
+
+  node.append(icon, name, pin, statusDot, close);
   // A sub-tab is not independently draggable: its position is its parent's.
   // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
   attachTabInteraction(node, tab.id, tab.parentId === undefined);
 
-  // Right-click context menu for chat tabs: export (md/json). Non-chat tabs
-  // keep the native browser menu. (Promote is gone with the rewind branch —
-  // there is no second chat to promote over a first.)
+  // Right-click context menu for chat tabs: pin/unpin or promote, then export
+  // (md/json). Non-chat tabs keep the native browser menu.
   node.addEventListener("contextmenu", (e) => {
     if (tab.kind !== "chat") {
       return;
     }
     e.preventDefault();
-    const items: ContextMenuItem[] = [
+    // Read the CURRENT spec: openTab replaces an already-open tab's spec with a
+    // spread copy, so the closure's reference can be one generation behind on
+    // exactly the fields this menu reports.
+    const spec = state.tabs.find((t) => t.id === tab.id) ?? tab;
+    const items: ContextMenuItem[] = [];
+    if (spec.parentId === undefined) {
+      const pinned = spec.pinned === true;
+      items.push({
+        label: pinned ? "Unpin" : "Pin",
+        action: () => {
+          setTabPinned(tab.id, !pinned);
+        },
+      });
+    } else {
+      items.push({
+        label: "Promote to its own tab",
+        action: () => {
+          promoteTab(tab.id);
+        },
+      });
+    }
+    items.push(
       {
         label: "Export as Markdown",
         action: () => {
@@ -706,7 +878,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
           downloadChatExport(tab.id, tab.name, "json");
         },
       },
-    ];
+    );
     showContextMenu(items, { x: e.clientX, y: e.clientY });
   });
 

@@ -170,6 +170,14 @@ h3.section-title {
   margin-block: var(--sp-2);
 }
 
+/* A setting that is deliberately NOT switchable (the permission-ask floor) still
+   belongs in the list with its switchable siblings, so it reserves the toggle's
+   slot instead of sitting flush-left and reading as a different kind of row.
+   Width matches .toggle below; keep the two in step. */
+.section-option-fixed {
+  padding-inline-start: calc(2.25rem + var(--sp-3));
+}
+
 [id="notify-sub-options"] {
   margin-block-start: calc(-1 * var(--sp-2));
 }

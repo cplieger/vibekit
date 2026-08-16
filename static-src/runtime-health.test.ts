@@ -11,6 +11,9 @@ vi.mock("./banner-stack.js", () => ({
   clearBannerCodes: vi.fn(),
 }));
 
+const { mockOpenSetting } = vi.hoisted(() => ({ mockOpenSetting: vi.fn() }));
+vi.mock("./settings-highlight.js", () => ({ openSetting: mockOpenSetting }));
+
 import { checkRuntimeHealth } from "./runtime-health.js";
 import { apiGetOrError } from "./api-client.js";
 import { showBanner, clearBannerCodes } from "./banner-stack.js";
@@ -42,6 +45,29 @@ describe("runtime-health: degraded banner reconciliation", () => {
     expect(level).toBe("error");
     expect(dismissible).toBe(false);
     expect(mockedClear).not.toHaveBeenCalled();
+  });
+
+  // D115: every one of these states tells the reader to go and look at
+  // something, and Run Diagnostics is where the version pair and the log
+  // pointer live — so the banner jumps there instead of naming a panel and
+  // leaving the reader to find it.
+  it("carries an in-app jump to Run diagnostics", async () => {
+    mockedGet.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      data: null,
+      error: "HTTP 503",
+      body: { status: "unready", reason: "kiro-cli installing" },
+    });
+    await checkRuntimeHealth();
+
+    const link = mockedShow.mock.calls[0]?.[5];
+    expect(link?.label).toBe("Run diagnostics");
+    // An href would be dropped by isSafeURL (relative URLs throw in new URL),
+    // so an in-app jump must be a callback, not a link.
+    expect(link?.href).toBeUndefined();
+    link?.onClick?.();
+    expect(mockOpenSetting).toHaveBeenCalledWith("general", "diagnostics-run");
   });
 
   // The reasons are a LIFECYCLE, and a first boot spends minutes in the first

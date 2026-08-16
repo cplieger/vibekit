@@ -6,20 +6,24 @@
 import { $, byId } from "./dom.js";
 import { el } from "@cplieger/reactive";
 import { closeModal, RollingOutput } from "./modals.js";
+import { type Server, type Transport, mcpState, discoverySignalFor } from "./mcp-state.js";
 import {
-  type Server,
-  type KeyPair,
-  type Transport,
-  mcpState,
-  discoverySignalFor,
-} from "./mcp-state.js";
-import { renderKeyPairList, appendKeyPair, collectKeyPairs } from "./mcp-pairs.js";
+  type EditablePair,
+  renderKeyPairList,
+  appendKeyPair,
+  collectKeyPairs,
+} from "./mcp-pairs.js";
 import { buildChip } from "./chip.js";
-import { saveServer, searchRegistry } from "./actions/mcp.js";
+import { importServers, saveServer, searchRegistry } from "./actions/mcp.js";
 import { getToolsStatus } from "./actions/tools.js";
 import { installToolAndWait } from "./tools.js";
 import { bindLoadingState } from "./actions/index.js";
-import { initSearchPanel, setSwitchMode, cleanupSearch } from "./mcp-panels-search.js";
+import {
+  type InstallField,
+  initSearchPanel,
+  setSwitchMode,
+  cleanupSearch,
+} from "./mcp-panels-search.js";
 
 // --- Add / edit modal ---
 
@@ -87,32 +91,22 @@ export function initModal(args: InitArgs): void {
   setMode(args.mode, args.server);
 }
 
-const PANEL_MODES: Readonly<
-  Record<AddMode, { transport: Transport | null; init: (existing: Server | null) => void }>
-> = {
-  search: {
-    transport: null,
-    init: () => {
-      initSearchPanel();
-    },
+// Each mode's initialiser. There is no per-mode `transport` any more: the paste
+// panel used to declare "stdio", which is what stopped a pasted remote server
+// from going through it at all, and once that was gone the field had exactly one
+// reader left. The npm form states its own transport at its save site.
+const PANEL_MODES: Readonly<Record<AddMode, (existing: Server | null) => void>> = {
+  search: () => {
+    initSearchPanel();
   },
-  remote: {
-    transport: "http",
-    init: (s) => {
-      initRemotePanel(s);
-    },
+  remote: (s) => {
+    initRemotePanel(s);
   },
-  npm: {
-    transport: "stdio",
-    init: (s) => {
-      initNpmPanel(s);
-    },
+  npm: (s) => {
+    initNpmPanel(s);
   },
-  raw: {
-    transport: "stdio",
-    init: (s) => {
-      initRawPanel(s);
-    },
+  raw: (s) => {
+    initRawPanel(s);
   },
 };
 
@@ -124,7 +118,7 @@ function setMode(mode: AddMode, existing: Server | null): void {
     btn.classList.toggle("active", btn.dataset["mcpMode"] === mode);
   }
 
-  PANEL_MODES[mode].init(existing);
+  PANEL_MODES[mode](existing);
 }
 
 // --- Submit helpers ---
@@ -218,10 +212,9 @@ function initNpmPanel(existing: Server | null): void {
 
   byId<HTMLButtonElement>("mcp-npm-save").onclick = (): void => {
     const args = ["-y", pkg.value.trim()].filter((a) => a !== "");
-    const transport: Transport = PANEL_MODES.npm.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
     void submitServer(
       {
-        transport,
+        transport: "stdio",
         name: name.value.trim(),
         command: "npx",
         args,
@@ -301,25 +294,28 @@ async function gateNpmPanelOnNode(): Promise<void> {
   panel.prepend(banner);
 }
 
-function fillNpmForm(
-  name: string,
-  pkg: string,
-  fields: {
-    name: string;
-    description?: string | undefined;
-    required?: boolean | undefined;
-    secret?: boolean | undefined;
-  }[],
-): void {
+function fillNpmForm(name: string, pkg: string, fields: InstallField[]): void {
   byId<HTMLInputElement>("mcp-npm-name").value = name;
   byId<HTMLInputElement>("mcp-npm-pkg").value = pkg;
   byId<HTMLInputElement>("mcp-npm-prewarm").checked = true;
-  const list = byId<HTMLDivElement>("mcp-npm-env");
-  renderKeyPairList(
-    list,
-    fields.map((f) => ({ name: f.name, value: "" })),
-    "env",
-  );
+  renderKeyPairList(byId<HTMLDivElement>("mcp-npm-env"), declaredRows(fields), "env");
+}
+
+/** Carry the publisher's declared fields onto the form rows.
+ *
+ *  The names were already prefilled; the description, the required marker and
+ *  the secret hint were thrown away here, which is why a server could install
+ *  cleanly and then fail with nothing on screen saying it wanted a token. */
+function declaredRows(fields: InstallField[]): EditablePair[] {
+  return fields.map((f) => ({
+    name: f.name,
+    value: "",
+    declared: {
+      description: f.description,
+      required: f.required,
+      secret: f.secret,
+    },
+  }));
 }
 
 export function extractNpxPackage(s: Server): string {
@@ -403,106 +399,95 @@ function initRemotePanel(existing: Server | null): void {
 function fillRemoteForm(
   name: string,
   url: string,
-  fields: {
-    name: string;
-    description?: string | undefined;
-    required?: boolean | undefined;
-    secret?: boolean | undefined;
-  }[],
+  fields: InstallField[],
   transportHint?: string,
 ): void {
   byId<HTMLInputElement>("mcp-remote-name").value = name;
   byId<HTMLInputElement>("mcp-remote-url").value = url;
   byId<HTMLSelectElement>("mcp-remote-transport").value = remoteTransport(transportHint);
-  const list = byId<HTMLDivElement>("mcp-remote-headers");
-  renderKeyPairList(
-    list,
-    fields.map((f) => ({ name: f.name, value: "" })),
-    "header",
-  );
+  renderKeyPairList(byId<HTMLDivElement>("mcp-remote-headers"), declaredRows(fields), "header");
 }
 
-// --- Panel: raw JSON ---
+// --- Panel: paste a block ---
+//
+// Every MCP server's README hands out a JSON block, and this is where it goes.
+// The panel does NOT translate it: the server owns that (internal/mcp/paste.go),
+// because the translation and the naming of an unknown key are one job and it
+// belongs at the decode boundary. So this parses only far enough to catch
+// invalid JSON without a round trip, then posts the object unchanged.
+//
+// A block may name SEVERAL servers, and pasting installs all of them — the block
+// is one artifact the user copied out of one README, so asking them to pick one
+// adds a step that gains nothing. The server is all-or-nothing on failure, so a
+// bad entry means nothing lands and the message names it; because a re-paste of
+// an already-configured server is a no-op, fixing the block and pasting again
+// re-lands the entries that were fine at no cost.
 
-function initRawPanel(existing: Server | null): void {
+function initRawPanel(_existing: Server | null): void {
+  // Editing never reaches this panel — openEditModal routes stdio to the npm
+  // form and remote to the remote form — so there is no edit shape to build and
+  // no PUT path here. It is an add-only surface.
   const textarea = byId<HTMLTextAreaElement>("mcp-raw-input");
   const err = byId<HTMLParagraphElement>("mcp-raw-error");
   err.classList.add("hidden");
   err.textContent = "";
+  textarea.value = RAW_TEMPLATE;
 
-  if (existing !== null) {
-    textarea.value = JSON.stringify(rawEditShape(existing), null, 2);
-  } else {
-    textarea.value = RAW_TEMPLATE;
-  }
-
-  byId<HTMLButtonElement>("mcp-raw-save").onclick = (): void => {
-    let parsed: Record<string, unknown>;
+  const saveBtn = byId<HTMLButtonElement>("mcp-raw-save");
+  saveBtn.onclick = (): void => {
+    err.classList.add("hidden");
+    err.textContent = "";
+    let parsed: unknown;
     try {
-      parsed = JSON.parse(textarea.value) as Record<string, unknown>;
+      parsed = JSON.parse(textarea.value);
     } catch (e: unknown) {
-      err.textContent = "Invalid JSON: " + (e instanceof Error ? e.message : String(e));
-      err.classList.remove("hidden");
+      showPasteError(err, "Invalid JSON: " + (e instanceof Error ? e.message : String(e)));
       return;
     }
-    const body = rawSubmitShape(parsed);
-    if (body === null) {
-      err.textContent = "JSON must include { name, command, args, env? } for a stdio server.";
-      err.classList.remove("hidden");
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      showPasteError(err, "Paste a JSON object: either an mcpServers block or one server.");
       return;
     }
-    body.enabled = existing?.enabled ?? true;
-    void submitServer(body, err, byId<HTMLButtonElement>("mcp-raw-save"));
+    void submitPaste(parsed as Record<string, unknown>, err, saveBtn);
   };
+}
+
+function showPasteError(err: HTMLParagraphElement, msg: string): void {
+  err.textContent = msg;
+  err.classList.remove("hidden");
+}
+
+async function submitPaste(
+  block: Record<string, unknown>,
+  err: HTMLParagraphElement,
+  saveBtn: HTMLButtonElement,
+): Promise<void> {
+  const unbind = bindLoadingState("mcp.import_servers", saveBtn, { pendingClass: "btn-loading" });
+  const o = await importServers.dispatch(block, {
+    onSettled: () => {
+      unbind();
+    },
+  }).outcome;
+  if (o.status !== "success") {
+    showPasteError(err, o.status === "error" ? o.error.message : "Connect failed.");
+    return;
+  }
+  closeModal($.mcpModal);
+  mcpState.refetchServers();
 }
 
 const RAW_TEMPLATE = `{
-  "name": "my-server",
-  "command": "/path/to/binary",
-  "args": ["--flag", "value"],
-  "env": {
-    "MY_TOKEN": "..."
-  }
-}
-`;
-
-export function rawEditShape(s: Server): Record<string, unknown> {
-  const env: Record<string, string> = {};
-  for (const kv of s.env ?? []) {
-    env[kv.name] = kv.value;
-  }
-  return {
-    name: s.name,
-    command: s.command ?? "",
-    args: s.args ?? [],
-    env,
-    prewarm: s.prewarm ?? false,
-  };
-}
-
-export function rawSubmitShape(parsed: Record<string, unknown>): Partial<Server> | null {
-  const name = typeof parsed["name"] === "string" ? parsed["name"] : "";
-  const command = typeof parsed["command"] === "string" ? parsed["command"] : "";
-  if (name === "" || command === "") {
-    return null;
-  }
-  const argsIn = parsed["args"];
-  const args = Array.isArray(argsIn)
-    ? argsIn.filter((a): a is string => typeof a === "string")
-    : [];
-  const envIn = parsed["env"];
-  const env: KeyPair[] = [];
-  if (typeof envIn === "object" && envIn !== null) {
-    for (const [k, v] of Object.entries(envIn)) {
-      if (typeof v === "string") {
-        env.push({ name: k, value: v });
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+      "env": {
+        "MY_TOKEN": "..."
       }
     }
   }
-  const transport: Transport = PANEL_MODES.raw.transport!; // eslint-disable-line @typescript-eslint/no-non-null-assertion
-  const prewarm = parsed["prewarm"] === true;
-  return { transport, name, command, args, env, prewarm };
 }
+`;
 
 // --- Disabled tools chip list ---
 

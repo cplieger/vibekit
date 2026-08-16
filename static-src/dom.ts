@@ -347,6 +347,9 @@ class Elements {
   get editorDiffBtn(): HTMLButtonElement {
     return byId("editor-diff-btn");
   }
+  get editorMarkdown(): HTMLDivElement {
+    return byId("editor-markdown");
+  }
   get editorDiffPane(): HTMLDivElement {
     return byId("editor-diff-pane");
   }
@@ -493,9 +496,6 @@ class Elements {
   }
   get notifyFinishedToggle(): HTMLInputElement {
     return byId("notify-finished-toggle");
-  }
-  get notifyPermissionToggle(): HTMLInputElement {
-    return byId("notify-permission-toggle");
   }
 
   // Settings tab bar (mobile dropdown + desktop segmented control)

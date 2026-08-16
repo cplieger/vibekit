@@ -81,6 +81,18 @@ func (h *Hub) LineTracker() translate.LineRecorder {
 	return h.lines
 }
 
+// IsScheduledRun reports whether a run was launched by a schedule.
+//
+// The unattended map is already the record of that — it is what gates the
+// deny-fast permission floor — so this exports the fact rather than tracking it
+// twice. Written between `new` and `invoke` in launchRun, which is before the
+// first lifecycle frame can arrive, so a run_start reaching translate always sees
+// the mark its launch set.
+func (h *Hub) IsScheduledRun(workflowID string) bool {
+	_, ok := h.scheduleForRun(workflowID)
+	return ok
+}
+
 // IsHookStatusEnabled returns whether hook status display is enabled.
 func (h *Hub) IsHookStatusEnabled() bool {
 	return h.isHookStatusEnabled()

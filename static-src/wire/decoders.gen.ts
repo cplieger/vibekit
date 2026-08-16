@@ -460,6 +460,8 @@ export const decodeMessage: Decoder<Message> = (v) => {
   const reasoning = o["reasoning"] === null ? undefined : optStr(o, "reasoning", "$.message");
   if (reasoning !== undefined) out.reasoning = reasoning;
   if (o["event_kind"] !== undefined && o["event_kind"] !== null) out.event_kind = reqOneOf(o, "event_kind", EVENT_KINDS, "$.message");
+  const turnModel = o["turn_model"] === null ? undefined : optStr(o, "turn_model", "$.message");
+  if (turnModel !== undefined) out.turn_model = turnModel;
   if (o["tool_calls"] !== undefined && o["tool_calls"] !== null) out.tool_calls = decodeArray(o["tool_calls"], decodeToolCall, "$.message.tool_calls");
   if (o["blocks"] !== undefined && o["blocks"] !== null) out.blocks = decodeArray(o["blocks"], decodeBlock, "$.message.blocks");
   if (o["code_references"] !== undefined && o["code_references"] !== null) out.code_references = decodeArray(o["code_references"], decodeCodeReference, "$.message.code_references");
@@ -663,6 +665,7 @@ export const decodePolicyView: Decoder<PolicyView> = (v) => {
     rules: o["rules"] === null ? [] : decodeArray(o["rules"], decodePolicyRule, "$.policy_view.rules"),
     writable_scopes: o["writable_scopes"] === null ? [] : decodeArray(o["writable_scopes"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.writable_scopes"),
     capabilities: o["capabilities"] === null ? [] : decodeArray(o["capabilities"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.capabilities"),
+    relax_capabilities: o["relax_capabilities"] === null ? [] : decodeArray(o["relax_capabilities"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.policy_view.relax_capabilities"),
     available: reqBool(o, "available", "$.policy_view"),
   };
   return out;
@@ -773,6 +776,8 @@ export const decodeRunFinishedPayload: Decoder<RunFinishedPayload> = (v) => {
     workflow_id: reqStr(o, "workflow_id", "$.run_finished_payload"),
     status: reqStr(o, "status", "$.run_finished_payload"),
   };
+  const name = o["name"] === null ? undefined : optStr(o, "name", "$.run_finished_payload");
+  if (name !== undefined) out.name = name;
   return out;
 };
 
@@ -812,6 +817,8 @@ export const decodeRunStartedPayload: Decoder<RunStartedPayload> = (v) => {
   };
   const name = o["name"] === null ? undefined : optStr(o, "name", "$.run_started_payload");
   if (name !== undefined) out.name = name;
+  const scheduled = o["scheduled"] === null ? undefined : optBool(o, "scheduled", "$.run_started_payload");
+  if (scheduled !== undefined) out.scheduled = scheduled;
   return out;
 };
 
@@ -1109,6 +1116,8 @@ export const decodeTurnEndedPayload: Decoder<TurnEndedPayload> = (v) => {
   if (o["changed_files"] !== undefined && o["changed_files"] !== null) out.changed_files = decodeRecord(o["changed_files"], decodeFileChange, "$.turn_ended_payload.changed_files");
   if (o["refusal"] !== undefined && o["refusal"] !== null) out.refusal = decodeRefusalInfo(o["refusal"]);
   if (o["stop_reason"] !== undefined && o["stop_reason"] !== null) out.stop_reason = reqOneOf(o, "stop_reason", STOP_REASONS, "$.turn_ended_payload");
+  const model = o["model"] === null ? undefined : optStr(o, "model", "$.turn_ended_payload");
+  if (model !== undefined) out.model = model;
   const creditsDelta = o["credits_delta"] === null ? undefined : optNum(o, "credits_delta", "$.turn_ended_payload");
   if (creditsDelta !== undefined) out.credits_delta = creditsDelta;
   const elapsedMs = o["elapsed_ms"] === null ? undefined : optNum(o, "elapsed_ms", "$.turn_ended_payload");

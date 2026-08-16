@@ -37,6 +37,7 @@ import {
   TAB_VIEWS,
 } from "./tabs.js";
 import { submitPrompt } from "./submit.js";
+import { showContextMenu } from "./context-menu.js";
 import { chatSkeleton } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { showModelPicker, hideModelPicker } from "./picker.js";
@@ -72,12 +73,21 @@ onBus(BUS_ACTIVATE_CHAT, (p) => {
  *  conflicts prefetch), so bulk-opening N chats active would fan out 2N
  *  requests at boot (B8) — the boot path activates exactly one tab at
  *  the end instead. */
-export function openChatTab(id: string, name: string, opts?: { activate?: boolean }): void {
+export function openChatTab(
+  id: string,
+  name: string,
+  opts?: { activate?: boolean; parentId?: string },
+): void {
   openTab(
     {
       id,
       name,
       kind: "chat",
+      // A side conversation hangs off the chat it came from. `owns` stays at its
+      // default (true) deliberately: the side chat owns its own bridge, so closing
+      // its tab must tear that bridge down the way any chat tab does. `owns:
+      // false` is for a tab that only WATCHES work another chat owns.
+      ...(opts?.parentId === undefined ? {} : { parentId: opts.parentId }),
       // Derive the tab icon from the chat's current mode so a reloaded or
       // restored chat shows the right mode glyph; installStoreSubscribers keeps
       // it in sync on later (user- or agent-initiated) mode changes.
@@ -239,16 +249,21 @@ export function sendPrompt(text: string): void {
 
 // --- Session lifecycle ---
 
-/** Create a new chat. If initialPrompt is non-empty, send it immediately.
- *  Otherwise open the model picker and wait for the user to type. */
-export function createSession(initialPrompt?: string): void {
+const NEW_CHAT_NAME = "New conversation";
+
+/** Mint a client-side chat id and seed its store header.
+ *
+ *  Every chat id is client-generated; the chat becomes a SERVER record on its
+ *  first prompt, which is also where its name comes from (the 80-char truncation
+ *  in command/prompt.go). Nothing here is persisted, so there is no create_chat
+ *  round trip to make. */
+function seedLocalChat(model: string): string {
   const id = `c-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
-  const model = getLastModel();
   // Template for upsertHeader + initial render; only the header fields
   // matter — the rest are defaults satisfying the Session type.
   const session: Session = {
     id,
-    name: "New conversation",
+    name: NEW_CHAT_NAME,
     model,
     acp_session_id: "",
     current_mode_id: "",
@@ -272,8 +287,16 @@ export function createSession(initialPrompt?: string): void {
     updated_at: Date.now(),
     message_count: 0,
   });
+  return id;
+}
+
+/** Create a new chat. If initialPrompt is non-empty, send it immediately.
+ *  Otherwise open the model picker and wait for the user to type. */
+export function createSession(initialPrompt?: string): void {
+  const model = getLastModel();
+  const id = seedLocalChat(model);
   setActive(id);
-  openChatTab(id, session.name);
+  openChatTab(id, NEW_CHAT_NAME);
 
   if (initialPrompt !== undefined && initialPrompt !== "") {
     setCurrentModel(model);
@@ -281,6 +304,96 @@ export function createSession(initialPrompt?: string): void {
   } else {
     showModelPicker(model, applyLocalModel);
   }
+}
+
+/** Open a side conversation off `parentChatID`, seeded with a transcript
+ *  selection: a real chat, opened as a SUB-TAB under the one it came from.
+ *
+ *  Four things it is, each load-bearing:
+ *
+ *    - A real PERSISTED chat, because the seeded prompt is what creates the
+ *      server record. So closing it leaves it in History like any other chat, and
+ *      invariant 3 holds — the bridge it gets has a chat file behind it.
+ *    - It OWNS its bridge: the tab keeps the default `owns`, so its × tears the
+ *      side chat down rather than orphaning a process.
+ *    - No shared parent context beyond the selection. The selection seeds the
+ *      first prompt and that is the whole inheritance, plus the parent's model
+ *      and mode so the answer comes from the same agent that produced the text.
+ *    - The name is the server's 80-char truncation of that first prompt, which is
+ *      why nothing here names it: the store effect renames the tab on the echo.
+ */
+export function openSideChat(parentChatID: string, selection: string): void {
+  const seed = selection.trim();
+  if (seed === "") {
+    return;
+  }
+  const parent = get(parentChatID);
+  const model = parent?.model ?? getLastModel();
+  const id = seedLocalChat(model);
+  setActive(id);
+  openChatTab(id, NEW_CHAT_NAME, { parentId: parentChatID });
+  const mode = parent?.current_mode_id ?? "";
+  if (mode !== "") {
+    // Same shape as role-picker's selectMode: the chat has no bridge yet, so the
+    // server persists the choice and applies it at session/new.
+    void setMode.dispatch({ chatID: id, modeID: mode });
+  }
+  setCurrentModel(model);
+  sendPrompt(seed);
+}
+
+/** Wire the transcript's right-click menu: one entry, on a non-empty selection.
+ *
+ *  The selection is read HERE rather than in the item's action, because opening
+ *  the menu focuses its first item and that can collapse the selection. An empty
+ *  selection (or one outside the transcript) is left to the native menu, the same
+ *  way a non-chat tab is.
+ *
+ *  One entry and nothing else, by decision: no floating selection toolbar and no
+ *  Copy or Quote, which are copy-and-paste with extra steps. Code blocks already
+ *  have their own copy button, so a second door would disagree with the first. */
+export function initTranscriptContextMenu(): void {
+  $.messages.addEventListener("contextmenu", (e) => {
+    const chatID = getActiveId();
+    if (chatID === "") {
+      return;
+    }
+    const sel = window.getSelection();
+    const text = sel === null ? "" : sel.toString().trim();
+    if (text === "" || !selectionInside(sel, $.messages)) {
+      return;
+    }
+    e.preventDefault();
+    showContextMenu(
+      [
+        {
+          label: "Ask in a side conversation",
+          action: () => {
+            openSideChat(chatID, text);
+          },
+        },
+      ],
+      { x: e.clientX, y: e.clientY },
+    );
+  });
+}
+
+/** Whether the WHOLE selection lies inside `host`.
+ *
+ *  Both endpoints, not just the anchor: a drag that starts in the transcript and
+ *  ends outside it passes an anchor-only check, so `sel.toString()` seeded a side
+ *  conversation with page text the reader never selected from the conversation —
+ *  and reversing the drag direction flipped the verdict on the same range, since
+ *  the anchor is wherever the gesture began. */
+function selectionInside(sel: Selection | null, host: HTMLElement): boolean {
+  if (sel === null) {
+    return false;
+  }
+  return nodeInside(sel.anchorNode, host) && nodeInside(sel.focusNode, host);
+}
+
+function nodeInside(node: Node | null, host: HTMLElement): boolean {
+  return node !== null && (node === host || host.contains(node));
 }
 
 export function switchSession(id: string): void {

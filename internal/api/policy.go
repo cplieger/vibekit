@@ -52,11 +52,19 @@ type PolicyRuleCore struct {
 // PolicyView is the GET /api/permissions response: the native policy rule
 // set plus the metadata the editor needs. Available is false when no bridge
 // could answer (the view falls back to reading the editable files directly).
+// Capabilities and RelaxCapabilities answer different questions and neither is a
+// filter on the other. Capabilities is what the rule-adder's dropdown OFFERS —
+// the suggested set unioned with every capability the live rules already use, so
+// it can learn a name vibekit shipped without. RelaxCapabilities is the fixed
+// membership of the workspace relaxation switch, derived in policyfile and
+// deliberately not discovered: it decides what one click grants, so it may not
+// grow from whatever happens to be in the returned rules.
 type PolicyView struct {
-	Rules          []PolicyRule `json:"rules"`
-	WritableScopes []string     `json:"writable_scopes"`
-	Capabilities   []string     `json:"capabilities"`
-	Available      bool         `json:"available"`
+	Rules             []PolicyRule `json:"rules"`
+	WritableScopes    []string     `json:"writable_scopes"`
+	Capabilities      []string     `json:"capabilities"`
+	RelaxCapabilities []string     `json:"relax_capabilities"`
+	Available         bool         `json:"available"`
 }
 
 // PolicyExplainRequest is the POST /api/permissions/explain body. Exactly

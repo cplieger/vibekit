@@ -126,6 +126,53 @@ func Capabilities() []string {
 	return out
 }
 
+// relaxExcluded is what the workspace relaxation deliberately leaves alone, and
+// each entry is excluded for its own reason rather than by a shared theme.
+//
+// The three UMBRELLAS (all, builtin, filesystem) are supersets of the discrete
+// capabilities beside them. One `capability: all, effect: allow` rule would
+// express the whole relaxation in a single write, and that is exactly why it is
+// wrong here: it grants strictly more than the members do (every capability KAS
+// gains later, including ones this snapshot has never heard of), and it makes
+// reversal all-or-nothing where discrete rules can be removed one at a time.
+//
+// POWER is excluded on a different ground. A power's manifest carries no
+// permissions field, so its MCP servers run at the user's privilege governed
+// only by Cedar — Cedar is the whole guard there, and a blanket allow removes
+// it. Installing a power is also rare rather than routine, so leaving it to ask
+// costs the user almost no interruptions while keeping the one prompt that is
+// genuinely load-bearing. See the Permissions section of the vibekit steering
+// doc, which names this as the one surviving argument for a policy floor.
+var relaxExcluded = map[string]struct{}{
+	"all": {}, "builtin": {}, "filesystem": {},
+	"power": {},
+}
+
+// RelaxCapabilities returns the capability set the Settings -> Permissions
+// workspace relaxation writes broad allow rules for, sorted.
+//
+// It is DERIVED (suggestedCapabilities minus relaxExcluded) rather than listed,
+// so it cannot name a capability the vocabulary snapshot does not have, and a
+// capability added to that snapshot joins the relaxation unless it is
+// deliberately excluded beside it. TestRelaxCapabilities_ExactSet pins the
+// resulting set, so either edit is a visible decision rather than a side effect.
+//
+// The relaxation writes one rule per member with no match/exclude, which is
+// what makes it exactly reversible: Signature keys on capability + effect +
+// globs, so removing the same bare rules removes precisely what was written and
+// leaves any hand-authored narrower rule for the same capability untouched.
+func RelaxCapabilities() []string {
+	out := make([]string, 0, len(suggestedCapabilities))
+	for c := range suggestedCapabilities {
+		if _, skip := relaxExcluded[c]; skip {
+			continue
+		}
+		out = append(out, c)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // maxCapabilityLen bounds a capability token. KAS's own names are under 16
 // characters; this is generous headroom, and its job is only to keep a
 // pathological value out of the file (see SanitizeRule).

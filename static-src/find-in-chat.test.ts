@@ -81,6 +81,32 @@ describe("FindEngine matching", () => {
     expect(texts).toEqual(["Todo", "todo", "TODO", "tODo"]);
   });
 
+  it("matches only the exact casing when case sensitivity is asked for", () => {
+    const el = root(`<p>Todo todo TODO tODo</p>`);
+    const eng = new FindEngine(el);
+    expect(eng.search("todo", true)).toBe(1);
+    expect(marks(el).map((m) => m.textContent)).toEqual(["todo"]);
+  });
+
+  it("matches an upper-case needle exactly under case sensitivity", () => {
+    const el = root(`<p>Todo todo TODO</p>`);
+    const eng = new FindEngine(el);
+    expect(eng.search("TODO", true)).toBe(1);
+    expect(marks(el).map((m) => m.textContent)).toEqual(["TODO"]);
+  });
+
+  it("defaults to insensitive when the flag is omitted", () => {
+    const el = root(`<p>Alpha alpha</p>`);
+    expect(new FindEngine(el).search("ALPHA")).toBe(2);
+  });
+
+  it("finds every occurrence within one node under case sensitivity", () => {
+    const el = root(`<p>Err err Err err</p>`);
+    const eng = new FindEngine(el);
+    expect(eng.search("err", true)).toBe(2);
+    expect(el.textContent).toBe("Err err Err err");
+  });
+
   it("finds multiple matches within a single text node and preserves surrounding text", () => {
     const el = root(`<p>a TODO b TODO c</p>`);
     const eng = new FindEngine(el);
@@ -328,6 +354,46 @@ describe("Ctrl-F overlay", () => {
     );
     expect(document.getElementById("chat-find")?.classList.contains("hidden")).toBe(true);
     expect(document.querySelectorAll("mark.chat-find-hit")).toHaveLength(0);
+  });
+
+  it("re-runs the search when the match-case toggle flips, without retyping", () => {
+    // step() decides whether to re-search by comparing the query STRING, and
+    // the toggle changes neither the string nor the input event — so the toggle
+    // has to force the search itself or nothing at all would happen.
+    onHotkey(ctrlF());
+    const count = document.getElementById("chat-find-count");
+    const toggle = document.querySelector<HTMLButtonElement>(".chat-find-case");
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+
+    typeAndEnter("todo");
+    expect(count?.textContent).toBe("1 of 3");
+
+    toggle?.click();
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    // The transcript says "TODO" three times and "todo" never.
+    expect(count?.textContent).toBe("No matches");
+    expect(document.querySelectorAll("mark.chat-find-hit")).toHaveLength(0);
+
+    toggle?.click();
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+    expect(count?.textContent).toBe("1 of 3");
+  });
+
+  it("resets to the first match on a toggle rather than keeping a position in the old set", () => {
+    onHotkey(ctrlF());
+    const count = document.getElementById("chat-find-count");
+    typeAndEnter("TODO");
+    typeAndEnter("TODO"); // step to 2 of 3
+    expect(count?.textContent).toBe("2 of 3");
+    document.querySelector<HTMLButtonElement>(".chat-find-case")?.click();
+    // The match set changed, so a position in the previous one means nothing.
+    expect(count?.textContent).toBe("1 of 3");
+  });
+
+  it("carries an accessible name on the toggle", () => {
+    onHotkey(ctrlF());
+    const toggle = document.querySelector<HTMLButtonElement>(".chat-find-case");
+    expect(toggle?.getAttribute("aria-label")).toBe("Match case");
   });
 
   it("lets a second Ctrl-F fall through to the browser (escape hatch) while the field is focused", () => {

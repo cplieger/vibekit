@@ -54,3 +54,19 @@ type ChatStoreDeps interface {
 	ChatStore() api.ChatStore
 	ParentACPSession(chatID api.ChatID) string
 }
+
+// RunOriginAccess answers whether a workflow run was launched by a SCHEDULE.
+//
+// One method, because that is the whole question workflow.go asks. The fact lives
+// on the host: the scheduler's launch path carries a schedule id and marks the run
+// with it, and nothing on the ACP wire distinguishes a scheduled run from a manual
+// one (both are parentless, both arrive with an empty chat id). Keyed by workflow
+// id rather than chat id for the same reason — a parentless run's frames carry no
+// topic.
+//
+// In-memory on the host, so a run that OUTLIVES a restart reports false
+// afterwards: the mark is gone, and vibekit genuinely no longer knows the run was
+// scheduled. That is a missing start signal on a resume, not a wrong one.
+type RunOriginAccess interface {
+	IsScheduledRun(workflowID string) bool
+}

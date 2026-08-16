@@ -3,17 +3,31 @@
 // ---------------------------------------------------------------------------
 
 import type { BannerLevel } from "../types.js";
+import type { SettingsTab } from "../router.js";
 import type { ErrorCode } from "../wire/types.gen.js";
 
 export interface ErrorRoute {
   surface: "banner" | "send-error";
   level: BannerLevel;
   dismissible: boolean;
+  /** Optional in-app jump for a banner: the Settings tab plus the id of the
+   *  control the message is really about. Data rather than a callback so the
+   *  routing table stays a table — the handler turns it into the banner's
+   *  action. Only meaningful on `surface: "banner"`. */
+  setting?: { tab: SettingsTab; control: string; label: string };
 }
 
 export const ERROR_ROUTES: Readonly<Partial<Record<ErrorCode, ErrorRoute>>> = {
   agent_not_found: { surface: "banner", level: "error", dismissible: true },
-  agent_config_error: { surface: "banner", level: "error", dismissible: false },
+  // The payload names a `.kiro/agents` path, so the message is about authored
+  // configuration; Custom instructions is the panel that owns it, and the global
+  // instructions box is the control a reader lands on to check their setup.
+  agent_config_error: {
+    surface: "banner",
+    level: "error",
+    dismissible: false,
+    setting: { tab: "instructions", control: "steering-input", label: "Open custom instructions" },
+  },
   rate_limit: { surface: "banner", level: "warning", dismissible: true },
   compaction_failed: { surface: "banner", level: "error", dismissible: true },
   // The chat is running, just not in the mode that was asked for, and the fix is

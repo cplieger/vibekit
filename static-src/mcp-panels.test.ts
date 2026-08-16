@@ -40,10 +40,12 @@ vi.mock(import("./icons.js"), async (importOriginal) => {
 });
 vi.mock("./actions/mcp.js", () => ({
   saveServer: { dispatch: async () => ({}) },
+  importServers: { dispatch: async () => ({}) },
+  searchRegistry: { cancel: () => undefined },
 }));
 
 import { simplifyName } from "./mcp-panels-search.js";
-import { extractNpxPackage, rawEditShape, rawSubmitShape } from "./mcp-panels.js";
+import { extractNpxPackage } from "./mcp-panels.js";
 import type { Server } from "./mcp-state.js";
 
 // ---------------------------------------------------------------------------
@@ -100,146 +102,6 @@ describe("extractNpxPackage", () => {
       expect(extractNpxPackage(stub(args))).toBe(expected);
     });
   }
-});
-
-// ---------------------------------------------------------------------------
-// rawEditShape — table-driven
-// ---------------------------------------------------------------------------
-
-describe("rawEditShape", () => {
-  it("converts server to edit shape with env as object", () => {
-    const s = {
-      id: "1",
-      name: "test",
-      transport: "stdio",
-      enabled: true,
-      command: "/bin/cmd",
-      args: ["--flag"],
-      env: [{ name: "KEY", value: "VAL" }],
-      created_at: 0,
-      updated_at: 0,
-    } as Server;
-    expect(rawEditShape(s)).toEqual({
-      name: "test",
-      command: "/bin/cmd",
-      args: ["--flag"],
-      env: { KEY: "VAL" },
-      prewarm: false,
-    });
-  });
-
-  it("handles missing optional fields", () => {
-    const s = {
-      id: "2",
-      name: "bare",
-      transport: "stdio",
-      enabled: true,
-      created_at: 0,
-      updated_at: 0,
-    } as Server;
-    expect(rawEditShape(s)).toEqual({
-      name: "bare",
-      command: "",
-      args: [],
-      env: {},
-      prewarm: false,
-    });
-  });
-
-  it("handles multiple env pairs", () => {
-    const s = {
-      id: "3",
-      name: "multi",
-      transport: "stdio",
-      enabled: true,
-      command: "cmd",
-      env: [
-        { name: "A", value: "1" },
-        { name: "B", value: "2" },
-      ],
-      created_at: 0,
-      updated_at: 0,
-    } as Server;
-    expect(rawEditShape(s)).toEqual({
-      name: "multi",
-      command: "cmd",
-      args: [],
-      env: { A: "1", B: "2" },
-      prewarm: false,
-    });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// rawSubmitShape — table-driven
-// ---------------------------------------------------------------------------
-
-describe("rawSubmitShape", () => {
-  it("returns valid partial server for complete input", () => {
-    const result = rawSubmitShape({ name: "srv", command: "/bin/x", args: ["a"], env: { K: "V" } });
-    expect(result).toEqual({
-      transport: "stdio",
-      name: "srv",
-      command: "/bin/x",
-      args: ["a"],
-      env: [{ name: "K", value: "V" }],
-      prewarm: false,
-    });
-  });
-
-  it("returns null when name is missing", () => {
-    expect(rawSubmitShape({ command: "/bin/x" })).toBeNull();
-  });
-
-  it("returns null when command is missing", () => {
-    expect(rawSubmitShape({ name: "srv" })).toBeNull();
-  });
-
-  it("returns null for empty name", () => {
-    expect(rawSubmitShape({ name: "", command: "/bin/x" })).toBeNull();
-  });
-
-  it("returns null for empty command", () => {
-    expect(rawSubmitShape({ name: "srv", command: "" })).toBeNull();
-  });
-
-  it("filters non-string args", () => {
-    const result = rawSubmitShape({ name: "s", command: "c", args: ["ok", 123, null, "yes"] });
-    expect(result!.args).toEqual(["ok", "yes"]);
-  });
-
-  it("handles non-array args gracefully", () => {
-    const result = rawSubmitShape({ name: "s", command: "c", args: "not-array" });
-    expect(result!.args).toEqual([]);
-  });
-
-  it("skips non-string env values", () => {
-    const result = rawSubmitShape({ name: "s", command: "c", env: { A: "ok", B: 123 } });
-    expect(result!.env).toEqual([{ name: "A", value: "ok" }]);
-  });
-
-  it("handles null env gracefully", () => {
-    const result = rawSubmitShape({ name: "s", command: "c", env: null });
-    expect(result!.env).toEqual([]);
-  });
-
-  it("strips env entries with empty-string keys", () => {
-    const result = rawSubmitShape({ name: "s", command: "c", env: { "": "val", K: "V" } });
-    expect(result!.env).toEqual([
-      { name: "", value: "val" },
-      { name: "K", value: "V" },
-    ]);
-  });
-
-  it("handles undefined env gracefully", () => {
-    const result = rawSubmitShape({ name: "s", command: "c" });
-    expect(result!.env).toEqual([]);
-  });
-
-  it("handles numeric name/command types as empty", () => {
-    expect(rawSubmitShape({ name: 123, command: "c" })).toBeNull();
-    expect(rawSubmitShape({ name: "s", command: 456 })).toBeNull();
-  });
 });
 
 // ---------------------------------------------------------------------------

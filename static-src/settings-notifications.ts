@@ -1,6 +1,12 @@
 // ---------------------------------------------------------------------------
 // Notification toggles: iOS detection, permission requests, sub-option
 // visibility, push/unregister lifecycle. Extracted from settings.ts.
+//
+// There is ONE sub-option, not two. The permission-ask channel used to have its
+// own off switch and it was removed: an ask blocks the turn and has no per-tab
+// marker, so muting it stalled every later turn with no signal. See the "no
+// notify_permission key" note in internal/settings/defaults.go for the floor,
+// and Settings -> Permissions for the relaxation that replaced it.
 // ---------------------------------------------------------------------------
 
 import {
@@ -10,12 +16,9 @@ import {
   unregisterPush,
   isAgentFinishedEnabled,
   setAgentFinishedEnabled,
-  isPermissionNeededEnabled,
-  setPermissionNeededEnabled,
   setNotifyUICallback,
 } from "./notify.js";
 import { patchSettings } from "./persist.js";
-import type { AppSettings } from "./persist.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { $ } from "./dom.js";
 import { isIOS, isStandalone } from "./platform.js";
@@ -26,7 +29,6 @@ export function initNotificationToggles(): void {
   const notifyHint = $.notifyHint;
   const notifySubOptions = $.notifySubOptions;
   const finishedToggle = $.notifyFinishedToggle;
-  const permissionToggle = $.notifyPermissionToggle;
 
   // iOS Safari (non-PWA): Web Push is only available when the app is
   // added to the home screen. Disable the toggle and show a permanent
@@ -42,7 +44,6 @@ export function initNotificationToggles(): void {
 
   notifyToggle.checked = areNotificationsEnabled();
   finishedToggle.checked = isAgentFinishedEnabled();
-  permissionToggle.checked = isPermissionNeededEnabled();
   bindLoadingState("notify.register_push", notifyToggle);
   const unbindPatch = bindLoadingState("settings.patch", notifyToggle, { preserveDisabled: true });
   registerCleanup(unbindPatch);
@@ -78,7 +79,6 @@ export function initNotificationToggles(): void {
   setNotifyUICallback(() => {
     notifyToggle.checked = areNotificationsEnabled();
     finishedToggle.checked = isAgentFinishedEnabled();
-    permissionToggle.checked = isPermissionNeededEnabled();
     updateSub();
     notifyHint.classList.add("hidden");
     if (notifyToggle.checked && "Notification" in window && Notification.permission === "denied") {
@@ -101,10 +101,6 @@ export function initNotificationToggles(): void {
         finishedToggle.checked = true;
         mutatedInputs.push(finishedToggle);
       }
-      if (!permissionToggle.checked) {
-        permissionToggle.checked = true;
-        mutatedInputs.push(permissionToggle);
-      }
       // Show sub-options optimistically.
       updateSub();
       // Defer in-memory state updates until PATCH succeeds (Bug 3 fix).
@@ -112,7 +108,6 @@ export function initNotificationToggles(): void {
         {
           notifications_enabled: true,
           notify_agent_finished: true,
-          notify_permission: true,
         },
         ...mutatedInputs,
       ).then((r) => {
@@ -121,13 +116,11 @@ export function initNotificationToggles(): void {
           // subscription that requestPermission may have started.
           setNotificationsEnabled(false);
           setAgentFinishedEnabled(false);
-          setPermissionNeededEnabled(false);
           unregisterPush();
           updateSub();
         } else {
           setNotificationsEnabled(true);
           setAgentFinishedEnabled(true);
-          setPermissionNeededEnabled(true);
           updateSub();
           // Only prompt for browser permission after server confirms enable.
           const hint = requestPermission();
@@ -154,50 +147,35 @@ export function initNotificationToggles(): void {
     }
   });
 
-  const onSubChange = (): void => {
-    // Only register inputs that actually changed for rollback (Bug 2 fix).
-    const mutatedInputs: HTMLInputElement[] = [];
-    if (finishedToggle.checked !== isAgentFinishedEnabled()) {
-      mutatedInputs.push(finishedToggle);
+  finishedToggle.addEventListener("change", () => {
+    if (finishedToggle.checked === isAgentFinishedEnabled()) {
+      // Nothing actually changed — skip the server round-trip.
+      return;
     }
-    if (permissionToggle.checked !== isPermissionNeededEnabled()) {
-      mutatedInputs.push(permissionToggle);
-    }
-
-    const bothOff = !finishedToggle.checked && !permissionToggle.checked;
-    if (bothOff) {
+    // With one sub-option left, switching it off IS switching notifications
+    // off: there is no second channel for the master toggle to keep alive.
+    const allOff = !finishedToggle.checked;
+    const mutatedInputs: HTMLInputElement[] = [finishedToggle];
+    if (allOff) {
       notifyToggle.checked = false;
       mutatedInputs.push(notifyToggle);
     }
-
-    // Nothing actually changed — skip the server round-trip.
-    if (mutatedInputs.length === 0) {
-      return;
-    }
-
-    const patch: Partial<AppSettings> = {
-      notify_agent_finished: finishedToggle.checked,
-      notify_permission: permissionToggle.checked,
-    };
-
-    if (bothOff) {
-      patch.notifications_enabled = false;
-    }
-
-    void patchSettings(patch, ...mutatedInputs).then((r) => {
+    void patchSettings(
+      allOff
+        ? { notify_agent_finished: false, notifications_enabled: false }
+        : { notify_agent_finished: true },
+      ...mutatedInputs,
+    ).then((r) => {
       if (r === null) {
         // Action framework rolls back the toggle inputs; no extra work needed.
       } else {
         setAgentFinishedEnabled(finishedToggle.checked);
-        setPermissionNeededEnabled(permissionToggle.checked);
-        if (bothOff) {
+        if (allOff) {
           setNotificationsEnabled(false);
           unregisterPush();
           updateSub();
         }
       }
     });
-  };
-  finishedToggle.addEventListener("change", onSubChange);
-  permissionToggle.addEventListener("change", onSubChange);
+  });
 }

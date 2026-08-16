@@ -80,6 +80,67 @@
   overflow-x: auto;
 }
 
+/* Rendered-markdown read surface. Occupies the same grid cell as the highlight
+   pane and the textarea, so exactly one of the four is ever visible; the gutter
+   column collapses with it because `.hidden` is display:none.
+
+   No prose rules here on purpose. The prose container inside carries
+   `.message.assistant` — the app's one rendered-markdown skin, whose ~40rem cap
+   is the reading measure — rather than a second copy of it that would drift. */
+.editor-markdown {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+}
+
+/* The document's YAML front-matter, rendered rather than stripped: for a
+   steering doc the inclusion mode and fileMatchPattern are the facts a reader
+   came for. Set apart from the prose because it is metadata about the file, not
+   part of it. */
+.editor-fm {
+  display: block;
+  max-width: 40.75rem;
+  margin-block-end: var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-inline-start: 0.125rem solid var(--c-accent);
+  border-radius: 0 var(--r) var(--r) 0;
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
+}
+
+.editor-fm-title {
+  display: block;
+  margin-block-end: var(--sp-1);
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Two columns: the key sizes to its content so the values line up, and the
+   value column takes the rest and wraps. */
+.editor-fm-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+}
+
+.editor-fm-key {
+  color: var(--c-text-secondary);
+  font-family: var(--font-mono);
+}
+
+.editor-fm-val {
+  margin: 0;
+  color: var(--c-text-primary);
+  overflow-wrap: anywhere;
+}
+
 .editor-content {
   grid-column: 2;
   grid-row: 1;

@@ -847,16 +847,63 @@
 .code-wrap > pre {
   /* stylelint-disable-next-line declaration-no-important -- must beat highlight.js theme margins injected at runtime */
   margin: 0 !important;
+
+  /* The head owns the top corners now; the pre closes the bottom pair. */
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+
+/* The block's title bar: which language on the left, the block's actions on the
+ * right. The actions used to float absolutely over the pre's top-right, where
+ * they covered the first line of code — the worst line to cover, since it is
+ * the one that says what the snippet is. A flow row costs one row of height and
+ * covers nothing. */
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 1.75rem;
+  padding: 0.125rem var(--sp-2);
+  background: var(--c-bg-tertiary);
+  border: 1px solid var(--c-border);
+  border-block-end: none;
+  border-radius: var(--r) var(--r) 0 0;
+}
+
+/* The RAW fence tag, as the author wrote it. highlight.ts exposes no
+ * display-name map and inventing one would be a fourth lookup table beside the
+ * three that already decide highlighting. Empty for a fence with no tag: the
+ * bar still earns its row by holding the actions. */
+.code-lang {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .code-actions {
-  position: absolute;
-  top: var(--sp-2);
-  inset-inline-end: var(--sp-2);
   display: flex;
+  flex-shrink: 0;
   gap: 0.25rem;
-  z-index: 1;
-  pointer-events: auto;
+}
+
+/* Still arriving. The block has its chrome but not its highlighting, because
+ * the text is still growing; the dot says which state it is in rather than
+ * leaving the missing colour to be read as a failure. */
+.code-wrap[data-code-state="streaming"] .code-lang::after {
+  content: "";
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  margin-inline-start: var(--sp-1);
+  border-radius: 50%;
+  background: var(--c-accent);
+  animation: vk-breathe 1.4s var(--ease-standard) infinite;
+  vertical-align: 1px;
 }
 
 .code-act-btn {
@@ -876,6 +923,61 @@
     background: var(--c-bg-tertiary);
     color: var(--c-text-primary);
   }
+}
+
+/* The reply's markdown SOURCE, shown in place of its rendering.
+ *
+ * A sibling of the rendered bubbles rather than a replacement of them, and
+ * hidden with `.hidden` rather than opacity — see the reasoning in
+ * messages-turn-actions.ts toggleRawSource. Same prose measure as the rendering
+ * it stands in for, so toggling does not change the column width. */
+.turn-raw {
+  max-width: 40.75rem;
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--c-code-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--c-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Math (native MathML, no KaTeX).
+ *
+ * THE FONT IS THE WHOLE REASON THIS BLOCK EXISTS. MathML Core layout is native
+ * in every browser this app targets, but Chromium ships no math font, so
+ * without a stack a fraction lays out correctly while its stretchy braces and
+ * radical signs fall back to whatever the page font happens to have. Naming
+ * fonts a system may already carry (TeX distributions, Office, most Linux
+ * font packages) costs nothing and degrades gracefully: the `math` generic and
+ * then `serif` still set fractions, roots and scripts, and only stretchy
+ * operators come out at a fixed size instead of stretched. Bundling a math font
+ * file was the alternative and it buys a guarantee at the price of a permanent
+ * binary asset inside //go:embed static.
+ *
+ * `[data-math-raw]` is the DEGRADATION state, set by smd-renderer.ts: an
+ * expression still streaming, never closed, or outside the converter's subset
+ * keeps its LaTeX. It reads as source rather than as broken mathematics. */
+[data-math] {
+  font-family: "Latin Modern Math", "STIX Two Math", "XITS Math", "Cambria Math", math, serif;
+}
+
+[data-math="block"] {
+  display: block;
+  margin: var(--sp-3) 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
+[data-math-raw] {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
 }
 
 [id="scroll-bottom"] {

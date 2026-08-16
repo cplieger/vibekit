@@ -35,13 +35,19 @@ vi.mock("../send-state.js", () => ({
   setSSEStatus: vi.fn(),
 }));
 
+// There is no isPermissionNeededEnabled to mock: the permission ask has no
+// per-kind switch, so the three ask handlers notify unconditionally and only the
+// master gate inside notifyIfHidden applies.
+const mockNotifyIfHidden = vi.fn();
 vi.mock("../notify.js", () => ({
-  notifyIfHidden: vi.fn(),
+  notifyIfHidden: mockNotifyIfHidden,
   setBadge: vi.fn(),
   isAgentFinishedEnabled: () => false,
-  isPermissionNeededEnabled: () => false,
   NOTIFY_TITLE: "vibekit",
 }));
+
+const mockOpenSetting = vi.fn();
+vi.mock("../settings-highlight.js", () => ({ openSetting: mockOpenSetting }));
 
 vi.mock("../git.js", () => ({ refreshGitBadge: vi.fn() }));
 
@@ -90,9 +96,31 @@ beforeEach(() => {
 });
 
 describe("ERROR_ROUTES", () => {
-  const expectedRoutes: [string, { surface: string; level: string; dismissible: boolean }][] = [
+  const expectedRoutes: [
+    string,
+    {
+      surface: string;
+      level: string;
+      dismissible: boolean;
+      setting?: { tab: string; control: string; label: string };
+    },
+  ][] = [
     ["agent_not_found", { surface: "banner", level: "error", dismissible: true }],
-    ["agent_config_error", { surface: "banner", level: "error", dismissible: false }],
+    // The one routed error that also names a setting: the payload carries a
+    // .kiro/agents path, so the banner links at Custom instructions (D115).
+    [
+      "agent_config_error",
+      {
+        surface: "banner",
+        level: "error",
+        dismissible: false,
+        setting: {
+          tab: "instructions",
+          control: "steering-input",
+          label: "Open custom instructions",
+        },
+      },
+    ],
     ["rate_limit", { surface: "banner", level: "warning", dismissible: true }],
     ["compaction_failed", { surface: "banner", level: "error", dismissible: true }],
     ["switch_failed", { surface: "send-error", level: "error", dismissible: false }],
@@ -169,6 +197,21 @@ describe("turn_ended turn summary → store", () => {
     expect(m?.turn_credits).toBeUndefined();
     expect(m?.turn_elapsed_ms).toBeUndefined();
     expect(m?.changed_files).toBeUndefined();
+    expect(m?.turn_model).toBeUndefined();
+  });
+
+  it("stamps the model that served the turn", () => {
+    seedWithAssistant();
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", model: "sonnet-4" });
+    expect(get("chat-1")?.messages[0]?.turn_model).toBe("sonnet-4");
+  });
+
+  // The server omits the field when it cannot name a model, and a blank string
+  // would read as an attributed turn. Both absences have to leave it undefined.
+  it("leaves the model undefined when the payload names none", () => {
+    seedWithAssistant();
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", model: "" });
+    expect(get("chat-1")?.messages[0]?.turn_model).toBeUndefined();
   });
 });
 
@@ -216,8 +259,31 @@ describe("error handler", () => {
       "slow down",
       "warning",
       true,
+      undefined,
     );
     expect(mockSetLastError).not.toHaveBeenCalled();
+  });
+
+  // D115: a banner whose route names a setting carries a working in-app jump,
+  // and one whose route does not carries no affordance at all.
+  it("gives agent_config_error a banner action that opens the named control", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "agent_config_error", message: "bad agent json" });
+
+    const link = mockShowBanner.mock.calls[0]?.[5] as
+      { label: string; onClick: () => void } | undefined;
+    expect(link?.label).toBe("Open custom instructions");
+    link?.onClick();
+    expect(mockOpenSetting).toHaveBeenCalledWith("instructions", "steering-input");
+  });
+
+  it("passes no banner action for a routed error that names no setting", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "compaction_failed", message: "nope" });
+    expect(mockShowBanner.mock.calls[0]?.[5]).toBeUndefined();
+    expect(mockOpenSetting).not.toHaveBeenCalled();
   });
 
   it("routes a send-error-class error to setLastError", () => {
@@ -235,6 +301,31 @@ describe("error handler", () => {
     fireSSE("error", "chat-1", { code: "mystery_code", message: "huh" });
     expect(get("chat-1")?.thinking).toBe(false);
     expect(mockSetLastError).toHaveBeenCalledWith("mystery_code: huh");
+  });
+});
+
+// D103: the protected approval floor, at the client's notification site. There
+// is no per-kind switch left, so all three turn-blocking asks reach
+// notifyIfHidden — which is where the master switch is checked. The
+// isAgentFinishedEnabled mock returns false, so a turn_ended notification would
+// NOT fire; that contrast is what makes these assertions non-vacuous.
+describe("the permission-class asks always notify", () => {
+  it.each([
+    ["permission_needed", { request_id: 1, options: [] }, "Permission needed"],
+    ["elicitation_needed", { request_id: 2 }, "Input requested by a tool"],
+    ["user_input_needed", { request_id: 3, options: [] }, "The agent has a question"],
+  ])("%s notifies with no per-kind gate", (event, payload, body) => {
+    fireSSE(event, "chat-1", payload);
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", body);
+  });
+
+  it("uses the turn-approval wording when the ask carries files", () => {
+    fireSSE("permission_needed", "chat-1", {
+      request_id: 4,
+      options: [],
+      files: [{ path: "a.go", action_id: "act-1" }],
+    });
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "Review this turn's changes");
   });
 });
 

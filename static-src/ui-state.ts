@@ -13,6 +13,10 @@ const LS_KEY = LS_UI_STATE_KEY;
 
 export interface UIState {
   tab_order: string[];
+  /** Top-level tabs the user pinned, so a long-running conversation stays
+   *  reachable when fifteen tabs are open. Per-device like `tab_order`, and for
+   *  the same reason: two devices should not fight over each other's strip. */
+  pinned_tabs: string[];
   active_view: string;
   shell_open: boolean;
   /** User-dragged shell panel height in px; 0 = use the CSS default (16rem). */
@@ -31,6 +35,7 @@ export interface UIState {
 function empty(): UIState {
   return {
     tab_order: [],
+    pinned_tabs: [],
     active_view: "",
     shell_open: false,
     shell_h: 0,
@@ -67,6 +72,7 @@ function sanitize(d: unknown): UIState {
   const o = d as Record<string, unknown>;
   return {
     tab_order: strArray(o["tab_order"]) ?? e.tab_order,
+    pinned_tabs: strArray(o["pinned_tabs"]) ?? e.pinned_tabs,
     active_view: typeof o["active_view"] === "string" ? o["active_view"] : e.active_view,
     shell_open: typeof o["shell_open"] === "boolean" ? o["shell_open"] : e.shell_open,
     shell_h:

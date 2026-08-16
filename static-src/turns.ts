@@ -72,6 +72,17 @@ export interface TurnLedger {
    *  so a turn that read forty files and wrote none reported no work at all. */
   commands: number;
   reads: number;
+  /** The model(s) that answered, distinct and in emission order.
+   *
+   *  A FOURTH aggregation strategy beside the sum, the count and the
+   *  merge-by-key above, because a model is none of those: adding two model ids
+   *  is meaningless and taking the last one is silently wrong on a turn a
+   *  mid-turn switch split into two assistant messages. Carrying both is the
+   *  only rendering that answers "which model served this turn" honestly when
+   *  the answer is "two of them". Empty for every turn persisted before the
+   *  field existed, which is why the footer renders nothing rather than
+   *  "unknown". */
+  models: string[];
 }
 
 /** Tool kinds that mean "a command ran". `execute` and `shell` are the two KAS
@@ -156,6 +167,7 @@ export function turnLedger(t: Turn): TurnLedger {
     changedFiles: {},
     commands: 0,
     reads: 0,
+    models: [],
   };
   for (const m of t.body) {
     for (const tc of m.tool_calls ?? []) {
@@ -170,6 +182,10 @@ export function turnLedger(t: Turn): TurnLedger {
     }
     if (m.turn_elapsed_ms !== undefined && m.turn_elapsed_ms > 0) {
       led.elapsedMs += m.turn_elapsed_ms;
+    }
+    const model = m.turn_model ?? "";
+    if (model !== "" && !led.models.includes(model)) {
+      led.models.push(model);
     }
     for (const [path, fc] of Object.entries(m.changed_files ?? {})) {
       led.changedFiles[path] = fc;

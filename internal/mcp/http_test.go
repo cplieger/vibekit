@@ -119,6 +119,9 @@ func TestHandleCollection_POST_validationFail_is400(t *testing.T) {
 	}
 }
 
+// Same name, DIFFERENT spec is still 409. The identical-spec re-POST is now a
+// 200 no-op — the item that changed it also removed the only workaround the 409
+// had, which was delete-then-re-add, and that discarded the user's API keys.
 func TestHandleCollection_POST_nameConflict_is409(t *testing.T) {
 	_, mux := newRoutedStore(t)
 
@@ -126,7 +129,7 @@ func TestHandleCollection_POST_nameConflict_is409(t *testing.T) {
 		Transport: TransportStdio, Name: "dup", Command: "bash",
 	})
 	rec := doJSON(t, mux, http.MethodPost, "/api/mcp", &Server{
-		Transport: TransportStdio, Name: "dup", Command: "bash",
+		Transport: TransportStdio, Name: "dup", Command: "zsh",
 	})
 
 	if rec.Code != http.StatusConflict {

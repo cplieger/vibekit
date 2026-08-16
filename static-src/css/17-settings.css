@@ -1937,3 +1937,40 @@ select.native-rule-effect:focus-visible {
 .history-skel-date {
   block-size: 0.75rem;
 }
+
+/* Deep-linked control (?highlight=<id> / openSetting) — settings-highlight.ts.
+   Two accent rings that fade, so the mark reads on a control of any shape
+   (checkbox, select, text input) without moving it: outline draws outside the
+   box and takes no layout, unlike a border. `outline` rather than
+   `box-shadow` so it also traces a non-rectangular control faithfully. */
+@keyframes setting-flash {
+  0%,
+  100% {
+    outline-color: transparent;
+    background-color: transparent;
+  }
+
+  15%,
+  55% {
+    outline-color: var(--c-accent);
+    background-color: var(--c-accent-subtle);
+  }
+}
+
+.setting-flash {
+  border-radius: var(--r-sm);
+  outline: 2px solid transparent;
+  outline-offset: 3px;
+  animation: setting-flash 1.6s var(--ease-standard);
+}
+
+/* A flash is a "look here" cue, not information: a reader who has asked for no
+   motion still gets the scroll, and a steady ring instead of a pulsing one.
+   The class is stripped on a timer as well as on animationend, so suppressing
+   the animation here cannot leave the ring on permanently. */
+@media (prefers-reduced-motion: reduce) {
+  .setting-flash {
+    outline-color: var(--c-accent);
+    animation: none;
+  }
+}

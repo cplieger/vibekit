@@ -41,6 +41,10 @@ export const ICON_COPY = svg(
 );
 export const ICON_COPY_MD =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
+// Angle brackets (Lucide "code"): show the reply's markdown SOURCE instead of
+// its rendering, for when a message renders wrong and the question is whether
+// the model or the parser is at fault.
+export const ICON_SOURCE = svg(14, '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>');
 export const ICON_LINK =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 // Open-in-new-tab / external-link icon (Lucide). Used by the

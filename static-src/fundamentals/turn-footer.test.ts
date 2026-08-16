@@ -91,6 +91,25 @@ describe("the aggregate row", () => {
     updateTurnFooter(el, { credits: 1, elapsedMs: 3000 });
     expect(line(el)).toBe("1.00 cr \u00b7 3.0s");
   });
+
+  // Which model, last on the line: it answers "who did this" rather than "what
+  // did it cost", so it reads as attribution at the end.
+  it("names the model that served the turn", () => {
+    expect(line(buildTurnFooter({ credits: 0.5, models: ["sonnet-4"] }))).toBe(
+      "0.50 cr \u00b7 sonnet-4",
+    );
+  });
+
+  it("shows an arrow when a switch split the turn", () => {
+    expect(line(buildTurnFooter({ models: ["sonnet-4", "opus-4"] }))).toBe(
+      "sonnet-4 \u2192 opus-4",
+    );
+  });
+
+  it("renders nothing rather than 'unknown' for a turn with no model", () => {
+    expect(line(buildTurnFooter({ credits: 0.5 }))).toBe("0.50 cr");
+    expect(line(buildTurnFooter({ credits: 0.5, models: [] }))).toBe("0.50 cr");
+  });
 });
 
 describe("the per-file breakdown", () => {
@@ -205,6 +224,20 @@ describe("hasTurnSummary", () => {
   it("is not made true by a clean or running outcome alone", () => {
     expect(hasTurnSummary({ outcome: "completed" })).toBe(false);
     expect(hasTurnSummary({ outcome: "running" })).toBe(false);
+  });
+
+  // DELIBERATELY not widened for the model. Every completed turn has one, so
+  // admitting it here would put a footer on every turn in the transcript —
+  // including the ones this rule exists to suppress. The model rides a footer
+  // that already earned its place; it never earns one.
+  it("is not made true by a model alone", () => {
+    expect(hasTurnSummary({ models: ["sonnet-4"] })).toBe(false);
+    expect(hasTurnSummary({ models: ["sonnet-4"], outcome: "completed" })).toBe(false);
+  });
+
+  it("still shows the model on a footer something else earned", () => {
+    expect(hasTurnSummary({ models: ["sonnet-4"], credits: 0.1 })).toBe(true);
+    expect(line(buildTurnFooter({ models: ["sonnet-4"], credits: 0.1 }))).toContain("sonnet-4");
   });
 });
 

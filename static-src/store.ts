@@ -556,7 +556,12 @@ export function upsertMessage(chatID: string, msg: Message): void {
  *  server persists the same fields at flush time so it also survives reload. */
 export function setTurnSummary(
   chatID: string,
-  data: { credits?: number; elapsedMs?: number; changedFiles?: Record<string, FileChange> },
+  data: {
+    credits?: number;
+    elapsedMs?: number;
+    changedFiles?: Record<string, FileChange>;
+    model?: string;
+  },
 ): void {
   const s = get(chatID);
   if (s === undefined) {
@@ -584,6 +589,12 @@ export function setTurnSummary(
   }
   if (data.changedFiles !== undefined && Object.keys(data.changedFiles).length > 0) {
     target.changed_files = data.changedFiles;
+    changed = true;
+  }
+  // Same non-empty guard as the numbers above: an absent model means the server
+  // could not name one, and stamping "" would make a turn look attributed.
+  if (data.model !== undefined && data.model !== "") {
+    target.turn_model = data.model;
     changed = true;
   }
   if (changed) {

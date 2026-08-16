@@ -21,7 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
-import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
+import { onBus, onSSE, BUS_RUNS_CHANGED } from "./bus.js";
 import { reconcile } from "./reconcile.js";
 import { loadRecipes, loadRuns, launchRun, cancelRun } from "./actions/runs.js";
 import { loadSchedules, saveSchedule, deleteSchedule } from "./actions/schedules.js";
@@ -29,6 +29,8 @@ import { buildSchedulePicker, defaultSpec, summaryLine } from "./schedule-picker
 import type { ScheduleSpec, ScheduleView } from "./schedule-types.js";
 import { createPopup } from "@cplieger/ui-primitives/popup";
 import { openLiveRunView } from "./run-view.js";
+import { loadSettings } from "./persist.js";
+import { toggleSettingsView } from "./tabs.js";
 import type { Recipe, WorkflowRunRow } from "./types.js";
 
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
@@ -55,6 +57,13 @@ export function renderRecipesPanel(panel: HTMLElement): void {
         void refreshRuns();
       }
     });
+    // The schedule form's unattended note reads the auto-approve setting, and
+    // that setting is changed on another page. Without this the note would be
+    // correct as of whenever this tab last rendered, which is the boilerplate a
+    // live read-out exists to avoid. Same hook docs.ts uses for its inventory.
+    onSSE("settings_updated", () => {
+      void refreshAutoApprove();
+    });
   }
   if (recipes.length === 0) {
     panel.replaceChildren(el("div", { className: "list-empty" }, "Loading workflows…"));
@@ -68,7 +77,19 @@ export function renderRecipesPanel(panel: HTMLElement): void {
     // Decoration, deliberately off the critical path: the workflow list must
     // still render when the schedule endpoint is unavailable.
     void refreshSchedules();
+    void refreshAutoApprove();
   })();
+}
+
+/** The auto-approve setting's current value, for the schedule form's unattended
+ *  note. Off is the safe default and the server's own: absent or unreadable
+ *  settings mean off there too, so a failed read cannot make the note claim more
+ *  permission than the run will get. */
+let autoApprove = false;
+
+async function refreshAutoApprove(): Promise<void> {
+  const s = await loadSettings();
+  autoApprove = s.scheduled_auto_approve === true;
 }
 
 /** Schedules by recipe source. One per recipe, matching the single-run rule. */
@@ -136,6 +157,11 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
       buildSchedulePicker({
         spec: view?.spec ?? defaultSpec(),
         enabled: view?.enabled ?? false,
+        autoApprove,
+        onOpenPermissions: () => {
+          close();
+          toggleSettingsView("permissions");
+        },
         onSave: (spec: ScheduleSpec) => {
           close();
           void (async () => {

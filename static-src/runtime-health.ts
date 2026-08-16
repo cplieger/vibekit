@@ -29,6 +29,7 @@
 import { apiGetOrError } from "./api-client.js";
 import { showBanner, clearBannerCodes, GLOBAL_BANNER } from "./banner-stack.js";
 import { onBus, BUS_TRANSPORT_GAP } from "./bus.js";
+import { openSetting } from "./settings-highlight.js";
 import type { BannerLevel } from "./types.js";
 
 const CODE = "runtime_degraded";
@@ -102,7 +103,17 @@ export async function checkRuntimeHealth(): Promise<void> {
     const state = STATES[reason] ?? FALLBACK;
     // Not dismissible: the condition blocks the product's core function, and it
     // clears itself on the next check after recovery.
-    showBanner(GLOBAL_BANNER, CODE, state.message, state.level, false);
+    //
+    // Every one of these states tells the reader to go and look at something —
+    // the version pair, or the container logs — and Run Diagnostics is where
+    // both live, so the banner links straight at that button instead of naming
+    // a panel and leaving the reader to find it.
+    showBanner(GLOBAL_BANNER, CODE, state.message, state.level, false, {
+      label: "Run diagnostics",
+      onClick: () => {
+        openSetting("general", "diagnostics-run");
+      },
+    });
     return;
   }
   // Healthy, network failure, or a startup/shutdown 503: clear. The

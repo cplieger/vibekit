@@ -581,6 +581,17 @@ export interface Message {
   reasoning?: string;
   event_kind?: EventKind;
   id: string;
+  /**
+ * TurnModel is the model that answered this turn, stamped on the final
+ * assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
+ * below. It belongs on the MESSAGE and not only on the Chat because the
+ * chat's Model is the CURRENT one: a footer reading that at render time
+ * would relabel every historical turn the moment the user switched models.
+ * Absent on every message persisted before this field existed, and the
+ * client renders nothing rather than "unknown". (Grouped with the strings
+ * above for govet fieldalignment, not for logical order.)
+ */
+  turn_model?: string;
   tool_calls?: ToolCall[];
   /**
  * Blocks is the chronologically-ordered content array — text / tool_use /
@@ -840,11 +851,19 @@ export interface PolicyRuleCore {
  * PolicyView is the GET /api/permissions response: the native policy rule
  * set plus the metadata the editor needs. Available is false when no bridge
  * could answer (the view falls back to reading the editable files directly).
+ * Capabilities and RelaxCapabilities answer different questions and neither is a
+ * filter on the other. Capabilities is what the rule-adder's dropdown OFFERS —
+ * the suggested set unioned with every capability the live rules already use, so
+ * it can learn a name vibekit shipped without. RelaxCapabilities is the fixed
+ * membership of the workspace relaxation switch, derived in policyfile and
+ * deliberately not discovered: it decides what one click grants, so it may not
+ * grow from whatever happens to be in the returned rules.
  */
 export interface PolicyView {
   rules: PolicyRule[];
   writable_scopes: string[];
   capabilities: string[];
+  relax_capabilities: string[];
   available: boolean;
 }
 
@@ -952,10 +971,18 @@ export interface Repo {
  * There is no aborted_by_restart flag. A restart PAUSES a run — KAS's read-path
  * reconcile has exactly one outcome and no path to aborted (probe 24) — so there
  * is nothing for such a flag to mean.
+ * //
+ * Name is here for RunStartedPayload's reason, arriving at the other end of the
+ * run: an outcome signal has to say WHICH run finished, and a client that never
+ * saw this run's start frame (a page opened mid-run, another device) has nothing
+ * else to name it with. Read out of KAS's `finalState`, which this frame already
+ * decodes for its log line, so it costs one field and no new decode. Empty when
+ * KAS sends no state, and the consumer falls back to a generic label.
  */
 export interface RunFinishedPayload {
   workflow_id: string;
   status: string;
+  name?: string;
 }
 
 /**
@@ -1008,10 +1035,23 @@ export interface RunProgressPayload {
  * chat. Carries the name because a client that has never fetched this run has
  * nothing to label the row with, and a row appearing with no name reads as a
  * bug rather than as a pending fetch.
+ * //
+ * Scheduled marks a run the SCHEDULER launched, and it exists because the client
+ * cannot work this out. A parentless run's lifecycle frames are workspace-global
+ * with an empty chat id, and a MANUAL launch is parentless too, so watching
+ * events cannot separate the two; `parentSessionId` separates agent-parented from
+ * parentless and is empty for both of these. Only the launch path knows, so the
+ * distinction travels from there.
+ * //
+ * Its one consumer is the client's start signal: a manual launch already has the
+ * user's attention (they clicked Run, and a run tab opened), while a scheduled one
+ * began with nobody looking. Absent on the wire for a manual run rather than
+ * false, so an older client and a manual launch read alike.
  */
 export interface RunStartedPayload {
   workflow_id: string;
   name?: string;
+  scheduled?: boolean;
 }
 
 /**
@@ -1408,6 +1448,12 @@ export interface TurnEndedPayload {
  */
   refusal?: RefusalInfo;
   stop_reason?: StopReason;
+  /**
+ * Model is the model that answered this turn, for the live footer render.
+ * The same value is persisted on the message (Message.TurnModel) so the
+ * footer survives a reload; empty when the turn produced no buffer.
+ */
+  model?: string;
   credits_delta?: number;
   elapsed_ms?: number;
 }

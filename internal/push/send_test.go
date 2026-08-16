@@ -78,17 +78,21 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 		t.Error("agentFinished=false should prevent Send from recording last-push timestamp")
 	}
 
-	// Mirror for permission.
+	// The mirror for permission is deliberately the OTHER direction. There is
+	// no notify_permission setting any more, so no reachable configuration
+	// hands SetPreferences a false for this kind (see floor_test.go); asserting
+	// that the gate can silence it would pin a state the app cannot enter. What
+	// matters is that the ask gets through with the other kind switched off.
 	s.SetPreferences(map[api.PushKind]bool{
-		api.PushKindAgentFinished: true,
-		api.PushKindPermission:    false,
+		api.PushKindAgentFinished: false,
+		api.PushKindPermission:    true,
 	})
 	s.Send(t.Context(), "title", "body", api.PushKindPermission, "")
 	s.mu.Lock()
 	_, pnRecorded := s.lastPush[api.PushKindPermission]
 	s.mu.Unlock()
-	if pnRecorded {
-		t.Error("permissionNeeded=false should prevent Send from recording last-push timestamp")
+	if !pnRecorded {
+		t.Error("permission push must reach the send path even with agent_finished off")
 	}
 }
 

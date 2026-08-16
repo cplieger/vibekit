@@ -1206,6 +1206,29 @@
   margin-block-start: var(--sp-3);
 }
 
+/* Pointer to the workspace relaxation (permission.ts buildPolicyPointer).
+   Tertiary and below the answer row on purpose: it navigates to Settings and
+   grants nothing, so it must not read as a third way to answer the ask. */
+.approval-policy-pointer {
+  margin-block-start: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.approval-policy-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--c-accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.approval-policy-link:hover {
+  color: var(--c-accent-hover);
+}
+
 .confirm-allow {
   border-color: var(--c-green);
   color: var(--c-green);

@@ -207,21 +207,59 @@ func (s *Service) HasSubscribers() bool {
 // key, and kind constant are co-located. The init() below validates that
 // every registered kind passes api.PushKind.Valid(), ensuring the registry
 // and the api-level Valid() switch cannot drift.
-var kindRegistry = []struct {
+//
+// An EMPTY SettingsKey means the kind has no writable preference: it is a
+// floor, always DefaultOn, and loadPreferences never looks for a value it
+// could be overridden by. PushKindPermission is the one such kind — see the
+// "no notify_permission key" note in internal/settings/defaults.go for why
+// silencing a turn-blocking ask is a defect rather than a preference.
+var kindRegistry = []kindEntry{
+	{api.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
+	{api.PushKindPermission, "", true},
+}
+
+// kindEntry is one registered kind. Named rather than anonymous so
+// validateKindRegistry can take a table — including a deliberately wrong one in
+// a test, which is the only way to exercise a rule whose production form is a
+// panic at init.
+type kindEntry struct {
 	Kind        api.PushKind
 	SettingsKey string
 	DefaultOn   bool
-}{
-	{api.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
-	{api.PushKindPermission, settings.KeyNotifyPermission, true},
 }
 
 func init() {
-	for _, kr := range kindRegistry {
+	if err := validateKindRegistry(kindRegistry); err != nil {
+		panic("push: " + err.Error())
+	}
+}
+
+// validateKindRegistry enforces the two rules the registry's types cannot.
+//
+// The first keeps the registry and api.PushKind.Valid() from drifting. The
+// second is why the keyless convention is safe to have at all: an empty
+// SettingsKey MEANS "unconfigurable floor", and nothing distinguishes that from
+// an entry whose author simply forgot the key — so a future kind added with a
+// missing key would become permanently on and unwritable, silently. Only the
+// permission ask earns the exemption, and only as an always-on floor.
+func validateKindRegistry(entries []kindEntry) error {
+	for _, kr := range entries {
 		if !kr.Kind.Valid() {
-			panic("push: kindRegistry contains invalid PushKind: " + string(kr.Kind))
+			return errors.New("kindRegistry contains invalid PushKind: " + string(kr.Kind))
+		}
+		if kr.SettingsKey != "" {
+			continue
+		}
+		if kr.Kind != api.PushKindPermission {
+			return errors.New("kindRegistry entry " + string(kr.Kind) +
+				" declares no settings key; only the permission floor may omit one")
+		}
+		if !kr.DefaultOn {
+			return errors.New("the keyless permission floor must be DefaultOn: " +
+				"an unanswered ask blocks the turn")
 		}
 	}
+	return nil
 }
 
 // ReloadPreferences deduplicates concurrent preference reloads via
@@ -278,6 +316,13 @@ func (s *Service) loadPreferences(ctx context.Context) {
 	// Build local prefs map without holding mu — settings.Field does disk I/O.
 	local := make(map[api.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
+		// A keyless kind is a floor: no disk read, so no config.json value —
+		// current, hand-edited or left over from an older release — can turn
+		// it off.
+		if kr.SettingsKey == "" {
+			local[kr.Kind] = kr.DefaultOn
+			continue
+		}
 		if v, ok := settings.Field[bool](ctx, s.dir, kr.SettingsKey, kr.SettingsKey); ok {
 			local[kr.Kind] = v
 		} else {

@@ -307,14 +307,10 @@
                     <p class="section-hint">Notify when the agent completes a response and no device has the app in the foreground.</p>
                   </div>
                 </div>
-                <div class="section-option">
-                  <label class="toggle">
-                    <input type="checkbox" id="notify-permission-toggle" aria-label="Permission needed" checked>
-                    <span class="toggle-slider"></span>
-                  </label>
+                <div class="section-option section-option-fixed">
                   <div>
                     <span class="section-option-label">Permission needed</span>
-                    <p class="section-hint">Notify when the agent needs your approval to run a tool and no device has the app in the foreground.</p>
+                    <p class="section-hint">Always on. An approval request blocks the turn until you answer it, so it cannot be switched off separately — silencing it would stall every later turn with nothing on screen to say why. To be asked less often, widen the policy in <strong>Permissions</strong> instead.</p>
                   </div>
                 </div>
               </div>
@@ -561,6 +557,16 @@
               </details>
             </div>
 
+            <div class="page-section" id="workspace-relax-section">
+              <h3 class="section-title">Stop asking in this workspace</h3>
+              <p class="section-hint">Writes a broad <strong>allow</strong> rule for each everyday capability at <strong>workspace</strong> scope, so the agent stops asking for them here. This is the way to be interrupted less: it removes the <em>asks</em>, where muting the notification would only hide them and leave every turn waiting. It applies to this workspace and every chat in it, permanently, until you switch it back off. Installing a <strong>power</strong> still asks, because a power's servers are governed by this policy alone. Each rule appears in the Active policy above and can be removed individually.</p>
+              <label class="perm-mode">
+                <input type="checkbox" id="workspace-relax-checkbox">
+                <span>Allow every everyday capability in this workspace without asking</span>
+              </label>
+              <p id="workspace-relax-status" class="section-hint hidden"></p>
+            </div>
+
             <div class="page-section">
               <h3 class="section-title">Supervised mode (default for new chats)</h3>
               <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent needs permission to <em>run</em> a write tool; Supervised mode decides whether the <em>resulting file change</em> needs your review before it's saved to disk. When on, every file change (create, edit, delete) shows up in the chat with Accept / Reject buttons and the write only lands after you approve. The Supervised pill next to the chat prompt toggles the current conversation; this setting only picks the default for new ones.</p>
@@ -793,6 +799,7 @@
             <pre id="editor-gutter" class="editor-gutter" aria-hidden="true"></pre>
             <pre id="editor-highlight" class="editor-highlight"><code id="editor-code"></code></pre>
             <textarea id="editor-content" class="editor-content hidden" spellcheck="false" aria-label="File editor"></textarea>
+            <div id="editor-markdown" class="editor-markdown hidden"></div>
             <div id="editor-diff-pane" class="editor-diff-pane hidden"></div>
           </div>
           <div class="editor-toolbar bottom-bar">
@@ -1024,7 +1031,7 @@
     <nav id="mcp-modal-tabs" class="mcp-modal-tabs" role="tablist" aria-label="Add integration method">
       <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="remote">Remote URL</button>
       <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="npm">npm package</button>
-      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="raw">Raw JSON</button>
+      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="raw">Paste JSON</button>
     </nav>
 
     <!-- Search panel: queries the official MCP registry via proxy -->
@@ -1117,14 +1124,14 @@
       </button>
     </div>
 
-    <!-- Raw JSON panel: stdio escape hatch -->
+    <!-- Paste panel: the mcpServers block straight out of a server's README -->
     <div class="mcp-mode-panel hidden" data-mcp-mode="raw">
-      <p class="mcp-mode-hint">Escape hatch for custom binaries or docker commands. Paste a stdio server config as JSON. Env values are secrets; they stay on the server with 0600 perms.</p>
-      <textarea id="mcp-raw-input" class="page-textarea mcp-raw-input" rows="12" spellcheck="false" autocomplete="off" aria-label="Server JSON"></textarea>
+      <p class="mcp-mode-hint">Paste the <code>mcpServers</code> block from a server's README. Local (<code>command</code>) and hosted (<code>url</code>) servers both work, and a block naming several servers connects all of them. A server already configured with the same settings is left alone, so re-pasting a block is safe and keeps the keys you have typed in. Env and header values are secrets; they stay on the server with 0600 perms.</p>
+      <textarea id="mcp-raw-input" class="page-textarea mcp-raw-input" rows="12" spellcheck="false" autocomplete="off" aria-label="Server JSON to paste"></textarea>
       <p id="mcp-raw-error" class="section-hint mcp-raw-error hidden"></p>
       <button type="button" id="mcp-raw-save" class="btn-save">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        Save
+        Connect
       </button>
     </div>
 

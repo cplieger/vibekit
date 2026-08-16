@@ -320,6 +320,12 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	var creditsBeforeTurn float64
 	if chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID); ok {
 		creditsBeforeTurn = chat.Usage.Credits
+		// Latch the answering model HERE, at dispatch, not on the turn's first
+		// frame. The bridge is up and its model persisted by this point, and
+		// switch_model's fast path can land any time from now on — including
+		// before the old model has emitted anything, which is precisely when the
+		// first-frame read attributed one model's answer to another.
+		deps.LatchTurnModel(cmd.ChatID, chat.Model)
 	}
 	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
 	start := time.Now()

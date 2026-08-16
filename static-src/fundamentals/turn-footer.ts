@@ -37,6 +37,10 @@ export interface TurnSummaryData {
   /** Commands run and files read — work a file list cannot show. */
   commands?: number;
   reads?: number;
+  /** The model(s) that answered, distinct and in order. Rendered as one name
+   *  normally and `a -> b` when a switch split the turn. Absent on every turn
+   *  persisted before the field existed. */
+  models?: string[];
   /** The turn's result, carried as the footer's tint so outcome is scannable
    *  down the transcript without reading a word. */
   outcome?: TurnOutcome;
@@ -51,7 +55,12 @@ export interface TurnSummaryData {
  *  A non-clean outcome always qualifies, even with no numbers behind it: an
  *  interrupted or failed turn is exactly when a reader needs to know what
  *  landed, and suppressing the row because a cancel arrived before any usage
- *  was stamped would hide the one fact that matters. */
+ *  was stamped would hide the one fact that matters.
+ *
+ *  `models` is DELIBERATELY not admitted here. Every completed turn has a model,
+ *  so counting it as "something worth showing" would put a footer on every turn
+ *  in the transcript — including the ones this rule exists to suppress. The
+ *  model rides a footer that already earned its place; it never earns one. */
 export function hasTurnSummary(d: TurnSummaryData): boolean {
   return (
     (d.outcome !== undefined && d.outcome !== "completed" && d.outcome !== "running") ||
@@ -166,6 +175,13 @@ function summaryLine(d: TurnSummaryData, files: [string, FileChange][]): string 
   }
   if ((d.elapsedMs ?? 0) > 0) {
     parts.push(formatElapsed(d.elapsedMs ?? 0));
+  }
+  // Which model, last: it answers "who did this" rather than "what did it
+  // cost", so it reads as attribution at the end of the line. An arrow when a
+  // switch split the turn, because "sonnet-4" alone would name one half.
+  const models = d.models ?? [];
+  if (models.length > 0) {
+    parts.push(models.join(" \u2192 "));
   }
   return parts.join(" \u00b7 ");
 }

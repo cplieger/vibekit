@@ -11,10 +11,14 @@ type TurnEndedPayload struct {
 	// Refusal accompanies stop_reason "refusal": the model declined to
 	// continue and the final assistant chunk carried this metadata
 	// (also persisted on the message; here for the live render).
-	Refusal      *RefusalInfo `json:"refusal,omitempty"`
-	StopReason   StopReason   `json:"stop_reason,omitempty"`
-	CreditsDelta float64      `json:"credits_delta,omitempty"`
-	ElapsedMs    float64      `json:"elapsed_ms,omitempty"`
+	Refusal    *RefusalInfo `json:"refusal,omitempty"`
+	StopReason StopReason   `json:"stop_reason,omitempty"`
+	// Model is the model that answered this turn, for the live footer render.
+	// The same value is persisted on the message (Message.TurnModel) so the
+	// footer survives a reload; empty when the turn produced no buffer.
+	Model        string  `json:"model,omitempty"`
+	CreditsDelta float64 `json:"credits_delta,omitempty"`
+	ElapsedMs    float64 `json:"elapsed_ms,omitempty"`
 }
 
 // FileChange tracks per-file change stats during a turn.

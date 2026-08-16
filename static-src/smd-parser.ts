@@ -19,8 +19,13 @@
 // Behaviour matches the reference implementation: paragraphs, headings
 // (1-6), blockquotes, ordered/unordered/task lists, code blocks/fences/
 // inline, bold/italic/strike, links/images/raw URLs, tables, line breaks,
-// horizontal rules. Equation/MathML tokens are accepted for parser
-// completeness but render as empty wrappers (vibekit has no MathML).
+// horizontal rules. The equation tokens carry their expression as TEXT, and the
+// renderer converts the accumulated source to native MathML when the expression
+// closes (smd-renderer.ts + mathml.ts). An expression that never closes, or that
+// the converter does not support, stays as its raw string. Inline is `$x$` or
+// `\(x\)`; a BLOCK needs a newline right after its opener (`$$\n…$$`,
+// `\[\n…\]`), because `\[` is also a legitimate escaped bracket — so `\[x\]` on
+// one line renders as the literal text, which is honest but is not display math.
 // ---------------------------------------------------------------------------
 
 import {
@@ -214,7 +219,11 @@ const TOKEN_HANDLERS: Partial<Record<Token, TokenHandler>> = {
     return actionAlwaysContinue;
   },
   [EQUATION_BLOCK]: (p, _char, pending) => {
-    if (pending === "\\]" || pending === "$") {
+    // `$$` as well as `$`: a block opened with `$$\n` is closed with `$$`, and
+    // the bare `$` only matched when the previous character left `pending`
+    // empty — which the newline before a closing fence never does. See the
+    // equation guard in handleCommon's `$` case for the other half.
+    if (pending === "\\]" || pending === "$" || pending === "$$") {
       add_text(p);
       end_token(p);
       p.pending = "";

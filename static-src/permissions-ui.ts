@@ -171,6 +171,19 @@ function shortSource(src: string): string {
 class NativePolicyController {
   private writable = new Set<string>();
   private ctrl: AbortController | null = null;
+  /** The relaxation's membership, straight from the policy view. Never a local
+   *  constant: the set decides what one click grants, and policyfile is where
+   *  the capability vocabulary and the exclusion reasons live. */
+  private relaxCaps: string[] = [];
+  /** Suppresses the relaxation checkbox's change handler while a render writes
+   *  its state, so painting the read-back cannot look like a user click. */
+  private paintingRelax = false;
+  /** A partial-write report, carried across the refetch that follows it. It has
+   *  to live here rather than being written straight to the DOM: every switch
+   *  ends in a reload, and the reload repaints this same line — so a note
+   *  written before it would be erased by the very render meant to show what
+   *  landed. */
+  private relaxNote = "";
 
   init(): void {
     const addBtn = maybeEl<HTMLButtonElement>("native-rule-add");
@@ -179,6 +192,13 @@ class NativePolicyController {
     }
     addBtn.addEventListener("click", () => {
       void this.addRule();
+    });
+    const relaxBox = maybeEl<HTMLInputElement>("workspace-relax-checkbox");
+    relaxBox?.addEventListener("change", () => {
+      if (this.paintingRelax) {
+        return;
+      }
+      void this.setRelaxed(relaxBox.checked, relaxBox);
     });
     maybeEl<HTMLButtonElement>("native-explain-run")?.addEventListener("click", () => {
       void this.runExplain();
@@ -228,6 +248,7 @@ class NativePolicyController {
       return;
     }
     this.writable = new Set(data.writable_scopes);
+    this.relaxCaps = data.relax_capabilities;
     this.populateCapabilities(data.capabilities);
     if (data.available) {
       this.showStatus("", false);
@@ -238,6 +259,118 @@ class NativePolicyController {
       );
     }
     this.render(data.rules);
+    this.renderRelaxState(data.rules);
+  }
+
+  // --- The workspace relaxation switch ---------------------------------------
+  //
+  // One switch, N rules, and it has to be N: policyRuleBody carries exactly one
+  // capability and Upsert is deliberately discrete-rule (no auto-merge into a
+  // match array), which is what makes each rule individually removable from the
+  // Active policy list above. There is no batch op on the wire and adding one
+  // would trade that reversibility for a single round trip.
+  //
+  // Scope is always workspace. Per-chat is unexpressible — policyfile defines
+  // exactly two writable scopes, user and workspace — and user scope would leak
+  // the grant into every other workspace on the box.
+
+  /** Is this rule one the relaxation wrote? Bare (no globs), allow, workspace,
+   *  and a member of the set. The glob check is what keeps a hand-authored
+   *  `fs_write allow match:src/**` from reading as the relaxation being on. */
+  private isRelaxRule(r: PolicyRule): boolean {
+    return (
+      r.scope === "workspace" &&
+      r.effect === "allow" &&
+      (r.match ?? []).length === 0 &&
+      (r.exclude ?? []).length === 0 &&
+      this.relaxCaps.includes(r.capability)
+    );
+  }
+
+  /** Paint the switch from the rules the server just reported, and say what is
+   *  actually on rather than rounding a partial state to a boolean. A partial
+   *  set is a real state — an interrupted write, a rule removed by hand from the
+   *  list above — so the box goes indeterminate and the status line names the
+   *  count. Reporting it as simply off would invite a click that then tries to
+   *  write rules that already exist. */
+  private renderRelaxState(rules: PolicyRule[]): void {
+    const box = maybeEl<HTMLInputElement>("workspace-relax-checkbox");
+    if (box === null) {
+      return;
+    }
+    const total = this.relaxCaps.length;
+    const present = new Set(rules.filter((r) => this.isRelaxRule(r)).map((r) => r.capability));
+    const n = present.size;
+    this.paintingRelax = true;
+    box.checked = total > 0 && n === total;
+    box.indeterminate = n > 0 && n < total;
+    this.paintingRelax = false;
+    const status = maybeEl("workspace-relax-status");
+    if (status === null) {
+      return;
+    }
+    let text = "";
+    if (n === total && total > 0) {
+      text = `On. ${String(total)} capabilities allowed without asking: ${this.relaxCaps.join(", ")}.`;
+    } else if (n > 0) {
+      const missing = this.relaxCaps.filter((c) => !present.has(c));
+      text =
+        `Partly on: ${String(n)} of ${String(total)} allowed. Still asking for ${missing.join(", ")}. ` +
+        `Switch on to add the rest, or off to remove all ${String(n)}.`;
+    }
+    if (this.relaxNote !== "") {
+      text = text === "" ? this.relaxNote : `${this.relaxNote} ${text}`;
+    }
+    status.textContent = text;
+    status.classList.toggle("hidden", text === "");
+    status.classList.toggle("native-policy-status-error", this.relaxNote !== "");
+  }
+
+  /** Turn the relaxation on or off. Switching ON widens what the agent may do,
+   *  so it takes the same confirm the effect editor uses before a widening
+   *  change; switching OFF narrows and needs none, matching removeRule (which
+   *  confirms only for a deny). Rolls the box back on cancel or on a write that
+   *  landed nothing, and reports a partial result rather than claiming success:
+   *  each rule is its own atomic file write, so the SET is not atomic. */
+  private async setRelaxed(on: boolean, box: HTMLInputElement): Promise<void> {
+    const caps = this.relaxCaps;
+    if (caps.length === 0) {
+      return;
+    }
+    // A fresh attempt supersedes the last one's report.
+    this.relaxNote = "";
+    if (on) {
+      const ok = await confirm(
+        `Allow ${String(caps.length)} capabilities in this workspace without asking (${caps.join(", ")})? ` +
+          `That WIDENS what the agent is allowed to do, in every chat here, until you switch it back off.`,
+        "Widen workspace policy",
+      );
+      if (!ok) {
+        void this.load();
+        return;
+      }
+    }
+    box.disabled = true;
+    let failed = 0;
+    for (const capability of caps) {
+      const res = await editNativeRule.dispatch(
+        on
+          ? { op: "add", scope: "workspace", capability, effect: "allow", confirm: true }
+          : { op: "remove", scope: "workspace", capability, effect: "allow", confirm: true },
+      );
+      if (res === null || res.error !== undefined) {
+        failed++;
+      }
+    }
+    box.disabled = false;
+    if (failed > 0) {
+      this.relaxNote =
+        `${String(caps.length - failed)} of ${String(caps.length)} rules ${on ? "written" : "removed"}; ` +
+        `${String(failed)} failed.`;
+    }
+    // Repaint from the server either way: the read-back is the only honest
+    // report of what landed, and the note above rides that same render.
+    void this.load();
   }
 
   private populateCapabilities(caps: string[]): void {

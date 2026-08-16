@@ -43,6 +43,7 @@ import {
 import {
   buildTurnHeader,
   updateTurnHeader,
+  initTurnHeaderCallbacks,
   type TurnHeaderData,
 } from "./fundamentals/turn-header.js";
 import {
@@ -69,7 +70,11 @@ import { rewindChat } from "./actions/rewind.js";
 import { confirm as confirmDialog } from "./confirm.js";
 import { disposeAllToolEffects, initToolCallbacks } from "./messages-tools.js";
 import { buildEvent, updateEvent, buildSystemFallback } from "./messages-events.js";
-import { attachTurnActions, initTurnActionCallbacks } from "./messages-turn-actions.js";
+import {
+  attachTurnActions,
+  initTurnActionCallbacks,
+  copyWithFeedback,
+} from "./messages-turn-actions.js";
 import { syncCodeReferences } from "./code-refs.js";
 import { syncRefusal, setRefusalRewindHandler } from "./refusal.js";
 
@@ -171,6 +176,10 @@ initToolCallbacks({
   explainError,
 });
 initTurnActionCallbacks({ svgTemplate });
+// The header's Copy reuses the assistant side's copy behaviour verbatim.
+// Injected because turn-header.ts is a pure fundamental: it renders the band,
+// it does not know about the actions framework.
+initTurnHeaderCallbacks({ copy: copyWithFeedback });
 initBlockRenderer({ pushStreamingEffect, makeRow });
 // The refusal callout's Rewind CTA reuses the standard rewind flow (confirm →
 // branch → open the new tab). Injected — refusal.ts can't import messages.ts.
@@ -793,6 +802,7 @@ function mountTurnFooter(card: HTMLElement, t: Turn): void {
     changedFiles: led.changedFiles,
     commands: led.commands,
     reads: led.reads,
+    models: led.models,
     outcome: t.outcome,
     foldSummary: turnFoldSummary(t),
   };

@@ -81,13 +81,18 @@ type searchQuery struct {
 	tool string
 	role string
 	turn int
+	// caseSensitive applies to the FREE TEXT only. The scoped filters stay
+	// case-insensitive whatever the reader asked for: `role:` is an enum, and a
+	// path filter that suddenly cared about case would be a behaviour change
+	// nobody requested by ticking a box labelled "match case".
+	caseSensitive bool
 }
 
 // parseSearchQuery splits `file:` / `tool:` / `role:` / `turn:` prefixes out of
 // the raw query. Unknown prefixes stay in the free text rather than being
 // dropped: a reader typing `http://` means it literally.
-func parseSearchQuery(raw string) searchQuery {
-	q := searchQuery{turn: -1}
+func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
+	q := searchQuery{turn: -1, caseSensitive: caseSensitive}
 	var text []string
 	for tok := range strings.FieldsSeq(raw) {
 		name, val, ok := strings.Cut(tok, ":")
@@ -112,7 +117,10 @@ func parseSearchQuery(raw string) searchQuery {
 			text = append(text, tok)
 		}
 	}
-	q.text = strings.ToLower(strings.Join(text, " "))
+	q.text = strings.Join(text, " ")
+	if !caseSensitive {
+		q.text = strings.ToLower(q.text)
+	}
 	return q
 }
 
@@ -121,8 +129,13 @@ func parseSearchQuery(raw string) searchQuery {
 // Turn numbers come from the same projection the timeline rail draws, so a hit's
 // turn number and a rail marker's number are the same thing by construction
 // rather than by two implementations agreeing.
-func SearchChat(msgs []api.Message, raw string) []SearchHit {
-	q := parseSearchQuery(raw)
+//
+// caseSensitive governs the FREE TEXT only (see searchQuery). Both halves of the
+// in-chat search have to agree on it — the client highlights and counts in the
+// DOM while this enumerates session-wide — so the flag travels on the request
+// rather than being a server default either side could get wrong.
+func SearchChat(msgs []api.Message, raw string, caseSensitive bool) []SearchHit {
+	q := parseSearchQuery(raw, caseSensitive)
 	if q.text == "" && q.file == "" && q.tool == "" && q.role == "" && q.turn < 0 {
 		return []SearchHit{}
 	}
@@ -230,16 +243,21 @@ func appendMessageHits(hits []SearchHit, m *api.Message, q *searchQuery, turn in
 		})
 	}
 	runes := []rune(body)
-	lower := strings.ToLower(body)
+	// The haystack is folded only when the query was folded, so the two always
+	// agree; parseSearchQuery owns the needle's side of that.
+	hay := body
+	if !q.caseSensitive {
+		hay = strings.ToLower(body)
+	}
 	needle := q.text
 	from := 0
 	for {
-		idx := strings.Index(lower[from:], needle)
+		idx := strings.Index(hay[from:], needle)
 		if idx < 0 {
 			return hits
 		}
 		byteAt := from + idx
-		runeAt := len([]rune(lower[:byteAt]))
+		runeAt := len([]rune(hay[:byteAt]))
 		hits = append(hits, SearchHit{
 			MessageID:     m.ID,
 			TurnMessageID: opener,

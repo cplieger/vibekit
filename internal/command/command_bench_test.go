@@ -48,6 +48,7 @@ func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPC
 }
 
 func (d *benchDeps) AbandonInFlightTurn(context.Context, api.ChatID) {}
+func (d *benchDeps) LatchTurnModel(api.ChatID, string)               {}
 
 // TestBenchDeps_NoPanic verifies that every benchDeps method can be called
 // with zero-value arguments without panicking.
@@ -89,6 +90,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.InflightDone()
 	d.CleanupChatState(t.Context(), "x")
 	d.PrimeIfNeeded(t.Context(), "x", nil)
+	d.LatchTurnModel("x", "sonnet-4")
 }
 
 // TestBenchDeps_Contract documents which methods intentionally return nil

@@ -34,6 +34,17 @@ export function routeForPath(path: string): {
   return { readURL: url, writeURL: url, displayPath: path };
 }
 
+/** Whether a path's READ state renders its markdown instead of showing raw
+ *  source.
+ *
+ *  Keyed on the path rather than on a mode variant: the read surface is a
+ *  function of what the file IS, so the state and the content it paints cannot
+ *  drift apart. Editing is unaffected — the toggle shows source for every file. */
+export function rendersMarkdown(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
+}
+
 // --- Types ---
 
 interface DiffSource {

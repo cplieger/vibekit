@@ -152,7 +152,15 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ap
 		api.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	api.WriteJSON(w, map[string]any{"hits": SearchChat(c.Messages, r.URL.Query().Get("q"))})
+	// `case=1` is the client's match-case toggle. Both halves of the in-chat
+	// search have to agree on it (the client highlights in the DOM, this
+	// enumerates session-wide), so it rides the request rather than being a
+	// default either side could get wrong. Absent or anything else = insensitive,
+	// which is the behaviour every existing client gets.
+	caseSensitive := r.URL.Query().Get("case") == "1"
+	api.WriteJSON(w, map[string]any{
+		"hits": SearchChat(c.Messages, r.URL.Query().Get("q"), caseSensitive),
+	})
 }
 
 // parseLimitParam returns the validated ?limit= page size, defaulting to 50

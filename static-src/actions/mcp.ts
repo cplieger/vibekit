@@ -21,6 +21,11 @@ export interface RegistrySearchResult {
     description?: string;
     version?: string;
     repository?: string;
+    /** Upstream lifecycle status, present only when it is NOT active
+     *  (`deprecated` / `deleted`). The server omits the common case. */
+    status?: string;
+    /** The publisher's reason for a non-active status, when they gave one. */
+    status_message?: string;
     packages?: {
       registry_type: string;
       identifier: string;
@@ -140,6 +145,71 @@ export const saveServer = apiAction<SaveArgs, Server>({
   }),
   error: false,
 });
+
+// --- mcp.import_servers ---
+//
+// Connect every server of a pasted README block. The server owns the
+// translation from the publisher's shape (see internal/mcp/paste.go), so this
+// posts the parsed JSON unchanged: a second translator here would be a second
+// copy of the same rules, and the one that names an unknown key has to be the
+// one at the decode boundary.
+
+/** What one entry of a pasted block did. There is no "updated": an entry naming
+ *  a configured server either matches its spec or fails the paste. */
+interface ImportResult {
+  name: string;
+  outcome: "created" | "unchanged";
+}
+
+/** Per-entry outcomes plus what the translation had to say about keys vibekit
+ *  recognises and cannot store, so an accepted `timeout` does not read as a
+ *  silently-dropped field. */
+export interface ImportServersResult {
+  results: ImportResult[];
+  notes?: string[];
+}
+
+export const importServers = apiAction<Record<string, unknown>, ImportServersResult>({
+  name: "mcp.import_servers",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: (block) => ({
+    method: "POST",
+    path: `${MCP_API}/import`,
+    body: block,
+  }),
+  success: (_args, res) => summariseImport(res),
+  // The panel renders the failure inline beside the textarea the user is fixing,
+  // which is where they are looking; a toast would put it somewhere else.
+  error: false,
+});
+
+/** One sentence naming what landed. Exported for its test: the wording is the
+ *  only report a user gets that a re-paste was a no-op rather than a rewrite. */
+export function summariseImport(res: ImportServersResult | null): string {
+  const results = res?.results ?? [];
+  const created = results.filter((r) => r.outcome === "created").length;
+  const unchanged = results.length - created;
+  const parts: string[] = [];
+  if (created > 0) {
+    parts.push(`Connected ${created} integration${created === 1 ? "" : "s"}`);
+  }
+  if (unchanged > 0) {
+    parts.push(`${unchanged} already configured`);
+  }
+  if (parts.length === 0) {
+    parts.push("Nothing to connect");
+  }
+  const notes = res?.notes ?? [];
+  const onlyNote = notes.length === 1 ? notes[0] : undefined;
+  if (onlyNote !== undefined) {
+    parts.push(onlyNote);
+  } else if (notes.length > 1) {
+    parts.push(`${notes.length} keys vibekit does not store were ignored`);
+  }
+  return parts.join(". ") + ".";
+}
 
 // --- mcp.search_registry ---
 

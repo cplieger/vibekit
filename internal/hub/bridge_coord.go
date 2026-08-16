@@ -588,6 +588,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 
 	var changedFiles map[string]*api.FileChange
 	var refusal *api.RefusalInfo
+	var model string
 
 	if buf, ok := bc.TakeBuffer(chatID); ok && buf.Started {
 		// Settle whatever the steering-marker filter was still withholding. A
@@ -598,6 +599,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 		translate.FlushSteerCarry(buf)
 		changedFiles = buf.ChangedFiles
 		refusal = buf.Refusal
+		model = buf.Model
 		if stopReason == stopReasonCancelled {
 			changed := buf.MarkCancelledToolsFailed()
 			for i := range changed {
@@ -625,6 +627,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 		bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{
 			StopReason:   stopReason,
 			Refusal:      refusal,
+			Model:        model,
 			CreditsDelta: creditsDelta,
 			ElapsedMs:    elapsedMs,
 			ChangedFiles: changedFiles,
@@ -738,6 +741,10 @@ func assistantTurnMessage(buf *buffer.Buffer, creditsDelta, elapsedMs float64) a
 		TurnCredits:   creditsDelta,
 		TurnElapsedMs: elapsedMs,
 		ChangedFiles:  buf.ChangedFiles,
+		// Which model answered, latched when the turn opened rather than read
+		// from the chat now: the chat's Model is the CURRENT one, and a footer
+		// derived from it would relabel history on every switch.
+		TurnModel: buf.Model,
 	}
 }
 

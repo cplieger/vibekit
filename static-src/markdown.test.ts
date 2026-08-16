@@ -4,7 +4,7 @@
 // edge cases. markdown.ts renders via the smd-parser streaming state machine
 // into real DOM nodes, so happy-dom is required.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";
 import { renderMarkdown, createMarkdownStream } from "./markdown.js";
 
@@ -428,5 +428,134 @@ describe("markdown surface contracts", () => {
     r.end();
     // After end(), all text is parsed and rendered.
     expect(el.textContent?.length).toBe(10_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The streaming tail: a fence the model has not closed.
+//
+// The renderer's per-block callback fires only on CLOSE, and `parser_end` does
+// not close an open token — so before the sweeps below, an unterminated fence
+// carried no highlight, no language and no Copy button, permanently.
+// ---------------------------------------------------------------------------
+
+describe("markdown code-block decoration while streaming", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("decorates a fence that is still open, provisionally", () => {
+    vi.useFakeTimers();
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el);
+    r.writeDelta("```go\nfunc main() {\n");
+    // The write buffer flushes on its own interval; nothing has closed yet.
+    vi.advanceTimersByTime(250);
+    const wrap = el.querySelector(".code-wrap");
+    expect(wrap?.getAttribute("data-code-state")).toBe("streaming");
+    expect(el.querySelector(".code-lang")?.textContent).toBe("go");
+  });
+
+  it("promotes the same block to final once the fence closes", () => {
+    vi.useFakeTimers();
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el);
+    r.writeDelta("```go\nfunc main() {\n");
+    vi.advanceTimersByTime(250);
+    r.writeDelta("}\n```\n");
+    vi.advanceTimersByTime(250);
+    expect(el.querySelectorAll(".code-head")).toHaveLength(1);
+    expect(el.querySelector(".code-wrap")?.getAttribute("data-code-state")).toBe("final");
+  });
+
+  it("finalizes a fence the model never closed, at end()", () => {
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el);
+    r.writeDelta("```go\nfunc main() {\n");
+    r.end();
+    expect(el.querySelector(".code-wrap")?.getAttribute("data-code-state")).toBe("final");
+    expect(el.querySelector(".code-lang")?.textContent).toBe("go");
+  });
+
+  it("decorates an unterminated fence on the replay path too", () => {
+    const el = document.createElement("div");
+    renderMarkdownInto(el, "```bash\necho hi");
+    expect(el.querySelector(".code-wrap")).not.toBeNull();
+    expect(el.querySelector(".code-lang")?.textContent).toBe("bash");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Math: the whole path, parser through converter.
+// ---------------------------------------------------------------------------
+
+const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+
+describe("markdown math rendering", () => {
+  const cases: { name: string; md: string; display: boolean }[] = [
+    { name: "$…$ inline", md: "the value $x^2$ here", display: false },
+    { name: "\\(…\\) inline", md: "the value \\(x^2\\) here", display: false },
+    { name: "$$…$$ block", md: "$$\nx^2\n$$\n", display: true },
+    { name: "\\[…\\] block", md: "\\[\nx^2\n\\]\n", display: true },
+  ];
+
+  for (const tc of cases) {
+    it(`renders ${tc.name} as native MathML`, () => {
+      const el = document.createElement("div");
+      renderMarkdownInto(el, tc.md);
+      const math = el.querySelector("math");
+      expect(math).not.toBeNull();
+      expect(math?.namespaceURI).toBe(MATHML_NS);
+      expect(math?.hasAttribute("display")).toBe(tc.display);
+    });
+  }
+
+  it("survives a delimiter split across write chunks", () => {
+    // The stream slices at a fixed byte budget regardless of content, so any
+    // delimiter can arrive in two pieces. The parser's `pending` field is what
+    // makes that work; this pins it end to end.
+    const el = document.createElement("div");
+    const r = createMarkdownStream(el);
+    r.writeDelta("area $");
+    r.writeDelta("\\pi r^2");
+    r.writeDelta("$ done");
+    r.end();
+    const math = el.querySelector("math");
+    expect(math?.namespaceURI).toBe(MATHML_NS);
+    expect(math?.textContent).toBe("\u03c0r2");
+  });
+
+  it("leaves an unsupported expression as its raw LaTeX", () => {
+    const el = document.createElement("div");
+    renderMarkdownInto(el, "a matrix $\\begin{pmatrix} a & b \\end{pmatrix}$ inline");
+    expect(el.querySelector("math")).toBeNull();
+    const host = el.querySelector("[data-math]");
+    expect(host?.hasAttribute("data-math-raw")).toBe(true);
+    expect(host?.textContent).toBe("\\begin{pmatrix} a & b \\end{pmatrix}");
+  });
+
+  it("leaves an unclosed expression as its raw LaTeX", () => {
+    const el = document.createElement("div");
+    renderMarkdownInto(el, "unfinished $x^2 + y");
+    expect(el.querySelector("math")).toBeNull();
+    expect(el.querySelector("[data-math-raw]")?.textContent).toBe("x^2 + y");
+  });
+
+  it("needs a newline after the block opener, and says so by rendering the source", () => {
+    // A KNOWN LIMITATION of the parser this port carries: `\[` only opens a
+    // block when a newline follows, because `\[` is also a legitimate escaped
+    // bracket. Pinned so the degradation is a decision rather than a surprise —
+    // the reader sees the literal text, which is honest.
+    const el = document.createElement("div");
+    renderMarkdownInto(el, "\\[x^2\\]\n");
+    expect(el.querySelector("[data-math]")).toBeNull();
+    expect(el.textContent).toBe("[x^2]");
+  });
+
+  it("does not treat a price or a bare dollar as math", () => {
+    const el = document.createElement("div");
+    renderMarkdownInto(el, "it costs $5 or $ 10");
+    expect(el.querySelector("[data-math]")).toBeNull();
+    expect(el.textContent).toContain("$5");
   });
 });

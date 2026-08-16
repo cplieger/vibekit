@@ -9,8 +9,9 @@ import { highlight } from "./highlight.js";
 import { getActiveId } from "./store.js";
 import { fetchAgentLines as fetchAgentLinesAction } from "./actions/editor.js";
 import { scrollToEditorLine, flashEditorLine } from "./editor-scroll.js";
+import { renderMarkdownDoc } from "./editor-markdown.js";
 import type { FileState } from "./editor-types.js";
-import { getActiveFilePath, fileStates } from "./editor-types.js";
+import { getActiveFilePath, fileStates, rendersMarkdown } from "./editor-types.js";
 
 // --- Pending line jump state (shared with openers) ---
 
@@ -79,18 +80,34 @@ export function showReadMode(): void {
   $.editorHighlight.classList.remove("hidden");
   $.editorContent.classList.add("hidden");
   $.editorDiffPane.classList.add("hidden");
+  $.editorMarkdown.classList.add("hidden");
+  $.editorGutter.classList.remove("hidden");
 }
 
 export function showEditMode(): void {
   $.editorHighlight.classList.add("hidden");
   $.editorContent.classList.remove("hidden");
   $.editorDiffPane.classList.add("hidden");
+  $.editorMarkdown.classList.add("hidden");
+  $.editorGutter.classList.remove("hidden");
 }
 
 export function showDiffMode(): void {
   $.editorHighlight.classList.add("hidden");
   $.editorContent.classList.add("hidden");
   $.editorDiffPane.classList.remove("hidden");
+  $.editorMarkdown.classList.add("hidden");
+}
+
+/** The rendered-markdown read surface. The gutter goes with it: those line
+ *  numbers count SOURCE lines, and beside rendered prose they would number
+ *  something that is no longer on screen. */
+function showMarkdownMode(): void {
+  $.editorHighlight.classList.add("hidden");
+  $.editorContent.classList.add("hidden");
+  $.editorDiffPane.classList.add("hidden");
+  $.editorMarkdown.classList.remove("hidden");
+  $.editorGutter.classList.add("hidden");
 }
 
 // --- Gutter ---
@@ -126,9 +143,26 @@ export function updateGutter(content: string, agentLines?: ReadonlySet<number>):
 
 // --- Highlight rendering ---
 
-export function renderHighlight(content: string, path: string): void {
+function renderHighlight(content: string, path: string): void {
   $.editorCode.innerHTML = highlight(content, path);
   updateGutter(content);
+}
+
+/** Paint the READ surface of a loaded file: rendered markdown for a document,
+ *  syntax-highlighted source for everything else.
+ *
+ *  One funnel because there is more than one read-paint site — this module's
+ *  mode renderer and editor-core's Cancel, which resets to the saved text
+ *  without going through restoreUI. A markdown branch added to only one of them
+ *  leaves the rendered view missing after Cancel. */
+export function renderReadSurface(state: FileState): void {
+  if (rendersMarkdown(state.path)) {
+    renderMarkdownDoc($.editorMarkdown, state.current.value);
+    showMarkdownMode();
+    return;
+  }
+  renderHighlight(state.current.value, state.path);
+  showReadMode();
 }
 
 // --- Edit-mode UI ---
@@ -149,8 +183,7 @@ export function renderEditModeUI(state: FileState): void {
     $.editorCancelBtn.classList.remove("hidden");
     $.editorSaveBtn.classList.remove("hidden");
   } else {
-    renderHighlight(state.current.value, state.path);
-    showReadMode();
+    renderReadSurface(state);
     $.editorEditBtn.classList.remove("hidden");
     $.editorCancelBtn.classList.add("hidden");
     $.editorSaveBtn.classList.add("hidden");

@@ -71,7 +71,6 @@ func TestKnownKeys_CoversFrontendSettings(t *testing.T) {
 		"last_model",
 		"notifications_enabled",
 		"notify_agent_finished",
-		"notify_permission",
 		"agent_ignore_files",
 		"debug_logs",
 		"supervised_default",

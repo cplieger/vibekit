@@ -103,17 +103,28 @@ function isSearchableElement(elem: Element): boolean {
   return true;
 }
 
-/** Wrap each case-insensitive occurrence of `lc` (length `needleLen`) in `node`
- *  with a `<mark>`, preserving original casing. Appends created marks to `out`.
- *  Only text nodes are touched — element nodes (and their listeners) are never
- *  disturbed. */
-function wrapMatchesInNode(node: Text, needleLen: number, lc: string, out: HTMLElement[]): void {
+/** Wrap each occurrence of `needle` (length `needleLen`) in `node` with a
+ *  `<mark>`, preserving original casing. Appends created marks to `out`. Only
+ *  text nodes are touched — element nodes (and their listeners) are never
+ *  disturbed.
+ *
+ *  `needle` arrives already folded when the search is case-INSENSITIVE, so the
+ *  haystack is folded to match; a case-SENSITIVE search compares both verbatim.
+ *  `needleLen` is passed separately because the slice below has to come out of
+ *  the ORIGINAL text either way. */
+function wrapMatchesInNode(
+  node: Text,
+  needleLen: number,
+  needle: string,
+  caseSensitive: boolean,
+  out: HTMLElement[],
+): void {
   const text = node.nodeValue ?? "";
   if (text === "") {
     return;
   }
-  const hay = text.toLowerCase();
-  let idx = hay.indexOf(lc);
+  const hay = caseSensitive ? text : text.toLowerCase();
+  let idx = hay.indexOf(needle);
   if (idx < 0) {
     return;
   }
@@ -127,7 +138,7 @@ function wrapMatchesInNode(node: Text, needleLen: number, lc: string, out: HTMLE
     frag.appendChild(hit);
     out.push(hit);
     last = idx + needleLen;
-    idx = hay.indexOf(lc, last);
+    idx = hay.indexOf(needle, last);
   }
   if (last < text.length) {
     frag.appendChild(document.createTextNode(text.slice(last)));
@@ -176,16 +187,16 @@ export class FindEngine {
   /** Re-highlight `query` across the root. Clears any prior highlight first.
    *  Resets the current match to the first (index 0), or -1 when there are
    *  none. Returns the total match count. */
-  search(query: string): number {
+  search(query: string, caseSensitive = false): number {
     this.clear();
     this.lastQuery = query;
     if (query === "") {
       return 0;
     }
-    const lc = query.toLowerCase();
+    const needle = caseSensitive ? query : query.toLowerCase();
     const marks: HTMLElement[] = [];
     for (const node of this.collectTextNodes()) {
-      wrapMatchesInNode(node, query.length, lc, marks);
+      wrapMatchesInNode(node, query.length, needle, caseSensitive, marks);
     }
     this.marks = marks;
     this.current = marks.length > 0 ? 0 : -1;
@@ -279,7 +290,13 @@ export class FindEngine {
 let overlayEl: HTMLElement | null = null;
 let inputEl: HTMLInputElement | null = null;
 let countEl: HTMLElement | null = null;
+let caseBtn: HTMLButtonElement | null = null;
 let engine: FindEngine | null = null;
+/** The match-case toggle's state, shared by BOTH halves of the search: the DOM
+ *  walker that highlights and the server pre-pass that enumerates. Persists
+ *  across open/close — it is a preference about how the reader searches, not
+ *  state belonging to one query. */
+let caseSensitive = false;
 let isOpen = false;
 let lastFocus: HTMLElement | null = null;
 let typeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -341,6 +358,15 @@ function ensureBuilt(): void {
     "aria-atomic": "true",
   });
 
+  // Match case. A latched toggle, so it carries aria-pressed rather than
+  // relying on the tint alone.
+  const caseToggle = navButton("Match case", "Aa", "Match case", () => {
+    setCaseSensitive(!caseSensitive);
+  });
+  caseToggle.classList.add("chat-find-case");
+  caseToggle.setAttribute("aria-pressed", caseSensitive ? "true" : "false");
+  caseBtn = caseToggle;
+
   const prevBtn = navButton("Previous match", "\u2191", "Previous (Shift+Enter)", () => {
     step(-1);
   });
@@ -351,7 +377,7 @@ function ensureBuilt(): void {
     closeFindInChat();
   });
 
-  const nav = el("div", { className: "chat-find-nav" }, prevBtn, nextBtn, closeBtn);
+  const nav = el("div", { className: "chat-find-nav" }, caseToggle, prevBtn, nextBtn, closeBtn);
   const overlay = el(
     "div",
     {
@@ -422,6 +448,21 @@ function applyEngine(fn: () => void): void {
   }
 }
 
+/** Flip the match-case toggle and re-run.
+ *
+ *  The re-run is FORCED, because `step()` decides whether to re-search by
+ *  comparing the query STRING to the last one and flipping this changes neither.
+ *  It also deliberately does not preserve the current index the way
+ *  `scheduleRerun` does: the match set itself changed, so a position in the old
+ *  one means nothing. */
+function setCaseSensitive(on: boolean): void {
+  caseSensitive = on;
+  caseBtn?.setAttribute("aria-pressed", on ? "true" : "false");
+  if (inputEl !== null) {
+    runSearch(inputEl.value);
+  }
+}
+
 function runSearch(query: string): void {
   if (engine === null) {
     return;
@@ -436,13 +477,13 @@ function runSearch(query: string): void {
   // typing responsive on what IS resident, and the reveal simply widens what it
   // can see when it lands a moment later.
   applyEngine(() => {
-    engine?.search(query);
+    engine?.search(query, caseSensitive);
   });
   updateCounter();
   revealCurrent();
 
   const chatID = getActiveId();
-  void runServerSearch(chatID, query)
+  void runServerSearch(chatID, query, caseSensitive)
     .then((hits) => {
       if (!isOpen || inputEl?.value !== query) {
         return; // superseded by newer typing, or the overlay closed
@@ -453,7 +494,7 @@ function runSearch(query: string): void {
       // Re-run over the now-revealed DOM so the marks and the count cover the
       // turns the reveal opened.
       applyEngine(() => {
-        engine?.search(query);
+        engine?.search(query, caseSensitive);
       });
       updateCounter();
       revealCurrent();
@@ -544,7 +585,7 @@ function scheduleRerun(): void {
     }
     const prevIndex = engine.currentIndex;
     applyEngine(() => {
-      engine?.search(inputEl?.value ?? "");
+      engine?.search(inputEl?.value ?? "", caseSensitive);
       engine?.setCurrent(prevIndex);
     });
     updateCounter();

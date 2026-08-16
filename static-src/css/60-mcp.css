@@ -639,6 +639,43 @@
   align-items: center;
 }
 
+/* What the publisher declared about a field, under its row. The row is a
+   three-column grid, so this spans it rather than adding a fourth column that
+   would squeeze the inputs on every row including the ones with nothing to say. */
+.mcp-pair-meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1);
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  line-height: 1.4;
+}
+
+.mcp-pair-mark {
+  flex: none;
+  padding: 0 0.25rem;
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+/* Required is the one marker that changes what the user has to do next, so it
+   carries the accent; Secret is context and stays neutral. */
+.mcp-pair-mark-required {
+  border-color: var(--c-warning);
+  color: var(--c-warning);
+}
+
+.mcp-pair-desc {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
 .mcp-pair-name,
 .mcp-pair-value {
   width: 100%;
@@ -699,6 +736,72 @@
   color: var(--c-text-secondary);
   margin: 0;
   line-height: 1.45;
+}
+
+/* The registry still LISTS a deprecated entry, so the badge is the only thing
+   separating a dead server from a live one in this list. */
+.mcp-result-status {
+  flex: none;
+  padding: 0 0.25rem;
+  border: 1px solid var(--c-warning);
+  border-radius: var(--r-sm);
+  color: var(--c-warning);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.mcp-result-status-note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--c-warning);
+  line-height: 1.45;
+}
+
+.mcp-result-deprecated {
+  border-color: var(--c-warning);
+}
+
+.mcp-install-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+/* What installing this option will ask for. Disclosure, not a gate: the form
+   behind it saves whether or not a required field is filled. */
+.mcp-requires {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.mcp-requires > summary {
+  cursor: pointer;
+}
+
+.mcp-requires-list {
+  margin: var(--sp-1) 0 0;
+  padding-inline-start: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.mcp-requires-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1);
+}
+
+.mcp-requires-name {
+  font-family: var(--font-mono);
+  color: var(--c-text-secondary);
+}
+
+.mcp-requires-desc {
+  flex: 1 1 12rem;
+  min-width: 0;
 }
 
 .mcp-install-btn {

@@ -27,7 +27,6 @@ type PushState =
 let swRegistration: ServiceWorkerRegistration | null = null;
 let enabled = false;
 let agentFinished = true;
-let permissionNeeded = true;
 let notifyUICallback: (() => void) | null = null;
 let pushState: PushState = { kind: "idle" };
 
@@ -62,18 +61,18 @@ export function areNotificationsEnabled(): boolean {
 export function isAgentFinishedEnabled(): boolean {
   return agentFinished;
 }
-export function isPermissionNeededEnabled(): boolean {
-  return permissionNeeded;
-}
+
+// There is no per-kind getter for the permission ask, and adding one back is
+// the defect: an ask blocks the turn, so a channel that can go dark on its own
+// stalls every later turn with nothing on screen to say so. The master
+// `enabled` switch is the only gate, checked inside notifyIfHidden. See the
+// "no notify_permission key" note in internal/settings/defaults.go.
 
 export function setNotificationsEnabled(v: boolean): void {
   enabled = v;
 }
 export function setAgentFinishedEnabled(v: boolean): void {
   agentFinished = v;
-}
-export function setPermissionNeededEnabled(v: boolean): void {
-  permissionNeeded = v;
 }
 
 export function setNotifyUICallback(fn: () => void): void {
@@ -83,12 +82,10 @@ export function setNotifyUICallback(fn: () => void): void {
 export function restoreNotifications(s: {
   notifications_enabled?: boolean;
   notify_agent_finished?: boolean;
-  notify_permission?: boolean;
 }): void {
   const wasEnabled = enabled;
   enabled = s.notifications_enabled === true;
   agentFinished = s.notify_agent_finished !== false;
-  permissionNeeded = s.notify_permission !== false;
 
   if (enabled) {
     autoSubscribe();

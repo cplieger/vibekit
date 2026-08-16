@@ -18,10 +18,11 @@ vi.mock("./icons.js", () => ({
   ICON_SPINNER: "",
   ICON_HOURGLASS: "",
   ICON_ALERT: "",
+  ICON_PIN_FILLED: "",
 }));
 vi.mock("./ui-state.js", () => ({
   save: vi.fn(),
-  load: vi.fn(() => ({ tab_order: [], active_view: "" })),
+  load: vi.fn(() => ({ tab_order: [], pinned_tabs: [], active_view: "" })),
 }));
 vi.mock("./dom.js", () => ({
   $: new Proxy(
@@ -58,11 +59,19 @@ import {
   renameTab,
   hasTab,
   getActiveTabId,
+  setTabPinned,
+  promoteTab,
+  restoreTabState,
   _resetForTest,
 } from "./tabs.js";
-import { attachDrag } from "./tabs-drag.js";
-import { save as uiSave } from "./ui-state.js";
+import { attachDrag, setReorderCallback } from "./tabs-drag.js";
+import { save as uiSave, load as uiLoad } from "./ui-state.js";
 import type { TabSpec } from "./tabs.js";
+
+// The store's own reorderTabs, captured HERE because tabs.ts registers it once
+// at module load and every suite below clears mocks in its beforeEach. Driving it
+// is exactly what a completed drag does.
+const commitDrop = vi.mocked(setReorderCallback).mock.calls[0]?.[0];
 
 function makeTab(id: string, name = id): TabSpec {
   return {
@@ -442,6 +451,54 @@ describe("sub-tabs", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  // `skipOnClose` says the ROOT id was already deleted remotely (handlers/chat.ts
+  // passes it on a chat_deleted event). It says nothing about a child, which is
+  // its own persisted chat with its own bridge — so forwarding it left the child
+  // tab gone while its turn and its agent process kept running unreachable.
+  it("skips only the closed tab's teardown, not an owning child's", () => {
+    const parentClose = vi.fn();
+    const childClose = vi.fn();
+    openTab({ ...makeTab("p"), onClose: parentClose });
+    openTab({ ...childTab("c", "p"), onClose: childClose });
+    closeTab("p", { skipOnClose: true });
+    expect(hasTab("p")).toBe(false);
+    expect(hasTab("c")).toBe(false);
+    expect(parentClose).not.toHaveBeenCalled();
+    expect(childClose).toHaveBeenCalledTimes(1);
+  });
+
+  // The flag must not reach a grandchild either, and an owns:false child still
+  // skips its own teardown — through its ownership check, not through the flag.
+  it("tears down every owning descendant of a remotely deleted parent", () => {
+    const order: string[] = [];
+    const viewClose = vi.fn();
+    openTab({
+      ...makeTab("p"),
+      onClose: () => {
+        order.push("p");
+      },
+    });
+    openTab({
+      ...childTab("c", "p"),
+      onClose: () => {
+        order.push("c");
+      },
+    });
+    openTab({
+      ...childTab("gc", "c"),
+      onClose: () => {
+        order.push("gc");
+      },
+    });
+    openTab({ ...childTab("view", "p"), owns: false, onClose: viewClose });
+    closeTab("p", { skipOnClose: true });
+    expect(order).toEqual(["gc", "c"]);
+    expect(viewClose).not.toHaveBeenCalled();
+    for (const id of ["p", "c", "gc", "view"]) {
+      expect(hasTab(id)).toBe(false);
+    }
+  });
+
   it("still removes an owns:false child when its parent closes", () => {
     const onClose = vi.fn();
     openTab(makeTab("p"));
@@ -478,5 +535,270 @@ describe("sub-tabs", () => {
     // attachDrag runs once per DRAGGABLE row; the child must not get a handle,
     // because its position is its parent's rather than its own.
     expect(vi.mocked(attachDrag)).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pinned tabs.
+//
+// A pin is a sort key plus a marker, and the sort lives in the ARRAY: the drag
+// subsystem reads the dropped order back out of the DOM and the keyboard arrows
+// walk the rendered children, so a render-time sort would make both disagree
+// with what is stored.
+// ---------------------------------------------------------------------------
+
+describe("pinned tabs", () => {
+  function paint(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+
+  async function rowIDs(): Promise<string[]> {
+    await paint();
+    return [...document.querySelectorAll<HTMLElement>("#tab-list .tab")].map(
+      (e) => e.dataset["tabId"] ?? "",
+    );
+  }
+
+  function lastSaved(): { tab_order?: string[]; pinned_tabs?: string[] } | undefined {
+    const calls = vi.mocked(uiSave).mock.calls;
+    return calls[calls.length - 1]?.[0] as
+      { tab_order?: string[]; pinned_tabs?: string[] } | undefined;
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="tab-list"></div>';
+    vi.clearAllMocks();
+  });
+
+  it("moves a pinned tab ahead of every unpinned one", async () => {
+    openTab(makeTab("a"));
+    openTab(makeTab("b"));
+    openTab(makeTab("c"));
+    setTabPinned("c", true);
+    await expect(rowIDs()).resolves.toEqual(["c", "a", "b"]);
+  });
+
+  it("does not reshuffle the pinned run when another tab joins it", async () => {
+    openTab(makeTab("a"));
+    openTab(makeTab("b"));
+    openTab(makeTab("c"));
+    setTabPinned("c", true);
+    await expect(rowIDs()).resolves.toEqual(["c", "a", "b"]);
+    setTabPinned("a", true);
+    // The partition is stable, so pinning `a` only guarantees it sits above the
+    // unpinned tabs — it does not overtake a pin that was already ahead of it.
+    // Reordering WITHIN the run is what drag is for.
+    await expect(rowIDs()).resolves.toEqual(["c", "a", "b"]);
+  });
+
+  it("leaves a tab where it is when the pin is removed", async () => {
+    openTab(makeTab("a"));
+    openTab(makeTab("b"));
+    setTabPinned("b", true);
+    await expect(rowIDs()).resolves.toEqual(["b", "a"]);
+    setTabPinned("b", false);
+    await expect(rowIDs()).resolves.toEqual(["b", "a"]);
+  });
+
+  it("opens a new unpinned tab after the pinned run", async () => {
+    openTab(makeTab("a"));
+    setTabPinned("a", true);
+    openTab(makeTab("b"));
+    await expect(rowIDs()).resolves.toEqual(["a", "b"]);
+  });
+
+  // The partition is what enforces this: a drop commits through reorderTabs,
+  // which re-partitions, so the illegal position snaps back rather than being
+  // refused mid-drag inside the drag subsystem's index arithmetic.
+  it("cannot be dragged below an unpinned tab", async () => {
+    openTab(makeTab("a"));
+    openTab(makeTab("b"));
+    openTab(makeTab("c"));
+    setTabPinned("a", true);
+    expect(commitDrop).toBeTypeOf("function");
+    commitDrop?.(["b", "c", "a"]);
+    await expect(rowIDs()).resolves.toEqual(["a", "b", "c"]);
+  });
+
+  it("still honours a drag that reorders within the pinned run", async () => {
+    openTab(makeTab("a"));
+    openTab(makeTab("b"));
+    openTab(makeTab("c"));
+    setTabPinned("a", true);
+    setTabPinned("b", true);
+    commitDrop?.(["b", "a", "c"]);
+    await expect(rowIDs()).resolves.toEqual(["b", "a", "c"]);
+  });
+
+  it("carries a parent's children with it", async () => {
+    openTab(makeTab("p"));
+    openTab(childTab("kid", "p"));
+    openTab(makeTab("other"));
+    setTabPinned("p", true);
+    await expect(rowIDs()).resolves.toEqual(["p", "kid", "other"]);
+    setTabPinned("other", true);
+    // `other` is pinned second, so it lands after the whole `p` group rather
+    // than between a parent and its child.
+    await expect(rowIDs()).resolves.toEqual(["p", "kid", "other"]);
+  });
+
+  // Nested side chats are reachable: the transcript context menu parents a new
+  // side conversation on the ACTIVE chat, which may itself be one. A grouping
+  // that only recognised a DIRECT child made the grandchild an orphan top-level
+  // group, so pinning any other tab could sort it away from the tab its own
+  // parentId names.
+  it("carries a whole descendant tree, not just direct children", async () => {
+    openTab(makeTab("p"));
+    openTab(childTab("kid", "p"));
+    openTab(childTab("grandkid", "kid"));
+    openTab(makeTab("other"));
+    setTabPinned("p", true);
+    await expect(rowIDs()).resolves.toEqual(["p", "kid", "grandkid", "other"]);
+    // The second pin is what exposed it: an orphaned grandchild group sat
+    // BETWEEN two pinned groups, so the partition hoisted `other` over it and
+    // the grandchild ended up behind a stranger, away from the tab it names.
+    setTabPinned("other", true);
+    await expect(rowIDs()).resolves.toEqual(["p", "kid", "grandkid", "other"]);
+  });
+
+  // Same assumption, second site: a drop (and the boot restore) names top-level
+  // ids only, so the walk that reproduces the strip has to descend.
+  it("keeps a nested descendant behind its parent through a reorder", async () => {
+    openTab(makeTab("p"));
+    openTab(childTab("kid", "p"));
+    openTab(childTab("grandkid", "kid"));
+    openTab(makeTab("other"));
+    commitDrop?.(["p", "other"]);
+    await expect(rowIDs()).resolves.toEqual(["p", "kid", "grandkid", "other"]);
+  });
+
+  // A sub-tab's position is its parent's, the same rule that denies it a drag
+  // handle.
+  it("refuses to pin a sub-tab", async () => {
+    openTab(makeTab("p"));
+    openTab(childTab("kid", "p"));
+    openTab(makeTab("other"));
+    setTabPinned("kid", true);
+    await expect(rowIDs()).resolves.toEqual(["p", "kid", "other"]);
+    expect(lastSaved()?.pinned_tabs).toEqual([]);
+  });
+
+  it("marks the pinned row for the pin glyph", async () => {
+    openTab(makeTab("a"));
+    setTabPinned("a", true);
+    await paint();
+    const row = document.querySelector<HTMLElement>('[data-tab-id="a"]');
+    expect(row?.classList.contains("tab-pinned")).toBe(true);
+    // The glyph itself is decorative; the announced state is the .sr-only word.
+    expect(row?.querySelector(".tab-pin .sr-only")?.textContent).toBe("Pinned");
+    setTabPinned("a", false);
+    await paint();
+    expect(
+      document.querySelector<HTMLElement>('[data-tab-id="a"]')?.classList.contains("tab-pinned"),
+    ).toBe(false);
+  });
+
+  it("persists pins as their own list beside tab_order", () => {
+    openTab(makeTab("a"));
+    openTab(makeTab("b"));
+    setTabPinned("b", true);
+    expect(lastSaved()?.pinned_tabs).toEqual(["b"]);
+    expect(lastSaved()?.tab_order).toEqual(["b", "a"]);
+  });
+
+  // The reload path: pins are stamped from the snapshot BEFORE the reorder, or
+  // they would be recorded without moving their tabs.
+  it("survives a reload", async () => {
+    vi.mocked(uiLoad).mockReturnValueOnce({
+      tab_order: ["a", "b", "c"],
+      pinned_tabs: ["c"],
+      active_view: "",
+    } as never);
+    _resetForTest();
+    document.body.innerHTML = '<div id="tab-list"></div>';
+    openTab(makeTab("a"));
+    openTab(makeTab("b"));
+    openTab(makeTab("c"));
+    restoreTabState();
+    await expect(rowIDs()).resolves.toEqual(["c", "a", "b"]);
+    expect(lastSaved()?.pinned_tabs).toEqual(["c"]);
+  });
+
+  it("restores a pin even when no order was saved", async () => {
+    vi.mocked(uiLoad).mockReturnValueOnce({
+      tab_order: [],
+      pinned_tabs: ["b"],
+      active_view: "",
+    } as never);
+    _resetForTest();
+    document.body.innerHTML = '<div id="tab-list"></div>';
+    openTab(makeTab("a"));
+    openTab(makeTab("b"));
+    restoreTabState();
+    await expect(rowIDs()).resolves.toEqual(["b", "a"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Promote: a sub-tab becomes a top-level tab.
+// ---------------------------------------------------------------------------
+
+describe("promoteTab", () => {
+  function paint(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = '<div id="tab-list"></div>';
+    vi.clearAllMocks();
+  });
+
+  it("clears the parent and joins tab_order", () => {
+    openTab(makeTab("p"));
+    openTab(childTab("kid", "p"));
+    const before = vi.mocked(uiSave).mock.calls.at(-1)?.[0] as { tab_order?: string[] };
+    expect(before.tab_order).toEqual(["p"]);
+    promoteTab("kid");
+    const after = vi.mocked(uiSave).mock.calls.at(-1)?.[0] as { tab_order?: string[] };
+    expect(after.tab_order).toEqual(["p", "kid"]);
+  });
+
+  it("survives its former parent's close", () => {
+    openTab(makeTab("p"));
+    openTab(childTab("kid", "p"));
+    promoteTab("kid");
+    closeTab("p");
+    expect(hasTab("kid")).toBe(true);
+  });
+
+  it("drops the indent and gains a drag handle", async () => {
+    openTab(makeTab("p"));
+    openTab(childTab("kid", "p"));
+    await paint();
+    // One handle so far: the parent's. The child had none.
+    expect(vi.mocked(attachDrag)).toHaveBeenCalledTimes(1);
+    promoteTab("kid");
+    await paint();
+    const row = document.querySelector<HTMLElement>('[data-tab-id="kid"]');
+    expect(row).not.toBeNull();
+    expect(row?.classList.contains("tab-child")).toBe(false);
+    // The node is rebuilt on promote precisely because attachTabInteraction
+    // decides draggability once, at element creation.
+    expect(vi.mocked(attachDrag)).toHaveBeenCalledTimes(2);
+  });
+
+  it("is a no-op on a top-level tab", () => {
+    openTab(makeTab("a"));
+    const before = vi.mocked(uiSave).mock.calls.length;
+    promoteTab("a");
+    expect(vi.mocked(uiSave).mock.calls.length).toBe(before);
   });
 });

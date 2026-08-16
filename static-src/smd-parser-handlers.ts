@@ -751,7 +751,20 @@ export function handleCommon(p: Parser, char: string, pending_with_char: string)
       }
       break;
     case "$":
-      if (p.token !== IMAGE && p.token !== STRIKE && p.pending === "$") {
+      // The equation guard every sibling case in this switch already carries,
+      // and its absence was a real defect: inside an OPEN equation the closing
+      // `$$` fell through to the opener below, re-entered MAYBE_EQ_BLOCK and
+      // opened a nested block that never closed. So `$$\nx^2\n$$` rendered its
+      // source as text with an empty second wrapper inside it — invisible while
+      // the tokens mapped to meaningless custom elements, and wrong the moment
+      // they started rendering as mathematics.
+      if (
+        p.token !== IMAGE &&
+        p.token !== STRIKE &&
+        p.token !== EQUATION_BLOCK &&
+        p.token !== EQUATION_INLINE &&
+        p.pending === "$"
+      ) {
         if (char === "$") {
           p.token = MAYBE_EQ_BLOCK;
           p.pending = pending_with_char;

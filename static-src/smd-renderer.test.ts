@@ -56,15 +56,18 @@ describe("smd-renderer TOKEN_TAG_MAP coverage", () => {
     { token: CODE_FENCE, expectedTag: "PRE", label: "CODE_FENCE → pre" },
     { token: LINK, expectedTag: "A", label: "LINK → a" },
     { token: IMAGE, expectedTag: "IMG", label: "IMAGE → img" },
+    // The equation tokens open a plain HTML host that holds the raw LaTeX until
+    // the expression closes; the namespaced <math> subtree replaces its children
+    // at end_token. See the equation cases below and mathml.test.ts.
     {
       token: EQUATION_BLOCK,
-      expectedTag: "EQUATION-BLOCK",
-      label: "EQUATION_BLOCK → equation-block",
+      expectedTag: "SPAN",
+      label: "EQUATION_BLOCK → span host",
     },
     {
       token: EQUATION_INLINE,
-      expectedTag: "EQUATION-INLINE",
-      label: "EQUATION_INLINE → equation-inline",
+      expectedTag: "SPAN",
+      label: "EQUATION_INLINE → span host",
     },
   ];
 
@@ -75,5 +78,88 @@ describe("smd-renderer TOKEN_TAG_MAP coverage", () => {
     const child = container.firstElementChild;
     expect(child).not.toBeNull();
     expect(child!.tagName).toBe(expectedTag);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Equations: the host, the namespace, and the raw degradation.
+//
+// The namespace assertion is the load-bearing one. `document.createElement`
+// would produce an element whose tagName is also "math", so a test that only
+// checked the tag name would pass on the exact defect this code exists to avoid.
+// ---------------------------------------------------------------------------
+
+const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
+
+/** Feed one equation through the renderer the way the parser does: open the
+ *  token, hand over the LaTeX as text, close it. */
+function renderEquation(token: Token, latex: string): HTMLElement {
+  const container = document.createElement("div");
+  const r = domRenderer(container, { animateText: false });
+  r.add_token(r.data, token);
+  r.add_text(r.data, latex);
+  r.end_token(r.data);
+  return container;
+}
+
+describe("smd-renderer equations", () => {
+  it("holds the raw LaTeX while the expression is still open", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: false });
+    r.add_token(r.data, EQUATION_INLINE);
+    r.add_text(r.data, "x^2");
+    const host = container.firstElementChild;
+    expect(host?.getAttribute("data-math")).toBe("inline");
+    expect(host?.hasAttribute("data-math-raw")).toBe(true);
+    expect(host?.textContent).toBe("x^2");
+    expect(host?.querySelector("math")).toBeNull();
+  });
+
+  it("swaps in a MathML subtree in the MathML namespace on close", () => {
+    const container = renderEquation(EQUATION_INLINE, "x^2");
+    const host = container.firstElementChild;
+    expect(host?.hasAttribute("data-math-raw")).toBe(false);
+    const math = host?.firstElementChild;
+    expect(math?.tagName.toLowerCase()).toBe("math");
+    expect(math?.namespaceURI).toBe(MATHML_NS);
+    // Every descendant, not just the root: one createElement anywhere in the
+    // converter would leave a subtree that does not render as mathematics.
+    for (const node of math?.querySelectorAll("*") ?? []) {
+      expect(node.namespaceURI).toBe(MATHML_NS);
+    }
+  });
+
+  it("marks a block equation display=block", () => {
+    const container = renderEquation(EQUATION_BLOCK, "\\frac{a}{b}");
+    const host = container.firstElementChild;
+    expect(host?.getAttribute("data-math")).toBe("block");
+    expect(host?.firstElementChild?.getAttribute("display")).toBe("block");
+  });
+
+  it("keeps the raw string when the converter does not understand it", () => {
+    const src = "\\begin{pmatrix} a & b \\end{pmatrix}";
+    const container = renderEquation(EQUATION_INLINE, src);
+    const host = container.firstElementChild;
+    expect(host?.hasAttribute("data-math-raw")).toBe(true);
+    expect(host?.querySelector("math")).toBeNull();
+    expect(host?.textContent).toBe(src);
+  });
+
+  it("keeps the raw string for an expression split across chunks and closed", () => {
+    const container = document.createElement("div");
+    const r = domRenderer(container, { animateText: true });
+    r.add_token(r.data, EQUATION_INLINE);
+    // Split mid-command: the parser slices at a fixed byte budget, so any
+    // delimiter or command can arrive in pieces.
+    r.add_text(r.data, "\\al");
+    r.add_text(r.data, "pha + \\beta");
+    r.end_token(r.data);
+    const host = container.firstElementChild;
+    // animateText must NOT wrap an equation host's text: the chunk spans are
+    // thrown away on close, and textContent has to be the exact source.
+    expect(host?.querySelector("[data-vk-chunk-enter]")).toBeNull();
+    const math = host?.firstElementChild;
+    expect(math?.namespaceURI).toBe(MATHML_NS);
+    expect(math?.textContent).toBe("\u03b1+\u03b2");
   });
 });

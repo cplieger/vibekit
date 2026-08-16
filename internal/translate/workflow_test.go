@@ -207,6 +207,95 @@ func TestRunStart_CarriesTheName(t *testing.T) {
 	}
 }
 
+// TestRunStart_CarriesTheScheduledMark pins the one fact on this event the client
+// provably cannot derive for itself.
+//
+// A parentless run's lifecycle frames are workspace-global with an EMPTY chat id,
+// and a manual launch is parentless too, so nothing a client can watch separates
+// scheduled from manual. `parentSessionId` does not either: it separates
+// agent-parented from parentless and is empty for both of these. Only the launch
+// path knows, which is why the flag is read from the host here.
+//
+// The lookup is keyed on the WORKFLOW id, and that is the part worth a test: the
+// obvious key, chatID, is the empty string for exactly the runs the flag is about.
+func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		scheduled map[string]bool
+		wantFlag  bool
+	}{
+		{"a scheduled run is marked", map[string]bool{"wf_1": true}, true},
+		{"a manual run is not", nil, false},
+		// The mark belongs to one run, so another run's mark must not reach this one.
+		{"another run's mark does not leak", map[string]bool{"wf_other": true}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			var events []api.ServerEvent
+			deps := capturing(&events)
+			deps.scheduledRuns = c.scheduled
+			tr := New(deps)
+
+			// The empty chat id is the real shape: runDispatch passes "" for a
+			// parentless run's lifecycle frames.
+			tr.HandleRunStart(t.Context(), "",
+				notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "nightly"}))
+
+			p, ok := events[0].Payload.(api.RunStartedPayload)
+			if !ok {
+				t.Fatalf("payload type %T, want RunStartedPayload", events[0].Payload)
+			}
+			if p.Scheduled != c.wantFlag {
+				t.Errorf("scheduled = %v, want %v", p.Scheduled, c.wantFlag)
+			}
+			if p.WorkflowID != "wf_1" || p.Name != "nightly" {
+				t.Errorf("payload = %+v, want the run's id and name intact", p)
+			}
+		})
+	}
+}
+
+// TestRunComplete_CarriesTheRunsName pins the label the completion signal needs.
+//
+// This frame is the one lifecycle notification with no top-level workflowName, so
+// the name has to come out of `finalState` — the same place the log line above
+// reads it. Without it an outcome signal can only name a uuid, and a client that
+// never saw this run's start frame (a page opened mid-run, another device) has
+// nothing at all.
+func TestRunComplete_CarriesTheRunsName(t *testing.T) {
+	t.Parallel()
+	var events []api.ServerEvent
+	tr := New(capturing(&events))
+
+	tr.HandleRunComplete(t.Context(), "", notif("_kiro/workflow/run_complete", map[string]any{
+		"workflowId": "wf_1",
+		"status":     "completed",
+		"finalState": map[string]any{"workflowName": "nightly-publish"},
+	}))
+	p, ok := events[0].Payload.(api.RunFinishedPayload)
+	if !ok {
+		t.Fatalf("payload type %T, want RunFinishedPayload", events[0].Payload)
+	}
+	if p.Name != "nightly-publish" {
+		t.Errorf("name = %q, want the run's name from finalState", p.Name)
+	}
+	if p.Status != "completed" || p.WorkflowID != "wf_1" {
+		t.Errorf("payload = %+v, want the id and status intact", p)
+	}
+
+	// A frame with no state carries no name, and the payload says so rather than
+	// inventing one; the client falls back to a generic label.
+	events = nil
+	tr.HandleRunComplete(t.Context(), "", notif("_kiro/workflow/run_complete", map[string]any{
+		"workflowId": "wf_2", "status": "failed",
+	}))
+	if p, _ := events[0].Payload.(api.RunFinishedPayload); p.Name != "" {
+		t.Errorf("name = %q for a frame with no finalState, want empty", p.Name)
+	}
+}
+
 // TestRunNotifications_IgnoreFramesWithNoWorkflowID pins that a malformed frame
 // emits nothing rather than an event naming the empty run.
 func TestRunNotifications_IgnoreFramesWithNoWorkflowID(t *testing.T) {

@@ -311,6 +311,15 @@
   color: var(--c-green);
 }
 
+/* A LATCHED action rather than a momentary one: the raw-source toggle stays on
+   until it is pressed again, so it has to look pressed. The other buttons in the
+   row carry no aria-pressed and are unaffected. */
+.turn-action-btn[aria-pressed="true"] {
+  opacity: 1;
+  color: var(--c-accent);
+  background: var(--c-accent-subtle);
+}
+
 /* The .checkpoint-line dashed separator and its .checkpoint-rewind button are
  * GONE. A turn no longer needs a rule drawn between itself and its neighbour —
  * it is a bordered card — and Rewind moved into the card header's action slot

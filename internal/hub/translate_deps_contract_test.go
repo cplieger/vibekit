@@ -72,6 +72,16 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 			t.Error("LineTracker() returned nil")
 		}
 	})
+
+	t.Run("IsScheduledRun_false_for_an_unlaunched_run", func(t *testing.T) {
+		// A run nothing launched is not scheduled. This is the direction that
+		// matters: reporting a manual run as scheduled would put a start toast on
+		// every launch the user made by hand.
+		d := newDeps(t)
+		if d.IsScheduledRun("wf-never-launched") {
+			t.Error("IsScheduledRun(unlaunched) = true, want false")
+		}
+	})
 }
 
 func TestHub_TranslateDepsContract(t *testing.T) {

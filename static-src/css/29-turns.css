@@ -141,6 +141,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Copy the sent prompt. Pushed to the far end of the meta row, so the header
+   band's action sits where the footer band's ledger does and the two line up.
+   In the META row rather than inside `.turn-req`, which is what puts it outside
+   the three-line clamp by construction. */
+.turn-copy-req {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+}
+
 .turn-rewind {
   font-size: var(--fs-xs);
   color: var(--c-text-secondary);
@@ -752,8 +761,13 @@
   -webkit-line-clamp: none;
 }
 
+/* Folded, the meta row sits BESIDE the request rather than above it, so a Copy
+   button pushed to the row's end would land between the timestamp and the
+   prompt text. The row is a navigation surface when folded; expanding is what
+   offers the actions. */
 .turn[data-folded] .turn-req-more,
 .turn[data-folded] .turn-rewind,
+.turn[data-folded] .turn-copy-req,
 .turn[data-folded] .turn-ledger-files {
   display: none;
 }

@@ -400,14 +400,21 @@ func (c *registryCache) evictLocked() {
 // the same field-plumbing logic.
 
 // RegistryEntry is the browser-facing shape of one search result.
+//
+// Status carries the upstream lifecycle verdict, and only when it is NOT
+// "active": the badge is its one consumer and an absent status reads as active
+// anyway, so emitting the common case would put a constant on every row. See
+// registryStatusActive.
 type RegistryEntry struct {
-	Name        string            `json:"name"`
-	Title       string            `json:"title,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Version     string            `json:"version,omitempty"`
-	Repository  string            `json:"repository,omitempty"`
-	Packages    []RegistryPackage `json:"packages,omitempty"`
-	Remotes     []RegistryRemote  `json:"remotes,omitempty"`
+	Name          string            `json:"name"`
+	Title         string            `json:"title,omitempty"`
+	Description   string            `json:"description,omitempty"`
+	Version       string            `json:"version,omitempty"`
+	Repository    string            `json:"repository,omitempty"`
+	Status        string            `json:"status,omitempty"`
+	StatusMessage string            `json:"status_message,omitempty"`
+	Packages      []RegistryPackage `json:"packages,omitempty"`
+	Remotes       []RegistryRemote  `json:"remotes,omitempty"`
 }
 
 // RegistryPackage is one install option from a stdio-speaking server.
@@ -475,10 +482,39 @@ var supportedRemoteTypes = map[string]Transport{
 // (vs an inline anonymous struct) so the per-package / per-remote
 // mapping can be factored into convertRegistryPackage / convertRegistryRemote.
 type registryWireResponse struct {
-	Servers []struct {
-		Server registryWireServer `json:"server"`
-	} `json:"servers"`
+	Servers []registryWireEntry `json:"servers"`
 }
+
+// registryWireEntry is one row of the upstream list: the server document, plus
+// the `_meta` sibling that carries the registry's own bookkeeping.
+//
+// The lifecycle status lives in `_meta`, NOT on the server object — verified
+// against the live registry and its OpenAPI (RegistryExtensions: status is
+// required, enum active|deprecated|deleted, with an optional statusMessage
+// explaining a deprecation). A deprecated entry is still returned by search
+// (only `deleted` is filtered, behind include_deleted), which is exactly why it
+// looked live: vibekit dropped `_meta` entirely and had nothing to badge with.
+type registryWireEntry struct {
+	Meta   registryWireMeta   `json:"_meta"`
+	Server registryWireServer `json:"server"`
+}
+
+// registryWireMeta mirrors the upstream ResponseMeta. The key is a namespaced
+// literal, so it cannot be a Go identifier — hence the tag.
+type registryWireMeta struct {
+	Official registryWireOfficial `json:"io.modelcontextprotocol.registry/official"`
+}
+
+// registryWireOfficial is the subset of RegistryExtensions vibekit surfaces.
+// The timestamps and isLatest are decoded by nobody: a row shows a version, and
+// "published 8 months ago" is not a fact that changes an install decision.
+type registryWireOfficial struct {
+	Status        string `json:"status"`
+	StatusMessage string `json:"statusMessage"`
+}
+
+// registryStatusActive is the upstream status a row does not need to announce.
+const registryStatusActive = "active"
 
 type registryWireServer struct {
 	Name        string `json:"name"`
@@ -531,7 +567,7 @@ func normaliseRegistryResponse(body []byte) []RegistryEntry {
 	}
 	out := make([]RegistryEntry, 0, len(raw.Servers))
 	for i := range raw.Servers {
-		if entry, ok := buildRegistryEntry(&raw.Servers[i].Server); ok {
+		if entry, ok := buildRegistryEntry(&raw.Servers[i]); ok {
 			out = append(out, entry)
 		}
 	}
@@ -543,13 +579,18 @@ func normaliseRegistryResponse(body []byte) []RegistryEntry {
 // install paths (no supported package and no supported remote), in which
 // case the caller skips it — common for schema-only publications or
 // packages using registries vibekit doesn't support.
-func buildRegistryEntry(srv *registryWireServer) (RegistryEntry, bool) {
+func buildRegistryEntry(row *registryWireEntry) (RegistryEntry, bool) {
+	srv := &row.Server
 	entry := RegistryEntry{
 		Name:        srv.Name,
 		Title:       srv.Title,
 		Description: srv.Description,
 		Version:     srv.Version,
 		Repository:  srv.Repository.URL,
+	}
+	if st := row.Meta.Official.Status; st != "" && st != registryStatusActive {
+		entry.Status = st
+		entry.StatusMessage = row.Meta.Official.StatusMessage
 	}
 	for j := range srv.Packages {
 		if pe, ok := convertRegistryPackage(&srv.Packages[j]); ok {

@@ -109,6 +109,22 @@
   outline-offset: 1px;
 }
 
+/* Match case: the one LATCHED control in the bar, so it needs a resting-on
+   state the momentary buttons beside it do not. "Aa" is text rather than a
+   glyph, at the row's own size instead of the nav buttons' --fs-lg — two
+   letters at 1.25rem overflow a 1.75rem square. */
+.chat-find-case {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.chat-find-case[aria-pressed="true"] {
+  color: var(--c-accent);
+  background: var(--c-accent-subtle);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 45%, transparent);
+}
+
 /* No-results affordance: tint the field + counter without restructuring. */
 .chat-find-no-results .chat-find-input {
   border-color: var(--c-red);

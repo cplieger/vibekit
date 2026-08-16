@@ -14,7 +14,8 @@ export interface AppSettings {
   last_model?: string;
   notifications_enabled?: boolean;
   notify_agent_finished?: boolean;
-  notify_permission?: boolean;
+  // No notify_permission: the permission ask is a floor, not a preference.
+  // See the "no notify_permission key" note in internal/settings/defaults.go.
   agent_ignore_files?: string[];
   debug_logs?: boolean;
   /** Default Supervised-mode state for new chats. When true, new

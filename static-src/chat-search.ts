@@ -52,13 +52,20 @@ export function searchHitCount(turn: number): number {
  * of the ordering: the walker prunes hidden subtrees, so a folded turn's hit is
  * invisible to it until the fold is lifted.
  */
-export async function runServerSearch(chatID: string, query: string): Promise<SearchHit[]> {
+export async function runServerSearch(
+  chatID: string,
+  query: string,
+  caseSensitive = false,
+): Promise<SearchHit[]> {
   if (chatID === "" || query.trim() === "") {
     resetServerSearch(chatID);
     return [];
   }
+  // `case=1` only when asked. The server treats an absent parameter as
+  // insensitive, so the default stays the behaviour it has always had.
+  const flag = caseSensitive ? "&case=1" : "";
   const d = await apiGet<{ hits?: SearchHit[] }>(
-    `/api/chats/${encodeURIComponent(chatID)}/search?q=${encodeURIComponent(query)}`,
+    `/api/chats/${encodeURIComponent(chatID)}/search?q=${encodeURIComponent(query)}${flag}`,
   );
   // A null is a failed fetch, already logged centrally. Leave the previous
   // reveal in place rather than collapsing turns out from under a reader

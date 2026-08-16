@@ -57,6 +57,7 @@ import {
 } from "./smd-parser-types.js";
 import type { Token, Attr, Renderer } from "./smd-parser-types.js";
 import { isSafeUrl, rewriteWorkspaceImageSrc } from "./utils-url.js";
+import { latexToMathML } from "./mathml.js";
 import { el } from "@cplieger/reactive";
 
 export type { Renderer } from "./smd-parser-types.js";
@@ -99,9 +100,34 @@ const TOKEN_TAG_MAP: Readonly<Record<number, string>> = {
   [LIST_ORDERED]: "ol",
   [LIST_ITEM]: "li",
   [TABLE]: "table",
-  [EQUATION_BLOCK]: "equation-block",
-  [EQUATION_INLINE]: "equation-inline",
 };
+
+/** Attribute marking an equation host, and the state it is in.
+ *
+ *  `data-math` is the kind (`inline` / `block`); `data-math-raw` says the host
+ *  is still showing LaTeX rather than mathematics. Set at creation — a
+ *  mid-stream equation genuinely IS raw text at that moment — and removed only
+ *  when the conversion succeeds, so a half-arrived or unsupported expression is
+ *  styled as source without a second code path. */
+const MATH_ATTR = "data-math";
+const MATH_RAW_ATTR = "data-math-raw";
+
+/** Turn a closed equation host's LaTeX into MathML in place.
+ *
+ *  Runs at end_token, not at add_token: the parser hands the expression over as
+ *  text (possibly across several chunks), so the full source only exists once
+ *  the closing delimiter arrives. An expression the converter rejects keeps the
+ *  raw text it already holds — the degradation the equation tokens gave for
+ *  free before there was a converter at all. */
+function finalizeMath(host: Element): void {
+  const src = host.textContent;
+  const math = latexToMathML(src, host.getAttribute(MATH_ATTR) === "block");
+  if (math === null) {
+    return;
+  }
+  host.replaceChildren(math);
+  host.removeAttribute(MATH_RAW_ATTR);
+}
 
 function add_token_dom(data: DomRendererData, type: Token): void {
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -126,6 +152,19 @@ function add_token_dom(data: DomRendererData, type: Token): void {
       pre.className = "code";
       const slot = makeEl("code");
       data.nodes[++data.index] = pre.appendChild(slot);
+      return;
+    }
+    case EQUATION_BLOCK:
+    case EQUATION_INLINE: {
+      // A plain host in the HTML namespace, holding the raw LaTeX until the
+      // expression closes. It cannot BE the `<math>` element: makeEl is
+      // document.createElement, and a `math` element outside the MathML
+      // namespace is an unknown inline element rather than mathematics. The
+      // namespaced subtree is built by mathml.ts and swapped in at end_token.
+      const host = makeEl("span");
+      host.setAttribute(MATH_ATTR, type === EQUATION_BLOCK ? "block" : "inline");
+      host.setAttribute(MATH_RAW_ATTR, "");
+      data.nodes[++data.index] = parent.appendChild(host);
       return;
     }
     case LINK:
@@ -171,6 +210,9 @@ function add_token_dom(data: DomRendererData, type: Token): void {
 function end_token_dom(data: DomRendererData): void {
   const closing = data.nodes[data.index];
   data.index -= 1;
+  if (closing?.hasAttribute(MATH_ATTR) === true) {
+    finalizeMath(closing);
+  }
   // If decrementing brought us back to the root (index 0), the node
   // that just closed was a top-level block. Fire the callback so
   // callers can decorate / animate the freshly-completed block.
@@ -214,7 +256,9 @@ function add_text_dom(data: DomRendererData, text: string): void {
   // <code>/<pre> (their syntax highlighter expects unwrapped text
   // children). Replay path leaves animateText=false so historical
   // content paints flat.
-  if (data.animateText && tag !== "CODE" && tag !== "PRE") {
+  // An equation host is skipped too: its children are replaced wholesale when
+  // the expression closes, so a per-chunk wrapper is work thrown away.
+  if (data.animateText && tag !== "CODE" && tag !== "PRE" && !parent.hasAttribute(MATH_ATTR)) {
     const span = makeEl("span");
     span.setAttribute("data-vk-chunk-enter", "");
     span.appendChild(document.createTextNode(text));

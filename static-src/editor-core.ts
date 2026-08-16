@@ -20,13 +20,7 @@ import { parseConflicts } from "./conflict.js";
 import { saveFile as saveFileAction } from "./actions/editor.js";
 import { isPending } from "./actions/index.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
-import {
-  showReadMode,
-  showEditMode,
-  updateGutter,
-  renderHighlight,
-  renderEditModeUI,
-} from "./editor-ui.js";
+import { showEditMode, updateGutter, renderReadSurface, renderEditModeUI } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
 import { activateFile, closeEditorFile, fetchGitDiffSources } from "./editor-openers.js";
 import {
@@ -200,8 +194,9 @@ function stopEditing(state: FileState): void {
     return;
   }
   state.mode.value = { kind: "edit", editing: false };
-  renderHighlight(state.original.value, state.path);
-  showReadMode();
+  // `current` was just reset to `original` above, so the read surface paints the
+  // saved text — as markdown for a document, as source otherwise.
+  renderReadSurface(state);
   $.editorEditBtn.classList.remove("hidden");
   $.editorCancelBtn.classList.add("hidden");
   $.editorSaveBtn.classList.add("hidden");

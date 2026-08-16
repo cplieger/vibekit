@@ -1,8 +1,13 @@
 // @vitest-environment happy-dom
 // The turn card's header band: the trigger, its meta row, and the three-line
 // clamp the folded-row navigation model depends on.
-import { describe, it, expect } from "vitest";
-import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
+import { describe, it, expect, vi } from "vitest";
+import {
+  buildTurnHeader,
+  updateTurnHeader,
+  initTurnHeaderCallbacks,
+  type TurnHeaderData,
+} from "./turn-header.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
   return { n: 1, outcome: "completed", ts: 0, request: "short request", ...over };
@@ -118,6 +123,68 @@ describe("the three-line clamp", () => {
     more(h).click();
     updateTurnHeader(h, data({ request: LONG + "tail" }));
     expect(text(h).hasAttribute("data-clamped")).toBe(true);
+  });
+});
+
+function copyBtn(h: HTMLElement): HTMLButtonElement {
+  const b = h.querySelector<HTMLButtonElement>(".turn-copy-req");
+  if (b === null) {
+    throw new Error("no .turn-copy-req");
+  }
+  return b;
+}
+
+describe("copying the sent prompt", () => {
+  it("lives in the META row, where the clamp cannot reach it", () => {
+    // The clamp is scoped to `.turn-req-text`; a control inside it would be
+    // hidden by a long prompt folding to three lines.
+    const h = buildTurnHeader(data());
+    expect(h.querySelector(".turn-head-row > .turn-copy-req")).not.toBeNull();
+    expect(text(h).querySelector(".turn-copy-req")).toBeNull();
+  });
+
+  it("copies the whole request, not the three lines the clamp shows", () => {
+    const copy = vi.fn();
+    initTurnHeaderCallbacks({ copy });
+    const h = buildTurnHeader(data({ request: LONG }));
+    copyBtn(h).click();
+    expect(copy).toHaveBeenCalledWith(copyBtn(h), LONG);
+  });
+
+  it("copies the trimmed request", () => {
+    const copy = vi.fn();
+    initTurnHeaderCallbacks({ copy });
+    const h = buildTurnHeader(data({ request: "  fix the composer  " }));
+    copyBtn(h).click();
+    expect(copy).toHaveBeenCalledWith(copyBtn(h), "fix the composer");
+  });
+
+  it("reads the text at CLICK time, so a repaint cannot leave it stale", () => {
+    const copy = vi.fn();
+    initTurnHeaderCallbacks({ copy });
+    const h = buildTurnHeader(data({ request: "first" }));
+    updateTurnHeader(h, data({ request: "second" }));
+    copyBtn(h).click();
+    expect(copy).toHaveBeenCalledWith(copyBtn(h), "second");
+  });
+
+  it("is hidden on a turn the user did not ask for", () => {
+    const h = buildTurnHeader(data({ request: undefined }));
+    expect(copyBtn(h).hidden).toBe(true);
+  });
+
+  it("appears and disappears with the request across updates", () => {
+    const h = buildTurnHeader(data({ request: "ask" }));
+    expect(copyBtn(h).hidden).toBe(false);
+    updateTurnHeader(h, data({ request: undefined }));
+    expect(copyBtn(h).hidden).toBe(true);
+    updateTurnHeader(h, data({ request: "ask again" }));
+    expect(copyBtn(h).hidden).toBe(false);
+  });
+
+  it("carries an accessible name", () => {
+    const h = buildTurnHeader(data());
+    expect(copyBtn(h).getAttribute("aria-label")).toBe("Copy this prompt");
   });
 });
 

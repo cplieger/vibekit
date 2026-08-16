@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -13,13 +14,51 @@ import (
 //
 //	GET    /api/mcp          → list (secrets masked)
 //	POST   /api/mcp          → create
+//	POST   /api/mcp/import   → create every server of a pasted README block
 //	GET    /api/mcp/{id}     → one (secrets masked)
 //	PUT    /api/mcp/{id}     → replace (preserves "***" values)
 //	PATCH  /api/mcp/{id}     → toggle enabled: body {"enabled": bool}
 //	DELETE /api/mcp/{id}     → remove
+//
+// `import` is its own route rather than a second body shape on POST /api/mcp:
+// that endpoint decodes ONE vibekit record and answers with one, while a paste
+// decodes a foreign shape, can name several servers, and answers with a
+// per-entry outcome list. One route serving both would need a shape flag on the
+// request and a union on the response.
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp", s.handleCollection)
+	mux.HandleFunc("/api/mcp/import", s.handleImport)
 	mux.HandleFunc("/api/mcp/", s.handleOne)
+}
+
+// handleImport handles POST /api/mcp/import: translate a pasted publisher block
+// (or a single publisher-shaped server object) and create every server in it.
+//
+// 200 {"results":[{"name","outcome"}],"notes":[...]} on success. `notes` carries
+// what the translation had to say about keys vibekit recognises and cannot
+// store, and about a name it had to adjust — so an accepted `timeout` does not
+// read as a silently-dropped field.
+func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		api.MethodNotAllowed(w, http.MethodPost)
+		return
+	}
+	var raw json.RawMessage
+	if !decodeJSONBody(w, r, &raw) {
+		return
+	}
+	req, err := parseImportBody(raw)
+	if err != nil {
+		slog.Debug("mcp: import parse failed", "error", err)
+		api.BadRequest(w, err.Error())
+		return
+	}
+	results, err := s.ImportServers(r.Context(), req.servers)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	api.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
 }
 
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {

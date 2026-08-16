@@ -89,6 +89,14 @@ type InfraDeps interface {
 	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
 	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
 	AbandonInFlightTurn(ctx context.Context, chatID api.ChatID)
+	// LatchTurnModel records which model this turn was DISPATCHED under, before
+	// the prompt call can race a concurrent switch_model. First write wins, so
+	// the value is immutable for the turn's lifetime.
+	//
+	// It exists because the turn buffer otherwise latches on the first assistant
+	// FRAME, which can be seconds later: a fast in-session switch landing in that
+	// window stamped the new model onto an answer the previous one produced.
+	LatchTurnModel(chatID api.ChatID, model string)
 }
 
 // Typed accessors on Dispatcher for narrow interface access.

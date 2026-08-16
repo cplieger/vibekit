@@ -168,11 +168,15 @@ func TestLoadPreferences(t *testing.T) {
 		wantPN   bool
 	}{
 		{"MissingFileKeepsDefaults", "", true, true},
-		{"AppliesDisabledToggles", `{"notify_agent_finished":false,"notify_permission":false}`, false, false},
 		{"MalformedJSONFallsBackToDefaults", `{not json`, true, true},
 		{"PartialJSONOnlyAgentFinished", `{"notify_agent_finished":false}`, false, true},
-		{"PartialJSONOnlyPermission", `{"notify_permission":false}`, true, false},
 		{"EmptyObjectKeepsDefaults", `{}`, true, true},
+		// The permission ask has no settings key, so a stale or hand-written
+		// notify_permission is read by nothing: the kind stays on even when
+		// the file explicitly asks for it off. See the "no notify_permission
+		// key" note in internal/settings/defaults.go.
+		{"StaleNotifyPermissionIsIgnored", `{"notify_permission":false}`, true, true},
+		{"StaleKeyDoesNotBleedIntoAgentFinished", `{"notify_agent_finished":false,"notify_permission":false}`, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

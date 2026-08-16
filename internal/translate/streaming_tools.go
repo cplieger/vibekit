@@ -290,6 +290,21 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, b
 	}
 	buf.Started = true
 	buf.MessageID = t.newMsgID()
+	// FALLBACK attribution only. A prompt latches the model at DISPATCH
+	// (CmdPrompt -> LatchTurnModel), which is what closes the window where a fast
+	// switch lands before the old model's first frame; SetModel is first-write-wins,
+	// so for a dispatched turn this read finds a value already there and changes
+	// nothing.
+	//
+	// It stays for the turns nobody dispatched — an agent-opened turn, a priming
+	// reply — where the chat record is the only evidence of what is answering and
+	// no switch can have raced a dispatch that never happened. Dropping it would
+	// leave those turns with no attribution at all.
+	if !buf.HasModel() {
+		if c, ok := t.deps.ChatStore().Get(ctx, chatID); ok {
+			buf.SetModel(c.Model)
+		}
+	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
 		api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

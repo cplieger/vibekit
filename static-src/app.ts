@@ -61,6 +61,7 @@ import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./reten
 import { initKeyboardShortcuts } from "./keys.js";
 import { handleFindHotkey, openChatFind } from "./find-in-chat.js";
 import { forceSettingsTab, loadSettingsTabData } from "./settings-tabs.js";
+import { flushURLHighlight } from "./settings-highlight.js";
 import { forceGitTab } from "./git-tabs.js";
 import { loadGitRepos } from "./git.js";
 import { restoreLastModel } from "./session-context.js";
@@ -70,6 +71,7 @@ import {
   switchSession,
   sendPrompt,
   installStoreSubscribers,
+  initTranscriptContextMenu,
 } from "./chat.js";
 import { initModelSwitcher } from "./model-switcher.js";
 import { makeExpandable } from "./pill-expand.js";
@@ -172,6 +174,7 @@ function init(): void {
   initUI();
   initShellPanel();
   setCopyCallback((text) => void copyClipboard.dispatch(text, { silent: true }));
+  initTranscriptContextMenu();
   initEditor();
   initFileBrowser();
   initFilePicker();
@@ -707,6 +710,10 @@ function applyRoute(route: Route): void {
         // in settings-tabs.ts (B9).
         onShow: () => {
           loadSettingsTabData(route.tab);
+          // A `?highlight=` on this URL fires after the panel's loader, so the
+          // control it names exists by the time we look for it. One-shot, so a
+          // later popstate back here does not re-flash it.
+          flushURLHighlight();
         },
       });
       break;

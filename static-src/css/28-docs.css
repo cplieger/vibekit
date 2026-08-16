@@ -353,6 +353,41 @@
   border-inline-start: 2px solid var(--c-accent);
 }
 
+/* The unattended note. Quieter than the summary (that is the rule the user is
+   building; this is the standing policy it will run under) but not a footnote:
+   it sits above the actions, because it is what should be read before Save. The
+   yellow edge is the app's caution vocabulary, the same one the always-loaded
+   inclusion badge uses. */
+.sched-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  align-items: start;
+  padding: var(--sp-2);
+  border-radius: var(--r-sm);
+  background: color-mix(in oklch, var(--c-yellow) 8%, transparent);
+  border-inline-start: 2px solid color-mix(in oklch, var(--c-yellow) 45%, transparent);
+}
+
+.sched-note-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--c-yellow);
+}
+
+.sched-note-body {
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  color: var(--c-text-secondary);
+}
+
+/* The live read-out. Stronger than the body because it is the sentence that
+   changes: the paragraph above states the policy, this states its value. */
+.sched-note-state {
+  font-size: var(--fs-xs);
+  color: var(--c-text-primary);
+}
+
 .sched-actions {
   justify-content: flex-end;
 }
