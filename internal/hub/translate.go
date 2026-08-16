@@ -87,8 +87,11 @@ func (h *Hub) initDispatch() {
 		// Workflow-run lifecycle. Nine KAS notifications → three SSE events; the
 		// seven middle kinds share one handler because they mean one thing to a
 		// client ("refetch"). See translate/workflow.go.
-		methodWFRunStart:    h.translator.HandleRunStart,
-		methodWFRunComplete: h.translator.HandleRunComplete,
+		// Wrapped rather than registered bare: the run clock (run_bounds.go) has
+		// to see a run start, pause and finish, and `run_start` is the only frame
+		// vibekit gets for an AGENT-launched run, whose launch path is KAS's.
+		methodWFRunStart:    h.observeRunStart,
+		methodWFRunComplete: h.observeRunComplete,
 	}
 	for method, kind := range map[string]api.RunProgressKind{
 		methodWFNodeStart:     api.RunProgressNodeStart,
@@ -101,6 +104,11 @@ func (h *Hub) initDispatch() {
 	} {
 		h.chatHandlers[method] = h.translator.RunProgressHandler(kind)
 	}
+	// A run-level pause stops the clock, because each arm is a ceiling of
+	// EXECUTING time: a run parked on purpose must not be cancelled for having
+	// been parked. Node-level pauses keep it — a step waiting inside a run that is
+	// still going is exactly what the ceiling is for.
+	h.chatHandlers[methodWFPaused] = h.observeRunPaused(h.chatHandlers[methodWFPaused])
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via
 	// REST, and the session inventory diff which has no client consumer now

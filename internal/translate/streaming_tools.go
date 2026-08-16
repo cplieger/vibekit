@@ -43,6 +43,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	subtask := tc.Meta.Kiro.AgentSubtaskID
 	if wf := tc.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
 		subtask = wf
+		t.countStepTurn(tc.Meta.Kiro.Workflow, wf)
 	}
 	var diffs []api.ToolDiff
 	for _, c := range tc.Content {

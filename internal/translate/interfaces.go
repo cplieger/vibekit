@@ -70,3 +70,18 @@ type ChatStoreDeps interface {
 type RunOriginAccess interface {
 	IsScheduledRun(workflowID string) bool
 }
+
+// RunBoundsAccess reports a workflow STEP that blew its turn cap.
+//
+// One method, and it takes the breach rather than asking permission for it,
+// because the two halves of the cap live in different places on purpose:
+// COUNTING belongs here (the step's tool frames pass through this package, and
+// `_meta.kiro.workflow` is what identifies them), while ENFORCEMENT belongs on
+// the host (it owns the bridges and the only stop verb, which is run-scoped).
+//
+// The host is expected to cancel the whole RUN, since no per-step stop verb
+// exists on the wire; that is the host's decision to state, not this package's to
+// assume, which is why the name says what happened rather than what to do.
+type RunBoundsAccess interface {
+	StepTurnCapExceeded(workflowID, nodeID string, turns int)
+}

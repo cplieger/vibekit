@@ -187,23 +187,26 @@ const (
 	methodKiroWorkflowUpdate = "_kiro/workflow/update"
 )
 
-// v3 (KAS) hook-management method names. list/setEnabled/triggerHook are C→A
-// requests vibekit issues on the utility bridge (which opts into the v2 hook
-// engine via _meta.kiro.hooks={enabled,v2} — see internal/bridge/bridge.go).
-// All three are gated: KAS answers them only when v2Hooks is enabled (verified
-// live — otherwise list throws "not available when v2Hooks is disabled").
-// executeHook is an A→C REQUEST KAS makes back to the client to RUN a
-// runCommand hook's shell command (security-sensitive; answered on the utility
-// bridge only, and only while a user-initiated trigger is in flight — see
-// utility_bridge.go). didChange is an A→C notification KAS emits after a hook
-// file changes. Shapes verified against the KAS 2.12 acp-server bundle + a live
-// probe (see kiro-cli-research.md "v3 _kiro/* wire surface").
+// v3 (KAS) hook-management method names. list/setEnabled are C→A requests
+// vibekit issues on the utility bridge (which opts into the v2 hook engine via
+// _meta.kiro.hooks={enabled,v2} — see internal/bridge/bridge.go). Both are gated:
+// KAS answers them only when v2Hooks is enabled (verified live — otherwise list
+// throws "not available when v2Hooks is disabled"). didChange is an A→C
+// notification KAS emits after a hook file changes. Shapes verified against the
+// KAS 2.12 acp-server bundle + a live probe (see kiro-cli-research.md "v3 _kiro/*
+// wire surface").
+//
+// TWO names KAS still serves are deliberately ABSENT: `_kiro/hooks/triggerHook`
+// (C→A) and `_kiro/hooks/executeHook` (A→C). The pair was Run-now, and answering
+// executeHook is what made vibekit run `sh -c` on a command a hook file specifies.
+// Naming a method here is what makes it reachable, so the names went with the
+// surface rather than being kept "for reference" — the dead-code gate would flag
+// them anyway. Autofire never used them: KAS runs runCommand hooks in its own
+// process.
 const (
-	methodKiroHooksList        = "_kiro/hooks/list"        // C→A request: {workspacePaths?,trigger?,toolId?,includeDisabled?} → {hooks[]}
-	methodKiroHooksSetEnabled  = "_kiro/hooks/setEnabled"  // C→A request: {hookId, enabled} → {success, code?, error?}
-	methodKiroHooksTriggerHook = "_kiro/hooks/triggerHook" // C→A request: {sessionId,hookId,hookName,hookActionType,command|prompt,approved?} → {success, code?, error?}
-	methodKiroHooksExecuteHook = "_kiro/hooks/executeHook" // A→C request: {hookId,hookName,command,sessionId,userPrompt,operationId,timeout?} → {output,exitCode,cancelled?}
-	methodKiroHooksDidChange   = "_kiro/hooks/didChange"   // A→C notification: {hooks[]}
+	methodKiroHooksList       = "_kiro/hooks/list"       // C→A request: {workspacePaths?,trigger?,toolId?,includeDisabled?} → {hooks[]}
+	methodKiroHooksSetEnabled = "_kiro/hooks/setEnabled" // C→A request: {hookId, enabled} → {success, code?, error?}
+	methodKiroHooksDidChange  = "_kiro/hooks/didChange"  // A→C notification: {hooks[]}
 )
 
 // v3 (KAS) Infrastructure-Safety method names. getProperties is a C→A request

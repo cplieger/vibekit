@@ -122,10 +122,25 @@ describe("the sheet's content", () => {
 
   it("lists the bindings that live outside the registry", () => {
     const other = sheetGroups().find((g) => g.name === "Elsewhere");
-    // Escape and `?` (keys.ts, above the modifier gate), Ctrl+F (find-in-chat.ts,
-    // capture phase) and F2 (files.ts). A sheet missing these is wrong for the
-    // reader even though no register() call owns them.
-    expect(other?.rows.map((r) => r.chords[0]?.join("+"))).toEqual(["Esc", "Ctrl+F", "F2", "?"]);
+    // Escape and `?` (keys.ts, above the modifier gate), Ctrl+F TWICE (app.ts's
+    // capture-phase listener routes it by the active tab's kind, so the chord
+    // has two meanings and the sheet says both) and F2 (files.ts). A sheet
+    // missing these is wrong for the reader even though no register() call owns
+    // them.
+    expect(other?.rows.map((r) => r.chords[0]?.join("+"))).toEqual([
+      "Esc",
+      "Ctrl+F",
+      "Ctrl+F",
+      "F2",
+      "?",
+    ]);
+    expect(other?.rows.map((r) => r.description)).toEqual([
+      "Close a dialog, or clear the file browser selection",
+      "Search this conversation",
+      "Find in files, from a file browser or editor tab",
+      "Rename in the file browser",
+      "Show this list",
+    ]);
   });
 
   it("renders every row into the modal and opens it", () => {

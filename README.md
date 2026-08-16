@@ -80,6 +80,7 @@ Vibekit is a full workspace in the browser. Everything below is reachable from a
 **Editing and files** in the browser:
 
 - File browser: navigate, rename, delete, download, and upload (dialog or drag-drop).
+- Find in files (Ctrl+F from the file browser or the editor): a recursive search of file contents under the folder you are looking at, with optional include/exclude patterns. A pattern without a slash matches the file name at any depth (`*.go`); one with a slash matches the path under the folder searched (`src/*.go`); an exclude also skips a whole folder (`node_modules`). There is no index, so the scan is capped and the result says how many files it opened and whether it stopped early.
 - Syntax-highlighted editor with edit/save and deep links to a line (`#L<n>`).
 - Diff view against the last save or against git `HEAD`.
 - Merge-conflict resolver: accept ours/theirs/both per hunk, with an AI "suggest" merge.

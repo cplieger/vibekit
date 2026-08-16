@@ -643,11 +643,6 @@
               <div id="knowledge-list" class="list-container"><div class="list-empty">No knowledge bases yet.</div></div>
             </div>
 
-            <div class="page-section" id="hooks-section">
-              <h3 class="section-title">Hooks</h3>
-              <p class="section-hint">Automations from the workspace's <code>.kiro/hooks/</code> and the global <code>~/.kiro/hooks/</code> (marked <em>Global</em>; they apply in every workspace). Toggle to enable or disable a hook; <strong>Run now</strong> runs a command hook and shows its output. Agent hooks run their prompt in a chat. Hook status messages in chat are controlled by the <code>hooks.showStatus</code> toggle in <strong>General</strong>.</p>
-              <div id="hooks-list" class="list-container"><div class="list-empty">No hooks yet.</div></div>
-            </div>
           </div>
 
         </div>
@@ -866,6 +861,9 @@
               </button>
               <input id="fb-path" class="fb-path" type="text" readonly aria-label="Current path">
               <div class="fb-actions">
+                <button type="button" id="fb-search-btn" class="icon-btn" data-tooltip="Find in files (Ctrl+F)" aria-label="Find in files (Ctrl+F)" aria-pressed="false">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+                </button>
                 <button type="button" id="fb-chat-filter" class="icon-btn" data-tooltip="Highlight files this chat changed" aria-label="Highlight files this chat changed" aria-pressed="false">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54z"/></svg>
                 </button>

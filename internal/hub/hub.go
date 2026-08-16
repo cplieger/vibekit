@@ -151,9 +151,20 @@ type Hub struct {
 	// among the pointer-bearing fields for govet fieldalignment: a slice is 8
 	// of 24 pointer bytes, less dense than a string's 8 of 16.
 	acpArgs []string
-	ciBusy  atomic.Bool
-	// unattendedMu guards unattendedRuns. Non-pointer, so it sits in the tail
-	// with ciBusy rather than among the pointer fields.
+	// runBounds holds the ceiling arms, the termination claims and the recorded
+	// abnormal terminations that let a run's row say what actually happened to it.
+	// See run_bounds.go.
+	//
+	// It carries pointers (three maps and a slice) but ENDS in a plain counter, so
+	// govet fieldalignment wants it after the pointer-only fields above rather than
+	// among them: embedded higher up, that trailing word sits inside the struct's
+	// pointer prefix and costs 8 bytes of scan.
+	runBounds runBoundsState
+	ciBusy    atomic.Bool
+	// unattendedMu guards unattendedRuns AND runBounds. Non-pointer, so it sits
+	// in the tail with ciBusy rather than among the pointer fields. One mutex for
+	// both because they are one subject read together — a run's schedule mark and
+	// its bounds — and two would only invite a lock-order question.
 	unattendedMu sync.Mutex
 }
 

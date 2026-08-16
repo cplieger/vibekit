@@ -17,6 +17,8 @@
 // ---------------------------------------------------------------------------
 
 import { compactChat } from "./actions/chat.js";
+import { isThinking, setThinking } from "./store.js";
+import { showToast } from "./toast.js";
 
 /** Handles a typed command. Returns true when it consumed the input, so the
  *  caller must NOT also send it as a prompt. */
@@ -31,7 +33,53 @@ const HANDLERS: Record<string, TypedHandler> = {
     void compactChat.dispatch({ chatID });
     return true;
   },
+  drop: dropTurn,
 };
+
+/**
+ * `/drop` — end the turn CLIENT-SIDE and put the composer back in prompt mode.
+ *
+ * The problem it solves is that the two obvious recoveries both need the engine
+ * to still be answering, and the state this fixes is the one where it is not.
+ * While `thinking` is set, Send means STEER (submit.ts), so typing "continue"
+ * goes into KAS's steering buffer where a dead turn never reads it; and the
+ * button's click target is Cancel, which is `session/cancel` plus a grace budget
+ * that only resolves when KAS answers the pending prompt. So the only thing that
+ * worked was reloading the page, which rebuilds the whole client and refetches
+ * to change one boolean.
+ *
+ * ONE write, and everything else follows from the existing reactive chain:
+ * send-state.ts recomputes to `idle`, prompt-input.ts restores the button to
+ * `type="submit"`, and submit.ts's `isThinking` check now routes the next Send
+ * as a PROMPT. It asks the engine for nothing, which is the whole point.
+ *
+ * Not a break of "server state is canonical": `thinking` is client/stream-owned
+ * (store.ts says so, and it is seeded false at chat creation), and the app
+ * already performs this exact transition unattended — the `transport:gap`
+ * handler clears it on EVERY chat as its safe default. This is the
+ * user-triggered, single-chat version of that.
+ *
+ * If the turn was in fact alive, nothing is lost and nothing lies: the next
+ * prompt reaches a busy session, the server answers 409, and submit.ts steers
+ * into the running turn exactly as it would have.
+ *
+ * Deliberately does NOT clear KAS's steering buffer. That would be a command,
+ * and a verb whose contract is "requires nothing from the engine" cannot depend
+ * on one answering. `steer_clear` is the affordance for that and stays the
+ * Discard × on the chip row.
+ */
+function dropTurn(chatID: string): boolean {
+  if (!isThinking(chatID)) {
+    // Already idle. Claimed anyway rather than passed through: sending "/drop"
+    // to the model is worse than doing nothing, and the toast says why nothing
+    // happened.
+    showToast("No turn is running on this chat.", "info");
+    return true;
+  }
+  setThinking(chatID, false);
+  showToast("Dropped the turn locally. The agent was not told to stop.", "info");
+  return true;
+}
 
 /**
  * Consume a typed command if the table claims it.

@@ -145,8 +145,17 @@ func (h *Hub) armRunDeadline(workflowID, scheduleID string, deadline time.Time) 
 // unattended had not finished at its deadline. That is the fact being recorded, so
 // a run that completes microseconds later does not make the record wrong — it
 // overran, and the check is the evidence.
+//
+// The termination claim is the SECOND gate, and everything below it — the log
+// line, the reason, the cancel and the schedule's own outcome row — happens only
+// for the caller that took it. Without it this path recorded `overran` even when
+// the step cap had already recorded `step_cap` for the same run, and the second
+// write overwrote the first while both issued a cancel.
 func (h *Hub) cancelOverrunRun(workflowID, scheduleID string) {
 	if _, live := h.scheduleForRun(workflowID); !live {
+		return
+	}
+	if !h.claimRunTermination(workflowID) {
 		return
 	}
 	ctx, cancel := h.hubContext()
@@ -155,7 +164,10 @@ func (h *Hub) cancelOverrunRun(workflowID, scheduleID string) {
 	// ERROR rather than Warn: a schedule that stopped producing is the app's one
 	// genuinely unattended failure, and a homelab Loki rule keys on this message.
 	slog.Error(logMsgRunOverran, "workflow_id", workflowID, "schedule_id", scheduleID)
-	if err := h.CancelRun(ctx, workflowID); err != nil {
+	// The row must not read like a user cancel. The cancel below is the same verb
+	// the Cancel button reaches, so without the record the two are
+	// indistinguishable afterwards — the gap D56c closes.
+	if err := h.finishRunTermination(ctx, workflowID, runEndOverran); err != nil {
 		// Report it anyway. The run overran whether or not the cancel landed, and
 		// a schedule row that stays on "started" is the silence this exists to end.
 		slog.Error("could not cancel an overrunning scheduled run",
@@ -217,11 +229,38 @@ func (h *Hub) launchRun(ctx context.Context, source string, inputs map[string]st
 		h.coord.CloseBridge(runChatID(wfID))
 		return "", "", fmt.Errorf("workflow invoke: %w", err)
 	}
+	// The wall clock, for every run this path launches — manual and scheduled
+	// alike (run_bounds.go). After invoke, so a run that never started leaves no
+	// timer, and idempotent with the `run_start` frame's own arm.
+	h.armRunCeiling(wfID)
 	slog.Info("workflow run launched", "workflow_id", wfID, "recipe", recipe.Name)
 	return wfID, recipe.Name, nil
 }
 
-// CancelRun asks a run to stop.
+// CancelRun asks a run to stop, on the USER's behalf.
+//
+// It takes the run's termination claim like every bound does (run_bounds.go), and
+// that is what keeps a deliberate stop from being relabelled: a cancel pressed
+// seconds before a ceiling or a schedule deadline used to race a bound callback
+// that still saw a live gate, and the row afterwards read "overran" for a run the
+// user stopped on purpose. Winning records NOTHING, and that absence is the third
+// value the row's one field carries.
+//
+// A LOST claim returns nil rather than an error, because the run is already being
+// cancelled by something that got there first — the gesture's outcome is the one
+// the caller asked for. When the claim is won and the RPC then fails, the claim is
+// handed back, so a later Cancel is not silently refused.
+func (h *Hub) CancelRun(ctx context.Context, workflowID string) error {
+	if workflowID == "" {
+		return errors.New("missing workflow id")
+	}
+	if !h.claimRunTermination(workflowID) {
+		return nil
+	}
+	return h.finishRunTermination(ctx, workflowID, "")
+}
+
+// cancelRunRPC issues the cancel VERB and nothing else — no claim, no record.
 //
 // On the run's own bridge when one is live (the manual-launch case); through
 // the utility session otherwise — an agent-launched run, or one from a
@@ -230,7 +269,7 @@ func (h *Hub) launchRun(ctx context.Context, source string, inputs map[string]st
 // `run_complete` the cancel eventually produces closes it (see runDispatch),
 // because the owning process must live to the node boundary to certify the
 // cancelled state.
-func (h *Hub) CancelRun(ctx context.Context, workflowID string) error {
+func (h *Hub) cancelRunRPC(ctx context.Context, workflowID string) error {
 	return h.runControl(ctx, workflowID, methodKiroWorkflowCancel, "workflow cancel call")
 }
 
@@ -262,8 +301,16 @@ func (h *Hub) PauseRun(ctx context.Context, workflowID string) error {
 }
 
 // ResumeRun re-drives a paused run.
+//
+// Re-arms the wall clock, because the pause dropped it (run_bounds.go): a resumed
+// run is executing again and gets a fresh ceiling. `run_start` re-fires on resume
+// and arms too; whichever lands first wins.
 func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
-	return h.hostedRunControl(ctx, workflowID, methodKiroWorkflowResume)
+	err := h.hostedRunControl(ctx, workflowID, methodKiroWorkflowResume)
+	if err == nil {
+		h.armRunCeiling(workflowID)
+	}
+	return err
 }
 
 // RetryRun re-hosts a finished run and resets its failed work.
@@ -299,6 +346,12 @@ func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
 	// aborted without a terminal frame can still be registered.
 	if sb := h.bridge.mgr.get(chatID); sb != nil {
 		_, err := sb.Call(ctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
+		if err == nil {
+			// Only on success, and in this order: a retry KAS refused re-drove
+			// nothing, so the run's previous terminal reason is still the truth
+			// about it and its row must keep saying so.
+			h.rearmRetriedRun(workflowID)
+		}
 		return err
 	}
 
@@ -321,6 +374,11 @@ func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
 		h.coord.CloseBridge(chatID)
 		return fmt.Errorf("workflow retry: %w", err)
 	}
+	// A fresh clock and a clean row, both only now that the retry has landed: the
+	// run is executing again, so its recorded termination is no longer a fact
+	// about it — and the client deliberately lets a recognised end_reason outrank
+	// live status, so leaving it would render the running retry as aborted.
+	h.rearmRetriedRun(workflowID)
 	slog.Info("workflow run retried", "workflow_id", workflowID)
 	return nil
 }

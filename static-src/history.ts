@@ -43,8 +43,9 @@ interface HistoryRow {
   kind: "chat" | "run";
   title: string;
   updatedAt: number;
-  /** Secondary line: the agent's focus for a chat. Empty on a run, whose outcome
-   *  is the glyph's to state and whose status is the status slot's. */
+  /** Secondary line: the agent's focus for a chat. On a run, empty unless one of
+   *  vibekit's run bounds stopped it — the one ending the glyph and the status
+   *  slot cannot express between them (see END_REASON_TEXT). */
   detail: string;
   status: string;
   /** The verdict this row states as a glyph, or null when there is none to
@@ -59,14 +60,37 @@ interface HistoryRow {
  *  into the shared outcome vocabulary with no translation table here. */
 type RunVerdict = "completed" | "failed" | "aborted";
 
+/** How a bounded termination reads. The keys are the server's vocabulary
+ *  (api.WorkflowRun.EndReason); the sentences are the reader's.
+ *
+ *  A run stopped by one of vibekit's own bounds is the one ending KAS's status
+ *  cannot describe: both bounds terminate through the same cancel a person uses,
+ *  so the status is `aborted` for a backstop and for a click alike. This is where
+ *  the difference is stated. */
+const END_REASON_TEXT: Readonly<Record<string, string>> = {
+  overran: "stopped: it ran past its time limit",
+  step_cap: "stopped: a step ran past its turn limit",
+};
+
 /** A run's verdict, or null for a run with none to state.
  *
  *  Exhaustive over `RUN_STATUSES` (run-controls.ts): `running` and `paused`
  *  return null because their live status already renders in the status slot and
  *  a verdict is a claim only a settled run can make. An unknown status returns
  *  null for a different reason — it degrades to the status word rather than
- *  being guessed into a green check. */
-function runVerdict(status: string): RunVerdict | null {
+ *  being guessed into a green check.
+ *
+ *  A RECOGNISED `end_reason` OUTRANKS the status, and has to: a bound cancels the
+ *  run, so KAS reports it `aborted` at best and `running` if the frame has not
+ *  landed yet, and a row that reads "running" for a run vibekit already stopped
+ *  is the lie the field exists to remove. Recognised rather than merely non-empty,
+ *  so one vocabulary decides both the sentence and the verdict: an unknown value
+ *  degrades to the status word rather than repainting a completed run as aborted
+ *  with nothing on the row to explain why. */
+function runVerdict(status: string, endReason = ""): RunVerdict | null {
+  if (END_REASON_TEXT[endReason] !== undefined) {
+    return "aborted";
+  }
   switch (status) {
     case "completed":
     case "failed":
@@ -133,14 +157,19 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
     // agent's to handle, and labelling it here would invite an action this
     // page deliberately does not offer.
     const parentless = (r.parent_chat_id ?? "") === "";
+    const endReason = r.end_reason ?? "";
     rows.push({
       key: `r:${r.workflow_id}`,
       kind: "run",
       title: r.name === "" ? "Untitled run" : r.name,
       updatedAt: r.updated_at,
-      detail: "",
+      // A bound's reason is stated whatever the run's parentage, unlike the
+      // verdict below: it is a report of what VIBEKIT did to the run, not a
+      // judgement of the run, so withholding it from an agent-parented row would
+      // hide the app's own action from the only reader who can see it.
+      detail: END_REASON_TEXT[endReason] ?? "",
       status: r.status ?? "",
-      outcome: parentless ? runVerdict(r.status ?? "") : null,
+      outcome: parentless ? runVerdict(r.status ?? "", endReason) : null,
       run: r,
     });
   }

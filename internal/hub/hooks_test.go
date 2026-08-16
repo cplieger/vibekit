@@ -1,14 +1,11 @@
 package hub
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/cplieger/vibekit/internal/api"
 )
 
 func TestHookIDRoundTrip(t *testing.T) {
@@ -62,27 +59,6 @@ func TestParseHookResult(t *testing.T) {
 				t.Errorf("Code: got %q want %q", res.Code, tt.code)
 			}
 		})
-	}
-}
-
-func TestHookCappedBuffer(t *testing.T) {
-	var b hookCappedBuffer
-	// Write just under, then over the cap.
-	first := strings.Repeat("a", hookOutputCap-10)
-	if _, err := b.Write([]byte(first)); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if b.truncated {
-		t.Fatal("truncated too early")
-	}
-	if _, err := b.Write([]byte(strings.Repeat("b", 100))); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if !b.truncated {
-		t.Error("expected truncated after exceeding cap")
-	}
-	if b.buf.Len() != hookOutputCap {
-		t.Errorf("buffer len: got %d want %d", b.buf.Len(), hookOutputCap)
 	}
 }
 
@@ -188,99 +164,4 @@ func TestToHookInfo(t *testing.T) {
 	if agent.Enabled || agent.DisabledReason != "untrusted-workspace" {
 		t.Errorf("askAgent meta wrong: %+v", agent)
 	}
-}
-
-func TestRunHookCommand(t *testing.T) {
-	h := &Hub{lifecycle: &lifecyclePlane{workDir: t.TempDir()}}
-	ctx := t.Context()
-
-	t.Run("captures output, exit 0", func(t *testing.T) {
-		res := h.runHookCommand(ctx, "printf 'hello world'", 0)
-		if !res.Ran || res.ExitCode != 0 {
-			t.Fatalf("got %+v", res)
-		}
-		if !strings.Contains(res.Output, "hello world") {
-			t.Errorf("output missing: %q", res.Output)
-		}
-	})
-
-	t.Run("non-zero exit", func(t *testing.T) {
-		res := h.runHookCommand(ctx, "exit 3", 0)
-		if res.ExitCode != 3 {
-			t.Errorf("exit code: got %d want 3", res.ExitCode)
-		}
-	})
-
-	t.Run("empty command is a no-op", func(t *testing.T) {
-		res := h.runHookCommand(ctx, "   ", 0)
-		if !res.Ran || res.ExitCode != 0 || res.Output != "" {
-			t.Errorf("got %+v", res)
-		}
-	})
-
-	t.Run("output is capped + truncation-marked", func(t *testing.T) {
-		res := h.runHookCommand(ctx, `head -c 200000 </dev/zero | tr '\0' x`, 0)
-		if len(res.Output) > hookOutputCap+64 {
-			t.Errorf("output not capped: len %d", len(res.Output))
-		}
-		if !strings.Contains(res.Output, "[output truncated]") {
-			t.Errorf("missing truncation marker")
-		}
-	})
-
-	t.Run("ANSI escapes are stripped (SanitizeOutput)", func(t *testing.T) {
-		res := h.runHookCommand(ctx, `printf '\033[31mred\033[0m'`, 0)
-		if strings.Contains(res.Output, "\033[") {
-			t.Errorf("ANSI not stripped: %q", res.Output)
-		}
-		if !strings.Contains(res.Output, "red") {
-			t.Errorf("text lost: %q", res.Output)
-		}
-	})
-}
-
-// TestAnswerExecuteHook covers the security gate on the A→C executeHook
-// callback: a hook command runs ONLY while a user-initiated trigger is in
-// flight (expectingHookExec); otherwise the callback is refused (cancelled).
-func TestAnswerExecuteHook(t *testing.T) {
-	execParams := json.RawMessage(`{"command":"echo hi","timeout":5,"hookName":"g"}`)
-
-	t.Run("refuses when no trigger is in flight", func(t *testing.T) {
-		rb := newRespondingBridge()
-		ran := false
-		us := &utilitySession{hooks: utilitySessionHooks{runHookCommand: func(context.Context, string, int) hookRunResult {
-			ran = true
-			return hookRunResult{}
-		}}}
-		id := int64(1)
-		us.answerExecuteHook(rb, &api.RPCResponse{ID: &id, Method: methodKiroHooksExecuteHook, Params: execParams})
-		if ran {
-			t.Fatal("command ran without an in-flight trigger")
-		}
-		rb.respMu.Lock()
-		defer rb.respMu.Unlock()
-		m, _ := rb.response.result.(map[string]any)
-		if m["cancelled"] != true {
-			t.Errorf("expected cancelled:true, got %v", rb.response.result)
-		}
-	})
-
-	t.Run("runs + captures result when a trigger is in flight", func(t *testing.T) {
-		rb := newRespondingBridge()
-		us := &utilitySession{hooks: utilitySessionHooks{runHookCommand: func(_ context.Context, cmd string, _ int) hookRunResult {
-			return hookRunResult{Output: "ran:" + cmd, ExitCode: 0, Ran: true}
-		}}}
-		us.expectingHookExec.Store(true)
-		id := int64(2)
-		us.answerExecuteHook(rb, &api.RPCResponse{ID: &id, Method: methodKiroHooksExecuteHook, Params: execParams})
-		if run := us.lastHookRun.Load(); run == nil || run.Output != "ran:echo hi" {
-			t.Fatalf("lastHookRun not captured: %+v", run)
-		}
-		rb.respMu.Lock()
-		defer rb.respMu.Unlock()
-		m, _ := rb.response.result.(map[string]any)
-		if m["output"] != "ran:echo hi" {
-			t.Errorf("executeHook response output wrong: %v", rb.response.result)
-		}
-	})
 }

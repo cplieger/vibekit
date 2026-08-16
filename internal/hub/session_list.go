@@ -269,6 +269,11 @@ func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]api.ChatID) (
 			// Attributed through the launching session's chain, so a run
 			// launched by a chat that has since changed session still resolves.
 			ParentChatID: string(claimed[r.ParentSessionID]),
+			// Joined from the host, because KAS has no field for it: both run
+			// bounds stop a run through the same cancel a person does, so the
+			// reason has to come from the side that decided. "" for everything
+			// else, including a user cancel. See run_bounds.go.
+			EndReason: h.runEndReason(r.WorkflowID),
 		})
 	}
 	// Stable: ties must keep insertion order or the run list reshuffles

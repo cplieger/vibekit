@@ -39,14 +39,16 @@ const policyCallTimeout = 45 * time.Second
 // knowledge) with its hooks-management plumbing injected.
 //
 // The utility session opts into KAS's v2 hook engine (enableHooks →
-// _meta.kiro.hooks) so the hooks dashboard can list/toggle/trigger hooks over
-// it; chat bridges deliberately don't (see hooks.go). It issues no agent tool
-// calls, so no hook ever auto-fires here — the only executeHook it answers is a
-// user-initiated "Run now" trigger, gated on expectingHookExec.
+// _meta.kiro.hooks) so the Hooks tab can list and toggle hooks over it. Chat
+// bridges opt in too (bridge_coord.go passes EnableHooks:true on both the new-
+// and the loaded-session path), because that is what makes hook AUTOFIRE work.
+// Neither answers `executeHook`, and neither needs to: autofire runs the hook
+// inside KAS and never reaches for that callback, so the deleted responder is not
+// a gap in either session's plumbing (see hooks.go).
 //
 // NOTE the deliberate cycle this lazy in-package constructor resolves:
-// the utilitySessionHooks callbacks below (runHookCommand,
-// broadcastHooksChanged, cacheGovernanceFromUtility) point back INTO the
+// the utilitySessionHooks callbacks below (broadcastHooksChanged,
+// cacheGovernanceFromUtility) point back INTO the
 // hub's service surfaces, while those same services lease the utility
 // runtime through this method — a bidirectional edge, not a forward-only
 // seam. Any extraction of the utility runtime into its own package must
@@ -57,7 +59,6 @@ func (h *Hub) ensureUtility() *utilityRuntime {
 		h.bridge.utility = newUtilityRuntime(
 			h.lifecycle.shutdownCtx, h.bridge.factory, h.Models,
 			utilitySessionHooks{
-				runHookCommand:    h.runHookCommand,
 				onHooksChanged:    h.broadcastHooksChanged,
 				onGovernanceState: h.cacheGovernanceFromUtility,
 				tokenSource:       h.kiroAccessTokenResult,

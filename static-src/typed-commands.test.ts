@@ -13,10 +13,20 @@ vi.mock("./actions/chat.js", () => ({
   },
 }));
 
+const toasts: string[] = [];
+vi.mock("./toast.js", () => ({
+  showToast: (msg: string) => {
+    toasts.push(msg);
+    return () => undefined;
+  },
+}));
+
 const { handleTypedCommand } = await import("./typed-commands.js");
+const store = await import("./store.js");
 
 beforeEach(() => {
   dispatch.mockReset();
+  toasts.length = 0;
 });
 
 describe("handleTypedCommand", () => {
@@ -58,5 +68,82 @@ describe("handleTypedCommand", () => {
   it("refuses without a chat", () => {
     expect(handleTypedCommand("", "/compact")).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+// `/drop` is the one verb that asks the engine for nothing. That is its whole
+// contract, so the tests assert BOTH halves: the composer leaves steer mode, and
+// no command travels.
+describe("handleTypedCommand /drop", () => {
+  function seedThinking(...ids: string[]): void {
+    store.setSessions(
+      ids.map((id) => ({
+        id,
+        name: "test",
+        model: "",
+        acp_session_id: "",
+        current_mode_id: "",
+        available_modes: [],
+        available_models: [],
+        usage: {
+          context_pct: 0,
+          context_size: 0,
+          credits: 0,
+          turn_count: 0,
+          last_turn_ms: 0,
+          has_real_data: false,
+        },
+        message_count: 0,
+        messages: [],
+        has_more: false,
+        thinking: false,
+        working_label: "Thinking",
+      })),
+    );
+    store.setActive(ids[0] ?? "");
+    for (const id of ids) {
+      store.setThinking(id, true);
+    }
+  }
+
+  it("returns the composer to prompt mode by clearing thinking", () => {
+    seedThinking("c1");
+    expect(store.isThinking("c1")).toBe(true);
+    expect(handleTypedCommand("c1", "/drop")).toBe(true);
+    // This is what makes the next Send a PROMPT rather than a steer: submit.ts
+    // branches on exactly this read.
+    expect(store.isThinking("c1")).toBe(false);
+  });
+
+  it("dispatches no command, so it needs nothing from the engine", () => {
+    seedThinking("c1");
+    handleTypedCommand("c1", "/drop");
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("says the agent was not told to stop", () => {
+    seedThinking("c1");
+    handleTypedCommand("c1", "/drop");
+    expect(toasts.at(-1)).toContain("not told to stop");
+  });
+
+  it("claims the verb on an idle chat rather than sending it to the model", () => {
+    seedThinking("c1");
+    store.setThinking("c1", false);
+    expect(handleTypedCommand("c1", "/drop")).toBe(true);
+    expect(toasts.at(-1)).toContain("No turn is running");
+  });
+
+  it("touches only the named chat", () => {
+    seedThinking("c1", "c2");
+    handleTypedCommand("c2", "/drop");
+    expect(store.isThinking("c1")).toBe(true);
+    expect(store.isThinking("c2")).toBe(false);
+  });
+
+  it("does not claim /drop with arguments", () => {
+    seedThinking("c1");
+    expect(handleTypedCommand("c1", "/drop this turn")).toBe(false);
+    expect(store.isThinking("c1")).toBe(true);
   });
 });

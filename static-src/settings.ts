@@ -21,7 +21,6 @@ import { initSettingsTabs } from "./settings-tabs.js";
 import { initPermissionsUI, initNativePolicyUI, loadNativePolicy } from "./permissions-ui.js";
 import { initMCP } from "./mcp-ui.js";
 import { initKnowledge, loadKnowledge } from "./knowledge.js";
-import { initHooks, loadHooks } from "./hooks.js";
 // (forge-auth.ts is imported by git-sources-tab.ts now; no settings-side
 // import needed since the "Git & forges" Settings tab was retired.)
 import { apiGet } from "./api-client.js";
@@ -164,18 +163,19 @@ function initChatRetention(s: AppSettings): void {
 
 // --- UI init ---
 
-/** Load the lists the Instructions tab shows: the workspace knowledge bases and
- *  the hooks dashboard. Fired once on the tab's first activation via the
- *  settings-tabs loader map.
+/** Load the one list the Instructions tab still shows: the workspace knowledge
+ *  bases. Fired once on the tab's first activation via the settings-tabs loader
+ *  map.
  *
- *  The ".kiro/ steering docs, skills & agents" list is NOT here any more — it
- *  moved to the Kiro configuration browser (the book icon, docs.ts), which shows
- *  the whole inventory with its front-matter rather than three flat groups. The
- *  /api/workspace/kiro-config ENDPOINT stays: role-picker.ts fetches it to seed
- *  the mode picker with workspace agents before a session exists. */
+ *  TWO lists left this panel, and for the same reason both times: a `.kiro`
+ *  inventory belongs on the page that shows `.kiro` inventories. The steering /
+ *  skills / agents list went to the configuration browser first, and the HOOKS
+ *  dashboard followed it — hooks are `.kiro` files with a trigger, and keeping
+ *  them here meant one file family had two homes with different affordances in
+ *  each. The /api/workspace/kiro-config ENDPOINT stays: role-picker.ts fetches it
+ *  to seed the mode picker with workspace agents before a session exists. */
 function loadInstructionsPanel(): void {
   loadKnowledge();
-  loadHooks();
 }
 
 export function initUI(): void {
@@ -206,7 +206,6 @@ export function initUI(): void {
   initTools();
   initMCP();
   initKnowledge();
-  initHooks();
   initAllModals();
 
   // The "Git & forges" tab in Settings was retired with the multi-repo

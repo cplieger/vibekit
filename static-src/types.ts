@@ -254,6 +254,11 @@ export interface WorkflowRunRow {
   name: string;
   status?: string;
   parent_chat_id?: string;
+  /** Why a run BOUND stopped this run: "overran" (a wall clock) or "step_cap" (a
+   *  step's turn cap). Absent for every other ending, INCLUDING a user cancel —
+   *  which is the point of the field, since both bounds stop a run through the
+   *  same cancel a person uses and KAS reports `aborted` either way. */
+  end_reason?: string;
   updated_at: number;
   created_at?: number;
   started_at?: number;

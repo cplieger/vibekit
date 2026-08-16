@@ -315,6 +315,92 @@ describe("history: a run's outcome is a glyph, not a word", () => {
 });
 
 // ---------------------------------------------------------------------------
+// A run one of vibekit's own bounds stopped (D56c). Both bounds terminate through
+// the same cancel a person uses, and KAS's status vocabulary has no "cancelled",
+// so an overrun and a click both land on `aborted` — the row cannot tell them
+// apart from the status alone, which is the whole reason `end_reason` exists.
+// ---------------------------------------------------------------------------
+
+describe("history: an overrun reads differently from a cancel", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    hasTab.mockReturnValue(false);
+    toggleHistoryView.mockImplementation((onShow: () => void) => {
+      onShow();
+    });
+  });
+
+  it("says a wall-clock overrun stopped the run", async () => {
+    const c = await render({
+      sessions: [],
+      runs: [{ ...runRow, status: "aborted", end_reason: "overran" }],
+    });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.textContent).toContain("ran past its time limit");
+  });
+
+  it("says a step's turn cap stopped the run", async () => {
+    const c = await render({
+      sessions: [],
+      runs: [{ ...runRow, status: "aborted", end_reason: "step_cap" }],
+    });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.textContent).toContain("a step ran past its turn limit");
+  });
+
+  it("says nothing extra for a user cancel, which is the same status", async () => {
+    // The distinguisher is the ABSENCE of a reason. If this row grew a sentence,
+    // the field would be describing every abort rather than the two vibekit
+    // caused.
+    const c = await render({ sessions: [], runs: [runAt("aborted")] });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.textContent).not.toContain("ran past");
+    expect(row.querySelector(".list-row-summary")).toBeNull();
+  });
+
+  it("settles a run the terminal frame has not caught up with yet", async () => {
+    // A bound cancels at a node boundary, so KAS can still report `running` for a
+    // run vibekit already stopped. The reason outranks the status, or the row
+    // reads "running" forever.
+    const c = await render({
+      sessions: [],
+      runs: [{ ...runRow, status: "running", end_reason: "overran" }],
+    });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.querySelector(".tool-icon")).not.toBeNull();
+    expect(row.querySelector(".history-status")).toBeNull();
+    expect(row.getAttribute("aria-label")).toBe("Open feature-pipeline, aborted");
+  });
+
+  it("states the reason on an agent-parented run too", async () => {
+    // The verdict is withheld from an agent-parented row (its recovery is the
+    // agent's), but this sentence reports what VIBEKIT did to the run, and hiding
+    // the app's own action from the only reader who can see it would be worse.
+    const c = await render({
+      sessions: [],
+      runs: [{ ...runRow, status: "aborted", parent_chat_id: "c-owner", end_reason: "overran" }],
+    });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.querySelector(".tool-icon")).toBeNull();
+    expect(row.textContent).toContain("ran past its time limit");
+  });
+
+  it("ignores an end reason it does not recognise", async () => {
+    // `end_reason` is a plain string on the wire. An unknown value must not print
+    // a raw enum at the reader, and must not repaint a COMPLETED run as aborted
+    // with nothing on the row to explain why: one vocabulary decides both.
+    const c = await render({
+      sessions: [],
+      runs: [{ ...runRow, status: "completed", end_reason: "quiesced" }],
+    });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.textContent).not.toContain("quiesced");
+    expect(row.getAttribute("aria-label")).toBe("Open feature-pipeline, succeeded");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The tab-restore path. It needs a plain loader because the toggle-style opener
 // would CLOSE the already-active tab it was fired from.
 // ---------------------------------------------------------------------------

@@ -166,6 +166,25 @@
   font-style: italic;
 }
 
+/* A hook that lives outside the workspace (~/.kiro/hooks) and applies in every
+   one. Outlined rather than filled, like the badge it replaces on the retired
+   Settings dashboard: it says WHERE the hook lives, not what it does. Its
+   tooltip carries the path, because this is the row that cannot open it. */
+.docs-badge-global {
+  background: transparent;
+  border-color: var(--c-border);
+  color: var(--c-text-secondary);
+}
+
+/* KAS reports this hook as effectively off (an untrusted workspace, an empty
+   command). Amber and advisory, matching the note it replaces: the row's toggle
+   may well read enabled, and this is why that is not the whole story. */
+.docs-badge-disabled {
+  background: color-mix(in oklch, var(--c-yellow) 14%, transparent);
+  border-color: color-mix(in oklch, var(--c-yellow) 34%, transparent);
+  color: var(--c-yellow);
+}
+
 /* --- Git status letter -------------------------------------------------- */
 
 /* Same letters as the git view and the file browser (M/A/D/R/?/U), so a user

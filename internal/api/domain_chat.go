@@ -653,7 +653,24 @@ type WorkflowRun struct {
 	// the launching session's chain. Empty for a run with no vibekit parent
 	// (launched from the TUI, or by a chat vibekit no longer keeps).
 	ParentChatID string `json:"parent_chat_id,omitempty"`
-	UpdatedAt    int64  `json:"updated_at"`
-	CreatedAt    int64  `json:"created_at,omitempty"`
-	StartedAt    int64  `json:"started_at,omitempty"`
+	// EndReason says why a run STOPPED when something other than the run itself
+	// decided that: "overran" (it blew a wall clock — its schedule's next slot or
+	// the universal ceiling) or "step_cap" (one of its steps blew its turn cap).
+	//
+	// It exists because KAS's status cannot answer the question. Both bounds
+	// terminate a run through the same CancelRun the Cancel button reaches, so the
+	// run reports `cancelled` either way and a reader cannot tell a backstop from
+	// a person. Recording the reason rather than wrapping the cancel in a timeout
+	// is deliberate for that reason: a plain timeout wrapper conflates "exceeded
+	// its ceiling" with "was cancelled", which is the conflation this removes.
+	//
+	// A user cancel records NOTHING, so absence is the third value and no
+	// "cancelled_by_user" spelling is needed. Not KAS's field and not persisted:
+	// vibekit keeps it in memory for the runs it stopped in THIS process (see
+	// hub.runBoundsState), so a run stopped before a restart falls back to the
+	// plain status. Empty for every run that ended on its own terms.
+	EndReason string `json:"end_reason,omitempty"`
+	UpdatedAt int64  `json:"updated_at"`
+	CreatedAt int64  `json:"created_at,omitempty"`
+	StartedAt int64  `json:"started_at,omitempty"`
 }

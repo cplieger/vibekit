@@ -7,7 +7,9 @@ package hub
 
 import (
 	"encoding/json"
+	"errors"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -322,5 +324,132 @@ func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
 	defer at.mu.Unlock()
 	if len(at.terms) != 0 || len(at.byChatID["c1"]) != 0 {
 		t.Errorf("no-op kill mutated the registry: %d terms", len(at.terms))
+	}
+}
+
+// TestRetryRun_SuccessClearsTheOldTerminalReason is finding 9 on the hosted
+// branch, end to end through the verb.
+//
+// Retry reuses the workflow id, so a run stopped as `overran` carried that reason
+// into its retry — and history.ts deliberately lets a recognised end_reason
+// outrank live status, so the running retry rendered as aborted and stayed that way
+// after it succeeded.
+func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowRetry: json.RawMessage(`{}`)}
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+
+	// The run as the bounds left it: terminated, reason recorded, claim taken.
+	h.claimRunTermination(id)
+	h.recordRunEnd(id, runEndOverran)
+
+	if err := h.RetryRun(t.Context(), id); err != nil {
+		t.Fatalf("RetryRun: %v", err)
+	}
+	if got := h.runEndReason(id); got != "" {
+		t.Errorf("the retried run still reads %q, so its row renders as aborted", got)
+	}
+	if !h.runCeilingArmed(id) {
+		t.Error("the retried run holds no ceiling arm, so nothing bounds it")
+	}
+	// The claim went with the reason, or no bound could ever stop the retry.
+	if !h.claimRunTermination(id) {
+		t.Error("the retried run kept its termination claim")
+	}
+}
+
+// TestRetryRun_FailureKeepsTheOldTerminalReason is the other half, and the reason
+// the clear happens AFTER the RPC rather than before it: a retry KAS refused
+// re-drove nothing, so the previous terminal reason is still the truth about that
+// run and its row must keep saying so.
+func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+
+	h.claimRunTermination(id)
+	h.recordRunEnd(id, runEndOverran)
+
+	if err := h.RetryRun(t.Context(), id); err == nil {
+		t.Fatal("a refused retry reported success")
+	}
+	if got := h.runEndReason(id); got != runEndOverran {
+		t.Errorf("the refused retry cleared the reason to %q; the run is still aborted", got)
+	}
+	if h.runCeilingArmed(id) {
+		t.Error("a refused retry armed a ceiling for a run that is not executing")
+	}
+}
+
+// TestCancelRun_LostClaimIssuesNoSecondCancel pins the loser's half of the
+// termination claim on the public verb: something is already ending the run, so the
+// user's Cancel must not send a second cancel or overwrite the winner's reason.
+// It reports success because the outcome the caller asked for is the one happening.
+func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+
+	// A bound got there first.
+	if !h.claimRunTermination(id) {
+		t.Fatal("the fixture could not take the claim it needs to hold")
+	}
+	h.recordRunEnd(id, runEndStepCap)
+
+	if err := h.CancelRun(t.Context(), id); err != nil {
+		t.Errorf("CancelRun on an already-terminating run = %v, want nil", err)
+	}
+	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Error("a second cancel went out for a run already being cancelled")
+	}
+	if got := h.runEndReason(id); got != runEndStepCap {
+		t.Errorf("the row reads %q; the losing cancel overwrote the winner's reason", got)
+	}
+}
+
+// TestCancelRun_WinsTheClaimAndRecordsNothing: the user's cancel is the one
+// terminal path that records NO reason, because its absence is what makes the two
+// bounds distinguishable from a person on the History row.
+func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+	h.armRunCeiling(id)
+
+	if err := h.CancelRun(t.Context(), id); err != nil {
+		t.Fatalf("CancelRun: %v", err)
+	}
+	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
+		t.Error("the cancel verb never went out")
+	}
+	if got := h.runEndReason(id); got != "" {
+		t.Errorf("a user cancel recorded %q", got)
+	}
+	if h.runCeilingArmed(id) {
+		t.Error("the cancelled run kept its wall clock running")
+	}
+	// The claim is held, so a bound firing behind the cancel cannot relabel it.
+	if h.claimRunTermination(id) {
+		t.Error("the cancelled run's claim was not held, so a late bound can still record over it")
+	}
+}
+
+// TestCancelRun_FailedRPCHandsTheClaimBack: the claim means a termination is in
+// flight or landed. A cancel KAS refused is neither, so holding the claim would
+// make every later Cancel on a still-executing run silently do nothing.
+func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("kas refused")}
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+
+	if err := h.CancelRun(t.Context(), id); err == nil {
+		t.Fatal("a refused cancel reported success")
+	}
+	if !h.claimRunTermination(id) {
+		t.Error("the run stayed claimed after its cancel failed, so nothing can stop it")
 	}
 }

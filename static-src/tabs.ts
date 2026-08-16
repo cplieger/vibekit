@@ -49,7 +49,7 @@ export const TAB_VIEWS = {
   run: "#run-view",
 } as const;
 
-type TabKind = keyof typeof TAB_VIEWS;
+export type TabKind = keyof typeof TAB_VIEWS;
 
 /** Everything needed to render and route a tab. */
 export interface TabSpec {
@@ -490,6 +490,18 @@ export function getActiveTabId(): string {
 export function getActiveTabRoute(): Route | null {
   const tab = state.tabs.find((t) => t.id === state.active);
   return tab?.route ?? null;
+}
+/** Kind of the currently active tab, or null when no tab is active.
+ *
+ *  This is what a key binding scoped BY VIEW reads. The store already knows
+ *  which tab is active and what kind it is, so the answer is here rather than in
+ *  a DOM test for which view element happens to be unhidden — and it is the
+ *  TabSpec's kind rather than the route's, because an editor tab's kind is
+ *  "editor" while its route's is "file", and a binding keyed on the route would
+ *  be speaking a second vocabulary for the same question. */
+export function getActiveTabKind(): TabKind | null {
+  const tab = state.tabs.find((t) => t.id === state.active);
+  return tab?.kind ?? null;
 }
 /** Return all open tab IDs. Used by system handlers to reconcile tabs
  *  without DOM scraping. */

@@ -284,6 +284,9 @@ class Elements {
   get fbChatFilter(): HTMLButtonElement {
     return byId("fb-chat-filter");
   }
+  get fbSearchBtn(): HTMLButtonElement {
+    return byId("fb-search-btn");
+  }
   // Chat options (the composer's set-once switches menu)
   get chatOptionsBtn(): HTMLButtonElement {
     return byId("chat-options-btn");

@@ -28,6 +28,7 @@ import { iconEl } from "./icon-el.js";
 import { pushRoute } from "./router.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
+import { initFilesSearch, resetFilesSearch } from "./files-search.js";
 import {
   type FileEntry,
   fetchDir,
@@ -119,6 +120,16 @@ export function initFileBrowser(): void {
     getEntryMap: () => state.entryMap,
     reload: loadDir,
   });
+  initFilesSearch({
+    getSearchPath: () => state.currentPath,
+    // Ctrl-F in an editor tab means find-in-files, and the search surface lives
+    // in the files view. toggleSingleton only CLOSES a tab that is already
+    // active, so calling it from another tab's context opens rather than
+    // toggles.
+    activateBrowser: () => {
+      toggleFilesView(loadDir, resetFileBrowser);
+    },
+  });
 
   // Auto-disable buttons while any mutually-exclusive file operation is
   // in flight. Prevents races (e.g. rename + delete on the same selection).
@@ -188,6 +199,7 @@ export function restoreFileBrowser(path: string): void {
 /** Reset the file browser to root. */
 function resetFileBrowser(): void {
   state.reset();
+  resetFilesSearch();
   // Clear the DOM too: rows kept while hidden would replay their entry
   // animation in unison on the next display flip (a block translate) and
   // skip fresh mounts in reconcile. A fresh mount every open keeps the

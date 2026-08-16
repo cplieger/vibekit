@@ -13,9 +13,10 @@
 //
 // The authored half exists because three bindings live outside that registry and
 // a sheet missing them is wrong for the reader: Escape (keys.ts, above the
-// modifier gate), Ctrl+F (find-in-chat.ts, capture phase so the browser's native
-// find can be pre-empted only on the chat view), and F2 (files.ts). Each row
-// names its owner in a comment so the pairing can be re-checked.
+// modifier gate), Ctrl+F (app.ts's capture-phase listener, which routes to
+// find-in-chat.ts or files-search.ts by the active tab's kind, so it earns two
+// rows), and F2 (files.ts). Each row names its owner in a comment so the pairing
+// can be re-checked.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -43,8 +44,12 @@ const OTHER_GROUP = "Elsewhere";
 const OTHER_ROWS: readonly SheetRow[] = [
   // keys.ts, handled above the Ctrl/Cmd gate.
   { description: "Close a dialog, or clear the file browser selection", chords: [["Esc"]] },
-  // find-in-chat.ts via app.ts's capture-phase listener; chat view only.
+  // app.ts's capture-phase listener, dispatched by the ACTIVE TAB's kind: a
+  // files or editor tab reaches files-search.ts, everything else
+  // find-in-chat.ts. Two rows because it is genuinely two bindings on one chord;
+  // a second press falls through to the browser's own find in both.
   { description: "Search this conversation", chords: [["Ctrl", "F"]] },
+  { description: "Find in files, from a file browser or editor tab", chords: [["Ctrl", "F"]] },
   // files.ts, on a selected row in the file browser.
   { description: "Rename in the file browser", chords: [["F2"]] },
   // keys.ts, the binding that opens this sheet.

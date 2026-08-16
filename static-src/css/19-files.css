@@ -419,3 +419,125 @@
     color: var(--c-text-primary);
   }
 }
+
+/* ==========================================================================
+   Find in files
+   ==========================================================================
+   In-flow above the listing rather than a floating overlay like .chat-find:
+   the transcript's find is a small widget over content that keeps scrolling
+   under it, while this one REPLACES the listing with its results, so a panel
+   docked to the top of the same scroller is the honest shape. It reuses the
+   `Aa` latched toggle's aria-pressed vocabulary so the two search bars read
+   alike. */
+
+.fb-search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  margin-block-end: var(--sp-2);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+}
+
+.fb-search-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
+.fb-search-field {
+  flex: 1 1 8rem;
+  min-width: 0;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--c-text-primary);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-size: var(--fs-base);
+  min-height: var(--input-h);
+  outline: none;
+  touch-action: manipulation;
+  transition: border-color var(--dur-micro) var(--ease-micro);
+
+  &:focus-visible {
+    border-color: var(--c-accent);
+  }
+}
+
+.fb-search-globs .fb-search-field {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+
+.fb-search-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  inline-size: var(--btn-h);
+  block-size: var(--btn-h);
+  padding: 0;
+  color: var(--c-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--r);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro) var(--ease-micro),
+    color var(--dur-micro) var(--ease-micro);
+
+  &:hover {
+    color: var(--c-text-primary);
+    background: var(--c-bg-hover);
+  }
+}
+
+.fb-search-case {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+
+.fb-search-case[aria-pressed="true"] {
+  color: var(--c-accent);
+  background: var(--c-accent-subtle);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 45%, transparent);
+}
+
+.fb-search-note {
+  font-size: var(--fs-sm);
+  /* Reserved height so the note landing does not shift the results under the
+     reader's cursor between keystrokes. */
+  min-height: 1.25rem;
+}
+
+.fb-search-hit {
+  cursor: pointer;
+  /* A hit row carries a path, a line number and an excerpt, so it is taller and
+     more variable than a listing row; the fixed intrinsic size that bounds the
+     listing's paint would be wrong here. */
+  contain-intrinsic-size: auto 2.75rem;
+}
+
+.fb-search-lineno {
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.fb-search-excerpt {
+  flex: 2 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--c-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}

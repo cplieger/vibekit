@@ -62,7 +62,8 @@ import { initTooltips } from "./tooltip.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
-import { handleFindHotkey, openChatFind } from "./find-in-chat.js";
+import { openChatFind } from "./find-in-chat.js";
+import { handleFindKey } from "./find-dispatch.js";
 import { forceSettingsTab, loadSettingsTabData } from "./settings-tabs.js";
 import { flushURLHighlight } from "./settings-highlight.js";
 import { forceGitTab } from "./git-tabs.js";
@@ -249,10 +250,11 @@ function init(): void {
     showShortcuts: openShortcutsSheet,
   });
 
-  // Find in Chat (Ctrl-F / Cmd-F). Capture phase so we can preventDefault the
-  // browser's native find before it opens — but only when the chat view is the
-  // active context (see find-in-chat.ts; native find is left alone elsewhere).
-  document.addEventListener("keydown", handleFindHotkey, true);
+  // Find (Ctrl-F / Cmd-F), scoped by the ACTIVE TAB (find-dispatch.ts owns the
+  // routing). Capture phase so the browser's native find can be pre-empted
+  // before it opens; ONE listener, because a second capture-phase keydown on the
+  // same chord would be a third meaning nobody can predict.
+  document.addEventListener("keydown", handleFindKey, true);
   document.addEventListener("keydown", focusComposerOnTyping);
 
   // Action-framework global: live-log every action error to the

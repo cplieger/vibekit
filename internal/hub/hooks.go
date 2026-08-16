@@ -1,8 +1,15 @@
 package hub
 
-// Hooks-management dashboard: list / enable-disable / run the workspace's
-// .kiro/hooks/*.json hooks over the v3 (KAS) _kiro/hooks/* requests. Mirrors
-// the REST-backed-by-bridge.Call shape of knowledge.go / spec.go.
+// Hooks state: list the workspace's .kiro/hooks/*.json hooks and flip their
+// enabled flag, over the v3 (KAS) _kiro/hooks/* requests. Mirrors the
+// REST-backed-by-bridge.Call shape of knowledge.go / spec.go.
+//
+// TWO verbs, and there used to be three. "Run now" is DELETED, not relocated:
+// it was `_kiro/hooks/triggerHook`, whose runCommand path made KAS call back
+// `_kiro/hooks/executeHook` and made vibekit run `sh -c` on a command a file
+// specifies. That was this app's most security-sensitive path, and the deletion
+// is clean because Run-now was its ONLY caller — hook autofire does not use it
+// (see below), so hooks keep working exactly as they did.
 //
 // Bridge-targeting model (hooks are workspace-GLOBAL, like knowledge + specs):
 // the store is the on-disk .kiro/hooks/*.json set, shared by every kiro-cli
@@ -13,42 +20,22 @@ package hub
 // gate is real: without it, _kiro/hooks/list throws "not available when
 // v2Hooks is disabled" (verified live).
 //
-// Why the DASHBOARD ops route through the utility bridge (not a chat bridge):
-// the reads are workspace-global and must work with no chat open, and the
-// utility bridge issues no agent tool calls, so its only _kiro/hooks/executeHook
-// is a user-initiated "Run now" trigger (utility_bridge.go gates it on
-// expectingHookExec). Chat bridges ALSO enable the hook engine now
-// (bridge_coord.go sets StartOpts.EnableHooks:true) so the workspace's hooks
-// AUTOFIRE during agent turns — but that is a separate concern from this
-// dashboard, and it does NOT flow through executeHook: in v2 mode KAS loads the
-// hook files and runs runCommand hooks INTERNALLY (its own process runner, in
-// the workspace), verified on the live v3 wire (chat autofire produced zero
-// executeHook callbacks). So chat bridges never answer executeHook; only the
-// utility bridge does, and only for "Run now". vibekit's create_hook command
-// (command/hooks.go) still writes hook files directly; this surface manages them.
-//
-// executeHook (the "Run now" path) is SECURITY-SENSITIVE — it makes vibekit run
-// a shell command the hook file specifies. It is genuinely invoked over the acp
-// bridge (verified live), so it is handled: the command is user-authored
-// (.kiro/hooks/*.json), sourced server-side from the hook the user clicked "Run
-// now" on (never from the client body), and run via runHookCommand with the
-// same guards as the `!cmd` shell interception (workDir cwd, timeout, output
-// cap, sanitization).
+// AUTOFIRE IS UNAFFECTED, and that is what made the deletion safe. Chat bridges
+// enable the hook engine (bridge_coord.go sets StartOpts.EnableHooks:true) so the
+// workspace's hooks fire during agent turns, and in v2 mode KAS loads the hook
+// files and runs runCommand hooks INTERNALLY, in its own process runner in the
+// workspace. Verified two ways: on the live v3 wire, chat autofire produced zero
+// executeHook callbacks; and mechanically, no chat-bridge dispatcher ever had a
+// case for that method, so a callback there would have gone unanswered and wedged
+// every turn. vibekit's create_hook command (command/hooks.go) still writes hook
+// files directly; this surface manages them.
 //
 // Wire shapes verified live against kiro-cli acp v3 2.12.0:
 //   - list   {workspacePaths?} → {hooks:[{id:"<absPath>#hook-N", name,
 //              action:{type:"runCommand",command}|{type:"askAgent",prompt},
 //              _meta:{trigger,source,matcher,filePath,enabled,disabledReason?}}]}
-//              The action carries NO timeout: KAS's projectHookForWire (the one
-//              projection behind both list and didChange, re-read on 2.16.2 and
-//              on the pinned 2.18.0) emits {type,command} or {type,prompt} and
-//              nothing else, while the hook FILE declares `timeout` as a sibling
-//              of `action`. So a per-hook timeout is only reachable by reading
-//              the file at _meta.filePath, never off this reply.
 //   - setEnabled {hookId, enabled} → {success, code?, error?}; PERSISTS the
 //              enabled flag into the .kiro/hooks/*.json file.
-//   - triggerHook {sessionId,hookId,hookName,hookActionType,command,approved}
-//              → {success,...}; for runCommand, KAS calls back executeHook.
 //   - didChange (A→C notification) fires after a hook file changes → an
 //              hooks_changed SSE (utility_bridge.go forwards it).
 
@@ -56,11 +43,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -74,31 +59,6 @@ import (
 // the first call, which lazily spins up the utility bridge (session/new + auth
 // handshake); the read itself is fast. bridge.Call has no timeout of its own.
 const hookCallTimeout = 45 * time.Second
-
-// hookTriggerSlack is how much longer a triggerHook round-trip is allowed than
-// the command it carries. KAS awaits the executeHook callback for the whole
-// command, so the RPC deadline is the command's cap plus this.
-//
-// Getting this backwards is not a slow request, it is a wedged utility bridge:
-// rawCall's timeout resets the SHARED session, while answerExecuteHook's command
-// runs under context.Background() and cannot be cancelled by it, so the reset
-// releases hookTriggerMu and expectingHookExec with the command still running --
-// exactly the crossed-output race that mutex exists to prevent.
-const hookTriggerSlack = 30 * time.Second
-
-// hookCommandTimeout is the default wall-clock cap for a runCommand hook's
-// shell command when the hook file declares no explicit timeout. Matches the
-// `!cmd` shell-interception default feel; overridable per-hook (bounded by
-// hookMaxCommandTimeout).
-const hookCommandTimeout = 60 * time.Second
-
-// hookMaxCommandTimeout caps a per-hook timeout override so a pathological
-// hook file can't pin a runner indefinitely.
-const hookMaxCommandTimeout = 10 * time.Minute
-
-// hookOutputCap bounds captured stdout+stderr of a runCommand hook run before
-// truncation. Modest: the output is surfaced inline in the dashboard.
-const hookOutputCap = 64 * 1024
 
 // actionRunCommand / actionAskAgent are the two KAS hook action types.
 const (
@@ -134,8 +94,7 @@ type kasHooksListResult struct {
 	Hooks []kasHook `json:"hooks"`
 }
 
-// kasHookResult is the {success, code?, error?} reply shared by setEnabled and
-// triggerHook.
+// kasHookResult is setEnabled's {success, code?, error?} reply.
 type kasHookResult struct {
 	Code    string `json:"code"`
 	Error   string `json:"error"`
@@ -146,8 +105,16 @@ type kasHookResult struct {
 
 // hookInfo is one hook in the GET /api/hooks response. ID is a URL-safe opaque
 // handle (base64url of the KAS "<absPath>#hook-N" id) the client echoes back to
-// the enabled / trigger endpoints; the raw KAS id (with its '/' and '#') is not
-// path-safe.
+// the enabled endpoint; the raw KAS id (with its '/' and '#') is not path-safe.
+//
+// Its READER is the configuration browser's Hooks tab (static-src/docs.ts), which
+// joins these rows onto the ones GET /api/workspace/kiro-docs reports for the same
+// files. What the tab needs from here is the state that scan cannot know — Enabled,
+// DisabledReason — plus Scope and FilePath to decide which affordances a row may
+// offer, and ID for the setEnabled call. Command / Prompt / Matcher are
+// display-only, and carry a GLOBAL hook's whole row: those files live outside the
+// workspace, so the docs scan emits no row for them at all and this is their only
+// source. See "the three gates" in docs.ts.
 //
 // Scope is "workspace" (the hook file lives under the workspace) or "global"
 // (kiro-cli 2.13+: $HOME/.kiro/hooks/*.json, loaded in every workspace — the
@@ -179,16 +146,6 @@ const (
 
 type hooksListResponse struct {
 	Hooks []hookInfo `json:"hooks"`
-}
-
-// hookRunResult is the outcome of running a runCommand hook's shell command
-// (captured by the utility bridge's executeHook responder, surfaced by the
-// trigger endpoint). Ran is false when no command actually ran (e.g. the
-// trigger was cancelled before executeHook fired).
-type hookRunResult struct {
-	Output   string
-	ExitCode int
-	Ran      bool
 }
 
 // encodeHookID / decodeHookID map the KAS hook id (an absolute path with a
@@ -354,146 +311,17 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 	api.Ok(w)
 }
 
-// hookTriggerResponse is the POST /api/hooks/{id}/trigger reply for a
-// runCommand hook: the captured command output + exit code.
-type hookTriggerResponse struct {
-	Output   string `json:"output"`
-	Ran      bool   `json:"ran"`
-	ExitCode int    `json:"exit_code"`
-}
-
-// handleHookTrigger: POST /api/hooks/{id}/trigger → run a runCommand hook now.
-// The hook's command is sourced server-side from the current hook list (never
-// from the client) and run via KAS's triggerHook → executeHook callback. Only
-// runCommand hooks are supported here — an askAgent hook runs as a prompt in a
-// chat (the client sends its prompt through the normal prompt flow), so this
-// returns 400 for one.
-func (h *Hub) handleHookTrigger(w http.ResponseWriter, r *http.Request) {
-	hookID, ok := hookIDFromPath(w, r)
-	if !ok {
-		return
-	}
-	hook, found, err := h.findHook(r.Context(), hookID)
-	if err != nil {
-		h.writeHookErr(w, err)
-		return
-	}
-	if !found {
-		api.NotFound(w, "hook not found")
-		return
-	}
-	if hook.Action.Type != actionRunCommand {
-		api.BadRequest(w, "only runCommand hooks can be run here; agent hooks run in a chat")
-		return
-	}
-	u := h.ensureUtility()
-	// The command runs under hookCommandTimeout, because that is the only cap
-	// reachable here: the hook's own declared timeout is not on the list reply
-	// (see the wire shapes at the top of this file), so there is nothing to
-	// derive a longer deadline from.
-	cctx, cancel := context.WithTimeout(r.Context(), hookCommandTimeout+hookTriggerSlack)
-	defer cancel()
-	// approved:true — the user's explicit "Run now" click is the consent, so
-	// we skip KAS's extra per-command approval round-trip. The command is the
-	// server-sourced hook command, not client input.
-	run, err := u.session.triggerRunCommandHook(cctx, hook.ID, hook.Name, hook.Action.Command)
-	if err != nil {
-		h.writeHookErr(w, err)
-		return
-	}
-	api.WriteJSON(w, hookTriggerResponse{Output: run.Output, ExitCode: run.ExitCode, Ran: run.Ran})
-}
-
-// clampedHookCommandTimeout resolves the timeout KAS hands the executeHook
-// callback, in seconds, to the wall-clock cap the command actually runs under:
-// the default when the callback declares none, clamped to hookMaxCommandTimeout
-// so a pathological value cannot pin a runner.
-func clampedHookCommandTimeout(declaredSecs int) time.Duration {
-	if declaredSecs <= 0 {
-		return hookCommandTimeout
-	}
-	return min(time.Duration(declaredSecs)*time.Second, hookMaxCommandTimeout)
-}
-
-// findHook re-lists the workspace hooks and returns the one whose KAS id
-// matches (server-authoritative lookup so the trigger command can't be spoofed
-// by the client).
-func (h *Hub) findHook(ctx context.Context, kasID string) (kasHook, bool, error) {
-	hooks, err := h.hooksListRaw(ctx)
-	if err != nil {
-		return kasHook{}, false, err
-	}
-	for i := range hooks {
-		if hooks[i].ID == kasID {
-			return hooks[i], true, nil
-		}
-	}
-	return kasHook{}, false, nil
-}
-
-// runHookCommand runs a runCommand hook's shell command in the workspace with
-// the same guards as the `!cmd` shell interception (workDir cwd, bounded
-// timeout, capped + sanitized output). Wired onto the utility bridge as its
-// executeHook responder (ensureUtility); invoked only for a user-initiated
-// "Run now" trigger (utility_bridge.go gates it on expectingHookExec).
-func (h *Hub) runHookCommand(ctx context.Context, cmdStr string, timeoutSecs int) hookRunResult {
-	cmdStr = strings.TrimSpace(cmdStr)
-	if cmdStr == "" {
-		return hookRunResult{Ran: true}
-	}
-	cctx, cancel := context.WithTimeout(ctx, clampedHookCommandTimeout(timeoutSecs))
-	defer cancel()
-
-	// The command is user-authored (.kiro/hooks/*.json), sourced server-side
-	// from the hook the user clicked "Run now" on — same trust model as the
-	// `!cmd` shell interception (command/shell.go), which likewise runs sh -c.
-	proc := exec.CommandContext(cctx, "sh", "-c", cmdStr)
-	proc.Dir = h.lifecycle.workDir
-	var capped hookCappedBuffer
-	proc.Stdout = &capped
-	proc.Stderr = &capped
-	runErr := proc.Run()
-
-	raw := capped.buf.String()
-	exitCode := 0
-	if runErr != nil {
-		exitCode = 1
-		if exitErr := (&exec.ExitError{}); errors.As(runErr, &exitErr) {
-			exitCode = exitErr.ExitCode()
-		} else {
-			raw += "\n" + runErr.Error()
-		}
-	}
-	if capped.truncated {
-		raw += "\n[output truncated]"
-	}
-	return hookRunResult{Output: api.SanitizeOutput(raw), ExitCode: exitCode, Ran: true}
-}
-
-// hookCappedBuffer is a bytes-bounded writer for a hook command's combined
-// stdout+stderr (cap hookOutputCap).
-type hookCappedBuffer struct {
-	buf       strings.Builder
-	truncated bool
-}
-
-func (b *hookCappedBuffer) Write(p []byte) (int, error) {
-	remaining := hookOutputCap - b.buf.Len()
-	if remaining <= 0 {
-		b.truncated = true
-		return len(p), nil
-	}
-	if len(p) <= remaining {
-		return b.buf.Write(p)
-	}
-	b.truncated = true
-	_, _ = b.buf.Write(p[:remaining])
-	return len(p), nil
-}
-
 // broadcastHooksChanged fans out an hooks_changed SSE (workspace-global, empty
 // chatID) so every device refetches GET /api/hooks. Fired after a create /
 // toggle and by the utility bridge on a _kiro/hooks/didChange notification.
+//
+// The didChange half is what keeps a hand-edited hook FILE reaching the UI: KAS
+// watches the .kiro/hooks tree itself, so an edit made in the editor (or by the
+// agent) arrives here with no polling. Its reader is the configuration browser's
+// Hooks tab, which must subscribe to this event and not only to
+// `settings_updated` — the docs scan is memoized behind directory mtime AND entry
+// names, so an in-place body edit changes neither and that endpoint alone would
+// serve a stale trigger forever.
 func (h *Hub) broadcastHooksChanged() {
 	h.Broadcast(context.Background(), api.NewEvent(api.EventHooksChanged, "", api.HooksChangedPayload{}))
 }
@@ -535,15 +363,6 @@ func (h *Hub) writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 	api.BadRequest(w, msg)
 }
 
-// hookTriggerError turns a triggerHook {success:false} reply into an error
-// carrying the KAS message (or a generic fallback).
-func hookTriggerError(res kasHookResult) error {
-	if msg := strings.TrimSpace(res.Error); msg != "" {
-		return errors.New(msg)
-	}
-	return errors.New("hook trigger failed")
-}
-
 // writeHookErr maps a bridge / kiro-cli failure to 502 with a generic message
 // (details logged, not leaked). Like knowledge.go there is no errNoLiveBridge
 // case: the utility bridge is auto-started, so a failure here is a backend
@@ -553,9 +372,10 @@ func (h *Hub) writeHookErr(w http.ResponseWriter, err error) {
 	api.WriteJSONStatus(w, http.StatusBadGateway, api.ErrorJSON("hooks request failed"))
 }
 
-// registerHooksRoutes wires the hooks-management endpoints.
+// registerHooksRoutes wires the hooks-state endpoints. TWO routes: there is no
+// POST /api/hooks/{id}/trigger, and adding one back would restore the executeHook
+// shell path along with it.
 func (h *Hub) registerHooksRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/hooks", h.handleHooksList)
 	mux.HandleFunc("POST /api/hooks/{id}/enabled", h.handleHookSetEnabled)
-	mux.HandleFunc("POST /api/hooks/{id}/trigger", h.handleHookTrigger)
 }

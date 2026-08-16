@@ -28,6 +28,7 @@ type Deps interface {
 	StreamingAccess
 	PermissionAccess
 	RunOriginAccess
+	RunBoundsAccess
 	// MCPRecorder returns the MCP state recorder sub-interface.
 	MCPRecorder() MCPRecorder
 	// SetGovernance caches the latest account/workspace governance state so
