@@ -30,6 +30,7 @@ import (
 	mcpPkg "github.com/cplieger/vibekit/internal/mcp"
 	"github.com/cplieger/vibekit/internal/mcp/prewarm"
 	pushPkg "github.com/cplieger/vibekit/internal/push"
+	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/settings"
@@ -115,6 +116,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	}
 
 	scheduleStore := openScheduleStore(cfg.ConfigDir)
+	leaseStore := openRunLeaseStore(cfg.ConfigDir)
 
 	pushSvc := pushPkg.New(ctx, cfg.ConfigDir, cfg.VapidSub)
 
@@ -127,8 +129,21 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		hub.WithACPArgs(cfg.ACPArgs),
 		hub.WithKiroCLIPath(kiro.cliPath, kiro.env),
 		hub.WithSessionReaper(sessionReaper, chatStore.ReferencedSessionIDs),
-		hub.WithSchedules(scheduleStore))
+		hub.WithSchedules(scheduleStore),
+		hub.WithRunLeases(leaseStore))
 	chat.WithBroadcaster(h)(chatStore)
+
+	// Clear the runs a previous process left paused, BEFORE anything can launch.
+	// The scheduler below is the only thing at build time that can, and its own
+	// first tick is a minute out, but relying on that would make correctness a
+	// property of the tick interval.
+	//
+	// On the HUB's context, never this function's: Build's ctx is
+	// context.Background() in production, so a sweep started on it would outlive
+	// App.Shutdown. In the background because the sweep issues one RPC per lease
+	// over a utility bridge whose kiro-cli may still be installing; a boot must not
+	// wait on that.
+	go h.SweepOrphanedRuns(h.ShutdownCtx())
 
 	startScheduleRunner(ctx, scheduleStore, h)
 
@@ -686,6 +701,21 @@ func openScheduleStore(dir string) *schedule.Store {
 	if err != nil {
 		slog.Warn("workflow scheduling disabled", "error", err)
 		return nil
+	}
+	return st
+}
+
+// openRunLeaseStore opens the durable run-lease store.
+//
+// It ALWAYS returns a store: runlease.NewStore hands back a usable empty one
+// alongside the error, because a lease carries a run's wall clock and its
+// unattended mark. Refusing to open it would leave every run unbounded, which is
+// the opposite of what the record is for — so an unreadable file warns, starts
+// empty and lets the next launch mint fresh leases.
+func openRunLeaseStore(dir string) *runlease.Store {
+	st, err := runlease.NewStore(dir)
+	if err != nil {
+		slog.Warn("run leases starting empty; runs from before this boot will not be swept", "error", err)
 	}
 	return st
 }

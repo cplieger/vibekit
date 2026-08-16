@@ -12,8 +12,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/runlease"
 )
 
 // bufferedEvents decodes the SSE replay buffer back into typed envelopes, so a
@@ -350,8 +352,8 @@ func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	if got := h.runEndReason(id); got != "" {
 		t.Errorf("the retried run still reads %q, so its row renders as aborted", got)
 	}
-	if !h.runCeilingArmed(id) {
-		t.Error("the retried run holds no ceiling arm, so nothing bounds it")
+	if !h.runBounded(id) {
+		t.Error("the retried run holds no deadline, so nothing bounds it")
 	}
 	// The claim went with the reason, or no bound could ever stop the retry.
 	if !h.claimRunTermination(id) {
@@ -378,8 +380,138 @@ func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	if got := h.runEndReason(id); got != runEndOverran {
 		t.Errorf("the refused retry cleared the reason to %q; the run is still aborted", got)
 	}
-	if h.runCeilingArmed(id) {
-		t.Error("a refused retry armed a ceiling for a run that is not executing")
+	if h.runBounded(id) {
+		t.Error("a refused retry bounded a run that is not executing")
+	}
+}
+
+// TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable is the
+// interleaving that shipped the defect, forced deterministically.
+//
+// A retry re-hosts a PARENTLESS run, and its first lifecycle frame can arrive before
+// the retry call returns — the code says so itself. The lease was granted after that
+// call, so `run_start` landing first found no lease and the observer, inferring
+// origin from lease ABSENCE, stamped OriginAgent on a run no chat owns. The rearm
+// then saw a lease and kept it, and the agent exclusion made that run permanently
+// unsweepable: if its bridge died or vibekit restarted, its restart-paused row was
+// never cleared and blocked every later launch of the recipe forever.
+//
+// The fake bridge's blockOn seam holds the retry call open, so the frame is delivered
+// strictly INSIDE the window rather than near it.
+func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowRetry: json.RawMessage(`{}`),
+		// The run list is where a re-hosted run's recipe comes from.
+		methodKiroWorkflowList: json.RawMessage(
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`),
+	}
+	held := make(chan struct{})
+	br.blockOn = map[string]chan struct{}{methodKiroWorkflowRetry: held}
+	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
+
+	done := make(chan error, 1)
+	go func() { done <- h.RetryRun(t.Context(), id) }()
+
+	// Wait until the retry is genuinely in flight, then deliver the frame the way
+	// runDispatch does: a run bridge's workflow frames carry an EMPTY chat id.
+	stop := time.Now().Add(5 * time.Second)
+	for !slices.Contains(br.callLog(), methodKiroWorkflowRetry) {
+		if time.Now().After(stop) {
+			t.Fatalf("the retry never reached the bridge: %v", br.callLog())
+		}
+		time.Sleep(time.Millisecond)
+	}
+	h.observeRunStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
+		"workflowId": id, "workflowName": "nightly",
+	}))
+	close(held)
+	if err := <-done; err != nil {
+		t.Fatalf("RetryRun: %v", err)
+	}
+
+	l, ok := h.lease(id)
+	if !ok {
+		t.Fatal("the retried run holds no lease")
+	}
+	if l.Origin == runlease.OriginAgent {
+		t.Error("a frame arriving mid-retry leased a parentless run as agent-origin, which " +
+			"excludes it from the orphan sweep for good")
+	}
+	if l.Origin != runlease.OriginManual {
+		t.Errorf("origin = %q, want manual", l.Origin)
+	}
+	if l.Recipe != "nightly" {
+		t.Errorf("recipe = %q, want nightly off the run list; a nameless lease is invisible to "+
+			"the single-run rule's comparison", l.Recipe)
+	}
+	if !l.Bounded() {
+		t.Error("the retried run took no deadline")
+	}
+}
+
+// TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList is the re-hosting branch —
+// the one retry's legality window actually implies, since `closeFinishedRunBridge`
+// tears the bridge down on exactly the statuses retry is legal from.
+//
+// Its lease used to be minted with an EMPTY recipe, on the reasoning that a
+// re-hosted run's recipe is unknowable here. It is knowable: KAS's own run list
+// reports it, and that is the same string the single-run rule compares against. The
+// guess cost something real — a nameless lease cannot be recognised as the run
+// holding its own recipe, so the admission backstop could not explain it.
+func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowRetry: json.RawMessage(`{}`),
+		methodKiroWorkflowList: json.RawMessage(
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`),
+	}
+	// Deliberately NO bridge in the manager: that is what makes this the re-hosting
+	// path rather than the already-hosted one.
+	if h.bridge.mgr.get(runChatID(id)) != nil {
+		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
+	}
+
+	if err := h.RetryRun(t.Context(), id); err != nil {
+		t.Fatalf("RetryRun: %v", err)
+	}
+	l, ok := h.lease(id)
+	if !ok {
+		t.Fatal("the re-hosted run holds no lease, so nothing bounds it")
+	}
+	if l.Recipe != "nightly" {
+		t.Errorf("recipe = %q, want nightly off KAS's run list", l.Recipe)
+	}
+	if l.Origin != runlease.OriginManual {
+		t.Errorf("origin = %q, want manual: the user clicked Retry, so this run is the user's "+
+			"own and must stay sweepable", l.Origin)
+	}
+	if !l.Bounded() {
+		t.Error("the re-hosted run took no deadline")
+	}
+}
+
+// TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused: the lease is now
+// granted BEFORE the verb, so a refusal has to put it back. A lease left behind for
+// a run that never re-drove would make its recipe read as busy to the admission
+// backstop and hand a wall clock to a run that is not executing.
+func TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.T) {
+	h, _, br := newTestHub()
+	const id = "wf_1"
+	br.callResults = map[string]json.RawMessage{
+		methodKiroWorkflowList: json.RawMessage(
+			`{"runs":[{"workflowId":"wf_1","name":"nightly","status":"aborted"}]}`),
+	}
+	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
+
+	if err := h.RetryRun(t.Context(), id); err == nil {
+		t.Fatal("a refused retry reported success")
+	}
+	if _, ok := h.lease(id); ok {
+		t.Error("the refused retry kept the lease it minted, so the recipe reads as busy and a " +
+			"run that is not executing carries a deadline")
 	}
 }
 
@@ -417,7 +549,8 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	h.armRunCeiling(id)
+	h.grantLease(t.Context(), id, "publish", manualLaunch())
+	h.armRunDeadline(t.Context(), id)
 
 	if err := h.CancelRun(t.Context(), id); err != nil {
 		t.Fatalf("CancelRun: %v", err)
@@ -428,7 +561,7 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	if got := h.runEndReason(id); got != "" {
 		t.Errorf("a user cancel recorded %q", got)
 	}
-	if h.runCeilingArmed(id) {
+	if h.runBounded(id) {
 		t.Error("the cancelled run kept its wall clock running")
 	}
 	// The claim is held, so a bound firing behind the cancel cannot relabel it.

@@ -70,6 +70,7 @@ type RunVerdict = "completed" | "failed" | "aborted";
 const END_REASON_TEXT: Readonly<Record<string, string>> = {
   overran: "stopped: it ran past its time limit",
   step_cap: "stopped: a step ran past its turn limit",
+  orphaned: "stopped: the server restarted while it was running",
 };
 
 /** A run's verdict, or null for a run with none to state.

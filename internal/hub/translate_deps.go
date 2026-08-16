@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -83,14 +84,14 @@ func (h *Hub) LineTracker() translate.LineRecorder {
 
 // IsScheduledRun reports whether a run was launched by a schedule.
 //
-// The unattended map is already the record of that — it is what gates the
-// deny-fast permission floor — so this exports the fact rather than tracking it
-// twice. Written between `new` and `invoke` in launchRun, which is before the
-// first lifecycle frame can arrive, so a run_start reaching translate always sees
-// the mark its launch set.
+// The run's LEASE is already the record of that — it is what gates the deny-fast
+// permission floor — so this exports the fact rather than tracking it twice.
+// Granted between `new` and `invoke` in launchRun, which is before the first
+// lifecycle frame can arrive, so a run_start reaching translate always sees the
+// origin its launch recorded.
 func (h *Hub) IsScheduledRun(workflowID string) bool {
-	_, ok := h.scheduleForRun(workflowID)
-	return ok
+	l, ok := h.lease(workflowID)
+	return ok && l.Origin == runlease.OriginScheduled
 }
 
 // IsHookStatusEnabled returns whether hook status display is enabled.

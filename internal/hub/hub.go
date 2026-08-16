@@ -30,6 +30,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/kirosession"
+	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
@@ -115,16 +116,18 @@ type Hub struct {
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
 	schedules          *schedule.Store
-	// unattendedRuns maps a SCHEDULED run's workflow id to the schedule that
-	// launched it, which gates the deny-fast permission floor and attributes a
-	// denial back to the row. See run_unattended.go.
-	unattendedRuns map[string]string
-	sessionReaper  *kirosession.Reaper
-	sessionRefs    func(context.Context) (map[string]struct{}, bool)
-	lines          *buffer.LineTracker
-	agentTerms     *agentTerminals
-	hookStatus     *hookStatusCache
-	governance     *governanceCache
+	// leases is what vibekit knows about the runs it put on the wire: the
+	// envelope around a run KAS owns (see internal/runlease). Reach it through
+	// leaseStore(), which supplies an in-memory registry when the durable store
+	// was not wired — a lease carries the run's wall clock, so there is no
+	// "leases off" mode the way there is a "scheduling off" mode.
+	leases        *runlease.Store
+	sessionReaper *kirosession.Reaper
+	sessionRefs   func(context.Context) (map[string]struct{}, bool)
+	lines         *buffer.LineTracker
+	agentTerms    *agentTerminals
+	hookStatus    *hookStatusCache
+	governance    *governanceCache
 	// authLatch remembers the last outcome of vending a KAS access token, so
 	// readiness can report a dead sign-in without asking kiro-cli (see
 	// bridge_v3_auth.go).
@@ -161,10 +164,14 @@ type Hub struct {
 	// pointer prefix and costs 8 bytes of scan.
 	runBounds runBoundsState
 	ciBusy    atomic.Bool
-	// unattendedMu guards unattendedRuns AND runBounds. Non-pointer, so it sits
-	// in the tail with ciBusy rather than among the pointer fields. One mutex for
-	// both because they are one subject read together — a run's schedule mark and
-	// its bounds — and two would only invite a lock-order question.
+	// unattendedMu guards runBounds. Non-pointer, so it sits in the tail with
+	// ciBusy rather than among the pointer fields.
+	//
+	// It used to guard a second map, unattendedRuns, which held a run's schedule
+	// mark; that fact lives on the run's lease now, and the lease store carries its
+	// own mutex. Where the deadline callback needs BOTH atomically it takes this
+	// one first and the store's second (claimExpiredDeadline), which is the only
+	// place two are held and the only order they are ever taken in.
 	unattendedMu sync.Mutex
 }
 
@@ -190,6 +197,16 @@ func WithACPArgs(args []string) Option {
 // half-present.
 func WithSchedules(st *schedule.Store) Option {
 	return func(h *Hub) { h.schedules = st }
+}
+
+// WithRunLeases wires the DURABLE run-lease store.
+//
+// Unlike WithSchedules, absent does not mean off: the hub falls back to an
+// in-memory registry (leaseStore), because a lease carries the run's wall clock
+// and its unattended mark. What this option adds is survival across a restart —
+// which is the whole point of the record, so production always wires it.
+func WithRunLeases(st *runlease.Store) Option {
+	return func(h *Hub) { h.leases = st }
 }
 
 // WithPush wires the push notification service at construction time.

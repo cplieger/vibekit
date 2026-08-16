@@ -50,6 +50,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/runlease"
 )
 
 // Workflow RPC param keys, shared across the five verbs.
@@ -92,105 +93,49 @@ var errRecipeBusy = errors.New("this recipe already has a live run")
 // trusted: the wire value looks like a path (`bundled://x` or an absolute
 // *.workflow.json), and echoing it into `new` unchecked would let a client
 // point this endpoint at an arbitrary file.
+//
+// A manual run of a SCHEDULED recipe is bounded by that recipe's next slot as
+// well as the ceiling — the same two inputs a scheduled launch gets — so clicking
+// Run shortly before 02:00 cannot hold the recipe past 02:00. It stays ATTENDED
+// either way: the slot bounds the run, the unattended permission floor does not
+// apply, and no schedule row is attributed to it.
 func (h *Hub) LaunchRun(ctx context.Context, source string, inputs map[string]string) (id, name string, err error) {
-	return h.launchRun(ctx, source, inputs, "")
+	return h.launchRun(ctx, source, inputs, manualLaunch())
 }
 
 // LaunchScheduledRun launches a run on behalf of a schedule, marking it
 // UNATTENDED for the duration.
 //
-// The mark is what gates the deny-fast permission floor, and it is set between
-// `new` and `invoke` — the earliest point the workflow id exists and still
-// before anything can execute, so no permission request can slip through
-// unmarked.
-// The deadline bounds the run by its own repeat interval (see schedule.Launcher).
-// It is armed AFTER the launch succeeds, so a run that never started leaves no
-// timer behind, and it is deliberately not threaded through launchRun: a manual
-// launch has no interval to be bounded by, and passing a value only one caller
-// ever sets would put schedule policy in the shared body.
-func (h *Hub) LaunchScheduledRun(ctx context.Context, source, scheduleID string, deadline time.Time) (id, name string, err error) {
-	id, name, err = h.launchRun(ctx, source, nil, scheduleID)
-	if err != nil {
-		return "", "", err
-	}
-	h.armRunDeadline(id, scheduleID, deadline)
-	return id, name, nil
+// The mark is what gates the deny-fast permission floor, and it rides the lease
+// granted between `new` and `invoke` — the earliest point the workflow id exists
+// and still before anything can execute, so no permission request can slip
+// through unmarked.
+//
+// slotAt is the instant this run's own next slot comes due (see
+// schedule.Launcher). It is an INPUT to the run's single deadline rather than a
+// second bound of its own, so it travels with the launch instead of arming a
+// timer of its own afterwards. Zero means the schedule cannot name its next slot,
+// and the run is then bounded by the ceiling alone.
+func (h *Hub) LaunchScheduledRun(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error) {
+	return h.launchRun(ctx, source, nil, scheduledLaunch(scheduleID, slotAt))
 }
 
-// armRunDeadline cancels a scheduled run that is still going when its next slot
-// comes due. Nothing to arm for a zero or already-passed deadline.
-//
-// AfterFunc rather than a goroutine, for the same reason the unattended floor
-// uses it: it parks nothing while waiting, and a run that ends first makes the
-// callback a no-op rather than something that has to be cancelled.
-func (h *Hub) armRunDeadline(workflowID, scheduleID string, deadline time.Time) {
-	if workflowID == "" || deadline.IsZero() {
-		return
-	}
-	if d := time.Until(deadline); d > 0 {
-		time.AfterFunc(d, func() { h.cancelOverrunRun(workflowID, scheduleID) })
-	}
-}
-
-// cancelOverrunRun is the deadline's callback: stop the run and say why.
-//
-// This is what makes "the next slot runs fresh" true. Without it a wedged run
-// holds the recipe forever under the single-run rule, every later slot is refused
-// as an overlap, and the schedule silently stops producing — the one failure the
-// launch-failure alert deliberately cannot distinguish from a merely long run,
-// because only this side knows the interval.
-//
-// scheduleForRun is the liveness gate, and it is exact rather than approximate:
-// clearUnattended runs on a terminal run_complete, so a run still marked
-// unattended had not finished at its deadline. That is the fact being recorded, so
-// a run that completes microseconds later does not make the record wrong — it
-// overran, and the check is the evidence.
-//
-// The termination claim is the SECOND gate, and everything below it — the log
-// line, the reason, the cancel and the schedule's own outcome row — happens only
-// for the caller that took it. Without it this path recorded `overran` even when
-// the step cap had already recorded `step_cap` for the same run, and the second
-// write overwrote the first while both issued a cancel.
-func (h *Hub) cancelOverrunRun(workflowID, scheduleID string) {
-	if _, live := h.scheduleForRun(workflowID); !live {
-		return
-	}
-	if !h.claimRunTermination(workflowID) {
-		return
-	}
-	ctx, cancel := h.hubContext()
-	defer cancel()
-
-	// ERROR rather than Warn: a schedule that stopped producing is the app's one
-	// genuinely unattended failure, and a homelab Loki rule keys on this message.
-	slog.Error(logMsgRunOverran, "workflow_id", workflowID, "schedule_id", scheduleID)
-	// The row must not read like a user cancel. The cancel below is the same verb
-	// the Cancel button reaches, so without the record the two are
-	// indistinguishable afterwards — the gap D56c closes.
-	if err := h.finishRunTermination(ctx, workflowID, runEndOverran); err != nil {
-		// Report it anyway. The run overran whether or not the cancel landed, and
-		// a schedule row that stays on "started" is the silence this exists to end.
-		slog.Error("could not cancel an overrunning scheduled run",
-			"workflow_id", workflowID, "schedule_id", scheduleID, "error", err)
-	}
-	if h.schedules == nil || scheduleID == "" {
-		return
-	}
-	if err := h.schedules.RecordOutcome(ctx, scheduleID, outcomeOverran); err != nil {
-		slog.Warn("could not record the schedule's outcome",
-			"schedule_id", scheduleID, "error", err)
-	}
-}
-
-// launchRun is the shared body. scheduleID empty means an ordinary manual
-// launch, which is attended by definition and never gets the floor.
-func (h *Hub) launchRun(ctx context.Context, source string, inputs map[string]string, scheduleID string) (id, name string, err error) {
+// launchRun is the shared body of both public launch verbs. The origin carries
+// everything that differs between them.
+func (h *Hub) launchRun(ctx context.Context, source string, inputs map[string]string, o launchOrigin) (id, name string, err error) {
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
 
 	recipe, err := h.recipeBySource(cctx, source)
 	if err != nil {
 		return "", "", err
+	}
+	if o.origin == runlease.OriginManual {
+		// A manual run of a recipe that ALSO has a schedule must yield to that
+		// recipe's next slot, and the slot is only knowable once the recipe is
+		// resolved. Without this the run took the ceiling as its whole bound and
+		// refused every slot underneath it (run_lease.go manualSlot).
+		o.slotAt = h.manualSlot(recipe.Source)
 	}
 	if bErr := h.recipeIdle(cctx, recipe.Name); bErr != nil {
 		return "", "", bErr
@@ -217,22 +162,23 @@ func (h *Hub) launchRun(ctx context.Context, source string, inputs map[string]st
 	// immediately, and a frame arriving before the map entry would find no
 	// bridge to answer through.
 	h.bridge.mgr.insert(runChatID(wfID), &sharedBridge{bridge: bridge, state: bridgeIdle})
-	if scheduleID != "" {
-		h.markUnattended(wfID, scheduleID)
-	}
+	// The run's envelope, before anything can execute: the single-run rule's
+	// evidence that this row is vibekit's own, the deadline's inputs, and the
+	// unattended mark the permission floor reads.
+	h.grantLease(cctx, wfID, recipe.Name, o)
 	go h.coord.Forward(runChatID(wfID), bridge)
 
 	if _, err := bridge.Call(cctx, methodKiroWorkflowInvoke, map[string]any{keyWorkflowID: wfID}); err != nil {
 		// The run was created but never started; nothing is executing. Tear the
 		// bridge down and surface the failure rather than leaving a zombie row.
-		h.clearUnattended(wfID)
+		h.releaseLease(cctx, wfID)
 		h.coord.CloseBridge(runChatID(wfID))
 		return "", "", fmt.Errorf("workflow invoke: %w", err)
 	}
 	// The wall clock, for every run this path launches — manual and scheduled
 	// alike (run_bounds.go). After invoke, so a run that never started leaves no
 	// timer, and idempotent with the `run_start` frame's own arm.
-	h.armRunCeiling(wfID)
+	h.armRunDeadline(cctx, wfID)
 	slog.Info("workflow run launched", "workflow_id", wfID, "recipe", recipe.Name)
 	return wfID, recipe.Name, nil
 }
@@ -302,13 +248,14 @@ func (h *Hub) PauseRun(ctx context.Context, workflowID string) error {
 
 // ResumeRun re-drives a paused run.
 //
-// Re-arms the wall clock, because the pause dropped it (run_bounds.go): a resumed
-// run is executing again and gets a fresh ceiling. `run_start` re-fires on resume
-// and arms too; whichever lands first wins.
+// Re-arms the wall clock, because the pause parked it (run_bounds.go): a resumed
+// run is executing again and gets a FRESH budget rather than the remainder of the
+// one it was holding when it parked. `run_start` re-fires on resume and arms too;
+// whichever lands first wins.
 func (h *Hub) ResumeRun(ctx context.Context, workflowID string) error {
 	err := h.hostedRunControl(ctx, workflowID, methodKiroWorkflowResume)
 	if err == nil {
-		h.armRunCeiling(workflowID)
+		h.armRunDeadline(ctx, workflowID)
 	}
 	return err
 }
@@ -345,18 +292,25 @@ func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
 	// is not the expected path (retry's window implies a closed bridge) but a run
 	// aborted without a terminal frame can still be registered.
 	if sb := h.bridge.mgr.get(chatID); sb != nil {
+		recipe := h.recipeOfRun(ctx, workflowID)
 		_, err := sb.Call(ctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID})
 		if err == nil {
 			// Only on success, and in this order: a retry KAS refused re-drove
 			// nothing, so the run's previous terminal reason is still the truth
 			// about it and its row must keep saying so.
-			h.rearmRetriedRun(workflowID)
+			h.rearmRetriedRun(ctx, workflowID, recipe)
 		}
 		return err
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, launchTimeout)
 	defer cancel()
+
+	// The recipe name, read off KAS's run list BEFORE anything is re-driven. The
+	// list is the only place a re-hosted run's recipe is available to this process,
+	// and it has to be read while the run is still listed under its pre-retry
+	// state rather than after the lease is needed.
+	recipe := h.recipeOfRun(cctx, workflowID)
 
 	bridge := h.bridge.mgr.factory()
 	if err := bridge.Start(cctx, &api.StartOpts{Lifetime: h.lifecycle.shutdownCtx}); err != nil {
@@ -368,9 +322,24 @@ func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
 	h.bridge.mgr.insert(chatID, &sharedBridge{bridge: bridge, state: bridgeIdle})
 	go h.coord.Forward(chatID, bridge)
 
+	// The lease before the verb, exactly as a fresh launch grants between `new`
+	// and `invoke`: retry's own `run_start` can arrive before the call returns, and
+	// a lease minted from that frame would carry the frame's name rather than the
+	// list's and would depend on the frame having one at all. Granting first makes
+	// the retried run's envelope independent of that race.
+	minted := false
+	if _, held := h.lease(workflowID); !held {
+		h.grantLease(cctx, workflowID, recipe, manualLaunch())
+		minted = true
+	}
+
 	if _, err := bridge.Call(cctx, methodKiroWorkflowRetry, map[string]any{keyWorkflowID: workflowID}); err != nil {
 		// Nothing is executing: tear the bridge down rather than leaving a
-		// process hosting a run it failed to restart.
+		// process hosting a run it failed to restart, and give back a lease this
+		// call minted for a run that never re-drove.
+		if minted {
+			h.releaseLease(cctx, workflowID)
+		}
 		h.coord.CloseBridge(chatID)
 		return fmt.Errorf("workflow retry: %w", err)
 	}
@@ -378,9 +347,34 @@ func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
 	// run is executing again, so its recorded termination is no longer a fact
 	// about it — and the client deliberately lets a recognised end_reason outrank
 	// live status, so leaving it would render the running retry as aborted.
-	h.rearmRetriedRun(workflowID)
-	slog.Info("workflow run retried", "workflow_id", workflowID)
+	h.rearmRetriedRun(cctx, workflowID, recipe)
+	slog.Info("workflow run retried", "workflow_id", workflowID, "recipe", recipe)
 	return nil
+}
+
+// recipeOfRun reads a run's recipe NAME off KAS's own run list.
+//
+// The list is the only place this process can learn the recipe of a run it did not
+// launch: a retry rehydrates a run KAS holds on disk, so vibekit never saw its
+// `new`. The name it reports is the same string the single-run rule compares
+// against, which is what makes a lease keyed with it useful rather than decorative.
+//
+// Best-effort — "" when the list cannot be read or does not carry the run — because
+// a retry must not fail over a name. A nameless lease still bounds the run; it is
+// only invisible to the single-run rule's comparison.
+func (h *Hub) recipeOfRun(ctx context.Context, workflowID string) string {
+	runs, err := h.workflowRunsRaw(ctx)
+	if err != nil {
+		slog.Warn("could not read a retried run's recipe, so its lease carries none",
+			"workflow_id", workflowID, "error", err)
+		return ""
+	}
+	for i := range runs {
+		if runs[i].WorkflowID == workflowID {
+			return runs[i].Name
+		}
+	}
+	return ""
 }
 
 // SetRunStepStatus marks an in-flight step completed or failed so a wedged run
@@ -560,7 +554,9 @@ func (h *Hub) closeFinishedRunBridge(chatID api.ChatID, msg *api.RPCResponse) {
 		return
 	}
 	slog.Info("run finished, closing its bridge", "chat_id", chatID, "status", p.Status)
-	h.clearUnattended(workflowIDOf(chatID))
+	// The run's LEASE is not released here. forgetRunBounds owns that, on the same
+	// terminal frame, because it is the one site every origin reaches — an
+	// agent-parented run has no bridge of its own to close.
 	go h.coord.CloseBridge(chatID)
 }
 
@@ -588,6 +584,17 @@ func (h *Hub) recipeBySource(ctx context.Context, source string) (api.Recipe, er
 }
 
 // recipeIdle enforces the single-run rule against the current run list.
+//
+// KAS's list stays the source of truth here, and deliberately so: it is the only
+// thing that sees the runs vibekit did not launch — an agent's, which KAS parents
+// on the calling chat's session, and the TUI's — so keying the rule on vibekit's
+// own leases instead would let a second live run of one recipe start.
+//
+// What the leases add is the ability to EXPLAIN a blocking row rather than refuse
+// it blindly: before returning busy, ask whether that row is an orphan vibekit
+// itself owns and left behind (run_orphan.go). This is the backstop half of the
+// orphan clearing; the boot sweep is the half that makes a restart leave the system
+// idle without waiting for someone to try a launch.
 func (h *Hub) recipeIdle(ctx context.Context, name string) error {
 	runs, err := h.workflowRuns(ctx, nil)
 	if err != nil {
@@ -596,9 +603,15 @@ func (h *Hub) recipeIdle(ctx context.Context, name string) error {
 		return fmt.Errorf("run list unavailable: %w", err)
 	}
 	for i := range runs {
-		if runs[i].Name == name && !terminalRunStatus(runs[i].Status) {
-			return errRecipeBusy
+		if runs[i].Name != name || terminalRunStatus(runs[i].Status) {
+			continue
 		}
+		if h.clearBlockingOrphan(ctx, runs[i].WorkflowID, runs[i].Status) {
+			slog.Info("cleared a restart-orphaned run that was holding its recipe",
+				"workflow_id", runs[i].WorkflowID, "recipe", name)
+			continue
+		}
+		return errRecipeBusy
 	}
 	return nil
 }
@@ -737,21 +750,11 @@ func (h *Hub) resumeRestartPausedRuns(ctx context.Context, chatID api.ChatID) {
 // process becomes the run's owner again — which is where an agent-launched
 // run's frames belong.
 func (h *Hub) resumeIfRestartPaused(ctx context.Context, chatID api.ChatID, workflowID string) {
-	u := h.ensureUtility()
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
-		callerParams(map[string]any{keyWorkflowID: workflowID}))
-	if err != nil {
-		slog.Warn("rehydrate: inspect failed", "workflow_id", workflowID, "error", err)
-		return
-	}
-	var res struct {
-		State struct {
-			PauseReason string `json:"pauseReason"`
-		} `json:"state"`
-	}
-	if json.Unmarshal(raw, &res) != nil || res.State.PauseReason != stalePauseReason {
+	// The same predicate the orphan sweep reads, inverted in action: that one
+	// CANCELS what this one RESUMES. One function rather than two copies of a
+	// literal comparison, so the two cannot drift into disagreeing about which
+	// runs a dead process left behind.
+	if !h.restartPaused(ctx, workflowID) {
 		return
 	}
 	sb := h.bridge.mgr.get(chatID)

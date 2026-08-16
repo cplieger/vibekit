@@ -49,9 +49,12 @@ const LastDay = -1
 //     row then reads failed forever while nothing is actually wrong
 //   - MissGrace is 3 minutes, and a slot that may still fire is only
 //     distinguishable from the NEXT slot while the interval exceeds the grace
-//   - a scheduled run is bounded by its own interval (the host's armRunDeadline),
-//     and that bound logs at ERROR for an alert rule, so a 1-minute interval
-//     pages the operator for any run that takes 61 seconds
+//   - a scheduled run's own interval is one input to the run's single deadline
+//     (the host's runCeiling / minRunBudget pair in internal/hub/run_bounds.go),
+//     and blowing that deadline logs at ERROR for an alert rule, so a 1-minute
+//     interval pages the operator for any run that takes 61 seconds. The host
+//     FLOORS the derived budget at this same 5 minutes, so the two numbers move
+//     together — change minRunBudget with this constant
 //
 // Mirrored in static-src/schedule-types.ts (INTERVAL_BOUNDS), which is where the
 // user meets the rule; change both together.

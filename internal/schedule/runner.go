@@ -28,14 +28,19 @@ const MissGrace = 3 * time.Minute
 // run back to the row that asked for it. That attribution is what makes a
 // silent nightly failure visible: the host records the outcome against this id
 // when the run is denied a permission nobody was there to answer.
-// The deadline is the instant this run's own NEXT slot comes due, and it is
-// computed here because it is a property of the SCHEDULE rather than of the run:
-// a scheduled run may take up to its own repeat interval and no longer. The
-// interval IS the number, which is what makes this bound a rule rather than a
-// timeout somebody had to pick. Zero means unbounded (a spec whose next slot
-// cannot be computed), and the host is expected to treat it that way.
+//
+// slotAt is the instant this run's own NEXT slot comes due, and it is computed
+// here because it is a property of the SCHEDULE rather than of the run: a
+// scheduled run may take up to its own repeat interval and no longer. The interval
+// IS the number, which is what makes this bound a rule rather than a timeout
+// somebody had to pick.
+//
+// It is an INPUT to the run's bound, not the bound itself. The host takes the
+// tighter of this and its own universal ceiling and applies a floor, so zero (a
+// spec whose next slot cannot be computed) means "no slot to respect" rather than
+// "unbounded" — such a run is still bounded by the ceiling.
 type Launcher interface {
-	LaunchScheduledRun(ctx context.Context, source, scheduleID string, deadline time.Time) (id, name string, err error)
+	LaunchScheduledRun(ctx context.Context, source, scheduleID string, slotAt time.Time) (id, name string, err error)
 }
 
 // Runner fires due schedules. Construct with NewRunner and call Run in a
@@ -116,9 +121,10 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 	// the grace window does not extend the run's budget past the slot it would
 	// collide with.
 	//
-	// An uncomputable next slot yields NO bound rather than a launch failure. The
-	// run still being launched is the point: refusing to run because the bound
-	// cannot be derived would turn a display-level defect into an outage.
+	// An uncomputable next slot yields no SLOT input rather than a launch failure.
+	// The run still being launched is the point: refusing to run because one of the
+	// two bound inputs cannot be derived would turn a display-level defect into an
+	// outage, and the host's own ceiling still bounds it.
 	//
 	// DEFENSIVE, and unreachable through the store today: Put validates the spec
 	// (an unknown frequency is rejected there), so every persisted entry can name

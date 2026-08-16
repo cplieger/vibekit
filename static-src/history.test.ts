@@ -349,6 +349,19 @@ describe("history: an overrun reads differently from a cancel", () => {
     expect(row.textContent).toContain("a step ran past its turn limit");
   });
 
+  it("says a restart interrupted the run", async () => {
+    // The fourth fact, and the reason it needs its own value: a run cut off by a
+    // restart stopped mid-step through the same cancel a person uses, so without
+    // the sentence the reader is left inferring it from a run that simply stops.
+    const c = await render({
+      sessions: [],
+      runs: [{ ...runRow, status: "aborted", end_reason: "orphaned" }],
+    });
+    const row = c.querySelector('[data-key="r:wf_1"]')!;
+    expect(row.textContent).toContain("the server restarted while it was running");
+    expect(row.getAttribute("aria-label")).toBe("Open feature-pipeline, aborted");
+  });
+
   it("says nothing extra for a user cancel, which is the same status", async () => {
     // The distinguisher is the ABSENCE of a reason. If this row grew a sentence,
     // the field would be describing every abort rather than the two vibekit
