@@ -1570,6 +1570,72 @@ func TestHandleReclone_RejectsNonStandardScheme(t *testing.T) {
 	}
 }
 
+// TestHandleReclone_RefusesAnIntermediateSymlinkEscape is the handler-level
+// counterpart to TestRepoDirForDelete_RefusesAnIntermediateSymlinkEscape: it
+// pins that reclone actually CALLS the resolved variant.
+//
+// The bait is one the unguarded code takes. With the lexical resolver,
+// {"repo":"link/victim"} passes every guard reclone has — it is not empty, not
+// ".", not the workspace root, `<dir>/.git` exists through the symlink, origin
+// resolves, and the scheme is allowed — and os.RemoveAll then deletes a repo
+// outside the workspace. So the surviving victim tree is the assertion that
+// matters: revert handleReclone to h.repoDir and this test fails on it.
+//
+// The positive control lives next door: TestHandleReclone_RejectsNonStandardScheme
+// drives a plain in-workspace repo all the way to the scheme check, so the guard
+// added here is not refusing everything.
+func TestHandleReclone_RefusesAnIntermediateSymlinkEscape(t *testing.T) {
+	// Requires a real git binary to set up the fixture.
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available in PATH")
+	}
+	outside := t.TempDir()
+	workDir := t.TempDir()
+
+	victim := filepath.Join(outside, "victim")
+	if err := os.MkdirAll(victim, 0o750); err != nil {
+		t.Fatalf("mkdir victim: %v", err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = victim
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	// An ALLOWED scheme deliberately: a rejected scheme would stop the request
+	// before os.RemoveAll for a reason that has nothing to do with the escape,
+	// and the test would pass with the guard removed.
+	run("remote", "add", "origin", "https://example.invalid/victim.git")
+
+	if err := os.Symlink(outside, filepath.Join(workDir, "link")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	h := NewHandler(workDir)
+	req := httptest.NewRequest(http.MethodPost, "/api/git/reclone",
+		strings.NewReader(`{"repo":"link/victim"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.handleReclone(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("handleReclone({\"repo\":\"link/victim\"}) code = %d, want %d",
+			rec.Code, http.StatusBadRequest)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "not inside the workspace") {
+		t.Errorf("handleReclone({\"repo\":\"link/victim\"}) body = %q, want substring %q",
+			body, "not inside the workspace")
+	}
+	// The assertion the guard exists for: the repo outside the workspace is intact.
+	if _, err := os.Stat(filepath.Join(victim, ".git")); err != nil {
+		t.Errorf("reclone deleted a repo outside the workspace: os.Stat(%q) = %v, want nil",
+			filepath.Join(victim, ".git"), err)
+	}
+}
+
 // --- handleStage validation (no git subprocess needed) ---
 
 func TestStagingHandlers_InputValidation(t *testing.T) {
@@ -3056,15 +3122,15 @@ func TestHandleBranchName_CleanTreeUsesCommits(t *testing.T) {
 }
 
 // TestRepoDirForDelete_RefusesAnIntermediateSymlinkEscape pins the containment
-// check the DESTRUCTIVE caller needs.
+// check the DESTRUCTIVE callers need.
 //
 // repoDir is deliberately lexical-only so a user can address a symlinked repo by
 // its link name, and its doc justifies that on the ground that this package
-// performs "read operations". handleRemove is the exception: it calls
-// os.RemoveAll. That unlinks a final symlink rather than following it, but the
-// kernel resolves every INTERMEDIATE component, so a lexically-clean
-// "link/victim" deletes outside the workspace. No `..`, not absolute, and the
-// dir == workDir guard does not fire.
+// performs "read operations". Two handlers are the exception, because they call
+// os.RemoveAll: handleRemove and handleReclone. That unlinks a final symlink
+// rather than following it, but the kernel resolves every INTERMEDIATE
+// component, so a lexically-clean "link/victim" deletes outside the workspace.
+// No `..`, not absolute, and the dir == workDir guard does not fire.
 //
 // Both directions are asserted, because a fix that simply refused symlinks would
 // break the feature the lexical rule exists for.
