@@ -108,6 +108,19 @@ class PromptInputController {
     this.draft = "";
   }
 
+  /** Leave cycling and put the saved draft back in the box.
+   *
+   *  ONE method for both keys that end cycling (Escape, and ArrowDown off the
+   *  newest prompt), because exitCycling() zeroes this.draft: read it after the
+   *  exit and you get "", so the user's typing is silently thrown away. Escape
+   *  saved it to a local first and ArrowDown did not, which is exactly the bug
+   *  this method removes the room for. */
+  private restoreDraft(el: HTMLTextAreaElement): void {
+    const saved = this.draft;
+    this.exitCycling();
+    this.setInputValue(el, saved);
+  }
+
   private userPrompts(): string[] {
     const s = getActive();
     if (s === undefined) {
@@ -266,8 +279,7 @@ class PromptInputController {
       if (e.key === "ArrowDown" && this.cursorOnLastLine(input) && this.idx !== -1) {
         e.preventDefault();
         if (this.idx === 0) {
-          this.exitCycling();
-          this.setInputValue(input, this.draft);
+          this.restoreDraft(input);
           return;
         }
         this.idx -= 1;
@@ -279,9 +291,7 @@ class PromptInputController {
       if (e.key === "Escape" && this.idx !== -1) {
         e.preventDefault();
         e.stopPropagation();
-        const d = this.draft;
-        this.exitCycling();
-        this.setInputValue(input, d);
+        this.restoreDraft(input);
         return;
       }
     });
