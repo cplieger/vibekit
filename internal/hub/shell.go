@@ -3,8 +3,8 @@
 // The shell runs in a real pseudo-terminal (creack/pty) so interactive
 // programs (vim, htop, less, tab completion) work correctly. I/O flows
 // over a WebSocket at /api/shell/ws using a compact binary wire protocol
-// (see github.com/cplieger/web-terminal-engine/v3/terminal). The server maintains a VT500
-// screen buffer (github.com/cplieger/web-terminal-engine/v3/vt) and sends only changed rows
+// (see github.com/cplieger/web-terminal-engine/v4/terminal). The server maintains a VT500
+// screen buffer (github.com/cplieger/web-terminal-engine/v4/vt) and sends only changed rows
 // to the client on each flush tick — dramatically reducing bandwidth vs.
 // raw-byte streaming, and enabling a lightweight DOM-based renderer on the
 // client (no xterm.js dependency).
@@ -26,7 +26,9 @@ package hub
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/cplieger/web-terminal-engine/v4/terminal"
 )
@@ -58,7 +60,19 @@ func (h *Hub) handleShellWS(w http.ResponseWriter, r *http.Request) {
 	h.shellMgr.handleShellWS(w, r)
 }
 
-// kill shuts down the PTY process.
+// kill ends the PTY session and waits for its teardown: reaping the child and
+// telling attached clients the process is gone. Its one caller is Hub.Shutdown,
+// which runs at process exit, and work still in flight when the process goes is
+// work that is lost — so this takes the engine's blocking form rather than Close.
+//
+// The budget is its own because Hub.Shutdown carries no context (the HTTP
+// server's grace is the outer bound on everything around it). It is sized above
+// the engine's 5s reap ceiling so an expiry means the teardown genuinely hung.
 func (sm *ShellManager) kill() {
-	sm.handler.Shutdown()
+	const budget = 10 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	if err := sm.handler.Shutdown(ctx); err != nil {
+		slog.Warn("shell teardown did not finish", "budget", budget, "error", err)
+	}
 }
