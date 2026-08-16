@@ -5,9 +5,10 @@
 // as pills in a row below the input: the body opens the file in its own
 // viewer tab, the `×` removes it. On submit, the list is
 // sent alongside the prompt text. The server classifies each by
-// extension: supported document types (PDF, DOCX, XLSX, DOC, XLS, CSV)
-// are inlined as ACP embedded `resource` blocks; everything else becomes
-// a path reference the agent reads via fs_read.
+// extension into one of three: a supported document type (PDF, DOCX,
+// XLSX, DOC, XLS, CSV) is inlined as an ACP embedded `resource` block,
+// an image (PNG, JPEG, GIF, WebP) as an `image` block, and anything else
+// becomes a path reference the agent reads with its file tools.
 // ---------------------------------------------------------------------------
 
 import { createCollection, bindList, effect } from "@cplieger/reactive";

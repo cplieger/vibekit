@@ -132,13 +132,13 @@ func (r *Runner) fire(ctx context.Context, e *Entry, due time.Time) {
 	// silently is how an unbounded run would become invisible if a future
 	// frequency ever parses but cannot be projected. Deliberately not tested —
 	// reaching it needs a state the store refuses to hold.
-	deadline, dErr := NextRun(e.Spec, due)
+	slotAt, dErr := NextRun(e.Spec, due)
 	if dErr != nil {
-		slog.Warn("schedule cannot name its next slot, so its run is unbounded",
+		slog.Warn("schedule cannot name its next slot, so its run is bounded by the ceiling alone",
 			"id", e.ID, "source", e.Source, "error", dErr)
-		deadline = time.Time{}
+		slotAt = time.Time{}
 	}
-	runID, name, err := r.launcher.LaunchScheduledRun(ctx, e.Source, e.ID, deadline)
+	runID, name, err := r.launcher.LaunchScheduledRun(ctx, e.Source, e.ID, slotAt)
 	result := "started"
 	if err != nil {
 		// An overlap is the expected, already-implemented refusal (one live run

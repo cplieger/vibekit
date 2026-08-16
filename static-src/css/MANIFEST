@@ -2,8 +2,16 @@
 # Files concatenated in declared order at Docker build time.
 #
 # Slicing follows the existing @layer cascade:
-#   00-03  layer declaration, @property defs, @layer tokens/reset/base
-#   10-22  @layer components (split by feature: chat, tools, input, ...)
+#   00-02  layer declaration + @property defs (00), @layer tokens (01),
+#          @layer reset (02); the ui-primitives base and 04-uip-skin sit
+#          unlayered between 01 and 02
+#   03     base — UNLAYERED, deliberately (see 10-29)
+#   10-29  feature stylesheets, split by feature (chat, tools, input, ...).
+#          Only 10-shell-app.css is @layer components — it opens the block on
+#          line 1 and closes it on its last. The other 21 are UNLAYERED, so they
+#          beat it and every layered rule, and a tie between two of them is
+#          decided by the order below. That is why 15-input.css takes the
+#          `transition` property from 03-base.css's press rule.
 #   30     @layer utilities
 #   40     a11y (between utilities-close and mobile-open)
 #   50     @layer mobile

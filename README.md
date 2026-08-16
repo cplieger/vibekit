@@ -9,7 +9,7 @@
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cplieger/vibekit/badge)](https://scorecard.dev/viewer/?uri=github.com/cplieger/vibekit)
 [![SBOM](https://img.shields.io/badge/SBOM-SPDX-1D4ED8)](https://github.com/cplieger/vibekit/releases)
 
-A browser-based front-end for the **Kiro CLI**: chat with an AI coding agent from any device, with a live terminal, a file editor, checkpoints, and git/forge workflows in the same tab.
+A browser-based front-end for the **Kiro CLI**: chat with an AI coding agent from any device, with a live terminal, a file editor, and git/forge workflows in the same tab.
 
 Vibekit runs `kiro-cli` as an Agent Client Protocol (ACP) subprocess and wraps it in a full workspace UI. The **server is the single source of truth**: every action is persisted and echoed to all connected clients over Server-Sent Events, so a conversation open on your phone and your desktop stays in sync with no drift. One `kiro-cli` bridge backs each chat and is shared by every tab and device viewing it.
 
@@ -31,6 +31,7 @@ Signing in from the UI authenticates **kiro-cli to AWS** (the agent's identity);
 services:
   vibekit:
     image: ghcr.io/cplieger/vibekit:latest
+    container_name: vibekit
     # Override with PUID/PGID in .env; defaults to 1000:1000.
     user: "${PUID:-1000}:${PGID:-1000}"  # match your host user
     ports:
@@ -44,8 +45,8 @@ services:
 Before the first start, create and own the bind-mount directories. The container runs as the UID from `user:` (1000 unless you set `PUID`/`PGID`), and the entrypoint does not `chown` them, so a root-owned host directory makes first boot fail with `failed to create required directories`:
 
 ```bash
-mkdir -p /opt/appdata/vibekit/config /opt/appdata/vibekit/workspace
-chown -R "${PUID:-1000}:${PGID:-1000}" /opt/appdata/vibekit
+mkdir -p ./config ./workspace
+chown -R "${PUID:-1000}:${PGID:-1000}" ./config ./workspace
 ```
 
 To skip managing host ownership, run as root instead with `user: "0:0"` (less secure).
@@ -60,12 +61,12 @@ Vibekit is a full workspace in the browser. Everything below is reachable from a
 
 - Multi-device conversations kept in sync live over SSE; full history, one file per chat.
 - Streaming markdown responses with collapsible reasoning ("thinking") blocks.
-- Prompt queue: keep typing while the agent works; queued prompts drain in order as turns finish.
+- Steering: send while the agent is working and your message joins the turn already running instead of waiting for the next one. Queued messages show as chips until the agent reads them, and you can drop the unread ones without cancelling the turn.
 - Inline shell: prefix a message with `!` to run a command locally.
-- Slash commands (`/compact`, …) with type-ahead completion.
-- File attachments by drag-drop or paperclip; PDF/CSV/Office documents are sent to the agent as documents.
+- A few typed commands: `/compact` to compact the context now, `/drop` to end a wedged turn, and `/goal` to set an objective the agent works toward across turns until it verifies the goal is met or its iteration budget runs out.
+- File attachments by drag-drop, paste, or the composer's `+` menu. PDF, CSV and Office documents are sent to the agent as documents, images as images, and anything else as a path it opens with its file tools.
 - Find-in-chat (Ctrl-F) and per-chat export to Markdown or JSON.
-- On-demand and automatic context compaction; configurable chat retention with an archive/History view.
+- On-demand and automatic context compaction; configurable chat retention, with a History view over past conversations and workflow runs and a search across every chat for the one you are thinking of.
 
 **Agent control** over models, modes, and turns:
 
@@ -73,9 +74,8 @@ Vibekit is a full workspace in the browser. Everything below is reachable from a
 - Switch models on the fly, with per-model credit multipliers.
 - Set reasoning effort (low through max).
 - Approve or deny tool-call permission prompts; answer the agent's structured questions and MCP input (elicitation) forms.
-- Plan handoff: edit a proposed plan in the editor, or run it directly.
-- Rewind: branch a new conversation from any past turn, then merge it back or discard it.
-- Subagents and agent-spawned terminals render as nested, collapsible cards.
+- Tangents: fork a side conversation carrying everything said so far, and leave the original chat untouched from that point on. It opens as a sub-tab of the chat it came from.
+- Subagents render as collapsible cards with the delegate's own reasoning, tool calls and diffs inside, and a rolling tail of its last lines while it works. The agent's own terminals get tabs in the shell panel.
 
 **Editing and files** in the browser:
 
@@ -98,28 +98,29 @@ Vibekit is a full workspace in the browser. Everything below is reachable from a
 
 **Safety nets** around the agent's file edits:
 
-- Checkpoints: content-addressed per-file snapshots, independent of git; restore a turn's file edits or undo a single file, with cross-chat conflict detection and click-to-diff.
-- Supervised mode: stage every agent file write for per-hunk accept/reject/merge before it touches disk; grant trust for the rest of a turn when you're confident.
+- Rewind: send the whole conversation back to any earlier message of yours. The agent's file edits roll back with the transcript, from snapshots the agent runtime takes on its own, independently of git.
+- Supervised mode: hold the whole turn for review instead of approving each write. You get one approval listing every file the turn touched, and you keep or discard each one; discarding restores it. Renames and deletes are reviewable too, not just writes.
 - Permissions: a Cedar policy editor (allow/deny/ask per capability, with path scoping) and a "test a decision" explainer; one policy governs every tool call, shell commands included.
-- Scope: checkpoints and supervised staging cover the agent's file-write channel. Changes made through shell commands or terminals (the agent's or yours) are approved via permissions but not snapshotted or staged; use git for those.
+- Scope: rewind and supervised review cover the agent's file-write channel. Changes made through shell commands or terminals (the agent's or yours) are approved via permissions but not snapshotted; use git for those. A held write does land on disk while you review it, so a watcher or dev server sees it before you decide.
 
 **MCP** server management:
 
 - Add, edit, and remove MCP servers (local, or remote over HTTP/SSE) from the UI.
-- OAuth (device flow, client id/secret), per-server auto-approve, live reconnect, and prompt/resource browsing.
+- OAuth for servers that need it: vibekit registers itself with the server automatically, or takes a client id and secret you already have, then surfaces a sign-in link. Plus per-server auto-approve, live reconnect, and prompt/resource browsing.
 
 **Workspace tools** and agent configuration:
 
 - Manage installed tools: search a catalog of ~700 runtimes, language servers, and CLIs (compiled from the mise and aqua registries by [tool-catalog](https://github.com/cplieger/tool-catalog)), install them in the background with streamed progress, pin versions, or bring your own install command. The catalog refreshes itself on a schedule (`VIBEKIT_TOOL_CATALOG_REFRESH`, see the table below), keeping the last good copy on any failure, with a manual Refresh button in Settings → Tools. Every tool has an enable/disable switch: disabling uninstalls it but keeps the entry as a template, and fresh installs start with language-server templates (Go, TypeScript, Python, Rust) ready to switch on. Enabling a language server also activates kiro-cli's [code intelligence](https://kiro.dev/docs/cli/code-intelligence/) for the workspace automatically: LSP-backed navigation, rename, and diagnostics, live chats included, no restart. The detected-language set is frozen into `/workspace/.kiro/settings/lsp.json` at first activation; after adding a new language to the workspace, delete that file and vibekit re-initializes it on the next boot or language-server install.
 - Knowledge bases: index workspace directories, with live progress.
-- Spec board (`/specs`): a live requirements → design → tasks tree.
-- Hooks: list, enable/disable, and run agent hooks; create one from chat context.
-- Edit global custom instructions and browse steering docs, skills, and agents.
+- Configuration browser (`/docs`): the whole `.kiro` inventory with its front-matter, one tab per kind: steering docs with the badge saying whether they load every session, skills, agents with their model and tool count, specs grouped by feature, and hooks.
+- Hooks: list, enable or disable, and create one from chat context.
+- Workflows: launch a recipe with its declared inputs, watch the run in its own tab with pause, resume and cancel, or put it on a schedule and read the outcome afterwards.
+- Edit global custom instructions and manage knowledge bases.
 
 **Notifications** and PWA install:
 
 - Installable as a PWA, with a home-screen icon and a share target.
-- Web-push notifications when a turn finishes or the agent needs permission, even with the tab closed.
+- Web-push notifications when a turn finishes, a pull request's checks settle, or the agent needs permission, even with the tab closed. The turn and pull-request kinds each have their own switch; the permission notice has none, because off-screen there is nothing else to tell you a turn is blocked waiting on you.
 
 **Settings** and per-device preferences:
 
@@ -147,7 +148,7 @@ The access log and the login/logout audit logs record a `client_ip`. How that ad
     WT_TRUSTED_PROXIES: "10.0.0.0/8,192.168.0.0/16"
   ```
 
-`X-Forwarded-For` is honored **only** when the connecting peer falls inside `WT_TRUSTED_PROXIES`; otherwise the header is ignored and the socket peer is logged. List every proxy hop between the client and vibekit. This is spoof-safe by default: an empty, unset, or misconfigured value falls back to the unspoofable socket peer rather than trusting a client-supplied header.
+`X-Forwarded-For` is honored **only** when the connecting peer falls inside `WT_TRUSTED_PROXIES`; otherwise the header is ignored and the socket peer is logged. List every proxy hop between the client and vibekit. This is spoof-safe by default: an empty, unset, or misconfigured value falls back to the unspoofable socket peer, and never trusts a client-supplied header.
 
 ### Host allowlist (`WT_ALLOWED_HOSTS`)
 
@@ -157,9 +158,9 @@ This blocks **DNS rebinding**: an attacker's page makes its own hostname resolve
 
 ### Trusted install uids (`WT_TRUSTED_INSTALL_UIDS`)
 
-Before installing kiro-cli, vibekit checks who can write each directory on the way to its install tree under `/config/tools`, and refuses to install when another identity can — what lands there is later executed by this container. Leave this **unset** (the default) and that check applies in full; that is the right setting for almost every deployment.
+Before installing kiro-cli, vibekit checks who can write each directory on the way to its install tree under `/config/tools`, and refuses to install when another identity can, because what lands there is later executed by this container. Leave this **unset** (the default) and that check applies in full; that is the right setting for almost every deployment.
 
-Set it only when the check refuses a volume you know is safe — typically a shared or network mount whose permissions grant an account you control:
+Set it only when the check refuses a volume you know is safe, typically a shared or network mount whose permissions grant an account you control:
 
 ```yaml
 environment:
@@ -188,12 +189,13 @@ environment:
   VIBEKIT_KIRO_ACP_ARGS: "-v"
 ```
 
-Only the values are appended; nothing is interpreted as a shell command. Three flags are refused with a logged reason, because vibekit's own behaviour depends on them staying fixed:
+Only the values are appended; nothing is interpreted as a shell command. Five flags are refused with a logged reason:
 
-- `--agent-engine` — vibekit speaks only the v3 wire, so selecting v1 or v2 would leave every chat unable to start.
-- `--trust-all-tools` / `--trust-tools` — these have no effect on v3. Tool approval is the policy you edit in **Settings → Permissions**, so setting them here would look like turning approvals off without doing so.
+- `--agent-engine`: vibekit speaks only the v3 wire, so selecting v1 or v2 would leave every chat unable to start.
+- `--trust-all-tools` / `--trust-tools`: these have no effect on v3. Tool approval is the policy you edit in **Settings → Permissions**, so setting them here would look like turning approvals off without doing so.
+- `--model` / `--effort`: kiro-cli rejects both on the v3 wire and exits before the session opens, so either one here would stop every chat in the container from starting. Pick the model and the reasoning effort per chat in the composer instead, where you can also change them mid-conversation.
 
-vibekit already passes `--model` and `--effort` itself, and anything you set here is a starting value: changing the model or reasoning effort in the UI still takes precedence afterwards. Flags are logged by count only, never by value, so a mistyped value cannot leak into the logs. Not applied to the small background helper vibekit uses for chat titles.
+Anything else you set is a starting value that the UI still overrides afterwards. Flags are logged by count only, never by value, so a mistyped value cannot leak into the logs. Not applied to the small background helper vibekit uses for commit messages, pull-request descriptions and error explanations.
 
 ### Agent-launched workflow runs (`VIBEKIT_AGENT_WORKFLOWS`)
 
@@ -215,11 +217,11 @@ The agent then loses the workflow tools and answers about workflows in prose ins
 
 ### Agent environment variables (`VIBEKIT_ALLOW_AGENT_ENV`)
 
-When the agent runs a command, it can also ask for environment variables to be set for it. Most are ordinary — `CGO_ENABLED`, `GOFLAGS`, `TERM`. A few are not: they don't carry data, they change what a program *executes*. `LD_PRELOAD` loads code into any program that starts. `GIT_SSH_COMMAND` replaces the command git runs. `BASH_ENV` runs a script before your script.
+When the agent runs a command, it can also ask for environment variables to be set for it. Most are ordinary: `CGO_ENABLED`, `GOFLAGS`, `TERM`. A few are not: they don't carry data, they change what a program _executes_. `LD_PRELOAD` loads code into any program that starts. `GIT_SSH_COMMAND` replaces the command git runs. `BASH_ENV` runs a script before your script.
 
 vibekit refuses those, because approving a command is meant to approve **that** command. Otherwise you could approve a harmless `tar -xf backup.tar` and get something else, since the agent's variables take precedence over vibekit's own.
 
-The refusal names the variable, so the agent can retry without it. The list is kiro-cli's own, so an agent behaves the same here as it does in the terminal, and a value that cannot do harm is still accepted — `GIT_PAGER=cat` and `PAGER=` are the normal way to stop git paging, and they keep working.
+The refusal names the variable, so the agent can retry without it. The list is kiro-cli's own, so an agent behaves the same here as it does in the terminal, and a value that cannot do harm is still accepted. `GIT_PAGER=cat` and `PAGER=` are the normal way to stop git paging, and they keep working.
 
 If you genuinely need one (a profiler that preloads a library, a vendored `NODE_PATH`), name it:
 
