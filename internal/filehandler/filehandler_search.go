@@ -155,10 +155,21 @@ type FileSearchResult struct {
 	// the shape and size of a candidate are only knowable once it is open — see
 	// classify.
 	Scanned int `json:"scanned"`
-	// Truncated says the answer is INCOMPLETE — the walk hit its file,
-	// directory or depth cap, or the match cap stopped it opening the rest.
-	// Either way files were left unread, so the UI must say so rather than let a
-	// short result imply the text is nowhere else.
+	// Truncated says the answer is INCOMPLETE: the walk hit its file, directory
+	// or depth cap, the match cap stopped it opening the rest, or something it
+	// meant to read could not be read — a search root, directory or file the
+	// kernel refused for a reason the walk did not choose. Either way files were
+	// left unread, so the UI must say so rather than let a short result imply the
+	// text is nowhere else.
+	//
+	// One field rather than two, because a caller can do exactly one thing with
+	// either answer: say the result is partial. A second word for "and some of it
+	// was unreadable" would split one fact across two names for a distinction no
+	// reader of this endpoint acts on, and the reason WHY belongs in the log line
+	// that already names the path. A DELIBERATE skip — an excluded glob, a
+	// symlink, a sensitive path, a binary, a file that vanished under the walk —
+	// is not a loss and never sets this: the answer covers everything the search
+	// was asked to cover.
 	Truncated bool `json:"truncated"`
 }
 
@@ -451,12 +462,17 @@ func openSearchRoot(l loc) (*os.File, error) {
 func (s *fileScan) addRoot(l loc) bool {
 	f, err := openSearchRoot(l)
 	if err != nil {
+		// A root that cannot be opened contributes nothing, and on the "/" fan-out
+		// the other mounts still answer — so the reply would otherwise present a
+		// scan of some mounts as a scan of all of them.
+		s.truncated = true
 		slog.Warn("filehandler: search open failed", "path", l.abs, "error", err)
 		return true
 	}
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
+		s.truncated = true
 		slog.Warn("filehandler: search stat failed", "path", l.abs, "error", err)
 		return true
 	}
@@ -515,6 +531,10 @@ func (s *fileScan) walkDir(d searchDir) bool {
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
+				// The chunk in hand was consumed, but the REST of this directory was
+				// never enumerated, so entries the search would have matched are
+				// unaccounted for. EOF is the ordinary end and says nothing.
+				s.truncated = true
 				slog.Warn("filehandler: search readdir failed", "path", d.abs, "error", err)
 			}
 			return true
@@ -637,9 +657,11 @@ func (s *fileScan) descend(d searchDir, name string) bool {
 		// A directory that vanished under the walk is normal on a tree the agent
 		// is writing to, and so is one replaced by a symlink or a non-directory
 		// between the ReadDir that classified it and this open — the refusal IS
-		// the guarantee. Anything else means part of the answer is missing and
-		// the operator should be able to see why.
+		// the guarantee. Anything else (a permission wall, an I/O error) means the
+		// whole subtree went unread, which is what Truncated says: the operator
+		// gets the reason from the log, the caller gets told the answer is partial.
 		if !errors.Is(err, fs.ErrNotExist) && !isSwapRefusal(err) {
+			s.truncated = true
 			slog.Warn("filehandler: search opendir failed", "path", abs, "error", err)
 		}
 		return true
@@ -665,13 +687,25 @@ func (s *fileScan) readChunk(d searchDir, cands []searchCandidate) {
 	if len(cands) == 0 {
 		return
 	}
-	per := make([][]FileMatch, len(cands))
+	per := make([]candidateRead, len(cands))
 	parallel.Bounded(s.ctx, cands, searchWorkers, func(i int, c searchCandidate) {
-		per[i] = s.readCandidate(d.f, c)
+		per[i].hits, per[i].unread = s.readCandidate(d.f, c)
 	})
 	for i := range per {
-		s.collect(per[i])
+		s.collect(per[i].hits)
+		if per[i].unread {
+			s.truncated = true
+		}
 	}
+}
+
+// candidateRead is one candidate's outcome, carried back by index rather than
+// folded in by the worker: an unreadable file has to reach `truncated`, and
+// `truncated` is the walk goroutine's to write — which is what keeps the fan-out
+// free of a mutex.
+type candidateRead struct {
+	hits   []FileMatch
+	unread bool
 }
 
 // collect folds one file's hits into the reply.
@@ -681,23 +715,24 @@ func (s *fileScan) collect(hits []FileMatch) {
 }
 
 // readCandidate opens one candidate against its directory's descriptor and
-// returns its hits.
-func (s *fileScan) readCandidate(dir *os.File, c searchCandidate) []FileMatch {
+// returns its hits, plus whether the file was left UNREAD for a reason the walk
+// did not choose — a file counted in `scanned` that contributed no lines because
+// the kernel refused it is a hole in the answer, not a skip.
+func (s *fileScan) readCandidate(dir *os.File, c searchCandidate) (hits []FileMatch, unread bool) {
 	f, size, err := openCandidate(dir, c)
 	if err != nil {
-		logSearchReadError(c.abs, err)
-		return nil
+		return nil, logSearchReadError(c.abs, err)
 	}
 	defer func() { _ = f.Close() }()
 	data, err := readSearchFile(s.ctx, f, size)
 	switch {
 	case errors.Is(err, errSearchBinary):
-		return nil
+		// Not a loss: a binary holds no lines to report, so the answer covers it.
+		return nil, false
 	case err != nil:
-		logSearchReadError(c.abs, err)
-		return nil
+		return nil, logSearchReadError(c.abs, err)
 	}
-	return s.matchLines(c.abs, data)
+	return s.matchLines(c.abs, data), false
 }
 
 // openCandidate opens one accepted candidate as a single name against the
@@ -790,21 +825,29 @@ func (s *fileScan) results() FileSearchResult {
 	}
 }
 
-// logSearchReadError records why a candidate contributed nothing. Every case
-// here is a SKIP rather than a failure of the search: ErrNotRegular covers the
-// FIFO, device node and socket refused off the descriptor (which is also what
-// keeps /proc special files out, something an os.Root explicitly does not do),
-// ELOOP and ENOTDIR are the kernel refusing a name that was swapped after the
-// walk classified it, and a vanished file is the ordinary consequence of
-// searching a tree the agent is writing to.
-func logSearchReadError(abs string, err error) {
+// logSearchReadError records why a candidate contributed nothing, and reports
+// whether that was a LOSS. The two answers come from one switch because they are
+// one judgement: the Debug cases are SKIPS the search chose or expected, and
+// anything reaching Warn is a file the search meant to read and could not.
+//
+// ErrNotRegular covers the FIFO, device node and socket refused off the
+// descriptor (which is also what keeps /proc special files out, something an
+// os.Root explicitly does not do), ELOOP and ENOTDIR are the kernel refusing a
+// name that was swapped after the walk classified it, and a vanished file is the
+// ordinary consequence of searching a tree the agent is writing to. A cancelled
+// request is neither: the handler discards the body, so nothing is reported at
+// all.
+func logSearchReadError(abs string, err error) (lost bool) {
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return false
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, atomicfile.ErrNotRegular),
 		errors.Is(err, atomicfile.ErrFileTooLarge), isSwapRefusal(err):
 		slog.Debug("filehandler: search skipped file", "path", abs, "error", err)
+		return false
 	default:
 		slog.Warn("filehandler: search read failed", "path", abs, "error", err)
+		return true
 	}
 }
 

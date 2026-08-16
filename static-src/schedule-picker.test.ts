@@ -123,14 +123,23 @@ describe("describeSpec for minutely", () => {
 function mount(
   spec: ScheduleSpec,
   autoApprove = false,
-): { body: HTMLElement; save: () => ScheduleSpec } {
+  stored?: { enabled: boolean },
+): {
+  body: HTMLElement;
+  save: () => ScheduleSpec;
+  savedEnabled: () => boolean;
+  remove: () => HTMLButtonElement | null;
+} {
   let saved: ScheduleSpec | undefined;
+  let savedEnabled: boolean | undefined;
   const body = buildSchedulePicker({
     spec,
-    enabled: false,
+    enabled: stored?.enabled ?? false,
+    exists: stored !== undefined,
     autoApprove,
-    onSave: (s: ScheduleSpec) => {
+    onSave: (s: ScheduleSpec, enabled: boolean) => {
       saved = s;
+      savedEnabled = enabled;
     },
     onRemove: vi.fn(),
     onClose: vi.fn(),
@@ -146,6 +155,13 @@ function mount(
       }
       return saved;
     },
+    savedEnabled: (): boolean => {
+      if (savedEnabled === undefined) {
+        throw new Error("Save did not fire");
+      }
+      return savedEnabled;
+    },
+    remove: (): HTMLButtonElement | null => body.querySelector<HTMLButtonElement>(".btn-danger"),
   };
 }
 
@@ -295,6 +311,7 @@ describe("the unattended note", () => {
       buildSchedulePicker({
         spec: defaultSpec(),
         enabled: false,
+        exists: false,
         autoApprove,
         onSave: vi.fn(),
         onRemove: vi.fn(),
@@ -429,5 +446,74 @@ describe("defaultSpec", () => {
     expect(s.interval).toBeGreaterThan(0);
     expect(s.weekdays?.length).toBeGreaterThan(0);
     expect(s.month_day).toBeGreaterThan(0);
+  });
+});
+
+// Save could only ever produce enabled=true, so Remove was the one off-switch
+// and deleting the rule was the price of pausing it. The store, summaryLine and
+// the server's runner already modelled disabled; only the form could not reach it.
+describe("pausing a schedule", () => {
+  const daily = (): ScheduleSpec => ({ freq: "daily", hour: 2, minute: 0 });
+
+  it("saves a new schedule enabled without touching the box", () => {
+    const form = mount(daily());
+    form.save();
+    expect(form.savedEnabled()).toBe(true);
+  });
+
+  it("offers the box checked for a new schedule", () => {
+    const box = mount(daily()).body.querySelector<HTMLInputElement>(".sched-enabled input");
+    expect(box?.checked).toBe(true);
+  });
+
+  it("saves disabled when the box is unchecked, keeping the rule", () => {
+    const form = mount(daily(), false, { enabled: true });
+    const box = form.body.querySelector<HTMLInputElement>(".sched-enabled input");
+    expect(box?.checked).toBe(true);
+    if (box === null) {
+      throw new Error("no enabled box");
+    }
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    expect(form.save()).toEqual(daily());
+    expect(form.savedEnabled()).toBe(false);
+  });
+
+  it("round-trips a stored disabled schedule back to enabled", () => {
+    const form = mount(daily(), false, { enabled: false });
+    const box = form.body.querySelector<HTMLInputElement>(".sched-enabled input");
+    expect(box?.checked).toBe(false);
+    if (box === null) {
+      throw new Error("no enabled box");
+    }
+    box.checked = true;
+    box.dispatchEvent(new Event("change"));
+    form.save();
+    expect(form.savedEnabled()).toBe(true);
+  });
+
+  it("marks the preview paused, and unmarks it, without altering the rule", () => {
+    const form = mount(daily(), false, { enabled: true });
+    const summary = form.body.querySelector(".sched-summary");
+    const rule = summary?.textContent ?? "";
+    expect(rule).not.toContain("paused");
+    const box = form.body.querySelector<HTMLInputElement>(".sched-enabled input");
+    if (box === null) {
+      throw new Error("no enabled box");
+    }
+    box.checked = false;
+    box.dispatchEvent(new Event("change"));
+    expect(summary?.textContent).toBe(`${rule} (paused)`);
+    box.checked = true;
+    box.dispatchEvent(new Event("change"));
+    expect(summary?.textContent).toBe(rule);
+  });
+
+  // Remove keys on the record existing, not on it running. Keying it on enabled
+  // (as it did) leaves a paused schedule with no way to delete it.
+  it("offers Remove for a paused schedule and withholds it when there is none", () => {
+    expect(mount(daily(), false, { enabled: false }).remove()).not.toBeNull();
+    expect(mount(daily(), false, { enabled: true }).remove()).not.toBeNull();
+    expect(mount(daily()).remove()).toBeNull();
   });
 });

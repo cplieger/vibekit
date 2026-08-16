@@ -215,8 +215,6 @@ const (
 	ErrCodeAgentNotFound     ErrorCode = "agent_not_found"
 	ErrCodeAgentConfigError  ErrorCode = "agent_config_error"
 	ErrCodeRateLimit         ErrorCode = "rate_limit"
-	ErrCodeStreamTimeout     ErrorCode = "stream_timeout"
-	ErrCodeSpawnFailed       ErrorCode = "spawn_failed"
 	ErrCodeSwitchFailed      ErrorCode = "switch_failed"
 	ErrCodeCompactionFailed  ErrorCode = "compaction_failed"
 	// ErrCodeModeNotApplied means session/set_mode was refused at spawn, so the

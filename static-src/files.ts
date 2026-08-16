@@ -8,7 +8,7 @@
 
 import { $, maybeViewTransition } from "./dom.js";
 import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
-import { toggleFilesView } from "./tabs.js";
+import { getActiveTabKind, toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
 import { openChange } from "./navigate.js";
 import { fileDownloadURL } from "./utils-url.js";
@@ -29,6 +29,8 @@ import { pushRoute } from "./router.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
 import { initFilesSearch, resetFilesSearch } from "./files-search.js";
+import { screenUploads } from "./upload-policy.js";
+import * as toast from "./toast.js";
 import {
   type FileEntry,
   fetchDir,
@@ -157,11 +159,17 @@ export function initFileBrowser(): void {
   });
 
   // F2 renames the selected single item. No-op for zero or multi.
+  //
+  // Keyed on the tab, not the view, for find-dispatch.ts's reason: the tab store
+  // already knows which tab is active, so reading it is reading the answer rather
+  // than inferring it from which view element happens to be unhidden. Ctrl-F
+  // already asks the question this way, and two mechanisms for one question is
+  // how they drift apart.
   document.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key !== "F2") {
       return;
     }
-    if (document.getElementById("files-view")?.classList.contains("hidden") ?? true) {
+    if (getActiveTabKind() !== "files") {
       return;
     }
     if (state.selected.size !== 1) {
@@ -835,19 +843,31 @@ function downloadSelected(): void {
 function uploadViaDialog(): void {
   const input = el("input", { type: "file", multiple: true }) as HTMLInputElement;
   input.addEventListener("change", () => {
-    if (input.files !== null && input.files.length > 0) {
-      void upload.dispatch(
-        { files: input.files, targetDir: state.currentPath },
-        {
-          onSuccess: (paths) => {
-            loadDir();
-            for (const p of paths) {
-              attachPathToActiveChat(p);
-            }
-          },
-        },
-      );
+    if (input.files === null || input.files.length === 0) {
+      return;
     }
+    // Screened even though the file came from a dialog: the user chose the file,
+    // not its size against a limit they cannot see from the OS picker, and
+    // multi-select makes the TOTAL cap reachable without any single file being
+    // large. Naming the file here beats a 413 that names nothing.
+    const screened = screenUploads(input.files);
+    if (screened.skipped !== "") {
+      toast.error(screened.skipped);
+    }
+    if (screened.files === null) {
+      return;
+    }
+    void upload.dispatch(
+      { files: screened.files, targetDir: state.currentPath },
+      {
+        onSuccess: (paths) => {
+          loadDir();
+          for (const p of paths) {
+            attachPathToActiveChat(p);
+          }
+        },
+      },
+    );
   });
   input.click();
 }

@@ -271,3 +271,83 @@ describe("persistence across a reload", () => {
     expect(ceiling()).toBe("");
   });
 });
+
+// A rotate or an on-screen keyboard shrinks the area the ceiling was measured
+// against while nothing is being dragged, so there is no interaction to
+// re-clamp on. Under happy-dom window.visualViewport is undefined, so the
+// module's listener lands on window, which is what these cases dispatch.
+describe("re-clamping on a viewport change", () => {
+  /** Let the module's rAF-coalesced handler run. */
+  const frame = (): Promise<void> =>
+    new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+
+  it("clamps a saved ceiling down when the area shrinks, and does not persist it", async () => {
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ composer_h: 360 }));
+    await mount(600);
+    expect(ceiling()).toBe("360px");
+
+    // 300px of area, 100px of bar chrome, 128px transcript floor.
+    stubHeight("chat-area", 300);
+    window.dispatchEvent(new Event("resize"));
+    await frame();
+
+    expect(ceiling()).toBe("72px");
+    // A keyboard opening is not the user choosing a smaller box.
+    expect(savedHeight()).toBe(360);
+  });
+
+  it("restores the user's number when the area grows back", async () => {
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ composer_h: 360 }));
+    await mount(600);
+
+    stubHeight("chat-area", 300);
+    window.dispatchEvent(new Event("resize"));
+    await frame();
+    expect(ceiling()).toBe("72px");
+
+    // Rotating back must not leave the ratcheted-down value: the re-clamp reads
+    // the SAVED ceiling, not the one currently applied.
+    stubHeight("chat-area", 600);
+    window.dispatchEvent(new Event("resize"));
+    await frame();
+    expect(ceiling()).toBe("360px");
+  });
+
+  it("coalesces a burst into one re-clamp", async () => {
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ composer_h: 360 }));
+    await mount(600);
+
+    stubHeight("chat-area", 300);
+    for (let i = 0; i < 5; i++) {
+      window.dispatchEvent(new Event("resize"));
+    }
+    await frame();
+    expect(ceiling()).toBe("72px");
+  });
+
+  it("leaves a drag in progress alone", async () => {
+    localStorage.setItem(LS_UI_STATE_KEY, JSON.stringify({ composer_h: 360 }));
+    await mount(600);
+    // pointermove is already applying a ceiling against the live layout; a
+    // re-clamp underneath it would fight the pointer.
+    handle().classList.add("dragging");
+
+    stubHeight("chat-area", 300);
+    window.dispatchEvent(new Event("resize"));
+    await frame();
+    expect(ceiling()).toBe("360px");
+  });
+
+  it("does nothing when no ceiling was ever saved", async () => {
+    await mount(600);
+    expect(ceiling()).toBe("");
+    stubHeight("chat-area", 300);
+    window.dispatchEvent(new Event("resize"));
+    await frame();
+    expect(ceiling()).toBe("");
+  });
+});

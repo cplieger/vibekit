@@ -546,6 +546,25 @@ export function getSavedTabState(): { tab_order: string[]; active_view: string }
   return { tab_order: s.tab_order, active_view: s.active_view };
 }
 
+/** Drop persisted ids whose feature is no longer available, so a restore cannot
+ *  reopen a page the user has no way to reach.
+ *
+ *  A singleton tab's entry point can disappear between sessions — History's
+ *  toolbar button is hidden when chat retention is off, because nothing is kept
+ *  to list. Restoring the tab anyway reopened a page with no button to reopen it
+ *  and no reason to exist. An id absent from `available` is unconditional, which
+ *  is every chat tab and every singleton that cannot be switched off.
+ *
+ *  The availability VERDICT stays with the caller: this module knows which ids
+ *  come back, and app.ts knows what each feature currently depends on. Putting
+ *  retention in here would make the tab store read settings. */
+export function restorableSingletonIDs(
+  ids: readonly string[],
+  available: Readonly<Record<string, boolean>>,
+): string[] {
+  return ids.filter((id) => available[id] ?? true);
+}
+
 /** Register module-level subscribers. Extracted into a function so
  *  _resetForTest can re-register them after clearing the subscriber set.
  *  Effects defer their work until state has tabs — this matches the

@@ -406,6 +406,18 @@
   border-inline-start: 2px solid var(--c-accent);
 }
 
+/* Pause: the state Save produces when this is unchecked, so keeping a rule and
+   not running it does not require deleting it. Directly under the summary,
+   because it is the clause that decides whether the sentence above it happens. */
+.sched-enabled {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: center;
+  font-size: var(--fs-xs);
+  color: var(--c-text-secondary);
+  cursor: pointer;
+}
+
 /* The unattended note. Quieter than the summary (that is the rule the user is
    building; this is the standing policy it will run under) but not a footnote:
    it sits above the actions, because it is what should be read before Save. The

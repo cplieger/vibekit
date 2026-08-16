@@ -63,6 +63,7 @@ import {
   setTabPinned,
   promoteTab,
   restoreTabState,
+  restorableSingletonIDs,
   _resetForTest,
 } from "./tabs.js";
 import { attachDrag, setReorderCallback } from "./tabs-drag.js";
@@ -856,5 +857,39 @@ describe("promoteTab", () => {
     const before = vi.mocked(uiSave).mock.calls.length;
     promoteTab("a");
     expect(vi.mocked(uiSave).mock.calls.length).toBe(before);
+  });
+});
+
+// The restore-side half of the History retention gate. The toolbar button was
+// already hidden when retention is off; the boot restore checked nothing, so a
+// workspace that turned retention off between sessions reopened a page with no
+// way to reach it and no way to reopen it.
+describe("restorableSingletonIDs", () => {
+  it("restores History when retention is on", () => {
+    expect(restorableSingletonIDs(["__history__"], { __history__: true })).toEqual(["__history__"]);
+  });
+
+  it("drops History when retention is off", () => {
+    expect(restorableSingletonIDs(["__history__"], { __history__: false })).toEqual([]);
+  });
+
+  it("leaves every other persisted id alone in both directions", () => {
+    const ids = ["__settings__", "chat-1", "__history__", "__files__", "editor:/a/b.go"];
+    expect(restorableSingletonIDs(ids, { __history__: true })).toEqual(ids);
+    expect(restorableSingletonIDs(ids, { __history__: false })).toEqual([
+      "__settings__",
+      "chat-1",
+      "__files__",
+      "editor:/a/b.go",
+    ]);
+  });
+
+  it("preserves persisted order", () => {
+    const ids = ["__files__", "__history__", "__settings__"];
+    expect(restorableSingletonIDs(ids, { __history__: true })).toEqual(ids);
+  });
+
+  it("treats an id with no availability entry as unconditional", () => {
+    expect(restorableSingletonIDs(["__git__"], {})).toEqual(["__git__"]);
   });
 });

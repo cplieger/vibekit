@@ -49,6 +49,9 @@ vi.mock("./tabs.js", () => ({
   openEditorView: (_p: string, onShow: () => void) => {
     onShow();
   },
+  // No tab is active before the open, so onShow fires and `open` skips its
+  // already-active fallback — one activation, which is what a real first open is.
+  getActiveTabId: () => "",
   closeTab: () => undefined,
   setTabDirty: () => undefined,
 }));
@@ -119,12 +122,13 @@ describe("opening an image", () => {
 
   // The control: the same call path DOES reach the read route for a text file,
   // so "not called" above is about the image branch rather than about the
-  // harness. Not a count — `open()` activates twice on a first open (once
-  // through the tab's onShow, once unconditionally afterwards) and the second
-  // load aborts the first.
-  it("still calls the JSON read route for a text file", () => {
+  // harness. It is a COUNT now: `open()` used to activate twice on a first open
+  // (once through the tab's onShow, once unconditionally afterwards), and the
+  // second load aborted the first, which is the wasted round trip this asserts
+  // is gone.
+  it("still calls the JSON read route for a text file, exactly once", () => {
     openFile("main.go");
-    expect(apiGet).toHaveBeenCalled();
+    expect(apiGet).toHaveBeenCalledTimes(1);
     expect(apiGet.mock.calls[0]?.[0]).toBe("/api/file?path=main.go");
   });
 

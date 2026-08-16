@@ -2,6 +2,9 @@
 // Tests for the Kiro configuration browser's pure pieces: the repo/path split
 // that makes a git letter resolvable, and the per-category metadata shaping.
 import { describe, it, expect, vi, beforeEach, beforeAll } from "vitest";
+import type * as GitStatusStore from "./git-status-store.js";
+
+type GitStatusStoreModule = typeof GitStatusStore;
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
@@ -16,6 +19,15 @@ vi.mock("./tabs.js", () => ({
   }),
 }));
 vi.mock("./bus.js", () => ({ onSSE: vi.fn(() => () => undefined) }));
+// Only the POLL is replaced. initGitStatusStore starts one that reaches
+// /api/git/status-all through the actions transport — which the api-client mock
+// above does not cover — so the first request outlived the window teardown and
+// printed an unhandled AbortError. The store itself stays real: these tests seed
+// it with _setReposForTest and assert on the letter statusFor derives.
+vi.mock("./git-status-store.js", async (importOriginal) => ({
+  ...(await importOriginal<GitStatusStoreModule>()),
+  initGitStatusStore: vi.fn(),
+}));
 vi.mock("./actions/hooks.js", () => ({ setHookEnabled: { dispatch: vi.fn() } }));
 
 import {

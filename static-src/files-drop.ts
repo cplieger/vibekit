@@ -17,12 +17,7 @@ import { byId } from "./dom.js";
 import { iconEl } from "./icon-el.js";
 import { installDropZone } from "./drop-zone.js";
 import { installComposerPaste } from "./composer-paste.js";
-import {
-  preflightUploads,
-  preflightMessage,
-  uploadLimitHint,
-  UPLOADS_DIR,
-} from "./upload-policy.js";
+import { screenUploads, uploadLimitHint, UPLOADS_DIR } from "./upload-policy.js";
 import * as toast from "./toast.js";
 import { $ } from "./dom.js";
 
@@ -66,20 +61,15 @@ export function initChatAttach(): void {
     // Pre-flight before any bytes leave: an over-cap file can only end in a
     // 413, and a dropped folder is a batch nobody chose. Rejections are said
     // out loud, because a silently shortened batch reads as a lost file.
-    const { accepted, rejected } = preflightUploads(Array.from(files));
-    const skipped = preflightMessage(rejected);
-    if (skipped !== "") {
-      toast.error(skipped);
+    const screened = screenUploads(files);
+    if (screened.skipped !== "") {
+      toast.error(screened.skipped);
     }
-    if (accepted.length === 0) {
+    if (screened.files === null) {
       return;
     }
-    const dt = new DataTransfer();
-    for (const f of accepted) {
-      dt.items.add(f);
-    }
     void upload.dispatch(
-      { files: dt.files, targetDir: UPLOADS_DIR },
+      { files: screened.files, targetDir: UPLOADS_DIR },
       {
         onSuccess: (paths) => {
           for (const p of paths) {

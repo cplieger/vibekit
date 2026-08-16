@@ -11,7 +11,7 @@ vi.mock("./dom.js", () => ({
   el: () => document.createElement("div"),
 }));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_KEYS_ESCAPE: "escape" }));
-vi.mock("./tabs.js", () => ({ toggleFilesView: vi.fn() }));
+vi.mock("./tabs.js", () => ({ toggleFilesView: vi.fn(), getActiveTabKind: vi.fn(() => "files") }));
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
 vi.mock("./modals.js", () => ({ closeModal: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn().mockResolvedValue(true) }));

@@ -7,8 +7,18 @@ import { describe, it, expect, vi } from "vitest";
 // explicitly (the optional second param) so the reconcile behaviour is
 // observable without seeding module-private agent-line caches.
 
+// The gutter is what these tests are about; the other five surfaces are here so
+// the exported mode helpers can be driven, since each one decides whether the
+// gutter belongs beside what it is showing.
 vi.mock("./dom.js", () => ({
-  $: { editorGutter: document.createElement("pre") },
+  $: {
+    editorGutter: document.createElement("pre"),
+    editorHighlight: document.createElement("pre"),
+    editorContent: document.createElement("textarea"),
+    editorDiffPane: document.createElement("div"),
+    editorMarkdown: document.createElement("div"),
+    editorImage: document.createElement("div"),
+  },
 }));
 
 vi.mock("./highlight.js", () => ({
@@ -38,7 +48,7 @@ vi.mock("./editor-scroll.js", () => ({
 }));
 
 import { $ } from "./dom.js";
-import { updateGutter } from "./editor-ui.js";
+import { updateGutter, showReadMode, showEditMode, showDiffMode } from "./editor-ui.js";
 
 function content(lineCount: number): string {
   return Array.from({ length: lineCount }, (_, i) => `L${String(i + 1)}`).join("\n");
@@ -73,5 +83,44 @@ describe("updateGutter file-switch reconcile (no manual clear)", () => {
     expect(rowsB.item(5).classList.contains("gutter-agent-modified")).toBe(false); // line 6 cleared
     // Persisting row (line 1) is the SAME DOM node across both calls.
     expect(rowsB.item(0)).toBe(row1Before);
+  });
+});
+
+// Which surfaces the gutter belongs beside. The diff pane renders its own
+// old/new line numbers per row, so leaving the source gutter up put a second,
+// stale column next to them counting the file as it was before the comparison.
+// showDiffMode was the one mode helper that never touched the gutter at all.
+describe("the gutter's visibility per mode", () => {
+  const gutterHidden = (): boolean => $.editorGutter.classList.contains("hidden");
+
+  it("shows the gutter beside source, read and edit alike", () => {
+    showDiffMode();
+    showReadMode();
+    expect(gutterHidden()).toBe(false);
+    showDiffMode();
+    showEditMode();
+    expect(gutterHidden()).toBe(false);
+  });
+
+  it("hides the gutter in diff mode", () => {
+    showReadMode();
+    expect(gutterHidden()).toBe(false);
+    showDiffMode();
+    expect(gutterHidden()).toBe(true);
+  });
+
+  it("brings the gutter back when the diff is left", () => {
+    showDiffMode();
+    expect(gutterHidden()).toBe(true);
+    showReadMode();
+    expect(gutterHidden()).toBe(false);
+  });
+
+  it("leaves the diff pane the only visible surface", () => {
+    showDiffMode();
+    expect($.editorDiffPane.classList.contains("hidden")).toBe(false);
+    for (const surface of [$.editorHighlight, $.editorContent, $.editorMarkdown, $.editorImage]) {
+      expect(surface.classList.contains("hidden")).toBe(true);
+    }
   });
 });

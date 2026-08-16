@@ -17,7 +17,10 @@ import (
 
 func TestSyncPushPreferences(t *testing.T) {
 	mp := &testPush{}
-	s := &Server{push: mp}
+	// An empty configDir would resolve the persisted-settings lookup against the
+	// package directory, so the fixture names a directory that has no config.json
+	// rather than depending on the cwd not growing one.
+	s := &Server{push: mp, configDir: t.TempDir()}
 
 	// Both true by default.
 	s.syncPushPreferences(map[string]json.RawMessage{})
@@ -690,7 +693,7 @@ func TestSyncPushPreferences_permissionIsAFloor(t *testing.T) {
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
 			mp := &testPush{}
-			s := &Server{push: mp}
+			s := &Server{push: mp, configDir: t.TempDir()}
 			var patch map[string]json.RawMessage
 			if err := json.Unmarshal([]byte(body), &patch); err != nil {
 				t.Fatalf("unmarshal %s: %v", body, err)

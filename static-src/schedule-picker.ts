@@ -257,7 +257,14 @@ export function buildUnattendedNote(
 
 interface PickerOptions {
   spec: ScheduleSpec;
+  /** Whether the stored schedule is currently running, and so the initial state
+   *  of the Run-on-this-schedule box. A recipe with no schedule yet opens the
+   *  form checked: the user came here to create one. */
   enabled: boolean;
+  /** Whether a schedule RECORD exists, which is what Remove needs to know.
+   *  Distinct from `enabled` since a schedule can be saved paused: keying Remove
+   *  on `enabled` would leave a paused schedule with no way to delete it. */
+  exists: boolean;
   /** The auto-approve setting's CURRENT value, for the unattended note's live
    *  read-out. Passed in rather than fetched here so this module stays a pure
    *  form over the data its caller already holds. */
@@ -279,8 +286,10 @@ interface PickerOptions {
  */
 export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
   // A working copy: nothing is committed until Save, so Cancel is a no-op
-  // rather than an undo.
+  // rather than an undo. The enabled flag is part of that copy for the same
+  // reason.
   const spec: ScheduleSpec = { ...opts.spec };
+  let enabled = opts.exists ? opts.enabled : true;
 
   const freqSel = el("select", { className: "sched-freq" }) as HTMLSelectElement;
   for (const [value, label] of [
@@ -431,7 +440,11 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     // The picker's own preview has no next_run_at yet (the server resolves that
     // on save), so it shows the rule alone; the ROW shows the rule plus the
     // resolved next run once saved.
-    summary.textContent = describeSpec(spec);
+    //
+    // A paused rule is still shown, marked: it is the rule Save is about to
+    // store, and the alternative (blanking it) hides the thing being edited.
+    const rule = describeSpec(spec);
+    summary.textContent = enabled ? rule : `${rule} (paused)`;
   }
 
   freqSel.addEventListener("change", () => {
@@ -443,15 +456,37 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     paint();
   });
 
+  // Pause is a state Save can produce, so a user who wants a schedule back next
+  // week does not have to re-author the rule to keep it. Remove was the only
+  // off-switch, which made deletion the price of a pause; the store, the row's
+  // summary line and the runner's own skip already modelled the disabled state,
+  // so this is the half that was missing rather than a new capability.
+  //
+  // The input is nested in its label rather than paired by id: the picker is
+  // rebuilt on every open, and a fixed id would collide with a picker still in
+  // the DOM on another row.
+  const enabledBox = el("input", { type: "checkbox" }) as HTMLInputElement;
+  enabledBox.checked = enabled;
+  enabledBox.addEventListener("change", () => {
+    enabled = enabledBox.checked;
+    paint();
+  });
+  const enabledRow = el(
+    "label",
+    { className: "sched-enabled" },
+    enabledBox,
+    el("span", {}, "Run on this schedule"),
+  );
+
   const save = el("button", { type: "button", className: "btn-small btn-primary" }, "Save");
   save.addEventListener("click", () => {
-    opts.onSave(spec, true);
+    opts.onSave(spec, enabled);
   });
   const cancel = el("button", { type: "button", className: "btn-small" }, "Cancel");
   cancel.addEventListener("click", opts.onClose);
 
   const actions = el("div", { className: "sched-actions" }, save, cancel);
-  if (opts.enabled) {
+  if (opts.exists) {
     const remove = el("button", { type: "button", className: "btn-small btn-danger" }, "Remove");
     remove.addEventListener("click", opts.onRemove);
     actions.appendChild(remove);
@@ -465,6 +500,7 @@ export function buildSchedulePicker(opts: PickerOptions): HTMLElement {
     el("div", { className: "sched-row" }, freqSel),
     el("div", { className: "sched-row" }, detail),
     summary,
+    enabledRow,
     // Below the rule and above the actions: it is what the user should have read
     // before pressing Save, not a footnote after it.
     buildUnattendedNote(opts.autoApprove, opts.onOpenPermissions),

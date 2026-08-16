@@ -29,12 +29,24 @@
 //     mouse-only reset would be an affordance a keyboard user cannot reach, and
 //     Home is the conventional reset for a role=separator.
 //
-// The clamp is recomputed at every interaction and at restore rather than
-// watched: a persisted ceiling set on a desktop is re-clamped against the phone
-// it is next opened on, which is where the mismatch actually shows up. The one
-// exception is a boot-time restore against a view that has no layout yet, where
-// there is nothing to clamp against and no interaction to wait for — that parks
-// the value and watches the chat area until it can measure, once.
+// The clamp is recomputed at every interaction and at restore, which covers the
+// case the module was written for: a persisted ceiling set on a desktop is
+// re-clamped against the phone it is next opened on. Two cases have no
+// interaction to wait for and each gets a watcher:
+//
+//   - A boot-time restore against a view with no layout yet has nothing to clamp
+//     against, so the value is parked and the chat area watched until it can be
+//     measured, once.
+//   - The viewport changing UNDER a valid ceiling — a rotate, or the on-screen
+//     keyboard opening — shrinks the space the ceiling was measured against
+//     while nothing is being dragged. Without a re-clamp the composer keeps a
+//     ceiling taller than the area it now sits in until the user next touches
+//     the handle, which on a phone is exactly when they are typing.
+//
+// The viewport re-clamp re-applies the SAVED ceiling rather than the rendered
+// one, so a rotate into portrait clamps down and a rotate back restores the
+// user's number instead of ratcheting it away. It never persists: a keyboard
+// opening is not the user choosing a smaller box.
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
@@ -220,6 +232,12 @@ export function initComposerResize(): void {
     resetComposerH();
   });
 
+  // visualViewport when it exists, window otherwise. The distinction is the
+  // whole point of the listener: the on-screen keyboard resizes the visual
+  // viewport and fires nothing on window in mobile Safari, and the keyboard is
+  // the change most likely to leave a ceiling taller than the space left.
+  (window.visualViewport ?? window).addEventListener("resize", onViewportResize);
+
   resizeEl.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key === "Home") {
       e.preventDefault();
@@ -247,4 +265,30 @@ function restoreComposerH(): void {
   if (saved > 0) {
     applyComposerH(saved);
   }
+}
+
+/** Pending rAF handle for the viewport re-clamp. 0 = nothing scheduled. */
+let reclampFrame = 0;
+
+/** Re-clamp against the new viewport, coalesced to one frame.
+ *
+ *  Coalesced because a keyboard opening and a rotate both fire a burst, and each
+ *  re-clamp is three layout reads. Reads the SAVED value so the clamp is
+ *  reversible; a drag in progress is skipped, since pointermove is already
+ *  applying a ceiling against the live layout and a re-clamp underneath it would
+ *  fight the pointer. */
+function onViewportResize(): void {
+  if (reclampFrame !== 0) {
+    return;
+  }
+  reclampFrame = requestAnimationFrame(() => {
+    reclampFrame = 0;
+    if ($.composerResize.classList.contains("dragging")) {
+      return;
+    }
+    const saved = uiState.load().composer_h;
+    if (saved > 0) {
+      applyComposerH(saved);
+    }
+  });
 }

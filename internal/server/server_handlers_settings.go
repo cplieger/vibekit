@@ -214,13 +214,27 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 // to config.json and then never reached the running service until the next SSE
 // reconnect happened to call ReloadPreferences.
 //
+// A key the patch does not carry is resolved against the PERSISTED settings
+// before it falls back to the registry default, which is the same order
+// push.loadPreferences reads (disk, else default) with the patch as the freshest
+// layer on top. Seeding the default for an absent key and overriding only on a
+// hit is correct only while the argument happens to be the whole merged document:
+// on a genuinely sparse map it re-enables every kind the caller did not mention,
+// which for a preference the user turned OFF is the one direction that must never
+// happen silently. The function owns that resolution rather than trusting its
+// caller's shape.
+//
 // PushKindPermission has no branch that can lower it: its registry entry declares
-// no settings key, so the loop below cannot find a value to read for it and this
-// write path cannot silence a turn-blocking ask however the body was assembled.
-// See the "no notify_permission key" note in internal/settings/defaults.go.
+// no settings key, so neither lookup below can find a value to read for it and
+// this write path cannot silence a turn-blocking ask however the body was
+// assembled. See the "no notify_permission key" note in
+// internal/settings/defaults.go.
 func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 	kinds := push.Kinds()
 	prefs := make(map[api.PushKind]bool, len(kinds))
+	// Read at most once, and only when a key is actually missing: the merged
+	// document every current caller passes needs no disk read at all.
+	var persisted map[string]json.RawMessage
 	for _, k := range kinds {
 		prefs[k.Kind] = k.DefaultOn
 		if k.SettingsKey == "" {
@@ -228,7 +242,14 @@ func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 		}
 		v, ok := patch[k.SettingsKey]
 		if !ok {
-			continue
+			if persisted == nil {
+				// readExistingSettings never returns nil, so the nil check above
+				// distinguishes "not read yet" from "read and empty".
+				persisted = readExistingSettings(filepath.Join(s.configDir, settings.Filename))
+			}
+			if v, ok = persisted[k.SettingsKey]; !ok {
+				continue
+			}
 		}
 		var on bool
 		if json.Unmarshal(v, &on) == nil {

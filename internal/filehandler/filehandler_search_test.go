@@ -555,9 +555,15 @@ func TestSearch_SwappedNameIsNotReadAfterAdmission(t *testing.T) {
 		}
 
 		sc := newFileScan(t.Context(), "needle", false, nil, nil)
-		hits := sc.readCandidate(dir, cand)
+		hits, unread := sc.readCandidate(dir, cand)
 		if len(hits) != 0 {
 			t.Fatalf("read %d hits from a name swapped to a symlink: %+v", len(hits), hits)
+		}
+		// The refusal IS the guarantee, so it is not a hole in the answer: reporting
+		// it as truncation would tell every caller its result was partial whenever a
+		// symlink sat in a searched tree.
+		if unread {
+			t.Error("readCandidate reported a swap refusal as an unread file; a refused symlink is a deliberate skip, not a loss")
 		}
 		for _, m := range hits {
 			if strings.Contains(m.Excerpt, secret) {

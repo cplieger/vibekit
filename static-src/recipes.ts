@@ -157,15 +157,19 @@ function wireSchedulePopup(btn: HTMLButtonElement, source: string): void {
       buildSchedulePicker({
         spec: view?.spec ?? defaultSpec(),
         enabled: view?.enabled ?? false,
+        exists: view !== undefined,
         autoApprove,
         onOpenPermissions: () => {
           close();
           toggleSettingsView("permissions");
         },
-        onSave: (spec: ScheduleSpec) => {
+        // The picker's flag is carried through rather than re-decided here: it
+        // was hardcoded true at both ends, so a paused schedule was unreachable
+        // even once the form could express it.
+        onSave: (spec: ScheduleSpec, enabled: boolean) => {
           close();
           void (async () => {
-            await saveSchedule.dispatch({ source, spec, enabled: true });
+            await saveSchedule.dispatch({ source, spec, enabled });
             await refreshSchedules();
           })();
         },

@@ -391,13 +391,13 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 	if err != nil {
 		return nil
 	}
-	chosen, order := dedupeAgentFiles(entries)
-	docs := make([]kiroDoc, 0, len(order))
-	for _, base := range order {
+	agents := steering.DedupeAgentFiles(entries)
+	docs := make([]kiroDoc, 0, len(agents))
+	for _, a := range agents {
 		if ctx.Err() != nil || len(docs) >= maxDocsPerCategory {
 			return docs
 		}
-		file := chosen[base]
+		base, file := a.Base, a.File
 		data, verdict, rErr := readGuardedFS(root, "agents/"+file, guard)
 		if rErr != nil {
 			slog.Warn("kiro docs: read agent", "name", file, "error", rErr)
@@ -419,38 +419,6 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 		})
 	}
 	return docs
-}
-
-// dedupeAgentFiles collapses an agents directory to one file per base name,
-// preferring `.md` over `.json`. Returns the choice map and a stable order.
-func dedupeAgentFiles(entries []fs.DirEntry) (chosen map[string]string, order []string) {
-	chosen = make(map[string]string, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || strings.ContainsRune(e.Name(), 0) {
-			continue
-		}
-		var base string
-		switch {
-		case strings.HasSuffix(e.Name(), ".md"):
-			base = strings.TrimSuffix(e.Name(), ".md")
-		case strings.HasSuffix(e.Name(), ".json"):
-			base = strings.TrimSuffix(e.Name(), ".json")
-		default:
-			continue
-		}
-		if base == "" {
-			continue
-		}
-		existing, seen := chosen[base]
-		switch {
-		case !seen:
-			chosen[base] = e.Name()
-			order = append(order, base)
-		case strings.HasSuffix(e.Name(), ".md") && strings.HasSuffix(existing, ".json"):
-			chosen[base] = e.Name()
-		}
-	}
-	return chosen, order
 }
 
 // scanDocsSpecs walks `specs/` and groups each document under its feature

@@ -29,6 +29,8 @@ import {
 import { attachPathToActiveChat } from "./chat.js";
 import { byId } from "./dom.js";
 import { upload } from "./actions/files.js";
+import { screenUploads } from "./upload-policy.js";
+import * as toast from "./toast.js";
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
@@ -105,8 +107,18 @@ export function initFilePicker(): void {
 
 function performUpload(files: FileList): void {
   const modal = byId<HTMLDivElement>("filepicker-modal");
+  // The fourth upload door, screened like the other three: the modal stays open
+  // on a refusal so the user can pick again, which is only useful if the message
+  // names what was wrong.
+  const screened = screenUploads(files);
+  if (screened.skipped !== "") {
+    toast.error(screened.skipped);
+  }
+  if (screened.files === null) {
+    return;
+  }
   void upload.dispatch(
-    { files, targetDir: currentPath },
+    { files: screened.files, targetDir: currentPath },
     {
       onSuccess: (paths) => {
         onUploadComplete?.();

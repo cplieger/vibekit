@@ -96,12 +96,17 @@ export function showEditMode(): void {
   $.editorGutter.classList.remove("hidden");
 }
 
+/** The diff surface. The gutter goes with it for a third reason: the diff pane
+ *  renders its OWN old/new line numbers per row, so leaving the source gutter up
+ *  puts a second, stale column beside them numbering the file as it was before
+ *  the comparison. */
 export function showDiffMode(): void {
   $.editorHighlight.classList.add("hidden");
   $.editorContent.classList.add("hidden");
   $.editorDiffPane.classList.remove("hidden");
   $.editorMarkdown.classList.add("hidden");
   $.editorImage.classList.add("hidden");
+  $.editorGutter.classList.add("hidden");
 }
 
 /** The rendered-markdown read surface. The gutter goes with it: those line

@@ -24,8 +24,6 @@ const errorCodeArb = fc.constantFrom(
   "agent_not_found",
   "agent_config_error",
   "rate_limit",
-  "stream_timeout",
-  "spawn_failed",
   "switch_failed",
   "compaction_failed",
 );

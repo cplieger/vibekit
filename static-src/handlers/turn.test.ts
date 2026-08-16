@@ -13,6 +13,9 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { setSessions, setActive, get, recordSteerQueued, steerCount } from "../store.js";
 import type { Session } from "../types.js";
+import type * as TurnRail from "../turn-rail.js";
+
+type TurnRailModule = typeof TurnRail;
 
 // scroll.ts touches DOM elements at import; use the shared mock.
 vi.mock(
@@ -56,6 +59,21 @@ const mockShowLoginModal = vi.fn();
 vi.mock("../modals.js", () => ({ showLoginModal: mockShowLoginModal }));
 
 vi.mock("../git.js", () => ({ refreshGitBadge: vi.fn() }));
+
+// Only the two FETCHING functions are replaced, and only for their fetch. turn.ts
+// fires refreshTurnRail fire-and-forget on every turn frame, and it was the one
+// module in this graph still reaching api-client: the real one issues
+// GET /api/chats/{id}/turns, which happy-dom sends at its base URL, so each frame
+// left a request in flight for the window teardown to abort and print as an
+// unhandled AbortError. The count varied run to run (0-9 across the suite)
+// because it was a race between the request failing and the file finishing, which
+// is why it never failed a test and never stayed fixed either. Spreading the real
+// module keeps the rest of the rail's behaviour (railRows, observeTurns) honest.
+vi.mock("../turn-rail.js", async (importOriginal) => ({
+  ...(await importOriginal<TurnRailModule>()),
+  loadTurnRail: vi.fn(() => Promise.resolve()),
+  refreshTurnRail: vi.fn(() => Promise.resolve()),
+}));
 
 const mockShowBanner = vi.fn();
 vi.mock("../banner-stack.js", () => ({ showBanner: mockShowBanner, onTurnEnded: vi.fn() }));

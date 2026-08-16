@@ -30,12 +30,8 @@
 # grepping the VALUE, not the Go identifier:
 #   "other"          -> types.gen.ts ToolKind union   (+ static-src/tool-schema.ts OTHER profile)
 #   "refusal"        -> types.gen.ts StopReason union (+ static-src/refusal.ts)
-#   "stream_timeout" -> types.gen.ts ErrorCode union
-#   "spawn_failed"   -> types.gen.ts ErrorCode union
 constant ToolKindOther
 constant StopReasonRefusal
-constant ErrCodeStreamTimeout
-constant ErrCodeSpawnFailed
 
 # --- 2. json-tagged fields on wiregen-registered structs. The struct is
 # registered in cmd/wire-codegen, so the field is part of the generated TS

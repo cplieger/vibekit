@@ -34,6 +34,7 @@ import {
   setOnEmpty,
   restoreTabState,
   getSavedTabState,
+  restorableSingletonIDs,
   getActiveTabId,
   getActiveTabRoute,
   activateTab,
@@ -341,8 +342,13 @@ async function checkAuthAndStart(): Promise<void> {
   // first chat's session/new lands. Fire-and-forget; session-sourced
   // updates overwrite this the moment a bridge spawns.
   void fetchModelsFromREST();
-  // Read retention setting so tab-close knows whether to keep or delete.
-  void refreshRetention();
+  // Read retention setting so tab-close knows whether to keep or delete, and so
+  // restoreSingletonTabs can tell whether History is reachable at all. Kept
+  // concurrent with loadList below and awaited at the restore instead of here:
+  // serialising it would add a round trip to every boot, while not awaiting it at
+  // all leaves the restore reading the default (enabled) whenever /api/settings
+  // is the slower of the two.
+  const retentionReady = refreshRetention();
 
   const skel = chatSkeleton();
   $.messages.appendChild(skel);
@@ -379,6 +385,7 @@ async function checkAuthAndStart(): Promise<void> {
       for (const s of getSessions()) {
         openChatTab(s.id, s.name, { activate: false });
       }
+      await retentionReady;
       restoreSingletonTabs();
       restoreTabState();
       if (getActiveTabId() === "" && getSessions().length > 0) {
@@ -438,7 +445,13 @@ function initPostAuth(): void {
  *  a lazy import, because those two modules are lazy everywhere else and a static
  *  import here would pull them into the main bundle. */
 function restoreSingletonTabs(): void {
-  for (const id of getSavedTabState().tab_order) {
+  // History is gated because its own entry point is: the toolbar button hides
+  // when retention is off (nothing is kept to list), so restoring the tab
+  // reopened a page the user could neither reach nor get back to.
+  const ids = restorableSingletonIDs(getSavedTabState().tab_order, {
+    __history__: isRetentionEnabled(),
+  });
+  for (const id of ids) {
     switch (id) {
       case "__settings__":
         openTab(

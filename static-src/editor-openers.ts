@@ -4,7 +4,7 @@
 
 import { $ } from "./dom.js";
 import { effect } from "@cplieger/reactive";
-import { openEditorView, closeTab, setTabDirty } from "./tabs.js";
+import { openEditorView, closeTab, setTabDirty, getActiveTabId } from "./tabs.js";
 import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
@@ -138,6 +138,14 @@ function open(path: string, opts: OpenOpts): void {
   if (opts.line !== undefined && opts.line > 0) {
     pendingLines.set(path, opts.line);
   }
+  // activateTab skips onShow for exactly one case: the tab was ALREADY active,
+  // so activation is a no-op and nothing loads the file. Read before the open,
+  // because openEditorView is what changes the answer.
+  //
+  // Activating unconditionally afterwards ran a FIRST open twice, and each
+  // activation issues a /api/file read against a fresh AbortController — the
+  // second one aborted the first, so the wasted round trip was invisible.
+  const wasActive = getActiveTabId() === `editor:${path}`;
   openEditorView(
     path,
     () => {
@@ -147,8 +155,9 @@ function open(path: string, opts: OpenOpts): void {
       closeEditorFile(path);
     },
   );
-  // Always activate — openEditorView may skip the callback if the tab was already active.
-  activateFile(path);
+  if (wasActive) {
+    activateFile(path);
+  }
   const line = opts.line;
   pushRoute(line !== undefined && line > 0 ? { kind: "file", path, line } : { kind: "file", path });
 

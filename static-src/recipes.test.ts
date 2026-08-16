@@ -47,6 +47,11 @@ vi.mock("./actions/runs.js", () => ({
   },
 }));
 vi.mock("./run-view.js", () => ({ openLiveRunView: vi.fn() }));
+// The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove
+// reaches /api/settings through the actions transport (which the api-client mock
+// does not cover), fire-and-forget, so the request was still open when the window
+// tore down and printed an unhandled AbortError.
+vi.mock("./persist.js", () => ({ loadSettings: vi.fn(async () => ({})) }));
 
 // The Schedule button's actions: unmocked they reach the network, and a row's
 // summary line is decoration this suite does not assert on.

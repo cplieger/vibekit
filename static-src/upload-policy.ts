@@ -1,13 +1,19 @@
 // ---------------------------------------------------------------------------
-// Upload policy the composer applies before a byte leaves the browser.
+// Upload policy applied before a byte leaves the browser.
 //
-// Two jobs, one module because they answer the same question with the same
-// numbers: where an upload goes, and which files are worth sending. Both are
-// consumed by the composer's drop and paste paths (files-drop.ts,
-// composer-paste.ts) and by the limit hint the composer shows.
+// Two jobs, one module, but they have DIFFERENT audiences and the split is the
+// thing to keep straight:
 //
-// The file browser and the upload picker are deliberately NOT consumers: they
-// upload where the user is looking, which is the whole point of those surfaces.
+//   - WHERE a composer upload goes (UPLOADS_DIR) is the composer's alone. The
+//     file browser and the upload picker upload where the user is looking, which
+//     is the whole point of those surfaces.
+//   - WHICH files are worth sending (screenUploads and the limits under it) is
+//     EVERY door's, because the limit being predicted is the server's and it does
+//     not care which gesture produced the request. It was wired to the composer
+//     only, so the browser drop, the browser's upload dialog and the picker each
+//     transmitted the bytes first and reported a bare 413 afterwards, naming no
+//     file. The server's cap is real either way (this is a diagnosis, not a
+//     gate), so what the wiring buys is the offending file's name up front.
 // ---------------------------------------------------------------------------
 
 /** Where a composer upload lands: one folder at the workspace root, modelled
@@ -160,4 +166,43 @@ export function preflightMessage(rejected: readonly RejectedFile[]): string {
     return `Skipped ${first.name}: ${first.reason}`;
   }
   return `Skipped ${String(rejected.length)} files, starting with ${first.name}: ${first.reason}`;
+}
+
+/** What one door should upload, and what to say about the rest. `files` is null
+ *  when nothing survived, so a caller's whole branch is "say the message, then
+ *  stop if there is nothing left". */
+export interface ScreenedUpload {
+  files: FileList | null;
+  /** Empty on the common path, so a caller can skip the toast without a count. */
+  skipped: string;
+}
+
+/**
+ * Screen one upload gesture: pre-flight, then hand back a FileList the caller
+ * can dispatch as-is.
+ *
+ * This exists so the four upload doors share one screening step instead of four
+ * copies of preflight + message + FileList rebuild. Each door still owns its own
+ * TARGET and its own reporting channel — the message comes back rather than
+ * being toasted here, which is what keeps this module free of the DOM and unit
+ * testable as policy.
+ *
+ * The FileList is passed through UNCHANGED when nothing was refused. That is the
+ * common path, and rebuilding it there would allocate a DataTransfer per drop to
+ * arrive at the same list.
+ */
+export function screenUploads(files: FileList): ScreenedUpload {
+  const { accepted, rejected } = preflightUploads(Array.from(files));
+  const skipped = preflightMessage(rejected);
+  if (accepted.length === 0) {
+    return { files: null, skipped };
+  }
+  if (rejected.length === 0) {
+    return { files, skipped };
+  }
+  const dt = new DataTransfer();
+  for (const f of accepted) {
+    dt.items.add(f);
+  }
+  return { files: dt.files, skipped };
 }
