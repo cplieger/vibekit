@@ -73,7 +73,14 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "re-clone requires a named repo (cannot target workspace root)")
 		return
 	}
-	dir := h.repoDir(body.Repo)
+	// The resolved variant, matching handleRemove: this handler DELETES, so it
+	// needs the intermediate-symlink check the lexical resolver cannot make (see
+	// repoDirForDelete). It answers "" for a path it will not vouch for.
+	dir := h.repoDirForDelete(body.Repo)
+	if dir == "" {
+		api.BadRequest(w, "that repo path is not inside the workspace")
+		return
+	}
 	if dir == h.workDir {
 		api.BadRequest(w, "cannot re-clone workspace root")
 		return
