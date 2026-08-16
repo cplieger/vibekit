@@ -31,7 +31,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/cplieger/web-terminal-engine/v3/terminal"
+	"github.com/cplieger/web-terminal-engine/v4/terminal"
 )
 
 // readManifest resolves the client half from the engine artifact's own published
