@@ -17,7 +17,7 @@ Usage:
   python3 scripts/css-contrast.py text          # text-on-surface AA checks
   python3 scripts/css-contrast.py selected      # the inks that sit ON a selected fill
   python3 scripts/css-contrast.py shadow        # elevation layers vs the surface below
-  python3 scripts/css-contrast.py ansi          # the ansi_up palette vs the terminal base
+  python3 scripts/css-contrast.py ansi          # the 16-colour ANSI palette vs its surface
   python3 scripts/css-contrast.py show TOKEN..  # resolve named tokens
   python3 scripts/css-contrast.py all
 """
