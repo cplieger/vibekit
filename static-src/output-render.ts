@@ -128,15 +128,33 @@ function rgb(r: number | undefined, g: number | undefined, b: number | undefined
 function applySpan(node: HTMLElement, span: TextSpan): void {
   const classes: string[] = [];
   const { attrs } = span;
-  if ((attrs & ATTR_BOLD) !== 0) {classes.push("ansi-bold");}
-  if ((attrs & ATTR_DIM) !== 0) {classes.push("ansi-dim");}
-  if ((attrs & ATTR_ITALIC) !== 0) {classes.push("ansi-italic");}
-  if ((attrs & ATTR_UNDERLINE) !== 0) {classes.push("ansi-underline");}
-  if ((attrs & ATTR_DOUBLE_UNDERLINE) !== 0) {classes.push("ansi-double-underline");}
-  if ((attrs & ATTR_OVERLINE) !== 0) {classes.push("ansi-overline");}
-  if ((attrs & ATTR_STRIKE) !== 0) {classes.push("ansi-strike");}
-  if ((attrs & ATTR_BLINK) !== 0) {classes.push("ansi-blink");}
-  if ((attrs & ATTR_HIDDEN) !== 0) {classes.push("ansi-hidden");}
+  if ((attrs & ATTR_BOLD) !== 0) {
+    classes.push("ansi-bold");
+  }
+  if ((attrs & ATTR_DIM) !== 0) {
+    classes.push("ansi-dim");
+  }
+  if ((attrs & ATTR_ITALIC) !== 0) {
+    classes.push("ansi-italic");
+  }
+  if ((attrs & ATTR_UNDERLINE) !== 0) {
+    classes.push("ansi-underline");
+  }
+  if ((attrs & ATTR_DOUBLE_UNDERLINE) !== 0) {
+    classes.push("ansi-double-underline");
+  }
+  if ((attrs & ATTR_OVERLINE) !== 0) {
+    classes.push("ansi-overline");
+  }
+  if ((attrs & ATTR_STRIKE) !== 0) {
+    classes.push("ansi-strike");
+  }
+  if ((attrs & ATTR_BLINK) !== 0) {
+    classes.push("ansi-blink");
+  }
+  if ((attrs & ATTR_HIDDEN) !== 0) {
+    classes.push("ansi-hidden");
+  }
   // Inverse swaps foreground and background. Done by swapping the values here
   // rather than with a CSS filter, because only this code knows what the two
   // colours actually are once defaults are involved.
