@@ -26,13 +26,13 @@ import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { activeSession, getActive } from "./store.js";
 import { createSession } from "./chat.js";
-import { setTabIcon } from "./tabs.js";
 import { setMode } from "./actions/chat.js";
 import { apiGet } from "./api-client.js";
 import type { SessionMode } from "./types.js";
 import {
   type PickerMode,
   catalogBaseModes,
+  displayModeName,
   iconForMode,
   labelForMode,
   mergeCatalogAndWorkspace,
@@ -144,7 +144,7 @@ function modeOption(entry: PickerMode, currentMode: string): HTMLButtonElement {
   const isCurrent = mode.id === currentMode;
   const children: HTMLElement[] = [
     el("span", { className: "pill-role-item-icon" }, iconEl(iconForMode(mode.id))),
-    el("span", { className: "pill-role-name" }, mode.name || mode.id),
+    el("span", { className: "pill-role-name" }, displayModeName(mode.name || mode.id)),
   ];
   // Scope on the row. It was already on the wire and already read (the grouping
   // above keys on it) and simply was not shown, so a user looking at two custom
@@ -193,8 +193,8 @@ function selectMode(modeID: string): void {
     }
   }
   const chatID = active.id;
-  // Reflect the choice on the tab immediately; the action's optimistic
-  // update flips the pill, and the server's mode_changed broadcast confirms.
-  setTabIcon(chatID, iconForMode(modeID));
+  // No tab write here any more: a chat tab's leading element is its activity
+  // dot, not a mode glyph, so the only optimistic surface is the pill — which
+  // the action's own update flips, confirmed by the server's mode_changed.
   void setMode.dispatch({ chatID, modeID });
 }

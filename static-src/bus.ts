@@ -204,6 +204,16 @@ export const BUS_ACTIVATE_CHAT = "chat:activate" as const;
  *  and concretely because importing the history page from a handler drags the
  *  whole chat module in behind it. */
 export const BUS_RUNS_CHANGED = "runs:changed" as const;
+/** The active tab changed, so any affordance scoped to the tab you were LOOKING
+ *  at is now scoped to nothing.
+ *
+ *  On the bus rather than a direct call because the tab store must not know what
+ *  a search box is, and because the alternative — hiding the affordance with its
+ *  view — is what let the transcript's find survive a tab switch with its
+ *  observer connected, its highlights welded into the DOM and its
+ *  search-opened folds still open. A view becoming invisible is not the same
+ *  event as a feature closing, and only the second one runs a teardown. */
+export const BUS_TAB_CHANGED = "tabs:changed" as const;
 
 /** Payload shape per bus event. Events with no payload use `undefined`. */
 interface BusPayloads {
@@ -212,6 +222,7 @@ interface BusPayloads {
   readonly [BUS_KEYS_ESCAPE]: undefined;
   readonly [BUS_ACTIVATE_CHAT]: { chatID: string; then?: () => void };
   readonly [BUS_RUNS_CHANGED]: undefined;
+  readonly [BUS_TAB_CHANGED]: { to: string; kind: string | null };
 }
 
 // The generic cross-module bus is backed by @cplieger/reactive's createBus

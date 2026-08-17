@@ -34,6 +34,9 @@ import { applyOutcome } from "./tool-card.js";
 import type { ToolRenderInfo } from "./tool-schema.js";
 import { ICON_TAB_RUN } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { createSearchShell, searchGlyph } from "./search-shell.js";
+import type { SearchShell } from "./search-shell.js";
+import { registerFind } from "./find-registry.js";
 import type { ResumableSessionRow, WorkflowRunRow } from "./types.js";
 
 /** A chat row and a run row share the list, so they share a shape. */
@@ -182,8 +185,18 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
 
 class HistoryController {
   private abort: AbortController | null = null;
-  private searchTimer: ReturnType<typeof setTimeout> | null = null;
-  private searchWired = false;
+  /** The shared search box. Built once and left mounted: unlike the transcript's
+   *  and the browser's, this box is PERMANENT page furniture — it is the page's
+   *  second mode selector, so there is nothing to reveal and nothing to dismiss.
+   *
+   *  It carries NO match-case toggle, and that is the endpoint's decision rather
+   *  than a gap. `chat.searchOneChat` states it: "Case-INSENSITIVE, always. The
+   *  match-case toggle belongs to the in-chat search, which is a different
+   *  question on a different endpoint; a cross-chat 'which conversation was that
+   *  in' is asked from memory, and memory does not remember capitalisation." So
+   *  `GET /api/chats/search` reads no `case` parameter and `titleHits` folds
+   *  unconditionally. A toggle here would be wired to nothing. */
+  private shell: SearchShell | null = null;
   private query = "";
 
   /** Wire the search box and load, the body every path that opens this page
@@ -192,6 +205,16 @@ class HistoryController {
   mount(): void {
     this.wireSearch();
     void this.refresh();
+  }
+
+  /** Put the caret in the box. What Ctrl-F means on this page. */
+  focusSearch(): boolean {
+    this.wireSearch();
+    if (this.shell === null) {
+      return false;
+    }
+    this.shell.focus();
+    return true;
   }
 
   showView(): void {
@@ -210,41 +233,66 @@ class HistoryController {
     searchChats.cancel();
     this.abort?.abort();
     this.abort = null;
-    if (this.searchTimer !== null) {
-      clearTimeout(this.searchTimer);
-      this.searchTimer = null;
-    }
+    this.shell?.cancel();
   }
 
-  /** Wire the search box once; the element outlives a view close. */
+  /** Build the search box once into its host; the element outlives a view
+   *  close. */
   private wireSearch(): void {
-    if (this.searchWired) {
+    if (this.shell !== null) {
       return;
     }
-    const input = document.getElementById("hist-search-input");
-    if (!(input instanceof HTMLInputElement)) {
+    const host = document.getElementById("hist-search-host");
+    if (host === null) {
       return;
     }
-    this.searchWired = true;
-    input.addEventListener("input", () => {
-      this.query = input.value.trim();
-      if (this.searchTimer !== null) {
-        clearTimeout(this.searchTimer);
-      }
-      this.searchTimer = setTimeout(() => {
-        this.searchTimer = null;
+    this.shell = createSearchShell<null>({
+      id: "hist-search",
+      regionClass: "hist-search",
+      inputClass: "hist-search-input",
+      buttonClass: "hist-search-btn",
+      noteClass: "hist-search-note",
+      label: "Search conversations",
+      // The one string the four boxes genuinely differ on, which is why the
+      // shell takes it as a parameter: this box answers "which conversation was
+      // that in", so it names the unit it returns rather than the place it looks.
+      placeholder: "Search conversations\u2026",
+      inputType: "search",
+      note: true,
+      // The scan is over up to 500 chat files, so the pause is longer than the
+      // shell's default: a search is per-pause here, not per-keystroke.
+      debounceMs: SEARCH_DEBOUNCE_MS,
+      compose: ({ input, note }) => {
+        // The magnifier stays: it is a SEARCH, not a filter — the server reads
+        // every chat file on disk, so it finds conversations the loaded list does
+        // not contain, and a funnel would promise it only narrows what is on
+        // screen. 18-pages.css records that reasoning.
+        const field = el("span", { className: "hist-search-field" });
+        field.appendChild(searchGlyph("hist-search-icon"));
+        field.appendChild(input);
+        return [field, note];
+      },
+      query: (q) => {
+        this.query = q.trim();
+        return null;
+      },
+      render: () => {
         void this.refresh();
-      }, SEARCH_DEBOUNCE_MS);
+      },
+      onDismiss: () => {
+        // Escape CLEARS rather than closes: a permanent box has nothing to
+        // dismiss, so the useful meaning is "back to the full list".
+        if (this.shell === null || this.shell.input.value === "") {
+          return;
+        }
+        this.shell.input.value = "";
+        this.shell.run();
+      },
+      onSubmit: () => {
+        this.shell?.run();
+      },
     });
-    // Escape clears back to the full list, the convention every search box has.
-    input.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Escape" && input.value !== "") {
-        e.stopPropagation();
-        input.value = "";
-        this.query = "";
-        void this.refresh();
-      }
-    });
+    host.appendChild(this.shell.region);
   }
 
   /** Route to the list or to search, depending on the box. */
@@ -258,10 +306,7 @@ class HistoryController {
   }
 
   private setNote(text: string): void {
-    const note = document.getElementById("hist-search-note");
-    if (note !== null) {
-      note.textContent = text;
-    }
+    this.shell?.setNote(text);
   }
 
   /** Render matching CHATS for the current query. */
@@ -536,7 +581,18 @@ registerCleanup(() => {
   historyCtrl.teardown();
 });
 
+/** Put the caret in the cross-chat search box. What Ctrl-F and the toolbar's
+ *  search button mean on this page.
+ *
+ *  Registered with find-dispatch rather than imported by it, because this module
+ *  is lazily loaded (it pulls chat.ts in behind it) and the dispatcher must not
+ *  put it on the boot path. */
+function focusHistorySearch(): boolean {
+  return historyCtrl.focusSearch();
+}
+
 export function showHistoryView(): void {
+  registerFind("history", focusHistorySearch);
   historyCtrl.showView();
 }
 
@@ -546,6 +602,7 @@ export function showHistoryView(): void {
  *  toggles, so firing it from the `onShow` of an already-open, already-active
  *  tab would hit `hasTab && active` and CLOSE the tab it was meant to fill. */
 export function loadHistoryView(): void {
+  registerFind("history", focusHistorySearch);
   historyCtrl.mount();
 }
 

@@ -244,3 +244,125 @@
 .diff-pane-unified .diff-line-text {
   white-space: pre;
 }
+
+/* ==========================================================================
+   Find in the open file
+
+   IN-FLOW, docked between the conflict overlay and the scroller, not floating
+   over the text. `.editor-body` is the scroller, so a bar in the flex column
+   shrinks it by exactly its own height and covers no line of the file — where a
+   floating box would sit over the first lines, which on a jump-to-match is
+   precisely where the reader is looking. Same reasoning 19-files.css records for
+   the file browser's bar; the transcript's box floats because ITS content keeps
+   scrolling underneath.
+
+   The buttons reuse .chat-find-btn's pairing (SVG glyph + `line-height: 0` to
+   collapse the strut around a replaced element) and `Aa` reuses the cap-band
+   trim. 24-find.css carries the derivation for both.
+   ========================================================================== */
+
+.editor-find {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--c-bg-secondary);
+  border-block-end: 1px solid var(--c-border);
+}
+
+.editor-find-input {
+  flex: 1 1 8rem;
+  min-inline-size: 0;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--c-text-primary);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-size: var(--fs-base);
+  touch-action: manipulation;
+  transition: border-color var(--dur-micro) var(--ease-standard);
+
+  &:focus-visible {
+    outline: none;
+    border-color: var(--c-accent);
+  }
+}
+
+.editor-find-count {
+  min-inline-size: 4.5rem;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.editor-find-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.editor-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  inline-size: var(--btn-h);
+  block-size: var(--btn-h);
+  padding: 0;
+  color: var(--c-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--r);
+  line-height: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+
+  &:hover {
+    color: var(--c-text-primary);
+    background: var(--c-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 1px;
+  }
+}
+
+/* Fill, edge and ink for the latched state: 70-selection.css. No local selected
+   state here. */
+.editor-find-case {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: normal;
+  text-box: trim-both cap alphabetic;
+}
+
+/* No-results affordance, matching .chat-find-no-results: tint the field and the
+   counter rather than restructuring the bar. */
+.editor-find-no-results .editor-find-input {
+  border-color: var(--c-red);
+}
+
+.editor-find-no-results .editor-find-count {
+  color: var(--c-red);
+}
+
+/* Mobile: 44px targets and 16px to defeat iOS focus-zoom. In the feature file,
+   not 50-mobile.css (see css/MANIFEST's layer note). */
+@media (width <= 40rem) {
+  .editor-find-input {
+    font-size: 16px;
+  }
+
+  .editor-find-btn {
+    inline-size: 2.75rem;
+    block-size: 2.75rem;
+  }
+}

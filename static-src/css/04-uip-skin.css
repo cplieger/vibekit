@@ -52,7 +52,7 @@
      .vk-confirm-dialog::backdrop. */
   --uip-dialog-leave-duration: var(--dur-exit);
   --uip-dialog-leave-easing: var(--ease-exit);
-  --uip-backdrop: oklch(0% 0 0deg / 50%);
+  --uip-backdrop: oklch(0% 0 none / 50%);
 
   /* --- popover (context menu): the old .tab-context-menu appeared instantly;
      the library's optional enter fade is mapped to vibekit's micro motion. */
@@ -66,7 +66,7 @@
      below, since createModal's JS open is instant). The disclosure vars drive
      the createDisclosure height tween (adopted for the git repo sections in
      22-git-multirepo.css), mapped to vibekit's standard panel motion. */
-  --uip-modal-backdrop: oklch(0% 0 0deg / 75%);
+  --uip-modal-backdrop: oklch(0% 0 none / 75%);
   --uip-modal-leave-duration: var(--dur-exit);
   --uip-modal-leave-easing: var(--ease-exit);
   --uip-disclosure-duration: var(--dur-standard);
@@ -93,7 +93,9 @@
   padding: var(--sp-2) var(--sp-3);
   font-size: var(--fs-sm);
   color: var(--c-text-primary);
-  box-shadow: 0 0.25rem 0.75rem color-mix(in srgb, #000 25%, transparent);
+  box-shadow:
+    var(--shadow-ambient),
+    0 0.25rem 0.75rem color-mix(in srgb, #000 25%, transparent);
   overflow-wrap: break-word;
 
   /* Enter from below (slide up), matching the old bottom-anchored stack; the
@@ -172,7 +174,7 @@
   color: oklch(90% 0.01 283deg);
   font-size: var(--fs-xs);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
 
   /* WRAPS. `nowrap` and `max-width` contradicted each other: nowrap forbids the
    * break the max-width needs, so a long tooltip ignored the cap and ran off
@@ -187,7 +189,9 @@
   -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  box-shadow: 0 2px 8px oklch(0% 0 0deg / 40%);
+  box-shadow:
+    var(--shadow-ambient),
+    0 2px 8px oklch(0% 0 none / 40%);
   animation: vk-fade-in var(--dur-micro) var(--ease-enter) both;
 }
 
@@ -206,7 +210,9 @@
   border-radius: var(--r);
   padding: var(--sp-4);
   max-width: 24rem;
-  box-shadow: 0 0.5rem 2rem oklch(0% 0 0deg / 50%);
+  box-shadow:
+    var(--shadow-ambient),
+    0 0.5rem 2rem oklch(0% 0 none / 50%);
 }
 
 .uip-ask-title {
@@ -243,7 +249,7 @@
   cursor: pointer;
   transition:
     background var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 
   &:hover {
     background: var(--c-bg-tertiary);

@@ -167,14 +167,67 @@ export function pushDecision(d: Decision): void {
   bump();
 }
 
-/** Drop a decision without answering it: the ask is no longer live (the turn
- *  was cancelled, or the chat went away). Does NOT call submit — nothing is
- *  owed to a request the agent has abandoned. */
+/** Drop every decision keyed to this surface without answering: the chat went
+ *  away (its tab closed, or another device deleted it) or the client can no
+ *  longer support the claim that any of them is live (a transport gap). Does NOT
+ *  call submit — nothing is owed to a request the agent has abandoned.
+ *
+ *  Unconditional, unlike `dropTurnDecisions`: when the chat itself is gone there
+ *  is no surface left to answer on, and `close_chat` / `delete_chat` cancel the
+ *  chat's runs server-side, so a run-scoped ask keyed here is dead too. */
 export function dropDecisions(chatID: string): void {
   if (!queues.delete(chatID)) {
     return;
   }
   bump();
+}
+
+/** Drop the decisions a TURN owned, leaving a workflow run's alone.
+ *
+ *  A permission, an elicitation and a question all BLOCK the turn that raised
+ *  them, so a turn that has ended cannot still be waiting on one: it was
+ *  answered (already spliced), or it was abandoned when the turn was cancelled —
+ *  and `cmdCancel` clears the server's own pending set, so the entry left here is
+ *  a card for a request nothing will accept an answer for. Keeping it marked the
+ *  chat as needing a decision indefinitely, since `tabStatusFor` puts `input`
+ *  ahead of every other state.
+ *
+ *  A run-scoped ask is exempt and the exemption is load-bearing: an
+ *  agent-launched run is parented on the calling chat's session but OUTLIVES the
+ *  turn that launched it (a goal run ends its turn immediately and then runs),
+ *  and its asks are queued under that chat's id. Dropping those would strand the
+ *  run waiting for an answer no surface is offering any more, which is the exact
+ *  failure the dock's queue was built to end. */
+export function dropTurnDecisions(chatID: string): void {
+  const q = queues.get(chatID);
+  if (q === undefined) {
+    return;
+  }
+  const rest = q.filter((d) => d.runID !== undefined && d.runID !== "");
+  if (rest.length === q.length) {
+    return;
+  }
+  if (rest.length === 0) {
+    queues.delete(chatID);
+  } else {
+    queues.set(chatID, rest);
+  }
+  bump();
+}
+
+/** Does this chat hold an unanswered decision? The tab strip's activity dot asks,
+ *  so a background chat blocked on a permission stops looking identical to one
+ *  that is merely working.
+ *
+ *  Reads `queueVersion.value` (not `.peek()`) on purpose: the caller is a
+ *  reactive effect, and this read is what subscribes it to the arrival and the
+ *  answering of a decision. The queue is this module's state, so there is
+ *  nothing in the chat store for that effect to have keyed on instead.
+ *
+ *  A `run:<id>` key is not a chat and has no tab, so it simply never matches. */
+export function hasPendingDecision(chatID: string): boolean {
+  void queueVersion.value;
+  return (queues.get(chatID)?.length ?? 0) > 0;
 }
 
 /** Retire a decision ANOTHER surface answered (`decision_settled`), and say who

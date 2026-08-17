@@ -25,12 +25,18 @@
   flex-direction: row;
   align-items: center;
   gap: var(--sp-1);
-  cursor: pointer;
 }
 
 /* The surface carries the two lines (name row, then the description) that
    .list-row's single centred line does not assume, so its own axis is the column
-   one the row used to have. */
+   one the row used to have.
+
+   EVERY block of a docs row belongs in here, not beside it. The row's axis is
+   horizontal, so a block appended to the ROW becomes a column sitting next to
+   the surface and its left edge is the running sum of its siblings' text widths.
+   That is not hypothetical: the Workflows tab was authored before this wrapper
+   existed and kept appending to the row, which laid its schedule summary,
+   description and inputs note side by side for a release. */
 .docs-row-surface {
   display: flex;
   flex-direction: column;
@@ -45,6 +51,29 @@
   }
 }
 
+/* The pointer belongs to the thing that activates, and only when it activates.
+   It used to sit on .docs-row, which reaches every row on all six tabs — so a
+   recipe row (no click handler at all, deliberately: this file's own Workflows
+   note says the row is not a button) and an inert document row (a global hook,
+   which cannot be opened from here) both offered a pointer and then did nothing.
+   docs.ts adds role=button to the surface exactly when it wires the open, so the
+   attribute is the honest condition. */
+.docs-row-surface[role="button"] {
+  cursor: pointer;
+}
+
+/* The row name on all six tabs. --fw-medium at the inherited --fs-sm mono, the
+   weight .mcp-row-name already uses for the same job: the name is the thing a
+   reader scans for, and at 12px it was sitting at the same 400 as the metadata
+   beside it. Deliberately NOT a size bump — .list-row sets --fs-sm for History,
+   Tools, the git rows and these six together, so growing it here alone would
+   make the docs tabs disagree with every other list in the app, and growing it
+   there would reflow all of them. Scoped to .docs-row so the six tabs move as
+   one set, which is the unit the tab bar makes the user compare. */
+.docs-row .list-row-name {
+  font-weight: var(--fw-medium);
+}
+
 /* The trailing controls. Reveal on row hover / control focus, so a resting list
    stays quiet; a keyboard user reaches the delete by Tab, which is why
    focus-within is part of the condition rather than hover alone. */
@@ -55,7 +84,7 @@
   flex-shrink: 0;
   color: var(--c-text-tertiary);
   opacity: 0;
-  transition: opacity var(--dur-micro) var(--ease-micro);
+  transition: opacity var(--dur-micro) var(--ease-standard);
 }
 
 .docs-row:hover > .docs-row-controls,
@@ -112,7 +141,14 @@
   padding: 0.1875rem var(--sp-1);
   border-radius: var(--r-sm);
   background: var(--c-bg-tertiary);
-  color: var(--c-text-tertiary);
+  /* --c-text-control, not --c-text-tertiary: the hint ink measures 3.203:1 dark
+     and 3.900:1 light against this fill, and this is an 11px LABEL rather than
+     hint text, so it needs AA. --c-text-control clears 4.5:1 on all four ramp
+     rungs in both themes (worst 4.561), which is what it exists for. Found by
+     `css-contrast.py all` once its oklch parser could read a `none` hue; the
+     same cross-product check still flags several :hover pairs and the turn
+     footer, which are a wider sweep than this badge. */
+  color: var(--c-text-control);
   border: 1px solid var(--c-border);
   white-space: nowrap;
 }
@@ -227,9 +263,14 @@
   align-items: center;
 }
 
-.recipe-run-btn {
-  margin-inline-start: auto;
-  flex-shrink: 0;
+/* The badge hugs the title instead of being pushed to the far edge with it.
+   .list-row-name is `flex: 1`, which is right for a document row — the inclusion
+   badges line up as a column a reader scans DOWN — but Workflows has one origin
+   badge per row and it reads as belonging to the name, so the name is
+   content-sized and the free space lands after the badge, where the auto margin
+   on the button pair claims it. */
+.recipe-row .list-row-name {
+  flex: 0 1 auto;
 }
 
 /* Cancel is a stop: it reads as destructive, same as every other danger
@@ -304,24 +345,57 @@
 }
 
 /* An active schedule is a state, marked the way every other on-state is. */
-.recipe-sched-btn.on {
-  color: var(--c-accent);
-  border-color: color-mix(in oklch, var(--c-accent) 40%, transparent);
-}
+/* .recipe-sched-btn.on: 70-selection.css. */
 
+/* ONE rule, not two. This was declared twice at equal specificity with
+   conflicting margin-inline-start (`auto` here, `0` in the schedule block
+   below), so the pair's alignment depended on which declaration a reader
+   happened to find first. The Schedule button above claims the space; this one
+   only refuses to. */
 .recipe-run-btn {
-  /* The pair is right-aligned as a unit, so only the first claims the space. */
   margin-inline-start: 0;
+  flex-shrink: 0;
 }
 
+/* No padding-inline-start. It was 4px, which is 4px more than every other block
+   in the surface has, so the summary sat alone off the column's left edge — the
+   residual misalignment left over once the stack itself was restored. */
 .recipe-sched-summary {
   font-size: var(--fs-xs);
-  padding-inline-start: var(--sp-1);
+  color: var(--c-text-tertiary);
 }
 
-/* Only a live schedule earns the accent; "Not scheduled" stays muted. */
+/* Only a live schedule earns the accent; "Not scheduled" stays muted — which is
+   what the rule above now actually does. It used to be spelled `text-muted` in
+   recipes.ts, a class this stylesheet never defined, so the dormant state
+   rendered at full primary ink and outshouted the scheduled one it exists to
+   contrast with. */
 .recipe-sched-summary.is-scheduled {
   color: var(--c-accent);
+}
+
+/* Phone: the badge drops under the title.
+ *
+ * THIS RULE CANNOT LIVE IN 50-mobile.css. That file is inside `@layer mobile`
+ * and this one is unlayered, and an unlayered rule beats every layer whatever
+ * the media query says — so a copy of this block over there would simply never
+ * apply. 50-mobile.css's own `.page-content` padding override is already dead
+ * for exactly that reason (18-pages.css declares it unlayered), which is the
+ * evidence rather than the theory. See css/MANIFEST and 00-header.css.
+ *
+ * 40rem is the app's phone rung, the same one this page's tab bar uses to swap
+ * its pills for a native select. Giving the name the whole first line is what
+ * makes the stack deterministic — plain `flex-wrap` would break only when the
+ * text happened to be long enough. The button pair rides the second line with
+ * the badge, still right-aligned by the auto margin, which works per flex line. */
+@media (width <= 40rem) {
+  .recipe-row .docs-row-top {
+    flex-wrap: wrap;
+  }
+
+  .recipe-row .list-row-name {
+    flex-basis: 100%;
+  }
 }
 
 .sched-popup {
@@ -385,15 +459,13 @@
   cursor: pointer;
 
   &:hover {
-    background: var(--c-bg-hover);
+    background: var(--c-hover);
   }
 }
 
-.sched-day.on {
-  color: var(--c-bg-primary);
-  background: var(--c-accent);
-  border-color: var(--c-accent);
-}
+/* .sched-day.on: 70-selection.css. It reached for --c-bg-primary as an ink on
+ * an accent fill, which is what --c-on-accent exists for and what
+ * --c-selected-fg means on a selected fill. */
 
 /* The summary is the element the user reads to confirm the rule, so it is the
    most prominent thing in the picker after the controls themselves. */
@@ -455,4 +527,80 @@
 
 .sched-actions {
   justify-content: flex-end;
+}
+
+/* ==========================================================================
+   The metadata filter
+
+   In-flow above the panels, not floating: it narrows the list rendered UNDER it
+   and the list stays put, so there is nothing for a floating box to annotate.
+   19-files.css records the same in-flow-versus-floating rule for the file
+   browser's bar, and this follows it.
+
+   Unadorned, with no magnifier and no funnel. The app's three existing filters
+   (#git-changes-filter, #git-prs-filter, the branch popover's) carry no glyph, so
+   a fourth that did would be introducing a convention for one member of a set of
+   four. The History box DOES carry a magnifier, and that is the honest
+   distinction: it reaches past the page to every chat file on disk, while this
+   one only hides rows already here.
+
+   Capped rather than full-width, for 18-pages.css's reason: an unadorned
+   full-width box reads as an empty section panel instead of a control.
+   ========================================================================== */
+
+.docs-filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-block-end: var(--sp-3);
+}
+
+.docs-filter-field {
+  display: flex;
+  align-items: center;
+  max-inline-size: 22rem;
+}
+
+.docs-filter-input {
+  font: inherit;
+  inline-size: 100%;
+  min-inline-size: 0;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--c-text-primary);
+  background: var(--c-bg-secondary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-sm);
+
+  &:focus-visible {
+    outline: none;
+    border-color: var(--c-accent);
+    background: color-mix(in oklch, var(--c-accent) 4%, var(--c-bg-secondary));
+  }
+
+  &::placeholder {
+    color: var(--c-text-tertiary);
+  }
+}
+
+/* Tertiary ink and a reserved height, the same two properties .fb-search-note
+   and .hist-search-note carry: the count describes the rows beside it, so it must
+   not compete with them, and a note that appears between keystrokes must not
+   shift the list under the reader's cursor. */
+.docs-filter-note {
+  min-block-size: 1rem;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+}
+
+/* Mobile: 16px defeats iOS focus-zoom, and the cap goes so the field uses the
+   width it has. In the FEATURE file rather than 50-mobile.css — an unlayered
+   slice beats @layer mobile whatever the specificity (see css/MANIFEST). */
+@media (width <= 40rem) {
+  .docs-filter-field {
+    max-inline-size: none;
+  }
+
+  .docs-filter-input {
+    font-size: 16px;
+  }
 }

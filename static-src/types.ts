@@ -202,6 +202,31 @@ export interface Session {
   /** Agent-declared one-line description of what it is working on
    *  (chat_status SSE). Shown as the chat tab's tooltip. */
   agent_status_text?: string;
+  /** This chat's last turn or bridge operation failed (`error` SSE naming this
+   *  chat). Client-only and latched, for the same reason `agent_status` is: the
+   *  failure is a settled fact until the next turn, and a background chat's
+   *  failure is otherwise invisible — `handlers/turn.ts` deliberately routes the
+   *  error PROSE only for the active chat, to keep one chat's failure off
+   *  another's send button. Cleared by the next `setThinking(id, true)` and by
+   *  the transport-gap reconciler, exactly like `agent_status`. */
+  turn_failed?: boolean;
+  /** This chat's last turn finished while the reader was looking somewhere else.
+   *  Client-only and latched, the mirror of `turn_failed`.
+   *
+   *  It exists because the agent-declared `completed` status is the higher-
+   *  fidelity signal and NOT a guaranteed one: it only arrives when the model
+   *  calls `update_session_information`, so a turn that ended without one fell
+   *  to `idle` and "your background chat finished" — the whole point of the tab
+   *  dot — was true only sometimes. `turn_ended` always arrives, so the latch is
+   *  what makes the promise hold; `completed` still wins where it lands, because
+   *  it is the agent's own verdict rather than the transport's.
+   *
+   *  Set only when the chat is NOT being watched (not the active tab, or the page
+   *  is hidden), so the state means "finished while you were away". Cleared by
+   *  activating the chat (seeing it settles it), by the next
+   *  `setThinking(id, true)`, and by the transport-gap reconciler, exactly like
+   *  `turn_failed`. Never set for a cancelled turn: nothing was finished. */
+  turn_done?: boolean;
   /** Mid-turn steers KAS is holding or has just delivered for this chat.
    *  A pure projection of the three steer SSE events; cleared at every turn
    *  boundary because that is when KAS clears its own buffer. */

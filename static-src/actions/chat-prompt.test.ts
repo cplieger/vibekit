@@ -14,9 +14,14 @@ vi.mock("../transport.js", () => ({
   send: vi.fn(),
 }));
 
+const { mockGet } = vi.hoisted(() => ({
+  mockGet: vi.fn(() => ({ id: "c1", model: "m1" }) as Record<string, unknown> | undefined),
+}));
 vi.mock("../store.js", () => ({
-  get: () => ({ id: "c1", model: "m1" }),
+  get: mockGet,
   setThinking: vi.fn(),
+  setTurnFailed: vi.fn(),
+  setTurnDone: vi.fn(),
   recordSteerQueued: vi.fn(),
   setModel: vi.fn(),
   setSupervisedMode: vi.fn(),
@@ -31,7 +36,7 @@ vi.mock("../api-client.js", () => ({
 }));
 
 import { send as transportSend } from "../transport.js";
-import { setThinking, recordSteerQueued } from "../store.js";
+import { setThinking, setTurnFailed, setTurnDone, recordSteerQueued } from "../store.js";
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
 import { sendPrompt } from "./chat.js";
 
@@ -40,6 +45,7 @@ const mockSend = vi.mocked(transportSend);
 beforeEach(() => {
   resetActionFramework();
   mockSend.mockReset();
+  mockGet.mockReturnValue({ id: "c1", model: "m1" });
 });
 
 describe("sendPrompt — 409 queued path", () => {
@@ -69,5 +75,52 @@ describe("sendPrompt — 409 queued path", () => {
       model: "model-1",
     });
     expect(setThinking).toHaveBeenCalledWith("c1", true);
+  });
+});
+
+// The optimistic write is `setThinking(chatID, true)`, and that call CLEARS the
+// two outcome latches — starting a turn is what invalidates the previous turn's
+// verdict. So a rollback that restored `thinking: false` alone erased a failure
+// or a finished-while-away mark the reader had not seen yet, and the erasing
+// event was an ordinary rejected prompt: a 400, a 413, a dead POST.
+describe("sendPrompt — rollback restores what the optimistic write cleared", () => {
+  it("re-latches a failure the rejected send wiped", async () => {
+    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_failed: true });
+    mockSend.mockResolvedValue({ ok: false, status: 400, error: "bad request" });
+
+    await sendPrompt.dispatch({ chatID: "c1", text: "hi", messageID: "m3", model: "model-1" });
+
+    expect(setThinking).toHaveBeenCalledWith("c1", true);
+    expect(setThinking).toHaveBeenLastCalledWith("c1", false);
+    expect(setTurnFailed).toHaveBeenCalledWith("c1");
+  });
+
+  it("re-latches a finished-while-away mark the same way", async () => {
+    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_done: true });
+    mockSend.mockResolvedValue({ ok: false, status: 413, error: "too large" });
+
+    await sendPrompt.dispatch({ chatID: "c1", text: "hi", messageID: "m4", model: "model-1" });
+
+    expect(setTurnDone).toHaveBeenCalledWith("c1");
+  });
+
+  it("re-latches nothing when there was nothing latched", async () => {
+    mockSend.mockResolvedValue({ ok: false, status: 400, error: "bad request" });
+
+    await sendPrompt.dispatch({ chatID: "c1", text: "hi", messageID: "m5", model: "model-1" });
+
+    expect(setTurnFailed).not.toHaveBeenCalled();
+    expect(setTurnDone).not.toHaveBeenCalled();
+  });
+
+  it("re-latches nothing on a send that succeeded", async () => {
+    mockGet.mockReturnValue({ id: "c1", model: "m1", turn_failed: true });
+    mockSend.mockResolvedValue({ ok: true, status: 200 });
+
+    await sendPrompt.dispatch({ chatID: "c1", text: "hi", messageID: "m6", model: "model-1" });
+
+    // The turn started, so the cleared verdict is correctly gone: restoring it
+    // here would paint a failure over live work.
+    expect(setTurnFailed).not.toHaveBeenCalled();
   });
 });

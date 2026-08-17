@@ -274,22 +274,34 @@ function recipeRow(r: Recipe): HTMLElement {
   schedBtn.textContent = "Schedule";
   wireSchedulePopup(schedBtn, r.source);
 
-  const row = el(
+  // Every block goes on the SURFACE, never on the row. `.docs-row` is a
+  // horizontal flex container (it holds an activation surface beside a control
+  // slot), so a block appended to the row is laid out BESIDE its siblings rather
+  // than under them — which is what this function used to do, for four blocks,
+  // giving each one a left edge equal to the running sum of the text widths
+  // before it. The column lives on `.docs-row-surface`; the five document tabs
+  // moved onto it and this one was not migrated with them.
+  const surface = el(
     "div",
-    { className: "list-row docs-row recipe-row", "data-recipe": r.source },
+    { className: "docs-row-surface" },
     el("div", { className: "docs-row-top" }, name, meta, schedBtn, btn),
   );
-  row.appendChild(el("div", { className: "recipe-sched-summary text-muted" }));
+  surface.appendChild(el("div", { className: "recipe-sched-summary" }));
   const desc = r.description ?? "";
   if (desc !== "") {
-    row.appendChild(el("div", { className: "docs-row-sub" }, desc));
+    surface.appendChild(el("div", { className: "docs-row-sub" }, desc));
   }
   const inputs = Object.keys(r.inputs ?? {});
   if (inputs.length > 0) {
-    row.appendChild(
-      el("div", { className: "recipe-inputs-note text-muted" }, `Inputs: ${inputs.join(", ")}`),
+    surface.appendChild(
+      el("div", { className: "recipe-inputs-note" }, `Inputs: ${inputs.join(", ")}`),
     );
   }
+  const row = el(
+    "div",
+    { className: "list-row docs-row recipe-row", "data-recipe": r.source },
+    surface,
+  );
   syncButton(row, r);
   syncSchedule(row, r.source);
   return row;
@@ -337,6 +349,14 @@ function toggleInputForm(r: Recipe, declared: string[]): void {
     existing.remove();
     return;
   }
+  // The form is a block of the row's column, so it hosts on the surface like
+  // every other block. On the row it became a flex item on the main line, where
+  // two declared inputs at min-width 14rem cannot fit and pushed the panel into
+  // a horizontal scrollbar (its overflow-y: auto computes overflow-x: auto too).
+  const host = row.querySelector<HTMLElement>(".docs-row-surface");
+  if (host === null) {
+    return;
+  }
   const fields = new Map<string, HTMLInputElement>();
   const form = el("form", { className: "recipe-input-form" });
   for (const key of declared) {
@@ -366,7 +386,7 @@ function toggleInputForm(r: Recipe, declared: string[]): void {
     form.remove();
     launch(r, inputs);
   });
-  row.appendChild(form);
+  host.appendChild(form);
   fields.values().next().value?.focus();
 }
 

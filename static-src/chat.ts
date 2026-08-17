@@ -20,6 +20,7 @@ import {
   activeSession,
   removeChat,
   tabStatusFor,
+  clearTurnDone,
   markGhostChat,
   isGhostChat,
 } from "./store.js";
@@ -35,9 +36,9 @@ import {
   renameTab,
   setTabStatus,
   setTabTooltip,
-  setTabIcon,
   TAB_VIEWS,
 } from "./tabs.js";
+import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
 import { submitPrompt } from "./submit.js";
 import { chatSkeleton } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
@@ -52,9 +53,9 @@ import {
   dropComposerState,
 } from "./composer-state.js";
 import { setCurrentModel, getLastModel } from "./session-context.js";
+import { labelForMode } from "./roles.js";
 import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
-import { iconForMode } from "./roles.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { isRetentionEnabled } from "./retention.js";
@@ -87,6 +88,14 @@ export function openChatTab(
   name: string,
   opts?: { activate?: boolean; parentId?: string },
 ): void {
+  // The dot's initial state, derived HERE because this is where the chat store is
+  // in scope. Without it a restored tab painted the `idle` floor and stayed there:
+  // the boot path loads the session list BEFORE opening its tabs, so the store
+  // effect that normally paints has already run by the time the rows exist and
+  // nothing makes it run again. `""` means this client holds no row for the id
+  // yet, which is every brand-new chat, and createTabEl's own `idle` floor is the
+  // right answer for it.
+  const dot = tabStatusFor(get(id), hasPendingDecision(id));
   openTab(
     {
       id,
@@ -97,10 +106,7 @@ export function openChatTab(
       // its tab must tear that bridge down the way any chat tab does. `owns:
       // false` is for a tab that only WATCHES work another chat owns.
       ...(opts?.parentId === undefined ? {} : { parentId: opts.parentId }),
-      // Derive the tab icon from the chat's current mode so a reloaded or
-      // restored chat shows the right mode glyph; installStoreSubscribers keeps
-      // it in sync on later (user- or agent-initiated) mode changes.
-      iconSvg: iconForMode(get(id)?.current_mode_id ?? ""),
+      ...(dot === "" ? {} : { dotStatus: dot }),
       view: TAB_VIEWS.chat,
       route: { kind: "chat", id },
       onShow: () => {
@@ -112,6 +118,12 @@ export function openChatTab(
         // the unsent text with it, and a delete's tombstone then drops the save
         // rather than racing it.
         flushComposerDraft();
+        // The chat's unanswered asks go with the tab. Closing cancels the turn and
+        // the chat's runs server-side, so nothing here is still live — and the dock
+        // queue is keyed by chat id, so a queue left behind was resurrected by
+        // reopening the SAME id: the card came back and the tab dot said the chat
+        // needed a decision that no longer existed.
+        dropDecisions(id);
         // There is no archive step any more: a closed chat is just a chat that
         // stopped being in a tab, and "archived" is computed from its age
         // against the retention window. So closing a tab persists nothing.
@@ -155,6 +167,10 @@ function activateChatView(id: string): void {
   // runs against the shared editor textarea. The save MUST precede setActive:
   // it reads the outgoing chat's id, which nothing can recover afterwards.
   saveComposerState();
+  // Opening the chat is what settles a `done` dot: the mark means "this finished
+  // while you were away", so arriving is the event that answers it. The store
+  // effect below re-derives the dot off this write, so no explicit repaint.
+  clearTurnDone(id);
   setActive(id);
   hideModelPicker();
   restoreComposerState(id);
@@ -473,8 +489,21 @@ export function createPlannerSession(): void {
   if (id === "") {
     return;
   }
-  setTabIcon(id, iconForMode("plan"));
   void setMode.dispatch({ chatID: id, modeID: "plan" });
+}
+
+/** A chat tab's hover tooltip: its mode, then what the agent says it is doing.
+ *
+ *  Either half can be missing — a chat with no session yet has no mode, and the
+ *  agent only declares a description while it is working — so the separator is
+ *  emitted only when both are present, rather than leaving a dangling one. */
+function tabTooltipFor(s: Session): string {
+  const mode = s.current_mode_id === "" ? "" : labelForMode(s.current_mode_id, s.available_modes);
+  const doing = s.agent_status_text ?? "";
+  if (mode === "" || doing === "") {
+    return mode === "" ? doing : mode;
+  }
+  return `${mode} · ${doing}`;
 }
 
 /** Wire the effect() that drives tab-rename reconciliation and
@@ -496,15 +525,21 @@ export function installStoreSubscribers(): void {
       if (hasTab(s.id)) {
         // Reconcile tab name with server auto-rename / agent focus title.
         renameTab(s.id, s.name);
-        // Per-tab activity dot: thinking while a turn runs, amber waiting
-        // when the agent declared waiting_on_user (turn_ended re-derives
-        // via the same tabStatusFor rule in handlers/turn.ts).
-        setTabStatus(s.id, tabStatusFor(s));
-        // Agent-declared "what I'm working on" as the tab tooltip.
-        setTabTooltip(s.id, s.agent_status_text ?? "");
-        // Tab icon derived from the chat's current mode, so a mode change
-        // (user- or agent-initiated) or a reload shows the right glyph.
-        setTabIcon(s.id, iconForMode(s.current_mode_id));
+        // Per-tab activity dot. tabStatusFor owns the precedence; the pending-ask
+        // half comes from the dock's own queue rather than the store, and reading
+        // it here is also what subscribes this effect to a decision arriving or
+        // being answered on a BACKGROUND chat — the case the feature exists for.
+        setTabStatus(s.id, tabStatusFor(s, hasPendingDecision(s.id)));
+        // The tooltip carries the chat's MODE and the agent's "what I'm working
+        // on", in that order. The mode half is here because the dot took the slot
+        // the per-mode role glyph used to hold, and for a BACKGROUND chat that was
+        // the only place a role read out at all — the mode pill and its picker are
+        // active-chat only. It restores the information with no element, no width
+        // and no second visual vocabulary in the 9px column. Pointer-only, so it is
+        // a convenience rather than a full replacement; a second glyph on the row
+        // was the alternative and it re-spends the width the dot just claimed,
+        // worst on mobile where the strip is a drawer.
+        setTabTooltip(s.id, tabTooltipFor(s));
       }
     }
   });

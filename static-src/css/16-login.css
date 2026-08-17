@@ -58,8 +58,9 @@
   color: var(--c-accent);
   align-items: center;
 
+  /* Border and ink carry the accent; the hover is the ordinary wash. */
   &:hover {
-    background: var(--c-accent-subtle);
+    background: var(--c-hover);
   }
 }
 

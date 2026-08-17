@@ -126,6 +126,45 @@ describe("BUS_TRANSPORT_GAP handler", () => {
     expect(mockLoadMessages).toHaveBeenCalledWith("active-chat");
   });
 
+  it("clears the finished-turn latch, for the same reason it clears thinking", async () => {
+    // The latch normally stands until the next turn, but "the next turn" may have
+    // happened inside the outage, so a green dot after a gap is a claim this client
+    // can no longer support. The busy chats that ARE still running get an
+    // authoritative turn_state in the connect replay; a finished one gets nothing,
+    // which is the accepted cost of not guessing.
+    const { setTurnDone, setTurnFailed, tabStatusFor } = await import("../store.js");
+    setSessions([makeSession("a"), makeSession("b")]);
+    setTurnDone("a");
+    setTurnFailed("b");
+
+    fireGap();
+    expect(tabStatusFor(get("a"))).toBe("idle");
+    expect(tabStatusFor(get("b"))).toBe("idle");
+  });
+
+  it("drops every unanswered ask, because the connect replay re-pushes the live ones", async () => {
+    // `streamInitialState` lists the whole pending set — all three ask kinds — on
+    // EVERY connect, and it writes those frames after the `connected` frame this
+    // handler runs off. So clearing is safe and self-healing, where keeping an ask
+    // whose answering frame was among the lost events left the chat reporting
+    // `input` forever.
+    const { pushDecision, hasPendingDecision, _resetForTest } = await import("../decision-dock.js");
+    _resetForTest();
+    setSessions([makeSession("a")]);
+    pushDecision({
+      kind: "permission",
+      chatID: "a",
+      runID: "",
+      requestID: 1,
+      payload: { request_id: 1, title: "run a command", options: [] } as never,
+      submit: vi.fn(),
+    });
+    expect(hasPendingDecision("a")).toBe(true);
+
+    fireGap();
+    expect(hasPendingDecision("a")).toBe(false);
+  });
+
   it("clears every session's steers, because they are claims it can no longer support", () => {
     // Steers are KAS's state and the gap means the frames that resolved or
     // dropped them may be among the lost ones. A chip saying "the agent hasn't

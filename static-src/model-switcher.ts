@@ -30,6 +30,8 @@ import {
 } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { el, effect } from "@cplieger/reactive";
+import { iconEl } from "./icon-el.js";
+import { ICON_MODEL } from "./icons.js";
 import type { ModelInfo } from "./types.js";
 
 /** Canonical effort levels with display labels. Single source of truth
@@ -114,6 +116,12 @@ class ModelSwitchController {
   private queueState: QueueState = { status: "idle" };
 
   init(): void {
+    // The pill's glyph, from icons.ts rather than an inline literal in
+    // index.html. Prepended (not appended) because the label follows it, and
+    // once — init() is called a single time from app.ts. The `.switching` face
+    // hides this svg by descendant selector, so wrapping it would be wrong but
+    // injecting it is not.
+    $.switchModelBtn.prepend(iconEl(ICON_MODEL));
     const expandContent = $.modelSwitchList;
     makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {

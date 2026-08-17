@@ -112,14 +112,14 @@
   flex: 1;
   height: 0.375rem;
   background: var(--c-bg-tertiary);
-  border-radius: 0.1875rem;
+  border-radius: var(--r-sm);
   overflow: hidden;
 }
 
 .upload-progress-fill {
   height: 100%;
   background: var(--c-accent);
-  border-radius: 0.1875rem;
+  border-radius: var(--r-sm);
   width: 0;
   transition: width var(--dur-standard);
 }
@@ -148,7 +148,7 @@
     color var(--dur-micro);
 
   &:hover {
-    background: var(--c-bg-hover);
+    background: var(--c-hover);
     color: var(--c-text-primary);
   }
 
@@ -215,17 +215,20 @@
      until their turn. */
   animation-delay: calc(var(--stagger-index, 0) * 30ms);
 
+  /* The last row drops the separator's COLOUR, not the edge itself. `none`
+     would zero the used width, and since 70-selection.css reserves a 1px edge
+     on all four sides of every row, that would make the last row 1px shorter
+     than its neighbours and leave a SELECTED last row unable to draw its bottom
+     border at all. */
   &:last-child {
-    border-block-end: none;
+    border-block-end-color: transparent;
   }
 
   &:hover {
     background: var(--c-bg-tertiary);
   }
 
-  &.fb-row-selected {
-    background: var(--c-accent-subtle);
-  }
+  /* Selected: 70-selection.css, with every other selected surface. */
 
   &.fb-row-exiting {
     opacity: 0;
@@ -292,7 +295,7 @@
   transition:
     opacity var(--dur-micro),
     color var(--dur-micro),
-    background var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard);
 }
 
 :where(.fb-row:hover) .fb-add-to-chat,
@@ -348,7 +351,7 @@
 .fb-git-clickable {
   cursor: pointer;
   border-radius: var(--r-sm);
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -411,7 +414,7 @@
   padding: var(--sp-2) var(--sp-3);
   outline: none;
   min-height: var(--input-h);
-  transition: border-color var(--dur-micro) var(--ease-micro);
+  transition: border-color var(--dur-micro) var(--ease-standard);
 
   &:focus,
   &:not(:read-only) {
@@ -459,7 +462,7 @@
   min-height: var(--input-h);
   outline: none;
   touch-action: manipulation;
-  transition: border-color var(--dur-micro) var(--ease-micro);
+  transition: border-color var(--dur-micro) var(--ease-standard);
 
   &:focus-visible {
     border-color: var(--c-accent);
@@ -471,6 +474,12 @@
   font-size: var(--fs-sm);
 }
 
+/* The centring pairing is .chat-find-btn's, and the two are kept identical
+   deliberately: the same defect was in both bars (a TEXT `×` whose line box, not
+   its ink, is what `align-items: center` centres), so a fix in one would have left
+   the other wrong and the two bars looking different. `line-height: 0` collapses
+   the strut around the SVG so the button's box is the glyph's own; the long-form
+   reasoning is in 24-find.css. */
 .fb-search-btn {
   display: inline-flex;
   align-items: center;
@@ -483,33 +492,38 @@
   background: transparent;
   border: none;
   border-radius: var(--r);
-  font-size: var(--fs-lg);
-  line-height: 1;
+  line-height: 0;
   cursor: pointer;
   touch-action: manipulation;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
 
   &:hover {
     color: var(--c-text-primary);
-    background: var(--c-bg-hover);
+    background: var(--c-hover);
   }
 }
 
+/* The one text glyph in this bar, so it takes the cap-band trim rather than the
+   strut collapse above — see .chat-find-case. */
 .fb-search-case {
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
+  line-height: normal;
+  text-box: trim-both cap alphabetic;
 }
 
-.fb-search-case[aria-pressed="true"] {
-  color: var(--c-accent);
-  background: var(--c-accent-subtle);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 45%, transparent);
-}
+/* Fill, edge and ink: 70-selection.css. The inset shadow it drew was a border
+ * in disguise; the control reserves a real one there. */
 
 .fb-search-note {
   font-size: var(--fs-sm);
+
+  /* The ink was spelled `text-muted` on the element, a class no stylesheet
+     defines, so the note competed with the hits it describes. */
+  color: var(--c-text-tertiary);
+
   /* Reserved height so the note landing does not shift the results under the
      reader's cursor between keystrokes. */
   min-height: 1.25rem;

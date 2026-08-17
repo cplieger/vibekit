@@ -63,8 +63,7 @@ import { initTooltips } from "./tooltip.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
-import { openChatFind } from "./find-in-chat.js";
-import { handleFindKey } from "./find-dispatch.js";
+import { handleFindKey, toggleFindForActiveTab } from "./find-dispatch.js";
 import { forceSettingsTab, loadSettingsTabData } from "./settings-tabs.js";
 import { flushURLHighlight } from "./settings-highlight.js";
 import { forceGitTab } from "./git-tabs.js";
@@ -190,9 +189,12 @@ function init(): void {
   // a clicked path is that module's subject.
   initAttachmentPillCallbacks({ open: openAtLine });
   initTaskListPill();
-  // Wire toolbar history button. Hidden when retention is 0 (nothing kept).
+  // The search button routes through the same dispatcher as Ctrl-F, so the two
+  // cannot mean different things. It used to call find-in-chat directly, which
+  // made it a dead control on /files and /file/{path}: the chat view is hidden
+  // there, so the guard returned and the click did nothing at all.
   $.findBtn.addEventListener("click", () => {
-    openChatFind();
+    toggleFindForActiveTab();
   });
   $.docsBtn.addEventListener("click", () => {
     void import("./docs.js")

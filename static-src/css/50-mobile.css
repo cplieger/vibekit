@@ -114,10 +114,15 @@
       padding: var(--sp-3) var(--sp-4) calc(var(--sp-3) + env(safe-area-inset-bottom, 0));
     }
 
+    /* No radius override. The desktop pair agreed at height/2 and the mobile
+       pair did not: only `.pill` got a bigger radius here, so a 36px pill sat
+       beside a 36px send button carrying 18px and 16px. The ladder is absolute
+       rather than proportional, which is the whole point of it — a rung is a
+       rung at every breakpoint, so growing the box no longer needs a second
+       radius decision that one of the two controls will miss. */
     .pill {
       height: 2.25rem;
       padding: 0 var(--sp-3);
-      border-radius: 1.125rem;
       font-size: var(--fs-sm);
     }
 

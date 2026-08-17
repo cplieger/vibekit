@@ -19,7 +19,10 @@ import {
   setAgentStatus,
   setCurrentMode,
   clearSteers,
+  clearTurnFailed,
+  clearTurnDone,
 } from "../store.js";
+import { dropDecisions } from "../decision-dock.js";
 import { loadList, loadMessages } from "../store-load.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { refreshCompactionThreshold } from "../status.js";
@@ -63,6 +66,19 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     // Agent-declared status is as untrustworthy as `thinking` after a
     // gap: the clearing chat_status may be among the dropped events.
     setAgentStatus(s.id, "", "");
+    // Same reasoning for the two outcome latches. Each normally stands until the
+    // next turn, but "the next turn" may have happened inside the outage, so a red
+    // or green dot after a gap is a claim this client can no longer support.
+    clearTurnFailed(s.id);
+    clearTurnDone(s.id);
+    // And the same for the dock's unanswered asks: the frames that answered or
+    // abandoned them may be among the dropped events, so an `input` dot after a
+    // gap is a claim this client cannot support either. Safe to clear rather than
+    // guess, because every unresolved request is re-pushed by the connect replay
+    // (`streamInitialState` lists the whole pending set, all three kinds, on EVERY
+    // connect) — and that replay lands after this handler, which runs off the
+    // `connected` frame itself.
+    dropDecisions(s.id);
     // Steers are KAS's state, and a gap means we may have missed the frames
     // that resolved or dropped them. Clearing is the honest default for the same
     // reason `thinking` is cleared above: a chip claiming the agent has not read

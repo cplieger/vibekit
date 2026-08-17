@@ -497,8 +497,11 @@ async function search(
   result: unknown,
   query = "redis",
 ): Promise<{ table: HTMLElement; note: HTMLElement }> {
-  document.body.innerHTML = `<div id="history-table"></div>
-    <input id="hist-search-input" /><div id="hist-search-note"></div>`;
+  // Only the HOST is markup now. The box itself — its role, its field's
+  // attributes, its debounce, its supersession guard and its note — is built by
+  // the shared search shell (search-shell.ts), which is what stops this box, the
+  // transcript's and the file browser's from drifting apart again.
+  document.body.innerHTML = `<div id="history-table"></div><div id="hist-search-host"></div>`;
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
   const { showHistoryView } = await import("./history.js");
@@ -578,6 +581,42 @@ describe("history: cross-chat search", () => {
   it("surfaces a failed search rather than an empty list", async () => {
     const { note } = await search(null);
     expect(note.textContent).toContain("Search failed");
+  });
+
+  it("is a role=search landmark carrying the shared field attributes", async () => {
+    // The box used to be hand-authored markup with no role at all, so it was the
+    // one search on the page not reachable by landmark navigation.
+    await search({ matches: [match()], scanned: 3, truncated: false });
+    const region = document.getElementById("hist-search");
+    expect(region?.getAttribute("role")).toBe("search");
+    expect(region?.getAttribute("aria-label")).toBe("Search conversations");
+    const input = document.getElementById("hist-search-input") as HTMLInputElement;
+    expect(input.getAttribute("autocomplete")).toBe("off");
+    expect(input.getAttribute("enterkeyhint")).toBe("search");
+    expect(input.placeholder, "the one string the four boxes genuinely differ on").toBe(
+      "Search conversations\u2026",
+    );
+  });
+
+  it("ships NO match-case toggle, because the endpoint would not read it", async () => {
+    // GET /api/chats/search takes only `q`. chat.searchOneChat states why —
+    // "Case-INSENSITIVE, always ... a cross-chat 'which conversation was that in'
+    // is asked from memory, and memory does not remember capitalisation" — and
+    // titleHits folds unconditionally. A toggle here would be wired to nothing,
+    // which is worse than its absence.
+    await search({ matches: [match()], scanned: 3, truncated: false });
+    expect(document.querySelector('#hist-search [aria-label="Match case"]')).toBeNull();
+    // And the query carries nothing but the text, so there is no flag to be
+    // silently dropped on the way to a server that would ignore it.
+    expect(searchDispatch).toHaveBeenLastCalledWith("redis");
+  });
+
+  it("keeps its magnifier, because it is a SEARCH and not a filter", async () => {
+    // The server reads every chat file on disk, so this box finds conversations
+    // the loaded list does not contain. A funnel would promise it only narrows
+    // what is on screen; 18-pages.css records the distinction.
+    await search({ matches: [match()], scanned: 3, truncated: false });
+    expect(document.querySelector("#hist-search .hist-search-icon")).not.toBeNull();
   });
 
   it("returns to the full list when the box is cleared", async () => {

@@ -16,6 +16,8 @@ import { getActive } from "./store.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
+import { iconEl } from "./icon-el.js";
+import { ICON_MODEL_20 } from "./icons.js";
 
 /** Static header copy for the model picker. Describes the model choice
  *  itself — tool access is a per-mode concern on v3, not a model property,
@@ -47,13 +49,15 @@ class ModelPickerController {
     this.currentId = currentModelId;
     picker.setAttribute("aria-label", PICKER_LABEL);
 
-    const svg = label.querySelector("svg");
-    const labelText = document.createTextNode(PICKER_LABEL);
-    if (svg !== null) {
-      label.replaceChildren(svg, document.createTextNode(" "), labelText);
-    } else {
-      label.replaceChildren(labelText);
-    }
+    // The glyph is BUILT here rather than salvaged out of the markup. It used
+    // to be an inline <svg> in index.html that this line found and re-appended,
+    // which is why the null branch existed; icons.ts owns the geometry now and
+    // the model pill renders the same `d` at 12px.
+    label.replaceChildren(
+      iconEl(ICON_MODEL_20),
+      document.createTextNode(" "),
+      document.createTextNode(PICKER_LABEL),
+    );
 
     let desc = picker.querySelector(".picker-desc");
     if (desc === null) {

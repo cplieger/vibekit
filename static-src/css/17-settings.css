@@ -82,19 +82,20 @@
   transition:
     background var(--dur-micro),
     color var(--dur-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    border-color var(--dur-micro) var(--ease-standard);
 
-  &:hover {
-    background: var(--c-bg-tertiary);
+  /* Scoped away from the selected tab: without it, hover repaints the selected
+     fill and the bar forgets which tab you are on. */
+  &:not(.active):hover {
+    background: var(--c-hover);
     color: var(--c-text-primary);
   }
 
-  &.active {
-    background: var(--c-bg-primary);
-    color: var(--c-text-primary);
-    border-color: var(--c-border);
-    box-shadow: 0 1px 2px oklch(0% 0 0deg / 8%);
-  }
+  /* Selected: 70-selection.css. This was the one segmented control that marked
+     selection with NO accent at all — a raised white card against the bar —
+     and in dark mode its hover moved LIGHTER while its selected state moved
+     DARKER, so a hovered unselected tab read as more prominent than the
+     selected one. */
 }
 
 /* Mobile tab select: native dropdown, hidden on desktop. */
@@ -200,7 +201,7 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
   color: var(--c-text-secondary);
@@ -223,30 +224,30 @@
 }
 
 .forge-kind-gitlab {
-  background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary));
-  border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-forge-gitlab) 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-forge-gitlab) 40%, var(--c-border));
 }
 
 .forge-kind-gitlab svg {
-  fill: #fc6d26;
+  fill: var(--c-forge-gitlab);
 }
 
 .forge-kind-codeberg {
-  background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary));
-  border-color: color-mix(in srgb, #2185d0 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-forge-codeberg) 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-forge-codeberg) 40%, var(--c-border));
 }
 
 .forge-kind-codeberg svg {
-  fill: #2185d0;
+  fill: var(--c-forge-codeberg);
 }
 
 .forge-kind-gitea {
-  background: color-mix(in srgb, #609926 14%, var(--c-bg-primary));
-  border-color: color-mix(in srgb, #609926 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-forge-gitea) 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-forge-gitea) 40%, var(--c-border));
 }
 
 .forge-kind-gitea svg {
-  fill: #609926;
+  fill: var(--c-forge-gitea);
 }
 
 .forge-kind-title {
@@ -368,7 +369,7 @@
 .forge-account-repos-chevron {
   display: inline-block;
   color: var(--c-text-tertiary);
-  transition: transform var(--dur-micro) var(--ease-micro);
+  transition: transform var(--dur-micro) var(--ease-standard);
 }
 
 .forge-account-repos[open] > .forge-account-repos-summary > .forge-account-repos-chevron {
@@ -478,7 +479,7 @@
   display: inline-block;
   width: 12em;
   height: 0.875rem;
-  border-radius: 0.25rem;
+  border-radius: var(--r-sm);
 }
 
 .forge-account-meta {
@@ -640,7 +641,7 @@
 .forge-status {
   font-size: var(--fs-xs);
   padding: 2px var(--sp-2);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
 }
 
 .forge-status-pending {
@@ -692,7 +693,7 @@
   cursor: pointer;
   min-width: 22ch;
   max-width: 44ch;
-  transition: border-color var(--dur-micro) var(--ease-micro);
+  transition: border-color var(--dur-micro) var(--ease-standard);
 }
 
 .repo-picker-trigger:hover {
@@ -740,7 +741,7 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   font-size: 10px;
   font-weight: 700;
   font-family: var(--font-mono);
@@ -757,18 +758,18 @@
 }
 
 .repo-picker-badge-gitlab {
-  background: color-mix(in srgb, #fc6d26 14%, var(--c-bg-primary));
-  border-color: color-mix(in srgb, #fc6d26 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-forge-gitlab) 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-forge-gitlab) 40%, var(--c-border));
 }
 
 .repo-picker-badge-codeberg {
-  background: color-mix(in srgb, #2185d0 14%, var(--c-bg-primary));
-  border-color: color-mix(in srgb, #2185d0 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-forge-codeberg) 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-forge-codeberg) 40%, var(--c-border));
 }
 
 .repo-picker-badge-gitea {
-  background: color-mix(in srgb, #609926 14%, var(--c-bg-primary));
-  border-color: color-mix(in srgb, #609926 40%, var(--c-border));
+  background: color-mix(in srgb, var(--c-forge-gitea) 14%, var(--c-bg-primary));
+  border-color: color-mix(in srgb, var(--c-forge-gitea) 40%, var(--c-border));
 }
 
 /* State glyph (cloned/remote/local-only) on the right of a row. */
@@ -930,24 +931,23 @@
 
 .repo-picker-chip {
   padding: 2px var(--sp-2);
-  border-radius: 999px;
+
+  /* Clickable: the small rung, proportional to a ~20px box. */
+  border-radius: var(--r);
   border: 1px solid var(--c-border);
   background: var(--c-bg-secondary);
   color: var(--c-text-secondary);
   font-size: var(--fs-xs);
   cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 .repo-picker-chip:hover {
-  background: var(--c-bg-hover);
+  background: var(--c-bg-tertiary);
 }
 
-.repo-picker-chip-active {
-  background: color-mix(in srgb, var(--c-accent) 20%, var(--c-bg-secondary));
-  border-color: color-mix(in srgb, var(--c-accent) 50%, var(--c-border));
-  color: var(--c-text-primary);
-}
+/* .repo-picker-chip-active: 70-selection.css. All three of its channels were
+ * ad-hoc color-mixes with no token behind any of them. */
 
 .repo-picker-list {
   flex: 1;
@@ -970,17 +970,14 @@
   color: var(--c-text-primary);
   text-align: start;
   cursor: pointer;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 .repo-picker-row:hover {
-  background: var(--c-bg-hover);
+  background: var(--c-hover);
 }
 
-.repo-picker-row-selected {
-  border-color: color-mix(in srgb, var(--c-accent) 40%, var(--c-border));
-  background: color-mix(in srgb, var(--c-accent) 6%, transparent);
-}
+/* .repo-picker-row-selected: 70-selection.css. */
 
 .repo-picker-row-cloning {
   opacity: 0.6;
@@ -1143,7 +1140,7 @@
 .git-pr-badge {
   font-size: var(--fs-xs);
   padding: 1px var(--sp-2);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--c-border);
   background: var(--c-bg-secondary);
   color: var(--c-text-tertiary);
@@ -1260,7 +1257,9 @@
   align-items: center;
   gap: var(--sp-1);
   padding: 2px var(--sp-2);
-  border-radius: 999px;
+
+  /* Clickable: the small rung. */
+  border-radius: var(--r);
   border: 1px solid var(--c-border);
   background: var(--c-bg-secondary);
   font-size: var(--fs-xs);
@@ -1270,7 +1269,7 @@
 }
 
 .git-ci-pill:hover {
-  background: var(--c-bg-hover);
+  background: var(--c-bg-tertiary);
 }
 
 .git-ci-dot {
@@ -1322,7 +1321,9 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   padding: var(--sp-2) 0;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 22%);
+  box-shadow:
+    var(--shadow-ambient),
+    0 8px 24px rgb(0 0 0 / 22%);
 }
 
 .git-ci-panel-head {
@@ -1692,12 +1693,12 @@ select.native-rule-effect:focus-visible {
   line-height: 1;
   cursor: pointer;
   transition:
-    color var(--dur-micro) var(--ease-micro),
-    background var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 .native-rule-remove:hover {
   color: var(--c-text-primary);
-  background: var(--c-bg-hover);
+  background: var(--c-hover);
 }
 
 /* --- Permissions rule forms (.rule-form) --------------------------------
@@ -1767,8 +1768,8 @@ select.native-rule-effect:focus-visible {
   color: var(--c-text-primary);
   touch-action: manipulation;
   transition:
-    border-color var(--dur-micro) var(--ease-micro),
-    background var(--dur-micro) var(--ease-micro);
+    border-color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .rf-mono {
@@ -1953,7 +1954,7 @@ select.native-rule-effect:focus-visible {
   15%,
   55% {
     outline-color: var(--c-accent);
-    background-color: var(--c-accent-subtle);
+    background-color: var(--c-selected-bg);
   }
 }
 

@@ -2,17 +2,23 @@
    Universal interaction feedback
    ========================================================================== */
 
-/* Press scale: every interactive element gets a subtle inward press on
- * :active. The 0.96 factor is small enough to feel tactile without
- * looking like a bounce. Spring easing on release makes the return
- * feel physical. Scoped via :where() so specificity stays at 0 and
- * component-level overrides (e.g. send-btn's 0.92) win naturally. */
+/* Press scale, on the controls that do NOT yet carry a colour press.
+ *
+ * The design system's press is a COLOUR step on the same axis as hover — one
+ * rung deeper — because that is one mechanism instead of two and because it
+ * survives prefers-reduced-motion, which a transform does not. `.pill`, `.tab`
+ * and `.send-btn` have been converted and have left this list. The rest are
+ * still here, and converting one means knowing its resting fill: a transparent
+ * control takes `var(--c-press)`, a filled one steps up the ramp (see the
+ * interaction ladder in 01-tokens.css). That is per-surface work.
+ *
+ * Scoped via :where() so specificity stays at 0 and a component-level override
+ * wins naturally. */
 :where(
   .icon-btn,
   .action-pill,
   .btn,
   .btn-small,
-  .pill,
   .sidebar-action-btn,
   .turn-action-btn,
   .picker-btn,
@@ -21,34 +27,26 @@
   .git-action-btn,
   .mcp-modal-tab,
   .history-modal-row,
-  .tab,
   .perm-mode
 ):active {
   transform: scale(0.96);
-  transition: transform var(--dur-micro) var(--ease-micro);
+  transition: transform var(--dur-micro) var(--ease-standard);
 }
 
-/* An expanded pill presses exactly like a collapsed one: this is the only rule
- * that SCALES anything, open or closed. That holds because the expanded card is
- * a SIBLING of the pill inside .pill-slot rather than a child of it
- * (15-input.css "Expandable pill system"), so scaling the pill cannot reach the
- * open menu.
+/* THE TRANSITION TRAP, kept because it still applies to every member above.
+ * `:where(…):active` scores (0,1,0) — exactly what a bare `.icon-btn` scores —
+ * and both stylesheets are unlayered, so the LATER file in the CSS MANIFEST
+ * takes the `transition` property. A member of the list above that declares its
+ * own `transition` must therefore name `transform` in it, or the scale applies
+ * with no animation in either direction: a one-frame snap on press and on
+ * release. The same rule governs the colour press: a converted control must
+ * name `background` in its own transition list.
  *
- * The `transition` declared above does NOT win for `.pill`, and naming
- * transform here is not what animates the scale. `:where(…):active` scores
- * (0,1,0), the same as a bare `.pill`, and both files are unlayered — so the
- * later file in MANIFEST takes the property. `transform` is therefore listed in
- * `.pill`'s own transition (15-input.css), and a member of the list above that
- * carries its own `transition` must do the same or its press will not animate.
- *
- * The three exceptions this replaces pressed the pill's CHILDREN while pinning
- * the pill itself to `transform: none` — the only way to keep the open card
- * still while the card was a descendant, and it left the trigger's border and
- * background motionless under the finger. A counter-scale on the card was the
- * other candidate and cannot work in CSS: cancelling an ancestor's scale needs
- * the descendant to scale about the same absolute point, and expressing the
- * pill's centre inside the card's coordinate space needs the pill's measured
- * width and height. */
+ * `.pill` left this list, and with it the whole scale-versus-open-card problem:
+ * an expanded pill's card is a SIBLING inside `.pill-slot` rather than a child
+ * (15-input.css "Expandable pill system"), so nothing was scaling the open menu
+ * even before the colour press replaced the scale. Do not re-add a `transform`
+ * exception for it. */
 
 /* ==========================================================================
    Canonical keyframe library (vk-* prefix)

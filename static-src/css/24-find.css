@@ -3,9 +3,32 @@
 
    A floating search bar anchored top-right over the transcript, plus the
    <mark> highlight styles. Unlayered (like the other component slices) so it
-   wins over the layered base by source order. Shown/hidden via the global
-   `.hidden` utility; @starting-style animates the entry. Reduced-motion is
-   handled globally in 40-a11y.css.
+   wins over the layered base by source order.
+
+   BOTH LEGS ANIMATE, and getting there took removing the mechanism rather than
+   adding one. The box was shown and hidden through the global `.hidden` utility,
+   which is `display: none !important` (40-a11y.css) — `display` is a discrete
+   property, so the close could not animate at all and the box simply vanished.
+
+   It is a @cplieger/ui-primitives popup now, so the reveal is the `[hidden]`
+   ATTRIBUTE (the library's own `.uip-popup[hidden] { display: none }`) plus the
+   `is-open` / `is-leaving` state-class pair. The library un-hides, forces a
+   reflow, then adds `is-open`, so a transition from the RESTING state below
+   plays on the way in; on the way out it removes `is-open`, adds `is-leaving`
+   and waits for this element's own transitionend before `[hidden]` lands. So the
+   resting state IS the leave target and one declaration covers both directions.
+   @starting-style went with it: nothing enters the layout any more.
+
+   `display … transition-behavior: allow-discrete` is NOT the answer here and was
+   not tried again: 21-shell-panel.css records that it SNAPPED SHUT in practice
+   on this codebase, which is why the shell panel collapses a live element
+   instead. Believe that comment.
+
+   Reduced motion stays covered by 40-a11y.css's global
+   `transition-duration: 0.01ms !important`, which reaches this transition like
+   any other — and the leave still finalizes, because transitionend fires for a
+   near-zero duration. A leave that depended on a TIMER rather than the
+   transition would have needed its own reduced-motion answer; this one does not.
    ========================================================================== */
 
 /* Anchored top-right of the transcript but BELOW the toolbar, not over it. It
@@ -31,19 +54,35 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   box-shadow:
+    var(--shadow-ambient),
     0 1px 2px rgb(0 0 0 / 20%),
     0 6px 16px rgb(0 0 0 / 28%);
+
+  /* RESTING = closed, and therefore also the leave target. A diagonal shrink
+     back into the top-right corner the box is anchored to, which is the same
+     gesture the open plays in reverse. */
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  transition:
+    opacity var(--dur-exit) var(--ease-exit),
+    transform var(--dur-exit) var(--ease-exit);
+
+  /* The leave keeps the box in the layout until its transition ends, and this
+     box is absolutely positioned over the transcript at z-index 60 — so for the
+     length of the fade a fully transparent rectangle would still be taking
+     clicks meant for the messages under it. Restored on .is-open below. */
+  pointer-events: none;
+}
+
+/* Open. The library adds this after a forced reflow, so the transition from the
+   resting state above plays rather than collapsing into one frame. */
+.chat-find.is-open {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
   transition:
     opacity var(--dur-enter) var(--ease-enter),
     transform var(--dur-enter) var(--ease-enter);
-}
-
-/* Diagonal grow-in from the top-right corner it's anchored to. */
-@starting-style {
-  .chat-find {
-    opacity: 0;
-    transform: translateY(-6px) scale(0.98);
-  }
 }
 
 .chat-find-input {
@@ -56,7 +95,7 @@
   border-radius: var(--r);
   font-size: var(--fs-base);
   touch-action: manipulation;
-  transition: border-color var(--dur-micro) var(--ease-micro);
+  transition: border-color var(--dur-micro) var(--ease-standard);
 }
 
 .chat-find-input:focus-visible {
@@ -79,29 +118,48 @@
   gap: 2px;
 }
 
+/* The bar's buttons. `--btn-h`, matching .fb-search-btn: the two bars disagreed
+   at 1.75rem versus the token, and 1.75rem was also short of the input beside
+   it, so the row read as misaligned before anything was centred.
+
+   `line-height: 0` is the centring half, and it is only correct because these
+   buttons hold an SVG. A replaced element sits on the baseline, so the line box's
+   STRUT is what oversizes it; collapsing the strut leaves a box that is the
+   glyph's own, and `align-items: center` then centres the ink. `.tab-close` and
+   `.shell-header-btn` are the same pairing — it is this app's convention for
+   every correctly-centred icon button.
+
+   The glyphs used to be TEXT (`↑` `↓` `×`), and no authored value could have
+   centred them: `align-items: center` centres a text item's LINE BOX, `×` is a
+   math operator drawn about the math axis, an arrow follows neither the cap nor
+   the x-height band, and each font answers differently — so the offset was
+   platform-dependent by construction. `text-box: trim-both cap alphabetic` (the
+   composer packet's fix for the pill labels) does not reach them either: it trims
+   to the CAP band, and only a letterform fills that. Hence SVG for these three
+   and the trim for `Aa` below, which IS a letterform. */
 .chat-find-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  inline-size: 1.75rem;
-  block-size: 1.75rem;
+  flex-shrink: 0;
+  inline-size: var(--btn-h);
+  block-size: var(--btn-h);
   padding: 0;
   color: var(--c-text-secondary);
   background: transparent;
   border: none;
   border-radius: var(--r);
-  font-size: var(--fs-lg);
-  line-height: 1;
+  line-height: 0;
   cursor: pointer;
   touch-action: manipulation;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
 }
 
 .chat-find-btn:hover {
   color: var(--c-text-primary);
-  background: var(--c-bg-hover);
+  background: var(--c-hover);
 }
 
 .chat-find-btn:focus-visible {
@@ -110,20 +168,31 @@
 }
 
 /* Match case: the one LATCHED control in the bar, so it needs a resting-on
-   state the momentary buttons beside it do not. "Aa" is text rather than a
-   glyph, at the row's own size instead of the nav buttons' --fs-lg — two
-   letters at 1.25rem overflow a 1.75rem square. */
+   state the momentary buttons beside it do not, and the one whose glyph stays
+   TEXT — the letters ARE the affordance, where an icon for "match case" would
+   have to be learned.
+
+   So it takes the OTHER centring fix and needs both halves. `line-height: normal`
+   undoes the sibling rule's strut collapse (that answer is for a replaced
+   element, and this content is a text node), and `text-box: trim-both cap
+   alphabetic` makes the box edges the cap band, so centring the box centres the
+   letterforms with no value authored per font. `A` is a cap and `a` sits on the
+   baseline, so the band is exactly full — which is why the trim works here and
+   would not for `×` or an arrow. 15-input.css carries the long-form derivation.
+
+   No numeric line-height: the vertical offset formula has no line-height term
+   (CSS2.1 10.8.1 splits leading symmetrically), so one would move the glyphs by
+   zero — label-centring.test.ts pins that reasoning for the pill labels. */
 .chat-find-case {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
+  line-height: normal;
+  text-box: trim-both cap alphabetic;
 }
 
-.chat-find-case[aria-pressed="true"] {
-  color: var(--c-accent);
-  background: var(--c-accent-subtle);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-accent) 45%, transparent);
-}
+/* Fill, edge and ink: 70-selection.css. The inset shadow it drew was a border
+ * in disguise; the control reserves a real one there. */
 
 /* No-results affordance: tint the field + counter without restructuring. */
 .chat-find-no-results .chat-find-input {
@@ -139,7 +208,7 @@
 mark.chat-find-hit {
   color: inherit;
   background: color-mix(in srgb, var(--c-accent) 32%, transparent);
-  border-radius: 2px;
+  border-radius: var(--r-sm);
   scroll-margin-block: 20vh;
 }
 
@@ -149,7 +218,11 @@ mark.chat-find-hit-current {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 45%, transparent);
 }
 
-/* Mobile: 44px touch targets and 16px input to defeat iOS focus-zoom. */
+/* Mobile: 44px touch targets and 16px input to defeat iOS focus-zoom.
+   In THIS file rather than 50-mobile.css on purpose — an unlayered feature slice
+   outranks `@layer mobile` whatever the specificity, so a rule for this surface
+   put there would silently lose (css/MANIFEST and 00-header.css record the trap
+   and the audit script that enumerates it). */
 @media (width <= 40rem) {
   .chat-find {
     inset-inline: var(--sp-2);

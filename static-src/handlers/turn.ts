@@ -18,10 +18,17 @@ import {
   get,
   getActiveId,
   tabStatusFor,
+  setTurnFailed,
+  setTurnDone,
   clearSteers,
 } from "../store.js";
 import { notifyIfHidden, setBadge, isAgentFinishedEnabled, NOTIFY_TITLE } from "../notify.js";
-import { pushDecision, collapseSettledDecision } from "../decision-dock.js";
+import {
+  pushDecision,
+  collapseSettledDecision,
+  hasPendingDecision,
+  dropTurnDecisions,
+} from "../decision-dock.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
 import { setLastError, clearLastError } from "../send-state.js";
@@ -33,6 +40,16 @@ import { respondPermission, respondElicitation, respondUserInput } from "../acti
 import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
+
+/** Is the reader looking at this chat right now? The active tab with the page in
+ *  front of them, which is the one case where a finished-turn mark says nothing
+ *  the transcript is not already showing.
+ *
+ *  The test lives here rather than in the store because this is the layer that
+ *  knows which chat is on screen; the store just holds the latch. */
+function isWatching(chatID: string): boolean {
+  return chatID === getActiveId() && document.visibilityState === "visible";
+}
 
 /** Notify the user and set the badge if the page is hidden. */
 function notifyAndBadge(title: string, body: string): void {
@@ -81,11 +98,33 @@ onSSE("turn_ended", (chatID, p) => {
   // The turn's snapshot chunk-watermark (connect-time turn_state) is
   // finished business once the turn ends.
   clearSnapshotSeq(chatID);
+  // Every ask this TURN raised is over: each one blocks the turn, so a turn that
+  // has ended is not waiting on one. Answered asks are already gone; what is left
+  // is an abandoned queue (the user cancelled, and cmdCancel cleared the server's
+  // own pending set), and leaving it here marked the chat `input` forever —
+  // `tabStatusFor` puts that ahead of everything. A workflow run's ask survives:
+  // it outlives the turn that launched it. Runs BEFORE the dot is re-derived, or
+  // the stale ask decides the state one last time.
+  dropTurnDecisions(chatID);
+  // A finished turn is `done` even when the agent never said so. `completed`
+  // arrives only if the model calls its status tool, so the transport's own
+  // verdict is what makes "your background chat finished" hold; tabStatusFor
+  // still prefers `completed` where it lands.
+  //
+  // Two conditions, both narrow on purpose. A CANCELLED turn finished nothing,
+  // which is the same line the "Agent finished" notification already draws below.
+  // And a chat the reader is watching needs no mark: `done` means "finished while
+  // you were away", so it is not latched on the visible active tab at all rather
+  // than latched and immediately cleared.
+  if (p.stop_reason !== "cancelled" && !isWatching(chatID)) {
+    setTurnDone(chatID);
+  }
   // Re-derive the per-tab activity dot for the chat whose turn ended, even
   // when it's a background tab. Shares tabStatusFor with the store effect:
   // thinking clears, but an agent-declared waiting_on_user survives turn
-  // end (that's its point — "I asked you something") as the amber dot.
-  setTabStatus(chatID, tabStatusFor(get(chatID)));
+  // end (that's its point — "I asked you something") and so does a RUN's
+  // pending decision, whose ask outlives the turn that raised it.
+  setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
   clearLastError();
   onTurnEnded(chatID);
   refreshGitBadge();
@@ -252,13 +291,21 @@ function bannerLinkFor(action: ErrorAction | undefined): BannerLink | undefined 
 }
 
 onSSE("error", (chatID, p) => {
+  // --- Side-effects: fire unconditionally regardless of active chat ---
   // Unfreeze thinking so send-state can settle correctly.
   setThinking(chatID, false);
+  // Latch the failure on the CHAT, then re-derive its tab dot. This half has to
+  // run for a background chat: the prose below deliberately does not (one chat's
+  // failure must not claim another's send button), which left a failed
+  // background turn with no marker anywhere — its dot simply went out, exactly
+  // as if the turn had finished cleanly.
+  setTurnFailed(chatID);
+  setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
 
   const code = p.code;
   const msg = p.message;
 
-  // Only surface errors for the active chat to avoid polluting the
+  // Only surface the error PROSE for the active chat, to avoid polluting the
   // send-button state with errors from background chats.
   if (chatID !== getActiveId()) {
     return;

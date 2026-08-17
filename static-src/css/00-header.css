@@ -1,5 +1,16 @@
 @layer reset, tokens, components, utilities, mobile;
 
+/* Order is precedence, low to high, and `components` sitting BELOW `utilities`
+   and `mobile` is what makes 50-mobile.css's overrides win over
+   10-shell-app.css — the only member of `components` — regardless of
+   specificity. An unlayered rule outranks all five, so most of this app's
+   feature CSS beats every layered rule and ties among unlayered files are
+   settled by css/MANIFEST order alone.
+
+   Do not "simplify" the one-member layer away without running
+   `python3 scripts/css-cascade-audit.py`: it enumerates the pairs whose winner
+   depends on the layer, and today all four of them are mobile layout. */
+
 /* @view-transition { navigation: auto; } — REMOVED: triggers full-page
    bitmap snapshots on every pushState/replaceState, causing GPU memory
    pressure and overheating on phones/tablets. Explicit startViewTransition()

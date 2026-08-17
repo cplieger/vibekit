@@ -6,6 +6,7 @@
 import { onSSE } from "../bus.js";
 import { forgetChatFolds } from "../fold-state.js";
 import { upsertHeader, removeChat, getActiveId, setAgentStatus } from "../store.js";
+import { dropDecisions } from "../decision-dock.js";
 import { closeTab, hasTab } from "../tabs.js";
 import { parseRoute, replaceRoute } from "../router.js";
 
@@ -65,6 +66,12 @@ onSSE("chat_deleted", (_chatID, p) => {
   if (hasTab(p.id)) {
     closeTab(p.id, { skipOnClose: true });
   }
+  // The dock's queue is keyed by chat id and outlives the session row, so it has
+  // to be dropped explicitly. `skipOnClose` above is precisely the path that does
+  // NOT run the tab's own teardown (the chat is already deleted remotely), so
+  // without this the queue survived a delete and a chat recreated under the same
+  // id inherited a card for a request the server has forgotten.
+  dropDecisions(p.id);
   removeChat(p.id);
   // Drop the chat's per-turn fold overrides with it, or localStorage accumulates
   // an entry per deleted chat forever.

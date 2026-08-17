@@ -15,14 +15,37 @@
   width: 100%;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r-lg, 0.75rem);
+  border-radius: var(--r-lg);
   /* Positioning context for the top-edge resize handle, which is absolute. */
   position: relative;
   transition:
     border-color var(--dur-micro),
-    box-shadow var(--dur-micro) var(--ease-micro);
+    box-shadow var(--dur-micro) var(--ease-standard);
 
-  &:focus-within {
+  /* THE MESSAGE BOX'S focus, not the container's. `:focus-within` is what this
+   * was, and it made the accent border a function of whether ANY descendant held
+   * focus — which meant every press on a descendant that CANNOT hold focus
+   * flickered it off. The browser's mousedown walks up for a mouse-focusable
+   * ancestor, finds none, and clears focus to <body>; `:focus-within` goes false
+   * on the way down and true again on mouseup's click. Order is mousedown ->
+   * blur -> mouseup -> click.
+   *
+   * The reported case was the "Supervised mode" row in the `+` menu, the one
+   * <label> in a card of <button>s (chat-options.ts). It was never one row's
+   * bug: #context-card is built entirely from spans, so a press-and-hold on
+   * "Tokens used" did the same thing, and so does a press on `.prompt-pills`
+   * own padding, where there is no card at all. Keying on the textarea closes
+   * all of them at once, including every card and label not yet written.
+   *
+   * The alternative was a mousedown preventDefault on the card, which keeps the
+   * caret in the textarea and lets the click still toggle. It was rejected on
+   * two costs: suppressing mousedown's default also suppresses selection-start,
+   * so #context-card's figures (credits, turn time) stop being selectable — and
+   * a card-scoped handler leaves the pill row's own padding still flickering, so
+   * it patches instances where this patches the class. What it buys instead —
+   * the border no longer lights while a pill menu is open — is the honest
+   * reading of a treatment that is a text-field focus ring plus an input tint. */
+  &:has([id="prompt-input"]:focus) {
     border-color: var(--c-accent);
     box-shadow: 0 0 0 1px var(--c-accent);
     background: color-mix(in srgb, var(--c-accent) 3%, var(--c-bg-secondary));
@@ -47,11 +70,11 @@
   z-index: 1;
   /* The box's own rounding, so hovering the handle cannot paint square corners
      over the accent-lit border beneath it. */
-  border-radius: var(--r-lg, 0.75rem) var(--r-lg, 0.75rem) 0 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
 
   /* Touch drags must fire pointermove, not pan/scroll the page. */
   touch-action: none;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 /* Design system: ~24px minimum hit target (WCAG 2.5.8); the visual bar stays
@@ -76,7 +99,7 @@
   background: transparent;
   color: var(--c-text-primary);
   border: none;
-  border-radius: var(--r-lg, 0.75rem) var(--r-lg, 0.75rem) 0 0;
+  border-radius: var(--r-lg) var(--r-lg) 0 0;
   padding: var(--sp-3) var(--sp-4) var(--sp-1);
   font-size: var(--fs-md);
   font-family: var(--font-sans);
@@ -115,12 +138,12 @@
   font-size: var(--fs-xs);
   list-style: none;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 .attachment-pill:hover {
-  background: var(--c-bg-hover);
+  background: var(--c-bg-tertiary);
   border-color: var(--c-accent);
 }
 
@@ -138,7 +161,7 @@
   color: inherit;
   font: inherit;
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
 }
 
 .attachment-open:focus-visible {
@@ -167,20 +190,20 @@
   padding: 0;
   border: 0;
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   font-size: 0.85em;
   line-height: 1;
   color: inherit;
   opacity: 0.5;
   cursor: pointer;
   transition:
-    opacity var(--dur-micro) var(--ease-micro),
-    background var(--dur-micro) var(--ease-micro);
+    opacity var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .attachment-close:hover {
   opacity: 1;
-  background: var(--c-bg-hover);
+  background: var(--c-hover);
 }
 
 .attachment-pill:hover .attachment-close {
@@ -345,7 +368,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   font-size: 0.9em;
   line-height: 1;
   color: inherit;
@@ -353,13 +376,13 @@
   cursor: pointer;
   touch-action: manipulation;
   transition:
-    opacity var(--dur-micro) var(--ease-micro),
-    background var(--dur-micro) var(--ease-micro);
+    opacity var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .queued-cancel:hover {
   opacity: 1;
-  background: var(--c-bg-hover);
+  background: var(--c-hover);
 }
 
 .queued-cancel:focus-visible {
@@ -407,32 +430,109 @@
    * pill perfectly rounded. */
   height: 2rem;
   border: 1px solid var(--c-border);
-  border-radius: 1rem;
+
+  /* The INNER rung, not height/2. A stadium reads as a tag — something
+     labelled — where this is something pressed, and a control sitting inside
+     the 12px .prompt-box takes the rung below its container's so the two
+     radii read as nested rather than as the child being rounder than the
+     parent. .send-btn takes the same rung; they are one row of controls. */
+  border-radius: var(--r-md);
   background: var(--c-bg-primary);
-  color: var(--c-text-secondary);
+
+  /* The full ink, not --c-text-secondary, and not --c-text-control either.
+   * This is a HIERARCHY call rather than an accessibility fix: secondary
+   * measured 10.68:1 dark / 8.86:1 light on this fill, comfortably past AAA,
+   * so nothing was failing — it was 1.84x dimmer than the buttons beside it
+   * while being the smallest text in the row at 11px, and the row's own job is
+   * to read as one uniform line of controls.
+   *
+   * --c-text-control is the semantically right token for a control's label and
+   * is currently an ALIAS of --c-text-secondary, so adopting it here would have
+   * changed nothing on the pixel. Moving the token's own value instead would
+   * move `.list-row-btn` and `.subagent-toggle` with it — a system decision,
+   * not this row's. */
+  color: var(--c-text-primary);
   font-size: var(--fs-xs);
   cursor: pointer;
   white-space: nowrap;
-  /* `transform` belongs in THIS list, not in the press rule's own. The
-   * universal press (03-base.css) is `:where(… .pill …):active`, which scores
-   * (0,1,0) — exactly what `.pill` scores — and both stylesheets are unlayered,
-   * so the later file in MANIFEST wins the tie on `transition`. That is this
-   * rule. Without transform named here the scale still applied and animated
-   * neither way: a one-frame snap on press and on release. */
+  /* `background` must be named here for the same reason `transform` used to be:
+   * the press lives in another unlayered stylesheet at equal specificity, so
+   * the later file in MANIFEST takes the `transition` property and that file is
+   * this one. `.pill` has left the universal scale list (03-base.css) — its
+   * press is a colour step now — so `transform` is gone from both. */
   transition:
     background var(--dur-micro),
     color var(--dur-micro),
-    border-color var(--dur-micro) var(--ease-micro),
-    transform var(--dur-micro) var(--ease-micro);
+    border-color var(--dur-micro) var(--ease-standard);
 
+  /* Declares no `color` of its own any more: it used to lift the label from
+   * secondary to primary, and the resting state IS primary now, so the
+   * declaration was a no-op naming a change that no longer happens. The
+   * background step still carries hover. */
   &:hover {
     background: var(--c-bg-tertiary);
-    color: var(--c-text-primary);
   }
 
   & svg {
     flex-shrink: 0;
   }
+}
+
+/* THE VERTICAL CENTRING OF A LABEL IN A FLEX ROW.
+ *
+ * `align-items: center` centres a flex item's BOX, and a text item's box is not
+ * symmetric about the letterforms inside it: with the baseline sitting `ascent`
+ * from the box top, the box centre lands at `baseline + (ascent - descent) / 2`
+ * while the glyph band's optical centre is at `baseline + band / 2`. The label
+ * therefore renders off-centre by exactly
+ *
+ *     ((ascent - descent) / 2 - band / 2) / unitsPerEm  em
+ *
+ * MEASURED off the real font files: +0.120em at Noto Sans (1.32px at 11px),
+ * +0.083em at Liberation Sans (0.91px), +0.073em at DejaVu Sans (0.80px),
+ * +0.164em at Segoe UI (1.81px). Positive means low, and every font in both
+ * stacks is positive for lowercase.
+ *
+ * A `line-height` DOES NOT FIX THIS, and adding one was the tempting wrong
+ * answer. CSS2.1 10.8.1 distributes leading half above and half below, so the
+ * box centre stays at `baseline + (ascent - descent) / 2` for every value
+ * including `normal` — the formula above has no line-height term in it. Worked
+ * at Noto Sans 11px: `normal` puts the band centre 1.32px below the box centre
+ * and `line-height: 1` puts it 1.32px below, identically, while shrinking the
+ * box from 14.98px to 11px so the descenders now overflow it. On the two labels
+ * below that carry `overflow: hidden` for their ellipsis, that overflow is
+ * CLIPPED — a visible regression bought for no visible gain. `vertical-align` is
+ * inert on a flex item, so that is not the lever either.
+ *
+ * `text-box` is: trimming to `cap alphabetic` makes the box edges the cap band,
+ * so centring the box centres the letterforms and the offset is zero by
+ * construction, at every font size and in every font, with no value authored
+ * here. Chrome 133+ / Safari 18.2+; Firefox has not shipped it and degrades to
+ * exactly today's rendering, which is why it is safe to state plainly rather
+ * than guard.
+ *
+ * The trim moves the block-END edge up to the baseline, so descenders leave the
+ * content box — which the clipping labels below have to answer for.
+ *
+ * The same defect and the same fix apply to `.sidebar-email`; its half lives
+ * with the sidebar in 10-shell-app.css. */
+:where([id="context-label"], [id="ctx-model-pill"], .pill-role-label) {
+  text-box: trim-both cap alphabetic;
+}
+
+/* Room for the descenders the trim put outside the box, on the labels that clip.
+ * SYMMETRIC, which is the whole trick: `align-items: center` centres the margin
+ * box, so equal padding leaves the cap band exactly where the trim put it while
+ * giving a 'g' or a 'p' somewhere to hang.
+ *
+ * 0.35em is derived, not picked: the deepest descender across `--font-sans` and
+ * `--font-mono` on this image and on the two the metrics above name is 0.300em
+ * (Liberation Mono; Noto Sans and Open Sans 0.293em, Segoe UI 0.251em, DejaVu
+ * Sans 0.236em), so 0.35em clears the worst of them with margin at both label
+ * sizes. #context-label is excluded because it renders digits and a percent sign
+ * and can never have a descender. */
+:where([id="ctx-model-pill"], .pill-role-label) {
+  padding-block: 0.35em;
 }
 
 /* Context ring pill */
@@ -455,8 +555,22 @@
       stroke 0.4s;
   }
 
-  & [id="context-ring-tick"] {
-    transition: transform 0.3s;
+  /* The reserve moves once, when the setting loads, and it moves in two
+     properties: the rotation places its start and the dash pattern sets its
+     extent. Both are written by status.ts.
+
+     Its COLOUR is here rather than a `stroke="var(…)"` presentation attribute in
+     index.html, unlike the disc and the pie beside it. Two reasons, and the
+     second is the load-bearing one: a colour belongs in the stylesheet, and
+     css-tokens.test.ts's orphan check reads var() out of the CSS and out of the
+     TS — not out of the HTML — so a token whose only reader is a markup
+     attribute registers as declared-and-unused. --c-border and --c-green get
+     away with it only because they have many other readers. */
+  & [id="context-ring-wedge"] {
+    stroke: var(--c-reserve);
+    transition:
+      transform 0.3s,
+      stroke-dasharray 0.3s;
   }
 
   & [id="context-label"] {
@@ -520,14 +634,12 @@
 
 /* Any expandable pill gets accent styling when its popup is open, so the
  * context, model, role and task-list pills all read the same way open. */
-.pill-expandable.pill-expanded {
-  /* Accent border + background tint only. Recoloring the pill's TEXT to
-   * the accent (as this rule once did) made the context pill's "%" figure
-   * and every other expanded pill label low-contrast purple — the popup
-   * open state is already signalled by border, tint, and the card. */
-  border-color: var(--c-accent);
-  background: var(--c-accent-subtle);
-}
+/* The OPEN state is the selected treatment: 70-selection.css.
+ *
+ * The rule this replaces carried border + fill and deliberately no ink, because
+ * `--c-accent` on the old accent-tinted fill made the context pill's "%" figure
+ * low-contrast purple. That was the missing on-selected ink token stated in
+ * prose; --c-selected-fg is 8.6:1 on the fill, so the third channel is back. */
 
 /* Task list pill */
 .pill-badge {
@@ -535,7 +647,7 @@
   font-weight: var(--fw-semibold);
   background: var(--c-accent);
   color: var(--c-on-accent);
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   padding: 0 0.25rem;
   min-width: 0.875rem;
   text-align: center;
@@ -614,9 +726,11 @@
   left: 0;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: 0.75rem;
+  border-radius: var(--r-lg);
   padding: var(--sp-2) var(--sp-3);
-  box-shadow: 0 -0.25rem 1rem oklch(0% 0 0deg / 12%);
+  box-shadow:
+    var(--shadow-ambient),
+    0 -0.25rem 1rem oklch(0% 0 none / 12%);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -746,10 +860,7 @@
     background: var(--c-bg-tertiary);
   }
 
-  &.active {
-    background: var(--c-accent-subtle);
-    color: var(--c-accent);
-  }
+  /* Selected: 70-selection.css, with every other selected surface. */
 }
 
 .pill-model-meta {
@@ -812,10 +923,7 @@
     background: var(--c-bg-tertiary);
   }
 
-  &.active {
-    background: var(--c-accent-subtle);
-    color: var(--c-accent);
-  }
+  /* Selected: 70-selection.css, with every other selected surface. */
 }
 
 .pill-role-item-icon {
@@ -901,11 +1009,7 @@
   border-color: var(--c-text-tertiary);
 }
 
-.effort-btn.active {
-  background: var(--c-accent-subtle);
-  border-color: var(--c-accent);
-  color: var(--c-accent);
-}
+/* .effort-btn.active: 70-selection.css. */
 
 /* Status dot expand: the dot lives in the sidebar footer at the very
  * bottom of the viewport, so growing downward pushes off-screen. Pop
@@ -959,13 +1063,8 @@
   font-size: var(--fs-xs);
 }
 
-/* Active state for any toggle pill, keyed on the a11y state rather than a
- * per-feature class so a new toggle inherits it. */
-.pill[aria-pressed="true"] {
-  color: var(--c-accent);
-  border-color: var(--c-accent);
-  background: var(--c-accent-subtle);
-}
+/* A toggle pill's ON state is keyed on the a11y attribute rather than a
+ * per-feature class, so a new toggle inherits it: 70-selection.css. */
 
 /* The press's SECOND channel, shared by every pill.
  *
@@ -984,7 +1083,7 @@
  * Placed AFTER the aria-pressed rule so a toggled-on pill presses too: both
  * score (0,2,0), so source order is the whole tiebreak. */
 .pill:active {
-  background: var(--c-bg-hover);
+  background: var(--c-bg-elevated);
   border-color: var(--c-text-tertiary);
 }
 
@@ -1025,7 +1124,7 @@
   align-items: flex-start;
   cursor: pointer;
   text-align: start;
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   padding: var(--sp-1);
 }
 
@@ -1037,7 +1136,7 @@
   width: 100%;
   transition:
     background var(--dur-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    border-color var(--dur-micro) var(--ease-standard);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -1047,7 +1146,7 @@
    * full-width menu row reads as the card wobbling rather than the row
    * depressing, so the press is the fill alone. */
   &:active {
-    background: var(--c-bg-hover);
+    background: var(--c-press);
   }
 }
 
@@ -1080,7 +1179,7 @@
   flex-direction: column;
   gap: var(--sp-1);
   padding: var(--sp-2);
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
 }
@@ -1097,7 +1196,7 @@
   width: 100%;
   padding: 0.25rem var(--sp-2);
   border: 1px solid var(--c-border);
-  border-radius: 0.375rem;
+  border-radius: var(--r);
   background: var(--c-bg-secondary);
   color: var(--c-text-primary);
   font: inherit;
@@ -1122,71 +1221,108 @@
 
 /* THE activity button: one control, two states. Send when nothing runs,
  * Cancel while a turn streams — the 4-state split button (send half + cancel
- * half + divider + wrapper) is gone. Density and identity come from the same
- * accent pill the send half had; the streaming face goes red-on-subtle so the
- * label change is not the only signal. */
+ * half + divider + wrapper) is gone.
+ *
+ * ONE CONSTRUCTION, THREE FACES. Each face is the same recipe with a different
+ * hue: a wash of that hue over the page, ringed in the hue at full strength,
+ * with the primary ink on top. Before this the three faces were three unrelated
+ * recipes — a solid accent fill with inverted ink, a 16%-red tint on the top ramp
+ * rung with red ink, a solid yellow with inverted ink — and each carried its own
+ * hover. Only the first was really designed; the other two were compensating for
+ * it, which is why the `.failed` comment had to reason about --c-on-accent
+ * inverting per theme while `.streaming` used no ink token at all.
+ *
+ * THE COLOURS ARE THE REQUESTED ONES, AND THE EDGE IS WHAT MAKES THEM VISIBLE.
+ * The ask was dark mode in the LIGHT theme's accent with a white glyph, light
+ * mode in a light background colour with a black glyph. The glyph half is exact:
+ * --c-text-primary IS white in dark and #161616 in light. The fill half is the
+ * requested direction — a dark purple in dark, a pale one in light — reached by
+ * washing the hue over --c-bg-primary, which is the darkest rung in dark and the
+ * lightest in light, so one declaration inverts correctly.
+ *
+ * What the fill CANNOT also do is carry 3:1 against the bar, and that is
+ * arithmetic rather than a tuning failure. Pinning the ink to --c-text-primary
+ * puts the ink and the bar on the SAME side of the fill in both themes (dark:
+ * white ink wants a dark fill, the dark bar wants a light one), so the two floors
+ * leave a window under 3 percentage points wide — and the windows for the three
+ * hues do not overlap in either theme, measured: dark accent [66.6, 70.5],
+ * red [67.4, 71.1], yellow [52.1, 55.3]; light accent [73.8, 76.3], red
+ * [82.4, 85.5], yellow [75.0, 77.5]. No shared fraction exists, per-theme or
+ * not. So the EDGE carries the separation, which is what WCAG 1.4.11 asks for
+ * anyway — a 3:1 boundary, not a 3:1 fill. Measured at the resting face: edge vs
+ * bar 6.541:1 dark / 5.456:1 light on Send, worst across all six faces 4.145:1
+ * (light streaming); ink on fill 10.165:1 dark / 9.509:1 light on Send, worst
+ * 4.648:1 (dark failed, pressed). The fill itself sits at 1.462:1 dark / 1.501:1
+ * light against the bar, which is the honest cost of the requested colours and
+ * the number to re-check if anyone widens the ramp.
+ *
+ * Hover and press are two depths of ONE step on the fill's own axis, which is
+ * the design system's interaction ladder applied where it fits. They are NOT
+ * --layer-hover / --layer-press: those wash the INK in, and this control's ink IS
+ * --c-text-primary, so layering them would walk the fill toward the glyph and
+ * take the 4.5:1 with it. More of the hue is the correct "one step further" for
+ * a control whose identity is that hue. */
 .send-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   position: relative;
-  border: none;
-  border-radius: 1rem;
-  background: var(--c-accent);
-  color: var(--c-on-accent);
+
+  --send-hue: var(--c-accent);
+  --send-depth: 38%;
+
+  /* The edge, at the hue's full strength. border-box is global, so adding it
+     kept the 2rem height that matches `.pill` beside it. */
+  border: 1px solid var(--send-hue);
+
+  /* Same rung as .pill: the send button is the last control in that row. */
+  border-radius: var(--r-md);
+  background: color-mix(in oklch, var(--send-hue) var(--send-depth), var(--c-bg-primary));
+  color: var(--c-text-primary);
   cursor: pointer;
   padding: 0 var(--sp-3);
   min-width: 2.25rem;
   height: 2rem;
   flex-shrink: 0;
+
+  /* `background` and `border-color` are both named: the face is a fill AND an
+     edge now, and every state changes both. */
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
 
   & svg {
     width: 1rem;
     height: 1rem;
     flex-shrink: 0;
-    transition: transform var(--dur-micro) var(--ease-micro);
+    transition: transform var(--dur-micro) var(--ease-standard);
   }
 
   &:hover {
-    background: var(--c-accent-hover);
+    --send-depth: 46%;
   }
 
+  /* A colour step, not a scale: it survives prefers-reduced-motion, which a
+     transform does not. */
   &:active {
-    transform: scale(0.92);
-    transition: transform var(--dur-micro) var(--ease-micro);
+    --send-depth: 54%;
   }
 
-  /* Streaming = Cancel. Red on a quiet field: stopping is destructive-ish,
-     and the face must differ from Send by more than the glyph. */
+  /* Streaming = Cancel. Stopping is destructive-ish, so the face differs from
+     Send by hue in both the fill and the ring, not by the glyph alone. */
   &:where(.streaming) {
-    background: color-mix(in srgb, var(--c-red) 16%, var(--c-bg-tertiary));
-    color: var(--c-red);
-
-    &:hover {
-      background: color-mix(in srgb, var(--c-red) 28%, var(--c-bg-tertiary));
-    }
+    --send-hue: var(--c-red);
   }
 
-  /* Something failed. Yellow so the face differs from Send by more than the
-     glyph, and still CLICKABLE — the tooltip names the failure and the click is
-     the retry, so this must not read as a dead control. */
+  /* Something failed, and the control is still CLICKABLE — the tooltip names the
+     failure and the click is the retry, so this must not read as dead. */
   &:where(.failed) {
-    background: var(--c-yellow);
-
-    /* on-accent, not black: the yellow fill is pastel in dark mode (dark ink)
-       and deep in light mode (white ink), same inversion as the accent. */
-    color: var(--c-on-accent);
+    --send-hue: var(--c-yellow);
 
     & svg {
       transform: none;
       animation: vk-breathe 1.6s ease-in-out infinite;
-    }
-
-    &:hover {
-      background: color-mix(in srgb, var(--c-yellow) 85%, var(--c-text-primary));
     }
   }
 

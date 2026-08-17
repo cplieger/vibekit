@@ -39,7 +39,7 @@
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   touch-action: manipulation;
-  transition: border-color var(--dur-micro) var(--ease-micro);
+  transition: border-color var(--dur-micro) var(--ease-standard);
 }
 
 .knowledge-add-input:focus-visible {
@@ -72,14 +72,14 @@
   max-inline-size: 10rem;
   overflow: hidden;
   background: color-mix(in srgb, var(--c-accent) 20%, transparent);
-  border-radius: 2px;
+  border-radius: var(--r-sm);
 }
 
 .knowledge-bar-fill {
   display: block;
   block-size: 100%;
   background: var(--c-accent);
-  border-radius: 2px;
+  border-radius: var(--r-sm);
   transition: inline-size var(--dur-standard) var(--ease-standard);
 }
 

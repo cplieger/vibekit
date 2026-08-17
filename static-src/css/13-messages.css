@@ -84,7 +84,13 @@
 
 .picker-label {
   font-size: var(--fs-xl);
-  color: var(--c-text-secondary);
+
+  /* The empty state's one heading, so it carries the full ink. It was
+     --c-text-secondary, which measured 10.68:1 dark / 8.86:1 light here — past
+     AAA, so this is a hierarchy call and not a fix: the heading was 1.84x dimmer
+     than the cards it introduces. --c-text-control does not apply; this is a
+     heading, not a control's label. */
+  color: var(--c-text-primary);
   font-weight: var(--fw-medium);
   text-wrap: balance;
   display: flex;
@@ -126,7 +132,7 @@
   transition:
     border-color var(--dur-micro),
     background var(--dur-micro),
-    transform var(--dur-micro) var(--ease-micro);
+    transform var(--dur-micro) var(--ease-standard);
   animation: vk-scale-in var(--dur-enter) var(--ease-enter) both;
 
   &:hover {
@@ -139,10 +145,7 @@
     transform: translateY(0);
   }
 
-  &.active {
-    border-color: var(--c-accent);
-    background: var(--c-accent-subtle);
-  }
+  /* Selected: 70-selection.css, with every other selected surface. */
 
   & .picker-name {
     font-weight: var(--fw-medium);
@@ -483,7 +486,7 @@
     }
 
     & .media-download:hover {
-      background: var(--c-bg-hover);
+      background: var(--c-hover);
       border-color: var(--c-accent);
     }
 
@@ -522,7 +525,7 @@
     border-left: 3px solid var(--c-accent);
     background: color-mix(in srgb, var(--c-accent) 5%, transparent);
     padding: var(--sp-2) var(--sp-3);
-    border-radius: 0.5rem;
+    border-radius: var(--r-md);
     font-style: normal;
     color: var(--c-text-secondary);
   }
@@ -545,9 +548,9 @@
   font-size: var(--fs-sm);
   cursor: pointer;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    color var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 .load-more-btn:hover {
@@ -597,7 +600,7 @@
   user-select: none;
   font-style: italic;
   padding: var(--sp-1) 0;
-  transition: color var(--dur-micro) var(--ease-micro);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .reasoning-summary:hover {
@@ -646,8 +649,8 @@
   touch-action: manipulation;
   font-variant-numeric: tabular-nums;
   transition:
-    color var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 /* Scale glyph is the affordance; hide the native disclosure triangle. */
@@ -700,7 +703,7 @@
   color: var(--c-accent);
   text-decoration: none;
   touch-action: manipulation;
-  transition: color var(--dur-micro) var(--ease-micro);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .code-refs-link:hover {
@@ -801,7 +804,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   font-size: var(--fs-sm);
   border-left: 3px solid;
 
@@ -868,8 +871,8 @@
   white-space: nowrap;
   text-decoration: underline;
   text-underline-offset: 2px;
-  border-radius: 0.25rem;
-  transition: opacity var(--dur-micro) var(--ease-micro);
+  border-radius: var(--r-sm);
+  transition: opacity var(--dur-micro) var(--ease-standard);
 
   &:hover {
     opacity: 0.85;
@@ -1045,7 +1048,9 @@
   align-items: center;
   gap: var(--sp-1);
   justify-content: center;
-  box-shadow: 0 0.125rem 0.5rem oklch(0% 0 0deg / 30%);
+  box-shadow:
+    var(--shadow-ambient),
+    0 0.125rem 0.5rem oklch(0% 0 none / 30%);
   z-index: 10;
   opacity: 1;
   transition:
@@ -1119,8 +1124,8 @@
   font-size: var(--fs-xs);
   cursor: pointer;
   transition:
-    color var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 .refusal-btn:hover:not(:disabled) {

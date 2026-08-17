@@ -45,6 +45,252 @@
   opacity: 0.7;
 }
 
+/* ==========================================================================
+   Tab activity dot
+   ==========================================================================
+   Ported from @cplieger/web-terminal-ui's `.wt-status-dot` (css/30-tabs.css),
+   so vibekit and web-terminal-kiro read the same way. On a CHAT tab it is the
+   leading element and it REPLACED the per-mode role glyph: the strip's job is
+   peripheral awareness of chats you are not looking at, and a chat's role is
+   the same every time you glance at it while its activity is the thing that
+   changed. Every other tab kind keeps its glyph and uses this element in the
+   trailing slot for the editor's unsaved mark.
+
+   MOVED HERE from 61-mcp-tools.css, which is the MCP-tools stylesheet and had
+   nothing to do with the tab strip. It is not extracted to a shared file: there
+   is one consumer, the tab strip, and a shared home for one consumer is
+   ceremony. The two keyframes stay in 03-base.css with the rest of the app's
+   animation vocabulary, where they already were.
+
+   Six chat states plus the editor's, and the grammar is the source's: an
+   ANIMATED state is a solid disc carrying a glow BEAT plus a travelling WAVE;
+   a state that WANTS YOU is a still disc inside a HARD ring; a settled state is
+   a bare still disc; nothing-has-happened is HOLLOW. Colour never carries a
+   state on its own — `css-contrast.py dot` prints the channel matrix and fails
+   if any two states are separable by hue alone, with motion available AND with
+   it removed. */
+.tab-status-dot {
+  /* Hidden until a status is written. That is the source's `.wt-reports` gate
+     expressed as an attribute rather than a class: an editor tab with nothing
+     unsaved has no state to show, and a chat tab always has one (idle is a
+     state), so the presence of `data-status` IS the reveal condition and there
+     is no second flag to keep in sync. */
+  display: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+
+  /* Every state paints from this one custom property — the disc's background,
+     the idle ring's colour, the hard ring's mix and the reduced-motion donut.
+     That is what lets 70-selection.css re-point ONE declaration per state to
+     the on-selected ink instead of restating a background per state. */
+  --dot-color: var(--c-dot-idle);
+}
+
+.tab-status-dot[data-status] {
+  display: block;
+}
+
+/* The LEADING dot (a chat tab, where the role glyph used to be) holds the
+   glyph's 14px slot so a chat row's name lines up with a settings or files
+   row's. Without it a mixed strip has two text origins 2.5px apart, which is
+   exactly the misalignment the active tab's reserved border exists to avoid one
+   rung up. Keyed on position rather than a class: if anything is ever inserted
+   ahead of it the dot is no longer the leading element and the rule correctly
+   stops applying. */
+.tab-status-dot:first-child {
+  margin-inline: calc((0.875rem - 9px) / 2);
+}
+
+/* The TRAILING dot (every other kind: the editor's unsaved mark) sits after the
+   pin marker and needs its own separation from it. */
+.tab-status-dot:not(:first-child) {
+  margin-inline-start: var(--sp-1);
+}
+
+/* Idle — a chat that exists with nothing happening in it. HOLLOW, and the fill
+   is the channel that separates it from every filled state without hue (WCAG
+   1.4.1). --c-dot-idle is sized by measurement; see 01-tokens.css. */
+.tab-status-dot[data-status="idle"] {
+  background: transparent;
+  border: 1.5px solid var(--dot-color);
+}
+
+/* Working — a turn is in flight. The ONLY animated state, which is what the
+   source's motion axis means: motion is "in flight", stillness is "settled".
+   Two cues, the status-badge "processing" idiom: the disc holds full opacity
+   while a pre-painted overlay GLOWS through it, and a ::after WAVE travels off
+   the disc's edge and dissolves, re-emitted each cycle.
+
+   vibekit's own `waiting` state used to animate too, and stopping it is a
+   correction rather than a port gap: a waiting_on_user dot persists until the
+   next turn, so an animated one nags indefinitely with nothing in flight — the
+   exact failure the source names for its `crashed` state ("nothing clears it,
+   so any animation would nag forever"). */
+.tab-status-dot[data-status="working"] {
+  background: var(--dot-color);
+
+  /* Own compositing layer. The overlay and the wave are compositor-driven
+     layers, and a nested layer's position snaps to DEVICE pixels independently
+     of its parent's fractional page position — at 9px that reads as the pulse
+     sitting visibly off-centre. Promoting the dot rasters disc, overlay and
+     wave in one frame of reference, so they snap together. */
+  position: relative;
+  transform: translateZ(0);
+
+  --dot-color: var(--c-accent);
+}
+
+/* The glow beat, compositor-only. The disc itself never changes; this
+   pre-painted overlay carries the beat's bright peak and animates ONLY opacity,
+   so after one rasterization the GPU blends two static layers.
+
+   Geometry is load-bearing: a HARD-edged overlay at 9px shows any half-pixel
+   layer snap as an off-centre pulse, so this is a radial with a solid bright
+   core and a ~1px feather ending at the disc's rim — a snapped half-pixel then
+   falls inside the feather. */
+.tab-status-dot[data-status="working"]::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in oklch, var(--dot-color) 78%, #fff) 0 70%,
+    transparent 92%
+  );
+  opacity: 0;
+  /* The app's own standard curve rather than the bare `ease-in-out` the port
+     carried over. A glow beat is ordinary UI emphasis, which is exactly what
+     `--ease-standard` is the token for; the wave below keeps `linear` because its
+     travel is continuous motion and an eased one made it invisible (the source
+     records the same finding). */
+  animation: vk-dot-glow 1.2s var(--ease-standard) infinite;
+  will-change: opacity;
+}
+
+/* The wave: a feathered radial BAND (not a hairline ring) that starts hugging
+   the disc's edge and travels outward, dissolving, re-emitted each cycle. Soft
+   on both edges, so it reads as light leaving the disc rather than an outline
+   shrinking in opacity; scaling the layer scales the feather with it, which is
+   what makes the wave dissipate as it grows. transform + opacity only, so it
+   composites — an animated box-shadow spread would repaint every frame. */
+.tab-status-dot[data-status="working"]::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: radial-gradient(
+    closest-side,
+    transparent 44%,
+    var(--dot-color) 76%,
+    transparent 100%
+  );
+  animation: vk-dot-wave 1.2s linear infinite;
+}
+
+/* WAITING and INPUT — the two states that want you. A still disc inside a
+   static HARD 2px ring: the stillness plus the hard edge is the message, and
+   the ring is the source's exclusive vocabulary for "blocked, waiting on you".
+
+   THEY SHARE ONE VISUAL ON PURPOSE, and it is a real limit rather than an
+   oversight. `waiting` is the agent declaring waiting_on_user with its turn
+   over; `input` is a permission / elicitation / question sitting unanswered in
+   that chat's dock with the turn frozen. Six chat states against four
+   non-colour channels leaves nothing to separate this pair with, and separating
+   them by hue alone is the 1.4.1 failure this whole vocabulary is built to
+   avoid. So they take one treatment and differ in the ANNOUNCED name and the
+   tooltip ("waiting for you" / "needs a decision"), which is a channel a 9px
+   disc does not have to spend. The remedy is identical either way: open the tab
+   and answer. `css-contrast.py dot` declares the pair so the channel check
+   treats the shared visual as intended. */
+.tab-status-dot[data-status="waiting"],
+.tab-status-dot[data-status="input"] {
+  background: var(--dot-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
+
+  --dot-color: var(--c-yellow);
+}
+
+/* Failed — the chat's last turn or bridge operation errored. Still, because
+   nothing more is coming and nothing clears it until the next prompt; that is
+   the source's `crashed` semantics, not its animated `failed` (which is a LIVE
+   OSC 9;4 progress state vibekit has no channel for).
+
+   A DIAMOND, which is the one deviation from the source's geometry and it is
+   forced by measurement. `failed` and `done` are both settled solid discs, so
+   with motion spent on `working` and the ring spent on the wants-you pair they
+   had only hue left — and they are 4.145:1 vs 4.490:1 in light, i.e. Y 0.150 vs
+   0.134, indistinguishable in greyscale. The source vocabulary has the same gap
+   between `crashed` and `done`; porting it would have shipped a 1.4.1 failure.
+   8px rather than 9px because a rotated square's diagonal is its footprint. */
+.tab-status-dot[data-status="failed"] {
+  width: 8px;
+  height: 8px;
+  background: var(--dot-color);
+  border-radius: 1.5px;
+  transform: rotate(45deg);
+
+  --dot-color: var(--c-red);
+}
+
+/* The leading slot's margin is derived from the 9px disc, so the 8px diamond
+   above reserved 13px where every other state reserves 14px — and the chat's name
+   moved 1px sideways at the exact moment its status flipped to or from failed,
+   which is the one moment the reader is looking at that row. Re-derived from its
+   own width so the slot's total inline footprint stays 14px. Specificity beats the
+   generic `:first-child` rule (class + attribute + pseudo-class), so the order in
+   this file is not what makes it win. */
+.tab-status-dot[data-status="failed"]:first-child {
+  margin-inline: calc((0.875rem - 8px) / 2);
+}
+
+/* Done — the turn finished: the agent declared it complete, or it simply ended
+   while nobody was watching (store.ts explains why the second producer exists).
+   A bare still disc, the source's `done` verbatim. */
+.tab-status-dot[data-status="done"] {
+  background: var(--dot-color);
+
+  --dot-color: var(--c-green);
+}
+
+/* Dirty — an editor tab's unsaved changes. Not a chat state: editor tabs never
+   receive setTabStatus and chat tabs never receive setTabDirty, so the two
+   halves cannot collide on the one attribute. */
+.tab-status-dot[data-status="dirty"] {
+  background: var(--dot-color);
+
+  --dot-color: var(--c-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Motion is what separates `working` from the settled states, so with it gone
+     the disc becomes a DONUT with a static ring: it then differs from the
+     wants-you pair (solid disc + ring) by the hole and from done/failed by the
+     ring, which is shape rather than hue. The hole is a genuinely transparent
+     gradient stop rather than a background-coloured inset shadow, so it shows
+     whatever fill its row has — resting, hovered, selected or pressed, in both
+     themes — and needs no token that would have to be re-pointed per rung. */
+  .tab-status-dot[data-status="working"] {
+    background: radial-gradient(closest-side, transparent 0 55%, var(--dot-color) 55% 100%);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
+  }
+
+  /* The overlay and the wave disappear ENTIRELY rather than freezing mid-beat or
+     mid-travel, and this is load-bearing rather than tidy. 40-a11y.css zeroes
+     every animation's duration and iteration count globally, which RUNS each
+     one to completion instead of suppressing it — and neither keyframe set
+     declares a fill-mode, so a completed `vk-dot-wave` reverts the ::after to
+     its own declarations: `opacity: 1`, no transform. That is a solid opaque
+     band hugging the disc, permanently. Removing the pseudos is what stops it,
+     so `content: none` is the fix and the global rule alone is not enough. */
+  .tab-status-dot[data-status="working"]::before,
+  .tab-status-dot[data-status="working"]::after {
+    content: none;
+  }
+}
+
 .tab-context-menu {
   position: fixed;
   z-index: 999;
@@ -52,7 +298,9 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r);
   padding: var(--sp-1);
-  box-shadow: 0 4px 12px oklch(0% 0 0deg / 25%);
+  box-shadow:
+    var(--shadow-ambient),
+    0 4px 12px oklch(0% 0 none / 25%);
 }
 
 .tab-context-item {

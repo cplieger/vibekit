@@ -152,7 +152,7 @@
   color: inherit;
   cursor: pointer;
   text-align: start;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 /* Variant used in the PRs tab: the header is a flex row containing
@@ -182,7 +182,7 @@
   color: inherit;
   cursor: pointer;
   text-align: start;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 .git-repo-section-header-toggle:hover {
@@ -215,15 +215,15 @@
 }
 
 .git-repo-section-forge-gitlab svg {
-  fill: #fc6d26;
+  fill: var(--c-forge-gitlab);
 }
 
 .git-repo-section-forge-codeberg svg {
-  fill: #2185d0;
+  fill: var(--c-forge-codeberg);
 }
 
 .git-repo-section-forge-gitea svg {
-  fill: #609926;
+  fill: var(--c-forge-gitea);
 }
 
 /* createDisclosure sets aria-expanded on the trigger — the header button in the
@@ -244,7 +244,7 @@
 .git-repo-section-chevron {
   display: inline-block;
   color: var(--c-text-tertiary);
-  transition: transform var(--dur-micro) var(--ease-micro);
+  transition: transform var(--dur-micro) var(--ease-standard);
 }
 
 .git-repo-section-header[aria-expanded="true"] .git-repo-section-chevron,
@@ -288,15 +288,16 @@
   gap: 2px;
   padding: 1px 6px;
   border: 1px solid var(--c-border);
-  border-radius: 999px;
+  /* Clickable, so a rung rather than a stadium — the small one. */
+  border-radius: var(--r);
   background: var(--c-bg-secondary);
   color: var(--c-text-secondary);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   cursor: pointer;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 .git-repo-branch-chip:hover {
@@ -317,7 +318,9 @@
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
-  box-shadow: 0 8px 24px oklch(0% 0 0deg / 30%);
+  box-shadow:
+    var(--shadow-ambient),
+    0 8px 24px oklch(0% 0 none / 30%);
   max-height: 60vh;
   min-width: 220px;
   font-size: var(--fs-sm);
@@ -352,10 +355,8 @@
   background: var(--c-bg-tertiary);
 }
 
-.git-branch-popover-row.current {
-  font-weight: 600;
-  color: var(--c-accent);
-}
+/* .git-branch-popover-row.current: 70-selection.css. It was the only selected
+ * state in the app carrying font-weight, which reflows the row it marks. */
 
 .git-branch-popover-create {
   display: flex;
@@ -695,7 +696,7 @@ a.git-pr-row-title:hover {
   font-size: var(--fs-xs);
   padding: 1px 6px;
   border: 1px solid var(--c-border);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   color: var(--c-text-tertiary);
   white-space: nowrap;
 }

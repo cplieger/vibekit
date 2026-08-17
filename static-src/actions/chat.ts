@@ -28,6 +28,8 @@ import {
   indexOfSession,
   setModel,
   setCurrentMode,
+  setTurnFailed,
+  setTurnDone,
 } from "../store.js";
 import { send as transportSend } from "../transport.js";
 import { clearLastError } from "../send-state.js";
@@ -435,17 +437,39 @@ async function promptEchoed(chatID: string, messageID: string): Promise<boolean>
   return promptEchoArrived(chatID, messageID);
 }
 
-export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chatID: string }>({
+export const sendPrompt = defineAction<
+  SendPromptArgs,
+  "sent" | "queued",
+  { chatID: string; turnFailed: boolean; turnDone: boolean }
+>({
   name: "chat.send_prompt",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
   optimistic: ({ chatID }) => {
+    // The two outcome latches are captured because setThinking(true) CLEARS
+    // them: starting a turn is what invalidates the previous turn's verdict. A
+    // rollback means no turn started, so restoring `thinking: false` alone
+    // erased a failure or a finished-while-away mark the reader had not seen —
+    // a rejected prompt (400, 413, a dead POST) wiped the very state the dot
+    // exists to carry.
+    const s = get(chatID);
+    const snapshot = {
+      chatID,
+      turnFailed: s?.turn_failed === true,
+      turnDone: s?.turn_done === true,
+    };
     setThinking(chatID, true);
-    return { chatID };
+    return snapshot;
   },
   rollback: (_args, op) => {
     if (op !== undefined) {
       setThinking(op.chatID, false);
+      if (op.turnFailed) {
+        setTurnFailed(op.chatID);
+      }
+      if (op.turnDone) {
+        setTurnDone(op.chatID);
+      }
     }
   },
   run: async (args, signal, ctx) => {

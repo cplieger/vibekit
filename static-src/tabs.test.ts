@@ -369,19 +369,29 @@ describe("setTabDirty (editor unsaved indicator)", () => {
   it("shows a steady dirty dot when dirty and clears it when clean", async () => {
     const { setTabDirty } = await import("./tabs.js");
     document.body.innerHTML =
-      '<div data-tab-id="editor:/a.ts"><span class="tab-status-dot hidden"></span></div>';
-    const dot = document.querySelector(".tab-status-dot");
-    if (dot === null) {
+      '<div data-tab-id="editor:/a.ts">' +
+      '<span class="tab-name">a.ts</span>' +
+      '<span class="tab-status-sr sr-only"></span>' +
+      '<span class="tab-status-dot" aria-hidden="true"></span>' +
+      "</div>";
+    const dot = document.querySelector<HTMLElement>(".tab-status-dot");
+    const sr = document.querySelector<HTMLElement>(".tab-status-sr");
+    if (dot === null || sr === null) {
       throw new Error("dot missing");
     }
 
     setTabDirty("editor:/a.ts", true);
-    expect(dot.classList.contains("tab-dot-dirty")).toBe(true);
-    expect(dot.classList.contains("hidden")).toBe(false);
+    expect(dot.dataset["status"]).toBe("dirty");
+    // The announced word rides the same write, so an editor tab is not the one
+    // surface where the dot is colour-only.
+    expect(sr.textContent).toBe(", unsaved changes");
 
     setTabDirty("editor:/a.ts", false);
-    expect(dot.classList.contains("tab-dot-dirty")).toBe(false);
-    expect(dot.classList.contains("hidden")).toBe(true);
+    // The attribute is REMOVED rather than emptied: `[data-status]` alone is the
+    // CSS reveal condition, so an empty value would leave a clean file's tab
+    // showing an idle-styled dot.
+    expect(dot.hasAttribute("data-status")).toBe(false);
+    expect(sr.textContent).toBe("");
   });
 
   it("no-ops when the tab is not mounted", async () => {

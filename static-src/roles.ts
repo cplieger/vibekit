@@ -231,11 +231,40 @@ export function iconForSubagent(name: string): string {
   }
 }
 
+/** Display form of a mode's name, for names that are really identifiers.
+ *
+ *  The six bundled workflow modes carry hand-written names (`bug-fix` is
+ *  "Bug Fix"), so they never reach this. Everything else arrives named by
+ *  whoever declared it, and two of those sources hand over a raw id: KAS names
+ *  its non-workflow agents after themselves (`semantic_reviewer`), and a
+ *  workspace agent is named by its front matter, which is commonly the file's
+ *  own snake_case stem. Rendering those verbatim put an underscore in the role
+ *  list beside eleven properly-spaced neighbours.
+ *
+ *  Applied by SHAPE rather than by a list of known ids, so an agent added later
+ *  — by KAS or by the user — is covered without an edit here.
+ *
+ *  A name is treated as an identifier only when it has no whitespace and no
+ *  capital: both are marks of a human having written it, and neither survives
+ *  the transformation intact, so respecting them is what keeps this from
+ *  mangling a deliberate name. "iOS review" and "Bug Fix" pass through
+ *  untouched; `semantic_reviewer` becomes "Semantic Reviewer". */
+export function displayModeName(name: string): string {
+  if (name === "" || /\s/.test(name) || /[A-Z]/.test(name)) {
+    return name;
+  }
+  return name
+    .split(/[-_.]+/)
+    .filter((word) => word !== "")
+    .map((word) => word.replace(/^./, (first) => first.toUpperCase()))
+    .join(" ");
+}
+
 /** Human-facing label for a mode id. Prefers the live session's mode name
  *  (custom agents carry their own), falls back to the bundled catalog, then
  *  to the raw id. */
 export function labelForMode(id: string, modes?: readonly SessionMode[]): string {
   const key = normalizeModeID(id);
   const found = modes?.find((m) => m.id === key) ?? BUILTIN_MODES.find((m) => m.id === key);
-  return found?.name ?? id;
+  return displayModeName(found?.name ?? id);
 }

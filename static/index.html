@@ -10,7 +10,7 @@
        web-terminal-kiro pastel violet (#c099ff) in dark mode. Media metas
        track the OS scheme; an in-app forced theme keeps the OS-derived
        chrome color, same approximation as the old single meta. -->
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#9046FF">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#771edf">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#c099ff">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -111,7 +111,10 @@
     <main id="chat-area">
       <div class="chat-toolbar">
         <span id="toolbar-title" class="toolbar-title"></span>
-        <button type="button" id="find-btn" class="icon-btn" data-tooltip="Search this chat (Ctrl+F)" aria-label="Search this chat">
+        <!-- One button, five destinations: find-dispatch.ts routes it by the
+             active tab, so the label cannot name one view. It said "Search this
+             chat" on every view, including the two where the click did nothing. -->
+        <button type="button" id="find-btn" class="icon-btn" data-tooltip="Search (Ctrl+F)" aria-label="Search" aria-pressed="false">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
         <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser">
@@ -142,7 +145,11 @@
           <div id="messages-wrap">
             <div id="messages"></div>
             <div id="model-picker" class="hidden">
-              <div class="picker-label"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2" r="1.5" fill="currentColor" stroke="none"/><line x1="12" y1="3.5" x2="12" y2="5"/><rect x="2" y="5" width="20" height="16" rx="2"/><circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/><path d="M9.5 17.5c.5.8 1.4 1 2.5 1s2-.2 2.5-1"/></svg> Choose a model</div>
+              <!-- The model glyph is icons.ts's ICON_MODEL_20, written in by
+                   picker.ts on show. It used to be an inline literal here and a
+                   byte-identical one on the model pill below, at two sizes,
+                   with nothing tying them together. -->
+              <div class="picker-label">Choose a model</div>
               <div class="picker-grid"></div>
             </div>
           </div>
@@ -188,19 +195,31 @@
                    interactive content inside a <button>. -->
               <span class="pill-slot">
                 <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage — tokens, credits and turns for this chat" aria-label="Context usage">
+                  <!-- A PIE, not a ring. The three circles share one radius and
+                       one stroke width: r=4 with an 8-wide stroke spans r 0..8,
+                       so each stroke IS a filled sector, and pathLength="100"
+                       makes every dash number a percentage. That is what let the
+                       hardcoded 50.27 circumference go, and it is why no second
+                       one had to arrive with the wedge.
+
+                       No stroke-linecap anywhere: butt is the default, and it is
+                       load-bearing twice over — a round cap bulges a sector's
+                       two radial edges outward, and it paints a zero-length dash
+                       as a dot, which is exactly the reserve at 0%. -->
                   <svg class="context-ring" viewBox="0 0 20 20" width="16" height="16">
-                    <circle cx="10" cy="10" r="8" fill="none" stroke="var(--c-border)" stroke-width="2.5"/>
-                    <circle id="context-ring-fill" cx="10" cy="10" r="8" fill="none" stroke="var(--c-green)"
-                      stroke-width="2.5" stroke-dasharray="50.27" stroke-dashoffset="50.27"
-                      stroke-linecap="round" transform="rotate(-90 10 10)"/>
-                    <!-- Compaction threshold tick: a short radial line at
-                         (100 - context_buffer)% of the ring so users can
-                         see where auto-compaction will fire. Positioned
-                         via stroke-dasharray by status.ts. -->
-                    <line id="context-ring-tick" x1="10" y1="1" x2="10" y2="3"
-                      stroke="var(--c-yellow)" stroke-width="1.5"
-                      stroke-linecap="round"
-                      transform="rotate(0 10 10)"/>
+                    <circle cx="10" cy="10" r="8" fill="var(--c-border)"/>
+                    <!-- The compaction RESERVE: the slice from the threshold
+                         round to 12 o'clock, so where auto-compaction fires is a
+                         region you can see rather than a tick you have to know
+                         how to read. Drawn UNDER the usage pie, so usage eats
+                         into it last. Rotated to the threshold and sized to the
+                         buffer by status.ts. -->
+                    <circle id="context-ring-wedge" cx="10" cy="10" r="4" fill="none"
+                      stroke-width="8" pathLength="100"
+                      stroke-dasharray="0 100" transform="rotate(-90 10 10)"/>
+                    <circle id="context-ring-fill" cx="10" cy="10" r="4" fill="none" stroke="var(--c-green)"
+                      stroke-width="8" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"
+                      transform="rotate(-90 10 10)"/>
                   </svg>
                   <span id="context-label">0%</span>
                 </button>
@@ -216,7 +235,8 @@
               </span>
               <span class="pill-slot">
                 <button id="switch-model-btn" class="pill pill-model pill-expandable" type="button" aria-label="Switch model">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2" r="1.5" fill="currentColor" stroke="none"/><line x1="12" y1="3.5" x2="12" y2="5"/><rect x="2" y="5" width="20" height="16" rx="2"/><circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/><path d="M9.5 17.5c.5.8 1.4 1 2.5 1s2-.2 2.5-1"/></svg>
+                  <!-- icons.ts ICON_MODEL, prepended by model-switcher.ts's
+                       init(). Same `d` as the picker heading's 20px copy. -->
                   <span id="ctx-model-pill">auto</span>
                 </button>
                 <span id="model-switch-list" class="pill-expand-content pill-model-list hidden"></span>
@@ -687,6 +707,10 @@
               </select>
             </label>
           </header>
+          <!-- Host for the metadata filter, built by docs.ts through the shared
+               search shell. Metadata only: the inventory carries names,
+               descriptions, front-matter and triggers, never document bodies. -->
+          <div id="docs-filter-host"></div>
           <div data-docs-panel="steering" class="list-container docs-panel"></div>
           <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
           <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
@@ -915,23 +939,11 @@
       <div id="history-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">History</h2>
-          <div class="hist-search">
-            <label class="sr-only" for="hist-search-input">Search conversations</label>
-            <span class="hist-search-field">
-              <svg class="hist-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7"/>
-                <path d="M21 21l-4.35-4.35"/>
-              </svg>
-              <input
-                id="hist-search-input"
-                type="search"
-                class="hist-search-input"
-                placeholder="Search conversations…"
-                autocomplete="off"
-              >
-            </span>
-            <div id="hist-search-note" class="hist-search-note text-muted" role="status"></div>
-          </div>
+          <!-- The box itself is built by history.ts through the shared search
+               shell (static-src/search-shell.ts), so its role, its field's
+               attributes, its debounce and its note come from the same place as
+               the transcript's and the browser's. This is only its host. -->
+          <div id="hist-search-host"></div>
           <div id="history-table" class="list-container">
             <div class="list-empty">No previous sessions in this workspace.</div>
           </div>

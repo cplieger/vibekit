@@ -11,7 +11,15 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { setSessions, setActive, get, recordSteerQueued, steerCount } from "../store.js";
+import {
+  setSessions,
+  setActive,
+  get,
+  recordSteerQueued,
+  steerCount,
+  setAgentStatus,
+  tabStatusFor,
+} from "../store.js";
 import type { Session } from "../types.js";
 import type * as TurnRail from "../turn-rail.js";
 
@@ -23,9 +31,13 @@ vi.mock(
   async () => (await import("../__test-helpers__/scroll-mock.js")).scrollMock,
 );
 const mockCollapseSettled = vi.fn();
+const mockHasPendingDecision = vi.fn(() => false);
+const mockDropTurnDecisions = vi.fn();
 vi.mock("../decision-dock.js", () => ({
   pushDecision: vi.fn(),
   collapseSettledDecision: mockCollapseSettled,
+  hasPendingDecision: mockHasPendingDecision,
+  dropTurnDecisions: mockDropTurnDecisions,
 }));
 
 vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
@@ -284,6 +296,66 @@ describe("turn_ended side effects", () => {
 
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
     expect(steerCount("chat-1")).toBe(0);
+  });
+
+  // The dot's headline promise is "your background chat finished", and the signal
+  // it used to rest on — the agent's own `completed` status — only arrives when
+  // the model calls update_session_information. A turn that ended without one
+  // fell to `idle`, so the promise held only sometimes. turn_ended always
+  // arrives, which is why the latch lives on this handler.
+  it("latches done for a background chat whose agent never declared completed", () => {
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(get("chat-1")?.agent_status).toBeUndefined();
+    expect(tabStatusFor(get("chat-1"))).toBe("done");
+  });
+
+  it("latches nothing for a CANCELLED turn, which finished nothing", () => {
+    // The same line the "Agent finished" notification already draws: a cancelled
+    // turn is not a finished one, and a green "turn finished" dot would be a claim
+    // about work the user stopped.
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled" });
+    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+  });
+
+  it("latches nothing for the chat the reader is watching", () => {
+    // `done` means "finished while you were away". The active tab with the page in
+    // front of the reader needs no mark, and not latching is better than latching
+    // and clearing: a green dot on the row you are reading is noise, and it would
+    // then only clear on your next visit or your next prompt.
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+  });
+
+  it("still prefers the agent's own verdict where it lands", () => {
+    setSessions([makeSession("chat-1"), makeSession("chat-2")]);
+    setActive("chat-2");
+    setAgentStatus("chat-1", "waiting_on_user", "over to you");
+
+    // A finished turn that left a question behind is a chat that WANTS something,
+    // not a chat that is done, and the agent is the only thing that knows which.
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(tabStatusFor(get("chat-1"))).toBe("waiting");
+  });
+
+  // Every ask BLOCKS its turn, so a turn that has ended is not waiting on one.
+  // What is left in the queue is an abandoned card (cmdCancel already cleared the
+  // server's own pending set), and `input` outranks every other state — so the
+  // chat claimed it needed a decision indefinitely.
+  it("discards the turn's abandoned asks before re-deriving the dot", () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled" });
+    expect(mockDropTurnDecisions).toHaveBeenCalledWith("chat-1");
   });
 });
 

@@ -38,6 +38,11 @@ vi.mock("./store.js", () => ({
   })),
   activeSession: { value: undefined },
   removeChat: vi.fn(),
+  // The dot's seed at tab creation and its clear at activation. Both are real
+  // store reads in production; here the module is mocked wholesale, so they only
+  // need to exist and be inert.
+  tabStatusFor: vi.fn(() => ""),
+  clearTurnDone: vi.fn(),
 }));
 vi.mock("./store-load.js", () => ({ loadList: vi.fn(), loadMessages: vi.fn() }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
@@ -49,8 +54,15 @@ vi.mock("./tabs.js", () => ({
   getActiveTabId: vi.fn(() => ""),
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
-  setTabIcon: vi.fn(),
+  setTabTooltip: vi.fn(),
   TAB_VIEWS: { chat: "#chat-view" },
+}));
+// The chat tab's activity dot asks the dock whether this chat holds an
+// unanswered decision. Mocked so the suite does not pull in the three card
+// builders behind the real module for a boolean.
+vi.mock("./decision-dock.js", () => ({
+  hasPendingDecision: vi.fn(() => false),
+  dropDecisions: vi.fn(),
 }));
 vi.mock("./skeleton.js", () => ({ chatSkeleton: vi.fn(() => document.createElement("div")) }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
@@ -80,7 +92,10 @@ vi.mock("./composer-state.js", () => ({
 vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
 vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
-vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
+vi.mock("./roles.js", () => ({
+  iconForMode: vi.fn(() => ""),
+  labelForMode: vi.fn((id: string) => (id === "plan" ? "Plan" : id)),
+}));
 vi.mock("./submit.js", () => ({ submitPrompt: submitPromptMock }));
 // $.messages is a real element so a listener registered on it could be driven.
 // Nothing in chat.ts registers one any more — see "no transcript context menu"
@@ -99,9 +114,24 @@ vi.mock("./actions/chat.js", () => ({
 }));
 
 import * as chatModule from "./chat.js";
-import { createPlannerSession, openChatTab, openTangentChat, openPreviousSession } from "./chat.js";
-import { openTab } from "./tabs.js";
-import { get, removeChat, upsertHeader, markGhostChat, isGhostChat } from "./store.js";
+import {
+  createPlannerSession,
+  openChatTab,
+  openTangentChat,
+  openPreviousSession,
+  installStoreSubscribers,
+} from "./chat.js";
+import { openTab, hasTab, setTabTooltip } from "./tabs.js";
+import { dropDecisions } from "./decision-dock.js";
+import {
+  get,
+  getSessions,
+  removeChat,
+  upsertHeader,
+  markGhostChat,
+  isGhostChat,
+  clearTurnDone,
+} from "./store.js";
 import { loadMessages } from "./store-load.js";
 import { seedComposerDraft } from "./composer-state.js";
 import { isRetentionEnabled } from "./retention.js";
@@ -244,6 +274,32 @@ describe("openChatTab onClose retention gate", () => {
     expect(removeChat).toHaveBeenCalledWith("c-empty");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
   });
+
+  // The chat's unanswered asks go with the tab. Closing cancels the turn and the
+  // chat's runs server-side, so nothing left here is live — and because the dock's
+  // queue is keyed by chat id, a queue left behind was RESURRECTED by reopening
+  // the same id: the card came back and the tab dot said the chat needed a
+  // decision that no longer existed.
+  // Opening the chat is what settles a `done` dot: the mark means "this finished
+  // while you were away", so arriving is the event that answers it. Without this
+  // the only clear was the next prompt, so a green dot sat on a chat the reader had
+  // already read.
+  it("settles the finished-turn mark when the chat is activated", () => {
+    openChatTab("c-open", "chat");
+    const spec = vi.mocked(openTab).mock.calls.at(-1)?.[0] as { onShow?: () => void };
+    spec.onShow?.();
+    expect(clearTurnDone).toHaveBeenCalledWith("c-open");
+  });
+
+  it("drops the chat's unanswered asks on close, in every retention mode", () => {
+    for (const retention of [true, false]) {
+      vi.clearAllMocks();
+      vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
+      vi.mocked(isRetentionEnabled).mockReturnValue(retention);
+      captureOnClose("c-closed")();
+      expect(dropDecisions).toHaveBeenCalledWith("c-closed");
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -349,5 +405,42 @@ describe("no transcript context menu", () => {
     const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
     messagesEl.dispatchEvent(e);
     expect(e.defaultPrevented).toBe(false);
+  });
+});
+
+// The activity dot took the slot the per-mode role glyph used to hold, and for a
+// BACKGROUND chat that glyph was the only place a role read out at all — the mode
+// pill and its picker are active-chat only. The tooltip is where the role went:
+// no element, no width, no second visual vocabulary in the 9px column. It is
+// pointer-only, so it is a convenience rather than a full restoration.
+describe("the chat tab's tooltip carries the mode as well as the activity", () => {
+  function driveEffect(over: Record<string, unknown>): void {
+    const s = { id: "c1", name: "Fix the parser", available_modes: [], ...over };
+    vi.mocked(getSessions).mockReturnValue([s as never]);
+    vi.mocked(hasTab).mockReturnValue(true);
+    installStoreSubscribers();
+  }
+
+  it("composes the mode and what the agent says it is doing", () => {
+    driveEffect({ current_mode_id: "plan", agent_status_text: "reading the parser" });
+    expect(setTabTooltip).toHaveBeenCalledWith("c1", "Plan · reading the parser");
+  });
+
+  it("gives the mode alone when the agent has declared nothing", () => {
+    // The separator is emitted only when both halves exist, so a quiet chat's
+    // tooltip is a mode rather than a mode with a dangling middot.
+    driveEffect({ current_mode_id: "plan" });
+    expect(setTabTooltip).toHaveBeenCalledWith("c1", "Plan");
+  });
+
+  it("gives the activity alone before the chat has a session", () => {
+    // A chat with no bridge yet has no mode id, which is every brand-new chat.
+    driveEffect({ current_mode_id: "", agent_status_text: "reading the parser" });
+    expect(setTabTooltip).toHaveBeenCalledWith("c1", "reading the parser");
+  });
+
+  it("clears the tooltip when there is neither", () => {
+    driveEffect({ current_mode_id: "" });
+    expect(setTabTooltip).toHaveBeenCalledWith("c1", "");
   });
 });

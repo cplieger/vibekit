@@ -81,7 +81,14 @@
   flex-direction: column;
   gap: var(--sp-1);
   padding: var(--sp-2) var(--sp-3);
-  background: var(--c-user-bubble);
+
+  /* The tint is a ramp rung, not its own token. `--c-user-bubble` was the
+     character-identical oklch triple to the old --c-border in both themes, so
+     the app had two names for one colour and no way to tell which a site meant
+     — and the name said "bubble" about a surface that stopped being a bubble
+     when the turn card replaced them. --c-bg-tertiary lands within a hair of
+     the value it had. */
+  background: var(--c-bg-tertiary);
   border-bottom: 1px solid var(--c-border);
   /* -1px so the tint sits inside the card's own border rather than over it. */
   border-start-start-radius: calc(var(--r) - 1px);
@@ -159,8 +166,8 @@
   padding: 2px var(--sp-2);
   cursor: pointer;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 .turn-rewind:hover {
@@ -297,7 +304,7 @@
   color: var(--c-text-tertiary);
   padding: var(--sp-1) var(--sp-3);
   font-variant-numeric: tabular-nums;
-  background: var(--c-user-bubble);
+  background: var(--c-bg-tertiary);
   border-top: 1px solid var(--c-border);
   border-end-start-radius: calc(var(--r) - 1px);
   border-end-end-radius: calc(var(--r) - 1px);
@@ -327,12 +334,12 @@
 }
 
 .turn-footer[data-outcome="interrupted"] {
-  background: color-mix(in srgb, var(--c-yellow) 12%, var(--c-user-bubble));
+  background: color-mix(in srgb, var(--c-yellow) 12%, var(--c-bg-tertiary));
   color: var(--c-text-secondary);
 }
 
 .turn-footer[data-outcome="failed"] {
-  background: color-mix(in srgb, var(--c-red) 12%, var(--c-user-bubble));
+  background: color-mix(in srgb, var(--c-red) 12%, var(--c-bg-tertiary));
   color: var(--c-text-secondary);
 }
 
@@ -352,7 +359,7 @@
   font: inherit;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition: color var(--dur-micro) var(--ease-micro);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .turn-ledger-summary:disabled {
@@ -411,7 +418,7 @@
   border-right: 1.5px solid currentcolor;
   border-bottom: 1.5px solid currentcolor;
   transform: rotate(-45deg);
-  transition: transform var(--dur-micro) var(--ease-micro);
+  transition: transform var(--dur-micro) var(--ease-standard);
 }
 
 .turn-ledger-summary:disabled .turn-ledger-caret {
@@ -457,8 +464,8 @@
   text-align: left;
   cursor: pointer;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
 }
 
 .turn-file-row:hover {
@@ -571,9 +578,9 @@
   line-height: 1;
   cursor: pointer;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    color var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 .rail-marker:hover,
@@ -713,7 +720,7 @@
    for no reason a reader could act on. One surface has one width by
    construction. */
 .turn[data-folded] {
-  background: var(--c-user-bubble);
+  background: var(--c-bg-tertiary);
 }
 
 .turn[data-folded] > .turn-header,
@@ -833,7 +840,7 @@
   border-right: 1.5px solid currentcolor;
   border-bottom: 1.5px solid currentcolor;
   transform: rotate(45deg);
-  transition: transform var(--dur-micro) var(--ease-micro);
+  transition: transform var(--dur-micro) var(--ease-standard);
 }
 
 .turn[data-folded] .turn-fold-toggle::before {
@@ -908,11 +915,11 @@
   font-size: var(--fs-xs);
   cursor: pointer;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
 }
 
 .turn-review-all:hover {
-  background: var(--c-bg-hover);
+  background: var(--c-hover);
   color: var(--c-text-primary);
 }

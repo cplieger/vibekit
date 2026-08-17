@@ -50,7 +50,7 @@
 }
 
 .tool-output-reveal:hover {
-  background: var(--c-bg-hover);
+  background: var(--c-bg-tertiary);
   color: var(--c-text-primary);
 }
 
@@ -114,7 +114,7 @@
   font-variant-numeric: tabular-nums;
   transition:
     background var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 }
 
 .tool-group-header:hover {
@@ -157,7 +157,7 @@
   align-items: center;
   justify-content: center;
   color: var(--c-accent);
-  transition: color var(--dur-micro) var(--ease-micro);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .tool-icon svg {
@@ -347,10 +347,10 @@
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 
   &:hover {
-    background: var(--c-bg-hover);
+    background: var(--c-hover);
     border-color: var(--c-accent);
     color: var(--c-text-primary);
   }
@@ -386,7 +386,7 @@
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 }
 
 .inline-file-icon {
@@ -448,7 +448,7 @@
   padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
   user-select: none;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 .subagent-header:hover {
@@ -490,7 +490,9 @@
   flex-shrink: 0;
   background: none;
   border: none;
-  color: var(--c-text-tertiary);
+
+  /* A control's label, not a hint (see --c-text-control in 01-tokens.css). */
+  color: var(--c-text-control);
   cursor: pointer;
   font-size: var(--fs-sm);
   line-height: 1;
@@ -701,7 +703,7 @@
   line-height: 0;
   transition:
     color var(--dur-micro),
-    background var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard);
   flex-shrink: 0;
 
   &:hover {
@@ -790,7 +792,7 @@
   font-size: var(--fs-sm);
   transition:
     background var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -998,7 +1000,7 @@
   font-size: var(--fs-sm);
   resize: vertical;
   width: 100%;
-  transition: border-color var(--dur-micro) var(--ease-micro);
+  transition: border-color var(--dur-micro) var(--ease-standard);
 }
 
 .git-commit-btn {
@@ -1093,7 +1095,7 @@
   white-space: nowrap;
   transition:
     background var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -1264,7 +1266,7 @@
   width: 100%;
   text-align: start;
   padding: var(--sp-1) var(--sp-2);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   font-family: var(--font-mono);
@@ -1291,7 +1293,7 @@
   font-size: var(--fs-xs);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   color: var(--c-text-primary);
 }
 
@@ -1306,7 +1308,7 @@
   font-size: var(--fs-xs);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   color: var(--c-text-primary);
   cursor: pointer;
 }
@@ -1322,7 +1324,7 @@
   font-size: var(--fs-xs);
   font-weight: 600;
   padding: 1px var(--sp-1);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   user-select: none;
 }
@@ -1487,8 +1489,8 @@
   color: var(--c-text-primary);
   cursor: pointer;
   transition:
-    border-color var(--dur-micro) var(--ease-micro),
-    background var(--dur-micro) var(--ease-micro);
+    border-color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .user-input-option:hover {

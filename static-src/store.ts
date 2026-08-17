@@ -137,34 +137,138 @@ export function setThinking(id: string, v: boolean): void {
       thinking: v,
       working_label: v ? s.working_label : "Thinking",
     };
-    // A new turn invalidates the agent's previously declared status
-    // (e.g. a lingering waiting_on_user): the agent re-declares via
-    // focus updates as the turn progresses.
+    // A new turn invalidates every verdict the PREVIOUS turn left behind: the
+    // agent's declared status (e.g. a lingering waiting_on_user), which it
+    // re-declares via focus updates as the turn progresses, and the two outcome
+    // latches, because work is happening again. All of them are
+    // latched-until-next-turn for the same reason, so they clear in one place.
     if (v) {
       delete next.agent_status;
       delete next.agent_status_text;
+      delete next.turn_failed;
+      delete next.turn_done;
     }
     return next;
   });
 }
 
-/** Derive the tab activity dot for a session: an in-flight turn shows the
- *  pulsing "thinking" dot; an agent-declared waiting_on_user (which
- *  deliberately survives turn end — it means "I asked you something")
- *  shows the amber "waiting" dot; anything else clears. Single rule shared
- *  by the store effect (chat.ts) and the turn_ended handler so the two
- *  writers can't disagree. */
-export function tabStatusFor(s: Session | undefined): "" | "thinking" | "waiting" {
+/** Latch that this chat's last turn or bridge operation failed (`error` SSE).
+ *  Cleared by the next `setThinking(id, true)`, so there is no explicit
+ *  unlatch — a failure stands until work resumes. */
+export function setTurnFailed(id: string): void {
+  const s = get(id);
+  if (s === undefined || s.turn_failed === true) {
+    return; // no-op: don't churn the session signal on a replayed error frame
+  }
+  sessions.update(id, (prev) => ({ ...prev, turn_failed: true }));
+}
+
+/** Clear the failure latch without starting a turn. Only the transport-gap
+ *  reconciler needs this: after a dropped stream the client cannot tell which
+ *  of its latched verdicts still hold, and it clears `thinking` and
+ *  `agent_status` there for the same reason. */
+export function clearTurnFailed(id: string): void {
+  if (get(id)?.turn_failed !== true) {
+    return;
+  }
+  sessions.update(id, (prev) => {
+    const next: Session = { ...prev };
+    delete next.turn_failed;
+    return next;
+  });
+}
+
+/** Latch that this chat's turn finished while nobody was watching it.
+ *
+ *  The mirror of `setTurnFailed`, and it exists for the same reason: `turn_ended`
+ *  always arrives, while the agent's own `completed` status only arrives when the
+ *  model calls its status tool. Without the latch, "your background chat
+ *  finished" held only for the turns where it did.
+ *
+ *  The caller decides whether the reader was watching — `handlers/turn.ts` owns
+ *  that test, because it is the layer that knows which chat is on screen. */
+export function setTurnDone(id: string): void {
+  const s = get(id);
+  if (s === undefined || s.turn_done === true) {
+    return; // no-op: don't churn the session signal on a replayed turn_ended
+  }
+  sessions.update(id, (prev) => ({ ...prev, turn_done: true }));
+}
+
+/** Clear the finished latch. Two callers: activating the chat (seeing it is what
+ *  settles it) and the transport-gap reconciler, for the same reason it clears
+ *  the failure latch — after a dropped stream the client can no longer support
+ *  either claim. */
+export function clearTurnDone(id: string): void {
+  if (get(id)?.turn_done !== true) {
+    return;
+  }
+  sessions.update(id, (prev) => {
+    const next: Session = { ...prev };
+    delete next.turn_done;
+    return next;
+  });
+}
+
+/** Derive the chat tab's activity-dot state. ONE rule, shared by the store
+ *  effect (chat.ts) and the turn_ended / error handlers, so no two writers can
+ *  disagree about what a chat's dot means.
+ *
+ *  Order is precedence, most urgent first, and each rung earns its place:
+ *
+ *   - `input` outranks `working` because the two COEXIST — a permission ask
+ *     arrives mid-turn and `thinking` stays true until the turn ends — so
+ *     putting working first would mask every ask behind the state that needs
+ *     nothing from anyone. That masking is a documented cost elsewhere in the
+ *     app: the push notice for a permission cannot be silenced precisely
+ *     because "a background chat waiting on an approval renders identically to
+ *     one that is working". This is the fix for that, so the order is the
+ *     whole point rather than a detail.
+ *   - `failed` and `working` are mutually exclusive by construction (the error
+ *     handler clears thinking, and a new turn clears the latch), so their
+ *     relative order is inert; failed is listed first so a future path that
+ *     sets both reports the failure rather than hiding it.
+ *   - `waiting` outranks `done` because a chat that asked you something wants
+ *     more than one that merely finished, and the two CAN coexist now: the
+ *     agent can declare waiting_on_user and then the turn can end, which sets
+ *     the `turn_done` latch under a live waiting.
+ *   - `done` has TWO producers and they are not equivalent. The agent's
+ *     `completed` status is the higher-fidelity signal and the one to prefer,
+ *     but it only arrives when the model calls `update_session_information`, so
+ *     a turn ending without one used to fall to `idle` — which made "your
+ *     background chat finished" true only sometimes. `turn_done` is the
+ *     transport's own verdict (`turn_ended` always arrives) and it is what makes
+ *     the promise hold; see types.ts for its clear discipline.
+ *   - `idle` is the FLOOR for a real chat, not an absence. A chat tab always
+ *     shows a dot, which is what keeps the strip's leading column aligned and
+ *     what makes "nothing is happening here" readable rather than inferred.
+ *     Only an unknown chat yields "".
+ *
+ *  `pendingAsk` is passed rather than read because the queue of unanswered
+ *  decisions lives in `decision-dock.ts`, which imports this module — so the
+ *  dependency has to point the other way at the call site. */
+export type TabDotState = "" | "input" | "failed" | "working" | "waiting" | "done" | "idle";
+
+export function tabStatusFor(s: Session | undefined, pendingAsk = false): TabDotState {
   if (s === undefined) {
     return "";
   }
+  if (pendingAsk) {
+    return "input";
+  }
+  if (s.turn_failed === true) {
+    return "failed";
+  }
   if (s.thinking) {
-    return "thinking";
+    return "working";
   }
   if (s.agent_status === "waiting_on_user") {
     return "waiting";
   }
-  return "";
+  if (s.agent_status === "completed" || s.turn_done === true) {
+    return "done";
+  }
+  return "idle";
 }
 
 /** Record the agent-declared activity status/description for a chat

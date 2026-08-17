@@ -70,8 +70,24 @@
 }
 
 /* --- Background --- */
+
+/* The one entry in this file that REGRESSED when the app base moved to
+ * near-black, and the only one: measured against the old #1e1e2e base a #000
+ * span read 1.280:1, and against #0a0a14 it reads 1.066:1 — the span and the
+ * transcript behind it are the same colour, so output that deliberately marks a
+ * region with a black background loses the region. Every other dark-theme entry
+ * that misses its floor got BETTER against the darker base and was already
+ * missing it before (`css-contrast.py ansi` lists them), so this is the only
+ * change the base move earns.
+ *
+ * The theme's own terminal black is the value, not a re-picked literal: it is
+ * what `shell.ts` already hands the terminal for the same colour, and it inverts
+ * (#28282e dark, #15161b light) where #000 could only ever suit one theme. It
+ * lands at 1.344:1 against the dark base rather than the 3:1 a region marker
+ * would want — a colour that clears 3:1 on a near-black base is a mid-grey and
+ * no longer reads as black, so the region stays visible-but-quiet by choice. */
 .ansi-black-bg {
-  background-color: #000;
+  background-color: var(--c-term-black);
 }
 
 .ansi-red-bg {

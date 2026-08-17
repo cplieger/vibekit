@@ -40,3 +40,7 @@ reports/
 static/chunks/
 static/*.map
 static/*.gz
+
+# Byte-compiled Python from scripts/
+__pycache__/
+*.pyc

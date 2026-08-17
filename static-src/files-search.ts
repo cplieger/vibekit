@@ -28,11 +28,13 @@
 import { el } from "@cplieger/reactive";
 import { join } from "@cplieger/keyenc";
 import { $, byId } from "./dom.js";
-import { apiGet, CancellableSlot } from "./api-client.js";
+import { apiGet } from "./api-client.js";
 import { openAtLine } from "./navigate.js";
 import { reconcile } from "./reconcile.js";
 import { fileIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { caseParam, createSearchShell, searchField, wireSearchKeys } from "./search-shell.js";
+import type { SearchShell } from "./search-shell.js";
 
 // --- Wire types ------------------------------------------------------------
 // Hand-declared beside the feature, the chat-search-types.ts precedent: one
@@ -56,10 +58,6 @@ export interface FileSearchResult {
    *  short result imply the text is nowhere else. */
   truncated: boolean;
 }
-
-/** Matches find-in-chat's TYPE_DEBOUNCE_MS: small enough to feel instant, large
- *  enough to coalesce a burst of keystrokes. */
-const TYPE_DEBOUNCE_MS = 90;
 
 /** The glob convention, stated where the user meets it.
  *
@@ -87,19 +85,12 @@ export interface FilesSearchCtx {
 let ctx: FilesSearchCtx | null = null;
 let barEl: HTMLElement | null = null;
 let resultsEl: HTMLElement | null = null;
-let inputEl: HTMLInputElement | null = null;
 let includeEl: HTMLInputElement | null = null;
 let excludeEl: HTMLInputElement | null = null;
-let noteEl: HTMLElement | null = null;
-let caseBtn: HTMLButtonElement | null = null;
-/** Persists across open/close: a preference about how the reader searches, not
- *  state belonging to one query. Same reasoning as find-in-chat's. */
-let caseSensitive = false;
-let isOpen = false;
-let typeTimer: ReturnType<typeof setTimeout> | undefined;
-/** Its OWN abort slot. Sharing the browser's would make a search and a
- *  directory load cancel each other. */
-const searchSlot = new CancellableSlot();
+/** The box's shell: the field, the `Aa` toggle, the note, the debounce and the
+ *  supersession guard. Its abort signal is its OWN — sharing the browser's would
+ *  make a search and a directory load cancel each other. */
+let shell: SearchShell | null = null;
 let lastMatches: FileSearchMatch[] = [];
 
 // --- Pure helpers (exported for tests) -------------------------------------
@@ -113,8 +104,9 @@ export function searchURL(
   opts: { caseSensitive?: boolean; include?: string; exclude?: string } = {},
 ): string {
   const q = new URLSearchParams({ path, q: query });
-  if (opts.caseSensitive === true) {
-    q.set("case", "1");
+  const flag = caseParam(opts.caseSensitive === true);
+  if (flag !== "") {
+    q.set("case", flag);
   }
   if ((opts.include ?? "") !== "") {
     q.set("include", opts.include ?? "");
@@ -159,80 +151,85 @@ export function hitKey(m: FileSearchMatch): string {
 
 // --- DOM -------------------------------------------------------------------
 
-function field(id: string, placeholder: string, label: string, title: string): HTMLInputElement {
-  return el("input", {
+function globField(id: string, placeholder: string, label: string): HTMLInputElement {
+  return searchField({
     id,
-    type: "text",
     className: "fb-search-field",
+    label,
     placeholder,
-    "aria-label": label,
-    title,
-    autocomplete: "off",
-    autocapitalize: "off",
-    spellcheck: "false",
-  }) as HTMLInputElement;
-}
-
-function barButton(label: string, glyph: string, onClick: () => void): HTMLButtonElement {
-  const btn = el(
-    "button",
-    { type: "button", className: "fb-search-btn", "aria-label": label, title: label },
-    glyph,
-  ) as HTMLButtonElement;
-  btn.addEventListener("click", onClick);
-  return btn;
+    title: GLOB_HINT,
+  });
 }
 
 function ensureBuilt(): void {
   if (barEl !== null) {
     return;
   }
-  const query = field(
-    "fb-search-input",
-    "Find in files\u2026",
-    "Find in files",
-    "Find in files. Press Ctrl+F again to use the browser's find.",
-  );
-  query.setAttribute("enterkeyhint", "search");
-  inputEl = query;
+  includeEl = globField("fb-search-include", "Include (*.go)", "Include patterns");
+  excludeEl = globField("fb-search-exclude", "Exclude (node_modules)", "Exclude patterns");
+  const globRow = el("div", { className: "fb-search-row fb-search-globs" }, includeEl, excludeEl);
 
-  const caseToggle = barButton("Match case", "Aa", () => {
-    caseSensitive = !caseSensitive;
-    caseBtn?.setAttribute("aria-pressed", caseSensitive ? "true" : "false");
-    runSearch();
-  });
-  caseToggle.classList.add("fb-search-case");
-  caseToggle.setAttribute("aria-pressed", caseSensitive ? "true" : "false");
-  caseBtn = caseToggle;
-
-  const closeBtn = barButton("Close find", "\u00d7", () => {
-    closeFilesSearch();
-  });
-
-  includeEl = field("fb-search-include", "Include (*.go)", "Include patterns", GLOB_HINT);
-  excludeEl = field("fb-search-exclude", "Exclude (node_modules)", "Exclude patterns", GLOB_HINT);
-
-  const note = el("div", {
-    id: "fb-search-note",
-    className: "fb-search-note text-muted",
-    role: "status",
-    "aria-live": "polite",
-    "aria-atomic": "true",
-  });
-  noteEl = note;
-
-  const bar = el(
-    "div",
-    {
-      id: "fb-search",
-      className: "fb-search hidden",
-      role: "search",
-      "aria-label": "Find in files",
+  // The GLOB ROW is this surface's alone — a transcript has no paths to include
+  // or exclude — so it arrives through `compose` rather than becoming a shell
+  // feature. Everything above it is the shell's: the field's attributes, the
+  // debounce, the supersession guard, the `Aa` toggle's aria-pressed idiom and
+  // the note.
+  const built = createSearchShell<FileSearchResult>({
+    id: "fb-search",
+    regionClass: "fb-search hidden",
+    inputClass: "fb-search-field",
+    buttonClass: "fb-search-btn",
+    caseClass: "fb-search-case",
+    noteClass: "fb-search-note",
+    label: "Find in files",
+    placeholder: "Find in files\u2026",
+    inputTitle: "Find in files. Press Ctrl+F again to use the browser's find.",
+    matchCase: true,
+    note: true,
+    closeButton: true,
+    compose: ({ input, caseButton, closeButton, note }) => [
+      el("div", { className: "fb-search-row" }, input, caseButton, closeButton),
+      globRow,
+      note,
+    ],
+    query: async (query, qctx) => {
+      const trimmed = query.trim();
+      if (trimmed === "" || ctx === null) {
+        return null;
+      }
+      return apiGet<FileSearchResult>(
+        searchURL(ctx.getSearchPath(), trimmed, {
+          caseSensitive: qctx.caseSensitive,
+          include: includeEl?.value.trim() ?? "",
+          exclude: excludeEl?.value.trim() ?? "",
+        }),
+        qctx.signal,
+      );
     },
-    el("div", { className: "fb-search-row" }, query, caseToggle, closeBtn),
-    el("div", { className: "fb-search-row fb-search-globs" }, includeEl, excludeEl),
-    note,
-  );
+    render: (res, query) => {
+      const searchPath = ctx?.getSearchPath() ?? "";
+      if (query.trim() === "") {
+        lastMatches = [];
+        renderResults(searchPath);
+        built.setNote("");
+        return;
+      }
+      if (res === null) {
+        built.setNote("Search failed. Check your connection.");
+        return;
+      }
+      lastMatches = res.matches;
+      renderResults(searchPath);
+      built.setNote(searchNote(res));
+    },
+    onDismiss: () => {
+      closeFilesSearch();
+    },
+    onSubmit: () => {
+      built.run();
+    },
+  });
+  shell = built;
 
   const results = el("div", {
     id: "fb-search-results",
@@ -240,25 +237,26 @@ function ensureBuilt(): void {
     role: "list",
   });
 
-  for (const target of [query, includeEl, excludeEl]) {
+  // The glob fields feed the same query, so they schedule the same run and carry
+  // the same key contract. Sharing wireSearchKeys is what keeps Escape meaning
+  // the same thing in all three fields.
+  for (const target of [includeEl, excludeEl]) {
     target.addEventListener("input", () => {
-      scheduleSearch();
+      built.schedule();
     });
-    target.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
+    wireSearchKeys(target, {
+      onDismiss: () => {
         closeFilesSearch();
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        runSearch();
-      }
+      },
+      onSubmit: () => {
+        built.run();
+      },
     });
   }
 
-  $.fbList.insertAdjacentElement("beforebegin", bar);
+  $.fbList.insertAdjacentElement("beforebegin", built.region);
   $.fbList.insertAdjacentElement("afterend", results);
-  barEl = bar;
+  barEl = built.region;
   resultsEl = results;
 }
 
@@ -303,64 +301,22 @@ function renderResults(searchPath: string): void {
   });
 }
 
-function setNote(text: string): void {
-  if (noteEl !== null) {
-    noteEl.textContent = text;
-  }
-}
-
-function scheduleSearch(): void {
-  if (typeTimer !== undefined) {
-    clearTimeout(typeTimer);
-  }
-  typeTimer = setTimeout(() => {
-    typeTimer = undefined;
-    runSearch();
-  }, TYPE_DEBOUNCE_MS);
-}
-
-function runSearch(): void {
-  if (inputEl === null || ctx === null) {
-    return;
-  }
-  const query = inputEl.value.trim();
-  const searchPath = ctx.getSearchPath();
-  if (query === "") {
-    // Cancel rather than fire an empty query: the server answers an empty scan
-    // for it, and a stale in-flight response must not repaint the cleared list.
-    searchSlot.abort();
-    lastMatches = [];
-    renderResults(searchPath);
-    setNote("");
-    return;
-  }
-  const signal = searchSlot.start();
-  const url = searchURL(searchPath, query, {
-    caseSensitive,
-    include: includeEl?.value.trim() ?? "",
-    exclude: excludeEl?.value.trim() ?? "",
-  });
-  void apiGet<FileSearchResult>(url, signal).then((res) => {
-    // Superseded by newer typing, or the bar closed while this was in flight.
-    if (signal.aborted || !isOpen || inputEl?.value.trim() !== query) {
-      return;
-    }
-    if (res === null) {
-      setNote("Search failed. Check your connection.");
-      return;
-    }
-    lastMatches = res.matches;
-    renderResults(searchPath);
-    setNote(searchNote(res));
-  });
-}
-
 // --- Lifecycle -------------------------------------------------------------
+
+/** Open state is the bar's own class, not a second boolean.
+ *
+ *  Unlike the transcript's box this is NOT a popup: its results render into a
+ *  sibling element OUTSIDE the panel, so the primitive's outside-click dismissal
+ *  would close the bar on the first click of a result row. Placement decides
+ *  dismissal, which is why search-shell.ts owns neither. */
+function isOpen(): boolean {
+  return barEl !== null && !barEl.classList.contains("hidden");
+}
 
 export function initFilesSearch(c: FilesSearchCtx): void {
   ctx = c;
   $.fbSearchBtn.addEventListener("click", () => {
-    if (isOpen) {
+    if (isOpen()) {
       closeFilesSearch();
     } else {
       openFilesSearch();
@@ -377,36 +333,29 @@ export function initFilesSearch(c: FilesSearchCtx): void {
 export function openFilesSearch(): void {
   ctx?.activateBrowser();
   ensureBuilt();
-  if (barEl === null || inputEl === null || resultsEl === null) {
+  if (barEl === null || shell === null || resultsEl === null) {
     return;
   }
-  isOpen = true;
   barEl.classList.remove("hidden");
   resultsEl.classList.remove("hidden");
   $.fbList.classList.add("hidden");
   $.fbSearchBtn.setAttribute("aria-pressed", "true");
-  inputEl.focus();
-  inputEl.select();
-  runSearch();
+  shell.focus();
+  shell.run();
 }
 
 export function closeFilesSearch(): void {
-  if (!isOpen || barEl === null || resultsEl === null) {
+  if (!isOpen() || barEl === null || resultsEl === null) {
     return;
   }
-  if (typeTimer !== undefined) {
-    clearTimeout(typeTimer);
-    typeTimer = undefined;
-  }
-  searchSlot.abort();
-  isOpen = false;
+  shell?.cancel();
   barEl.classList.add("hidden");
   resultsEl.classList.add("hidden");
   resultsEl.replaceChildren();
   lastMatches = [];
   $.fbList.classList.remove("hidden");
   $.fbSearchBtn.setAttribute("aria-pressed", "false");
-  setNote("");
+  shell?.setNote("");
 }
 
 /** Drop the search when the browser resets (tab close). Mirrors
@@ -414,14 +363,14 @@ export function closeFilesSearch(): void {
  *  entry animation in unison on the next open. */
 export function resetFilesSearch(): void {
   closeFilesSearch();
-  if (inputEl !== null) {
-    inputEl.value = "";
+  if (shell !== null) {
+    shell.input.value = "";
   }
 }
 
 /** @internal Test seam: whether the bar is open. */
 export function _isFilesSearchOpen(): boolean {
-  return isOpen;
+  return isOpen();
 }
 
 /** Ctrl-F / Cmd-F for a files or editor tab, dispatched from app.ts.
@@ -435,10 +384,20 @@ export function handleFindInFilesHotkey(e: KeyboardEvent): void {
   if (e.key.toLowerCase() !== "f" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) {
     return;
   }
-  if (isOpen && inputEl !== null && document.activeElement === inputEl) {
+  if (isOpen() && shell !== null && document.activeElement === shell.input) {
     return;
   }
   e.preventDefault();
+  openFilesSearch();
+}
+
+/** Toggle the file search. What the toolbar button and the dispatcher's button
+ *  route mean — the same shape find-in-chat's toggle now has. */
+export function toggleFilesSearch(): void {
+  if (isOpen()) {
+    closeFilesSearch();
+    return;
+  }
   openFilesSearch();
 }
 
