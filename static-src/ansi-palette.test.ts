@@ -13,13 +13,23 @@
 // send-btn-contrast.test.ts gives: a second implementation is a second thing to
 // be wrong, and the numbers in the stylesheet comments were measured with the
 // first one. It uses `ansi-check --tsv`, which emits every measurement in one
-// process; 640 gated checks as individual `pair` calls would be 640 subprocesses.
+// process; 576 gated checks as individual `pair` calls would be 576 subprocesses.
 //
 // The script READS 15-ansi.css, so these floors are asserted against what ships.
 // That direction matters: the old report kept its own copy of the palette and had
 // already drifted from the stylesheet (`black` still read `#000` there after
 // `.ansi-black-bg` moved to a token), which is the same duplication defect one
 // level up.
+//
+// The 32 --c-term-* values those classes read are now GENERATED, by
+// scripts/css-ansi-palette.py, from kitty's default palette plus
+// web-terminal-engine's own contrast lift. Four tests below cover that: the
+// generator's output matches 01-tokens.css, layer 1 is kitty's table unaltered,
+// layer 2 lifts only the entries that fail, and the one set of values the
+// generator AUTHORS — the four light achromatic inks, which the lift collapses
+// onto a single grey — stays spread and ordered. The floors are still measured
+// independently, by css-contrast.py, through the stylesheet — so the generator and
+// the report can disagree, and one of them fails when they do.
 //
 // Node environment: this runs a process and reads TSV.
 
@@ -31,6 +41,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "..", "scripts", "css-contrast.py");
+const generator = join(here, "..", "scripts", "css-ansi-palette.py");
 const sheet = join(here, "css", "15-ansi.css");
 
 interface Row {
@@ -71,6 +82,23 @@ function rows(): Row[] {
     "both themes must be measured — a palette correct in one is the defect",
   ).toEqual(["dark", "light"]);
   return parsed;
+}
+
+/** The generator's kitty -> shipped audit, one row per token. */
+function tableRows(): string[][] {
+  return execFileSync("python3", [generator, "table"], { encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .slice(1)
+    .map((line) => line.split("\t"));
+}
+
+/** `#rgb` or `#rrggbb` to its three channel values. */
+function expandHex(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  const full = h.length === 3 ? [...h].map((c) => c + c).join("") : h;
+  expect(full, `unexpected hex shape: ${hex}`).toMatch(/^[0-9a-f]{6}$/);
+  return [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16)) as [number, number, number];
 }
 
 /** The 16 ANSI codes, each in both roles. */
@@ -169,12 +197,15 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
     // TWO rules in one, and both were measured rather than reasoned about.
     //
     // NAMESPACE: `.ansi-<x>-fg` / `.ansi-<x>-bg` is the 16-code palette, and
-    // css-contrast.py parses that shape out of this file. Naming the inverse
-    // fallbacks `.ansi-inverse-fg` / `-bg` made the report treat them as a 17th
-    // code: 782 measurements with 72 FAIL, including the tautology
-    // `inverse-fg on --c-bg-secondary: 1.000`, because a fallback for the
-    // DEFAULT colour is not a colour a program can select on its own. Under the
-    // -ink/-fill names the report reads 704 with 0 FAIL.
+    // css-contrast.py parses it out of this file. Naming the inverse fallbacks
+    // `.ansi-inverse-fg` / `-bg` made the report treat them as a 17th code,
+    // including the tautology `inverse-fg on --c-bg-secondary: 1.000`, because a
+    // fallback for the DEFAULT colour is not a colour a program can select on
+    // its own. The script now matches an alternation over the 16 real names
+    // rather than the `-fg`/`-bg` SHAPE, so a future non-palette class cannot
+    // repeat that; this rule stays because the namespace is what makes the
+    // alternation legible, and belt-and-braces is cheap on a defect that landed
+    // once already.
     //
     // ONE PROPERTY EACH: a rule setting both would also match a HALF-explicit
     // inverse and override the swapped palette class on the side that did have a
@@ -199,14 +230,14 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
     }
   });
 
-  it("clears 4.5:1 for every ink on both surfaces it renders on, in both themes", () => {
-    // ONE surface is traced now: a tool card's `.tool-output pre` resolves to
-    // --c-bg-secondary via `.tool-call`. Agent command output moved into the card
-    // that spawned it, so `.agent-term-pane` and its --c-term-bg are gone; the
-    // report still measures that token as a second surface, which makes this a
-    // stricter check than the app needs rather than a wrong one. Tightening
-    // ANSI_SURFACES to one entry is a css-contrast.py change and would drop the
-    // count below to 32.
+  it("clears 4.5:1 for every ink on the surface it renders on, in both themes", () => {
+    // ONE surface, traced rather than assumed: a tool card's `.tool-output pre`
+    // paints nothing and resolves to --c-bg-secondary via `.tool-call`. Agent
+    // command output moved into the card that spawned it, so `.agent-term-pane`
+    // and its --c-term-bg are gone, and the live shell panel is not a second
+    // surface either — web-terminal-engine paints each run from server-resolved
+    // RGB inline and reads none of these tokens. ANSI_SURFACES is one entry now,
+    // which is why this count is 32 rather than 64.
     const misses = rows()
       .filter((r) => r.kind === "fg-surface" && r.floor !== null && r.ratio < r.floor)
       .map(
@@ -214,12 +245,12 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
       );
     expect(
       misses,
-      "an ANSI foreground is body text, so WCAG 1.4.3's 4.5:1 applies on every " +
-        "surface it can land on — and the same class set lands on both.",
+      "an ANSI foreground is body text, so WCAG 1.4.3's 4.5:1 applies on the " +
+        "surface it lands on — which is also the surface the generator lifts against.",
     ).toEqual([]);
     // Coverage, so a filter that silently matched nothing cannot pass this.
     const checked = rows().filter((r) => r.kind === "fg-surface");
-    expect(checked.length, "16 codes x 2 surfaces x 2 themes").toBe(64);
+    expect(checked.length, "16 codes x 1 surface x 2 themes").toBe(32);
   });
 
   it("clears 4.5:1 for every ink-on-fill pair a program can select", () => {
@@ -243,9 +274,12 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
 
   it("clears 4.5:1 for the container's own ink on every fill", () => {
     // The other half of the pairing, and the one easy to forget: `ESC[41m` with
-    // no colour set arrives as a fill with the CONTAINER's ink on it —
-    // --c-text-secondary in a tool card, and --c-term-fg kept beside it as the
-    // live terminal's default ink.
+    // no colour set arrives as a fill with the CONTAINER's ink on it, which is
+    // --c-text-secondary in a tool card. --c-term-fg left this set with
+    // --c-term-bg, for the same reason: it is the live terminal's ink and the
+    // live terminal paints no ANSI fill. It was never binding either — lighter
+    // than every legal dark fill, darker than every legal light one — so the
+    // derived fills are byte-identical with or without it.
     const misses = rows()
       .filter((r) => r.kind === "ink-fill" && r.floor !== null && r.ratio < r.floor)
       .map((r) => `${r.theme} ${r.name} on ${r.context}: ${String(r.ratio)}:1`);
@@ -259,10 +293,10 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
   it("measures no exit-status footer, because there is no longer one to paint", () => {
     // `.agent-term-status` was the agent-terminal pane's "exited (code N)" line
     // and the pane is gone: the card's own status glyph carries the outcome now,
-    // so a second rendering of it would be a second thing to keep true. The
-    // report finds the rules by reading this stylesheet, so its `status` section
-    // empties out on its own — asserted rather than deleted so the rule cannot
-    // creep back in without a reader.
+    // so a second rendering of it would be a second thing to keep true. The rule
+    // never lived in 15-ansi.css, so the report's parser could not have found it
+    // whatever happened; the parser, the section and ANSI_STATUS_OPACITY are all
+    // deleted, and this asserts they stay deleted.
     expect(rows().filter((r) => r.kind === "status")).toEqual([]);
   });
 
@@ -274,10 +308,10 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
     // anyone who moves the surface ramp sees these numbers move rather than
     // discovering the trade by eye.
     const recorded = rows().filter((r) => r.kind === "fill-surface");
-    expect(recorded.length, "16 fills x 2 surfaces x 2 themes").toBe(64);
+    expect(recorded.length, "16 fills x 1 surface x 2 themes").toBe(32);
     expect(
       recorded.every((r) => r.floor === null),
-      "these are recorded, not gated — gating them would be 64 standing failures",
+      "these are recorded, not gated — gating them would be 32 standing failures",
     ).toBe(true);
     // If one ever reaches 3:1 the trade has changed and the comments are stale.
     const surprising = recorded
@@ -288,6 +322,130 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
       "a fill reaching 3:1 against its surface would mean the arithmetic in " +
         "01-tokens.css is wrong — good news, but the comment needs rewriting.",
     ).toEqual([]);
+  });
+
+  it("ships exactly what the generator derives — a hand-edited token fails here", () => {
+    // The 32 --c-term-* values are GENERATED (scripts/css-ansi-palette.py) rather
+    // than typed, because 32 values across two themes typed by hand is where an
+    // arithmetic error hides and a surface change has to be re-derived rather
+    // than re-guessed. `check` re-derives and diffs against 01-tokens.css, so an
+    // edit made without re-running the generator is this failure. Same shape as
+    // theme-init-snippet.test.ts's drift guard and cmd/wire-codegen's determinism
+    // check: the generator is the source, the file is its output.
+    const out = execFileSync("python3", [generator, "check"], { encoding: "utf8" });
+    expect(out.trim(), "01-tokens.css drifted from scripts/css-ansi-palette.py").toBe("0 drifted");
+  });
+
+  it("anchors layer 1 on kitty's published palette, unaltered", () => {
+    // The DEFERRAL itself, stated independently of the generator so that editing
+    // its KITTY table is a test failure rather than a silent redefinition of what
+    // vibekit defers to. Source: kitty/options/definition.py color0-color15, the
+    // same table web-terminal-engine's vt/wire.go basic16RGB resolves indices
+    // 0-15 to. This is the one place a literal palette copy is right — it is a
+    // claim about an external reference, not a second declaration of what ships.
+    const KITTY = [
+      "#000",
+      "#cc0403",
+      "#19cb00",
+      "#cecb00",
+      "#0d73cc",
+      "#cb1ed1",
+      "#0dcdcd",
+      "#ddd",
+      "#767676",
+      "#f2201f",
+      "#23fd00",
+      "#fffd00",
+      "#1a8fff",
+      "#fd28ff",
+      "#14ffff",
+      "#fff",
+    ];
+    const table = tableRows();
+    expect(table.length, "16 codes x 2 roles x 2 themes").toBe(64);
+    for (const theme of ["dark", "light"]) {
+      for (const role of ["ink", "fill"]) {
+        const seen = table.filter((r) => r[0] === theme && r[1] === role).map((r) => r[3]);
+        expect(seen, `${theme} ${role} must be anchored on kitty's 16`).toEqual(KITTY);
+      }
+    }
+  });
+
+  it("lifts only what fails, and every ink clears the floor after the lift", () => {
+    // Layer 2's two properties in one place. The floor is the engine's: every
+    // lifted ink clears 4.5:1 on the surface it renders on, which is also what
+    // WithMinimumContrast enforces in web-terminal-server. And the lift is
+    // MINIMAL, so the common case is kitty's actual colour — 10 of 16 in dark.
+    //
+    // The counts are per ORIGIN rather than a lifted yes/no, because the four
+    // light achromatic inks are neither kitty's value nor the engine's function
+    // applied to it: they are authored in the generator (next test). A boolean
+    // would file them under the lift, which is the one claim about them that is
+    // false. `kitty` here means byte-exact — light keeps two, `black` and `red`.
+    const rowsOf = tableRows();
+    const under = rowsOf.filter((r) => Number(r[6]) < 4.5).map((r) => `${r[0]} ${r[2]}: ${r[6]}:1`);
+    expect(under, "every derived value must clear the floor it was derived for").toEqual([]);
+    const count = (theme: string, src: string): number =>
+      rowsOf.filter((r) => r[0] === theme && r[1] === "ink" && r[5] === src).length;
+    expect(count("dark", "kitty"), "dark: kitty's own colour on 10 of 16").toBe(10);
+    expect(count("light", "kitty"), "light: only black and red are byte-exact kitty").toBe(2);
+    expect(count("light", "authored"), "light: white, bright-black, bright-white").toBe(3);
+    expect(
+      count("dark", "authored"),
+      "dark keeps three distinct achromatic levels under the lift, so it is not " +
+        "authored — the asymmetry is the decision, not an oversight",
+    ).toBe(0);
+  });
+
+  it("keeps the four light achromatic codes distinct and in contrast order", () => {
+    // THE REGRESSION THIS PIN EXISTS FOR, and no floor can catch it. The lift stops
+    // at the smallest blend clearing 4.5:1, which is a FIXED target luminance, so
+    // on a light card every entry starting lighter than that converges on it:
+    // `white`, `bright-black` and `bright-white` all arrived at #666. All three
+    // cleared the floor, so nothing failed — ESC[90m (de-emphasis) and ESC[97m
+    // (emphasis) simply rendered as one colour. Only the ORDER catches that.
+    //
+    // The order is the lightness each code ASKS for, inverted into contrast against
+    // a light card: ESC[30m asks for black, the loudest thing available here, and
+    // ESC[97m asks for white, which is invisible and must therefore be darkened
+    // LEAST of the four — so the quietest legible grey is the honest rendering of
+    // "bright white". Achromatic is asserted too: these four carry no hue, and
+    // inventing one would be a worse answer than the collapse.
+    const ORDER = ["black", "bright-black", "white", "bright-white"];
+    const byToken = new Map(
+      tableRows()
+        .filter((r) => r[0] === "light" && r[1] === "ink")
+        .map((r) => [r[2], r]),
+    );
+    const ramp = ORDER.map((name) => {
+      const row = byToken.get(`--c-term-${name}`);
+      expect(row, `light --c-term-${name} must be in the generator's table`).toBeDefined();
+      return { name, hex: row![4]!, ratio: Number(row![6]) };
+    });
+
+    for (const step of ramp) {
+      const [r, g, b] = expandHex(step.hex);
+      expect(
+        [r === g, g === b],
+        `${step.name} must stay achromatic — ${step.hex} has unequal channels`,
+      ).toEqual([true, true]);
+      expect(step.ratio, `${step.name} must clear the floor`).toBeGreaterThanOrEqual(4.5);
+    }
+
+    expect(
+      new Set(ramp.map((s) => s.hex)).size,
+      `the four light achromatic codes collapsed: ${ramp.map((s) => `${s.name}=${s.hex}`).join(", ")}`,
+    ).toBe(4);
+
+    const gaps = ramp.slice(1).map((s, i) => ramp[i]!.ratio - s.ratio);
+    expect(
+      gaps.every((g) => g > 0),
+      `contrast must fall monotonically across ${ORDER.join(" > ")}: ` +
+        ramp.map((s) => `${s.name} ${String(s.ratio)}`).join(", "),
+    ).toBe(true);
+    // A gap this small would be a compression back toward the collapse rather than
+    // a ramp. Measured today: 4.015, 4.867, 3.153 against a floor of 1.5.
+    expect(Math.min(...gaps), `adjacent steps too close: ${gaps.join(", ")}`).toBeGreaterThan(1.5);
   });
 
   it("cannot pass vacuously — the tool still reports a miss, and its verdicts are computed", () => {

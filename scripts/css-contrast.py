@@ -975,37 +975,49 @@ def show_shadow(themes: list[Theme]) -> None:
 
 # ------------------------------------------------------------- the ANSI palette
 #
-# The two surfaces ansi_up output actually renders on, established by tracing the
-# three call sites rather than assumed:
+# ONE surface, established by tracing the call sites rather than assumed:
+# tool-card.ts and messages-tools.ts both write into `.tool-output pre`, which
+# paints nothing; the nearest painting ancestor is `.tool-call` (14-tools.css) at
+# --c-bg-secondary. It is OPAQUE, so it needs no compositing.
 #
-#   tool-card.ts / messages-tools.ts write into `.tool-output pre`, which paints
-#   nothing; the nearest painting ancestor is `.tool-call` (14-tools.css) at
-#   --c-bg-secondary.
-#   agent-terminal.ts writes into `pre.agent-term-output`, which paints nothing;
-#   its parent `.agent-term-pane` (61-mcp-tools.css) is --c-term-bg.
-#
-# Both are OPAQUE, so neither needs compositing. --c-bg-primary and --c-code-bg —
-# the two this section used to measure — are neither of them: the page base is two
-# ramp rungs below where ANSI renders, and --c-code-bg is scoped inside the
+# There is no second surface. `.agent-term-pane` at --c-term-bg was one until
+# agent command output moved into the card that spawned it and agent-terminal.ts
+# was deleted; the live shell panel is not a replacement, because
+# web-terminal-engine paints each ANSI run inline from server-resolved RGB and
+# reads none of these tokens. Measuring --c-term-bg anyway was a stricter check
+# than the app needs, which is a different thing from a correct one: it asserts a
+# floor against a surface no ANSI class can land on, so a future palette could be
+# blocked by a constraint nothing enforces. --c-bg-primary and --c-code-bg were
+# measured here even earlier and were wrong in the other direction — the page base
+# is two ramp rungs below where ANSI renders, and --c-code-bg is scoped inside the
 # assistant prose bubble, which a tool card is a SIBLING of.
-ANSI_SURFACES = ("--c-bg-secondary", "--c-term-bg")
+ANSI_SURFACES = ("--c-bg-secondary",)
 
-# The ink each of those containers sets. A bare `ESC[41m` arrives with a fill and
-# no colour of its own, so the container's ink is what lands on it.
-ANSI_INKS = {
-    "--c-text-secondary": "--c-bg-secondary",
-    "--c-term-fg": "--c-term-bg",
-}
-
-# `.agent-term-status` is a child of `.agent-term-pane` and carries opacity 0.85,
-# so what a reader sees is the token COMPOSITED over --c-term-bg.
-ANSI_STATUS_OPACITY = 0.85
+# The ink that container sets. A bare `ESC[41m` arrives with a fill and no colour
+# of its own, so the container's ink is what lands on it. --c-term-fg sat here as
+# the live terminal's default ink and left with --c-term-bg for the same reason;
+# it was never binding either way (it is lighter than every legal dark fill and
+# darker than every legal light one), so the derived fills are unchanged.
+ANSI_INKS = {"--c-text-secondary": "--c-bg-secondary"}
 
 ANSI_FG_FLOOR = 4.5
 ANSI_PAIR_FLOOR = 4.5
 
+# The 16 ANSI codes, spelled out rather than matched by shape. A `.ansi-*-fg` /
+# `-bg` pattern already admitted a 17th entry once: `.ansi-inverse-fg` / `-bg` are
+# fallbacks for the DEFAULT colour, not a code a program can select, and they
+# arrived here as a palette entry measuring --c-bg-secondary against itself at
+# 1.000:1. Renaming them to -ink/-fill fixed that instance; an alternation is what
+# makes the next one impossible. The count assertions in ansi-palette.test.ts keep
+# this list honest in the other direction.
+ANSI_CODES = (
+    "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+    "bright-black", "bright-red", "bright-green", "bright-yellow",
+    "bright-blue", "bright-magenta", "bright-cyan", "bright-white",
+)  # fmt: skip
 
-def parse_ansi_sheet() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+
+def parse_ansi_sheet() -> tuple[dict[str, str], dict[str, str]]:
     """Read css/15-ansi.css and return its declared expressions.
 
     PARSED, not restated. This used to be two hardcoded dicts mirroring the
@@ -1013,23 +1025,20 @@ def parse_ansi_sheet() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     `#000` here long after `.ansi-black-bg` moved to a token, so the section
     reported a colour the app had stopped painting. A duplicated palette is the
     defect this whole section exists to measure, so the report may not keep its
-    own copy.
+    own copy. Only the class NAMES are enumerated (ANSI_CODES), which is a
+    different kind of claim from a colour.
     """
     src = re.sub(r"/\*.*?\*/", " ", ANSI_SHEET.read_text(), flags=re.S)
     fg: dict[str, str] = {}
     bg: dict[str, str] = {}
-    for m in re.finditer(r"\.ansi-([\w-]+)-(fg|bg)\s*\{([^}]*)\}", src):
+    codes = "|".join(re.escape(c) for c in ANSI_CODES)
+    for m in re.finditer(rf"\.ansi-({codes})-(fg|bg)\s*\{{([^}}]*)\}}", src):
         name, role, body = m.group(1), m.group(2), m.group(3)
         prop = "color" if role == "fg" else "background-color"
         v = re.search(rf"(?<![-\w]){prop}\s*:\s*([^;]+)", body)
         if v:
             (fg if role == "fg" else bg)[name] = v.group(1).strip()
-    status: dict[str, str] = {}
-    for m in re.finditer(r"\.agent-term-status\.(is-\w+)\s*\{([^}]*)\}", src):
-        v = re.search(r"(?<![-\w])color\s*:\s*([^;]+)", m.group(2))
-        if v:
-            status[m.group(1)] = v.group(1).strip()
-    return fg, bg, status
+    return fg, bg
 
 
 def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Colour, float, float]]:
@@ -1037,7 +1046,7 @@ def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Col
 
     A floor of 0 means "recorded, not gated" — see the fill-vs-surface trade.
     """
-    fgs, bgs, status = parse_ansi_sheet()
+    fgs, bgs = parse_ansi_sheet()
     rows = []
     for th in themes:
         # A foreground is text on whichever container it landed in.
@@ -1057,7 +1066,7 @@ def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Col
                      contrast(f, b), ANSI_PAIR_FLOOR)
                 )
         # A fill with no ANSI foreground: the container's own ink lands on it.
-        for ink, _ in ANSI_INKS.items():
+        for ink in ANSI_INKS:
             for bname, bexpr in bgs.items():
                 f, b = th.colour(ink), th.resolve(bexpr)
                 rows.append(
@@ -1065,12 +1074,12 @@ def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Col
                      contrast(f, b), ANSI_PAIR_FLOOR)
                 )
         # A fill against the surface it marks. RECORDED, NOT GATED, and the
-        # reason is arithmetic: carrying the darkest ink at 4.5:1 caps a dark
-        # fill at luminance 0.0288 while --c-bg-secondary sits at 0.0206, so the
-        # lightest legal fill lands ~1.07:1 against the surface. 3:1 here and
-        # 4.5:1 above cannot both hold unless the inks flatten to near-white,
+        # reason is arithmetic: carrying the darkest ink at 4.5:1 pins a fill
+        # PAST --c-bg-secondary's own luminance, so the fills land between
+        # 1.00:1 and 1.41:1 against the surface. 3:1 here and 4.5:1 above cannot
+        # both hold unless the inks flatten toward the surface's own extreme,
         # and the conflict survives even at a 3:1 pairing floor. Gating it would
-        # put 64 permanent failures in this report for a floor no palette that
+        # put 32 permanent failures in this report for a floor no palette that
         # keeps its hues can reach.
         for bname, bexpr in bgs.items():
             for s in ANSI_SURFACES:
@@ -1079,29 +1088,25 @@ def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Col
                     ("fill-surface", th.name, f"{bname}-bg", s, b, surf,
                      contrast(b, surf), 0.0)
                 )
-        # The exit-status footer, composited through its own opacity.
-        for cls, expr in status.items():
-            c = th.resolve(expr)
-            surf = th.flat("--c-term-bg")
-            comp = Colour(c.r, c.g, c.b, ANSI_STATUS_OPACITY).over(surf)
-            rows.append(
-                ("status", th.name, f"agent-term-status.{cls}", "--c-term-bg", comp, surf,
-                 contrast(comp, surf), ANSI_FG_FLOOR)
-            )
     return rows
 
 
 def show_ansi(themes: list[Theme]) -> None:
-    fgs, bgs, status = parse_ansi_sheet()
+    fgs, bgs = parse_ansi_sheet()
     print("ANSI PALETTE (css/15-ansi.css, read from the stylesheet itself).")
     print()
+    print("The 32 --c-term-* values behind these classes are GENERATED — kitty's")
+    print("default palette lifted by web-terminal-engine's own contrast rule. Run")
+    print("`css-ansi-palette.py table` for the kitty-vs-shipped audit; this section")
+    print("only measures the floors, and does so through the stylesheet, so it")
+    print("cannot agree with the generator by construction.")
+    print()
     print("Two ramps, because a colour that reads AS text and a colour that CARRIES")
-    print("text cannot be the same colour. Four checks are GATED: an ink on each of")
-    print("the two surfaces it renders on (4.5:1), an ink on every fill (4.5:1 —")
-    print("what ESC[34;40m renders), the container's own ink on every fill (4.5:1 —")
-    print("the bare ESC[41m case), and the exit-status footer through its opacity.")
-    print("A fill against the surface it marks is RECORDED, NOT GATED: see the")
-    print("trade at the end.")
+    print("text cannot be the same colour. Three checks are GATED: an ink on the one")
+    print("surface it renders on (4.5:1), an ink on every fill (4.5:1 — what")
+    print("ESC[34;40m renders), and the container's own ink on every fill (4.5:1 —")
+    print("the bare ESC[41m case). A fill against the surface it marks is RECORDED,")
+    print("NOT GATED: see the trade at the end.")
     print()
     literals = [n for n, e in {**fgs, **bgs}.items() if "var(" not in e]
     if literals:
@@ -1113,7 +1118,6 @@ def show_ansi(themes: list[Theme]) -> None:
         ("fg-surface", "INK vs THE SURFACE IT RENDERS ON (floor 4.5:1)"),
         ("fg-fill", "INK ON FILL — every pair a program can select (floor 4.5:1)"),
         ("ink-fill", "CONTAINER INK ON FILL — a fill with no ANSI ink (floor 4.5:1)"),
-        ("status", "EXIT-STATUS FOOTER, composited at opacity 0.85 (floor 4.5:1)"),
     ):
         group = [r for r in rows if r[0] == kind]
         print(f"  {title}")
@@ -1139,24 +1143,10 @@ def show_ansi(themes: list[Theme]) -> None:
             f"{fmt(hi[6])}:1 ({hi[2]} on {hi[3]})"
         )
     print("    A region marker would want 3:1 and cannot have it: a fill that carries")
-    print("    the darkest ink at 4.5:1 is pinned to the surface's own luminance. So a")
-    print("    fill WITH text on it is fully legible and a TEXTLESS coloured region is")
-    print("    quiet. That is .ansi-black-bg's old trade, now general — and measured")
+    print("    the darkest ink at 4.5:1 is pinned past the surface's own luminance. So")
+    print("    a fill WITH text on it is fully legible and a TEXTLESS coloured region")
+    print("    is quiet. That is .ansi-black-bg's old trade, now general — and measured")
     print("    against --c-bg-secondary, which is where this palette actually renders.")
-    print()
-    print("  HUE FIDELITY — the angle every chromatic entry was authored at.")
-    for th in themes:
-        drift = []
-        for name, expr in {**{f"{k}-fg": v for k, v in fgs.items()},
-                           **{f"{k}-bg": v for k, v in bgs.items()}}.items():
-            c = th.resolve(expr)
-            _, chroma, hue = colour_to_oklch(c)
-            if chroma < 0.005:
-                continue
-            want = re.search(r"([\d.]+)deg", th.decls.get(re.sub(r"^.*var\((--[\w-]+)\).*$", r"\1", expr), ""))
-            if want and abs(((hue - float(want.group(1)) + 180) % 360) - 180) > 0.5:
-                drift.append(f"{name} {want.group(1)}->{hue:.1f}")
-        print(f"    {th.name:<6} " + (", ".join(drift) if drift else "every chromatic angle exact"))
     print()
 
 

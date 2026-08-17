@@ -162,102 +162,100 @@
     --c-hl-string: oklch(75% 0.14 145deg);
     --c-hl-number: oklch(78% 0.13 60deg);
 
-    /* ---- SEEDS: terminal 16-colour ANSI palette + surfaces ----------------
+    /* ---- SEEDS: the live terminal's own surfaces ---------------------------
      * --c-term-bg / --c-term-fg reach the LIVE terminal through shell.ts's
      * SHELL_THEME, which maps them onto the engine's own --bg / --text on the
      * #shell-terminal root. That is the whole of SHELL_THEME's colour interest:
      * web-terminal-engine paints each ANSI run inline from server-resolved RGB
-     * (its render.ts `colorHex`), so it reads none of the 16 codes below and the
-     * shell panel is NOT a consumer of this palette. --c-term-bg tracks BELOW
-     * --c-bg-primary so the terminal still reads as an inset.
-     *
-     * The 16 codes are 15-ansi.css's, and they are TWO ramps rather than one
-     * value per code, because a colour that reads AS text and a colour that
-     * CARRIES text cannot be the same colour. `--c-term-<name>` is the ink;
-     * `--c-term-<name>-bg` is the fill a glyph sits on. All 32 have a consumer,
-     * so the palette is declared once now instead of twice.
-     *
-     * SWEPT, NOT PICKED — `css-contrast.py ansi` prints every figure and reads
-     * these through 15-ansi.css itself, so it cannot drift from what ships.
-     * ANSI output renders on ONE surface — --c-bg-secondary, a tool card, via
-     * `.tool-output pre` -> `.tool-call` — since agent command output moved into
-     * the card that spawned it and the agent-terminal pane went away. The report
-     * still measures --c-term-bg as a second surface, which is now a stricter
-     * check than the app needs rather than a claim about where a class lands.
-     * --c-bg-secondary BINDS in both themes —
-     * it is the lighter of the two under dark and the darker under light — so an
-     * ink clearing it clears the other for free. Held: every ink >= 4.5:1 on both
-     * surfaces; every ink >= 4.5:1 on all 16 fills (256 pairs, because a program
-     * writing ESC[34;40m renders one); and both container default inks
-     * (--c-text-secondary, --c-term-fg) >= 4.5:1 on every fill, which is the bare
-     * `ESC[41m` case where the fill arrives with no ink of its own.
-     *
-     * THE HUE ANGLES ARE FIXED POINTS. All 12 chromatic entries keep the exact
-     * angle they had; only L and C moved, and C is the most sRGB holds at that L,
-     * capped at the old seed's own chroma so nothing became more garish. These
-     * are ANSI's colours and they are read BY NAME — "red means it failed" — so
-     * flattening one toward the ink to buy contrast would delete the thing the
-     * escape code exists to say.
-     *
-     * THE TRADE, arithmetic rather than taste: a fill CANNOT both carry text at
-     * 4.5:1 and clear 3:1 against the surface behind it. Carrying the darkest ink
-     * caps a dark fill at luminance 0.0288 while --c-bg-secondary sits at 0.0206,
-     * so the lightest legal fill reads 1.07:1 against the surface it is marking
-     * and nothing in the band beats 1.55:1. Light mirrors it. The only escape is
-     * near-white inks, i.e. the flattening forbidden above, and the conflict
-     * survives even at a 3:1 pairing floor. So a fill WITH text on it is fully
-     * legible and a TEXTLESS coloured region is quiet. That generalises the trade
-     * .ansi-black-bg used to carry alone, and corrects it: that entry was
-     * measured against --c-bg-primary, which is not a surface this palette
-     * renders on.
-     *
-     * The four achromatic codes are a LIGHTNESS ramp, so they are re-anchored per
-     * theme rather than preserved: "black" ink on a near-black surface is a
-     * contradiction, not a colour. Their order survives (black -> bright-white);
-     * the light block states what that costs there. */
+     * (its render.ts `colorHex`), so it reads none of the 16 codes below — the
+     * shell panel is neither a consumer of this palette nor a surface it renders
+     * on. --c-term-bg tracks BELOW --c-bg-primary so the terminal reads as an
+     * inset. */
     --c-term-bg: oklch(10% 0.015 283deg);
     --c-term-fg: oklch(88% 0.01 283deg);
     --c-term-cursor: var(--c-term-fg);
     --c-term-cursor-accent: var(--c-term-bg);
     --c-term-selection: oklch(100% 0 none / 20%);
     --c-term-selection-inactive: oklch(100% 0 none / 10%);
-    --c-term-black: oklch(68.7% 0.01 none);
-    --c-term-red: oklch(70.7% 0.18 25deg);
-    --c-term-green: oklch(67.2% 0.14 140deg);
-    --c-term-yellow: oklch(68.8% 0.14 85deg);
-    --c-term-blue: oklch(68.3% 0.14 245deg);
-    --c-term-magenta: oklch(70.4% 0.17 315deg);
-    --c-term-cyan: oklch(67.5% 0.1 200deg);
-    --c-term-white: oklch(89.4% 0.01 none);
-    --c-term-bright-black: oklch(78.1% 0.01 none);
-    --c-term-bright-red: oklch(78.7% 0.123 25deg);
-    --c-term-bright-green: oklch(75.2% 0.14 140deg);
-    --c-term-bright-yellow: oklch(76.8% 0.14 85deg);
-    --c-term-bright-blue: oklch(76.3% 0.13 245deg);
-    --c-term-bright-magenta: oklch(78.4% 0.161 315deg);
-    --c-term-bright-cyan: oklch(75.5% 0.1 200deg);
-    --c-term-bright-white: oklch(100% 0 none);
 
-    /* The fills. Every one sits at or below the transcript surface's own
-     * luminance, which is what the pairing floor forces; the base rung is 55% of
-     * the band and the bright rung is the band itself, so "bright is lighter"
-     * survives on this side too. */
-    --c-term-black-bg: oklch(25.3% 0.01 none);
-    --c-term-red-bg: oklch(26.4% 0.107 25deg);
-    --c-term-green-bg: oklch(24.1% 0.078 140deg);
-    --c-term-yellow-bg: oklch(25.2% 0.052 85deg);
-    --c-term-blue-bg: oklch(25% 0.063 245deg);
-    --c-term-magenta-bg: oklch(26.9% 0.133 315deg);
-    --c-term-cyan-bg: oklch(24.6% 0.042 200deg);
-    --c-term-white-bg: oklch(25.3% 0.01 none);
-    --c-term-bright-black-bg: oklch(30.7% 0.01 none);
-    --c-term-bright-red-bg: oklch(32.2% 0.13 25deg);
-    --c-term-bright-green-bg: oklch(29.7% 0.096 140deg);
-    --c-term-bright-yellow-bg: oklch(30.8% 0.063 85deg);
-    --c-term-bright-blue-bg: oklch(30.5% 0.077 245deg);
-    --c-term-bright-magenta-bg: oklch(32.8% 0.161 315deg);
-    --c-term-bright-cyan-bg: oklch(30.1% 0.051 200deg);
-    --c-term-bright-white-bg: oklch(30.7% 0.01 none);
+    /* ---- SEEDS: the 16-colour ANSI palette --------------------------------
+     * GENERATED by scripts/css-ansi-palette.py. Do not hand-edit: the generator
+     * is the source of these 32 values and `css-ansi-palette.py check` fails on
+     * any divergence. 15-ansi.css reads them; css-contrast.py measures them
+     * through that stylesheet, so neither the report nor this block can drift
+     * from what ships.
+     *
+     * ANSI renders on ONE surface: --c-bg-secondary, a tool card, reached by
+     * `.tool-output pre` -> `.tool-call`. Agent command output moved into the
+     * card that spawned it, so the agent-terminal pane and its --c-term-bg are
+     * gone, and the live shell panel never reads these codes at all.
+     *
+     * DEFERRED to web-terminal-engine, in both of its layers. The slot values
+     * are kitty's published defaults (kitty/options/definition.py color0-15),
+     * which is the table the engine's vt/wire.go basic16RGB resolves 0-15 to;
+     * the 16 slots are terminal-DEFINED, so that is a palette CHOICE, and kitty
+     * is the reference because it is the only widely-used terminal whose default
+     * background is pure black — web-terminal-ui's default too. Deferring is
+     * what makes SGR 34 the same blue here, in the shell panel two panes away,
+     * and in both sibling apps.
+     *
+     * Not byte-identical to that table, and the difference has one cause: the
+     * engine's SECOND layer. vt/contrast.go ensureContrast blends a foreground
+     * toward white or black, away from the background, until it clears 4.5:1,
+     * and never touches the background; web-terminal-server sets that floor.
+     * kitty's 16 clear it on only 13 slots against pure black and 10 against the
+     * transcript card, so identity without the lift is text nobody can read. The
+     * engine lifts per RUN at render time. A custom property holds one value and
+     * the server does not know the client's theme, so the lift is applied
+     * offline and baked in here — only to the entries that FAIL, and only as far
+     * as needed, which is why most of this ramp is kitty's actual colour.
+     */
+    --c-term-black: #8e8e8e;
+    --c-term-red: #e16968;
+    --c-term-green: #19cb00;
+    --c-term-yellow: #cecb00;
+    --c-term-blue: #4493d8;
+    --c-term-magenta: #d858dd;
+    --c-term-cyan: #0dcdcd;
+    --c-term-white: #ddd;
+    --c-term-bright-black: #8e8e8e;
+    --c-term-bright-red: #f55756;
+    --c-term-bright-green: #23fd00;
+    --c-term-bright-yellow: #fffd00;
+    --c-term-bright-blue: #1a8fff;
+    --c-term-bright-magenta: #fd28ff;
+    --c-term-bright-cyan: #14ffff;
+    --c-term-bright-white: #fff;
+
+    /* The fills. The engine has no second ramp and needs none — it lifts the ink
+     * against whatever background is really there, an ANSI one included. CSS
+     * cannot pair-match, and one ramp measures 256 of 256 pairs under 4.5:1
+     * (`ESC[31;41m` is red on red), so the fills are derived by the same
+     * machinery with the roles swapped: the fill moves, away from the ink set,
+     * until every ink clears 4.5:1 on it.
+     *
+     * The consequence is arithmetic, not taste. Carrying the darkest ink pins a
+     * fill past the surface's own luminance, so against the surface these read
+     * 1.001:1 .. 1.413:1 — a fill WITH text on it is fully legible and a TEXTLESS
+     * coloured region is quiet. css-contrast.py records that figure without
+     * gating it, because gating it would be 32 standing failures for a floor no
+     * palette that keeps its hues can reach. */
+    --c-term-black-bg: #000;
+    --c-term-red-bg: #560201;
+    --c-term-green-bg: #062e00;
+    --c-term-yellow-bg: #292800;
+    --c-term-blue-bg: #052848;
+    --c-term-magenta-bg: #470b49;
+    --c-term-cyan-bg: #032c2c;
+    --c-term-white-bg: #272727;
+    --c-term-bright-black-bg: #272727;
+    --c-term-bright-red-bg: #520b0b;
+    --c-term-bright-green-bg: #062e00;
+    --c-term-bright-yellow-bg: #292900;
+    --c-term-bright-blue-bg: #072848;
+    --c-term-bright-magenta-bg: #470b48;
+    --c-term-bright-cyan-bg: #032c2c;
+    --c-term-bright-white-bg: #272727;
 
     /* ======================================================================
        DERIVED. Everything below is authored ONCE and is correct in both
@@ -683,56 +681,80 @@
     --c-term-selection: oklch(0% 0 none / 15%);
     --c-term-selection-inactive: oklch(0% 0 none / 8%);
 
-    /* The ANSI inks, same 12 hue angles, deepened until they clear 4.5:1 on
-     * --c-bg-secondary (a light card at luminance 0.7782 — the binding surface
-     * here, not the near-white --c-term-bg the retired seeds were tuned for,
-     * which is why 11 of the old 16 failed).
+    /* The ANSI palette against the LIGHT card. The 12 CHROMATIC entries are the
+     * same deferral: 11 of them lift here against 6 in dark, because kitty's
+     * slots are chosen for a pure-black background and a light surface is the
+     * opposite end. They keep their hue and lose their brightness — blending
+     * toward black scales all three channels, so the angle survives while yellow
+     * arrives as an olive. A light surface has only the dark half of the range
+     * available for text; that is the cost of a light theme, not of this table.
      *
-     * The achromatic four INVERT, and this is the conventional loss worth naming:
-     * a light theme has only the dark half of the ramp available for text, so
-     * `white` and `bright-white` cannot be light. They keep their ORDER — black is
-     * still the darkest and bright-white the lightest of the four — which means
-     * bright-white is now the QUIETEST rather than the loudest, so ESC[97m used
-     * for emphasis reads softer than ESC[30m. The alternative was inverting the
-     * ramp so bright-white became the strongest ink, which fixes emphasis and
-     * breaks ESC[30m — and black-as-dark-text is the far commoner case, since it
-     * is what every program pairing ESC[30m with a light background wants. */
-    --c-term-black: oklch(8% 0.01 none);
-    --c-term-red: oklch(41.2% 0.167 25deg);
-    --c-term-green: oklch(37.7% 0.121 140deg);
-    --c-term-yellow: oklch(39.4% 0.08 85deg);
-    --c-term-blue: oklch(38.9% 0.098 245deg);
-    --c-term-magenta: oklch(41.2% 0.17 315deg);
-    --c-term-cyan: oklch(38.3% 0.065 200deg);
-    --c-term-white: oklch(36.2% 0.01 none);
-    --c-term-bright-black: oklch(21.3% 0.01 none);
-    --c-term-bright-red: oklch(49.2% 0.18 25deg);
-    --c-term-bright-green: oklch(45.7% 0.14 140deg);
-    --c-term-bright-yellow: oklch(47.4% 0.097 85deg);
-    --c-term-bright-blue: oklch(46.9% 0.118 245deg);
-    --c-term-bright-magenta: oklch(49.2% 0.17 315deg);
-    --c-term-bright-cyan: oklch(46.3% 0.078 200deg);
-    --c-term-bright-white: oklch(47.2% 0.01 none);
+     * The four ACHROMATIC entries are AUTHORED here, and they are the only values
+     * in either theme that are neither kitty's nor the engine's function applied
+     * to kitty's. Deferring cost more than it bought: kitty defines those four by
+     * LIGHTNESS alone, a light card can use none of it, and the lift drove white,
+     * bright-black and bright-white onto ONE grey, because it stops at the
+     * smallest blend clearing the floor and that is a fixed target luminance. So
+     * ESC[90m (de-emphasis) and ESC[97m (emphasis) rendered identically, which
+     * deletes a distinction rather than washing one out, and #666 preserved no
+     * part of 0xdddddd — there was no hue left to defer to.
+     *
+     * The ramp is even steps in kitty's own 8-bit space, from color0 (which
+     * clears at 16.6:1 unaided) to the darkest grey the floor allows, ordered by
+     * the lightness each code ASKED for: on a light background ESC[30m asks for
+     * the loudest thing available and ESC[97m asks for something invisible, so
+     * the quietest legible grey is the honest rendering of "bright white".
+     *
+     * DARK is left alone deliberately. There the lift collapses `black` onto
+     * `bright-black`, and both of those ask for something too dark to read on a
+     * dark card, so one answer for both is honest; `white` and `bright-white`
+     * keep kitty's spread, so three distinct levels survive. Light had one.
+     */
+    --c-term-black: #000;
+    --c-term-red: #cc0403;
+    --c-term-green: #0f7700;
+    --c-term-yellow: #6b6900;
+    --c-term-blue: #0c67b7;
+    --c-term-magenta: #b01ab5;
+    --c-term-cyan: #077272;
+    --c-term-white: #444;
+    --c-term-bright-black: #222;
+    --c-term-bright-red: #c91b1a;
+    --c-term-bright-green: #107700;
+    --c-term-bright-yellow: #6a6900;
+    --c-term-bright-blue: #1367b8;
+    --c-term-bright-magenta: #b11cb2;
+    --c-term-bright-cyan: #097272;
+    --c-term-bright-white: #666;
 
-    /* The fills invert with the inks: a fill that carries dark text has to be
-     * light, so ESC[40m ("black background") is the DARKEST light fill rather
-     * than a dark region. Same arithmetic as dark's — a fill dark enough to mark
-     * a region here cannot carry this theme's inks at all. */
-    --c-term-black-bg: oklch(88.2% 0.01 none);
-    --c-term-red-bg: oklch(88.8% 0.058 25deg);
-    --c-term-green-bg: oklch(86.7% 0.14 140deg);
-    --c-term-yellow-bg: oklch(88.3% 0.127 85deg);
-    --c-term-blue-bg: oklch(87.9% 0.063 245deg);
-    --c-term-magenta-bg: oklch(88.8% 0.079 315deg);
-    --c-term-cyan-bg: oklch(87% 0.1 200deg);
-    --c-term-white-bg: oklch(88.2% 0.01 none);
-    --c-term-bright-black-bg: oklch(93.4% 0.01 none);
-    --c-term-bright-red-bg: oklch(93.5% 0.032 25deg);
-    --c-term-bright-green-bg: oklch(91.8% 0.14 140deg);
-    --c-term-bright-yellow-bg: oklch(93.2% 0.072 85deg);
-    --c-term-bright-blue-bg: oklch(93.1% 0.035 245deg);
-    --c-term-bright-magenta-bg: oklch(93.6% 0.044 315deg);
-    --c-term-bright-cyan-bg: oklch(92.2% 0.098 200deg);
-    --c-term-bright-white-bg: oklch(93.4% 0.01 none);
+    /* The fills. The engine has no second ramp and needs none — it lifts the ink
+     * against whatever background is really there, an ANSI one included. CSS
+     * cannot pair-match, and one ramp measures 256 of 256 pairs under 4.5:1
+     * (`ESC[31;41m` is red on red), so the fills are derived by the same
+     * machinery with the roles swapped: the fill moves, away from the ink set,
+     * until every ink clears 4.5:1 on it.
+     *
+     * The consequence is arithmetic, not taste. Carrying the darkest ink pins a
+     * fill past the surface's own luminance, so against the surface these read
+     * 1.000:1 .. 1.268:1 — a fill WITH text on it is fully legible and a TEXTLESS
+     * coloured region is quiet. css-contrast.py records that figure without
+     * gating it, because gating it would be 32 standing failures for a floor no
+     * palette that keeps its hues can reach. */
+    --c-term-black-bg: #e5e5e5;
+    --c-term-red-bg: #f8dfdf;
+    --c-term-green-bg: #c1f1ba;
+    --c-term-yellow-bg: #eae991;
+    --c-term-blue-bg: #d5e7f6;
+    --c-term-magenta-bg: #f7ddf8;
+    --c-term-cyan-bg: #b4f0f0;
+    --c-term-white-bg: #e5e5e5;
+    --c-term-bright-black-bg: #e5e5e5;
+    --c-term-bright-red-bg: #fddddd;
+    --c-term-bright-green-bg: #8cfe7a;
+    --c-term-bright-yellow-bg: #fffd00;
+    --c-term-bright-blue-bg: #d0e8ff;
+    --c-term-bright-magenta-bg: #ffd9ff;
+    --c-term-bright-cyan-bg: #14ffff;
+    --c-term-bright-white-bg: #fff;
   }
 } /* @layer tokens */
