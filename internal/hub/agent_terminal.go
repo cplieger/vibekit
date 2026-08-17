@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/procgroup"
 )
@@ -32,20 +33,81 @@ import (
 // exit status (KAS zTerminalExitStatus {exitCode?, signal?}).
 const keySignal = "signal"
 
+// terminalDrainGrace bounds how long awaitTerminalExit waits for the output
+// pipe to reach EOF AFTER the process has exited, before it force-closes the
+// read end. Only a grandchild still holding the write end can reach it. Matches
+// cmd.WaitDelay, which bounds the mirror case inside Wait.
+const terminalDrainGrace = 2 * time.Second
+
 // agentTerminal is one headless subprocess spawned by kiro-cli.
 type agentTerminal struct {
 	exitErr error
 	cmd     *exec.Cmd
 	done    chan struct{}
 	output  *byteRing
-	chatID  api.ChatID
-	signal  string
+	// ansi carries SGR state and any incomplete escape across read boundaries,
+	// so a colour opened in one 4 KB chunk still applies in the next and a
+	// sequence split by the boundary never leaks bytes into the text. It also
+	// owns the running UTF-16 offset the wire reports as a chunk's base, which
+	// is why nothing here keeps a second count of the same quantity. Used only
+	// for the LIVE stream; the durable copy is re-parsed from the ring.
+	//
+	// Owned by the pump goroutine alone. Read or write it from anywhere else
+	// and two streams' styles bleed together.
+	ansi   *ansitext.Parser
+	chatID api.ChatID
+	signal string
 	// turnSeq is the chat's turn sequence at creation — which TURN spawned
 	// this terminal. What lets an interrupt kill the turn's own processes
 	// without touching a background command an earlier turn left running.
 	turnSeq  uint64
 	exitCode int
 	mu       sync.Mutex
+}
+
+// newAgentTerminal builds one terminal with every field a running terminal
+// needs. A constructor rather than a struct literal because two of those fields
+// are easy to forget and the consequence is not a compile error: without `ansi`
+// the pump nil-panics on the first byte, and without `output` the agent's own
+// terminal/output pull returns nothing.
+func newAgentTerminal(cmd *exec.Cmd, chatID api.ChatID, limit int) *agentTerminal {
+	return &agentTerminal{
+		cmd:    cmd,
+		done:   make(chan struct{}),
+		output: newByteRing(limit),
+		ansi:   ansitext.NewParser(),
+		chatID: chatID,
+	}
+}
+
+// rawOutput returns a snapshot of the terminal's raw ring under the same lock
+// the pump writes it with.
+//
+// The lock is the point. The ring is written by the pump goroutine and read by
+// three callers on other goroutines (the agent's terminal/output pull, the
+// retire path, and the translate layer's adoption), and two of those run while
+// the process is still producing bytes — KAS releases a terminal a few
+// milliseconds after creating it, which is well inside a command's lifetime.
+func (t *agentTerminal) rawOutput() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.output.String()
+}
+
+// wireSpans converts the parser's spans to the wire shape. The two structs are
+// deliberately separate: internal/ansitext stays a stdlib-only leaf that owns
+// the parse, and internal/api owns every shape codegen projects into
+// TypeScript. Same boundary as the ACP wire types in internal/translate, which
+// convert into api types rather than being them.
+func wireSpans(in []ansitext.Span) []api.TextSpan {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]api.TextSpan, len(in))
+	for i, s := range in {
+		out[i] = api.TextSpan{Start: s.Start, End: s.End, FG: s.FG, BG: s.BG, Attrs: s.Attrs}
+	}
+	return out
 }
 
 // termEnvVar is one entry of the ACP terminal/create `env` array (KAS
@@ -102,10 +164,30 @@ func exitStatusFromState(st *os.ProcessState) (exitCode int, signal string) {
 	return 0, "unknown"
 }
 
-// agentTerminals holds all active terminals keyed by terminal ID.
+// agentTerminals holds all active terminals keyed by terminal ID, plus the
+// output records of terminals that have since gone away.
 type agentTerminals struct {
 	terms    map[string]*agentTerminal
 	byChatID map[api.ChatID][]string // chatID → []terminalID
+	// retired holds the RAW output of terminals no longer in terms, keyed by
+	// the same id, because a terminal's output outlives the terminal.
+	//
+	// KAS releases a terminal as soon as it has read the output, and only THEN
+	// reports the tool call's result: measured on a live run, release landed 3ms
+	// after create (23:42:13.344 → .347) while the `completed` tool_call_update
+	// came after the terminal_output frame. So a design that looks the terminal
+	// up at completion is racing a lifetime it does not control, and loses every
+	// time — the tool call persisted an empty output, which is the defect the
+	// adoption path was added to fix.
+	//
+	// Keyed by terminal id rather than tool-call id on purpose: the tool call
+	// learns its terminal id LATER still, so the id the pump has is the only one
+	// available when the bytes arrive.
+	//
+	// Bounded by the turn: every record is evicted at the turn boundary, and
+	// each holds at most one ring (64 KiB), so the peak is the turn's terminal
+	// count times that.
+	retired map[string]retiredOutput
 	// turnSeq is each chat's CURRENT turn ordinal, incremented at every
 	// turn end. A terminal stamps the value at creation, so "this turn's
 	// terminals" is a comparison rather than bookkeeping the create path
@@ -114,20 +196,84 @@ type agentTerminals struct {
 	mu      sync.Mutex
 }
 
+// retiredOutput is what survives a terminal: its raw bytes and enough identity
+// to evict the record at the right moment.
+//
+// Raw rather than rendered, because the rendered form is DERIVABLE and the ring
+// already bounds it. Keeping a second accumulator would mean a second buffer, a
+// second cap, and span offsets to rebase whenever that cap dropped bytes; the
+// ring already keeps a bounded tail, so adoption parses it on demand instead.
+//
+// A record is kept even when raw is EMPTY, and that is deliberate: the record's
+// existence is the answer to "did this terminal ever run", which is a different
+// question from "what did it print". Dropping the empty ones makes a silent
+// command (`mkdir -p`, `chmod`, a passing test runner with -q) indistinguishable
+// from a lost record, and the adoption path logs a warning on the latter — so
+// every silent command would file a false alarm and the signal would be worth
+// nothing.
+type retiredOutput struct {
+	raw     string
+	chatID  api.ChatID
+	turnSeq uint64
+}
+
 func newAgentTerminals() *agentTerminals {
 	return &agentTerminals{
 		terms:    make(map[string]*agentTerminal),
 		byChatID: make(map[api.ChatID][]string),
+		retired:  make(map[string]retiredOutput),
 		turnSeq:  make(map[api.ChatID]uint64),
 	}
+}
+
+// retire records a departing terminal's output so a later tool-call completion
+// can still adopt it. Callers hold at.mu.
+//
+// Every path that removes a terminal from `terms` goes through here, so no path
+// can forget: forgetting is silent (adoption simply finds nothing) and costs the
+// stored output of that command.
+func (at *agentTerminals) retire(id string, term *agentTerminal) {
+	if term == nil || term.output == nil {
+		return
+	}
+	at.retired[id] = retiredOutput{raw: term.rawOutput(), chatID: term.chatID, turnSeq: term.turnSeq}
+}
+
+// peekRetired returns a retired terminal's raw output WITHOUT consuming the
+// record.
+//
+// Non-destructive on purpose. KAS can send more than one terminal status frame
+// for the same tool call, and adoption runs on each: a consuming read would make
+// the second one find nothing and log "terminal output missing at completion"
+// about output that was adopted successfully a moment earlier. Leaving the record
+// in place makes adoption idempotent instead, and costs nothing — the turn
+// boundary evicts it either way.
+func (at *agentTerminals) peekRetired(id string) (string, bool) {
+	at.mu.Lock()
+	defer at.mu.Unlock()
+	rec, ok := at.retired[id]
+	if !ok {
+		return "", false
+	}
+	return rec.raw, true
 }
 
 // AdvanceTurn marks a chat's turn boundary. Called at turn end, so every
 // terminal created since the LAST call belongs to the turn now closing —
 // nothing creates agent terminals outside a turn.
+//
+// It is also when retired output records are evicted. A turn ends only after
+// every tool call in it has settled, so any record still here has had its chance
+// to be adopted; holding it longer would grow with the session.
 func (at *agentTerminals) AdvanceTurn(chatID api.ChatID) {
 	at.mu.Lock()
+	closing := at.turnSeq[chatID]
 	at.turnSeq[chatID]++
+	for id, rec := range at.retired {
+		if rec.chatID == chatID && rec.turnSeq <= closing {
+			delete(at.retired, id)
+		}
+	}
 	at.mu.Unlock()
 }
 
@@ -158,6 +304,7 @@ func (at *agentTerminals) KillForTurn(chatID api.ChatID) {
 			kept = append(kept, id)
 			continue
 		}
+		at.retire(id, term)
 		delete(at.terms, id)
 		doomed = append(doomed, term)
 	}
@@ -178,6 +325,10 @@ func (at *agentTerminals) KillForTurn(chatID api.ChatID) {
 // KillForChat kills all terminals belonging to chatID and removes them
 // from both maps. Called from cleanupChatState to prevent orphaned
 // subprocesses when a chat is deleted.
+//
+// This is the one removal path that does NOT retire the output: the chat is
+// being deleted, so there is no transcript left to adopt into. It drops any
+// record the chat already had for the same reason.
 func (at *agentTerminals) KillForChat(chatID api.ChatID) {
 	at.mu.Lock()
 	ids := at.byChatID[chatID]
@@ -191,6 +342,11 @@ func (at *agentTerminals) KillForChat(chatID api.ChatID) {
 					slog.Debug("hub: agent terminal kill failed", "id", id, "error", err)
 				}
 			}
+		}
+	}
+	for id, rec := range at.retired {
+		if rec.chatID == chatID {
+			delete(at.retired, id)
 		}
 	}
 	at.mu.Unlock()
@@ -216,7 +372,8 @@ func (at *agentTerminals) drainAll() {
 
 	// Clear maps.
 	at.mu.Lock()
-	for id := range terms {
+	for id, term := range terms {
+		at.retire(id, term)
 		delete(at.terms, id)
 	}
 	at.byChatID = make(map[api.ChatID][]string)
@@ -233,6 +390,7 @@ func (at *agentTerminals) release(terminalID string) (*agentTerminal, bool) {
 	if !ok {
 		return nil, false
 	}
+	at.retire(terminalID, term)
 	delete(at.terms, terminalID)
 	if term.chatID != "" {
 		ids := at.byChatID[term.chatID]
@@ -283,11 +441,81 @@ func (h *Hub) handleTerminalRequest(ctx context.Context, chatID api.ChatID, meth
 	}
 }
 
+// agentShell resolves the shell that runs an agent command LINE, once per
+// process. bash first (KAS names the tool `execute_bash`, and agents write
+// bash-isms: `[[ ]]`, process substitution, `${var/x/y}`), POSIX sh as the
+// fallback for an image without bash.
+var agentShell = sync.OnceValue(func() string {
+	if p, err := exec.LookPath("bash"); err == nil {
+		return p
+	}
+	return "/bin/sh"
+})
+
+// agentCommand builds the process for one terminal/create.
+//
+// ACP's CreateTerminalRequest is `{command, args?}` and KAS leaves `args`
+// UNSET, putting the whole command line in `command` — measured against
+// kiro-cli 2.18.0 (the KAS bundle's request schema marks args optional, and
+// every observed frame carried `"args":null` with the full line in `command`).
+// Handing that straight to exec.Command makes the ENTIRE string the executable
+// path, so every agent command containing a space died with
+// `exec: "echo \"hello\"": executable file not found in $PATH`. Only a bare
+// binary name or a bare path worked, which made the agent's job close to
+// impossible: no flags, no arguments, no pipelines, no redirection.
+//
+// So an ABSENT `args` means `command` is a command line and runs through a
+// shell. A PRESENT `args` — including an empty one — means the sender already
+// split the argv and is exec'd directly: the schema permits it, this client
+// honours it, and neither reading has to guess which one it got.
+//
+// Presence, not length. `{"command":"prog","args":[]}` says "exec prog with no
+// arguments", which is a different statement from omitting the field, and a
+// length test collapses them: a program whose name contains a space or a shell
+// metacharacter would be handed to bash despite the sender having said it was a
+// bare program name. Hence the pointer at the decode site.
+//
+// The shell branch does not widen what the agent may run. Authorization is
+// kiro-cli's Cedar policy, which decides on the command LINE the agent asked
+// for; the environment it runs with is screened separately in termCreate, and
+// that screen is what stops a variable redirecting the approved command into
+// something else.
+func agentCommand(ctx context.Context, command string, args *[]string) *exec.Cmd {
+	if args != nil {
+		return exec.CommandContext(ctx, command, *args...) // #nosec G204 -- agent-controlled
+	}
+	return exec.CommandContext(ctx, agentShell(), "-c", command) // #nosec G204 -- agent-controlled
+}
+
+// derefArgs flattens the presence-preserving pointer for the wire.
+func derefArgs(args *[]string) []string {
+	if args == nil {
+		return nil
+	}
+	return *args
+}
+
+// failTermCreate answers a terminal/create that could not start, and logs it.
+// Every failure path goes through this one door, because before it six
+// respondErr returns logged nothing at all: a command that failed to exec left
+// NO server-side trace, broadcast no event and produced no tab, so the only
+// party that ever learned was the agent, in its own tool result. That is how
+// the exec-without-a-shell bug above stayed invisible for as long as it did.
+func (h *Hub) failTermCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse, command, reason string) {
+	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", command, "reason", reason)
+	respondErr(ctx, h, chatID, msg, reason)
+}
+
 func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 	var params struct {
-		Command string   `json:"command"`
-		Cwd     string   `json:"cwd"`
-		Args    []string `json:"args"`
+		Command string `json:"command"`
+		Cwd     string `json:"cwd"`
+		// Args is a POINTER so an explicitly empty array stays distinguishable
+		// from an omitted field. `{"command":"prog","args":[]}` is a request to
+		// exec `prog` with no arguments, which is not the same statement as
+		// omitting args, and treating the two alike would hand a command line to
+		// a shell that the sender had already decided was a bare program name.
+		Args *[]string `json:"args"`
 		// Env is the ACP terminal/create env array (KAS zEnvVariable
 		// {name,value}); populated into cmd.Env so env-dependent agent
 		// commands run with the requested variables.
@@ -295,11 +523,11 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 		OutputByteLimit int          `json:"outputByteLimit"`
 	}
 	if parseRequest(msg, &params) != nil {
-		respondErr(ctx, h, chatID, msg, "invalid params")
+		h.failTermCreate(ctx, chatID, msg, params.Command, "invalid params")
 		return
 	}
 	if params.Command == "" {
-		respondErr(ctx, h, chatID, msg, "command is required")
+		h.failTermCreate(ctx, chatID, msg, params.Command, "command is required")
 		return
 	}
 	// Screen the requested environment BEFORE anything is created, so the refusal
@@ -329,7 +557,7 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	// (and on terminal_kill / terminal_release / normal exit via cmdCancel).
 	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(ctx))
 	stop := context.AfterFunc(h.lifecycle.shutdownCtx, cmdCancel)
-	cmd := exec.CommandContext(cmdCtx, params.Command, params.Args...) // #nosec G204 -- agent-controlled
+	cmd := agentCommand(cmdCtx, params.Command, params.Args)
 	// Own process group, so every teardown path can signal the whole tree
 	// rather than just the head. See procgroup.Kill for why the head alone is
 	// not enough — for an agent terminal or, since kiro-cli 2.18.0, for the
@@ -348,7 +576,7 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 		if err != nil {
 			stop()
 			cmdCancel()
-			respondErr(ctx, h, chatID, msg, "cwd escapes workspace: "+err.Error())
+			h.failTermCreate(ctx, chatID, msg, params.Command, "cwd escapes workspace: "+err.Error())
 			return
 		}
 		cmd.Dir = abs
@@ -356,34 +584,46 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 		cmd.Dir = h.lifecycle.workDir
 	}
 
-	term := &agentTerminal{
-		cmd:    cmd,
-		done:   make(chan struct{}),
-		output: newByteRing(limit),
-		chatID: chatID,
-	}
+	term := newAgentTerminal(cmd, chatID, limit)
 
-	stdout, err := cmd.StdoutPipe()
+	// One CALLER-OWNED pipe for both streams, not Cmd.StdoutPipe/StderrPipe.
+	//
+	// os/exec closes the pipes it hands out inside Wait, which is the hazard
+	// Cmd.StdoutPipe documents ("it is incorrect to call Wait before all reads
+	// from the pipe have completed"). Owning the read end means Wait cannot
+	// truncate the pump, so the ordering constraint disappears instead of being
+	// managed: Wait observes exit, and the drain is then bounded from THAT
+	// moment. The earlier shape waited for the drain BEFORE Wait, which put the
+	// grace clock on the wrong side of the process — any command running longer
+	// than the grace exhausted it and fell straight back into the race.
+	//
+	// Merging both streams into one pipe also removes the interleaving question:
+	// stdout and stderr arrive in the order the process wrote them, which is
+	// what a terminal shows. io.MultiReader did not preserve write order — it
+	// drained stdout to EOF first, so a command's stderr landed after all of its
+	// stdout however the two were actually produced.
+	pr, pw, err := os.Pipe()
 	if err != nil {
 		stop()
 		cmdCancel()
-		respondErr(ctx, h, chatID, msg, err.Error())
+		h.failTermCreate(ctx, chatID, msg, params.Command, "pipe: "+err.Error())
 		return
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		stop()
-		cmdCancel()
-		respondErr(ctx, h, chatID, msg, err.Error())
-		return
-	}
+	cmd.Stdout = pw
+	cmd.Stderr = pw
 
 	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		_ = pr.Close()
 		stop()
 		cmdCancel()
-		respondErr(ctx, h, chatID, msg, err.Error())
+		h.failTermCreate(ctx, chatID, msg, params.Command, err.Error())
 		return
 	}
+	// The child holds its own duplicate of the write end, so closing ours is
+	// what makes the reader see EOF when the last writer exits. Without it the
+	// pump would block forever on a process that has already gone.
+	_ = pw.Close()
 
 	termID := newMessageID() // reuse the ID generator for unique terminal IDs
 
@@ -405,19 +645,25 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	h.Broadcast(ctx, api.NewEvent(api.EventTerminalCreated, chatID, api.TerminalCreatedPayload{
 		TerminalID: termID,
 		Command:    params.Command,
-		Args:       params.Args,
+		// The wire field stays a plain slice: the client only labels the tab
+		// with it, so presence-versus-empty carries no meaning there.
+		Args: derefArgs(params.Args),
 	}))
 	respondOK(ctx, h, chatID, msg, map[string]string{"terminalId": termID})
 
-	// Stream stdout + stderr into the ring buffer. Started only after the
+	// Stream the merged output into the ring buffer. Started only after the
 	// terminal is registered and terminal_created is broadcast (see above).
+	// drained closes at EOF, which awaitTerminalExit waits for after Wait.
+	drained := make(chan struct{})
 	h.lifecycle.inflight.Go(func() {
-		h.pumpTerminalOutput(term, termID, chatID, io.MultiReader(stdout, stderr))
+		defer close(drained)
+		defer func() { _ = pr.Close() }()
+		h.pumpTerminalOutput(term, termID, chatID, pr)
 	})
 
 	// Wait for exit in background.
 	h.lifecycle.inflight.Go(func() {
-		h.awaitTerminalExit(term, termID, chatID, cmd, stop, cmdCancel)
+		h.awaitTerminalExit(term, termID, chatID, cmd, stop, cmdCancel, drained, pr)
 	})
 }
 
@@ -442,12 +688,7 @@ func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID api.
 	// exactly once (the agent pull path via byteRing.String() runs its own
 	// ToValidUTF8), so only the SSE broadcast needs the carry.
 	var pending []byte
-	broadcast := func(data string) {
-		h.Broadcast(ctx, api.NewEvent(api.EventTerminalOutput, chatID, api.TerminalOutputPayload{
-			TerminalID: termID,
-			Data:       data,
-		}))
-	}
+	emit := h.terminalEmitter(ctx, term, termID, chatID)
 	for {
 		n, readErr := r.Read(buf)
 		if n > 0 {
@@ -462,8 +703,8 @@ func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID api.
 				chunk = append(pending, chunk...)
 			}
 			hold := incompleteTailLen(chunk)
-			if emit := chunk[:len(chunk)-hold]; len(emit) > 0 {
-				broadcast(string(emit))
+			if out := chunk[:len(chunk)-hold]; len(out) > 0 {
+				emit(string(out))
 			}
 			// Carry the incomplete tail (copied — buf is reused next Read).
 			pending = append(pending[:0:0], chunk[len(chunk)-hold:]...)
@@ -475,8 +716,76 @@ func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID api.
 	// Flush any leftover incomplete bytes at EOF so no output is lost; they
 	// render as U+FFFD, matching the ring's ToValidUTF8 behaviour.
 	if len(pending) > 0 {
-		broadcast(string(pending))
+		emit(string(pending))
 	}
+	// Release any escape sequence the stream ended mid-way through, so a
+	// truncated sequence shows its bytes rather than vanishing.
+	base := term.ansi.Offset()
+	if text, parsed := term.ansi.Flush(); text != "" {
+		h.publishTerminalText(ctx, termID, chatID, text, wireSpans(parsed), base)
+	}
+}
+
+// terminalEmitter returns the function that turns one raw chunk into what the
+// TRANSCRIPT renders: hidden Unicode stripped, escape sequences parsed off into
+// style spans, plain text out.
+//
+// Parsing server-side is what lets the client paint spans with textContent
+// instead of building HTML from these bytes.
+//
+// SanitizeUnicode, NOT SanitizeOutput. SanitizeOutput is
+// SanitizeUnicode(StripANSI(s)) iterated to a fixed point, so calling it here
+// deletes every escape sequence BEFORE the parser can see one: spans come out
+// empty on every chunk and agent output renders entirely unstyled. Measured
+// through this exact path — `ESC[90m1:47AM…` produces spans=0 with
+// SanitizeOutput and spans=2 without. TestTerminalEmitter_* pins it.
+//
+// The security property SanitizeOutput's iteration provided is preserved by the
+// ORDER rather than by stripping. Hidden Unicode goes first, so nothing can hide
+// a sequence behind a zero-width character; the parser then consumes SGR and
+// drops every other escape family StripANSI matched; and ansitext guarantees an
+// escape-free output text (its release paths neutralize a stray ESC, asserted by
+// FuzzParse). So the text reaching the chat file carries no residual escape,
+// which is what the strip was for.
+//
+// There is deliberately no secret-masking step. This app deleted its redaction
+// layer on purpose — chat logs, run history and diagnostics are served as
+// kiro-cli produced them — so adding one here would reintroduce a layer the
+// rest of the app does not have, on one surface, which is worse than not having
+// it: it would make the transcript disagree with the tool card's own content
+// blocks about what the command printed.
+func (h *Hub) terminalEmitter(
+	ctx context.Context, term *agentTerminal, termID string, chatID api.ChatID,
+) func(string) {
+	return func(raw string) {
+		base := term.ansi.Offset()
+		text, parsed := term.ansi.Write(api.SanitizeUnicode(raw))
+		if text == "" && len(parsed) == 0 {
+			return
+		}
+		h.publishTerminalText(ctx, termID, chatID, text, wireSpans(parsed), base)
+	}
+}
+
+// publishTerminalText broadcasts one rendered chunk.
+//
+// base is where this chunk starts in the terminal's accumulated plain text,
+// counted in UTF-16 code units, read off the parser's own counter before the
+// write that produced the text. It is NOT a byte length, and it is NOT a second
+// tally: span offsets are absolute across the stream in UTF-16 units, so the
+// base has to be the same quantity from the same source, or every live span
+// rebases onto the wrong character the moment output contains anything
+// non-ASCII.
+func (h *Hub) publishTerminalText(
+	ctx context.Context, termID string, chatID api.ChatID,
+	text string, spans []api.TextSpan, base int,
+) {
+	h.Broadcast(ctx, api.NewEvent(api.EventTerminalOutput, chatID, api.TerminalOutputPayload{
+		TerminalID: termID,
+		Data:       text,
+		Spans:      spans,
+		Offset:     base,
+	}))
 }
 
 // incompleteTailLen returns the number of trailing bytes of b that form an
@@ -513,11 +822,40 @@ func incompleteTailLen(b []byte) int {
 // signal-killed process records a signal string (ProcessState.ExitCode()
 // is -1) rather than exitCode -1, so the exit reports signal:"..." and
 // omits exit_code (KAS's zTerminalExitStatus requires exitCode>=0).
-func (h *Hub) awaitTerminalExit(term *agentTerminal, termID string, chatID api.ChatID, cmd *exec.Cmd, stop func() bool, cmdCancel context.CancelFunc) {
+func (h *Hub) awaitTerminalExit(
+	term *agentTerminal, termID string, chatID api.ChatID, cmd *exec.Cmd,
+	stop func() bool, cmdCancel context.CancelFunc,
+	drained <-chan struct{}, pr *os.File,
+) {
 	// Hub-scoped context for the broadcast (outlives the per-event ctx).
 	ctx, cancel := h.hubContext()
 	defer cancel()
+
+	// Wait FIRST, then drain. Safe in that order only because the pipe is
+	// caller-owned (see termCreate): os/exec closes the pipes IT hands out
+	// inside Wait, so with Cmd.StdoutPipe this order would truncate the pump.
 	err := cmd.Wait()
+
+	// Now bound the drain from the moment the process actually exited. The bound
+	// is needed because EOF is not guaranteed: a command that leaves a
+	// grandchild holding the write end (`some-daemon &`) keeps the pipe open
+	// after the head exits. Closing our read end is what releases the pump in
+	// that case — a plain timeout would leave the goroutine blocked on Read for
+	// as long as the grandchild lived.
+	//
+	// terminal_exited must not be observable before the output it describes, so
+	// the broadcast happens after this: measured, a `whoami` sent its exit as
+	// event 365 and its own "root\n" as 368, and the client painted the exit
+	// footer above the line that produced it.
+	select {
+	case <-drained:
+	case <-time.After(terminalDrainGrace):
+		slog.Warn("agent terminal: output still open after exit; releasing the reader",
+			"chat_id", chatID, "term_id", termID, "grace", terminalDrainGrace)
+		_ = pr.Close()
+		<-drained
+	}
+
 	stop()      // unregister the AfterFunc
 	cmdCancel() // release the command context
 	term.mu.Lock()

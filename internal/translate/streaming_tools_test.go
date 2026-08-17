@@ -422,6 +422,33 @@ func TestRelPath(t *testing.T) {
 		// the absolute path to the client.
 		{name: "DotDotPrefixedDirIsRelative", workDir: "/work", abs: "/work/..drafts/x.go", want: "..drafts/x.go"},
 		{name: "ParentEscapeReturnsAbs", workDir: "/work", abs: "/x.go", want: "/x.go"},
+		// BF14. KAS sends some tool-call paths as file:// URIs (measured: a
+		// shell-written file arrived as "file:///workspace/hello.sh"). Every
+		// consumer treats the value as a path, so the URI has to be gone by the
+		// time it leaves here. filepath.Clean turns "file:///work/x.go" into the
+		// RELATIVE "file:/work/x.go", so filepath.Rel errored and the raw URI
+		// passed straight through into the turn footer's label and into
+		// GET /api/file?path=…, which denied it as outside the granted roots.
+		{name: "FileURIBecomesRelative", workDir: "/work", abs: "file:///work/sub/file.go", want: "sub/file.go"},
+		{name: "FileURIIsPercentDecoded", workDir: "/work", abs: "file:///work/hello%20world.sh", want: "hello world.sh"},
+		// Normalising FIRST is what keeps the outside-the-workspace branch from
+		// returning the spelling this function exists to remove.
+		{name: "FileURIOutsideWorkDirIsStillAPath", workDir: "/work", abs: "file:///elsewhere/x.go", want: "/elsewhere/x.go"},
+		{name: "FileURIWithEmptyWorkDirIsStillAPath", workDir: "", abs: "file:///a/b.go", want: "/a/b.go"},
+		{name: "LocalhostAuthorityIsAccepted", workDir: "/work", abs: "file://localhost/work/x.go", want: "x.go"},
+		// A remote authority names a file this process cannot open, so it is
+		// left alone rather than rewritten into a local path that would then be
+		// resolved against the local filesystem.
+		{name: "RemoteAuthorityIsLeftAlone", workDir: "/work", abs: "file://host/share/x.go", want: "file://host/share/x.go"},
+		{name: "NonFileSchemeIsLeftAlone", workDir: "/work", abs: "https://example.com/x.go", want: "https://example.com/x.go"},
+		// A filename may legitimately contain "://", which trips the cheap gate
+		// but parses to NO scheme, so it must come back through as a path. The
+		// duplicate slashes collapse because filepath.Clean does that to every
+		// path this function handles — pre-existing and orthogonal to the URI
+		// branch, which is what this case is pinning.
+		{name: "PathContainingSchemeSeparator", workDir: "/work", abs: "/work/weird:///name.go", want: "weird:/name.go"},
+		// An unparseable reference is returned as-is rather than mangled.
+		{name: "MalformedURIIsLeftAlone", workDir: "/work", abs: "file://%zz/x.go", want: "file://%zz/x.go"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

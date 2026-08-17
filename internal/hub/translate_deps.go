@@ -7,6 +7,7 @@ package hub
 import (
 	"context"
 
+	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/translate"
@@ -80,6 +81,46 @@ func (h *Hub) BufferStore() translate.BufferAccess {
 // LineTracker returns the line tracker for file-change recording.
 func (h *Hub) LineTracker() translate.LineRecorder {
 	return h.lines
+}
+
+// TerminalOutput returns an agent terminal's output for the translate layer to
+// persist onto the owning tool call. See translate.StreamingAccess for why the
+// tool call needs it.
+//
+// It reads the RAW ring and renders on demand rather than returning a
+// pre-accumulated copy. Three things fall out of that. The rendering is
+// derivable, so there is no second buffer to keep in step and no second cap: the
+// ring already bounds the bytes and keeps the tail. It works for a terminal that
+// has already been released, because `retire` kept those bytes under the same id
+// — which matters because KAS releases before it reports the result, so the
+// live registry is empty by the time this is called. And the sanitize-then-parse
+// order here is the same one the live pump uses, so the persisted text and the
+// streamed text cannot disagree about what an escape meant.
+//
+// ok reports whether the terminal is KNOWN, not whether it printed anything. A
+// registered terminal with no output answers ("", nil, true), because a silent
+// command is a different fact from a lost record and only the second one is
+// worth warning about.
+func (h *Hub) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
+	h.agentTerms.mu.Lock()
+	term, live := h.agentTerms.terms[terminalID]
+	h.agentTerms.mu.Unlock()
+
+	var raw string
+	if live {
+		raw = term.rawOutput()
+	} else {
+		var known bool
+		raw, known = h.agentTerms.peekRetired(terminalID)
+		if !known {
+			return "", nil, false
+		}
+	}
+	if raw == "" {
+		return "", nil, true
+	}
+	text, spans := ansitext.Parse(api.SanitizeUnicode(raw))
+	return text, wireSpans(spans), true
 }
 
 // IsScheduledRun reports whether a run was launched by a schedule.

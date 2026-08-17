@@ -29,6 +29,21 @@ type StreamingAccess interface {
 	ChatStore() api.ChatStore
 	ParentACPSession(chatID api.ChatID) string
 	WorkDir() string
+	// TerminalOutput returns an agent terminal's rendered output: plain text
+	// with escapes parsed off, plus the spans styling it.
+	//
+	// ok reports whether the terminal is KNOWN, not whether it printed
+	// anything: a registered terminal that produced no output answers
+	// ("", nil, true). The distinction is the whole value of the boolean —
+	// adoption logs a miss on false, and a silent command reporting as missing
+	// would file that warning on every turn.
+	//
+	// This is what makes the tool CARD the durable home of a command's output.
+	// KAS puts none of it on the tool call — a successful terminal-backed
+	// command's tool_call_update carries no output field at all, so before this
+	// every finished command persisted an empty output and the bytes lived only
+	// in an ephemeral SSE stream that a page reload discarded.
+	TerminalOutput(terminalID string) (text string, spans []api.TextSpan, ok bool)
 }
 
 // PermissionAccess provides the methods needed by permission_handler.go

@@ -56,7 +56,7 @@ func TestAgentTerminalsNewAndLookup(t *testing.T) {
 	if len(terms.terms) != 0 {
 		t.Errorf("expected empty, got %d", len(terms.terms))
 	}
-	terms.terms["test"] = &agentTerminal{done: make(chan struct{})}
+	terms.terms["test"] = newAgentTerminal(nil, "", 64)
 	if _, ok := terms.terms["test"]; !ok {
 		t.Error("expected to find terminal 'test'")
 	}
@@ -162,7 +162,9 @@ func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
 	at := newAgentTerminals()
 	done := make(chan struct{})
 	close(done) // already exited
-	at.terms["t1"] = &agentTerminal{done: done}
+	t1 := newAgentTerminal(nil, "", 64)
+	t1.done = done
+	at.terms["t1"] = t1
 	at.byChatID["c1"] = []string{"t1"}
 
 	at.drainAll()
@@ -179,8 +181,8 @@ func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
 // its id from the chat's slice) and reports (nil,false) for an unknown id.
 func TestAgentTerminals_Release(t *testing.T) {
 	at := newAgentTerminals()
-	at.terms["t1"] = &agentTerminal{chatID: "c1", done: make(chan struct{})}
-	at.terms["t2"] = &agentTerminal{chatID: "c1", done: make(chan struct{})}
+	at.terms["t1"] = newAgentTerminal(nil, "c1", 64)
+	at.terms["t2"] = newAgentTerminal(nil, "c1", 64)
 	at.byChatID["c1"] = []string{"t1", "t2"}
 
 	term, ok := at.release("t1")
@@ -345,7 +347,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 // still receives every raw byte.
 func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
 	h := New(t.TempDir(), func() api.ACPBridge { return newFakeBridge() }, newFakeChatStore())
-	term := &agentTerminal{done: make(chan struct{}), output: newByteRing(1024)}
+	term := newAgentTerminal(nil, "c1", 1024)
 	// "aé€😀" with reads that split every multi-byte rune internally:
 	// é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
 	r := &chunkReader{chunks: [][]byte{
@@ -447,7 +449,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 		}
 		chunkSize := int(chunkRaw)%8 + 1
 		_, preSeq := h.sse.hub.Bounds()
-		term := &agentTerminal{done: make(chan struct{}), output: newByteRing(1 << 20)}
+		term := newAgentTerminal(nil, "c1", 1<<20)
 		h.pumpTerminalOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
 
 		// The ring receives every raw byte exactly once, for any input.

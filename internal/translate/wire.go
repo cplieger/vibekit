@@ -37,7 +37,11 @@ type ACPToolCallContentBlock struct {
 	Path    string `json:"path"`
 	OldText string `json:"oldText"`
 	NewText string `json:"newText"`
-	Content struct {
+	// TerminalID is set on a type:"terminal" block, ACP's way of saying "this
+	// tool call's output is that terminal's stream". It is the link that makes
+	// the tool CARD the terminal's rendering surface.
+	TerminalID string `json:"terminalId"`
+	Content    struct {
 		Text string `json:"text"`
 	} `json:"content"`
 }
@@ -308,3 +312,9 @@ const ContentTypeContent = "content"
 // ContentTypeDiff is the ACP content-block type for file-change diffs
 // in tool_call and tool_call_update payloads.
 const ContentTypeDiff = "diff"
+
+// ContentTypeTerminal is the ACP content-block type that names the terminal
+// running an execute tool call. Its terminalId is how the tool card finds its
+// own output stream, which is what makes the transcript the rendering surface
+// for agent commands.
+const ContentTypeTerminal = "terminal"

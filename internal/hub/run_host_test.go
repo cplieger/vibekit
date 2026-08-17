@@ -279,12 +279,9 @@ func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 	at := newAgentTerminals()
 	add := func(id string, chat api.ChatID) {
 		at.mu.Lock()
-		at.terms[id] = &agentTerminal{
-			cmd:     &exec.Cmd{},
-			chatID:  chat,
-			turnSeq: at.currentTurn(chat),
-			done:    make(chan struct{}),
-		}
+		term := newAgentTerminal(&exec.Cmd{}, chat, 1024)
+		term.turnSeq = at.currentTurn(chat)
+		at.terms[id] = term
 		at.byChatID[chat] = append(at.byChatID[chat], id)
 		at.mu.Unlock()
 	}

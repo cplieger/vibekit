@@ -9,8 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 
+	"github.com/cplieger/pathinside"
 	"github.com/cplieger/vibekit/internal/fileutil"
 	"golang.org/x/sync/errgroup"
 )
@@ -85,4 +87,40 @@ func (h *Handler) cachedDiscoverRepos(ctx context.Context) []repoEntry {
 	})
 	r, _ := v.([]repoEntry)
 	return r
+}
+
+// ownerOf resolves which discovered repository owns a WORKSPACE-relative
+// path, returning the repo name and the path rewritten repo-relative.
+// ok is false when no repo owns it.
+//
+// This lives on the server because the server owns the repo inventory. The
+// client cannot do the split without a second copy of this rule, and the one
+// place it tried (git-status-store.ts, which composed "<repoName>/<relPath>"
+// keys and then looked them up with absolute paths) got it wrong and silently
+// showed no status at all. One rule, one owner.
+//
+// Longest name first, so a repo nested inside another wins over its ancestor.
+// The workspace-root repo (".") owns everything no subdirectory repo claims,
+// which reproduces the previous default without making it the only answer.
+func (h *Handler) ownerOf(ctx context.Context, relPath string) (repo, inRepo string, ok bool) {
+	repos := h.cachedDiscoverRepos(ctx)
+	best := -1
+	for _, e := range repos {
+		if e.Name == "." {
+			if best < 0 {
+				repo, inRepo, ok, best = ".", relPath, true, 0
+			}
+			continue
+		}
+		if !pathinside.Inside(e.Name, relPath) || len(e.Name) <= best {
+			continue
+		}
+		rest := strings.TrimPrefix(strings.TrimPrefix(relPath, e.Name), "/")
+		if rest == "" {
+			// The repo DIRECTORY itself, not a file in it.
+			continue
+		}
+		repo, inRepo, ok, best = e.Name, rest, true, len(e.Name)
+	}
+	return repo, inRepo, ok
 }

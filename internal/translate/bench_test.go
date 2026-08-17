@@ -31,6 +31,18 @@ type baseDeps struct {
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
+	// terminals stands in for the hub's agent-terminal registry, keyed by
+	// terminal id, so adoptTerminalOutput is exercisable without one. A key
+	// present with an empty text is a REGISTERED terminal that printed nothing,
+	// which the real registry reports as ok — the distinction the miss warning
+	// keys on.
+	terminals map[string]termRendered
+}
+
+// termRendered is one terminal's rendered output in the stub registry.
+type termRendered struct {
+	text  string
+	spans []api.TextSpan
 }
 
 func newBaseDeps() *baseDeps {
@@ -38,7 +50,13 @@ func newBaseDeps() *baseDeps {
 		store:       testsupport.NopChatStore{},
 		bufStore:    buffer.NewStore(),
 		lineTracker: buffer.NewLineTracker(),
+		terminals:   map[string]termRendered{},
 	}
+}
+
+func (d *baseDeps) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
+	t, ok := d.terminals[terminalID]
+	return t.text, t.spans, ok
 }
 
 func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {

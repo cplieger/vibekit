@@ -138,8 +138,8 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
-	file := r.URL.Query().Get("path")
-	if file == "" {
+	requested := r.URL.Query().Get("path")
+	if requested == "" {
 		api.BadRequest(w, "path required")
 		return
 	}
@@ -149,8 +149,8 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	// lines clean. Reject the full ASCII control range (including
 	// tab, ESC) plus DEL so slog/Loki readers see readable values
 	// and no invisible bytes survive into downstream tooling.
-	if !validateFilePath(file) {
-		slog.Warn("git show: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(file))
+	if !validateFilePath(requested) {
+		slog.Warn("git show: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(requested))
 		api.BadRequest(w, "invalid path")
 		return
 	}
@@ -163,7 +163,31 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "invalid ref")
 		return
 	}
-	dir := h.repoDir(repoFromQuery(r))
+	// An absent `repo` means "resolve it": the path is workspace-relative and
+	// the caller does not know which repository owns it. That is the shape
+	// every caller coming from a turn's changed-file ledger or a tool card
+	// has — those paths are produced by translate.relPath, which strips the
+	// workspace prefix and knows nothing about repos. Defaulting to the
+	// workspace root instead (the old behaviour) ran `git show` in a
+	// directory that is usually not a repository at all, so the base side of
+	// every such diff failed; and when the root WAS a repo but the file lived
+	// in a subdirectory repo, the base read as empty and the diff claimed
+	// every line had just been added.
+	repo := repoFromQuery(r)
+	file := requested
+	if repo == "" {
+		owner, inRepo, ok := h.ownerOf(r.Context(), requested)
+		if !ok {
+			// Not a failure: there is no committed revision to show. The
+			// client renders an all-add diff against an empty base.
+			writeGitError(w, KindNotInRepo, "")
+			return
+		}
+		repo, file = owner, inRepo
+	}
+	dir := h.repoDir(repo)
+	// gitShowCmd carries --no-textconv, so this new resolution path inherits the
+	// raw-blob pin rather than needing its own.
 	out, err := gitShowCmd(r.Context(), dir, ref, file)
 	if err != nil {
 		if errors.Is(err, ErrPathNotInRef) {

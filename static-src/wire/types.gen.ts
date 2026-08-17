@@ -294,6 +294,15 @@ export interface ConfiguredForge {
  * and should refetch authoritative state.
  */
 export interface ConnectedPayload {
+  /**
+ * Workspace is the absolute workspace root, and the client needs it from
+ * the first frame because it cannot derive it. Every ACP-supplied path
+ * reaches the client workspace-RELATIVE (translate.relPath strips this
+ * prefix so a turn footer reads "hello.sh"), while the /api/file* surface
+ * has a container-ABSOLUTE namespace. Opening a changed file rejoins the
+ * two, and this is the missing half of that join.
+ */
+  workspace?: string;
   floor: number;
   head: number;
 }
@@ -1260,6 +1269,87 @@ export interface SystemTool {
   installed: boolean;
 }
 
+/** TerminalCreatedPayload is the payload for type="terminal_created". */
+export interface TerminalCreatedPayload {
+  terminal_id: string;
+  command: string;
+  args: string[];
+}
+
+/**
+ * TerminalExitedPayload is the payload for type="terminal_exited". A
+ * signal-killed process carries Signal (e.g. "killed") with ExitCode
+ * omitted; a normal exit carries ExitCode (>=0) with Signal empty. This
+ * mirrors KAS's zTerminalExitStatus, which requires exitCode>=0 and a
+ * separate signal string, so a signal death never reports exit_code:-1.
+ */
+export interface TerminalExitedPayload {
+  exit_code?: number;
+  terminal_id: string;
+  signal?: string;
+}
+
+/**
+ * TerminalOutputPayload is the payload for type="terminal_output".
+ * //
+ * Data is PLAIN text with escape sequences already parsed off and hidden
+ * Unicode already stripped; Spans style ranges of it. The parse happens
+ * server-side (internal/ansitext) so the browser never builds HTML out of
+ * agent-controlled bytes.
+ * //
+ * Offset is where this chunk's Data begins in the terminal's accumulated
+ * output, in the same UTF-16 code units the spans are addressed in. It is
+ * load-bearing rather than diagnostic: the spans carry ABSOLUTE offsets across
+ * the terminal's whole stream, so a client painting one chunk has to subtract
+ * this base to index into the chunk it was handed.
+ */
+export interface TerminalOutputPayload {
+  terminal_id: string;
+  data: string;
+  spans?: TextSpan[];
+  offset: number;
+}
+
+/**
+ * TextSpan styles the half-open range [Start,End) of a sibling text field.
+ * //
+ * It mirrors internal/ansitext.Span; the wire type lives here because
+ * internal/api owns every shape codegen projects into TypeScript and
+ * internal/ansitext stays a stdlib-only leaf that knows nothing about the wire.
+ * //
+ * Attrs values match web-terminal-engine's vt.WireRun.A so the terminal
+ * renderer and the transcript renderer share one attribute vocabulary. The
+ * COLOUR encoding deliberately differs from WireRun's, which resolves every
+ * colour to 0xRRGGBB against the terminal's theme: a palette INDEX survives
+ * into a persisted chat file without baking today's theme into it, and the
+ * transcript's ANSI palette is a set of CSS custom properties the user's theme
+ * redefines.
+ */
+export interface TextSpan {
+  /**
+ * Start is the inclusive offset into the styled text, in UTF-16 CODE UNITS
+ * rather than bytes, because the consumer indexes with JavaScript string
+ * offsets. A byte offset would point into the middle of a character the
+ * moment output contained a box-drawing glyph or an accented name.
+ */
+  start: number;
+  /** End is the exclusive offset into the styled text, in UTF-16 code units. */
+  end: number;
+  /**
+ * FG is the foreground colour: -1 for default, 0-255 for a palette index,
+ * or 0x1000000|RGB for 24-bit colour.
+ */
+  fg: number;
+  /** BG is the background colour, encoded like FG. */
+  bg: number;
+  /**
+ * Attrs is a bitfield: 1=bold, 2=italic, 4=underline, 8=inverse,
+ * 16=strike, 32=dim, 64=hidden, 128=blink, 256=overline,
+ * 512=double-underline.
+ */
+  attrs: number;
+}
+
 /**
  * ToolCall is a tool invocation inside an assistant message. One assistant
  * message may have multiple tool calls; each can be updated in place as
@@ -1285,6 +1375,14 @@ export interface ToolCall {
  */
   agent_subtask_id?: string;
   /**
+ * TerminalID links an execute tool call to the agent terminal running it,
+ * taken from the ACP type:"terminal" content block KAS sends on the tool
+ * call. It is what lets the CARD be the terminal's rendering surface: the
+ * client subscribes the card's output region to this terminal's live
+ * stream. Empty on every tool call that spawned no process.
+ */
+  terminal_id?: string;
+  /**
  * Checkpoint is KAS's snapshot mapping for a tool call that wrote a
  * file, taken from _meta.kiro.checkpoint. Nil for every tool call that
  * touched no file — which is most of them. Placed ahead of the slices
@@ -1309,6 +1407,13 @@ export interface ToolCall {
   input?: unknown;
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
+  /**
+ * OutputSpans styles ranges of Output. Parsed once server-side by
+ * internal/ansitext, so Output stays plain searchable text and the client
+ * paints spans without ever building HTML from agent-controlled bytes.
+ * Empty for the ~99.75% of real command outputs that carry no escape.
+ */
+  output_spans?: TextSpan[];
   duration_ms?: number;
   ts: number;
 }

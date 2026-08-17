@@ -33,8 +33,15 @@ type FileChange struct {
 // the newest. Clients with last-seen-id < Floor know they missed events
 // and should refetch authoritative state.
 type ConnectedPayload struct {
-	Floor uint64 `json:"floor"`
-	Head  uint64 `json:"head"`
+	// Workspace is the absolute workspace root, and the client needs it from
+	// the first frame because it cannot derive it. Every ACP-supplied path
+	// reaches the client workspace-RELATIVE (translate.relPath strips this
+	// prefix so a turn footer reads "hello.sh"), while the /api/file* surface
+	// has a container-ABSOLUTE namespace. Opening a changed file rejoins the
+	// two, and this is the missing half of that join.
+	Workspace string `json:"workspace,omitempty"`
+	Floor     uint64 `json:"floor"`
+	Head      uint64 `json:"head"`
 }
 
 // PermissionNeededPayload is the payload for type="permission_needed".
@@ -432,9 +439,22 @@ type ToolCallUpdatePayload struct {
 }
 
 // TerminalOutputPayload is the payload for type="terminal_output".
+//
+// Data is PLAIN text with escape sequences already parsed off and hidden
+// Unicode already stripped; Spans style ranges of it. The parse happens
+// server-side (internal/ansitext) so the browser never builds HTML out of
+// agent-controlled bytes.
+//
+// Offset is where this chunk's Data begins in the terminal's accumulated
+// output, in the same UTF-16 code units the spans are addressed in. It is
+// load-bearing rather than diagnostic: the spans carry ABSOLUTE offsets across
+// the terminal's whole stream, so a client painting one chunk has to subtract
+// this base to index into the chunk it was handed.
 type TerminalOutputPayload struct {
-	TerminalID string `json:"terminal_id"`
-	Data       string `json:"data"`
+	TerminalID string     `json:"terminal_id"`
+	Data       string     `json:"data"`
+	Spans      []TextSpan `json:"spans,omitempty"`
+	Offset     int        `json:"offset"`
 }
 
 // TerminalExitedPayload is the payload for type="terminal_exited". A
