@@ -150,6 +150,10 @@ const ICONS: Readonly<Record<TabKind, string>> = {
 interface Callbacks {
   onActivate: ((id: string) => void) | null;
   onEmpty: (() => void) | null;
+  /** Notified with the id of every tab that leaves the store. `closeTab` is the
+   *  only production path that removes one, so this is complete by construction.
+   *  A NOTIFICATION slot, like onEmpty: it must not mutate the store. */
+  onClosed: ((id: string) => void) | null;
 }
 
 interface Internal {
@@ -163,13 +167,21 @@ interface State {
 }
 
 const state: State = { tabs: [], active: "" };
-const callbacks: Callbacks = { onActivate: null, onEmpty: null };
+const callbacks: Callbacks = { onActivate: null, onEmpty: null, onClosed: null };
 const internal: Internal = { emptyTimer: null, renderQueued: false };
 
 /** Reactive version counter. Effects subscribed via `tabsEffect()` re-run
  *  on every emit(). State is mutated in place; this counter is the
  *  signal those mutations trip. */
 const stateVersion = signal(0);
+
+/** Reactive counter for DOT writes, which deliberately do not `emit()`.
+ *
+ *  A second signal rather than a second emit: `emit()` runs the persistence
+ *  subscriber and queues a re-render, and a dot is not a structural change (see
+ *  setTabStatus). Only `subscribeTabCues` reads this one, so a dot write reaches
+ *  the out-of-page attention surfaces without waking anything else. */
+const dotVersion = signal(0);
 type Subscriber = (s: State) => void;
 
 /** All registered module-level effects. Tracked so _resetForTest can
@@ -402,6 +414,12 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   }
   state.tabs.splice(at, 1);
 
+  // The tab is gone from the store, so anything keying per-tab state off an id can
+  // drop it. Fired here, after the splice and before the teardown, for the same
+  // re-entrancy reason the splice comes first: a listener must observe a state the
+  // tab has already left.
+  callbacks.onClosed?.(id);
+
   // `owns: false` tears down nothing: the tab is a view, and dismissing a view
   // must not kill the work it was watching.
   if (!opts?.skipOnClose && tab.owns !== false) {
@@ -542,10 +560,19 @@ function recordDotStatus(id: string, status: TabDotStatus | ""): void {
   if (tab === undefined) {
     return;
   }
+  const before = tab.dotStatus;
   if (status === "") {
     delete tab.dotStatus;
   } else {
     tab.dotStatus = status;
+  }
+  // Only a CHANGED dot moves the attention surfaces, and the guard is what keeps
+  // the store effect's sweep over every open chat (chat.ts) from waking the fold
+  // once per tab on a change that touched one of them. The PAINT below is
+  // deliberately unguarded: an unchanged state still has to be re-applied to a
+  // row that was rebuilt since the last write.
+  if (before !== tab.dotStatus) {
+    dotVersion.value = dotVersion.peek() + 1;
   }
 }
 
@@ -652,6 +679,62 @@ export function getActiveTabKind(): TabKind | null {
  *  without DOM scraping. */
 export function getOpenTabIDs(): string[] {
   return state.tabs.map((t) => t.id);
+}
+
+/** The chat tabs and their current dot states, for the out-of-page attention fold
+ *  (attention.ts). A pure STORE read: the dot state is parked on the spec, so
+ *  nothing here reads the DOM and a row that has not been built yet still counts.
+ *
+ *  The list is heterogeneous, so the filter is the whole correctness argument:
+ *
+ *   - `kind === "chat"` is the only cue-bearing kind. It excludes the five
+ *     `__…__` singletons and every `run:` tab, which carry no dot at all, and it
+ *     excludes `editor:` tabs, whose `dirty` mark rides the same element and is
+ *     not a chat state. `isCueStatus` rejects `dirty` as well, so it cannot reach
+ *     the fold by either route.
+ *   - `owns !== false` excludes a VIEW tab — one watching work another chat owns.
+ *     Such a tab is a window onto a chat, not the chat, so counting it would count
+ *     one chat twice whenever the chat's own tab is also open. A SUB-TAB is NOT
+ *     excluded: a tangent carries `parentId` and the default `owns`, because it is
+ *     its own chat with its own bridge and its own cue.
+ *
+ *  Ids are unique in the store (openTab dedupes), so no further de-duplication is
+ *  needed for the count to be one per chat. */
+export function cueCandidates(): { id: string; status: string }[] {
+  return state.tabs
+    .filter((t) => t.kind === "chat" && t.owns !== false)
+    .map((t) => ({ id: t.id, status: t.dotStatus ?? "" }));
+}
+
+/** Subscribe to everything that can change the attention fold's input, and return
+ *  the disposer.
+ *
+ *  TWO signals, because there are two disjoint write paths and covering one is not
+ *  covering the input: `stateVersion` for the tab SET (every list mutation ends in
+ *  `emit()` — openTab, closeTab on all three of its branches, reorderTabs,
+ *  activateTab, promoteTab, restoreTabState) and `dotVersion` for every dot write
+ *  (`recordDotStatus`, the single writer of `TabSpec.dotStatus`, which
+ *  deliberately does not emit). A funnel on `emit()` alone would leave the count
+ *  stale on every status change; one on the dot alone would leave it stale after a
+ *  chat closed.
+ *
+ *  Deliberately NOT registered in `moduleEffects`: the caller owns this
+ *  subscription's lifetime, so `_resetForTest` must not silently unsubscribe it
+ *  while the caller still believes it is live. */
+export function subscribeTabCues(fn: () => void): () => void {
+  return effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    stateVersion.value; // subscribe: the tab set
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    dotVersion.value; // subscribe: any tab's dot
+    fn();
+  });
+}
+
+/** Register the notification for a tab leaving the store. One slot, one
+ *  consumer: attention.ts, which drops the chat's acknowledgement. */
+export function setOnTabClosed(fn: (id: string) => void): void {
+  callbacks.onClosed = fn;
 }
 
 // --- Empty-state timer ---
@@ -1332,6 +1415,7 @@ export function _resetForTest(): void {
   state.active = "";
   callbacks.onActivate = null;
   callbacks.onEmpty = null;
+  callbacks.onClosed = null;
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }

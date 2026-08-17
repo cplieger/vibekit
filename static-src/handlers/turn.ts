@@ -22,7 +22,8 @@ import {
   setTurnDone,
   clearSteers,
 } from "../store.js";
-import { notifyIfHidden, setBadge, isAgentFinishedEnabled, NOTIFY_TITLE } from "../notify.js";
+import { notifyIfHidden, isAgentFinishedEnabled, NOTIFY_TITLE } from "../notify.js";
+import { isWatching } from "../attention.js";
 import {
   pushDecision,
   collapseSettledDecision,
@@ -41,23 +42,15 @@ import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
 
-/** Is the reader looking at this chat right now? The active tab with the page in
- *  front of them, which is the one case where a finished-turn mark says nothing
- *  the transcript is not already showing.
- *
- *  The test lives here rather than in the store because this is the layer that
- *  knows which chat is on screen; the store just holds the latch. */
-function isWatching(chatID: string): boolean {
-  return chatID === getActiveId() && document.visibilityState === "visible";
-}
-
-/** Notify the user and set the badge if the page is hidden. */
-function notifyAndBadge(title: string, body: string): void {
-  notifyIfHidden(title, body);
-  if (document.visibilityState === "hidden") {
-    setBadge(1);
-  }
-}
+// `isWatching` moved to attention.ts, which reads the same rule to decide whether
+// a cue is already observed — one definition, so the `turn_done` latch and the
+// out-of-page acknowledgement cannot disagree about what "looking at it" means.
+//
+// `notifyAndBadge` is gone with it. Its badge half wrote the literal 1 into
+// document.title whenever the page was hidden, which is a FLAG where the reader
+// wants a count; the attention fold carries the real number, and two writers
+// fighting over one title would make the count wrong rather than absent. The
+// Notification half is `notifyIfHidden`, called directly.
 
 /** Track last notification time per chat to avoid duplicate notifications
  *  on SSE reconnect replay (events arrive within milliseconds). */
@@ -158,7 +151,7 @@ onSSE("turn_ended", (chatID, p) => {
       _lastNotifyMs.set(chatID, now);
       const s = get(chatID);
       const name = s?.name ?? "Chat";
-      notifyAndBadge(NOTIFY_TITLE, `${name}: Agent finished`);
+      notifyIfHidden(NOTIFY_TITLE, `${name}: Agent finished`);
     }
   }
 
@@ -200,7 +193,7 @@ onSSE("turn_ended", (chatID, p) => {
 // relaxation, which stops the asks from being raised at all.
 
 onSSE("permission_needed", (chatID, p) => {
-  notifyAndBadge(
+  notifyIfHidden(
     NOTIFY_TITLE,
     p.files !== undefined && p.files.length > 0
       ? "Review this turn's changes"
@@ -223,7 +216,7 @@ onSSE("permission_needed", (chatID, p) => {
 });
 
 onSSE("elicitation_needed", (chatID, p) => {
-  notifyAndBadge(NOTIFY_TITLE, "Input requested by a tool");
+  notifyIfHidden(NOTIFY_TITLE, "Input requested by a tool");
   pushDecision({
     kind: "elicitation",
     chatID,
@@ -241,7 +234,7 @@ onSSE("elicitation_needed", (chatID, p) => {
 });
 
 onSSE("user_input_needed", (chatID, p) => {
-  notifyAndBadge(NOTIFY_TITLE, "The agent has a question");
+  notifyIfHidden(NOTIFY_TITLE, "The agent has a question");
   pushDecision({
     kind: "user_input",
     chatID,

@@ -15,8 +15,11 @@ import { registerCleanup } from "./actions/index.js";
 /** Application name used in browser Notification titles. */
 export const NOTIFY_TITLE = "Vibekit";
 
-/** Application name used in document.title (tab title). */
-const DOC_TITLE_BASE = "Vibekit for Kiro";
+// There is no document-title writer here any more. `setBadge` was named for a
+// badge it never set — it wrote document.title only, was called with the literal
+// 1 and the literal 0, and asserted its own copy of static/index.html's <title>
+// over whatever that file declared. attention.ts owns the title now, with a real
+// count folded from the chat tabs and the base captured from the served document.
 
 type PushState =
   | { kind: "idle" }
@@ -50,9 +53,13 @@ let pushState: PushState = { kind: "idle" };
 
 // --- Visibility tracking ---
 
+// The `data-tab-hidden` CSS hook, and nothing else. This handler used to clear
+// the title count here as well — a wholesale clear on becoming visible, which is
+// the shortcut that blanks the cue of a background chat the reader never saw.
+// attention.ts replaces it with the rule that only acknowledges the chat on screen
+// and the sidebar rows actually in view.
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") {
-    setBadge(0);
     document.documentElement.removeAttribute("data-tab-hidden");
   } else {
     document.documentElement.setAttribute("data-tab-hidden", "");
@@ -224,10 +231,6 @@ export function notifyIfHidden(title: string, body: string): boolean {
   } catch {
     return false;
   }
-}
-
-export function setBadge(count: number): void {
-  document.title = count > 0 ? `(${String(count)}) ${DOC_TITLE_BASE}` : DOC_TITLE_BASE;
 }
 
 // ---------------------------------------------------------------------------

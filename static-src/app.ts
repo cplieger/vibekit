@@ -58,6 +58,7 @@ import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
 import { initAwaySummary } from "./away-summary.js";
+import { initAttention } from "./attention.js";
 import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
@@ -149,6 +150,12 @@ function init(): void {
   );
 
   installStoreSubscribers();
+
+  // The out-of-page attention surfaces: the tab-title count, the installed app's
+  // icon badge and the tab icon, all folded from the chat tabs' dots. Wired here,
+  // before any tab is opened, because it captures the served <title> as its base
+  // and subscribes to the tab store's dot and set signals.
+  initAttention();
 
   // Refresh picker whenever the active session's available_models
   // shifts. Models come both from a pre-conversation REST fetch at
