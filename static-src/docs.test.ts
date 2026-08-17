@@ -332,6 +332,22 @@ function wsHook(over: Partial<HookLike> = {}): HookLike {
   };
 }
 
+// The fixture with one optional field genuinely ABSENT. `decodeHook` copies only
+// the keys the payload carries, so a hook whose server JSON omitted a field has no
+// such key at all — `{ scope: undefined }` is a shape production cannot produce,
+// and a fixture that writes it tests against a state the decoder never hands the
+// page. Rest-destructured rather than deleted so the key is gone by construction.
+
+function withoutScope(hook: HookLike): HookLike {
+  const { scope: _scope, ...rest } = hook;
+  return rest;
+}
+
+function withoutCommand(hook: HookLike): HookLike {
+  const { command: _command, ...rest } = hook;
+  return rest;
+}
+
 /** The docs row the server emits for the same file. Its path carries the work
  *  directory; the hook's does not, which is the whole reason the join
  *  normalizes. */
@@ -496,7 +512,7 @@ describe("the Hooks tab: a global hook is unreachable, not merely read-only", ()
   it("treats an absent scope as workspace, which is the safe direction", () => {
     // An older server sends no scope field. Defaulting to global would strip a
     // workspace hook of affordances it legitimately has.
-    _setHooksForTest([wsHook({ scope: undefined })]);
+    _setHooksForTest([withoutScope(wsHook())]);
     const row = _renderRowForTest(wsHookDoc());
     expect(row.querySelector<HTMLElement>(".docs-row-surface")?.getAttribute("role")).toBe(
       "button",
@@ -605,13 +621,14 @@ describe("the Hooks tab: rows the file scan cannot see", () => {
     // one, which is the only row it builds outright.
     _setDocsForTest([]);
     _setHooksForTest([
-      wsHook({
-        scope: "global",
-        file_path: "~/.kiro/hooks/ask.json",
-        name: "ask",
-        command: undefined,
-        prompt: "Review the diff",
-      }),
+      withoutCommand(
+        wsHook({
+          scope: "global",
+          file_path: "~/.kiro/hooks/ask.json",
+          name: "ask",
+          prompt: "Review the diff",
+        }),
+      ),
     ]);
     expect(_hookRowsForTest()[0]?.action).toBe("Review the diff");
   });
@@ -703,8 +720,10 @@ describe("the Hooks tab: staying current", () => {
     vi.mocked(apiGet).mockResolvedValue({ docs: [] });
     vi.mocked(apiGetTyped).mockResolvedValue({ hooks: [] });
     const { toggleDocsView } = await import("./tabs.js");
+    // onShow is optional on tabs.ts's real toggleDocsView — a restored tab is
+    // reopened without one — so the stub calls it only when the caller passed it.
     vi.mocked(toggleDocsView).mockImplementation((_tab, onShow) => {
-      onShow();
+      onShow?.();
     });
 
     const { onSSE } = await import("./bus.js");

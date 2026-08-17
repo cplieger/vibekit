@@ -19,7 +19,11 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 /** The tab store reduced to the one fact `open` reads and the one rule
  *  activateTab enforces: onShow fires only when the ACTIVE tab changes. */
 let activeTab = "";
-const openEditorView = vi.fn((path: string, onShow: () => void) => {
+// The parameter lists mirror the real signatures (tabs.ts openEditorView takes
+// onClose third; api-client.ts apiGet takes the AbortSignal second) because the
+// assertions below READ the recorded arguments — a mock declaring fewer than it
+// is handed types its own call log as having no such argument.
+const openEditorView = vi.fn((path: string, onShow: () => void, _onClose?: () => void) => {
   const id = `editor:${path}`;
   if (activeTab === id) {
     return;
@@ -28,7 +32,9 @@ const openEditorView = vi.fn((path: string, onShow: () => void) => {
   onShow();
 });
 
-const apiGet = vi.fn(() => Promise.resolve({ content: "hello", content_hash: "h" }));
+const apiGet = vi.fn((_url: string, _signal?: AbortSignal) =>
+  Promise.resolve({ content: "hello", content_hash: "h" }),
+);
 
 vi.mock("./tabs.js", () => ({
   openEditorView: (path: string, onShow: () => void, onClose?: () => void) =>
@@ -86,7 +92,7 @@ const { fileStates, setActiveFilePath } = await import("./editor-types.js");
 
 /** GETs against the file read route, which is what an activation costs. */
 function fileReads(): number {
-  return apiGet.mock.calls.filter((c) => String(c[0]).startsWith("/api/file")).length;
+  return apiGet.mock.calls.filter((c) => c[0].startsWith("/api/file")).length;
 }
 
 describe("opening a file activates it once", () => {
@@ -112,7 +118,7 @@ describe("opening a file activates it once", () => {
 
   it("does not abort the read it just issued", () => {
     openFile("/workspace/a.go");
-    const signal = apiGet.mock.calls.at(-1)?.[1] as AbortSignal | undefined;
+    const signal = apiGet.mock.calls.at(-1)?.[1];
     // The second activation's controller swap aborted the first one's request,
     // which is why the wasted round trip was invisible.
     expect(signal?.aborted).toBe(false);

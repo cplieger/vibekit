@@ -56,6 +56,37 @@ function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, (m) => "\n".repeat((m.match(/\n/g) ?? []).length));
 }
 
+/**
+ * Capture group 1 of a match, asserted rather than optional-chained.
+ *
+ * Every pattern in this file declares group 1 as mandatory — not optional, not
+ * inside an alternation that can skip it — so a match missing it means the
+ * PATTERN was edited wrong, which is a defect in the test rather than a shape
+ * the stylesheets can produce. Asserting once here is what lets all thirteen
+ * read sites use the group as the string it is.
+ */
+function capture(m: RegExpExecArray, re: RegExp): string {
+  const group = m[1];
+  if (group === undefined) {
+    throw new Error(`${re.source} matched ${JSON.stringify(m[0])} with no capture group 1`);
+  }
+  return group;
+}
+
+/** Capture group 1 of every match, for the loops that need nothing else. */
+function* captures(text: string, re: RegExp): Generator<string> {
+  for (const m of text.matchAll(re)) {
+    yield capture(m, re);
+  }
+}
+
+/** The patterns whose capture is read through `capture`/`captures`. */
+const DECLARATION = /(--[\w-]+)\s*:/g;
+const VAR_READ = /var\(\s*(--[\w-]+)/g;
+const INNERMOST_BLOCK = /\{([^{}]*)\}/g;
+// oklch(<L> 0 <hue>) — chroma written as a bare zero, hue anything but `none`.
+const ZERO_CHROMA = /oklch\(\s*[\d.]+%?\s+0(?:\.0+)?\s+([^)/\s]+)/g;
+
 const appSheets = readSheets(cssDir);
 const vendorSheets = vendorDirs.flatMap(readSheets);
 
@@ -63,13 +94,13 @@ const vendorSheets = vendorDirs.flatMap(readSheets);
 function declaredIn(sheets: Sheet[]): Set<string> {
   const out = new Set<string>();
   for (const s of sheets) {
-    for (const m of stripComments(s.text).matchAll(/(--[\w-]+)\s*:/g)) {
-      out.add(m[1]);
+    for (const name of captures(stripComments(s.text), DECLARATION)) {
+      out.add(name);
     }
     // @property registers a name and gives it an initial value, which is a
     // declaration for our purposes even though the syntax differs.
-    for (const m of s.text.matchAll(/@property\s+(--[\w-]+)/g)) {
-      out.add(m[1]);
+    for (const name of captures(s.text, /@property\s+(--[\w-]+)/g)) {
+      out.add(name);
     }
   }
   return out;
@@ -98,8 +129,8 @@ function writtenByScript(): Set<string> {
       if (entry.isDirectory()) {
         walk(p);
       } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
-        for (const m of readFileSync(p, "utf8").matchAll(/["'`](--[\w-]+)["'`]/g)) {
-          out.add(m[1]);
+        for (const name of captures(readFileSync(p, "utf8"), /["'`](--[\w-]+)["'`]/g)) {
+          out.add(name);
         }
       }
     }
@@ -123,9 +154,9 @@ describe("design tokens are declared before they are read", () => {
       lines.forEach((line, i) => {
         // The name is the first argument of var(); a fallback follows a comma
         // and is deliberately NOT what makes the read legitimate.
-        for (const m of line.matchAll(/var\(\s*(--[\w-]+)/g)) {
-          if (!declared.has(m[1])) {
-            orphans.push(`${sheet.name}:${i + 1} reads ${m[1]}`);
+        for (const name of captures(line, VAR_READ)) {
+          if (!declared.has(name)) {
+            orphans.push(`${sheet.name}:${i + 1} reads ${name}`);
           }
         }
       });
@@ -175,9 +206,9 @@ describe("design tokens are declared before they are read", () => {
 
     const declared = new Map<string, string>();
     for (const sheet of appSheets) {
-      for (const m of stripComments(sheet.text).matchAll(/(--[\w-]+)\s*:/g)) {
-        if (scoped.test(m[1]) && !vocabulary.test(m[1]) && !declared.has(m[1])) {
-          declared.set(m[1], sheet.name);
+      for (const name of captures(stripComments(sheet.text), DECLARATION)) {
+        if (scoped.test(name) && !vocabulary.test(name) && !declared.has(name)) {
+          declared.set(name, sheet.name);
         }
       }
     }
@@ -188,8 +219,8 @@ describe("design tokens are declared before they are read", () => {
     // token's value.
     const read = new Set<string>([...writtenByScript()]);
     for (const sheet of [...appSheets, ...vendorSheets]) {
-      for (const m of stripComments(sheet.text).matchAll(/var\(\s*(--[\w-]+)/g)) {
-        read.add(m[1]);
+      for (const name of captures(stripComments(sheet.text), VAR_READ)) {
+        read.add(name);
       }
     }
 
@@ -365,11 +396,10 @@ describe("an achromatic colour leaves its hue powerless", () => {
       stripComments(sheet.text)
         .split("\n")
         .forEach((line, i) => {
-          // oklch(<L> 0 <hue>) — chroma written as a bare zero, hue anything but
-          // `none`. Matches the declaration form only; a mix's own arguments are
-          // var() references and cannot carry a literal triple.
-          for (const m of line.matchAll(/oklch\(\s*[\d.]+%?\s+0(?:\.0+)?\s+([^)/\s]+)/g)) {
-            if (m[1] !== "none") {
+          // ZERO_CHROMA matches the declaration form only; a mix's own arguments
+          // are var() references and cannot carry a literal triple.
+          for (const m of line.matchAll(ZERO_CHROMA)) {
+            if (capture(m, ZERO_CHROMA) !== "none") {
               offenders.push(`${sheet.name}:${i + 1} - ${m[0]})`);
             }
           }
@@ -408,8 +438,8 @@ describe("an ink is only paired with a fill it clears", () => {
       // Innermost blocks only. A nested state that raises the fill while the ink
       // sits on its parent is a real pairing too, but it is not decidable from
       // one block, and this catches the shape that actually recurred.
-      for (const m of text.matchAll(/\{([^{}]*)\}/g)) {
-        const body = m[1];
+      for (const m of text.matchAll(INNERMOST_BLOCK)) {
+        const body = capture(m, INNERMOST_BLOCK);
         if (RAISED.test(body) && HINT.test(body)) {
           offenders.push(`${sheet.name}:${text.slice(0, m.index).split("\n").length}`);
         }
@@ -431,8 +461,9 @@ describe("an ink is only paired with a fill it clears", () => {
     const offenders: string[] = [];
     for (const sheet of appSheets) {
       const text = stripComments(sheet.text);
-      for (const m of text.matchAll(/\{([^{}]*)\}/g)) {
-        if (top.test(m[1]) && hue.test(m[1])) {
+      for (const m of text.matchAll(INNERMOST_BLOCK)) {
+        const body = capture(m, INNERMOST_BLOCK);
+        if (top.test(body) && hue.test(body)) {
           offenders.push(`${sheet.name}:${text.slice(0, m.index).split("\n").length}`);
         }
       }

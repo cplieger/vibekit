@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "static-src"
@@ -39,7 +38,14 @@ LAYER_RANK = {"reset": 1, "tokens": 2, "components": 3, "utilities": 4, "mobile"
 UNLAYERED = 99
 
 FUNCTIONAL_MAX = ("is", "not", "has", "matches", "any")
-SKIP_AT = ("@keyframes", "@font-face", "@property", "@page", "@counter-style", "@view-transition")
+SKIP_AT = (
+    "@keyframes",
+    "@font-face",
+    "@property",
+    "@page",
+    "@counter-style",
+    "@view-transition",
+)
 
 
 def read_manifest(path: Path, base: Path) -> list[tuple[str, Path]]:
@@ -69,7 +75,12 @@ def strip_comments(css: str) -> str:
     `.tab-close` came out 34 lines early, which is the difference between a
     citable coordinate and a wrong one.
     """
-    return re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group(0).count("\n") or " ", css, flags=re.S)
+    return re.sub(
+        r"/\*.*?\*/",
+        lambda m: "\n" * m.group(0).count("\n") or " ",
+        css,
+        flags=re.DOTALL,
+    )
 
 
 def split_top_level(s: str, sep: str = ",") -> list[str]:
@@ -143,13 +154,19 @@ def specificity(sel: str) -> tuple[int, int, int]:
                 if name == "where":
                     pass
                 elif name in FUNCTIONAL_MAX:
-                    best = max((specificity(p) for p in split_top_level(inner)), default=(0, 0, 0))
+                    best = max(
+                        (specificity(p) for p in split_top_level(inner)),
+                        default=(0, 0, 0),
+                    )
                     a, b, c = a + best[0], b + best[1], c + best[2]
                 elif name in ("nth-child", "nth-last-child"):
                     b += 1
                     if " of " in inner:
                         best = max(
-                            (specificity(p) for p in split_top_level(inner.split(" of ", 1)[1])),
+                            (
+                                specificity(p)
+                                for p in split_top_level(inner.split(" of ", 1)[1])
+                            ),
                             default=(0, 0, 0),
                         )
                         a, b, c = a + best[0], b + best[1], c + best[2]
@@ -264,7 +281,20 @@ def keys_of(compound: str) -> tuple[frozenset[str], frozenset[str], str | None, 
 
 
 class Rule:
-    __slots__ = ("file", "line", "order", "selector", "props", "spec", "layer", "pos", "neg", "elem", "pseudo", "at")
+    __slots__ = (
+        "at",
+        "elem",
+        "file",
+        "layer",
+        "line",
+        "neg",
+        "order",
+        "pos",
+        "props",
+        "pseudo",
+        "selector",
+        "spec",
+    )
 
     def __init__(self, file, line, order, selector, props, layer, at):
         self.file = file
@@ -274,7 +304,9 @@ class Rule:
         self.props = props
         self.spec = specificity(selector)
         self.layer = layer
-        self.pos, self.neg, self.elem, self.pseudo = keys_of(rightmost_compound(selector))
+        self.pos, self.neg, self.elem, self.pseudo = keys_of(
+            rightmost_compound(selector)
+        )
         self.at = at
 
     @property
@@ -291,7 +323,9 @@ class Rule:
         return f"layer{self.layer}"
 
 
-def parse(path: Path, name: str, order: int, force_layer: int | None = None) -> list[Rule]:
+def parse(
+    path: Path, name: str, order: int, force_layer: int | None = None
+) -> list[Rule]:
     css = strip_comments(path.read_text())
     rules: list[Rule] = []
     i, n, line = 0, len(css), 1
@@ -409,10 +443,16 @@ def can_match_same_element(a: Rule, b: Rule, loose: bool = False) -> bool:
     return ca <= cb or cb <= ca
 
 
-def wins(a: Rule, b: Rule, a_layer: int) -> str:
-    """Which of the two rules wins, given a's effective layer rank."""
-    if a_layer != b.layer:
-        return "a" if a_layer > b.layer else "b"
+def wins(a: Rule, b: Rule, a_layer: int, b_layer: int) -> str:
+    """Which of the two rules wins, given each one's effective layer rank.
+
+    Both ranks are arguments rather than read off the rules, because the
+    unlayering pass asks the same question twice about the same pair — once with
+    the shipped ranks and once with the hypothetical ones — and mutating a Rule
+    between the two calls would make the second answer depend on the first.
+    """
+    if a_layer != b_layer:
+        return "a" if a_layer > b_layer else "b"
     if a.spec != b.spec:
         return "a" if a.spec > b.spec else "b"
     return "a" if a.order > b.order else "b"
@@ -472,7 +512,9 @@ def main() -> int:
         help="comma-separated stylesheets to treat as unlayered in the AFTER state",
     )
     ap.add_argument("--loose", action="store_true", help="report any shared-class pair")
-    ap.add_argument("--losers", help="instead: list rules in this file that currently LOSE")
+    ap.add_argument(
+        "--losers", help="instead: list rules in this file that currently LOSE"
+    )
     args = ap.parse_args()
 
     unlayer = {s.strip() for s in args.unlayer.split(",") if s.strip()}
@@ -480,16 +522,22 @@ def main() -> int:
     print(f"bundle: {len(bundle_order())} stylesheets, {len(rules)} flattened rules")
 
     if args.losers:
-        print(f"\nrules in {args.losers} overridden by another stylesheet, as shipped:\n")
+        print(
+            f"\nrules in {args.losers} overridden by another stylesheet, as shipped:\n"
+        )
         found = 0
         for a, b, shared in colliding_pairs(rules, index, args.loose):
             for x, y in ((a, b), (b, a)):
                 if x.file != args.losers:
                     continue
-                if wins(x, y, x.layer) == "b":  # y wins
+                if wins(x, y, x.layer, y.layer) == "b":  # y wins
                     found += 1
-                    print(f"  LOSES  {x.where} spec={x.spec} {x.layer_name}  {x.selector}")
-                    print(f"  to     {y.where} spec={y.spec} {y.layer_name}  {y.selector}")
+                    print(
+                        f"  LOSES  {x.where} spec={x.spec} {x.layer_name}  {x.selector}"
+                    )
+                    print(
+                        f"  to     {y.where} spec={y.spec} {y.layer_name}  {y.selector}"
+                    )
                     print(f"    dead properties: {', '.join(shared)}")
                     if x.at or y.at:
                         print(f"    at-context: [{x.at or '-'}] vs [{y.at or '-'}]")
@@ -506,18 +554,8 @@ def main() -> int:
         lb_after = UNLAYERED if b.file in unlayer else b.layer
         if (la_before, lb_before) == (la_after, lb_after):
             continue
-        b_copy_before = b
-        before = wins(a, b_copy_before, la_before) if lb_before == b.layer else None
-        # recompute with explicit ranks rather than mutating rules
-        def decide(ra: int, rb: int) -> str:
-            if ra != rb:
-                return "a" if ra > rb else "b"
-            if a.spec != b.spec:
-                return "a" if a.spec > b.spec else "b"
-            return "a" if a.order > b.order else "b"
-
-        before = decide(la_before, lb_before)
-        after = decide(la_after, lb_after)
+        before = wins(a, b, la_before, lb_before)
+        after = wins(a, b, la_after, lb_after)
         if before != after:
             reversals.append((a, b, shared, before, after))
 
@@ -530,7 +568,9 @@ def main() -> int:
         return 0
 
     print(f"CASCADE-CHANGE SET: {len(reversals)} rule pair(s) flip:\n")
-    for a, b, shared, before, after in sorted(reversals, key=lambda h: (h[0].order, h[0].line, h[1].order, h[1].line)):
+    for a, b, shared, before, after in sorted(
+        reversals, key=lambda h: (h[0].order, h[0].line, h[1].order, h[1].line)
+    ):
         win_before = a if before == "a" else b
         win_after = a if after == "a" else b
         print(f"  A {a.where} spec={a.spec} {a.layer_name}  {a.selector}")

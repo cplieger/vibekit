@@ -94,7 +94,7 @@ func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 	if parked.Bounded() {
 		t.Error("a lease with no deadline reported bounded; a parked run must not be cancellable")
 	}
-	if parked.Expired(now.Add(time.Hour)) {
+	if parked.expired(now.Add(time.Hour)) {
 		t.Error("a parked lease reported expired; a run parked for a week must not be cancelled for it")
 	}
 
@@ -102,10 +102,10 @@ func TestLeaseBounded_IsTheSuccessorOfTheArmMap(t *testing.T) {
 	if !live.Bounded() {
 		t.Error("a lease with a deadline reported unbounded")
 	}
-	if live.Expired(now) {
+	if live.expired(now) {
 		t.Error("a lease expired before its deadline")
 	}
-	if !live.Expired(now.Add(time.Minute)) {
+	if !live.expired(now.Add(time.Minute)) {
 		t.Error("a lease was not expired AT its deadline; the timer fires then")
 	}
 }

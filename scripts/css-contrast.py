@@ -40,18 +40,25 @@ ANSI_SHEET = CSS_DIR / "15-ansi.css"
 class Colour:
     """A colour in gamma-encoded sRGB (0..1 per channel) plus alpha."""
 
-    __slots__ = ("r", "g", "b", "a", "clipped")
+    # Alphabetical because that is all `__slots__` is — a name set, with no
+    # ordering semantics. `__init__` below is where the channel order is stated.
+    __slots__ = ("a", "b", "clipped", "g", "r")
 
-    def __init__(self, r: float, g: float, b: float, a: float = 1.0, clipped: bool = False):
+    def __init__(
+        self, r: float, g: float, b: float, a: float = 1.0, clipped: bool = False
+    ):
         self.r, self.g, self.b, self.a, self.clipped = r, g, b, a, clipped
 
     def __repr__(self) -> str:
         return f"#{self.hex()}" + ("" if self.a >= 1 else f" a={self.a:.3f}")
 
     def hex(self) -> str:
-        return "".join(f"{round(max(0.0, min(1.0, c)) * 255):02x}" for c in (self.r, self.g, self.b))
+        return "".join(
+            f"{round(max(0.0, min(1.0, c)) * 255):02x}"
+            for c in (self.r, self.g, self.b)
+        )
 
-    def over(self, bg: "Colour") -> "Colour":
+    def over(self, bg: Colour) -> Colour:
         """Composite self over an opaque backdrop (CSS composites in sRGB)."""
         if self.a >= 1:
             return Colour(self.r, self.g, self.b, 1.0, self.clipped)
@@ -222,7 +229,9 @@ class Theme:
                 return self.resolve(self.decls[name], _depth + 1)
             if len(parts) > 1:
                 return self.resolve(parts[1], _depth + 1)
-            raise KeyError(f"{name} is READ but never DECLARED in the {self.name} theme")
+            raise KeyError(
+                f"{name} is READ but never DECLARED in the {self.name} theme"
+            )
 
         if low.startswith("over("):
             # Not CSS. `over(A, B)` is alpha compositing — what a browser
@@ -295,7 +304,7 @@ class Theme:
                 H = float(nums[2])
             return oklch_to_colour(L, C, H, alpha)
 
-        if low.startswith("rgb(") or low.startswith("rgba("):
+        if low.startswith(("rgb(", "rgba(")):
             inner = func_body(e, "rgba" if low.startswith("rgba(") else "rgb")
             assert inner is not None
             alpha = 1.0
@@ -307,7 +316,10 @@ class Theme:
             if len(parts) == 4:  # legacy rgba(r, g, b, a)
                 av = parts.pop()
                 alpha = float(av[:-1]) / 100 if av.endswith("%") else float(av)
-            ch = [float(p[:-1]) / 100 if p.endswith("%") else float(p) / 255 for p in parts]
+            ch = [
+                float(p[:-1]) / 100 if p.endswith("%") else float(p) / 255
+                for p in parts
+            ]
             return Colour(ch[0], ch[1], ch[2], alpha)
 
         m = re.fullmatch(r"#([0-9a-fA-F]{3,8})", e)
@@ -350,7 +362,7 @@ def block_body(src: str, start: int) -> str:
 
 
 def parse_themes() -> tuple[Theme, Theme]:
-    src = re.sub(r"/\*.*?\*/", " ", TOKENS.read_text(), flags=re.S)
+    src = re.sub(r"/\*.*?\*/", " ", TOKENS.read_text(), flags=re.DOTALL)
 
     def decls_of(body: str) -> dict[str, str]:
         # strip nested at-rule blocks so a nested @media does not leak in
@@ -408,7 +420,9 @@ def show_ramp(themes: list[Theme], rungs: list[str]) -> None:
         print()
 
 
-def show_pairs(themes: list[Theme], pairs: list[tuple[str, str, str, float | None]]) -> None:
+def show_pairs(
+    themes: list[Theme], pairs: list[tuple[str, str, str, float | None]]
+) -> None:
     """Contrast each pair, compositing a translucent first colour ONTO the second.
 
     A wash measured as if it were opaque is not a measurement of anything: a 16%
@@ -480,8 +494,12 @@ def show_selected(themes: list[Theme]) -> None:
                 cells.append(f"{fmt(r)}:1")
                 if fill in HELD_FILLS:
                     held.append(r)
-            verdict = "PASS" if min(held) >= 4.5 else f"FAIL (held min {fmt(min(held))}:1)"
-            print(f"    {tok:<26} {cells[0]:<12} {cells[1]:<12} {cells[2]:<12} {verdict}")
+            verdict = (
+                "PASS" if min(held) >= 4.5 else f"FAIL (held min {fmt(min(held))}:1)"
+            )
+            print(
+                f"    {tok:<26} {cells[0]:<12} {cells[1]:<12} {cells[2]:<12} {verdict}"
+            )
         # The row's own ink, for the hierarchy check below.
         own = th.colour("--c-selected-fg")
         print(
@@ -499,7 +517,9 @@ def show_selected(themes: list[Theme]) -> None:
         for pct in range(1, 101):
             expr = selected_expr(other, pct)
             worst = min(
-                contrast(th.resolve(expr), th.flat(fill)) for th in themes for fill in HELD_FILLS
+                contrast(th.resolve(expr), th.flat(fill))
+                for th in themes
+                for fill in HELD_FILLS
             )
             if worst >= 4.5:
                 best = (pct, worst)
@@ -510,7 +530,12 @@ def show_selected(themes: list[Theme]) -> None:
             continue
         pct, worst = best
         per = [
-            fmt(min(contrast(th.resolve(selected_expr(other, pct)), th.flat(f)) for f in HELD_FILLS))
+            fmt(
+                min(
+                    contrast(th.resolve(selected_expr(other, pct)), th.flat(f))
+                    for f in HELD_FILLS
+                )
+            )
             for th in themes
         ]
         print(f"  {label:<44} {pct:<7} {per[0]:<10} {per[1]:<10} {fmt(worst)}:1")
@@ -616,15 +641,50 @@ DOT_HELD = ["resting", "hover", "selected", "sel+hover"]
 # 40-a11y.css zeroes every animation under prefers-reduced-motion and the
 # vocabulary has to survive that.
 DOT_STATES: list[tuple[str, str, str, dict[str, str]]] = [
-    ("idle", "var(--c-dot-idle)", "--c-selected-muted-fg", {"fill": "hollow", "surround": "none", "motion": "still", "shape": "circle"}),
-    ("working", "--c-blue", "--c-selected-blue-fg", {"fill": "solid", "surround": "none", "motion": "animated", "shape": "circle"}),
-    ("waiting", "--c-yellow", "--c-selected-yellow-fg", {"fill": "hollow", "surround": "ring", "motion": "still", "shape": "circle"}),
-    ("input", "--c-orange", "--c-selected-orange-fg", {"fill": "solid", "surround": "ring", "motion": "still", "shape": "circle"}),
-    ("failed", "--c-red", "--c-selected-red-fg", {"fill": "solid", "surround": "none", "motion": "still", "shape": "diamond"}),
-    ("done", "--c-green", "--c-selected-green-fg", {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"}),
+    (
+        "idle",
+        "var(--c-dot-idle)",
+        "--c-selected-muted-fg",
+        {"fill": "hollow", "surround": "none", "motion": "still", "shape": "circle"},
+    ),
+    (
+        "working",
+        "--c-blue",
+        "--c-selected-blue-fg",
+        {"fill": "solid", "surround": "none", "motion": "animated", "shape": "circle"},
+    ),
+    (
+        "waiting",
+        "--c-yellow",
+        "--c-selected-yellow-fg",
+        {"fill": "hollow", "surround": "ring", "motion": "still", "shape": "circle"},
+    ),
+    (
+        "input",
+        "--c-orange",
+        "--c-selected-orange-fg",
+        {"fill": "solid", "surround": "ring", "motion": "still", "shape": "circle"},
+    ),
+    (
+        "failed",
+        "--c-red",
+        "--c-selected-red-fg",
+        {"fill": "solid", "surround": "none", "motion": "still", "shape": "diamond"},
+    ),
+    (
+        "done",
+        "--c-green",
+        "--c-selected-green-fg",
+        {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"},
+    ),
     # Editor tabs only. It can never share a strip position with a chat state,
     # so the pairwise check excludes it rather than demanding a channel for it.
-    ("dirty", "--c-accent", "--c-selected-accent-fg", {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"}),
+    (
+        "dirty",
+        "--c-accent",
+        "--c-selected-accent-fg",
+        {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"},
+    ),
 ]
 
 # NO ALIASES, and the empty list is the finding. `waiting` and `input` used to be
@@ -660,7 +720,14 @@ DOT_SOURCE_HUES = [
 # The status seeds whose L/C range defines "inside this theme's own palette" for
 # the orange sweep below. Read rather than asserted, so a retuned theme moves the
 # admissible band with it.
-DOT_SEED_BAND = ["--c-green", "--c-red", "--c-yellow", "--c-blue", "--c-teal", "--c-warning"]
+DOT_SEED_BAND = [
+    "--c-green",
+    "--c-red",
+    "--c-yellow",
+    "--c-blue",
+    "--c-teal",
+    "--c-warning",
+]
 
 # The base favicon's own artwork under the attention badge, and why the badge's
 # ink is a separate question from the tab dot's. static/favicon.svg is an opaque
@@ -685,7 +752,11 @@ def show_dot(themes: list[Theme]) -> None:
     for th in themes:
         print(f"  {th.name}:")
         cols = [c for c, _ in DOT_FILLS + DOT_SELECTED_FILLS]
-        print(f"    {'state':<10} {'ink':<26} " + " ".join(f"{c:<11}" for c in cols) + " verdict")
+        print(
+            f"    {'state':<10} {'ink':<26} "
+            + " ".join(f"{c:<11}" for c in cols)
+            + " verdict"
+        )
         for state, unsel, sel, _ch in DOT_STATES:
             row, held = [], []
             for cols_, ink in ((DOT_FILLS, unsel), (DOT_SELECTED_FILLS, sel)):
@@ -702,7 +773,11 @@ def show_dot(themes: list[Theme]) -> None:
                 else f"FAIL ({worst_col} {fmt(worst)}:1, want {DOT_FLOOR}:1)"
             )
             ink = f"{unsel} / {sel.replace('--c-selected-', '')}"
-            print(f"    {state:<10} {ink:<26} " + " ".join(f"{c:<11}" for c in row) + f" {verdict}")
+            print(
+                f"    {state:<10} {ink:<26} "
+                + " ".join(f"{c:<11}" for c in row)
+                + f" {verdict}"
+            )
         print()
 
     print("IDLE-RING SWEEP: the smallest 1%-step ink fraction clearing 3:1 on the")
@@ -747,7 +822,10 @@ def show_dot(themes: list[Theme]) -> None:
 
     aliases = {frozenset(p) for p in DOT_ALIASES}
     chat = [(s, ch) for s, _u, _sel, ch in DOT_STATES if s != DOT_CHAT_ONLY]
-    for pass_name, reduce_motion in (("motion available", False), ("prefers-reduced-motion", True)):
+    for pass_name, reduce_motion in (
+        ("motion available", False),
+        ("prefers-reduced-motion", True),
+    ):
         resolved = []
         for state, ch in chat:
             eff = dict(ch)
@@ -767,7 +845,9 @@ def show_dot(themes: list[Theme]) -> None:
             verdict = f"FAIL  hue is the only separator for: {pairs}"
         print(f"  {pass_name:<24} {verdict}")
     for a, b in DOT_ALIASES:
-        print(f"  {'aliased on purpose':<24} {a}/{b} share one visual; they differ in the announced name")
+        print(
+            f"  {'aliased on purpose':<24} {a}/{b} share one visual; they differ in the announced name"
+        )
     print()
 
     print("GREYSCALE ORDERING, for reference: what a reader with no hue perception")
@@ -792,7 +872,9 @@ def show_dot(themes: list[Theme]) -> None:
 def from_hex(value: str) -> Colour:
     text = value.lstrip("#")
     return Colour(
-        int(text[0:2], 16) / 255.0, int(text[2:4], 16) / 255.0, int(text[4:6], 16) / 255.0
+        int(text[0:2], 16) / 255.0,
+        int(text[2:4], 16) / 255.0,
+        int(text[4:6], 16) / 255.0,
     )
 
 
@@ -812,7 +894,9 @@ def show_dot_hues(themes: list[Theme]) -> None:
     print("one. What would be a finding is a state whose FAMILY differs — a violet")
     print("`working` against a blue one, which is what this replaced.")
     print()
-    print(f"  {'state':<10} {'source token':<18} {'source':<10} {'hue':<8} {'vibekit token':<12} dark hue   light hue")
+    print(
+        f"  {'state':<10} {'source token':<18} {'source':<10} {'hue':<8} {'vibekit token':<12} dark hue   light hue"
+    )
     for state, token, src_token, src_hex in DOT_SOURCE_HUES:
         _, _, src_hue = colour_to_oklch(from_hex(src_hex))
         cells = []
@@ -863,7 +947,9 @@ def show_orange_sweep(themes: list[Theme]) -> None:
                 held = []
                 for cols, is_sel in ((DOT_FILLS, False), (DOT_SELECTED_FILLS, True)):
                     ink = (
-                        f"color-mix(in oklch, var(--c-selected-fg) 56%, {expr})" if is_sel else expr
+                        f"color-mix(in oklch, var(--c-selected-fg) 56%, {expr})"
+                        if is_sel
+                        else expr
                     )
                     for col, fill in cols:
                         if col not in DOT_HELD:
@@ -884,16 +970,26 @@ def show_orange_sweep(themes: list[Theme]) -> None:
             f"C {fmt(min(chromas))}..{fmt(max(chromas))}"
         )
         print(f"  {th.name}: {len(rows)} admissible in the seed band ({band})")
-        print(f"    {'':<4} {'construction':<28} {'hex':<9} {'separation':<11} worst held")
+        print(
+            f"    {'':<4} {'construction':<28} {'hex':<9} {'separation':<11} worst held"
+        )
         declared = th.decls.get("--c-orange", "")
         for rank, (separation, expr, worst, hexv) in enumerate(rows[:5]):
-            mark = "<--" if expr.replace(" ", "") == declared.replace(" ", "") else f"#{rank + 1}"
+            mark = (
+                "<--"
+                if expr.replace(" ", "") == declared.replace(" ", "")
+                else f"#{rank + 1}"
+            )
             print(
                 f"    {mark:<4} {expr:<28} {hexv:<9} {fmt(separation):<11} "
                 f"{worst[0]} {fmt(worst[1])}:1"
             )
-        if declared and all(r[1].replace(" ", "") != declared.replace(" ", "") for r in rows[:5]):
-            print(f"    NOTE --c-orange is declared {declared!r}, outside the top 5 above")
+        if declared and all(
+            r[1].replace(" ", "") != declared.replace(" ", "") for r in rows[:5]
+        ):
+            print(
+                f"    NOTE --c-orange is declared {declared!r}, outside the top 5 above"
+            )
         print()
 
 
@@ -908,7 +1004,11 @@ def show_favicon_badge(themes: list[Theme]) -> None:
     mid = Colour((start.r + end.r) / 2, (start.g + end.g) / 2, (start.b + end.b) / 2)
     print(f"  badge sits at the gradient midpoint: {mid.hex()}")
     print()
-    print(f"  {'cue':<8} {'token':<12} " + " ".join(f"{th.name + ' ink':<18}" for th in themes) + " gamut")
+    print(
+        f"  {'cue':<8} {'token':<12} "
+        + " ".join(f"{th.name + ' ink':<18}" for th in themes)
+        + " gamut"
+    )
     for cue, token in FAVICON_CUES:
         cells, clipped = [], []
         for th in themes:
@@ -921,7 +1021,11 @@ def show_favicon_badge(themes: list[Theme]) -> None:
         # clamps per channel, so the tab dot and the tab icon would carry two
         # different colours from one declaration.
         verdict = "in sRGB" if not clipped else f"FAIL clipped in {', '.join(clipped)}"
-        print(f"  {cue:<8} {token:<12} " + " ".join(f"{c:<18}" for c in cells) + f" {verdict}")
+        print(
+            f"  {cue:<8} {token:<12} "
+            + " ".join(f"{c:<18}" for c in cells)
+            + f" {verdict}"
+        )
     print()
     print("  The dark inks are pastels and the light ones are deep, so on a")
     print("  saturated violet only the dark family separates at all. The generator")
@@ -937,7 +1041,11 @@ def show_shadow(themes: list[Theme]) -> None:
     print("is a no-op: a black shadow cannot darken a base that is already black.")
     print()
     for th in themes:
-        rungs = [r for r in ("--c-bg-primary", "--c-bg-secondary", "--c-bg-tertiary") if r in th.decls]
+        rungs = [
+            r
+            for r in ("--c-bg-primary", "--c-bg-secondary", "--c-bg-tertiary")
+            if r in th.decls
+        ]
         print(f"  {th.name}:")
         print(f"    {'site':<24} {'worst rung':<14} {'on':<18} verdict")
         for label, colour in SHADOW_SITES:
@@ -968,7 +1076,9 @@ def show_shadow(themes: list[Theme]) -> None:
                 if rung not in th.decls:
                     continue
                 bg = th.flat(rung)
-                cells.append(f"{rung.replace('--c-bg-', '')}={fmt(contrast(c.over(bg), bg))}:1")
+                cells.append(
+                    f"{rung.replace('--c-bg-', '')}={fmt(contrast(c.over(bg), bg))}:1"
+                )
             print(f"    {tok:<26} {'  '.join(cells)}")
         print()
 
@@ -1028,7 +1138,7 @@ def parse_ansi_sheet() -> tuple[dict[str, str], dict[str, str]]:
     own copy. Only the class NAMES are enumerated (ANSI_CODES), which is a
     different kind of claim from a colour.
     """
-    src = re.sub(r"/\*.*?\*/", " ", ANSI_SHEET.read_text(), flags=re.S)
+    src = re.sub(r"/\*.*?\*/", " ", ANSI_SHEET.read_text(), flags=re.DOTALL)
     fg: dict[str, str] = {}
     bg: dict[str, str] = {}
     codes = "|".join(re.escape(c) for c in ANSI_CODES)
@@ -1041,7 +1151,9 @@ def parse_ansi_sheet() -> tuple[dict[str, str], dict[str, str]]:
     return fg, bg
 
 
-def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Colour, float, float]]:
+def ansi_rows(
+    themes: list[Theme],
+) -> list[tuple[str, str, str, str, Colour, Colour, float, float]]:
     """Every ANSI measurement as (kind, theme, name, context, fg, bg, ratio, floor).
 
     A floor of 0 means "recorded, not gated" — see the fill-vs-surface trade.
@@ -1054,24 +1166,48 @@ def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Col
             for s in ANSI_SURFACES:
                 surf = th.flat(s)
                 rows.append(
-                    ("fg-surface", th.name, f"{name}-fg", s, th.resolve(expr), surf,
-                     contrast(th.resolve(expr), surf), ANSI_FG_FLOOR)
+                    (
+                        "fg-surface",
+                        th.name,
+                        f"{name}-fg",
+                        s,
+                        th.resolve(expr),
+                        surf,
+                        contrast(th.resolve(expr), surf),
+                        ANSI_FG_FLOOR,
+                    )
                 )
         # A foreground ON a fill: what a program setting both actually renders.
         for name, expr in fgs.items():
             for bname, bexpr in bgs.items():
                 f, b = th.resolve(expr), th.resolve(bexpr)
                 rows.append(
-                    ("fg-fill", th.name, f"{name}-fg", f"{bname}-bg", f, b,
-                     contrast(f, b), ANSI_PAIR_FLOOR)
+                    (
+                        "fg-fill",
+                        th.name,
+                        f"{name}-fg",
+                        f"{bname}-bg",
+                        f,
+                        b,
+                        contrast(f, b),
+                        ANSI_PAIR_FLOOR,
+                    )
                 )
         # A fill with no ANSI foreground: the container's own ink lands on it.
         for ink in ANSI_INKS:
             for bname, bexpr in bgs.items():
                 f, b = th.colour(ink), th.resolve(bexpr)
                 rows.append(
-                    ("ink-fill", th.name, ink, f"{bname}-bg", f, b,
-                     contrast(f, b), ANSI_PAIR_FLOOR)
+                    (
+                        "ink-fill",
+                        th.name,
+                        ink,
+                        f"{bname}-bg",
+                        f,
+                        b,
+                        contrast(f, b),
+                        ANSI_PAIR_FLOOR,
+                    )
                 )
         # A fill against the surface it marks. RECORDED, NOT GATED, and the
         # reason is arithmetic: carrying the darkest ink at 4.5:1 pins a fill
@@ -1085,8 +1221,16 @@ def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Col
             for s in ANSI_SURFACES:
                 b, surf = th.resolve(bexpr), th.flat(s)
                 rows.append(
-                    ("fill-surface", th.name, f"{bname}-bg", s, b, surf,
-                     contrast(b, surf), 0.0)
+                    (
+                        "fill-surface",
+                        th.name,
+                        f"{bname}-bg",
+                        s,
+                        b,
+                        surf,
+                        contrast(b, surf),
+                        0.0,
+                    )
                 )
     return rows
 
@@ -1110,7 +1254,9 @@ def show_ansi(themes: list[Theme]) -> None:
     print()
     literals = [n for n, e in {**fgs, **bgs}.items() if "var(" not in e]
     if literals:
-        print(f"  !! {len(literals)} entries still carry a literal: {', '.join(sorted(literals))}")
+        print(
+            f"  !! {len(literals)} entries still carry a literal: {', '.join(sorted(literals))}"
+        )
         print()
 
     rows = ansi_rows(themes)
@@ -1131,7 +1277,9 @@ def show_ansi(themes: list[Theme]) -> None:
                 + (f"   {len(fails)} FAIL" if fails else "   all clear")
             )
             for r in fails:
-                print(f"        {r[2]:<26} on {r[3]:<20} {fmt(r[6])}:1  FAIL (want {r[7]})")
+                print(
+                    f"        {r[2]:<26} on {r[3]:<20} {fmt(r[6])}:1  FAIL (want {r[7]})"
+                )
         print()
 
     print("  FILL vs THE SURFACE IT MARKS — recorded, not gated.")
@@ -1145,7 +1293,9 @@ def show_ansi(themes: list[Theme]) -> None:
     print("    A region marker would want 3:1 and cannot have it: a fill that carries")
     print("    the darkest ink at 4.5:1 is pinned past the surface's own luminance. So")
     print("    a fill WITH text on it is fully legible and a TEXTLESS coloured region")
-    print("    is quiet. That is .ansi-black-bg's old trade, now general — and measured")
+    print(
+        "    is quiet. That is .ansi-black-bg's old trade, now general — and measured"
+    )
     print("    against --c-bg-secondary, which is where this palette actually renders.")
     print()
 
@@ -1180,7 +1330,13 @@ def main() -> int:
     dark, light = parse_themes()
     themes = [dark, light]
 
-    ramp = ["--c-bg-primary", "--c-bg-secondary", "--c-bg-tertiary", "--c-bg-elevated", "--c-bg-hover"]
+    ramp = [
+        "--c-bg-primary",
+        "--c-bg-secondary",
+        "--c-bg-tertiary",
+        "--c-bg-elevated",
+        "--c-bg-hover",
+    ]
     surfaces = [r for r in ramp if r in dark.decls]
 
     if cmd in ("ramp", "all"):
@@ -1195,30 +1351,83 @@ def main() -> int:
             ("border vs bg-tertiary", "--c-border", "--c-bg-tertiary", None),
             ("border vs bg-elevated", "--c-border", "--c-bg-elevated", None),
             ("border vs bg-hover (legacy)", "--c-border", "--c-bg-hover", None),
-            ("accent-subtle vs bg-hover (legacy)", "--c-accent-subtle", "--c-bg-hover", None),
-            ("selected-bg vs bg-secondary", "--c-selected-bg", "--c-bg-secondary", 1.25),
-            ("selected-border vs selected-bg", "--c-selected-border", "--c-selected-bg", 1.25),
+            (
+                "accent-subtle vs bg-hover (legacy)",
+                "--c-accent-subtle",
+                "--c-bg-hover",
+                None,
+            ),
+            (
+                "selected-bg vs bg-secondary",
+                "--c-selected-bg",
+                "--c-bg-secondary",
+                1.25,
+            ),
+            (
+                "selected-border vs selected-bg",
+                "--c-selected-border",
+                "--c-selected-bg",
+                1.25,
+            ),
             ("selected-fg on selected-bg", "--c-selected-fg", "--c-selected-bg", 4.5),
-            ("selected-bg-hover vs selected-bg", "--c-selected-bg-hover", "--c-selected-bg", None),
-            ("selected-bg-press vs selected-bg-hover", "--c-selected-bg-press", "--c-selected-bg-hover", None),
-            ("tab-active-bg vs bg-secondary (legacy)", "--c-tab-active-bg", "--c-bg-secondary", None),
-            ("tab-active-border vs tab-active-bg (legacy)", "--c-tab-active-border", "--c-tab-active-bg", None),
+            (
+                "selected-bg-hover vs selected-bg",
+                "--c-selected-bg-hover",
+                "--c-selected-bg",
+                None,
+            ),
+            (
+                "selected-bg-press vs selected-bg-hover",
+                "--c-selected-bg-press",
+                "--c-selected-bg-hover",
+                None,
+            ),
+            (
+                "tab-active-bg vs bg-secondary (legacy)",
+                "--c-tab-active-bg",
+                "--c-bg-secondary",
+                None,
+            ),
+            (
+                "tab-active-border vs tab-active-bg (legacy)",
+                "--c-tab-active-border",
+                "--c-tab-active-bg",
+                None,
+            ),
         ]
         show_pairs(themes, pairs)
 
         print("WASHES vs EVERY SURFACE RUNG (a wash has no position on the ramp,")
-        print("so it must clear each rung — this is what the old opaque border could not do)")
+        print(
+            "so it must clear each rung — this is what the old opaque border could not do)"
+        )
         wash_pairs: list[tuple[str, str, str, float | None]] = []
         for tok, floor in (("--c-border", 1.3), ("--c-code-bg", 1.15)):
             for s in surfaces:
-                wash_pairs.append((f"{tok.replace('--c-', '')} on {s.replace('--c-bg-', '')}", tok, s, floor))
+                wash_pairs.append(
+                    (
+                        f"{tok.replace('--c-', '')} on {s.replace('--c-bg-', '')}",
+                        tok,
+                        s,
+                        floor,
+                    )
+                )
         show_pairs(themes, wash_pairs)
 
-        print("TINTED HAIRLINES: the color-mix(status, --c-border) sites, over their surface")
+        print(
+            "TINTED HAIRLINES: the color-mix(status, --c-border) sites, over their surface"
+        )
         tinted: list[tuple[str, str, str, float | None]] = []
         for hue in ("--c-teal", "--c-danger", "--c-accent"):
             expr = f"color-mix(in srgb, var({hue}) 45%, var(--c-border))"
-            tinted.append((f"{hue.replace('--c-', '')} 45% + border", expr, "--c-bg-secondary", 1.3))
+            tinted.append(
+                (
+                    f"{hue.replace('--c-', '')} 45% + border",
+                    expr,
+                    "--c-bg-secondary",
+                    1.3,
+                )
+            )
         show_pairs(themes, tinted)
 
         print("HOVER / PRESS WASH, composited over each surface")
@@ -1241,7 +1450,12 @@ def main() -> int:
     if cmd in ("text", "all"):
         print("TEXT ON SURFACE (WCAG 1.4.3: 4.5:1 body, 3:1 large; 1.4.11: 3:1 UI)")
         text_pairs: list[tuple[str, str, str, float | None]] = []
-        for t in ("--c-text-primary", "--c-text-secondary", "--c-text-tertiary", "--c-text-control"):
+        for t in (
+            "--c-text-primary",
+            "--c-text-secondary",
+            "--c-text-tertiary",
+            "--c-text-control",
+        ):
             for s in surfaces:
                 # The hint ink is sized against the PAGE and is not a
                 # general-purpose ink: it clears 4.5:1 on --c-bg-primary and on
@@ -1252,16 +1466,30 @@ def main() -> int:
                 # to skip the whole section. The rule is asserted where it can
                 # actually be checked, over the stylesheets:
                 # css-tokens.test.ts, "keeps the hint ink off a raised fill".
-                floor = None if t == "--c-text-tertiary" and s != "--c-bg-primary" else 4.5
+                floor = (
+                    None if t == "--c-text-tertiary" and s != "--c-bg-primary" else 4.5
+                )
                 text_pairs.append(
-                    (f"{t.replace('--c-text-', '')} on {s.replace('--c-bg-', '')}", t, s, floor)
+                    (
+                        f"{t.replace('--c-text-', '')} on {s.replace('--c-bg-', '')}",
+                        t,
+                        s,
+                        floor,
+                    )
                 )
         # A control's label sits on its own HOVER wash more often than on the top
         # ramp rung, now that hover is a wash rather than a jump to that rung.
         for t in ("--c-text-control", "--c-text-primary"):
             for s in ("--c-bg-primary", "--c-bg-secondary"):
                 expr = f"over(var(--c-hover), var({s}))"
-                text_pairs.append((f"{t.replace('--c-text-', '')} on hover({s.replace('--c-bg-', '')})", t, expr, 4.5))
+                text_pairs.append(
+                    (
+                        f"{t.replace('--c-text-', '')} on hover({s.replace('--c-bg-', '')})",
+                        t,
+                        expr,
+                        4.5,
+                    )
+                )
         text_pairs += [
             ("accent on bg-primary", "--c-accent", "--c-bg-primary", 4.5),
             ("on-accent on accent", "--c-on-accent", "--c-accent", 4.5),
@@ -1277,7 +1505,14 @@ def main() -> int:
         # one surface they all pass on. 3:1 rather than 4.5:1 because most of
         # these land on a glyph or a badge; a hue used for small body text needs
         # the stricter floor and its own row above.
-        for hue in ("--c-green", "--c-red", "--c-yellow", "--c-blue", "--c-danger", "--c-warning"):
+        for hue in (
+            "--c-green",
+            "--c-red",
+            "--c-yellow",
+            "--c-blue",
+            "--c-danger",
+            "--c-warning",
+        ):
             for s in ("--c-bg-secondary", "--c-bg-tertiary", "--c-bg-elevated"):
                 # Same reasoning as the hint ink above for the TOP rung: red,
                 # danger and warning land between 2.58 and 2.98 there, and the
@@ -1324,7 +1559,10 @@ def main() -> int:
             for th in themes:
                 try:
                     c = th.flat(tok, "--c-bg-primary")
-                    print(f"  {th.name:<6} {c!r:<22} Y={fmt(c.luminance())}" + ("  OUT OF GAMUT" if c.clipped else ""))
+                    print(
+                        f"  {th.name:<6} {c!r:<22} Y={fmt(c.luminance())}"
+                        + ("  OUT OF GAMUT" if c.clipped else "")
+                    )
                 except (KeyError, ValueError) as exc:
                     print(f"  {th.name:<6} {exc}")
 

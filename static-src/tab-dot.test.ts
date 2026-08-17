@@ -559,8 +559,11 @@ describe("the dot hues are web-terminal-ui's status vocabulary", () => {
     // Every rule in the block, at every scope: exactly two carry a ring. The
     // reduced-motion `working` donut used to be a third, which put the wants-you
     // marker on the one state that wants nothing from the reader.
-    const ringed = [...tabs.matchAll(/([^{}]*)\{([^{}]*box-shadow: 0 0 0 2px[^{}]*)\}/g)].map((m) =>
-      m[1].trim().split("\n").pop()?.trim(),
+    // The prelude is capture group 1 and the pattern makes it mandatory, so the
+    // `= ""` default never applies; it is there so a later edit to the pattern
+    // shows up as an empty selector in the assertion below rather than a throw.
+    const ringed = [...tabs.matchAll(/([^{}]*)\{([^{}]*box-shadow: 0 0 0 2px[^{}]*)\}/g)].map(
+      ([, prelude = ""]) => prelude.trim().split("\n").pop()?.trim(),
     );
     expect(ringed.sort()).toEqual([
       '.tab-status-dot[data-status="input"]',

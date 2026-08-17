@@ -22,7 +22,7 @@ describe("mergeBlockReason", () => {
   // Every branch the function now has. The catch-all this replaced said
   // the PR "isn't mergeable" and told the reader to open it on the forge;
   // no branch may reintroduce that.
-  const table: [string | undefined, string][] = [
+  const table: [string, string][] = [
     ["draft", "draft"],
     ["conflicts", "conflicts"],
     ["checks_failing", "check is failing"],
@@ -33,7 +33,7 @@ describe("mergeBlockReason", () => {
   ];
 
   for (const [cause, fragment] of table) {
-    it(`names the cause for ${String(cause)}`, () => {
+    it(`names the cause for ${cause}`, () => {
       const reason = mergeBlockReason(pr({ merge_blocked: cause }));
       expect(reason).not.toBe("");
       expect(reason).toContain(fragment);
@@ -57,7 +57,9 @@ describe("mergeBlockReason", () => {
 
   it("reserves empty and absent for mergeable, and nothing else", () => {
     expect(mergeBlockReason(pr({ merge_blocked: "" }))).toBe("");
-    expect(mergeBlockReason(pr({ merge_blocked: undefined }))).toBe("");
+    // ABSENT is the field missing, not the field set to undefined: the forge
+    // handlers omit it, so `pr()` is the shape production actually delivers.
+    expect(mergeBlockReason(pr())).toBe("");
     // Whitespace is not emptiness: a value the server sent is a cause.
     expect(mergeBlockReason(pr({ merge_blocked: " " }))).not.toBe("");
   });

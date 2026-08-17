@@ -90,9 +90,25 @@ type Lease struct {
 // whether it believes the run to be EXECUTING under a deadline it set.
 func (l *Lease) Bounded() bool { return !l.Deadline.IsZero() }
 
-// Expired reports whether the lease's deadline has passed. A parked lease is
+// expired reports whether the lease's deadline has passed. A parked lease is
 // never expired: there is no deadline to pass.
-func (l *Lease) Expired(now time.Time) bool {
+//
+// UNEXPORTED, and the reason is the mechanism above it. Nothing outside this
+// package asks whether a deadline has passed, because nothing needs to: the hub
+// enforces the bound with a `time.AfterFunc` armed for exactly this instant, so
+// the timer FIRING is that question, and its callback then asks the sharper one
+// (is the stored deadline still the one I was armed for — armRunDeadline's
+// generation check). Substituting a wall-clock comparison there would be a
+// downgrade, not a tightening: AfterFunc measures monotonic elapsed time, so a
+// backwards clock adjustment would make an expired() gate refuse to cancel a run
+// whose budget genuinely ran out. NewStore parks every deadline it reads back,
+// so a loaded lease is never expired either, which is why the orphan sweep keys
+// on KAS's own status and pause reason instead.
+//
+// It stays as the statement of the invariant Bounded()'s three readers rely on —
+// that a parked lease is not merely unbounded but uncancellable — and
+// TestLeaseBounded_IsTheSuccessorOfTheArmMap is what holds both halves together.
+func (l *Lease) expired(now time.Time) bool {
 	return l.Bounded() && !now.Before(l.Deadline)
 }
 

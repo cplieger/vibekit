@@ -118,7 +118,15 @@ async function openFile(
     case "diff":
       state.mode.value = {
         kind: "diff",
-        diffSource: { oldContent: "", newContent: content, oldLabel: "a", newLabel: "b" },
+        // fromGit false: both sides are in memory here. True would send the left
+        // pane to GET /api/git/show, which this suite neither needs nor stubs.
+        diffSource: {
+          oldContent: "",
+          newContent: content,
+          oldLabel: "a",
+          newLabel: "b",
+          fromGit: false,
+        },
       };
       break;
     case "image":

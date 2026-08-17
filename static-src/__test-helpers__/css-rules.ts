@@ -114,5 +114,12 @@ export function ruleContaining(
     found.length,
     `expected exactly one rule listing ${selector} (scope: ${scope}), found ${found.length}`,
   ).toBe(1);
-  return found[0];
+  const [only] = found;
+  if (only === undefined) {
+    // The expect above has already failed the test by the time this can run.
+    // It is here because `expect` is not a type guard, and stating the invariant
+    // as a throw is what lets the return type be the rule rather than a maybe.
+    throw new Error(`no rule listing ${selector} (scope: ${scope})`);
+  }
+  return only;
 }

@@ -18,6 +18,7 @@ import {
   SEARCH_DEBOUNCE_MS,
   wireSearchKeys,
 } from "./search-shell.js";
+import type { SearchShellSpec } from "./search-shell.js";
 
 beforeEach(() => {
   document.body.innerHTML = "";
@@ -149,7 +150,10 @@ describe("wireSearchKeys", () => {
 });
 
 /** A shell wired to a resolvable query, so a test can control when it answers. */
-function harness(over: Partial<Parameters<typeof createSearchShell>[0]> = {}) {
+// The spec is named with its own result type rather than reached through
+// `Parameters<typeof createSearchShell>[0]`, which resolves the generic to
+// `unknown` and then poisons `query`'s return type at the spread below.
+function harness(over: Partial<SearchShellSpec<string>> = {}) {
   const query = vi.fn();
   const render = vi.fn();
   let resolveWith: ((v: string | null) => void) | null = null;
@@ -171,7 +175,7 @@ function harness(over: Partial<Parameters<typeof createSearchShell>[0]> = {}) {
       render(res, q);
     },
     ...over,
-  } as Parameters<typeof createSearchShell>[0]);
+  });
   document.body.appendChild(shell.region);
   return {
     shell,

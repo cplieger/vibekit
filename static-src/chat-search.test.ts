@@ -5,7 +5,9 @@ import type { SearchHit } from "./chat-search.js";
 
 const apiGet = vi.fn<(url: string) => Promise<{ hits?: SearchHit[] } | null>>();
 const openForSearch = vi.fn();
-const clearSearchOpened = vi.fn(() => true);
+// The chat id is declared because fold-state.ts's clearSearchOpened takes one and
+// the wrapper below forwards it; a nullary mock types its own call log as empty.
+const clearSearchOpened = vi.fn((_chatID: string) => true);
 const emitMessages = vi.fn();
 
 vi.mock("./api-client.js", () => ({ apiGet: (url: string) => apiGet(url) }));
