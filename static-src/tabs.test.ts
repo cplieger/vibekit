@@ -58,6 +58,9 @@ import {
   renameTab,
   hasTab,
   getActiveTabId,
+  editorTabID,
+  isEditorTabID,
+  openEditorView,
   _resetForTest,
 } from "./tabs.js";
 import { attachDrag } from "./tabs-drag.js";
@@ -168,6 +171,74 @@ describe("closeTab", () => {
     for (const id of expectGone) {
       expect(hasTab(id)).toBe(false);
     }
+  });
+
+  // The store REMOVES a tab before notifying, and this is the property that
+  // depends on it. onClose is a teardown callback, so a callback that closes
+  // its own tab must find it already gone; notifying first made every such
+  // callback an infinite loop. The editor's teardown did exactly that
+  // (closeEditorFile ended in closeTab), so an editor tab could not be closed
+  // by ×, middle-click or Delete — the click recursed until the stack died.
+  it("a teardown that closes its own tab does not recurse", () => {
+    expect.assertions(3);
+    let closes = 0;
+    openTab({
+      ...makeTab("self-closing"),
+      onClose: () => {
+        closes++;
+        closeTab("self-closing");
+      },
+    });
+    closeTab("self-closing");
+    expect(closes).toBe(1);
+    expect(hasTab("self-closing")).toBe(false);
+    expect(getActiveTabId()).toBe("");
+  });
+
+  it("a teardown observes the tab as already gone", () => {
+    expect.assertions(1);
+    let presentDuringTeardown = true;
+    openTab({
+      ...makeTab("t"),
+      onClose: () => {
+        presentDuringTeardown = hasTab("t");
+      },
+    });
+    closeTab("t");
+    expect(presentDuringTeardown).toBe(false);
+  });
+
+  it("a child teardown that closes the parent leaves the parent's onClose run once", () => {
+    expect.assertions(3);
+    let parentCloses = 0;
+    openTab({ ...makeTab("p"), onClose: () => void parentCloses++ });
+    openTab({
+      ...makeTab("c"),
+      parentId: "p",
+      onClose: () => {
+        closeTab("p");
+      },
+    });
+    closeTab("p");
+    expect(parentCloses).toBe(1);
+    expect(hasTab("p")).toBe(false);
+    expect(hasTab("c")).toBe(false);
+  });
+});
+
+describe("editor tab ids", () => {
+  it("round-trips a path and recognises its own ids", () => {
+    expect.assertions(3);
+    const id = editorTabID("/workspace/hello.sh");
+    expect(id).toBe("editor:/workspace/hello.sh");
+    expect(isEditorTabID(id)).toBe(true);
+    expect(isEditorTabID("__settings__")).toBe(false);
+  });
+
+  it("openEditorView keys its tab by editorTabID", () => {
+    expect.assertions(1);
+    openEditorView("/workspace/hello.sh", () => undefined);
+    expect(hasTab(editorTabID("/workspace/hello.sh"))).toBe(true);
   });
 });
 

@@ -7,6 +7,7 @@
 import { signal, computed, type Signal, type ReadonlySignal } from "@cplieger/reactive";
 import { lineDiff, type DiffLine } from "./diff.js";
 import { countHunks } from "./diff-pane.js";
+import { relToWorkspace } from "./workspace.js";
 import type { ConflictFile } from "./conflict.js";
 
 // --- Virtual path routing ---
@@ -25,13 +26,20 @@ const DIFF_LABEL_WORKING_TREE = "working tree";
 //
 // routeForPath therefore has one branch, which is why it now reads as a plain
 // URL builder rather than a router.
+//
+// It is also where the editor's two path forms are kept apart. The editor
+// ADDRESSES a file absolutely, because that is the namespace /api/file* serves
+// and the form the file browser hands over; it DISPLAYS the file relative to
+// the workspace, because "/workspace/" on every filename is noise the reader
+// already knows. Deriving the label here means the split lives with the URL
+// builder rather than at each of the header's callers.
 export function routeForPath(path: string): {
   readURL: string;
   writeURL: string;
   displayPath: string;
 } {
   const url = `/api/file?path=${encodeURIComponent(path)}`;
-  return { readURL: url, writeURL: url, displayPath: path };
+  return { readURL: url, writeURL: url, displayPath: relToWorkspace(path) };
 }
 
 // --- Types ---

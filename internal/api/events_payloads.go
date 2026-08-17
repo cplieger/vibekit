@@ -29,8 +29,15 @@ type FileChange struct {
 // the newest. Clients with last-seen-id < Floor know they missed events
 // and should refetch authoritative state.
 type ConnectedPayload struct {
-	Floor uint64 `json:"floor"`
-	Head  uint64 `json:"head"`
+	// Workspace is the absolute workspace root, and the client needs it from
+	// the first frame because it cannot derive it. Every ACP-supplied path
+	// reaches the client workspace-RELATIVE (translate.relPath strips this
+	// prefix so a turn footer reads "hello.sh"), while the /api/file* surface
+	// has a container-ABSOLUTE namespace. Opening a changed file rejoins the
+	// two, and this is the missing half of that join.
+	Workspace string `json:"workspace,omitempty"`
+	Floor     uint64 `json:"floor"`
+	Head      uint64 `json:"head"`
 }
 
 // PermissionNeededPayload is the payload for type="permission_needed".

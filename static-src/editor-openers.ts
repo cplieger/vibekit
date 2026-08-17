@@ -4,7 +4,7 @@
 
 import { $ } from "./dom.js";
 import { effect } from "@cplieger/reactive";
-import { openEditorView, closeTab, setTabDirty } from "./tabs.js";
+import { openEditorView, editorTabID, setTabDirty } from "./tabs.js";
 import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
@@ -118,7 +118,7 @@ function open(path: string, opts: OpenOpts): void {
     dirtyTabUnbinds.set(
       path,
       effect(() => {
-        setTabDirty(`editor:${path}`, created.dirty.value);
+        setTabDirty(editorTabID(path), created.dirty.value);
       }),
     );
   }
@@ -176,11 +176,16 @@ export async function fetchGitDiffSources(
   if (!fileStates.has(state.path)) {
     return;
   }
-  const { oldContent, newContent, error } = result;
+  const { oldContent, newContent, error, baseLabel } = result;
   state.mode.value = {
     kind: "diff",
     diffSource: {
       ...m.diffSource,
+      // The base pane's caption is whatever the load found there, not the ref
+      // that was asked for: a file git owns no revision of gets "not in git"
+      // rather than an empty pane captioned "HEAD", which would claim HEAD
+      // holds the file and holds it empty.
+      oldLabel: baseLabel,
       oldContent,
       newContent,
     },
@@ -282,6 +287,17 @@ function persistOpenFiles(): void {
   uiState.save({ editor_files: [...fileStates.keys()] });
 }
 
+/** Tear down one open file's client state.
+ *
+ *  This is the editor tab's `onClose`, and nothing else calls it. It does NOT
+ *  close the tab: the tab store is what invoked this, and calling back into
+ *  closeTab was both redundant and the second half of an infinite loop (the
+ *  store fired onClose while the tab was still present, so the call re-entered
+ *  and recursed until the stack died — every editor tab was unclosable).
+ *
+ *  Ownership runs one way now. The store owns the tab, this owns the file
+ *  state, and neither reaches into the other. To close a file
+ *  programmatically, close its tab: `closeTab(editorTabID(path))`. */
 export function closeEditorFile(path: string): void {
   const state = fileStates.get(path);
   if (state?.mode.value.kind === "conflict") {
@@ -293,7 +309,6 @@ export function closeEditorFile(path: string): void {
   pendingLines.delete(path);
   clearAgentLineCache(path);
   clearSuggestionState(path);
-  closeTab(`editor:${path}`);
   const activeFilePath = getActiveFilePath();
   if (activeFilePath === path) {
     setActiveFilePath("");

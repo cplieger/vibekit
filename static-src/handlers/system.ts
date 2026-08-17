@@ -12,6 +12,7 @@
 import { onSSE, onBus, BUS_TRANSPORT_GAP } from "../bus.js";
 import { syncSettings } from "../settings.js";
 import { restoreLastModel } from "../session-context.js";
+import { setWorkspaceRoot } from "../workspace.js";
 import {
   getSessions,
   getActiveId,
@@ -24,7 +25,19 @@ import { loadList, loadMessages } from "../store-load.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { refreshCompactionThreshold } from "../status.js";
 import { refreshRetention } from "../retention.js";
-import { closeTab, hasTab, getOpenTabIDs } from "../tabs.js";
+import { closeTab, hasTab, getOpenTabIDs, isEditorTabID } from "../tabs.js";
+
+// The handshake states the workspace root. It is the only way the client learns
+// where the workspace is, and every relative agent path needs it to become
+// openable — see workspace.ts. Recorded here rather than in transport.ts, whose
+// own handshake hook returns early on the first connection of a page load (it
+// only cares about replay gaps) and would therefore miss it exactly once: on
+// the connection that matters.
+onSSE("connected", (_chatID, p) => {
+  if (typeof p.workspace === "string" && p.workspace !== "") {
+    setWorkspaceRoot(p.workspace);
+  }
+});
 
 onSSE("settings_updated", () => {
   // Reconcile our cache from the server's view. Use restoreLastModel
@@ -82,7 +95,7 @@ onBus(BUS_TRANSPORT_GAP, (_gap) => {
     const sessionIDs = new Set(getSessions().map((s) => s.id));
     // Walk open tabs via the tabs module (avoids DOM scraping).
     for (const id of getOpenTabIDs().filter(
-      (id) => id !== "" && !id.startsWith("__") && !id.startsWith("editor:"),
+      (id) => id !== "" && !id.startsWith("__") && !isEditorTabID(id),
     )) {
       if (!sessionIDs.has(id) && hasTab(id)) {
         closeTab(id);

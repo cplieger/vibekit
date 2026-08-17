@@ -267,14 +267,16 @@ func TestHandleShow_Rejections(t *testing.T) {
 }
 
 func TestHandleShow_MissingFileReturnsEmptyContent(t *testing.T) {
-	// Non-repo tempdir: git errors with "fatal: not a git repository",
-	// which no longer matches any "missing file" marker (we dropped
-	// the broad "fatal: path " prefix in cycle u10c1 because it
-	// swallowed unrelated path errors). It now falls through to the
-	// slog.Warn + show-failed branch. Both branches still emit
-	// `{"content":""}`; the assertion pins the branch via the
-	// `error` field so a future regression that re-widens the missing-
-	// file allowlist doesn't silently hide a real failure.
+	// A workspace that is no repo, with no `repo` param: the path belongs to
+	// no repository, so there is no revision of it to show. That is reported
+	// as not_in_repo, NOT as a failure — a file outside every repo renders
+	// correctly as an all-add diff, and folding the two made a real git
+	// failure claim "brand new file, every line added".
+	//
+	// This is the shape a turn's changed-file ledger produces: relPath hands
+	// the client a workspace-relative path with no repo attached. It used to
+	// resolve to the workspace root, run `git show` in a directory that is
+	// usually not a repository, and fail.
 	h := NewHandler(t.TempDir())
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=nonexistent", nil)
 	rec := httptest.NewRecorder()
@@ -283,9 +285,72 @@ func TestHandleShow_MissingFileReturnsEmptyContent(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `"error":"show_failed"`) {
-		t.Errorf("body = %q, want show-failed error marker", body)
+	if !strings.Contains(body, `"error":"not_in_repo"`) {
+		t.Errorf("body = %q, want not_in_repo marker", body)
 	}
+}
+
+// TestHandleShow_ResolvesOwningRepo covers the three answers handleShow gives a
+// workspace-relative path with NO repo parameter, which is every path coming
+// from a turn's changed-file ledger or a tool card.
+func TestHandleShow_ResolvesOwningRepo(t *testing.T) {
+	skipNoGit(t)
+	ws := t.TempDir()
+	// A repo one level down, the normal shape of this workspace.
+	sub := filepath.Join(ws, "myrepo")
+	if err := os.MkdirAll(sub, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	initFixtureRepo(t, sub)
+	// A file in the workspace but inside no repo.
+	if err := os.WriteFile(filepath.Join(ws, "loose.sh"), []byte("hi\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(ws)
+
+	show := func(t *testing.T, path string) (int, string) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/git/show?path="+path, nil)
+		rec := httptest.NewRecorder()
+		h.handleShow(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+
+	t.Run("committed file in a subdirectory repo is found", func(t *testing.T) {
+		// The owning repo AND the repo-relative path are both derived here; the
+		// caller sent neither. Before, this ran `git show HEAD:myrepo/README.md`
+		// in the workspace root and failed.
+		code, body := show(t, "myrepo/README.md")
+		if code != http.StatusOK {
+			t.Fatalf("code = %d, body = %s", code, body)
+		}
+		if !strings.Contains(body, "hi") {
+			t.Errorf("body = %q, want the committed content", body)
+		}
+	})
+
+	t.Run("untracked file in a repo has an empty base", func(t *testing.T) {
+		if err := os.WriteFile(filepath.Join(sub, "new.txt"), []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		code, body := show(t, "myrepo/new.txt")
+		if code != http.StatusOK {
+			t.Fatalf("code = %d, body = %s", code, body)
+		}
+		if !strings.Contains(body, `"content":""`) {
+			t.Errorf("body = %q, want empty content for a path absent at HEAD", body)
+		}
+	})
+
+	t.Run("file outside every repo reports not_in_repo", func(t *testing.T) {
+		code, body := show(t, "loose.sh")
+		if code != http.StatusOK {
+			t.Fatalf("code = %d, body = %s", code, body)
+		}
+		if !strings.Contains(body, `"error":"not_in_repo"`) {
+			t.Errorf("body = %q, want not_in_repo marker", body)
+		}
+	})
 }
 
 // --- pure function coverage ---

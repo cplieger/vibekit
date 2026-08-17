@@ -64,19 +64,40 @@ export const fetchAgentLines = apiAction<
   error: false,
 });
 
-/** Fetch git diff sources for the editor diff view. Toast on failure. */
+/** Fetch git diff sources for the editor diff view. Toast on failure.
+ *
+ *  The two sides speak different path languages, and conflating them is what
+ *  broke this action for every file:
+ *
+ *    /api/file    container-ABSOLUTE, resolved against the granted-roots
+ *                 allow-list. A relative path is denied 403.
+ *    /api/git/show  repo-relative (or workspace-relative with no `repo`, which
+ *                 the server then resolves to the owning repository).
+ *
+ *  `path` arrives absolute (the editor's own form) and each side is given the
+ *  form it accepts, rather than one spelling being sent to both and failing on
+ *  whichever endpoint disagreed.
+ *
+ *  `baseLabel` is returned because the left pane's caption is a claim about
+ *  what it holds: `not_in_repo` means git owns no revision of this file, so
+ *  labelling the empty pane "HEAD" would assert that HEAD has it and is empty.
+ *  That distinction is also why a missing base is NOT an error here — a file
+ *  outside every repo renders correctly as an all-add diff, and only a real
+ *  git failure earns the error surface. */
 export const loadDiff = defineAction<
   { path: string; repo: string; ref: string },
-  { oldContent: string; newContent: string; error: string }
+  { oldContent: string; newContent: string; error: string; baseLabel: string }
 >({
   name: "editor.load_diff",
   retryable: retryNetwork,
   run: async ({ path, repo, ref }, signal) => {
     const { apiGet } = await import("../api-client.js");
+    const { relToWorkspace } = await import("../workspace.js");
     const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";
+    const gitPath = repo !== "" ? path : relToWorkspace(path);
     const [oldD, newD] = await Promise.all([
-      apiGet<{ content?: string }>(
-        `/api/git/show?path=${encodeURIComponent(path)}&ref=${encodeURIComponent(ref)}${repoParam}`,
+      apiGet<{ content?: string; error?: string; detail?: string }>(
+        `/api/git/show?path=${encodeURIComponent(gitPath)}&ref=${encodeURIComponent(ref)}${repoParam}`,
         signal,
       ),
       apiGet<{ content?: string; error?: string }>(
@@ -87,13 +108,26 @@ export const loadDiff = defineAction<
     if (signal.aborted) {
       throw new ActionError("cancelled", { code: "cancelled" });
     }
-    if (oldD === null || newD === null) {
-      throw new ActionError("Could not load base/new revision", { code: "network" });
+    // Each side is named, because "one of them failed" is not something the
+    // reader can act on. This message reached users as a bare "Could not load
+    // base/new revision" whichever side died and whatever the status was.
+    if (newD === null) {
+      throw new ActionError(`Could not read the working copy of ${gitPath}`, { code: "network" });
+    }
+    if (oldD === null) {
+      throw new ActionError(`Could not read ${ref} for ${gitPath}`, { code: "network" });
+    }
+    const gitErr = oldD.error ?? "";
+    if (gitErr !== "" && gitErr !== "not_in_repo") {
+      throw new ActionError(`git could not read ${ref} for ${gitPath}: ${oldD.detail ?? gitErr}`, {
+        code: "network",
+      });
     }
     return {
       oldContent: oldD.content ?? "",
       newContent: newD.content ?? "",
       error: newD.error ?? "",
+      baseLabel: gitErr === "not_in_repo" ? "not in git" : ref,
     };
   },
   error: "Could not load diff",

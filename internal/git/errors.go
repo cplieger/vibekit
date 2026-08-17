@@ -29,6 +29,14 @@ const (
 	KindNoChanges        ErrorKind = "no_changes"
 	KindGenerationFailed ErrorKind = "generation_failed"
 	KindShowFailed       ErrorKind = "show_failed"
+	// KindNotInRepo means no discovered repository owns the path, so there
+	// is no committed revision of it to show. Distinct from KindShowFailed
+	// because it is not a failure: a file in the workspace but outside every
+	// repo (or a workspace root that is not itself a repo) simply has no
+	// "before", and a client showing it as an all-add diff is CORRECT. Fold
+	// the two and a real git failure renders as "this file is brand new",
+	// silently claiming every line was added.
+	KindNotInRepo ErrorKind = "not_in_repo"
 )
 
 // writeGitError writes a structured error response with a stable

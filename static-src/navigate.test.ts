@@ -32,9 +32,11 @@ vi.mock("./git-tabs.js", () => ({
 }));
 
 import { openChange, openChangeSet, openAtLine, openExternal } from "./navigate.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 beforeEach(() => {
   calls.length = 0;
+  resetWorkspace();
 });
 
 describe("openChange", () => {
@@ -80,6 +82,43 @@ describe("openAtLine", () => {
   it("does nothing for an empty path", () => {
     openAtLine("");
     expect(calls).toEqual([]);
+  });
+});
+
+// This module is the seam between the client's two path spaces, and the ONE
+// place the crossing happens. Its callers cannot be made to agree: three of them
+// (turn-footer ledger row, tool-card filename, approval row) carry the agent's
+// workspace-RELATIVE path while the file browser carries an absolute one, and
+// the editor addresses files absolutely because that is the namespace
+// /api/file* serves. Without the conversion the three relative callers produced
+// GET /api/file?path=hello.sh, which the granted-roots allow-list denied 403 —
+// so clicking a changed filename could never load its diff.
+describe("path-space normalisation", () => {
+  beforeEach(() => {
+    setWorkspaceRoot("/workspace");
+  });
+
+  it("makes a relative change path absolute", () => {
+    openChange("hello.sh");
+    expect(calls).toEqual(["gitdiff:/workspace/hello.sh:HEAD"]);
+  });
+
+  it("leaves an absolute change path alone", () => {
+    // The file browser's row already holds a real filesystem path.
+    openChange("/workspace/sub/a.go");
+    expect(calls).toEqual(["gitdiff:/workspace/sub/a.go:HEAD"]);
+  });
+
+  it("leaves a path in another granted mount alone", () => {
+    openChange("/config/mcp.json");
+    expect(calls).toEqual(["gitdiff:/config/mcp.json:HEAD"]);
+  });
+
+  it("makes a relative line reference absolute", () => {
+    // A read card's filename and a `path:line` reference in the agent's prose
+    // are both relative and were both denied the same way.
+    openAtLine("src/a.ts", 42);
+    expect(calls).toEqual(["file:/workspace/src/a.ts:42"]);
   });
 });
 
