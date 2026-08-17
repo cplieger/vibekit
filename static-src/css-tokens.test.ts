@@ -79,6 +79,13 @@ function declaredIn(sheets: Sheet[]): Set<string> {
  * Names a TypeScript module writes at runtime (`setProperty("--x", …)` or a
  * `"--x"` literal). Those are genuinely declared, just not in CSS, and pinning
  * them by hand would make this test a list to maintain instead of a check.
+ *
+ * TEST files are excluded, and that exclusion is the check working rather than a
+ * scoping detail: a test naming a token in an assertion is not a declaration of
+ * it, so counting one let a token be READ by a stylesheet, ASSERTED by a test,
+ * and declared nowhere — measured by deleting `--c-selected-orange-fg` from
+ * 01-tokens.css while 70-selection.css still read it, which stayed green because
+ * tab-dot.test.ts happened to name it. Every on-selected ink was in that state.
  */
 function writtenByScript(): Set<string> {
   const out = new Set<string>();
@@ -90,7 +97,7 @@ function writtenByScript(): Set<string> {
       const p = join(dir, entry.name);
       if (entry.isDirectory()) {
         walk(p);
-      } else if (entry.name.endsWith(".ts")) {
+      } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
         for (const m of readFileSync(p, "utf8").matchAll(/["'`](--[\w-]+)["'`]/g)) {
           out.add(m[1]);
         }
@@ -148,17 +155,23 @@ describe("design tokens are declared before they are read", () => {
     // vocabulary the next rule picks from, and demanding a current consumer for
     // each would argue against having a scale at all.
     //
-    // `--c-term-*` is excluded on that same vocabulary ground, and it is the one
-    // exclusion worth defending: the terminal seeds are the 16-colour ANSI
-    // standard, which is a COMPLETE SET by definition. Three members have
-    // consumers (`--c-term-bg` / `--c-term-fg` through shell.ts's SHELL_THEME,
-    // `--c-term-black` in 15-ansi.css) and declaring only those would leave the
-    // palette unable to answer for the other thirteen codes. Note the gap this
-    // leaves open, since it is real: 15-ansi.css still hardcodes the other 30
-    // ANSI literals rather than reading these seeds, so the palette is declared
-    // twice and only one copy is theme-aware.
+    // The `--c-term-*` exemption used to cover the whole family on that same
+    // vocabulary ground, and it was hiding a real gap: 15-ansi.css hardcoded 32
+    // ANSI literals rather than reading the seeds, so the palette was declared
+    // twice, only the unread copy was theme-split, and this test could not say
+    // so. That is fixed — all 32 ANSI entries (16 inks + 16 fills) are read by
+    // 15-ansi.css now — so the exemption is down to the four members that are
+    // genuinely unwired, named individually rather than by prefix so the next
+    // dead one cannot hide behind them.
+    //
+    // These four are the ENGINE's cursor and selection vocabulary. shell.ts's
+    // SHELL_THEME maps five variables (--bg, --text, --accent, --surface,
+    // --border) and none of them is these, so nothing reads them today. They are
+    // left declared rather than deleted because that is a decision about the live
+    // terminal's theming surface, not about contrast; flag them if they are still
+    // unwired next time this file is edited.
     const scoped = /^--(c|shadow)-/;
-    const vocabulary = /^--c-term-/;
+    const vocabulary = /^--c-term-(cursor|cursor-accent|selection|selection-inactive)$/;
 
     const declared = new Map<string, string>();
     for (const sheet of appSheets) {
@@ -170,8 +183,9 @@ describe("design tokens are declared before they are read", () => {
     }
 
     // A reader is any var() in any app or vendor sheet, or a name a TS module
-    // reads at runtime (shell.ts pulls the ANSI palette via getComputedStyle),
-    // or a use inside ANOTHER token's value.
+    // names as a string literal (shell.ts's SHELL_THEME maps --c-term-bg and
+    // --c-term-fg onto the engine's own variables), or a use inside ANOTHER
+    // token's value.
     const read = new Set<string>([...writtenByScript()]);
     for (const sheet of [...appSheets, ...vendorSheets]) {
       for (const m of stripComments(sheet.text).matchAll(/var\(\s*(--[\w-]+)/g)) {

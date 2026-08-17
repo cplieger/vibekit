@@ -432,10 +432,11 @@ export type TabDotStatus = "idle" | "working" | "waiting" | "input" | "failed" |
  *  sighted user reads and what a screen reader hears cannot drift. Exhaustive
  *  over TabDotStatus by type, so a new state cannot ship unnamed.
  *
- *  `waiting` and `input` share one VISUAL (css/12-tabs.css explains why a 9px
- *  disc has no channel left to separate them), so these two phrases are the
- *  only place the distinction survives. They are deliberately unlike each other
- *  in speech rather than near-synonyms. */
+ *  `waiting` and `input` used to share one VISUAL, which made these two phrases
+ *  the only place the distinction survived. They now differ by hue and by fill
+ *  (css/12-tabs.css), and the phrases stay deliberately unlike each other anyway:
+ *  the visual says "this chat wants you" for both, and only the words say which
+ *  kind of wanting it is. */
 const DOT_PHRASE: Readonly<Record<TabDotStatus, string>> = {
   idle: "idle",
   working: "working",

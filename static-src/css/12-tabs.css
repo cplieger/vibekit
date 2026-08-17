@@ -62,13 +62,19 @@
    ceremony. The two keyframes stay in 03-base.css with the rest of the app's
    animation vocabulary, where they already were.
 
-   Six chat states plus the editor's, and the grammar is the source's: an
-   ANIMATED state is a solid disc carrying a glow BEAT plus a travelling WAVE;
-   a state that WANTS YOU is a still disc inside a HARD ring; a settled state is
-   a bare still disc; nothing-has-happened is HOLLOW. Colour never carries a
-   state on its own — `css-contrast.py dot` prints the channel matrix and fails
-   if any two states are separable by hue alone, with motion available AND with
-   it removed. */
+   Six chat states plus the editor's, and the grammar is the source's: motion
+   means A TURN IS IN FLIGHT; a HARD RING means the chat wants you; a SOLID disc
+   means there is a turn's worth of substance behind the state; HOLLOW means
+   there is not. Colour never carries a state on its own — `css-contrast.py dot`
+   prints the channel matrix and fails if any two states are separable by hue
+   alone, with motion available AND with it removed.
+
+   The HUES are the source's too, adopted 2026-08 so a user reading both apps
+   learns one signal: `working` takes the blue web-terminal-ui pins as
+   `--status-working`, `input` the orange it pins as `--status-input`, and
+   `failed` / `done` were already red and green. Only the hue is shared, not the
+   value — see --c-orange in 01-tokens.css for why copying the package's fixed
+   sRGB hexes would break light mode. */
 .tab-status-dot {
   /* Hidden until a status is written. That is the source's `.wt-reports` gate
      expressed as an attribute rather than a class: an editor tab with nothing
@@ -119,6 +125,12 @@
 
 /* Working — a turn is in flight. The ONLY animated state, which is what the
    source's motion axis means: motion is "in flight", stillness is "settled".
+   BLUE, not the accent: web-terminal-ui pins `--status-working` to a fixed blue
+   rather than to its own `--accent`, and vibekit overrides that accent to its
+   violet through shell.ts's SHELL_THEME — so before this change a terminal tab's
+   working dot was blue while a chat tab's was violet, in the same window. The
+   editor's `dirty` mark keeps the accent, which separates it from `working` as a
+   side effect rather than as the goal.
    Two cues, the status-badge "processing" idiom: the disc holds full opacity
    while a pre-painted overlay GLOWS through it, and a ::after WAVE travels off
    the disc's edge and dissolves, re-emitted each cycle.
@@ -139,7 +151,7 @@
   position: relative;
   transform: translateZ(0);
 
-  --dot-color: var(--c-accent);
+  --dot-color: var(--c-blue);
 }
 
 /* The glow beat, compositor-only. The disc itself never changes; this
@@ -190,27 +202,50 @@
   animation: vk-dot-wave 1.2s linear infinite;
 }
 
-/* WAITING and INPUT — the two states that want you. A still disc inside a
-   static HARD 2px ring: the stillness plus the hard edge is the message, and
-   the ring is the source's exclusive vocabulary for "blocked, waiting on you".
+/* WAITING and INPUT — the two states that want you, and the RING is what says
+   so. It is the source's exclusive vocabulary for "blocked, waiting on you", so
+   both states carry it and nothing else does.
 
-   THEY SHARE ONE VISUAL ON PURPOSE, and it is a real limit rather than an
-   oversight. `waiting` is the agent declaring waiting_on_user with its turn
-   over; `input` is a permission / elicitation / question sitting unanswered in
-   that chat's dock with the turn frozen. Six chat states against four
-   non-colour channels leaves nothing to separate this pair with, and separating
-   them by hue alone is the 1.4.1 failure this whole vocabulary is built to
-   avoid. So they take one treatment and differ in the ANNOUNCED name and the
-   tooltip ("waiting for you" / "needs a decision"), which is a channel a 9px
-   disc does not have to spend. The remedy is identical either way: open the tab
-   and answer. `css-contrast.py dot` declares the pair so the channel check
-   treats the shared visual as intended. */
-.tab-status-dot[data-status="waiting"],
+   THEY USED TO SHARE ONE VISUAL, both solid discs in --c-yellow, split only by
+   the announced phrase. That was recorded as a hard limit — six chat states
+   against four non-colour channels — and it was not one: the pair was aliased
+   because it had been given ONE hue, and the source system separates the same two
+   meanings BY hue on purpose (its own comment: yellow is "deliberately not amber
+   -- amber would collide with --status-input's"). Giving `input` the source's
+   orange took the pair apart, and the fill channel then had a slot free for
+   `waiting`.
+
+   So: `input` is a SOLID orange disc in a ring — a decision is open and the turn
+   is frozen mid-flight, which is substance waiting on you. `waiting` is a HOLLOW
+   yellow disc in a ring — the agent declared waiting_on_user and its turn is
+   OVER, so there is nothing in flight to fill the disc with. Fill therefore keeps
+   the meaning it has everywhere else in this vocabulary, and the ring keeps its
+   one meaning across both. The remedy is still the same either way (open the tab
+   and answer), so the phrases stay unlike each other too.
+
+   Dropping `waiting`'s ring instead was the obvious reading of "separate them on
+   the surround" and it does not work: a solid ringless disc is exactly `done`, so
+   the collision moves rather than closing. hollow+ring is the only free
+   combination in the declared vocabulary, and `css-contrast.py dot` now proves
+   the pair separates with NO alias declared.
+
+   The ring declaration is repeated rather than factored into a shared selector
+   list, so every state in this block stays exactly ONE rule. That is what lets
+   70-selection.css re-point a state with one line and what lets the tests read a
+   state's whole treatment from a single body. */
+.tab-status-dot[data-status="waiting"] {
+  background: transparent;
+  border: 1.5px solid var(--dot-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
+
+  --dot-color: var(--c-yellow);
+}
+
 .tab-status-dot[data-status="input"] {
   background: var(--dot-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
 
-  --dot-color: var(--c-yellow);
+  --dot-color: var(--c-orange);
 }
 
 /* Failed — the chat's last turn or bridge operation errored. Still, because
@@ -266,15 +301,29 @@
 
 @media (prefers-reduced-motion: reduce) {
   /* Motion is what separates `working` from the settled states, so with it gone
-     the disc becomes a DONUT with a static ring: it then differs from the
-     wants-you pair (solid disc + ring) by the hole and from done/failed by the
-     ring, which is shape rather than hue. The hole is a genuinely transparent
-     gradient stop rather than a background-coloured inset shadow, so it shows
-     whatever fill its row has — resting, hovered, selected or pressed, in both
-     themes — and needs no token that would have to be re-pointed per rung. */
+     the disc becomes a DONUT: a hole is shape rather than hue, and it separates
+     working from every solid state (done, failed, input) at a glance. The hole is
+     a genuinely transparent gradient stop rather than a background-coloured inset
+     shadow, so it shows whatever fill its row has — resting, hovered, selected or
+     pressed, in both themes — and needs no token that would have to be re-pointed
+     per rung.
+
+     NO RING here, and it used to have one. The ring is the wants-you marker and
+     `working` does not want you, so borrowing it put a false signal on the one
+     state that is making progress on its own. It was tolerable while the wants-you
+     pair shared a single visual; with the pair split, three of six states would
+     have carried a ring and the marker would have meant nothing. Dropping it also
+     leaves fewer weak pairs, not more: with the ring, working sat one channel from
+     BOTH ringed states; without it, only `idle` is one channel away.
+
+     That one remaining pair is why the hole is 45% and not the 55% it was. Both
+     are rings of ink at 9px, so the band widths have to be tellable apart: 45%
+     leaves a 2.5px band around a 4px hole against idle's 1.5px hairline around a
+     6px one — heavy ring versus outline. Widening further would close the hole
+     until the donut read as a solid disc, which is the collision on the other
+     side. */
   .tab-status-dot[data-status="working"] {
-    background: radial-gradient(closest-side, transparent 0 55%, var(--dot-color) 55% 100%);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
+    background: radial-gradient(closest-side, transparent 0 45%, var(--dot-color) 45% 100%);
   }
 
   /* The overlay and the wave disappear ENTIRELY rather than freezing mid-beat or

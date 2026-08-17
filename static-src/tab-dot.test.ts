@@ -34,6 +34,9 @@
 // cannot answer "which rule applies".
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ruleContaining, loadCSS } from "./__test-helpers__/css-rules.js";
 import {
   tabStatusFor,
@@ -386,15 +389,38 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
   it("replaces the lost motion with a shape, not just a colour", () => {
     // Motion is what separates `working` from every settled state, so with it
     // gone the disc has to differ by SHAPE or the state is carried by hue alone
-    // (WCAG 1.4.1). It becomes a donut with a static ring.
+    // (WCAG 1.4.1). It becomes a donut.
     const reduced = ruleContaining(tabs, dot, "prefers-reduced-motion");
     expect(/radial-gradient\(closest-side, transparent/.test(reduced.body)).toBe(true);
-    expect(/box-shadow:\s*0 0 0 2px/.test(reduced.body)).toBe(true);
     // The hole is a TRANSPARENT gradient stop, not a background-coloured inset
     // shadow: the same dot sits on five different row fills (resting, hovered,
     // selected, selected-hover, selected-press) in two themes, and an opaque
     // hole would be wrong on four of them.
     expect(/inset .*var\(--c-bg/.test(reduced.body)).toBe(false);
+  });
+
+  it("does not borrow the wants-you ring to make up for the motion", () => {
+    // It used to. The ring means "this chat wants you", `working` wants nothing,
+    // and with the waiting/input pair un-merged three of six states would have
+    // carried one. Dropping it also leaves the donut one channel from `idle`
+    // alone rather than from both ringed states.
+    const reduced = ruleContaining(tabs, dot, "prefers-reduced-motion");
+    expect(/box-shadow/.test(reduced.body)).toBe(false);
+  });
+
+  it("keeps the donut's band tellable apart from a hollow dot's hairline", () => {
+    // `idle` and `waiting` are hollow — a 1.5px edge — so at 9px the donut is the
+    // OTHER ring of ink in the vocabulary and the two have to differ by weight,
+    // not just by hue. A 45% hole leaves a 2.5px band around a 4px hole; the 55%
+    // it started at left 2.0px, close enough to a hairline to read as one.
+    // Widening past 45% closes the hole until the donut reads as a solid disc,
+    // which is the collision on the other side, so the stop is bounded twice.
+    const reduced = ruleContaining(tabs, dot, "prefers-reduced-motion");
+    const stop = /transparent 0 (\d+)%, var\(--dot-color\) \1% 100%/.exec(reduced.body);
+    expect(stop, "the donut must have one hole radius, used by both stops").not.toBeNull();
+    const hole = Number(stop?.[1]);
+    expect(hole).toBeGreaterThanOrEqual(35);
+    expect(hole).toBeLessThanOrEqual(50);
   });
 
   it("keeps the global reduced-motion sweep that backs it up", () => {
@@ -422,9 +448,9 @@ describe("every dot state has an on-selected ink", () => {
     const sel = loadCSS("70-selection.css");
     const inks: [string, string][] = [
       ["idle", "--c-selected-muted-fg"],
-      ["working", "--c-selected-accent-fg"],
+      ["working", "--c-selected-blue-fg"],
       ["waiting", "--c-selected-yellow-fg"],
-      ["input", "--c-selected-yellow-fg"],
+      ["input", "--c-selected-orange-fg"],
       ["failed", "--c-selected-red-fg"],
       ["done", "--c-selected-green-fg"],
       ["dirty", "--c-selected-accent-fg"],
@@ -439,23 +465,118 @@ describe("every dot state has an on-selected ink", () => {
   });
 
   it("keeps every state resolving through the one custom property", () => {
-    // The disc, the idle ring, the hard ring's 30% mix and the reduced-motion
-    // donut all read --dot-color, which is what makes one line per state in
-    // 70-selection.css sufficient. A state that hardcoded `background:
+    // The disc, both hollow borders, the hard ring's 30% mix and the
+    // reduced-motion donut all read --dot-color, which is what makes one line per
+    // state in 70-selection.css sufficient. A state that hardcoded `background:
     // var(--c-red)` would take its selected ink in no layer at all.
     const tabs = loadCSS("12-tabs.css");
-    for (const state of ["working", "waiting", "input", "failed", "done", "dirty"]) {
+    for (const state of ["working", "input", "failed", "done", "dirty"]) {
       const rule = ruleContaining(tabs, `.tab-status-dot[data-status="${state}"]`, "top");
       expect(
         /background: var\(--dot-color\)/.test(rule.body),
         `${state} must paint from --dot-color; got: ${rule.body.trim()}`,
       ).toBe(true);
     }
-    expect(
-      /border: 1\.5px solid var\(--dot-color\)/.test(
-        ruleContaining(tabs, '.tab-status-dot[data-status="idle"]', "top").body,
-      ),
-    ).toBe(true);
+    // The two hollow states paint their ink into a border instead of a
+    // background, so they read the same property from the other side.
+    for (const state of ["idle", "waiting"]) {
+      expect(
+        /border: 1\.5px solid var\(--dot-color\)/.test(
+          ruleContaining(tabs, `.tab-status-dot[data-status="${state}"]`, "top").body,
+        ),
+        `${state} must draw its hollow edge from --dot-color`,
+      ).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. The hue vocabulary, shared with @cplieger/web-terminal-ui.
+//
+// The two apps sit in the same window (vibekit hosts a web-terminal panel), so a
+// state that means one thing must not carry two colours between them. Before
+// 2026-08 it did: `working` was vibekit's violet accent while the terminal's was
+// --status-working's blue, and vibekit overrides the terminal's accent to that
+// same violet through shell.ts's SHELL_THEME, so both dots were on screen
+// disagreeing.
+// ---------------------------------------------------------------------------
+
+describe("the dot hues are web-terminal-ui's status vocabulary", () => {
+  const tabs = loadCSS("12-tabs.css");
+
+  it("gives each state the token carrying the source system's hue", () => {
+    // Tokens, not values: vibekit's are theme-split and contrast-measured while
+    // the package's are fixed sRGB tuned for a dark terminal, so the hue is what
+    // travels. See --c-orange in 01-tokens.css.
+    const hues: [string, string][] = [
+      ["working", "--c-blue"], // --status-working #52a9fe
+      ["waiting", "--c-yellow"],
+      ["input", "--c-orange"], // --status-input  #fb923c
+      ["failed", "--c-red"], // --status-failed #dc2626
+      ["done", "--c-green"], // --status-done   #22c55e
+    ];
+    for (const [state, token] of hues) {
+      const rule = ruleContaining(tabs, `.tab-status-dot[data-status="${state}"]`, "top");
+      expect(
+        rule.body.includes(`--dot-color: var(${token})`),
+        `${state} must take ${token}; got: ${rule.body.trim()}`,
+      ).toBe(true);
+    }
+  });
+
+  it("keeps the editor's mark off the working hue, and working off the accent", () => {
+    // `dirty` and `working` were BOTH --c-accent, which is how an editor tab with
+    // unsaved changes and a chat mid-turn came to look identical. They separate
+    // now, and the separation must not close from either side.
+    const working = ruleContaining(tabs, '.tab-status-dot[data-status="working"]', "top");
+    const dirty = ruleContaining(tabs, '.tab-status-dot[data-status="dirty"]', "top");
+    expect(working.body).not.toContain("--c-accent");
+    expect(dirty.body).toContain("--dot-color: var(--c-accent)");
+  });
+
+  it("un-merges waiting from input on fill as well as hue", () => {
+    // They shared ONE visual until the hues were aligned, and the alias that
+    // exempted the pair from the non-colour-channel check is gone with it. Hue
+    // alone would put the pair straight back into a WCAG 1.4.1 failure, so the
+    // fill difference is what makes the un-merge real: `input` is solid (a turn
+    // frozen mid-flight), `waiting` is hollow (its turn is over).
+    const waiting = ruleContaining(tabs, '.tab-status-dot[data-status="waiting"]', "top");
+    const input = ruleContaining(tabs, '.tab-status-dot[data-status="input"]', "top");
+    expect(waiting.body).toContain("background: transparent");
+    expect(input.body).toContain("background: var(--dot-color)");
+    expect(waiting.body).not.toContain("--c-orange");
+    expect(input.body).not.toContain("--c-yellow");
+    // The ring is the wants-you marker and BOTH keep it: that is the half of the
+    // treatment they still share, and it is why the phrases still have to differ.
+    for (const rule of [waiting, input]) {
+      expect(
+        /box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--dot-color\) 30%/.test(rule.body),
+      ).toBe(true);
+    }
+  });
+
+  it("gives the ring to nothing else, so it keeps meaning one thing", () => {
+    // Every rule in the block, at every scope: exactly two carry a ring. The
+    // reduced-motion `working` donut used to be a third, which put the wants-you
+    // marker on the one state that wants nothing from the reader.
+    const ringed = [...tabs.matchAll(/([^{}]*)\{([^{}]*box-shadow: 0 0 0 2px[^{}]*)\}/g)].map((m) =>
+      m[1].trim().split("\n").pop()?.trim(),
+    );
+    expect(ringed.sort()).toEqual([
+      '.tab-status-dot[data-status="input"]',
+      '.tab-status-dot[data-status="waiting"]',
+    ]);
+  });
+
+  it("keeps the tool's alias list empty, which is where the un-merge is proven", () => {
+    // scripts/css-contrast.py fails when two chat states differ by hue alone, and
+    // DOT_ALIASES is the list of pairs it has been told not to look at. The pair
+    // was in it. An entry re-appearing here would let the merge come back with
+    // the check still reporting PASS, which is the one failure mode a mechanical
+    // gate has that a human reviewer does not.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const script = readFileSync(join(here, "..", "scripts", "css-contrast.py"), "utf8");
+    expect(script).toContain("DOT_ALIASES: list[tuple[str, str]] = []");
   });
 });
 

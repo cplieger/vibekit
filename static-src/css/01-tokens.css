@@ -102,6 +102,36 @@
     --c-red: oklch(75.6% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
 
+    /* ORANGE, at @cplieger/web-terminal-ui's --status-input hue. That package
+     * declares `#fb923c` for "action required" and says of its yellow that it is
+     * "deliberately not amber -- amber would collide with --status-input's", so
+     * the two states it separates by HUE are the two vibekit had collapsed onto
+     * one. `#fb923c` converts to oklch 75.8% 0.159 55.9deg, and 55.9deg is the
+     * part adopted here: the package's tokens are fixed sRGB values tuned for a
+     * dark terminal, so copying the hex would put a pastel on white in light mode
+     * and clear no floor this design holds.
+     *
+     * L AND C ARE SWEPT, NOT PICKED (`css-contrast.py dot` prints the sweep).
+     * Over each theme's OWN status-seed band — the L and C range its existing
+     * green/red/yellow/blue/teal/warning already occupy — the sweep maximises the
+     * SMALLER of the two separations that matter, oklab distance to --c-yellow and
+     * to --c-red, among the values that clear 3:1 on all four held tab-row fills
+     * and land inside sRGB. The orange sits between those two hues in the dot
+     * vocabulary, so being confusable with either is the only way this token can
+     * fail. Dark lands at 0.126, light at 0.086; both are yellow-bound, and for
+     * scale this palette already ships --c-blue against --c-accent at 0.096 as
+     * two distinct signals. The pair the light figure is thinnest for, `waiting`
+     * against `input`, also differs by FILL, so hue is not carrying it alone.
+     *
+     * The in-gamut constraint is the one that moved the answer, and it is not
+     * tidiness: every other seed is in gamut, and outside sRGB a browser reduces
+     * chroma while `gen-attention-icons.py` clamps per channel — so an
+     * out-of-gamut orange would paint the tab dot and the tab ICON two different
+     * colours, which is exactly what the attention badge exists to keep in step.
+     * Dropping it would have given 0.128 / 0.101 at oklch(81% 0.13) and
+     * oklch(54% 0.15), both of which clip. */
+    --c-orange: oklch(81% 0.125 55.9deg);
+
     /* Secondary status hues, theme-split like green/red/yellow. danger and
      * warning were undeclared tokens resolving through per-site fallback
      * literals (#e66666 / #e6c074, ~28 sites); these dark values EQUAL those
@@ -133,34 +163,98 @@
     --c-hl-number: oklch(78% 0.13 60deg);
 
     /* ---- SEEDS: terminal 16-colour ANSI palette + surfaces ----------------
-     * --c-term-bg / --c-term-fg reach the terminal through shell.ts's
+     * --c-term-bg / --c-term-fg reach the LIVE terminal through shell.ts's
      * SHELL_THEME, which maps them onto the engine's own --bg / --text on the
-     * #shell-terminal root; --c-term-black is 15-ansi.css's black background.
-     * The rest are the ANSI standard's remaining codes, declared as the complete
-     * set a palette has to be. --c-term-bg tracks BELOW --c-bg-primary so the
-     * terminal still reads as an inset; it moved down with the ramp. */
+     * #shell-terminal root. That is the whole of SHELL_THEME's colour interest:
+     * web-terminal-engine paints each ANSI run inline from server-resolved RGB
+     * (its render.ts `colorHex`), so it reads none of the 16 codes below and the
+     * shell panel is NOT a consumer of this palette. --c-term-bg tracks BELOW
+     * --c-bg-primary so the terminal still reads as an inset.
+     *
+     * The 16 codes are 15-ansi.css's, and they are TWO ramps rather than one
+     * value per code, because a colour that reads AS text and a colour that
+     * CARRIES text cannot be the same colour. `--c-term-<name>` is the ink;
+     * `--c-term-<name>-bg` is the fill a glyph sits on. All 32 have a consumer,
+     * so the palette is declared once now instead of twice.
+     *
+     * SWEPT, NOT PICKED — `css-contrast.py ansi` prints every figure and reads
+     * these through 15-ansi.css itself, so it cannot drift from what ships.
+     * ANSI output renders on exactly two surfaces: --c-bg-secondary (a tool
+     * card, via `.tool-output pre` -> `.tool-call`) and --c-term-bg (an agent
+     * terminal, via `.agent-term-pane`). --c-bg-secondary BINDS in both themes —
+     * it is the lighter of the two under dark and the darker under light — so an
+     * ink clearing it clears the other for free. Held: every ink >= 4.5:1 on both
+     * surfaces; every ink >= 4.5:1 on all 16 fills (256 pairs, because a program
+     * writing ESC[34;40m renders one); and both container default inks
+     * (--c-text-secondary, --c-term-fg) >= 4.5:1 on every fill, which is the bare
+     * `ESC[41m` case where the fill arrives with no ink of its own.
+     *
+     * THE HUE ANGLES ARE FIXED POINTS. All 12 chromatic entries keep the exact
+     * angle they had; only L and C moved, and C is the most sRGB holds at that L,
+     * capped at the old seed's own chroma so nothing became more garish. These
+     * are ANSI's colours and they are read BY NAME — "red means it failed" — so
+     * flattening one toward the ink to buy contrast would delete the thing the
+     * escape code exists to say.
+     *
+     * THE TRADE, arithmetic rather than taste: a fill CANNOT both carry text at
+     * 4.5:1 and clear 3:1 against the surface behind it. Carrying the darkest ink
+     * caps a dark fill at luminance 0.0288 while --c-bg-secondary sits at 0.0206,
+     * so the lightest legal fill reads 1.07:1 against the surface it is marking
+     * and nothing in the band beats 1.55:1. Light mirrors it. The only escape is
+     * near-white inks, i.e. the flattening forbidden above, and the conflict
+     * survives even at a 3:1 pairing floor. So a fill WITH text on it is fully
+     * legible and a TEXTLESS coloured region is quiet. That generalises the trade
+     * .ansi-black-bg used to carry alone, and corrects it: that entry was
+     * measured against --c-bg-primary, which is not a surface this palette
+     * renders on.
+     *
+     * The four achromatic codes are a LIGHTNESS ramp, so they are re-anchored per
+     * theme rather than preserved: "black" ink on a near-black surface is a
+     * contradiction, not a colour. Their order survives (black -> bright-white);
+     * the light block states what that costs there. */
     --c-term-bg: oklch(10% 0.015 283deg);
     --c-term-fg: oklch(88% 0.01 283deg);
     --c-term-cursor: var(--c-term-fg);
     --c-term-cursor-accent: var(--c-term-bg);
     --c-term-selection: oklch(100% 0 none / 20%);
     --c-term-selection-inactive: oklch(100% 0 none / 10%);
-    --c-term-black: oklch(28% 0.01 283deg);
-    --c-term-red: oklch(66% 0.18 25deg);
-    --c-term-green: oklch(75% 0.14 140deg);
-    --c-term-yellow: oklch(82% 0.14 85deg);
-    --c-term-blue: oklch(72% 0.14 245deg);
-    --c-term-magenta: oklch(70% 0.17 315deg);
-    --c-term-cyan: oklch(75% 0.1 200deg);
-    --c-term-white: oklch(88% 0.01 283deg);
-    --c-term-bright-black: oklch(50% 0.01 283deg);
-    --c-term-bright-red: oklch(72% 0.18 25deg);
-    --c-term-bright-green: oklch(82% 0.14 140deg);
-    --c-term-bright-yellow: oklch(88% 0.14 85deg);
-    --c-term-bright-blue: oklch(78% 0.14 245deg);
-    --c-term-bright-magenta: oklch(76% 0.17 315deg);
-    --c-term-bright-cyan: oklch(82% 0.1 200deg);
+    --c-term-black: oklch(68.7% 0.01 none);
+    --c-term-red: oklch(70.7% 0.18 25deg);
+    --c-term-green: oklch(67.2% 0.14 140deg);
+    --c-term-yellow: oklch(68.8% 0.14 85deg);
+    --c-term-blue: oklch(68.3% 0.14 245deg);
+    --c-term-magenta: oklch(70.4% 0.17 315deg);
+    --c-term-cyan: oklch(67.5% 0.1 200deg);
+    --c-term-white: oklch(89.4% 0.01 none);
+    --c-term-bright-black: oklch(78.1% 0.01 none);
+    --c-term-bright-red: oklch(78.7% 0.123 25deg);
+    --c-term-bright-green: oklch(75.2% 0.14 140deg);
+    --c-term-bright-yellow: oklch(76.8% 0.14 85deg);
+    --c-term-bright-blue: oklch(76.3% 0.13 245deg);
+    --c-term-bright-magenta: oklch(78.4% 0.161 315deg);
+    --c-term-bright-cyan: oklch(75.5% 0.1 200deg);
     --c-term-bright-white: oklch(100% 0 none);
+
+    /* The fills. Every one sits at or below the transcript surface's own
+     * luminance, which is what the pairing floor forces; the base rung is 55% of
+     * the band and the bright rung is the band itself, so "bright is lighter"
+     * survives on this side too. */
+    --c-term-black-bg: oklch(25.3% 0.01 none);
+    --c-term-red-bg: oklch(26.4% 0.107 25deg);
+    --c-term-green-bg: oklch(24.1% 0.078 140deg);
+    --c-term-yellow-bg: oklch(25.2% 0.052 85deg);
+    --c-term-blue-bg: oklch(25% 0.063 245deg);
+    --c-term-magenta-bg: oklch(26.9% 0.133 315deg);
+    --c-term-cyan-bg: oklch(24.6% 0.042 200deg);
+    --c-term-white-bg: oklch(25.3% 0.01 none);
+    --c-term-bright-black-bg: oklch(30.7% 0.01 none);
+    --c-term-bright-red-bg: oklch(32.2% 0.13 25deg);
+    --c-term-bright-green-bg: oklch(29.7% 0.096 140deg);
+    --c-term-bright-yellow-bg: oklch(30.8% 0.063 85deg);
+    --c-term-bright-blue-bg: oklch(30.5% 0.077 245deg);
+    --c-term-bright-magenta-bg: oklch(32.8% 0.161 315deg);
+    --c-term-bright-cyan-bg: oklch(30.1% 0.051 200deg);
+    --c-term-bright-white-bg: oklch(30.7% 0.01 none);
 
     /* ======================================================================
        DERIVED. Everything below is authored ONCE and is correct in both
@@ -392,6 +486,12 @@
     --c-selected-yellow-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-yellow));
     --c-selected-blue-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-blue));
 
+    /* The orange joins at the SHARED fraction rather than widening it: swept on
+     * its own it needs 52% to clear 4.5:1 (light's hovered selected fill binds at
+     * 4.549:1), which is below red's 56, so the family's one number still covers
+     * every member. A new hue that had needed 57 would have moved all five. */
+    --c-selected-orange-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-orange));
+
     /* The accent takes the same rung, and it is the one the old code called out
      * as impossible: `.commands-popover-name` is accent ink and the selected fill
      * is accent over the surface, so on a selected row the name was the fill's
@@ -561,6 +661,13 @@
     /* Deeper than the old 60%: yellow needs lower L than its siblings to
      * read as text on white (60% was 3.1:1 as pill text; 49% is 6:1). */
     --c-yellow: oklch(49% 0.09 86.5deg);
+
+    /* Same hue as dark's, same sweep; light binds harder because a deep orange
+     * and a deep yellow are both browns. 54% is the largest L in the band that
+     * still clears 3:1 (55% misses at 2.94:1), so the sweep's winner sits at
+     * 3.065:1 on the hovered row — thinner margin than dark's, and level with
+     * --c-red's 3.059:1 and --c-dot-idle's 3.046:1 on that same fill. */
+    --c-orange: oklch(54% 0.13 55.9deg);
     --c-blue: oklch(48% 0.13 259.9deg);
     --c-teal: oklch(47% 0.09 168.3deg);
     --c-danger: oklch(50% 0.14 25deg);
@@ -572,21 +679,57 @@
     --c-term-fg: oklch(25% 0.01 283deg);
     --c-term-selection: oklch(0% 0 none / 15%);
     --c-term-selection-inactive: oklch(0% 0 none / 8%);
-    --c-term-black: oklch(20% 0.01 283deg);
-    --c-term-red: oklch(48% 0.18 25deg);
-    --c-term-green: oklch(52% 0.14 140deg);
-    --c-term-yellow: oklch(65% 0.14 85deg);
-    --c-term-blue: oklch(48% 0.14 245deg);
-    --c-term-magenta: oklch(48% 0.17 315deg);
-    --c-term-cyan: oklch(55% 0.1 200deg);
-    --c-term-white: oklch(70% 0.01 283deg);
-    --c-term-bright-black: oklch(45% 0.01 283deg);
-    --c-term-bright-red: oklch(58% 0.18 25deg);
-    --c-term-bright-green: oklch(62% 0.14 140deg);
-    --c-term-bright-yellow: oklch(70% 0.14 85deg);
-    --c-term-bright-blue: oklch(58% 0.14 245deg);
-    --c-term-bright-magenta: oklch(56% 0.17 315deg);
-    --c-term-bright-cyan: oklch(62% 0.1 200deg);
-    --c-term-bright-white: oklch(92% 0.01 283deg);
+
+    /* The ANSI inks, same 12 hue angles, deepened until they clear 4.5:1 on
+     * --c-bg-secondary (a light card at luminance 0.7782 — the binding surface
+     * here, not the near-white --c-term-bg the retired seeds were tuned for,
+     * which is why 11 of the old 16 failed).
+     *
+     * The achromatic four INVERT, and this is the conventional loss worth naming:
+     * a light theme has only the dark half of the ramp available for text, so
+     * `white` and `bright-white` cannot be light. They keep their ORDER — black is
+     * still the darkest and bright-white the lightest of the four — which means
+     * bright-white is now the QUIETEST rather than the loudest, so ESC[97m used
+     * for emphasis reads softer than ESC[30m. The alternative was inverting the
+     * ramp so bright-white became the strongest ink, which fixes emphasis and
+     * breaks ESC[30m — and black-as-dark-text is the far commoner case, since it
+     * is what every program pairing ESC[30m with a light background wants. */
+    --c-term-black: oklch(8% 0.01 none);
+    --c-term-red: oklch(41.2% 0.167 25deg);
+    --c-term-green: oklch(37.7% 0.121 140deg);
+    --c-term-yellow: oklch(39.4% 0.08 85deg);
+    --c-term-blue: oklch(38.9% 0.098 245deg);
+    --c-term-magenta: oklch(41.2% 0.17 315deg);
+    --c-term-cyan: oklch(38.3% 0.065 200deg);
+    --c-term-white: oklch(36.2% 0.01 none);
+    --c-term-bright-black: oklch(21.3% 0.01 none);
+    --c-term-bright-red: oklch(49.2% 0.18 25deg);
+    --c-term-bright-green: oklch(45.7% 0.14 140deg);
+    --c-term-bright-yellow: oklch(47.4% 0.097 85deg);
+    --c-term-bright-blue: oklch(46.9% 0.118 245deg);
+    --c-term-bright-magenta: oklch(49.2% 0.17 315deg);
+    --c-term-bright-cyan: oklch(46.3% 0.078 200deg);
+    --c-term-bright-white: oklch(47.2% 0.01 none);
+
+    /* The fills invert with the inks: a fill that carries dark text has to be
+     * light, so ESC[40m ("black background") is the DARKEST light fill rather
+     * than a dark region. Same arithmetic as dark's — a fill dark enough to mark
+     * a region here cannot carry this theme's inks at all. */
+    --c-term-black-bg: oklch(88.2% 0.01 none);
+    --c-term-red-bg: oklch(88.8% 0.058 25deg);
+    --c-term-green-bg: oklch(86.7% 0.14 140deg);
+    --c-term-yellow-bg: oklch(88.3% 0.127 85deg);
+    --c-term-blue-bg: oklch(87.9% 0.063 245deg);
+    --c-term-magenta-bg: oklch(88.8% 0.079 315deg);
+    --c-term-cyan-bg: oklch(87% 0.1 200deg);
+    --c-term-white-bg: oklch(88.2% 0.01 none);
+    --c-term-bright-black-bg: oklch(93.4% 0.01 none);
+    --c-term-bright-red-bg: oklch(93.5% 0.032 25deg);
+    --c-term-bright-green-bg: oklch(91.8% 0.14 140deg);
+    --c-term-bright-yellow-bg: oklch(93.2% 0.072 85deg);
+    --c-term-bright-blue-bg: oklch(93.1% 0.035 245deg);
+    --c-term-bright-magenta-bg: oklch(93.6% 0.044 315deg);
+    --c-term-bright-cyan-bg: oklch(92.2% 0.098 200deg);
+    --c-term-bright-white-bg: oklch(93.4% 0.01 none);
   }
 } /* @layer tokens */

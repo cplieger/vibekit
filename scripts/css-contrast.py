@@ -29,7 +29,9 @@ import re
 import sys
 from pathlib import Path
 
-TOKENS = Path(__file__).resolve().parent.parent / "static-src" / "css" / "01-tokens.css"
+CSS_DIR = Path(__file__).resolve().parent.parent / "static-src" / "css"
+TOKENS = CSS_DIR / "01-tokens.css"
+ANSI_SHEET = CSS_DIR / "15-ansi.css"
 
 
 # ---------------------------------------------------------------- colour maths
@@ -615,9 +617,9 @@ DOT_HELD = ["resting", "hover", "selected", "sel+hover"]
 # vocabulary has to survive that.
 DOT_STATES: list[tuple[str, str, str, dict[str, str]]] = [
     ("idle", "var(--c-dot-idle)", "--c-selected-muted-fg", {"fill": "hollow", "surround": "none", "motion": "still", "shape": "circle"}),
-    ("working", "--c-accent", "--c-selected-accent-fg", {"fill": "solid", "surround": "none", "motion": "animated", "shape": "circle"}),
-    ("waiting", "--c-yellow", "--c-selected-yellow-fg", {"fill": "solid", "surround": "ring", "motion": "still", "shape": "circle"}),
-    ("input", "--c-yellow", "--c-selected-yellow-fg", {"fill": "solid", "surround": "ring", "motion": "still", "shape": "circle"}),
+    ("working", "--c-blue", "--c-selected-blue-fg", {"fill": "solid", "surround": "none", "motion": "animated", "shape": "circle"}),
+    ("waiting", "--c-yellow", "--c-selected-yellow-fg", {"fill": "hollow", "surround": "ring", "motion": "still", "shape": "circle"}),
+    ("input", "--c-orange", "--c-selected-orange-fg", {"fill": "solid", "surround": "ring", "motion": "still", "shape": "circle"}),
     ("failed", "--c-red", "--c-selected-red-fg", {"fill": "solid", "surround": "none", "motion": "still", "shape": "diamond"}),
     ("done", "--c-green", "--c-selected-green-fg", {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"}),
     # Editor tabs only. It can never share a strip position with a chat state,
@@ -625,13 +627,14 @@ DOT_STATES: list[tuple[str, str, str, dict[str, str]]] = [
     ("dirty", "--c-accent", "--c-selected-accent-fg", {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"}),
 ]
 
-# The states that share ONE visual on purpose. A 9px dot has four non-colour
-# channels and six chat states; `waiting` (the agent declared waiting_on_user,
-# turn over) and `input` (a decision is open, turn blocked) are the pair with no
-# channel left, so they take the same treatment and differ in the ANNOUNCED name
-# instead. Declared here so the pairwise check treats their identity as intended
-# rather than reporting it as the failure it would otherwise be.
-DOT_ALIASES = [("waiting", "input")]
+# NO ALIASES, and the empty list is the finding. `waiting` and `input` used to be
+# declared here as one intended visual, on the reasoning that six chat states
+# against four non-colour channels left the pair nothing. What actually left them
+# nothing was sharing ONE hue: with `input` moved to web-terminal-ui's orange, the
+# fill channel had a slot free (hollow + ring) and the pair separates on fill as
+# well as hue, so the exemption is not needed. Keep it empty — an entry here is a
+# state the check has been told not to look at.
+DOT_ALIASES: list[tuple[str, str]] = []
 
 # `dirty` is an editor-tab state; every other member is a chat state.
 DOT_CHAT_ONLY = "dirty"
@@ -639,9 +642,35 @@ DOT_CHAT_ONLY = "dirty"
 DOT_FLOOR = 3.0
 
 # Under prefers-reduced-motion an animated state loses its motion and gains a
-# hole plus a static ring (the source vocabulary's own degradation), so its
-# channels are rewritten before the second pairwise pass.
-REDUCED_MOTION_SUBSTITUTION = {"fill": "donut", "surround": "ring", "motion": "still"}
+# hole, so its channels are rewritten before the second pairwise pass. It does
+# NOT gain a ring: the ring is the wants-you marker, and `working` borrowing it
+# would put a false signal on the one state that needs nothing from the reader.
+REDUCED_MOTION_SUBSTITUTION = {"fill": "donut", "motion": "still"}
+
+# The hue whose two vibekit tokens carry it, and the source token they answer to.
+# Printed with the orange sweep so the alignment claim is checkable rather than
+# asserted in a comment.
+DOT_SOURCE_HUES = [
+    ("working", "--c-blue", "--status-working", "#52a9fe"),
+    ("input", "--c-orange", "--status-input", "#fb923c"),
+    ("failed", "--c-red", "--status-failed", "#dc2626"),
+    ("done", "--c-green", "--status-done", "#22c55e"),
+]
+
+# The status seeds whose L/C range defines "inside this theme's own palette" for
+# the orange sweep below. Read rather than asserted, so a retuned theme moves the
+# admissible band with it.
+DOT_SEED_BAND = ["--c-green", "--c-red", "--c-yellow", "--c-blue", "--c-teal", "--c-warning"]
+
+# The base favicon's own artwork under the attention badge, and why the badge's
+# ink is a separate question from the tab dot's. static/favicon.svg is an opaque
+# 48-unit rounded rect filled `linearGradient(#A468FF -> #7E2FF0)` on the (0,0)
+# -> (1,1) diagonal; the badge centre sits at (35.25, 12.75) of 48, where that
+# gradient's offset is (x + y) / 2 = 0.500 — its exact midpoint. So the badge is
+# never seen against a theme surface, which is what decides which theme's value
+# it must carry.
+FAVICON_BADGE_BACKDROP = ("#A468FF", "#7E2FF0")
+FAVICON_CUES = [("input", "--c-orange"), ("done", "--c-green"), ("alert", "--c-red")]
 
 
 def as_expr(ink: str) -> str:
@@ -701,6 +730,9 @@ def show_dot(themes: list[Theme]) -> None:
         print(f"  {label:<52} {best[0]:<7} {fmt(best[1])}:1")
     print()
 
+    show_dot_hues(themes)
+    show_orange_sweep(themes)
+
     print("NON-COLOUR CHANNELS (WCAG 1.4.1: colour may not be the only means of")
     print("conveying a state). Every pair of chat states must differ on at least one")
     print("of fill / surround / motion / shape, with motion available AND removed.")
@@ -754,6 +786,149 @@ def show_dot(themes: list[Theme]) -> None:
             print(f"    {state:<10} Y={fmt(y):<8} {hexv}")
     print()
 
+    show_favicon_badge(themes)
+
+
+def from_hex(value: str) -> Colour:
+    text = value.lstrip("#")
+    return Colour(
+        int(text[0:2], 16) / 255.0, int(text[2:4], 16) / 255.0, int(text[4:6], 16) / 255.0
+    )
+
+
+def oklab_distance(th: Theme, expr_a: str, expr_b: str) -> float:
+    """Perceptual distance between two inks as they land on an unselected row."""
+    bg = th.flat("--c-bg-secondary")
+    a = colour_to_oklab(th.resolve(expr_a).over(bg))
+    b = colour_to_oklab(th.resolve(expr_b).over(bg))
+    return math.dist(a, b)
+
+
+def show_dot_hues(themes: list[Theme]) -> None:
+    print("SOURCE HUES: which colour FAMILY carries each meaning, against")
+    print("@cplieger/web-terminal-ui's --status-* tokens. The claim is the family,")
+    print("not the value: each app draws from its own palette, so a few degrees of")
+    print("drift is expected and 24deg is too where a palette's red is a pinkish")
+    print("one. What would be a finding is a state whose FAMILY differs — a violet")
+    print("`working` against a blue one, which is what this replaced.")
+    print()
+    print(f"  {'state':<10} {'source token':<18} {'source':<10} {'hue':<8} {'vibekit token':<12} dark hue   light hue")
+    for state, token, src_token, src_hex in DOT_SOURCE_HUES:
+        _, _, src_hue = colour_to_oklch(from_hex(src_hex))
+        cells = []
+        for th in themes:
+            _, _, hue = colour_to_oklch(th.colour(token))
+            cells.append(f"{fmt(hue)}deg ({fmt(abs(hue - src_hue))} off)")
+        print(
+            f"  {state:<10} {src_token:<18} {src_hex:<10} {fmt(src_hue):<8} {token:<12} "
+            + "  ".join(cells)
+        )
+    print()
+
+
+def show_orange_sweep(themes: list[Theme]) -> None:
+    print("ORANGE SWEEP, which sizes --c-orange. The HUE is fixed by the source")
+    print("token (--status-input #fb923c). L and C are swept in 1% / 0.005 steps")
+    print("over the L and C range this theme's OWN status seeds occupy, keeping")
+    print("only values that clear the floor on all four held fills AND land inside")
+    print("sRGB, and the winner MAXIMISES the smaller of two oklab distances: to")
+    print("--c-yellow and to --c-red. Those are the orange's neighbours in the dot")
+    print("vocabulary, so being confusable with either is the only way the token")
+    print("can fail.")
+    print()
+    print("The in-gamut constraint is not tidiness. Every other seed is in gamut,")
+    print("and outside it a browser reduces chroma while the favicon generator")
+    print("clamps per channel — so an out-of-gamut orange would paint the tab dot")
+    print("and the tab ICON two different colours, which is the one thing the")
+    print("attention badge exists to keep in step.")
+    print()
+    # Rounded to the precision a token would carry, so the declared value is one
+    # of the candidates the sweep ranks rather than a near miss it cannot match.
+    _, _, exact = colour_to_oklch(from_hex("#fb923c"))
+    hue = f"{round(exact, 1):g}"
+    for th in themes:
+        lightnesses, chromas = [], []
+        for token in DOT_SEED_BAND:
+            lightness, chroma, _ = colour_to_oklch(th.colour(token))
+            lightnesses.append(round(lightness * 100))
+            chromas.append(chroma)
+        rows = []
+        for pct in range(min(lightnesses), max(lightnesses) + 1):
+            steps = round((max(chromas) - min(chromas)) / 0.005)
+            for i in range(steps + 1):
+                chroma = round(min(chromas) + i * 0.005, 3)
+                expr = f"oklch({pct}% {chroma:g} {hue}deg)"
+                if th.resolve(expr).clipped:
+                    continue
+                held = []
+                for cols, is_sel in ((DOT_FILLS, False), (DOT_SELECTED_FILLS, True)):
+                    ink = (
+                        f"color-mix(in oklch, var(--c-selected-fg) 56%, {expr})" if is_sel else expr
+                    )
+                    for col, fill in cols:
+                        if col not in DOT_HELD:
+                            continue
+                        bg = th.flat(fill)
+                        held.append((col, contrast(th.resolve(ink).over(bg), bg)))
+                worst = min(held, key=lambda kv: kv[1])
+                if worst[1] < DOT_FLOOR:
+                    continue
+                separation = min(
+                    oklab_distance(th, expr, "var(--c-yellow)"),
+                    oklab_distance(th, expr, "var(--c-red)"),
+                )
+                rows.append((separation, expr, worst, th.resolve(expr).hex()))
+        rows.sort(key=lambda r: -r[0])
+        band = (
+            f"L {min(lightnesses)}..{max(lightnesses)}  "
+            f"C {fmt(min(chromas))}..{fmt(max(chromas))}"
+        )
+        print(f"  {th.name}: {len(rows)} admissible in the seed band ({band})")
+        print(f"    {'':<4} {'construction':<28} {'hex':<9} {'separation':<11} worst held")
+        declared = th.decls.get("--c-orange", "")
+        for rank, (separation, expr, worst, hexv) in enumerate(rows[:5]):
+            mark = "<--" if expr.replace(" ", "") == declared.replace(" ", "") else f"#{rank + 1}"
+            print(
+                f"    {mark:<4} {expr:<28} {hexv:<9} {fmt(separation):<11} "
+                f"{worst[0]} {fmt(worst[1])}:1"
+            )
+        if declared and all(r[1].replace(" ", "") != declared.replace(" ", "") for r in rows[:5]):
+            print(f"    NOTE --c-orange is declared {declared!r}, outside the top 5 above")
+        print()
+
+
+def show_favicon_badge(themes: list[Theme]) -> None:
+    print("ATTENTION FAVICON BADGE: the same three cue inks, measured where they")
+    print("are actually seen. The badge is composited onto static/favicon.svg,")
+    print("whose own artwork is an opaque violet gradient, so its backdrop is")
+    print("NEITHER theme's surface — which is what decides that ONE icon serving")
+    print("both themes is correct, and which value it has to carry.")
+    print()
+    start, end = (from_hex(h) for h in FAVICON_BADGE_BACKDROP)
+    mid = Colour((start.r + end.r) / 2, (start.g + end.g) / 2, (start.b + end.b) / 2)
+    print(f"  badge sits at the gradient midpoint: {mid.hex()}")
+    print()
+    print(f"  {'cue':<8} {'token':<12} " + " ".join(f"{th.name + ' ink':<18}" for th in themes) + " gamut")
+    for cue, token in FAVICON_CUES:
+        cells, clipped = [], []
+        for th in themes:
+            c = th.colour(token)
+            cells.append(f"{c.hex()} {fmt(contrast(c, mid))}:1")
+            if c.clipped:
+                clipped.append(th.name)
+        # An out-of-gamut ink is a real defect HERE and nowhere else in this
+        # script: a browser reduces chroma to reach sRGB while the generator
+        # clamps per channel, so the tab dot and the tab icon would carry two
+        # different colours from one declaration.
+        verdict = "in sRGB" if not clipped else f"FAIL clipped in {', '.join(clipped)}"
+        print(f"  {cue:<8} {token:<12} " + " ".join(f"{c:<18}" for c in cells) + f" {verdict}")
+    print()
+    print("  The dark inks are pastels and the light ones are deep, so on a")
+    print("  saturated violet only the dark family separates at all. The generator")
+    print("  therefore reads the default theme's :root and the light overrides are")
+    print("  out of scope by MEASUREMENT rather than by omission.")
+    print()
+
 
 def show_shadow(themes: list[Theme]) -> None:
     print("ELEVATION: each authored shadow layer composited over the surface it")
@@ -798,80 +973,215 @@ def show_shadow(themes: list[Theme]) -> None:
         print()
 
 
-# The ansi_up class palette (css/15-ansi.css) is 32 hardcoded literals plus the
-# agent-terminal status pair. Foreground entries are text on the transcript
-# surface; the one background entry that can vanish is black-on-near-black.
-ANSI_FG = {
-    "black": "#555",
-    "red": "#f55",
-    "green": "#5f5",
-    "yellow": "#ff5",
-    "blue": "#55f",
-    "magenta": "#f5f",
-    "cyan": "#5ff",
-    "white": "#ccc",
-    "bright-black": "#888",
-    "bright-red": "#f88",
-    "bright-green": "#8f8",
-    "bright-yellow": "#ff8",
-    "bright-blue": "#88f",
-    "bright-magenta": "#f8f",
-    "bright-cyan": "#8ff",
-    "bright-white": "#fff",
+# ------------------------------------------------------------- the ANSI palette
+#
+# The two surfaces ansi_up output actually renders on, established by tracing the
+# three call sites rather than assumed:
+#
+#   tool-card.ts / messages-tools.ts write into `.tool-output pre`, which paints
+#   nothing; the nearest painting ancestor is `.tool-call` (14-tools.css) at
+#   --c-bg-secondary.
+#   agent-terminal.ts writes into `pre.agent-term-output`, which paints nothing;
+#   its parent `.agent-term-pane` (61-mcp-tools.css) is --c-term-bg.
+#
+# Both are OPAQUE, so neither needs compositing. --c-bg-primary and --c-code-bg —
+# the two this section used to measure — are neither of them: the page base is two
+# ramp rungs below where ANSI renders, and --c-code-bg is scoped inside the
+# assistant prose bubble, which a tool card is a SIBLING of.
+ANSI_SURFACES = ("--c-bg-secondary", "--c-term-bg")
+
+# The ink each of those containers sets. A bare `ESC[41m` arrives with a fill and
+# no colour of its own, so the container's ink is what lands on it.
+ANSI_INKS = {
+    "--c-text-secondary": "--c-bg-secondary",
+    "--c-term-fg": "--c-term-bg",
 }
-ANSI_BG = {
-    "black": "#000",
-    "red": "#a00",
-    "green": "#0a0",
-    "yellow": "#a50",
-    "blue": "#00a",
-    "magenta": "#a0a",
-    "cyan": "#0aa",
-    "white": "#aaa",
-    "bright-black": "#555",
-    "bright-red": "#f55",
-    "bright-green": "#5f5",
-    "bright-yellow": "#ff5",
-    "bright-blue": "#55f",
-    "bright-magenta": "#f5f",
-    "bright-cyan": "#5ff",
-    "bright-white": "#fff",
-}
+
+# `.agent-term-status` is a child of `.agent-term-pane` and carries opacity 0.85,
+# so what a reader sees is the token COMPOSITED over --c-term-bg.
+ANSI_STATUS_OPACITY = 0.85
+
+ANSI_FG_FLOOR = 4.5
+ANSI_PAIR_FLOOR = 4.5
+
+
+def parse_ansi_sheet() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """Read css/15-ansi.css and return its declared expressions.
+
+    PARSED, not restated. This used to be two hardcoded dicts mirroring the
+    stylesheet's 32 literals, and it had already drifted: `black` still read
+    `#000` here long after `.ansi-black-bg` moved to a token, so the section
+    reported a colour the app had stopped painting. A duplicated palette is the
+    defect this whole section exists to measure, so the report may not keep its
+    own copy.
+    """
+    src = re.sub(r"/\*.*?\*/", " ", ANSI_SHEET.read_text(), flags=re.S)
+    fg: dict[str, str] = {}
+    bg: dict[str, str] = {}
+    for m in re.finditer(r"\.ansi-([\w-]+)-(fg|bg)\s*\{([^}]*)\}", src):
+        name, role, body = m.group(1), m.group(2), m.group(3)
+        prop = "color" if role == "fg" else "background-color"
+        v = re.search(rf"(?<![-\w]){prop}\s*:\s*([^;]+)", body)
+        if v:
+            (fg if role == "fg" else bg)[name] = v.group(1).strip()
+    status: dict[str, str] = {}
+    for m in re.finditer(r"\.agent-term-status\.(is-\w+)\s*\{([^}]*)\}", src):
+        v = re.search(r"(?<![-\w])color\s*:\s*([^;]+)", m.group(2))
+        if v:
+            status[m.group(1)] = v.group(1).strip()
+    return fg, bg, status
+
+
+def ansi_rows(themes: list[Theme]) -> list[tuple[str, str, str, str, Colour, Colour, float, float]]:
+    """Every ANSI measurement as (kind, theme, name, context, fg, bg, ratio, floor).
+
+    A floor of 0 means "recorded, not gated" — see the fill-vs-surface trade.
+    """
+    fgs, bgs, status = parse_ansi_sheet()
+    rows = []
+    for th in themes:
+        # A foreground is text on whichever container it landed in.
+        for name, expr in fgs.items():
+            for s in ANSI_SURFACES:
+                surf = th.flat(s)
+                rows.append(
+                    ("fg-surface", th.name, f"{name}-fg", s, th.resolve(expr), surf,
+                     contrast(th.resolve(expr), surf), ANSI_FG_FLOOR)
+                )
+        # A foreground ON a fill: what a program setting both actually renders.
+        for name, expr in fgs.items():
+            for bname, bexpr in bgs.items():
+                f, b = th.resolve(expr), th.resolve(bexpr)
+                rows.append(
+                    ("fg-fill", th.name, f"{name}-fg", f"{bname}-bg", f, b,
+                     contrast(f, b), ANSI_PAIR_FLOOR)
+                )
+        # A fill with no ANSI foreground: the container's own ink lands on it.
+        for ink, _ in ANSI_INKS.items():
+            for bname, bexpr in bgs.items():
+                f, b = th.colour(ink), th.resolve(bexpr)
+                rows.append(
+                    ("ink-fill", th.name, ink, f"{bname}-bg", f, b,
+                     contrast(f, b), ANSI_PAIR_FLOOR)
+                )
+        # A fill against the surface it marks. RECORDED, NOT GATED, and the
+        # reason is arithmetic: carrying the darkest ink at 4.5:1 caps a dark
+        # fill at luminance 0.0288 while --c-bg-secondary sits at 0.0206, so the
+        # lightest legal fill lands ~1.07:1 against the surface. 3:1 here and
+        # 4.5:1 above cannot both hold unless the inks flatten to near-white,
+        # and the conflict survives even at a 3:1 pairing floor. Gating it would
+        # put 64 permanent failures in this report for a floor no palette that
+        # keeps its hues can reach.
+        for bname, bexpr in bgs.items():
+            for s in ANSI_SURFACES:
+                b, surf = th.resolve(bexpr), th.flat(s)
+                rows.append(
+                    ("fill-surface", th.name, f"{bname}-bg", s, b, surf,
+                     contrast(b, surf), 0.0)
+                )
+        # The exit-status footer, composited through its own opacity.
+        for cls, expr in status.items():
+            c = th.resolve(expr)
+            surf = th.flat("--c-term-bg")
+            comp = Colour(c.r, c.g, c.b, ANSI_STATUS_OPACITY).over(surf)
+            rows.append(
+                ("status", th.name, f"agent-term-status.{cls}", "--c-term-bg", comp, surf,
+                 contrast(comp, surf), ANSI_FG_FLOOR)
+            )
+    return rows
 
 
 def show_ansi(themes: list[Theme]) -> None:
-    print("ANSI PALETTE vs THE SURFACE IT RENDERS ON. ansi_up output appears in the")
-    print("transcript (tool-card output), so the backdrop is the app surface, not")
-    print("the terminal's. A foreground wants 4.5:1; a BACKGROUND span wants 3:1")
-    print("against the surface behind it or the region it marks is invisible.")
+    fgs, bgs, status = parse_ansi_sheet()
+    print("ANSI PALETTE (css/15-ansi.css, read from the stylesheet itself).")
     print()
-    for surface in ("--c-bg-primary", "--c-code-bg"):
-        for th in themes:
-            bg = th.flat(surface, "--c-bg-primary")
-            print(f"  {th.name} on {surface} ({bg.hex()}):")
-            fails = []
-            for name, lit in ANSI_FG.items():
-                r = contrast(th.resolve(lit), bg)
-                if r < 4.5:
-                    fails.append(f"      {name + '-fg':<20} {lit:<6} {fmt(r)}:1  FAIL")
-            for name, lit in ANSI_BG.items():
-                r = contrast(th.resolve(lit), bg)
-                if r < 3.0:
-                    fails.append(f"      {name + '-bg':<20} {lit:<6} {fmt(r)}:1  FAIL (want 3:1)")
-            print("\n".join(fails) if fails else "      all entries clear their floor")
+    print("Two ramps, because a colour that reads AS text and a colour that CARRIES")
+    print("text cannot be the same colour. Four checks are GATED: an ink on each of")
+    print("the two surfaces it renders on (4.5:1), an ink on every fill (4.5:1 —")
+    print("what ESC[34;40m renders), the container's own ink on every fill (4.5:1 —")
+    print("the bare ESC[41m case), and the exit-status footer through its opacity.")
+    print("A fill against the surface it marks is RECORDED, NOT GATED: see the")
+    print("trade at the end.")
+    print()
+    literals = [n for n, e in {**fgs, **bgs}.items() if "var(" not in e]
+    if literals:
+        print(f"  !! {len(literals)} entries still carry a literal: {', '.join(sorted(literals))}")
         print()
-    print("  The theme token an ANSI black background should take instead:")
+
+    rows = ansi_rows(themes)
+    for kind, title in (
+        ("fg-surface", "INK vs THE SURFACE IT RENDERS ON (floor 4.5:1)"),
+        ("fg-fill", "INK ON FILL — every pair a program can select (floor 4.5:1)"),
+        ("ink-fill", "CONTAINER INK ON FILL — a fill with no ANSI ink (floor 4.5:1)"),
+        ("status", "EXIT-STATUS FOOTER, composited at opacity 0.85 (floor 4.5:1)"),
+    ):
+        group = [r for r in rows if r[0] == kind]
+        print(f"  {title}")
+        for th in themes:
+            mine = [r for r in group if r[1] == th.name]
+            fails = [r for r in mine if r[6] < r[7]]
+            worst = min(mine, key=lambda r: r[6])
+            print(
+                f"    {th.name:<6} {len(mine):>3} checks, worst "
+                f"{worst[2]} on {worst[3]} = {fmt(worst[6])}:1"
+                + (f"   {len(fails)} FAIL" if fails else "   all clear")
+            )
+            for r in fails:
+                print(f"        {r[2]:<26} on {r[3]:<20} {fmt(r[6])}:1  FAIL (want {r[7]})")
+        print()
+
+    print("  FILL vs THE SURFACE IT MARKS — recorded, not gated.")
     for th in themes:
-        if "--c-term-black" not in th.decls:
-            continue
-        base = th.flat("--c-bg-primary")
-        code = th.flat("--c-code-bg", "--c-bg-primary")
+        mine = [r for r in rows if r[0] == "fill-surface" and r[1] == th.name]
+        lo, hi = min(mine, key=lambda r: r[6]), max(mine, key=lambda r: r[6])
         print(
-            f"    {th.name:<6} --c-term-black {th.colour('--c-term-black')!r:<10} "
-            f"vs base {fmt(contrast(th.colour('--c-term-black'), base))}:1, "
-            f"vs code-bg {fmt(contrast(th.colour('--c-term-black'), code))}:1"
+            f"    {th.name:<6} {fmt(lo[6])}:1 ({lo[2]} on {lo[3]}) .. "
+            f"{fmt(hi[6])}:1 ({hi[2]} on {hi[3]})"
         )
+    print("    A region marker would want 3:1 and cannot have it: a fill that carries")
+    print("    the darkest ink at 4.5:1 is pinned to the surface's own luminance. So a")
+    print("    fill WITH text on it is fully legible and a TEXTLESS coloured region is")
+    print("    quiet. That is .ansi-black-bg's old trade, now general — and measured")
+    print("    against --c-bg-secondary, which is where this palette actually renders.")
     print()
+    print("  HUE FIDELITY — the angle every chromatic entry was authored at.")
+    for th in themes:
+        drift = []
+        for name, expr in {**{f"{k}-fg": v for k, v in fgs.items()},
+                           **{f"{k}-bg": v for k, v in bgs.items()}}.items():
+            c = th.resolve(expr)
+            _, chroma, hue = colour_to_oklch(c)
+            if chroma < 0.005:
+                continue
+            want = re.search(r"([\d.]+)deg", th.decls.get(re.sub(r"^.*var\((--[\w-]+)\).*$", r"\1", expr), ""))
+            if want and abs(((hue - float(want.group(1)) + 180) % 360) - 180) > 0.5:
+                drift.append(f"{name} {want.group(1)}->{hue:.1f}")
+        print(f"    {th.name:<6} " + (", ".join(drift) if drift else "every chromatic angle exact"))
+    print()
+
+
+def ansi_check(themes: list[Theme], tsv: bool) -> int:
+    """`ansi-check` — every gated ANSI measurement as TSV, exit 1 on any miss.
+
+    Exists so a test can assert these floors against THIS implementation instead
+    of a second copy of the colour maths in TypeScript, and so 256 pairs cost one
+    process rather than 256.
+    """
+    rows = ansi_rows(themes)
+    failed = 0
+    for kind, theme, name, ctx, fg, bg, ratio, floor in rows:
+        gated = floor > 0
+        miss = gated and ratio < floor
+        failed += 1 if miss else 0
+        if tsv:
+            print(
+                f"{kind}\t{theme}\t{name}\t{ctx}\t{fg.hex()}\t{bg.hex()}\t"
+                f"{fmt(ratio)}\t{fmt(floor) if gated else '-'}\t"
+                f"{'FAIL' if miss else ('ok' if gated else 'recorded')}"
+            )
+    if not tsv:
+        print(f"{len(rows)} measurements, {failed} FAIL")
+    return 1 if failed else 0
 
 
 def main() -> int:
@@ -1014,6 +1324,9 @@ def main() -> int:
 
     if cmd in ("ansi", "all"):
         show_ansi(themes)
+
+    if cmd == "ansi-check":
+        return ansi_check(themes, tsv="--tsv" in argv[1:])
 
     if cmd == "show":
         for tok in argv[1:]:

@@ -21,6 +21,7 @@
 // excludes ../static), so the real assets are absent there.
 
 import { describe, it, expect } from "vitest";
+import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 
 /** One entry per cue, and each field pins a different link in the chain the
  *  generator walks.
@@ -36,11 +37,36 @@ import { describe, it, expect } from "vitest";
  *  edit to one of the tokens fails the oklch assertion, which is the reminder to
  *  re-run the generator so the tab icon and the tab dot still agree. The
  *  conversion itself is deliberately NOT reimplemented here — porting a colour
- *  space into a test would make the test the thing most likely to be wrong. */
+ *  space into a test would make the test the thing most likely to be wrong.
+ *
+ *  `state` and `shape` are the other half of the agreement, added when the cue
+ *  inks were aligned with @cplieger/web-terminal-ui's --status-* hues: a cue
+ *  stands for one TAB DOT STATE, so the assertions below read that state's own
+ *  rule out of 12-tabs.css rather than restating what it should be. `alert` is a
+ *  diamond because `failed` is one, and `failed` is one because it and `done`
+ *  were otherwise separable by hue alone. */
 const CUES = {
-  input: { token: "--c-yellow", oklch: "oklch(91.9% 0.07 86.5deg)", fill: "#f9e2af" },
-  done: { token: "--c-green", oklch: "oklch(85.8% 0.109 142.7deg)", fill: "#a6e3a1" },
-  alert: { token: "--c-red", oklch: "oklch(75.6% 0.13 2.8deg)", fill: "#f38ba8" },
+  input: {
+    token: "--c-orange",
+    oklch: "oklch(81% 0.125 55.9deg)",
+    fill: "#feab6e",
+    state: "input",
+    shape: "circle",
+  },
+  done: {
+    token: "--c-green",
+    oklch: "oklch(85.8% 0.109 142.7deg)",
+    fill: "#a6e3a1",
+    state: "done",
+    shape: "circle",
+  },
+  alert: {
+    token: "--c-red",
+    oklch: "oklch(75.6% 0.13 2.8deg)",
+    fill: "#f38ba8",
+    state: "failed",
+    shape: "diamond",
+  },
 } as const;
 
 const VARIANTS = ["input", "done", "alert"] as const;
@@ -96,13 +122,18 @@ describe("attention favicon variants", () => {
       if (svg === null) {
         continue; // reported by the presence case above
       }
-      // A variant is the app's own icon pixel-for-pixel plus a status dot. Any
+      // A variant is the app's own icon pixel-for-pixel plus a status badge. Any
       // other difference means it was hand-edited and has drifted from the base.
       expect(svg.startsWith(head), `favicon-${variant}.svg diverges from favicon.svg`).toBe(true);
       expect(svg.endsWith(`</svg>${tail}`)).toBe(true);
       const inserted = svg.slice(head.length, svg.length - `</svg>${tail}`.length);
+      // Two shapes, one element each: a circle, or the diamond's four-vertex
+      // path. Both are matched here so a cue that silently lost its shape fails
+      // in the shape case below rather than passing a loose structural regex.
       expect(inserted).toMatch(
-        /^<circle cx="[\d.]+" cy="[\d.]+" r="[\d.]+" fill="#[0-9a-f]{6}"\/>$/,
+        CUES[variant].shape === "diamond"
+          ? /^<path d="M[-\d. LZ]+" fill="#[0-9a-f]{6}"\/>$/
+          : /^<circle cx="[\d.]+" cy="[\d.]+" r="[\d.]+" fill="#[0-9a-f]{6}"\/>$/,
       );
     }
   });
@@ -126,22 +157,39 @@ describe("attention favicon variants", () => {
       if (svg === null) {
         continue; // reported by the presence case above
       }
-      const dot =
-        /<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)" fill="#[0-9a-f]{6}"\/>(?=<\/svg>)/.exec(
-          svg,
-        );
-      expect(dot, `favicon-${variant}.svg has no trailing status dot`).not.toBeNull();
-      const cx = Number(dot?.[1]);
-      const cy = Number(dot?.[2]);
-      const r = Number(dot?.[3]);
       // Top-right quadrant with PAD of clear space beyond it, proportional to the
       // frame — the exact placement DOT_CX / DOT_CY / DOT_R describe at 32 units.
-      expect(cx / side, `favicon-${variant}.svg dot cx`).toBeCloseTo(
-        (UNIT - PAD - DOT_R) / UNIT,
-        5,
-      );
-      expect(cy / side, `favicon-${variant}.svg dot cy`).toBeCloseTo((PAD + DOT_R) / UNIT, 5);
-      expect(r / side, `favicon-${variant}.svg dot radius`).toBeCloseTo(DOT_R / UNIT, 5);
+      // EVERY shape holds that one footprint, which is why a cue can change
+      // silhouette without moving in the artwork: the diamond's DIAGONAL is what
+      // matches the circle's diameter, the same fitting the tab dot uses for its
+      // own diamond (an 8px square in a 9px slot).
+      const wantCx = ((UNIT - PAD - DOT_R) / UNIT) * side;
+      const wantCy = ((PAD + DOT_R) / UNIT) * side;
+      const wantR = (DOT_R / UNIT) * side;
+      if (CUES[variant].shape === "diamond") {
+        const path = /<path d="M([-\d. LZ]+)" fill="#[0-9a-f]{6}"\/>(?=<\/svg>)/.exec(svg);
+        expect(path, `favicon-${variant}.svg has no trailing status badge`).not.toBeNull();
+        const pts = (path?.[1] ?? "")
+          .replace(/Z$/, "")
+          .split("L")
+          .map((p) => p.trim().split(/\s+/).map(Number));
+        expect(pts, `favicon-${variant}.svg diamond must have four vertices`).toHaveLength(4);
+        expect(pts).toEqual([
+          [wantCx, wantCy - wantR],
+          [wantCx + wantR, wantCy],
+          [wantCx, wantCy + wantR],
+          [wantCx - wantR, wantCy],
+        ]);
+      } else {
+        const dot =
+          /<circle cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)" fill="#[0-9a-f]{6}"\/>(?=<\/svg>)/.exec(
+            svg,
+          );
+        expect(dot, `favicon-${variant}.svg has no trailing status badge`).not.toBeNull();
+        expect(Number(dot?.[1]), `favicon-${variant}.svg dot cx`).toBeCloseTo(wantCx, 5);
+        expect(Number(dot?.[2]), `favicon-${variant}.svg dot cy`).toBeCloseTo(wantCy, 5);
+        expect(Number(dot?.[3]), `favicon-${variant}.svg dot radius`).toBeCloseTo(wantR, 5);
+      }
     }
   });
 
@@ -158,7 +206,7 @@ describe("attention favicon variants", () => {
       if (svg === null) {
         continue;
       }
-      const fill = /<circle[^>]*fill="(#[0-9a-f]{6})"\/>(?=<\/svg>)/.exec(svg);
+      const fill = /<(?:circle|path)[^>]*fill="(#[0-9a-f]{6})"\/>(?=<\/svg>)/.exec(svg);
       expect(fill?.[1], `favicon-${variant}.svg carries the wrong cue colour`).toBe(
         CUES[variant].fill,
       );
@@ -167,6 +215,46 @@ describe("attention favicon variants", () => {
     // of them into one swatch would satisfy every per-variant assertion above and
     // still leave two states indistinguishable in the tab strip.
     expect(new Set(VARIANTS.map((v) => CUES[v].fill)).size).toBe(VARIANTS.length);
+  });
+
+  it("gives each cue the silhouette its own tab dot has", async () => {
+    // The icon and the dot are two renderings of ONE signal, so a cue's shape is
+    // read out of the state's CSS rather than restated here. `failed` spends a
+    // shape because it and `done` are both settled solid marks with only hue
+    // between them (4.145:1 vs 4.490:1 in light, Y 0.150 vs 0.134), which is a
+    // WCAG 1.4.1 failure; the icon carried a circle for it anyway until 2026-08,
+    // so the one pair where confusing the two matters most was re-merged on the
+    // surface a user glances at without looking.
+    const tabs = loadCSS("12-tabs.css");
+    for (const variant of VARIANTS) {
+      const { state, shape } = CUES[variant];
+      const rule = ruleContaining(tabs, `.tab-status-dot[data-status="${state}"]`, "top");
+      const isDiamond = /transform: rotate\(45deg\)/.test(rule.body);
+      expect(
+        isDiamond ? "diamond" : "circle",
+        `favicon-${variant} mirrors the ${state} dot, whose rule says otherwise`,
+      ).toBe(shape);
+    }
+  });
+
+  it("does not claim the ring that its dot has and its icon cannot carry", async () => {
+    // `input`'s tab dot is a disc inside a 2px ring at 30% alpha. At the 16px
+    // rendering the whole badge is 5.5px across, so a proportional ring is 0.85px
+    // at 30% over a saturated violet — invisible. It is DROPPED rather than drawn
+    // thicker to be seen, because a ring that is not the dot's ring would make the
+    // icon claim a fidelity it does not have. The cost is stated: on the icon
+    // `input` and `done` separate by hue alone.
+    //
+    // This asserts the drop is deliberate. If a ring is ever added, it belongs in
+    // the generator with the geometry re-derived, and this case is where the
+    // decision gets revisited rather than quietly contradicted.
+    const svg = await readStatic("favicon-input.svg");
+    if (svg === null) {
+      return;
+    }
+    const badges = [...svg.matchAll(/<(?:circle|path)[^>]*fill="#feab6e"/g)];
+    expect(badges, "favicon-input.svg must carry exactly one orange mark").toHaveLength(1);
+    expect(svg).not.toContain("stroke");
   });
 
   it("keeps each cue's colour token where the generator reads it from", async () => {

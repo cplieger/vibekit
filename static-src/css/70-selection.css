@@ -257,11 +257,15 @@
    on the selected fill.
 
    Each state re-points ONE custom property rather than restating a background,
-   which is why the dot resolves everything through `--dot-color`: the disc, the
-   idle ring, the hard ring's 30% mix and the reduced-motion donut all follow
+   which is why the dot resolves everything through `--dot-color`: the disc, both
+   hollow borders, the hard ring's 30% mix and the reduced-motion donut all follow
    from one declaration, so a state cannot get its selected ink in one layer and
    miss it in another. All six clear WCAG 1.4.11's 3:1 on the resting AND
    hovered selected fill in both themes, worst 4.541:1 (`css-contrast.py dot`).
+
+   `working` and `input` moved off the accent and yellow in 2026-08, when the dot
+   hues were aligned with web-terminal-ui's --status-* family; `waiting` and
+   `input` had shared the yellow line until then and now take separate ones.
 
    This REPLACED two hand-rolled compensations that predated the ink family:
    `.tab.active .tab-dot-thinking` and `.tab.active .tab-dot-dirty` both mixed
@@ -272,14 +276,20 @@
   --dot-color: var(--c-selected-muted-fg);
 }
 
-.tab.active .tab-status-dot[data-status="working"],
+.tab.active .tab-status-dot[data-status="working"] {
+  --dot-color: var(--c-selected-blue-fg);
+}
+
 .tab.active .tab-status-dot[data-status="dirty"] {
   --dot-color: var(--c-selected-accent-fg);
 }
 
-.tab.active .tab-status-dot[data-status="waiting"],
-.tab.active .tab-status-dot[data-status="input"] {
+.tab.active .tab-status-dot[data-status="waiting"] {
   --dot-color: var(--c-selected-yellow-fg);
+}
+
+.tab.active .tab-status-dot[data-status="input"] {
+  --dot-color: var(--c-selected-orange-fg);
 }
 
 .tab.active .tab-status-dot[data-status="failed"] {

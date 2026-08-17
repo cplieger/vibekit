@@ -1,153 +1,160 @@
 /*
  * ANSI terminal color classes for ansi_up (use_classes=true mode).
  * Standard 8 colors + bright variants, plus modifiers.
- * Colors tuned for dark backgrounds (vibekit's default theme).
+ *
+ * EVERY value here is a token read. There are no literals left, and that is the
+ * point: this file used to carry 32 hardcoded hexes "tuned for dark backgrounds",
+ * so the palette was declared twice — once here, once as the theme-split
+ * --c-term-* seeds — and only the copy nothing consumed tracked the theme. In
+ * light mode 15 of the 16 foreground entries missed 4.5:1, .ansi-bright-white-fg
+ * worst at 1.044:1 (white text on a white card).
+ *
+ * Two ramps, not one value per code: `--c-term-<name>` is the ink and
+ * `--c-term-<name>-bg` is the fill, because a colour that reads AS text and a
+ * colour that CARRIES text cannot be the same colour. The floors, the two
+ * surfaces these render on, the 256-pair check and the one trade a fill cannot
+ * escape are all documented at the seeds in 01-tokens.css; `css-contrast.py ansi`
+ * measures this file directly, so the report cannot drift from what ships.
  */
 
 /* --- Foreground --- */
 .ansi-black-fg {
-  color: #555;
+  color: var(--c-term-black);
 }
 
 .ansi-red-fg {
-  color: #f55;
+  color: var(--c-term-red);
 }
 
 .ansi-green-fg {
-  color: #5f5;
+  color: var(--c-term-green);
 }
 
 .ansi-yellow-fg {
-  color: #ff5;
+  color: var(--c-term-yellow);
 }
 
 .ansi-blue-fg {
-  color: #55f;
+  color: var(--c-term-blue);
 }
 
 .ansi-magenta-fg {
-  color: #f5f;
+  color: var(--c-term-magenta);
 }
 
 .ansi-cyan-fg {
-  color: #5ff;
+  color: var(--c-term-cyan);
 }
 
 .ansi-white-fg {
-  color: #ccc;
+  color: var(--c-term-white);
 }
 
 .ansi-bright-black-fg {
-  color: #888;
+  color: var(--c-term-bright-black);
 }
 
 .ansi-bright-red-fg {
-  color: #f88;
+  color: var(--c-term-bright-red);
 }
 
 .ansi-bright-green-fg {
-  color: #8f8;
+  color: var(--c-term-bright-green);
 }
 
 .ansi-bright-yellow-fg {
-  color: #ff8;
+  color: var(--c-term-bright-yellow);
 }
 
 .ansi-bright-blue-fg {
-  color: #88f;
+  color: var(--c-term-bright-blue);
 }
 
 .ansi-bright-magenta-fg {
-  color: #f8f;
+  color: var(--c-term-bright-magenta);
 }
 
 .ansi-bright-cyan-fg {
-  color: #8ff;
+  color: var(--c-term-bright-cyan);
 }
 
 .ansi-bright-white-fg {
-  color: #fff;
+  color: var(--c-term-bright-white);
 }
 
 /* --- Background --- */
 
-/* The one entry in this file that REGRESSED when the app base moved to
- * near-black, and the only one: measured against the old #1e1e2e base a #000
- * span read 1.280:1, and against #0a0a14 it reads 1.066:1 — the span and the
- * transcript behind it are the same colour, so output that deliberately marks a
- * region with a black background loses the region. Every other dark-theme entry
- * that misses its floor got BETTER against the darker base and was already
- * missing it before (`css-contrast.py ansi` lists them), so this is the only
- * change the base move earns.
- *
- * The theme's own terminal black is the value, not a re-picked literal: it is
- * what `shell.ts` already hands the terminal for the same colour, and it inverts
- * (#28282e dark, #15161b light) where #000 could only ever suit one theme. It
- * lands at 1.344:1 against the dark base rather than the 3:1 a region marker
- * would want — a colour that clears 3:1 on a near-black base is a mid-grey and
- * no longer reads as black, so the region stays visible-but-quiet by choice. */
+/* A fill is sized to CARRY a glyph, not to mark a region, and the two are
+ * mutually exclusive here rather than merely in tension: carrying the darkest ink
+ * at 4.5:1 caps a dark-theme fill at luminance 0.0288, while the transcript
+ * surface behind it sits at 0.0206 — so the lightest legal fill reads 1.07:1
+ * against the thing it is marking, and no value in the band beats 1.55:1. The
+ * arithmetic is in 01-tokens.css. Consequence to know: a fill with text on it is
+ * fully legible, and a TEXTLESS coloured region (a program painting a bar out of
+ * spaces) is quiet. That is the trade .ansi-black-bg used to carry alone, now
+ * general and now measured against the surface this file actually renders on. */
 .ansi-black-bg {
-  background-color: var(--c-term-black);
+  background-color: var(--c-term-black-bg);
 }
 
 .ansi-red-bg {
-  background-color: #a00;
+  background-color: var(--c-term-red-bg);
 }
 
 .ansi-green-bg {
-  background-color: #0a0;
+  background-color: var(--c-term-green-bg);
 }
 
 .ansi-yellow-bg {
-  background-color: #a50;
+  background-color: var(--c-term-yellow-bg);
 }
 
 .ansi-blue-bg {
-  background-color: #00a;
+  background-color: var(--c-term-blue-bg);
 }
 
 .ansi-magenta-bg {
-  background-color: #a0a;
+  background-color: var(--c-term-magenta-bg);
 }
 
 .ansi-cyan-bg {
-  background-color: #0aa;
+  background-color: var(--c-term-cyan-bg);
 }
 
 .ansi-white-bg {
-  background-color: #aaa;
+  background-color: var(--c-term-white-bg);
 }
 
 .ansi-bright-black-bg {
-  background-color: #555;
+  background-color: var(--c-term-bright-black-bg);
 }
 
 .ansi-bright-red-bg {
-  background-color: #f55;
+  background-color: var(--c-term-bright-red-bg);
 }
 
 .ansi-bright-green-bg {
-  background-color: #5f5;
+  background-color: var(--c-term-bright-green-bg);
 }
 
 .ansi-bright-yellow-bg {
-  background-color: #ff5;
+  background-color: var(--c-term-bright-yellow-bg);
 }
 
 .ansi-bright-blue-bg {
-  background-color: #55f;
+  background-color: var(--c-term-bright-blue-bg);
 }
 
 .ansi-bright-magenta-bg {
-  background-color: #f5f;
+  background-color: var(--c-term-bright-magenta-bg);
 }
 
 .ansi-bright-cyan-bg {
-  background-color: #5ff;
+  background-color: var(--c-term-bright-cyan-bg);
 }
 
 .ansi-bright-white-bg {
-  background-color: #fff;
+  background-color: var(--c-term-bright-white-bg);
 }
 
 /* --- Modifiers --- */
@@ -170,7 +177,13 @@
 /* --- Agent terminal exit-status footer --- */
 /* Rendered by agent-terminal.ts when a terminal process exits: a small
  * "exited (code N)" / "killed (SIGNAL)" line below the output. Green on a
- * clean exit, red otherwise; colours match the ansi green/red above. */
+ * clean exit, red otherwise; the colours ARE the ansi green/red above, read
+ * from the same tokens rather than restated as literals.
+ *
+ * This element is a child of .agent-term-pane, so it sits on --c-term-bg, and
+ * the opacity below composites against that surface — `css-contrast.py ansi`
+ * measures the composited result, not the raw token, because the raw token is
+ * not what a reader sees. */
 .agent-term-status {
   padding: 0.25rem 0.5rem;
   font-family: var(--font-mono, monospace);
@@ -179,9 +192,9 @@
 }
 
 .agent-term-status.is-ok {
-  color: #5f5;
+  color: var(--c-term-green);
 }
 
 .agent-term-status.is-err {
-  color: #f55;
+  color: var(--c-term-red);
 }
