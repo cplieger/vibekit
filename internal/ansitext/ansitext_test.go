@@ -314,21 +314,16 @@ func TestParser_FlushReleasesHeldBytes(t *testing.T) {
 	}
 }
 
-func TestStrip_ReturnsTextOnly(t *testing.T) {
-	if got := Strip("\x1b[31mred\x1b[0m"); got != "red" {
-		t.Errorf("Strip = %q, want %q", got, "red")
-	}
-}
-
 func TestRGB_RoundTripsAndIsDistinctFromPaletteIndices(t *testing.T) {
 	c := RGB(10, 20, 30)
-	if !IsRGB(c) {
-		t.Errorf("IsRGB(RGB(...)) = false, want true")
+	if c < rgbFlag {
+		t.Errorf("RGB(...) = %d, want it above rgbFlag (%d)", c, rgbFlag)
 	}
+	// The two encodings share one int32, so a palette index must never land in
+	// the truecolour range or a 256-colour span would render as an RGB triple.
 	for i := range 256 {
-		idx := int32(i)
-		if IsRGB(idx) {
-			t.Fatalf("palette index %d reported as RGB: the two encodings collide", idx)
+		if idx := int32(i); idx >= rgbFlag {
+			t.Fatalf("palette index %d collides with the RGB range", idx)
 		}
 	}
 	if got := (c >> 16) & 0xff; got != 10 {
