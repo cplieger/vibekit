@@ -11,10 +11,14 @@ type TurnEndedPayload struct {
 	// Refusal accompanies stop_reason "refusal": the model declined to
 	// continue and the final assistant chunk carried this metadata
 	// (also persisted on the message; here for the live render).
-	Refusal      *RefusalInfo `json:"refusal,omitempty"`
-	StopReason   StopReason   `json:"stop_reason,omitempty"`
-	CreditsDelta float64      `json:"credits_delta,omitempty"`
-	ElapsedMs    float64      `json:"elapsed_ms,omitempty"`
+	Refusal    *RefusalInfo `json:"refusal,omitempty"`
+	StopReason StopReason   `json:"stop_reason,omitempty"`
+	// Model is the model that answered this turn, for the live footer render.
+	// The same value is persisted on the message (Message.TurnModel) so the
+	// footer survives a reload; empty when the turn produced no buffer.
+	Model        string  `json:"model,omitempty"`
+	CreditsDelta float64 `json:"credits_delta,omitempty"`
+	ElapsedMs    float64 `json:"elapsed_ms,omitempty"`
 }
 
 // FileChange tracks per-file change stats during a turn.
@@ -218,8 +222,6 @@ const (
 	ErrCodeAgentNotFound     ErrorCode = "agent_not_found"
 	ErrCodeAgentConfigError  ErrorCode = "agent_config_error"
 	ErrCodeRateLimit         ErrorCode = "rate_limit"
-	ErrCodeStreamTimeout     ErrorCode = "stream_timeout"
-	ErrCodeSpawnFailed       ErrorCode = "spawn_failed"
 	ErrCodeSwitchFailed      ErrorCode = "switch_failed"
 	ErrCodeCompactionFailed  ErrorCode = "compaction_failed"
 	// ErrCodeModeNotApplied means session/set_mode was refused at spawn, so the
@@ -231,6 +233,13 @@ const (
 	// set this account's session advertises, so it was refused before the wire
 	// rather than accepted locally and rejected mid-prompt on every later turn.
 	ErrCodeModelNotServed ErrorCode = "model_not_served"
+	// ErrCodeAuthTokenUnavailable means kiro-cli could not vend a KAS access
+	// token for the _kiro/auth/getAccessToken host request. Distinct from every
+	// other code here because the answer is a SIGN-IN rather than a retry: KAS
+	// runs unauthenticated without that token, so sessions still open and every
+	// service-backed surface (the model registry, turns) fails. In practice this
+	// is an expired SSO refresh chain after a week away, not a first boot.
+	ErrCodeAuthTokenUnavailable ErrorCode = "auth_token_unavailable" //nolint:gosec // G101: an SSE error code, not a credential
 )
 
 // ErrorPayload is the payload for type="error". Code lets clients react
@@ -431,11 +440,16 @@ type ToolCallUpdatePayload struct {
 
 // TerminalOutputPayload is the payload for type="terminal_output".
 //
-// Data is PLAIN text with escape sequences already removed and secrets already
-// redacted; Spans style ranges of it. The parse happens server-side
-// (internal/ansitext) so the browser never builds HTML out of agent-controlled
-// bytes, and Offset says where this chunk's Data begins in the terminal's
-// accumulated output, so a client that missed a chunk can tell.
+// Data is PLAIN text with escape sequences already parsed off and hidden
+// Unicode already stripped; Spans style ranges of it. The parse happens
+// server-side (internal/ansitext) so the browser never builds HTML out of
+// agent-controlled bytes.
+//
+// Offset is where this chunk's Data begins in the terminal's accumulated
+// output, in the same UTF-16 code units the spans are addressed in. It is
+// load-bearing rather than diagnostic: the spans carry ABSOLUTE offsets across
+// the terminal's whole stream, so a client painting one chunk has to subtract
+// this base to index into the chunk it was handed.
 type TerminalOutputPayload struct {
 	TerminalID string     `json:"terminal_id"`
 	Data       string     `json:"data"`
@@ -540,9 +554,24 @@ type SteerQueuedPayload struct {
 
 // SteerInjectedPayload is the payload for type="steer_injected": the model has
 // now READ the steer. This is the moment the chip stops being a promise.
+//
+// It is broadcast TWICE for a steer the agent answers, and the two frames carry
+// different halves. KAS's own steering channel produces the first, when the model
+// reads the steer, with Text and no Ack. The second comes off the assistant TEXT
+// stream when the agent's `[STEERING steer-<id>: …]` acknowledgement marker
+// closes (translate/steer_marker.go), with Ack and no Text: reading a steer and
+// acting on it are separate moments, so they cannot share one frame, and the
+// client merges both onto the chip by SteerID.
 type SteerInjectedPayload struct {
 	SteerID string `json:"steer_id"`
 	Text    string `json:"text"`
+	// Ack is the agent's own statement of what it did about the steer, lifted
+	// out of the acknowledgement marker KAS asks it to emit and which vibekit
+	// hides from the transcript as machinery. That statement is strictly better
+	// information than a check glyph, so the chip carries it: "read" becomes
+	// "read: rebased onto main instead". Empty on the read frame, and empty when
+	// the agent closed its response without a marker.
+	Ack string `json:"ack,omitempty"`
 }
 
 // SteerClearedPayload is the payload for type="steer_cleared": the steers named

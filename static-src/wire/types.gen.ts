@@ -2,7 +2,7 @@
 
 export type DecisionKind = "permission" | "elicitation" | "user_input";
 
-export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "stream_timeout" | "spawn_failed" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served";
+export type ErrorCode = "recovery_failed" | "bridge_start_failed" | "prompt_failed" | "agent_not_found" | "agent_config_error" | "rate_limit" | "switch_failed" | "compaction_failed" | "mode_not_applied" | "model_not_served" | "auth_token_unavailable";
 
 export type EventKind = "interrupted" | "cancelled" | "model_switched" | "compacted" | "compaction_failed" | "infra_safety_blocked";
 
@@ -101,6 +101,16 @@ export interface ApprovalFile {
 }
 
 /**
+ * Attachment is a file attached to a prompt. The server reads the file
+ * and decides whether to send it as a document content block (PDF, DOCX,
+ * etc.) or a text path reference based on the extension.
+ */
+export interface Attachment {
+  path: string;
+  name: string;
+}
+
+/**
  * Block is one entry in an assistant message's chronological content
  * array. Position in Message.Blocks IS the order in which the agent
  * emitted the block — text → tool → text → tool, etc. — so the client
@@ -191,6 +201,14 @@ export interface ChatHeader {
   model?: string;
   acp_session_id?: string;
   current_mode_id?: string;
+  /**
+ * Effort mirrors Chat's. Carried here because the effort control reads the
+ * ACTIVE chat's level, and an empty chat never fetches its full record (the
+ * client shows the model picker instead of loading messages), so the header
+ * is the only path that reaches every chat. Chat.Draft is deliberately NOT
+ * mirrored — see the comment on that field.
+ */
+  effort?: string;
   id: string;
   compaction_watermark?: string;
   available_models?: SessionModel[];
@@ -590,6 +608,17 @@ export interface Message {
   reasoning?: string;
   event_kind?: EventKind;
   id: string;
+  /**
+ * TurnModel is the model that answered this turn, stamped on the final
+ * assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
+ * below. It belongs on the MESSAGE and not only on the Chat because the
+ * chat's Model is the CURRENT one: a footer reading that at render time
+ * would relabel every historical turn the moment the user switched models.
+ * Absent on every message persisted before this field existed, and the
+ * client renders nothing rather than "unknown". (Grouped with the strings
+ * above for govet fieldalignment, not for logical order.)
+ */
+  turn_model?: string;
   tool_calls?: ToolCall[];
   /**
  * Blocks is the chronologically-ordered content array — text / tool_use /
@@ -614,6 +643,19 @@ export interface Message {
  */
   refusal?: RefusalInfo;
   plan?: PlanEntry[];
+  /**
+ * Attachments are the files the user attached to THIS prompt, stamped on
+ * the user message so a sent turn can render them as pills in its header.
+ * It has to live on the record: BuildPromptBlocks consumes
+ * PromptCommand.Attachments on the way OUT to KAS and folds each one into a
+ * content block, so by the time the turn is read back there is nothing to
+ * recover the list from — an image or a document does not even leave its
+ * path in Content. Absent on every message persisted before this field
+ * existed, and on every turn opened by a steer (`_session/steer` takes a
+ * plain string, so a mid-turn send has no structured attachment list to
+ * carry).
+ */
+  attachments?: Attachment[];
   /**
  * TurnCredits / TurnElapsedMs complete the turn footer summary alongside
  * ChangedFiles (above). The values also ride the turn_ended SSE for the
@@ -683,7 +725,12 @@ export interface OpenExternalURLPayload {
   url: string;
 }
 
-/** PR represents a pull/merge request. */
+/**
+ * PR represents a pull/merge request. CheckStatus and MergeBlocked carry
+ * no omitempty: their empty value is meaningful (the forge reported no CI
+ * state / nothing blocks this merge), so the client must receive it
+ * rather than infer it from an absent field.
+ */
 export interface PR {
   title: string;
   body?: string;
@@ -692,11 +739,36 @@ export interface PR {
   source_branch: string;
   target_branch: string;
   url?: string;
+  /**
+ * HeadSHA is the head commit of the source branch: the value a merge
+ * pins itself to, so a push landing between the read and the click
+ * fails the merge instead of landing unreviewed code.
+ */
+  head_sha?: string;
+  /**
+ * CheckStatus is the folded CI state of HeadSHA. One of "" (the forge
+ * reported no checks), "pending", "passing", "failing".
+ */
+  check_status: string;
+  /**
+ * MergeBlocked names why the forge refuses a merge, or "" when
+ * nothing does. One of "draft", "conflicts", "checks_failing",
+ * "checks_running", "behind", "blocked", "unknown".
+ */
+  merge_blocked: string;
   number: number;
+  checks_total?: number;
+  checks_failing?: number;
   created_at?: number;
   updated_at?: number;
   mergeable?: boolean;
   draft?: boolean;
+  /**
+ * AutoMergeArmed reports that the forge will merge this PR itself
+ * once its requirements are met, so the row offers a read-out
+ * rather than arming it twice.
+ */
+  auto_merge_armed?: boolean;
 }
 
 /** PermissionNeededPayload is the payload for type="permission_needed". */
@@ -819,11 +891,19 @@ export interface PolicyRuleCore {
  * PolicyView is the GET /api/permissions response: the native policy rule
  * set plus the metadata the editor needs. Available is false when no bridge
  * could answer (the view falls back to reading the editable files directly).
+ * Capabilities and RelaxCapabilities answer different questions and neither is a
+ * filter on the other. Capabilities is what the rule-adder's dropdown OFFERS —
+ * the suggested set unioned with every capability the live rules already use, so
+ * it can learn a name vibekit shipped without. RelaxCapabilities is the fixed
+ * membership of the workspace relaxation switch, derived in policyfile and
+ * deliberately not discovered: it decides what one click grants, so it may not
+ * grow from whatever happens to be in the returned rules.
  */
 export interface PolicyView {
   rules: PolicyRule[];
   writable_scopes: string[];
   capabilities: string[];
+  relax_capabilities: string[];
   available: boolean;
 }
 
@@ -931,10 +1011,18 @@ export interface Repo {
  * There is no aborted_by_restart flag. A restart PAUSES a run — KAS's read-path
  * reconcile has exactly one outcome and no path to aborted (probe 24) — so there
  * is nothing for such a flag to mean.
+ * //
+ * Name is here for RunStartedPayload's reason, arriving at the other end of the
+ * run: an outcome signal has to say WHICH run finished, and a client that never
+ * saw this run's start frame (a page opened mid-run, another device) has nothing
+ * else to name it with. Read out of KAS's `finalState`, which this frame already
+ * decodes for its log line, so it costs one field and no new decode. Empty when
+ * KAS sends no state, and the consumer falls back to a generic label.
  */
 export interface RunFinishedPayload {
   workflow_id: string;
   status: string;
+  name?: string;
 }
 
 /**
@@ -987,10 +1075,23 @@ export interface RunProgressPayload {
  * chat. Carries the name because a client that has never fetched this run has
  * nothing to label the row with, and a row appearing with no name reads as a
  * bug rather than as a pending fetch.
+ * //
+ * Scheduled marks a run the SCHEDULER launched, and it exists because the client
+ * cannot work this out. A parentless run's lifecycle frames are workspace-global
+ * with an empty chat id, and a MANUAL launch is parentless too, so watching
+ * events cannot separate the two; `parentSessionId` separates agent-parented from
+ * parentless and is empty for both of these. Only the launch path knows, so the
+ * distinction travels from there.
+ * //
+ * Its one consumer is the client's start signal: a manual launch already has the
+ * user's attention (they clicked Run, and a run tab opened), while a scheduled one
+ * began with nobody looking. Absent on the wire for a manual run rather than
+ * false, so an older client and a manual launch read alike.
  */
 export interface RunStartedPayload {
   workflow_id: string;
   name?: string;
+  scheduled?: boolean;
 }
 
 /**
@@ -1118,10 +1219,27 @@ export interface SteerClearedPayload {
 /**
  * SteerInjectedPayload is the payload for type="steer_injected": the model has
  * now READ the steer. This is the moment the chip stops being a promise.
+ * //
+ * It is broadcast TWICE for a steer the agent answers, and the two frames carry
+ * different halves. KAS's own steering channel produces the first, when the model
+ * reads the steer, with Text and no Ack. The second comes off the assistant TEXT
+ * stream when the agent's `[STEERING steer-<id>: …]` acknowledgement marker
+ * closes (translate/steer_marker.go), with Ack and no Text: reading a steer and
+ * acting on it are separate moments, so they cannot share one frame, and the
+ * client merges both onto the chip by SteerID.
  */
 export interface SteerInjectedPayload {
   steer_id: string;
   text: string;
+  /**
+ * Ack is the agent's own statement of what it did about the steer, lifted
+ * out of the acknowledgement marker KAS asks it to emit and which vibekit
+ * hides from the transcript as machinery. That statement is strictly better
+ * information than a check glyph, so the chip carries it: "read" becomes
+ * "read: rebased onto main instead". Empty on the read frame, and empty when
+ * the agent closed its response without a marker.
+ */
+  ack?: string;
 }
 
 /**
@@ -1174,11 +1292,16 @@ export interface TerminalExitedPayload {
 /**
  * TerminalOutputPayload is the payload for type="terminal_output".
  * //
- * Data is PLAIN text with escape sequences already removed and secrets already
- * redacted; Spans style ranges of it. The parse happens server-side
- * (internal/ansitext) so the browser never builds HTML out of agent-controlled
- * bytes, and Offset says where this chunk's Data begins in the terminal's
- * accumulated output, so a client that missed a chunk can tell.
+ * Data is PLAIN text with escape sequences already parsed off and hidden
+ * Unicode already stripped; Spans style ranges of it. The parse happens
+ * server-side (internal/ansitext) so the browser never builds HTML out of
+ * agent-controlled bytes.
+ * //
+ * Offset is where this chunk's Data begins in the terminal's accumulated
+ * output, in the same UTF-16 code units the spans are addressed in. It is
+ * load-bearing rather than diagnostic: the spans carry ABSOLUTE offsets across
+ * the terminal's whole stream, so a client painting one chunk has to subtract
+ * this base to index into the chunk it was handed.
  */
 export interface TerminalOutputPayload {
   terminal_id: string;
@@ -1189,10 +1312,18 @@ export interface TerminalOutputPayload {
 
 /**
  * TextSpan styles the half-open range [Start,End) of a sibling text field.
+ * //
  * It mirrors internal/ansitext.Span; the wire type lives here because
- * internal/api owns every shape codegen projects into TypeScript, and Attrs
- * values match web-terminal-engine's WireRun.a so the terminal renderer and the
- * transcript renderer share one attribute vocabulary.
+ * internal/api owns every shape codegen projects into TypeScript and
+ * internal/ansitext stays a stdlib-only leaf that knows nothing about the wire.
+ * //
+ * Attrs values match web-terminal-engine's vt.WireRun.A so the terminal
+ * renderer and the transcript renderer share one attribute vocabulary. The
+ * COLOUR encoding deliberately differs from WireRun's, which resolves every
+ * colour to 0xRRGGBB against the terminal's theme: a palette INDEX survives
+ * into a persisted chat file without baking today's theme into it, and the
+ * transcript's ANSI palette is a set of CSS custom properties the user's theme
+ * redefines.
  */
 export interface TextSpan {
   /**
@@ -1259,6 +1390,20 @@ export interface ToolCall {
  * extend the GC scan region past a slice's non-pointer len/cap words.
  */
   checkpoint?: ToolCheckpoint;
+  /**
+ * Disclosed names the skill or steering document a `disclose_context` call
+ * loaded, from _meta.kiro.disclosedContext. Nil on every other tool call.
+ * This is the only signal that a skill's body actually reached the model, so
+ * it is what the transcript renders instead of a generic tool card.
+ */
+  disclosed?: ToolDisclosed;
+  /**
+ * Denial is KAS's structured reason for a call the Cedar policy refused,
+ * from _meta.kiro.policyDenial. Nil unless the policy denied it. Present so a
+ * refusal reads as a refusal rather than a tool failure, and names the rule
+ * responsible, since the user owns the policy.
+ */
+  denial?: ToolDenial;
   input?: unknown;
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
@@ -1324,6 +1469,34 @@ export interface ToolCheckpoint {
 }
 
 /**
+ * ToolDenial is the policy verdict that refused a tool call.
+ * //
+ * Rule is the matched rule, and it is the load-bearing field: a denial that
+ * names its rule is one click from editing it, which is what makes "configure
+ * permissions however you like" actionable. Scope and Source say WHERE the rule
+ * lives (user or workspace `permissions.yaml`), so the user knows which file to
+ * open.
+ */
+export interface ToolDenial {
+  rule?: ToolDenialRule;
+  capability: string;
+  resource: string;
+  scope: string;
+  source: string;
+}
+
+/**
+ * ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny" or
+ * "ask" (an unanswered ask that timed out reaches here as a denial).
+ */
+export interface ToolDenialRule {
+  capability: string;
+  effect: string;
+  match?: string[];
+  exclude?: string[];
+}
+
+/**
  * ToolDiff is a before/after text change from a write tool call. Sent
  * by kiro-cli in tool_call notifications for edit operations. Path is
  * workspace-relative (absolute paths from kiro-cli are normalised via
@@ -1334,6 +1507,16 @@ export interface ToolDiff {
   path: string;
   old_text?: string;
   new_text: string;
+}
+
+/**
+ * ToolDisclosed identifies a skill or steering document loaded into context by
+ * the agent's own `disclose_context` call. Type is "skill" or "steering".
+ */
+export interface ToolDisclosed {
+  type: string;
+  display_name: string;
+  uri: string;
 }
 
 /**
@@ -1401,6 +1584,12 @@ export interface TurnEndedPayload {
  */
   refusal?: RefusalInfo;
   stop_reason?: StopReason;
+  /**
+ * Model is the model that answered this turn, for the live footer render.
+ * The same value is persisted on the message (Message.TurnModel) so the
+ * footer survives a reload; empty when the turn produced no buffer.
+ */
+  model?: string;
   credits_delta?: number;
   elapsed_ms?: number;
 }

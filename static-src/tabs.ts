@@ -21,6 +21,7 @@ import {
   ICON_TAB_EDITOR,
   ICON_TAB_HISTORY,
   ICON_TAB_DOCS,
+  ICON_PIN_FILLED,
 } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import * as uiState from "./ui-state.js";
@@ -31,6 +32,7 @@ import { attachDrag, isDragHandled, setReorderCallback } from "./tabs-drag.js";
 import { showContextMenu } from "./context-menu.js";
 import type { ContextMenuItem } from "./context-menu.js";
 import { downloadChatExport } from "./chat-export.js";
+import { BUS_TAB_CHANGED, emitBus } from "./bus.js";
 
 // --- Types ---
 
@@ -48,16 +50,39 @@ export const TAB_VIEWS = {
   run: "#run-view",
 } as const;
 
-type TabKind = keyof typeof TAB_VIEWS;
+export type TabKind = keyof typeof TAB_VIEWS;
 
 /** Everything needed to render and route a tab. */
 export interface TabSpec {
   id: string;
   name: string;
   kind: TabKind;
-  /** Optional per-tab icon (SVG string) overriding the kind's default.
-   *  Used to give chat tabs a per-agent-role glyph. */
-  iconSvg?: string | undefined;
+  /* There is deliberately no per-tab icon override. It existed for exactly one
+   * purpose — a per-agent-role glyph on chat tabs — and a chat tab's leading
+   * element is the activity dot now, so the field had one producer
+   * (`iconForMode`) feeding a slot that no longer renders one. `iconForMode`
+   * itself stays: the mode pill and its picker are where a chat's role reads
+   * out. */
+  /** The activity dot's last painted state, so a row that is CREATED already
+   *  knows what it should show.
+   *
+   *  The dot used to live only in the DOM, and `setTabStatus` wrote only to the
+   *  live node — so any path that built a row without a following state change
+   *  showed the seeded `idle` whatever the chat was doing. Two such paths, both
+   *  ordinary: the boot restore populates sessions BEFORE it opens their tabs (so
+   *  the store effect has already run by the time the rows exist, and nothing
+   *  makes it run again), and `promoteTab` deliberately discards and rebuilds a
+   *  row without touching session state. A working, failed, waiting or input
+   *  background tab read as idle until something unrelated repainted it, which is
+   *  the feature failing on exactly the path it exists for.
+   *
+   *  LIVE state, and it must never be persisted: the persistence subscriber
+   *  derives `tab_order` / `pinned_tabs` from ids and `active_view` from the
+   *  active id, so no TabSpec field can reach localStorage by construction, and a
+   *  dot restored from a previous process would be a claim about a turn that
+   *  ended before the page loaded. `openChatTab` seeds it from CURRENT session
+   *  state instead. */
+  dotStatus?: TabDotStatus | undefined;
   /** CSS selector for the view element to show. */
   view: string;
   /** The URL route this tab maps to. */
@@ -77,6 +102,17 @@ export interface TabSpec {
    *  view is, so a future one is a two-field opt-in rather than a second
    *  mechanism. */
   parentId?: string | undefined;
+  /** Pinned: this tab sorts ahead of every unpinned one and stays reachable when
+   *  the strip is long. Persisted per device beside `tab_order`.
+   *
+   *  Pinning a TAB inverts the flaw that kills pinning a message: it is a
+   *  present-tense judgement rather than a prediction, because you know right now
+   *  which conversation matters. It is also the whole feature — no folders, no
+   *  tags, nothing to maintain.
+   *
+   *  Meaningful on a top-level tab only. A sub-tab's position is its parent's,
+   *  the same rule that denies it a drag handle. */
+  pinned?: boolean | undefined;
   /** Whether closing this tab tears down what it shows. Default true.
    *
    *  `owns: false` makes the tab a VIEW: closing it dismisses the view and
@@ -114,6 +150,10 @@ const ICONS: Readonly<Record<TabKind, string>> = {
 interface Callbacks {
   onActivate: ((id: string) => void) | null;
   onEmpty: (() => void) | null;
+  /** Notified with the id of every tab that leaves the store. `closeTab` is the
+   *  only production path that removes one, so this is complete by construction.
+   *  A NOTIFICATION slot, like onEmpty: it must not mutate the store. */
+  onClosed: ((id: string) => void) | null;
 }
 
 interface Internal {
@@ -127,13 +167,21 @@ interface State {
 }
 
 const state: State = { tabs: [], active: "" };
-const callbacks: Callbacks = { onActivate: null, onEmpty: null };
+const callbacks: Callbacks = { onActivate: null, onEmpty: null, onClosed: null };
 const internal: Internal = { emptyTimer: null, renderQueued: false };
 
 /** Reactive version counter. Effects subscribed via `tabsEffect()` re-run
  *  on every emit(). State is mutated in place; this counter is the
  *  signal those mutations trip. */
 const stateVersion = signal(0);
+
+/** Reactive counter for DOT writes, which deliberately do not `emit()`.
+ *
+ *  A second signal rather than a second emit: `emit()` runs the persistence
+ *  subscriber and queues a re-render, and a dot is not a structural change (see
+ *  setTabStatus). Only `subscribeTabCues` reads this one, so a dot write reaches
+ *  the out-of-page attention surfaces without waking anything else. */
+const dotVersion = signal(0);
 type Subscriber = (s: State) => void;
 
 /** All registered module-level effects. Tracked so _resetForTest can
@@ -200,6 +248,7 @@ function insertSpec(spec: TabSpec): void {
   const parent = spec.parentId;
   if (parent === undefined) {
     state.tabs.push(spec);
+    applyPinOrder();
     return;
   }
   const pIdx = state.tabs.findIndex((t) => t.id === parent);
@@ -207,6 +256,7 @@ function insertSpec(spec: TabSpec): void {
     // An orphan (parent already closed) behaves as top-level rather than
     // vanishing: a tab nobody can see is worse than a tab in the wrong place.
     state.tabs.push(spec);
+    applyPinOrder();
     return;
   }
   let at = pIdx + 1;
@@ -214,6 +264,91 @@ function insertSpec(spec: TabSpec): void {
     at++;
   }
   state.tabs.splice(at, 0, spec);
+}
+
+/** Group `state.tabs` into [parent, ...its whole descendant tree] runs, in array
+ *  order. Shared by the pin partition, which must move a parent and everything
+ *  under it as one unit — splitting them would put a child under a stranger.
+ *
+ *  Membership is tested against every tab already IN a group, not just each
+ *  group's first element. A sub-tab can itself have one (the transcript menu
+ *  parents a side conversation on the ACTIVE chat, which may already be a side
+ *  conversation), and matching only the head made such a grandchild an orphan
+ *  top-level group — so pinning any other tab could sort it away from the tab its
+ *  own `parentId` names. */
+function tabGroups(): TabSpec[][] {
+  const groups: TabSpec[][] = [];
+  for (const t of state.tabs) {
+    const owner =
+      t.parentId === undefined
+        ? undefined
+        : groups.findLast((g) => g.some((m) => m.id === t.parentId));
+    if (owner === undefined) {
+      // A top-level tab, or an orphan — which behaves as top-level here for the
+      // same reason insertSpec treats it that way.
+      groups.push([t]);
+      continue;
+    }
+    owner.push(t);
+  }
+  return groups;
+}
+
+/** Reorder `state.tabs` so every pinned group precedes every unpinned one,
+ *  stably and with each parent's children still behind it.
+ *
+ *  In the ARRAY, not in the render, because two mechanisms read DOM order back as
+ *  the truth: a drop reads the new order out of the strip (tabs-drag.ts), and the
+ *  keyboard arrows walk `el.parentElement.children`. A render-time sort would
+ *  make both disagree with what is stored.
+ *
+ *  This is also what makes a pinned tab undraggable below an unpinned one, and
+ *  why the drag subsystem needed no change: every drop commits through
+ *  reorderTabs, which re-partitions, so an illegal drop snaps back. A snap-back
+ *  is honest — the alternative was clamping the drop indicator mid-drag inside a
+ *  subsystem whose index arithmetic is correctness-sensitive. */
+function applyPinOrder(): void {
+  const groups = tabGroups();
+  const pinned = groups.filter((g) => g[0]?.pinned === true);
+  if (pinned.length === 0 || pinned.length === groups.length) {
+    return;
+  }
+  state.tabs = [...pinned, ...groups.filter((g) => g[0]?.pinned !== true)].flat();
+}
+
+/** Pin or unpin a top-level tab. No-op on a sub-tab: its position is its
+ *  parent's, exactly as with drag. */
+export function setTabPinned(id: string, pinned: boolean): void {
+  const tab = state.tabs.find((t) => t.id === id);
+  if (tab === undefined || tab.parentId !== undefined || (tab.pinned ?? false) === pinned) {
+    return;
+  }
+  tab.pinned = pinned;
+  applyPinOrder();
+  emit();
+}
+
+/** Promote a sub-tab to a top-level tab.
+ *
+ *  Persistence is FREE: the persistence subscriber derives `tab_order` from
+ *  `tabs.filter(t => t.parentId === undefined)` on every emit, so clearing the
+ *  field is the whole storage story. Nothing is sent to the server either — a
+ *  side conversation is already its own chat record with its own bridge, so there
+ *  is nothing to copy.
+ *
+ *  The DOM node is DISCARDED rather than reused, which is the one non-obvious
+ *  part. `attachTabInteraction` decides draggability once, at element creation,
+ *  and renderDOM keeps the existing node for a tab it already knows — so a
+ *  promoted tab would keep its indent and, worse, never get a drag handle. */
+export function promoteTab(id: string): void {
+  const tab = state.tabs.find((t) => t.id === id);
+  if (tab?.parentId === undefined) {
+    return;
+  }
+  tab.parentId = undefined;
+  document.querySelector(`[data-tab-id="${CSS.escape(id)}"]`)?.remove();
+  applyPinOrder();
+  emit();
 }
 
 /** Activate an existing tab. */
@@ -230,7 +365,10 @@ export function activateTab(id: string): void {
 
 /** Close a tab. Activates the neighbor or fires onEmpty if none remain.
  *  Pass `{ skipOnClose: true }` when the chat is already deleted remotely
- *  to avoid re-dispatching the delete action against a stale session. */
+ *  to avoid re-dispatching the delete action against a stale session.
+ *
+ *  `skipOnClose` is a fact about `id` ALONE and never travels down the cascade —
+ *  see the children loop below. */
 export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   const idx = state.tabs.findIndex((t) => t.id === id);
   if (idx < 0) {
@@ -247,26 +385,40 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
   //
   // Children first so a child's own teardown never runs against a parent that
   // has already gone.
+  //
+  // WITHOUT opts, deliberately. `skipOnClose` means "this id was already deleted
+  // remotely", which is true of the root and of nothing else: a child is its own
+  // persisted chat with its own bridge, and its `onClose` is what cancels its
+  // turn and tears that bridge down. Forwarding the flag left the child's tab
+  // gone from the UI while its process kept running with no surface to stop it.
+  // A child that owns nothing still skips its teardown — through its own
+  // ownership check below, which is where that decision belongs.
   for (const child of childrenOf(id)) {
-    closeTab(child.id, opts);
+    closeTab(child.id);
   }
 
   // REMOVE, then notify. The order is the store's re-entrancy guarantee, not a
   // detail: onClose is a TEARDOWN callback, so it must observe a state the tab
-  // has already left. Notifying first made every callback that closes its own
-  // tab an infinite loop — the editor's teardown does exactly that
-  // (closeEditorFile ends in closeTab), so the tab still being present meant
-  // closeTab re-entered, fired onClose again, and recursed until the stack
-  // died. Every editor tab was unclosable by ×, middle-click and Delete.
+  // has already left. Notifying first made every callback that closes its own tab
+  // an infinite loop — the editor's teardown did exactly that (closeEditorFile
+  // ended in closeTab), so the tab still being present meant closeTab re-entered,
+  // fired onClose again, and recursed until the stack died. Every editor tab was
+  // unclosable by ×, middle-click and Delete.
   //
   // The index is re-found because the children cascade above spliced the array,
   // and a missing tab means a child's teardown already closed this one, whose
-  // onClose therefore already ran.
+  // onClose has therefore already run.
   const at = state.tabs.findIndex((t) => t.id === id);
   if (at < 0) {
     return;
   }
   state.tabs.splice(at, 1);
+
+  // The tab is gone from the store, so anything keying per-tab state off an id can
+  // drop it. Fired here, after the splice and before the teardown, for the same
+  // re-entrancy reason the splice comes first: a listener must observe a state the
+  // tab has already left.
+  callbacks.onClosed?.(id);
 
   // `owns: false` tears down nothing: the tab is a view, and dismissing a view
   // must not kill the work it was watching.
@@ -300,20 +452,128 @@ export function renameTab(id: string, name: string): void {
   emit();
 }
 
-/** Set a status indicator on a tab: "thinking" (accent disc with the glow beat +
- *  travelling wave), "permission" (still yellow disc in a hard ring), "waiting"
- *  (the same beat + wave in yellow — the agent declared waiting_on_user and
- *  needs input), or "" to clear. The visual vocabulary is shared with
- *  @cplieger/web-terminal-ui's .wt-status-dot; see css/61-mcp-tools.css. */
-export function setTabStatus(id: string, status: "" | "thinking" | "permission" | "waiting"): void {
-  const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`);
-  if (el === null) {
+/** The activity dot's states. Six come from a chat's live state (derived by
+ *  `tabStatusFor` in store.ts); "dirty" is the editor's unsaved mark, which
+ *  rides the same element because a tab is never both a chat and a file.
+ *
+ *  Ported from @cplieger/web-terminal-ui's `.wt-status-dot`; the visual grammar
+ *  and the reasoning behind each state live in css/12-tabs.css. */
+export type TabDotStatus = "idle" | "working" | "waiting" | "input" | "failed" | "done" | "dirty";
+
+/** What each state is CALLED. This is not decoration: the dot is a 9px
+ *  graphical object, and a screen-reader user gets nothing at all from it, so
+ *  the phrase is the state's only channel for them — which matters most here,
+ *  because the whole feature exists for tabs you are not looking at.
+ *
+ *  One table feeding both the announced name and the hover tooltip, so what a
+ *  sighted user reads and what a screen reader hears cannot drift. Exhaustive
+ *  over TabDotStatus by type, so a new state cannot ship unnamed.
+ *
+ *  `waiting` and `input` used to share one VISUAL, which made these two phrases
+ *  the only place the distinction survived. They now differ by hue and by fill
+ *  (css/12-tabs.css), and the phrases stay deliberately unlike each other anyway:
+ *  the visual says "this chat wants you" for both, and only the words say which
+ *  kind of wanting it is. */
+const DOT_PHRASE: Readonly<Record<TabDotStatus, string>> = {
+  idle: "idle",
+  working: "working",
+  waiting: "waiting for you",
+  input: "needs a decision",
+  // "operation" rather than "turn": the latch behind this state is set for every
+  // `error` frame naming the chat, which includes `switch_failed` and
+  // `bridge_start_failed` — failures with no turn in them. The breadth is
+  // deliberate and useful (a chat whose bridge would not start has failed at
+  // something the reader needs to see), so the phrase is what had to widen. It is
+  // the only channel a screen-reader user has here, so it must not claim more than
+  // its producer supports.
+  failed: "last operation failed",
+  done: "turn finished",
+  dirty: "unsaved changes",
+};
+
+/** Paint one tab's dot: the attribute CSS keys off, the tooltip a pointer
+ *  reveals, and the word a screen reader hears.
+ *
+ *  The announced word is a SEPARATE element after `.tab-name`, not a child of
+ *  the dot, and the position is the reason. A tab's accessible name is computed
+ *  from its contents, and the dot is the leading element on a chat row — so a
+ *  word inside it would announce "working Fix the parser" rather than "Fix the
+ *  parser, working". The app already settled that ordering on its workflow rows
+ *  ("Open nightly-sweep, failed"): the name opens, the state follows. The dot
+ *  itself is therefore aria-hidden and purely visual.
+ *
+ *  An aria-label on the tab root would have been the other option and is worse:
+ *  it REPLACES the computed name, so it would have to restate the tab name and
+ *  the pinned marker, and be re-synced on every rename — which the close
+ *  button's own stale `aria-label="Close <old name>"` already demonstrates.
+ *
+ *  An empty status removes the attribute rather than setting it empty, so
+ *  `[data-status]` alone is the CSS reveal condition and there is no second flag
+ *  to keep in sync. */
+function paintDot(row: HTMLElement, status: TabDotStatus | ""): void {
+  const dot = row.querySelector<HTMLElement>(`.${CLS_DOT}`);
+  const sr = row.querySelector<HTMLElement>(`.${CLS_DOT_SR}`);
+  if (dot === null || sr === null) {
     return;
   }
-  el.classList.toggle("hidden", status === "");
-  el.classList.toggle("tab-dot-thinking", status === "thinking");
-  el.classList.toggle("tab-dot-permission", status === "permission");
-  el.classList.toggle("tab-dot-waiting", status === "waiting");
+  if (status === "") {
+    dot.removeAttribute("data-status");
+    dot.removeAttribute("title");
+    sr.textContent = "";
+    return;
+  }
+  const phrase = DOT_PHRASE[status];
+  dot.dataset["status"] = status;
+  dot.title = phrase;
+  sr.textContent = `, ${phrase}`;
+}
+
+const CLS_DOT = "tab-status-dot";
+const CLS_DOT_SR = "tab-status-sr";
+
+function rowOf(id: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
+}
+
+/** Set a chat tab's activity dot. The state is derived by `tabStatusFor`
+ *  (store.ts), which owns the precedence; this is the writer.
+ *
+ *  Records the value on the SPEC before painting, so a row created or rebuilt
+ *  later starts from the real state instead of the seeded `idle` — see
+ *  `TabSpec.dotStatus`. Deliberately does NOT `emit()`: a dot is not a structural
+ *  change, so it must not run the persistence subscriber or a re-render, and the
+ *  paint below is the whole visible effect. */
+export function setTabStatus(id: string, status: TabDotStatus | ""): void {
+  recordDotStatus(id, status);
+  const row = rowOf(id);
+  if (row === null) {
+    return;
+  }
+  paintDot(row, status);
+}
+
+/** Park a dot state on its spec. "" means no state, which is an ABSENT field
+ *  rather than an empty string, so `createTabEl` can tell "nothing was ever
+ *  painted" from "painted, then cleared" with one `?? default`. */
+function recordDotStatus(id: string, status: TabDotStatus | ""): void {
+  const tab = state.tabs.find((candidate) => candidate.id === id);
+  if (tab === undefined) {
+    return;
+  }
+  const before = tab.dotStatus;
+  if (status === "") {
+    delete tab.dotStatus;
+  } else {
+    tab.dotStatus = status;
+  }
+  // Only a CHANGED dot moves the attention surfaces, and the guard is what keeps
+  // the store effect's sweep over every open chat (chat.ts) from waking the fold
+  // once per tab on a change that touched one of them. The PAINT below is
+  // deliberately unguarded: an unchanged state still has to be re-applied to a
+  // row that was rebuilt since the last write.
+  if (before !== tab.dotStatus) {
+    dotVersion.value = dotVersion.peek() + 1;
+  }
 }
 
 /** Set (or clear, with "") a tab's hover tooltip. Used for the agent's
@@ -333,23 +593,31 @@ export function setTabTooltip(id: string, text: string): void {
   }
 }
 
-/** Mark an editor tab as having unsaved changes (a steady accent dot).
- *  Reuses the shared .tab-status-dot: editor tabs never receive setTabStatus
- *  (thinking/permission are chat-tab states), so there is no contention. */
+/** Mark an editor tab as having unsaved changes (a steady accent disc).
+ *  Reuses the shared .tab-status-dot on the ONE attribute setTabStatus writes,
+ *  which is what makes the two halves mutually exclusive by construction rather
+ *  than by convention: a chat tab never receives setTabDirty and an editor tab
+ *  never receives setTabStatus, and even if one did, the second write would
+ *  replace the first instead of leaving two states painted at once. */
 export function setTabDirty(id: string, dirty: boolean): void {
-  const el = document.querySelector(`[data-tab-id="${CSS.escape(id)}"] .tab-status-dot`);
-  if (el === null) {
+  recordDotStatus(id, dirty ? "dirty" : "");
+  const row = rowOf(id);
+  if (row === null) {
     return;
   }
-  el.classList.toggle("hidden", !dirty);
-  el.classList.toggle("tab-dot-dirty", dirty);
+  paintDot(row, dirty ? "dirty" : "");
 }
 
 function reorderTabs(order: string[]): void {
   const byID = new Map(state.tabs.map((t) => [t.id, t]));
   const next: TabSpec[] = [];
-  /** Take a tab, then immediately its children — so a persisted or dragged
-   *  order that names only top-level ids still reproduces the full strip. */
+  /** Take a tab, then immediately its whole descendant tree — so a persisted or
+   *  dragged order that names only top-level ids still reproduces the full strip.
+   *
+   *  Recursive for the same reason tabGroups matches on membership: a direct-
+   *  children walk left a grandchild in `byID`, and the defensive sweep below
+   *  then appended it to the END of the strip, away from its parent. Terminates
+   *  on the byID guard even if two specs ever named each other as parent. */
   const take = (id: string): void => {
     const t = byID.get(id);
     if (t === undefined) {
@@ -358,8 +626,8 @@ function reorderTabs(order: string[]): void {
     next.push(t);
     byID.delete(id);
     for (const c of childrenOf(id)) {
-      if (byID.delete(c.id)) {
-        next.push(c);
+      if (byID.has(c.id)) {
+        take(c.id);
       }
     }
   };
@@ -377,6 +645,9 @@ function reorderTabs(order: string[]): void {
     next.push(t);
   }
   state.tabs = next;
+  // The one funnel for BOTH a drag drop and the boot restore, so the pinned-first
+  // rule holds for both without either knowing about it.
+  applyPinOrder();
   emit();
 }
 
@@ -392,10 +663,78 @@ export function getActiveTabRoute(): Route | null {
   const tab = state.tabs.find((t) => t.id === state.active);
   return tab?.route ?? null;
 }
+/** Kind of the currently active tab, or null when no tab is active.
+ *
+ *  This is what a key binding scoped BY VIEW reads. The store already knows
+ *  which tab is active and what kind it is, so the answer is here rather than in
+ *  a DOM test for which view element happens to be unhidden — and it is the
+ *  TabSpec's kind rather than the route's, because an editor tab's kind is
+ *  "editor" while its route's is "file", and a binding keyed on the route would
+ *  be speaking a second vocabulary for the same question. */
+export function getActiveTabKind(): TabKind | null {
+  const tab = state.tabs.find((t) => t.id === state.active);
+  return tab?.kind ?? null;
+}
 /** Return all open tab IDs. Used by system handlers to reconcile tabs
  *  without DOM scraping. */
 export function getOpenTabIDs(): string[] {
   return state.tabs.map((t) => t.id);
+}
+
+/** The chat tabs and their current dot states, for the out-of-page attention fold
+ *  (attention.ts). A pure STORE read: the dot state is parked on the spec, so
+ *  nothing here reads the DOM and a row that has not been built yet still counts.
+ *
+ *  The list is heterogeneous, so the filter is the whole correctness argument:
+ *
+ *   - `kind === "chat"` is the only cue-bearing kind. It excludes the five
+ *     `__…__` singletons and every `run:` tab, which carry no dot at all, and it
+ *     excludes `editor:` tabs, whose `dirty` mark rides the same element and is
+ *     not a chat state. `isCueStatus` rejects `dirty` as well, so it cannot reach
+ *     the fold by either route.
+ *   - `owns !== false` excludes a VIEW tab — one watching work another chat owns.
+ *     Such a tab is a window onto a chat, not the chat, so counting it would count
+ *     one chat twice whenever the chat's own tab is also open. A SUB-TAB is NOT
+ *     excluded: a tangent carries `parentId` and the default `owns`, because it is
+ *     its own chat with its own bridge and its own cue.
+ *
+ *  Ids are unique in the store (openTab dedupes), so no further de-duplication is
+ *  needed for the count to be one per chat. */
+export function cueCandidates(): { id: string; status: string }[] {
+  return state.tabs
+    .filter((t) => t.kind === "chat" && t.owns !== false)
+    .map((t) => ({ id: t.id, status: t.dotStatus ?? "" }));
+}
+
+/** Subscribe to everything that can change the attention fold's input, and return
+ *  the disposer.
+ *
+ *  TWO signals, because there are two disjoint write paths and covering one is not
+ *  covering the input: `stateVersion` for the tab SET (every list mutation ends in
+ *  `emit()` — openTab, closeTab on all three of its branches, reorderTabs,
+ *  activateTab, promoteTab, restoreTabState) and `dotVersion` for every dot write
+ *  (`recordDotStatus`, the single writer of `TabSpec.dotStatus`, which
+ *  deliberately does not emit). A funnel on `emit()` alone would leave the count
+ *  stale on every status change; one on the dot alone would leave it stale after a
+ *  chat closed.
+ *
+ *  Deliberately NOT registered in `moduleEffects`: the caller owns this
+ *  subscription's lifetime, so `_resetForTest` must not silently unsubscribe it
+ *  while the caller still believes it is live. */
+export function subscribeTabCues(fn: () => void): () => void {
+  return effect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    stateVersion.value; // subscribe: the tab set
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    dotVersion.value; // subscribe: any tab's dot
+    fn();
+  });
+}
+
+/** Register the notification for a tab leaving the store. One slot, one
+ *  consumer: attention.ts, which drops the chat's acknowledgement. */
+export function setOnTabClosed(fn: (id: string) => void): void {
+  callbacks.onClosed = fn;
 }
 
 // --- Empty-state timer ---
@@ -435,6 +774,29 @@ export function getSavedTabState(): { tab_order: string[]; active_view: string }
   return { tab_order: s.tab_order, active_view: s.active_view };
 }
 
+/** Drop persisted ids whose feature is no longer available, so a restore cannot
+ *  reopen a page the user has no way to reach.
+ *
+ *  A singleton tab's entry point can disappear between sessions — History's
+ *  toolbar button is hidden when chat retention is off, because nothing is kept
+ *  to list. Restoring the tab anyway reopened a page with no button to reopen it
+ *  and no reason to exist. An id absent from `available` is unconditional, which
+ *  is every chat tab and every singleton that cannot be switched off.
+ *
+ *  The availability VERDICT stays with the caller: this module knows which ids
+ *  come back, and app.ts knows what each feature currently depends on. Putting
+ *  retention in here would make the tab store read settings. */
+export function restorableSingletonIDs(
+  ids: readonly string[],
+  available: Readonly<Record<string, boolean>>,
+): string[] {
+  return ids.filter((id) => available[id] ?? true);
+}
+
+/** The id last announced on BUS_TAB_CHANGED. Module state rather than a closure
+ *  so _resetForTest can clear it with the rest. */
+let lastAnnouncedTab = "";
+
 /** Register module-level subscribers. Extracted into a function so
  *  _resetForTest can re-register them after clearing the subscriber set.
  *  Effects defer their work until state has tabs — this matches the
@@ -460,6 +822,12 @@ function registerModuleSubscribers(): void {
       // Top-level ids ONLY. A sub-tab's position is derived from its parent, so
       // persisting it would let a restore place a child away from its parent.
       tab_order: state.tabs.filter((t) => t.parentId === undefined).map((t) => t.id),
+      // Pins are their own list rather than a prefix of tab_order: the order
+      // already encodes where a pinned tab sits, but not that it is pinned, and
+      // an unpin has to be able to leave the tab where it is.
+      pinned_tabs: state.tabs
+        .filter((t) => t.parentId === undefined && t.pinned === true)
+        .map((t) => t.id),
       active_view: state.active,
     });
   });
@@ -474,6 +842,16 @@ function registerModuleSubscribers(): void {
       showView(active);
     } else {
       syncSidebarButtons(null);
+    }
+    // Announce a REAL switch. This effect re-runs on every store mutation, so
+    // the guard is what separates "the active tab changed" from "something else
+    // about the tabs did" — a subscriber that tears a feature down cannot be
+    // handed the second one. Emitted here rather than inside showView because
+    // showView's DOM swap runs inside a view transition, so its timing is not
+    // the state change's.
+    if (s.active !== lastAnnouncedTab) {
+      lastAnnouncedTab = s.active;
+      emitBus(BUS_TAB_CHANGED, { to: s.active, kind: active?.kind ?? null });
     }
   });
 
@@ -499,8 +877,22 @@ function registerModuleSubscribers(): void {
  *  boot-loop opens have already re-saved an intermediate state. */
 export function restoreTabState(): void {
   const saved = capturedUIState();
+  // Stamp the pins BEFORE the reorder. The partition runs inside reorderTabs, so
+  // a pin applied after it would be recorded without moving its tab, and the
+  // strip would come back out of order until the next mutation.
+  const pins = new Set(saved.pinned_tabs);
+  let pinned = false;
+  for (const t of state.tabs) {
+    if (t.parentId === undefined && pins.has(t.id)) {
+      t.pinned = true;
+      pinned = true;
+    }
+  }
   if (saved.tab_order.length > 0) {
     reorderTabs(saved.tab_order);
+  } else if (pinned) {
+    applyPinOrder();
+    emit();
   }
   if (saved.active_view !== "" && hasTab(saved.active_view)) {
     activateTab(saved.active_view);
@@ -653,25 +1045,10 @@ function renderDOM(): void {
     // parent_chat_id made the indent a chat-only feature and coupled the tab
     // module to chat state; `parentId` is generic and any kind can carry it.
     el.classList.toggle("tab-child", tab.parentId !== undefined);
+    // Pin marker, from the spec like the indent. Toggled here rather than only at
+    // creation so pinning an already-rendered tab shows immediately.
+    el.classList.toggle("tab-pinned", tab.pinned === true);
     prev = el;
-  }
-}
-
-/** Swap a chat tab's icon (SVG string) in place — used when the chat's
- *  agent/role changes on an empty chat. Updates both the live DOM node and
- *  the stored spec so a later re-render keeps the new icon. No-op if the
- *  tab isn't open or the icon is unchanged. */
-export function setTabIcon(id: string, svg: string): void {
-  const spec = state.tabs.find((t) => t.id === id);
-  if (spec === undefined || spec.iconSvg === svg) {
-    return;
-  }
-  spec.iconSvg = svg;
-  for (const child of $.tabList.children) {
-    if ((child as HTMLElement).dataset["tabId"] === id) {
-      child.querySelector(".tab-icon")?.replaceChildren(iconEl(svg));
-      break;
-    }
   }
 }
 
@@ -682,8 +1059,6 @@ function createTabEl(tab: TabSpec): HTMLElement {
     "data-kind": tab.kind,
     role: "tab",
   });
-
-  const icon = el("span", { className: "tab-icon" }, iconEl(tab.iconSvg ?? ICONS[tab.kind]));
 
   const name = el("span", { className: "tab-name" }, tab.name);
 
@@ -697,22 +1072,81 @@ function createTabEl(tab: TabSpec): HTMLElement {
     closeTab(tab.id);
   });
 
-  const statusDot = el("span", { className: "tab-status-dot hidden" });
+  // The dot is decoration; `statusSR` is what a screen reader hears. Both ride
+  // every row and paintDot writes both, so no node is added or removed as a
+  // state changes — the same reasoning as the pin marker below.
+  const statusDot = el("span", { className: CLS_DOT, "aria-hidden": "true" });
+  const statusSR = el("span", { className: `${CLS_DOT_SR} sr-only` });
 
-  node.append(icon, name, statusDot, close);
+  // The pin marker rides every row and CSS reveals it under `.tab-pinned`, so
+  // renderDOM toggles one class instead of adding and removing a node. The glyph
+  // is decorative; the .sr-only word beside it is what a screen reader hears,
+  // because colour and shape alone are one channel.
+  const pin = el(
+    "span",
+    { className: "tab-pin" },
+    iconEl(ICON_PIN_FILLED),
+    el("span", { className: "sr-only" }, "Pinned"),
+  );
+
+  if (tab.kind === "chat") {
+    // A chat tab LEADS with its activity dot, in the slot the per-mode role
+    // glyph used to hold. That is the replacement, not a supplement: the strip
+    // exists to say what is happening in the chats you are not looking at, and
+    // a chat's role does not change between glances while its activity does.
+    // The role still reads out on the mode pill and its picker; see the note on
+    // TabSpec (the `iconSvg` field this removed).
+    node.append(statusDot, name, statusSR, pin, close);
+    // Painted from the SPEC, falling back to `idle`. The fallback is why the dot
+    // is seeded at all rather than left blank for the store effect to fill: the
+    // effect paints on a later tick, so an unseeded dot would leave the row one
+    // frame narrower and shift its name. The spec value is what makes the row
+    // honest as well as stable — a restored or rebuilt tab paints the state its
+    // chat is actually in, instead of claiming idle until an unrelated update
+    // repaints it.
+    paintDot(node, tab.dotStatus ?? "idle");
+  } else {
+    // Every other kind keeps its glyph — none of them has an activity concept —
+    // and uses the same element in the trailing slot for the editor's unsaved
+    // mark, which is where it already was. No `idle` floor here: an editor tab
+    // with nothing unsaved has no state to show.
+    const icon = el("span", { className: "tab-icon" }, iconEl(ICONS[tab.kind]));
+    node.append(icon, name, statusSR, pin, statusDot, close);
+    paintDot(node, tab.dotStatus ?? "");
+  }
   // A sub-tab is not independently draggable: its position is its parent's.
   // attachTabInteraction wires click/keyboard AND drag, so the flag rides along.
   attachTabInteraction(node, tab.id, tab.parentId === undefined);
 
-  // Right-click context menu for chat tabs: export (md/json). Non-chat tabs
-  // keep the native browser menu. (Promote is gone with the rewind branch —
-  // there is no second chat to promote over a first.)
+  // Right-click context menu for chat tabs: pin/unpin or promote, then export
+  // (md/json). Non-chat tabs keep the native browser menu.
   node.addEventListener("contextmenu", (e) => {
     if (tab.kind !== "chat") {
       return;
     }
     e.preventDefault();
-    const items: ContextMenuItem[] = [
+    // Read the CURRENT spec: openTab replaces an already-open tab's spec with a
+    // spread copy, so the closure's reference can be one generation behind on
+    // exactly the fields this menu reports.
+    const spec = state.tabs.find((t) => t.id === tab.id) ?? tab;
+    const items: ContextMenuItem[] = [];
+    if (spec.parentId === undefined) {
+      const pinned = spec.pinned === true;
+      items.push({
+        label: pinned ? "Unpin" : "Pin",
+        action: () => {
+          setTabPinned(tab.id, !pinned);
+        },
+      });
+    } else {
+      items.push({
+        label: "Promote to its own tab",
+        action: () => {
+          promoteTab(tab.id);
+        },
+      });
+    }
+    items.push(
       {
         label: "Export as Markdown",
         action: () => {
@@ -725,7 +1159,7 @@ function createTabEl(tab: TabSpec): HTMLElement {
           downloadChatExport(tab.id, tab.name, "json");
         },
       },
-    ];
+    );
     showContextMenu(items, { x: e.clientX, y: e.clientY });
   });
 
@@ -936,12 +1370,12 @@ export function openRunTab(
   });
 }
 
-/** The tab id for an open editor file, and the predicate that recognises one.
+/** The tab id for an open editor file.
  *
- *  Both live here because the convention was being composed and tested by hand
- *  in three modules (this one, the editor's dirty-indicator binding, and the
- *  reconnect-gap handler's tab reconcile), which is one string literal away
- *  from a silent mismatch. */
+ *  Here rather than at each caller because the convention was being composed and
+ *  tested by hand in three modules (this one, the editor's dirty-indicator
+ *  binding, and the reconnect-gap handler's tab reconcile), which is one string
+ *  literal away from a silent mismatch. */
 export function editorTabID(filePath: string): string {
   return EDITOR_TAB_PREFIX + filePath;
 }
@@ -981,6 +1415,7 @@ export function _resetForTest(): void {
   state.active = "";
   callbacks.onActivate = null;
   callbacks.onEmpty = null;
+  callbacks.onClosed = null;
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }
@@ -988,6 +1423,7 @@ export function _resetForTest(): void {
   internal.renderQueued = false;
   savedUIState = null;
   bootDone = false;
+  lastAnnouncedTab = "";
   // Dispose existing module effects and re-register so tests observe
   // the same side-effects (persistence, view sync, DOM render) as
   // production.

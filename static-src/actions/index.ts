@@ -56,4 +56,6 @@ export type {
   TransportSendFn,
   TransportSendResult,
   ApiConfig,
+  ApiErrorInfo,
+  ApiErrorDecision,
 } from "@cplieger/actions";

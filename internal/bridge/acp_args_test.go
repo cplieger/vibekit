@@ -45,6 +45,29 @@ func TestFilterACPArgs(t *testing.T) {
 			want: []string{"-v"},
 		},
 		{
+			// The FATAL refusal: kiro-cli rejects these alongside
+			// --agent-engine=v3 and exits before answering initialize, so one of
+			// them in the compose value would take down every chat bridge.
+			name: "refuses model and its value",
+			in:   []string{"--model", "claude-opus-5", "-v"},
+			want: []string{"-v"},
+		},
+		{
+			name: "refuses model inline without eating the next token",
+			in:   []string{"--model=claude-opus-5", "-v"},
+			want: []string{"-v"},
+		},
+		{
+			name: "refuses effort and its value",
+			in:   []string{"--effort", "max", "-v"},
+			want: []string{"-v"},
+		},
+		{
+			name: "refuses effort inline without eating the next token",
+			in:   []string{"--effort=max", "-v"},
+			want: []string{"-v"},
+		},
+		{
 			name: "keeps an unknown future flag — the whole point of the hatch",
 			in:   []string{"--some-flag-upstream-adds", "value"},
 			want: []string{"--some-flag-upstream-adds", "value"},
@@ -104,6 +127,10 @@ func TestRefuseReasonNamesTheRealSurface(t *testing.T) {
 		{flagTrustAll, []string{"inert", "permissions.yaml"}},
 		{flagTrustAllShort, []string{"inert", "permissions.yaml"}},
 		{flagTrustTools, []string{"inert", "permissions.yaml"}},
+		// The fatal pair must say WHY it is fatal and where the real control
+		// lives, or an operator reads the refusal as vibekit being obstructive.
+		{flagModel, []string{"exits before initialize", "composer"}},
+		{flagEffort, []string{"exits before initialize", "composer"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.flag, func(t *testing.T) {

@@ -30,12 +30,14 @@ interface Harness {
   termFocus: ReturnType<typeof vi.fn>;
   shellBtn: HTMLButtonElement;
   shellToggleBtn: HTMLButtonElement;
-  shellClearBtn: HTMLButtonElement;
+  shellRestartBtn: HTMLButtonElement;
   shellFullscreenBtn: HTMLButtonElement;
   shellPanel: HTMLDivElement;
   shellTerminal: HTMLDivElement;
   shellResize: HTMLDivElement;
   save: ReturnType<typeof vi.fn>;
+  restartDispatch: ReturnType<typeof vi.fn>;
+  confirmMock: ReturnType<typeof vi.fn>;
   getRunCb: () => ((cmd: string) => void) | null;
 }
 
@@ -72,7 +74,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
 
   const shellBtn = document.createElement("button");
   const shellToggleBtn = document.createElement("button");
-  const shellClearBtn = document.createElement("button");
+  const shellRestartBtn = document.createElement("button");
   const shellFullscreenBtn = document.createElement("button");
   const shellPanel = document.createElement("div");
   shellPanel.classList.add("shell-closed");
@@ -105,6 +107,9 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     runCb = cb;
   });
   const save = vi.fn();
+  const restartDispatch = vi.fn(() => Promise.resolve({ ok: true }));
+  const confirmMock = vi.fn(() => Promise.resolve(true));
+  const toastError = vi.fn();
   // initShellPanel reads load().shell_h to restore a persisted height.
   const load = vi.fn(() => ({ shell_h: uiStateData.shell_h ?? 0 }));
 
@@ -116,11 +121,14 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   vi.doMock("./messages.js", () => ({ getScrollEl }));
   vi.doMock("./code-blocks.js", () => ({ setShellRunCallback }));
   vi.doMock("./ui-state.js", () => ({ save, load }));
+  vi.doMock("./actions/shell.js", () => ({ restartShell: { dispatch: restartDispatch } }));
+  vi.doMock("./confirm.js", () => ({ confirm: confirmMock }));
+  vi.doMock("./toast.js", () => ({ error: toastError, info: vi.fn(), success: vi.fn() }));
   vi.doMock("./dom.js", () => ({
     $: {
       shellBtn,
       shellToggleBtn,
-      shellClearBtn,
+      shellRestartBtn,
       shellFullscreenBtn,
       shellPanel,
       shellTerminal,
@@ -138,12 +146,14 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     termFocus,
     shellBtn,
     shellToggleBtn,
-    shellClearBtn,
+    shellRestartBtn,
     shellFullscreenBtn,
     shellPanel,
     shellTerminal,
     shellResize,
     save,
+    restartDispatch,
+    confirmMock,
     getRunCb: () => runCb,
   };
 }
@@ -226,26 +236,55 @@ describe("shell.ts: lazy terminal creation", () => {
 });
 
 describe("shell.ts: host-driven actions", () => {
-  // The Ctrl+L is deferred one frame so the shell's redraw cannot race the reset
-  // it follows — sent synchronously, the prompt bytes landed while the local
-  // buffer was still being torn down and the window stayed blank until the next
-  // keystroke. The reset itself stays synchronous, so the clear feels instant.
-  it("the Reset button clears via the handle immediately, then redraws with Ctrl+L next frame", async () => {
+  // The Restart button replaced a Reset that only cleared the screen. It exists
+  // because terminal.Handler is single-use server-side: a child that exits (or a
+  // wedged foreground process) leaves a panel that can never start again, and a
+  // screen clear cannot help with either. Confirmed, because unlike the clear it
+  // kills whatever is running.
+  it("the Restart button confirms, calls the server, then drops the local buffer", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click(); // open so the terminal (and its handle) exists
 
-    h.shellClearBtn.click();
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
 
+    expect(h.confirmMock).toHaveBeenCalledTimes(1);
+    expect(h.restartDispatch).toHaveBeenCalledTimes(1);
     expect(h.resetSpy).toHaveBeenCalledTimes(1);
-    expect(h.sendSpy).not.toHaveBeenCalledWith(new Uint8Array([0x0c]));
-
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-
-    expect(h.sendSpy).toHaveBeenCalledWith(new Uint8Array([0x0c]));
   });
 
-  it("run-in-shell types the command into the terminal through the send funnel", async () => {
+  it("a declined confirm neither calls the server nor touches the terminal", async () => {
+    const h = await setup();
+    h.confirmMock.mockResolvedValueOnce(false);
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.restartDispatch).not.toHaveBeenCalled();
+    expect(h.resetSpy).not.toHaveBeenCalled();
+  });
+
+  // A failed restart must not drop the buffer: the old PTY is still live, so
+  // clearing the screen would hide a working shell behind a blank pane.
+  it("a failed restart leaves the terminal alone", async () => {
+    const h = await setup();
+    h.restartDispatch.mockResolvedValueOnce(null);
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.resetSpy).not.toHaveBeenCalled();
+  });
+
+  // The command lands at the prompt and WAITS. No trailing newline anywhere on
+  // this path: send() writes raw bytes, so one would be Enter and the click
+  // would execute rather than type. Pressing Enter is the user's confirmation.
+  it("types the command with NO trailing newline, so it waits at the prompt", async () => {
     const h = await setup();
     h.mod.initShellPanel(); // registers the run callback
     h.shellBtn.click(); // open so the terminal (and its handle) exists
@@ -254,7 +293,10 @@ describe("shell.ts: host-driven actions", () => {
     expect(runCb).not.toBeNull();
     runCb?.("echo hi");
 
-    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi\n"));
+    expect(h.sendSpy).toHaveBeenCalledWith(new TextEncoder().encode("echo hi"));
+    const sent = h.sendSpy.mock.calls[0]?.[0] as Uint8Array;
+    expect(sent.at(-1)).not.toBe(0x0a);
+    expect(sent.at(-1)).not.toBe(0x0d);
   });
 });
 
@@ -366,14 +408,44 @@ describe("shell.ts: resize handle", () => {
   });
 });
 
+describe("shell.ts: fullscreen toggle", () => {
+  // The toggle moved here from agent-terminal.ts when that module was deleted.
+  // Nothing else wired this button, so without the move it would have gone dead
+  // silently — the panel's CLOSE path already cleared the class, so the only
+  // visible symptom was a header button that did nothing.
+  it("enters fullscreen and mirrors the state on aria-pressed", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("false");
+
+    h.shellFullscreenBtn.click();
+    expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(true);
+    expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("leaves through the transient class so the exit has something to animate", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellFullscreenBtn.click();
+
+    h.shellFullscreenBtn.click();
+    // aria-pressed flips immediately; the class is held for one animation.
+    expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("false");
+    expect(h.shellPanel.classList.contains("shell-fullscreen-leaving")).toBe(true);
+
+    h.shellPanel.dispatchEvent(new Event("animationend"));
+    expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(false);
+    expect(h.shellPanel.classList.contains("shell-fullscreen-leaving")).toBe(false);
+  });
+});
+
 describe("shell.ts: close behavior", () => {
   it("clears fullscreen (class + aria-pressed) when closing", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click(); // open
-    // Simulate the fullscreen toggle having been used.
-    h.shellPanel.classList.add("shell-fullscreen");
-    h.shellFullscreenBtn.setAttribute("aria-pressed", "true");
+    h.shellFullscreenBtn.click();
+    expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(true);
 
     h.shellToggleBtn.click(); // close
     expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(false);

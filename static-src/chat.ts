@@ -20,6 +20,9 @@ import {
   activeSession,
   removeChat,
   tabStatusFor,
+  clearTurnDone,
+  markGhostChat,
+  isGhostChat,
 } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
 import { effect, el } from "@cplieger/reactive";
@@ -33,25 +36,33 @@ import {
   renameTab,
   setTabStatus,
   setTabTooltip,
-  setTabIcon,
   TAB_VIEWS,
 } from "./tabs.js";
+import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
 import { submitPrompt } from "./submit.js";
 import { chatSkeleton } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { showModelPicker, hideModelPicker } from "./picker.js";
 import { mountChatView, setLoadMore, scrollToBottom, loadTurnRail } from "./messages.js";
-import { addAttachment, clearAttachments } from "./attachments.js";
+import { addAttachment } from "./attachments.js";
+import {
+  saveComposerState,
+  restoreComposerState,
+  seedComposerDraft,
+  flushComposerDraft,
+  dropComposerState,
+} from "./composer-state.js";
 import { setCurrentModel, getLastModel } from "./session-context.js";
+import { labelForMode } from "./roles.js";
 import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
-import { iconForMode } from "./roles.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
 import { isRetentionEnabled } from "./retention.js";
 import {
   closeChat as closeChatAction,
   deleteChat as deleteChatAction,
+  forkChat,
   resumeSession,
   setMode,
 } from "./actions/chat.js";
@@ -72,22 +83,47 @@ onBus(BUS_ACTIVATE_CHAT, (p) => {
  *  conflicts prefetch), so bulk-opening N chats active would fan out 2N
  *  requests at boot (B8) — the boot path activates exactly one tab at
  *  the end instead. */
-export function openChatTab(id: string, name: string, opts?: { activate?: boolean }): void {
+export function openChatTab(
+  id: string,
+  name: string,
+  opts?: { activate?: boolean; parentId?: string },
+): void {
+  // The dot's initial state, derived HERE because this is where the chat store is
+  // in scope. Without it a restored tab painted the `idle` floor and stayed there:
+  // the boot path loads the session list BEFORE opening its tabs, so the store
+  // effect that normally paints has already run by the time the rows exist and
+  // nothing makes it run again. `""` means this client holds no row for the id
+  // yet, which is every brand-new chat, and createTabEl's own `idle` floor is the
+  // right answer for it.
+  const dot = tabStatusFor(get(id), hasPendingDecision(id));
   openTab(
     {
       id,
       name,
       kind: "chat",
-      // Derive the tab icon from the chat's current mode so a reloaded or
-      // restored chat shows the right mode glyph; installStoreSubscribers keeps
-      // it in sync on later (user- or agent-initiated) mode changes.
-      iconSvg: iconForMode(get(id)?.current_mode_id ?? ""),
+      // A side conversation hangs off the chat it came from. `owns` stays at its
+      // default (true) deliberately: the side chat owns its own bridge, so closing
+      // its tab must tear that bridge down the way any chat tab does. `owns:
+      // false` is for a tab that only WATCHES work another chat owns.
+      ...(opts?.parentId === undefined ? {} : { parentId: opts.parentId }),
+      ...(dot === "" ? {} : { dotStatus: dot }),
       view: TAB_VIEWS.chat,
       route: { kind: "chat", id },
       onShow: () => {
         activateChatView(id);
       },
       onClose: () => {
+        // The draft belongs to the CHAT, not to the tab, so a pending save goes
+        // out before the teardown dispatch: a close that keeps the record keeps
+        // the unsent text with it, and a delete's tombstone then drops the save
+        // rather than racing it.
+        flushComposerDraft();
+        // The chat's unanswered asks go with the tab. Closing cancels the turn and
+        // the chat's runs server-side, so nothing here is still live — and the dock
+        // queue is keyed by chat id, so a queue left behind was resurrected by
+        // reopening the SAME id: the card came back and the tab dot said the chat
+        // needed a decision that no longer existed.
+        dropDecisions(id);
         // There is no archive step any more: a closed chat is just a chat that
         // stopped being in a tab, and "archived" is computed from its age
         // against the retention window. So closing a tab persists nothing.
@@ -110,6 +146,9 @@ export function openChatTab(id: string, name: string, opts?: { activate?: boolea
           // delete_chat implies the same teardown server-side.
           deleteChat(id);
         }
+        // Local only: a close that kept the record kept its draft with it, and
+        // reopening the chat seeds the text back from the server.
+        dropComposerState(id);
       },
     },
     opts,
@@ -124,9 +163,17 @@ function deleteChat(id: string): void {
 }
 
 function activateChatView(id: string): void {
+  // Save-then-restore against the shared composer, the same pair activateFile
+  // runs against the shared editor textarea. The save MUST precede setActive:
+  // it reads the outgoing chat's id, which nothing can recover afterwards.
+  saveComposerState();
+  // Opening the chat is what settles a `done` dot: the mark means "this finished
+  // while you were away", so arriving is the event that answers it. The store
+  // effect below re-derives the dot off this write, so no explicit repaint.
+  clearTurnDone(id);
   setActive(id);
   hideModelPicker();
-  clearAttachments();
+  restoreComposerState(id);
   ensureBound();
   const session = get(id);
   if (session === undefined) {
@@ -142,6 +189,7 @@ function activateChatView(id: string): void {
 
   if (session.message_count === 0 && session.messages.length === 0) {
     showModelPicker(session.model, applyLocalModel);
+    seedEmptyChatDraft(id);
   } else {
     // Hydrate messages from the server, then render. Defer the skeleton by
     // 150ms so a fast (cached) open never flashes it: skeletonTiming appends
@@ -176,6 +224,11 @@ function activateChatView(id: string): void {
         $.messages.appendChild(retry);
         return;
       }
+      // The chat's record is in now, so its stored draft can be adopted. Only
+      // matters when this device holds none for the chat — after a reload — and
+      // it deliberately loses to a draft the user has started typing since the
+      // activation.
+      seedComposerDraft(id);
       const fresh = get(id);
       if (fresh !== undefined) {
         setupLoadMore(id);
@@ -187,6 +240,32 @@ function activateChatView(id: string): void {
     });
   }
   refreshContextUI(session);
+}
+
+/** Fetch a message-less chat's record so its stored draft can be adopted.
+ *
+ *  The draft rides the single-chat GET (deliberately, so it travels on neither
+ *  the list nor a chat_updated frame), and the branch above skips that GET for a
+ *  chat with no messages — which is exactly the chat that can still hold one. A
+ *  record is auto-created by `set_mode` or `set_effort` before the first prompt,
+ *  so the user can pick a mode, type half a message, reload, and come back to a
+ *  persisted zero-message chat whose draft the server is holding. Without this
+ *  the box came back empty, which defeats the reason the draft is server-side at
+ *  all.
+ *
+ *  A GHOST chat is skipped: its id exists nowhere but this tab, so the GET would
+ *  404 on every New chat click. The re-check after the await is the same guard
+ *  the loaded branch uses — the user can switch chats while it is in flight, and
+ *  the seed writes into the shared composer. */
+function seedEmptyChatDraft(id: string): void {
+  if (isGhostChat(id)) {
+    return;
+  }
+  void loadMessages(id).then((ok) => {
+    if (ok && getActiveId() === id) {
+      seedComposerDraft(id);
+    }
+  });
 }
 
 // --- Pagination ---
@@ -239,16 +318,21 @@ export function sendPrompt(text: string): void {
 
 // --- Session lifecycle ---
 
-/** Create a new chat. If initialPrompt is non-empty, send it immediately.
- *  Otherwise open the model picker and wait for the user to type. */
-export function createSession(initialPrompt?: string): void {
+const NEW_CHAT_NAME = "New conversation";
+
+/** Mint a client-side chat id and seed its store header.
+ *
+ *  Every chat id is client-generated; the chat becomes a SERVER record on its
+ *  first prompt, which is also where its name comes from (the 80-char truncation
+ *  in command/prompt.go). Nothing here is persisted, so there is no create_chat
+ *  round trip to make. */
+function seedLocalChat(model: string): string {
   const id = `c-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
-  const model = getLastModel();
   // Template for upsertHeader + initial render; only the header fields
   // matter — the rest are defaults satisfying the Session type.
   const session: Session = {
     id,
-    name: "New conversation",
+    name: NEW_CHAT_NAME,
     model,
     acp_session_id: "",
     current_mode_id: "",
@@ -272,8 +356,19 @@ export function createSession(initialPrompt?: string): void {
     updated_at: Date.now(),
     message_count: 0,
   });
+  // Nothing on the server answers to this id yet, so nothing should ask it about
+  // the chat. The first frame naming it clears the mark (store.upsertHeader).
+  markGhostChat(id);
+  return id;
+}
+
+/** Create a new chat. If initialPrompt is non-empty, send it immediately.
+ *  Otherwise open the model picker and wait for the user to type. */
+export function createSession(initialPrompt?: string): void {
+  const model = getLastModel();
+  const id = seedLocalChat(model);
   setActive(id);
-  openChatTab(id, session.name);
+  openChatTab(id, NEW_CHAT_NAME);
 
   if (initialPrompt !== undefined && initialPrompt !== "") {
     setCurrentModel(model);
@@ -281,6 +376,47 @@ export function createSession(initialPrompt?: string): void {
   } else {
     showModelPicker(model, applyLocalModel);
   }
+}
+
+/** Open a TANGENT off `parentChatID`: a real chat that starts with the parent's
+ *  whole conversation behind it, opened as a SUB-TAB under the one it came from.
+ *
+ *  The context is the parent's REAL context, not a copy of it. `chat.fork` calls
+ *  KAS's own `session/fork`, and the new chat is created already bound to the
+ *  session it returns, so the transcript arrives from the session/load replay
+ *  and nothing is copied here. Nothing syncs the two afterwards either: one JSON
+ *  file per chat, one SSE topic per chat, and no cross-chat write path.
+ *
+ *  Five things it is, each load-bearing:
+ *
+ *    - A real PERSISTED chat, created by the fork command rather than by a first
+ *      prompt. So closing it leaves it in History like any other chat, and
+ *      invariant 3 holds — the bridge it gets has a chat file behind it.
+ *    - It OWNS its bridge: the tab keeps the default `owns`, so its × tears the
+ *      tangent down rather than orphaning a process. `owns: false` would be
+ *      wrong — a forked session is genuinely this tab's own work, not a view
+ *      over someone else's.
+ *    - A SUB-TAB of its parent, and promotable out of that with `promoteTab`
+ *      (the tab context menu's "Promote to its own tab"), which clears
+ *      `parentId`. Until then the parent's close cascade takes it with it.
+ *    - It inherits model, mode and effort from the parent — read SERVER-side off
+ *      the parent's record, because the record is the truth about all three and a
+ *      tab's projection can be stale. Nothing is dispatched from here for them.
+ *    - Nothing seeds a first prompt. There is no selection to seed one from: with
+ *      the whole conversation inherited, a selected phrase chooses nothing.
+ *
+ *  The name is left to the ordinary precedence (the agent's focus title, else the
+ *  first prompt's truncation), which is why nothing here names it. */
+export function openTangentChat(parentChatID: string): void {
+  if (parentChatID === "" || get(parentChatID) === undefined) {
+    return;
+  }
+  const model = get(parentChatID)?.model ?? getLastModel();
+  const id = seedLocalChat(model);
+  setActive(id);
+  openChatTab(id, NEW_CHAT_NAME, { parentId: parentChatID });
+  setCurrentModel(model);
+  void forkChat.dispatch({ chatID: id, parentChatID });
 }
 
 export function switchSession(id: string): void {
@@ -353,8 +489,21 @@ export function createPlannerSession(): void {
   if (id === "") {
     return;
   }
-  setTabIcon(id, iconForMode("plan"));
   void setMode.dispatch({ chatID: id, modeID: "plan" });
+}
+
+/** A chat tab's hover tooltip: its mode, then what the agent says it is doing.
+ *
+ *  Either half can be missing — a chat with no session yet has no mode, and the
+ *  agent only declares a description while it is working — so the separator is
+ *  emitted only when both are present, rather than leaving a dangling one. */
+function tabTooltipFor(s: Session): string {
+  const mode = s.current_mode_id === "" ? "" : labelForMode(s.current_mode_id, s.available_modes);
+  const doing = s.agent_status_text ?? "";
+  if (mode === "" || doing === "") {
+    return mode === "" ? doing : mode;
+  }
+  return `${mode} · ${doing}`;
 }
 
 /** Wire the effect() that drives tab-rename reconciliation and
@@ -376,15 +525,21 @@ export function installStoreSubscribers(): void {
       if (hasTab(s.id)) {
         // Reconcile tab name with server auto-rename / agent focus title.
         renameTab(s.id, s.name);
-        // Per-tab activity dot: thinking while a turn runs, amber waiting
-        // when the agent declared waiting_on_user (turn_ended re-derives
-        // via the same tabStatusFor rule in handlers/turn.ts).
-        setTabStatus(s.id, tabStatusFor(s));
-        // Agent-declared "what I'm working on" as the tab tooltip.
-        setTabTooltip(s.id, s.agent_status_text ?? "");
-        // Tab icon derived from the chat's current mode, so a mode change
-        // (user- or agent-initiated) or a reload shows the right glyph.
-        setTabIcon(s.id, iconForMode(s.current_mode_id));
+        // Per-tab activity dot. tabStatusFor owns the precedence; the pending-ask
+        // half comes from the dock's own queue rather than the store, and reading
+        // it here is also what subscribes this effect to a decision arriving or
+        // being answered on a BACKGROUND chat — the case the feature exists for.
+        setTabStatus(s.id, tabStatusFor(s, hasPendingDecision(s.id)));
+        // The tooltip carries the chat's MODE and the agent's "what I'm working
+        // on", in that order. The mode half is here because the dot took the slot
+        // the per-mode role glyph used to hold, and for a BACKGROUND chat that was
+        // the only place a role read out at all — the mode pill and its picker are
+        // active-chat only. It restores the information with no element, no width
+        // and no second visual vocabulary in the 9px column. Pointer-only, so it is
+        // a convenience rather than a full replacement; a second glyph on the row
+        // was the alternative and it re-spends the width the dot just claimed,
+        // worst on mobile where the strip is a drawer.
+        setTabTooltip(s.id, tabTooltipFor(s));
       }
     }
   });

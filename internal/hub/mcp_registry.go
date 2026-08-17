@@ -65,6 +65,20 @@ type mcpServerRuntime struct {
 	Tools     []string
 	Prompts   []api.MCPPromptInfo
 	Resources []api.MCPResourceInfo
+	// Relayed is the relay's single-use latch for THIS authorization attempt
+	// (mcp_oauth_relay.go). It is set the moment a relay RESERVES the attempt,
+	// not after the callback lands, and it stays set once the loopback listener
+	// accepts it — so a resubmitted address gets a legible "already relayed"
+	// answer instead of a confusing gateway error from a code the provider has
+	// since spent. A relay that did not deliver gives the reservation back, so a
+	// corrected paste stays possible.
+	//
+	// Reserving IS the latch rather than a second in-flight flag: no consumer can
+	// distinguish the two states, and a concurrent second paste has to be refused
+	// in both, so one field carries both meanings. Only beginOAuthRelay and
+	// releaseOAuthRelay write it, and it resets with the record on the next
+	// recordOAuth.
+	Relayed bool
 }
 
 // mcpRegistry is the hub's in-memory view of connected MCP servers.
@@ -147,6 +161,11 @@ func (r *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp/reconnect", r.hub.handleMCPReconnect)
 	mux.HandleFunc("/api/mcp/prompt", r.hub.handleMCPGetPrompt)
 	mux.HandleFunc("/api/mcp/resource", r.hub.handleMCPGetResource)
+	// The OAuth loopback relay (mcp_oauth_relay.go). Registering it here is
+	// mandatory, not optional: internal/mcp's "/api/mcp/" SUBTREE handler would
+	// otherwise swallow this path and read "oauth-relay" as a server id, so an
+	// unregistered relay 404s as an unknown server rather than failing visibly.
+	mux.HandleFunc("/api/mcp/oauth-relay", r.handleOAuthRelay)
 }
 
 // signalReady closes the readyCh so any goroutine waiting in
@@ -258,6 +277,76 @@ func (r *mcpRegistry) recordDisabled(ctx context.Context, name string) {
 	r.signalChange()
 }
 
+// oauthAttempt is a granted reservation to relay ONE authorization attempt's
+// callback. beginOAuthRelay issues it and it is the only handle that can give
+// the reservation back, which is what makes the single-use guarantee an atomic
+// reserve-then-complete instead of a check followed by a later, unattributed
+// mark.
+//
+// The RECORD POINTER is the attempt's identity, and it needs no generation
+// counter beside it because it cannot be confused with another attempt: every
+// transition in this registry installs a FRESH mcpServerRuntime (see each
+// record* method), and begin/release are the only writers that mutate a record in
+// place rather than replacing it. So a token whose pointer is still the map's
+// current value names the attempt it was issued for, and a token whose
+// pointer was replaced names a dead one. That is what stops an old callback
+// still in flight from latching the NEWER attempt recordOAuth installed while it
+// was out: the pointers differ and release becomes a no-op, leaving the new
+// attempt relayable rather than silently marked delivered.
+//
+// rec is never dereferenced outside the registry lock. authURL is copied in so
+// the handler has no reason to reach through it: it is the relay's whole trust
+// anchor (KAS put its own loopback `redirect_uri` and `state` in it), and
+// reading it off the record later could pick up a different attempt's value.
+type oauthAttempt struct {
+	rec     *mcpServerRuntime
+	server  string
+	authURL string
+}
+
+// beginOAuthRelay reserves the relay for a server's pending authorization
+// attempt, returning the attempt and the authorization URL to check the pasted
+// address against.
+//
+// Everything the single-use rule depends on happens here under one lock: the
+// server is waiting for authorization, no relay has delivered or is delivering
+// its callback, and the reservation is taken. Two concurrent pastes therefore
+// cannot both proceed — a double click, or a second device, gets
+// errRelayAlreadyDone rather than spending the same authorization code twice.
+// A server in any other state has no attempt at all and gets errRelayNoFlow,
+// which is what keeps the route from being a standing lever with no flow behind
+// it.
+func (r *mcpRegistry) beginOAuthRelay(name string) (oauthAttempt, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, exists := r.servers[name]
+	if !exists || s.State != mcpStateOAuth || s.OAuthURL == "" {
+		return oauthAttempt{}, errRelayNoFlow
+	}
+	if s.Relayed {
+		return oauthAttempt{}, errRelayAlreadyDone
+	}
+	s.Relayed = true
+	return oauthAttempt{rec: s, server: name, authURL: s.OAuthURL}, nil
+}
+
+// releaseOAuthRelay gives back a reservation whose relay did not deliver, so a
+// corrected paste can still be tried. Called on a refused paste, a transport
+// failure and a listener refusal; a delivered callback keeps the reservation,
+// which is what makes it the latch.
+//
+// It mutates nothing unless the attempt is still the current one. A record
+// replaced while this relay was out belongs to a different attempt, and clearing
+// ITS latch would hand a fresh attempt's reservation to whoever holds a stale
+// token.
+func (r *mcpRegistry) releaseOAuthRelay(a oauthAttempt) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if a.rec != nil && r.servers[a.server] == a.rec {
+		a.rec.Relayed = false
+	}
+}
+
 // clearAll wipes the runtime registry and broadcasts mcp_disconnected
 // for each server that had state. Called when the last bridge exits;
 // MCP subprocesses are scoped to kiro-cli, so nothing is live anymore.
@@ -342,6 +431,10 @@ type statusServer struct {
 	Tools     []string              `json:"tools,omitempty"`
 	Prompts   []api.MCPPromptInfo   `json:"prompts,omitempty"`
 	Resources []api.MCPResourceInfo `json:"resources,omitempty"`
+	// Relayed says this attempt's callback is on its way to the loopback listener
+	// or was already delivered to it. On the wire so a reload, or a second
+	// device, does not offer the paste box again for a code that has been spent.
+	Relayed bool `json:"relayed,omitempty"`
 }
 
 func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {

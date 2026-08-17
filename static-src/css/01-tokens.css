@@ -1,41 +1,136 @@
 @layer tokens {
+  /* ==========================================================================
+     THE TOKEN LAYER
+
+     Two blocks, and only two. `:root` carries the dark theme's SEEDS plus every
+     DERIVED token; `:root[data-theme="light"]` carries only the seeds that
+     genuinely differ. Nothing is authored twice.
+
+     Three rules keep it that way:
+
+     1. A seed is a value no relationship can produce — a surface rung, an ink,
+        the accent, a status hue, an ANSI colour. Seeds are theme-split.
+     2. A RELATIONSHIP is authored once, in `:root`, as a `color-mix()` over
+        seeds. Custom properties substitute at computed-value time, so a mix
+        written here re-resolves against whichever theme is active: one
+        declaration, correct in both. Every interaction and selection state is
+        one of these, which is why the light block below contains none of them.
+     3. An interaction state is a WASH (`color-mix(…, transparent)`), not a
+        ramp step, so it composites over whatever backdrop the control sits on
+        instead of assuming one.
+
+     There is no `prefers-color-scheme` block. `static/index.html`'s anti-FOUC
+     script sets `data-theme` synchronously in <head>, BEFORE this stylesheet is
+     fetched, and it sets it on both its try and its catch path — so a media
+     block could only ever win in a document with no JavaScript at all, which
+     this SPA cannot render anyway. The block that used to be here was a
+     byte-identical copy of the one below; two copies of one theme is how a
+     theme drifts from itself.
+     ========================================================================== */
+
   :root {
     color-scheme: dark;
     interpolate-size: allow-keywords;
 
-    --c-bg-primary: oklch(24.3% 0.03 283.9deg);
-    --c-bg-secondary: oklch(27.2% 0.031 284.1deg);
-    --c-bg-tertiary: oklch(30.8% 0.041 283.7deg);
-    --c-bg-hover: oklch(34.1% 0.047 283.6deg);
-    --c-text-primary: oklch(100% 0 0deg);
-    --c-text-secondary: oklch(75.1% 0.04 273.9deg);
-    --c-text-tertiary: oklch(55% 0.034 277.1deg);
+    /* ---- SEEDS: the surface ramp -------------------------------------------
+     * Four opaque rungs, measured rather than eyeballed
+     * (`python3 scripts/css-contrast.py ramp`). The old ramp spanned 1.387:1
+     * end to end with adjacent steps of 1.091 / 1.124 / 1.131 — steps that
+     * small are not steps, they are one surface with rounding error, which is
+     * why cards, insets and hover states all read as the same plane.
+     *
+     * This ramp starts nearly black and spans 2.375:1 with every adjacent step
+     * at 1.32:1 or better. Both properties are load-bearing and they pull the
+     * same way: for a fixed end-to-end ratio a DARKER base lets the top rung
+     * sit lower, because (Y+0.05) compresses hard at the bottom. Re-measure
+     * before nudging any of the four; the floors are steps >= 1.25:1 and
+     * end-to-end >= 2.3:1. */
+    --c-bg-primary: oklch(15% 0.022 283.9deg);
+    --c-bg-secondary: oklch(27.5% 0.03 284.1deg);
+    --c-bg-tertiary: oklch(35.5% 0.038 283.7deg);
+
+    /* The top rung. Named for what it IS (a raised surface) rather than for one
+     * state that used to borrow it: as `--c-bg-hover` this token meant "tab
+     * hover" in one file and "pill press" in another while also being the
+     * surface a card sits on, so no site could change it without changing the
+     * other two meanings. Hover and press are washes now (below). */
+    --c-bg-elevated: oklch(42.5% 0.044 283.6deg);
+
+    /* ---- SEEDS: ink -------------------------------------------------------- */
+    --c-text-primary: oklch(100% 0 none);
+
+    /* Lifted from L 75.1% by the same rule as the hint ink below: the surfaces
+     * moved, so the ink moves. At 75.1% it fell to 3.78:1 on --c-bg-elevated
+     * and 4.17:1 on a hovered secondary surface — under AA, and this is the
+     * token --c-text-control aliases, so a control's own label would have been
+     * the thing failing. At 80.5% every rung and every hover wash clears 4.5:1.
+     * The ink ramp is 100 / 80.5 / 63, evenly spaced enough to stay three
+     * distinguishable levels. */
+    --c-text-secondary: oklch(80.5% 0.04 273.9deg);
+
+    /* Hint ink, and hint ink only — the label of something clickable takes
+     * --c-text-control instead.
+     *
+     * Lifted from L 55% because the ramp moved out from under it: the surfaces
+     * it sits on are all lighter now, and at 55% it fell to 2.30:1 on
+     * --c-bg-tertiary (from 2.74:1). At 63% it reads 5.62 / 4.23 / 3.19 across
+     * the first three rungs, better than the old 3.36 / 3.08 / 2.74 everywhere,
+     * and it clears 3:1 on every rung so a hint stays legible as UI text. Ink
+     * and surfaces move together; changing one without re-measuring the other
+     * is how this token fell behind in the first place. */
+    --c-text-tertiary: oklch(63% 0.034 277.1deg);
+
     /* Accent is THEME-SPLIT: dark mode carries web-terminal-kiro's pastel
      * violet family (#c099ff) because the old deep purple (#9046FF,
      * oklch(59% 0.254 295.8deg)) read at 3.5:1 as text on --c-bg-primary;
-     * the pastel reads at 7.2:1. Light mode keeps the deep purple. A pastel
+     * the pastel reads at 7.2:1. Light mode carries a deep purple one rung
+     * BELOW that retired one — oklch(50% 0.254 295.8deg), #771edf, not
+     * #9046FF, which is a different colour and was what this comment and
+     * <meta name="theme-color"> both claimed until it was measured. A pastel
      * fill inverts its ink: anything ON an accent fill uses --c-on-accent
      * (dark ink here, white in light mode), never a hardcoded #fff. The
      * --img-*-on-accent tokens bake that same ink into the checkbox glyph
      * SVGs, which as data URIs cannot read custom properties. */
     --c-accent: oklch(75.8% 0.147 300.4deg);
     --c-accent-hover: oklch(70% 0.16 300.4deg);
-    --c-accent-subtle: oklch(35.6% 0.15 300.4deg);
     --c-on-accent: oklch(22% 0.05 300.4deg);
     --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e142e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
     --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231e142e' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
 
-    /* Tab selection. DERIVED, not two hand-picked swatches per theme: the fill
-     * is accent-over-surface and the edge is that fill lightened toward the text
-     * colour, so one definition covers dark and light and a theme change moves
-     * both. Same construction as web-terminal-kiro's --tab-active-bg /
-     * --tab-active-border, which is where the vocabulary comes from. */
-    --c-tab-active-bg: color-mix(in oklch, var(--c-accent) 30%, var(--c-bg-secondary));
-    --c-tab-active-border: color-mix(in oklch, var(--c-tab-active-bg), var(--c-text-primary) 25%);
-    --c-border: oklch(34.5% 0.045 283.8deg);
+    /* ---- SEEDS: status hues ----------------------------------------------- */
     --c-green: oklch(85.8% 0.109 142.7deg);
     --c-red: oklch(75.6% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
+
+    /* ORANGE, at @cplieger/web-terminal-ui's --status-input hue. That package
+     * declares `#fb923c` for "action required" and says of its yellow that it is
+     * "deliberately not amber -- amber would collide with --status-input's", so
+     * the two states it separates by HUE are the two vibekit had collapsed onto
+     * one. `#fb923c` converts to oklch 75.8% 0.159 55.9deg, and 55.9deg is the
+     * part adopted here: the package's tokens are fixed sRGB values tuned for a
+     * dark terminal, so copying the hex would put a pastel on white in light mode
+     * and clear no floor this design holds.
+     *
+     * L AND C ARE SWEPT, NOT PICKED (`css-contrast.py dot` prints the sweep).
+     * Over each theme's OWN status-seed band — the L and C range its existing
+     * green/red/yellow/blue/teal/warning already occupy — the sweep maximises the
+     * SMALLER of the two separations that matter, oklab distance to --c-yellow and
+     * to --c-red, among the values that clear 3:1 on all four held tab-row fills
+     * and land inside sRGB. The orange sits between those two hues in the dot
+     * vocabulary, so being confusable with either is the only way this token can
+     * fail. Dark lands at 0.126, light at 0.086; both are yellow-bound, and for
+     * scale this palette already ships --c-blue against --c-accent at 0.096 as
+     * two distinct signals. The pair the light figure is thinnest for, `waiting`
+     * against `input`, also differs by FILL, so hue is not carrying it alone.
+     *
+     * The in-gamut constraint is the one that moved the answer, and it is not
+     * tidiness: every other seed is in gamut, and outside sRGB a browser reduces
+     * chroma while `gen-attention-icons.py` clamps per channel — so an
+     * out-of-gamut orange would paint the tab dot and the tab ICON two different
+     * colours, which is exactly what the attention badge exists to keep in step.
+     * Dropping it would have given 0.128 / 0.101 at oklch(81% 0.13) and
+     * oklch(54% 0.15), both of which clip. */
+    --c-orange: oklch(81% 0.125 55.9deg);
 
     /* Secondary status hues, theme-split like green/red/yellow. danger and
      * warning were undeclared tokens resolving through per-site fallback
@@ -48,41 +143,382 @@
     --c-warning: oklch(82.5% 0.104 83.6deg);
     --c-link: oklch(81.7% 0.091 277.3deg);
 
-    /* Code surfaces + syntax tokens. The keyword IS the accent (re-resolves
-     * per theme); string/number are split because a pastel that reads on the
-     * dark inset wash vanishes on the light one. */
-    --c-code-bg: oklch(0% 0 0deg / 30%);
-    --c-hl-keyword: var(--c-accent);
+    /* Forge brand colours. NOT theme-split and never derived: a brand hex is a
+     * third party's constant, so the one thing it must not do is drift per
+     * theme or per site. These were 18 literal `#fc6d26` / `#2185d0` /
+     * `#609926` declarations across 22-git-multirepo.css and 17-settings.css,
+     * where three of them sat inside `color-mix()` and so could not even be
+     * grepped as colours. GitHub has no entry on purpose: its brand mark is
+     * monochrome, so it renders in --c-text-primary and inverts with the
+     * theme, which is the correct behaviour for it. */
+    --c-forge-gitlab: #fc6d26;
+    --c-forge-codeberg: #2185d0;
+    --c-forge-gitea: #609926;
+
+    /* ---- SEEDS: syntax + bubbles ------------------------------------------ */
+    /* string/number are split because a pastel that reads on the dark inset
+     * wash vanishes on the light one. The keyword IS the accent, so it derives.
+     */
     --c-hl-string: oklch(75% 0.14 145deg);
     --c-hl-number: oklch(78% 0.13 60deg);
-    --c-user-bubble: oklch(34.5% 0.045 283.8deg);
-    --c-agent-bubble: color-mix(in srgb, var(--c-accent) 15%, transparent);
 
-    /* Terminal 16-color ANSI palette + surfaces. Read via
-     getComputedStyle in shell.ts so the terminal theme follows the app
-     theme automatically. */
-    --c-term-bg: oklch(20% 0.02 283deg);
+    /* ---- SEEDS: the live terminal's own surfaces ---------------------------
+     * --c-term-bg / --c-term-fg reach the LIVE terminal through shell.ts's
+     * SHELL_THEME, which maps them onto the engine's own --bg / --text on the
+     * #shell-terminal root. That is the whole of SHELL_THEME's colour interest:
+     * web-terminal-engine paints each ANSI run inline from server-resolved RGB
+     * (its render.ts `colorHex`), so it reads none of the 16 codes below — the
+     * shell panel is neither a consumer of this palette nor a surface it renders
+     * on. --c-term-bg tracks BELOW --c-bg-primary so the terminal reads as an
+     * inset. */
+    --c-term-bg: oklch(10% 0.015 283deg);
     --c-term-fg: oklch(88% 0.01 283deg);
     --c-term-cursor: var(--c-term-fg);
     --c-term-cursor-accent: var(--c-term-bg);
-    --c-term-selection: oklch(100% 0 0deg / 20%);
-    --c-term-selection-inactive: oklch(100% 0 0deg / 10%);
-    --c-term-black: oklch(28% 0.01 283deg);
-    --c-term-red: oklch(66% 0.18 25deg);
-    --c-term-green: oklch(75% 0.14 140deg);
-    --c-term-yellow: oklch(82% 0.14 85deg);
-    --c-term-blue: oklch(72% 0.14 245deg);
-    --c-term-magenta: oklch(70% 0.17 315deg);
-    --c-term-cyan: oklch(75% 0.1 200deg);
-    --c-term-white: oklch(88% 0.01 283deg);
-    --c-term-bright-black: oklch(50% 0.01 283deg);
-    --c-term-bright-red: oklch(72% 0.18 25deg);
-    --c-term-bright-green: oklch(82% 0.14 140deg);
-    --c-term-bright-yellow: oklch(88% 0.14 85deg);
-    --c-term-bright-blue: oklch(78% 0.14 245deg);
-    --c-term-bright-magenta: oklch(76% 0.17 315deg);
-    --c-term-bright-cyan: oklch(82% 0.1 200deg);
-    --c-term-bright-white: oklch(100% 0 0deg);
+    --c-term-selection: oklch(100% 0 none / 20%);
+    --c-term-selection-inactive: oklch(100% 0 none / 10%);
+
+    /* ---- SEEDS: the 16-colour ANSI palette --------------------------------
+     * GENERATED by scripts/css-ansi-palette.py. Do not hand-edit: the generator
+     * is the source of these 32 values and `css-ansi-palette.py check` fails on
+     * any divergence. 15-ansi.css reads them; css-contrast.py measures them
+     * through that stylesheet, so neither the report nor this block can drift
+     * from what ships.
+     *
+     * ANSI renders on ONE surface: --c-bg-secondary, a tool card, reached by
+     * `.tool-output pre` -> `.tool-call`. Agent command output moved into the
+     * card that spawned it, so the agent-terminal pane and its --c-term-bg are
+     * gone, and the live shell panel never reads these codes at all.
+     *
+     * DEFERRED to web-terminal-engine, in both of its layers. The slot values
+     * are kitty's published defaults (kitty/options/definition.py color0-15),
+     * which is the table the engine's vt/wire.go basic16RGB resolves 0-15 to;
+     * the 16 slots are terminal-DEFINED, so that is a palette CHOICE, and kitty
+     * is the reference because it is the only widely-used terminal whose default
+     * background is pure black — web-terminal-ui's default too. Deferring is
+     * what makes SGR 34 the same blue here, in the shell panel two panes away,
+     * and in both sibling apps.
+     *
+     * Not byte-identical to that table, and the difference has one cause: the
+     * engine's SECOND layer. vt/contrast.go ensureContrast blends a foreground
+     * toward white or black, away from the background, until it clears 4.5:1,
+     * and never touches the background; web-terminal-server sets that floor.
+     * kitty's 16 clear it on only 13 slots against pure black and 10 against the
+     * transcript card, so identity without the lift is text nobody can read. The
+     * engine lifts per RUN at render time. A custom property holds one value and
+     * the server does not know the client's theme, so the lift is applied
+     * offline and baked in here — only to the entries that FAIL, and only as far
+     * as needed, which is why most of this ramp is kitty's actual colour.
+     */
+    --c-term-black: #8e8e8e;
+    --c-term-red: #e16968;
+    --c-term-green: #19cb00;
+    --c-term-yellow: #cecb00;
+    --c-term-blue: #4493d8;
+    --c-term-magenta: #d858dd;
+    --c-term-cyan: #0dcdcd;
+    --c-term-white: #ddd;
+    --c-term-bright-black: #8e8e8e;
+    --c-term-bright-red: #f55756;
+    --c-term-bright-green: #23fd00;
+    --c-term-bright-yellow: #fffd00;
+    --c-term-bright-blue: #1a8fff;
+    --c-term-bright-magenta: #fd28ff;
+    --c-term-bright-cyan: #14ffff;
+    --c-term-bright-white: #fff;
+
+    /* The fills. The engine has no second ramp and needs none — it lifts the ink
+     * against whatever background is really there, an ANSI one included. CSS
+     * cannot pair-match, and one ramp measures 256 of 256 pairs under 4.5:1
+     * (`ESC[31;41m` is red on red), so the fills are derived by the same
+     * machinery with the roles swapped: the fill moves, away from the ink set,
+     * until every ink clears 4.5:1 on it.
+     *
+     * The consequence is arithmetic, not taste. Carrying the darkest ink pins a
+     * fill past the surface's own luminance, so against the surface these read
+     * 1.001:1 .. 1.413:1 — a fill WITH text on it is fully legible and a TEXTLESS
+     * coloured region is quiet. css-contrast.py records that figure without
+     * gating it, because gating it would be 32 standing failures for a floor no
+     * palette that keeps its hues can reach. */
+    --c-term-black-bg: #000;
+    --c-term-red-bg: #560201;
+    --c-term-green-bg: #062e00;
+    --c-term-yellow-bg: #292800;
+    --c-term-blue-bg: #052848;
+    --c-term-magenta-bg: #470b49;
+    --c-term-cyan-bg: #032c2c;
+    --c-term-white-bg: #272727;
+    --c-term-bright-black-bg: #272727;
+    --c-term-bright-red-bg: #520b0b;
+    --c-term-bright-green-bg: #062e00;
+    --c-term-bright-yellow-bg: #292900;
+    --c-term-bright-blue-bg: #072848;
+    --c-term-bright-magenta-bg: #470b48;
+    --c-term-bright-cyan-bg: #032c2c;
+    --c-term-bright-white-bg: #272727;
+
+    /* ======================================================================
+       DERIVED. Everything below is authored ONCE and is correct in both
+       themes, because every value is a relationship over the seeds above.
+       Nothing here may be repeated in the light block.
+       ====================================================================== */
+
+    /* ---- The edge -------------------------------------------------------- *
+     * A WASH off the ink, not a swatch, and the reason is arithmetic rather
+     * than taste. An opaque border has to be placed relative to the ramp, and
+     * the old one was placed level with the ramp's top rung: 1.013:1 against
+     * it, the same colour to the eye, so a bordered control that hovered lost
+     * its outline. Widening the ramp makes that worse, not better — with a
+     * 2.375:1 ramp, an opaque border clearing the top rung by 1.25:1 lands at
+     * ~3:1 against the base, which is a wireframe, not a hairline.
+     *
+     * A wash has no position on the ramp. It lifts whatever it sits on by a
+     * fixed fraction, so it reads at ~1.4-1.7:1 against EVERY rung — about
+     * where the old border sat against --c-bg-primary (1.406:1) and about
+     * where web-terminal-ui's own `oklch(100% 0 none / 15%)` border sits.
+     * One declaration covers both themes: dark mixes white in, light mixes
+     * near-black in, because --c-text-primary inverts.
+     *
+     * Consequence worth knowing: the 37 sites that write
+     * `color-mix(…, var(--c-border))` to tint a hairline toward a status hue
+     * now produce a partly-transparent result. Measured, they stay well clear
+     * of their backdrop (see the report); if one ever reads too faint, the fix
+     * is a higher status fraction at that site, not an opaque border here. */
+    --c-border: color-mix(in oklch, var(--c-text-primary) 16%, transparent);
+
+    /* The tab activity dot's IDLE ring: "this chat exists and nothing is
+     * happening in it". A wash off the ink for the same reason --c-border is
+     * one — a chat tab is either on the sidebar (--c-bg-secondary) or under the
+     * hover wash, and one declaration covering both themes beats two swatches.
+     *
+     * 51%, MEASURED, not picked: it is the smallest 1%-step fraction clearing
+     * WCAG 1.4.11's 3:1 on the resting AND hovered fill in BOTH themes (light is
+     * the binding side at 3.046:1), and `css-contrast.py dot` prints the sweep
+     * that sizes it. web-terminal-ui's own idle ring is 45% of its ink, which
+     * looks like the same number and is not comparable: that ring is measured
+     * against nothing — the package sets no floor for idle at all — and 45% here
+     * lands at 2.633:1 on the hovered light row, which misses.
+     *
+     * It is still the QUIETEST member of the vocabulary, though only just:
+     * 3.046:1 against `failed`'s 3.059:1 on that same worst fill, and clearly
+     * quieter on the other three. So holding idle to the same floor as the
+     * states that matter does not invert the hierarchy — that was the worry, and
+     * the measurement answered it. There is no trade here.
+     *
+     * A SELECTED row does not use this: the dot declares its own colour, so
+     * --c-selected-fg never reaches it, and 70-selection.css switches the ring
+     * to --c-selected-muted-fg, which is the on-selected family's member for
+     * exactly this job and is already sized at 4.5:1. */
+    --c-dot-idle: color-mix(in oklch, var(--c-text-primary) 51%, transparent);
+
+    /* The context ring's compaction RESERVE — the slice of the scale the app
+     * keeps back so auto-compaction has room to work. One rung deeper than the
+     * disc it sits in (--c-border's 16%), so the reserve reads as a region of
+     * the same track rather than as a second track.
+     *
+     * 49%, MEASURED like --c-dot-idle above and by the same method: the smallest
+     * 1%-step fraction clearing WCAG 1.4.11's 3:1 against the disc in BOTH
+     * themes, with light binding at 3.020:1 (dark has 4.369:1 to spare). Its
+     * closeness to the dot's 51% is arithmetic coincidence — a different
+     * backdrop reached almost the same answer — not a shared value, and the two
+     * must not be folded together: one is a tab's idle ring on a sidebar row.
+     *
+     * ACHROMATIC on purpose, and this is the whole reason it is not simply
+     * --c-yellow. The pie that grows into this slice cycles green -> yellow ->
+     * red, so a yellow reserve sits beside a yellow pie for the entire 70-90%
+     * band — precisely the band where the reader needs to see how much room is
+     * left. A wash cannot collide with a hue, and it inverts per theme for
+     * free. */
+    --c-reserve: color-mix(in oklch, var(--c-text-primary) 49%, transparent);
+
+    /* ---- Elevation ------------------------------------------------------- *
+     * A FIRST LAYER for every floating surface's shadow, not a replacement for
+     * one. A black shadow can only darken, and against the new near-black base
+     * there is nothing left to darken: all 14 authored shadow layers measure
+     * 1.007-1.033:1 against --c-bg-primary in dark mode, so every popover,
+     * menu, banner and panel reads as a flat bordered rectangle. In light mode
+     * the same layers are fine (1.298-3.612:1), which is why this is one added
+     * layer rather than a re-tuned set — the black layers still do the work on
+     * a light base.
+     *
+     * It reuses the border wash rather than introducing an elevation palette,
+     * and that reuse is what makes it correct in both themes: mixing the INK in
+     * lifts on dark and sinks on light from one declaration. Measured as a ring
+     * over the base: 1.529:1 dark, 1.403:1 light.
+     *
+     * It does NOT thicken the surface's own 1px border, which was the obvious
+     * worry. A translucent border composites over the element's OWN background
+     * (#484856 on a bg-secondary panel); the ring composites over the PAGE
+     * (#31313a). Those differ at 1.433:1, so the pair reads as edge-then-halo
+     * rather than as a uniform 2px line.
+     *
+     * Apply it FIRST, keeping each site's existing blur, offset and opacity:
+     *
+     *     box-shadow:
+     *       var(--shadow-ambient),
+     *       0 8px 24px rgb(0 0 0 / 20%);
+     *
+     * Measure with `css-contrast.py shadow`, which lists every site. */
+    --shadow-ambient: 0 0 0 1px var(--c-border);
+
+    /* ---- The interaction ladder ------------------------------------------ *
+     * Hover and press are two DEPTHS OF ONE WASH, adopted from
+     * web-terminal-ui's tab vocabulary (15% of the text colour to hover, 25%
+     * to press). Press is a colour step on the same axis as hover, not a
+     * separate mechanism — vibekit used to press with a 4% scale transform and,
+     * for `.pill` alone, a jump to the top ramp rung, which was neither a
+     * deeper step of that pill's own hover nor available to a reader with
+     * prefers-reduced-motion.
+     *
+     * Apply them as a background LAYER, never as `background`:
+     *
+     *     background-image: var(--layer-hover);
+     *
+     * The gradient tokens below exist for exactly that. A wash written into
+     * `background` would REPLACE a filled control's own colour with a
+     * translucent film over its parent; written into `background-image` it
+     * composites on top of whatever `background-color` the control already
+     * carries, so one pair of tokens serves a transparent icon button and a
+     * solid accent button without either site knowing which it is. */
+    --c-hover: color-mix(in oklch, var(--c-text-primary) 15%, transparent);
+    --c-press: color-mix(in oklch, var(--c-text-primary) 25%, transparent);
+    --layer-hover: linear-gradient(var(--c-hover) 0 100%);
+    --layer-press: linear-gradient(var(--c-press) 0 100%);
+
+    /* ---- Selection: ONE treatment, three channels ------------------------ *
+     * The app had 20 selected-state rules across 9 recipes, disagreeing about
+     * which property carries the state — fill only, ink only, fill+ink,
+     * fill+border, and one segmented control using no accent at all. Twelve of
+     * them filled with a `--c-accent-subtle` that measured 1.000:1 against the
+     * top ramp rung, so "selected" and "hovered" were the same colour in
+     * greyscale and to a deuteranope.
+     *
+     * This is the construction that measured right all along — it was
+     * `--c-selected-bg` / `--c-selected-border`, the only derived pair in
+     * the file and the only fill/edge pair that separated (1.880:1) — renamed
+     * off the one surface that happened to own it. The fill is accent over the
+     * surface; the edge is that fill lifted toward the ink; the ink is the ink.
+     *
+     * All three channels travel together, always. A fill without its border
+     * and ink is what produced surfaces that coloured the icon while their
+     * neighbours coloured the background, and `css-tokens.test.ts` fails on a
+     * rule that sets one without the others. */
+    --c-selected-bg: color-mix(in oklch, var(--c-accent) 30%, var(--c-bg-secondary));
+    --c-selected-border: color-mix(in oklch, var(--c-selected-bg), var(--c-text-primary) 25%);
+
+    /* The on-selected ink vibekit lacked. Five rules used to compensate for its
+     * absence one site at a time — `--c-text-primary` here, `inherit` there,
+     * `--c-bg-primary` in a third — and one rule dropped its ink entirely with
+     * a comment explaining that the accent was illegible on the accent fill.
+     * That comment was right, which is why this is the text colour and not the
+     * accent. */
+    --c-selected-fg: var(--c-text-primary);
+
+    /* Selected surfaces get the same two-rung ladder, mixed against the
+     * on-selected ink at 12% and 22% (web-terminal-ui's figures for an
+     * already-filled control: a rung subtler than the 15/25 above, because it
+     * starts from a fill rather than from nothing). Mixed IN rather than
+     * layered over, so a hovered selected row is still one flat colour.
+     *
+     * A selected row's hover must be gated `@media (any-hover: hover)`:
+     * tapping an UNSELECTED row moves the class away, so a touchscreen's
+     * sticky :hover leaves with it, but tapping a SELECTED row changes
+     * nothing, and an ungated hover would latch there until the next tap
+     * somewhere else. */
+    --c-selected-bg-hover: color-mix(in oklch, var(--c-selected-bg), var(--c-selected-fg) 12%);
+    --c-selected-bg-press: color-mix(in oklch, var(--c-selected-bg), var(--c-selected-fg) 22%);
+
+    /* ---- The inks that sit ON a selected fill ----------------------------- *
+     * `--c-selected-fg` above only reaches the descendants that INHERIT it,
+     * and a row's quiet metadata does not: `.pill-model-meta`,
+     * `.pill-role-scope`, `.picker-meta`, `.fb-meta` and friends each declare
+     * their own `--c-text-tertiary`, and an explicit declaration beats an
+     * inherited value however specific the ancestor. So the consolidation
+     * coloured the row and left its metadata behind, measuring 2.464:1 dark /
+     * 3.081:1 light on the selected fill — a WCAG 1.4.3 failure in the rows the
+     * consolidation exists to make legible. Same for the status hues a selected
+     * row can contain: a git-status letter in a selected file row, the yellow
+     * "shadows …" note in the mode list, the terminal tab's exit glyph.
+     *
+     * Two roles, two constructions, and the difference is which direction the
+     * ink has to move:
+     *
+     *   MUTED metadata has no hue to protect, so it mixes toward the FILL. That
+     *   keeps it on the row's own axis — quieter than the row's ink, not a
+     *   second grey — and it inverts per theme for free, because both inputs do.
+     *
+     *   A STATUS hue mixes toward the row's INK, which lightens it in dark mode
+     *   and darkens it in light mode. `color-mix(in oklch)` moves L and leaves H
+     *   alone, so the hue angle survives exactly (measured in the browser:
+     *   143deg green, 3deg red, 87deg yellow, 260deg blue, before and after).
+     *
+     *   THAT ONLY HOLDS BECAUSE THE INK'S HUE IS `none` RATHER THAN `0deg`, and
+     *   it is the reason every achromatic colour in this file is authored that
+     *   way. A hue is powerless only when it is MISSING; an explicitly authored
+     *   `0deg` is a real hue and gets interpolated like any other. Written
+     *   with a literal zero hue instead, every one of these mixes dragged toward
+     *   red: green rendered at 63deg (orange) and the accent at 334deg (pink),
+     *   in the browser, while `css-contrast.py` reported 0deg of drift because
+     *   it implements the powerless rule the authored value had opted out of. So
+     *   the instrument and the paint disagreed silently and only a screenshot
+     *   showed it. css-tokens.test.ts now fails on an explicit hue for chroma 0.
+     *
+     * THE TWO FRACTIONS ARE MEASURED, NOT PICKED (`css-contrast.py selected`,
+     * which prints the sweep that sizes them). 56% is the smallest single
+     * fraction that clears 4.5:1 for every status hue in both themes — red is
+     * what binds it, needing exactly 56 where green needs 52, blue 51, accent
+     * 55 and yellow 48. 82% does the same for the muted ink (its own floor is
+     * 81) while staying 1.37:1 off the row's own ink, so the hierarchy the
+     * metadata exists to express is still visible. Hue drift across the mix is
+     * 0.0deg for green, red, yellow and blue and 0.7deg for the accent.
+     *
+     * THE FLOOR IS THE RESTING AND HOVERED FILL, NOT THE PRESSED ONE, and that
+     * is a stated trade rather than an oversight. `--c-selected-bg-press` sits
+     * 22% of the way to the ink, which leaves so little budget that even
+     * `--c-selected-fg` itself only reads 4.993:1 on it; holding 4.5:1 there
+     * needs 94% for the muted ink, 87% for red and 72% for green, at which point
+     * every ink on a pressed row is the row's ink and both the hierarchy and the
+     * status colour are gone. Hover is the state a pointer RESTS in, so hover is
+     * what the fractions are sized for; press is transient and lands at
+     * 3.5-4.5:1. Re-measure both fractions if any of the three fills moves. */
+    --c-selected-muted-fg: color-mix(in oklch, var(--c-selected-fg) 82%, var(--c-selected-bg));
+    --c-selected-green-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-green));
+    --c-selected-red-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-red));
+    --c-selected-yellow-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-yellow));
+    --c-selected-blue-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-blue));
+
+    /* The orange joins at the SHARED fraction rather than widening it: swept on
+     * its own it needs 52% to clear 4.5:1 (light's hovered selected fill binds at
+     * 4.549:1), which is below red's 56, so the family's one number still covers
+     * every member. A new hue that had needed 57 would have moved all five. */
+    --c-selected-orange-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-orange));
+
+    /* The accent takes the same rung, and it is the one the old code called out
+     * as impossible: `.commands-popover-name` is accent ink and the selected fill
+     * is accent over the surface, so on a selected row the name was the fill's
+     * own hue at 3.797:1. Mixing toward the row's ink pulls it clear (4.559:1
+     * dark / 5.080:1 light on the hovered fill) without landing on
+     * `--c-selected-fg`, so the name is still the coloured half of that row. */
+    --c-selected-accent-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-accent));
+
+    /* ---- Derived ink ----------------------------------------------------- *
+     * The label of something clickable. Named for the RULE rather than for a
+     * position on the ink ramp: an interactive label is text, so WCAG 1.4.3
+     * wants 4.5:1, and --c-text-tertiary only reaches 4.05:1 on the base
+     * surface. Two controls were labelled with it (`.list-row-btn`,
+     * `.subagent-toggle`) and both now take this. The next control gets it
+     * right by picking the token instead of choosing between two greys. */
+    --c-text-control: var(--c-text-secondary);
+
+    /* The code-block inset. Derived off the ink for the same reason the border
+     * is: as a fixed 30% BLACK wash it depended on the surface being light
+     * enough to darken, and against the new near-black base it measured
+     * 1.043:1 — an invisible box. Mixing the INK in instead lifts on dark and
+     * sinks on light from one declaration. */
+    --c-code-bg: color-mix(in oklch, var(--c-text-primary) 9%, transparent);
+    --c-hl-keyword: var(--c-accent);
+
+    /* ---- Type, space, size ----------------------------------------------- */
     --font-sans: system-ui, sans-serif;
     --font-mono: ui-monospace, "Cascadia Code", "Fira Code", monospace;
     --fs-xs: 0.6875rem;
@@ -100,16 +536,49 @@
     --sp-4: 1rem;
     --sp-5: 1.25rem;
     --sidebar-w: 16.25rem;
-    --r: 0.375rem;
-    --r-sm: 0.25rem;
     --content-max-w: 50rem;
     --btn-h: 2.25rem;
     --input-h: 2.375rem;
 
-    /* Motion tokens (see vibekit-ui.md for rationale) */
-    --ease-micro: cubic-bezier(0.2, 0, 0, 1);
-    --dur-micro: 0.1s;
+    /* ---- The radius ladder ----------------------------------------------- *
+     * Four rungs, because a radius reads far rounder on a small box than on a
+     * large one: the same 8px is a quarter of a 32px control's side and a
+     * fifteenth of a 120px card's. A container and the controls inside it
+     * therefore cannot share a value, which is the relationship this ladder
+     * encodes and the one thing the previous two rungs could not express.
+     *
+     *   --r-lg  12px  containers (.prompt-box, an expand card, a panel)
+     *   --r-md   8px  a control INSIDE a 12px container (.pill, .send-btn)
+     *   --r      6px  a standalone control or small chip
+     *   --r-sm   4px  a tiny box (a 16-24px icon button, an inline marker)
+     *
+     * --r-lg was not a token at all before this: it was READ three times in
+     * 15-input.css through `var(--r-lg, 0.75rem)` and never declared, so the
+     * app's container radius lived in a fallback literal. stylelint's
+     * `no-unknown-custom-properties` cannot catch that — a fallback suppresses
+     * the rule, verified — which is why `css-tokens.test.ts` checks reads WITH
+     * fallbacks too. 8px did not exist either; it was invented inline. */
+    --r-lg: 0.75rem;
+    --r-md: 0.5rem;
+    --r: 0.375rem;
+    --r-sm: 0.25rem;
+
+    /* A stadium. RESERVED FOR NON-INTERACTIVE STATUS BADGES — a state label, a
+     * count, a transport name. Interactive controls take a rung off the ladder
+     * above instead: a stadium button reads as a tag rather than as something
+     * you press, and this app had it on both, spelled `999px` at 7 sites and
+     * `999rem` at 5. One spelling, one meaning. */
+    --r-pill: 999px;
+
+    /* ---- Motion ---------------------------------------------------------- *
+     * ONE curve for the two general durations. `--ease-standard` was a
+     * character-identical copy of this value used at 106 sites while
+     * `--ease-standard` was used at 29, so the app had two names for one curve
+     * and no way to tell which a site meant. The DURATIONS are the real axis
+     * and they keep their tiers; --ease-enter / --ease-exit are genuinely
+     * different curves and stay. (Rationale: vibekit-ui.md.) */
     --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --dur-micro: 0.1s;
     --dur-standard: 0.2s;
     --ease-enter: cubic-bezier(0, 0, 0, 1);
     --dur-enter: 0.25s;
@@ -135,116 +604,157 @@
     --dur-spring: 0.5s;
   }
 
-  :root[data-theme="light"],
-  :root:not([data-theme]) {
-    @media (prefers-color-scheme: light) {
-      color-scheme: light;
+  /* ==========================================================================
+     LIGHT: seeds only.
 
-      --c-bg-primary: oklch(98.5% 0.005 283.9deg);
-      --c-bg-secondary: oklch(96% 0.008 284.1deg);
-      --c-bg-tertiary: oklch(93% 0.012 283.7deg);
-      --c-bg-hover: oklch(90% 0.015 283.6deg);
-      --c-text-primary: oklch(20% 0 0deg);
-      --c-text-secondary: oklch(40% 0.02 273.9deg);
-      --c-text-tertiary: oklch(55% 0.015 277.1deg);
-      --c-accent: oklch(50% 0.254 295.8deg);
-      --c-accent-hover: oklch(45% 0.247 293deg);
-      --c-accent-subtle: oklch(90% 0.06 285.8deg);
-      --c-on-accent: oklch(100% 0 0deg);
-      --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
-      --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
-      --c-border: oklch(85% 0.01 283.8deg);
-      --c-green: oklch(50% 0.12 142.7deg);
-      --c-red: oklch(55% 0.15 2.8deg);
+     Every value here is one a relationship could not produce — a surface rung,
+     an ink, the accent, a status hue, an ANSI colour. Every interaction and
+     selection state is absent BY CONSTRUCTION: they are mixes over these seeds,
+     declared once in `:root`, and they re-resolve here for free. If you find
+     yourself adding a hover, a press, a selected fill or a border to this
+     block, the token is in the wrong place.
 
-      /* Deeper than the old 60%: yellow needs lower L than its siblings to
-       * read as text on white (60% was 3.1:1 as pill text; 49% is 6:1). */
-      --c-yellow: oklch(49% 0.09 86.5deg);
-      --c-blue: oklch(48% 0.13 259.9deg);
-      --c-teal: oklch(47% 0.09 168.3deg);
-      --c-danger: oklch(50% 0.14 25deg);
-      --c-warning: oklch(52% 0.1 80deg);
-      --c-link: oklch(45% 0.12 277.3deg);
-      --c-code-bg: oklch(0% 0 0deg / 6%);
-      --c-hl-string: oklch(42% 0.12 145deg);
-      --c-hl-number: oklch(44% 0.1 60deg);
-      --c-user-bubble: oklch(92% 0.015 283.8deg);
-      --c-agent-bubble: color-mix(in srgb, var(--c-accent) 8%, transparent);
-      --c-term-bg: oklch(98% 0.005 283deg);
-      --c-term-fg: oklch(25% 0.01 283deg);
-      --c-term-selection: oklch(0% 0 0deg / 15%);
-      --c-term-selection-inactive: oklch(0% 0 0deg / 8%);
-      --c-term-black: oklch(20% 0.01 283deg);
-      --c-term-red: oklch(48% 0.18 25deg);
-      --c-term-green: oklch(52% 0.14 140deg);
-      --c-term-yellow: oklch(65% 0.14 85deg);
-      --c-term-blue: oklch(48% 0.14 245deg);
-      --c-term-magenta: oklch(48% 0.17 315deg);
-      --c-term-cyan: oklch(55% 0.1 200deg);
-      --c-term-white: oklch(70% 0.01 283deg);
-      --c-term-bright-black: oklch(45% 0.01 283deg);
-      --c-term-bright-red: oklch(58% 0.18 25deg);
-      --c-term-bright-green: oklch(62% 0.14 140deg);
-      --c-term-bright-yellow: oklch(70% 0.14 85deg);
-      --c-term-bright-blue: oklch(58% 0.14 245deg);
-      --c-term-bright-magenta: oklch(56% 0.17 315deg);
-      --c-term-bright-cyan: oklch(62% 0.1 200deg);
-      --c-term-bright-white: oklch(92% 0.01 283deg);
-    }
-  }
+     This is not a derivation of light FROM dark, and it should not become one.
+     Light's accent is a deep purple where dark's is a pastel, so the ink ON an
+     accent fill inverts; its status hues need lower lightness to read on white
+     where dark's need higher to read on near-black. An algorithm that produced
+     one from the other would have to be told all of that, at which point it is
+     a second copy of the seeds wearing a function's clothes. What single-
+     sourcing buys is that the RELATIONSHIPS cannot disagree between themes —
+     and that is the half that was drifting.
+     ========================================================================== */
 
   :root[data-theme="light"] {
     color-scheme: light;
 
+    /* The ramp, same construction as dark: steps >= 1.20:1, 1.789:1 end to end,
+     * against 1.078 / 1.095 / 1.097 and 1.294:1 before.
+     *
+     * It does NOT reach dark's 1.25 / 2.3 floors, and that is a measured
+     * decision rather than an oversight. (Y + 0.05) compresses near white, so
+     * equal PERCEPTUAL steps report smaller ratios up here: dark's rungs are
+     * 12.5 / 8 / 7 points of OKLab L apart and light's are 6.5 / 6 / 6, which
+     * is the same order of visible step while the numbers differ by a third.
+     * Pushing light to 1.25 per step needs its deepest rung at L 77.5%, and
+     * --c-text-secondary lands at 4.53:1 there — passing AA with no margin at
+     * all. L 80% keeps it at 4.95:1. The floor that matters more than the ramp
+     * number is that body text stays legible on every rung. */
     --c-bg-primary: oklch(98.5% 0.005 283.9deg);
-    --c-bg-secondary: oklch(96% 0.008 284.1deg);
-    --c-bg-tertiary: oklch(93% 0.012 283.7deg);
-    --c-bg-hover: oklch(90% 0.015 283.6deg);
-    --c-text-primary: oklch(20% 0 0deg);
+    --c-bg-secondary: oklch(92% 0.01 284.1deg);
+    --c-bg-tertiary: oklch(86% 0.014 283.7deg);
+    --c-bg-elevated: oklch(80% 0.018 283.6deg);
+    --c-text-primary: oklch(20% 0 none);
     --c-text-secondary: oklch(40% 0.02 273.9deg);
-    --c-text-tertiary: oklch(55% 0.015 277.1deg);
+
+    /* Deepened from L 55% for the mirror-image reason dark's was lifted: light's
+     * surfaces moved DOWN, so its hint ink has to move down too or it closes on
+     * them. 3.91:1 on --c-bg-tertiary and 3.19:1 on --c-bg-elevated, against
+     * 3.94 / n-a before. */
+    --c-text-tertiary: oklch(50% 0.015 277.1deg);
     --c-accent: oklch(50% 0.254 295.8deg);
     --c-accent-hover: oklch(45% 0.247 293deg);
-    --c-accent-subtle: oklch(90% 0.06 285.8deg);
-    --c-on-accent: oklch(100% 0 0deg);
+    --c-on-accent: oklch(100% 0 none);
     --img-check-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'/%3E%3C/svg%3E");
     --img-dash-on-accent: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'%3E%3Cline x1='5' y1='12' x2='19' y2='12'/%3E%3C/svg%3E");
-    --c-border: oklch(85% 0.01 283.8deg);
     --c-green: oklch(50% 0.12 142.7deg);
     --c-red: oklch(55% 0.15 2.8deg);
 
     /* Deeper than the old 60%: yellow needs lower L than its siblings to
      * read as text on white (60% was 3.1:1 as pill text; 49% is 6:1). */
     --c-yellow: oklch(49% 0.09 86.5deg);
+
+    /* Same hue as dark's, same sweep; light binds harder because a deep orange
+     * and a deep yellow are both browns. 54% is the largest L in the band that
+     * still clears 3:1 (55% misses at 2.94:1), so the sweep's winner sits at
+     * 3.065:1 on the hovered row — thinner margin than dark's, and level with
+     * --c-red's 3.059:1 and --c-dot-idle's 3.046:1 on that same fill. */
+    --c-orange: oklch(54% 0.13 55.9deg);
     --c-blue: oklch(48% 0.13 259.9deg);
     --c-teal: oklch(47% 0.09 168.3deg);
     --c-danger: oklch(50% 0.14 25deg);
     --c-warning: oklch(52% 0.1 80deg);
     --c-link: oklch(45% 0.12 277.3deg);
-    --c-code-bg: oklch(0% 0 0deg / 6%);
     --c-hl-string: oklch(42% 0.12 145deg);
     --c-hl-number: oklch(44% 0.1 60deg);
-    --c-user-bubble: oklch(92% 0.015 283.8deg);
-    --c-agent-bubble: color-mix(in srgb, var(--c-accent) 8%, transparent);
     --c-term-bg: oklch(98% 0.005 283deg);
     --c-term-fg: oklch(25% 0.01 283deg);
-    --c-term-selection: oklch(0% 0 0deg / 15%);
-    --c-term-selection-inactive: oklch(0% 0 0deg / 8%);
-    --c-term-black: oklch(20% 0.01 283deg);
-    --c-term-red: oklch(48% 0.18 25deg);
-    --c-term-green: oklch(52% 0.14 140deg);
-    --c-term-yellow: oklch(65% 0.14 85deg);
-    --c-term-blue: oklch(48% 0.14 245deg);
-    --c-term-magenta: oklch(48% 0.17 315deg);
-    --c-term-cyan: oklch(55% 0.1 200deg);
-    --c-term-white: oklch(70% 0.01 283deg);
-    --c-term-bright-black: oklch(45% 0.01 283deg);
-    --c-term-bright-red: oklch(58% 0.18 25deg);
-    --c-term-bright-green: oklch(62% 0.14 140deg);
-    --c-term-bright-yellow: oklch(70% 0.14 85deg);
-    --c-term-bright-blue: oklch(58% 0.14 245deg);
-    --c-term-bright-magenta: oklch(56% 0.17 315deg);
-    --c-term-bright-cyan: oklch(62% 0.1 200deg);
-    --c-term-bright-white: oklch(92% 0.01 283deg);
+    --c-term-selection: oklch(0% 0 none / 15%);
+    --c-term-selection-inactive: oklch(0% 0 none / 8%);
+
+    /* The ANSI palette against the LIGHT card. The 12 CHROMATIC entries are the
+     * same deferral: 11 of them lift here against 6 in dark, because kitty's
+     * slots are chosen for a pure-black background and a light surface is the
+     * opposite end. They keep their hue and lose their brightness — blending
+     * toward black scales all three channels, so the angle survives while yellow
+     * arrives as an olive. A light surface has only the dark half of the range
+     * available for text; that is the cost of a light theme, not of this table.
+     *
+     * The four ACHROMATIC entries are AUTHORED here, and they are the only values
+     * in either theme that are neither kitty's nor the engine's function applied
+     * to kitty's. Deferring cost more than it bought: kitty defines those four by
+     * LIGHTNESS alone, a light card can use none of it, and the lift drove white,
+     * bright-black and bright-white onto ONE grey, because it stops at the
+     * smallest blend clearing the floor and that is a fixed target luminance. So
+     * ESC[90m (de-emphasis) and ESC[97m (emphasis) rendered identically, which
+     * deletes a distinction rather than washing one out, and #666 preserved no
+     * part of 0xdddddd — there was no hue left to defer to.
+     *
+     * The ramp is even steps in kitty's own 8-bit space, from color0 (which
+     * clears at 16.6:1 unaided) to the darkest grey the floor allows, ordered by
+     * the lightness each code ASKED for: on a light background ESC[30m asks for
+     * the loudest thing available and ESC[97m asks for something invisible, so
+     * the quietest legible grey is the honest rendering of "bright white".
+     *
+     * DARK is left alone deliberately. There the lift collapses `black` onto
+     * `bright-black`, and both of those ask for something too dark to read on a
+     * dark card, so one answer for both is honest; `white` and `bright-white`
+     * keep kitty's spread, so three distinct levels survive. Light had one.
+     */
+    --c-term-black: #000;
+    --c-term-red: #cc0403;
+    --c-term-green: #0f7700;
+    --c-term-yellow: #6b6900;
+    --c-term-blue: #0c67b7;
+    --c-term-magenta: #b01ab5;
+    --c-term-cyan: #077272;
+    --c-term-white: #444;
+    --c-term-bright-black: #222;
+    --c-term-bright-red: #c91b1a;
+    --c-term-bright-green: #107700;
+    --c-term-bright-yellow: #6a6900;
+    --c-term-bright-blue: #1367b8;
+    --c-term-bright-magenta: #b11cb2;
+    --c-term-bright-cyan: #097272;
+    --c-term-bright-white: #666;
+
+    /* The fills. The engine has no second ramp and needs none — it lifts the ink
+     * against whatever background is really there, an ANSI one included. CSS
+     * cannot pair-match, and one ramp measures 256 of 256 pairs under 4.5:1
+     * (`ESC[31;41m` is red on red), so the fills are derived by the same
+     * machinery with the roles swapped: the fill moves, away from the ink set,
+     * until every ink clears 4.5:1 on it.
+     *
+     * The consequence is arithmetic, not taste. Carrying the darkest ink pins a
+     * fill past the surface's own luminance, so against the surface these read
+     * 1.000:1 .. 1.268:1 — a fill WITH text on it is fully legible and a TEXTLESS
+     * coloured region is quiet. css-contrast.py records that figure without
+     * gating it, because gating it would be 32 standing failures for a floor no
+     * palette that keeps its hues can reach. */
+    --c-term-black-bg: #e5e5e5;
+    --c-term-red-bg: #f8dfdf;
+    --c-term-green-bg: #c1f1ba;
+    --c-term-yellow-bg: #eae991;
+    --c-term-blue-bg: #d5e7f6;
+    --c-term-magenta-bg: #f7ddf8;
+    --c-term-cyan-bg: #b4f0f0;
+    --c-term-white-bg: #e5e5e5;
+    --c-term-bright-black-bg: #e5e5e5;
+    --c-term-bright-red-bg: #fddddd;
+    --c-term-bright-green-bg: #8cfe7a;
+    --c-term-bright-yellow-bg: #fffd00;
+    --c-term-bright-blue-bg: #d0e8ff;
+    --c-term-bright-magenta-bg: #ffd9ff;
+    --c-term-bright-cyan-bg: #14ffff;
+    --c-term-bright-white-bg: #fff;
   }
 } /* @layer tokens */

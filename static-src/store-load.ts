@@ -32,12 +32,18 @@ const decodeChatGetResponseLocal: Decoder<{
   chat: ChatHeader;
   messages: Message[];
   has_more: boolean;
+  draft: string;
 }> = (v) => {
   const o = asObject(v, "$.chat_get");
   return {
     chat: decodeChatHeader(o["chat"]),
     messages: decodeArray(o["messages"], decodeMessage, "$.chat_get.messages"),
     has_more: reqBool(o, "has_more", "$.chat_get"),
+    // `draft` rides this response rather than the header, so it stays off the
+    // list endpoint and off every chat_updated frame. Optional-tolerant: a
+    // server that predates the field, or a proxy that strips it, must not fail
+    // the whole chat load.
+    draft: typeof o["draft"] === "string" ? o["draft"] : "",
   };
 };
 
@@ -86,6 +92,7 @@ export async function loadList(): Promise<boolean> {
       available_modes: h.available_modes ?? [],
       available_models: h.available_models ?? [],
       supervised_mode: h.supervised_mode ?? false,
+      effort: h.effort ?? "",
       usage: h.usage,
       message_count: h.message_count,
       messages: existing?.messages ?? [],
@@ -96,6 +103,20 @@ export async function loadList(): Promise<boolean> {
       thinking: existing?.thinking ?? false,
       working_label: existing?.working_label ?? "Thinking",
       ...(existing?.steers !== undefined && { steers: existing.steers }),
+      // Every CLIENT-ONLY projection carries over, not just steers. This list is
+      // the header endpoint's blind spot: the server sends none of these fields,
+      // so rebuilding a Session from a header alone silently resets them — and
+      // `loadList` runs on EVERY `connected`, reconnects included, so an ordinary
+      // network recovery repainted a failed tab as idle and dropped the agent's
+      // declared status with it. The reconcile that IS entitled to drop them is
+      // `transport:gap`, which clears them explicitly and runs first, so there is
+      // nothing left here to preserve after a real replay gap.
+      ...(existing?.turn_failed === true && { turn_failed: true as const }),
+      ...(existing?.turn_done === true && { turn_done: true as const }),
+      ...(existing?.agent_status !== undefined && { agent_status: existing.agent_status }),
+      ...(existing?.agent_status_text !== undefined && {
+        agent_status_text: existing.agent_status_text,
+      }),
       ...(h.compaction_watermark !== undefined && { compaction_watermark: h.compaction_watermark }),
     };
     next.push(session);
@@ -162,6 +183,13 @@ export async function loadMessages(
   session.has_more = d.has_more;
   rebuildMsgIndex(chatID, session.messages);
   msgControllers.delete(chatID);
+  // Park the server's draft on the session so the composer can adopt it. Only on
+  // the newest page: an older page fetch is a scroll-up, not an open. This module
+  // deliberately does not reach into the composer — chat.ts owns that call, right
+  // where it already sequences the rest of the activation.
+  if (beforeID === undefined) {
+    session.draft = d.draft;
+  }
   emitMessages();
   return true;
 }

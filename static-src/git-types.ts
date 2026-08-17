@@ -32,7 +32,13 @@ export type GitRepoStatusBadge = Pick<
   "repo" | "is_repo" | "branch" | "ahead" | "behind" | "has_dirty"
 >;
 
-/** A pull request from the forge API. */
+/** A pull request from the forge API.
+ *
+ *  `check_status` and `merge_blocked` are plain strings rather than
+ *  unions on purpose: the server's vocabulary can grow, and a union here
+ *  would make the unknown-value fallbacks in git-pr-status.ts read as
+ *  dead code to the type checker while the wire still produces them. The
+ *  canonical values are listed on each field. */
 export interface GitPR {
   number: number;
   title: string;
@@ -45,6 +51,17 @@ export interface GitPR {
   author?: string;
   created_at?: number;
   updated_at?: number;
+  /** Head commit of the source branch; the merge pins itself to this. */
+  head_sha?: string;
+  /** "" (forge reported none) | "pending" | "passing" | "failing". */
+  check_status?: string;
+  /** "" | "draft" | "conflicts" | "checks_failing" | "checks_running"
+   *  | "behind" | "blocked" | "unknown". */
+  merge_blocked?: string;
+  checks_total?: number;
+  checks_failing?: number;
+  /** The forge will merge this itself once its requirements are met. */
+  auto_merge_armed?: boolean;
 }
 
 /** A group of PRs for a single repo (used in the PRs tab). */

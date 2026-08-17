@@ -182,52 +182,23 @@ func scanSkills(_ context.Context, root fs.FS, prefix string) []kiroConfigItem {
 	return items
 }
 
-// scanAgents returns kiroConfigItems for agent configs under agents/. An
-// agent may ship as a `.md` doc, a `.json` ACP config, or both; paired
-// files share a base name and produce ONE item, preferring the `.md`
-// (a JSON-only agent is otherwise omitted). Capped at maxAgentsPerDir.
+// scanAgents returns kiroConfigItems for agent configs under agents/,
+// collapsing each `.json`/`.md` pair to ONE item through
+// steering.DedupeAgentFiles. Capped at maxAgentsPerDir.
 func scanAgents(_ context.Context, root fs.FS, prefix string) []kiroConfigItem {
 	entries, err := fs.ReadDir(root, "agents")
 	if err != nil {
 		return nil
 	}
-	// De-dupe by base name; prefer the .md file when both .md and .json
-	// exist for the same agent.
-	chosen := make(map[string]string) // base name -> chosen filename
-	var order []string
-	for _, e := range entries {
-		if e.IsDir() || strings.ContainsRune(e.Name(), 0) {
-			continue
-		}
-		var name string
-		switch {
-		case strings.HasSuffix(e.Name(), ".md"):
-			name = strings.TrimSuffix(e.Name(), ".md")
-		case strings.HasSuffix(e.Name(), ".json"):
-			name = strings.TrimSuffix(e.Name(), ".json")
-		default:
-			continue
-		}
-		if name == "" {
-			continue
-		}
-		existing, seen := chosen[name]
-		switch {
-		case !seen:
-			chosen[name] = e.Name()
-			order = append(order, name)
-		case strings.HasSuffix(e.Name(), ".md") && strings.HasSuffix(existing, ".json"):
-			chosen[name] = e.Name()
-		}
-	}
-	items := make([]kiroConfigItem, 0, min(len(order), maxAgentsPerDir))
-	for _, name := range order {
+	agents := steering.DedupeAgentFiles(entries)
+	items := make([]kiroConfigItem, 0, min(len(agents), maxAgentsPerDir))
+	for _, a := range agents {
 		if len(items) >= maxAgentsPerDir {
 			break
 		}
 		items = append(items, kiroConfigItem{
-			Name: name,
-			Path: prefix + "/agents/" + chosen[name],
+			Name: a.Base,
+			Path: prefix + "/agents/" + a.File,
 			Type: "agent",
 		})
 	}

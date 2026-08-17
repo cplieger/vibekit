@@ -88,7 +88,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
-		d.NotifyPush(ctx, "test body", api.PushKindPermission)
+		d.NotifyPush(ctx, "test body", api.PushKindPermission, "")
 	})
 
 	t.Run("BufferStore_non_nil", func(t *testing.T) {
@@ -105,5 +105,13 @@ func TestBaseDeps_FullContract(t *testing.T) {
 
 	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {
 		_ = d.IsHookStatusEnabled()
+	})
+
+	t.Run("IsScheduledRun_false_for_an_unmarked_run", func(t *testing.T) {
+		// False is the default that matters: a manual run must never be reported
+		// as scheduled, so the stub's zero value is the manual case.
+		if d.IsScheduledRun("wf-unknown") {
+			t.Error("IsScheduledRun(unknown) = true, want false")
+		}
 	})
 }

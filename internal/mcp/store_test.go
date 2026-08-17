@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +54,9 @@ func TestCreate_ValidStdio(t *testing.T) {
 	}
 }
 
+// A name collision is only a conflict when the SPEC differs. The identical-spec
+// half of this used to assert 409; it is now a no-op that keeps the stored
+// record (see TestCreate_IdenticalSpecPreservesEnvValues).
 func TestCreate_NameConflict(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.Create(t.Context(), &Server{
@@ -61,12 +65,92 @@ func TestCreate_NameConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	// Case-insensitive conflict check.
+	// Case-insensitive conflict check: a different command under the same name,
+	// spelled differently, is still the same server and still a conflict.
 	_, err = s.Create(t.Context(), &Server{
-		Transport: TransportStdio, Name: "FOO", Command: "bash", Enabled: true,
+		Transport: TransportStdio, Name: "FOO", Command: "zsh", Enabled: true,
 	})
-	if err != ErrNameConflict {
+	if !errors.Is(err, ErrNameConflict) {
 		t.Errorf("expected ErrNameConflict, got %v", err)
+	}
+	if got := len(s.List(t.Context())); got != 1 {
+		t.Errorf("stored servers = %d, want 1 (the conflict must not append)", got)
+	}
+}
+
+// The same POST twice keeps the record the user has since filled in. This is
+// the no-op that replaced the 409: its only workaround was delete-then-re-add,
+// and DELETE discards the record's stored secrets outright.
+func TestCreate_IdenticalSpecPreservesEnvValues(t *testing.T) {
+	s := newTestStore(t)
+	spec := func() *Server {
+		return &Server{
+			Transport: TransportStdio, Name: "github", Command: "npx",
+			Args:    []string{"-y", "@modelcontextprotocol/server-github"},
+			Env:     []KeyPair{{Name: "TOKEN", Value: "<YOUR_TOKEN>"}},
+			Enabled: true,
+		}
+	}
+	first, err := s.Create(t.Context(), spec())
+	if err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	// The user replaces the placeholder with the real key.
+	if _, err := s.Update(t.Context(), first.ID, &Server{
+		Transport: TransportStdio, Name: "github", Command: "npx",
+		Args:    []string{"-y", "@modelcontextprotocol/server-github"},
+		Env:     []KeyPair{{Name: "TOKEN", Value: "ghp_real"}},
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("fill token: %v", err)
+	}
+
+	again, err := s.Create(t.Context(), spec())
+	if err != nil {
+		t.Fatalf("reinstall should be a no-op, got %v", err)
+	}
+	if again.ID != first.ID {
+		t.Errorf("reinstall returned a new record: %q vs %q", again.ID, first.ID)
+	}
+	raw := s.EnabledRaw(t.Context())
+	if len(raw) != 1 {
+		t.Fatalf("stored = %d, want 1 (no duplicate)", len(raw))
+	}
+	if raw[0].Env[0].Value != "ghp_real" {
+		t.Errorf("env value = %q, want the token the user typed", raw[0].Env[0].Value)
+	}
+}
+
+// A re-POST says nothing about the toggles the user set afterwards, so they are
+// outside the spec comparison and must survive it.
+func TestCreate_IdenticalSpecKeepsUserPolicy(t *testing.T) {
+	s := newTestStore(t)
+	created, err := s.Create(t.Context(), &Server{
+		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
+		DisabledTools: []string{"delete_repo"},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := s.SetEnabled(t.Context(), created.ID, false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+
+	// The block carries neither the disabled flag nor the tool denial.
+	if _, err := s.Create(t.Context(), &Server{
+		Transport: TransportStdio, Name: "gh", Command: "npx", Enabled: true,
+	}); err != nil {
+		t.Fatalf("reinstall: %v", err)
+	}
+	list := s.List(t.Context())
+	if len(list) != 1 {
+		t.Fatalf("stored = %d", len(list))
+	}
+	if list[0].Enabled {
+		t.Error("a reinstall re-enabled a server the user had switched off")
+	}
+	if len(list[0].DisabledTools) != 1 {
+		t.Errorf("disabled_tools = %#v, want the user's denial kept", list[0].DisabledTools)
 	}
 }
 

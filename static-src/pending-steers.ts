@@ -12,6 +12,14 @@
 // whatever you are trying to redirect. Once `steer_injected` arrives it has been
 // READ, and the redirection is in effect. Collapsing those into one "pending"
 // look would hide the only fact a person steering a live turn is watching for.
+//
+// A read chip also carries WHAT THE AGENT DID, when the agent said so. KAS asks
+// it to close its response with `[STEERING steer-<id>: what I did about it]`;
+// vibekit hides that marker from the transcript as machinery, and the sentence
+// inside it lands here instead (`steer.ack`). It is strictly better information
+// than a check glyph — "read" becomes "read: rebased onto main instead" — and it
+// is the agent's own account rather than an inference, which is why the chip
+// shows it verbatim and adds no interpretation of its own.
 // Neither is a sent user message: a steer becomes transcript when the turn's
 // messages arrive, exactly like a prompt waiting on `message_appended`
 // (vibekit.md #2/#6).
@@ -52,18 +60,20 @@ export function initPendingSteers(): void {
   }
   bound = true;
   const row = $.queuedRow;
-  // Re-render only when the active chat, the steer texts, or their READ state
-  // changes. The computed returns a string so it dedups by value — an unrelated
-  // session write (usage, thinking, a streaming chunk) must not re-render the
-  // row, and `injected` has to be in the key or a steer being read would repaint
-  // nothing.
+  // Re-render only when the active chat, the steer texts, their READ state or
+  // their acknowledgement changes. The computed returns a string so it dedups by
+  // value — an unrelated session write (usage, thinking, a streaming chunk) must
+  // not re-render the row, and `injected` and `ack` each have to be in the key or
+  // a steer being read, or answered, would repaint nothing.
   const sig = computed(() => {
     const s = activeSession.value;
     const steers = s?.steers ?? [];
     return (
       (s?.id ?? "") +
       "\u0001" +
-      steers.map((e) => (e.injected ? "1" : "0") + ":" + e.text).join("\u0000")
+      steers
+        .map((e) => (e.injected ? "1" : "0") + ":" + (e.ack ?? "") + "\u0002" + e.text)
+        .join("\u0000")
     );
   });
   effect(() => {
@@ -114,6 +124,10 @@ function render(row: HTMLUListElement): void {
 function buildChip(steer: PendingSteer): HTMLElement {
   const preview = truncate(steer.text);
   const read = steer.injected;
+  // Only on a read chip. An ack cannot arrive before the read frame, but the
+  // states are independent on the wire and a "waiting" chip claiming an outcome
+  // would be the worst thing this row could say.
+  const ack = read ? (steer.ack ?? "") : "";
   const icon = el(
     "span",
     { className: "queued-icon", "aria-hidden": "true" },
@@ -124,14 +138,26 @@ function buildChip(steer: PendingSteer): HTMLElement {
     "li",
     {
       className: read ? "queued-prompt steer-read" : "queued-prompt",
-      title: steer.text,
+      // Both halves in full, because the visible text of each is truncated and
+      // the agent's answer is the part worth reading whole.
+      title: ack === "" ? steer.text : steer.text + "\n\n" + ack,
       // The state is carried by the glyph, so it has to be in the accessible
-      // name too — a shape-only signal is invisible to a screen reader.
-      "aria-label": read ? `Read by the agent: ${preview}` : `Waiting for the agent: ${preview}`,
+      // name too — a shape-only signal is invisible to a screen reader. The ack
+      // is a second visual channel and rides the same rule.
+      //
+      // The RAW strings, not the truncated ones: truncation is a layout answer
+      // to a fixed-width chip, and the accessible name has no width. Passing
+      // the preview here left a screen-reader user with only the 60-character
+      // summary while the full text existed solely in a hover tooltip, which is
+      // not an accessible alternative to anything.
+      "aria-label": accessibleName(steer.text, read, ack),
     },
     icon,
     label,
   );
+  if (ack !== "") {
+    li.appendChild(el("span", { className: "queued-ack" }, truncate(ack)));
+  }
   // A notification did not come from the user (vibekit refuses to send one), so
   // it is marked as somebody else's voice rather than styled like their words.
   if (steer.severity !== undefined && steer.severity !== "") {
@@ -139,6 +165,25 @@ function buildChip(steer: PendingSteer): HTMLElement {
     li.dataset["severity"] = steer.severity;
   }
   return li;
+}
+
+// accessibleName spells out the chip's state in words, because the glyph, the
+// border treatment and the ack span are all visual.
+//
+// Nothing is shortened here. Both strings are collapsed to one line, because an
+// accessible name is announced as a single string and stray newlines buy
+// nothing, but the whole of each is present: the visible chip truncates to fit
+// a fixed-width row, and a reader who cannot see the row is not subject to that
+// constraint. The tooltip carries the same two strings for a mouse.
+function accessibleName(text: string, read: boolean, ack: string): string {
+  const steerText = oneLine(text);
+  if (!read) {
+    return `Waiting for the agent: ${steerText}`;
+  }
+  if (ack === "") {
+    return `Read by the agent: ${steerText}`;
+  }
+  return `Read by the agent: ${steerText}. The agent did: ${oneLine(ack)}`;
 }
 
 function buildDiscard(waiting: number): HTMLElement {
@@ -172,7 +217,13 @@ function onDiscard(): void {
   announce("Discarding messages the agent hasn't read");
 }
 
+// oneLine collapses whitespace without shortening. Split out of truncate
+// because the accessible name needs the normalisation and not the cut.
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 function truncate(text: string): string {
-  const oneLine = text.replace(/\s+/g, " ").trim();
-  return oneLine.length > PREVIEW_MAX ? oneLine.slice(0, PREVIEW_MAX - 1) + "\u2026" : oneLine;
+  const flat = oneLine(text);
+  return flat.length > PREVIEW_MAX ? flat.slice(0, PREVIEW_MAX - 1) + "\u2026" : flat;
 }

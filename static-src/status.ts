@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { $ } from "./dom.js";
-import { formatTokens, formatMetering } from "./status-format.js";
+import { formatTokens, formatMetering, contextReserve } from "./status-format.js";
 import { humanName } from "./strings.js";
 import { fetchKiroSetting, CancellableSlot } from "./api-client.js";
 import { registerCleanup } from "./actions/index.js";
@@ -35,7 +35,7 @@ interface ContextBarUpdate {
 class ContextBarController {
   private compactionBufferPct = 10;
   private compactionSlot = new CancellableSlot();
-  private contextTickInitialised = false;
+  private contextReserveInitialised = false;
   private contextBarQueued = false;
   private contextBarArgs: ContextBarUpdate | null = null;
 
@@ -53,17 +53,20 @@ class ContextBarController {
     if (signal.aborted) {
       return;
     }
-    this.positionContextTick();
+    this.positionContextReserve();
   }
 
-  private positionContextTick(): void {
-    const tick = document.getElementById("context-ring-tick");
-    if (tick === null) {
+  /** Size and place the compaction reserve. Two writes, one derivation: the
+   *  dash LENGTH is the reserve's extent (percent-for-percent, because the
+   *  element carries pathLength="100") and the ROTATION is where it starts. */
+  private positionContextReserve(): void {
+    const wedge = document.getElementById("context-ring-wedge");
+    if (wedge === null) {
       return;
     }
-    const thresholdPct = Math.max(0, Math.min(100, 100 - this.compactionBufferPct));
-    const deg = (thresholdPct / 100) * 360;
-    tick.setAttribute("transform", `rotate(${String(deg)} 10 10)`);
+    const { lengthPct, rotateDeg } = contextReserve(this.compactionBufferPct);
+    wedge.style.strokeDasharray = `${String(lengthPct)} 100`;
+    wedge.setAttribute("transform", `rotate(${String(rotateDeg)} 10 10)`);
   }
 
   refreshCompactionThreshold(): void {
@@ -75,8 +78,8 @@ class ContextBarController {
   }
 
   update(opts: ContextBarUpdate): void {
-    if (!this.contextTickInitialised) {
-      this.contextTickInitialised = true;
+    if (!this.contextReserveInitialised) {
+      this.contextReserveInitialised = true;
       void this.fetchCompactionBuffer();
     }
     this.contextBarArgs = opts;
@@ -99,9 +102,10 @@ class ContextBarController {
     const summarizedCount = opts.summarizedCount ?? 0;
     const clamped = Math.min(100, Math.max(0, pct));
 
-    const circ = 50.27;
-    const offset = circ * (1 - clamped / 100);
-    $.contextRingFill.style.strokeDashoffset = String(offset);
+    // pathLength="100" on the element makes the dash pattern speak in percent,
+    // so the offset IS the unused remainder. The hardcoded 50.27 circumference
+    // this replaced was the ring's one magic constant.
+    $.contextRingFill.style.strokeDashoffset = String(100 - clamped);
     const stroke =
       clamped >= 90 ? "var(--c-red)" : clamped >= 70 ? "var(--c-yellow)" : "var(--c-green)";
     $.contextRingFill.style.stroke = stroke;

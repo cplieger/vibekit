@@ -51,6 +51,10 @@ interface PendingHold {
   /** Characters held, tracked rather than recomputed so appending N chunks is
    *  linear instead of quadratic. */
   chars: number;
+  /** Set once a chunk did not fit under the cap. Nothing further is accepted
+   *  after that, so the hold is always a contiguous PREFIX of the stream —
+   *  see holdChunk for why a hole would be invisible. */
+  full: boolean;
 }
 const pendingChunks = new Map<string, PendingHold>();
 
@@ -100,8 +104,16 @@ export function disposeAllToolEffects(): void {
   pendingChunks.clear();
 }
 
-/** Record a tool call's terminal link and flush anything already held for it.
- *  Idempotent: the same link arrives on every later update. */
+/** Record a tool call's terminal link and settle anything already held for it.
+ *  Idempotent: the same link arrives on every later update.
+ *
+ *  A hold is FLUSHED only when the tool call carries no output of its own. When
+ *  it does, that output is the server's whole-stream snapshot and the card has
+ *  already rendered it, so appending the held chunks would print the opening
+ *  lines twice — reachable whenever a fast command's first frame arrives already
+ *  completed while its early chunks were still waiting for a card to claim them.
+ *  The snapshot supersedes the hold; the hold is dropped either way, because a
+ *  second call must not flush what the first discarded. */
 function linkTerminal(tc: ToolCall): void {
   const termID = tc.terminal_id;
   if (termID === undefined || termID === "" || termToTool.get(termID) === tc.id) {
@@ -113,6 +125,9 @@ function linkTerminal(tc: ToolCall): void {
     return;
   }
   pendingChunks.delete(termID);
+  if (tc.output !== undefined && tc.output !== "") {
+    return;
+  }
   for (const chunk of held.chunks) {
     appendTerminalChunk(termID, chunk.text, chunk.spans, chunk.base);
   }
@@ -181,10 +196,17 @@ function holdChunk(termID: string, text: string, spans: TextSpan[], base: number
       }
       pendingChunks.delete(oldest.value);
     }
-    held = { chunks: [], chars: 0 };
+    held = { chunks: [], chars: 0, full: false };
     pendingChunks.set(termID, held);
   }
-  if (held.chars + text.length > PENDING_CHARS_CAP) {
+  if (held.full || held.chars + text.length > PENDING_CHARS_CAP) {
+    // Refusing everything after the first chunk that did not fit is what keeps
+    // the hold a contiguous PREFIX. Skipping only the oversized chunk and taking
+    // later smaller ones leaves a HOLE that nothing marks: each chunk is rebased
+    // by its own `base`, so the two sides of the gap render as though they were
+    // adjacent and the missing middle is invisible. A prefix is enough because
+    // the completion snapshot replaces all of it.
+    held.full = true;
     return;
   }
   held.chunks.push({ text, spans, base });
@@ -268,8 +290,17 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     if (tc.locations !== undefined && tc.locations.length > 0) {
       opts.locations = tc.locations;
     }
+    if (tc.disclosed !== undefined) {
+      opts.disclosed = tc.disclosed;
+    }
+    if (tc.denial !== undefined) {
+      opts.denial = tc.denial;
+    }
     const card = buildToolCard(opts);
     toolEls.set(tc.id, card);
+    // After buildToolCard, deliberately: the card is what a held chunk would be
+    // appended to, and whether the hold is flushed at all depends on the output
+    // this build just rendered.
     linkTerminal(tc);
 
     const sig = ensureToolCallSig(tc.id, tc);
@@ -342,6 +373,11 @@ function applyStatusUpdate(
     fileBasename: card.dataset["filename"] ?? "",
     diffSources: null,
     mcp: null,
+    // Both come from the DOM on this path: applyOutcome reads
+    // dataset.denied for the refusal state, and a disclosed card's claim was
+    // already written at build time.
+    disclosed: null,
+    denial: null,
   });
   const done = isToolDone(status);
   if (done) {

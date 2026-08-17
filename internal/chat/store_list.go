@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/api"
 	"golang.org/x/sync/singleflight"
 )
@@ -133,39 +134,150 @@ func (s *Store) listOnce(ctx context.Context) ([]api.ChatHeader, bool) {
 	return headers, complete
 }
 
-// BuildHistory returns a plain-text transcript used for prime priming. Returns
-// "" if the chat is missing or empty.
+// primeHistoryCap bounds the transcript BuildHistory returns.
+//
+// The prime is the DEGRADED path: it runs only when a model switch fell back to
+// a new session or a reload could not `session/load`, so the alternative to a
+// good prime is a model that has forgotten the conversation entirely. That
+// argues for generosity. Against it: the prime is itself a prompt, so every byte
+// spent re-narrating history is a byte the resumed conversation cannot use, and
+// an unbounded transcript can exceed the window outright, which fails upstream
+// with an opaque error instead of a shortened memory.
+//
+// 64 KiB is roughly 16k tokens: enough to carry a long working session's recent
+// arc, and a small fraction of any window vibekit's models offer. Bytes rather
+// than tokens because vibekit cannot count tokens (the context ring reads usage
+// from KAS's `usage_update`, which does not exist yet at prime time), and a byte
+// budget is the same proxy `MaxInlineTurnBytes` and `pushBodyCap` already use.
+const primeHistoryCap = 64 << 10
+
+// primeOmissionNotice tells the model its own input was clipped. Without it a
+// truncated prime is indistinguishable from a short conversation, so the model
+// answers confidently about a history it was never given.
+const primeOmissionNotice = "[%d earlier message(s) omitted to fit the priming budget]\n"
+
+// BuildHistory returns a plain-text transcript used for prime priming, bounded
+// to primeHistoryCap. Returns "" if the chat is missing or empty.
+//
+// Trimming drops WHOLE MESSAGES, oldest first, which is the only honest unit
+// here: cutting mid-message would hand the model half a sentence and no way to
+// know it. The newest messages are the ones kept, because a resumed
+// conversation continues from its end and anything from the start that still
+// matters has usually been restated since.
+//
+// The last message always survives. If it alone exceeds the budget its content
+// is truncated with a marker charged INSIDE the cap (the same rule
+// push.fitToCap follows), because a prime with no final turn cannot resume
+// anything.
 func (s *Store) BuildHistory(ctx context.Context, chatID api.ChatID) string {
 	c, ok := s.Get(ctx, chatID)
 	if !ok || len(c.Messages) == 0 {
 		return ""
 	}
-	var b strings.Builder
+
+	// Render first, measure second. Each message's rendered form is what costs
+	// budget, so selecting on the raw fields would mis-count the role prefixes
+	// and the tool-call lines.
+	rendered := make([]string, len(c.Messages))
 	for i := range c.Messages {
-		m := &c.Messages[i]
-		switch m.Role {
-		case api.RoleUser:
-			b.WriteString("User: ")
-			b.WriteString(m.Content)
-			b.WriteByte('\n')
-		case api.RoleAssistant:
-			b.WriteString("Assistant: ")
-			b.WriteString(m.Content)
-			for j := range m.ToolCalls {
-				tc := &m.ToolCalls[j]
-				fmt.Fprintf(&b, "\n  [tool: %s status=%s]", tc.Title, tc.Status)
-			}
-			b.WriteByte('\n')
-		case api.RoleEvent:
-			b.WriteString("[")
-			b.WriteString(string(m.EventKind))
-			b.WriteString("] ")
-			b.WriteString(m.Content)
-			b.WriteByte('\n')
-		default:
-			slog.Warn("chat build_history: unknown message role, skipped",
-				"chat_id", chatID, "msg_id", m.ID, "role", string(m.Role))
+		rendered[i] = renderPrimeMessage(&c.Messages[i], chatID)
+	}
+
+	// Reserve the omission notice's bytes BEFORE selecting, so the notice can
+	// never push an already-admitted message over the cap. Computed exactly
+	// (the count is bounded by the message total) rather than guessed.
+	budget := primeHistoryCap - len(fmt.Sprintf(primeOmissionNotice, len(rendered)))
+	first, total := selectPrimeWindow(rendered, budget)
+	if first == len(rendered) {
+		return "" // every message was an unknown role
+	}
+
+	var b strings.Builder
+	b.Grow(min(total, primeHistoryCap))
+	if omitted := countRenderable(rendered[:first]); omitted > 0 {
+		slog.Info("chat build_history: transcript trimmed to the priming budget",
+			"chat_id", chatID, "omitted", omitted, "kept", len(rendered)-first, "cap", primeHistoryCap)
+		fmt.Fprintf(&b, primeOmissionNotice, omitted)
+	}
+	for _, line := range rendered[first:] {
+		if line == "" {
+			continue
 		}
+		// The single-message overflow case, reachable only for the last message:
+		// every earlier one was admitted under `budget`, which already excluded
+		// the notice.
+		if b.Len()+len(line) > primeHistoryCap {
+			capped, _ := runesafe.SanitizeCapped(line, max(primeHistoryCap-b.Len(), 0), "...")
+			b.WriteString(capped)
+			continue
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+// selectPrimeWindow picks the newest run of rendered messages that fits budget,
+// returning the index of the oldest one kept and their total size. `first ==
+// len(rendered)` means nothing was renderable.
+//
+// The last message is admitted unconditionally, which is what guarantees a prime
+// always carries the turn the conversation resumes from; the caller truncates it
+// if it alone busts the cap.
+func selectPrimeWindow(rendered []string, budget int) (first, total int) {
+	first = len(rendered)
+	last := len(rendered) - 1
+	for i, line := range slices.Backward(rendered) {
+		if line == "" {
+			continue // unknown role, already warned
+		}
+		if total+len(line) > budget && i != last {
+			break
+		}
+		total += len(line)
+		first = i
+	}
+	return first, total
+}
+
+// countRenderable counts the messages that would have produced output, so the
+// omission notice reports messages the model lost rather than array slots.
+func countRenderable(rendered []string) int {
+	n := 0
+	for _, r := range rendered {
+		if r != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// renderPrimeMessage renders one message for the priming transcript, or "" for a
+// role this projection does not know how to narrate.
+func renderPrimeMessage(m *api.Message, chatID api.ChatID) string {
+	var b strings.Builder
+	switch m.Role {
+	case api.RoleUser:
+		b.WriteString("User: ")
+		b.WriteString(m.Content)
+		b.WriteByte('\n')
+	case api.RoleAssistant:
+		b.WriteString("Assistant: ")
+		b.WriteString(m.Content)
+		for j := range m.ToolCalls {
+			tc := &m.ToolCalls[j]
+			fmt.Fprintf(&b, "\n  [tool: %s status=%s]", tc.Title, tc.Status)
+		}
+		b.WriteByte('\n')
+	case api.RoleEvent:
+		b.WriteString("[")
+		b.WriteString(string(m.EventKind))
+		b.WriteString("] ")
+		b.WriteString(m.Content)
+		b.WriteByte('\n')
+	default:
+		slog.Warn("chat build_history: unknown message role, skipped",
+			"chat_id", chatID, "msg_id", m.ID, "role", string(m.Role))
+		return ""
 	}
 	return b.String()
 }

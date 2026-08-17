@@ -1,16 +1,36 @@
 // @vitest-environment happy-dom
 // ---------------------------------------------------------------------------
-// Tests for the Workflows sub-tab — the Run ⇄ Cancel row logic, not the DOM
-// chrome. Each case pins a piece of the single-run contract:
+// Tests for the Workflows sub-tab. Two halves.
+//
+// The Run ⇄ Cancel row logic. Each case pins a piece of the single-run contract:
 //   - the button names the recipe's ONE possible live run (Run ⇄ Cancel flips
 //     on the run list, not on who launched it)
 //   - paused is NOT terminal: a paused run still blocks a relaunch, so its row
 //     must offer Cancel or the recipe wedges with no way out
 //   - launching with declared inputs collects them inline (no modal)
 //   - a launch opens the run tab that OWNS the run
+//
+// The row's LAYOUT, which this suite deliberately did not cover before and
+// which is what let a regression ship. `.docs-row` became a horizontal flex
+// container (a delete button had to sit beside the activation surface) and the
+// five document tabs moved their stack onto a `.docs-row-surface` column. This
+// tab was not migrated, so its four blocks — top line, schedule summary,
+// description, inputs note — were authored to stack and were laid side by side
+// instead, each block's left edge being the running sum of the text widths
+// before it.
+//
+// The layout cases are a DOM half and a SOURCE half, and they need each other.
+// happy-dom implements no layout and no cascade, so "these blocks share a left
+// edge" is not observable at runtime; it is the conjunction of two facts that
+// are — the blocks are siblings of one container, and that container is a
+// stretch column whose members carry no inline-start offset.
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { loadCSS, ruleBody, ruleContaining } from "./__test-helpers__/css-rules.js";
 
 const dispatched: { name: string; args: unknown }[] = [];
 
@@ -47,6 +67,11 @@ vi.mock("./actions/runs.js", () => ({
   },
 }));
 vi.mock("./run-view.js", () => ({ openLiveRunView: vi.fn() }));
+// The unattended note's auto-approve read-out. Unmocked, refreshAutoApprove
+// reaches /api/settings through the actions transport (which the api-client mock
+// does not cover), fire-and-forget, so the request was still open when the window
+// tore down and printed an unhandled AbortError.
+vi.mock("./persist.js", () => ({ loadSettings: vi.fn(async () => ({})) }));
 
 // The Schedule button's actions: unmocked they reach the network, and a row's
 // summary line is decoration this suite does not assert on.
@@ -169,5 +194,210 @@ describe("the Run ⇄ Cancel row", () => {
     };
     expect(args.source).toBe("bundled://goal");
     expect(args.inputs).toEqual({ prompt: "make the tests pass" });
+  });
+});
+
+describe("the recipe row stacks", () => {
+  const docs = loadCSS("28-docs.css");
+
+  function rowFor(panel: HTMLElement, source: string): HTMLElement {
+    const row = panel.querySelector<HTMLElement>(`[data-recipe="${source}"]`);
+    if (row === null) {
+      throw new Error(`no row rendered for ${source}`);
+    }
+    return row;
+  }
+
+  // Each case names its own recipe. The module keeps the last fetched list, and
+  // `reconcile` keys rows by source and runs only `update()` on a key it already
+  // has — so reusing one name across cases would let a row MOUNTED from the
+  // previous case's recipe survive into this one and be asserted against the new
+  // one's fields. A unique key per case is what forces a fresh mount.
+
+  it("hosts every block on the surface and nothing beside it", async () => {
+    // The DOM half of "the blocks share a left edge". A block appended to the
+    // ROW is a flex item on the row's horizontal main axis; a block appended to
+    // the surface is a member of its column. So the assertion is membership: the
+    // row has exactly ONE child, and all four blocks are inside it.
+    recipesReply = { recipes: [recipe("stack-all", { prompt: "prompt" })] };
+    const panel = await render();
+    const row = rowFor(panel, "bundled://stack-all");
+
+    expect(row.children.length).toBe(1);
+    const surface = row.children[0];
+    expect(surface?.className).toBe("docs-row-surface");
+
+    const blocks = [...(surface?.children ?? [])].map((c) => c.className);
+    expect(blocks).toEqual([
+      "docs-row-top",
+      "recipe-sched-summary",
+      "docs-row-sub",
+      "recipe-inputs-note",
+    ]);
+  });
+
+  it("declares the surface a stretch column, with no per-block inset", () => {
+    // The SOURCE half. Siblings in a stretch column each span the container's
+    // content box, so their left edges are equal — unless one carries its own
+    // inline-start offset, which the schedule summary did: 4px of
+    // padding-inline-start, the exact residual left over once the stack was
+    // restored, and the only remaining reason the three lines disagreed.
+    const surface = ruleBody(docs, ".docs-row-surface");
+    expect(/flex-direction:\s*column/.test(surface)).toBe(true);
+    expect(/align-items:\s*stretch/.test(surface)).toBe(true);
+
+    for (const block of [".recipe-sched-summary", ".recipe-inputs-note", ".docs-row-sub"]) {
+      const body = ruleBody(docs, block);
+      expect(/padding-inline-start|padding-left|margin-inline-start|margin-left/.test(body)).toBe(
+        false,
+      );
+    }
+  });
+
+  it("keeps the badge beside the title rather than at the far edge", async () => {
+    // Adjacency in the DOM is necessary but not sufficient: the badge was
+    // already the name's next sibling while it rendered at the row's right
+    // edge, because `.list-row-name { flex: 1 }` ate the free space between
+    // them. Both facts, therefore.
+    recipesReply = { recipes: [{ ...recipe("badge-beside"), built_in: true }] };
+    const panel = await render();
+    const top = rowFor(panel, "bundled://badge-beside").querySelector(".docs-row-top");
+
+    expect(top?.children[0]?.className).toBe("list-row-name");
+    expect(top?.children[1]?.className).toContain("docs-row-meta");
+    expect(top?.children[1]?.textContent).toBe("bundled");
+
+    const name = ruleContaining(docs, ".recipe-row .list-row-name", "top");
+    expect(/flex:\s*0 1 auto/.test(name.body)).toBe(true);
+  });
+
+  it("stacks the badge under the title on a phone, from THIS stylesheet", () => {
+    // The cascade trap. 28-docs.css is unlayered and 50-mobile.css sits inside
+    // `@layer mobile`, so an unlayered rule wins whatever the media query says
+    // — a copy of this block over there would never apply, which is why
+    // 50-mobile.css's own .page-content padding override is already dead.
+    const mobile = ruleContaining(docs, ".recipe-row .list-row-name", "40rem");
+    expect(/flex-basis:\s*100%/.test(mobile.body)).toBe(true);
+    expect(
+      /flex-wrap:\s*wrap/.test(ruleContaining(docs, ".recipe-row .docs-row-top", "40rem").body),
+    ).toBe(true);
+
+    expect(loadCSS("50-mobile.css")).not.toMatch(/recipe/);
+  });
+
+  it("hosts the inputs form off the row's main line", async () => {
+    // Two 14rem inputs cannot fit a ~750px line, and the panel's `overflow-y:
+    // auto` computes `overflow-x` to `auto` with it, so a two-input recipe could
+    // put a horizontal scrollbar on the whole page.
+    recipesReply = {
+      recipes: [recipe("form-host", { prompt: "prompt", max_iterations: "string" })],
+    };
+    const panel = await render();
+    const row = rowFor(panel, "bundled://form-host");
+    buttonFor(panel, "bundled://form-host")?.click();
+
+    const form = row.querySelector(".recipe-input-form");
+    expect(form).not.toBeNull();
+    expect(form?.parentElement?.className).toBe("docs-row-surface");
+    // Nothing joined the row's own axis on the way.
+    expect(row.children.length).toBe(1);
+  });
+
+  it("declares .recipe-run-btn exactly once", () => {
+    // It was declared twice at equal specificity with conflicting
+    // margin-inline-start, so which one won was a source-order accident.
+    // ruleContaining requires exactly one match and reports the count it found.
+    const rule = ruleContaining(docs, ".recipe-run-btn", "top");
+    expect(/margin-inline-start:\s*0/.test(rule.body)).toBe(true);
+  });
+
+  it("gives the pointer only to a surface that actually activates", () => {
+    // `.docs-row { cursor: pointer }` reached every row on all six tabs. A
+    // recipe row has no click handler (this stylesheet says so itself) and an
+    // inert document row — a global hook — cannot be opened either, so both
+    // offered a pointer and then did nothing. docs.ts sets role=button exactly
+    // when it wires the open, which makes the attribute the honest condition.
+    expect(/cursor/.test(ruleBody(docs, ".docs-row"))).toBe(false);
+    const surface = ruleContaining(docs, '.docs-row-surface[role="button"]', "top");
+    expect(/cursor:\s*pointer/.test(surface.body)).toBe(true);
+  });
+
+  it("carries the row name's weight, not a size, and on all six tabs", () => {
+    // The title is byte-identical to the five sibling tabs, History and Tools:
+    // `.list-row-name`, mono, --fs-sm, weight 400. So it is not small, it is
+    // light — and a size bump on this tab alone would make Workflows disagree
+    // with the five tabs it shares a tab bar with. `.docs-row` is exactly those
+    // six, and --fw-medium at the same size is what .mcp-row-name already does.
+    const rule = ruleContaining(docs, ".docs-row .list-row-name", "top");
+    expect(/font-weight:\s*var\(--fw-medium\)/.test(rule.body)).toBe(true);
+    expect(/font-size/.test(rule.body)).toBe(false);
+    expect(
+      /font-weight:\s*var\(--fw-medium\)/.test(ruleBody(loadCSS("60-mcp.css"), ".mcp-row-name")),
+    ).toBe(true);
+  });
+});
+
+describe("the muted classes are gone rather than defined", () => {
+  // `.text-muted` and `.text-sm` were on seven elements across four files and
+  // declared in no stylesheet, so "Not scheduled" rendered at full primary ink
+  // and outshouted the `.is-scheduled` accent meant to distinguish it. They were
+  // REPLACED rather than defined: the utilities layer ranks below every
+  // unlayered feature slice, so a `.text-muted` there would have lost to the
+  // component rules at some of those very sites (`.recipe-inputs-note` already
+  // sets colour unlayered) and won at others — a class that works in some places
+  // is worse than one that works nowhere. Each site takes its ink from its own
+  // component rule instead.
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  it("names neither class anywhere in authored source", () => {
+    const roots = [here, join(here, "actions"), join(here, "handlers"), join(here, "fundamentals")];
+    const files = roots.flatMap((dir) =>
+      readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isFile() && (e.name.endsWith(".ts") || e.name.endsWith(".html")))
+        .map((e) => join(dir, e.name)),
+    );
+    files.push(join(here, "..", "static", "index.html"));
+
+    const offenders: string[] = [];
+    for (const f of files) {
+      // The test file naming the classes in its own prose is not a use site.
+      if (f.endsWith("recipes.test.ts")) {
+        continue;
+      }
+      const text = readFileSync(f, "utf8");
+      if (/\btext-muted\b|\btext-sm\b/.test(text)) {
+        offenders.push(f.slice(here.length + 1));
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("mutes the dormant schedule line and lets a live one take the accent", () => {
+    const docs = loadCSS("28-docs.css");
+    expect(/color:\s*var\(--c-text-tertiary\)/.test(ruleBody(docs, ".recipe-sched-summary"))).toBe(
+      true,
+    );
+    // Higher specificity, so the accent still wins for a live schedule.
+    expect(
+      /color:\s*var\(--c-accent\)/.test(ruleBody(docs, ".recipe-sched-summary.is-scheduled")),
+    ).toBe(true);
+  });
+
+  it("gives every former use site a component rule that carries its ink", () => {
+    const pages = loadCSS("18-pages.css");
+    for (const sel of [".run-id", ".run-output-empty", ".hist-search-note"]) {
+      expect(/color:\s*var\(--c-text-tertiary\)/.test(ruleBody(pages, sel))).toBe(true);
+    }
+    // The agent name does the same job as the type beside it, so it joined that
+    // rule instead of getting one of its own.
+    const node = ruleContaining(pages, ".run-node-agent", "top");
+    expect(node.selector).toContain(".run-node-type");
+    expect(/color:\s*var\(--c-text-tertiary\)/.test(node.body)).toBe(true);
+
+    expect(
+      /color:\s*var\(--c-text-tertiary\)/.test(
+        ruleBody(loadCSS("19-files.css"), ".fb-search-note"),
+      ),
+    ).toBe(true);
   });
 });

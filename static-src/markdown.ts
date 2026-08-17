@@ -28,7 +28,8 @@ import { parser, parser_end, parser_write } from "./smd-parser.js";
 import type { Parser } from "./smd-parser.js";
 import { domRenderer } from "./smd-renderer.js";
 import { linkifyPaths } from "./linkify.js";
-import { decorateCodeBlocks } from "./code-blocks.js";
+import { decorateCodeBlocks, decorateStreamingCodeTail } from "./code-blocks.js";
+import { renderSvgBlock } from "./svg-block.js";
 
 /** Incremental-write flush throttle while streaming: buffered deltas are
  *  fed to the append-only streaming parser at most once per interval.
@@ -66,21 +67,33 @@ function nextTick(fn: () => void): void {
   }
 }
 
-/** Decorate a freshly-completed block. Idempotent. */
-function decorate(block: HTMLElement): void {
+/** Decorate a freshly-completed block. Idempotent. Returns the element now
+ *  standing in the document, which is not always the one passed in — an `svg`
+ *  fence is REPLACED by its rendered diagram. */
+function decorate(block: HTMLElement): HTMLElement {
   if (block.tagName === "PRE") {
+    // Ahead of decorateCodeBlocks: a converted diagram is no longer a code
+    // block, so it must not collect a language label, a Copy button or
+    // highlighting for source the reader can no longer see.
+    const diagram = renderSvgBlock(block);
+    if (diagram !== null) {
+      return diagram;
+    }
     if (block.parentElement !== null) {
       decorateCodeBlocks(block.parentElement);
     }
-    return;
+    return block;
   }
   linkifyPaths(block);
+  return block;
 }
 
 /** Decorate + tag for the per-block entry animation. */
 function decorateAndAnimate(block: HTMLElement): void {
-  decorate(block);
-  block.setAttribute("data-vk-block-enter", "");
+  // The tag goes on whatever decorate left in the document: setting it on a
+  // `<pre>` that has just been replaced by a diagram would animate a detached
+  // node and leave the visible one un-faded.
+  decorate(block).setAttribute("data-vk-block-enter", "");
 }
 
 export interface MarkdownStream {
@@ -119,6 +132,10 @@ export function createMarkdownStream(host: HTMLElement): MarkdownStream {
     const slice = pendingParse.slice(0, sliceEnd);
     pendingParse = pendingParse.slice(sliceEnd);
     parser_write(p, slice);
+    // A fence that is still open reaches no per-block callback, so the sweep
+    // after each slice is what gives a streaming block its language label and
+    // its Copy button while it arrives.
+    decorateStreamingCodeTail(host);
     if (pendingParse !== "") {
       nextTick(drain);
     } else {
@@ -174,6 +191,11 @@ export function createMarkdownStream(host: HTMLElement): MarkdownStream {
       }
       draining = false;
       parser_end(p);
+      // parser_end does NOT close an open fence, so a block the model never
+      // terminated is still provisional here. Finalize it: highlighting and the
+      // Run button are the half a streaming pass deliberately withholds, and
+      // withholding them forever is the bug this closes.
+      decorateCodeBlocks(host);
     },
   };
 }
@@ -186,6 +208,10 @@ export function renderMarkdownInto(host: HTMLElement, md: string): void {
   const p = parser(domRenderer(host, { onBlockComplete: decorate }));
   parser_write(p, md);
   parser_end(p);
+  // Same reason as the streaming path's end(): an unterminated fence in stored
+  // content never reaches the per-block callback, and a reloaded transcript must
+  // not be the one place a code block loses its chrome.
+  decorateCodeBlocks(host);
 }
 
 /** Pure parser output — no decoration, no animation. Used by tests,

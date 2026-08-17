@@ -11,7 +11,7 @@ vi.mock("./dom.js", () => ({
   el: () => document.createElement("div"),
 }));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_KEYS_ESCAPE: "escape" }));
-vi.mock("./tabs.js", () => ({ toggleFilesView: vi.fn() }));
+vi.mock("./tabs.js", () => ({ toggleFilesView: vi.fn(), getActiveTabKind: vi.fn(() => "files") }));
 vi.mock("./editor-openers.js", () => ({ openFile: vi.fn() }));
 vi.mock("./modals.js", () => ({ closeModal: vi.fn() }));
 vi.mock("./confirm.js", () => ({ confirm: vi.fn().mockResolvedValue(true) }));
@@ -21,6 +21,10 @@ vi.mock("./icons.js", () => ({ fileIcon: vi.fn(() => ""), FILE_ICONS: {} }));
 vi.mock("./router.js", () => ({ pushRoute: vi.fn() }));
 vi.mock("./chat.js", () => ({ attachPathToActiveChat: vi.fn() }));
 vi.mock("./files-browser-drop.js", () => ({ initBrowserDragDrop: vi.fn() }));
+// files-search.ts is the browser's other satellite, stubbed for the same reason
+// as the drop module: this file tests FileBrowserState, and the search bar's own
+// behaviour is files-search.test.ts's.
+vi.mock("./files-search.js", () => ({ initFilesSearch: vi.fn(), resetFilesSearch: vi.fn() }));
 vi.mock("./files-picker.js", () => ({ setOnUploadComplete: vi.fn() }));
 vi.mock("./api-client.js", () => ({ apiPost: vi.fn(), apiGet: vi.fn() }));
 vi.mock("./scroll.js", () => ({

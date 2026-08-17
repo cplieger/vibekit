@@ -14,7 +14,11 @@
 // symlink-aware resolvePath is applied uniformly. Operations that
 // touch a DIRECTORY (delete, upload target) additionally consult
 // isProtectedDir; operations with a secondary path argument (rename's
-// name, copy/move's dest) re-run the full guard on the new path.
+// name, copy/move's dest) re-run the full guard on the new path. The
+// two RECURSIVE routes (the zip download and the content search)
+// resolve their root once and then stay in that mount by
+// construction, re-checking the sensitive-path list per entry —
+// see filehandler_search.go for why both halves are required.
 package filehandler
 
 import (
@@ -43,6 +47,21 @@ const (
 	// respPath is the response-body key echoing the request path back
 	// to the client (listing and read responses).
 	respPath = "path"
+
+	// defaultUploadDir is the upload target when the client sends no
+	// "dir". A workspace folder modelled on an OS Downloads folder:
+	// user-managed, with no pruning and no retention policy anywhere in
+	// this app. It does not have to exist — handleUpload's MkdirAll
+	// creates it inside the mount's own os.Root on the first upload, so
+	// nothing else in the app pre-creates it.
+	//
+	// A literal rather than a value derived from KIRO_WORK_DIR, because
+	// the handler holds a longest-first sorted mount list and no notion
+	// of which of those mounts is "the workspace"; an operator who moves
+	// the workspace also has to move this. The client sends the same
+	// string for the composer's drop and paste uploads, and
+	// TestUploadPolicyMatchesClient pins the two spellings together.
+	defaultUploadDir = "/workspace/uploads"
 )
 
 // Handler implements api.RouteHandler, serving /api/file/* and /api/files/*.
@@ -77,6 +96,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/files", h.handleFiles)
 	mux.HandleFunc("/api/files/action", h.handleFilesAction)
 	mux.HandleFunc("/api/files/download", h.handleDownloadZip)
+	mux.HandleFunc("/api/files/search", h.handleFilesSearch)
 }
 
 // errHandled signals that an action function has already written its

@@ -11,7 +11,6 @@
     "actions/*.ts",
     "lib/**/*.ts",
     "**/__test-helpers__/**/*.ts",
-    "vendor-types/*.d.ts",
     "**/*.test.ts"
   ],
   "exclude": ["vitest.config.ts"]

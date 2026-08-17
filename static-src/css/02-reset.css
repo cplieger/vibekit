@@ -93,15 +93,15 @@
     margin: 0;
     flex-shrink: 0;
     border: 1px solid var(--c-border);
-    border-radius: 3px;
+    border-radius: var(--r-sm);
     background-color: var(--c-bg-secondary);
     background-position: center;
     background-repeat: no-repeat;
     background-size: 0.75rem;
     cursor: pointer;
     transition:
-      background-color var(--dur-micro) var(--ease-micro),
-      border-color var(--dur-micro) var(--ease-micro);
+      background-color var(--dur-micro) var(--ease-standard),
+      border-color var(--dur-micro) var(--ease-standard);
   }
 
   input[type="checkbox"]:hover {

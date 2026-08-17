@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -147,3 +148,79 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 			got.Matches[0].ID, got.Matches[0].Score, got.Matches[1].Score)
 	}
 }
+
+// TestSearchAll_IsAlwaysCaseInsensitive pins the DECISION behind the missing
+// `case` parameter, so the History page's box is not given a toggle wired to
+// nothing.
+//
+// searchOneChat states the reason: a cross-chat "which conversation was that in"
+// is asked from memory, and memory does not remember capitalisation. The
+// match-case toggle belongs to the in-chat search, which is a different question
+// on a different endpoint (handleSearch, which DOES read `case`). Two halves have
+// to hold for that to be true end to end — the body scan and the title boost —
+// because titleHits folds independently of SearchChat.
+//
+// If a future change adds a case parameter here, this test is the record of what
+// it is overturning, and the client's toggle has to arrive in the same commit.
+func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		query string
+		// wantChats is every chat id the query must return, whatever the casing.
+		wantChats []string
+	}{
+		{name: "lowercase query", query: "redis", wantChats: []string{"c-aaaaaaaa", "c-bbbbbbbb"}},
+		{name: "uppercase query", query: "REDIS", wantChats: []string{"c-aaaaaaaa", "c-bbbbbbbb"}},
+		{name: "mixed-case query", query: "ReDiS", wantChats: []string{"c-aaaaaaaa", "c-bbbbbbbb"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _ := newTestStore(t)
+			// One chat matches only in its TITLE (the titleHits half), the other
+			// only in its BODY (the SearchChat half), and both are spelled in a
+			// case the queries above disagree with.
+			seedChat(t, s, "c-aaaaaaaa", "REDIS migration", []api.Message{
+				msg("m1", api.RoleUser, "moved the cache over"),
+			})
+			seedChat(t, s, "c-bbbbbbbb", "Assorted notes", []api.Message{
+				msg("m2", api.RoleUser, "we touched Redis in passing"),
+			})
+
+			got := s.SearchAll(t.Context(), tc.query)
+			ids := make(map[string]bool, len(got.Matches))
+			for i := range got.Matches {
+				ids[string(got.Matches[i].ID)] = true
+			}
+			for _, want := range tc.wantChats {
+				if !ids[want] {
+					t.Errorf("query %q missed chat %s; matches: %+v", tc.query, want, got.Matches)
+				}
+			}
+		})
+	}
+}
+
+// TestSearchAll_TakesNoCaseArgument is the compile-time half of the decision.
+//
+// A signature test rather than a behaviour one, because the client's toggle is
+// gated on the parameter's ABSENCE: the moment SearchAll grows one, a
+// silently-ignored `?case=1` becomes possible and the History box must gain its
+// `Aa` button in the same change. handleSearchAll forwards only `q`.
+func TestSearchAll_TakesNoCaseArgument(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestStore(t)
+	// A NAMED type, so the assignment is a real assertion rather than an inferred
+	// one: adding a third parameter to SearchAll stops it compiling here, and the
+	// failure lands in this file rather than as a client toggle that does nothing.
+	var f searchAllSignature = s.SearchAll
+	if got := f(t.Context(), ""); len(got.Matches) != 0 {
+		t.Errorf("empty query must return no matches, got %+v", got.Matches)
+	}
+}
+
+// searchAllSignature is the shape handleSearchAll forwards to: a context and a
+// query, and NO case flag.
+type searchAllSignature func(context.Context, string) SearchAllResult

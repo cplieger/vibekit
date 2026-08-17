@@ -52,8 +52,14 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	if !isReasoning {
 		prev, _ := buf.SteerCarry()
 		var carry string
-		text, carry = stripSteerAcks(prev, text)
+		var acks []steerAck
+		text, carry, acks = stripSteerAcks(prev, text)
 		buf.SetSteerCarry(carry, subtask)
+		// BEFORE the empty-text return below, not after: a marker closing a
+		// response usually arrives as its own delta, which is exactly the case
+		// that returns early, so a broadcast placed after it would never fire
+		// for the common shape.
+		t.broadcastSteerAcks(ctx, chatID, acks)
 		if text == "" {
 			// The whole delta is either withheld as a marker candidate or was a
 			// marker in full. Returning here rather than broadcasting an empty
@@ -107,6 +113,29 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 			AgentSubtaskID: subtask,
 			Refusal:        refusal,
 		}))
+}
+
+// broadcastSteerAcks reports what the agent said it did about each steer whose
+// acknowledgement marker just closed.
+//
+// It re-broadcasts steer_injected rather than introducing a second event type,
+// because the ack is a further fact about a steer the client already tracks by
+// id and the store's merge is already keyed on that id. A new event would have
+// bought nothing but a second handler and a second wire registration.
+//
+// Text is deliberately EMPTY on this frame. The steer's own text lives in KAS's
+// buffer, not here, so the honest payload carries only what this layer learned;
+// the client merges by id and never overwrites the text it already holds.
+func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID api.ChatID, acks []steerAck) {
+	for _, ack := range acks {
+		if ack.SteerID == "" || ack.Text == "" {
+			continue
+		}
+		t.deps.Broadcast(ctx, api.NewEvent(api.EventSteerInjected, chatID, api.SteerInjectedPayload{
+			SteerID: ack.SteerID,
+			Ack:     ack.Text,
+		}))
+	}
 }
 
 // announceTruncation says once, in both directions, that a turn outgrew the

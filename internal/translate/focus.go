@@ -71,10 +71,24 @@ const PrimePreambleReload = "The previous session could not be reloaded, so this
 	"silently and reply with a single short line confirming " +
 	"you're caught up.\n\n"
 
+// PrimePreambleTangent is the TANGENT's fallback preamble: a tangent whose
+// `session/fork` was refused, so the parent's context could not be inherited and
+// has to be injected instead (see command/fork.go).
+//
+// Its first sentence differs from the other two for the reason PrimePreambleReload
+// exists: nothing was switched and nothing failed to reload, and telling the model
+// either would be a small lie in the one message it reads before everything else.
+// What it does say is that the history belongs to a conversation this one branched
+// FROM — the only preamble here whose transcript is another chat's.
+const PrimePreambleTangent = "This conversation is a tangent branched off another " +
+	"one. Below is the full history of the conversation it came from. Read it " +
+	"silently and reply with a single short line confirming " +
+	"you're caught up.\n\n"
+
 // primePreambles is every preamble the coordinator can send. The focus filter
 // walks all of them: KAS derives a first-prompt title from whatever text it sees
 // first, so a preamble missing from this list becomes a chat title.
-var primePreambles = []string{PrimePreambleSwitch, PrimePreambleReload}
+var primePreambles = []string{PrimePreambleSwitch, PrimePreambleReload, PrimePreambleTangent}
 
 // derivedTitleEllipsis matches KAS's SESSION_TITLE_ELLIPSIS.
 const derivedTitleEllipsis = "..."

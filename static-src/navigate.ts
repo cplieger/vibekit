@@ -53,8 +53,8 @@ import { absPath } from "./workspace.js";
  *  path, while the file browser carries an absolute one. The editor addresses
  *  files absolutely, so every caller is normalised here rather than each
  *  learning the rule. Before this, the three relative callers produced
- *  `GET /api/file?path=hello.sh`, which the granted-roots allow-list denied
- *  with 403 — so clicking a changed filename could never load its diff. */
+ *  `GET /api/file?path=hello.sh`, which the granted-roots allow-list denied with
+ *  403 — so clicking a changed filename could never load its diff. */
 export function openChange(path: string, ref = "HEAD"): void {
   if (path === "") {
     return;
@@ -82,8 +82,8 @@ export function openChangeSet(): void {
  *
  *  Normalised through the same seam as openChange, and for the same reason: a
  *  read card's filename and a `path:line` reference in the agent's prose are
- *  both workspace-RELATIVE, so both produced `GET /api/file?path=…` requests
- *  the granted-roots allow-list denied. An absolute path passes through. */
+ *  both workspace-RELATIVE, so both produced `GET /api/file?path=…` requests the
+ *  granted-roots allow-list denied. An absolute path passes through. */
 export function openAtLine(path: string, line?: number): void {
   if (path === "") {
     return;

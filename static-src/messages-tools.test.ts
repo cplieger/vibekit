@@ -4,8 +4,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock messages-tools.ts's heavy DOM/store deps so the import resolves without
-// pulling the store, subagent modals, tool-card, etc. ansi + reactive stay
-// real (applyOutputUpdate uses ansiToHtml + el for actual rendering).
+// pulling the store, subagent modals, tool-card, etc. output-render + reactive
+// stay real (applyOutputUpdate paints through renderOutput + el).
 vi.mock("./store-signals.js", () => ({
   ensureToolCallSig: vi.fn(() => ({ value: undefined })),
   clearToolCallSig: vi.fn(),

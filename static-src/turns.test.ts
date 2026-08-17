@@ -169,6 +169,59 @@ describe("turnLedger", () => {
     expect(led.changedFiles["a.ts"]).toEqual({ lines_added: 5, lines_removed: 2 });
   });
 
+  // The model is the FOURTH aggregation strategy in this function, and it is
+  // none of the other three: adding two ids is meaningless, and taking the last
+  // one is silently wrong on a turn a mid-turn switch split in two.
+  it("names the model that served the turn", () => {
+    const [t] = projectTurns([user("u1", "a"), assistant("a1", { turn_model: "sonnet-4" })], false);
+    expect(turnLedger(t!).models).toEqual(["sonnet-4"]);
+  });
+
+  it("carries both models in order when a switch split the turn", () => {
+    const [t] = projectTurns(
+      [
+        user("u1", "a"),
+        assistant("a1", { turn_model: "sonnet-4" }),
+        event("e1", "model_switched"),
+        assistant("a2", { turn_model: "opus-4" }),
+      ],
+      false,
+    );
+    expect(turnLedger(t!).models).toEqual(["sonnet-4", "opus-4"]);
+  });
+
+  it("does not repeat one model that answered several messages", () => {
+    const [t] = projectTurns(
+      [
+        user("u1", "a"),
+        assistant("a1", { turn_model: "sonnet-4" }),
+        assistant("a2", { turn_model: "sonnet-4" }),
+      ],
+      false,
+    );
+    expect(turnLedger(t!).models).toEqual(["sonnet-4"]);
+  });
+
+  // Every message persisted before the field existed carries no model, and the
+  // footer renders nothing for that rather than "unknown".
+  it("reports no model for a turn that carries none", () => {
+    const [t] = projectTurns([user("u1", "a"), assistant("a1")], false);
+    expect(turnLedger(t!).models).toEqual([]);
+  });
+
+  it("ignores an empty model string", () => {
+    const [t] = projectTurns([user("u1", "a"), assistant("a1", { turn_model: "" })], false);
+    expect(turnLedger(t!).models).toEqual([]);
+  });
+
+  it("keeps the models a partly-stamped turn does have", () => {
+    const [t] = projectTurns(
+      [user("u1", "a"), assistant("a1"), assistant("a2", { turn_model: "opus-4" })],
+      false,
+    );
+    expect(turnLedger(t!).models).toEqual(["opus-4"]);
+  });
+
   it("reports a zeroed ledger for a turn that carried no data", () => {
     const [t] = projectTurns([user("u1", "a"), assistant("a1")], false);
     const led = turnLedger(t!);

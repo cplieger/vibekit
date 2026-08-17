@@ -113,5 +113,5 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID api.Cha
 	t.deps.Broadcast(ctx, evt)
 	t.deps.PendingPermsAdd(reqID, evt)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID, api.WorkingLabelPayload{Label: api.WorkingLabelApproval}))
-	t.deps.NotifyPush(ctx, "Permission needed", api.PushKindPermission)
+	t.deps.NotifyPush(ctx, "Permission needed", api.PushKindPermission, chatID)
 }

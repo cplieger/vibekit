@@ -31,6 +31,7 @@ vi.mock("./chat.js", () => ({ attachPathToActiveChat: vi.fn() }));
 import { toggleChatFilter, _repaintRowsForTest } from "./files.js";
 import { openFileGitDiff } from "./editor-openers.js";
 import { _setReposForTest } from "./git-status-store.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 import { setSessions, setActive } from "./store.js";
 import type { GitRepoStatus, GitFileEntry } from "./git-types.js";
 import type { Session } from "./types.js";
@@ -131,6 +132,10 @@ beforeEach(() => {
   const l = document.createElement("div");
   l.id = "fb-list";
   document.body.appendChild(l);
+  resetWorkspace();
+  // /api/git/status-all names each repo by a bare directory under the workspace,
+  // so the absolute keys only exist once the handshake has stated the root.
+  setWorkspaceRoot("/w");
   _setReposForTest([]);
   setSessions([session([])]);
   setActive("c1");
@@ -140,7 +145,7 @@ beforeEach(() => {
 
 describe("git letter decoration", () => {
   it("puts the file's own letter on its row, before the meta column", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a/b.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a/b.go", status: "M" }])]);
     list().append(row("/w/r/a/b.go"));
     _repaintRowsForTest();
     expect(letters()).toEqual(["M"]);
@@ -148,7 +153,7 @@ describe("git letter decoration", () => {
   });
 
   it("reuses the app's git-st-* colour vocabulary rather than a browser-local one", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
     list().append(row("/w/r/a.go"));
     _repaintRowsForTest();
     expect(list().querySelector(".fb-git-letter")?.className).toContain("git-st-m");
@@ -156,7 +161,7 @@ describe("git letter decoration", () => {
 
   it("gives a directory the WORST letter beneath it", () => {
     _setReposForTest([
-      repo("/w/r", [
+      repo("r", [
         { path: "a/untracked.go", status: "?" },
         { path: "a/conflict.go", status: "U" },
       ]),
@@ -167,14 +172,14 @@ describe("git letter decoration", () => {
   });
 
   it("leaves a clean row undecorated", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
     list().append(row("/w/r/clean.go"));
     _repaintRowsForTest();
     expect(letters()).toEqual([]);
   });
 
   it("opens the file's diff when its letter is clicked, without selecting the row", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
     const r = row("/w/r/a.go");
     let rowClicks = 0;
     r.addEventListener("click", () => {
@@ -191,7 +196,7 @@ describe("git letter decoration", () => {
   });
 
   it("does not make a directory's rollup letter clickable — it has no one diff", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a/b.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a/b.go", status: "M" }])]);
     list().append(row("/w/r/a", true));
     _repaintRowsForTest();
     const badge = list().querySelector<HTMLElement>(".fb-git-letter");
@@ -201,7 +206,7 @@ describe("git letter decoration", () => {
   });
 
   it("repaints in place: the same row elements survive, so selection is untouched", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
     const r = row("/w/r/a.go");
     r.classList.add("fb-row-selected");
     list().append(r);
@@ -211,19 +216,19 @@ describe("git letter decoration", () => {
   });
 
   it("replaces the letter on the next poll rather than stacking a second one", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
     list().append(row("/w/r/a.go"));
     _repaintRowsForTest();
-    _setReposForTest([repo("/w/r", [{ path: "a.go", status: "D" }])]);
+    _setReposForTest([repo("r", [{ path: "a.go", status: "D" }])]);
     _repaintRowsForTest();
     expect(letters()).toEqual(["D"]);
   });
 
   it("drops the letter when the tree goes clean", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a.go", status: "M" }])]);
     list().append(row("/w/r/a.go"));
     _repaintRowsForTest();
-    _setReposForTest([repo("/w/r", [])]);
+    _setReposForTest([repo("r", [])]);
     _repaintRowsForTest();
     expect(letters()).toEqual([]);
   });
@@ -276,7 +281,7 @@ describe("changed-by-this-chat filter", () => {
   });
 
   it("still shows the git letter on a dimmed row — the filter is not a mask", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a/theirs.go", status: "M" }])]);
+    _setReposForTest([repo("r", [{ path: "a/theirs.go", status: "M" }])]);
     toggleChatFilter();
     expect(dimmed()).toEqual(["/w/r/a/theirs.go"]);
     expect(letters()).toEqual(["M", "M"]);

@@ -97,6 +97,84 @@ export function catalogBaseModes(): readonly SessionMode[] {
   return catalogModes ?? BUILTIN_MODES;
 }
 
+/** One offered mode plus what the pre-session merge had to DECIDE about it.
+ *
+ *  `shadowed` is that decision, made visible. It is not a field on SessionMode
+ *  because SessionMode is a codegen'd wire type and this is a client-side
+ *  resolution the wire never carries: the live session's availableModes arrives
+ *  already resolved by KAS, so a shadow only exists in the pre-session window. */
+export interface PickerMode {
+  mode: SessionMode;
+  /** The SOURCE of the catalog entry this workspace agent shadows (`global` or
+   *  `bundled`), when it shadows one. Absent when nothing is shadowed. */
+  shadowed?: string;
+}
+
+/** The description a workspace agent carries before a session can supply its
+ *  own. Exported so a test can assert the merge's output shape without pinning
+ *  the sentence. */
+export const WORKSPACE_AGENT_DESC = "Custom agent from your workspace .kiro/agents/ folder.";
+
+/** Merge the pre-session catalog with the workspace agents, MODELLING the
+ *  collision instead of deduping it away.
+ *
+ *  The rule is KAS's own last-write-wins: when a workspace agent and a catalog
+ *  entry (a bundled mode, or the user's global ~/.kiro/agents) share an id, the
+ *  WORKSPACE definition is what a session loads. So the workspace row is the one
+ *  offered, and it says what it shadows.
+ *
+ *  That is the opposite of what this merge used to do. It filtered the workspace
+ *  agent OUT whenever the catalog held its id, so the surviving row was the
+ *  GLOBAL entry while the comment three lines above claimed the workspace
+ *  definition was what a session would load — the picker did not merely hide one
+ *  of the two, it showed the wrong one, and the user had no way to tell.
+ *
+ *  Both halves matter: dropping the shadowed catalog row keeps one row per id
+ *  (two rows carrying the same id would offer a choice `session/set_mode` cannot
+ *  express, since both would send the same mode id), and marking the survivor is
+ *  what tells the user which definition a run will use. */
+export function mergeCatalogAndWorkspace(
+  base: readonly SessionMode[],
+  workspaceAgents: readonly string[],
+): PickerMode[] {
+  const workspace = new Set(workspaceAgents);
+  const out: PickerMode[] = [];
+  for (const m of base) {
+    if (workspace.has(m.id)) {
+      continue; // shadowed by the workspace definition appended below
+    }
+    out.push({ mode: m });
+  }
+  for (const name of workspaceAgents) {
+    const shadows = base.find((m) => m.id === name);
+    out.push({
+      mode: {
+        id: name,
+        name,
+        description: WORKSPACE_AGENT_DESC,
+        source: "workspace",
+      },
+      ...(shadows !== undefined && { shadowed: shadows.source ?? "bundled" }),
+    });
+  }
+  return out;
+}
+
+/** Human-facing label for a mode's scope. The wire's `source` values are
+ *  `bundled` | `global` | `workspace`; a bundled mode needs no label (it is the
+ *  top group and every row in it is bundled), which is why this answers "" for
+ *  it rather than "bundled". */
+export function scopeLabel(source: string | undefined): string {
+  switch (source) {
+    case "workspace":
+      return "workspace";
+    case "global":
+      return "global";
+    default:
+      return "";
+  }
+}
+
 /** Normalize an empty / legacy mode id to the canonical default. Maps the
  *  v2 default-agent ids onto the default so mixed-engine state resolves to
  *  one highlighted entry in the picker. */
@@ -153,11 +231,40 @@ export function iconForSubagent(name: string): string {
   }
 }
 
+/** Display form of a mode's name, for names that are really identifiers.
+ *
+ *  The six bundled workflow modes carry hand-written names (`bug-fix` is
+ *  "Bug Fix"), so they never reach this. Everything else arrives named by
+ *  whoever declared it, and two of those sources hand over a raw id: KAS names
+ *  its non-workflow agents after themselves (`semantic_reviewer`), and a
+ *  workspace agent is named by its front matter, which is commonly the file's
+ *  own snake_case stem. Rendering those verbatim put an underscore in the role
+ *  list beside eleven properly-spaced neighbours.
+ *
+ *  Applied by SHAPE rather than by a list of known ids, so an agent added later
+ *  — by KAS or by the user — is covered without an edit here.
+ *
+ *  A name is treated as an identifier only when it has no whitespace and no
+ *  capital: both are marks of a human having written it, and neither survives
+ *  the transformation intact, so respecting them is what keeps this from
+ *  mangling a deliberate name. "iOS review" and "Bug Fix" pass through
+ *  untouched; `semantic_reviewer` becomes "Semantic Reviewer". */
+export function displayModeName(name: string): string {
+  if (name === "" || /\s/.test(name) || /[A-Z]/.test(name)) {
+    return name;
+  }
+  return name
+    .split(/[-_.]+/)
+    .filter((word) => word !== "")
+    .map((word) => word.replace(/^./, (first) => first.toUpperCase()))
+    .join(" ");
+}
+
 /** Human-facing label for a mode id. Prefers the live session's mode name
  *  (custom agents carry their own), falls back to the bundled catalog, then
  *  to the raw id. */
 export function labelForMode(id: string, modes?: readonly SessionMode[]): string {
   const key = normalizeModeID(id);
   const found = modes?.find((m) => m.id === key) ?? BUILTIN_MODES.find((m) => m.id === key);
-  return found?.name ?? id;
+  return displayModeName(found?.name ?? id);
 }

@@ -8,6 +8,17 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
+// LatchTurnModel stamps the dispatching model onto the chat's turn buffer.
+//
+// GetOrInit rather than Get: at dispatch the turn has produced no frame yet, so
+// the buffer usually does not exist. An empty buffer is indistinguishable from
+// no buffer everywhere it is read — isEmptyTurn above, Snapshot's own guard, the
+// connect-time turn_state replay — because all three key on content, not
+// presence.
+func (h *Hub) LatchTurnModel(chatID api.ChatID, model string) {
+	h.bridge.assistantBufs.GetOrInit(chatID).SetModel(model)
+}
+
 // isEmptyTurn returns true if the prompt response reports end_turn AND we
 // received no streamed content for this chat (the assistant buffer is empty).
 // On v3 the prompt response carries only stopReason/usage — content only ever

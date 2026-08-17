@@ -23,6 +23,16 @@ type BridgeAccess interface {
 	GetOrCreateBridge(ctx context.Context, chatID api.ChatID, model string) (Bridge, error)
 	CloseBridge(chatID api.ChatID)
 	PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b Bridge)
+	// PrimeFromChat notes that chatID's FIRST session should be primed with
+	// another chat's transcript. The tangent's fallback (command/fork.go): a
+	// refused session/fork leaves the new chat with no inherited session, so the
+	// parent's history has to reach the model some other way.
+	//
+	// A note rather than a field on the chat record, because it describes one
+	// session's launch and not the chat: it is consumed by the next spawn and
+	// does not survive a restart, which is correct — by then the tangent has its
+	// own conversation and is owed nothing from its parent.
+	PrimeFromChat(chatID, sourceChatID api.ChatID)
 }
 
 // ChatAccess provides chat store and broadcast operations needed by
@@ -89,6 +99,14 @@ type InfraDeps interface {
 	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
 	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
 	AbandonInFlightTurn(ctx context.Context, chatID api.ChatID)
+	// LatchTurnModel records which model this turn was DISPATCHED under, before
+	// the prompt call can race a concurrent switch_model. First write wins, so
+	// the value is immutable for the turn's lifetime.
+	//
+	// It exists because the turn buffer otherwise latches on the first assistant
+	// FRAME, which can be seconds later: a fast in-session switch landing in that
+	// window stamped the new model onto an answer the previous one produced.
+	LatchTurnModel(chatID api.ChatID, model string)
 }
 
 // Typed accessors on Dispatcher for narrow interface access.

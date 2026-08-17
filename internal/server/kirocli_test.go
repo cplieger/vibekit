@@ -142,7 +142,8 @@ func TestLoopbackOnlyAdmitsOnlyInContainerCallers(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			admitted := false
-			h := loopbackOnly(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { admitted = true }))
+			h := loopbackOnly(kiroRescanSurface,
+				http.HandlerFunc(func(http.ResponseWriter, *http.Request) { admitted = true }))
 			req := httptest.NewRequest(http.MethodPost, kiroRescanPath, nil)
 			req.RemoteAddr = tc.remote
 			req.Host = tc.host
@@ -167,6 +168,13 @@ func TestLoopbackOnlyAdmitsOnlyInContainerCallers(t *testing.T) {
 				}
 				if body["error"] == "" {
 					t.Errorf("body = %v, want the canonical error envelope", body)
+				}
+				// The refusal names THIS surface. It is the whole of what a
+				// rejected caller learns, and the same middleware now backs
+				// /debug/pprof/ too, so a generic message would send an
+				// operator to retry the wrong path.
+				if !strings.Contains(body["error"], kiroRescanSurface) {
+					t.Errorf("refusal = %q, want it to name %q", body["error"], kiroRescanSurface)
 				}
 				if _, isVerdict := body["status"]; isVerdict {
 					t.Error("a rejected request answered with the readiness envelope; a caller could read the 403 as a verdict")

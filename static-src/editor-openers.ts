@@ -4,7 +4,7 @@
 
 import { $ } from "./dom.js";
 import { effect } from "@cplieger/reactive";
-import { openEditorView, editorTabID, setTabDirty } from "./tabs.js";
+import { openEditorView, editorTabID, setTabDirty, getActiveTabId } from "./tabs.js";
 import * as uiState from "./ui-state.js";
 import { pushRoute } from "./router.js";
 import { parseConflicts } from "./conflict.js";
@@ -19,6 +19,7 @@ import {
   routeForPath,
   freshState,
 } from "./editor-types.js";
+import { isViewableImage } from "./file-extensions.js";
 import {
   showReadMode,
   applyPendingLine,
@@ -38,6 +39,14 @@ registerCleanup(() => activeLoadController?.abort());
 // --- Public openers ---
 
 export function openFile(path: string, line?: number): void {
+  // An image opens in image mode, not edit mode: `/api/file` refuses a binary
+  // with a 415 and caps the read at 2 MB, so the text path could only ever show
+  // that error. `.svg` lands here too, which is the point — it is DISPLAYED in
+  // an `<img>`, where it is inert, and never offered as a link on this origin.
+  if (isViewableImage(path)) {
+    open(path, { mode: { kind: "image" } });
+    return;
+  }
   const opts: OpenOpts = { mode: { kind: "edit", editing: false } };
   if (line !== undefined) {
     opts.line = line;
@@ -129,6 +138,14 @@ function open(path: string, opts: OpenOpts): void {
   if (opts.line !== undefined && opts.line > 0) {
     pendingLines.set(path, opts.line);
   }
+  // activateTab skips onShow for exactly one case: the tab was ALREADY active,
+  // so activation is a no-op and nothing loads the file. Read before the open,
+  // because openEditorView is what changes the answer.
+  //
+  // Activating unconditionally afterwards ran a FIRST open twice, and each
+  // activation issues a /api/file read against a fresh AbortController — the
+  // second one aborted the first, so the wasted round trip was invisible.
+  const wasActive = getActiveTabId() === editorTabID(path);
   openEditorView(
     path,
     () => {
@@ -138,8 +155,9 @@ function open(path: string, opts: OpenOpts): void {
       closeEditorFile(path);
     },
   );
-  // Always activate — openEditorView may skip the callback if the tab was already active.
-  activateFile(path);
+  if (wasActive) {
+    activateFile(path);
+  }
   const line = opts.line;
   pushRoute(line !== undefined && line > 0 ? { kind: "file", path, line } : { kind: "file", path });
 
@@ -181,10 +199,10 @@ export async function fetchGitDiffSources(
     kind: "diff",
     diffSource: {
       ...m.diffSource,
-      // The base pane's caption is whatever the load found there, not the ref
+      // The base pane's caption is whatever the load FOUND there, not the ref
       // that was asked for: a file git owns no revision of gets "not in git"
-      // rather than an empty pane captioned "HEAD", which would claim HEAD
-      // holds the file and holds it empty.
+      // rather than an empty pane captioned "HEAD", which would claim HEAD holds
+      // the file and holds it empty.
       oldLabel: baseLabel,
       oldContent,
       newContent,
@@ -215,9 +233,19 @@ export function activateFile(path: string): void {
   $.editorError.classList.add("hidden");
   $.editorHighlight.parentElement?.scrollTo(0, 0);
 
+  const m = state.mode.value;
+  // An image has no text buffer, so there is nothing for `loadFile` to fetch
+  // (the JSON route would answer 415) and no lines for the agent-line gutter to
+  // mark. Both are skipped rather than tolerated: the surface paints from the
+  // path alone, and `loaded` is set so a re-activation does not try again.
+  if (m.kind === "image") {
+    state.loaded = true;
+    restoreUI(state);
+    return;
+  }
+
   void fetchAgentLines(path);
 
-  const m = state.mode.value;
   if (m.kind === "diff" && m.diffSource.fromGit && !state.loaded) {
     $.editorCode.textContent = "Loading diff...";
     showReadMode();
@@ -252,7 +280,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   showReadMode();
   $.editorEditBtn.disabled = true;
 
-  const d = await apiGet<{ content?: string; error?: string }>(
+  const d = await apiGet<{ content?: string; content_hash?: string; error?: string }>(
     routeForPath(state.path).readURL,
     signal,
   );
@@ -273,6 +301,7 @@ async function loadFile(state: FileState, signal?: AbortSignal): Promise<void> {
   }
   state.original.value = d.content ?? "";
   state.current.value = state.original.value;
+  state.loadedHash = d.content_hash ?? "";
   state.loaded = true;
   state.error = "";
   const parsed = parseConflicts(state.current.value);
@@ -290,14 +319,15 @@ function persistOpenFiles(): void {
 /** Tear down one open file's client state.
  *
  *  This is the editor tab's `onClose`, and nothing else calls it. It does NOT
- *  close the tab: the tab store is what invoked this, and calling back into
- *  closeTab was both redundant and the second half of an infinite loop (the
- *  store fired onClose while the tab was still present, so the call re-entered
- *  and recursed until the stack died — every editor tab was unclosable).
+ *  close the tab: the tab store is what invoked it, and calling back into
+ *  closeTab was both redundant and the second half of an infinite loop — the
+ *  store fired onClose while the tab was still present, so the call re-entered,
+ *  fired onClose again, and recursed until the stack died. Every editor tab was
+ *  unclosable.
  *
- *  Ownership runs one way now. The store owns the tab, this owns the file
- *  state, and neither reaches into the other. To close a file
- *  programmatically, close its tab: `closeTab(editorTabID(path))`. */
+ *  Ownership runs one way now. The store owns the tab, this owns the file state,
+ *  and neither reaches into the other. To close a file programmatically, close
+ *  its tab: `closeTab(editorTabID(path))`. */
 export function closeEditorFile(path: string): void {
   const state = fileStates.get(path);
   if (state?.mode.value.kind === "conflict") {

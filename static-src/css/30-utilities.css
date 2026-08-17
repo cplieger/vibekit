@@ -30,7 +30,7 @@
 
 .skeleton-line {
   height: 0.75rem;
-  border-radius: 0.25rem;
+  border-radius: var(--r-sm);
 }
 
 .skeleton-msg-group {

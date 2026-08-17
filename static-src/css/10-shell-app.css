@@ -100,7 +100,7 @@
     min-height: var(--btn-h);
     transition:
       background var(--dur-micro),
-      color var(--dur-micro) var(--ease-micro);
+      color var(--dur-micro) var(--ease-standard);
     position: relative;
 
     &:hover {
@@ -178,7 +178,7 @@
     /* Inactive tabs stay FLAT — no chip, no border — and lift on hover, so the
      * only filled row in the strip is the selected one. */
     &:not(.active):hover {
-      background: var(--c-bg-hover);
+      background: var(--c-hover);
     }
 
     /* The active tab is a FILLED row, not a bordered one: the whole background
@@ -190,10 +190,9 @@
      * one edge, which is easy to miss on a dense strip and impossible to see at
      * all once a row is indented (a sub-tab's `↳` sits exactly where the border
      * was). A fill is unambiguous at any indent. */
-    &.active {
-      background: var(--c-tab-active-bg);
-      border-color: var(--c-tab-active-border);
-    }
+    /* The active row's fill/edge/ink triple lives in 70-selection.css with
+     * every other selected surface. Its hover and press stay here: they score
+     * (0,3,0), so they still beat that file's (0,2,0) resting rule. */
 
     /* The active tab DOES get hover feedback — it just cannot be the flat
      * `--c-bg-hover` square the old rule used, which repainted the fill and so
@@ -202,10 +201,12 @@
      * whatever it sits on and the selection survives. Without it the selected
      * row was the one row in the strip that did not answer the pointer, which
      * reads as "this row is not clickable". */
-    &.active:hover {
-      background: linear-gradient(color-mix(in srgb, var(--c-text-primary) 10%, transparent) 0 100%)
-        var(--c-tab-active-bg);
-    }
+    /* The active row's whole treatment — fill, edge, ink, hover and press —
+     * lives in 70-selection.css. Its hover scores (0,3,0), exactly what the
+     * resting rule there scores once `:not(.dragging)` is counted, so a copy
+     * left here would LOSE the tie to a later file and the selected row would
+     * stop answering the pointer. That is not a hypothetical: it is what the
+     * cascade audit found when this rule was first left behind. */
 
     /* Dragging keeps the accent outline and takes its fill elsewhere: under the
      * active fill, --c-accent-subtle is nearly the same swatch, so a dragged
@@ -278,10 +279,17 @@
     position: fixed;
     z-index: 9999;
     pointer-events: none;
-    background: var(--c-accent-subtle);
+
+    /* Matches `.tab.dragging` (bg-tertiary + accent outline) so the ghost and
+     * the row it was lifted from read as one object. It used to fill with
+     * --c-accent-subtle, which was nearly the selected fill's own swatch — the
+     * same collision `.dragging` was changed to avoid. */
+    background: var(--c-bg-tertiary);
     outline: 1px solid var(--c-accent);
     border-radius: var(--r);
-    box-shadow: 0 0.5rem 1.25rem oklch(0% 0 0deg / 25%);
+    box-shadow:
+      var(--shadow-ambient),
+      0 0.5rem 1.25rem oklch(0% 0 none / 25%);
     opacity: 0.92;
 
     /* Floating effect: gentle vertical bob + slight left/right rotation,
@@ -365,7 +373,7 @@
     justify-content: center;
     transition:
       background var(--dur-micro),
-      color var(--dur-micro) var(--ease-micro);
+      color var(--dur-micro) var(--ease-standard);
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
   }
@@ -373,14 +381,14 @@
   /* On the active tab the × sits on the accent-derived fill, where the grey
      inks sink in. Carry the row's full ink there (white in dark mode). */
   .tab.active .tab-close {
-    color: var(--c-text-primary);
+    color: var(--c-selected-fg);
   }
 
   /* Hover lifts WHATEVER fill the × sits on — flat row, hovered row, or the
      active tab's violet chip — instead of painting the global grey
      --c-bg-hover square, which mismatched the accent fill and vanished
      against an already-hovered row. Same text-mix construction as
-     --c-tab-active-border. */
+     --c-selected-border. */
   .tab-close:hover {
     color: var(--c-text-primary);
     background: color-mix(in srgb, var(--c-text-primary) 12%, transparent);
@@ -406,7 +414,17 @@
     text-decoration: none;
     min-width: 0;
     flex: 1;
-    line-height: normal;
+
+    /* The footer's other half of the flex-centring fix in 15-input.css: this
+       address is a flex item whose box is asymmetric about its letterforms, so
+       `align-items: center` on .sidebar-footer centred the box and left the text
+       ~0.9-1.8px low depending on the OS font. `line-height: normal` used to sit
+       here, restating the default and fixing nothing — the offset carries no
+       line-height term. Trimming to the cap band is what makes the box symmetric
+       about the glyphs; the symmetric padding is the descender room the trim
+       takes away, and an email address is full of them. */
+    text-box: trim-both cap alphabetic;
+    padding-block: 0.35em;
   }
 
   .sidebar-email:hover {
@@ -434,7 +452,7 @@
   .popup-hover {
     pointer-events: none;
     opacity: 0;
-    transition: opacity var(--dur-micro) var(--ease-micro);
+    transition: opacity var(--dur-micro) var(--ease-standard);
   }
 
   .popup-anchor:hover > .popup-hover {
@@ -509,7 +527,7 @@
     line-height: 0;
     transition:
       background var(--dur-micro),
-      color var(--dur-micro) var(--ease-micro);
+      color var(--dur-micro) var(--ease-standard);
 
     &:where(:disabled) {
       opacity: 0.3;
@@ -528,17 +546,10 @@
       background: color-mix(in srgb, var(--c-red) 15%, transparent);
     }
 
-    &.active {
-      color: var(--c-accent);
-    }
-
-    /* A toggle's ON state, driven by the ARIA attribute itself so a pressed
-       control needs no second bookkeeping class to look pressed. Without this
-       an aria-pressed button announced its state and showed nothing. */
-    &[aria-pressed="true"] {
-      color: var(--c-accent);
-      background: var(--c-accent-subtle);
-    }
+    /* `.active` and `[aria-pressed="true"]` are one state, and they used to
+       disagree eight lines apart — the first coloured only the ink, the second
+       added a fill. Both are in 70-selection.css now, carrying the same three
+       channels as every other on-state in the app. */
 
     &:hover {
       background: var(--c-bg-tertiary);
@@ -554,7 +565,7 @@
     padding: var(--sp-2);
     border-radius: var(--r);
     line-height: 0;
-    transition: background var(--dur-micro) var(--ease-micro);
+    transition: background var(--dur-micro) var(--ease-standard);
   }
 
   .sidebar-close-only:hover {
@@ -714,8 +725,10 @@
     color: var(--c-accent);
     border-color: var(--c-accent);
 
+    /* The accent identity is already carried by the border and the ink, so the
+     * hover is the ordinary wash rather than a second accent surface. */
     &:hover {
-      background: var(--c-accent-subtle);
+      background: var(--c-hover);
     }
   }
 

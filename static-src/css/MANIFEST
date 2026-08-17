@@ -2,12 +2,36 @@
 # Files concatenated in declared order at Docker build time.
 #
 # Slicing follows the existing @layer cascade:
-#   00-03  layer declaration, @property defs, @layer tokens/reset/base
-#   10-22  @layer components (split by feature: chat, tools, input, ...)
+#   00-02  layer declaration + @property defs (00), @layer tokens (01),
+#          @layer reset (02); the ui-primitives base and 04-uip-skin sit
+#          unlayered between 01 and 02
+#   03     base — UNLAYERED, deliberately (see 10-29)
+#   10-29  feature stylesheets, split by feature (chat, tools, input, ...).
+#          Only 10-shell-app.css is @layer components — it opens the block on
+#          line 1 and closes it on its last. The other 21 are UNLAYERED, so they
+#          beat it and every layered rule, and a tie between two of them is
+#          decided by the order below. That is why 15-input.css takes the
+#          `transition` property from 03-base.css's press rule.
+#
+#          THAT ONE-MEMBER LAYER IS LOAD-BEARING, which is not obvious and cost
+#          a packet to establish. `components` ranks BELOW `utilities` and
+#          `mobile` in the declaration above, so 50-mobile.css's overrides beat
+#          10-shell-app.css whatever their specificity. Unlayering it would put
+#          it above every layer and flip four pairs, all mobile regressions:
+#          #sidebar width+z-index (the drawer stops being full-width and drops
+#          behind other chrome), .tab-close width+height (44px touch target
+#          falls back to 24px), .sidebar-close-only display (the drawer can no
+#          longer be closed) and #user-popup min-width. Enumerate with
+#          `python3 scripts/css-cascade-audit.py` before touching this.
 #   30     @layer utilities
 #   40     a11y (between utilities-close and mobile-open)
 #   50     @layer mobile
 #   60-61  MCP integrations (live in implicit outer layer, post-mobile)
+#   70     selection — the one selected-state treatment for every surface that
+#          has one. LAST on purpose: each of its selectors carries real
+#          specificity, so coming after every feature file is the only thing
+#          that lets it beat their equal-specificity `:hover` rules. It
+#          therefore owns the selected hover and press too.
 00-header.css
 01-tokens.css
 # @cplieger/ui-primitives headless base (structure + motion), then vibekit's
@@ -23,6 +47,7 @@
 12-tabs.css
 13-messages.css
 29-turns.css
+23-shortcuts.css
 24-find.css
 14-tools.css
 15-ansi.css
@@ -32,7 +57,6 @@
 17-settings.css
 18-pages.css
 25-knowledge.css
-27-hooks.css
 28-docs.css
 19-files.css
 20-editor.css
@@ -44,3 +68,4 @@
 50-mobile.css
 60-mcp.css
 61-mcp-tools.css
+70-selection.css

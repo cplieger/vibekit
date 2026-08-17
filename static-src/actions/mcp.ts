@@ -1,7 +1,8 @@
 // MCP actions: user-initiated mutations for the MCP integrations UI.
 // ---------------------------------------------------------------------------
 
-import { apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import { ActionError, apiAction, retryNetwork, RETRY_STANDARD } from "./index.js";
+import type { ApiErrorInfo, ApiErrorDecision } from "./index.js";
 
 import {
   type Server,
@@ -13,6 +14,77 @@ import {
 /** Base path for MCP API endpoints — single source of truth. */
 export const MCP_API = "/api/mcp";
 
+/** One validation failure attributed to the wire field it came from
+ *  (`internal/mcp.FieldError`). The server accumulates across independent
+ *  checks, so a pasted block with three bad fields answers with three of these
+ *  in one response instead of over three submit-fix-submit round trips. */
+export interface ValidationField {
+  field: string;
+  message: string;
+}
+
+/** Narrow a `fields` array off a 400 body. Server-controlled input, so every
+ *  entry is shape-checked rather than cast. */
+function readValidationFields(body: unknown): ValidationField[] {
+  if (typeof body !== "object" || body === null || !("fields" in body)) {
+    return [];
+  }
+  // `"fields" in body` already narrows, so no assertion is needed here.
+  const raw: unknown = body.fields;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: ValidationField[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const e = entry as { field?: unknown; message?: unknown };
+    if (typeof e.field === "string" && typeof e.message === "string") {
+      out.push({ field: e.field, message: e.message });
+    }
+  }
+  return out;
+}
+
+/** Recover the per-field breakdown a 400 carries, onto the error's `cause`.
+ *
+ *  The dispatch still FAILS — a rejected record is not a success, so the modal
+ *  must stay open with the form as the user left it — and `message` keeps the
+ *  server's joined text so a caller that only reads that renders exactly what it
+ *  did before. `cause` is the addition, and it is what lets the form mark three
+ *  inputs instead of printing three sentences above one box. */
+function decodeValidationError<T>(info: ApiErrorInfo): ApiErrorDecision<T> | undefined {
+  if (info.status !== 400) {
+    return undefined;
+  }
+  const fields = readValidationFields(info.body);
+  if (fields.length === 0) {
+    return undefined;
+  }
+  return {
+    kind: "error",
+    error: new ActionError(info.message, { status: info.status, cause: fields }),
+  };
+}
+
+/** Read the field breakdown back off a failed dispatch's error. Returns an empty
+ *  array for every other failure, which is what keeps a non-validation 400 (and
+ *  a network death) on the single-message path. */
+export function validationFieldsOf(err: { cause?: unknown } | undefined): ValidationField[] {
+  const raw = err?.cause;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((f): f is ValidationField => {
+    if (typeof f !== "object" || f === null) {
+      return false;
+    }
+    const c = f as { field?: unknown; message?: unknown };
+    return typeof c.field === "string" && typeof c.message === "string";
+  });
+}
+
 /** Result shape from the registry search endpoint. */
 export interface RegistrySearchResult {
   servers: {
@@ -21,6 +93,11 @@ export interface RegistrySearchResult {
     description?: string;
     version?: string;
     repository?: string;
+    /** Upstream lifecycle status, present only when it is NOT active
+     *  (`deprecated` / `deleted`). The server omits the common case. */
+    status?: string;
+    /** The publisher's reason for a non-active status, when they gave one. */
+    status_message?: string;
     packages?: {
       registry_type: string;
       identifier: string;
@@ -138,8 +215,75 @@ export const saveServer = apiAction<SaveArgs, Server>({
     path: id === "" ? MCP_API : `${MCP_API}/${encodeURIComponent(id)}`,
     body,
   }),
+  decodeError: decodeValidationError,
   error: false,
 });
+
+// --- mcp.import_servers ---
+//
+// Connect every server of a pasted README block. The server owns the
+// translation from the publisher's shape (see internal/mcp/paste.go), so this
+// posts the parsed JSON unchanged: a second translator here would be a second
+// copy of the same rules, and the one that names an unknown key has to be the
+// one at the decode boundary.
+
+/** What one entry of a pasted block did. There is no "updated": an entry naming
+ *  a configured server either matches its spec or fails the paste. */
+interface ImportResult {
+  name: string;
+  outcome: "created" | "unchanged";
+}
+
+/** Per-entry outcomes plus what the translation had to say about keys vibekit
+ *  recognises and cannot store, so an accepted `timeout` does not read as a
+ *  silently-dropped field. */
+export interface ImportServersResult {
+  results: ImportResult[];
+  notes?: string[];
+}
+
+export const importServers = apiAction<Record<string, unknown>, ImportServersResult>({
+  name: "mcp.import_servers",
+  idempotencyKey: true,
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  request: (block) => ({
+    method: "POST",
+    path: `${MCP_API}/import`,
+    body: block,
+  }),
+  decodeError: decodeValidationError,
+  success: (_args, res) => summariseImport(res),
+  // The panel renders the failure inline beside the textarea the user is fixing,
+  // which is where they are looking; a toast would put it somewhere else.
+  error: false,
+});
+
+/** One sentence naming what landed. Exported for its test: the wording is the
+ *  only report a user gets that a re-paste was a no-op rather than a rewrite. */
+export function summariseImport(res: ImportServersResult | null): string {
+  const results = res?.results ?? [];
+  const created = results.filter((r) => r.outcome === "created").length;
+  const unchanged = results.length - created;
+  const parts: string[] = [];
+  if (created > 0) {
+    parts.push(`Connected ${created} integration${created === 1 ? "" : "s"}`);
+  }
+  if (unchanged > 0) {
+    parts.push(`${unchanged} already configured`);
+  }
+  if (parts.length === 0) {
+    parts.push("Nothing to connect");
+  }
+  const notes = res?.notes ?? [];
+  const onlyNote = notes.length === 1 ? notes[0] : undefined;
+  if (onlyNote !== undefined) {
+    parts.push(onlyNote);
+  } else if (notes.length > 1) {
+    parts.push(`${notes.length} keys vibekit does not store were ignored`);
+  }
+  return parts.join(". ") + ".";
+}
 
 // --- mcp.search_registry ---
 
@@ -234,4 +378,39 @@ export const getResourceContent = apiAction<{ server: string; uri: string }, MCP
     body: { server, uri },
   }),
   error: "Couldn't load resource",
+});
+
+// --- mcp.relay_oauth_callback ---
+//
+// Rescue a sign-in whose redirect landed on the wrong machine. KAS binds its
+// OAuth redirect listener on the CONTAINER's localhost, so a browser reaching
+// vibekit from a phone or another laptop is sent to its own localhost, where
+// nothing is listening. The user pastes that dead address here and the server
+// replays it inward. Server contract and its validation:
+// `internal/hub/mcp_oauth_relay.go`.
+
+/** Result of POST /api/mcp/oauth-relay: the loopback listener's HTTP status. */
+export interface OAuthRelayResult {
+  status: number;
+}
+
+export const relayOAuthCallback = apiAction<
+  { server: string; redirect_url: string },
+  OAuthRelayResult
+>({
+  name: "mcp.relay_oauth_callback",
+  // Deliberately NO retry, matching deleteServer's reasoning: an authorization
+  // code is single-use, so a replay of a request that may already have been
+  // delivered spends it against a listener that will refuse the second copy.
+  // The server latches the attempt for the same reason.
+  scope: (args) => "mcp-oauth-relay:" + args.server,
+  request: ({ server, redirect_url }) => ({
+    method: "POST",
+    path: `${MCP_API}/oauth-relay`,
+    body: { server, redirect_url },
+  }),
+  // The panel shows the refusal inline, beside the box the address was pasted
+  // into: every rejection names which part of the address was wrong, and that
+  // belongs next to the field rather than in a toast that outlives it.
+  error: false,
 });

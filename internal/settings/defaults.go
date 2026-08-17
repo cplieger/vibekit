@@ -18,10 +18,9 @@ const (
 	KeyChatRetentionDays    = "chat_retention_days"
 	KeyDebugLogs            = "debug_logs"
 	KeyLastModel            = "last_model"
-	KeyModelEffort          = "model_effort"
 	KeyNotificationsEnabled = "notifications_enabled"
 	KeyNotifyAgentFinished  = "notify_agent_finished"
-	KeyNotifyPermission     = "notify_permission"
+	KeyNotifyPRStatus       = "notify_pr_status"
 	KeySupervisedDefault    = "supervised_default"
 
 	// KeyScheduledAutoApprove lets a SCHEDULED run's tool requests be approved
@@ -34,6 +33,24 @@ const (
 	// would not be.
 	KeyScheduledAutoApprove = "scheduled_auto_approve"
 )
+
+// There is deliberately no notify_permission key.
+//
+// A permission ask BLOCKS the turn: nothing proceeds until it is answered, and
+// off-screen there is no other marker for one (a background chat waiting on an
+// approval renders identically to one that is working). So a switch that
+// silenced the ask was not a preference — it was a way to stall every later
+// turn of every chat with no signal, discoverable only by noticing that work
+// had stopped. The permission notice is a FLOOR: api.PushKindPermission is
+// registered with no settings key, so no value in config.json can turn it off
+// (pinned by push.TestPermissionKindHasNoSettingsKey).
+//
+// What IS relaxable is the permission SYSTEM rather than the notice about it:
+// the Settings -> Permissions workspace relaxation (policyfile.RelaxCapabilities)
+// writes broad allow rules, so the asks stop happening instead of happening
+// silently. The master notifications_enabled switch still turns everything off
+// together, which is a deliberate and comprehensive choice rather than one
+// channel quietly going dark while the others keep arriving.
 
 // DefaultChatRetentionDays is the seeded default for chat_retention_days.
 //
@@ -104,15 +121,24 @@ func DefaultSettings() map[string]any {
 // Note: kiro-cli's own settings (cleanup.periodDays, chat.enable*,
 // etc.) live in a separate file ($KIRO_HOME/settings/settings.json) and
 // are not part of this set.
+//
+// There is deliberately no model_effort key. Reasoning effort was one global
+// setting shaped `{last_model, effort}`, so it was keyed by the LAST model rather
+// than by the chat: two chats could not disagree about effort, and switching
+// models discarded the previous model's choice. It is a field on the chat record
+// now (api.Chat.Effort), written by CmdSetEffort and applied at session/new
+// through StartOpts.Effort, which is where the other three per-chat composer
+// settings already lived. Nothing reads or writes the old key; a config.json that
+// still carries it warns as an unknown key on the next write and is otherwise
+// inert.
 var KnownKeys = map[string]struct{}{
 	KeyAgentIgnoreFiles:     {},
 	KeyChatRetentionDays:    {},
 	KeyDebugLogs:            {},
 	KeyLastModel:            {},
-	KeyModelEffort:          {},
 	KeyNotificationsEnabled: {},
 	KeyNotifyAgentFinished:  {},
-	KeyNotifyPermission:     {},
+	KeyNotifyPRStatus:       {},
 	KeySupervisedDefault:    {},
 	KeyScheduledAutoApprove: {},
 }
@@ -139,12 +165,15 @@ func WarnUnknownKeys(keys []string, source string) []string {
 }
 
 // ServerManagedKeys are settings keys owned by flows other than a full-file
-// PUT of the settings object: agent_ignore_files (written by the
-// Settings→Permissions UI) and model_effort (written by the model switcher),
-// both via PATCH. A PUT whose body omits them must not silently wipe them, so
-// handleSettingsWrite carries any omitted managed key over from the existing
-// file. Kept beside KnownKeys so the managed-key set stays in the settings
-// domain and references the same key constants (no drift).
+// PUT of the settings object: agent_ignore_files, written by the
+// Settings→Permissions UI via PATCH. A PUT whose body omits it must not
+// silently wipe it, so handleSettingsWrite carries any omitted managed key over
+// from the existing file. Kept beside KnownKeys so the managed-key set stays in
+// the settings domain and references the same key constants (no drift).
+//
+// model_effort used to be the second member; effort is per-chat now (see the
+// note above KnownKeys), so no PATCH-only writer is left besides the ignore
+// list.
 func ServerManagedKeys() []string {
-	return []string{KeyAgentIgnoreFiles, KeyModelEffort}
+	return []string{KeyAgentIgnoreFiles}
 }

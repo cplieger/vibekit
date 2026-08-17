@@ -42,6 +42,13 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 		"unimplemented terminal verb": "terminal/resize",
 		// A core ACP method vibekit does not implement.
 		"unknown core method": "session/somethingNew",
+		// A method on the NOOP table, arriving with an id. The table is keyed by
+		// method only and is consulted BEFORE the refusal, so without the id test
+		// on that lookup a request-shaped noop returns early and is never
+		// answered — the same wedge, reached through the one door that logs
+		// nothing on its way past. Every member is a notification today; this
+		// pins the guard so adding a request-shaped one cannot reopen it.
+		"a noop method arriving as a request": methodV3ToolsDidChange,
 	}
 
 	for name, method := range cases {
@@ -98,22 +105,32 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 // distinction, so it gets its own assertion rather than riding on the case
 // above.
 func TestTranslateACPEvent_IgnoresUnknownNotifications(t *testing.T) {
-	h, br := hubForFSTest(t, t.TempDir())
+	// Both an unrecognised method and a NOOP-table member, because the noop
+	// lookup now carries the same id test and must stay silent on the
+	// notification side of it.
+	for name, method := range map[string]string{
+		"unknown extension": "_kiro/some/future/notification",
+		"noop table member": methodV3ToolsDidChange,
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, br := hubForFSTest(t, t.TempDir())
 
-	h.translateACPEvent("c1", &api.RPCResponse{
-		Method: "_kiro/some/future/notification",
-		ID:     nil,
-	})
+			h.translateACPEvent("c1", &api.RPCResponse{
+				Method: method,
+				ID:     nil,
+			})
 
-	select {
-	case <-br.done:
-		br.respMu.Lock()
-		got := br.response
-		br.respMu.Unlock()
-		t.Fatalf("responded to a notification (id=%d, err=%v): notifications owe no reply",
-			got.id, got.err)
-	case <-time.After(200 * time.Millisecond):
-		// Correct: nothing sent.
+			select {
+			case <-br.done:
+				br.respMu.Lock()
+				got := br.response
+				br.respMu.Unlock()
+				t.Fatalf("responded to a notification (id=%d, err=%v): notifications owe no reply",
+					got.id, got.err)
+			case <-time.After(200 * time.Millisecond):
+				// Correct: nothing sent.
+			}
+		})
 	}
 }
 

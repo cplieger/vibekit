@@ -8,6 +8,8 @@ import { type FileEntry, joinPath } from "./files-shared.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { installDropZone } from "./drop-zone.js";
 import { upload } from "./actions/files.js";
+import { screenUploads } from "./upload-policy.js";
+import * as toast from "./toast.js";
 
 export interface DragDropContext {
   getCurrentPath: () => string;
@@ -57,8 +59,18 @@ export function initBrowserDragDrop(ctx: DragDropContext): void {
       const targetDir =
         dropTargetFolder !== "" ? joinPath(currentPath, dropTargetFolder) : currentPath;
       dropTargetFolder = "";
+      // Screened for the same reason the composer's drop is: a drop is not a
+      // considered choice of file, so an over-cap one arrived here as a full
+      // transfer ending in a bare 413 that named nothing.
+      const screened = screenUploads(files);
+      if (screened.skipped !== "") {
+        toast.error(screened.skipped);
+      }
+      if (screened.files === null) {
+        return;
+      }
       void upload.dispatch(
-        { files, targetDir },
+        { files: screened.files, targetDir },
         {
           onSuccess: (paths) => {
             ctx.reload();

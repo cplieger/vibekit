@@ -104,3 +104,31 @@ func TestMapGiteaConclusion(t *testing.T) {
 		})
 	}
 }
+
+func TestIsHexSHA(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"short abbreviated sha", "abc1234", true},
+		{"full sha", "5f2c1e4a9b8d7c6e5f4a3b2c1d0e9f8a7b6c5d4e", true},
+		{"64 hex digits", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", true},
+		{"uppercase hex", "ABC1234DEF", true},
+		{"too short", "abc123", false},
+		{"65 digits", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0", false},
+		{"empty", "", false},
+		{"non-hex letters", "zzzzzzz", false},
+		{"flag-shaped", "--match-head-commit", false},
+		{"with a space", "abc1234 def", false},
+		{"shell metacharacter", "abc1234;rm", false},
+		{"path traversal", "../../etc", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isHexSHA(tc.in); got != tc.want {
+				t.Errorf("isHexSHA(%q) = %t, want %t", tc.in, got, tc.want)
+			}
+		})
+	}
+}

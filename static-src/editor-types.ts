@@ -29,10 +29,10 @@ const DIFF_LABEL_WORKING_TREE = "working tree";
 //
 // It is also where the editor's two path forms are kept apart. The editor
 // ADDRESSES a file absolutely, because that is the namespace /api/file* serves
-// and the form the file browser hands over; it DISPLAYS the file relative to
-// the workspace, because "/workspace/" on every filename is noise the reader
-// already knows. Deriving the label here means the split lives with the URL
-// builder rather than at each of the header's callers.
+// and the form the file browser hands over; it DISPLAYS the file relative to the
+// workspace, because "/workspace/" on every filename is noise the reader already
+// knows. Deriving the label here means the split lives with the URL builder
+// rather than at each of the header's callers.
 export function routeForPath(path: string): {
   readURL: string;
   writeURL: string;
@@ -40,6 +40,17 @@ export function routeForPath(path: string): {
 } {
   const url = `/api/file?path=${encodeURIComponent(path)}`;
   return { readURL: url, writeURL: url, displayPath: relToWorkspace(path) };
+}
+
+/** Whether a path's READ state renders its markdown instead of showing raw
+ *  source.
+ *
+ *  Keyed on the path rather than on a mode variant: the read surface is a
+ *  function of what the file IS, so the state and the content it paints cannot
+ *  drift apart. Editing is unaffected — the toggle shows source for every file. */
+export function rendersMarkdown(path: string): boolean {
+  const lower = path.toLowerCase();
+  return lower.endsWith(".md") || lower.endsWith(".markdown");
 }
 
 // --- Types ---
@@ -72,7 +83,13 @@ export function unsavedDiffSource(oldContent: string, newContent: string): DiffS
 export type FileMode =
   | { kind: "edit"; editing: boolean }
   | { kind: "diff"; diffSource: DiffSource }
-  | { kind: "conflict"; conflict: ConflictFile; editing: true };
+  | { kind: "conflict"; conflict: ConflictFile; editing: true }
+  // A variant rather than an early branch in `open()`, because `restoreUI`
+  // switches exhaustively on this discriminant: adding a member makes tsc point
+  // at every site that has to handle it, which an `if` at the entry point does
+  // not. It carries no payload — the path is the whole input, and the bytes come
+  // from the file route rather than from a loaded buffer.
+  | { kind: "image" };
 
 export interface FileState {
   path: string;
@@ -81,6 +98,11 @@ export interface FileState {
   /** Live editor-buffer content. Reactive so `dirty` can derive from it. */
   current: Signal<string>;
   loaded: boolean;
+  /** Digest of the bytes this buffer LOADED, from the read response. Sent back on
+   *  save so the server can refuse a write over an external change. Empty when
+   *  unknown (a source that did not supply one), which degrades to the old
+   *  write-unconditionally behaviour rather than blocking the save. */
+  loadedHash: string;
   error: string;
   mode: Signal<FileMode>;
   /** Dirty flag: true when `current` differs from `original`. Derived
@@ -153,6 +175,7 @@ class EditorState {
       original,
       current,
       loaded: false,
+      loadedHash: "",
       error: "",
       mode,
       dirty,

@@ -1,0 +1,86 @@
+/* ==========================================================================
+   Keyboard shortcut reference sheet (#shortcuts-modal, shortcuts.ts)
+
+   Panel look, padding, gap and the entry animation come from the shared
+   .uip-modal-dialog skin (04-uip-skin.css); only the sizing, the group headings
+   and the keycaps live here. Unlayered like the other component slices, so it
+   wins over the layered base by source order.
+   ========================================================================== */
+
+/* Wider than the skin's 30rem default so a description and its chord sit on one
+   line at desktop widths, and capped in height because the list grows with every
+   binding added. */
+.shortcuts-card {
+  width: min(34rem, 90vw);
+  max-height: 80vh;
+  gap: var(--sp-2);
+}
+
+.shortcuts-note {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-tertiary);
+}
+
+.shortcuts-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.shortcut-group + .shortcut-group {
+  margin-top: var(--sp-4);
+}
+
+.shortcut-group-title {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--c-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* The keys column is content-sized and the description takes the rest, so the
+   keycaps line up down the sheet without a fixed column width that a longer
+   chord would overflow. */
+.shortcut-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-1) 0;
+}
+
+.shortcut-desc {
+  color: var(--c-text-primary);
+  font-size: var(--fs-sm);
+}
+
+.shortcut-keys {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+}
+
+.shortcut-chord {
+  display: inline-flex;
+  gap: 0.15rem;
+}
+
+.shortcut-or {
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.shortcuts-list kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  padding: 0.25rem 0.4rem;
+  color: var(--c-text-secondary);
+  background: var(--c-bg-tertiary);
+  border: 1px solid var(--c-border);
+  border-radius: calc(var(--r) / 2);
+}

@@ -24,14 +24,27 @@
 // when the server may have restarted, i.e. when the state can have flipped in
 // either direction, so the banner self-heals once the install completes (health
 // re-reads the verdict per request).
+//
+// There are TWO reason families, and they are separate because their remedies
+// are: the install family above ("kiro-cli ...", nothing for the user to do but
+// wait or read logs) and the sign-in family ("sign-in required", from
+// internal/server/authready.go, whose only fix is the login modal). A signed-out
+// runtime looks nothing like a missing one to the user, which is why the second
+// literal deliberately does not carry the first's prefix.
 // ---------------------------------------------------------------------------
 
 import { apiGetOrError } from "./api-client.js";
 import { showBanner, clearBannerCodes, GLOBAL_BANNER } from "./banner-stack.js";
 import { onBus, BUS_TRANSPORT_GAP } from "./bus.js";
+import { openSetting } from "./settings-highlight.js";
+import { showLoginModal } from "./modals.js";
 import type { BannerLevel } from "./types.js";
 
 const CODE = "runtime_degraded";
+
+/** The sign-in family's own banner code, separate from the install family's so
+ *  clearing one cannot silently drop the other. */
+const AUTH_CODE = "runtime_signed_out";
 
 /**
  * The reason prefix every kiro-cli readiness verdict shares. It is what
@@ -39,6 +52,18 @@ const CODE = "runtime_degraded";
  * (`starting up or shutting down`), which must NOT raise this banner.
  */
 const KIRO_REASON_PREFIX = "kiro-cli";
+
+/**
+ * The sign-in family's prefix (internal/server/authready.go `reasonSignIn`).
+ *
+ * A SECOND family rather than another key under the one above, and the
+ * distinction is why the literal deliberately avoids the "kiro-cli" prefix: this
+ * is not an install state, it is a live runtime whose login chain has expired,
+ * and its only fix is signing in. Routed under the install prefix it would match
+ * the family, miss every named state, and render the terminal "restart the
+ * container" copy — telling the reader to do the one thing that cannot help.
+ */
+const AUTH_REASON_PREFIX = "sign-in required";
 
 interface RuntimeState {
   readonly message: string;
@@ -91,10 +116,30 @@ function reasonOf(body: unknown): string {
   return "";
 }
 
+const SIGNED_OUT: RuntimeState = {
+  message:
+    "The agent runtime is signed out, so chats will open and then fail. " +
+    "This usually means the sign-in expired while you were away.",
+  level: "error",
+};
+
 /** Probe /api/health once and reconcile the degraded banner. */
 export async function checkRuntimeHealth(): Promise<void> {
   const res = await apiGetOrError<HealthBody>("/api/health");
   const reason = reasonOf(res.body);
+  if (!res.ok && reason.startsWith(AUTH_REASON_PREFIX)) {
+    // Not dismissible, for the same reason as the install family: it blocks the
+    // product's core function and clears itself on the next check once a token
+    // vends. The CTA is the login modal rather than Run Diagnostics — the
+    // diagnostics panel can only report what this banner already says, and
+    // signing in is the whole remedy.
+    clearBannerCodes(GLOBAL_BANNER, [CODE]);
+    showBanner(GLOBAL_BANNER, AUTH_CODE, SIGNED_OUT.message, SIGNED_OUT.level, false, {
+      label: "Sign in",
+      onClick: showLoginModal,
+    });
+    return;
+  }
   if (!res.ok && reason.startsWith(KIRO_REASON_PREFIX)) {
     // An unknown kiro-cli reason falls back to the terminal wording rather than
     // being ignored: a state the server can report and the client cannot name
@@ -102,13 +147,24 @@ export async function checkRuntimeHealth(): Promise<void> {
     const state = STATES[reason] ?? FALLBACK;
     // Not dismissible: the condition blocks the product's core function, and it
     // clears itself on the next check after recovery.
-    showBanner(GLOBAL_BANNER, CODE, state.message, state.level, false);
+    //
+    // Every one of these states tells the reader to go and look at something —
+    // the version pair, or the container logs — and Run Diagnostics is where
+    // both live, so the banner links straight at that button instead of naming
+    // a panel and leaving the reader to find it.
+    clearBannerCodes(GLOBAL_BANNER, [AUTH_CODE]);
+    showBanner(GLOBAL_BANNER, CODE, state.message, state.level, false, {
+      label: "Run diagnostics",
+      onClick: () => {
+        openSetting("general", "diagnostics-run");
+      },
+    });
     return;
   }
-  // Healthy, network failure, or a startup/shutdown 503: clear. The
-  // transient cases re-assert on the next gap check if still degraded;
+  // Healthy, network failure, or a startup/shutdown 503: clear BOTH families.
+  // The transient cases re-assert on the next gap check if still degraded;
   // a stale banner over a working runtime is the worse failure mode.
-  clearBannerCodes(GLOBAL_BANNER, [CODE]);
+  clearBannerCodes(GLOBAL_BANNER, [CODE, AUTH_CODE]);
 }
 
 /** Wire the boot probe + transport-gap re-probes. Called once from app.ts. */

@@ -703,6 +703,13 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 		{method: api.MethodFSWrite, wantErr: true},
 		{method: "terminal/create", wantErr: true},
 		{method: "_kiro/some/future_request", wantErr: true},
+		// The security property D69 bought, asserted where a regression would
+		// land: executeHook asks vibekit to run a shell command a hook FILE
+		// specifies, and this session used to answer it for the Run-now trigger.
+		// It must now reach the default refusal branch like any other capability
+		// vibekit does not offer. A re-added special case would return a result
+		// here and fail this row.
+		{method: "_kiro/hooks/executeHook", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method, func(t *testing.T) {

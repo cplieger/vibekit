@@ -257,7 +257,7 @@ func TestWriteFile_SymlinkedParent_Blocked(t *testing.T) {
 	}
 }
 
-// --- isSensitive tests (direct coverage) ---
+// --- IsSensitive tests (direct coverage) ---
 
 func TestIsSensitive(t *testing.T) {
 	tests := []struct {
@@ -280,8 +280,8 @@ func TestIsSensitive(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isSensitive(tc.path); got != tc.want {
-				t.Errorf("isSensitive(%q) = %v, want %v", tc.path, got, tc.want)
+			if got := IsSensitive(tc.path); got != tc.want {
+				t.Errorf("IsSensitive(%q) = %v, want %v", tc.path, got, tc.want)
 			}
 		})
 	}
@@ -305,9 +305,9 @@ func TestIsProtectedDir(t *testing.T) {
 		{"/workspace", false},
 		{"/workspace/repo", false},
 		// Note: a path below a sensitive dir prefix still matches
-		// because callers already ran it through isSensitive (which
+		// because callers already ran it through IsSensitive (which
 		// would also block it). isProtectedDir is the defense for
-		// the CONTAINER case, not a substitute for isSensitive.
+		// the CONTAINER case, not a substitute for IsSensitive.
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {
@@ -695,7 +695,7 @@ func TestAction_SecurityRejections(t *testing.T) {
 		},
 		{
 			// isProtectedDir on delete: the container of a sensitive
-			// tree is not deletable even though isSensitive only
+			// tree is not deletable even though IsSensitive only
 			// matches its contents.
 			name:              "delete/protected_dir",
 			action:            "delete",
@@ -1163,6 +1163,51 @@ func TestHandleDownload_File(t *testing.T) {
 	ct := rec.Header().Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/plain") {
 		t.Errorf("Content-Type = %q, want text/plain*", ct)
+	}
+}
+
+// TestHandleDownload_SVGIsAttachment pins the one download header that is a
+// SECURITY control rather than a convenience.
+//
+// mime.TypeByExtension(".svg") is "image/svg+xml", and an SVG document rendered
+// at a same-origin URL executes its own script with this origin's privileges —
+// which would mean access to vibekit's cookies and its whole same-origin API
+// surface. Every `<img src=…>` pointed at this route is safe on its own (an SVG
+// referenced AS AN IMAGE may not fetch, script, or reach the embedding document),
+// but the file browser also renders a real anchor to this URL, and CSP does not
+// close the gap: `frame-src` falls back to `default-src 'self'`, which PERMITS a
+// same-origin frame.
+//
+// `Content-Disposition: attachment` is the whole control. It was untested, and a
+// plausible future change — "serve images inline so the viewer can use them" —
+// would have silently turned the existing download anchor into stored XSS. The
+// `<img>` path needs no `inline` to work, which is exactly why relaxing this
+// would buy nothing.
+func TestHandleDownload_SVGIsAttachment(t *testing.T) {
+	h, dir, prefix := testDir(t)
+	const svg = `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`
+	if err := os.WriteFile(filepath.Join(dir, "arch.svg"), []byte(svg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := getReq(t, h, "/api/file/download?path="+prefix+"/arch.svg")
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	// The type is script-capable, which is precisely why the disposition matters.
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/svg+xml") {
+		t.Errorf("Content-Type = %q, want image/svg+xml*", ct)
+	}
+	cd := rec.Header().Get("Content-Disposition")
+	if !strings.HasPrefix(cd, "attachment") {
+		t.Errorf("Content-Disposition = %q, want to start with attachment", cd)
+	}
+	if strings.Contains(cd, "inline") {
+		t.Errorf("Content-Disposition = %q, must never be inline for image/svg+xml", cd)
+	}
+	// The bytes are served verbatim; nothing sanitizes them, and nothing should —
+	// inertness comes from HOW the response is consumed, not from rewriting it.
+	if got := rec.Body.String(); got != svg {
+		t.Errorf("body = %q, want the file verbatim", got)
 	}
 }
 
@@ -1944,7 +1989,7 @@ func FuzzResolvePath(f *testing.F) {
 		}
 
 		// Assertion 4: the result is never a sensitive path.
-		if isSensitive(result.abs) {
+		if IsSensitive(result.abs) {
 			t.Errorf("resolvePath(%q) = %q is a sensitive path", input, result.abs)
 		}
 	})
@@ -1982,9 +2027,9 @@ func FuzzIsSensitive(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		result := isSensitive(input)
+		result := IsSensitive(input)
 
-		// Assertion 1: if isSensitive returns true, the input must match
+		// Assertion 1: if IsSensitive returns true, the input must match
 		// at least one sensitivePrefixes entry (directory prefix or exact file).
 		if result {
 			matched := false
@@ -2000,7 +2045,7 @@ func FuzzIsSensitive(f *testing.F) {
 				}
 			}
 			if !matched {
-				t.Errorf("isSensitive(%q) = true but no sensitivePrefixes entry matches", input)
+				t.Errorf("IsSensitive(%q) = true but no sensitivePrefixes entry matches", input)
 			}
 		}
 
@@ -2009,10 +2054,10 @@ func FuzzIsSensitive(f *testing.F) {
 			for _, sp := range sensitivePrefixes {
 				if sp.IsDir {
 					if strings.HasPrefix(input, sp.Path) {
-						t.Errorf("isSensitive(%q) = false but matches dir prefix %q", input, sp.Path)
+						t.Errorf("IsSensitive(%q) = false but matches dir prefix %q", input, sp.Path)
 					}
 				} else if input == sp.Path {
-					t.Errorf("isSensitive(%q) = false but matches exact path %q", input, sp.Path)
+					t.Errorf("IsSensitive(%q) = false but matches exact path %q", input, sp.Path)
 				}
 			}
 		}
@@ -2481,10 +2526,11 @@ func TestHandleFile_RejectionListsEveryPermittedMethod(t *testing.T) {
 // Security regression: the container's HOME tree (/config/home/) holds the
 // real credential stores — the AWS SSO token + OAuth client secret
 // (~/.aws/sso/cache), git SSH keys (~/.ssh), the forge PAT
-// (~/.config/gh/hosts.yml), and ~/.gitconfig — and /config/mcp.json holds
-// MCP env/header/oauth secrets in cleartext. A prior audit found these
+// (~/.config/gh/hosts.yml), and ~/.gitconfig — and /config/mcp.json plus
+// /config/mcp-secrets.json hold MCP env/header/oauth secrets and the OAuth
+// refresh tokens and PKCE verifiers in cleartext. A prior audit found these
 // browsable/readable/downloadable because sensitivePrefixes omitted them.
-// Pins that every access path (isSensitive predicate, resolvePath, HTTP
+// Pins that every access path (IsSensitive predicate, resolvePath, HTTP
 // read, HTTP download) now refuses them. The handler mounts "/config"
 // at the POLICY level (temp-dir backed), so the rejection exercises
 // the sensitive layer — not the mount match — and fires on the lexical
@@ -2497,14 +2543,15 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 		"config/home/.config/gh/hosts.yml",                   // forge PAT / OAuth token
 		"config/home/.gitconfig",                             // git identity / credential config
 		"config/mcp.json",                                    // MCP secrets, cleartext
+		"config/mcp-secrets.json",                            // MCP OAuth refresh tokens + PKCE verifiers
 	}
 	h := testHandlerAt(t, "/config")
 	for _, p := range credPaths {
 		t.Run(p, func(t *testing.T) {
 			abs := filepath.Clean("/" + p)
-			// isSensitive is the predicate enforce relies on.
-			if !isSensitive(abs) {
-				t.Errorf("isSensitive(%q) = false, want true (credential store must be protected)", abs)
+			// IsSensitive is the predicate enforce relies on.
+			if !IsSensitive(abs) {
+				t.Errorf("IsSensitive(%q) = false, want true (credential store must be protected)", abs)
 			}
 			// resolvePath gates every read/write/download/action.
 			if _, err := h.resolvePath(p); err == nil {
@@ -2522,4 +2569,92 @@ func TestSensitivePaths_CredentialStoresRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestWriteFile_StaleWriteGuard pins the guard that stops the editor silently
+// discarding an agent's work.
+//
+// The scenario is routine rather than exotic in this app: the file a user has
+// open in the editor is in the same tree the agent writes to, so "changed since
+// you loaded it" happens whenever the agent touches that file mid-edit. Before
+// this, the PUT overwrote unconditionally and the agent's version was gone with
+// no trace.
+//
+// A DIGEST rather than an mtime, because this repo measured that Linux stamps
+// inode timestamps from a coarse clock: two writes inside one tick are
+// byte-identical in mtime, which is exactly the rapid agent write the guard
+// exists to catch.
+func TestWriteFile_StaleWriteGuard(t *testing.T) {
+	dir := t.TempDir()
+	h, err := New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	target := filepath.Join(dir, "note.md")
+	if err := os.WriteFile(target, []byte("original\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Read it the way the editor does, to learn the hash.
+	rec := getReq(t, h, "/api/file?path="+target)
+	var read struct {
+		Content     string `json:"content"`
+		ContentHash string `json:"content_hash"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &read); err != nil {
+		t.Fatalf("decode read: %v", err)
+	}
+	if read.ContentHash == "" {
+		t.Fatal("read returned no content_hash, so a client has nothing to send back")
+	}
+
+	t.Run("matching hash writes", func(t *testing.T) {
+		body := `{"content":"mine\n","expected_hash":"` + read.ContentHash + `"}`
+		rec := putReq(t, h, "/api/file?path="+target, body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		got, _ := os.ReadFile(target)
+		if string(got) != "mine\n" {
+			t.Errorf("file = %q, want the written content", got)
+		}
+	})
+
+	t.Run("stale hash is refused and returns the current content", func(t *testing.T) {
+		// The file now says "mine\n"; save against the ORIGINAL hash, as an editor
+		// that loaded before the change would.
+		body := `{"content":"clobber\n","expected_hash":"` + read.ContentHash + `"}`
+		rec := putReq(t, h, "/api/file?path="+target, body)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409", rec.Code)
+		}
+		var out struct {
+			Error       string `json:"error"`
+			Content     string `json:"content"`
+			ContentHash string `json:"content_hash"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode conflict: %v", err)
+		}
+		// The current content rides the refusal so the client can show what
+		// changed instead of asking the user to reload and compare by eye.
+		if out.Content != "mine\n" {
+			t.Errorf("conflict content = %q, want the on-disk bytes", out.Content)
+		}
+		if out.ContentHash == "" || out.ContentHash == read.ContentHash {
+			t.Error("conflict must carry the NEW hash so the next save can succeed")
+		}
+		if got, _ := os.ReadFile(target); string(got) != "mine\n" {
+			t.Errorf("file = %q, the refused write must not have landed", got)
+		}
+	})
+
+	t.Run("omitted hash still writes", func(t *testing.T) {
+		// Optional by design: every non-editor writer and any older client keeps
+		// working rather than being blocked by a guard it does not know about.
+		rec := putReq(t, h, "/api/file?path="+target, `{"content":"unguarded\n"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+	})
 }

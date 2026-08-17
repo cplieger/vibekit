@@ -46,6 +46,7 @@ import {
   deleteServer,
   openEdit,
   reconnectServer,
+  relayOAuthCallback,
   getPromptContent,
   getResourceContent,
 } from "./actions/mcp.js";
@@ -357,6 +358,7 @@ function mountRow(s: Server, id: string): HTMLElement {
   // prewarm, patching surgically (no replaceChildren -> focus/identity kept).
   let oauthPill: HTMLAnchorElement | null = null;
   let oauthUrl: string | null = null;
+  let oauthRelay: HTMLDetailsElement | null = null;
   let prewarmBadge: HTMLSpanElement | null = null;
   cleanups.push(
     effect(() => {
@@ -384,10 +386,23 @@ function mountRow(s: Server, id: string): HTMLElement {
           oauthUrl = st.oauth_url;
           body.appendChild(oauthPill);
         }
-      } else if (oauthPill !== null) {
-        oauthPill.remove();
+        // The relay is offered only while a callback could still be delivered.
+        // Once this attempt's code has been relayed the box goes away: the code
+        // is spent, so a second paste can only fail, and leaving the field there
+        // would invite exactly that.
+        if (st.relayed) {
+          oauthRelay?.remove();
+          oauthRelay = null;
+        } else if (oauthRelay === null) {
+          oauthRelay = renderOAuthRelay(cur.name);
+          body.appendChild(oauthRelay);
+        }
+      } else if (oauthPill !== null || oauthRelay !== null) {
+        oauthPill?.remove();
         oauthPill = null;
         oauthUrl = null;
+        oauthRelay?.remove();
+        oauthRelay = null;
       }
 
       prewarmBadge = applyPrewarm(prewarmBadge, nameEl, pw);
@@ -517,6 +532,93 @@ function renderOAuthPill(url: string): HTMLAnchorElement {
     },
     safe ? "Finish sign-in →" : "Invalid OAuth URL",
   ) as HTMLAnchorElement;
+}
+
+/** The rescue box for a sign-in whose redirect landed on the wrong machine.
+ *
+ *  WHY IT EXISTS. KAS binds its OAuth redirect listener on the CONTAINER's
+ *  localhost. A browser reaching vibekit from a phone or another laptop is sent
+ *  to ITS OWN localhost, where nothing answers, so the sign-in dies on a
+ *  connection-refused page and clicking the pill again just repeats it. For a
+ *  container reached over the network that is the normal case.
+ *
+ *  Inline, not a modal: the address being pasted is on the clipboard from
+ *  another tab, and the refusal has to land next to the field that caused it.
+ *  The details element is collapsed by default so a local-browser sign-in (which
+ *  needs none of this) sees one line rather than a form. */
+export function renderOAuthRelay(serverName: string): HTMLDetailsElement {
+  const input = el("input", {
+    type: "url",
+    className: "mcp-relay-input",
+    // No `required`/`pattern`: every rejection is the server's to make against
+    // the authorization URL it stored, and a browser-side pattern would only
+    // duplicate part of that rule and drift from it.
+    placeholder: "http://localhost:1234/oauth/callback?code=…",
+    "aria-label": "The address the sign-in page could not reach",
+    autocomplete: "off",
+    spellcheck: "false",
+  }) as HTMLInputElement;
+
+  const note = el("p", { className: "mcp-relay-note" }) as HTMLParagraphElement;
+  const setNote = (text: string, kind: "err" | "ok" | "") => {
+    note.textContent = text;
+    note.classList.toggle("mcp-relay-err", kind === "err");
+    note.classList.toggle("mcp-relay-ok", kind === "ok");
+  };
+
+  const submit = el(
+    "button",
+    { type: "button", className: "btn-secondary" },
+    "Finish",
+  ) as HTMLButtonElement;
+  submit.addEventListener("click", () => {
+    const pasted = input.value.trim();
+    if (pasted === "") {
+      setNote("Paste the address from the page that failed to load.", "err");
+      return;
+    }
+    submit.disabled = true;
+    setNote("Delivering…", "");
+    void relayOAuthCallback
+      .dispatch(
+        { server: serverName, redirect_url: pasted },
+        {
+          onSuccess: () => {
+            // The code is delivered; the token exchange is still KAS's to
+            // finish. So this says DELIVERED and refetches — claiming
+            // "connected" here would be inventing a state transition that only
+            // `_kiro/mcp/status` can report.
+            setNote("Delivered. Waiting for the server to finish signing in…", "ok");
+            input.value = "";
+            mcpState.refetchStatus();
+          },
+          // The server's reason names which part of the address was wrong, and
+          // it is the only thing that can: it is checked against the
+          // authorization URL KAS stored, which the client never sees.
+          onError: (err) => {
+            setNote(err.message, "err");
+          },
+        },
+      )
+      .finally(() => {
+        submit.disabled = false;
+      });
+  });
+
+  const box = el(
+    "details",
+    { className: "mcp-relay" },
+    el("summary", {}, "The sign-in page did not load?"),
+    el(
+      "p",
+      { className: "mcp-relay-help" },
+      "The sign-in redirects to an address only this container can reach. Copy the " +
+        "whole address from the page that failed to load and paste it here.",
+    ),
+    el("div", { className: "mcp-relay-row" }, input, submit),
+    note,
+  ) as HTMLDetailsElement;
+  return box;
 }
 
 function renderEditBtn(s: Server, cleanups: (() => void)[]): HTMLButtonElement {
@@ -861,9 +963,17 @@ export function initMCP(): void {
       name: p.server,
       state: "needs_auth",
       oauth_url: p.url,
+      // A fresh authorization attempt, so the relay latch clears with it — the
+      // server's recordOAuth replaces the whole record for the same reason. A
+      // stale `true` here would hide the paste box for a code that was never
+      // delivered, which is the one state the user cannot recover from.
+      relayed: false,
     });
   });
   onSSE("mcp_failed", (_chat, p) => {
+    // Read the PREVIOUS state before writing the new one: the toast fires on the
+    // transition into `failed`, not on the frame. See announceMCPFailure.
+    announceMCPFailure(p.server, p.error, statusSignalFor(p.server).peek().state);
     mcpState.setStatusFromEvent(p.server, { name: p.server, state: "failed", error: p.error });
   });
   onSSE("mcp_disconnected", (_chat, p) => {
@@ -893,4 +1003,43 @@ function updatePrewarmStatus(pkg: string, state: "installing" | "done" | "failed
     setPrewarm(server.id, state);
     return;
   }
+}
+
+// --- Broken-server notice ---
+//
+// A toast when a server turns out to be broken, and NO proactive probing. Not
+// every chat uses an MCP server, so an MCP problem must not block or complicate
+// the chat flow, and a health page is a different surface. What arrives here is
+// the failure kiro-cli already reported (`_kiro/mcp/status` carrying
+// `_kiro.dev/mcp/server_init_failure`), so the state, the reason and the delivery
+// mechanism all existed and only the notice did not.
+//
+// This joins the one existing `mcp_failed` consumer rather than adding a second
+// subscription to the same event: that handler already holds both the server name
+// and the reason, and it is where the previous state can still be read.
+
+/** DEDUPE IS REQUIRED, and it keys on the state TRANSITION rather than on the
+ *  frame. Each bridge emits its own `_kiro/mcp/status` on connect and
+ *  `recordInitFailure` broadcasts unconditionally, so a reconnect storm is a
+ *  broadcast storm; without this a wedged server would produce one toast per
+ *  bridge per reconnect. Leaving `failed` re-arms it, which is what keeps the
+ *  next genuine failure audible. */
+export function announceMCPFailure(server: string, reason: string, prevState: RuntimeState): void {
+  if (prevState === "failed") {
+    return;
+  }
+  showToast(mcpFailureText(server, reason), "error");
+}
+
+/** The captured reason, not a generic message: `error` is kiro-cli's own text and
+ *  it is what separates "command not found" from a handshake timeout. It CAN be
+ *  empty (adaptStatus defaults a missing one to ""), so the fallback still names
+ *  the server — a toast that says only "an integration failed" sends the reader
+ *  looking for which one. */
+export function mcpFailureText(server: string, reason: string): string {
+  const trimmed = reason.trim();
+  if (trimmed === "") {
+    return `Integration "${server}" failed to start.`;
+  }
+  return `Integration "${server}" failed to start: ${trimmed}`;
 }

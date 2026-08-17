@@ -132,7 +132,7 @@ func TestValidate_GoodName(t *testing.T) {
 	}
 }
 
-// F7: Name length boundaries (nameRe cap at 64 chars).
+// F7: Name length boundaries (NameMaxLen, 64 bytes).
 func TestValidate_NameLengthBoundaries(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -330,7 +330,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 				Transport: TransportStdio, Name: "ok", Command: "bash",
 				Headers: []KeyPair{{Name: "X-Foo", Value: "bar"}},
 			},
-			wantSubstr: "stdio transport cannot have url or headers",
+			wantSubstr: "stdio transport cannot have headers",
 		},
 		{
 			name: "stdio_too_many_args",
@@ -354,7 +354,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 				Transport: TransportHTTP, Name: "ok", URL: "https://x.example",
 				Args: []string{"leaked"},
 			},
-			wantSubstr: "remote transport cannot have command, args or env",
+			wantSubstr: "remote transport cannot have args",
 		},
 		{
 			name: "remote_with_env_rejected",
@@ -362,7 +362,7 @@ func TestValidate_LengthAndCrossTransportErrorBranches(t *testing.T) {
 				Transport: TransportHTTP, Name: "ok", URL: "https://x.example",
 				Env: []KeyPair{{Name: "LEAK", Value: "v"}},
 			},
-			wantSubstr: "remote transport cannot have command, args or env",
+			wantSubstr: "remote transport cannot have env",
 		},
 		{
 			name: "remote_url_too_long",
@@ -493,7 +493,7 @@ func TestValidate_MoreErrorBranches(t *testing.T) {
 
 // FuzzValidate exercises Validate with random Server structs. Asserts:
 // (1) Validate never panics, (2) if Validate returns nil the Server
-// satisfies basic invariants (name matches nameRe, transport is known,
+// satisfies basic invariants (ValidateName accepts the name, transport is known,
 // transport-specific fields are consistent), (3) idempotent — a second
 // Validate call on the same struct returns the same result.
 func FuzzValidate(f *testing.F) {
@@ -529,8 +529,8 @@ func FuzzValidate(f *testing.F) {
 
 		// Invariant: if Validate accepts, basic structural properties hold.
 		if err1 == nil {
-			if !nameRe.MatchString(s.Name) {
-				t.Fatal("Validate returned nil but name does not match nameRe")
+			if err := ValidateName(s.Name); err != nil {
+				t.Fatalf("Validate returned nil but ValidateName rejects the name: %v", err)
 			}
 			if _, ok := transportValidators[s.Transport]; !ok {
 				t.Fatal("Validate returned nil but transport is unknown")

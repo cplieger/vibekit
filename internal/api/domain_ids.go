@@ -9,6 +9,16 @@ const SecretMask = "***"
 // client does not supply one.
 const DefaultChatName = "New conversation"
 
+// MaxDraftBytes caps a chat's persisted composer draft.
+//
+// Two orders of magnitude below a prompt's 512 KiB cap on purpose. A draft is
+// re-saved on a 600ms debounce while the user types and is read back on every
+// chat open, so its cost is paid repeatedly where a prompt's is paid once; and
+// text long enough to exceed this has been pasted rather than typed, which is
+// what attachments are for. Shared by the command boundary (which answers 413)
+// and the store (which refuses defensively).
+const MaxDraftBytes = 16 * 1024
+
 // MaxChatNameBytes caps the byte length of chat names at creation and
 // rename boundaries. All code paths that set Chat.Name should enforce
 // this limit.

@@ -30,7 +30,12 @@
 import { sendPromptTo } from "./chat-commands.js";
 import { handleTypedCommand } from "./typed-commands.js";
 import { newMessageID } from "./transport.js";
-import { takeAttachments, addAttachment, type AttachedFile } from "./attachments.js";
+import {
+  takeAttachments,
+  addAttachmentTo,
+  attachmentGeneration,
+  type AttachedFile,
+} from "./attachments.js";
 import { isThinking } from "./store.js";
 import { steerChat } from "./actions/chat.js";
 import { clearLastError } from "./send-state.js";
@@ -92,10 +97,14 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
     return "sent";
   }
   const attachments = takeAttachments();
+  // Read BEFORE the await: this is the attachment state the send is taking with
+  // it, and recordFailure hands the token back so a restore into a state that was
+  // dropped meanwhile (the chat was closed) is refused rather than recreating it.
+  const attachGen = attachmentGeneration(chatID);
   const messageID = messageIDFor(chatID, text);
 
   if (isThinking(chatID)) {
-    return steer(chatID, text, messageID, attachments);
+    return steer(chatID, text, messageID, attachments, attachGen);
   }
 
   const result = await sendPromptTo(chatID, text, {
@@ -104,10 +113,10 @@ export async function submitPrompt(chatID: string, text: string): Promise<Submit
   });
   if (result === "queued") {
     // 409 busy: a turn started underneath us. Steer into it.
-    return steer(chatID, text, messageID, attachments);
+    return steer(chatID, text, messageID, attachments, attachGen);
   }
   if (result === "failed") {
-    recordFailure(chatID, text, messageID, attachments);
+    recordFailure(chatID, text, messageID, attachments, attachGen);
   } else {
     lastFailed = undefined;
   }
@@ -125,6 +134,7 @@ async function steer(
   text: string,
   messageID: string,
   attachments: readonly unknown[],
+  attachGen: number,
 ): Promise<SubmitResult> {
   const ok = await steerChat.dispatch({
     chatID,
@@ -132,7 +142,7 @@ async function steer(
     messageID,
   });
   if (ok === undefined) {
-    recordFailure(chatID, text, messageID, attachments);
+    recordFailure(chatID, text, messageID, attachments, attachGen);
     return "failed";
   }
   lastFailed = undefined;
@@ -171,13 +181,22 @@ function recordFailure(
   text: string,
   messageID: string,
   attachments: readonly unknown[],
+  attachGen: number,
 ): void {
   lastFailed = { chatID, text, messageID };
   restorePromptText(text);
   for (const a of attachments) {
     const path = (a as AttachedFile).path;
     if (typeof path === "string" && path !== "") {
-      addAttachment(path);
+      // Named chat, not "the active one": the send is asynchronous and
+      // takeAttachments emptied the row when it started, so by the time a
+      // failure lands the user may be looking at a different conversation.
+      // addAttachment would hang these files off that one's prompt.
+      //
+      // With the send's own generation, so a chat CLOSED in the meantime is not
+      // handed its files back: the close forgot them on purpose, and a stash entry
+      // written after it would reappear the next time the chat is opened.
+      addAttachmentTo(chatID, path, attachGen);
     }
   }
 }

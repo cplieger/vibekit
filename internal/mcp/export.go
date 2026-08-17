@@ -2,6 +2,11 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"slices"
+	"strings"
 )
 
 // ACP export + secret masking helpers. Kept in a leaf file so store.go
@@ -98,6 +103,123 @@ func mergeSecrets(patch, existing []KeyPair) []KeyPair {
 	}
 	return out
 }
+
+// sameSpec reports whether two records describe the same CONNECTION, which is
+// what makes a re-paste of an already-configured server a no-op instead of a
+// conflict. The line is drawn at what identifies the connection, so three
+// groups of fields are deliberately excluded:
+//
+//   - ID, CreatedAt, UpdatedAt: the store owns them.
+//   - Secret VALUES (env/header values, OAuthClientSecret): a pasted README
+//     carries <YOUR_TOKEN> or nothing at all, and preserving what the user
+//     already typed is the entire point of the item.
+//   - Enabled, Prewarm, DisabledTools, AutoApprove: the user's own policy. A
+//     re-paste says nothing about a toggle they set afterwards.
+//
+// Env and header NAMES are compared as sets, not sequences: they are records on
+// KAS's wire (pairsRecord flattens them) and the ordered form exists only so the
+// editor can hold duplicates, so a user who dragged two env rows around has not
+// changed the connection. Args stay order-sensitive, because argv order is.
+func sameSpec(a, b *Server) bool {
+	if a.Transport != b.Transport ||
+		strings.TrimSpace(a.Command) != strings.TrimSpace(b.Command) ||
+		strings.TrimSpace(a.URL) != strings.TrimSpace(b.URL) ||
+		a.OAuthClientID != b.OAuthClientID {
+		return false
+	}
+	if !slices.Equal(a.Args, b.Args) {
+		return false
+	}
+	if !slices.Equal(sortedPairNames(a.Env, false), sortedPairNames(b.Env, false)) {
+		return false
+	}
+	return slices.Equal(sortedPairNames(a.Headers, true), sortedPairNames(b.Headers, true))
+}
+
+// sortedPairNames returns the pair names in sorted order, lowercased when the
+// field dedupes case-insensitively (headers do, env does not — the same split
+// validateKeyPairs makes).
+func sortedPairNames(pairs []KeyPair, fold bool) []string {
+	out := make([]string, 0, len(pairs))
+	for _, kv := range pairs {
+		if fold {
+			out = append(out, strings.ToLower(kv.Name))
+			continue
+		}
+		out = append(out, kv.Name)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// guardOriginChange refuses to re-attach a preserved secret to a new origin.
+//
+// A PUT may change `url` while masked header rows survive, and mergeSecrets
+// keys its index on the header NAME alone — nothing consults the URL. So a
+// bearer issued for the old origin was silently re-attached, persisted, and
+// rendered into KAS's config file, whose watcher hands it to the new origin.
+//
+// This is NOT in tension with the deleted redaction layer, and the difference
+// decides the shape: that was about displaying a user their own secret, which is
+// theirs to see. This is about TRANSMITTING their secret to a third party it was
+// not issued for. Different direction, so refusing is right where redacting was
+// not — and it refuses rather than silently dropping the value to "", because a
+// silent drop is indistinguishable from a successful save and the user would
+// learn about it from a 401 inside the agent.
+//
+// The comparison is scheme+host, not the whole string: a path edit on the same
+// origin (/mcp to /mcp/v2) is not a new party, and refusing it would make a
+// routine edit demand every token be retyped. Origin is the unit the credential
+// was issued for.
+func guardOriginChange(in, existing *Server) error {
+	if !changesOrigin(existing.URL, in.URL) {
+		return nil
+	}
+	for _, kv := range in.Headers {
+		if kv.Value != SecretMask {
+			continue
+		}
+		// Exact-name lookup mirrors mergeSecrets: a name it would not match
+		// preserves nothing, so there is nothing to refuse.
+		if idx := slices.IndexFunc(existing.Headers, func(p KeyPair) bool {
+			return p.Name == kv.Name && p.Value != ""
+		}); idx >= 0 {
+			return fmt.Errorf(
+				"url points at a new origin, so the stored %q header was not carried over: re-enter its value for %s",
+				kv.Name, originLabel(in.URL))
+		}
+	}
+	if in.OAuthClientSecret == SecretMask && existing.OAuthClientSecret != "" {
+		return fmt.Errorf(
+			"url points at a new origin, so the stored oauth_client_secret was not carried over: re-enter it for %s",
+			originLabel(in.URL))
+	}
+	return nil
+}
+
+// changesOrigin reports whether next names a different scheme+host than prev.
+// An unparseable or empty value counts as different: the conservative answer is
+// the one that refuses to hand a credential over.
+func changesOrigin(prev, next string) bool {
+	return originLabel(prev) != originLabel(next)
+}
+
+// originLabel renders a URL's scheme+host lowercased, or the whole trimmed
+// string when it does not parse (so two identical unparseable values still
+// compare equal and an edit elsewhere in the record is not blocked).
+func originLabel(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return strings.ToLower(trimmed)
+	}
+	return strings.ToLower(u.Scheme + "://" + u.Host)
+}
+
+// errImportDuplicate names two entries of one paste that would become the same
+// server. A JSON object cannot hold a duplicate key, but two keys differing only
+// in case survive decoding and collide on the store's case-insensitive name rule.
+var errImportDuplicate = errors.New("names the same server twice")
 
 // There is no ACP wire builder here any more, and no ACPServers.
 //

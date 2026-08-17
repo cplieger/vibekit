@@ -27,12 +27,44 @@ describe("adaptStatus", () => {
         origin: "user",
         state: "needs_auth",
         oauth_url: "https://auth.example.com",
+        relayed: false,
       },
     },
     {
       name: "needs_auth without oauth_url defaults to empty string",
       input: { name: "sentry", state: "needs_auth" },
-      expected: { name: "sentry", origin: "user", state: "needs_auth", oauth_url: "" },
+      expected: {
+        name: "sentry",
+        origin: "user",
+        state: "needs_auth",
+        oauth_url: "",
+        relayed: false,
+      },
+    },
+    {
+      // An absent `relayed` must read as false, not as "unknown": the flag gates
+      // whether the loopback-relay paste box is offered, and defaulting it true
+      // would hide the only recovery path for a callback never delivered.
+      name: "needs_auth without relayed defaults to not-yet-relayed",
+      input: { name: "sentry", state: "needs_auth", oauth_url: "https://a.example" },
+      expected: {
+        name: "sentry",
+        origin: "user",
+        state: "needs_auth",
+        oauth_url: "https://a.example",
+        relayed: false,
+      },
+    },
+    {
+      name: "needs_auth carries a delivered relay through",
+      input: { name: "sentry", state: "needs_auth", oauth_url: "https://a.example", relayed: true },
+      expected: {
+        name: "sentry",
+        origin: "user",
+        state: "needs_auth",
+        oauth_url: "https://a.example",
+        relayed: true,
+      },
     },
     {
       name: "failed with error preserves error",

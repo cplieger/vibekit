@@ -5,7 +5,15 @@
 // empty chat, idle, mid-turn queue).
 // ---------------------------------------------------------------------------
 
-import { getActive, getActiveId, isThinking, setModel } from "./store.js";
+import {
+  activeSession,
+  get,
+  getActive,
+  getActiveId,
+  isThinking,
+  setEffort,
+  setModel,
+} from "./store.js";
 import { $ } from "./dom.js";
 import { humanName } from "./strings.js";
 import { switchModel } from "./actions/chat.js";
@@ -21,12 +29,13 @@ import {
   RETRY_STANDARD,
 } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
-import { el, signal, effect } from "@cplieger/reactive";
-import { patchSettings } from "./persist.js";
+import { el, effect } from "@cplieger/reactive";
+import { iconEl } from "./icon-el.js";
+import { ICON_MODEL } from "./icons.js";
 import type { ModelInfo } from "./types.js";
 
 /** Canonical effort levels with display labels. Single source of truth
- *  for the UI renderer and persistence layer. */
+ *  for the UI renderer and the effort row's active-tier check. */
 const EFFORT_LEVELS = [
   { id: "low", label: "low" },
   { id: "medium", label: "medium" },
@@ -35,18 +44,20 @@ const EFFORT_LEVELS = [
   { id: "max", label: "max" },
 ] as const;
 
-export type EffortLevel = (typeof EFFORT_LEVELS)[number]["id"];
-
-/** Active reasoning effort. Module-scoped so the effort action and the row's
- *  render effect share one source of truth (rather than the action reaching
- *  into a controller instance field). */
-const currentEffort = signal("");
-let effortLoaded = false;
+// There is no exported EffortLevel type. Its one consumer was AppSettings'
+// `model_effort` field, which is gone: effort is a per-chat string on the chat
+// record, validated server-side by api.EffortLevel.Valid().
 
 /** Dispatch a reasoning-effort change through the actions framework — the
- *  established command path, never a hand-rolled transport.send. Optimistic:
- *  the active tier flips instantly and rolls back if the server rejects the
- *  set_config_option, so the pill can't advertise an effort that never applied. */
+ *  established command path, never a hand-rolled transport.send.
+ *
+ *  Effort is PER-CHAT, on the chat record beside model, mode and supervised, so
+ *  the optimistic write goes to the STORE rather than to a module signal. It used
+ *  to be a module signal backed by one global `model_effort` setting keyed by the
+ *  last model, which meant two chats could not disagree, switching models
+ *  discarded the previous model's choice, and the value was read once per page
+ *  load — so a tab switch carried the previous chat's level over. Same shape as
+ *  chat.set_supervised now, which is the point. */
 const setEffortAction = transportAction<{ chatID: string; level: string }, { prev: string }>({
   name: "chat.set_effort",
   scope: ({ chatID }) => `chat:${chatID}`,
@@ -55,14 +66,18 @@ const setEffortAction = transportAction<{ chatID: string; level: string }, { pre
     chat_id: chatID,
     payload: { level },
   }),
-  optimistic: ({ level }) => {
-    const prev = currentEffort.peek();
-    currentEffort.value = level;
+  optimistic: ({ chatID, level }) => {
+    const session = get(chatID);
+    if (session === undefined) {
+      return undefined;
+    }
+    const prev = session.effort ?? "";
+    setEffort(chatID, level);
     return { prev };
   },
-  rollback: (_args, op) => {
+  rollback: ({ chatID }, op) => {
     if (op !== undefined) {
-      currentEffort.value = op.prev;
+      setEffort(chatID, op.prev);
     }
   },
   retryable: retryNetwork,
@@ -101,6 +116,12 @@ class ModelSwitchController {
   private queueState: QueueState = { status: "idle" };
 
   init(): void {
+    // The pill's glyph, from icons.ts rather than an inline literal in
+    // index.html. Prepended (not appended) because the label follows it, and
+    // once — init() is called a single time from app.ts. The `.switching` face
+    // hides this svg by descendant selector, so wrapping it would be wrong but
+    // injecting it is not.
+    $.switchModelBtn.prepend(iconEl(ICON_MODEL));
     const expandContent = $.modelSwitchList;
     makeExpandable($.switchModelBtn, expandContent, {
       onExpand: () => {
@@ -168,19 +189,10 @@ class ModelSwitchController {
   }
 
   private ensureEffortRow(list: HTMLElement): void {
-    // Load persisted effort on first call.
-    if (!effortLoaded) {
-      effortLoaded = true;
-      void import("./api-client.js")
-        .then(({ apiGet }) => apiGet<Record<string, any>>("/api/settings")) // eslint-disable-line @typescript-eslint/no-explicit-any
-        .then((settings) => {
-          const me = (settings as Record<string, unknown> | null)?.["model_effort"] as
-            { effort?: string; last_model?: string } | undefined;
-          if (me?.effort && me.last_model === getActive()?.model) {
-            currentEffort.value = me.effort;
-          }
-        });
-    }
+    // No settings fetch here any more. Effort arrives on the chat record (the
+    // header carries it, so an empty chat that never loads its messages still
+    // has one), which is also what makes the row correct after a tab switch
+    // rather than showing whichever chat was open when the page loaded.
     if (this.effortRow === null) {
       this.effortRow = el(
         "div",
@@ -205,12 +217,13 @@ class ModelSwitchController {
         this.effortRow.appendChild(btn);
       }
       // One effect keeps every .effort-btn's active class + aria-pressed in
-      // sync with the currentEffort signal (replaces the three hand-rolled
-      // sync loops). The row + controller are app-lifetime singletons, so this
-      // never needs disposal.
+      // sync with the ACTIVE CHAT's level. Reading activeSession is what makes
+      // the row per-chat: a tab switch re-runs this rather than carrying the
+      // previous chat's tier over. The row + controller are app-lifetime
+      // singletons, so this never needs disposal.
       const row = this.effortRow;
       effect(() => {
-        const lvl = currentEffort.value;
+        const lvl = activeSession.value?.effort ?? "";
         for (const btn of row.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
           const active = btn.dataset["level"] === lvl;
           btn.classList.toggle("active", active);
@@ -225,39 +238,21 @@ class ModelSwitchController {
     }
   }
 
+  /** Apply a reasoning-effort level to the active chat.
+   *
+   *  ONE path, where there used to be two. The empty-chat branch existed because
+   *  `set_effort` answered 409 with no bridge, so a pick before the first prompt
+   *  wrote the global `model_effort` setting instead — a different store, a
+   *  different key and a different scope reached by the same click. The command
+   *  persists on the chat record and tolerates a bridgeless chat now (mirroring
+   *  set_mode, which auto-creates), so there is nothing left to branch on and no
+   *  settings write at all. */
   private setEffort(level: string): void {
     const session = getActive();
     if (session === undefined) {
       return;
     }
-    // Empty chat = no bridge yet, so set_effort would 409 (no session to
-    // apply it to). Persist the choice locally instead: spawnBridge seeds
-    // it at session/new via StartOpts.Effort (effortForModel reads the
-    // same model_effort setting keyed by last_model).
-    const isEmpty = session.message_count === 0 && session.messages.length === 0;
-    if (isEmpty) {
-      currentEffort.value = level;
-      void patchSettings({
-        model_effort: { last_model: session.model, effort: level as EffortLevel },
-      });
-      return;
-    }
-    // Dispatch through the actions framework (optimistic flip + rollback live
-    // in setEffortAction). Persist only after the server accepts, so a rejected
-    // set_config_option doesn't leave a stale saved effort for this model.
-    void setEffortAction.dispatch(
-      { chatID: session.id, level },
-      {
-        onSuccess: () => {
-          void patchSettings({
-            model_effort: {
-              last_model: session.model,
-              effort: level as EffortLevel,
-            },
-          });
-        },
-      },
-    );
+    void setEffortAction.dispatch({ chatID: session.id, level });
   }
 
   private buildModelOption(m: ModelInfo): HTMLElement {

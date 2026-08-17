@@ -26,11 +26,19 @@ import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { activeSession, getActive } from "./store.js";
 import { createSession } from "./chat.js";
-import { setTabIcon } from "./tabs.js";
 import { setMode } from "./actions/chat.js";
 import { apiGet } from "./api-client.js";
 import type { SessionMode } from "./types.js";
-import { catalogBaseModes, iconForMode, labelForMode, normalizeModeID } from "./roles.js";
+import {
+  type PickerMode,
+  catalogBaseModes,
+  displayModeName,
+  iconForMode,
+  labelForMode,
+  mergeCatalogAndWorkspace,
+  normalizeModeID,
+  scopeLabel,
+} from "./roles.js";
 
 // Cache of workspace custom-agent names; refreshed on each expand so the
 // list renders instantly from cache, then folds in any changes. Only used
@@ -67,29 +75,18 @@ function refreshPill(modeID: string, modes: readonly SessionMode[]): void {
 }
 
 /** The modes to offer: the live session's availableModes when present
- *  (authoritative — carries bundled modes AND workspace agents), else the
- *  bundled catalog seeded with workspace agents from kiro-config. */
-function currentModes(): SessionMode[] {
+ *  (authoritative — carries bundled modes AND workspace agents, with the
+ *  shadowing already resolved by KAS, so no entry can be marked), else the
+ *  catalog merged with the workspace agents from kiro-config.
+ *
+ *  The shadow-marking window is therefore exactly "empty chat, no bridge yet":
+ *  once a session exists KAS has picked, and this list is its report. */
+function currentModes(): PickerMode[] {
   const live = getActive()?.available_modes ?? [];
   if (live.length > 0) {
-    return [...live];
+    return live.map((mode) => ({ mode }));
   }
-  // Base: the fetched config-template catalog (bundled + global agents)
-  // or the static bundled list before/without it. Workspace agents come
-  // from the kiro-config scan; dedup by id in case a workspace agent
-  // shadows a global one of the same name (matching KAS's last-write-wins
-  // where the workspace definition is what a session would load).
-  const base = catalogBaseModes();
-  const baseIDs = new Set(base.map((m) => m.id));
-  const custom: SessionMode[] = customAgents
-    .filter((name) => !baseIDs.has(name))
-    .map((name) => ({
-      id: name,
-      name,
-      description: "Custom agent from your workspace .kiro/agents/ folder.",
-      source: "workspace",
-    }));
-  return [...base, ...custom];
+  return mergeCatalogAndWorkspace(catalogBaseModes(), customAgents);
 }
 
 function renderList(list: HTMLElement): void {
@@ -118,9 +115,9 @@ function renderOptions(list: HTMLElement): void {
   // bundled | global | workspace; both global and workspace custom agents
   // belong under the "Custom agents" divider, so only "bundled" (and any
   // unset source, which the built-in catalog uses) stays in the top group.
-  const isCustomAgent = (m: SessionMode): boolean =>
-    m.source === "workspace" || m.source === "global";
-  const bundled = modes.filter((m) => !isCustomAgent(m));
+  const isCustomAgent = (p: PickerMode): boolean =>
+    p.mode.source === "workspace" || p.mode.source === "global";
+  const bundled = modes.filter((p) => !isCustomAgent(p));
   const workspace = modes.filter(isCustomAgent);
 
   // No "Switch mode for this chat" heading: the pill's own tooltip says that,
@@ -142,8 +139,29 @@ function renderOptions(list: HTMLElement): void {
   roleNav?.refresh();
 }
 
-function modeOption(mode: SessionMode, currentMode: string): HTMLButtonElement {
+function modeOption(entry: PickerMode, currentMode: string): HTMLButtonElement {
+  const { mode } = entry;
   const isCurrent = mode.id === currentMode;
+  const children: HTMLElement[] = [
+    el("span", { className: "pill-role-item-icon" }, iconEl(iconForMode(mode.id))),
+    el("span", { className: "pill-role-name" }, displayModeName(mode.name || mode.id)),
+  ];
+  // Scope on the row. It was already on the wire and already read (the grouping
+  // above keys on it) and simply was not shown, so a user looking at two custom
+  // agents could not tell which tree each came from.
+  const scope = scopeLabel(mode.source);
+  if (scope !== "") {
+    children.push(el("span", { className: "pill-role-scope" }, scope));
+  }
+  // The shadowed entry, marked. There is one row per id, so without this the
+  // collision is invisible: the user sees a "workspace" agent and cannot tell
+  // that a same-named global definition exists and is NOT the one a run loads.
+  let tooltip = mode.description ?? "";
+  if (entry.shadowed !== undefined) {
+    children.push(el("span", { className: "pill-role-shadow" }, "shadows " + entry.shadowed));
+    const note = `This workspace agent shadows the ${entry.shadowed} agent of the same name; the workspace definition is the one a run uses.`;
+    tooltip = tooltip === "" ? note : tooltip + " " + note;
+  }
   const opt = el(
     "button",
     {
@@ -151,10 +169,9 @@ function modeOption(mode: SessionMode, currentMode: string): HTMLButtonElement {
       className: isCurrent ? "pill-role-item active" : "pill-role-item",
       role: "option",
       "aria-selected": isCurrent ? "true" : "false",
-      "data-tooltip": mode.description ?? "",
+      "data-tooltip": tooltip,
     },
-    el("span", { className: "pill-role-item-icon" }, iconEl(iconForMode(mode.id))),
-    el("span", { className: "pill-role-name" }, mode.name || mode.id),
+    ...children,
   ) as HTMLButtonElement;
   opt.addEventListener("click", (e: MouseEvent) => {
     e.stopPropagation();
@@ -176,8 +193,8 @@ function selectMode(modeID: string): void {
     }
   }
   const chatID = active.id;
-  // Reflect the choice on the tab immediately; the action's optimistic
-  // update flips the pill, and the server's mode_changed broadcast confirms.
-  setTabIcon(chatID, iconForMode(modeID));
+  // No tab write here any more: a chat tab's leading element is its activity
+  // dot, not a mode glyph, so the only optimistic surface is the pill — which
+  // the action's own update flips, confirmed by the server's mode_changed.
   void setMode.dispatch({ chatID, modeID });
 }

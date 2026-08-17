@@ -41,6 +41,10 @@ export const ICON_COPY = svg(
 );
 export const ICON_COPY_MD =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18v14H3z"/><path d="M7 15V9l2 3 2-3v6M15 9v6m0 0l2-2m-2 2l-2-2"/></svg>';
+// Angle brackets (Lucide "code"): show the reply's markdown SOURCE instead of
+// its rendering, for when a message renders wrong and the question is whether
+// the model or the parser is at fault.
+export const ICON_SOURCE = svg(14, '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>');
 export const ICON_LINK =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
 // Open-in-new-tab / external-link icon (Lucide). Used by the
@@ -84,6 +88,53 @@ export const ICON_CANCEL = svg(
   16,
   '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
 );
+
+/* THE MODEL GLYPH — one `d`, two sizes, because it renders at both (20px in
+ * the empty-chat picker's heading, 12px in the composer's model pill) and used
+ * to be two byte-identical literals in static/index.html with nothing tying
+ * them together.
+ *
+ * REDRAWN for the 12px size, where the previous geometry collapsed. Its eyes
+ * were STROKED rings at r=2.5 with stroke-width 2, so each ring measured 7
+ * units across with only a 3-unit hole, and with centres 8 units apart the
+ * outer edges left ONE unit between them — 0.50 CSS px at 12px, under a device
+ * pixel, so the two rings bridged into a single blob and the 1px wall split
+ * 25/75 across two pixel columns and rendered as two greys. There was nowhere
+ * for the gap to grow either: the pair spanned 15 of the head's 18 interior
+ * units.
+ *
+ * Two changes fix it, and both are about what survives quantisation:
+ *
+ *   The eyes are FILLED dots (r=2), not rings. A ring at this size has to hold
+ *   two features — a wall and a hole — inside 1.5 CSS px, and neither survives;
+ *   a dot has one feature and degrades to a softer dot. The antenna dot already
+ *   worked this way, so this is the icon's own convention rather than a new one.
+ *
+ *   The gap is 4 units, not 1: inner edges at x=10 and x=14. At 12px that is
+ *   2.00 CSS px landing exactly on pixel columns 5 and 6 (1 unit = 0.5 px, so
+ *   even unit values ARE pixel boundaries), and at 20px it is 3.33 px. The pair
+ *   now spans 12 of the 18 interior units, so there is room either side.
+ *
+ * The mouth's dip went from 1 unit to 2 (`q3.5 4 7 0` — a quadratic's dip is
+ * half its control offset), because at 12px a 1-unit dip is 0.5 px and reads as
+ * a straight dash.
+ *
+ * SQUARE, and centred: the content bbox is x 1..23 by y 1..23 — 22 x 22 with a
+ * 1-unit margin all round. It used to be 22 x 21.5 sitting 0.75 units high,
+ * because the head was 2 units higher and 1 unit taller. Squaring it by
+ * extending only upward would have made it 22 x 22 flush against the top edge
+ * with 2 units below, which is square and still off-centre; moving the head
+ * down instead costs nothing and buys both. A test derives the bbox from these
+ * coordinates rather than snapshotting them. */
+const MODEL_ROBOT_D =
+  '<circle cx="12" cy="2.5" r="1.5" fill="currentColor" stroke="none"/>' +
+  '<path d="M12 4v3"/>' +
+  '<rect x="2" y="7" width="20" height="15" rx="2"/>' +
+  '<circle cx="8" cy="13" r="2" fill="currentColor" stroke="none"/>' +
+  '<circle cx="16" cy="13" r="2" fill="currentColor" stroke="none"/>' +
+  '<path d="M8.5 17.5q3.5 4 7 0"/>';
+export const ICON_MODEL = svg(12, MODEL_ROBOT_D);
+export const ICON_MODEL_20 = svg(20, MODEL_ROBOT_D);
 
 export const ICON_ALERT = svg(
   16,
@@ -233,7 +284,16 @@ export function toolIcon(kind: ToolKind, title: string): string {
   return ICON_BY_KIND[kind] ?? ICON_TOOL_FALLBACK; // eslint-disable-line @typescript-eslint/no-unnecessary-condition
 }
 
-// --- Tab icons (used by tabs.ts sidebar tabs) ---
+// --- Tab icons ---
+//
+// Two groups that share a prefix and no longer share a consumer. The per-KIND
+// glyphs (settings, git, editor, files, history, docs, run) are tabs.ts's
+// `ICONS` map. The per-MODE ones (chat, plan, spec, quick-spec, bug, autonomous,
+// agent) are `roles.ts` `iconForMode`, which now feeds the prompt bar's mode
+// pill and its picker ONLY: a chat tab's leading element is its activity dot,
+// so the role glyph left the strip. `ICONS.chat` and `ICONS.plan` survive
+// because the map is exhaustive over TabKind by type, not because a chat row
+// reads them.
 
 export const ICON_TAB_CHAT = svg(
   14,

@@ -55,9 +55,26 @@ describe("splitBySpans", () => {
   // The server's fuzz target guarantees sorted, non-overlapping, in-range
   // spans. This clamps anyway: a bad offset would otherwise slice garbage into
   // the transcript, and the cost of not trusting is two Math calls.
-  it("clamps a span reaching past the end of the text", () => {
-    const pieces = splitBySpans("ab", [span(1, 99, { fg: 1 })]);
-    expect(pieces.map((p) => p.text).join("")).toBe("ab");
+  //
+  // The clamp that MATTERS is the one against NEGATIVE offsets, and this is the
+  // reachable route to them: appendOutput rebases absolute offsets by subtracting
+  // the chunk's `base`, so a span addressing text before the chunk goes negative
+  // — and `String.prototype.slice` reads a negative index from the END, which
+  // would duplicate tail text into the middle of the output. An offset merely
+  // past the end needs no clamp at all (slice saturates on its own), which is why
+  // asserting on that case alone proves nothing.
+  it("clamps a negative offset instead of slicing from the end", () => {
+    const pieces = splitBySpans("abcdef", [span(-4, -1, { fg: 1 })]);
+    expect(pieces.map((p) => p.text).join("")).toBe("abcdef");
+    expect(pieces.every((p) => p.span === null)).toBe(true);
+  });
+
+  it("clamps a negative offset reached through appendOutput's rebase", () => {
+    // Same defect at the call site that can produce it: base 4 with a span
+    // addressing [0,3) of the accumulated stream.
+    appendOutput(host, "abcdef", [span(0, 3, { fg: 1 })], 4);
+    expect(host.textContent).toBe("abcdef");
+    expect(host.querySelectorAll("span")).toHaveLength(0);
   });
 
   it("ignores a span that starts before the cursor", () => {
@@ -173,6 +190,28 @@ describe("outputFragment", () => {
     expect(host.querySelector("span")!.style.color).toBe("rgb(10 20 30)");
   });
 
+  // Conceal has to beat whatever the foreground resolved to, and a CLASS cannot:
+  // the extended palette arrives as an inline style, which outranks every class,
+  // so a span that was both concealed and 256-colour used to render its text in
+  // full. No foreground is emitted at all when hidden, so `.ansi-hidden` is the
+  // only ink in play. A BACKGROUND still applies — concealing text on a coloured
+  // bar is a real thing a program does.
+  it("emits no foreground at all for a concealed span", () => {
+    host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 196, attrs: 64 })]));
+    let node = host.querySelector("span")!;
+    expect(node.style.color).toBe("");
+    expect(node.classList.contains("ansi-hidden")).toBe(true);
+
+    host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 1, attrs: 64 })]));
+    node = host.querySelector("span")!;
+    expect(node.classList.contains("ansi-red-fg")).toBe(false);
+    expect(node.classList.contains("ansi-hidden")).toBe(true);
+
+    host.replaceChildren(outputFragment("x", [span(0, 1, { fg: 1, bg: 4, attrs: 64 })]));
+    node = host.querySelector("span")!;
+    expect(node.classList.contains("ansi-blue-bg")).toBe(true);
+  });
+
   // Inverse swaps the colour VALUES rather than relying on a filter, because
   // only this code knows what the two colours resolve to once defaults are in
   // play.
@@ -181,27 +220,27 @@ describe("outputFragment", () => {
     const cls = host.querySelector("span")!.classList;
     expect(cls.contains("ansi-blue-fg")).toBe(true);
     expect(cls.contains("ansi-red-bg")).toBe(true);
-    // .ansi-inverse sets BOTH colour properties, so adding it here would
-    // override the swapped classes and paint the default inverse pair instead.
-    expect(cls.contains("ansi-inverse-fg")).toBe(false);
-    expect(cls.contains("ansi-inverse-bg")).toBe(false);
+    // Neither fallback appears: both sides had a colour of their own, and a
+    // fallback here would override the swapped class on that side.
+    expect(cls.contains("ansi-inverse-ink")).toBe(false);
+    expect(cls.contains("ansi-inverse-fill")).toBe(false);
   });
 
   it("resolves the default side when inverse has only one explicit colour", () => {
     host.appendChild(outputFragment("x", [span(0, 1, { fg: 2, attrs: 8 })]));
     const cls = host.querySelector("span")!.classList;
     // fg green, bg default → swapped: bg becomes green, fg takes the default
-    // background. Only the default SIDE gets an inverse class.
+    // background. Only the default SIDE gets a fallback class.
     expect(cls.contains("ansi-green-bg")).toBe(true);
-    expect(cls.contains("ansi-inverse-fg")).toBe(true);
-    expect(cls.contains("ansi-inverse-bg")).toBe(false);
+    expect(cls.contains("ansi-inverse-ink")).toBe(true);
+    expect(cls.contains("ansi-inverse-fill")).toBe(false);
   });
 
   it("resolves both sides when inverse has nothing to swap", () => {
     host.appendChild(outputFragment("x", [span(0, 1, { attrs: 8 })]));
     const cls = host.querySelector("span")!.classList;
-    expect(cls.contains("ansi-inverse-fg")).toBe(true);
-    expect(cls.contains("ansi-inverse-bg")).toBe(true);
+    expect(cls.contains("ansi-inverse-ink")).toBe(true);
+    expect(cls.contains("ansi-inverse-fill")).toBe(true);
   });
 
   it("indexes by UTF-16 units, so a span after an emoji lands correctly", () => {

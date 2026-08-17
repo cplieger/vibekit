@@ -54,6 +54,19 @@ type Buffer struct {
 	steerCarrySubtask string
 	Content           strings.Builder
 	Reasoning         strings.Builder
+	// Model is the model that answered this turn, latched when the turn OPENS
+	// and persisted onto the final assistant message at turn end.
+	//
+	// Latched rather than read later, and that is the whole point: the model
+	// lives on the Chat, not the Message, so a footer that read the session's
+	// current model at render time would relabel every historical turn the
+	// moment the user switched models — confidently lying about history. A
+	// latch also survives a mid-turn switch honestly, because the value
+	// recorded is the one that was running when the turn started.
+	//
+	// Same shape as Refusal below (first write wins, guarded by mu) so both
+	// callers of assistantTurnMessage pick it up with no signature change.
+	Model string
 	// Refusal marks the in-flight turn as a model refusal (kiro-cli 2.13):
 	// set once from the refusal explanation chunk's _meta.kiro.refusal,
 	// persisted onto the final assistant message at turn end. Guarded by mu.
@@ -138,6 +151,32 @@ func (buf *Buffer) AppendCodeReferences(refs []api.CodeReference) []api.CodeRefe
 	out := make([]api.CodeReference, len(buf.CodeReferences))
 	copy(out, buf.CodeReferences)
 	return out
+}
+
+// SetModel records which model is answering this turn. First write wins: a
+// mid-turn switch must not rewrite the attribution of work already done under
+// the previous model. An empty model is ignored, so an unknowable value leaves
+// the field absent rather than stamping a blank.
+func (buf *Buffer) SetModel(model string) {
+	if model == "" {
+		return
+	}
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	if buf.Model == "" {
+		buf.Model = model
+	}
+}
+
+// HasModel reports whether the turn's model has already been latched, so a
+// fallback caller can skip DERIVING one it would not be allowed to store
+// (SetModel is first-write-wins). Guarded, because the latch and the fallback
+// run on different goroutines: the prompt handler latches at dispatch while the
+// dispatch loop is still forwarding frames.
+func (buf *Buffer) HasModel() bool {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	return buf.Model != ""
 }
 
 // SetRefusal records the turn's model-refusal metadata (first write wins —

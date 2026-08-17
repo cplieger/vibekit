@@ -58,9 +58,12 @@ func newRecordingStartHub(t *testing.T) (*Hub, *fakeChatStore, *recordingStartBr
 	return h, cs, rb
 }
 
-// recordingPush records the body of each Send on a channel.
+// recordingPush records the body of each Send on a channel, plus the subject of
+// the most recent one (read only after a body has been received, so the
+// unsynchronised field is ordered behind the channel handoff).
 type recordingPush struct {
-	sends chan string
+	sends   chan string
+	subject api.PushSubject
 }
 
 func (p *recordingPush) RegisterRoutes(*http.ServeMux)        {}
@@ -70,7 +73,8 @@ func (p *recordingPush) HasSubscribers() bool                 { return true }
 func (p *recordingPush) SetPreferences(map[api.PushKind]bool) {}
 func (p *recordingPush) ReloadPreferences(context.Context)    {}
 func (p *recordingPush) Close()                               {}
-func (p *recordingPush) Send(_ context.Context, _, body string, _ api.PushKind) {
+func (p *recordingPush) Send(_ context.Context, _, body string, _ api.PushKind, subject api.PushSubject) {
+	p.subject = subject
 	select {
 	case p.sends <- body:
 	default:

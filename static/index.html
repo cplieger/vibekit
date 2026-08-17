@@ -10,7 +10,7 @@
        web-terminal-kiro pastel violet (#c099ff) in dark mode. Media metas
        track the OS scheme; an in-app forced theme keeps the OS-derived
        chrome color, same approximation as the old single meta. -->
-  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#9046FF">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#771edf">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#c099ff">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -56,6 +56,7 @@
           <button type="button" id="theme-btn" class="icon-btn" data-tooltip="Toggle theme" aria-label="Toggle theme">
             <svg class="theme-icon-dark" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
             <svg class="theme-icon-light hidden" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+            <svg class="theme-icon-system hidden" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 000 18z" fill="currentColor" stroke="none"/></svg>
           </button>
           <button type="button" id="settings-btn" class="icon-btn" data-tooltip="Settings" aria-label="Settings">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1.08-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1.08 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001.08 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1.08z"/></svg>
@@ -110,7 +111,10 @@
     <main id="chat-area">
       <div class="chat-toolbar">
         <span id="toolbar-title" class="toolbar-title"></span>
-        <button type="button" id="find-btn" class="icon-btn" data-tooltip="Search this chat (Ctrl+F)" aria-label="Search this chat">
+        <!-- One button, five destinations: find-dispatch.ts routes it by the
+             active tab, so the label cannot name one view. It said "Search this
+             chat" on every view, including the two where the click did nothing. -->
+        <button type="button" id="find-btn" class="icon-btn" data-tooltip="Search (Ctrl+F)" aria-label="Search" aria-pressed="false">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
         </button>
         <button type="button" id="files-btn" class="icon-btn" data-tooltip="File browser" aria-label="File browser">
@@ -141,7 +145,11 @@
           <div id="messages-wrap">
             <div id="messages"></div>
             <div id="model-picker" class="hidden">
-              <div class="picker-label"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2" r="1.5" fill="currentColor" stroke="none"/><line x1="12" y1="3.5" x2="12" y2="5"/><rect x="2" y="5" width="20" height="16" rx="2"/><circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/><path d="M9.5 17.5c.5.8 1.4 1 2.5 1s2-.2 2.5-1"/></svg> Choose a model</div>
+              <!-- The model glyph is icons.ts's ICON_MODEL_20, written in by
+                   picker.ts on show. It used to be an inline literal here and a
+                   byte-identical one on the model pill below, at two sizes,
+                   with nothing tying them together. -->
+              <div class="picker-label">Choose a model</div>
               <div class="picker-grid"></div>
             </div>
           </div>
@@ -170,7 +178,13 @@
                than a composer feature because a workflow-run tab has no
                composer and still has to be able to ask. -->
           <div id="decision-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
-          <div class="prompt-box">
+          <div id="prompt-box" class="prompt-box">
+            <!-- Top-edge drag handle: raises the message box's CEILING (the
+                 textarea keeps auto-growing with its content under it), persisted
+                 per device. A bare div here; composer-resize.ts sets the
+                 role=separator contract so the markup carries no a11y state that
+                 could drift from the behaviour. -->
+            <div id="composer-resize" class="composer-resize"></div>
             <textarea id="prompt-input" placeholder="Message Kiro..." rows="1" aria-label="Message" autofocus></textarea>
             <ul id="attachment-row" class="attachment-row hidden" aria-label="Attachments"></ul>
             <ul id="queued-row" class="queued-row hidden" aria-label="Prompts queued to send"></ul>
@@ -181,19 +195,31 @@
                    interactive content inside a <button>. -->
               <span class="pill-slot">
                 <button id="context-indicator" class="pill pill-context pill-expandable" type="button" data-tooltip="Context usage — tokens, credits and turns for this chat" aria-label="Context usage">
+                  <!-- A PIE, not a ring. The three circles share one radius and
+                       one stroke width: r=4 with an 8-wide stroke spans r 0..8,
+                       so each stroke IS a filled sector, and pathLength="100"
+                       makes every dash number a percentage. That is what let the
+                       hardcoded 50.27 circumference go, and it is why no second
+                       one had to arrive with the wedge.
+
+                       No stroke-linecap anywhere: butt is the default, and it is
+                       load-bearing twice over — a round cap bulges a sector's
+                       two radial edges outward, and it paints a zero-length dash
+                       as a dot, which is exactly the reserve at 0%. -->
                   <svg class="context-ring" viewBox="0 0 20 20" width="16" height="16">
-                    <circle cx="10" cy="10" r="8" fill="none" stroke="var(--c-border)" stroke-width="2.5"/>
-                    <circle id="context-ring-fill" cx="10" cy="10" r="8" fill="none" stroke="var(--c-green)"
-                      stroke-width="2.5" stroke-dasharray="50.27" stroke-dashoffset="50.27"
-                      stroke-linecap="round" transform="rotate(-90 10 10)"/>
-                    <!-- Compaction threshold tick: a short radial line at
-                         (100 - context_buffer)% of the ring so users can
-                         see where auto-compaction will fire. Positioned
-                         via stroke-dasharray by status.ts. -->
-                    <line id="context-ring-tick" x1="10" y1="1" x2="10" y2="3"
-                      stroke="var(--c-yellow)" stroke-width="1.5"
-                      stroke-linecap="round"
-                      transform="rotate(0 10 10)"/>
+                    <circle cx="10" cy="10" r="8" fill="var(--c-border)"/>
+                    <!-- The compaction RESERVE: the slice from the threshold
+                         round to 12 o'clock, so where auto-compaction fires is a
+                         region you can see rather than a tick you have to know
+                         how to read. Drawn UNDER the usage pie, so usage eats
+                         into it last. Rotated to the threshold and sized to the
+                         buffer by status.ts. -->
+                    <circle id="context-ring-wedge" cx="10" cy="10" r="4" fill="none"
+                      stroke-width="8" pathLength="100"
+                      stroke-dasharray="0 100" transform="rotate(-90 10 10)"/>
+                    <circle id="context-ring-fill" cx="10" cy="10" r="4" fill="none" stroke="var(--c-green)"
+                      stroke-width="8" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"
+                      transform="rotate(-90 10 10)"/>
                   </svg>
                   <span id="context-label">0%</span>
                 </button>
@@ -209,7 +235,8 @@
               </span>
               <span class="pill-slot">
                 <button id="switch-model-btn" class="pill pill-model pill-expandable" type="button" aria-label="Switch model">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="2" r="1.5" fill="currentColor" stroke="none"/><line x1="12" y1="3.5" x2="12" y2="5"/><rect x="2" y="5" width="20" height="16" rx="2"/><circle cx="8" cy="12" r="2.5"/><circle cx="16" cy="12" r="2.5"/><path d="M9.5 17.5c.5.8 1.4 1 2.5 1s2-.2 2.5-1"/></svg>
+                  <!-- icons.ts ICON_MODEL, prepended by model-switcher.ts's
+                       init(). Same `d` as the picker heading's 20px copy. -->
                   <span id="ctx-model-pill">auto</span>
                 </button>
                 <span id="model-switch-list" class="pill-expand-content pill-model-list hidden"></span>
@@ -221,16 +248,24 @@
                 </button>
                 <span id="role-list" class="pill-expand-content pill-role-list hidden"></span>
               </span>
-              <button id="attach-btn" class="pill" type="button" data-tooltip="Attach file" aria-label="Attach file">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-                <span class="pill-label">Attach</span>
-              </button>
-              <!-- Chat options: the set-once, per-chat switches (supervised
-                   mode first). A menu rather than more pills — a pill earns
-                   its slot by changing per message; a set-once mode does not. -->
+              <!-- Chat actions: the composer's tray for everything that acts on
+                   THIS chat without changing per message — attach a file, start
+                   a goal run, branch a tangent, and the supervised switch. A
+                   menu rather than four more pills: a pill earns its slot by
+                   changing per message (model, mode), and four that do not
+                   would grow the row without bound on a phone.
+
+                   `+` because three of the four ADD something to the chat, and
+                   it is the conventional composer glyph for such a tray. The
+                   tooltip and the aria-label say "Chat actions" — one wording
+                   for both, so the accessible name cannot drift from the visible
+                   one, and it is the wording that stays true for the switch too.
+
+                   Every row is appended by chat-options.ts; the card is
+                   deliberately empty here. -->
               <span class="pill-slot">
-                <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat options" aria-label="Chat options">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+                <button id="chat-options-btn" class="pill pill-expandable" type="button" data-tooltip="Chat actions" aria-label="Chat actions">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 </button>
                 <span id="chat-options-card" class="pill-expand-content chat-options-card hidden"></span>
               </span>
@@ -308,12 +343,18 @@
                 </div>
                 <div class="section-option">
                   <label class="toggle">
-                    <input type="checkbox" id="notify-permission-toggle" aria-label="Permission needed" checked>
+                    <input type="checkbox" id="notify-pr-status-toggle" aria-label="Pull request checks" checked>
                     <span class="toggle-slider"></span>
                   </label>
                   <div>
+                    <span class="section-option-label">Pull request checks</span>
+                    <p class="section-hint">Notify when CI on a pull request you opened turns green or red. Checked every minute while you have an open pull request in a repository checked out here, and every five minutes otherwise. Coverage follows what each host reports: GitHub sends both outcomes, GitLab reports a failure but cannot report a recovery, and Gitea or Codeberg report neither.</p>
+                  </div>
+                </div>
+                <div class="section-option section-option-fixed">
+                  <div>
                     <span class="section-option-label">Permission needed</span>
-                    <p class="section-hint">Notify when the agent needs your approval to run a tool and no device has the app in the foreground.</p>
+                    <p class="section-hint">Always on. An approval request blocks the turn until you answer it, so it cannot be switched off separately — silencing it would stall every later turn with nothing on screen to say why. To be asked less often, widen the policy in <strong>Permissions</strong> instead.</p>
                   </div>
                 </div>
               </div>
@@ -560,6 +601,16 @@
               </details>
             </div>
 
+            <div class="page-section" id="workspace-relax-section">
+              <h3 class="section-title">Stop asking in this workspace</h3>
+              <p class="section-hint">Writes a broad <strong>allow</strong> rule for each everyday capability at <strong>workspace</strong> scope, so the agent stops asking for them here. This is the way to be interrupted less: it removes the <em>asks</em>, where muting the notification would only hide them and leave every turn waiting. It applies to this workspace and every chat in it, permanently, until you switch it back off. Installing a <strong>power</strong> still asks, because a power's servers are governed by this policy alone. Each rule appears in the Active policy above and can be removed individually.</p>
+              <label class="perm-mode">
+                <input type="checkbox" id="workspace-relax-checkbox">
+                <span>Allow every everyday capability in this workspace without asking</span>
+              </label>
+              <p id="workspace-relax-status" class="section-hint hidden"></p>
+            </div>
+
             <div class="page-section">
               <h3 class="section-title">Supervised mode (default for new chats)</h3>
               <p class="section-hint">A separate layer from the Active policy above. That policy decides whether the agent needs permission to <em>run</em> a write tool; Supervised mode decides whether the <em>resulting file change</em> needs your review before it's saved to disk. When on, every file change (create, edit, delete) shows up in the chat with Accept / Reject buttons and the write only lands after you approve. The Supervised pill next to the chat prompt toggles the current conversation; this setting only picks the default for new ones.</p>
@@ -620,11 +671,6 @@
               <div id="knowledge-list" class="list-container"><div class="list-empty">No knowledge bases yet.</div></div>
             </div>
 
-            <div class="page-section" id="hooks-section">
-              <h3 class="section-title">Hooks</h3>
-              <p class="section-hint">Automations from the workspace's <code>.kiro/hooks/</code> and the global <code>~/.kiro/hooks/</code> (marked <em>Global</em>; they apply in every workspace). Toggle to enable or disable a hook; <strong>Run now</strong> runs a command hook and shows its output. Agent hooks run their prompt in a chat. Hook status messages in chat are controlled by the <code>hooks.showStatus</code> toggle in <strong>General</strong>.</p>
-              <div id="hooks-list" class="list-container"><div class="list-empty">No hooks yet.</div></div>
-            </div>
           </div>
 
         </div>
@@ -661,6 +707,10 @@
               </select>
             </label>
           </header>
+          <!-- Host for the metadata filter, built by docs.ts through the shared
+               search shell. Metadata only: the inventory carries names,
+               descriptions, front-matter and triggers, never document bodies. -->
+          <div id="docs-filter-host"></div>
           <div data-docs-panel="steering" class="list-container docs-panel"></div>
           <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
           <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
@@ -792,6 +842,8 @@
             <pre id="editor-gutter" class="editor-gutter" aria-hidden="true"></pre>
             <pre id="editor-highlight" class="editor-highlight"><code id="editor-code"></code></pre>
             <textarea id="editor-content" class="editor-content hidden" spellcheck="false" aria-label="File editor"></textarea>
+            <div id="editor-markdown" class="editor-markdown hidden"></div>
+            <div id="editor-image" class="editor-image hidden"></div>
             <div id="editor-diff-pane" class="editor-diff-pane hidden"></div>
           </div>
           <div class="editor-toolbar bottom-bar">
@@ -841,6 +893,9 @@
               </button>
               <input id="fb-path" class="fb-path" type="text" readonly aria-label="Current path">
               <div class="fb-actions">
+                <button type="button" id="fb-search-btn" class="icon-btn" data-tooltip="Find in files (Ctrl+F)" aria-label="Find in files (Ctrl+F)" aria-pressed="false">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+                </button>
                 <button type="button" id="fb-chat-filter" class="icon-btn" data-tooltip="Highlight files this chat changed" aria-label="Highlight files this chat changed" aria-pressed="false">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 3H2l8 9.46V19l4 2v-8.54z"/></svg>
                 </button>
@@ -884,23 +939,11 @@
       <div id="history-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">History</h2>
-          <div class="hist-search">
-            <label class="sr-only" for="hist-search-input">Search conversations</label>
-            <span class="hist-search-field">
-              <svg class="hist-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7"/>
-                <path d="M21 21l-4.35-4.35"/>
-              </svg>
-              <input
-                id="hist-search-input"
-                type="search"
-                class="hist-search-input"
-                placeholder="Search conversations…"
-                autocomplete="off"
-              >
-            </span>
-            <div id="hist-search-note" class="hist-search-note text-muted" role="status"></div>
-          </div>
+          <!-- The box itself is built by history.ts through the shared search
+               shell (static-src/search-shell.ts), so its role, its field's
+               attributes, its debounce and its note come from the same place as
+               the transcript's and the browser's. This is only its host. -->
+          <div id="hist-search-host"></div>
           <div id="history-table" class="list-container">
             <div class="list-empty">No previous sessions in this workspace.</div>
           </div>
@@ -930,8 +973,8 @@
             <span id="shell-title-text">Shell</span>
           </span>
           <span id="shell-status" class="shell-status"></span>
-          <button type="button" id="shell-clear-btn" class="shell-header-btn" data-tooltip="Reset terminal" aria-label="Reset terminal">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4 4l16 16"/></svg>
+          <button type="button" id="shell-restart-btn" class="shell-header-btn" data-tooltip="Restart shell" aria-label="Restart shell">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 019-9 9 9 0 016.7 3H21m0 0V3m0 3h-3M21 12a9 9 0 01-9 9 9 9 0 01-6.7-3H3m0 0v3m0-3h3"/></svg>
           </button>
           <button type="button" id="shell-fullscreen-btn" class="shell-header-btn" data-tooltip="Full screen" aria-label="Toggle full screen">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
@@ -1019,7 +1062,7 @@
     <nav id="mcp-modal-tabs" class="mcp-modal-tabs" role="tablist" aria-label="Add integration method">
       <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="remote">Remote URL</button>
       <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="npm">npm package</button>
-      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="raw">Raw JSON</button>
+      <button type="button" class="mcp-modal-tab" role="tab" data-mcp-mode="raw">Paste JSON</button>
     </nav>
 
     <!-- Search panel: queries the official MCP registry via proxy -->
@@ -1112,14 +1155,14 @@
       </button>
     </div>
 
-    <!-- Raw JSON panel: stdio escape hatch -->
+    <!-- Paste panel: the mcpServers block straight out of a server's README -->
     <div class="mcp-mode-panel hidden" data-mcp-mode="raw">
-      <p class="mcp-mode-hint">Escape hatch for custom binaries or docker commands. Paste a stdio server config as JSON. Env values are secrets; they stay on the server with 0600 perms.</p>
-      <textarea id="mcp-raw-input" class="page-textarea mcp-raw-input" rows="12" spellcheck="false" autocomplete="off" aria-label="Server JSON"></textarea>
+      <p class="mcp-mode-hint">Paste the <code>mcpServers</code> block from a server's README. Local (<code>command</code>) and hosted (<code>url</code>) servers both work, and a block naming several servers connects all of them. A server already configured with the same settings is left alone, so re-pasting a block is safe and keeps the keys you have typed in. Env and header values are secrets; they stay on the server with 0600 perms.</p>
+      <textarea id="mcp-raw-input" class="page-textarea mcp-raw-input" rows="12" spellcheck="false" autocomplete="off" aria-label="Server JSON to paste"></textarea>
       <p id="mcp-raw-error" class="section-hint mcp-raw-error hidden"></p>
       <button type="button" id="mcp-raw-save" class="btn-save">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        Save
+        Connect
       </button>
     </div>
 
@@ -1182,6 +1225,19 @@
       </button>
       <button type="button" id="filepicker-attach" class="btn-save" disabled>Attach</button>
     </div>
+  </div>
+
+  <!-- Keyboard shortcut reference sheet. Rows are built from keys.ts's registry
+       by shortcuts.ts; opened by `?` (see keys.ts, above the modifier gate). -->
+  <div id="shortcuts-modal" class="shortcuts-card hidden" data-modal>
+    <div class="modal-header-row">
+      <span id="shortcuts-modal-title" class="modal-title">Keyboard shortcuts</span>
+      <button type="button" id="shortcuts-close" class="icon-btn" data-tooltip="Close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <p class="shortcuts-note">Cmd works wherever Ctrl is shown.</p>
+    <div id="shortcuts-list" class="shortcuts-list"></div>
   </div>
 
   <script type="module" src="/app.js"></script>

@@ -13,6 +13,7 @@ import (
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/logctl"
+	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
 )
 
@@ -205,21 +206,54 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 
 // syncPushPreferences reads notification preference toggles from the settings
 // patch and forwards them to the push service.
+//
+// It DERIVES the kind set from push.Kinds() rather than naming the kinds here.
+// This used to be a hand-written map with both kinds spelled out and a single
+// `if` reading one key, which made it a THIRD copy of the kind set beside
+// api.pushKinds and push.kindRegistry — so a newly added kind's toggle persisted
+// to config.json and then never reached the running service until the next SSE
+// reconnect happened to call ReloadPreferences.
+//
+// A key the patch does not carry is resolved against the PERSISTED settings
+// before it falls back to the registry default, which is the same order
+// push.loadPreferences reads (disk, else default) with the patch as the freshest
+// layer on top. Seeding the default for an absent key and overriding only on a
+// hit is correct only while the argument happens to be the whole merged document:
+// on a genuinely sparse map it re-enables every kind the caller did not mention,
+// which for a preference the user turned OFF is the one direction that must never
+// happen silently. The function owns that resolution rather than trusting its
+// caller's shape.
+//
+// PushKindPermission has no branch that can lower it: its registry entry declares
+// no settings key, so neither lookup below can find a value to read for it and
+// this write path cannot silence a turn-blocking ask however the body was
+// assembled. See the "no notify_permission key" note in
+// internal/settings/defaults.go.
 func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
-	prefs := map[api.PushKind]bool{
-		api.PushKindAgentFinished: true,
-		api.PushKindPermission:    true,
-	}
-	if v, ok := patch[settings.KeyNotifyAgentFinished]; ok {
-		var af bool
-		if json.Unmarshal(v, &af) == nil {
-			prefs[api.PushKindAgentFinished] = af
+	kinds := push.Kinds()
+	prefs := make(map[api.PushKind]bool, len(kinds))
+	// Read at most once, and only when a key is actually missing: the merged
+	// document every current caller passes needs no disk read at all.
+	var persisted map[string]json.RawMessage
+	for _, k := range kinds {
+		prefs[k.Kind] = k.DefaultOn
+		if k.SettingsKey == "" {
+			continue // an unconfigurable floor: no key, so nothing to read
 		}
-	}
-	if v, ok := patch[settings.KeyNotifyPermission]; ok {
-		var pn bool
-		if json.Unmarshal(v, &pn) == nil {
-			prefs[api.PushKindPermission] = pn
+		v, ok := patch[k.SettingsKey]
+		if !ok {
+			if persisted == nil {
+				// readExistingSettings never returns nil, so the nil check above
+				// distinguishes "not read yet" from "read and empty".
+				persisted = readExistingSettings(filepath.Join(s.configDir, settings.Filename))
+			}
+			if v, ok = persisted[k.SettingsKey]; !ok {
+				continue
+			}
+		}
+		var on bool
+		if json.Unmarshal(v, &on) == nil {
+			prefs[k.Kind] = on
 		}
 	}
 	s.push.SetPreferences(prefs)

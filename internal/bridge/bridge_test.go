@@ -616,7 +616,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 
 		pr, pw, _ := os.Pipe()
 		br := &Bridge{
-			stdout:  bufio.NewScanner(pr),
+			stdout:  newFrameReader(bufio.NewReaderSize(pr, stdoutBufSize)),
 			pending: make(map[int64]chan *api.RPCResponse),
 			notifCh: make(chan *api.RPCResponse, 1024),
 			done:    make(chan struct{}),
@@ -1114,9 +1114,9 @@ func (w *captureWriter) wrote() bool {
 	return w.writes > 0
 }
 
-// errReader yields the configured error on the first Read. A non-EOF
-// error surfaces via bufio.Scanner.Err(); io.EOF terminates the scan
-// cleanly with a nil Err().
+// errReader yields the configured error on the first Read. A non-EOF error
+// surfaces from readFrame and is logged by logReadError; io.EOF terminates the
+// read loop as the ordinary teardown and logs nothing.
 type errReader struct{ failErr error }
 
 func (r errReader) Read([]byte) (int, error) { return 0, r.failErr }
@@ -1124,7 +1124,7 @@ func (r errReader) Read([]byte) (int, error) { return 0, r.failErr }
 // readLoopBridge builds the minimal Bridge that readLoop needs.
 func readLoopBridge(r io.Reader) *Bridge {
 	return &Bridge{
-		stdout:  bufio.NewScanner(r),
+		stdout:  newFrameReader(bufio.NewReaderSize(r, stdoutBufSize)),
 		pending: make(map[int64]chan *api.RPCResponse),
 		notifCh: make(chan *api.RPCResponse, 1),
 		done:    make(chan struct{}),

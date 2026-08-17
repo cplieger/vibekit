@@ -195,6 +195,48 @@ describe("windowOutput", () => {
   });
 });
 
+describe("windowOutput line splitting", () => {
+  // The splitter was rewritten to record each line's source offset, so these pin
+  // that it still agrees element-for-element with the `split("\n")` + pop it
+  // replaced — INCLUDING the one place it deliberately does not: the elided
+  // branch used to join head and tail without the trailing newline the
+  // non-elided branch kept, so the same input reported a different last line
+  // depending only on how long it was.
+  it("agrees with split-and-pop on the boundary inputs", async () => {
+    const { windowOutput } = await import("./strings.js");
+    const oldSplit = (text: string): string[] => {
+      const lines = text.split("\n");
+      if (lines.length > 0 && lines[lines.length - 1] === "") {
+        lines.pop();
+      }
+      return lines;
+    };
+    for (const text of ["", "\n", "a\nb", "a\nb\n", "a\n\nb", "\na", "a"]) {
+      // n is large enough that nothing is elided, so the reported text is the
+      // input and `kept` covers all of it — which is what makes the line count
+      // comparable to the old splitter's.
+      const win = windowOutput(text, 100);
+      expect(win.text, `text for ${JSON.stringify(text)}`).toBe(text);
+      expect(win.elided).toBe(0);
+      expect(win.kept).toEqual([{ from: 0, to: text.length, at: 0 }]);
+      // The elision threshold keys on the line COUNT, so the count itself has to
+      // match: windowOutput(text, k).elided is 0 exactly while lines <= 2k.
+      const lines = oldSplit(text).length;
+      expect(windowOutput(text, Math.max(1, Math.ceil(lines / 2))).elided).toBe(0);
+    }
+  });
+
+  it("keeps the trailing newline's last line in the elided branch too", async () => {
+    const { windowOutput } = await import("./strings.js");
+    const text = Array.from({ length: 10 }, (_, i) => `l${String(i)}`).join("\n") + "\n";
+    const win = windowOutput(text, 2);
+    // `l9` is the last real line; the old elided branch dropped it because
+    // `slice(-n)` picked up the empty remainder the trailing newline left.
+    expect(win.text.split("\n")).toEqual(["l0", "l1", "l8", "l9", ""]);
+    expect(win.elided).toBe(6);
+  });
+});
+
 describe("windowOutput kept ranges", () => {
   it("reports source ranges whose slices reconstruct the windowed text", async () => {
     const { windowOutput } = await import("./strings.js");

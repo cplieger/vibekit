@@ -1579,3 +1579,88 @@ func TestMutate_RejectsInvalidUTF8(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildHistory_TrimsOldestFirst pins the priming budget's three rules, which
+// are behavioural rather than incidental: the output is bounded, the NEWEST
+// messages are the ones kept, and the model is told what it lost.
+//
+// The unit matters as much as the number. Trimming drops whole messages because
+// half a sentence with no marker is worse than a shorter history: the model
+// cannot tell a truncated turn from a terse one.
+func TestBuildHistory_TrimsOldestFirst(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	ctx := context.Background()
+	chatID := api.ChatID("prime-trim")
+
+	// Twelve messages of ~8 KiB each: comfortably over the 64 KiB cap, so the
+	// oldest must go.
+	const each = 8 << 10
+	if err := s.Mutate(ctx, chatID, func(c *api.Chat, _ bool) bool {
+		for i := range 12 {
+			c.Messages = append(c.Messages, api.Message{
+				ID:      fmt.Sprintf("m%02d", i),
+				Role:    api.RoleUser,
+				Content: fmt.Sprintf("MARK%02d ", i) + strings.Repeat("x", each),
+				Ts:      int64(i + 1),
+			})
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("Mutate: %v", err)
+	}
+
+	h := s.BuildHistory(ctx, chatID)
+
+	if len(h) > primeHistoryCap {
+		t.Errorf("history is %d bytes, over the %d cap", len(h), primeHistoryCap)
+	}
+	if !strings.Contains(h, "MARK11") {
+		t.Error("newest message was dropped; a prime without the last turn cannot resume")
+	}
+	if strings.Contains(h, "MARK00") {
+		t.Error("oldest message survived a trim that should have dropped it first")
+	}
+	if !strings.Contains(h, "omitted") {
+		t.Error("history was trimmed without telling the model")
+	}
+}
+
+// TestBuildHistory_KeepsTheLastMessageEvenOversize covers the one case where a
+// single message exceeds the whole budget. Dropping it would return a prime with
+// no final turn, which is useless for resuming, so it is truncated with a marker
+// instead.
+func TestBuildHistory_KeepsTheLastMessageEvenOversize(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	ctx := context.Background()
+	chatID := api.ChatID("prime-oversize")
+
+	if err := s.Mutate(ctx, chatID, func(c *api.Chat, _ bool) bool {
+		c.Messages = []api.Message{
+			{ID: "old", Role: api.RoleUser, Content: "OLDMARK", Ts: 1},
+			{ID: "big", Role: api.RoleUser, Content: strings.Repeat("z", primeHistoryCap*2), Ts: 2},
+		}
+		return true
+	}); err != nil {
+		t.Fatalf("Mutate: %v", err)
+	}
+
+	h := s.BuildHistory(ctx, chatID)
+
+	if len(h) > primeHistoryCap {
+		t.Errorf("history is %d bytes, over the %d cap", len(h), primeHistoryCap)
+	}
+	if !strings.Contains(h, "User: ") {
+		t.Error("the oversize message was dropped entirely rather than truncated")
+	}
+	if strings.Contains(h, "OLDMARK") {
+		t.Error("an older message was kept while the newest had to be truncated")
+	}
+}

@@ -58,7 +58,7 @@
 
   /* Touch drags must fire pointermove, not pan/scroll the page. */
   touch-action: none;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 /* Design system: ~24px minimum hit target; the visual bar stays 3px. */
@@ -118,7 +118,7 @@
   align-items: center;
   justify-content: center;
   line-height: 0;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 .shell-header-btn:hover {

@@ -30,11 +30,6 @@ export function initTerminalStream(): void {
   const unsubOutput = onSSE("terminal_output", (_chatID, p) => {
     appendTerminalChunk(p.terminal_id, p.data, p.spans ?? [], p.offset);
   });
-  // terminal_exited is handled for ONE reason, and it is not rendering: it is
-  // the only moment the server says a terminal will send nothing more, so it is
-  // when an unclaimed hold can be released. A terminal that never links to a
-  // card would otherwise keep its held chunks until the whole chat was disposed.
-  // The outcome itself still comes from the card's own status glyph.
   const unsubExited = onSSE("terminal_exited", (_chatID, p) => {
     forgetTerminal(p.terminal_id);
   });

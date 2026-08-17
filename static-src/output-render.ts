@@ -152,22 +152,21 @@ function applySpan(node: HTMLElement, span: TextSpan): void {
   if ((attrs & ATTR_BLINK) !== 0) {
     classes.push("ansi-blink");
   }
-  if ((attrs & ATTR_HIDDEN) !== 0) {
-    classes.push("ansi-hidden");
-  }
   // Inverse swaps foreground and background. Done by swapping the values here
   // rather than with a CSS filter, because only this code knows what the two
   // colours actually are once defaults are involved.
   const inverse = (attrs & ATTR_INVERSE) !== 0;
   const fg = inverse ? span.bg : span.fg;
   const bg = inverse ? span.fg : span.bg;
-  // Under inverse, a side that is DEFAULT has to resolve to something concrete
-  // or the swap loses half of itself. Two single-property classes do that, one
-  // per side, so each side is handled independently: a rule setting both would
-  // override the swapped palette class on the explicit side, which is how
-  // inverse red-on-blue used to render as the default inverse pair.
 
-  if (fg !== COLOR_DEFAULT) {
+  // Conceal wins over whatever colour the foreground resolved to, so the
+  // foreground is not emitted at all and `.ansi-hidden` supplies the only ink.
+  // Emitting it and letting CSS override would be wrong for the extended
+  // palette, which arrives as an INLINE style and so beats any class: a span
+  // that was both concealed and 256-colour rendered its text in full.
+  if ((attrs & ATTR_HIDDEN) !== 0) {
+    classes.push("ansi-hidden");
+  } else if (fg !== COLOR_DEFAULT) {
     const v = colorValue(fg);
     if (v === null) {
       classes.push(`ansi-${BASIC_NAMES[fg] ?? "white"}-fg`);
@@ -175,7 +174,12 @@ function applySpan(node: HTMLElement, span: TextSpan): void {
       node.style.color = v;
     }
   } else if (inverse) {
-    classes.push("ansi-inverse-fg");
+    // Under inverse, a side that is DEFAULT has to resolve to something concrete
+    // or the swap loses half of itself. Two single-property classes do that, one
+    // per side, so each side is handled independently: a rule setting both would
+    // override the swapped palette class on the explicit side, which is how
+    // inverse red-on-blue used to render as the default inverse pair.
+    classes.push("ansi-inverse-ink");
   }
   if (bg !== COLOR_DEFAULT) {
     const v = colorValue(bg);
@@ -185,7 +189,7 @@ function applySpan(node: HTMLElement, span: TextSpan): void {
       node.style.backgroundColor = v;
     }
   } else if (inverse) {
-    classes.push("ansi-inverse-bg");
+    classes.push("ansi-inverse-fill");
   }
   if (classes.length > 0) {
     node.className = classes.join(" ");
@@ -217,11 +221,13 @@ export function renderOutput(host: HTMLElement, text: string, spans: readonly Te
 /**
  * Append a live chunk to an element already holding earlier output.
  *
- * `base` is the offset the chunk's text starts at in the accumulated output, so
- * the chunk's absolute span offsets can be rebased onto it. The caller passes
- * the payload's `offset` field, which the server sets from the terminal's own
- * accumulated length; that makes a dropped chunk detectable rather than silently
- * shifting every later span.
+ * `base` is where this chunk's text begins in the terminal's accumulated
+ * output. The spans carry ABSOLUTE offsets across that whole stream, so
+ * subtracting `base` is what turns them into offsets into the chunk that was
+ * handed over. Callers pass the payload's `offset` field, which the server sets
+ * from the terminal's own accumulated length. Nothing here detects a gap: a
+ * chunk that never arrived is invisible to this function, and the completion
+ * snapshot is what makes the record whole.
  */
 export function appendOutput(
   host: HTMLElement,

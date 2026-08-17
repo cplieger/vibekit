@@ -119,11 +119,17 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 	// changes for the file in a single unified-diff output. Untracked
 	// files have no HEAD entry; fall back to `--no-index` against
 	// /dev/null, which renders the file as all-additions.
-	out, err := gitCmd(r.Context(), dir, "diff", "HEAD", "--", file)
+	//
+	// --no-textconv on both: a repo's diff.<driver>.textconv is a command git
+	// runs to render a path it selected via .gitattributes. The --no-index
+	// call needs it just as much, and less obviously — "outside the index"
+	// does not mean outside the attributes, which are read from the working
+	// tree either way.
+	out, err := gitCmd(r.Context(), dir, "diff", "--no-textconv", "HEAD", "--", file)
 	if err != nil || strings.TrimSpace(out) == "" {
 		// `--no-index` exits non-zero when there's a diff (not an
 		// error condition). Capture combined output regardless.
-		out2, _ := gitCmd(r.Context(), dir, "diff", "--no-index", "--", "/dev/null", file)
+		out2, _ := gitCmd(r.Context(), dir, "diff", "--no-textconv", "--no-index", "--", "/dev/null", file)
 		if strings.TrimSpace(out2) != "" {
 			out = out2
 		}
@@ -164,7 +170,9 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	// workspace prefix and knows nothing about repos. Defaulting to the
 	// workspace root instead (the old behaviour) ran `git show` in a
 	// directory that is usually not a repository at all, so the base side of
-	// every such diff failed.
+	// every such diff failed; and when the root WAS a repo but the file lived
+	// in a subdirectory repo, the base read as empty and the diff claimed
+	// every line had just been added.
 	repo := repoFromQuery(r)
 	file := requested
 	if repo == "" {
@@ -178,6 +186,8 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		repo, file = owner, inRepo
 	}
 	dir := h.repoDir(repo)
+	// gitShowCmd carries --no-textconv, so this new resolution path inherits the
+	// raw-blob pin rather than needing its own.
 	out, err := gitShowCmd(r.Context(), dir, ref, file)
 	if err != nil {
 		if errors.Is(err, ErrPathNotInRef) {

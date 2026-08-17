@@ -11,8 +11,19 @@
 // ---------------------------------------------------------------------------
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
-import { setSessions, setActive, get, recordSteerQueued, steerCount } from "../store.js";
+import {
+  setSessions,
+  setActive,
+  get,
+  recordSteerQueued,
+  steerCount,
+  setAgentStatus,
+  tabStatusFor,
+} from "../store.js";
 import type { Session } from "../types.js";
+import type * as TurnRail from "../turn-rail.js";
+
+type TurnRailModule = typeof TurnRail;
 
 // scroll.ts touches DOM elements at import; use the shared mock.
 vi.mock(
@@ -20,9 +31,13 @@ vi.mock(
   async () => (await import("../__test-helpers__/scroll-mock.js")).scrollMock,
 );
 const mockCollapseSettled = vi.fn();
+const mockHasPendingDecision = vi.fn(() => false);
+const mockDropTurnDecisions = vi.fn();
 vi.mock("../decision-dock.js", () => ({
   pushDecision: vi.fn(),
   collapseSettledDecision: mockCollapseSettled,
+  hasPendingDecision: mockHasPendingDecision,
+  dropTurnDecisions: mockDropTurnDecisions,
 }));
 
 vi.mock("../attachments.js", () => ({ addAttachment: vi.fn() }));
@@ -35,15 +50,42 @@ vi.mock("../send-state.js", () => ({
   setSSEStatus: vi.fn(),
 }));
 
+// There is no isPermissionNeededEnabled to mock: the permission ask has no
+// per-kind switch, so the three ask handlers notify unconditionally and only the
+// master gate inside notifyIfHidden applies.
+const mockNotifyIfHidden = vi.fn();
 vi.mock("../notify.js", () => ({
-  notifyIfHidden: vi.fn(),
+  notifyIfHidden: mockNotifyIfHidden,
   setBadge: vi.fn(),
   isAgentFinishedEnabled: () => false,
-  isPermissionNeededEnabled: () => false,
   NOTIFY_TITLE: "vibekit",
 }));
 
+const mockOpenSetting = vi.fn();
+vi.mock("../settings-highlight.js", () => ({ openSetting: mockOpenSetting }));
+
+// The sign-in CTA's destination. Mocked for the same reason banner-stack is: a
+// call into it is a command at the handler's boundary, and the real module wires
+// a whoami poll at import.
+const mockShowLoginModal = vi.fn();
+vi.mock("../modals.js", () => ({ showLoginModal: mockShowLoginModal }));
+
 vi.mock("../git.js", () => ({ refreshGitBadge: vi.fn() }));
+
+// Only the two FETCHING functions are replaced, and only for their fetch. turn.ts
+// fires refreshTurnRail fire-and-forget on every turn frame, and it was the one
+// module in this graph still reaching api-client: the real one issues
+// GET /api/chats/{id}/turns, which happy-dom sends at its base URL, so each frame
+// left a request in flight for the window teardown to abort and print as an
+// unhandled AbortError. The count varied run to run (0-9 across the suite)
+// because it was a race between the request failing and the file finishing, which
+// is why it never failed a test and never stayed fixed either. Spreading the real
+// module keeps the rest of the rail's behaviour (railRows, observeTurns) honest.
+vi.mock("../turn-rail.js", async (importOriginal) => ({
+  ...(await importOriginal<TurnRailModule>()),
+  loadTurnRail: vi.fn(() => Promise.resolve()),
+  refreshTurnRail: vi.fn(() => Promise.resolve()),
+}));
 
 const mockShowBanner = vi.fn();
 vi.mock("../banner-stack.js", () => ({ showBanner: mockShowBanner, onTurnEnded: vi.fn() }));
@@ -90,9 +132,47 @@ beforeEach(() => {
 });
 
 describe("ERROR_ROUTES", () => {
-  const expectedRoutes: [string, { surface: string; level: string; dismissible: boolean }][] = [
+  const expectedRoutes: [
+    string,
+    {
+      surface: string;
+      level: string;
+      dismissible: boolean;
+      action?:
+        | { kind: "setting"; tab: string; control: string; label: string }
+        | { kind: "sign-in"; label: string };
+    },
+  ][] = [
     ["agent_not_found", { surface: "banner", level: "error", dismissible: true }],
-    ["agent_config_error", { surface: "banner", level: "error", dismissible: false }],
+    // A routed error that also names a Settings control: the payload carries a
+    // .kiro/agents path, so the banner links at Custom instructions (D115).
+    [
+      "agent_config_error",
+      {
+        surface: "banner",
+        level: "error",
+        dismissible: false,
+        action: {
+          kind: "setting",
+          tab: "instructions",
+          control: "steering-input",
+          label: "Open custom instructions",
+        },
+      },
+    ],
+    // D106: the runtime is running UNAUTHENTICATED, so the session opened and
+    // everything behind it will fail. The only fix is signing in, and there is no
+    // Settings control for that — which is why the action is a discriminated
+    // union rather than a Settings jump with a stretched meaning.
+    [
+      "auth_token_unavailable",
+      {
+        surface: "banner",
+        level: "error",
+        dismissible: false,
+        action: { kind: "sign-in", label: "Sign in" },
+      },
+    ],
     ["rate_limit", { surface: "banner", level: "warning", dismissible: true }],
     ["compaction_failed", { surface: "banner", level: "error", dismissible: true }],
     ["switch_failed", { surface: "send-error", level: "error", dismissible: false }],
@@ -169,6 +249,21 @@ describe("turn_ended turn summary → store", () => {
     expect(m?.turn_credits).toBeUndefined();
     expect(m?.turn_elapsed_ms).toBeUndefined();
     expect(m?.changed_files).toBeUndefined();
+    expect(m?.turn_model).toBeUndefined();
+  });
+
+  it("stamps the model that served the turn", () => {
+    seedWithAssistant();
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", model: "sonnet-4" });
+    expect(get("chat-1")?.messages[0]?.turn_model).toBe("sonnet-4");
+  });
+
+  // The server omits the field when it cannot name a model, and a blank string
+  // would read as an attributed turn. Both absences have to leave it undefined.
+  it("leaves the model undefined when the payload names none", () => {
+    seedWithAssistant();
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn", model: "" });
+    expect(get("chat-1")?.messages[0]?.turn_model).toBeUndefined();
   });
 });
 
@@ -202,6 +297,66 @@ describe("turn_ended side effects", () => {
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
     expect(steerCount("chat-1")).toBe(0);
   });
+
+  // The dot's headline promise is "your background chat finished", and the signal
+  // it used to rest on — the agent's own `completed` status — only arrives when
+  // the model calls update_session_information. A turn that ended without one
+  // fell to `idle`, so the promise held only sometimes. turn_ended always
+  // arrives, which is why the latch lives on this handler.
+  it("latches done for a background chat whose agent never declared completed", () => {
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(get("chat-1")?.agent_status).toBeUndefined();
+    expect(tabStatusFor(get("chat-1"))).toBe("done");
+  });
+
+  it("latches nothing for a CANCELLED turn, which finished nothing", () => {
+    // The same line the "Agent finished" notification already draws: a cancelled
+    // turn is not a finished one, and a green "turn finished" dot would be a claim
+    // about work the user stopped.
+    setSessions([makeSession("chat-1", { thinking: true }), makeSession("chat-2")]);
+    setActive("chat-2");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled" });
+    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+  });
+
+  it("latches nothing for the chat the reader is watching", () => {
+    // `done` means "finished while you were away". The active tab with the page in
+    // front of the reader needs no mark, and not latching is better than latching
+    // and clearing: a green dot on the row you are reading is noise, and it would
+    // then only clear on your next visit or your next prompt.
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+  });
+
+  it("still prefers the agent's own verdict where it lands", () => {
+    setSessions([makeSession("chat-1"), makeSession("chat-2")]);
+    setActive("chat-2");
+    setAgentStatus("chat-1", "waiting_on_user", "over to you");
+
+    // A finished turn that left a question behind is a chat that WANTS something,
+    // not a chat that is done, and the agent is the only thing that knows which.
+    fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
+    expect(tabStatusFor(get("chat-1"))).toBe("waiting");
+  });
+
+  // Every ask BLOCKS its turn, so a turn that has ended is not waiting on one.
+  // What is left in the queue is an abandoned card (cmdCancel already cleared the
+  // server's own pending set), and `input` outranks every other state — so the
+  // chat claimed it needed a decision indefinitely.
+  it("discards the turn's abandoned asks before re-deriving the dot", () => {
+    setSessions([makeSession("chat-1")]);
+    setActive("chat-1");
+
+    fireSSE("turn_ended", "chat-1", { stop_reason: "cancelled" });
+    expect(mockDropTurnDecisions).toHaveBeenCalledWith("chat-1");
+  });
 });
 
 describe("error handler", () => {
@@ -216,7 +371,62 @@ describe("error handler", () => {
       "slow down",
       "warning",
       true,
+      undefined,
     );
+    expect(mockSetLastError).not.toHaveBeenCalled();
+  });
+
+  // D115: a banner whose route names a setting carries a working in-app jump,
+  // and one whose route does not carries no affordance at all.
+  it("gives agent_config_error a banner action that opens the named control", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "agent_config_error", message: "bad agent json" });
+
+    const link = mockShowBanner.mock.calls[0]?.[5] as
+      { label: string; onClick: () => void } | undefined;
+    expect(link?.label).toBe("Open custom instructions");
+    link?.onClick();
+    expect(mockOpenSetting).toHaveBeenCalledWith("instructions", "steering-input");
+  });
+
+  it("passes no banner action for a routed error that names none", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", { code: "compaction_failed", message: "nope" });
+    expect(mockShowBanner.mock.calls[0]?.[5]).toBeUndefined();
+    expect(mockOpenSetting).not.toHaveBeenCalled();
+  });
+
+  // D106. Before this the auth failure existed only as one server log line and a
+  // JSON-RPC error to KAS, and KAS's answer to that error is to run
+  // unauthenticated — the chat opens and every turn fails with nothing on screen
+  // saying the runtime is signed out.
+  it("routes the auth failure to a non-dismissible banner with a sign-in CTA", () => {
+    setSessions([makeSession("chat-1", { thinking: true })]);
+    setActive("chat-1");
+    fireSSE("error", "chat-1", {
+      code: "auth_token_unavailable",
+      message: "kiro-cli: refresh token expired",
+    });
+
+    expect(mockShowBanner).toHaveBeenCalledWith(
+      "chat-1",
+      "auth_token_unavailable",
+      // kiro-cli's own reason travels through: it names which leg of the login
+      // chain is dead, and no wording invented client-side is more specific.
+      "kiro-cli: refresh token expired",
+      "error",
+      false,
+      expect.objectContaining({ label: "Sign in" }),
+    );
+    const link = mockShowBanner.mock.calls[0]?.[5] as
+      { label: string; onClick: () => void } | undefined;
+    link?.onClick();
+    expect(mockShowLoginModal).toHaveBeenCalledTimes(1);
+    // Not a Settings jump: the login modal is not in Settings at all.
+    expect(mockOpenSetting).not.toHaveBeenCalled();
+    // And not the send-error surface: it is not this send that is broken.
     expect(mockSetLastError).not.toHaveBeenCalled();
   });
 
@@ -235,6 +445,31 @@ describe("error handler", () => {
     fireSSE("error", "chat-1", { code: "mystery_code", message: "huh" });
     expect(get("chat-1")?.thinking).toBe(false);
     expect(mockSetLastError).toHaveBeenCalledWith("mystery_code: huh");
+  });
+});
+
+// D103: the protected approval floor, at the client's notification site. There
+// is no per-kind switch left, so all three turn-blocking asks reach
+// notifyIfHidden — which is where the master switch is checked. The
+// isAgentFinishedEnabled mock returns false, so a turn_ended notification would
+// NOT fire; that contrast is what makes these assertions non-vacuous.
+describe("the permission-class asks always notify", () => {
+  it.each([
+    ["permission_needed", { request_id: 1, options: [] }, "Permission needed"],
+    ["elicitation_needed", { request_id: 2 }, "Input requested by a tool"],
+    ["user_input_needed", { request_id: 3, options: [] }, "The agent has a question"],
+  ])("%s notifies with no per-kind gate", (event, payload, body) => {
+    fireSSE(event, "chat-1", payload);
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", body);
+  });
+
+  it("uses the turn-approval wording when the ask carries files", () => {
+    fireSSE("permission_needed", "chat-1", {
+      request_id: 4,
+      options: [],
+      files: [{ path: "a.go", action_id: "act-1" }],
+    });
+    expect(mockNotifyIfHidden).toHaveBeenCalledWith("vibekit", "Review this turn's changes");
   });
 });
 

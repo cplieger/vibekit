@@ -50,7 +50,7 @@
 }
 
 .tool-output-reveal:hover {
-  background: var(--c-bg-hover);
+  background: var(--c-bg-tertiary);
   color: var(--c-text-primary);
 }
 
@@ -114,7 +114,7 @@
   font-variant-numeric: tabular-nums;
   transition:
     background var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 }
 
 .tool-group-header:hover {
@@ -157,7 +157,7 @@
   align-items: center;
   justify-content: center;
   color: var(--c-accent);
-  transition: color var(--dur-micro) var(--ease-micro);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .tool-icon svg {
@@ -175,6 +175,49 @@
 /* Running keeps the accent: the spinner beside it is the motion channel. */
 .tool-icon.is-running {
   color: var(--c-accent);
+}
+
+/* A policy refusal is amber, not red: the tool did not break, it was not run.
+   The shield badge carries the same distinction in shape, because tint alone is
+   one channel (WCAG 1.4.1). */
+.tool-icon.is-denied {
+  color: var(--c-yellow);
+}
+
+/* Stopped rather than finished (a cancelled or aborted workflow run). Amber for
+   the same reason a refusal is: the work did not fail, it did not complete. That
+   makes SHAPE the only thing separating the two, which is exactly what the
+   triangle-versus-shield badge pair is for. */
+.tool-icon.is-warn {
+  color: var(--c-yellow);
+}
+
+/* The rule that refused the call. Presented as label/value pairs rather than
+   prose so the capability and the source file can be copied out of it. */
+.tool-denial {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  margin-block-end: var(--sp-2);
+  border-inline-start: 2px solid var(--c-yellow);
+  background: var(--c-bg-tertiary);
+  border-radius: var(--r);
+}
+
+.tool-denial-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+  font-size: var(--fs-sm);
+}
+
+.tool-denial-row > span {
+  color: var(--c-text-secondary);
+  flex: 0 0 5.5rem;
+}
+
+.tool-denial-row > code {
+  overflow-wrap: anywhere;
 }
 
 .tool-outcome-badge {
@@ -304,10 +347,10 @@
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 
   &:hover {
-    background: var(--c-bg-hover);
+    background: var(--c-hover);
     border-color: var(--c-accent);
     color: var(--c-text-primary);
   }
@@ -343,7 +386,7 @@
   transition:
     background var(--dur-micro),
     border-color var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 }
 
 .inline-file-icon {
@@ -405,7 +448,7 @@
   padding: var(--sp-2) var(--sp-3);
   cursor: pointer;
   user-select: none;
-  transition: background var(--dur-micro) var(--ease-micro);
+  transition: background var(--dur-micro) var(--ease-standard);
 }
 
 .subagent-header:hover {
@@ -447,7 +490,9 @@
   flex-shrink: 0;
   background: none;
   border: none;
-  color: var(--c-text-tertiary);
+
+  /* A control's label, not a hint (see --c-text-control in 01-tokens.css). */
+  color: var(--c-text-control);
   cursor: pointer;
   font-size: var(--fs-sm);
   line-height: 1;
@@ -658,7 +703,7 @@
   line-height: 0;
   transition:
     color var(--dur-micro),
-    background var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard);
   flex-shrink: 0;
 
   &:hover {
@@ -747,7 +792,7 @@
   font-size: var(--fs-sm);
   transition:
     background var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -955,7 +1000,7 @@
   font-size: var(--fs-sm);
   resize: vertical;
   width: 100%;
-  transition: border-color var(--dur-micro) var(--ease-micro);
+  transition: border-color var(--dur-micro) var(--ease-standard);
 }
 
 .git-commit-btn {
@@ -1050,7 +1095,7 @@
   white-space: nowrap;
   transition:
     background var(--dur-micro),
-    color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard);
 
   &:hover {
     background: var(--c-bg-tertiary);
@@ -1163,6 +1208,29 @@
   margin-block-start: var(--sp-3);
 }
 
+/* Pointer to the workspace relaxation (permission.ts buildPolicyPointer).
+   Tertiary and below the answer row on purpose: it navigates to Settings and
+   grants nothing, so it must not read as a third way to answer the ask. */
+.approval-policy-pointer {
+  margin-block-start: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+}
+
+.approval-policy-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--c-accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.approval-policy-link:hover {
+  color: var(--c-accent-hover);
+}
+
 .confirm-allow {
   border-color: var(--c-green);
   color: var(--c-green);
@@ -1198,7 +1266,7 @@
   width: 100%;
   text-align: start;
   padding: var(--sp-1) var(--sp-2);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   font-family: var(--font-mono);
@@ -1225,7 +1293,7 @@
   font-size: var(--fs-xs);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   color: var(--c-text-primary);
 }
 
@@ -1240,7 +1308,7 @@
   font-size: var(--fs-xs);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
-  border-radius: 4px;
+  border-radius: var(--r-sm);
   color: var(--c-text-primary);
   cursor: pointer;
 }
@@ -1256,7 +1324,7 @@
   font-size: var(--fs-xs);
   font-weight: 600;
   padding: 1px var(--sp-1);
-  border-radius: 3px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   user-select: none;
 }
@@ -1421,8 +1489,8 @@
   color: var(--c-text-primary);
   cursor: pointer;
   transition:
-    border-color var(--dur-micro) var(--ease-micro),
-    background var(--dur-micro) var(--ease-micro);
+    border-color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 .user-input-option:hover {

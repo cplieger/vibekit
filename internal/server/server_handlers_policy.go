@@ -37,7 +37,12 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	scope := r.URL.Query().Get("scope")
 	view := api.PolicyView{
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},
-		Available:      true,
+		// The relaxation set travels on BOTH branches: it is a fixed property of
+		// this build, not a projection of the live policy, so the switch stays
+		// usable when no bridge can answer (which is exactly when a user is
+		// most likely to be editing rules by hand).
+		RelaxCapabilities: policyfile.RelaxCapabilities(),
+		Available:         true,
 	}
 	if s.policy != nil {
 		rules, err := s.policy.PolicyList(r.Context(), scope)

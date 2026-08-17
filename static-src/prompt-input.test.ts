@@ -55,6 +55,9 @@ function makeSession(prompts: string[]): Session {
  *  so the DOM is staged once and every test reuses it. Replacing the nodes
  *  between tests would leave the keydown listener on the departed textarea. */
 beforeAll(() => {
+  // The action attribute is the real markup's backstop against a native form
+  // submission, and it is staged here so a regression shows up as a navigation
+  // attempt in this suite rather than only as a browser console violation.
   document.body.innerHTML = `
     <form id="prompt-form" action="javascript:void 0">
       <textarea id="prompt-input"></textarea>
@@ -150,20 +153,20 @@ describe("prompt history cycling", () => {
 // `form.dispatchEvent(new Event("submit"))`, and `new Event()` is
 // `cancelable: false`, so the submit handler's preventDefault() was a no-op and
 // the browser performed the form's NATIVE submission on every send. What kept
-// that from being a page navigation was the `action="javascript:void 0"`
-// backstop plus CSP `form-action 'self'`, which downgraded it to a console
-// violation — the exact failure that backstop's comment predicts. The staged
-// form above carries that action attribute so a regression shows up here as a
-// navigation attempt rather than only in a browser console.
+// that from being a page navigation was the `action="javascript:void 0"` backstop
+// plus CSP `form-action 'self'`, which downgraded it to a console violation — the
+// exact failure that backstop's comment predicts.
 // ---------------------------------------------------------------------------
 describe("send", () => {
   it("sends the trimmed text on Enter", () => {
+    expect.assertions(1);
     type("  hello  ");
     press("Enter");
     expect(submitted).toEqual(["hello"]);
   });
 
   it("clears the box after sending", () => {
+    expect.assertions(1);
     type("hello");
     press("Enter");
     expect(input().value).toBe("");
@@ -173,34 +176,57 @@ describe("send", () => {
     // A synthetic submit event dispatched from the keydown handler ran the send
     // AND then let the native submission proceed; one keystroke has to mean one
     // send and nothing else.
+    expect.assertions(1);
     type("hello");
     press("Enter");
     expect(submitted).toHaveLength(1);
   });
 
   it("refuses an empty or whitespace-only box", () => {
+    expect.assertions(1);
     type("   ");
     press("Enter");
     expect(submitted).toEqual([]);
   });
 
-  it("Enter does not trigger the form's native submission", () => {
-    // happy-dom reports a navigation attempt; the real browser reported a CSP
-    // form-action violation for the same cause.
-    const navigated = vi.fn();
+  it("does not dispatch a non-cancelable submit event at the form", () => {
+    // The cause, asserted directly: a `cancelable: false` submit event is one
+    // whose preventDefault cannot work, so the native submission follows it.
+    expect.assertions(1);
+    const uncancelable = vi.fn();
     const form = document.getElementById("prompt-form") as HTMLFormElement;
-    form.addEventListener("submit", (e) => {
+    const listener = (e: Event): void => {
       if (!e.cancelable) {
-        navigated();
+        uncancelable();
       }
-    });
+    };
+    form.addEventListener("submit", listener);
     type("hello");
     press("Enter");
-    expect(navigated).not.toHaveBeenCalled();
+    form.removeEventListener("submit", listener);
+    expect(uncancelable).not.toHaveBeenCalled();
+  });
+
+  it("attempts no native form submission on Enter", () => {
+    // The consequence, asserted through the DOM's own submit machinery:
+    // requestSubmit/submit is what a native submission would reach.
+    expect.assertions(1);
+    const form = document.getElementById("prompt-form") as HTMLFormElement;
+    const native = vi.fn();
+    const realSubmit = form.submit.bind(form);
+    form.submit = native;
+    try {
+      type("hello");
+      press("Enter");
+    } finally {
+      form.submit = realSubmit;
+    }
+    expect(native).not.toHaveBeenCalled();
   });
 
   it("sends through the form's own submit event too", () => {
     // The send button is type=submit, so a click arrives this way.
+    expect.assertions(1);
     type("hello");
     const form = document.getElementById("prompt-form") as HTMLFormElement;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -208,19 +234,21 @@ describe("send", () => {
   });
 
   it("sends through the exported shortcut entry point", () => {
+    expect.assertions(1);
     type("hello");
     sendComposer();
     expect(submitted).toEqual(["hello"]);
   });
 
   it("ends history cycling when it sends", () => {
+    expect.assertions(3);
     type("draft");
     press("ArrowUp");
     expect(input().value).toBe("newest");
     press("Enter");
     expect(submitted).toEqual(["newest"]);
-    // Cycling ended, so ArrowDown is a fresh capture rather than a step back
-    // into the previous cycle's draft.
+    // Cycling ended, so ArrowUp is a fresh walk from the top rather than a step
+    // deeper into the previous cycle.
     press("ArrowUp");
     expect(input().value).toBe("newest");
   });

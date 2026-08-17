@@ -134,6 +134,9 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID api.ChatID, msg 
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventRunStarted, chatID, api.RunStartedPayload{
 		WorkflowID: p.WorkflowID,
 		Name:       p.WorkflowName,
+		// Keyed on the workflow id, NOT on chatID: this frame's chat id is empty
+		// for exactly the runs the flag is about (see RunOriginAccess).
+		Scheduled: t.deps.IsScheduledRun(p.WorkflowID),
 	}))
 }
 
@@ -156,6 +159,10 @@ func (t *Translator) HandleRunComplete(ctx context.Context, chatID api.ChatID, m
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventRunFinished, chatID, api.RunFinishedPayload{
 		WorkflowID: p.WorkflowID,
 		Status:     p.Status,
+		// The one name this frame carries. It is inside the state rather than at
+		// the top level, unlike run_start's, which is why the log line above
+		// already reaches for it.
+		Name: p.FinalState.WorkflowName,
 	}))
 }
 

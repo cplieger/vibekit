@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/cplieger/keyenc"
@@ -12,7 +14,6 @@ import (
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/push"
-	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -47,6 +48,25 @@ type BridgeCoordinator struct {
 	// `_meta.kiro.secretStorage` declaration: see api.StartOpts.SecretStorage
 	// for why declaring it without a store breaks an MCP connect.
 	secretStorage func() bool
+	// chatStatus reads a chat's last self-declared status, which is what the
+	// agent-finished push body says instead of a fixed literal. A FUNCTION rather
+	// than the cache itself so the coordinator keeps taking no dependency on the
+	// SSE plane's internals, and nil-safe for tests that build a coordinator
+	// without one.
+	chatStatus func(api.ChatID) api.ChatStatusPayload
+	// primeFrom notes which chat's transcript should prime a chat's FIRST
+	// session, for the tangent whose session/fork was refused (command/fork.go).
+	// Consumed by the next spawn and deleted there, so it is a handoff between
+	// the fork command and one launch rather than state anything can read twice.
+	//
+	// Not persisted, deliberately. It describes the launch of one session; after
+	// a restart the tangent has its own conversation and the parent's history is
+	// no longer owed to it. Bounded by the same fact: a note only exists between
+	// a fork refusal and that chat's first prompt.
+	//
+	// Sits among the pointer fields for govet fieldalignment; its mutex is a
+	// non-pointer and stays at the end of the struct.
+	primeFrom map[api.ChatID]api.ChatID
 	// agentEngine is the kiro-cli agent engine for every bridge this
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
@@ -55,7 +75,36 @@ type BridgeCoordinator struct {
 	// Set on the CHAT spawns below and deliberately NOT threaded to the utility
 	// bridge, whose work is title generation and catalog fetches — an
 	// `--effort max` there would spend real credits on a two-word summary.
-	acpArgs []string
+	acpArgs     []string
+	primeFromMu sync.Mutex
+}
+
+// PrimeFromChat records that chatID's first session should be primed with
+// sourceChatID's transcript. See BridgeCoordinator.primeFrom.
+func (bc *BridgeCoordinator) PrimeFromChat(chatID, sourceChatID api.ChatID) {
+	if chatID == "" || sourceChatID == "" || chatID == sourceChatID {
+		return
+	}
+	bc.primeFromMu.Lock()
+	defer bc.primeFromMu.Unlock()
+	if bc.primeFrom == nil {
+		bc.primeFrom = make(map[api.ChatID]api.ChatID, 1)
+	}
+	bc.primeFrom[chatID] = sourceChatID
+}
+
+// takePrimeFrom claims and clears a chat's prime note. Claiming rather than
+// reading: the note is spent by the session it primes, so a later bridge for the
+// same chat must not re-inject a history that session has already read.
+func (bc *BridgeCoordinator) takePrimeFrom(chatID api.ChatID) api.ChatID {
+	bc.primeFromMu.Lock()
+	defer bc.primeFromMu.Unlock()
+	src, ok := bc.primeFrom[chatID]
+	if !ok {
+		return ""
+	}
+	delete(bc.primeFrom, chatID)
+	return src
 }
 
 // newBridgeCoordinator constructs a BridgeCoordinator from the Hub's
@@ -73,6 +122,7 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		preBridgeSpawn: h.preBridgeSpawn,
 		// h implements replayProjector via load_projection.go.
 		replayProjection: h,
+		chatStatus:       h.sse.chatStatus.Get,
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
 		secretStorage:    func() bool { return h.secrets != nil },
@@ -258,19 +308,26 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// Supervised is passed at creation and only here: the session/load path below
 	// does not repeat it, because KAS persists `autopilot` in its own session
 	// metadata and a loaded session already carries the value.
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: bc.effortForModel(ctx, model), AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
+	if err := sb.bridge.Start(ctx, &api.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: chat.Effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
 
 	sb.primed = false
-	// There is no rewind degrade path any more. It existed because a rewind
-	// FORKED a session, and a failed fork left a second chat showing a
-	// truncated transcript the fresh session knew nothing about — so its history
-	// had to be re-injected as an invisible priming prompt. A rewind reverts the
-	// session it is already in, so there is no fork to fail and no history to
-	// re-inject. primeReason keeps its model-switch member, which is a real
-	// recovery path.
+	// There is no rewind degrade path. It existed because a rewind FORKED a
+	// session, and a failed fork left a second chat showing a truncated
+	// transcript the fresh session knew nothing about. A rewind reverts the
+	// session it is already in, so there is nothing to re-inject.
+	//
+	// A TANGENT's refused fork is the same SHAPE and a different operation, and
+	// it does need the injection: this session has never seen the conversation
+	// the user opened it from, and that conversation lives in another chat. The
+	// note is claimed here rather than read at prime time so it is spent by
+	// exactly one session (see takePrimeFrom).
+	if src := bc.takePrimeFrom(chatID); src != "" {
+		sb.primeReason = primeReasonFork
+		sb.primeFrom = src
+	}
 	sb.state = bridgeIdle
 
 	return sb, nil
@@ -515,25 +572,38 @@ func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
 // PrimeIfNeeded sends the chat history as an ephemeral priming prompt on
 // the current bridge.
 func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatID, sb *sharedBridge) {
-	history := bc.chatStore.BuildHistory(ctx, chatID)
-	if history == "" {
-		return
-	}
-
 	// Preambles live in translate (PrimePreamble*) because the focus-title
 	// derivation filter must recognise a title KAS derives from this prime
 	// text — one definition keeps the filter and the prime in lockstep.
+	//
+	// The reason decides the preamble AND whose history is read. Every reason but
+	// the tangent's primes a session with its OWN chat's transcript; a tangent
+	// whose fork was refused has no transcript of its own yet and needs the
+	// parent's, which is why the source is read off the bridge rather than assumed
+	// to be chatID.
 	var prime string
+	source := chatID
 	switch sb.primeReason {
 	case primeReasonSwitch:
-		prime = translate.PrimePreambleSwitch + history
+		prime = translate.PrimePreambleSwitch
 	case primeReasonReload:
-		prime = translate.PrimePreambleReload + history
+		prime = translate.PrimePreambleReload
+	case primeReasonFork:
+		prime = translate.PrimePreambleTangent
+		if sb.primeFrom != "" {
+			source = sb.primeFrom
+		}
 	default:
 		return
 	}
 
-	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason)
+	history := bc.chatStore.BuildHistory(ctx, source)
+	if history == "" {
+		return
+	}
+	prime += history
+
+	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason, "history_from", source)
 	_, err := sb.bridge.Call(ctx, api.MethodPrompt, command.SessionParams(sb, map[string]any{
 		"prompt": []map[string]any{api.TextBlock(prime)},
 	}))
@@ -542,37 +612,27 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	}
 }
 
-// modelEffortSetting is the typed representation of the model_effort
-// config key (vibekit-managed). Read at session start to seed the
-// acp --effort launch flag.
-type modelEffortSetting struct {
-	LastModel string `json:"last_model"`
-	Effort    string `json:"effort"`
-}
+// There is no effortForModel and no modelEffortSetting. Effort was one GLOBAL
+// `model_effort` setting shaped `{last_model, effort}`, so it was keyed by the
+// LAST model rather than by the chat: two chats could not disagree, and
+// switching models discarded the previous model's level outright. It is a field
+// on the chat record now (api.Chat.Effort), read straight off the chat at spawn
+// and written by CmdSetEffort, so the launch flag needs no settings read.
 
-// effortForModel returns the persisted effort level for model, or "" if
-// none is stored or the stored model differs. The result seeds the
-// kiro-cli >=2.6 `acp --effort` launch flag (StartOpts.Effort), so a new
-// session starts at the user's chosen effort without a post-start
-// /effort dispatch. Mid-session changes still go through CmdSetEffort.
-func (bc *BridgeCoordinator) effortForModel(ctx context.Context, model string) string {
-	var me modelEffortSetting
-	if !settings.FieldInto(ctx, bc.lifecycle.configDir, settings.KeyModelEffort, "effort_for_model", &me) {
-		return ""
-	}
-	if me.LastModel != model {
-		return ""
-	}
-	return me.Effort
-}
-
-// NotifyPush sends a push notification if the push service is configured.
-func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind api.PushKind) {
+// NotifyPush sends a push notification about one CHAT if the push service is
+// configured.
+//
+// It keeps its chat-id parameter rather than taking an api.PushSubject: every
+// caller here is chat-scoped (a turn ended, a permission ask, an agent question),
+// so the conversion belongs at this one boundary instead of at each of them. A
+// notification with no chat behind it — the PR poller's — does not come through
+// here at all; it calls push.Send with its own subject.
+func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID) {
 	if bc.push == nil || !bc.push.HasSubscribers() {
 		return
 	}
 	bc.lifecycle.inflight.Go(func() {
-		bc.push.Send(ctx, push.DefaultTitle, body, kind)
+		bc.push.Send(ctx, push.DefaultTitle, body, kind, api.ChatSubject(chatID))
 	})
 }
 
@@ -585,9 +645,14 @@ func (bc *BridgeCoordinator) TakeBuffer(chatID api.ChatID) (*buffer.Buffer, bool
 // and broadcasts turn_ended with the credit delta and elapsed time.
 func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
 	stopReason := extractStopReason(resp)
+	// Read BEFORE the turn_ended broadcast below: emit() clears the chat's status
+	// as that event goes out, so a read at the push site always finds nothing. See
+	// statusDescription.
+	statusDesc := bc.statusDescription(chatID)
 
 	var changedFiles map[string]*api.FileChange
 	var refusal *api.RefusalInfo
+	var model string
 
 	if buf, ok := bc.TakeBuffer(chatID); ok && buf.Started {
 		// Settle whatever the steering-marker filter was still withholding. A
@@ -598,6 +663,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 		translate.FlushSteerCarry(buf)
 		changedFiles = buf.ChangedFiles
 		refusal = buf.Refusal
+		model = buf.Model
 		if stopReason == stopReasonCancelled {
 			changed := buf.MarkCancelledToolsFailed()
 			for i := range changed {
@@ -625,6 +691,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 		bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{
 			StopReason:   stopReason,
 			Refusal:      refusal,
+			Model:        model,
 			CreditsDelta: creditsDelta,
 			ElapsedMs:    elapsedMs,
 			ChangedFiles: changedFiles,
@@ -632,8 +699,51 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	}
 
 	if stopReason != stopReasonCancelled {
-		bc.NotifyPush(ctx, "Agent finished", api.PushKindAgentFinished)
+		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), api.PushKindAgentFinished, chatID)
 	}
+}
+
+// agentFinishedBody is what the agent-finished notification SAYS.
+//
+// It was the fixed literal "Agent finished", which tells a reader nothing about
+// which of three background chats just came back. The agent's own one-line
+// self-description is already server-side, in memory, on the Hub, keyed by the
+// chat id this method is handed: `chat_status` arrives on KAS's focus_update
+// channel (the model's update_session_information tool). So no new wire field, no
+// new call site — a read at the push site.
+//
+// ORDERING IS THE TRAP, and it is why the caller reads the description early
+// rather than here. The status cache is cleared at turn end by design (so a bare
+// replay cannot resurrect a stale "in_progress"), and the clear runs inside emit()
+// as the turn_ended event goes out — the broadcast that sits between the top of
+// EmitTurnEndedWithStats and this push. Reading the cache at the push site would
+// therefore always find the entry already gone and always fall back to the
+// literal, silently. So the read happens before the broadcast and travels here as
+// a string.
+//
+// EMPTY IS LEGITIMATE. An agent need never call update_session_information, so the
+// description is often "" and the literal is the honest fallback rather than a
+// defensive branch. Length needs no cap: fitToCap trims the body against the
+// marshaled payload cap and logs a Warn, so an oversize description is delivered
+// truncated rather than dropped.
+func (bc *BridgeCoordinator) statusDescription(chatID api.ChatID) string {
+	if bc.chatStatus == nil {
+		return ""
+	}
+	return bc.chatStatus(chatID).Description
+}
+
+// defaultAgentFinishedBody is the body for a turn whose agent never declared what
+// it was doing.
+const defaultAgentFinishedBody = "Agent finished"
+
+// agentFinishedBodyFrom picks the body from a chat's self-declared description.
+// Split out from the cache read so the choice is testable without a Hub.
+func agentFinishedBodyFrom(description string) string {
+	if d := strings.TrimSpace(description); d != "" {
+		return d
+	}
+	return defaultAgentFinishedBody
 }
 
 // persistTurn commits the finalized assistant turn to the chat file.
@@ -738,6 +848,10 @@ func assistantTurnMessage(buf *buffer.Buffer, creditsDelta, elapsedMs float64) a
 		TurnCredits:   creditsDelta,
 		TurnElapsedMs: elapsedMs,
 		ChangedFiles:  buf.ChangedFiles,
+		// Which model answered, latched when the turn opened rather than read
+		// from the chat now: the chat's Model is the CURRENT one, and a footer
+		// derived from it would relabel history on every switch.
+		TurnModel: buf.Model,
 	}
 }
 

@@ -123,69 +123,8 @@ func (us *utilitySession) configTemplateRaw(ctx context.Context) (json.RawMessag
 	return us.rawCall(ctx, "config template call", methodKiroConfigTemplate, callerParams(nil))
 }
 
-// triggerRunCommandHook triggers a runCommand hook and returns the captured
-// command output. It sets expectingHookExec around the triggerHook Call so
-// the executeHook callback (which fires DURING the Call, handled by the
-// forward goroutine) is allowed to run the command; the result lands in
-// lastHookRun. approved:true — the user's "Run now" click is the consent,
-// so KAS skips its own per-command approval round-trip. hookTriggerMu
-// serializes concurrent triggers, whose shared expectingHookExec +
-// lastHookRun would otherwise cross outputs.
-func (us *utilitySession) triggerRunCommandHook(ctx context.Context, hookID, hookName, command string) (hookRunResult, error) {
-	us.hookTriggerMu.Lock()
-	defer us.hookTriggerMu.Unlock()
-
-	us.lastHookRun.Store(nil)
-	us.expectingHookExec.Store(true)
-	defer us.expectingHookExec.Store(false)
-
-	params := map[string]any{
-		"hookId":         hookID,
-		"hookName":       hookName,
-		"hookActionType": actionRunCommand,
-		"command":        command,
-		"approved":       true,
-	}
-	// No `timeout` param. KAS accepts one here and re-forwards it onto the
-	// executeHook callback, but the value would have to be the hook file's own
-	// declared cap and vibekit has no way to know it: the list reply's action
-	// carries only {type, command} (see the wire shapes in hooks.go), so every
-	// Run-now runs under the 60s default. Reading it out of the file at
-	// _meta.filePath is the only way to close that, and this is not the place.
-	raw, err := us.rawCall(ctx, "hooks trigger", methodKiroHooksTriggerHook, scopedParams(params))
-	if err != nil {
-		return hookRunResult{}, err
-	}
-	// Distinguish "the command ran and failed" from "the trigger failed".
-	//
-	// The previous logic treated every success:false as a real failure and
-	// returned an error, discarding lastHookRun. That is backwards for the case
-	// that matters: KAS sets `failed: exitCode !== 0` and then reports
-	// `success: false`, so a hook whose command exits non-zero lands here with
-	// its output and exit code sitting in lastHookRun -- and vibekit threw them
-	// away, on the one run the user clicked "Run now" specifically to diagnose.
-	// The comment above this block asserted the opposite (that a non-zero exit
-	// arrives as success:true), which is why the discard looked correct.
-	//
-	// A genuine trigger failure (session gone, hook disabled server-side, KAS
-	// refused) never issues the executeHook callback, so lastHookRun stays nil.
-	// That is the distinguisher, and it is the reason this checks the callback
-	// result BEFORE the success flag rather than after.
-	return chooseHookOutcome(parseHookResult(raw), us.lastHookRun.Load())
-}
-
-// chooseHookOutcome decides what a "Run now" returns, given KAS's trigger reply
-// and whatever the executeHook callback recorded.
-//
-// A pure function because the ORDER is the whole content: consult the callback
-// result first, and fall back to the success flag only when there is none. A
-// populated callback means the command really ran, whatever the flag says.
-func chooseHookOutcome(res kasHookResult, run *hookRunResult) (hookRunResult, error) {
-	if run != nil {
-		return *run, nil
-	}
-	if !res.Success {
-		return hookRunResult{}, hookTriggerError(res)
-	}
-	return hookRunResult{}, nil
-}
+// There is no hook TRIGGER wrapper here. `_kiro/hooks/triggerHook` and the
+// `_kiro/hooks/executeHook` callback it provoked are deleted with Run-now: the
+// callback made vibekit run `sh -c` on a command a hook file specifies, and this
+// was its only caller. Do not re-add one without re-reading why the surface went
+// (hooks.go's header).

@@ -9,7 +9,12 @@ vi.mock("../toast.js", () =>
 );
 
 import { resetActionFramework } from "./__test-helpers__/action-test-setup.js";
-import { reconnectServer, getPromptContent, getResourceContent } from "./mcp.js";
+import {
+  reconnectServer,
+  getPromptContent,
+  getResourceContent,
+  relayOAuthCallback,
+} from "./mcp.js";
 
 const mockFetch = vi.fn();
 
@@ -85,5 +90,58 @@ describe("getResourceContent", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(init.body as string)).toEqual({ server: "everything", uri: "demo://x" });
     expect(res?.contents?.[0]?.text).toBe("body");
+  });
+});
+
+describe("relayOAuthCallback", () => {
+  it("POSTs the server and the pasted address to /api/mcp/oauth-relay", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ status: 200 }), { status: 200 }));
+    const pasted = "http://localhost:41234/oauth/callback?code=abc&state=st";
+
+    const res = await relayOAuthCallback.dispatch({ server: "linear", redirect_url: pasted });
+
+    const { url, init } = lastCall();
+    expect(url).toContain("/api/mcp/oauth-relay");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ server: "linear", redirect_url: pasted });
+    expect(res?.status).toBe(200);
+  });
+
+  // An authorization code is single-use. A retried relay can only replay a
+  // request that may already have spent it, so the definition carries no retry
+  // and this pins that: one dispatch, one request, whatever the failure.
+  it("never retries — a replayed callback would spend the code twice", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "the local sign-in listener did not answer" }), {
+        status: 502,
+      }),
+    );
+
+    await relayOAuthCallback
+      .dispatch({ server: "linear", redirect_url: "http://localhost:1/x?code=a&state=s" })
+      .catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  // The refusal is shown inline beside the field, so the action must not also
+  // raise a toast: the server's reason names which part of the pasted address
+  // was wrong and belongs next to the box it was pasted into.
+  it("raises no error toast, so the panel can show the reason inline", async () => {
+    const toast = await import("../toast.js");
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ error: "that address belongs to a different sign-in" }), {
+        status: 400,
+      }),
+    );
+
+    await relayOAuthCallback
+      .dispatch({ server: "linear", redirect_url: "http://localhost:1/x?code=a&state=s" })
+      .catch(() => undefined);
+    await vi.runAllTimersAsync();
+
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.showToast).not.toHaveBeenCalled();
   });
 });

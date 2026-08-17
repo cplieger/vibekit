@@ -40,7 +40,6 @@ import (
 	"maps"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -65,10 +64,6 @@ func newUtilityRuntime(shutdownCtx context.Context, factory api.ACPBridgeFactory
 // invokes. Constructor-injected and immutable after construction, so the
 // forward goroutine reads them without locks.
 type utilitySessionHooks struct {
-	// runHookCommand runs a runCommand hook's shell command for the
-	// executeHook A→C callback (workDir cwd, bounded timeout, capped +
-	// sanitized output). nil = not wired (older tests).
-	runHookCommand func(context.Context, string, int) hookRunResult
 	// onHooksChanged broadcasts an hooks_changed SSE on _kiro/hooks/didChange.
 	onHooksChanged func()
 	// onGovernanceState captures the _kiro/governance/state notification the
@@ -102,18 +97,12 @@ type utilitySession struct {
 	bridge       api.ACPBridge
 	responseCh   chan utilityChunkPayload
 	forwardDone  chan struct{}
-	lastHookRun  atomic.Pointer[hookRunResult]
 	gen          uint64
 	mu           sync.Mutex
 
-	// hookTriggerMu serializes user-initiated "Run now" hook triggers:
-	// expectingHookExec + lastHookRun are session-global, so two
-	// concurrent triggers would cross their captured outputs.
-	hookTriggerMu     sync.Mutex
-	expectingHookExec atomic.Bool
 	// enableHooks opts this session into KAS's v2 hook engine (StartOpts.
 	// EnableHooks → _meta.kiro.hooks); always true in production so the
-	// hooks dashboard's list/setEnabled/triggerHook RPCs are available.
+	// hooks list/setEnabled RPCs are available.
 	enableHooks bool
 	started     bool
 }
@@ -316,8 +305,8 @@ type utilityChunkPayload struct {
 // NotifCh, forwarding agent_chunk text to responseCh. Peer requests
 // (msg.ID != nil) are answered via answerHostRequest — the utility session
 // runs v3 (KAS) like every chat bridge, so it must vend the host-mediated
-// auth token + shell type or session/new stalls, and (with EnableHooks) it
-// answers the executeHook A→C callback. A _kiro/hooks/didChange notification
+// auth token + shell type or session/new stalls. `executeHook` is NOT among
+// them (see answerHostRequest). A _kiro/hooks/didChange notification
 // fans out an hooks_changed SSE. All other notifications (usage stats, stale
 // chunks) are discarded. This prevents NotifCh from filling up between calls,
 // which would block readLoop and deadlock all pending Call waiters.
@@ -376,8 +365,13 @@ func forwardChunk(msg *api.RPCResponse, responseCh chan<- utilityChunkPayload) {
 
 // answerHostRequest answers the v3 (KAS) host-mediated requests the utility
 // session receives. getAccessToken + shell_type are on the session-creation
-// critical path (session/new stalls without them). executeHook (only when
-// EnableHooks) runs a runCommand hook's command for a user-initiated trigger.
+// critical path (session/new stalls without them).
+//
+// `_kiro/hooks/executeHook` is NOT answered any more and must not be re-added:
+// answering it is what made vibekit run a shell command a hook file specifies,
+// and its only caller (Run-now) is deleted. It now falls to the default branch's
+// -32601, which is the honest reply — vibekit does not offer this capability. KAS
+// runs runCommand hooks internally on autofire, so nothing regresses.
 //
 // Tool-use requests are actively refused: the utility session is
 // text-generation only (the agent's system prompt says so), but the model
@@ -419,8 +413,6 @@ func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCRe
 	case msg.Method == methodKiroSecretDelete:
 		result, err := secretDeleteResult(ctx, us.secrets, msg.Params)
 		_ = bridge.Respond(ctx, *msg.ID, result, err)
-	case msg.Method == methodKiroHooksExecuteHook:
-		us.answerExecuteHook(bridge, msg)
 	case msg.Method == api.MethodRequestPermission:
 		// Deny: cancelled outcome, the ACP shape for "the user said no".
 		slog.Warn("utility bridge: denying tool permission request (text-only session)")
@@ -447,31 +439,4 @@ func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCRe
 			Message: "unsupported on the utility session: " + msg.Method,
 		})
 	}
-}
-
-// answerExecuteHook handles the security-sensitive _kiro/hooks/executeHook A→C
-// request: KAS asks the client to run a runCommand hook's shell command. It is
-// answered ONLY while a user-initiated "Run now" trigger is in flight
-// (expectingHookExec) — the utility session issues no agent tool calls, so no
-// hook ever auto-fires here; a stray callback is refused (cancelled). The
-// command is run via the hub's runHookCommand (workDir cwd, bounded timeout,
-// capped + sanitized output); its result is captured for the trigger endpoint.
-func (us *utilitySession) answerExecuteHook(bridge api.ACPBridge, msg *api.RPCResponse) {
-	ctx := context.Background()
-	var p struct {
-		Command  string `json:"command"`
-		HookName string `json:"hookName"`
-		Timeout  int    `json:"timeout"`
-	}
-	if msg.Params != nil {
-		_ = json.Unmarshal(msg.Params, &p)
-	}
-	if !us.expectingHookExec.Load() || us.hooks.runHookCommand == nil {
-		slog.Warn("utility bridge: unexpected hook executeHook, refusing", "hook", p.HookName)
-		_ = bridge.Respond(ctx, *msg.ID, map[string]any{"cancelled": true}, nil)
-		return
-	}
-	res := us.hooks.runHookCommand(ctx, p.Command, p.Timeout)
-	us.lastHookRun.Store(&res)
-	_ = bridge.Respond(ctx, *msg.ID, map[string]any{"output": res.Output, keyExitCode: res.ExitCode}, nil)
 }

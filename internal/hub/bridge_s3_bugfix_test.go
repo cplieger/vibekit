@@ -14,6 +14,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -361,6 +362,61 @@ func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
 	if string(data) != sentinel {
 		t.Errorf("M1: command saw env %q, want %q — env not populated into cmd.Env", string(data), sentinel)
 	}
+}
+
+// TestTermCreate_RefusesExecutionRedirectingEnv is the WIRING test for the
+// environment guard, and it exists because the unit tests beside
+// screenAgentEnv cannot fail if the call is deleted from termCreate.
+//
+// Two assertions, and the second is the one that matters: the request is answered
+// with an error, and NO terminal is created — so nothing was spawned before the
+// refusal. It drives the real handler through translateACPEvent rather than
+// calling screenAgentEnv, which is the whole point.
+//
+// LD_PRELOAD with a real sentinel path: had this been allowed, cmd.Env would carry
+// it last and the loader would win over the process environment.
+func TestTermCreate_RefusesExecutionRedirectingEnv(t *testing.T) {
+	work := t.TempDir()
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, work, br)
+	env := []map[string]string{{"name": "LD_PRELOAD", "value": "/tmp/evil.so"}}
+	msg := termCreateMsg(t, 1, "sh", []string{"-c", "true"}, env)
+
+	h.translateACPEvent("c1", msg)
+
+	h.agentTerms.mu.Lock()
+	live := len(h.agentTerms.terms)
+	h.agentTerms.mu.Unlock()
+	if live != 0 {
+		t.Errorf("a terminal was created despite a refused environment (%d live); "+
+			"the screen must run before anything is spawned", live)
+	}
+	resp, ok := br.lastResponse()
+	if !ok {
+		t.Fatal("terminal/create went unanswered; the agent would block on a request nothing will answer")
+	}
+	if resp.err == nil {
+		t.Fatalf("terminal/create was answered with a success (%v), want an error naming the variable", resp.result)
+	}
+	if !strings.Contains(resp.err.Error(), "LD_PRELOAD") {
+		t.Errorf("refusal %q does not name LD_PRELOAD; the agent cannot tell what to drop", resp.err)
+	}
+}
+
+// TestTermCreate_AllowsInertPagerEnv is the other half: the guard must not refuse
+// the shape an agent actually uses. `GIT_PAGER=cat` is how anything
+// non-interactive stops git paging, and a guard that blocks it gets switched off.
+func TestTermCreate_AllowsInertPagerEnv(t *testing.T) {
+	work := t.TempDir()
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, work, br)
+	env := []map[string]string{{"name": "GIT_PAGER", "value": "cat"}}
+	msg := termCreateMsg(t, 1, "sh", []string{"-c", "true"}, env)
+
+	h.translateACPEvent("c1", msg)
+
+	term := singleTerm(t, h)
+	waitClosed(t, term.done, "terminal")
 }
 
 // termEnv layers requested vars on top of os.Environ and returns nil when

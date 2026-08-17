@@ -108,6 +108,24 @@ var ErrNotIdle = errors.New("session not idle")
 // wall-clock time before the same error surfaces.
 var ErrBridgeExited = errors.New("ACP bridge exited")
 
+// ErrFrameTooLarge is the sentinel a Call returns (wrapped in a NON-retryable
+// TransportError) when a single stdout frame exceeded the bridge's size cap and
+// was dropped. It is deliberately distinct from ErrBridgeExited: the process and
+// the ACP session are both still alive, so the chat stays promptable and a
+// caller must not tear anything down on this.
+//
+// The wording is the USER-FACING one. A dropped frame's bytes are gone, so the
+// bridge cannot say whether it was a notification or the response to a pending
+// request, and it therefore fails every pending request rather than risk leaving
+// one waiting forever (Bridge.Call has no client-side deadline by design). This
+// string is what the prompt path's failure banner shows, via
+// promptFailureReason, which is the whole reason the loss is not silent.
+//
+// Not retryable: the same prompt would very likely produce the same oversize
+// tool result, so two retries buy a re-run of an expensive turn and the same
+// failure. A user who wants it again presses Send.
+var ErrFrameTooLarge = errors.New("a message from kiro-cli was too large to read and was dropped, so this turn was stopped")
+
 // There is no api.ErrChatNotFound sentinel. It existed for errors.Is
 // classification against a store TRANSITION, and PromoteRewind was the only
 // transition that returned it. (command.ErrChatNotFound is a different, live

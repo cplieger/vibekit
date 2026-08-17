@@ -1,0 +1,288 @@
+/* ==========================================================================
+   SELECTION — one treatment, every surface that has one.
+
+   This file exists because CSS has no other way to say it once. The app had 20
+   selected-state rules across 9 recipes: fill only, ink only, fill+ink,
+   fill+border, fill+border+ink, an underline, a font-weight, and two segmented
+   controls that used no accent at all. Twelve of them filled with a token that
+   measured 1.000:1 against the surface a hovered row moved to, so "selected"
+   and "hovered" were the same colour in greyscale and to a deuteranope. The
+   user's complaint was the visible half of that: some surfaces coloured the
+   icon and others coloured the background.
+
+   The three channels travel TOGETHER, always. Fill says which row; the edge
+   separates the fill from its neighbours; the ink stays legible on the fill.
+   Any one of them alone is a treatment that some other surface will disagree
+   with, which is how nine recipes happen.
+
+   WHY IT IS LAST IN THE MANIFEST. Each selector below carries its own real
+   specificity (a `:where()` wrapper would score 0,0,0 and lose to every base
+   rule), so the only way it can beat a feature file's `:hover` at equal
+   specificity is to come after it. That also means this file owns the whole
+   selected vocabulary — resting, hover and press — because a selected-hover
+   rule left behind in an earlier file would now lose to the resting fill here.
+   The two exceptions are deliberate and marked: `.tab.active:hover` and
+   `.tab.active:active` score (0,3,0) and stay in 10-shell-app.css beside the
+   rest of the tab strip.
+
+   Values: 01-tokens.css, `--c-selected-*`. Nothing here is a literal.
+   Enforcement: css-tokens.test.ts fails on a selected fill without its border
+   and ink.
+   ========================================================================== */
+
+/* Reserve the edge on every selectable base that did not already have one, so
+   the border channel is a colour change rather than a layout change. `.tab`,
+   `.settings-tab` and `.mcp-modal-tab` already reserve theirs; these did not,
+   which is why five of them could only ever carry two channels. */
+.pill-model-item,
+.pill-role-item,
+.popup-item,
+.git-branch-popover-row,
+.commands-popover-row {
+  border: 1px solid transparent;
+}
+
+/* `.fb-row` reserves the same edge but cannot take the shorthand: a file row
+   already carries `border-block-end: 1px solid var(--c-border)` (19-files.css)
+   as the list's separator, and a four-side shorthand in THIS file — which the
+   MANIFEST puts last — resets that colour to transparent at equal specificity.
+   Every unselected row lost its horizontal rule, leaving the separator visible
+   only on a selected row. So reserve the other three sides and hand the block
+   end its own colour back; the selected rule below still replaces all four. */
+.fb-row {
+  border: 1px solid transparent;
+  border-block-end-color: var(--c-border);
+}
+
+/* THE treatment. */
+.tab.active:not(.dragging),
+.settings-tab.active,
+.mcp-modal-tab.active,
+.pill-model-item.active,
+.pill-role-item.active,
+.popup-item.active,
+.picker-btn.active,
+.effort-btn.active,
+.fb-row.fb-row-selected,
+.repo-picker-chip-active,
+.repo-picker-row-selected,
+.git-branch-popover-row.current,
+.commands-popover-row.selected,
+.sched-day.on,
+.recipe-sched-btn.on,
+.pill[aria-pressed="true"],
+.pill-expandable.pill-expanded,
+.icon-btn.active,
+.icon-btn[aria-pressed="true"],
+.turn-action-btn[aria-pressed="true"],
+.chat-find-case[aria-pressed="true"],
+.fb-search-case[aria-pressed="true"],
+.editor-find-case[aria-pressed="true"] {
+  background: var(--c-selected-bg);
+  border-color: var(--c-selected-border);
+  color: var(--c-selected-fg);
+}
+
+/* A selected surface still answers the pointer, one rung into its own fill
+   rather than by repainting it — repainting is what erased the mark of
+   selection on every surface that hovered to a flat grey.
+
+   `any-hover`, not `hover`: tapping an UNSELECTED row moves the class away, so
+   a touchscreen's sticky :hover leaves with it, but tapping a SELECTED row
+   changes nothing and an ungated hover would latch there until the next tap
+   somewhere else. On a bare touchscreen the feedback is :active below, which is
+   the correct channel there. */
+@media (any-hover: hover) {
+  .settings-tab.active:hover,
+  .mcp-modal-tab.active:hover,
+  .pill-model-item.active:hover,
+  .pill-role-item.active:hover,
+  .popup-item.active:hover,
+  .picker-btn.active:hover,
+  .effort-btn.active:hover,
+  .fb-row.fb-row-selected:hover,
+  .repo-picker-chip-active:hover,
+  .repo-picker-row-selected:hover,
+  .git-branch-popover-row.current:hover,
+  .commands-popover-row.selected:hover,
+  .sched-day.on:hover,
+  .recipe-sched-btn.on:hover,
+  .pill[aria-pressed="true"]:hover,
+  .pill-expandable.pill-expanded:hover,
+  .icon-btn.active:hover,
+  .icon-btn[aria-pressed="true"]:hover,
+  .turn-action-btn[aria-pressed="true"]:hover,
+  .chat-find-case[aria-pressed="true"]:hover,
+  .fb-search-case[aria-pressed="true"]:hover,
+  .editor-find-case[aria-pressed="true"]:hover,
+
+  /* Keyboard focus, not decoration: `.pill-role-item`'s focus indicator IS a
+     background change (this app has no global :focus-visible ring — 02-reset.css
+     scopes one to checkboxes), so the resting fill would otherwise swallow it
+     and leave a focused selected role unmarked. */
+  .pill-role-item.active:focus-visible,
+
+  /* The sidebar tab strip. Its resting rule above carries `:not(.dragging)` so a
+     dragged active row keeps the drag's own fill, which means the resting rule
+     scores (0,3,0) — the same as this hover. Source order inside one file is
+     what puts hover on top, and it is why the tab's states could not stay in
+     10-shell-app.css. */
+  .tab.active:hover {
+    background: var(--c-selected-bg-hover);
+  }
+}
+
+.settings-tab.active:active,
+.mcp-modal-tab.active:active,
+.pill-model-item.active:active,
+.pill-role-item.active:active,
+.popup-item.active:active,
+.picker-btn.active:active,
+.effort-btn.active:active,
+.fb-row.fb-row-selected:active,
+.repo-picker-chip-active:active,
+.repo-picker-row-selected:active,
+.git-branch-popover-row.current:active,
+.commands-popover-row.selected:active,
+.sched-day.on:active,
+.recipe-sched-btn.on:active,
+.pill[aria-pressed="true"]:active,
+.pill-expandable.pill-expanded:active,
+.icon-btn.active:active,
+.icon-btn[aria-pressed="true"]:active,
+.turn-action-btn[aria-pressed="true"]:active,
+.chat-find-case[aria-pressed="true"]:active,
+.fb-search-case[aria-pressed="true"]:active,
+.editor-find-case[aria-pressed="true"]:active,
+.tab.active:active {
+  background: var(--c-selected-bg-press);
+}
+
+/* ==========================================================================
+   THE INK THAT DOES NOT INHERIT.
+
+   `color` on the rule above reaches the descendants that INHERIT it, and a
+   row's quiet metadata does not: `.pill-model-meta`, `.pill-role-scope`,
+   `.popup-meta`, `.picker-meta`, `.fb-meta`, `.repo-picker-row-meta` and
+   `.commands-popover-desc` each declare their own `--c-text-tertiary` or
+   `--c-text-secondary`, and an explicit declaration beats an inherited value
+   however specific the ancestor is. So the consolidation coloured the row and
+   left its metadata behind, at 2.464:1 dark / 3.081:1 light on the selected
+   fill — a WCAG 1.4.3 failure in the rows the consolidation exists to make
+   legible. Every current descendant ink was measured on the selected fill and
+   every one of them failed: tertiary 1.823:1 dark / 2.398:1 light at hover,
+   secondary 3.463 / 3.704, accent 2.810 / 2.772, red 2.757 / 2.106.
+
+   Values: 01-tokens.css, `--c-selected-*-fg`, sized by `css-contrast.py
+   selected`. Muted metadata mixes toward the FILL (no hue to protect); a status
+   hue mixes toward the row's INK, which lightens on dark and darkens on light
+   while `color-mix(in oklch)` leaves the hue angle alone — which is true only
+   because that ink's hue is authored `none`, not `0deg`. See 01-tokens.css.
+
+   A NEW SELECTED SURFACE WITH COLOURED METADATA BELONGS HERE. Setting the
+   parent's `color` is not enough, and that is the whole reason this block
+   exists rather than being an oversight anyone can repeat.
+   ========================================================================== */
+
+/* A plain list rather than `:is()`, deliberately: `:is()` would hand every
+   member the specificity of the most specific one, so the two
+   `.repo-picker-row-selected` descendants — naturally (0,2,0) — would score
+   (0,3,0) and start outranking rules they have no business beating. Each member
+   here only has to beat its own base declaration, which it does. */
+.pill-model-item.active .pill-model-meta,
+.pill-role-item.active .pill-role-scope,
+.popup-item.active .popup-meta,
+.picker-btn.active .picker-meta,
+.fb-row.fb-row-selected .fb-icon,
+.fb-row.fb-row-selected .fb-meta,
+.repo-picker-row-selected .repo-picker-row-meta,
+.repo-picker-row-selected .repo-picker-row-age,
+.commands-popover-row.selected .commands-popover-desc {
+  color: var(--c-selected-muted-fg);
+}
+
+/* The command name is the coloured half of its row, so it keeps a hue rather
+   than folding into the muted ink — but not the ACCENT, which on an accent-
+   derived fill is nearly the fill's own colour (3.797:1). */
+.commands-popover-row.selected .commands-popover-name {
+  color: var(--c-selected-accent-fg);
+}
+
+/* Status hues a selected row can contain. The file browser's git letter takes
+   its colour from the shared `git-st-*` vocabulary (14-tools.css) on the letter
+   element itself, so the on-selected variant is keyed the same way rather than
+   through `.fb-git-letter`, which carries shape only. */
+.fb-row.fb-row-selected .git-st-m {
+  color: var(--c-selected-yellow-fg);
+}
+
+.fb-row.fb-row-selected .git-st-a,
+/* stylelint-disable-next-line selector-class-pattern -- class is derived from git's raw status character ("?" for untracked) */
+.fb-row.fb-row-selected .git-st-\? {
+  color: var(--c-selected-green-fg);
+}
+
+.fb-row.fb-row-selected .git-st-d,
+.fb-row.fb-row-selected .git-st-u {
+  color: var(--c-selected-red-fg);
+}
+
+.fb-row.fb-row-selected .git-st-r {
+  color: var(--c-selected-blue-fg);
+}
+
+/* A workspace agent shadowing a same-named global one: the marker that tells the
+   reader which definition a run will use, so it must survive selection. */
+.pill-role-item.active .pill-role-shadow {
+  color: var(--c-selected-yellow-fg);
+}
+
+/* The tab activity dot (12-tabs.css). It is the largest single consumer of this
+   block, because it paints a status hue on the one row in the strip that is
+   always selected, and it declares its own colour — so `--c-selected-fg` never
+   reaches it and the resting hues measure 3.797:1 (accent) down to 2.706:1 (red)
+   on the selected fill.
+
+   Each state re-points ONE custom property rather than restating a background,
+   which is why the dot resolves everything through `--dot-color`: the disc, both
+   hollow borders, the hard ring's 30% mix and the reduced-motion donut all follow
+   from one declaration, so a state cannot get its selected ink in one layer and
+   miss it in another. All six clear WCAG 1.4.11's 3:1 on the resting AND
+   hovered selected fill in both themes, worst 4.541:1 (`css-contrast.py dot`).
+
+   `working` and `input` moved off the accent and yellow in 2026-08, when the dot
+   hues were aligned with web-terminal-ui's --status-* family; `waiting` and
+   `input` had shared the yellow line until then and now take separate ones.
+
+   This REPLACED two hand-rolled compensations that predated the ink family:
+   `.tab.active .tab-dot-thinking` and `.tab.active .tab-dot-dirty` both mixed
+   `color-mix(in oklch, var(--c-accent), var(--c-text-primary) 55%)` inline,
+   which is `--c-selected-accent-fg`'s construction at 55% instead of 56% —
+   the token computed by hand before it existed. */
+.tab.active .tab-status-dot[data-status="idle"] {
+  --dot-color: var(--c-selected-muted-fg);
+}
+
+.tab.active .tab-status-dot[data-status="working"] {
+  --dot-color: var(--c-selected-blue-fg);
+}
+
+.tab.active .tab-status-dot[data-status="dirty"] {
+  --dot-color: var(--c-selected-accent-fg);
+}
+
+.tab.active .tab-status-dot[data-status="waiting"] {
+  --dot-color: var(--c-selected-yellow-fg);
+}
+
+.tab.active .tab-status-dot[data-status="input"] {
+  --dot-color: var(--c-selected-orange-fg);
+}
+
+.tab.active .tab-status-dot[data-status="failed"] {
+  --dot-color: var(--c-selected-red-fg);
+}
+
+.tab.active .tab-status-dot[data-status="done"] {
+  --dot-color: var(--c-selected-green-fg);
+}

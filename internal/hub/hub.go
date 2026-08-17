@@ -30,6 +30,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ignore"
 	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/kirosession"
+	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
@@ -115,16 +116,22 @@ type Hub struct {
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
 	schedules          *schedule.Store
-	// unattendedRuns maps a SCHEDULED run's workflow id to the schedule that
-	// launched it, which gates the deny-fast permission floor and attributes a
-	// denial back to the row. See run_unattended.go.
-	unattendedRuns map[string]string
-	sessionReaper  *kirosession.Reaper
-	sessionRefs    func(context.Context) (map[string]struct{}, bool)
-	lines          *buffer.LineTracker
-	agentTerms     *agentTerminals
-	hookStatus     *hookStatusCache
-	governance     *governanceCache
+	// leases is what vibekit knows about the runs it put on the wire: the
+	// envelope around a run KAS owns (see internal/runlease). Reach it through
+	// leaseStore(), which supplies an in-memory registry when the durable store
+	// was not wired — a lease carries the run's wall clock, so there is no
+	// "leases off" mode the way there is a "scheduling off" mode.
+	leases        *runlease.Store
+	sessionReaper *kirosession.Reaper
+	sessionRefs   func(context.Context) (map[string]struct{}, bool)
+	lines         *buffer.LineTracker
+	agentTerms    *agentTerminals
+	hookStatus    *hookStatusCache
+	governance    *governanceCache
+	// authLatch remembers the last outcome of vending a KAS access token, so
+	// readiness can report a dead sign-in without asking kiro-cli (see
+	// bridge_v3_auth.go).
+	authLatch *authTokenLatch
 
 	// secrets holds the credential blobs KAS asks vibekit to persist on its
 	// behalf (_kiro/secret/*, bridge_v3_secret.go). ONE store for every
@@ -147,9 +154,24 @@ type Hub struct {
 	// among the pointer-bearing fields for govet fieldalignment: a slice is 8
 	// of 24 pointer bytes, less dense than a string's 8 of 16.
 	acpArgs []string
-	ciBusy  atomic.Bool
-	// unattendedMu guards unattendedRuns. Non-pointer, so it sits in the tail
-	// with ciBusy rather than among the pointer fields.
+	// runBounds holds the ceiling arms, the termination claims and the recorded
+	// abnormal terminations that let a run's row say what actually happened to it.
+	// See run_bounds.go.
+	//
+	// It carries pointers (three maps and a slice) but ENDS in a plain counter, so
+	// govet fieldalignment wants it after the pointer-only fields above rather than
+	// among them: embedded higher up, that trailing word sits inside the struct's
+	// pointer prefix and costs 8 bytes of scan.
+	runBounds runBoundsState
+	ciBusy    atomic.Bool
+	// unattendedMu guards runBounds. Non-pointer, so it sits in the tail with
+	// ciBusy rather than among the pointer fields.
+	//
+	// It used to guard a second map, unattendedRuns, which held a run's schedule
+	// mark; that fact lives on the run's lease now, and the lease store carries its
+	// own mutex. Where the deadline callback needs BOTH atomically it takes this
+	// one first and the store's second (claimExpiredDeadline), which is the only
+	// place two are held and the only order they are ever taken in.
 	unattendedMu sync.Mutex
 }
 
@@ -175,6 +197,16 @@ func WithACPArgs(args []string) Option {
 // half-present.
 func WithSchedules(st *schedule.Store) Option {
 	return func(h *Hub) { h.schedules = st }
+}
+
+// WithRunLeases wires the DURABLE run-lease store.
+//
+// Unlike WithSchedules, absent does not mean off: the hub falls back to an
+// in-memory registry (leaseStore), because a lease carries the run's wall clock
+// and its unattended mark. What this option adds is survival across a restart —
+// which is the whole point of the record, so production always wires it.
+func WithRunLeases(st *runlease.Store) Option {
+	return func(h *Hub) { h.leases = st }
 }
 
 // WithPush wires the push notification service at construction time.
@@ -248,6 +280,7 @@ func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, 
 		chatStore:    chatStore,
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
 		governance:   newGovernanceCache(),
+		authLatch:    &authTokenLatch{},
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
 	}
@@ -341,6 +374,7 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/events", h.handleSSE)
 	mux.Handle("/api/command", h.dispatcher)
 	mux.HandleFunc("/api/shell/ws", h.handleShellWS)
+	mux.HandleFunc("POST /api/shell/restart", h.handleShellRestart)
 	mux.HandleFunc("/api/file-changes", h.handleFileChanges)
 	h.registerKnowledgeRoutes(mux)
 	h.registerHooksRoutes(mux)

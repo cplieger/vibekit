@@ -3,6 +3,11 @@
 // without pulling in modals.ts's modal machinery.
 // ---------------------------------------------------------------------------
 
+// Type-only, so it is erased at compile time and this module keeps no runtime
+// edge. The alternative was restating TextSpan's five fields inline, twice —
+// which is a second declaration of a wire shape the generator owns.
+import type { TextSpan } from "./types.js";
+
 /** HTML-escape a string for safe interpolation into innerHTML. */
 export function escText(t: string): string {
   return t
@@ -105,11 +110,8 @@ export function windowOutput(text: string, n = OUTPUT_WINDOW_LINES): OutputWindo
 /** Map style spans onto a windowed text, clipping each to the kept ranges and
  *  rebasing it onto where that range landed. A span straddling the elision
  *  boundary yields one piece per side. */
-export function windowSpans(
-  spans: readonly { start: number; end: number; fg: number; bg: number; attrs: number }[],
-  kept: readonly KeptRange[],
-): { start: number; end: number; fg: number; bg: number; attrs: number }[] {
-  const out: { start: number; end: number; fg: number; bg: number; attrs: number }[] = [];
+export function windowSpans(spans: readonly TextSpan[], kept: readonly KeptRange[]): TextSpan[] {
+  const out: TextSpan[] = [];
   for (const range of kept) {
     for (const span of spans) {
       const start = Math.max(span.start, range.from);

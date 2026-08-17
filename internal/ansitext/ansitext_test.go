@@ -1,6 +1,7 @@
 package ansitext
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -52,6 +53,12 @@ func TestParse_StripsSequencesFromTheText(t *testing.T) {
 		{name: "dcs", in: "a\x1bPq~~\x1b\\b", want: "ab"},
 		{name: "two byte escape", in: "a\x1bcb", want: "ab"},
 		{name: "lone escape at end becomes U+FFFD", in: "ab\x1b", want: "ab\ufffd"},
+		// The three-byte forms whose FINAL byte leaks into the text when only
+		// two bytes are consumed. `ESC % G` (select UTF-8) is the plausible
+		// one from a pipe; each of these left a stray capital letter behind.
+		{name: "utf8 charset selection", in: "a\x1b%Gb", want: "ab"},
+		{name: "96 char set designation", in: "a\x1b-Ab", want: "ab"},
+		{name: "line attribute", in: "a\x1b#8b", want: "ab"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -93,8 +100,8 @@ func TestParse_SpansAddressTheRightRanges(t *testing.T) {
 	}
 }
 
-// Every SGR attribute is covered, including the five ansi_up silently ignored.
-// `ESC[7m` appears in real measured output and rendered unstyled before this.
+// Every SGR attribute is covered. `ESC[7m` appears in real measured output and
+// rendered unstyled before the parse moved here.
 func TestApplySGR_AllAttributes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -124,6 +131,37 @@ func TestApplySGR_AllAttributes(t *testing.T) {
 				t.Errorf("attrs = %#b, want %#b", spans[0].Attrs, tc.want)
 			}
 		})
+	}
+}
+
+// The attribute bit VALUES are a cross-language contract, not an internal
+// detail: web-terminal-engine's vt.WireRun.A uses these exact bits, and the
+// client's one constant table (output-render.ts) serves both renderers. A
+// reordering of the iota block would keep every other test in this file green
+// while silently repainting bold as italic in the browser.
+func TestAttrBits_MatchTheWireRunContract(t *testing.T) {
+	want := map[string]uint16{
+		"bold": 1, "italic": 2, "underline": 4, "inverse": 8, "strike": 16,
+		"dim": 32, "hidden": 64, "blink": 128, "overline": 256, "doubleUnderline": 512,
+	}
+	got := map[string]uint16{
+		"bold": AttrBold, "italic": AttrItalic, "underline": AttrUnderline,
+		"inverse": AttrInverse, "strike": AttrStrike, "dim": AttrDim,
+		"hidden": AttrHidden, "blink": AttrBlink, "overline": AttrOverline,
+		"doubleUnderline": AttrDoubleUnderline,
+	}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("Attr%s = %d, want %d (vt.WireRun.A contract)", name, got[name], w)
+		}
+	}
+	// Bit 1024 is WireRun's AttrAutolink. Nothing here may claim it.
+	var all uint16
+	for _, v := range got {
+		all |= v
+	}
+	if all&1024 != 0 {
+		t.Errorf("attribute bits = %#b, want none at 1024 (vt.AttrAutolink)", all)
 	}
 }
 
@@ -204,6 +242,56 @@ func TestApplySGR_MalformedExtendedColourDoesNotCorruptLaterParams(t *testing.T)
 	}
 }
 
+// A parameter this parser cannot honour must be IGNORED, never folded in as 0 —
+// 0 is a full reset, so the "unknown means zero" reading turns every one of
+// these into a silent style wipe. Each case here is a real emitter.
+func TestApplySGR_UnhonourableParametersDoNotReset(t *testing.T) {
+	cases := []struct {
+		name      string
+		seq       string
+		wantAttrs uint16
+		wantFG    int32
+		reason    string
+	}{{
+		name: "colon subparameter underline", seq: "\x1b[4:3mx",
+		wantAttrs: AttrUnderline, wantFG: ColorDefault,
+		reason: "gcc and clang emit ESC[4:3m for a curly diagnostic underline;" +
+			" read whole the field is non-numeric, and non-numeric read as 0 resets",
+	}, {
+		name: "colon subparameter keeps earlier styling", seq: "\x1b[31m\x1b[4:3mx",
+		wantAttrs: AttrUnderline, wantFG: 1,
+		reason: "the red opened by the previous sequence must survive the underline",
+	}, {
+		name: "private parameter marker is ignored whole", seq: "\x1b[31m\x1b[>4;2mx",
+		wantAttrs: 0, wantFG: 1,
+		reason: "xterm's modifyOtherKeys has an SGR final byte but is not SGR;" +
+			" terminals ignore it, and reading `>4` as 0 wiped the red",
+	}, {
+		name: "intermediate byte is skipped not zeroed", seq: "\x1b[1m\x1b[2 mx",
+		wantAttrs: AttrBold, wantFG: ColorDefault,
+		reason: "an intermediate byte means the sequence is not SGR at all",
+	}, {
+		name: "underline colour is dropped without resetting", seq: "\x1b[1m\x1b[58:2::1:2:3mx",
+		wantAttrs: AttrBold, wantFG: ColorDefault,
+		reason: "a Span carries no underline colour, so 58 is dropped — not read as a reset",
+	}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, spans := Parse(tc.seq)
+			var gotAttrs uint16
+			gotFG := ColorDefault
+			if len(spans) > 0 {
+				last := spans[len(spans)-1]
+				gotAttrs, gotFG = last.Attrs, last.FG
+			}
+			if gotAttrs != tc.wantAttrs || gotFG != tc.wantFG {
+				t.Errorf("attrs=%#b fg=%d, want attrs=%#b fg=%d (%s)",
+					gotAttrs, gotFG, tc.wantAttrs, tc.wantFG, tc.reason)
+			}
+		})
+	}
+}
+
 func TestParse_ResetClosesTheSpan(t *testing.T) {
 	text, spans := Parse("\x1b[31mred\x1b[0mplain\x1b[32mgreen\x1b[0m")
 	if text != "redplaingreen" {
@@ -226,7 +314,7 @@ func TestParse_ResetClosesTheSpan(t *testing.T) {
 func TestParser_SplitSequenceAcrossWrites(t *testing.T) {
 	const full = "a\x1b[31mred\x1b[0mb"
 	for cut := 1; cut < len(full); cut++ {
-		t.Run("cut_"+string(rune('a'+cut%26))+itoa(cut), func(t *testing.T) {
+		t.Run("cut_"+strconv.Itoa(cut), func(t *testing.T) {
 			p := NewParser()
 			text1, spans1 := p.Write(full[:cut])
 			text2, spans2 := p.Write(full[cut:])
@@ -257,18 +345,6 @@ func TestParser_SplitSequenceAcrossWrites(t *testing.T) {
 	}
 }
 
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
-}
-
 // Open style carries across writes: a colour set in one chunk styles text that
 // arrives in the next, which is why each stream needs its own Parser.
 func TestParser_OpenStyleCarriesAcrossWrites(t *testing.T) {
@@ -292,6 +368,40 @@ func TestParser_OpenStyleCarriesAcrossWrites(t *testing.T) {
 	}
 }
 
+// Offset is the parser's own count of emitted UTF-16 units, and the hub reports
+// it on the wire as the base of the chunk it is broadcasting. The property that
+// makes that correct: Offset read BEFORE a Write equals the absolute Start the
+// first span of that Write will carry. A second counter kept in step by hand is
+// exactly what this accessor exists to remove, so this test is the contract.
+func TestParser_OffsetIsTheBaseOfTheNextWrite(t *testing.T) {
+	p := NewParser()
+	if got := p.Offset(); got != 0 {
+		t.Fatalf("fresh parser Offset = %d, want 0", got)
+	}
+	// A lead-in with a surrogate pair, so a byte-based counter would disagree.
+	lead, _ := p.Write("ok\U0001F600")
+	wantAfterLead := 4 // "ok" + 2 units for the emoji
+	if got := p.Offset(); got != wantAfterLead {
+		t.Fatalf("Offset after %q = %d, want %d", lead, got, wantAfterLead)
+	}
+	base := p.Offset()
+	_, spans := p.Write("\x1b[31mred\x1b[0m")
+	if len(spans) != 1 {
+		t.Fatalf("got %d spans, want 1", len(spans))
+	}
+	if spans[0].Start != base {
+		t.Errorf("span starts at %d, want the pre-write Offset %d", spans[0].Start, base)
+	}
+	// And the flush path reports the same way.
+	_, _ = p.Write("tail\x1b[3")
+	flushBase := p.Offset()
+	tail, _ := p.Flush()
+	if flushBase+utf16Len(tail) != p.Offset() {
+		t.Errorf("Offset advanced by %d over a %d-unit flush",
+			p.Offset()-flushBase, utf16Len(tail))
+	}
+}
+
 // An escape that never terminates must not swallow output forever.
 func TestParser_UnterminatedSequenceIsReleasedAsText(t *testing.T) {
 	p := NewParser()
@@ -299,6 +409,9 @@ func TestParser_UnterminatedSequenceIsReleasedAsText(t *testing.T) {
 	text, _ := p.Write(long)
 	if text == "" {
 		t.Error("an over-long unterminated sequence held every byte back, want it released as text")
+	}
+	if strings.ContainsRune(text, 0x1b) {
+		t.Errorf("released text carries a raw ESC: %q", text[:min(len(text), 32)])
 	}
 }
 
@@ -352,6 +465,9 @@ func FuzzParse(f *testing.F) {
 	f.Add("a\x1b[2Kb\x1b[3Jc")
 	f.Add("\x1b[7minverse\x1b[27m")
 	f.Add("\x1bPq\x1b\\")
+	f.Add("\x1b[4:3munderline\x1b[m")
+	f.Add("\x1b[>4;2mx")
+	f.Add("a\x1b%Gb")
 	// The fuzzer's own finds, kept as seeds because each cost a real defect.
 	// A long string-terminated sequence, where the pending bound and the
 	// chunked/one-shot agreement meet:
@@ -398,7 +514,7 @@ func FuzzParse(f *testing.F) {
 			}
 		}
 
-		// 5. The plain text never carries an escape byte. This is the invariant
+		// 4. The plain text never carries an escape byte. This is the invariant
 		//    that lets the parser stand in for api.StripANSI: the text is
 		//    persisted to a JSON chat file and re-served, so a surviving ESC
 		//    would be a residual escape in stored output.
@@ -406,13 +522,13 @@ func FuzzParse(f *testing.F) {
 			t.Fatalf("plain text still contains ESC: %q", text)
 		}
 
-		// 4. Streaming agrees with one-shot. The pump feeds chunks, so a split
+		// 5. Streaming agrees with one-shot. The pump feeds chunks, so a split
 		//    must produce the same text as parsing the whole string. Scoped to
 		//    inputs within maxPendingBytes: past that bound the parser releases
 		//    an unterminated run as text rather than holding it, and a
 		//    bounded-memory streaming parser cannot agree with an unbounded
 		//    one-shot parser there (the fuzzer found exactly that case with a
-		//    4 KB `ESC X ... BEL` string sequence). Invariants 1-3 still hold
+		//    4 KB `ESC X ... BEL` string sequence). Invariants 1-4 still hold
 		//    for every input.
 		if len(in) > maxPendingBytes {
 			return
@@ -424,6 +540,12 @@ func FuzzParse(f *testing.F) {
 			tail, _ := p.Flush()
 			if a+b+tail != text {
 				t.Fatalf("split at %d gave %q, one-shot gave %q", cut, a+b+tail, text)
+			}
+			// 6. Offset agrees with the text actually emitted, at every split.
+			//    The hub reports Offset as a chunk's base, so a drift here
+			//    would rebase every live span onto the wrong character.
+			if got, want := p.Offset(), utf16Len(text); got != want {
+				t.Fatalf("split at %d: Offset = %d, want %d units of emitted text", cut, got, want)
 			}
 			if cut > 64 {
 				break // bound the loop; the interesting cuts are early

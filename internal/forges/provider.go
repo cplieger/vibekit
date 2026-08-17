@@ -21,6 +21,7 @@ package forges
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -129,7 +130,10 @@ type Repo struct {
 	UpdatedAt     int64  `json:"updated_at,omitempty"` // unix millis
 }
 
-// PR represents a pull/merge request.
+// PR represents a pull/merge request. CheckStatus and MergeBlocked carry
+// no omitempty: their empty value is meaningful (the forge reported no CI
+// state / nothing blocks this merge), so the client must receive it
+// rather than infer it from an absent field.
 type PR struct {
 	Title        string `json:"title"`
 	Body         string `json:"body,omitempty"`
@@ -138,11 +142,28 @@ type PR struct {
 	SourceBranch string `json:"source_branch"`
 	TargetBranch string `json:"target_branch"`
 	URL          string `json:"url,omitempty"`
-	Number       int    `json:"number"`
-	CreatedAt    int64  `json:"created_at,omitempty"`
-	UpdatedAt    int64  `json:"updated_at,omitempty"`
-	Mergeable    bool   `json:"mergeable,omitempty"`
-	Draft        bool   `json:"draft,omitempty"`
+	// HeadSHA is the head commit of the source branch: the value a merge
+	// pins itself to, so a push landing between the read and the click
+	// fails the merge instead of landing unreviewed code.
+	HeadSHA string `json:"head_sha,omitempty"`
+	// CheckStatus is the folded CI state of HeadSHA. One of "" (the forge
+	// reported no checks), "pending", "passing", "failing".
+	CheckStatus string `json:"check_status"`
+	// MergeBlocked names why the forge refuses a merge, or "" when
+	// nothing does. One of "draft", "conflicts", "checks_failing",
+	// "checks_running", "behind", "blocked", "unknown".
+	MergeBlocked  string `json:"merge_blocked"`
+	Number        int    `json:"number"`
+	ChecksTotal   int    `json:"checks_total,omitempty"`
+	ChecksFailing int    `json:"checks_failing,omitempty"`
+	CreatedAt     int64  `json:"created_at,omitempty"`
+	UpdatedAt     int64  `json:"updated_at,omitempty"`
+	Mergeable     bool   `json:"mergeable,omitempty"`
+	Draft         bool   `json:"draft,omitempty"`
+	// AutoMergeArmed reports that the forge will merge this PR itself
+	// once its requirements are met, so the row offers a read-out
+	// rather than arming it twice.
+	AutoMergeArmed bool `json:"auto_merge_armed,omitempty"`
 }
 
 // CreatePRParams describes a PR to create.
@@ -232,6 +253,17 @@ const (
 	MergeRebase MergeMethod = "rebase"
 )
 
+// MergeOptions describes how one merge should be performed.
+//
+// HeadSHA and Auto are preconditions rather than preferences: a merge
+// carrying a HeadSHA is refused by the forge when the branch moved, and
+// an Auto merge is handed to the forge to complete later.
+type MergeOptions struct {
+	Method  MergeMethod
+	HeadSHA string
+	Auto    bool
+}
+
 // ForgeOps is the unified abstraction over a specific forge backend.
 // Each implementation shells out to the corresponding CLI tool.
 //
@@ -258,11 +290,15 @@ type ForgeOps interface {
 	// CreatePR opens a new pull/merge request.
 	CreatePR(ctx context.Context, repo string, p *CreatePRParams) (*PR, error)
 
-	// MergePR merges an open PR.
-	MergePR(ctx context.Context, repo string, number int, method MergeMethod) error
+	// MergePR merges an open PR, or arms the forge's own auto-merge
+	// when opts.Auto is set.
+	MergePR(ctx context.Context, repo string, number int, opts MergeOptions) error
 
 	// ClosePR closes (without merging) an open PR.
 	ClosePR(ctx context.Context, repo string, number int) error
+
+	// ReopenPR reopens a closed PR.
+	ReopenPR(ctx context.Context, repo string, number int) error
 
 	// ListIssues lists issues for repo.
 	ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error)
@@ -275,6 +311,19 @@ type ForgeOps interface {
 
 	// CommitStatus returns CI checks for a commit ref (branch / SHA).
 	CommitStatus(ctx context.Context, repo, ref string) ([]Check, error)
+
+	// RerunFailedChecks re-runs the failed CI of a PR's CURRENT head.
+	// Returns an ErrNotSupported-wrapped error on a forge with no re-run
+	// verb.
+	//
+	// headSHA is the commit the caller's row was rendered from, and it is
+	// a PRECONDITION exactly like MergeOptions.HeadSHA: an implementation
+	// must refuse rather than re-run when the PR has moved since, because
+	// a re-run can carry deployment side effects and a row displaying one
+	// commit's red status must not act on another's. Empty means the
+	// caller had no head to pin (the forge reported none), and the re-run
+	// proceeds against whatever the PR's head is now.
+	RerunFailedChecks(ctx context.Context, repo string, number int, headSHA string) error
 
 	// ListReleases returns recent releases for repo.
 	ListReleases(ctx context.Context, repo string) ([]Release, error)
@@ -306,6 +355,12 @@ var ErrNotInstalled = cliexec.ErrNotInstalled
 // ErrNotLoggedIn signals the CLI is installed but no auth is configured
 // for this host. Aliased for the same reason as ErrNotInstalled.
 var ErrNotLoggedIn = cliexec.ErrNotLoggedIn
+
+// ErrNotSupported signals the forge has no mechanism for the requested
+// operation — not a failure to reach it, but an absent capability. The
+// HTTP layer answers 501 so the client can hide the control instead of
+// offering one that always fails.
+var ErrNotSupported = errors.New("forges: operation not supported by this forge")
 
 // ParseRepo splits a "owner/name" string. Returns an error if the
 // format is invalid. Both parts must be non-empty.

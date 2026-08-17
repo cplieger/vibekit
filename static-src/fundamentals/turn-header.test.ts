@@ -1,11 +1,38 @@
 // @vitest-environment happy-dom
 // The turn card's header band: the trigger, its meta row, and the three-line
 // clamp the folded-row navigation model depends on.
-import { describe, it, expect } from "vitest";
-import { buildTurnHeader, updateTurnHeader, type TurnHeaderData } from "./turn-header.js";
+import { describe, it, expect, vi } from "vitest";
+import {
+  buildTurnHeader,
+  updateTurnHeader,
+  initTurnHeaderCallbacks,
+  type TurnHeaderData,
+} from "./turn-header.js";
+import { initAttachmentPillCallbacks } from "../attachment-pill.js";
 
 function data(over: Partial<TurnHeaderData> = {}): TurnHeaderData {
-  return { n: 1, outcome: "completed", ts: 0, request: "short request", ...over };
+  return {
+    n: 1,
+    outcome: "completed",
+    ts: 0,
+    request: "short request",
+    attachments: [],
+    ...over,
+  };
+}
+
+function attachmentRow(h: HTMLElement): HTMLElement {
+  const r = h.querySelector<HTMLElement>(".turn-req-attachments");
+  if (r === null) {
+    throw new Error("no .turn-req-attachments");
+  }
+  return r;
+}
+
+function attachmentPaths(h: HTMLElement): (string | null)[] {
+  return [...attachmentRow(h).querySelectorAll(".attachment-pill")].map((p) =>
+    p.getAttribute("title"),
+  );
 }
 
 function text(h: HTMLElement): HTMLElement {
@@ -121,6 +148,68 @@ describe("the three-line clamp", () => {
   });
 });
 
+function copyBtn(h: HTMLElement): HTMLButtonElement {
+  const b = h.querySelector<HTMLButtonElement>(".turn-copy-req");
+  if (b === null) {
+    throw new Error("no .turn-copy-req");
+  }
+  return b;
+}
+
+describe("copying the sent prompt", () => {
+  it("lives in the META row, where the clamp cannot reach it", () => {
+    // The clamp is scoped to `.turn-req-text`; a control inside it would be
+    // hidden by a long prompt folding to three lines.
+    const h = buildTurnHeader(data());
+    expect(h.querySelector(".turn-head-row > .turn-copy-req")).not.toBeNull();
+    expect(text(h).querySelector(".turn-copy-req")).toBeNull();
+  });
+
+  it("copies the whole request, not the three lines the clamp shows", () => {
+    const copy = vi.fn();
+    initTurnHeaderCallbacks({ copy });
+    const h = buildTurnHeader(data({ request: LONG }));
+    copyBtn(h).click();
+    expect(copy).toHaveBeenCalledWith(copyBtn(h), LONG);
+  });
+
+  it("copies the trimmed request", () => {
+    const copy = vi.fn();
+    initTurnHeaderCallbacks({ copy });
+    const h = buildTurnHeader(data({ request: "  fix the composer  " }));
+    copyBtn(h).click();
+    expect(copy).toHaveBeenCalledWith(copyBtn(h), "fix the composer");
+  });
+
+  it("reads the text at CLICK time, so a repaint cannot leave it stale", () => {
+    const copy = vi.fn();
+    initTurnHeaderCallbacks({ copy });
+    const h = buildTurnHeader(data({ request: "first" }));
+    updateTurnHeader(h, data({ request: "second" }));
+    copyBtn(h).click();
+    expect(copy).toHaveBeenCalledWith(copyBtn(h), "second");
+  });
+
+  it("is hidden on a turn the user did not ask for", () => {
+    const h = buildTurnHeader(data({ request: undefined }));
+    expect(copyBtn(h).hidden).toBe(true);
+  });
+
+  it("appears and disappears with the request across updates", () => {
+    const h = buildTurnHeader(data({ request: "ask" }));
+    expect(copyBtn(h).hidden).toBe(false);
+    updateTurnHeader(h, data({ request: undefined }));
+    expect(copyBtn(h).hidden).toBe(true);
+    updateTurnHeader(h, data({ request: "ask again" }));
+    expect(copyBtn(h).hidden).toBe(false);
+  });
+
+  it("carries an accessible name", () => {
+    const h = buildTurnHeader(data());
+    expect(copyBtn(h).getAttribute("aria-label")).toBe("Copy this prompt");
+  });
+});
+
 describe("updateTurnHeader", () => {
   it("is idempotent", () => {
     const h = buildTurnHeader(data({ n: 3, request: "hello" }));
@@ -146,5 +235,88 @@ describe("updateTurnHeader", () => {
   it("leaves the time empty rather than rendering the epoch", () => {
     const h = buildTurnHeader(data({ ts: 0 }));
     expect(h.querySelector(".turn-ts")?.textContent).toBe("");
+  });
+});
+
+// The files the user attached, drawn as the composer's own pill so a sent request
+// is identifiable by what went with it. The server stamps them on the user
+// message because BuildPromptBlocks consumes them on the way out — an image or a
+// document attachment never appears in the request text, so there is nothing to
+// parse back out of it.
+describe("the request's attachments", () => {
+  const shot = { path: "out/shot.png", name: "shot.png" };
+  const spec = { path: "docs/spec.md", name: "spec.md" };
+
+  it("renders one pill per attachment", () => {
+    const h = buildTurnHeader(data({ attachments: [shot, spec] }));
+    expect(attachmentPaths(h)).toEqual(["out/shot.png", "docs/spec.md"]);
+    expect(attachmentRow(h).classList.contains("hidden")).toBe(false);
+  });
+
+  it("hides the row when the request carried none", () => {
+    const h = buildTurnHeader(data());
+    expect(attachmentPaths(h)).toEqual([]);
+    expect(attachmentRow(h).classList.contains("hidden")).toBe(true);
+  });
+
+  // The clamp is scoped to `.turn-req-text`. A pill inside it would vanish
+  // whenever a long prompt folded to three lines — and the attachments are part
+  // of how a reader identifies which request this was.
+  it("sits inside .turn-req but OUTSIDE the clamped text", () => {
+    const h = buildTurnHeader(data({ request: LONG, attachments: [shot] }));
+    expect(h.querySelector(".turn-req > .turn-req-attachments")).not.toBeNull();
+    expect(text(h).querySelector(".attachment-pill")).toBeNull();
+    expect(text(h).hasAttribute("data-clamped")).toBe(true);
+    expect(attachmentPaths(h)).toEqual(["out/shot.png"]);
+  });
+
+  it("stays clickable, opening the attachment it names", () => {
+    const opened: string[] = [];
+    initAttachmentPillCallbacks({
+      open: (p) => {
+        opened.push(p);
+      },
+    });
+    const h = buildTurnHeader(data({ attachments: [shot, spec] }));
+    const bodies = [...attachmentRow(h).querySelectorAll<HTMLButtonElement>(".attachment-open")];
+    expect(bodies).toHaveLength(2);
+    for (const b of bodies) {
+      b.click();
+    }
+    expect(opened).toEqual(["out/shot.png", "docs/spec.md"]);
+  });
+
+  // A sent attachment cannot be un-sent, so the header's pill carries no `×` —
+  // unlike the composer's, which is the same component with a remover passed in.
+  it("offers no remove control", () => {
+    const h = buildTurnHeader(data({ attachments: [shot] }));
+    expect(attachmentRow(h).querySelector(".attachment-close")).toBeNull();
+  });
+
+  // updateTurnHeader runs on every repaint, streaming chunks included. Rebuilding
+  // the row each time would destroy a pill the user is tabbed onto.
+  it("keeps the same pill elements across a repaint with the same list", () => {
+    const h = buildTurnHeader(data({ attachments: [shot, spec] }));
+    const before = [...attachmentRow(h).children];
+    updateTurnHeader(h, data({ attachments: [shot, spec], outcome: "failed" }));
+    expect([...attachmentRow(h).children]).toEqual(before);
+  });
+
+  it("rebuilds when the list actually changes", () => {
+    const h = buildTurnHeader(data({ attachments: [shot] }));
+    updateTurnHeader(h, data({ attachments: [shot, spec] }));
+    expect(attachmentPaths(h)).toEqual(["out/shot.png", "docs/spec.md"]);
+    updateTurnHeader(h, data({ attachments: [] }));
+    expect(attachmentPaths(h)).toEqual([]);
+    expect(attachmentRow(h).classList.contains("hidden")).toBe(true);
+  });
+
+  // The row is synced ahead of the request-text branch, which returns early for an
+  // agent-initiated turn — otherwise a repaint could leave pills describing a
+  // request that is no longer there.
+  it("clears the row even when the trigger becomes a system one", () => {
+    const h = buildTurnHeader(data({ attachments: [shot] }));
+    updateTurnHeader(h, data({ request: undefined, attachments: [] }));
+    expect(attachmentPaths(h)).toEqual([]);
   });
 });

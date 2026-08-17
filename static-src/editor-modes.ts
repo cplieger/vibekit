@@ -6,7 +6,7 @@
 import { $ } from "./dom.js";
 import { renderDiffModeUI } from "./editor-diff.js";
 import { renderConflictModeUI } from "./editor-conflict.js";
-import { renderEditModeUI, showReadMode } from "./editor-ui.js";
+import { renderEditModeUI, renderImageModeUI, showReadMode } from "./editor-ui.js";
 import type { FileState } from "./editor-types.js";
 
 // --- restoreUI (dispatches to mode-specific renderers) ---
@@ -15,7 +15,6 @@ export function restoreUI(state: FileState): void {
   if (state.error !== "") {
     $.editorCode.textContent = "";
     $.editorGutter.textContent = "";
-    $.editorGutter.classList.add("hidden");
     $.editorError.textContent = state.error;
     $.editorError.classList.remove("hidden");
     $.editorEditBtn.disabled = true;
@@ -23,7 +22,12 @@ export function restoreUI(state: FileState): void {
     $.editorCancelBtn.classList.add("hidden");
     $.editorSaveBtn.classList.add("hidden");
     $.editorDiffBtn.classList.add("hidden");
+    // After showReadMode, which un-hides the gutter for the surfaces that want
+    // it. An error state wants none: the gutter is empty here, and an empty one
+    // still paints its dividing rule beside a message about a file that failed
+    // to load.
     showReadMode();
+    $.editorGutter.classList.add("hidden");
     return;
   }
   $.editorGutter.classList.remove("hidden");
@@ -35,6 +39,9 @@ export function restoreUI(state: FileState): void {
       return;
     case "conflict":
       renderConflictModeUI(state);
+      return;
+    case "image":
+      renderImageModeUI(state);
       return;
     case "edit":
       renderEditModeUI(state);

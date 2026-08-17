@@ -8,6 +8,8 @@ package mcp
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -90,9 +92,23 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	}
 
 	s.mu.Lock()
-	if s.hasNameLocked(rec.Name, "") {
+	// A reinstall of an identical spec is a no-op, not a conflict. The 409 it
+	// replaces had exactly one workaround — delete, then re-add — which threw
+	// away every API key the user had typed in, because DELETE removes the record
+	// and its stored secrets outright. Returning the existing record instead
+	// preserves them, and skipping the persist matters beyond tidiness: a write
+	// re-renders KAS's config file, whose watcher emits a status notification
+	// back into the hub.
+	if existing := s.findByNameLocked(rec.Name); existing != nil {
+		if !sameSpec(existing, rec) {
+			s.mu.Unlock()
+			return nil, ErrNameConflict
+		}
+		out := maskedCopy(existing)
 		s.mu.Unlock()
-		return nil, ErrNameConflict
+		slog.Info("mcp: server already configured with this spec; keeping the stored one",
+			"id", existing.ID, "name", existing.Name)
+		return out, nil
 	}
 	s.servers = append(s.servers, rec)
 	if err := s.persist(ctx); err != nil {
@@ -108,6 +124,118 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	return maskedCopy(rec), nil
 }
 
+// ImportOutcome names what one entry of a pasted block did.
+type ImportOutcome string
+
+// ImportCreated and ImportUnchanged are the two outcomes of one import entry.
+// There is no "updated": an entry naming a configured server either matches its
+// spec (unchanged) or conflicts with it (the whole paste fails), because
+// silently rewriting a server the user has since edited is not what pasting a
+// README asked for.
+const (
+	ImportCreated   ImportOutcome = "created"
+	ImportUnchanged ImportOutcome = "unchanged"
+)
+
+// ImportResult is one entry's outcome, in the order the block declared it.
+type ImportResult struct {
+	Name    string        `json:"name"`
+	Outcome ImportOutcome `json:"outcome"`
+}
+
+// ImportServers creates every server of one pasted block, or none of them.
+//
+// ALL-OR-NOTHING is the decision, and it is about the artifact rather than the
+// store: the block is one thing the user copied out of one README, so installing
+// three of five and reporting the other two leaves them diffing the UI against
+// the document to work out what landed. The store gives no reason to prefer
+// partial success either — one atomicfile write covers N servers — and because
+// an identical re-paste is a no-op (see Create), correcting the block and
+// pasting it again costs nothing and re-lands the entries that were fine.
+//
+// A name already configured with the SAME spec is `unchanged`, which is what
+// makes the common case work: a block naming three servers where one is already
+// installed. A name configured with a DIFFERENT spec fails the paste, because
+// the alternative is a POST that silently overwrites.
+func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult, error) {
+	if len(in) == 0 {
+		return nil, errors.New("no servers to connect")
+	}
+	if len(in) > maxImportServers {
+		return nil, fmt.Errorf("too many servers in one paste (%d, max %d)", len(in), maxImportServers)
+	}
+	// Validate and de-duplicate before taking the lock: both are pure, and a
+	// block that cannot land should not have made every other caller wait.
+	seen := make(map[string]struct{}, len(in))
+	for _, sv := range in {
+		if err := Validate(sv); err != nil {
+			return nil, fmt.Errorf("server %q: %w", sv.Name, err)
+		}
+		key := strings.ToLower(sv.Name)
+		if _, dup := seen[key]; dup {
+			return nil, fmt.Errorf("%q %w", sv.Name, errImportDuplicate)
+		}
+		seen[key] = struct{}{}
+	}
+
+	now := time.Now().UnixMilli()
+	s.mu.Lock()
+	before := s.servers
+	results := make([]ImportResult, 0, len(in))
+	created := 0
+	for _, sv := range in {
+		res, err := s.importOneLocked(sv, now)
+		if err != nil {
+			s.servers = before
+			s.mu.Unlock()
+			return nil, err
+		}
+		if res.Outcome == ImportCreated {
+			created++
+		}
+		results = append(results, res)
+	}
+	if created == 0 {
+		s.mu.Unlock()
+		slog.Info("mcp: import matched the stored set; nothing written", "servers", len(in))
+		return results, nil
+	}
+	if err := s.persist(ctx); err != nil {
+		s.servers = before
+		s.mu.Unlock()
+		return nil, err
+	}
+	s.mu.Unlock()
+	slog.Info("mcp: servers imported", "created", created, "entries", len(in))
+	s.notifyChange(ctx)
+	return results, nil
+}
+
+// importOneLocked appends one entry, or reports that the stored record already
+// says the same thing. Caller must hold the write lock.
+func (s *Store) importOneLocked(sv *Server, now int64) (ImportResult, error) {
+	if existing := s.findByNameLocked(sv.Name); existing != nil {
+		if !sameSpec(existing, sv) {
+			return ImportResult{}, fmt.Errorf(
+				"%w: %q is configured with a different command or url; rename the entry or edit the existing integration",
+				ErrNameConflict, existing.Name)
+		}
+		return ImportResult{Name: existing.Name, Outcome: ImportUnchanged}, nil
+	}
+	rec := *sv
+	rec.ID = newID()
+	rec.Name = strings.TrimSpace(sv.Name)
+	rec.Args = append([]string(nil), sv.Args...)
+	rec.Env = copyPairs(sv.Env)
+	rec.Headers = copyPairs(sv.Headers)
+	rec.DisabledTools = append([]string(nil), sv.DisabledTools...)
+	rec.AutoApprove = append([]string(nil), sv.AutoApprove...)
+	rec.CreatedAt = now
+	rec.UpdatedAt = now
+	s.servers = append(s.servers, &rec)
+	return ImportResult{Name: rec.Name, Outcome: ImportCreated}, nil
+}
+
 // Update replaces one server by id. Fields whose secret value equals
 // SecretMask are preserved from the existing record, so a client can
 // edit non-secret fields without re-submitting the secret. Returns a
@@ -120,6 +248,13 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 		return nil, ErrNotFound
 	}
 	existing := s.servers[idx]
+	// Before mergeSecrets, not after: it substitutes a stored value for every
+	// masked row it can match, and once that has happened the record is
+	// indistinguishable from one the user retyped. See guardOriginChange.
+	if err := guardOriginChange(in, existing); err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
 	rec := &Server{
 		ID:        existing.ID,
 		Transport: in.Transport,

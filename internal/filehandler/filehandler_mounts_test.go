@@ -190,9 +190,9 @@ func TestResolvePath_SymlinkAcrossGrantedMounts(t *testing.T) {
 	}
 }
 
-// The upload default dir ("workspace") only works when /workspace is
-// granted; on a handler without it the upload is refused, never
-// silently redirected.
+// The upload default dir (defaultUploadDir, "/workspace/uploads") only works
+// when the workspace is granted; on a handler without it the upload is
+// refused, never silently redirected to whatever mount does exist.
 func TestHandleUpload_DefaultDirRequiresWorkspaceGrant(t *testing.T) {
 	h, _, _ := testDir(t)
 	mux := http.NewServeMux()

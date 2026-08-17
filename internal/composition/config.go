@@ -71,6 +71,13 @@ type Config struct {
 	// blank = an inactive policy = any Host accepted (backward compatible;
 	// the server warns at listen time).
 	HostPolicy *webhttp.HostPolicy
+	// BridgeEnvAllow re-permits names the bridge's credential screen would
+	// otherwise drop on its way down to kiro-cli, parsed from
+	// bridge.EnvAllowVar. Nil is the shipped configuration and the right one:
+	// nothing in the image puts a credential in this environment, so the
+	// override exists for the operator who has a legitimate variable whose name
+	// merely reads like one.
+	BridgeEnvAllow map[string]struct{}
 	// BrowseRoots is the file browser's allow-list: the granted
 	// directories the /api/file* surface can see. Always WorkDir +
 	// ConfigDir, plus any extra grants from VIBEKIT_BROWSE_ROOTS
@@ -121,6 +128,7 @@ func ConfigFromEnv() Config {
 		HostPolicy:          parseAllowedHosts(os.Getenv("WT_ALLOWED_HOSTS")),
 		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
 		ACPArgs:             bridge.ParseACPArgs(os.Getenv("VIBEKIT_KIRO_ACP_ARGS")),
+		BridgeEnvAllow:      bridge.ParseEnvAllowlist(os.Getenv(bridge.EnvAllowVar)),
 		AuthConfig:          ac,
 	}
 }

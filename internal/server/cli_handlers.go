@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/redact"
 	"github.com/cplieger/vibekit/internal/version"
 )
 
@@ -45,33 +44,8 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, api.ErrorJSON("diagnostic command failed"))
 		return
 	}
-	// Drop the final partial LINE before redacting, because the cap above cuts on
-	// a byte boundary and redact.Report's secret-named-field rule needs a CLOSING
-	// quote (`"key": "value"`). A cut landing inside a value leaves
-	// `"apiKey": "abc123` unterminated, the pattern does not match, and the partial
-	// secret reaches the browser unredacted — the redaction anchor survives and its
-	// terminator does not. Upstream hit the mirror image of this on a size-capped
-	// tail (KiroCrew #583) and the rule is the same: cut on a line boundary, never
-	// a byte one, on either side of a redaction pass.
-	//
-	// Only when the output was actually truncated: an untruncated dump ends where
-	// the command ended, and trimming its last line would discard real content.
-	body := string(out)
-	if truncated {
-		// No newline anywhere means the whole capped dump is ONE partial line, so
-		// there is no complete line to keep — and keeping the byte-cut tail is
-		// exactly the stranded-secret case this trim exists to close. Dropping it
-		// is the rule applied without exception; the "[truncated]" marker below
-		// still tells the reader why the report is short.
-		if nl := strings.LastIndexByte(body, '\n'); nl >= 0 {
-			body = body[:nl]
-		} else {
-			body = ""
-		}
-	}
-	// Sanitize (ANSI + hidden Unicode) then best-effort redact obvious
-	// secret patterns before the report reaches the browser.
-	report := redact.Report(api.SanitizeOutput(body))
+	// Sanitize (ANSI + hidden Unicode) before the report reaches the browser.
+	report := api.SanitizeOutput(string(out))
 	if truncated {
 		report += "\n\n[truncated]"
 	}

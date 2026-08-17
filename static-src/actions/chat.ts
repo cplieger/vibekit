@@ -28,6 +28,8 @@ import {
   indexOfSession,
   setModel,
   setCurrentMode,
+  setTurnFailed,
+  setTurnDone,
 } from "../store.js";
 import { send as transportSend } from "../transport.js";
 import { clearLastError } from "../send-state.js";
@@ -113,6 +115,39 @@ export const setSupervised = transportAction<
   retryable: retryNetwork,
   retry: RETRY_STANDARD,
   error: "Couldn't update supervised mode",
+});
+
+// --- chat.set_draft ---
+
+/** Persist the composer text the user has typed into a chat and not sent.
+ *
+ *  Server-side rather than localStorage so a draft follows the user across
+ *  devices and joins the state that is already per-chat and canonical. Dispatched
+ *  on a 600ms debounce and flushed on blur, on a chat switch and on unload, so it
+ *  is the highest-frequency mutation in the app and is deliberately quiet:
+ *
+ *    - `success: false` / `error: false` — the decision says draft saving is
+ *      user-transparent. A toast every 600ms of typing would be the loudest
+ *      thing in the UI, and a failed draft save costs nothing the user can act
+ *      on: the live textarea still holds the text and the next keystroke retries.
+ *    - `scope` per chat so dispatches serialize, which is what removes the need
+ *      for a generation counter to stop an older save landing after a newer one.
+ *    - no optimism, because there is nothing to render: the composer IS the
+ *      view of this value.
+ *
+ *  Not retryable on purpose. A retry would re-send text the next debounce is
+ *  about to supersede. */
+export const setDraft = transportAction<{ chatID: string; text: string }>({
+  name: "chat.set_draft",
+  networkMode: "always",
+  scope: ({ chatID }) => `chat:${chatID}`,
+  command: ({ chatID, text }) => ({
+    type: "set_draft",
+    chat_id: chatID,
+    payload: { text },
+  }),
+  success: false,
+  error: false,
 });
 
 // --- chat.compact ---
@@ -249,6 +284,34 @@ export const resumeSession = transportAction<
   error: "Couldn't resume that session",
 });
 
+// --- chat.fork ---
+// Open a TANGENT off another chat: a new chat that starts with the parent's real
+// conversation behind it and then diverges.
+//
+// The server calls KAS's own `session/fork` on the parent's live session and
+// binds the returned session id to the new chat, so the transcript arrives from
+// the session/load replay and nothing is copied client-side. The reply's
+// `outcome` names which path ran — `forked` (the session was branched) or
+// `primed` (the fork was refused, so the parent's transcript is injected into a
+// fresh session instead). The tangent opens either way, so the client does not
+// branch on it; it is there so a report about a vague answer can say which.
+
+export const forkChat = transportAction<
+  { chatID: string; parentChatID: string; title?: string },
+  { ok: boolean }
+>({
+  name: "chat.fork",
+  networkMode: "always",
+  command: ({ chatID, parentChatID, title }) => ({
+    type: "fork_chat",
+    chat_id: chatID,
+    payload: { parent_chat_id: parentChatID, ...(title === undefined ? {} : { title }) },
+  }),
+  retryable: retryNetwork,
+  retry: RETRY_STANDARD,
+  error: "Couldn't start a tangent",
+});
+
 // --- chat.cancel_turn ---
 //
 // No scope: cancel must fire immediately, not queue behind an in-flight
@@ -374,17 +437,39 @@ async function promptEchoed(chatID: string, messageID: string): Promise<boolean>
   return promptEchoArrived(chatID, messageID);
 }
 
-export const sendPrompt = defineAction<SendPromptArgs, "sent" | "queued", { chatID: string }>({
+export const sendPrompt = defineAction<
+  SendPromptArgs,
+  "sent" | "queued",
+  { chatID: string; turnFailed: boolean; turnDone: boolean }
+>({
   name: "chat.send_prompt",
   scope: ({ chatID }) => `chat:${chatID}`,
   idempotencyKey: true,
   optimistic: ({ chatID }) => {
+    // The two outcome latches are captured because setThinking(true) CLEARS
+    // them: starting a turn is what invalidates the previous turn's verdict. A
+    // rollback means no turn started, so restoring `thinking: false` alone
+    // erased a failure or a finished-while-away mark the reader had not seen —
+    // a rejected prompt (400, 413, a dead POST) wiped the very state the dot
+    // exists to carry.
+    const s = get(chatID);
+    const snapshot = {
+      chatID,
+      turnFailed: s?.turn_failed === true,
+      turnDone: s?.turn_done === true,
+    };
     setThinking(chatID, true);
-    return { chatID };
+    return snapshot;
   },
   rollback: (_args, op) => {
     if (op !== undefined) {
       setThinking(op.chatID, false);
+      if (op.turnFailed) {
+        setTurnFailed(op.chatID);
+      }
+      if (op.turnDone) {
+        setTurnDone(op.chatID);
+      }
     }
   },
   run: async (args, signal, ctx) => {

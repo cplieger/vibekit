@@ -164,11 +164,21 @@ func (b *Bridge) startProcess(engine string) error {
 	// first is still what gives kiro-cli a chance to exit on its own, but it is
 	// no longer sufficient: see procgroup.Kill for the 2.18.0 measurement.
 	b.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if len(b.extraEnv) > 0 {
-		// Appended LAST, so the active version directory wins PATH resolution
-		// over anything the inherited environment puts ahead of it. A nil Env
-		// (no overlay configured) keeps the plain inherited environment.
-		b.cmd.Env = append(os.Environ(), b.extraEnv...)
+	// Env is set UNCONDITIONALLY, which is what makes the credential screen
+	// (bridge_env.go) cover every spawn: a nil Env means os/exec inherits the
+	// parent environment implicitly, so a screen applied only when an overlay
+	// happens to be configured would be inert on the path that has none.
+	// b.extraEnv still lands LAST, so the active version directory wins PATH
+	// resolution over anything the inherited environment puts ahead of it.
+	env, dropped := screenBridgeEnv(os.Environ(), b.extraEnv, b.envAllow)
+	b.cmd.Env = env
+	if len(dropped) > 0 {
+		// NAMES only: their values are the credentials this dropped. One line
+		// per spawn rather than a startup summary, because a chat is what
+		// carries the environment down to the agent and this is that event.
+		slog.Warn("dropped credential-shaped variables from the kiro-cli environment",
+			"variables", strings.Join(dropped, ","),
+			"hint", "keep credentials out of the server environment, or allow the name via "+EnvAllowVar)
 	}
 	// Belt-and-braces graceful shutdown when lifecycleCtx is canceled.
 	// Default CommandContext behavior is immediate SIGKILL; Cancel + WaitDelay
@@ -214,9 +224,10 @@ func (b *Bridge) startProcess(engine string) error {
 		return fmt.Errorf("stderr pipe: %w", err)
 	}
 	b.stdin = stdin
-	b.stdout = bufio.NewScanner(stdoutPipe)
-	// Line cap must fit fsWriteCap worst-case; see scannerLineCap.
-	b.stdout.Buffer(make([]byte, 0, 64*1024), scannerLineCap)
+	// A frameReader rather than a bufio.Scanner: an oversize frame has to be
+	// survivable, and ErrTooLong is terminal for the Scanner that raised it.
+	// See bridge_frame.go.
+	b.stdout = newFrameReader(bufio.NewReaderSize(stdoutPipe, stdoutBufSize))
 	if startErr := b.cmd.Start(); startErr != nil {
 		_ = stdin.Close()
 		_ = stdoutPipe.Close()

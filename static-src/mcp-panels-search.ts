@@ -27,7 +27,11 @@ export type SwitchModeFn = (
   fields: InstallField[],
 ) => void;
 
-interface InstallField {
+/** One field a registry entry declares: the env var or header the server needs,
+ *  with the publisher's description and its required / secret markers. The
+ *  markers used to be dropped on the way into the form, which is why a server
+ *  could install cleanly and then do nothing. */
+export interface InstallField {
   name: string;
   description?: string | undefined;
   required?: boolean | undefined;
@@ -173,25 +177,47 @@ function renderSearchError(results: HTMLDivElement, q: string): void {
   results.appendChild(retryBtn);
 }
 
-function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
+/** One search result row. Exported for its test: the deprecated badge and the
+ *  requirements preview are the two things a reader relies on before installing,
+ *  and both are decided here. */
+export function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
+  const head = el(
+    "div",
+    { className: "mcp-result-head" },
+    el("span", { className: "mcp-result-name" }, entry.title ?? entry.name),
+    el("span", { className: "mcp-result-version" }, entry.version ?? ""),
+  );
+  // The registry still LISTS a deprecated entry (only deleted ones are filtered
+  // upstream), so without this badge a dead server reads exactly like a live one.
+  const status = entry.status ?? "";
+  if (status !== "") {
+    head.appendChild(el("span", { className: "mcp-result-status" }, status));
+  }
+
   const row = el(
     "div",
     { className: "mcp-result" },
-    el(
-      "div",
-      { className: "mcp-result-head" },
-      el("span", { className: "mcp-result-name" }, entry.title ?? entry.name),
-      el("span", { className: "mcp-result-version" }, entry.version ?? ""),
-    ),
+    head,
     el("p", { className: "mcp-result-desc" }, entry.description ?? entry.name),
   ) as HTMLDivElement;
+  if (status !== "") {
+    row.classList.add("mcp-result-deprecated");
+    const why = (entry.status_message ?? "").trim();
+    row.appendChild(
+      el(
+        "p",
+        { className: "mcp-result-status-note" },
+        why !== "" ? why : `The registry marks this entry ${status}.`,
+      ),
+    );
+  }
 
   for (const pkg of entry.packages ?? []) {
-    row.appendChild(renderInstallBtn(entry, "npm", pkg.identifier, pkg.env_vars ?? []));
+    row.appendChild(renderInstallOption(entry, "npm", pkg.identifier, pkg.env_vars ?? [], "env"));
   }
   for (const rem of entry.remotes ?? []) {
     row.appendChild(
-      renderInstallBtn(
+      renderInstallOption(
         entry,
         rem.type,
         rem.url,
@@ -201,11 +227,76 @@ function renderRegistryResult(entry: RegistryEntry): HTMLDivElement {
           required: h.required,
           secret: h.secret,
         })),
+        "header",
       ),
     );
   }
 
   return row;
+}
+
+/** One install path: the button, plus what installing it will ask for.
+ *
+ *  The preview is DISCLOSURE, not consent — it names the credentials the server
+ *  needs before the user commits, which is the gap that made a clean install
+ *  fail silently. It gates nothing; the form behind it saves either way. */
+function renderInstallOption(
+  entry: RegistryEntry,
+  kind: string,
+  identifier: string,
+  fields: InstallField[],
+  fieldKind: "env" | "header",
+): HTMLDivElement {
+  const option = el(
+    "div",
+    { className: "mcp-install-option" },
+    renderInstallBtn(entry, kind, identifier, fields),
+  ) as HTMLDivElement;
+  const preview = renderRequirements(fields, fieldKind);
+  if (preview !== null) {
+    option.appendChild(preview);
+  }
+  return option;
+}
+
+/** The declared env vars / headers of one install path. Null when the publisher
+ *  declared none, which is the honest reading of "needs nothing configured". */
+function renderRequirements(
+  fields: InstallField[],
+  fieldKind: "env" | "header",
+): HTMLElement | null {
+  if (fields.length === 0) {
+    return null;
+  }
+  const required = fields.filter((f) => f.required === true).length;
+  const label =
+    required > 0
+      ? `Needs ${required} of ${fields.length} ${fieldKind === "env" ? "environment variables" : "headers"}`
+      : `Optional ${fieldKind === "env" ? "environment variables" : "headers"} (${fields.length})`;
+
+  const list = el("ul", { className: "mcp-requires-list" });
+  for (const f of fields) {
+    const item = el("li", {}, el("code", { className: "mcp-requires-name" }, f.name));
+    if (f.required === true) {
+      item.appendChild(
+        el("span", { className: "mcp-pair-mark mcp-pair-mark-required" }, "Required"),
+      );
+    }
+    if (f.secret === true) {
+      item.appendChild(el("span", { className: "mcp-pair-mark" }, "Secret"));
+    }
+    const desc = (f.description ?? "").trim();
+    if (desc !== "") {
+      item.appendChild(el("span", { className: "mcp-requires-desc" }, desc));
+    }
+    list.appendChild(item);
+  }
+  // Open when something is required: the case this exists for is a user who did
+  // not know a token was needed, and a closed disclosure does not tell them.
+  const wrap = el("details", { className: "mcp-requires" }) as HTMLDetailsElement;
+  wrap.open = required > 0;
+  wrap.append(el("summary", {}, label), list);
+  return wrap;
 }
 
 function renderInstallBtn(

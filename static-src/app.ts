@@ -34,6 +34,7 @@ import {
   setOnEmpty,
   restoreTabState,
   getSavedTabState,
+  restorableSingletonIDs,
   getActiveTabId,
   getActiveTabRoute,
   activateTab,
@@ -50,17 +51,22 @@ import { initShellPanel } from "./shell.js";
 import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
 import { openFile } from "./editor-openers.js";
+import { openAtLine } from "./navigate.js";
+import { initAttachmentPillCallbacks } from "./attachment-pill.js";
 import { initFileBrowser, loadFileBrowser, restoreFileBrowser } from "./files.js";
 import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
 import { initAwaySummary } from "./away-summary.js";
+import { initAttention } from "./attention.js";
 import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
-import { handleFindHotkey, openChatFind } from "./find-in-chat.js";
+import { openShortcutsSheet } from "./shortcuts.js";
+import { handleFindKey, toggleFindForActiveTab } from "./find-dispatch.js";
 import { forceSettingsTab, loadSettingsTabData } from "./settings-tabs.js";
+import { flushURLHighlight } from "./settings-highlight.js";
 import { forceGitTab } from "./git-tabs.js";
 import { loadGitRepos } from "./git.js";
 import { restoreLastModel } from "./session-context.js";
@@ -76,6 +82,8 @@ import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
+import { initComposerState } from "./composer-state.js";
+import { initComposerResize } from "./composer-resize.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
@@ -93,6 +101,7 @@ import "./handlers/open-external-url.js";
 import "./handlers/safety.js";
 import "./handlers/run.js";
 import "./handlers/steer.js";
+import { initPushMessages } from "./handlers/push-message.js";
 import { cancelTurn } from "./actions/chat.js";
 import { copyClipboard } from "./actions/messages.js";
 import { setCopyCallback } from "./code-blocks.js";
@@ -142,6 +151,12 @@ function init(): void {
 
   installStoreSubscribers();
 
+  // The out-of-page attention surfaces: the tab-title count, the installed app's
+  // icon badge and the tab icon, all folded from the chat tabs' dots. Wired here,
+  // before any tab is opened, because it captures the served <title> as its base
+  // and subscribes to the tab store's dot and set signals.
+  initAttention();
+
   // Refresh picker whenever the active session's available_models
   // shifts. Models come both from a pre-conversation REST fetch at
   // startup (kiro-cli chat --list-models) and per-session from the
@@ -175,10 +190,18 @@ function init(): void {
   initFileBrowser();
   initFilePicker();
   initChatAttach();
+  // One opener for BOTH pill homes — the composer's staged row and a sent turn's
+  // header. Injected here because attachment-pill.ts is a leaf and one of its
+  // consumers is a pure `fundamentals/` view; routed through navigate.ts because
+  // a clicked path is that module's subject.
+  initAttachmentPillCallbacks({ open: openAtLine });
   initTaskListPill();
-  // Wire toolbar history button. Hidden when retention is 0 (nothing kept).
+  // The search button routes through the same dispatcher as Ctrl-F, so the two
+  // cannot mean different things. It used to call find-in-chat directly, which
+  // made it a dead control on /files and /file/{path}: the chat view is hidden
+  // there, so the guard returned and the click did nothing at all.
   $.findBtn.addEventListener("click", () => {
-    openChatFind();
+    toggleFindForActiveTab();
   });
   $.docsBtn.addEventListener("click", () => {
     void import("./docs.js")
@@ -234,12 +257,14 @@ function init(): void {
     sendMessage: () => {
       sendComposer();
     },
+    showShortcuts: openShortcutsSheet,
   });
 
-  // Find in Chat (Ctrl-F / Cmd-F). Capture phase so we can preventDefault the
-  // browser's native find before it opens — but only when the chat view is the
-  // active context (see find-in-chat.ts; native find is left alone elsewhere).
-  document.addEventListener("keydown", handleFindHotkey, true);
+  // Find (Ctrl-F / Cmd-F), scoped by the ACTIVE TAB (find-dispatch.ts owns the
+  // routing). Capture phase so the browser's native find can be pre-empted
+  // before it opens; ONE listener, because a second capture-phase keydown on the
+  // same chord would be a third meaning nobody can predict.
+  document.addEventListener("keydown", handleFindKey, true);
   document.addEventListener("keydown", focusComposerOnTyping);
 
   // Action-framework global: live-log every action error to the
@@ -279,6 +304,10 @@ function init(): void {
       console.warn("sw: registration failed", err);
     });
   }
+  // The other half of the push channel: the worker posts here to route a
+  // notification click and to toast a push that arrived while this page was
+  // focused (where it shows no OS notification at all).
+  initPushMessages();
 
   void checkAuthAndStart();
 }
@@ -322,8 +351,13 @@ async function checkAuthAndStart(): Promise<void> {
   // first chat's session/new lands. Fire-and-forget; session-sourced
   // updates overwrite this the moment a bridge spawns.
   void fetchModelsFromREST();
-  // Read retention setting so tab-close knows whether to keep or delete.
-  void refreshRetention();
+  // Read retention setting so tab-close knows whether to keep or delete, and so
+  // restoreSingletonTabs can tell whether History is reachable at all. Kept
+  // concurrent with loadList below and awaited at the restore instead of here:
+  // serialising it would add a round trip to every boot, while not awaiting it at
+  // all leaves the restore reading the default (enabled) whenever /api/settings
+  // is the slower of the two.
+  const retentionReady = refreshRetention();
 
   const skel = chatSkeleton();
   $.messages.appendChild(skel);
@@ -360,6 +394,7 @@ async function checkAuthAndStart(): Promise<void> {
       for (const s of getSessions()) {
         openChatTab(s.id, s.name, { activate: false });
       }
+      await retentionReady;
       restoreSingletonTabs();
       restoreTabState();
       if (getActiveTabId() === "" && getSessions().length > 0) {
@@ -405,18 +440,27 @@ function initPostAuth(): void {
   initPostAuthUI();
 }
 
-/** Reopen singleton tabs (Settings / Source Control / Files) that were open
- *  last session, without activating them, so restoreTabState() can restore
- *  their saved order and active state (B7). Chat tabs are reopened by the
- *  boot loop and editor tabs by restoreAll(); singletons were previously
- *  never reopened, so `hasTab(saved.active_view)` was always false for them
- *  and their position in the saved order was silently dropped.
- *  TODO(B7): History is still not restored — its data loader is
- *  module-internal (history.ts exports only a toggle-style opener, which
- *  would close the tab when fired from onShow of an already-active tab).
- *  Export a plain loader from that module and add it here. */
+/** Reopen the singleton tabs (Settings / Source Control / Kiro docs / History /
+ *  Files) that were open last session, without activating them, so
+ *  restoreTabState() can restore their saved order and active state (B7). Chat
+ *  tabs are reopened by the boot loop and editor tabs by restoreAll();
+ *  singletons were previously never reopened, so `hasTab(saved.active_view)` was
+ *  always false for them and their position in the saved order was silently
+ *  dropped.
+ *
+ *  Each `onShow` must be a plain LOADER, never the module's toggle-style opener:
+ *  a toggle fired from the onShow of an already-open, already-active tab closes
+ *  the tab it was meant to fill. The docs and History cases reach theirs through
+ *  a lazy import, because those two modules are lazy everywhere else and a static
+ *  import here would pull them into the main bundle. */
 function restoreSingletonTabs(): void {
-  for (const id of getSavedTabState().tab_order) {
+  // History is gated because its own entry point is: the toolbar button hides
+  // when retention is off (nothing is kept to list), so restoring the tab
+  // reopened a page the user could neither reach nor get back to.
+  const ids = restorableSingletonIDs(getSavedTabState().tab_order, {
+    __history__: isRetentionEnabled(),
+  });
+  for (const id of ids) {
     switch (id) {
       case "__settings__":
         openTab(
@@ -459,6 +503,39 @@ function restoreSingletonTabs(): void {
                 .then(({ forceDocsTab, loadDocs }) => {
                   forceDocsTab("steering");
                   loadDocs();
+                })
+                .catch(() => {
+                  /* noop */
+                });
+            },
+          },
+          { activate: false },
+        );
+        break;
+      case "__history__":
+        openTab(
+          {
+            id,
+            name: "History",
+            kind: "history",
+            view: TAB_VIEWS.history,
+            route: { kind: "history" },
+            onShow: () => {
+              void import("./history.js")
+                .then(({ loadHistoryView }) => {
+                  loadHistoryView();
+                })
+                .catch(() => {
+                  /* noop */
+                });
+            },
+            // Unlike the docs case, this one needs a close hook: the page holds a
+            // dispatch, an AbortController and a debounce timer, and the toggle
+            // path tears them down through its own onClose.
+            onClose: () => {
+              void import("./history.js")
+                .then(({ teardownHistoryView }) => {
+                  teardownHistoryView();
                 })
                 .catch(() => {
                   /* noop */
@@ -586,6 +663,15 @@ function populatePickerModels(models: ModelInfo[], activeModel: string): void {
 // ============================================================
 
 function setupInput(): void {
+  // The composer is three peers meeting on one element, wired here rather than
+  // from each other: prompt-input owns its BEHAVIOUR (send, history, the IME
+  // guard), composer-state owns its per-chat STATE (the draft and the staged
+  // attachments), composer-resize owns its SIZE. composer-state cannot be wired
+  // from prompt-input — send-state imports prompt-input to push the button state
+  // and transport imports send-state, so reaching the draft action from there
+  // would close an import cycle.
+  initComposerState();
+  initComposerResize();
   initPromptInput(
     (text: string) => {
       if (getActiveId() === "") {
@@ -668,6 +754,10 @@ function applyRoute(route: Route): void {
         // in settings-tabs.ts (B9).
         onShow: () => {
           loadSettingsTabData(route.tab);
+          // A `?highlight=` on this URL fires after the panel's loader, so the
+          // control it names exists by the time we look for it. One-shot, so a
+          // later popstate back here does not re-flash it.
+          flushURLHighlight();
         },
       });
       break;

@@ -7,8 +7,11 @@
 // chat (mirrors role-picker's selectMode).
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { setModeDispatch } = vi.hoisted(() => ({
+const { setModeDispatch, forkDispatch, submitPromptMock, messagesEl } = vi.hoisted(() => ({
   setModeDispatch: vi.fn(),
+  forkDispatch: vi.fn(),
+  submitPromptMock: vi.fn(),
+  messagesEl: document.createElement("div"),
 }));
 
 let activeId = "";
@@ -22,6 +25,8 @@ vi.mock("./store.js", () => ({
     activeId = id;
   }),
   upsertHeader: vi.fn(),
+  markGhostChat: vi.fn(),
+  isGhostChat: vi.fn(() => false),
   contextSizeFor: vi.fn(() => 0),
   defaultUsage: vi.fn(() => ({
     context_pct: 0,
@@ -33,6 +38,11 @@ vi.mock("./store.js", () => ({
   })),
   activeSession: { value: undefined },
   removeChat: vi.fn(),
+  // The dot's seed at tab creation and its clear at activation. Both are real
+  // store reads in production; here the module is mocked wholesale, so they only
+  // need to exist and be inert.
+  tabStatusFor: vi.fn(() => ""),
+  clearTurnDone: vi.fn(),
 }));
 vi.mock("./store-load.js", () => ({ loadList: vi.fn(), loadMessages: vi.fn() }));
 vi.mock("./banner-stack.js", () => ({ ensureBound: vi.fn() }));
@@ -44,8 +54,15 @@ vi.mock("./tabs.js", () => ({
   getActiveTabId: vi.fn(() => ""),
   renameTab: vi.fn(),
   setTabStatus: vi.fn(),
-  setTabIcon: vi.fn(),
+  setTabTooltip: vi.fn(),
   TAB_VIEWS: { chat: "#chat-view" },
+}));
+// The chat tab's activity dot asks the dock whether this chat holds an
+// unanswered decision. Mocked so the suite does not pull in the three card
+// builders behind the real module for a boolean.
+vi.mock("./decision-dock.js", () => ({
+  hasPendingDecision: vi.fn(() => false),
+  dropDecisions: vi.fn(),
 }));
 vi.mock("./skeleton.js", () => ({ chatSkeleton: vi.fn(() => document.createElement("div")) }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
@@ -61,12 +78,31 @@ vi.mock("./messages.js", () => ({
   // future test does exercise that path.
   loadTurnRail: vi.fn(),
 }));
-vi.mock("./attachments.js", () => ({ addAttachment: vi.fn(), clearAttachments: vi.fn() }));
+vi.mock("./attachments.js", () => ({ addAttachment: vi.fn() }));
+// The composer's per-chat state owns real DOM (the textarea) and a debounced
+// action dispatch; chat.ts only has to call its save/restore pair in the right
+// order, which the mock records.
+vi.mock("./composer-state.js", () => ({
+  saveComposerState: vi.fn(),
+  restoreComposerState: vi.fn(),
+  seedComposerDraft: vi.fn(),
+  flushComposerDraft: vi.fn(),
+  dropComposerState: vi.fn(),
+}));
 vi.mock("./session-context.js", () => ({ setCurrentModel: vi.fn(), getLastModel: () => "auto" }));
 vi.mock("./model-switcher.js", () => ({ applyLocalModel: vi.fn() }));
 vi.mock("./context-ui.js", () => ({ refreshContextUI: vi.fn() }));
-vi.mock("./roles.js", () => ({ iconForMode: vi.fn(() => "") }));
-vi.mock("./dom.js", () => ({ $: {} }));
+vi.mock("./roles.js", () => ({
+  iconForMode: vi.fn(() => ""),
+  labelForMode: vi.fn((id: string) => (id === "plan" ? "Plan" : id)),
+}));
+vi.mock("./submit.js", () => ({ submitPrompt: submitPromptMock }));
+// $.messages is a real element so a listener registered on it could be driven.
+// Nothing in chat.ts registers one any more — see "no transcript context menu"
+// below, which is what that element is here to witness.
+vi.mock("./dom.js", () => ({
+  $: { messages: messagesEl, promptInput: { focus: () => undefined } },
+}));
 vi.mock("./retention.js", () => ({ isRetentionEnabled: vi.fn(() => false) }));
 vi.mock("./bus.js", () => ({ onBus: vi.fn(), BUS_ACTIVATE_CHAT: "activate-chat" }));
 vi.mock("./actions/chat.js", () => ({
@@ -74,11 +110,30 @@ vi.mock("./actions/chat.js", () => ({
   deleteChat: { dispatch: vi.fn() },
   restoreChat: { dispatch: vi.fn() },
   setMode: { dispatch: setModeDispatch },
+  forkChat: { dispatch: forkDispatch },
 }));
 
-import { createPlannerSession, openChatTab } from "./chat.js";
-import { openTab } from "./tabs.js";
-import { get, removeChat } from "./store.js";
+import * as chatModule from "./chat.js";
+import {
+  createPlannerSession,
+  openChatTab,
+  openTangentChat,
+  openPreviousSession,
+  installStoreSubscribers,
+} from "./chat.js";
+import { openTab, hasTab, setTabTooltip } from "./tabs.js";
+import { dropDecisions } from "./decision-dock.js";
+import {
+  get,
+  getSessions,
+  removeChat,
+  upsertHeader,
+  markGhostChat,
+  isGhostChat,
+  clearTurnDone,
+} from "./store.js";
+import { loadMessages } from "./store-load.js";
+import { seedComposerDraft } from "./composer-state.js";
 import { isRetentionEnabled } from "./retention.js";
 import { closeChat, deleteChat } from "./actions/chat.js";
 
@@ -86,6 +141,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(get).mockReturnValue(undefined);
   vi.mocked(isRetentionEnabled).mockReturnValue(false);
+  vi.mocked(isGhostChat).mockReturnValue(false);
+  vi.mocked(loadMessages).mockResolvedValue(true);
   activeId = "";
 });
 
@@ -98,6 +155,86 @@ describe("createPlannerSession", () => {
     // createSession() sets the new chat active synchronously, so the dispatch
     // targets a real (non-empty) chat id.
     expect(arg.chatID).not.toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Activating a chat with NO messages. It still takes the model-picker branch, so
+// it never called loadMessages — and the draft rides that single-chat GET, on
+// purpose (it must travel on neither the list nor a chat_updated frame). A chat
+// can be PERSISTED with zero messages, because set_mode and set_effort both
+// auto-create the record before the first prompt, so a mode pick plus half a
+// typed message plus a reload came back to an empty box with the draft sitting on
+// the server: the exact case server-side drafts exist for.
+// ---------------------------------------------------------------------------
+
+describe("the draft of a chat with no messages", () => {
+  /** A persisted zero-message chat. `model` is empty so the context-size branch
+   *  above it (which calls setModel) stays out of the way. */
+  function emptyChat(): never {
+    return {
+      id: "c-empty",
+      model: "",
+      message_count: 0,
+      messages: [],
+      usage: { context_size: 0 },
+    } as never;
+  }
+
+  /** Activate through the History row path, the one exported caller that reaches
+   *  activateChatView for a chat the store already holds. */
+  function activate(): void {
+    openPreviousSession({ chat_id: "c-empty", session_id: "s1", title: "t", updated_at: 1 });
+  }
+
+  it("fetches the record so the stored draft can be adopted", async () => {
+    vi.mocked(get).mockReturnValue(emptyChat());
+    activate();
+    await vi.waitFor(() => {
+      expect(seedComposerDraft).toHaveBeenCalledWith("c-empty");
+    });
+    expect(loadMessages).toHaveBeenCalledWith("c-empty");
+  });
+
+  it("asks nothing about a ghost chat, whose id the server has never seen", async () => {
+    // Every New chat click lands here, and a GET on a client-minted id 404s.
+    vi.mocked(get).mockReturnValue(emptyChat());
+    vi.mocked(isGhostChat).mockReturnValue(true);
+    activate();
+    await Promise.resolve();
+    expect(loadMessages).not.toHaveBeenCalled();
+    expect(seedComposerDraft).not.toHaveBeenCalled();
+  });
+
+  it("seeds nothing when the fetch fails", async () => {
+    vi.mocked(get).mockReturnValue(emptyChat());
+    vi.mocked(loadMessages).mockResolvedValue(false);
+    activate();
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledWith("c-empty");
+    });
+    expect(seedComposerDraft).not.toHaveBeenCalled();
+  });
+
+  it("seeds nothing once the user has moved to another chat", async () => {
+    // The composer is shared, so a seed landing after a switch would write the
+    // outgoing chat's draft into the incoming chat's box.
+    vi.mocked(get).mockReturnValue(emptyChat());
+    vi.mocked(loadMessages).mockImplementation(async () => {
+      activeId = "c-other";
+      return true;
+    });
+    activate();
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledWith("c-empty");
+    });
+    expect(seedComposerDraft).not.toHaveBeenCalled();
+  });
+
+  it("marks a client-minted chat as a ghost when it is seeded", () => {
+    createPlannerSession();
+    const id = (vi.mocked(upsertHeader).mock.calls.at(-1)?.[0] as { id: string }).id;
+    expect(markGhostChat).toHaveBeenCalledWith(id);
   });
 });
 
@@ -136,5 +273,174 @@ describe("openChatTab onClose retention gate", () => {
     captureOnClose("c-empty")();
     expect(removeChat).toHaveBeenCalledWith("c-empty");
     expect(deleteChat.dispatch).not.toHaveBeenCalled();
+  });
+
+  // The chat's unanswered asks go with the tab. Closing cancels the turn and the
+  // chat's runs server-side, so nothing left here is live — and because the dock's
+  // queue is keyed by chat id, a queue left behind was RESURRECTED by reopening
+  // the same id: the card came back and the tab dot said the chat needed a
+  // decision that no longer existed.
+  // Opening the chat is what settles a `done` dot: the mark means "this finished
+  // while you were away", so arriving is the event that answers it. Without this
+  // the only clear was the next prompt, so a green dot sat on a chat the reader had
+  // already read.
+  it("settles the finished-turn mark when the chat is activated", () => {
+    openChatTab("c-open", "chat");
+    const spec = vi.mocked(openTab).mock.calls.at(-1)?.[0] as { onShow?: () => void };
+    spec.onShow?.();
+    expect(clearTurnDone).toHaveBeenCalledWith("c-open");
+  });
+
+  it("drops the chat's unanswered asks on close, in every retention mode", () => {
+    for (const retention of [true, false]) {
+      vi.clearAllMocks();
+      vi.mocked(get).mockReturnValue({ message_count: 3 } as never);
+      vi.mocked(isRetentionEnabled).mockReturnValue(retention);
+      captureOnClose("c-closed")();
+      expect(dropDecisions).toHaveBeenCalledWith("c-closed");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The tangent: a real chat opened as a sub-tab of the one it came from, whose
+// context is the parent's REAL context via a session fork.
+// ---------------------------------------------------------------------------
+
+function lastSpec(): {
+  id: string;
+  parentId?: string;
+  owns?: boolean;
+  kind: string;
+  onClose?: () => void;
+} {
+  return vi.mocked(openTab).mock.calls.at(-1)?.[0] as never;
+}
+
+describe("openTangentChat", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    activeId = "";
+    vi.mocked(get).mockReturnValue({ model: "parent-model" } as never);
+  });
+
+  it("opens the new chat as a sub-tab of its parent", () => {
+    openTangentChat("c-parent");
+    const spec = lastSpec();
+    expect(spec.parentId).toBe("c-parent");
+    expect(spec.kind).toBe("chat");
+    expect(spec.id).not.toBe("c-parent");
+  });
+
+  // The fork is what persists the chat AND what carries the context, so it must
+  // fire for the NEW chat naming the parent. Without the parent id the server
+  // has nothing to fork.
+  it("dispatches chat.fork for the new chat, naming its parent", () => {
+    openTangentChat("c-parent");
+    expect(forkDispatch).toHaveBeenCalledTimes(1);
+    const arg = forkDispatch.mock.calls[0]?.[0] as { chatID: string; parentChatID: string };
+    expect(arg.chatID).toBe(lastSpec().id);
+    expect(arg.parentChatID).toBe("c-parent");
+  });
+
+  // A selection chooses nothing once the whole conversation is inherited, so
+  // there is no seeded prompt any more. This is the assertion that fails if the
+  // old selection-seeding path is reintroduced.
+  it("seeds no prompt: the fork carries the context, not a quoted phrase", () => {
+    openTangentChat("c-parent");
+    expect(submitPromptMock).not.toHaveBeenCalled();
+  });
+
+  // It OWNS its bridge, so the tab keeps the default `owns` and its close tears
+  // the tangent down like any other chat tab. `owns: false` would be wrong — a
+  // forked session is this tab's own work, not a view over another chat's.
+  it("owns its bridge", () => {
+    openTangentChat("c-parent");
+    expect(lastSpec().owns).toBeUndefined();
+    expect(lastSpec().onClose).toBeTypeOf("function");
+  });
+
+  // Model rides the local seed so the tab and picker read right immediately; mode
+  // and effort are the SERVER's to copy off the parent record, which is why no
+  // set_mode is dispatched here any more.
+  it("seeds the parent's model locally and leaves mode to the server", () => {
+    vi.mocked(get).mockReturnValue({ model: "parent-model", current_mode_id: "plan" } as never);
+    openTangentChat("c-parent");
+    expect(vi.mocked(upsertHeader).mock.calls.at(-1)?.[0]).toMatchObject({
+      model: "parent-model",
+    });
+    expect(setModeDispatch).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when the parent is unknown", () => {
+    vi.mocked(get).mockReturnValue(undefined);
+    openTangentChat("c-parent");
+    expect(openTab).not.toHaveBeenCalled();
+    expect(forkDispatch).not.toHaveBeenCalled();
+  });
+
+  it("does nothing for an empty parent id", () => {
+    openTangentChat("");
+    expect(openTab).not.toHaveBeenCalled();
+    expect(forkDispatch).not.toHaveBeenCalled();
+  });
+});
+
+// The transcript's right-click entry is GONE with the selection it read. A
+// tangent inherits the whole conversation, so "I selected these words" does not
+// mean "branch this conversation", and a menu entry that silently inherited
+// everything from a phrase-scoped gesture was misleading. The `+` menu is the
+// door.
+describe("no transcript context menu", () => {
+  it("exports no initTranscriptContextMenu", () => {
+    expect(chatModule).not.toHaveProperty("initTranscriptContextMenu");
+  });
+
+  // The listener is what the export wired, so its absence is the behavioural
+  // half: a right-click on the transcript is the native menu's again. Asserting
+  // on defaultPrevented rather than on a mock, because there is no longer a
+  // context-menu module for this file to mock.
+  it("leaves a transcript right-click to the native menu", () => {
+    activeId = "c-active";
+    const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    messagesEl.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
+  });
+});
+
+// The activity dot took the slot the per-mode role glyph used to hold, and for a
+// BACKGROUND chat that glyph was the only place a role read out at all — the mode
+// pill and its picker are active-chat only. The tooltip is where the role went:
+// no element, no width, no second visual vocabulary in the 9px column. It is
+// pointer-only, so it is a convenience rather than a full restoration.
+describe("the chat tab's tooltip carries the mode as well as the activity", () => {
+  function driveEffect(over: Record<string, unknown>): void {
+    const s = { id: "c1", name: "Fix the parser", available_modes: [], ...over };
+    vi.mocked(getSessions).mockReturnValue([s as never]);
+    vi.mocked(hasTab).mockReturnValue(true);
+    installStoreSubscribers();
+  }
+
+  it("composes the mode and what the agent says it is doing", () => {
+    driveEffect({ current_mode_id: "plan", agent_status_text: "reading the parser" });
+    expect(setTabTooltip).toHaveBeenCalledWith("c1", "Plan · reading the parser");
+  });
+
+  it("gives the mode alone when the agent has declared nothing", () => {
+    // The separator is emitted only when both halves exist, so a quiet chat's
+    // tooltip is a mode rather than a mode with a dangling middot.
+    driveEffect({ current_mode_id: "plan" });
+    expect(setTabTooltip).toHaveBeenCalledWith("c1", "Plan");
+  });
+
+  it("gives the activity alone before the chat has a session", () => {
+    // A chat with no bridge yet has no mode id, which is every brand-new chat.
+    driveEffect({ current_mode_id: "", agent_status_text: "reading the parser" });
+    expect(setTabTooltip).toHaveBeenCalledWith("c1", "reading the parser");
+  });
+
+  it("clears the tooltip when there is neither", () => {
+    driveEffect({ current_mode_id: "" });
+    expect(setTabTooltip).toHaveBeenCalledWith("c1", "");
   });
 });

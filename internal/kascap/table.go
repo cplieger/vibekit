@@ -241,13 +241,23 @@ as prose and the model answers as though it had run something, which is
 exactly the lie typed /compact used to tell. With it, the verb either
 launches a real run or is not offered.
 
-It is a muscle-memory fallback, not the affordance. vibekit does not
-decode available_commands_update and ships no palette, so /goal is
-discoverable only to a user who already knows it; the Workflows tab is
-where a run gets launched deliberately, with its recipe and inputs
-visible. Note the loop it starts is an ordinary workflow run parented on
-the calling session, so it lands in the same unsupervised population as
-an agent-launched run.`,
+This row is LOAD-BEARING for a real affordance, not a muscle-memory
+fallback: the composer's chat-actions menu has a Set-a-goal row, and it
+composes exactly "/goal <text> [--max N]" and sends it through the
+ordinary prompt path, because the parser is the only route that can set
+the iteration bound. The bundled recipe's repeat node is written
+maxIterations: 200 and launchGoal applies the user's bound by mutating
+that node on a clone, so launching the recipe by source instead bounds
+every goal at 200. Stop sending this key and that row goes back to
+reaching the model as prose.
+
+vibekit still does not decode available_commands_update and ships no
+palette, so the TYPED verb is discoverable only to a user who already
+knows it; the menu row is the discoverable door. Note the loop it starts
+is an ordinary workflow run parented on the calling session, so it lands
+in the same unsupervised population as an agent-launched run — and its
+frames arrive on the calling chat's topic, which is why the row opens no
+run tab.`,
 	},
 	{
 		key:      "workspaceTrusted",

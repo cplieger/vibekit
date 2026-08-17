@@ -82,39 +82,6 @@ func workflowIDOf(chatID api.ChatID) string {
 	return strings.TrimPrefix(string(chatID), runChatPrefix)
 }
 
-// markUnattended records that a workflow run was launched by a schedule, keyed
-// so a later denial can be attributed back to the row that asked for it.
-func (h *Hub) markUnattended(workflowID, scheduleID string) {
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	if h.unattendedRuns == nil {
-		h.unattendedRuns = map[string]string{}
-	}
-	h.unattendedRuns[workflowID] = scheduleID
-}
-
-// clearUnattended forgets a run, at terminal status or on a failed launch.
-func (h *Hub) clearUnattended(workflowID string) {
-	if workflowID == "" {
-		return
-	}
-	h.unattendedMu.Lock()
-	delete(h.unattendedRuns, workflowID)
-	h.unattendedMu.Unlock()
-}
-
-// scheduleForRun returns the schedule id that launched a run, and whether the
-// run is unattended at all.
-func (h *Hub) scheduleForRun(workflowID string) (string, bool) {
-	if workflowID == "" {
-		return "", false
-	}
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	id, ok := h.unattendedRuns[workflowID]
-	return id, ok
-}
-
 // permissionWithUnattendedFloor wraps the ordinary permission handler.
 //
 // The request still reaches the client exactly as it would otherwise: the run's
@@ -124,10 +91,20 @@ func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 	return func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
 		inner(ctx, chatID, msg)
 
-		scheduleID, unattended := h.scheduleForRun(workflowIDOf(chatID))
-		if !unattended || msg.ID == nil {
+		// The lease's own mark, which is why the floor now survives a restart:
+		// before, the mark was in memory, so a container that restarted while a
+		// scheduled run was parked left that run's next permission ask waiting for
+		// a human who was never going to arrive.
+		//
+		// The lookup key strips the `run:` prefix and yields "" for any other chat
+		// id, so the floor reaches only a parentless run on its own bridge. An
+		// agent-launched run's asks arrive on its chat's real id and are attended
+		// by the person who asked for them.
+		l, held := h.lease(workflowIDOf(chatID))
+		if !held || !l.Unattended || msg.ID == nil {
 			return
 		}
+		scheduleID := l.ScheduleID
 		requestID := *msg.ID
 		tool := permissionToolName(msg.Params)
 		// AfterFunc parks no goroutine while waiting, and the timer is a no-op

@@ -46,6 +46,13 @@ type sharedBridge struct {
 	// pointer-bearing prefix above for govet fieldalignment.
 	primeReason primeReason
 
+	// primeFrom names the chat whose transcript primes this session, when that
+	// is NOT the chat the bridge belongs to. Set only on primeReasonFork: a
+	// tangent whose fork was refused needs its PARENT's history, which is the one
+	// case where BuildHistory must be asked about a different chat. Empty
+	// everywhere else, and PrimeIfNeeded reads the bridge's own chat then.
+	primeFrom api.ChatID
+
 	turnGen uint64
 	mu      sync.Mutex
 	state   bridgeState

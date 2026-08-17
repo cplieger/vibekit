@@ -55,20 +55,24 @@
 
 @media (prefers-contrast: more) {
   :root {
-    --c-border: oklch(45% 0 0deg);
-    --c-text-tertiary: oklch(70% 0 0deg);
+    --c-border: oklch(45% 0 none);
+    --c-text-tertiary: oklch(70% 0 none);
   }
 
   /* The 70% lift above is dark-mode arithmetic; on the light theme it LOWERS
-     contrast (2.6:1 vs the default's 4.7:1). Push the other way there. */
+     contrast (2.6:1 against the default's 5.7:1). Push the other way there.
+
+     --c-border is deliberately an OPAQUE swatch here where 01-tokens.css makes
+     it a wash: high contrast is exactly when the edge should stop adapting to
+     its backdrop and just be loud (2.64:1 on --c-bg-primary against the wash's
+     1.53:1).
+
+     The `@media (prefers-color-scheme: light)` twin of the rule below was
+     deleted with its counterpart in the token layer: index.html's anti-FOUC
+     script sets `data-theme` before this stylesheet is fetched, on both its try
+     and its catch path, so `:root:not([data-theme])` never matches. */
   :root[data-theme="light"] {
     --c-text-tertiary: oklch(40% 0.015 277.1deg);
-  }
-
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme]) {
-      --c-text-tertiary: oklch(40% 0.015 277.1deg);
-    }
   }
 }
 

@@ -21,6 +21,8 @@ import {
   setName,
   activeSession,
   getActiveId,
+  markGhostChat,
+  isGhostChat,
 } from "./store.js";
 import type { Session } from "./types.js";
 import { effect, flushSync } from "@cplieger/reactive";
@@ -260,6 +262,59 @@ describe("activeSession reactivity (two-tier tracking + batch)", () => {
   });
 });
 
+// A client-minted chat exists nowhere but this tab until the server says
+// otherwise, and asking the server about it 404s. The mark is what lets a caller
+// skip that question, so what matters is that it CLEARS the moment the record is
+// real — a mark left standing would go on suppressing a fetch the chat has since
+// earned.
+describe("ghost chats (a client-minted id the server has not acknowledged)", () => {
+  const header = (id: string) => ({
+    id,
+    name: id,
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      turn_count: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
+    created_at: 0,
+    updated_at: 0,
+    message_count: 0,
+  });
+
+  it("clears the mark when a server frame names the chat", () => {
+    setSessions([makeSession("g1")]);
+    markGhostChat("g1");
+    expect(isGhostChat("g1")).toBe(true);
+
+    upsertHeader(header("g1"));
+    expect(isGhostChat("g1")).toBe(false);
+  });
+
+  it("keeps the mark across writes that are not a server re-sync", () => {
+    setSessions([makeSession("g2")]);
+    markGhostChat("g2");
+    setName("g2", "renamed locally");
+    setThinking("g2", true);
+    expect(isGhostChat("g2")).toBe(true);
+  });
+
+  it("reports no ghost for an id with no row, which is nothing to ask about", () => {
+    setSessions([]);
+    markGhostChat("nothing");
+    expect(isGhostChat("nothing")).toBe(false);
+  });
+
+  it("does not survive the row: a reload's list is all persisted chats", () => {
+    setSessions([makeSession("g3")]);
+    markGhostChat("g3");
+    setSessions([makeSession("g3")]); // what loadList does
+    expect(isGhostChat("g3")).toBe(false);
+  });
+});
+
 describe("parseContextSize (table-driven)", () => {
   const cases: { input: string; expected: number | undefined }[] = [
     { input: "128K context", expected: 128_000 },
@@ -432,6 +487,41 @@ describe("Store steer projection", () => {
     resetStore("chat-1");
     recordSteerQueued("chat-1", { id: "notify-1", text: "step failed", severity: "error" });
     expect(get("chat-1")?.steers?.[0]?.severity).toBe("error");
+  });
+
+  // Two steer_injected frames, one id: KAS's read frame carries the text, the
+  // agent's acknowledgement marker carries what it did. Each field is adopted
+  // only from the frame that has it, or the second would blank the first's text.
+  it("records the agent's acknowledgement without losing the steer's text", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "use tabs instead" });
+    markSteerInjected("chat-1", "steer-1", "use tabs instead");
+    markSteerInjected("chat-1", "steer-1", "", "switched the file to tabs");
+    expect(get("chat-1")?.steers?.[0]).toEqual({
+      id: "steer-1",
+      text: "use tabs instead",
+      injected: true,
+      ack: "switched the file to tabs",
+    });
+  });
+
+  // A read frame after an ack frame must not erase the ack: SSE reconnect
+  // replays every unanswered frame, so the two can arrive in either order.
+  it("keeps an acknowledgement when a read frame is replayed after it", () => {
+    resetStore("chat-1");
+    recordSteerQueued("chat-1", { id: "steer-1", text: "one" });
+    markSteerInjected("chat-1", "steer-1", "", "did the thing");
+    markSteerInjected("chat-1", "steer-1", "one");
+    expect(get("chat-1")?.steers?.[0]?.ack).toBe("did the thing");
+  });
+
+  // An ack frame carries no text, so an id this client never saw has nothing to
+  // label a chip with. Creating a blank chip that reads only "read: did X" names
+  // no message and cannot be matched to anything the user wrote.
+  it("ignores an acknowledgement for a steer it never saw", () => {
+    resetStore("chat-1");
+    markSteerInjected("chat-1", "steer-unknown", "", "did something");
+    expect(get("chat-1")?.steers).toBeUndefined();
   });
 
   it("ignores an empty id rather than creating an unaddressable entry", () => {
@@ -655,5 +745,63 @@ describe("appendChunk snapshot-seq gating", () => {
     appendChunk("chat-wsc", "m-snap", "after clear", false, 0, "", 1);
     const msg = get("chat-wsc")!.messages.find((m) => m.id === "m-snap");
     expect(msg?.content).toBe("after clear");
+  });
+});
+
+// mergeMessage is a field-by-field ALLOWLIST: an unlisted field is silently
+// dropped on the second ingest of the same id, and a user message with
+// attachments is ingested at least twice — once from the prompt's own
+// message_appended and again on any chat refetch or reconnect replay. So the
+// clause is what makes the turn header's pills survive a reload, not decoration.
+describe("Store message attachments (merge allowlist)", () => {
+  const atts = [
+    { path: "out/shot.png", name: "shot.png" },
+    { path: "docs/spec.pdf", name: "spec.pdf" },
+  ];
+
+  it("keeps the attachments on first ingest", () => {
+    resetStore("chat-att1");
+    appendMessage("chat-att1", {
+      id: "m-1",
+      role: "user",
+      ts: 1,
+      content: "look at these",
+      attachments: atts,
+    });
+    expect(get("chat-att1")?.messages[0]?.attachments).toEqual(atts);
+  });
+
+  it("survives a re-ingest of the same id that omits them", () => {
+    resetStore("chat-att2");
+    appendMessage("chat-att2", {
+      id: "m-1",
+      role: "user",
+      ts: 1,
+      content: "look at these",
+      attachments: atts,
+    });
+    // A refetch or replay of the same row without the field must not erase it —
+    // the exact shape the allowlist exists to get right.
+    upsertMessage("chat-att2", { id: "m-1", role: "user", ts: 1, content: "look at these" });
+    expect(get("chat-att2")?.messages[0]?.attachments).toEqual(atts);
+  });
+
+  it("adopts a non-empty incoming list over an existing one", () => {
+    resetStore("chat-att3");
+    appendMessage("chat-att3", { id: "m-1", role: "user", ts: 1, content: "x", attachments: [] });
+    upsertMessage("chat-att3", {
+      id: "m-1",
+      role: "user",
+      ts: 1,
+      content: "x",
+      attachments: atts,
+    });
+    expect(get("chat-att3")?.messages[0]?.attachments).toEqual(atts);
+  });
+
+  it("leaves a message with none alone", () => {
+    resetStore("chat-att4");
+    appendMessage("chat-att4", { id: "m-1", role: "user", ts: 1, content: "just a question" });
+    expect(get("chat-att4")?.messages[0]?.attachments).toBeUndefined();
   });
 });

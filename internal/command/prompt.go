@@ -197,8 +197,17 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 			Role:    api.RoleUser,
 			Ts:      time.Now().UnixMilli(),
 			Content: p.Text,
+			// The attachments belong on the RECORD, not only on the outbound
+			// prompt: BuildPromptBlocks folds each one into a content block, and
+			// for an image or a document the path never reaches Content, so a
+			// turn read back later has no way to say what was attached.
+			Attachments: p.Attachments,
 		}
 		c.Messages = append(c.Messages, userMsg)
+		// The text just left the composer, so the draft holding it is spent.
+		// Cleared HERE rather than only by the client's own set_draft: if that
+		// POST is lost, a reload would put the sent message back in the box.
+		c.Draft = ""
 		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(p.Text, 80)
 			if name != p.Text {
@@ -320,6 +329,12 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	var creditsBeforeTurn float64
 	if chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID); ok {
 		creditsBeforeTurn = chat.Usage.Credits
+		// Latch the answering model HERE, at dispatch, not on the turn's first
+		// frame. The bridge is up and its model persisted by this point, and
+		// switch_model's fast path can land any time from now on — including
+		// before the old model has emitted anything, which is precisely when the
+		// first-frame read attributed one model's answer to another.
+		deps.LatchTurnModel(cmd.ChatID, chat.Model)
 	}
 	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
 	start := time.Now()

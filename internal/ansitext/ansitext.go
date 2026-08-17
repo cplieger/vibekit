@@ -3,10 +3,11 @@
 // It exists because agent command output is rendered in the CHAT TRANSCRIPT, in
 // a tool card, and a transcript wants three things at once that a browser-side
 // ANSI-to-HTML converter cannot give: the text has to stay searchable and
-// exportable as text, it has to pass through redaction as text, and it must
-// reach the DOM without anybody building an HTML string out of agent-controlled
-// bytes. So the parse happens once here, on the server, and produces two
-// values: the plain text, and style SPANS that address ranges of it.
+// exportable as text, it has to pass through the app's sanitizers as text, and
+// it must reach the DOM without anybody building an HTML string out of
+// agent-controlled bytes. So the parse happens once here, on the server, and
+// produces two values: the plain text, and style SPANS that address ranges of
+// it.
 //
 // Spans carry OFFSETS rather than copies, so styling a 64 KB command costs a
 // handful of small structs instead of a second copy of the output, and the
@@ -23,15 +24,27 @@
 // therefore DROPPED rather than interpreted: cursor movement, erases, scroll
 // regions, and every other non-SGR CSI final byte.
 //
-// SGR support is a strict superset of the ansi_up library this replaced: all
-// twelve attributes including inverse, strikethrough, blink, conceal, overline
-// and double-underline (ansi_up silently ignored five of those, so real
-// `ESC[7m` output rendered unstyled), plus the 16 basic colours, the 8 bright
-// aliases, the 256-colour palette and 24-bit truecolour.
+// SGR support covers all ten attributes including inverse, strikethrough,
+// blink, conceal, overline and double-underline, plus the 16 basic colours, the
+// 8 bright aliases, the 256-colour palette and 24-bit truecolour.
 //
-// The attribute bitflags and the colour encoding deliberately match
-// web-terminal-engine's vt.WireRun, so the two rendering paths in this app
-// speak one attribute language rather than two.
+// # Relationship to web-terminal-engine
+//
+// The attribute BITFLAGS deliberately match web-terminal-engine's vt.WireRun.A
+// (1=bold, 2=italic, 4=underline, 8=inverse, 16=strike, 32=dim, 64=hidden,
+// 128=blink, 256=overline, 512=double-underline), so the live shell and the
+// transcript speak one attribute language rather than two and one client-side
+// constant table serves both. Bit 1024 is reserved: WireRun uses it for
+// AttrAutolink, which this parser has no equivalent of.
+//
+// The COLOUR encoding deliberately does NOT match. WireRun resolves every
+// colour to 0xRRGGBB against the terminal's own theme before it reaches the
+// wire; a span here keeps the palette INDEX (0-255) and flags only true
+// 24-bit colour. Two reasons: these spans are PERSISTED into a chat file and
+// re-served, so resolving server-side would bake today's theme into the record
+// permanently, and the transcript's ANSI palette is a set of CSS custom
+// properties the user's theme redefines, so the index is exactly what the
+// client needs to paint with.
 package ansitext
 
 import (
@@ -39,8 +52,9 @@ import (
 	"unicode/utf8"
 )
 
-// Style attribute bits. Values match web-terminal-engine's WireRun.a so the
-// terminal renderer and the transcript renderer share one vocabulary.
+// Style attribute bits. Values match web-terminal-engine's vt.WireRun.A so the
+// terminal renderer and the transcript renderer share one vocabulary. Do not
+// extend past 512 without checking WireRun: 1024 is its AttrAutolink.
 const (
 	AttrBold uint16 = 1 << iota
 	AttrItalic
@@ -57,6 +71,11 @@ const (
 // ColorDefault marks "no colour set", distinct from black (index 0).
 const ColorDefault int32 = -1
 
+// rgbFlag marks an FG/BG value as packed 24-bit colour rather than a palette
+// index. 0x1000000 is one past the largest 24-bit value, so the two spaces
+// cannot collide.
+const rgbFlag int32 = 0x1000000
+
 // Span styles the half-open range [Start,End) of the plain text.
 //
 // Offsets are UTF-16 CODE UNITS, not bytes, because the only consumer indexes
@@ -72,13 +91,33 @@ type Span struct {
 	// End is the exclusive UTF-16 offset into the plain text.
 	End int `json:"end"`
 	// FG is the foreground colour: ColorDefault, a 0-255 palette index, or
-	// 0x1000000|RGB for 24-bit colour.
+	// rgbFlag|RGB for 24-bit colour.
 	FG int32 `json:"fg"`
 	// BG is the background colour, encoded like FG.
 	BG int32 `json:"bg"`
 	// Attrs is the OR of the Attr* bits.
 	Attrs uint16 `json:"attrs"`
 }
+
+// RGB packs three components into an FG/BG value.
+func RGB(r, g, b uint8) int32 {
+	return rgbFlag | int32(r)<<16 | int32(g)<<8 | int32(b)
+}
+
+// maxPendingBytes bounds how many bytes an unterminated escape sequence may
+// hold back, so a command that emits `ESC ]` and then gigabytes cannot grow
+// this buffer without limit. It is one read chunk (the pump reads 4 KB at a
+// time), which is far above any legitimate sequence: a CSI is a handful of
+// bytes, and even an OSC 8 hyperlink carrying a long URI is hundreds.
+//
+// Past the bound the run is released as literal text rather than held, because
+// a 4 KB "escape sequence" is not one. That is also the one input class where
+// chunked parsing cannot agree with one-shot parsing, and the disagreement is
+// inherent rather than a bug: a bounded-memory streaming parser has to decide
+// before it can know, while a one-shot parser sees the terminator. FuzzParse
+// scopes its streaming-agreement invariant to inputs within the bound for
+// exactly this reason.
+const maxPendingBytes = 4096
 
 // utf16Len counts the UTF-16 code units a string occupies: one per rune below
 // U+10000, two for anything above (a surrogate pair). An invalid byte decodes
@@ -102,8 +141,8 @@ func utf16Len(s string) int {
 // mid-sequence. Without it those paths would put a raw ESC into the plain text,
 // and that text is persisted to a JSON chat file and re-served.
 //
-// This is what lets the parser REPLACE api.StripANSI rather than run after it.
-// The caller sanitizes hidden Unicode first (so nothing can hide a sequence
+// This is what lets the parser stand in for api.StripANSI rather than run after
+// it. The caller sanitizes hidden Unicode first (so nothing can hide a sequence
 // behind a zero-width character), the parser then consumes SGR and drops every
 // other escape family StripANSI matched — CSI, OSC, charset designation,
 // DCS/SOS/PM/APC and the two-byte forms — and this covers the remainder. The
@@ -175,16 +214,6 @@ func expectedRuneLen(lead byte) int {
 	}
 }
 
-// rgbFlag marks an FG/BG value as packed 24-bit colour rather than a palette
-// index. 0x1000000 is one past the largest 24-bit value, so the two spaces
-// cannot collide.
-const rgbFlag int32 = 0x1000000
-
-// RGB packs three components into an FG/BG value.
-func RGB(r, g, b uint8) int32 {
-	return rgbFlag | int32(r)<<16 | int32(g)<<8 | int32(b)
-}
-
 // style is the parser's current SGR state.
 type style struct {
 	fg    int32
@@ -204,37 +233,36 @@ func (s style) isDefault() bool {
 //
 // A Parser is not safe for concurrent use.
 type Parser struct {
-	// pending holds a trailing byte run that starts an escape sequence but is
-	// not yet complete. It is always short: a sequence longer than
-	// maxPendingLen is treated as garbage and released as text.
+	// pending holds a trailing byte run that either starts an escape sequence
+	// or starts a rune, and is not yet complete. It is always short: a
+	// sequence longer than maxPendingBytes is treated as garbage and released
+	// as text.
 	pending []byte
 	cur     style
-	// offset is the total plain-text length emitted so far, so spans from
-	// successive Write calls address one continuous document.
+	// offset is the total plain-text length emitted so far, in UTF-16 code
+	// units, so spans from successive Write calls address one continuous
+	// document. Read through Offset.
 	offset int
 }
-
-// maxPendingBytes bounds how many bytes an unterminated escape sequence may
-// hold back, so a command that emits `ESC ]` and then gigabytes cannot grow
-// this buffer without limit. It is one read chunk (the pump reads 4 KB at a
-// time), which is far above any legitimate sequence: a CSI is a handful of
-// bytes, and even an OSC 8 hyperlink carrying a long URI is hundreds.
-//
-// Past the bound the run is released as literal text rather than held, because
-// a 4 KB "escape sequence" is not one. That is also the one input class where
-// chunked parsing cannot agree with one-shot parsing, and the disagreement is
-// inherent rather than a bug: a bounded-memory streaming parser has to decide
-// before it can know, while a one-shot parser sees the terminator. FuzzParse
-// scopes its streaming-agreement invariant to inputs within the bound for
-// exactly this reason.
-const maxPendingBytes = 4096
 
 // NewParser returns a Parser with default style and no pending bytes.
 func NewParser() *Parser { return &Parser{cur: style{fg: ColorDefault, bg: ColorDefault}} }
 
+// Offset returns how many UTF-16 code units of plain text this Parser has
+// emitted, which is the absolute offset the NEXT emitted unit will carry.
+//
+// It exists so the one caller that has to name that position on the wire — the
+// hub, whose terminal_output payload reports where a chunk begins in the
+// terminal's accumulated output — can read the parser's own counter instead of
+// keeping a second one. The counter has to agree with the span offsets exactly,
+// and two implementations of "count the UTF-16 units" is precisely the coupling
+// that drifts.
+func (p *Parser) Offset() int { return p.offset }
+
 // Write consumes one chunk and returns its plain text plus the spans styling
 // it. Span offsets are absolute across the Parser's lifetime, so a caller
-// appending text and spans to one accumulating document needs no adjustment.
+// appending text and spans to one accumulating document needs no adjustment,
+// and a caller shipping one chunk at a time reports Offset beside it.
 //
 // Text may be empty (a chunk holding only escapes), and spans may be empty
 // (unstyled text), independently.
@@ -254,15 +282,43 @@ func (p *Parser) Write(chunk string) (text string, spans []Span) {
 	return text, w.spans
 }
 
+// Flush releases any held incomplete sequence as literal text. Call it once at
+// end of stream so a truncated escape is not silently dropped; a stream that
+// ends mid-sequence is malformed, and showing the bytes beats losing them.
+func (p *Parser) Flush() (text string, spans []Span) {
+	if len(p.pending) == 0 {
+		return "", nil
+	}
+	text = validUTF8PerByte(neutralizeESC(string(p.pending)))
+	p.pending = p.pending[:0]
+	start := p.offset
+	p.offset += utf16Len(text)
+	if !p.cur.isDefault() {
+		spans = []Span{{Start: start, End: p.offset, FG: p.cur.fg, BG: p.cur.bg, Attrs: p.cur.attrs}}
+	}
+	return text, spans
+}
+
+// Parse is the one-shot form for a complete string.
+func Parse(s string) (text string, spans []Span) {
+	p := NewParser()
+	text, spans = p.Write(s)
+	tailText, tailSpans := p.Flush()
+	if tailText != "" {
+		text += tailText
+		spans = append(spans, tailSpans...)
+	}
+	return text, spans
+}
+
 // writer carries one Write call's accumulating state: the text built so far, how
 // many UTF-16 units that is, and the open style run. Extracted from Write so the
 // scan loop reads as a sequence of decisions rather than a knot of index
-// arithmetic; the previous inline form tripped gocognit and carried two
-// ineffectual `i = len(buf)` assignments whose only job was to reach a break.
+// arithmetic.
 type writer struct {
 	p         *Parser
-	sb        strings.Builder
 	spans     []Span
+	sb        strings.Builder
 	emitted   int
 	openStart int
 	openStyle style
@@ -355,35 +411,6 @@ func (w *writer) restyle(s style) {
 	w.p.cur = s
 }
 
-// Flush releases any held incomplete sequence as literal text. Call it once at
-// end of stream so a truncated escape is not silently dropped; a stream that
-// ends mid-sequence is malformed, and showing the bytes beats losing them.
-func (p *Parser) Flush() (text string, spans []Span) {
-	if len(p.pending) == 0 {
-		return "", nil
-	}
-	text = validUTF8PerByte(neutralizeESC(string(p.pending)))
-	p.pending = p.pending[:0]
-	start := p.offset
-	p.offset += utf16Len(text)
-	if !p.cur.isDefault() {
-		spans = []Span{{Start: start, End: p.offset, FG: p.cur.fg, BG: p.cur.bg, Attrs: p.cur.attrs}}
-	}
-	return text, spans
-}
-
-// Parse is the one-shot form for a complete string.
-func Parse(s string) (text string, spans []Span) {
-	p := NewParser()
-	text, spans = p.Write(s)
-	tailText, tailSpans := p.Flush()
-	if tailText != "" {
-		text += tailText
-		spans = append(spans, tailSpans...)
-	}
-	return text, spans
-}
-
 // scanEscape examines an escape sequence starting at b[0]==ESC.
 //
 // consumed is how many bytes the sequence occupies (0 when incomplete).
@@ -398,10 +425,14 @@ func (p *Parser) scanEscape(b string) (consumed int, newStyle style, changed, in
 	case '[':
 		return p.scanCSI(b)
 	case ']':
-		n := scanOSC(b)
+		n := scanStringTerminated(b)
 		return n, p.cur, false, n == 0
-	case '(', ')', '*', '+':
-		// Charset designation: ESC ( <final>. Meaningless without a grid.
+	case '(', ')', '*', '+', '-', '.', '/', '#', '%':
+		// Three-byte forms: charset designation (ESC ( B), the 96-character
+		// variants (ESC - A), line attributes (ESC # 8) and character-set
+		// selection (ESC % G). All meaningless without a grid, and all
+		// consumed WHOLE — dropping only the first two bytes would leak the
+		// final byte into the text as a stray letter.
 		if len(b) < 3 {
 			return 0, p.cur, false, true
 		}
@@ -441,25 +472,12 @@ func (p *Parser) scanCSI(b string) (consumed int, newStyle style, changed, incom
 	return 0, p.cur, false, true
 }
 
-// scanOSC parses ESC ] ... (BEL | ESC \). Returns 0 when incomplete.
+// scanStringTerminated parses an OSC/DCS/SOS/PM/APC string ending in ST or BEL,
+// and returns 0 when it is incomplete.
 //
 // OSC 8 hyperlinks are dropped rather than turned into links: a transcript
-// linkifies paths and URLs itself (linkifyPaths), so honouring an
-// agent-supplied link target would add an anchor whose href nothing here
-// validated.
-func scanOSC(b string) int {
-	for i := 2; i < len(b); i++ {
-		if b[i] == 0x07 {
-			return i + 1
-		}
-		if b[i] == 0x1b && i+1 < len(b) && b[i+1] == '\\' {
-			return i + 2
-		}
-	}
-	return 0
-}
-
-// scanStringTerminated parses a DCS/SOS/PM/APC string ending in ST or BEL.
+// linkifies paths and URLs itself, so honouring an agent-supplied link target
+// would add an anchor whose href nothing here validated.
 func scanStringTerminated(b string) int {
 	for i := 2; i < len(b); i++ {
 		if b[i] == 0x07 {
@@ -478,31 +496,53 @@ func applySGR(cur style, params string) style {
 	if params == "" {
 		return style{fg: ColorDefault, bg: ColorDefault}
 	}
+	if isPrivateParams(params) {
+		return cur
+	}
 	fields := strings.Split(params, ";")
 	for i := 0; i < len(fields); i++ {
-		n, ok := atoiSGR(fields[i])
+		n, ok := sgrParam(fields[i])
 		if !ok {
-			// A non-numeric parameter (a private-mode marker, an empty field)
-			// counts as 0 the way terminals treat it.
-			n = 0
+			// A field that is not a parameter at all (an intermediate byte
+			// swept up by scanCSI). Skipped, NOT read as 0 — 0 is a reset.
+			continue
 		}
 		// 38 and 48 are the only parameters that CONSUME the ones after them,
-		// so they are handled here rather than in a pure fold.
+		// so they advance the index rather than folding in place.
 		if n == 38 || n == 48 {
-			c, adv, valid := extendedColor(fields[i+1:])
-			if valid {
-				if n == 38 {
-					cur.fg = c
-				} else {
-					cur.bg = c
-				}
-			}
-			i += adv
+			cur, i = applyExtendedColor(cur, n, fields, i)
 			continue
 		}
 		cur = applySGRParam(cur, n)
 	}
 	return cur
+}
+
+// isPrivateParams reports whether an SGR parameter string opens with a
+// private-parameter marker (`<`, `=`, `>`, `?`), which makes the whole sequence
+// private-mode rather than SGR — xterm's `ESC[>4;2m` (modifyOtherKeys) is the
+// one that reaches a pipe. Terminals ignore those entirely, and the alternative
+// is worse than ignoring: `>4` is not a number, and a field read as 0 is a full
+// reset, so the sequence would silently wipe every attribute on the run.
+func isPrivateParams(params string) bool {
+	return params[0] >= 0x3c && params[0] <= 0x3f
+}
+
+// applyExtendedColor folds a `38`/`48` selector and the parameters it consumes
+// into a style, returning the style and the caller's advanced index. Split from
+// applySGR because it is the only fold that moves the loop variable, and an
+// invalid colour must still advance so it cannot swallow the styling after it.
+func applyExtendedColor(cur style, selector int, fields []string, i int) (next style, advanced int) {
+	c, adv, valid := extendedColor(fields[i+1:])
+	if !valid {
+		return cur, i + adv
+	}
+	if selector == 38 {
+		cur.fg = c
+	} else {
+		cur.bg = c
+	}
+	return cur, i + adv
 }
 
 // applySGRParam folds one self-contained SGR parameter into a style. Split from
@@ -577,7 +617,7 @@ func extendedColor(rest []string) (c int32, adv int, ok bool) {
 	if len(rest) == 0 {
 		return 0, 0, false
 	}
-	mode, valid := atoiSGR(rest[0])
+	mode, valid := sgrParam(rest[0])
 	if !valid {
 		return 0, 1, false
 	}
@@ -596,7 +636,7 @@ func palette256(rest []string) (c int32, adv int, ok bool) {
 	if len(rest) < 2 {
 		return 0, 1, false
 	}
-	idx, valid := atoiSGR(rest[1])
+	idx, valid := sgrParam(rest[1])
 	if !valid || idx < 0 || idx > 255 {
 		return 0, 2, false
 	}
@@ -610,7 +650,7 @@ func trueColor(rest []string) (c int32, adv int, ok bool) {
 	}
 	var comp [3]uint8
 	for i := range comp {
-		v, valid := atoiSGR(rest[i+1])
+		v, valid := sgrParam(rest[i+1])
 		if !valid || v < 0 || v > 255 {
 			return 0, 4, false
 		}
@@ -620,19 +660,32 @@ func trueColor(rest []string) (c int32, adv int, ok bool) {
 	return RGB(comp[0], comp[1], comp[2]), 4, true
 }
 
-// atoiSGR parses a decimal SGR parameter. It rejects anything non-numeric
-// rather than partially parsing, and bounds the value so a long digit run
-// cannot overflow. An empty field is 0, which is how terminals read it.
-func atoiSGR(s string) (int, bool) {
-	if s == "" {
+// sgrParam parses one decimal SGR parameter field.
+//
+// An EMPTY field is 0, which is how terminals read it (`ESC[m`, `ESC[1;;3m`).
+// A field carrying COLON SUBPARAMETERS is read as the base parameter with the
+// subparameters dropped: `4:3` is a curly underline and `58:2::1:2:3` is an
+// underline colour, and neither refinement is something a Span can carry. That
+// split is not cosmetic — reading the whole field as one number makes it
+// non-numeric, and a non-numeric field folded in as 0 is a full RESET, so
+// `ESC[4:3m` (which gcc and clang emit for a squiggly diagnostic underline)
+// would have wiped every attribute on the run instead of underlining it.
+//
+// ok is false for anything else, and the caller SKIPS such a field rather than
+// treating it as 0, for the same reason. The value is bounded so a long digit
+// run cannot overflow.
+func sgrParam(field string) (n int, ok bool) {
+	if base, _, found := strings.Cut(field, ":"); found {
+		field = base
+	}
+	if field == "" {
 		return 0, true
 	}
-	n := 0
-	for i := range len(s) {
-		if s[i] < '0' || s[i] > '9' {
+	for i := range len(field) {
+		if field[i] < '0' || field[i] > '9' {
 			return 0, false
 		}
-		n = n*10 + int(s[i]-'0')
+		n = n*10 + int(field[i]-'0')
 		if n > 0xffff {
 			return 0, false
 		}

@@ -304,3 +304,49 @@ func TestAppendDelta_SeqMonotonic(t *testing.T) {
 		t.Errorf("seqs = %d,%d,%d, want 1,2,3", s1, s2, s3)
 	}
 }
+
+// TestSetModel_LatchesFirstWrite pins the per-turn model attribution.
+//
+// FIRST WRITE WINS, deliberately: the value is latched when the turn opens so a
+// mid-turn switch cannot rewrite the attribution of work already done under the
+// previous model. And an empty model is IGNORED rather than stamped, so a turn
+// whose model could not be resolved carries no field at all — the client renders
+// nothing for that, where a blank string would read as an attributed turn.
+func TestSetModel_LatchesFirstWrite(t *testing.T) {
+	cases := []struct {
+		name  string
+		write []string
+		want  string
+	}{
+		{name: "no write leaves it empty", write: nil, want: ""},
+		{name: "one write lands", write: []string{"sonnet-4"}, want: "sonnet-4"},
+		{
+			name:  "a second write does not overwrite the first",
+			write: []string{"sonnet-4", "opus-4"},
+			want:  "sonnet-4",
+		},
+		{name: "an empty write is ignored", write: []string{""}, want: ""},
+		{
+			name:  "an empty write does not block a later real one",
+			write: []string{"", "opus-4"},
+			want:  "opus-4",
+		},
+		{
+			name:  "an empty write cannot clear a latched value",
+			write: []string{"opus-4", ""},
+			want:  "opus-4",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := &Buffer{}
+			for _, m := range tc.write {
+				buf.SetModel(m)
+			}
+			if buf.Model != tc.want {
+				t.Errorf("Model = %q, want %q", buf.Model, tc.want)
+			}
+		})
+	}
+}

@@ -15,7 +15,7 @@ import "strings"
 //
 // The prefix tests below are deliberately NOT pathinside calls, and the
 // reason is the deny-list inversion. pathinside's containment predicates
-// count the root as inside, while isSensitive must EXCLUDE the listed
+// count the root as inside, while IsSensitive must EXCLUDE the listed
 // directory itself so isProtectedDir can answer for it separately under a
 // different rule (see its doc). isProtectedDir is not a containment test
 // at all: it asks in BOTH directions — does the candidate enclose a
@@ -66,12 +66,26 @@ var sensitivePrefixes = []sensitivePath{
 	{Path: "/config/vapid-keys.json", IsDir: false},
 	// MCP server config — env / header / OAuth secrets stored cleartext.
 	{Path: "/config/mcp.json", IsDir: false},
+	// The OAuth credentials KAS asks vibekit to hold for it: opaque
+	// blobs, refresh tokens and PKCE verifiers whose 0600 is the whole
+	// protection. Its sibling above was blocked from the start and this
+	// one was not, which left the more sensitive of the pair readable.
+	{Path: "/config/mcp-secrets.json", IsDir: false},
 }
 
-// isSensitive reports whether the resolved absolute path is user-blocked.
+// IsSensitive reports whether the resolved absolute path is user-blocked.
 // Directory prefixes match their contents but not the directory itself;
 // use isProtectedDir when the operation would affect the container.
-func isSensitive(resolved string) bool {
+//
+// EXPORTED for one reason: internal/server's `.kiro` docs scanner reads files
+// too, and it must agree with this handler about what is off limits. It calls
+// THIS function rather than keeping a list of its own — two scanners disagreeing
+// about the denylist is the inconsistency that becomes a real leak the next time
+// a root is widened, and only one of them would be updated. The caller passes an
+// already-resolved absolute container path, symlinks followed, which is the only
+// form this predicate is meaningful on: the entries below are absolute
+// `/config/...` paths, so a path that has not been resolved cannot match one.
+func IsSensitive(resolved string) bool {
 	for _, sp := range sensitivePrefixes {
 		if sp.IsDir {
 			if strings.HasPrefix(resolved, sp.Path) {
@@ -86,8 +100,8 @@ func isSensitive(resolved string) bool {
 
 // isProtectedDir reports whether deleting `resolved` would wipe a
 // directory listed (or enclosing a path listed) in sensitivePrefixes.
-// This is the "directory container" check that isSensitive deliberately
-// omits — isSensitive alone lets `/config/chats` (no trailing slash)
+// This is the "directory container" check that IsSensitive deliberately
+// omits — IsSensitive alone lets `/config/chats` (no trailing slash)
 // through while `/config/chats/foo.json` is blocked.
 //
 // Callers pass an already-canonicalised path (filepath.Clean has run

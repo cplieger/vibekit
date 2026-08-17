@@ -15,6 +15,7 @@ var (
 	ErrInvalidPayload       = errors.New("invalid payload")
 	errEmptyPrompt          = errors.New("empty prompt")
 	errPromptTooLong        = errors.New("prompt too long")
+	errDraftTooLong         = errors.New("draft too long")
 	errMissingMessageID     = errors.New("missing message_id")
 	errNoBridge             = errors.New("no bridge")
 	errRewindTargetNotFound = errors.New("rewind target is not a user message in this chat")

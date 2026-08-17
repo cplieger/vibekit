@@ -84,7 +84,13 @@
 
 .picker-label {
   font-size: var(--fs-xl);
-  color: var(--c-text-secondary);
+
+  /* The empty state's one heading, so it carries the full ink. It was
+     --c-text-secondary, which measured 10.68:1 dark / 8.86:1 light here — past
+     AAA, so this is a hierarchy call and not a fix: the heading was 1.84x dimmer
+     than the cards it introduces. --c-text-control does not apply; this is a
+     heading, not a control's label. */
+  color: var(--c-text-primary);
   font-weight: var(--fw-medium);
   text-wrap: balance;
   display: flex;
@@ -126,7 +132,7 @@
   transition:
     border-color var(--dur-micro),
     background var(--dur-micro),
-    transform var(--dur-micro) var(--ease-micro);
+    transform var(--dur-micro) var(--ease-standard);
   animation: vk-scale-in var(--dur-enter) var(--ease-enter) both;
 
   &:hover {
@@ -139,18 +145,20 @@
     transform: translateY(0);
   }
 
-  &.active {
-    border-color: var(--c-accent);
-    background: var(--c-accent-subtle);
-  }
+  /* Selected: 70-selection.css, with every other selected surface. */
 
   & .picker-name {
     font-weight: var(--fw-medium);
   }
 
+  /* Secondary, not the hint ink: this sits on the CARD's fill rather than the
+     page's, and the hint ink is sized against the page. It measures 4.244:1 on
+     the card at rest and 3.203:1 once the card is hovered, both under AA for
+     11px text. The selected case is already handled a layer up, by
+     70-selection.css's on-selected muted ink. */
   & .picker-meta {
     font-size: var(--fs-xs);
-    color: var(--c-text-tertiary);
+    color: var(--c-text-secondary);
   }
 }
 
@@ -443,6 +451,69 @@
       max-width: 100%;
       border-radius: var(--r);
     }
+
+    /* Replaces an image that failed to load, naming the file it asked for.
+       Reads as a note rather than an error: the agent's frame being absent is
+       usually a stale path, not a fault the reader must act on. */
+    & .img-missing {
+      display: inline-block;
+      padding: var(--sp-1) var(--sp-2);
+      border: 1px dashed var(--c-border);
+      border-radius: var(--r);
+      color: var(--c-text-secondary);
+      font-size: var(--fs-sm);
+      font-family: var(--font-mono);
+      overflow-wrap: anywhere;
+    }
+
+    /* A workspace audio file the agent presented with `![](…)`. The native
+       player's own chrome is the whole widget; only its width is ours. */
+    & .media-audio {
+      display: block;
+      width: 100%;
+      max-width: 24rem;
+      margin-block: var(--sp-2);
+    }
+
+    /* The download affordance for a presented file that is neither image nor
+       audio. Styled as a chip rather than a prose link so it reads as an object
+       in the transcript, which is what it is. */
+    & .media-download {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: var(--sp-1) var(--sp-2);
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
+      color: var(--c-text-primary);
+      font-size: var(--fs-sm);
+      text-decoration: none;
+    }
+
+    & .media-download:hover {
+      background: var(--c-hover);
+      border-color: var(--c-accent);
+    }
+
+    /* A rendered ```svg fence. The figure is the block; the image inside it is
+       inert by specification (see svg-block.ts) and carries no interactivity, so
+       there is nothing to hover and no cursor to change. */
+    & .svg-figure {
+      margin: var(--sp-3) 0;
+    }
+
+    & .svg-diagram {
+      /* An SVG has no intrinsic pixel size to preserve, so a cap is the only
+         thing stopping it claiming the full column. */
+      max-width: 100%;
+      height: auto;
+      /* A diagram authored for a light page on a dark surface is unreadable
+         otherwise, and the source is not ours to restyle. */
+      background: var(--c-bg-secondary);
+      border: 1px solid var(--c-border);
+      border-radius: var(--r);
+      padding: var(--sp-2);
+    }
   }
 
   /* `.message.system` no longer styles the load-more affordance — that became a
@@ -459,7 +530,7 @@
     border-left: 3px solid var(--c-accent);
     background: color-mix(in srgb, var(--c-accent) 5%, transparent);
     padding: var(--sp-2) var(--sp-3);
-    border-radius: 0.5rem;
+    border-radius: var(--r-md);
     font-style: normal;
     color: var(--c-text-secondary);
   }
@@ -482,9 +553,9 @@
   font-size: var(--fs-sm);
   cursor: pointer;
   transition:
-    background var(--dur-micro) var(--ease-micro),
-    color var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 .load-more-btn:hover {
@@ -534,7 +605,7 @@
   user-select: none;
   font-style: italic;
   padding: var(--sp-1) 0;
-  transition: color var(--dur-micro) var(--ease-micro);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .reasoning-summary:hover {
@@ -583,8 +654,8 @@
   touch-action: manipulation;
   font-variant-numeric: tabular-nums;
   transition:
-    color var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 /* Scale glyph is the affordance; hide the native disclosure triangle. */
@@ -637,7 +708,7 @@
   color: var(--c-accent);
   text-decoration: none;
   touch-action: manipulation;
-  transition: color var(--dur-micro) var(--ease-micro);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .code-refs-link:hover {
@@ -738,7 +809,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  border-radius: 0.5rem;
+  border-radius: var(--r-md);
   font-size: var(--fs-sm);
   border-left: 3px solid;
 
@@ -805,8 +876,8 @@
   white-space: nowrap;
   text-decoration: underline;
   text-underline-offset: 2px;
-  border-radius: 0.25rem;
-  transition: opacity var(--dur-micro) var(--ease-micro);
+  border-radius: var(--r-sm);
+  transition: opacity var(--dur-micro) var(--ease-standard);
 
   &:hover {
     opacity: 0.85;
@@ -833,16 +904,63 @@
 .code-wrap > pre {
   /* stylelint-disable-next-line declaration-no-important -- must beat highlight.js theme margins injected at runtime */
   margin: 0 !important;
+
+  /* The head owns the top corners now; the pre closes the bottom pair. */
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+
+/* The block's title bar: which language on the left, the block's actions on the
+ * right. The actions used to float absolutely over the pre's top-right, where
+ * they covered the first line of code — the worst line to cover, since it is
+ * the one that says what the snippet is. A flow row costs one row of height and
+ * covers nothing. */
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 1.75rem;
+  padding: 0.125rem var(--sp-2);
+  background: var(--c-bg-tertiary);
+  border: 1px solid var(--c-border);
+  border-block-end: none;
+  border-radius: var(--r) var(--r) 0 0;
+}
+
+/* The RAW fence tag, as the author wrote it. highlight.ts exposes no
+ * display-name map and inventing one would be a fourth lookup table beside the
+ * three that already decide highlighting. Empty for a fence with no tag: the
+ * bar still earns its row by holding the actions. */
+.code-lang {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .code-actions {
-  position: absolute;
-  top: var(--sp-2);
-  inset-inline-end: var(--sp-2);
   display: flex;
+  flex-shrink: 0;
   gap: 0.25rem;
-  z-index: 1;
-  pointer-events: auto;
+}
+
+/* Still arriving. The block has its chrome but not its highlighting, because
+ * the text is still growing; the dot says which state it is in rather than
+ * leaving the missing colour to be read as a failure. */
+.code-wrap[data-code-state="streaming"] .code-lang::after {
+  content: "";
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  margin-inline-start: var(--sp-1);
+  border-radius: 50%;
+  background: var(--c-accent);
+  animation: vk-breathe 1.4s var(--ease-standard) infinite;
+  vertical-align: 1px;
 }
 
 .code-act-btn {
@@ -864,6 +982,61 @@
   }
 }
 
+/* The reply's markdown SOURCE, shown in place of its rendering.
+ *
+ * A sibling of the rendered bubbles rather than a replacement of them, and
+ * hidden with `.hidden` rather than opacity — see the reasoning in
+ * messages-turn-actions.ts toggleRawSource. Same prose measure as the rendering
+ * it stands in for, so toggling does not change the column width. */
+.turn-raw {
+  max-width: 40.75rem;
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--c-code-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--c-text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Math (native MathML, no KaTeX).
+ *
+ * THE FONT IS THE WHOLE REASON THIS BLOCK EXISTS. MathML Core layout is native
+ * in every browser this app targets, but Chromium ships no math font, so
+ * without a stack a fraction lays out correctly while its stretchy braces and
+ * radical signs fall back to whatever the page font happens to have. Naming
+ * fonts a system may already carry (TeX distributions, Office, most Linux
+ * font packages) costs nothing and degrades gracefully: the `math` generic and
+ * then `serif` still set fractions, roots and scripts, and only stretchy
+ * operators come out at a fixed size instead of stretched. Bundling a math font
+ * file was the alternative and it buys a guarantee at the price of a permanent
+ * binary asset inside //go:embed static.
+ *
+ * `[data-math-raw]` is the DEGRADATION state, set by smd-renderer.ts: an
+ * expression still streaming, never closed, or outside the converter's subset
+ * keeps its LaTeX. It reads as source rather than as broken mathematics. */
+[data-math] {
+  font-family: "Latin Modern Math", "STIX Two Math", "XITS Math", "Cambria Math", math, serif;
+}
+
+[data-math="block"] {
+  display: block;
+  margin: var(--sp-3) 0;
+  overflow-x: auto;
+  text-align: center;
+}
+
+[data-math-raw] {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  color: var(--c-text-secondary);
+  overflow-wrap: anywhere;
+}
+
 [id="scroll-bottom"] {
   position: absolute;
   bottom: var(--sp-3);
@@ -880,7 +1053,9 @@
   align-items: center;
   gap: var(--sp-1);
   justify-content: center;
-  box-shadow: 0 0.125rem 0.5rem oklch(0% 0 0deg / 30%);
+  box-shadow:
+    var(--shadow-ambient),
+    0 0.125rem 0.5rem oklch(0% 0 none / 30%);
   z-index: 10;
   opacity: 1;
   transition:
@@ -954,8 +1129,8 @@
   font-size: var(--fs-xs);
   cursor: pointer;
   transition:
-    color var(--dur-micro) var(--ease-micro),
-    border-color var(--dur-micro) var(--ease-micro);
+    color var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
 }
 
 .refusal-btn:hover:not(:disabled) {

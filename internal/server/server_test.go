@@ -12,11 +12,15 @@ import (
 
 	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/settings"
 )
 
 func TestSyncPushPreferences(t *testing.T) {
 	mp := &testPush{}
-	s := &Server{push: mp}
+	// An empty configDir would resolve the persisted-settings lookup against the
+	// package directory, so the fixture names a directory that has no config.json
+	// rather than depending on the cwd not growing one.
+	s := &Server{push: mp, configDir: t.TempDir()}
 
 	// Both true by default.
 	s.syncPushPreferences(map[string]json.RawMessage{})
@@ -27,7 +31,6 @@ func TestSyncPushPreferences(t *testing.T) {
 	// Set agent_finished to false.
 	s.syncPushPreferences(map[string]json.RawMessage{
 		"notify_agent_finished": json.RawMessage(`false`),
-		"notify_permission":     json.RawMessage(`true`),
 	})
 	if mp.prefs[api.PushKindAgentFinished] {
 		t.Error("agent_finished should be false")
@@ -43,14 +46,14 @@ type testPush struct {
 
 var _ api.PushService = (*testPush)(nil)
 
-func (p *testPush) RegisterRoutes(*http.ServeMux)                      {}
-func (p *testPush) Subscribe(api.PushSubscription)                     {}
-func (p *testPush) Unsubscribe(string)                                 {}
-func (p *testPush) Send(context.Context, string, string, api.PushKind) {}
-func (p *testPush) HasSubscribers() bool                               { return false }
-func (p *testPush) SetPreferences(prefs map[api.PushKind]bool)         { p.prefs = prefs }
-func (p *testPush) ReloadPreferences(context.Context)                  {}
-func (p *testPush) Close()                                             {}
+func (p *testPush) RegisterRoutes(*http.ServeMux)                                       {}
+func (p *testPush) Subscribe(api.PushSubscription)                                      {}
+func (p *testPush) Unsubscribe(string)                                                  {}
+func (p *testPush) Send(context.Context, string, string, api.PushKind, api.PushSubject) {}
+func (p *testPush) HasSubscribers() bool                                                { return false }
+func (p *testPush) SetPreferences(prefs map[api.PushKind]bool)                          { p.prefs = prefs }
+func (p *testPush) ReloadPreferences(context.Context)                                   {}
+func (p *testPush) Close()                                                              {}
 
 func TestSafeKiroSetting(t *testing.T) {
 	tests := []struct {
@@ -675,20 +678,46 @@ func TestDefaultCLITimeouts(t *testing.T) {
 	}
 }
 
-// TestSyncPushPreferences_permissionFalse verifies that an explicit
-// notify_permission=false in the patch turns the permission push preference
-// off. The sibling TestSyncPushPreferences only exercises the true case, which
-// can't distinguish "recorded false" from "left at the true default".
-func TestSyncPushPreferences_permissionFalse(t *testing.T) {
-	mp := &testPush{}
-	s := &Server{push: mp}
+// TestSyncPushPreferences_permissionIsAFloor pins the removal of the
+// notify_permission off switch at the WRITE path: the key is gone, so a body
+// still carrying it — a hand-edited config.json, an older client, a replayed
+// request — must not be able to silence a turn-blocking ask. The permission
+// preference stays true whatever the patch says.
+func TestSyncPushPreferences_permissionIsAFloor(t *testing.T) {
+	bodies := map[string]string{
+		"BareFalse":             `{"notify_permission":false}`,
+		"FalseBesideAnotherKey": `{"notify_permission":false,"notify_agent_finished":false}`,
+		"WrongType":             `{"notify_permission":"nonsense"}`,
+		"NullValue":             `{"notify_permission":null}`,
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			mp := &testPush{}
+			s := &Server{push: mp, configDir: t.TempDir()}
+			var patch map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(body), &patch); err != nil {
+				t.Fatalf("unmarshal %s: %v", body, err)
+			}
 
-	s.syncPushPreferences(map[string]json.RawMessage{
-		"notify_permission": json.RawMessage(`false`),
-	})
+			s.syncPushPreferences(patch)
 
-	if mp.prefs[api.PushKindPermission] {
-		t.Errorf("syncPushPreferences(notify_permission=false) -> prefs[Permission] = true, want false")
+			if !mp.prefs[api.PushKindPermission] {
+				t.Errorf("syncPushPreferences(%s) -> prefs[Permission] = false, want true (the ask is a floor)", body)
+			}
+		})
+	}
+}
+
+// TestNotifyPermissionKeyIsUnreachable pins the setting as GONE rather than
+// merely hidden: the key is not in the vibekit-managed set, so a write carrying
+// it is reported as unknown and no reader resolves it.
+func TestNotifyPermissionKeyIsUnreachable(t *testing.T) {
+	if _, known := settings.KnownKeys["notify_permission"]; known {
+		t.Error("notify_permission is still a known settings key; the off switch was only hidden, not removed")
+	}
+	unknown := settings.WarnUnknownKeys([]string{"notify_permission"}, "TestNotifyPermissionKeyIsUnreachable")
+	if len(unknown) != 1 || unknown[0] != "notify_permission" {
+		t.Errorf("WarnUnknownKeys([notify_permission]) = %v, want [notify_permission]", unknown)
 	}
 }
 

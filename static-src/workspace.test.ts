@@ -1,6 +1,18 @@
+// ---------------------------------------------------------------------------
+// Tests for workspace.ts — the one holder of the workspace root and the one
+// conversion between the client's two path spaces.
+//
+// The bug these close: every path the agent supplies is workspace-RELATIVE
+// (translate.relPath strips the prefix so a turn footer reads "hello.sh"), while
+// /api/file resolves its `path` against an ABSOLUTE granted-roots allow-list.
+// Nothing bridged them, so a click on a changed filename produced
+// GET /api/file?path=hello.sh and was denied 403 as outside every root.
+// ---------------------------------------------------------------------------
+
 import { describe, it, expect, beforeEach } from "vitest";
 import {
   absPath,
+  onWorkspaceRoot,
   relToWorkspace,
   setWorkspaceRoot,
   workspaceRoot,
@@ -18,6 +30,43 @@ describe("workspace root", () => {
     setWorkspaceRoot("/workspace");
     expect(workspaceRoot()).toBe("/workspace");
   });
+
+  it("notifies subscribers when the root lands", () => {
+    // The consumers race the handshake with no ordering between them, so they
+    // subscribe rather than betting on arriving second — see git-status-store.
+    expect.assertions(2);
+    let woke = 0;
+    onWorkspaceRoot(() => {
+      woke++;
+    });
+    expect(woke).toBe(0);
+    setWorkspaceRoot("/workspace");
+    expect(woke).toBe(1);
+  });
+
+  it("does not notify on a repeated root", () => {
+    // The handshake repeats on every reconnect. A subscriber that rebuilds an
+    // index must not be woken by a frame that told it nothing new.
+    expect.assertions(1);
+    setWorkspaceRoot("/workspace");
+    let woke = 0;
+    onWorkspaceRoot(() => {
+      woke++;
+    });
+    setWorkspaceRoot("/workspace");
+    expect(woke).toBe(0);
+  });
+
+  it("stops notifying after unsubscribe", () => {
+    expect.assertions(1);
+    let woke = 0;
+    const off = onWorkspaceRoot(() => {
+      woke++;
+    });
+    off();
+    setWorkspaceRoot("/workspace");
+    expect(woke).toBe(0);
+  });
 });
 
 describe("absPath", () => {
@@ -26,10 +75,6 @@ describe("absPath", () => {
     setWorkspaceRoot("/workspace");
   });
 
-  // The bug this closes: the turn footer, a tool card and an approval row all
-  // carry the agent's workspace-relative path, and sending it to
-  // GET /api/file?path=… was denied 403 "outside granted roots" because that
-  // handler resolves its path against an absolute allow-list.
   it.each([
     { desc: "joins a relative path onto the root", in: "hello.sh", want: "/workspace/hello.sh" },
     { desc: "joins a nested relative path", in: "a/b/c.go", want: "/workspace/a/b/c.go" },

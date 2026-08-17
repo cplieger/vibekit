@@ -23,6 +23,8 @@ func runCmdEnv(ctx context.Context, timeout time.Duration, stdin []byte, extraEn
 }
 
 // runJSON executes a CLI command and parses its stdout as JSON into v.
+//
+//nolint:unparam // timeout and cli are kept for symmetry with the three sibling runners: every current caller is a single-object glab read under CmdTimeout, and collapsing either parameter would leave one of four wrappers with a different shape
 func runJSON(ctx context.Context, timeout time.Duration, v any, cli string, args ...string) error {
 	return cliexec.RunJSON(ctx, timeout, v, cli, args...)
 }

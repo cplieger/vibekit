@@ -6,6 +6,13 @@ import { apiAction, defineAction, ActionError, retryNetwork, RETRY_STANDARD } fr
 
 import { routeForPath } from "../editor-types.js";
 
+/** `internal/git.KindNotInRepo` — no discovered repository owns the path, so
+ *  there is no committed revision of it to show. NOT a failure: a file in the
+ *  workspace but outside every repo simply has no "before", and rendering it as
+ *  an all-add diff is correct. It is a separate kind precisely so a real git
+ *  failure cannot render as "this file is brand new". */
+const GIT_ERR_NOT_IN_REPO = "not_in_repo";
+
 /** Save the active editor file (PUT). Inline error surface in the editor pane;
  *  framework toast suppressed.
  *
@@ -14,18 +21,37 @@ import { routeForPath } from "../editor-types.js";
  *  edits with the stale snapshot. The manual Retry button (retryable:
  *  "network") is kept so the user can consciously re-save, but auto-retry
  *  is intentionally omitted. */
+export interface SaveFileResult {
+  ok?: boolean;
+  error?: string;
+  /** Present only on a refused stale write: the file's CURRENT content, so the
+   *  caller can show what changed rather than telling the user to reload. */
+  content?: string;
+  content_hash?: string;
+}
+
 export const saveFile = apiAction<
-  { path: string; content: string },
-  { ok?: boolean; error?: string }
+  { path: string; content: string; expectedHash?: string },
+  SaveFileResult
 >({
   name: "editor.save_file",
   scope: (args) => "file:" + args.path,
   retryable: retryNetwork,
-  request: ({ path, content }) => ({
+  request: ({ path, content, expectedHash }) => ({
     method: "PUT",
     path: routeForPath(path).writeURL,
-    body: { content },
+    // expected_hash is the digest the file had when this buffer loaded it. The
+    // server refuses the write with 409 when the file changed since, which is
+    // the routine case here rather than an exotic one: the agent writes to the
+    // same tree the editor reads.
+    body: expectedHash === undefined ? { content } : { content, expected_hash: expectedHash },
   }),
+  // A 409 is the stale-write refusal, and its body carries the current content.
+  // Resolved as a SUCCESS payload (the same seam tools.ts uses for its
+  // has_dependents cascade) so the caller can branch on `error` and show the
+  // difference; every other status keeps the default error mapping.
+  decodeError: (info) =>
+    info.status === 409 ? { kind: "success", value: info.body ?? {} } : undefined,
   error: false,
 });
 
@@ -66,24 +92,28 @@ export const fetchAgentLines = apiAction<
 
 /** Fetch git diff sources for the editor diff view. Toast on failure.
  *
- *  The two sides speak different path languages, and conflating them is what
- *  broke this action for every file:
+ *  The two sides speak different path languages, and conflating them broke this
+ *  action for every file, in both directions:
  *
- *    /api/file    container-ABSOLUTE, resolved against the granted-roots
- *                 allow-list. A relative path is denied 403.
- *    /api/git/show  repo-relative (or workspace-relative with no `repo`, which
- *                 the server then resolves to the owning repository).
+ *    /api/file      container-ABSOLUTE, resolved against the granted-roots
+ *                   allow-list. A relative path is denied 403.
+ *    /api/git/show  repo-relative, or workspace-relative with no `repo`, which
+ *                   the server then resolves to the owning repository.
+ *                   validateFilePath REFUSES a leading "/", so an absolute path
+ *                   is a 400.
  *
- *  `path` arrives absolute (the editor's own form) and each side is given the
- *  form it accepts, rather than one spelling being sent to both and failing on
- *  whichever endpoint disagreed.
+ *  `path` arrives absolute (the editor's own form, and what the seam in
+ *  navigate.ts now guarantees), and each side is given the form it accepts. One
+ *  spelling sent to both meant whichever endpoint disagreed returned null and the
+ *  whole diff failed: an agent-supplied relative path failed on /api/file, and a
+ *  browser-supplied absolute one failed on /api/git/show.
  *
- *  `baseLabel` is returned because the left pane's caption is a claim about
- *  what it holds: `not_in_repo` means git owns no revision of this file, so
- *  labelling the empty pane "HEAD" would assert that HEAD has it and is empty.
- *  That distinction is also why a missing base is NOT an error here — a file
- *  outside every repo renders correctly as an all-add diff, and only a real
- *  git failure earns the error surface. */
+ *  `baseLabel` is returned because the left pane's caption is a claim about what
+ *  it holds: `not_in_repo` means git owns no revision of this file, so labelling
+ *  the empty pane "HEAD" would assert that HEAD has it and is empty. That
+ *  distinction is also why a missing base is NOT an error here — a file outside
+ *  every repo renders correctly as an all-add diff, and only a real git failure
+ *  earns the error surface. */
 export const loadDiff = defineAction<
   { path: string; repo: string; ref: string },
   { oldContent: string; newContent: string; error: string; baseLabel: string }
@@ -94,6 +124,8 @@ export const loadDiff = defineAction<
     const { apiGet } = await import("../api-client.js");
     const { relToWorkspace } = await import("../workspace.js");
     const repoParam = repo !== "" ? `&repo=${encodeURIComponent(repo)}` : "";
+    // With an explicit repo the caller already holds the repo-relative path; with
+    // none, the server resolves the owner from a workspace-relative one.
     const gitPath = repo !== "" ? path : relToWorkspace(path);
     const [oldD, newD] = await Promise.all([
       apiGet<{ content?: string; error?: string; detail?: string }>(
@@ -109,8 +141,8 @@ export const loadDiff = defineAction<
       throw new ActionError("cancelled", { code: "cancelled" });
     }
     // Each side is named, because "one of them failed" is not something the
-    // reader can act on. This message reached users as a bare "Could not load
-    // base/new revision" whichever side died and whatever the status was.
+    // reader can act on. This reached users as a bare "Could not load base/new
+    // revision" whichever side died and whatever the status was.
     if (newD === null) {
       throw new ActionError(`Could not read the working copy of ${gitPath}`, { code: "network" });
     }
@@ -118,7 +150,7 @@ export const loadDiff = defineAction<
       throw new ActionError(`Could not read ${ref} for ${gitPath}`, { code: "network" });
     }
     const gitErr = oldD.error ?? "";
-    if (gitErr !== "" && gitErr !== "not_in_repo") {
+    if (gitErr !== "" && gitErr !== GIT_ERR_NOT_IN_REPO) {
       throw new ActionError(`git could not read ${ref} for ${gitPath}: ${oldD.detail ?? gitErr}`, {
         code: "network",
       });
@@ -127,7 +159,7 @@ export const loadDiff = defineAction<
       oldContent: oldD.content ?? "",
       newContent: newD.content ?? "",
       error: newD.error ?? "",
-      baseLabel: gitErr === "not_in_repo" ? "not in git" : ref,
+      baseLabel: gitErr === GIT_ERR_NOT_IN_REPO ? "not in git" : ref,
     };
   },
   error: "Could not load diff",

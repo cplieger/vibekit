@@ -43,11 +43,13 @@ func (d *benchDeps) KillTurnTerminals(api.ChatID)                        {}
 func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool { return true }
 func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)         { return "", nil }
 func (d *benchDeps) PrimeIfNeeded(context.Context, api.ChatID, Bridge)   {}
+func (d *benchDeps) PrimeFromChat(api.ChatID, api.ChatID)                {}
 func (d *benchDeps) IsEmptyTurn(*api.RPCResponse, api.ChatID) bool       { return false }
 func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPCResponse, float64, float64) {
 }
 
 func (d *benchDeps) AbandonInFlightTurn(context.Context, api.ChatID) {}
+func (d *benchDeps) LatchTurnModel(api.ChatID, string)               {}
 
 // TestBenchDeps_NoPanic verifies that every benchDeps method can be called
 // with zero-value arguments without panicking.
@@ -89,6 +91,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.InflightDone()
 	d.CleanupChatState(t.Context(), "x")
 	d.PrimeIfNeeded(t.Context(), "x", nil)
+	d.LatchTurnModel("x", "sonnet-4")
 }
 
 // TestBenchDeps_Contract documents which methods intentionally return nil

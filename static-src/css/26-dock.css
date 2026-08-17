@@ -117,8 +117,8 @@
   border-radius: var(--r);
   background: var(--c-bg-primary);
   transition:
-    opacity var(--dur-micro) var(--ease-micro),
-    background var(--dur-micro) var(--ease-micro);
+    opacity var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard);
 }
 
 /* Unchecked = will be rolled back. Struck through and dimmed, because the file

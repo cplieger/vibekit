@@ -59,9 +59,22 @@ const (
 // chat. Carries the name because a client that has never fetched this run has
 // nothing to label the row with, and a row appearing with no name reads as a
 // bug rather than as a pending fetch.
+//
+// Scheduled marks a run the SCHEDULER launched, and it exists because the client
+// cannot work this out. A parentless run's lifecycle frames are workspace-global
+// with an empty chat id, and a MANUAL launch is parentless too, so watching
+// events cannot separate the two; `parentSessionId` separates agent-parented from
+// parentless and is empty for both of these. Only the launch path knows, so the
+// distinction travels from there.
+//
+// Its one consumer is the client's start signal: a manual launch already has the
+// user's attention (they clicked Run, and a run tab opened), while a scheduled one
+// began with nobody looking. Absent on the wire for a manual run rather than
+// false, so an older client and a manual launch read alike.
 type RunStartedPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	Name       string `json:"name,omitempty"`
+	Scheduled  bool   `json:"scheduled,omitempty"`
 }
 
 // RunProgressPayload is the payload for type="run_progress": an INVALIDATION
@@ -91,9 +104,17 @@ type RunProgressPayload struct {
 // There is no aborted_by_restart flag. A restart PAUSES a run — KAS's read-path
 // reconcile has exactly one outcome and no path to aborted (probe 24) — so there
 // is nothing for such a flag to mean.
+//
+// Name is here for RunStartedPayload's reason, arriving at the other end of the
+// run: an outcome signal has to say WHICH run finished, and a client that never
+// saw this run's start frame (a page opened mid-run, another device) has nothing
+// else to name it with. Read out of KAS's `finalState`, which this frame already
+// decodes for its log line, so it costs one field and no new decode. Empty when
+// KAS sends no state, and the consumer falls back to a generic label.
 type RunFinishedPayload struct {
 	WorkflowID string `json:"workflow_id"`
 	Status     string `json:"status"`
+	Name       string `json:"name,omitempty"`
 }
 
 // RunLaunchRequest is POST /api/runs's body: launch one recipe, PARENTLESS.

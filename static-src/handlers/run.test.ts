@@ -12,13 +12,25 @@
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../run-view.js", () => ({ refreshRunView: vi.fn() }));
+vi.mock("../toast.js", () => ({ info: vi.fn(), success: vi.fn(), error: vi.fn() }));
 
 import "./run.js";
 import { dispatch, onBus, BUS_RUNS_CHANGED } from "../bus.js";
 import type { SSEPayloads } from "../bus.js";
 import { refreshRunView } from "../run-view.js";
+import { info, success, error } from "../toast.js";
 
 const runView = vi.mocked(refreshRunView);
+const toastInfo = vi.mocked(info);
+const toastSuccess = vi.mocked(success);
+const toastError = vi.mocked(error);
+
+/** Every toast raised, in order, whatever its level. */
+function toasts(): string[] {
+  return [...toastInfo.mock.calls, ...toastSuccess.mock.calls, ...toastError.mock.calls].map(
+    (c) => c[0],
+  );
+}
 
 // The list side goes over the bus, so the test subscribes exactly as the history
 // page does rather than asserting on a mocked import.
@@ -29,6 +41,9 @@ onBus(BUS_RUNS_CHANGED, () => {
 
 beforeEach(() => {
   runView.mockClear();
+  toastInfo.mockClear();
+  toastSuccess.mockClear();
+  toastError.mockClear();
   listRefetches = 0;
 });
 
@@ -72,5 +87,120 @@ describe("run SSE handlers", () => {
   it("passes the workflow id through so a view showing another run ignores it", () => {
     send("run_progress", { workflow_id: "wf_other", kind: "node_start" });
     expect(runView).toHaveBeenCalledWith("wf_other");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The signal: who gets told, and when.
+//
+// The asymmetry is the contract. A start is announced only for a run nobody
+// launched by hand; a completion is announced for every run, because nothing else
+// in the app says a run ended (no push kind, and one shared run-dock element means
+// a background run tab has no surface).
+// ---------------------------------------------------------------------------
+describe("run toasts", () => {
+  // Each case uses its own workflow ids. The start guard is module state that
+  // outlives a test (it is keyed on the run, and a run does not restart because a
+  // test ended), so sharing an id between cases would have one suppress another.
+  it("announces a SCHEDULED run's start and names it", () => {
+    send("run_started", { workflow_id: "wf_ann_1", name: "nightly-publish", scheduled: true });
+    expect(toastInfo).toHaveBeenCalledTimes(1);
+    expect(toastInfo.mock.calls[0]?.[0]).toBe("Scheduled run started: nightly-publish");
+  });
+
+  // A manual launch already has the user's attention: they pressed Run, and a run
+  // tab opened in front of them. The flag is absent on the wire for such a run
+  // rather than false, so an older server reads as manual too.
+  it("says nothing when a run started manually", () => {
+    send("run_started", { workflow_id: "wf_man_1", name: "publish" });
+    send("run_started", { workflow_id: "wf_man_2", name: "publish", scheduled: false });
+    expect(toasts()).toEqual([]);
+  });
+
+  // `run_start` re-fires on every resume — three frames were measured for one run
+  // — and toast.ts coalesces nothing, so the guard is what stops one scheduled run
+  // from producing a stack of identical toasts.
+  it("announces a scheduled start once however often the frame re-fires", () => {
+    for (let i = 0; i < 3; i++) {
+      send("run_started", { workflow_id: "wf_resume", name: "nightly", scheduled: true });
+    }
+    expect(toastInfo).toHaveBeenCalledTimes(1);
+
+    // A different run is a different announcement.
+    send("run_started", { workflow_id: "wf_resume_other", name: "other", scheduled: true });
+    expect(toastInfo).toHaveBeenCalledTimes(2);
+  });
+
+  it("announces a completion for a scheduled AND a manual run", () => {
+    send("run_started", { workflow_id: "wf_sched", name: "nightly", scheduled: true });
+    send("run_started", { workflow_id: "wf_manual", name: "by-hand" });
+    toastInfo.mockClear();
+
+    send("run_finished", { workflow_id: "wf_sched", status: "completed", name: "nightly" });
+    send("run_finished", { workflow_id: "wf_manual", status: "completed", name: "by-hand" });
+    expect(toastSuccess.mock.calls.map((c) => c[0])).toEqual([
+      "nightly finished",
+      "by-hand finished",
+    ]);
+  });
+
+  // The level follows the OUTCOME, not the event: "finished" is not a verdict.
+  it("maps each terminal status to the level it deserves", () => {
+    const cases: { status: string; want: string; level: "success" | "error" | "info" }[] = [
+      { status: "completed", want: "publish finished", level: "success" },
+      { status: "failed", want: "publish failed", level: "error" },
+      { status: "aborted", want: "publish was aborted", level: "error" },
+      { status: "cancelled", want: "publish was cancelled", level: "info" },
+    ];
+    for (const c of cases) {
+      toastInfo.mockClear();
+      toastSuccess.mockClear();
+      toastError.mockClear();
+      send("run_finished", { workflow_id: "wf_level", status: c.status, name: "publish" });
+      const mock = { success: toastSuccess, error: toastError, info: toastInfo }[c.level];
+      expect(mock.mock.calls.map((x) => x[0])).toEqual([c.want]);
+      expect(toasts()).toHaveLength(1);
+    }
+  });
+
+  // A paused run is not a completion. KAS reports an onMaxIterations policy stop
+  // through this same frame, and the run is still resumable, so calling it
+  // finished would be a false statement about work that has not ended.
+  it("stays silent on a policy pause", () => {
+    send("run_finished", { workflow_id: "wf_pause", status: "paused", name: "publish" });
+    expect(toasts()).toEqual([]);
+  });
+
+  // A pause is also not the end of the run's start signal: the client stopped
+  // believing it was running, so a resumed scheduled run announces itself again.
+  it("re-announces a scheduled start after the run stopped", () => {
+    send("run_started", { workflow_id: "wf_restart", name: "nightly", scheduled: true });
+    send("run_finished", { workflow_id: "wf_restart", status: "paused", name: "nightly" });
+    send("run_started", { workflow_id: "wf_restart", name: "nightly", scheduled: true });
+    expect(toastInfo).toHaveBeenCalledTimes(2);
+  });
+
+  // A page opened mid-run, or a frame KAS sent no state with, has no name to use.
+  // A generic label beats a bare workflow uuid and beats saying nothing.
+  it("falls back to a generic label when the frame carries no name", () => {
+    send("run_finished", { workflow_id: "wf_noname", status: "completed" });
+    expect(toastSuccess.mock.calls[0]?.[0]).toBe("Workflow run finished");
+    send("run_started", { workflow_id: "wf_noname_2", scheduled: true });
+    expect(toastInfo.mock.calls[0]?.[0]).toBe("Scheduled run started: Workflow run");
+  });
+
+  // An unrecognised status is still an ending; naming it verbatim beats silence.
+  it("passes an unknown status through rather than dropping it", () => {
+    send("run_finished", { workflow_id: "wf_odd", status: "exploded", name: "publish" });
+    expect(toastInfo.mock.calls[0]?.[0]).toBe("publish finished: exploded");
+  });
+
+  // The seven frames between the ends are invalidations, and a busy run emits
+  // many: one toast each would bury the two that mean something.
+  it("never toasts a progress frame", () => {
+    for (const kind of ["node_start", "node_complete", "watch_poll", "loop_iteration", "paused"]) {
+      send("run_progress", { workflow_id: "wf_prog", kind });
+    }
+    expect(toasts()).toEqual([]);
   });
 });

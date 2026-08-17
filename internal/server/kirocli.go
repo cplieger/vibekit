@@ -15,6 +15,9 @@ import (
 // restored version directory arrives after the retries are exhausted).
 const kiroRescanPath = "/api/kiro-cli/rescan"
 
+// kiroRescanSurface is what a refused caller is told declined the request.
+const kiroRescanSurface = "the kiro-cli repair hook"
+
 // The readiness reasons vibekit puts on the wire, one per operator situation.
 //
 // The install manager reports a TYPED reason (pinstall.Reason) that names only
@@ -113,16 +116,23 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 // envelope the success and unready paths use, because this is a rejected request
 // rather than a readiness verdict and a caller keying on {"status":...} must not
 // read a 403 as one.
-func loopbackOnly(next http.Handler) http.Handler {
+//
+// surface NAMES the endpoint that refused, and it is a parameter rather than a
+// constant because there are two mounts behind this gate now (the repair hook and
+// /debug/pprof/) and web-terminal-kiro's copy of this wrapper already takes one.
+// A refused profile request telling the caller the repair hook declined it is a
+// wrong answer with the right status: the operator retries the wrong path.
+func loopbackOnly(surface string, next http.Handler) http.Handler {
 	refuse := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The request is USED, not discarded: this endpoint spawns no process but
-		// it does gate one, so a refusal is worth a correlatable record. Without
-		// this the 403 relied entirely on the access log, unlike the sibling app's
-		// loopback refusal, which passes the request into its writer.
-		slog.Warn("kiro-cli repair hook refused: not a loopback caller",
-			"remote", r.RemoteAddr, "host", r.Host)
+		// The request is USED, not discarded: neither endpoint spawns a process
+		// on this path but both gate one, so a refusal is worth a correlatable
+		// record. Without this the 403 relied entirely on the access log, unlike
+		// the sibling app's loopback refusal, which passes the request into its
+		// writer.
+		slog.Warn("loopback-only endpoint refused: not a loopback caller",
+			"surface", surface, "remote", r.RemoteAddr, "host", r.Host)
 		api.WriteJSONStatus(w, http.StatusForbidden,
-			api.ErrorJSON("the kiro-cli repair hook is loopback-only; call it from inside the container"))
+			api.ErrorJSON(surface+" is loopback-only; call it from inside the container"))
 	})
 	return webhttp.LoopbackOnly(refuse)(next)
 }

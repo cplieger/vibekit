@@ -30,8 +30,13 @@ type StreamingAccess interface {
 	ParentACPSession(chatID api.ChatID) string
 	WorkDir() string
 	// TerminalOutput returns an agent terminal's rendered output: plain text
-	// with escapes parsed off and secrets masked, plus the spans styling it.
-	// ok is false when no terminal with that id is registered.
+	// with escapes parsed off, plus the spans styling it.
+	//
+	// ok reports whether the terminal is KNOWN, not whether it printed
+	// anything: a registered terminal that produced no output answers
+	// ("", nil, true). The distinction is the whole value of the boolean —
+	// adoption logs a miss on false, and a silent command reporting as missing
+	// would file that warning on every turn.
 	//
 	// This is what makes the tool CARD the durable home of a command's output.
 	// KAS puts none of it on the tool call — a successful terminal-backed
@@ -52,7 +57,7 @@ type StreamingAccess interface {
 type PermissionAccess interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	ChatStore() api.ChatStore
-	NotifyPush(ctx context.Context, body string, kind api.PushKind)
+	NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID)
 	ParentACPSession(chatID api.ChatID) string
 	PendingPermsAdd(requestID int64, evt api.ServerEvent)
 }
@@ -63,4 +68,35 @@ type ChatStoreDeps interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	ChatStore() api.ChatStore
 	ParentACPSession(chatID api.ChatID) string
+}
+
+// RunOriginAccess answers whether a workflow run was launched by a SCHEDULE.
+//
+// One method, because that is the whole question workflow.go asks. The fact lives
+// on the host: the scheduler's launch path carries a schedule id and marks the run
+// with it, and nothing on the ACP wire distinguishes a scheduled run from a manual
+// one (both are parentless, both arrive with an empty chat id). Keyed by workflow
+// id rather than chat id for the same reason — a parentless run's frames carry no
+// topic.
+//
+// In-memory on the host, so a run that OUTLIVES a restart reports false
+// afterwards: the mark is gone, and vibekit genuinely no longer knows the run was
+// scheduled. That is a missing start signal on a resume, not a wrong one.
+type RunOriginAccess interface {
+	IsScheduledRun(workflowID string) bool
+}
+
+// RunBoundsAccess reports a workflow STEP that blew its turn cap.
+//
+// One method, and it takes the breach rather than asking permission for it,
+// because the two halves of the cap live in different places on purpose:
+// COUNTING belongs here (the step's tool frames pass through this package, and
+// `_meta.kiro.workflow` is what identifies them), while ENFORCEMENT belongs on
+// the host (it owns the bridges and the only stop verb, which is run-scoped).
+//
+// The host is expected to cancel the whole RUN, since no per-step stop verb
+// exists on the wire; that is the host's decision to state, not this package's to
+// assume, which is why the name says what happened rather than what to do.
+type RunBoundsAccess interface {
+	StepTurnCapExceeded(workflowID, nodeID string, turns int)
 }

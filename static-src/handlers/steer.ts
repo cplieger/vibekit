@@ -7,6 +7,11 @@
 //   steer_injected  the model has read it; the redirection is in effect
 //   steer_cleared   these were dropped at a turn boundary, unread
 //
+// steer_injected arrives TWICE for a steer the agent answers, and the second one
+// is not a duplicate: the first is KAS's read frame, the second carries `ack` —
+// the agent's own statement of what it did — off the assistant text stream once
+// it has acted. Both merge onto the same chip by id.
+//
 // This is the ONLY writer of `session.steers`. The code that sends a steer
 // records nothing locally (submit.ts), so the chip a user sees is always the
 // server's account of what the agent knows — which is what makes the row correct
@@ -29,7 +34,7 @@ onSSE("steer_queued", (chatID, p) => {
 });
 
 onSSE("steer_injected", (chatID, p) => {
-  markSteerInjected(chatID, p.steer_id, p.text);
+  markSteerInjected(chatID, p.steer_id, p.text, p.ack);
 });
 
 // Named ids only. KAS clears its buffer at EVERY turn boundary and the server

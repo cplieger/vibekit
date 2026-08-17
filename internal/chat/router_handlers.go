@@ -90,10 +90,15 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	window := make([]api.Message, end-start)
 	copy(window, msgs[start:end])
 
+	// `draft` rides here as its own field rather than on the header, which is
+	// what keeps the composer autosave off the SSE fan-out and off the list
+	// response: this is the one request a client makes when it opens a chat it
+	// has no local draft for, which is exactly when it needs the server's copy.
 	api.WriteJSON(w, map[string]any{
 		"chat":     rt.store.header(r.Context(), c),
 		"messages": window,
 		"has_more": start > 0,
+		"draft":    c.Draft,
 	})
 }
 
@@ -152,7 +157,15 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ap
 		api.NotFound(w, errMsgChatNotFound)
 		return
 	}
-	api.WriteJSON(w, map[string]any{"hits": SearchChat(c.Messages, r.URL.Query().Get("q"))})
+	// `case=1` is the client's match-case toggle. Both halves of the in-chat
+	// search have to agree on it (the client highlights in the DOM, this
+	// enumerates session-wide), so it rides the request rather than being a
+	// default either side could get wrong. Absent or anything else = insensitive,
+	// which is the behaviour every existing client gets.
+	caseSensitive := r.URL.Query().Get("case") == "1"
+	api.WriteJSON(w, map[string]any{
+		"hits": SearchChat(c.Messages, r.URL.Query().Get("q"), caseSensitive),
+	})
 }
 
 // parseLimitParam returns the validated ?limit= page size, defaulting to 50

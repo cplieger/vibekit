@@ -93,6 +93,17 @@ class Elements {
   get promptInput(): HTMLTextAreaElement {
     return byId("prompt-input");
   }
+  /** The bordered box holding the textarea, the pill rows and the resize
+   *  handle. Registered because the handle's drag writes --composer-h here (the
+   *  textarea's max-height consumes it) while the pill rows read the box's
+   *  focus-within state. */
+  get promptBox(): HTMLDivElement {
+    return byId("prompt-box");
+  }
+  /** The composer's top-edge resize handle (a keyboard role=separator). */
+  get composerResize(): HTMLDivElement {
+    return byId("composer-resize");
+  }
   get attachmentRow(): HTMLUListElement {
     return byId("attachment-row");
   }
@@ -209,8 +220,8 @@ class Elements {
   get shellToggleBtn(): HTMLButtonElement {
     return byId("shell-toggle-btn");
   }
-  get shellClearBtn(): HTMLButtonElement {
-    return byId("shell-clear-btn");
+  get shellRestartBtn(): HTMLButtonElement {
+    return byId("shell-restart-btn");
   }
   get shellFullscreenBtn(): HTMLButtonElement {
     return byId("shell-fullscreen-btn");
@@ -272,6 +283,9 @@ class Elements {
   }
   get fbChatFilter(): HTMLButtonElement {
     return byId("fb-chat-filter");
+  }
+  get fbSearchBtn(): HTMLButtonElement {
+    return byId("fb-search-btn");
   }
   // Chat options (the composer's set-once switches menu)
   get chatOptionsBtn(): HTMLButtonElement {
@@ -346,6 +360,12 @@ class Elements {
   }
   get editorDiffBtn(): HTMLButtonElement {
     return byId("editor-diff-btn");
+  }
+  get editorMarkdown(): HTMLDivElement {
+    return byId("editor-markdown");
+  }
+  get editorImage(): HTMLDivElement {
+    return byId("editor-image");
   }
   get editorDiffPane(): HTMLDivElement {
     return byId("editor-diff-pane");
@@ -491,11 +511,11 @@ class Elements {
   get notifySubOptions(): HTMLDivElement {
     return byId("notify-sub-options");
   }
+  get notifyPRStatusToggle(): HTMLInputElement {
+    return byId("notify-pr-status-toggle");
+  }
   get notifyFinishedToggle(): HTMLInputElement {
     return byId("notify-finished-toggle");
-  }
-  get notifyPermissionToggle(): HTMLInputElement {
-    return byId("notify-permission-toggle");
   }
 
   // Settings tab bar (mobile dropdown + desktop segmented control)

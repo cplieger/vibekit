@@ -266,18 +266,18 @@ func TestHandleShow_Rejections(t *testing.T) {
 	}
 }
 
-func TestHandleShow_MissingFileReturnsEmptyContent(t *testing.T) {
-	// A workspace that is no repo, with no `repo` param: the path belongs to
-	// no repository, so there is no revision of it to show. That is reported
-	// as not_in_repo, NOT as a failure — a file outside every repo renders
-	// correctly as an all-add diff, and folding the two made a real git
-	// failure claim "brand new file, every line added".
-	//
-	// This is the shape a turn's changed-file ledger produces: relPath hands
-	// the client a workspace-relative path with no repo attached. It used to
-	// resolve to the workspace root, run `git show` in a directory that is
-	// usually not a repository, and fail.
-	h := NewHandler(t.TempDir())
+// BF15, half one. A workspace root that is not itself a repository has no
+// committed revision of anything, and that is not a git FAILURE — it is the
+// absence of a base. The two used to be one kind: `git show` ran in the
+// non-repo directory, errored with "fatal: not a git repository", and the
+// handler reported show_failed. A client cannot act on that: the honest answer
+// is "no repo owns this path", which renders as an all-add diff.
+//
+// The distinction is what keeps a REAL git failure legible. Fold them and a
+// broken object database renders as "this file is brand new", silently claiming
+// every line was added.
+func TestHandleShow_PathOutsideEveryRepoIsNotAFailure(t *testing.T) {
+	h := NewHandler(t.TempDir()) // no .git anywhere
 	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=nonexistent", nil)
 	rec := httptest.NewRecorder()
 	h.handleShow(rec, req)
@@ -285,72 +285,163 @@ func TestHandleShow_MissingFileReturnsEmptyContent(t *testing.T) {
 		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `"error":"not_in_repo"`) {
-		t.Errorf("body = %q, want not_in_repo marker", body)
+	if !strings.Contains(body, `"error":"`+string(KindNotInRepo)+`"`) {
+		t.Errorf("body = %q, want the not-in-repo marker: no repository owns the path", body)
+	}
+	if strings.Contains(body, string(KindShowFailed)) {
+		t.Errorf("body = %q, want the absence of a base reported as such rather than as a git failure", body)
 	}
 }
 
-// TestHandleShow_ResolvesOwningRepo covers the three answers handleShow gives a
-// workspace-relative path with NO repo parameter, which is every path coming
-// from a turn's changed-file ledger or a tool card.
-func TestHandleShow_ResolvesOwningRepo(t *testing.T) {
-	skipNoGit(t)
-	ws := t.TempDir()
-	// A repo one level down, the normal shape of this workspace.
-	sub := filepath.Join(ws, "myrepo")
-	if err := os.MkdirAll(sub, 0o750); err != nil {
+// BF15, half two, and the one with a user-visible wrong ANSWER rather than a
+// wrong label. An absent `repo` used to default to the workspace root, so a file
+// living in a SUBDIRECTORY repo was shown from the wrong repository: `git show
+// HEAD:sub/tracked.txt` finds nothing there, the base came back empty, and the
+// diff claimed every line had just been added. Every caller that holds only a
+// workspace-relative path is in this shape — a turn's changed-file ledger, a
+// tool card's filename — because translate.relPath strips the workspace prefix
+// and knows nothing about repos.
+func TestHandleShow_ResolvesTheOwningRepoWhenNoneIsNamed(t *testing.T) {
+	work := t.TempDir()
+	// The workspace root is a repo too, so this cannot pass by accident: the
+	// old default WOULD find a repository here, just not the right one.
+	initFixtureRepo(t, work)
+	sub := filepath.Join(work, "sub")
+	if err := os.Mkdir(sub, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	initFixtureRepo(t, sub)
-	// A file in the workspace but inside no repo.
-	if err := os.WriteFile(filepath.Join(ws, "loose.sh"), []byte("hi\n"), 0o600); err != nil {
+	writeCommit(t, sub, "tracked.txt", "from the subrepo\n", "add tracked")
+
+	h := NewHandler(work)
+	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=sub/tracked.txt", nil)
+	rec := httptest.NewRecorder()
+	h.handleShow(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Content string `json:"content"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal %q: %v", rec.Body.String(), err)
+	}
+	if got.Error != "" {
+		t.Fatalf("error = %q, want the subrepo resolved", got.Error)
+	}
+	// gitCmd trims the trailing newline off every git invocation's output; that
+	// is pre-existing and shared with the repo-named path.
+	if got.Content != "from the subrepo" {
+		t.Errorf("content = %q, want the committed base from the owning repo."+
+			" Empty means the base was read from the workspace root, so the diff"+
+			" claims every line was added", got.Content)
+	}
+}
+
+// A file that genuinely does not exist at the ref, inside a real repo, is still
+// the empty-base case: the diff renders as all-add, which is correct for a new
+// file. This is the branch KindNotInRepo must NOT swallow.
+func TestHandleShow_MissingFileInARepoReturnsEmptyContent(t *testing.T) {
+	work := t.TempDir()
+	initFixtureRepo(t, work)
+	h := NewHandler(work)
+	req := httptest.NewRequest(http.MethodGet, "/api/git/show?path=never-committed.txt", nil)
+	rec := httptest.NewRecorder()
+	h.handleShow(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"content":""`) {
+		t.Errorf("body = %q, want empty content for a file absent at the ref", body)
+	}
+}
+
+// An explicitly named repo still wins: the resolution only fills in a MISSING
+// answer, it never overrides a caller that knows which repository it means.
+func TestHandleShow_ExplicitRepoIsNotReResolved(t *testing.T) {
+	work := t.TempDir()
+	sub := filepath.Join(work, "sub")
+	if err := os.Mkdir(sub, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	h := NewHandler(ws)
+	initFixtureRepo(t, sub)
+	writeCommit(t, sub, "tracked.txt", "named\n", "add tracked")
 
-	show := func(t *testing.T, path string) (int, string) {
-		t.Helper()
-		req := httptest.NewRequest(http.MethodGet, "/api/git/show?path="+path, nil)
-		rec := httptest.NewRecorder()
-		h.handleShow(rec, req)
-		return rec.Code, rec.Body.String()
+	h := NewHandler(work)
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/git/show?repo=sub&path=tracked.txt", nil)
+	rec := httptest.NewRecorder()
+	h.handleShow(rec, req)
+	if body := rec.Body.String(); !strings.Contains(body, "named") {
+		t.Errorf("body = %q, want the named repo's content (path stays repo-relative)", body)
 	}
+}
 
-	t.Run("committed file in a subdirectory repo is found", func(t *testing.T) {
-		// The owning repo AND the repo-relative path are both derived here; the
-		// caller sent neither. Before, this ran `git show HEAD:myrepo/README.md`
-		// in the workspace root and failed.
-		code, body := show(t, "myrepo/README.md")
-		if code != http.StatusOK {
-			t.Fatalf("code = %d, body = %s", code, body)
-		}
-		if !strings.Contains(body, "hi") {
-			t.Errorf("body = %q, want the committed content", body)
-		}
-	})
-
-	t.Run("untracked file in a repo has an empty base", func(t *testing.T) {
-		if err := os.WriteFile(filepath.Join(sub, "new.txt"), []byte("x\n"), 0o600); err != nil {
+// ownerOf is the rule the handler leans on, and it has three shapes worth
+// pinning independently of an HTTP round trip.
+func TestOwnerOf(t *testing.T) {
+	work := t.TempDir()
+	initFixtureRepo(t, work)
+	for _, name := range []string{"sub", "sub-longer"} {
+		dir := filepath.Join(work, name)
+		if err := os.Mkdir(dir, 0o750); err != nil {
 			t.Fatal(err)
 		}
-		code, body := show(t, "myrepo/new.txt")
-		if code != http.StatusOK {
-			t.Fatalf("code = %d, body = %s", code, body)
-		}
-		if !strings.Contains(body, `"content":""`) {
-			t.Errorf("body = %q, want empty content for a path absent at HEAD", body)
-		}
-	})
+		initFixtureRepo(t, dir)
+	}
+	h := NewHandler(work)
 
-	t.Run("file outside every repo reports not_in_repo", func(t *testing.T) {
-		code, body := show(t, "loose.sh")
-		if code != http.StatusOK {
-			t.Fatalf("code = %d, body = %s", code, body)
-		}
-		if !strings.Contains(body, `"error":"not_in_repo"`) {
-			t.Errorf("body = %q, want not_in_repo marker", body)
-		}
-	})
+	tests := []struct {
+		name      string
+		path      string
+		wantRepo  string
+		wantInner string
+		wantOK    bool
+		reason    string
+	}{{
+		name: "SubdirRepoWins", path: "sub/a.go",
+		wantRepo: "sub", wantInner: "a.go", wantOK: true,
+		reason: "the nearest repo owns the file, not the workspace root",
+	}, {
+		name: "RootRepoOwnsTheRest", path: "top.go",
+		wantRepo: ".", wantInner: "top.go", wantOK: true,
+		reason: "the workspace-root repo is the fallback, which reproduces the old default",
+	}, {
+		name: "LongerRepoNameWins", path: "sub-longer/b.go",
+		wantRepo: "sub-longer", wantInner: "b.go", wantOK: true,
+		reason: "of two matching names the longer one is the nearer repo",
+	}, {
+		// The case a string-prefix test gets WRONG, and it is not exotic: a
+		// sibling directory whose name merely begins with a repo's name.
+		// strings.HasPrefix says "sub" owns "subx/file.go" and hands git the
+		// path "x/file.go", which resolves to nothing.
+		name: "ASiblingBeginningWithARepoNameIsNotInIt", path: "subx/file.go",
+		wantRepo: ".", wantInner: "subx/file.go", wantOK: true,
+		reason: "ownership is separator-precise, not a string prefix",
+	}, {
+		name: "RepoDirectoryItselfIsNotAFile", path: "sub",
+		wantRepo: ".", wantInner: "sub", wantOK: true,
+		reason: "naming the repo dir is not naming a file in it, so it falls back to the root",
+	}}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, inner, ok := h.ownerOf(t.Context(), tt.path)
+			if repo != tt.wantRepo || inner != tt.wantInner || ok != tt.wantOK {
+				t.Errorf("ownerOf(%q) = (%q, %q, %v), want (%q, %q, %v) — %s",
+					tt.path, repo, inner, ok, tt.wantRepo, tt.wantInner, tt.wantOK, tt.reason)
+			}
+		})
+	}
+}
+
+// With no repository anywhere there is no owner, which is what makes the
+// handler's not-in-repo answer reachable.
+func TestOwnerOf_NoRepositoryMeansNoOwner(t *testing.T) {
+	h := NewHandler(t.TempDir())
+	if repo, inner, ok := h.ownerOf(t.Context(), "anything.go"); ok {
+		t.Errorf("ownerOf = (%q, %q, true), want no owner in a workspace with no repos", repo, inner)
+	}
 }
 
 // --- pure function coverage ---

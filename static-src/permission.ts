@@ -32,6 +32,7 @@ import { el } from "@cplieger/reactive";
 import { mcpToolInfo, formatMCPToolName } from "./tool-schema.js";
 import { editNativeRule } from "./actions/permissions.js";
 import { openChange } from "./navigate.js";
+import { openSetting } from "./settings-highlight.js";
 import { get } from "./store.js";
 import { ICON_DIFF } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -159,7 +160,36 @@ function buildToolPermissionCard(
   if (isModeSwitch) {
     card.classList.add("mode-switch");
   }
+  if (!isModeSwitch) {
+    card.appendChild(buildPolicyPointer());
+  }
   return card;
+}
+
+/** A pointer to the workspace relaxation, for the reader who is tired of being
+ *  asked. Its own row BELOW the answer buttons, deliberately not among them.
+ *
+ *  It NAVIGATES and nothing else — the click opens Settings and flashes the
+ *  switch, which the user then has to turn on and confirm there. That is the
+ *  whole reason it is a link and not a control: the relaxation is
+ *  Settings-only, so answering a prompt must never be a path that widens the
+ *  policy as a side effect. A "grant this capability" button here would be
+ *  exactly that path.
+ *
+ *  A mode switch gets none of this: it grants no capability, so the policy panel
+ *  has nothing to say about it. */
+function buildPolicyPointer(): HTMLElement {
+  const link = el("button", { type: "button", className: "approval-policy-link" }, "Settings");
+  link.addEventListener("click", () => {
+    openSetting("permissions", "workspace-relax-checkbox");
+  });
+  return el(
+    "div",
+    { className: "approval-policy-pointer" },
+    "Asked too often? Widen the workspace policy in ",
+    link,
+    ".",
+  );
 }
 
 // --- Turn approval ---------------------------------------------------------

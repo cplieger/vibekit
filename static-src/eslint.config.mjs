@@ -27,7 +27,6 @@ export default [
       "**/*.gen.js",
       "**/wire/*.gen.ts",
       // Test fixtures that aren't real code
-      "**/test-stubs/**",
       "**/__mocks__/**",
       "**/__test-helpers__/**",
     ],
@@ -176,7 +175,6 @@ export default [
       "**/*.fuzz.test.ts",
       "**/*.property.test.ts",
       "fc-strict-setup.ts",
-      "test-stubs/**",
     ],
     ...tseslint.configs.disableTypeChecked,
   },

@@ -116,6 +116,30 @@ describe("chat_deleted", () => {
     expect(get("c1")).toBeUndefined();
   });
 
+  // The dock's queue is keyed by chat id and outlives the session row, and this
+  // path deliberately closes the tab with `skipOnClose` (the chat is already gone
+  // remotely), so the tab's own teardown does NOT run. Without an explicit drop
+  // the queue survived the delete and a chat recreated under the same id inherited
+  // a card for a request the server has forgotten — which the tab dot reported as
+  // `input`, the state that outranks every other one.
+  it("drops the chat's unanswered asks with it", async () => {
+    const { pushDecision, hasPendingDecision, _resetForTest } = await import("../decision-dock.js");
+    _resetForTest();
+    setSessions([makeSession("c1")]);
+    pushDecision({
+      kind: "permission",
+      chatID: "c1",
+      runID: "",
+      requestID: 1,
+      payload: { request_id: 1, title: "run a command", options: [] } as never,
+      submit: vi.fn(),
+    });
+    expect(hasPendingDecision("c1")).toBe(true);
+
+    fireSSE("chat_deleted", "", { id: "c1" });
+    expect(hasPendingDecision("c1")).toBe(false);
+  });
+
   it("closes the open tab for the deleted chat", () => {
     setSessions([makeSession("c2")]);
     mockHasTab.mockReturnValue(true);

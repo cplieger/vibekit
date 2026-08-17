@@ -9,7 +9,7 @@
 // to the generic profile.
 // ---------------------------------------------------------------------------
 
-import type { ToolKind, ToolStatus } from "./types.js";
+import type { ToolDenial, ToolDisclosed, ToolKind, ToolStatus } from "./types.js";
 export type { ToolKind };
 
 /** What a tool card reveals when you open it — its "depth 1".
@@ -125,6 +125,15 @@ export interface ToolRenderInfo {
    *  for legible rendering of what would otherwise be "mcp__github__
    *  create_issue". */
   mcp: { server: string; tool: string } | null;
+  /** The skill or steering document this call loaded into context, or null.
+   *  Set only on a `disclose_context` call, and it is the only signal that a
+   *  skill's body actually reached the model, so the card names it instead of
+   *  showing a generic tool row. */
+  disclosed: ToolDisclosed | null;
+  /** The policy verdict that refused this call, or null. Present makes the card
+   *  read as a refusal rather than a failure: the two want opposite reactions,
+   *  edit the rule or debug the tool. */
+  denial: ToolDenial | null;
 }
 
 /** Lookup profile by tool title (kiro-cli names). Unknown titles resolve
@@ -304,6 +313,7 @@ export function renderInfoFor(
   title: string,
   kind: string,
   input: Record<string, unknown> | undefined,
+  meta?: { disclosed?: ToolDisclosed | undefined; denial?: ToolDenial | undefined },
 ): ToolRenderInfo {
   const profile = profileFor(title, kind);
   const filePath = pickFilePath(input);
@@ -317,5 +327,15 @@ export function renderInfoFor(
     fileBasename,
     diffSources,
     mcp,
+    disclosed: meta?.disclosed ?? null,
+    denial: meta?.denial ?? null,
   };
+}
+
+/** The claim line for a disclose_context call. The agent activating a skill is
+ *  the moment its body enters the prompt, so the card says which document rather
+ *  than naming the tool that fetched it. */
+export function disclosedClaim(d: ToolDisclosed): string {
+  const kindWord = d.type === "steering" ? "steering" : "skill";
+  return `Loaded ${kindWord}: ${d.display_name}`;
 }

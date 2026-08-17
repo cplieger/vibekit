@@ -32,12 +32,20 @@ func main() {
 		wiregen.TypeRef[api.ToolLocation](),
 		wiregen.TypeRef[api.ToolDiff](),
 		wiregen.TypeRef[api.ToolCheckpoint](),
+		// Declared BEFORE ToolCall: the generator emits in order and ToolCall
+		// references both.
+		wiregen.TypeRef[api.ToolDisclosed](),
+		wiregen.TypeRef[api.ToolDenialRule](),
+		wiregen.TypeRef[api.ToolDenial](),
 		wiregen.TypeRef[api.TextSpan](),
 		wiregen.TypeRef[api.ToolCall](),
 		wiregen.TypeRef[api.PlanEntry](),
 		wiregen.TypeRef[api.Block](),
 		wiregen.TypeRef[api.CodeReference](),
 		wiregen.TypeRef[api.RefusalInfo](),
+		// Declared BEFORE Message, which references it: the generator emits in
+		// order.
+		wiregen.TypeRef[api.Attachment](),
 		wiregen.TypeRef[api.Message](),
 		wiregen.TypeRef[api.MeteringItem](),
 		wiregen.TypeRef[api.Usage](),

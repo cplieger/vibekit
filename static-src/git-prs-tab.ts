@@ -20,7 +20,16 @@ import { confirm as confirmDialog } from "./confirm.js";
 import { ICON_REFRESH, ICON_PR_EMPTY, ICON_FILTER } from "./icons.js";
 import { preserveGitScroll } from "./git-scroll.js";
 import type { ConfiguredForge, Repo } from "./wire/types.gen.js";
-import { mergePR, closePR, createPR, refreshPRs as refreshPRsAction } from "./actions/git-prs.js";
+import {
+  mergePR,
+  closePR,
+  createPR,
+  armAutoMerge,
+  reopenPR,
+  rerunChecks,
+  refreshPRs as refreshPRsAction,
+} from "./actions/git-prs.js";
+import { checkChip, mergeBlockReason, supportsRerun, canArmAutoMerge } from "./git-pr-status.js";
 import { registerCleanup } from "./actions/index.js";
 import { bindLoadingState } from "./actions/index.js";
 import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
@@ -468,6 +477,22 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     meta.appendChild(el("span", { className: "git-pr-row-tag" }, "draft"));
   }
 
+  // Check status rides the row because it arrives in the list call that
+  // already ran (one more --json field, not a per-row fetch). A forge
+  // that reports no CI state gets no chip rather than a fabricated one.
+  const chip = checkChip(pr);
+  if (chip !== null) {
+    const chipEl = el("span", { className: `git-pr-row-tag ${chip.className}` }, chip.text);
+    chipEl.setAttribute("data-tooltip", chip.tooltip);
+    meta.appendChild(chipEl);
+  }
+
+  if (pr.auto_merge_armed === true) {
+    const armed = el("span", { className: "git-pr-row-tag git-pr-check-pending" }, "auto-merge");
+    armed.setAttribute("data-tooltip", "The forge will merge this once its requirements are met.");
+    meta.appendChild(armed);
+  }
+
   li.appendChild(meta);
 
   const sub = el("div", { className: "git-pr-row-sub" });
@@ -487,12 +512,14 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
   // Actions
   const actions = el("div", { className: "git-pr-row-actions" });
 
+  const prRef = { forge_id: g.forge_id, owner: g.owner, name: g.name, pr_number: pr.number };
+
   const merge = el(
     "button",
     { type: "button", className: "btn-small btn-primary" },
     "Merge",
   ) as HTMLButtonElement;
-  const mergeReason = computeMergeBlockReason(pr);
+  const mergeReason = mergeBlockReason(pr);
   merge.disabled = mergeReason !== "";
   merge.setAttribute(
     "data-tooltip",
@@ -505,12 +532,10 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
         return;
       }
       await withAsyncFeedback(merge, async () => {
-        const res = await mergePR.dispatch({
-          forge_id: g.forge_id,
-          owner: g.owner,
-          name: g.name,
-          pr_number: pr.number,
-        });
+        // head_sha pins the merge to the commit this row was rendered
+        // from: if something pushed since, the forge refuses instead of
+        // landing an unreviewed commit.
+        const res = await mergePR.dispatch({ ...prRef, head_sha: pr.head_sha ?? "" });
         if (res === null) {
           throw new Error("failed");
         }
@@ -519,6 +544,99 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
     })();
   });
   actions.appendChild(merge);
+
+  // Checks unsettled: offer to hand the merge to the forge rather than a
+  // disabled button and a wait.
+  if (canArmAutoMerge(pr)) {
+    const arm = el(
+      "button",
+      { type: "button", className: "btn-small" },
+      "Merge when green",
+    ) as HTMLButtonElement;
+    arm.setAttribute("data-tooltip", "Let the forge merge this once its checks pass");
+    arm.addEventListener("click", () => {
+      void (async () => {
+        const ok = await confirmDialog(
+          `Merge PR #${pr.number} (${pr.title}) once its checks pass?`,
+          "Arm auto-merge",
+          "normal",
+        );
+        if (!ok) {
+          return;
+        }
+        await withAsyncFeedback(arm, async () => {
+          const res = await armAutoMerge.dispatch({ ...prRef, head_sha: pr.head_sha ?? "" });
+          if (res === null) {
+            throw new Error("failed");
+          }
+          await refreshPRs();
+        });
+      })();
+    });
+    actions.appendChild(arm);
+  }
+
+  // A failed check here is most often flaky, so a retry beats a context
+  // switch. Hidden on the forges that have no re-run mechanism at all.
+  if (pr.check_status === "failing" && supportsRerun(g.forge_kind)) {
+    const rerun = el(
+      "button",
+      { type: "button", className: "btn-small" },
+      "Re-run",
+    ) as HTMLButtonElement;
+    rerun.setAttribute("data-tooltip", "Re-run the failed CI jobs");
+    rerun.addEventListener("click", () => {
+      void (async () => {
+        const ok = await confirmDialog(
+          `Re-run failed checks on PR #${pr.number}?`,
+          "Re-run",
+          "normal",
+        );
+        if (!ok) {
+          return;
+        }
+        await withAsyncFeedback(rerun, async () => {
+          // The same pin the merge sends, for the same reason: this row's
+          // check chip is the folded state of pr.head_sha, so the re-run has
+          // to name that commit or it can start CI for another one.
+          const res = await rerunChecks.dispatch({ ...prRef, head_sha: pr.head_sha ?? "" });
+          if (res === null) {
+            throw new Error("failed");
+          }
+          await refreshPRs();
+        });
+      })();
+    });
+    actions.appendChild(rerun);
+  }
+
+  // Reopen is the mirror of Close, and it renders on the state that earns
+  // it. The tab lists open PRs today, so this is the branch that lights up
+  // the moment a closed list exists rather than a view added to justify it.
+  if (pr.state !== "open") {
+    const reopen = el(
+      "button",
+      { type: "button", className: "btn-small" },
+      "Reopen",
+    ) as HTMLButtonElement;
+    reopen.setAttribute("data-tooltip", "Reopen this pull request");
+    reopen.addEventListener("click", () => {
+      void (async () => {
+        const ok = await confirmDialog(`Reopen PR #${pr.number}?`, "Reopen", "normal");
+        if (!ok) {
+          return;
+        }
+        await withAsyncFeedback(reopen, async () => {
+          const res = await reopenPR.dispatch(prRef);
+          if (res === null) {
+            throw new Error("failed");
+          }
+          await refreshPRs();
+        });
+      })();
+    });
+    actions.appendChild(reopen);
+  }
 
   const close = el(
     "button",
@@ -536,12 +654,7 @@ function renderPRRow(g: RepoGroup, pr: PR): HTMLElement {
         return;
       }
       await withAsyncFeedback(close, async () => {
-        const res = await closePR.dispatch({
-          forge_id: g.forge_id,
-          owner: g.owner,
-          name: g.name,
-          pr_number: pr.number,
-        });
+        const res = await closePR.dispatch(prRef);
         if (res === null) {
           throw new Error("failed");
         }
@@ -766,28 +879,8 @@ function openNewPRDialog(g: RepoGroup, sourceBranch = ""): void {
   void generate();
 }
 
-// --- Helpers ---
-
-/** Explain why the Merge button is disabled, or "" if it should be
- *  enabled. The PR struct only exposes `mergeable` (bool) + `draft`
- *  (bool) — not the rich GitHub mergeStateStatus / GitLab merge_status
- *  values — so the reason is somewhat coarse. We pick the most
- *  actionable phrasing we can from those two flags so the user sees
- *  something concrete on hover instead of a silently-disabled button.
- *
- *  Possible returns:
- *    "" — enabled, no reason
- *    "PR is a draft. Mark it as ready for review first."
- *    "this PR isn't mergeable — likely conflicts, failing required
- *      checks, or branch protection. Check the PR on the forge for
- *      details."
- */
-function computeMergeBlockReason(pr: PR): string {
-  if (pr.draft === true) {
-    return "PR is a draft. Mark it as ready for review first.";
-  }
-  if (pr.mergeable === false) {
-    return "this PR isn't mergeable — likely conflicts, failing required checks, or branch protection. Open it on the forge for details.";
-  }
-  return "";
-}
+// The merge-block reason, the check chip and the per-forge capability
+// rules live in git-pr-status.ts: they are pure, so they are testable
+// there without a document. The version this replaced was module-private
+// and read `mergeable === false`, which is dropped by omitempty for
+// exactly the PRs that cannot merge, so it enabled the button on them.

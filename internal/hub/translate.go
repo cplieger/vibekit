@@ -87,8 +87,11 @@ func (h *Hub) initDispatch() {
 		// Workflow-run lifecycle. Nine KAS notifications → three SSE events; the
 		// seven middle kinds share one handler because they mean one thing to a
 		// client ("refetch"). See translate/workflow.go.
-		methodWFRunStart:    h.translator.HandleRunStart,
-		methodWFRunComplete: h.translator.HandleRunComplete,
+		// Wrapped rather than registered bare: the run clock (run_bounds.go) has
+		// to see a run start, pause and finish, and `run_start` is the only frame
+		// vibekit gets for an AGENT-launched run, whose launch path is KAS's.
+		methodWFRunStart:    h.observeRunStart,
+		methodWFRunComplete: h.observeRunComplete,
 	}
 	for method, kind := range map[string]api.RunProgressKind{
 		methodWFNodeStart:     api.RunProgressNodeStart,
@@ -101,6 +104,11 @@ func (h *Hub) initDispatch() {
 	} {
 		h.chatHandlers[method] = h.translator.RunProgressHandler(kind)
 	}
+	// A run-level pause stops the clock, because each arm is a ceiling of
+	// EXECUTING time: a run parked on purpose must not be cancelled for having
+	// been parked. Node-level pauses keep it — a step waiting inside a run that is
+	// still going is exactly what the ceiling is for.
+	h.chatHandlers[methodWFPaused] = h.observeRunPaused(h.chatHandlers[methodWFPaused])
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via
 	// REST, and the session inventory diff which has no client consumer now
@@ -162,7 +170,12 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 		fn(ctx, chatID, msg)
 		return
 	}
-	if _, ok := h.noopMethods[msg.Method]; ok {
+	// The noop table is keyed by METHOD only, so the id test is what keeps it
+	// from swallowing a REQUEST. Every member is a notification today, but a
+	// future request-shaped method added to that map would otherwise return here
+	// and never be answered, which is the exact wedge the refusal below exists to
+	// prevent — and it would be invisible, because a noop logs nothing.
+	if _, ok := h.noopMethods[msg.Method]; ok && msg.ID == nil {
 		return
 	}
 	// An unrecognised REQUEST must be answered. KAS calls its ext-methods with

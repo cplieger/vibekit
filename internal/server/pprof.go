@@ -1,0 +1,82 @@
+// Runtime profiles, behind the loopback gate.
+//
+// # Why this server carries them at all
+//
+// Every hazard this app has actually had is goroutine-lifecycle shaped: inflight
+// request tracking, the Stop-before-Wait shutdown ordering, one bridge per chat
+// with a readLoop and a notification fan-out each, the per-chat buffer store, the
+// SSE hub's per-subscriber writers. A goroutine dump answers all of those
+// directly — which goroutine, parked on what, since when — and nothing else the
+// process exposes does. It is also the one diagnostic an agent working INSIDE
+// this container can fetch for itself, which is the difference between
+// diagnosing a leak and asking the operator to reproduce it.
+//
+// # Not the blank import
+//
+// `import _ "net/http/pprof"` is the documented spelling and it is INERT here:
+// its init registers on http.DefaultServeMux, and this process serves a
+// http.NewServeMux built in ListenAndServe and never touches DefaultServeMux.
+// So the handlers are reached explicitly. The same init still runs and its
+// DefaultServeMux registrations stay unreachable, which is why the gosec
+// suppression below is a statement about this process rather than a waiver.
+//
+// # What is deliberately NOT mounted
+//
+// pprof.Profile (CPU) and pprof.Trace hold the server for their sample window,
+// 30 seconds by default and caller-controlled via ?seconds=. On a single-process
+// dev box with live SSE streams and PTY sessions that is a self-inflicted stall,
+// and neither answers the goroutine question this exists for. pprof.Cmdline and
+// pprof.Symbol are omitted for a smaller reason: nothing needs them for a
+// `?debug=2` text dump, and Symbol would be the one endpoint here that reads
+// process memory on a caller-supplied address list.
+//
+// pprof.Index serves the index page AND every named profile by deriving the name
+// from the request path, so one registration covers goroutine, heap, allocs,
+// block, mutex and threadcreate. It only works mounted at the literal
+// /debug/pprof/ prefix, which is also what `go tool pprof <url>` expects.
+//
+// # Reachability, stated because it is surprising
+//
+// The gate denies browser provenance headers (Origin, Sec-Fetch-Site) along with
+// proxy ones, so /debug/pprof/ in a browser tab answers 403 even from inside the
+// container. `curl` from `docker exec` is the access path. That is the right
+// answer for the stated use and it does rule out the interactive flame-graph UI.
+
+package server
+
+import (
+	"net/http"
+	// A NORMAL import, not the blank one: see the file comment. gosec's G108
+	// does not fire on this repo's profile, so there is no suppression here to
+	// go stale — if it is ever enabled, the reason to give it is that the
+	// handlers below are reached only through loopbackOnly and that this process
+	// never serves DefaultServeMux, where the package's init registers.
+	"net/http/pprof"
+)
+
+// pprofPath is the subtree pattern. The trailing slash is load-bearing twice
+// over: ServeMux needs it to match a subtree (and it then takes precedence over
+// the "/" SPA handler), and pprof.Index derives a profile name by trimming
+// exactly this prefix off the request path.
+const pprofPath = "/debug/pprof/"
+
+// pprofSurface is what a refused caller is told declined the request. It names
+// this endpoint rather than the repair hook that composes the same middleware,
+// because the refusal is the whole of what a rejected caller learns and naming
+// the wrong path sends the operator to retry the wrong one.
+const pprofSurface = "the runtime profile endpoint"
+
+// pprofHandler returns the gated profile handler.
+//
+// Same gate as the kiro-cli repair hook, and for a stronger reason: a goroutine
+// dump names every function on every stack, and the heap profile names
+// allocation sites. That is a map of the process, so it belongs behind the same
+// socket-peer AND Host check rather than a weaker one.
+func pprofHandler() http.Handler {
+	return loopbackOnly(pprofSurface, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A profile is a snapshot of this instant and there is no version of it
+		// that a cache should ever serve twice.
+		w.Header().Set("Cache-Control", "no-store")
+		pprof.Index(w, r)
+	}))
+}

@@ -18,6 +18,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -26,7 +27,6 @@ import (
 	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/procgroup"
-	"github.com/cplieger/vibekit/internal/redact"
 )
 
 // keySignal is the wire key for a terminating signal in an ACP terminal
@@ -47,17 +47,16 @@ type agentTerminal struct {
 	output  *byteRing
 	// ansi carries SGR state and any incomplete escape across read boundaries,
 	// so a colour opened in one 4 KB chunk still applies in the next and a
-	// sequence split by the boundary never leaks bytes into the text. Used only
+	// sequence split by the boundary never leaks bytes into the text. It also
+	// owns the running UTF-16 offset the wire reports as a chunk's base, which
+	// is why nothing here keeps a second count of the same quantity. Used only
 	// for the LIVE stream; the durable copy is re-parsed from the ring.
+	//
+	// Owned by the pump goroutine alone. Read or write it from anywhere else
+	// and two streams' styles bleed together.
 	ansi   *ansitext.Parser
 	chatID api.ChatID
 	signal string
-	// sentUTF16 is how many UTF-16 code units of plain text have been broadcast,
-	// which is what TerminalOutputPayload.Offset reports. It is NOT a byte
-	// length: span offsets are UTF-16 units because the client indexes with
-	// JavaScript string offsets, so a byte base would rebase every live span
-	// onto the wrong character the moment output contained anything non-ASCII.
-	sentUTF16 int
 	// turnSeq is the chat's turn sequence at creation — which TURN spawned
 	// this terminal. What lets an interrupt kill the turn's own processes
 	// without touching a background command an earlier turn left running.
@@ -79,6 +78,20 @@ func newAgentTerminal(cmd *exec.Cmd, chatID api.ChatID, limit int) *agentTermina
 		ansi:   ansitext.NewParser(),
 		chatID: chatID,
 	}
+}
+
+// rawOutput returns a snapshot of the terminal's raw ring under the same lock
+// the pump writes it with.
+//
+// The lock is the point. The ring is written by the pump goroutine and read by
+// three callers on other goroutines (the agent's terminal/output pull, the
+// retire path, and the translate layer's adoption), and two of those run while
+// the process is still producing bytes — KAS releases a terminal a few
+// milliseconds after creating it, which is well inside a command's lifetime.
+func (t *agentTerminal) rawOutput() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.output.String()
 }
 
 // wireSpans converts the parser's spans to the wire shape. The two structs are
@@ -170,6 +183,10 @@ type agentTerminals struct {
 	// Keyed by terminal id rather than tool-call id on purpose: the tool call
 	// learns its terminal id LATER still, so the id the pump has is the only one
 	// available when the bytes arrive.
+	//
+	// Bounded by the turn: every record is evicted at the turn boundary, and
+	// each holds at most one ring (64 KiB), so the peak is the turn's terminal
+	// count times that.
 	retired map[string]retiredOutput
 	// turnSeq is each chat's CURRENT turn ordinal, incremented at every
 	// turn end. A terminal stamps the value at creation, so "this turn's
@@ -186,6 +203,14 @@ type agentTerminals struct {
 // already bounds it. Keeping a second accumulator would mean a second buffer, a
 // second cap, and span offsets to rebase whenever that cap dropped bytes; the
 // ring already keeps a bounded tail, so adoption parses it on demand instead.
+//
+// A record is kept even when raw is EMPTY, and that is deliberate: the record's
+// existence is the answer to "did this terminal ever run", which is a different
+// question from "what did it print". Dropping the empty ones makes a silent
+// command (`mkdir -p`, `chmod`, a passing test runner with -q) indistinguishable
+// from a lost record, and the adoption path logs a warning on the latter — so
+// every silent command would file a false alarm and the signal would be worth
+// nothing.
 type retiredOutput struct {
 	raw     string
 	chatID  api.ChatID
@@ -211,22 +236,25 @@ func (at *agentTerminals) retire(id string, term *agentTerminal) {
 	if term == nil || term.output == nil {
 		return
 	}
-	raw := term.output.String()
-	if raw == "" {
-		return
-	}
-	at.retired[id] = retiredOutput{raw: raw, chatID: term.chatID, turnSeq: term.turnSeq}
+	at.retired[id] = retiredOutput{raw: term.rawOutput(), chatID: term.chatID, turnSeq: term.turnSeq}
 }
 
-// takeRetired returns and consumes a retired terminal's raw output.
-func (at *agentTerminals) takeRetired(id string) (string, bool) {
+// peekRetired returns a retired terminal's raw output WITHOUT consuming the
+// record.
+//
+// Non-destructive on purpose. KAS can send more than one terminal status frame
+// for the same tool call, and adoption runs on each: a consuming read would make
+// the second one find nothing and log "terminal output missing at completion"
+// about output that was adopted successfully a moment earlier. Leaving the record
+// in place makes adoption idempotent instead, and costs nothing — the turn
+// boundary evicts it either way.
+func (at *agentTerminals) peekRetired(id string) (string, bool) {
 	at.mu.Lock()
 	defer at.mu.Unlock()
 	rec, ok := at.retired[id]
 	if !ok {
 		return "", false
 	}
-	delete(at.retired, id)
 	return rec.raw, true
 }
 
@@ -427,11 +455,11 @@ var agentShell = sync.OnceValue(func() string {
 // agentCommand builds the process for one terminal/create.
 //
 // ACP's CreateTerminalRequest is `{command, args?}` and KAS leaves `args`
-// UNSET, putting the whole command line in `command` — measured 2026-08-17
-// against kiro-cli 2.18.0 (the KAS bundle's request schema marks args
-// optional, and every observed frame carried `"args":null` with the full line
-// in `command`). Handing that straight to exec.Command makes the ENTIRE string
-// the executable path, so every agent command containing a space died with
+// UNSET, putting the whole command line in `command` — measured against
+// kiro-cli 2.18.0 (the KAS bundle's request schema marks args optional, and
+// every observed frame carried `"args":null` with the full line in `command`).
+// Handing that straight to exec.Command makes the ENTIRE string the executable
+// path, so every agent command containing a space died with
 // `exec: "echo \"hello\"": executable file not found in $PATH`. Only a bare
 // binary name or a bare path worked, which made the agent's job close to
 // impossible: no flags, no arguments, no pipelines, no redirection.
@@ -446,6 +474,12 @@ var agentShell = sync.OnceValue(func() string {
 // length test collapses them: a program whose name contains a space or a shell
 // metacharacter would be handed to bash despite the sender having said it was a
 // bare program name. Hence the pointer at the decode site.
+//
+// The shell branch does not widen what the agent may run. Authorization is
+// kiro-cli's Cedar policy, which decides on the command LINE the agent asked
+// for; the environment it runs with is screened separately in termCreate, and
+// that screen is what stops a variable redirecting the approved command into
+// something else.
 func agentCommand(ctx context.Context, command string, args *[]string) *exec.Cmd {
 	if args != nil {
 		return exec.CommandContext(ctx, command, *args...) // #nosec G204 -- agent-controlled
@@ -494,6 +528,19 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	}
 	if params.Command == "" {
 		h.failTermCreate(ctx, chatID, msg, params.Command, "command is required")
+		return
+	}
+	// Screen the requested environment BEFORE anything is created, so the refusal
+	// needs no teardown (unlike the cwd check below, which already holds a ctx).
+	// See agent_terminal_env.go: an agent-supplied variable wins over the process
+	// environment, and a few names redirect execution rather than carry data, so
+	// this is what stops an approved command running something else.
+	if blocked := screenAgentEnv(params.Env, operatorAllowedEnv()); len(blocked) > 0 {
+		slog.Warn("refused an agent terminal that redirects execution through the environment",
+			"chat_id", chatID, "command", params.Command, "variables", strings.Join(blocked, ","))
+		respondErr(ctx, h, chatID, msg, "refusing to set "+strings.Join(blocked, ", ")+
+			": these variables change what a program executes, so they are not accepted from the agent."+
+			" Pass the setting on the command itself, or have the operator allow the name via "+envAllowVar)
 		return
 	}
 
@@ -552,7 +599,9 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	//
 	// Merging both streams into one pipe also removes the interleaving question:
 	// stdout and stderr arrive in the order the process wrote them, which is
-	// what a terminal shows.
+	// what a terminal shows. io.MultiReader did not preserve write order — it
+	// drained stdout to EOF first, so a command's stderr landed after all of its
+	// stdout however the two were actually produced.
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		stop()
@@ -671,79 +720,72 @@ func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID api.
 	}
 	// Release any escape sequence the stream ended mid-way through, so a
 	// truncated sequence shows its bytes rather than vanishing.
+	base := term.ansi.Offset()
 	if text, parsed := term.ansi.Flush(); text != "" {
-		h.publishTerminalText(ctx, term, termID, chatID, text, wireSpans(parsed))
+		h.publishTerminalText(ctx, termID, chatID, text, wireSpans(parsed), base)
 	}
 }
 
 // terminalEmitter returns the function that turns one raw chunk into what the
-// TRANSCRIPT renders: secrets masked, escape sequences parsed off into style
-// spans, plain text out.
+// TRANSCRIPT renders: hidden Unicode stripped, escape sequences parsed off into
+// style spans, plain text out.
 //
-// Both halves matter. Redaction was previously absent on this surface, which was
-// survivable only while the output went to a panel nobody opened; now that it is
-// the tool card's content it gets the same treatment as any other agent output.
-// And parsing server-side is what lets the client paint spans with textContent
+// Parsing server-side is what lets the client paint spans with textContent
 // instead of building HTML from these bytes.
+//
+// SanitizeUnicode, NOT SanitizeOutput. SanitizeOutput is
+// SanitizeUnicode(StripANSI(s)) iterated to a fixed point, so calling it here
+// deletes every escape sequence BEFORE the parser can see one: spans come out
+// empty on every chunk and agent output renders entirely unstyled. Measured
+// through this exact path — `ESC[90m1:47AM…` produces spans=0 with
+// SanitizeOutput and spans=2 without. TestTerminalEmitter_* pins it.
+//
+// The security property SanitizeOutput's iteration provided is preserved by the
+// ORDER rather than by stripping. Hidden Unicode goes first, so nothing can hide
+// a sequence behind a zero-width character; the parser then consumes SGR and
+// drops every other escape family StripANSI matched; and ansitext guarantees an
+// escape-free output text (its release paths neutralize a stray ESC, asserted by
+// FuzzParse). So the text reaching the chat file carries no residual escape,
+// which is what the strip was for.
+//
+// There is deliberately no secret-masking step. This app deleted its redaction
+// layer on purpose — chat logs, run history and diagnostics are served as
+// kiro-cli produced them — so adding one here would reintroduce a layer the
+// rest of the app does not have, on one surface, which is worse than not having
+// it: it would make the transcript disagree with the tool card's own content
+// blocks about what the command printed.
 func (h *Hub) terminalEmitter(
 	ctx context.Context, term *agentTerminal, termID string, chatID api.ChatID,
 ) func(string) {
 	return func(raw string) {
-		// SanitizeUnicode, NOT SanitizeOutput. SanitizeOutput is
-		// SanitizeUnicode(StripANSI(s)) iterated to a fixed point, so calling it
-		// here deleted every escape sequence BEFORE the parser could see one:
-		// spans came out empty on every chunk and agent output rendered entirely
-		// unstyled, which is worse than the library this replaced. Measured
-		// through this exact path — `ESC[90m1:47AM…` produced spans=0 with
-		// SanitizeOutput and spans=2 without. TestTerminalEmitter_* pins it.
-		//
-		// The security property SanitizeOutput's iteration provided is preserved
-		// by the ORDER rather than by stripping. Hidden Unicode goes first, so
-		// nothing can hide a sequence behind a zero-width character; the parser
-		// then consumes SGR and drops every other escape family StripANSI
-		// matched; and ansitext guarantees an escape-free output text (its
-		// release paths neutralize a stray ESC, asserted by FuzzParse). So the
-		// text reaching the chat file carries no residual escape, which is what
-		// the strip was for.
-		text, parsed := term.ansi.Write(redact.Output(api.SanitizeUnicode(raw)))
+		base := term.ansi.Offset()
+		text, parsed := term.ansi.Write(api.SanitizeUnicode(raw))
 		if text == "" && len(parsed) == 0 {
 			return
 		}
-		h.publishTerminalText(ctx, term, termID, chatID, text, wireSpans(parsed))
+		h.publishTerminalText(ctx, termID, chatID, text, wireSpans(parsed), base)
 	}
 }
 
-// publishTerminalText broadcasts one rendered chunk. Offset is the count of
-// UTF-16 code units already sent, read and advanced under the same lock, so a
-// client can tell a contiguous chunk from one that followed a drop.
+// publishTerminalText broadcasts one rendered chunk.
+//
+// base is where this chunk starts in the terminal's accumulated plain text,
+// counted in UTF-16 code units, read off the parser's own counter before the
+// write that produced the text. It is NOT a byte length, and it is NOT a second
+// tally: span offsets are absolute across the stream in UTF-16 units, so the
+// base has to be the same quantity from the same source, or every live span
+// rebases onto the wrong character the moment output contains anything
+// non-ASCII.
 func (h *Hub) publishTerminalText(
-	ctx context.Context, term *agentTerminal, termID string, chatID api.ChatID,
-	text string, spans []api.TextSpan,
+	ctx context.Context, termID string, chatID api.ChatID,
+	text string, spans []api.TextSpan, base int,
 ) {
-	term.mu.Lock()
-	offset := term.sentUTF16
-	term.sentUTF16 += utf16Len(text)
-	term.mu.Unlock()
 	h.Broadcast(ctx, api.NewEvent(api.EventTerminalOutput, chatID, api.TerminalOutputPayload{
 		TerminalID: termID,
 		Data:       text,
 		Spans:      spans,
-		Offset:     offset,
+		Offset:     base,
 	}))
-}
-
-// utf16Len counts the UTF-16 code units a string occupies: one per rune below
-// U+10000, two above (a surrogate pair). Mirrors internal/ansitext's own count,
-// which is what produced the span offsets this offset has to agree with.
-func utf16Len(s string) int {
-	n := 0
-	for _, r := range s {
-		n++
-		if r > 0xffff {
-			n++
-		}
-	}
-	return n
 }
 
 // incompleteTailLen returns the number of trailing bytes of b that form an
@@ -802,9 +844,9 @@ func (h *Hub) awaitTerminalExit(
 	// as long as the grandchild lived.
 	//
 	// terminal_exited must not be observable before the output it describes, so
-	// the broadcast happens after this: measured 2026-08-16, a `whoami` sent its
-	// exit as event 365 and its own "root\n" as 368, and the client painted the
-	// exit footer above the line that produced it.
+	// the broadcast happens after this: measured, a `whoami` sent its exit as
+	// event 365 and its own "root\n" as 368, and the client painted the exit
+	// footer above the line that produced it.
 	select {
 	case <-drained:
 	case <-time.After(terminalDrainGrace):

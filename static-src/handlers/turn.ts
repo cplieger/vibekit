@@ -18,33 +18,39 @@ import {
   get,
   getActiveId,
   tabStatusFor,
+  setTurnFailed,
+  setTurnDone,
   clearSteers,
 } from "../store.js";
+import { notifyIfHidden, isAgentFinishedEnabled, NOTIFY_TITLE } from "../notify.js";
+import { isWatching } from "../attention.js";
 import {
-  notifyIfHidden,
-  setBadge,
-  isAgentFinishedEnabled,
-  isPermissionNeededEnabled,
-  NOTIFY_TITLE,
-} from "../notify.js";
-import { pushDecision, collapseSettledDecision } from "../decision-dock.js";
+  pushDecision,
+  collapseSettledDecision,
+  hasPendingDecision,
+  dropTurnDecisions,
+} from "../decision-dock.js";
 import { drainModelSwitchQueue } from "../model-switcher.js";
 import { setTabStatus } from "../tabs.js";
 import { setLastError, clearLastError } from "../send-state.js";
 import { refreshGitBadge } from "../git.js";
-import { showBanner, onTurnEnded } from "../banner-stack.js";
+import { showBanner, onTurnEnded, type BannerLink } from "../banner-stack.js";
+import { openSetting } from "../settings-highlight.js";
+import { showLoginModal } from "../modals.js";
 import { respondPermission, respondElicitation, respondUserInput } from "../actions/chat.js";
-import { ERROR_ROUTES } from "./error-routing.js";
+import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
 
-/** Notify the user and set the badge if the page is hidden. */
-function notifyAndBadge(title: string, body: string): void {
-  notifyIfHidden(title, body);
-  if (document.visibilityState === "hidden") {
-    setBadge(1);
-  }
-}
+// `isWatching` moved to attention.ts, which reads the same rule to decide whether
+// a cue is already observed — one definition, so the `turn_done` latch and the
+// out-of-page acknowledgement cannot disagree about what "looking at it" means.
+//
+// `notifyAndBadge` is gone with it. Its badge half wrote the literal 1 into
+// document.title whenever the page was hidden, which is a FLAG where the reader
+// wants a count; the attention fold carries the real number, and two writers
+// fighting over one title would make the count wrong rather than absent. The
+// Notification half is `notifyIfHidden`, called directly.
 
 /** Track last notification time per chat to avoid duplicate notifications
  *  on SSE reconnect replay (events arrive within milliseconds). */
@@ -85,11 +91,33 @@ onSSE("turn_ended", (chatID, p) => {
   // The turn's snapshot chunk-watermark (connect-time turn_state) is
   // finished business once the turn ends.
   clearSnapshotSeq(chatID);
+  // Every ask this TURN raised is over: each one blocks the turn, so a turn that
+  // has ended is not waiting on one. Answered asks are already gone; what is left
+  // is an abandoned queue (the user cancelled, and cmdCancel cleared the server's
+  // own pending set), and leaving it here marked the chat `input` forever —
+  // `tabStatusFor` puts that ahead of everything. A workflow run's ask survives:
+  // it outlives the turn that launched it. Runs BEFORE the dot is re-derived, or
+  // the stale ask decides the state one last time.
+  dropTurnDecisions(chatID);
+  // A finished turn is `done` even when the agent never said so. `completed`
+  // arrives only if the model calls its status tool, so the transport's own
+  // verdict is what makes "your background chat finished" hold; tabStatusFor
+  // still prefers `completed` where it lands.
+  //
+  // Two conditions, both narrow on purpose. A CANCELLED turn finished nothing,
+  // which is the same line the "Agent finished" notification already draws below.
+  // And a chat the reader is watching needs no mark: `done` means "finished while
+  // you were away", so it is not latched on the visible active tab at all rather
+  // than latched and immediately cleared.
+  if (p.stop_reason !== "cancelled" && !isWatching(chatID)) {
+    setTurnDone(chatID);
+  }
   // Re-derive the per-tab activity dot for the chat whose turn ended, even
   // when it's a background tab. Shares tabStatusFor with the store effect:
   // thinking clears, but an agent-declared waiting_on_user survives turn
-  // end (that's its point — "I asked you something") as the amber dot.
-  setTabStatus(chatID, tabStatusFor(get(chatID)));
+  // end (that's its point — "I asked you something") and so does a RUN's
+  // pending decision, whose ask outlives the turn that raised it.
+  setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
   clearLastError();
   onTurnEnded(chatID);
   refreshGitBadge();
@@ -123,7 +151,7 @@ onSSE("turn_ended", (chatID, p) => {
       _lastNotifyMs.set(chatID, now);
       const s = get(chatID);
       const name = s?.name ?? "Chat";
-      notifyAndBadge(NOTIFY_TITLE, `${name}: Agent finished`);
+      notifyIfHidden(NOTIFY_TITLE, `${name}: Agent finished`);
     }
   }
 
@@ -134,8 +162,12 @@ onSSE("turn_ended", (chatID, p) => {
   // double-rendered on SSE replay and vanished on refresh. Unconditional (not
   // active-gated): a background turn's footer is then present on switch, and
   // the server persists the same fields so it survives reload.
-  const summary: { credits?: number; elapsedMs?: number; changedFiles?: typeof p.changed_files } =
-    {};
+  const summary: {
+    credits?: number;
+    elapsedMs?: number;
+    changedFiles?: typeof p.changed_files;
+    model?: string;
+  } = {};
   if (p.credits_delta !== undefined) {
     summary.credits = p.credits_delta;
   }
@@ -145,18 +177,28 @@ onSSE("turn_ended", (chatID, p) => {
   if (p.changed_files !== undefined) {
     summary.changedFiles = p.changed_files;
   }
+  // Which model served the turn. Live half of the pair; the same value is
+  // persisted on the message so the footer survives a reload.
+  if (p.model !== undefined) {
+    summary.model = p.model;
+  }
   setTurnSummary(chatID, summary);
 });
 
+// The three asks below notify unconditionally, gated only by the master
+// notifications switch inside notifyIfHidden. Each one BLOCKS the turn until it
+// is answered and none has a per-tab marker of its own, so a per-kind mute
+// stalled every later turn of that chat with nothing on screen to say why. What
+// relaxes the interruptions is the Settings -> Permissions workspace
+// relaxation, which stops the asks from being raised at all.
+
 onSSE("permission_needed", (chatID, p) => {
-  if (isPermissionNeededEnabled()) {
-    notifyAndBadge(
-      NOTIFY_TITLE,
-      p.files !== undefined && p.files.length > 0
-        ? "Review this turn's changes"
-        : "Permission needed",
-    );
-  }
+  notifyIfHidden(
+    NOTIFY_TITLE,
+    p.files !== undefined && p.files.length > 0
+      ? "Review this turn's changes"
+      : "Permission needed",
+  );
   pushDecision({
     kind: "permission",
     chatID,
@@ -174,9 +216,7 @@ onSSE("permission_needed", (chatID, p) => {
 });
 
 onSSE("elicitation_needed", (chatID, p) => {
-  if (isPermissionNeededEnabled()) {
-    notifyAndBadge(NOTIFY_TITLE, "Input requested by a tool");
-  }
+  notifyIfHidden(NOTIFY_TITLE, "Input requested by a tool");
   pushDecision({
     kind: "elicitation",
     chatID,
@@ -194,9 +234,7 @@ onSSE("elicitation_needed", (chatID, p) => {
 });
 
 onSSE("user_input_needed", (chatID, p) => {
-  if (isPermissionNeededEnabled()) {
-    notifyAndBadge(NOTIFY_TITLE, "The agent has a question");
-  }
+  notifyIfHidden(NOTIFY_TITLE, "The agent has a question");
   pushDecision({
     kind: "user_input",
     chatID,
@@ -223,14 +261,44 @@ onSSE("decision_settled", (chatID, p) => {
 
 // --- Data-driven error classification (imported from error-routing.ts) ---
 
+/** Turn a route's declared action into the banner's link. The table stays data;
+ *  this is the one place that knows how each kind is performed. */
+function bannerLinkFor(action: ErrorAction | undefined): BannerLink | undefined {
+  if (action === undefined) {
+    return undefined;
+  }
+  switch (action.kind) {
+    case "setting":
+      return {
+        label: action.label,
+        onClick: () => {
+          openSetting(action.tab, action.control);
+        },
+      };
+    case "sign-in":
+      return { label: action.label, onClick: showLoginModal };
+    default:
+      action satisfies never;
+      return undefined;
+  }
+}
+
 onSSE("error", (chatID, p) => {
+  // --- Side-effects: fire unconditionally regardless of active chat ---
   // Unfreeze thinking so send-state can settle correctly.
   setThinking(chatID, false);
+  // Latch the failure on the CHAT, then re-derive its tab dot. This half has to
+  // run for a background chat: the prose below deliberately does not (one chat's
+  // failure must not claim another's send button), which left a failed
+  // background turn with no marker anywhere — its dot simply went out, exactly
+  // as if the turn had finished cleanly.
+  setTurnFailed(chatID);
+  setTabStatus(chatID, tabStatusFor(get(chatID), hasPendingDecision(chatID)));
 
   const code = p.code;
   const msg = p.message;
 
-  // Only surface errors for the active chat to avoid polluting the
+  // Only surface the error PROSE for the active chat, to avoid polluting the
   // send-button state with errors from background chats.
   if (chatID !== getActiveId()) {
     return;
@@ -243,9 +311,13 @@ onSSE("error", (chatID, p) => {
     return;
   }
   switch (route.surface) {
-    case "banner":
-      showBanner(chatID, code, msg, route.level, route.dismissible);
+    case "banner": {
+      // A routed banner that names an action carries a jump to it, so the
+      // message and the thing that fixes it are one click apart instead of the
+      // reader having to hunt the panel the prose named.
+      showBanner(chatID, code, msg, route.level, route.dismissible, bannerLinkFor(route.action));
       break;
+    }
     case "send-error":
       setLastError(`${code}: ${msg}`);
       break;

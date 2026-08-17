@@ -8,9 +8,10 @@
 
 import { $, maybeViewTransition } from "./dom.js";
 import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
-import { toggleFilesView } from "./tabs.js";
+import { getActiveTabKind, toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
 import { openChange } from "./navigate.js";
+import { fileDownloadURL } from "./utils-url.js";
 import {
   initGitStatusStore,
   onGitStatusChange,
@@ -27,6 +28,9 @@ import { iconEl } from "./icon-el.js";
 import { pushRoute } from "./router.js";
 import { attachPathToActiveChat } from "./chat.js";
 import { initBrowserDragDrop } from "./files-browser-drop.js";
+import { initFilesSearch, resetFilesSearch } from "./files-search.js";
+import { screenUploads } from "./upload-policy.js";
+import * as toast from "./toast.js";
 import {
   type FileEntry,
   fetchDir,
@@ -118,6 +122,16 @@ export function initFileBrowser(): void {
     getEntryMap: () => state.entryMap,
     reload: loadDir,
   });
+  initFilesSearch({
+    getSearchPath: () => state.currentPath,
+    // Ctrl-F in an editor tab means find-in-files, and the search surface lives
+    // in the files view. toggleSingleton only CLOSES a tab that is already
+    // active, so calling it from another tab's context opens rather than
+    // toggles.
+    activateBrowser: () => {
+      toggleFilesView(loadDir, resetFileBrowser);
+    },
+  });
 
   // Auto-disable buttons while any mutually-exclusive file operation is
   // in flight. Prevents races (e.g. rename + delete on the same selection).
@@ -145,11 +159,17 @@ export function initFileBrowser(): void {
   });
 
   // F2 renames the selected single item. No-op for zero or multi.
+  //
+  // Keyed on the tab, not the view, for find-dispatch.ts's reason: the tab store
+  // already knows which tab is active, so reading it is reading the answer rather
+  // than inferring it from which view element happens to be unhidden. Ctrl-F
+  // already asks the question this way, and two mechanisms for one question is
+  // how they drift apart.
   document.addEventListener("keydown", (e: KeyboardEvent) => {
     if (e.key !== "F2") {
       return;
     }
-    if (document.getElementById("files-view")?.classList.contains("hidden") ?? true) {
+    if (getActiveTabKind() !== "files") {
       return;
     }
     if (state.selected.size !== 1) {
@@ -187,6 +207,7 @@ export function restoreFileBrowser(path: string): void {
 /** Reset the file browser to root. */
 function resetFileBrowser(): void {
   state.reset();
+  resetFilesSearch();
   // Clear the DOM too: rows kept while hidden would replay their entry
   // animation in unison on the next display flip (a block translate) and
   // skip fresh mounts in reconcile. A fresh mount every open keeps the
@@ -798,8 +819,14 @@ function downloadSelected(): void {
   // ever becomes an issue, disable the button briefly via setTimeout.
   const singleName = names.length === 1 ? names[0] : undefined;
   if (singleName !== undefined && state.entryMap.get(singleName)?.isDir !== true) {
+    // A same-origin anchor to this route, and it is safe for exactly one reason:
+    // the server answers `Content-Disposition: attachment`, so a `.svg` — which
+    // arrives as `Content-Type: image/svg+xml` and is script-capable when
+    // navigated to — is SAVED rather than rendered as a document on vibekit's
+    // origin. The `download` attribute is the same instruction from this side.
+    // Never turn this into a "view in a tab" affordance.
     const a = el("a", {
-      href: `/api/file/download?path=${encodeURIComponent(joinPath(state.currentPath, singleName))}`,
+      href: fileDownloadURL(joinPath(state.currentPath, singleName)),
       download: singleName,
       rel: "noopener",
     });
@@ -816,19 +843,31 @@ function downloadSelected(): void {
 function uploadViaDialog(): void {
   const input = el("input", { type: "file", multiple: true }) as HTMLInputElement;
   input.addEventListener("change", () => {
-    if (input.files !== null && input.files.length > 0) {
-      void upload.dispatch(
-        { files: input.files, targetDir: state.currentPath },
-        {
-          onSuccess: (paths) => {
-            loadDir();
-            for (const p of paths) {
-              attachPathToActiveChat(p);
-            }
-          },
-        },
-      );
+    if (input.files === null || input.files.length === 0) {
+      return;
     }
+    // Screened even though the file came from a dialog: the user chose the file,
+    // not its size against a limit they cannot see from the OS picker, and
+    // multi-select makes the TOTAL cap reachable without any single file being
+    // large. Naming the file here beats a 413 that names nothing.
+    const screened = screenUploads(input.files);
+    if (screened.skipped !== "") {
+      toast.error(screened.skipped);
+    }
+    if (screened.files === null) {
+      return;
+    }
+    void upload.dispatch(
+      { files: screened.files, targetDir: state.currentPath },
+      {
+        onSuccess: (paths) => {
+          loadDir();
+          for (const p of paths) {
+            attachPathToActiveChat(p);
+          }
+        },
+      },
+    );
   });
   input.click();
 }

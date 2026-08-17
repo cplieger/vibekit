@@ -180,7 +180,7 @@ async function load(workflowID: string): Promise<void> {
       "div",
       { className: "run-summary" },
       el("span", { className: "run-status" }, state.status ?? "unknown"),
-      el("span", { className: "text-muted text-sm" }, state.workflowId),
+      el("span", { className: "run-id" }, state.workflowId),
       buildRunControls(workflowID, state.status ?? ""),
     ),
   );
@@ -212,7 +212,7 @@ async function load(workflowID: string): Promise<void> {
           value.trim() === ""
             ? el(
                 "div",
-                { className: "run-output-empty text-muted text-sm" },
+                { className: "run-output-empty" },
                 "Empty: this step's last assistant message carried no text.",
               )
             : el("pre", { className: "run-output-body" }, value),
@@ -283,7 +283,7 @@ function renderNode(node: RunNode, depth: number): HTMLElement {
     el("span", { className: "run-node-id" }, label),
     el("span", { className: "run-node-type" }, node.type),
     node.agentName !== undefined && node.agentName !== ""
-      ? el("span", { className: "text-muted text-sm" }, node.agentName)
+      ? el("span", { className: "run-node-agent" }, node.agentName)
       : null,
     el("span", { className: "run-node-dur" }, duration(node)),
   );

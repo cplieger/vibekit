@@ -102,6 +102,42 @@ type kiroDoc struct {
 
 	Tools            []string `json:"tools,omitempty"`
 	SteeringOverride bool     `json:"steering_override,omitempty"`
+
+	// ReadOnly says this row is not writable, so the page must render it without
+	// the edit or delete affordance.
+	//
+	// This is the row's PROVENANCE channel (D65), and it is deliberately a single
+	// asserted bit rather than a four-valued source enum. Crew's aim / kiro-user /
+	// kiro-workspace / package vocabulary does not map onto this endpoint: kiroRoots
+	// enumerates the workspace root's `.kiro` plus one level of `<repo>/.kiro` and
+	// nothing else — no global tree, no user tree, no package tree, no shipped
+	// read-only set — so every row it emits is workspace content and a source enum
+	// would have one inhabited value.
+	//
+	// NOTHING SETS IT TODAY, and that is the correction rather than an oversight.
+	// D67a set it for any entry reached through a symlink, on the premise that such
+	// a save fails with ELOOP; the premise was false (see docVerdict in
+	// kiro_docs_guard.go — the write resolves the link first and O_NOFOLLOW guards
+	// the canonical target), so the app has no writability source yet. The field
+	// stays because it is the right shape for one and the client already honours it;
+	// what went is the wrong derivation.
+	//
+	// `omitempty`, so absent means writable and read-only is asserted explicitly.
+	// Same default direction as api.Origin's adaptOrigin (mcp-state.ts), and for
+	// the same reason: a read-only row must only ever be produced by the server
+	// saying so, never by a field failing to arrive.
+	ReadOnly bool `json:"read_only,omitempty"`
+
+	// DeleteProtected says this row must render without the DELETE affordance while
+	// keeping its edit.
+	//
+	// A separate bit from ReadOnly because it answers a separate question. It is set
+	// for an entry reached through a symlink, where the delete route canonicalizes
+	// the path and so unlinks the link's TARGET — losing the aliased file rather
+	// than the alias. Editing through the link is what following it means; deleting
+	// through it is not. Folding the two into one flag is what made D67a claim a
+	// row was read-only while its own activation surface opened an editable file.
+	DeleteProtected bool `json:"delete_protected,omitempty"`
 }
 
 // docsCache memoizes one scan behind a cheap directory-mtime signature.
@@ -248,7 +284,8 @@ func scanKiroRoots(ctx context.Context, roots []kiroRoot) []kiroDoc {
 		if ctx.Err() != nil || len(docs) >= maxDocsTotal {
 			return docs
 		}
-		docs = append(docs, scanKiroDocsFS(ctx, os.DirFS(root.fsPath), root.prefix)...)
+		docs = append(docs, scanKiroDocsFS(ctx, os.DirFS(root.fsPath), root.prefix,
+			newRootGuard(root.fsPath, root.prefix))...)
 	}
 	if len(docs) > maxDocsTotal {
 		docs = docs[:maxDocsTotal]
@@ -258,22 +295,22 @@ func scanKiroRoots(ctx context.Context, roots []kiroRoot) []kiroDoc {
 
 // scanKiroDocsFS scans one `.kiro` tree over fs.FS, so it is unit-testable with
 // fstest.MapFS. Category order here is the page's fixed tab order.
-func scanKiroDocsFS(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
+func scanKiroDocsFS(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
 	var docs []kiroDoc
-	for _, scan := range []func(context.Context, fs.FS, string) []kiroDoc{
+	for _, scan := range []func(context.Context, fs.FS, string, pathGuard) []kiroDoc{
 		scanDocsSteering, scanDocsSkills, scanDocsAgents, scanDocsSpecs, scanDocsHooks,
 	} {
 		if ctx.Err() != nil {
 			return docs
 		}
-		docs = append(docs, scan(ctx, root, prefix)...)
+		docs = append(docs, scan(ctx, root, prefix, guard)...)
 	}
 	return docs
 }
 
 // scanDocsSteering walks `steering/` recursively for markdown.
-func scanDocsSteering(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
-	return walkMarkdown(ctx, root, "steering", catSteering, func(rel string, fm steering.FrontMatter, data []byte) kiroDoc {
+func scanDocsSteering(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
+	return walkMarkdown(ctx, root, "steering", catSteering, guard, func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) kiroDoc {
 		return kiroDoc{
 			Category:         catSteering,
 			Name:             docLabel(&fm, data, rel),
@@ -283,6 +320,7 @@ func scanDocsSteering(ctx context.Context, root fs.FS, prefix string) []kiroDoc 
 			Inclusion:        fm.Inclusion,
 			FileMatch:        fm.FileMatch,
 			SteeringOverride: fm.SteeringOverride,
+			DeleteProtected:  v.deleteProtected,
 		}
 	})
 }
@@ -290,8 +328,8 @@ func scanDocsSteering(ctx context.Context, root fs.FS, prefix string) []kiroDoc 
 // scanDocsSkills emits one row per skill MANIFEST (`skills/<name>/SKILL.md`).
 // Non-manifest markdown under a skill directory is reference material — the
 // regulations, the agent guides — and is deliberately not a row.
-func scanDocsSkills(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
-	entries, err := fs.ReadDir(root, "skills")
+func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
+	entries, err := readGuardedDir(root, "skills", guard)
 	if err != nil {
 		return nil
 	}
@@ -304,10 +342,12 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
 			continue
 		}
 		rel := e.Name() + "/SKILL.md"
-		data, rErr := readCappedFS(root, "skills/"+rel)
+		data, verdict, rErr := readGuardedFS(root, "skills/"+rel, guard)
 		if rErr != nil {
 			// A directory with no manifest is still a skill (matching the
-			// entity scan), just an undescribed one.
+			// entity scan), just an undescribed one. The verdict is unknown on
+			// this path, so the row keeps the editable default: read-only is
+			// asserted, never inferred from a failure.
 			data = nil
 		}
 		fm := steering.Parse(data)
@@ -338,6 +378,7 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
 			Description:      fm.Description,
 			Inclusion:        inclusion,
 			SteeringOverride: fm.SteeringOverride,
+			DeleteProtected:  verdict.deleteProtected,
 		})
 	}
 	return docs
@@ -345,19 +386,19 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
 
 // scanDocsAgents emits one row per agent, de-duplicating the `.json`/`.md` pair
 // and preferring the markdown (which is what carries the front-matter).
-func scanDocsAgents(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
-	entries, err := fs.ReadDir(root, "agents")
+func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
+	entries, err := readGuardedDir(root, "agents", guard)
 	if err != nil {
 		return nil
 	}
-	chosen, order := dedupeAgentFiles(entries)
-	docs := make([]kiroDoc, 0, len(order))
-	for _, base := range order {
+	agents := steering.DedupeAgentFiles(entries)
+	docs := make([]kiroDoc, 0, len(agents))
+	for _, a := range agents {
 		if ctx.Err() != nil || len(docs) >= maxDocsPerCategory {
 			return docs
 		}
-		file := chosen[base]
-		data, rErr := readCappedFS(root, "agents/"+file)
+		base, file := a.Base, a.File
+		data, verdict, rErr := readGuardedFS(root, "agents/"+file, guard)
 		if rErr != nil {
 			slog.Warn("kiro docs: read agent", "name", file, "error", rErr)
 			data = nil
@@ -368,47 +409,16 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
 			name = base
 		}
 		docs = append(docs, kiroDoc{
-			Category:    catAgent,
-			Name:        name,
-			Path:        prefix + "/agents/" + file,
-			Description: fm.Description,
-			Model:       fm.Model,
-			Tools:       fm.Tools,
+			Category:        catAgent,
+			Name:            name,
+			Path:            prefix + "/agents/" + file,
+			Description:     fm.Description,
+			Model:           fm.Model,
+			Tools:           fm.Tools,
+			DeleteProtected: verdict.deleteProtected,
 		})
 	}
 	return docs
-}
-
-// dedupeAgentFiles collapses an agents directory to one file per base name,
-// preferring `.md` over `.json`. Returns the choice map and a stable order.
-func dedupeAgentFiles(entries []fs.DirEntry) (chosen map[string]string, order []string) {
-	chosen = make(map[string]string, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || strings.ContainsRune(e.Name(), 0) {
-			continue
-		}
-		var base string
-		switch {
-		case strings.HasSuffix(e.Name(), ".md"):
-			base = strings.TrimSuffix(e.Name(), ".md")
-		case strings.HasSuffix(e.Name(), ".json"):
-			base = strings.TrimSuffix(e.Name(), ".json")
-		default:
-			continue
-		}
-		if base == "" {
-			continue
-		}
-		existing, seen := chosen[base]
-		switch {
-		case !seen:
-			chosen[base] = e.Name()
-			order = append(order, base)
-		case strings.HasSuffix(e.Name(), ".md") && strings.HasSuffix(existing, ".json"):
-			chosen[base] = e.Name()
-		}
-	}
-	return chosen, order
 }
 
 // scanDocsSpecs walks `specs/` and groups each document under its feature
@@ -421,18 +431,19 @@ func dedupeAgentFiles(entries []fs.DirEntry) (chosen map[string]string, order []
 // tasks.md. Fixed columns would manufacture an empty Tasks column for every
 // feature and hide the study entirely, so a feature is a group with arbitrary
 // children, ordered requirements → design → tasks → lexical.
-func scanDocsSpecs(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
-	docs := walkMarkdown(ctx, root, "specs", catSpec, func(rel string, fm steering.FrontMatter, data []byte) kiroDoc {
+func scanDocsSpecs(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
+	docs := walkMarkdown(ctx, root, "specs", catSpec, guard, func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) kiroDoc {
 		group := path.Dir(rel)
 		if group == "." {
 			group = "" // a doc loose in specs/ has no feature
 		}
 		return kiroDoc{
-			Category:    catSpec,
-			Name:        docLabel(&fm, data, rel),
-			Path:        prefix + "/specs/" + rel,
-			Group:       group,
-			Description: fm.Description,
+			Category:        catSpec,
+			Name:            docLabel(&fm, data, rel),
+			Path:            prefix + "/specs/" + rel,
+			Group:           group,
+			Description:     fm.Description,
+			DeleteProtected: v.deleteProtected,
 		}
 	})
 	sortSpecDocs(docs)
@@ -469,8 +480,8 @@ func sortSpecDocs(docs []kiroDoc) {
 // into several rows. Reuses steering.ParseHooks so the fields stay sanitized:
 // hook files are workspace content, and a raw newline or backtick in a name
 // would break out of the span these values render into.
-func scanDocsHooks(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
-	entries, err := fs.ReadDir(root, "hooks")
+func scanDocsHooks(ctx context.Context, root fs.FS, prefix string, guard pathGuard) []kiroDoc {
+	entries, err := readGuardedDir(root, "hooks", guard)
 	if err != nil {
 		return nil
 	}
@@ -482,12 +493,12 @@ func scanDocsHooks(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") || strings.ContainsRune(e.Name(), 0) {
 			continue
 		}
-		data, rErr := readCappedFS(root, "hooks/"+e.Name())
+		data, verdict, rErr := readGuardedFS(root, "hooks/"+e.Name(), guard)
 		if rErr != nil {
 			slog.Warn("kiro docs: read hook", "name", e.Name(), "error", rErr)
 			continue
 		}
-		docs = append(docs, hookRows(data, prefix, e.Name())...)
+		docs = append(docs, hookRows(data, prefix, e.Name(), verdict.deleteProtected)...)
 	}
 	if len(docs) > maxDocsPerCategory {
 		docs = docs[:maxDocsPerCategory]
@@ -497,7 +508,7 @@ func scanDocsHooks(ctx context.Context, root fs.FS, prefix string) []kiroDoc {
 
 // hookRows expands one v1 hook envelope into its rows. A file may carry several
 // hooks, and each is its own row.
-func hookRows(data []byte, prefix, file string) []kiroDoc {
+func hookRows(data []byte, prefix, file string, deleteProtected bool) []kiroDoc {
 	parsed := steering.ParseHooks(data)
 	out := make([]kiroDoc, 0, len(parsed))
 	for _, h := range parsed {
@@ -506,12 +517,13 @@ func hookRows(data []byte, prefix, file string) []kiroDoc {
 			name = strings.TrimSuffix(file, ".json")
 		}
 		out = append(out, kiroDoc{
-			Category: catHook,
-			Name:     name,
-			Path:     prefix + "/hooks/" + file,
-			Group:    file,
-			Trigger:  h.Trigger,
-			Action:   h.Command,
+			Category:        catHook,
+			Name:            name,
+			Path:            prefix + "/hooks/" + file,
+			Group:           file,
+			Trigger:         h.Trigger,
+			Action:          h.Command,
+			DeleteProtected: deleteProtected,
 		})
 	}
 	return out
@@ -524,9 +536,10 @@ func walkMarkdown(
 	ctx context.Context,
 	root fs.FS,
 	sub, category string,
-	mk func(rel string, fm steering.FrontMatter, data []byte) kiroDoc,
+	guard pathGuard,
+	mk func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) kiroDoc,
 ) []kiroDoc {
-	w := &mdWalker{ctx: ctx, root: root, sub: sub, category: category, mk: mk}
+	w := &mdWalker{ctx: ctx, root: root, sub: sub, category: category, guard: guard, mk: mk}
 	err := fs.WalkDir(root, sub, w.step)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		slog.Warn("kiro docs: walk", "category", category, "error", err)
@@ -540,7 +553,8 @@ func walkMarkdown(
 type mdWalker struct {
 	ctx      context.Context
 	root     fs.FS
-	mk       func(rel string, fm steering.FrontMatter, data []byte) kiroDoc
+	mk       func(rel string, fm steering.FrontMatter, data []byte, v docVerdict) kiroDoc
+	guard    pathGuard
 	sub      string
 	category string
 	docs     []kiroDoc
@@ -560,17 +574,23 @@ func (w *mdWalker) step(p string, d fs.DirEntry, walkErr error) error {
 		if strings.Count(rel, "/")+1 > maxSpecWalkDepth {
 			return fs.SkipDir
 		}
+		// Refused at the DIRECTORY, so the walk never enumerates what is behind
+		// a link out of the tree. Skipping only the files would still let a
+		// symlinked `steering/` cause a recursive walk of its target.
+		if !w.guard.allows(p) {
+			return fs.SkipDir
+		}
 		return nil
 	}
 	if !isMarkdownEntry(d) {
 		return nil
 	}
-	data, err := readCappedFS(w.root, p)
+	data, verdict, err := readGuardedFS(w.root, p, w.guard)
 	if err != nil {
 		slog.Warn("kiro docs: read", "category", w.category, "path", p, "error", err)
 		return nil
 	}
-	w.docs = append(w.docs, w.mk(rel, steering.Parse(data), data))
+	w.docs = append(w.docs, w.mk(rel, steering.Parse(data), data, verdict))
 	return nil
 }
 

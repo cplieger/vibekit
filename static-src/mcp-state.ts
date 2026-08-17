@@ -92,6 +92,13 @@ const decodeWireRuntimeStatus: Decoder<WireRuntimeStatus> = (v) => {
   if (err !== undefined) {
     out.error = err;
   }
+  // Read as a strict `=== true` rather than through a validator: the server
+  // omits it in the common case (`omitempty`), and a missing flag means "not
+  // yet relayed", which is the safe default — it offers the paste box rather
+  // than hiding it for a callback that was never delivered.
+  if (s["relayed"] === true) {
+    out.relayed = true;
+  }
   if (Array.isArray(s["tools"])) {
     out.tools = (s["tools"] as unknown[]).map((x) => String(x));
   }
@@ -268,7 +275,11 @@ export type Origin = "user" | "power" | "unknown";
 
 export type RuntimeStatus =
   | { name: string; origin: Origin; state: "connected" }
-  | { name: string; origin: Origin; state: "needs_auth"; oauth_url: string }
+  /** `relayed` says this attempt's stranded callback was already delivered
+   *  through the loopback relay (`POST /api/mcp/oauth-relay`). It rides the
+   *  status wire rather than living in the row, so a reload or a second device
+   *  does not offer the paste box again for a code that has been spent. */
+  | { name: string; origin: Origin; state: "needs_auth"; oauth_url: string; relayed: boolean }
   | { name: string; origin: Origin; state: "idle" }
   | { name: string; origin: Origin; state: "failed"; error: string }
   | { name: string; origin: Origin; state: "disabled" };
@@ -291,6 +302,7 @@ interface WireRuntimeStatus {
   state: string;
   origin?: string;
   oauth_url?: string;
+  relayed?: boolean;
   error?: string;
   tools?: string[];
   prompts?: MCPPromptInfo[];
@@ -313,7 +325,13 @@ export function adaptStatus(w: WireRuntimeStatus): RuntimeStatus {
   const origin = adaptOrigin(w.origin);
   switch (w.state) {
     case "needs_auth":
-      return { name: w.name, origin, state: "needs_auth", oauth_url: w.oauth_url ?? "" };
+      return {
+        name: w.name,
+        origin,
+        state: "needs_auth",
+        oauth_url: w.oauth_url ?? "",
+        relayed: w.relayed ?? false,
+      };
     case "failed":
       return { name: w.name, origin, state: "failed", error: w.error ?? "" };
     case "connected":

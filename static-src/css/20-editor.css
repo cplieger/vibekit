@@ -56,7 +56,7 @@
   font-size: var(--fs-sm);
   line-height: 1.6;
   tab-size: 4;
-  color: var(--c-text-tertiary);
+  color: var(--c-text-secondary);
   text-align: end;
   user-select: none;
   border-inline-end: 1px solid var(--c-border);
@@ -78,6 +78,91 @@
   margin: 0;
   white-space: pre;
   overflow-x: auto;
+}
+
+/* Rendered-markdown read surface. Occupies the same grid cell as the highlight
+   pane and the textarea, so exactly one of the four is ever visible; the gutter
+   column collapses with it because `.hidden` is display:none.
+
+   No prose rules here on purpose. The prose container inside carries
+   `.message.assistant` — the app's one rendered-markdown skin, whose ~40rem cap
+   is the reading measure — rather than a second copy of it that would drift. */
+.editor-markdown {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  background: var(--c-bg-primary);
+  color: var(--c-text-primary);
+}
+
+/* The image read surface. Same grid slot as the markdown surface — it is the
+   other non-text read view — and the gutter column is hidden alongside it. */
+.editor-image {
+  display: grid;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  /* Top-aligned, horizontally centred: a tall screenshot is READ from the top,
+     so centring it vertically would hide its first rows behind a scroll. */
+  place-content: start center;
+  padding: var(--sp-4);
+  background: var(--c-bg-primary);
+  /* No overflow of its own: `.editor-body` is the scroller, and a nested one
+     would compete with it — the same rule the markdown surface follows. */
+}
+
+/* Width-fit only, and never upscaled: a 32px icon stretched to the pane tells
+   the reader less about the file than its real size does, and a tall screenshot
+   should scroll rather than shrink to illegibility. */
+.editor-image-el {
+  max-width: 100%;
+  height: auto;
+}
+
+/* The document's YAML front-matter, rendered rather than stripped: for a
+   steering doc the inclusion mode and fileMatchPattern are the facts a reader
+   came for. Set apart from the prose because it is metadata about the file, not
+   part of it. */
+.editor-fm {
+  display: block;
+  max-width: 40.75rem;
+  margin-block-end: var(--sp-4);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-border);
+  border-inline-start: 0.125rem solid var(--c-accent);
+  border-radius: 0 var(--r) var(--r) 0;
+  background: var(--c-bg-secondary);
+  font-size: var(--fs-sm);
+}
+
+.editor-fm-title {
+  display: block;
+  margin-block-end: var(--sp-1);
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Two columns: the key sizes to its content so the values line up, and the
+   value column takes the rest and wraps. */
+.editor-fm-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--sp-1) var(--sp-3);
+  margin: 0;
+}
+
+.editor-fm-key {
+  color: var(--c-text-secondary);
+  font-family: var(--font-mono);
+}
+
+.editor-fm-val {
+  margin: 0;
+  color: var(--c-text-primary);
+  overflow-wrap: anywhere;
 }
 
 .editor-content {
@@ -158,4 +243,126 @@
 
 .diff-pane-unified .diff-line-text {
   white-space: pre;
+}
+
+/* ==========================================================================
+   Find in the open file
+
+   IN-FLOW, docked between the conflict overlay and the scroller, not floating
+   over the text. `.editor-body` is the scroller, so a bar in the flex column
+   shrinks it by exactly its own height and covers no line of the file — where a
+   floating box would sit over the first lines, which on a jump-to-match is
+   precisely where the reader is looking. Same reasoning 19-files.css records for
+   the file browser's bar; the transcript's box floats because ITS content keeps
+   scrolling underneath.
+
+   The buttons reuse .chat-find-btn's pairing (SVG glyph + `line-height: 0` to
+   collapse the strut around a replaced element) and `Aa` reuses the cap-band
+   trim. 24-find.css carries the derivation for both.
+   ========================================================================== */
+
+.editor-find {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex-shrink: 0;
+  padding: var(--sp-1) var(--sp-3);
+  background: var(--c-bg-secondary);
+  border-block-end: 1px solid var(--c-border);
+}
+
+.editor-find-input {
+  flex: 1 1 8rem;
+  min-inline-size: 0;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--c-text-primary);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  font-size: var(--fs-base);
+  touch-action: manipulation;
+  transition: border-color var(--dur-micro) var(--ease-standard);
+
+  &:focus-visible {
+    outline: none;
+    border-color: var(--c-accent);
+  }
+}
+
+.editor-find-count {
+  min-inline-size: 4.5rem;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.editor-find-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.editor-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  inline-size: var(--btn-h);
+  block-size: var(--btn-h);
+  padding: 0;
+  color: var(--c-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--r);
+  line-height: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+
+  &:hover {
+    color: var(--c-text-primary);
+    background: var(--c-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 1px;
+  }
+}
+
+/* Fill, edge and ink for the latched state: 70-selection.css. No local selected
+   state here. */
+.editor-find-case {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  line-height: normal;
+  text-box: trim-both cap alphabetic;
+}
+
+/* No-results affordance, matching .chat-find-no-results: tint the field and the
+   counter rather than restructuring the bar. */
+.editor-find-no-results .editor-find-input {
+  border-color: var(--c-red);
+}
+
+.editor-find-no-results .editor-find-count {
+  color: var(--c-red);
+}
+
+/* Mobile: 44px targets and 16px to defeat iOS focus-zoom. In the feature file,
+   not 50-mobile.css (see css/MANIFEST's layer note). */
+@media (width <= 40rem) {
+  .editor-find-input {
+    font-size: 16px;
+  }
+
+  .editor-find-btn {
+    inline-size: 2.75rem;
+    block-size: 2.75rem;
+  }
 }

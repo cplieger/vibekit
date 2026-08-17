@@ -286,59 +286,24 @@ type AgentEntry struct {
 	Name     string // from JSON "name" field
 }
 
-// findRepoAgents scans `.kiro/agents/` for agent configs. An agent may
-// ship as a `.json` config, a `.md` doc, or both; paired files share a
-// base name and count as ONE agent (preferring the `.md`, mirroring the
-// REST scan's scanAgents in internal/server/kiro_config.go). Capped at
-// 10 distinct agents.
+// findRepoAgents scans `.kiro/agents/` for agent configs, collapsing each
+// `.json`/`.md` pair to ONE agent through DedupeAgentFiles. Capped at 10
+// distinct agents.
 func findRepoAgents(repoDir string) []AgentEntry {
 	dir := filepath.Join(repoDir, ".kiro", "agents")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	// De-dupe by base name; prefer the .md file when both .md and .json
-	// exist for the same agent.
-	chosen := make(map[string]string) // base name -> chosen filename
-	var order []string
-	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		name, ok := agentBaseName(e.Name())
-		if !ok {
-			continue
-		}
-		existing, seen := chosen[name]
-		switch {
-		case !seen:
-			chosen[name] = e.Name()
-			order = append(order, name)
-		case strings.HasSuffix(e.Name(), ".md") && strings.HasSuffix(existing, ".json"):
-			chosen[name] = e.Name()
-		}
-	}
-	out := make([]AgentEntry, 0, min(len(order), 10))
-	for _, name := range order {
+	agents := DedupeAgentFiles(entries)
+	out := make([]AgentEntry, 0, min(len(agents), 10))
+	for _, a := range agents {
 		if len(out) >= 10 {
 			break
 		}
-		out = append(out, AgentEntry{Filename: chosen[name], Name: name})
+		out = append(out, AgentEntry{Filename: a.File, Name: a.Base})
 	}
 	return out
-}
-
-// agentBaseName returns the base name of an agent config file (stripping
-// a `.md` or `.json` extension) and whether the file is an agent config.
-func agentBaseName(filename string) (string, bool) {
-	switch {
-	case strings.HasSuffix(filename, ".md"):
-		return strings.TrimSuffix(filename, ".md"), true
-	case strings.HasSuffix(filename, ".json"):
-		return strings.TrimSuffix(filename, ".json"), true
-	default:
-		return "", false
-	}
 }
 
 // HookEntry is one hook from a `.kiro/hooks/*.json` document.

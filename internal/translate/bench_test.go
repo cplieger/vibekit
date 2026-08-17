@@ -21,11 +21,21 @@ type baseDeps struct {
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
 	// assert the hub-side cache write (mirrors onBroadcast).
 	onSetGovernance func(api.GovernanceStatePayload)
+	// scheduledRuns are the workflow ids IsScheduledRun answers true for, so a
+	// test can stage a scheduled run without a hub or a scheduler.
+	scheduledRuns map[string]bool
+	// stepCapBreaches records every StepTurnCapExceeded call, so a test can
+	// assert the per-step turn cap fired once and named the right step without a
+	// hub behind it.
+	stepCapBreaches []stepCapBreach
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
 	// terminals stands in for the hub's agent-terminal registry, keyed by
-	// terminal id, so adoptTerminalOutput is exercisable without one.
+	// terminal id, so adoptTerminalOutput is exercisable without one. A key
+	// present with an empty text is a REGISTERED terminal that printed nothing,
+	// which the real registry reports as ok — the distinction the miss warning
+	// keys on.
 	terminals map[string]termRendered
 }
 
@@ -44,6 +54,11 @@ func newBaseDeps() *baseDeps {
 	}
 }
 
+func (d *baseDeps) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
+	t, ok := d.terminals[terminalID]
+	return t.text, t.spans, ok
+}
+
 func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
 	if d.onBroadcast != nil {
 		d.onBroadcast(ctx, evt)
@@ -51,12 +66,21 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
 }
 func (d *baseDeps) ChatStore() api.ChatStore           { return d.store }
 func (d *baseDeps) ParentACPSession(api.ChatID) string { return d.parent }
-func (d *baseDeps) WorkDir() string                    { return "/tmp" }
-func (d *baseDeps) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
-	t, ok := d.terminals[terminalID]
-	return t.text, t.spans, ok
+func (d *baseDeps) IsScheduledRun(workflowID string) bool {
+	return d.scheduledRuns[workflowID]
 }
 
+// stepCapBreach is one recorded StepTurnCapExceeded call.
+type stepCapBreach struct {
+	workflowID string
+	nodeID     string
+	turns      int
+}
+
+func (d *baseDeps) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
+	d.stepCapBreaches = append(d.stepCapBreaches, stepCapBreach{workflowID, nodeID, turns})
+}
+func (d *baseDeps) WorkDir() string { return "/tmp" }
 func (d *baseDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]any) error {
 	return nil
 }
@@ -67,12 +91,12 @@ func (d *baseDeps) SetGovernance(g api.GovernanceStatePayload) {
 		d.onSetGovernance(g)
 	}
 }
-func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)           {}
-func (d *baseDeps) PendingPermsRemove(int64)                         {}
-func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind) {}
-func (d *baseDeps) BufferStore() BufferAccess                        { return d.bufStore }
-func (d *baseDeps) LineTracker() LineRecorder                        { return d.lineTracker }
-func (d *baseDeps) IsHookStatusEnabled() bool                        { return false }
+func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)                       {}
+func (d *baseDeps) PendingPermsRemove(int64)                                     {}
+func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind, api.ChatID) {}
+func (d *baseDeps) BufferStore() BufferAccess                                    { return d.bufStore }
+func (d *baseDeps) LineTracker() LineRecorder                                    { return d.lineTracker }
+func (d *baseDeps) IsHookStatusEnabled() bool                                    { return false }
 
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 

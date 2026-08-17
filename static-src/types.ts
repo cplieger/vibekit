@@ -31,12 +31,16 @@ export type {
   AccountUsage,
   AccountUsageBreakdown,
   ApprovalFile,
+  Attachment,
   ChatHeader,
   FileChange,
   Message,
   Block,
   CodeReference,
   RefusalInfo,
+  ToolDisclosed,
+  ToolDenial,
+  ToolDenialRule,
   MeteringItem,
   PermissionOption,
   PlanEntry,
@@ -164,6 +168,13 @@ export interface PendingSteer {
    *  waiting for the next node boundary. This is the distinction the chip row
    *  exists to show, and the reason `steer_injected` is its own event. */
   injected: boolean;
+  /** What the agent said it DID about the steer, from the acknowledgement
+   *  marker KAS asks it to close its response with. Arrives later than
+   *  `injected` and on a different channel (the text stream, not the steering
+   *  one), because reading a steer and acting on it are separate moments.
+   *  Absent until the marker closes, and absent for good if the agent never
+   *  emits one. */
+  ack?: string;
   /** Present only when KAS classified the message as a system notification
    *  instead of a user steer, which it decides by sniffing the text. vibekit
    *  refuses to SEND such a message, so a severity here means the notice came
@@ -195,11 +206,58 @@ export interface Session {
   /** Agent-declared one-line description of what it is working on
    *  (chat_status SSE). Shown as the chat tab's tooltip. */
   agent_status_text?: string;
+  /** This chat's last turn or bridge operation failed (`error` SSE naming this
+   *  chat). Client-only and latched, for the same reason `agent_status` is: the
+   *  failure is a settled fact until the next turn, and a background chat's
+   *  failure is otherwise invisible — `handlers/turn.ts` deliberately routes the
+   *  error PROSE only for the active chat, to keep one chat's failure off
+   *  another's send button. Cleared by the next `setThinking(id, true)` and by
+   *  the transport-gap reconciler, exactly like `agent_status`. */
+  turn_failed?: boolean;
+  /** This chat's last turn finished while the reader was looking somewhere else.
+   *  Client-only and latched, the mirror of `turn_failed`.
+   *
+   *  It exists because the agent-declared `completed` status is the higher-
+   *  fidelity signal and NOT a guaranteed one: it only arrives when the model
+   *  calls `update_session_information`, so a turn that ended without one fell
+   *  to `idle` and "your background chat finished" — the whole point of the tab
+   *  dot — was true only sometimes. `turn_ended` always arrives, so the latch is
+   *  what makes the promise hold; `completed` still wins where it lands, because
+   *  it is the agent's own verdict rather than the transport's.
+   *
+   *  Set only when the chat is NOT being watched (not the active tab, or the page
+   *  is hidden), so the state means "finished while you were away". Cleared by
+   *  activating the chat (seeing it settles it), by the next
+   *  `setThinking(id, true)`, and by the transport-gap reconciler, exactly like
+   *  `turn_failed`. Never set for a cancelled turn: nothing was finished. */
+  turn_done?: boolean;
   /** Mid-turn steers KAS is holding or has just delivered for this chat.
    *  A pure projection of the three steer SSE events; cleared at every turn
    *  boundary because that is when KAS clears its own buffer. */
   steers?: PendingSteer[];
   supervised_mode?: boolean;
+  /** Reasoning-effort level ("low".."max", "" = the engine default). The
+   *  fourth per-chat composer setting, beside model, mode and supervised; it
+   *  used to be one global `model_effort` setting keyed by the last model, so
+   *  two chats could not disagree. */
+  effort?: string;
+  /** The SERVER's copy of the composer draft, from the single-chat GET. A SEED
+   *  only: composer-state.ts holds the live working copy, adopts this once per
+   *  chat and thereafter ignores it, because a fetch can land after the user has
+   *  started typing the next message. It rides that GET rather than the header so
+   *  it stays off the list endpoint and off every chat_updated frame; a chat with
+   *  a record but no messages therefore needs its own fetch to get one, which is
+   *  what activateChatView's empty branch does (`set_mode` and `set_effort` both
+   *  auto-create the record before the first prompt, so a persisted empty chat
+   *  can genuinely hold a draft). */
+  draft?: string;
+  /** This chat exists nowhere but this tab's memory: a client-minted id whose
+   *  record the server has not acknowledged. Cleared the moment a server frame
+   *  names it (upsertHeader's re-sync branch), and gone with the row when the tab
+   *  closes. What it buys is not asking the server about a chat it has never
+   *  heard of — a GET on a ghost id 404s, and the empty-chat draft fetch would
+   *  fire one on every New chat click. */
+  ghost?: boolean;
   compaction_watermark?: string;
 }
 
@@ -225,6 +283,11 @@ export interface WorkflowRunRow {
   name: string;
   status?: string;
   parent_chat_id?: string;
+  /** Why a run BOUND stopped this run: "overran" (a wall clock) or "step_cap" (a
+   *  step's turn cap). Absent for every other ending, INCLUDING a user cancel —
+   *  which is the point of the field, since both bounds stop a run through the
+   *  same cancel a person uses and KAS reports `aborted` either way. */
+  end_reason?: string;
   updated_at: number;
   created_at?: number;
   started_at?: number;

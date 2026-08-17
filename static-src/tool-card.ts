@@ -23,6 +23,7 @@ import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import { createDisclosure, type DisclosureController } from "@cplieger/ui-primitives/disclosure";
 import {
   renderInfoFor,
+  disclosedClaim,
   formatMCPToolName,
   toolDepth1,
   hasDepth1,
@@ -30,6 +31,7 @@ import {
   isToolDone,
   type ToolRenderInfo,
 } from "./tool-schema.js";
+import type { ToolDenial, ToolDisclosed } from "./types.js";
 import { trackInProgress } from "./tool-group.js";
 import { el } from "@cplieger/reactive";
 
@@ -48,20 +50,43 @@ export interface BuildToolCardOpts {
   /** Live mode: show spinner + start timestamp + show-raw-input block +
    *  expand-on-fail. Replay mode: omit those since the call has settled. */
   live: boolean;
+  /** KAS's `_meta.kiro.disclosedContext`: the skill or steering document a
+   *  `disclose_context` call loaded. */
+  disclosed?: ToolDisclosed | undefined;
+  /** KAS's `_meta.kiro.policyDenial`: the rule that refused this call. */
+  denial?: ToolDenial | undefined;
 }
 
 /** Build a tool-call element. Does not append it to the DOM. */
 export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
-  const info = renderInfoFor(opts.title, opts.kind, opts.input);
+  const info = renderInfoFor(opts.title, opts.kind, opts.input, {
+    disclosed: opts.disclosed,
+    denial: opts.denial,
+  });
   const depth1 = toolDepth1(info.kind);
   const rawTitle = opts.title.startsWith("Running: ") ? opts.title.slice(9) : opts.title;
-  const displayTitle = info.mcp !== null ? formatMCPToolName(info.mcp.tool) : rawTitle;
+  // A disclose_context call names its DOCUMENT, not the tool that fetched it:
+  // the activation is the moment a skill's body enters the prompt, and "which
+  // skill" is the only fact a reader wants from the row.
+  const displayTitle =
+    info.disclosed !== null
+      ? disclosedClaim(info.disclosed)
+      : info.mcp !== null
+        ? formatMCPToolName(info.mcp.tool)
+        : rawTitle;
 
   const node = el("div", { className: `tool-call tool-depth1-${depth1}` }) as HTMLDivElement;
   node.dataset["kind"] = info.kind;
   node.dataset["title"] = displayTitle;
   node.dataset["depth1"] = depth1;
   node.dataset["toolId"] = opts.id;
+  if (info.disclosed !== null) {
+    node.dataset["disclosed"] = info.disclosed.type;
+  }
+  if (info.denial !== null) {
+    // Read back by applyOutcome on the update path, which only has the DOM.
+    node.dataset["denied"] = "1";
+  }
   if (info.mcp !== null) {
     node.dataset["mcpServer"] = info.mcp.server;
   }
@@ -228,6 +253,16 @@ function buildHeader(
   return header;
 }
 
+/** What a caller may state. `ToolStatus` is the tool wire enum; `aborted` is the
+ *  one run-level status with no tool counterpart, admitted because the History
+ *  page states a run's verdict through this same writer and a stopped run is
+ *  neither a success nor a failure of the work. */
+type OutcomeStatus = ToolStatus | "aborted";
+
+/** The verdicts the vocabulary paints. Not the wire enums: `pending` and
+ *  `in_progress` are one thing to a reader, and a refusal is its own state. */
+type OutcomeState = "ok" | "fail" | "warn" | "denied" | "running";
+
 /** Paint a card's outcome onto its glyph, and give the card an accessible name.
  *
  *  ONE writer for the whole vocabulary, which is the point: the outcome used to
@@ -241,15 +276,28 @@ function buildHeader(
  *  and a programmatic name is not visible text. */
 export function applyOutcome(
   node: HTMLElement,
-  status: ToolStatus,
+  status: OutcomeStatus,
   displayTitle: string,
   info: ToolRenderInfo,
 ): void {
   const icon = node.querySelector<HTMLElement>(".tool-icon");
-  const state = isToolDone(status) ? (status === "failed" ? "fail" : "ok") : "running";
+  // A policy refusal is its OWN state, not a failure. The command was never run,
+  // so "failed" would send the reader to debug a tool that behaved correctly;
+  // what they need is the rule. Read from the dataset as well as the info so the
+  // update path (which only has the DOM) reaches the same verdict.
+  const denied = info.denial !== null || node.dataset["denied"] === "1";
+  const state: OutcomeState = denied
+    ? "denied"
+    : status === "aborted"
+      ? "warn"
+      : isToolDone(status)
+        ? status === "failed"
+          ? "fail"
+          : "ok"
+        : "running";
   node.dataset["outcome"] = state;
   if (icon !== null) {
-    icon.classList.remove("is-ok", "is-fail", "is-running");
+    icon.classList.remove("is-ok", "is-fail", "is-warn", "is-running", "is-denied");
     icon.classList.add(`is-${state}`);
     // The shape half. Rebuilt rather than toggled so a re-render cannot stack
     // two badges on one glyph.
@@ -259,7 +307,7 @@ export function applyOutcome(
         el(
           "span",
           { className: "tool-outcome-badge", "aria-hidden": "true" },
-          state === "ok" ? "\u2713" : "\u2717",
+          OUTCOME_BADGE[state],
         ),
       );
     }
@@ -268,14 +316,30 @@ export function applyOutcome(
   node.setAttribute("aria-label", `${subject}, ${outcomeWord(state)}`);
 }
 
+/** The shape half of the vocabulary, one glyph per settled state.
+ *
+ *  A shield for a refusal and a triangle for a stop are distinct in SHAPE, not
+ *  only in tint, for the same WCAG 1.4.1 reason the check and cross are shapes —
+ *  which matters twice over here, because both are amber. */
+const OUTCOME_BADGE: Readonly<Record<Exclude<OutcomeState, "running">, string>> = {
+  ok: "\u2713",
+  fail: "\u2717",
+  warn: "\u26A0",
+  denied: "\u26D4",
+};
+
 /** The word the accessible name uses. Deliberately not the wire enum: "pending"
  *  and "in_progress" both mean the same thing to a listener. */
-function outcomeWord(state: string): string {
+function outcomeWord(state: OutcomeState): string {
   switch (state) {
     case "ok":
       return "succeeded";
     case "fail":
       return "failed";
+    case "warn":
+      return "aborted";
+    case "denied":
+      return "blocked by security policy";
     default:
       return "running";
   }
@@ -302,7 +366,42 @@ function buildDetails(opts: BuildToolCardOpts): string {
       : "";
   // No "collapsed" class: the disclosure controller wired in wireToggle owns
   // the collapse state (inline height + aria-hidden/inert on the region).
-  return `<div class="tool-details">${inputBlock}<div class="tool-output"></div></div>`;
+  return `<div class="tool-details">${denialBlock(opts.denial)}${inputBlock}<div class="tool-output"></div></div>`;
+}
+
+/** The rule that refused the call, and where it lives.
+ *
+ *  This is the whole point of surfacing a denial separately: the user owns the
+ *  policy, so a refusal that names its rule and its file is one step from
+ *  changing it. Without this the card says "blocked" and the reader has to go
+ *  hunt the policy for a rule that may not even be the one that fired. */
+function denialBlock(d: ToolDenial | undefined): string {
+  if (d === undefined) {
+    return "";
+  }
+  const rows: string[] = [
+    `<div class="tool-denial-row"><span>Capability</span><code>${escText(d.capability)}</code></div>`,
+  ];
+  if (d.resource !== "") {
+    rows.push(
+      `<div class="tool-denial-row"><span>Resource</span><code>${escText(d.resource)}</code></div>`,
+    );
+  }
+  if (d.rule !== undefined) {
+    const patterns = [
+      ...(d.rule.match ?? []).map((m) => escText(m)),
+      ...(d.rule.exclude ?? []).map((m) => `!${escText(m)}`),
+    ].join(", ");
+    rows.push(
+      `<div class="tool-denial-row"><span>Rule</span><code>${escText(d.rule.effect)} ${escText(d.rule.capability)}${patterns === "" ? "" : ` (${patterns})`}</code></div>`,
+    );
+  }
+  if (d.source !== "") {
+    rows.push(
+      `<div class="tool-denial-row"><span>From</span><code>${escText(d.scope)}: ${escText(d.source)}</code></div>`,
+    );
+  }
+  return `<div class="tool-denial">${rows.join("")}</div>`;
 }
 
 // --- Wiring ---

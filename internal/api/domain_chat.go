@@ -186,9 +186,19 @@ type ToolCall struct {
 	// below to keep govet fieldalignment happy: a trailing pointer would
 	// extend the GC scan region past a slice's non-pointer len/cap words.
 	Checkpoint *ToolCheckpoint `json:"checkpoint,omitempty"`
-	Input      json.RawMessage `json:"input,omitempty"`
-	Locations  []ToolLocation  `json:"locations,omitempty"`
-	Diffs      []ToolDiff      `json:"diffs,omitempty"`
+	// Disclosed names the skill or steering document a `disclose_context` call
+	// loaded, from _meta.kiro.disclosedContext. Nil on every other tool call.
+	// This is the only signal that a skill's body actually reached the model, so
+	// it is what the transcript renders instead of a generic tool card.
+	Disclosed *ToolDisclosed `json:"disclosed,omitempty"`
+	// Denial is KAS's structured reason for a call the Cedar policy refused,
+	// from _meta.kiro.policyDenial. Nil unless the policy denied it. Present so a
+	// refusal reads as a refusal rather than a tool failure, and names the rule
+	// responsible, since the user owns the policy.
+	Denial    *ToolDenial     `json:"denial,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	Locations []ToolLocation  `json:"locations,omitempty"`
+	Diffs     []ToolDiff      `json:"diffs,omitempty"`
 	// OutputSpans styles ranges of Output. Parsed once server-side by
 	// internal/ansitext, so Output stays plain searchable text and the client
 	// paints spans without ever building HTML from agent-controlled bytes.
@@ -199,10 +209,18 @@ type ToolCall struct {
 }
 
 // TextSpan styles the half-open range [Start,End) of a sibling text field.
+//
 // It mirrors internal/ansitext.Span; the wire type lives here because
-// internal/api owns every shape codegen projects into TypeScript, and Attrs
-// values match web-terminal-engine's WireRun.a so the terminal renderer and the
-// transcript renderer share one attribute vocabulary.
+// internal/api owns every shape codegen projects into TypeScript and
+// internal/ansitext stays a stdlib-only leaf that knows nothing about the wire.
+//
+// Attrs values match web-terminal-engine's vt.WireRun.A so the terminal
+// renderer and the transcript renderer share one attribute vocabulary. The
+// COLOUR encoding deliberately differs from WireRun's, which resolves every
+// colour to 0xRRGGBB against the terminal's theme: a palette INDEX survives
+// into a persisted chat file without baking today's theme into it, and the
+// transcript's ANSI palette is a set of CSS custom properties the user's theme
+// redefines.
 type TextSpan struct {
 	// Start is the inclusive offset into the styled text, in UTF-16 CODE UNITS
 	// rather than bytes, because the consumer indexes with JavaScript string
@@ -220,6 +238,38 @@ type TextSpan struct {
 	// 16=strike, 32=dim, 64=hidden, 128=blink, 256=overline,
 	// 512=double-underline.
 	Attrs uint16 `json:"attrs"`
+}
+
+// ToolDisclosed identifies a skill or steering document loaded into context by
+// the agent's own `disclose_context` call. Type is "skill" or "steering".
+type ToolDisclosed struct {
+	Type        string `json:"type"`
+	DisplayName string `json:"display_name"`
+	URI         string `json:"uri"`
+}
+
+// ToolDenial is the policy verdict that refused a tool call.
+//
+// Rule is the matched rule, and it is the load-bearing field: a denial that
+// names its rule is one click from editing it, which is what makes "configure
+// permissions however you like" actionable. Scope and Source say WHERE the rule
+// lives (user or workspace `permissions.yaml`), so the user knows which file to
+// open.
+type ToolDenial struct {
+	Rule       *ToolDenialRule `json:"rule,omitempty"`
+	Capability string          `json:"capability"`
+	Resource   string          `json:"resource"`
+	Scope      string          `json:"scope"`
+	Source     string          `json:"source"`
+}
+
+// ToolDenialRule is the Cedar rule that produced a denial. Effect is "deny" or
+// "ask" (an unanswered ask that timed out reaches here as a denial).
+type ToolDenialRule struct {
+	Capability string   `json:"capability"`
+	Effect     string   `json:"effect"`
+	Match      []string `json:"match,omitempty"`
+	Exclude    []string `json:"exclude,omitempty"`
 }
 
 // ToolCheckpoint is KAS's pre/post-image mapping for one file write,
@@ -334,9 +384,18 @@ type Message struct {
 	// extended-thinking models emit it as a parallel stream alongside
 	// Content. Persisted on the same message so the one-message-per-turn
 	// invariant holds; rendered above the content bubble in the UI.
-	Reasoning string     `json:"reasoning,omitempty"`
-	EventKind EventKind  `json:"event_kind,omitempty"`
-	ID        string     `json:"id"`
+	Reasoning string    `json:"reasoning,omitempty"`
+	EventKind EventKind `json:"event_kind,omitempty"`
+	ID        string    `json:"id"`
+	// TurnModel is the model that answered this turn, stamped on the final
+	// assistant message at turn_ended alongside TurnCredits / TurnElapsedMs
+	// below. It belongs on the MESSAGE and not only on the Chat because the
+	// chat's Model is the CURRENT one: a footer reading that at render time
+	// would relabel every historical turn the moment the user switched models.
+	// Absent on every message persisted before this field existed, and the
+	// client renders nothing rather than "unknown". (Grouped with the strings
+	// above for govet fieldalignment, not for logical order.)
+	TurnModel string     `json:"turn_model,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 	// Blocks is the chronologically-ordered content array — text / tool_use /
 	// thinking blocks in the order the agent emitted them, each stamped with an
@@ -355,6 +414,17 @@ type Message struct {
 	// render the distinct refusal callout (chip + rewind / switch-model CTAs).
 	Refusal *RefusalInfo `json:"refusal,omitempty"`
 	Plan    []PlanEntry  `json:"plan,omitempty"`
+	// Attachments are the files the user attached to THIS prompt, stamped on
+	// the user message so a sent turn can render them as pills in its header.
+	// It has to live on the record: BuildPromptBlocks consumes
+	// PromptCommand.Attachments on the way OUT to KAS and folds each one into a
+	// content block, so by the time the turn is read back there is nothing to
+	// recover the list from — an image or a document does not even leave its
+	// path in Content. Absent on every message persisted before this field
+	// existed, and on every turn opened by a steer (`_session/steer` takes a
+	// plain string, so a mid-turn send has no structured attachment list to
+	// carry).
+	Attachments []Attachment `json:"attachments,omitempty"`
 	// TurnCredits / TurnElapsedMs complete the turn footer summary alongside
 	// ChangedFiles (above). The values also ride the turn_ended SSE for the
 	// live render; omitempty drops the zero cases (a read-only turn has none).
@@ -422,10 +492,35 @@ type SessionModel struct {
 
 // Chat is the full persisted chat. Serialized as <dir>/<id>.json.
 type Chat struct {
-	Name                string         `json:"name"`
-	Model               string         `json:"model,omitempty"`
-	ACPSessionID        string         `json:"acp_session_id,omitempty"`
-	CurrentModeID       string         `json:"current_mode_id,omitempty"`
+	Name          string `json:"name"`
+	Model         string `json:"model,omitempty"`
+	ACPSessionID  string `json:"acp_session_id,omitempty"`
+	CurrentModeID string `json:"current_mode_id,omitempty"`
+	// Effort is the chat's reasoning-effort level ("low".."max"), the fourth
+	// composer setting to live here beside Model, CurrentModeID and
+	// SupervisedMode. It used to be one global `model_effort` setting keyed by
+	// the LAST model, so switching models discarded the previous model's choice
+	// and two chats could not disagree at all. Applied at session/new through
+	// StartOpts.Effort and live through CmdSetEffort.
+	//
+	// A plain string, not EffortLevel: this is persisted state, so a value
+	// written by a different build must decode rather than throw. The command
+	// boundary validates with EffortLevel.Valid().
+	Effort string `json:"effort,omitempty"`
+	// Draft is the composer text typed but not sent, so switching chat tabs
+	// stops bleeding one chat's half-written message into another.
+	//
+	// Server-side rather than localStorage because it then follows the user
+	// across devices and joins the state that is already per-chat and
+	// canonical. Deliberately NOT on ChatHeader: a debounced autosave would
+	// otherwise put the draft in a chat_updated frame every 600ms of typing,
+	// which every connected client would re-render and which would race the
+	// caret of the tab that typed it. The single-chat GET carries it instead.
+	//
+	// Retention rides chat_retention_days with no second TTL: the draft is a
+	// field in the one chat file the purge deletes. Store.SetDraft is what keeps
+	// that honest — it does not touch UpdatedAt, which the purge ages from.
+	Draft               string         `json:"draft,omitempty"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
 	ID                  string         `json:"id"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
@@ -515,6 +610,7 @@ func (c *Chat) Header() ChatHeader {
 		ACPSessionID:        c.ACPSessionID,
 		PriorACPSessionIDs:  c.PriorACPSessionIDs,
 		CurrentModeID:       c.CurrentModeID,
+		Effort:              c.Effort,
 		AvailableModes:      c.AvailableModes,
 		AvailableModels:     c.AvailableModels,
 		Usage:               c.Usage,
@@ -530,10 +626,16 @@ func (c *Chat) Header() ChatHeader {
 // by fieldalignment packing, not Chat's field order; both structs
 // serialise to JSON independently so the visual mismatch is harmless.
 type ChatHeader struct {
-	Name                string         `json:"name"`
-	Model               string         `json:"model,omitempty"`
-	ACPSessionID        string         `json:"acp_session_id,omitempty"`
-	CurrentModeID       string         `json:"current_mode_id,omitempty"`
+	Name          string `json:"name"`
+	Model         string `json:"model,omitempty"`
+	ACPSessionID  string `json:"acp_session_id,omitempty"`
+	CurrentModeID string `json:"current_mode_id,omitempty"`
+	// Effort mirrors Chat's. Carried here because the effort control reads the
+	// ACTIVE chat's level, and an empty chat never fetches its full record (the
+	// client shows the model picker instead of loading messages), so the header
+	// is the only path that reaches every chat. Chat.Draft is deliberately NOT
+	// mirrored — see the comment on that field.
+	Effort              string         `json:"effort,omitempty"`
 	ID                  string         `json:"id"`
 	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
 	AvailableModels     []SessionModel `json:"available_models,omitempty"`
@@ -594,7 +696,24 @@ type WorkflowRun struct {
 	// the launching session's chain. Empty for a run with no vibekit parent
 	// (launched from the TUI, or by a chat vibekit no longer keeps).
 	ParentChatID string `json:"parent_chat_id,omitempty"`
-	UpdatedAt    int64  `json:"updated_at"`
-	CreatedAt    int64  `json:"created_at,omitempty"`
-	StartedAt    int64  `json:"started_at,omitempty"`
+	// EndReason says why a run STOPPED when something other than the run itself
+	// decided that: "overran" (it blew a wall clock — its schedule's next slot or
+	// the universal ceiling) or "step_cap" (one of its steps blew its turn cap).
+	//
+	// It exists because KAS's status cannot answer the question. Both bounds
+	// terminate a run through the same CancelRun the Cancel button reaches, so the
+	// run reports `cancelled` either way and a reader cannot tell a backstop from
+	// a person. Recording the reason rather than wrapping the cancel in a timeout
+	// is deliberate for that reason: a plain timeout wrapper conflates "exceeded
+	// its ceiling" with "was cancelled", which is the conflation this removes.
+	//
+	// A user cancel records NOTHING, so absence is the third value and no
+	// "cancelled_by_user" spelling is needed. Not KAS's field and not persisted:
+	// vibekit keeps it in memory for the runs it stopped in THIS process (see
+	// hub.runBoundsState), so a run stopped before a restart falls back to the
+	// plain status. Empty for every run that ended on its own terms.
+	EndReason string `json:"end_reason,omitempty"`
+	UpdatedAt int64  `json:"updated_at"`
+	CreatedAt int64  `json:"created_at,omitempty"`
+	StartedAt int64  `json:"started_at,omitempty"`
 }

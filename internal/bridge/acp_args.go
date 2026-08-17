@@ -1,10 +1,16 @@
 // Operator-supplied kiro-cli launch flags: the VIBEKIT_KIRO_ACP_ARGS filter.
 //
-// The point of the injector is NOT to unlock a capability. Two things vibekit
-// was assumed to be missing, it already had: `resolveAgentEngine` is a one-line
-// hard pin to v3, and `buildACPArgs` already emits `--model` and `--effort`. Of
-// the seven flags `kiro-cli acp` accepts, three are already emitted and three
-// must be refused, which leaves `--agent` and `-v`.
+// The point of the injector is NOT to unlock a capability. `resolveAgentEngine`
+// is a one-line hard pin to v3, so the engine was never reachable here. Of the
+// seven flags `kiro-cli acp` accepts, one is already emitted (`--agent-engine`)
+// and five must be refused, which leaves `--agent` and `-v`.
+//
+// An earlier revision of this comment claimed `buildACPArgs` emits `--model` and
+// `--effort`. It does not, and cannot: kiro-cli REFUSES both alongside
+// `--agent-engine=v3` and exits before answering initialize (see
+// bridge_process.go). That mistake is why they were missing from the refusal list
+// below, which made this hatch a way to kill every chat bridge from a compose
+// value. Model and effort travel as session config options instead.
 //
 // So the justification is reach, not power: a flag upstream adds tomorrow becomes
 // a compose-value edit instead of a code change and an image rebuild. Worth ~40
@@ -45,6 +51,16 @@ const (
 	flagTrustAll      = "--trust-all-tools"
 	flagTrustAllShort = "-a"
 	flagTrustTools    = "--trust-tools"
+	// flagModel / flagEffort are refused because they KILL THE PROCESS. kiro-cli
+	// rejects both alongside --agent-engine=v3 and exits before answering
+	// initialize, so one of these in the compose value takes down every chat
+	// bridge in the container with an error the operator never sees on this
+	// wire. This is the only refusal here whose reason is fatality rather than
+	// a closed decision or an inert no-op, and it is the reason the filter is
+	// allow-unknown rather than allow-nothing: the model and the reasoning
+	// effort are session config options, set per chat and switchable live.
+	flagModel  = "--model"
+	flagEffort = "--effort"
 )
 
 // valueBearing names the refused flags that consume a following token, so the
@@ -53,6 +69,8 @@ const (
 var valueBearing = map[string]bool{
 	flagAgentEngine: true,
 	flagTrustTools:  true,
+	flagModel:       true,
+	flagEffort:      true,
 }
 
 // ParseACPArgs splits an operator-supplied flag string on whitespace and filters
@@ -72,7 +90,7 @@ func ParseACPArgs(raw string) []string {
 	return kept
 }
 
-// FilterACPArgs drops the three flags vibekit's own invariants own, together
+// FilterACPArgs drops the five flags vibekit's own invariants own, together
 // with the value of any that takes one. Exported so a test can assert the
 // refusals directly rather than through a log.
 //
@@ -110,6 +128,8 @@ func refuseReason(name string) (reason string, refused bool) {
 		return "vibekit is v3-only on the wire; the v2 handlers were removed, so v1/v2 would stall session/new", true
 	case flagTrustAll, flagTrustAllShort, flagTrustTools:
 		return "inert on v3 — tool authorization is kiro-cli's Cedar policy; edit permissions.yaml (Settings → Permissions) instead", true
+	case flagModel, flagEffort:
+		return "kiro-cli refuses this alongside --agent-engine=v3 and exits before initialize, so it would kill every chat bridge; pick the model and reasoning effort per chat in the composer instead", true
 	default:
 		return "", false
 	}

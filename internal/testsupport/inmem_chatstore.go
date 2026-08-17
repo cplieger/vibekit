@@ -96,6 +96,18 @@ func (s *InMemoryChatStore) Mutate(_ context.Context, id api.ChatID, mutate func
 	return nil
 }
 
+// SetDraft stores the chat's draft without touching UpdatedAt and without
+// broadcasting; see api.ChatStore for why those two absences are the point.
+// Absent chat: no-op, like the real store's load-then-write.
+func (s *InMemoryChatStore) SetDraft(_ context.Context, id api.ChatID, text string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.chats[id]; ok {
+		c.Draft = text
+	}
+	return nil
+}
+
 // Delete removes the chat with the given id and broadcasts a chat_deleted event.
 func (s *InMemoryChatStore) Delete(_ context.Context, id api.ChatID) error {
 	s.mu.Lock()

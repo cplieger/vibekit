@@ -14,7 +14,6 @@ import (
 	"github.com/cplieger/pathinside"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/redact"
 )
 
 // HandleToolCall adds a tool call to the current assistant message
@@ -46,6 +45,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	subtask := tc.Meta.Kiro.AgentSubtaskID
 	if wf := tc.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
 		subtask = wf
+		t.countStepTurn(tc.Meta.Kiro.Workflow, wf)
 	}
 	// One parser for both frames, so the ACP content union is decoded in one
 	// place. The create frame deliberately does NOT adopt content.output: the
@@ -58,12 +58,14 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		Title:          tc.Title,
 		Kind:           tc.Kind,
 		Status:         tc.Status,
-		Input:          redact.RawJSON(tc.RawInput),
+		Input:          tc.RawInput,
 		SubSessionID:   subSessionID,
 		AgentSubtaskID: subtask,
 		TerminalID:     content.terminalID,
 		Locations:      tc.Locations,
 		Diffs:          diffs,
+		Disclosed:      disclosedFrom(tc.Meta.Kiro.DisclosedContext),
+		Denial:         denialFrom(tc.Meta.Kiro.PolicyDenial),
 		Ts:             time.Now().UnixMilli(),
 	}
 	buf.ToolCalls = append(buf.ToolCalls, call)
@@ -121,7 +123,7 @@ func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) too
 	for _, item := range items {
 		switch {
 		case item.Type == ContentTypeContent && item.Content.Text != "":
-			outputDelta.WriteString(redact.Output(api.SanitizeOutput(item.Content.Text)))
+			outputDelta.WriteString(api.SanitizeOutput(item.Content.Text))
 			outputDelta.WriteByte('\n')
 		case item.Type == ContentTypeDiff && item.Path != "":
 			out.diffs = append(out.diffs, api.ToolDiff{
@@ -187,6 +189,7 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 		}
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
+	mergeToolMeta(tc, tu)
 }
 
 // applyToolCallStatus folds an update's status in, and on a terminal status
@@ -243,19 +246,18 @@ func (t *Translator) applyToolCallDiffs(
 // happens when there IS no terminal, so this never reaches it.
 //
 // A miss is LOGGED, because a silent one is the shape of every bug this function
-// exists to prevent. The output of an agent command was invisible for the whole
-// life of this feature and nothing said so — a card that renders empty looks
-// exactly like a command that printed nothing. So every link that resolves to no
-// record gets a line: the terminal existed (KAS named it), and its bytes are gone
-// at the one moment they were needed. That covers the failure shapes no test
-// predicted — a terminal released twice, an id reused, a record evicted before
-// its turn ended.
+// exists to prevent: a card that renders empty looks exactly like a command that
+// printed nothing, which is how the output of an agent command was invisible for
+// the whole life of this feature with nothing saying so. The warning is worth
+// having only because the hub distinguishes "no record" from "an empty record" —
+// a silent `mkdir -p` answers ok, so it does not file a false alarm here. What
+// remains is the real failure set: a record evicted before its turn ended, an id
+// KAS named and then reused, a completion arriving after the turn closed.
 //
 // The line carries what the tool call currently HAS rather than suppressing
 // itself when that is non-empty, because the two readings are different and only
 // the reader can tell which applies: `output_bytes=0` is a card that will render
-// empty, while a non-zero count is a fragment from an earlier content block (or a
-// duplicate `completed` frame finding what the first one already adopted). A
+// empty, while a non-zero count is a fragment from an earlier content block. A
 // condition here would have hidden the first case behind the second, and the fold
 // order makes it unknowable anyway — a same-frame content block is applied after
 // this runs.
@@ -276,6 +278,53 @@ func (t *Translator) adoptTerminalOutput(chatID api.ChatID, tc *api.ToolCall) {
 	}
 	tc.Output = text
 	tc.OutputSpans = spans
+}
+
+// mergeToolMeta folds a tool_call_update's disclosure and denial metadata into
+// the buffered call. Late adoption, for the same reason as the checkpoint fold: a
+// denial in particular is decided when the call is ATTEMPTED, so it can arrive on
+// the update rather than the create. Never overwrites a value already held.
+func mergeToolMeta(tc *api.ToolCall, tu *ACPToolCallUpdateWire) {
+	if tc.Disclosed == nil {
+		tc.Disclosed = disclosedFrom(tu.Meta.Kiro.DisclosedContext)
+	}
+	if tc.Denial == nil {
+		tc.Denial = denialFrom(tu.Meta.Kiro.PolicyDenial)
+	}
+}
+
+// disclosedFrom maps KAS's disclosedContext block onto the domain type. Returns
+// nil for every tool call that is not a disclose_context, which is nearly all of
+// them.
+func disclosedFrom(in *ACPDisclosedContext) *api.ToolDisclosed {
+	if in == nil {
+		return nil
+	}
+	return &api.ToolDisclosed{Type: in.Type, DisplayName: in.DisplayName, URI: in.URI}
+}
+
+// denialFrom maps KAS's policyDenial block onto the domain type. The outer
+// `effect` is always the literal "deny" so it is dropped; the matched rule's own
+// effect is kept, because an "ask" rule that nobody answered also arrives here.
+func denialFrom(in *ACPPolicyDenial) *api.ToolDenial {
+	if in == nil {
+		return nil
+	}
+	out := &api.ToolDenial{
+		Capability: in.Capability,
+		Resource:   in.Resource,
+		Scope:      in.Scope,
+		Source:     in.Source,
+	}
+	if in.MatchedRule != nil {
+		out.Rule = &api.ToolDenialRule{
+			Capability: in.MatchedRule.Capability,
+			Effect:     in.MatchedRule.Effect,
+			Match:      in.MatchedRule.Match,
+			Exclude:    in.MatchedRule.Exclude,
+		}
+	}
+	return out
 }
 
 // mergeCheckpoint folds a tool_call_update's _meta.kiro.checkpoint into the
@@ -308,12 +357,11 @@ func mergeCheckpoint(tc *api.ToolCall, in *ACPCheckpointMeta) {
 // localPath converts a wire path REFERENCE to a local filesystem path.
 //
 // KAS sends some tool-call paths as file:// URIs rather than as paths —
-// measured 2026-08-17, a shell-written file arrived as
-// "file:///workspace/hello.sh" in a diff content block. Every consumer
-// downstream treats the value as a path, and none of them survived a URI:
-// filepath.Rel refuses it (Clean turns it into the RELATIVE
-// "file:/workspace/hello.sh", so Rel against an absolute root errors), so it
-// passed through relPath untouched into the turn footer's label and into
+// measured, a shell-written file arrived as "file:///workspace/hello.sh" in a
+// diff content block. Every consumer downstream treats the value as a path, and
+// none of them survived a URI: filepath.Rel refuses it (Clean turns it into the
+// RELATIVE "file:/workspace/hello.sh", so Rel against an absolute root errors),
+// so it passed through relPath untouched into the turn footer's label and into
 // GET /api/file?path=…, which denied it as outside the granted roots. The
 // user-visible symptom was a changed-file row labelled with a URI whose diff
 // could never load.
@@ -343,11 +391,12 @@ func localPath(ref string) string {
 // relPath strips the workspace root prefix from an absolute path. A path that
 // is not under the workspace is returned unchanged.
 //
-// It is the ONE funnel every ACP-supplied path crosses on its way to the
-// client, so normalising the wire's URI spelling belongs here rather than at
-// each of the four call sites. Normalising FIRST also matters: the
-// not-under-the-workspace branch returns its input, and returning the raw URI
-// there would leak the spelling this function exists to remove.
+// It is the funnel the ACP-supplied paths that reach the client cross —
+// tool-call diffs on both frames, a turn-approval file row, an init error — so
+// normalising the wire's URI spelling belongs here rather than at each call
+// site. Normalising FIRST also matters: the not-under-the-workspace branch
+// returns its input, and returning the raw URI there would leak the spelling
+// this function exists to remove.
 //
 // The escape test is pathinside.RelEscapes on the rel this function already
 // computes for its result, not a leading-".." string prefix: the
@@ -384,6 +433,21 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, b
 	}
 	buf.Started = true
 	buf.MessageID = t.newMsgID()
+	// FALLBACK attribution only. A prompt latches the model at DISPATCH
+	// (CmdPrompt -> LatchTurnModel), which is what closes the window where a fast
+	// switch lands before the old model's first frame; SetModel is first-write-wins,
+	// so for a dispatched turn this read finds a value already there and changes
+	// nothing.
+	//
+	// It stays for the turns nobody dispatched — an agent-opened turn, a priming
+	// reply — where the chat record is the only evidence of what is answering and
+	// no switch can have raced a dispatch that never happened. Dropping it would
+	// leave those turns with no attribution at all.
+	if !buf.HasModel() {
+		if c, ok := t.deps.ChatStore().Get(ctx, chatID); ok {
+			buf.SetModel(c.Model)
+		}
+	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageCreated, chatID,
 		api.Message{ID: buf.MessageID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli()}))
 }

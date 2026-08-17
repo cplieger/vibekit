@@ -20,13 +20,7 @@ import { parseConflicts } from "./conflict.js";
 import { saveFile as saveFileAction } from "./actions/editor.js";
 import { isPending } from "./actions/index.js";
 import { renderConflictOverlay } from "./editor-conflict.js";
-import {
-  showReadMode,
-  showEditMode,
-  updateGutter,
-  renderHighlight,
-  renderEditModeUI,
-} from "./editor-ui.js";
+import { showEditMode, updateGutter, renderReadSurface, renderEditModeUI } from "./editor-ui.js";
 import { restoreUI } from "./editor-modes.js";
 import { activateFile, closeEditorFile, fetchGitDiffSources } from "./editor-openers.js";
 import {
@@ -200,8 +194,9 @@ function stopEditing(state: FileState): void {
     return;
   }
   state.mode.value = { kind: "edit", editing: false };
-  renderHighlight(state.original.value, state.path);
-  showReadMode();
+  // `current` was just reset to `original` above, so the read surface paints the
+  // saved text — as markdown for a document, as source otherwise.
+  renderReadSurface(state);
   $.editorEditBtn.classList.remove("hidden");
   $.editorCancelBtn.classList.add("hidden");
   $.editorSaveBtn.classList.add("hidden");
@@ -214,46 +209,61 @@ function saveFile(): void {
     return;
   }
   const content = $.editorContent.value;
-  void saveFileAction.dispatch(
-    { path: state.path, content },
-    {
-      onError: (e) => {
+  const args: Parameters<typeof saveFileAction.dispatch>[0] = { path: state.path, content };
+  if (state.loadedHash !== "") {
+    args.expectedHash = state.loadedHash;
+  }
+  void saveFileAction.dispatch(args, {
+    onError: (e) => {
+      if (getActiveFilePath() === state.path) {
+        $.editorError.textContent = e.message || "Save failed";
+        $.editorError.classList.remove("hidden");
+      }
+    },
+    onSuccess: (d) => {
+      if (d.error !== undefined) {
         if (getActiveFilePath() === state.path) {
-          $.editorError.textContent = e.message || "Save failed";
+          $.editorError.textContent = d.error;
           $.editorError.classList.remove("hidden");
-        }
-      },
-      onSuccess: (d) => {
-        if (d.error !== undefined) {
-          if (getActiveFilePath() === state.path) {
-            $.editorError.textContent = d.error;
-            $.editorError.classList.remove("hidden");
-          }
-          return;
-        }
-        state.original.value = content;
-        // Don't overwrite state.current — user may have edited during save.
-        // The save-button effect re-derives `disabled` from `activeDirty`
-        // (dirty flips to false once original === current, unless the user
-        // edited during the save), so no manual write here.
-        $.editorError.classList.add("hidden");
-        if (getActiveFilePath() === state.path) {
-          const m = state.mode.value;
-          if (m.kind === "conflict" && m.conflict.hunks.length === 0) {
-            state.mode.value = { kind: "edit", editing: false };
-            renderEditModeUI(state);
-          }
-          if (state.returnToGitDiff !== null) {
-            const { ref, repo } = state.returnToGitDiff;
-            state.returnToGitDiff = null;
+          // A refused stale write carries the file's current bytes. Show the
+          // difference rather than the words: the user's own text stays in the
+          // buffer (it is the only copy), `original` becomes what is on disk, so
+          // the existing unsaved-diff view answers "what changed under me" and
+          // the next save carries the new hash.
+          if (d.content !== undefined) {
+            state.original.value = d.content;
+            state.loadedHash = d.content_hash ?? "";
             state.mode.value = {
               kind: "diff",
-              diffSource: gitDiffSource(ref, "", content),
+              diffSource: unsavedDiffSource(d.content, content),
             };
-            void fetchGitDiffSources(state, repo, ref);
+            renderEditModeUI(state);
           }
         }
-      },
+        return;
+      }
+      state.original.value = content;
+      // Don't overwrite state.current — user may have edited during save.
+      // The save-button effect re-derives `disabled` from `activeDirty`
+      // (dirty flips to false once original === current, unless the user
+      // edited during the save), so no manual write here.
+      $.editorError.classList.add("hidden");
+      if (getActiveFilePath() === state.path) {
+        const m = state.mode.value;
+        if (m.kind === "conflict" && m.conflict.hunks.length === 0) {
+          state.mode.value = { kind: "edit", editing: false };
+          renderEditModeUI(state);
+        }
+        if (state.returnToGitDiff !== null) {
+          const { ref, repo } = state.returnToGitDiff;
+          state.returnToGitDiff = null;
+          state.mode.value = {
+            kind: "diff",
+            diffSource: gitDiffSource(ref, "", content),
+          };
+          void fetchGitDiffSources(state, repo, ref);
+        }
+      }
     },
-  );
+  });
 }

@@ -144,3 +144,70 @@ const BADGE_ONLY: Readonly<Record<string, string>> = {
 export function badgeForExt(ext: string): string {
   return KNOWN_EXTENSIONS[ext]?.badge ?? BADGE_ONLY[ext] ?? "";
 }
+
+/** The lowercased extension of a path or filename, without the dot. "" when
+ *  there is none — including for a dotfile, whose leading dot names the file
+ *  rather than typing it. Only looks after the last separator, so a dot in a
+ *  directory name cannot be mistaken for an extension. */
+export function extOf(path: string): string {
+  const slash = path.lastIndexOf("/");
+  const dot = path.lastIndexOf(".");
+  if (dot <= slash + 1) {
+    return "";
+  }
+  return path.slice(dot + 1).toLowerCase();
+}
+
+/** Extensions a browser renders as an image.
+ *
+ *  This is the BROWSER's question, and it has exactly one answer, so both
+ *  browser-side consumers read it: the editor's image surface and the markdown
+ *  `<img>` rewrite (which carried its own regex). It deliberately does NOT match
+ *  `internal/command/prompt_attachments.go`'s `imageExts`, whose comment says so
+ *  explicitly — that list is what KAS accepts as an inline image content block,
+ *  a different consumer with a different answer.
+ *
+ *  `.svg` is in the set because an SVG referenced AS AN IMAGE is inert by
+ *  specification: it may not fetch resources, run script, or reach the
+ *  embedding document. That property belongs to `<img>` alone. A same-origin
+ *  navigation to the same file executes its script, and so does an `<iframe>`
+ *  pointing at it — `object-src 'none'` kills `<object>`/`<embed>`, but
+ *  `frame-src` falls back to `default-src 'self'`, which PERMITS a same-origin
+ *  frame. So a consumer of this predicate must RENDER the file and must never
+ *  offer it as a link or a frame on vibekit's own origin. */
+const VIEWABLE_IMAGE_EXTS: ReadonlySet<string> = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "avif",
+  "ico",
+  "bmp",
+]);
+
+/** Whether a path names an image the browser can paint in an `<img>`. */
+export function isViewableImage(path: string): boolean {
+  return VIEWABLE_IMAGE_EXTS.has(extOf(path));
+}
+
+/** Extensions `<audio controls>` can play.
+ *
+ *  Native element, no dependency: the browser already ships a player with
+ *  transport controls, a timeline and keyboard support, and it degrades to its
+ *  own fallback content when the codec is missing. */
+const PLAYABLE_AUDIO_EXTS: ReadonlySet<string> = new Set([
+  "mp3",
+  "wav",
+  "ogg",
+  "m4a",
+  "flac",
+  "aac",
+  "opus",
+]);
+
+/** Whether a path names audio the browser can play in an `<audio>` element. */
+export function isPlayableAudio(path: string): boolean {
+  return PLAYABLE_AUDIO_EXTS.has(extOf(path));
+}

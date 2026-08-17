@@ -28,6 +28,69 @@ func FuzzNormaliseRegistryResponse(f *testing.F) {
 	})
 }
 
+// The lifecycle status lives in the `_meta` SIBLING of `server`, not on the
+// server object — the fixture below is the real shape a live
+// registry.modelcontextprotocol.io response uses. A deprecated entry is still
+// returned by search (only `deleted` is filtered upstream, behind
+// include_deleted), so before this reached the row a dead entry looked live.
+func TestNormaliseRegistryResponse_CarriesTheDeprecatedFlag(t *testing.T) {
+	body := []byte(`{
+		"servers": [
+			{"server":{"name":"ex/live","version":"2.0.0",
+			  "remotes":[{"type":"streamable-http","url":"https://live"}]},
+			 "_meta":{"io.modelcontextprotocol.registry/official":{
+			   "status":"active","statusChangedAt":"2026-04-13T17:32:20Z",
+			   "publishedAt":"2026-04-13T17:32:20Z","isLatest":true}}},
+			{"server":{"name":"ex/dead","version":"0.9.0",
+			  "packages":[{"registryType":"npm","identifier":"@ex/dead",
+			   "transport":{"type":"stdio"}}]},
+			 "_meta":{"io.modelcontextprotocol.registry/official":{
+			   "status":"deprecated",
+			   "statusMessage":"unmaintained; use @ex/live instead",
+			   "isLatest":true}}},
+			{"server":{"name":"ex/nometa","version":"1.0.0",
+			  "remotes":[{"type":"sse","url":"https://nometa"}]}}
+		]
+	}`)
+
+	got := normaliseRegistryResponse(body)
+	if len(got) != 3 {
+		t.Fatalf("entries = %d, want 3", len(got))
+	}
+	// An active entry carries no status: the badge is the only consumer and an
+	// absent status already reads as active.
+	if got[0].Status != "" || got[0].StatusMessage != "" {
+		t.Errorf("active entry = %+v, want no status fields", got[0])
+	}
+	if got[1].Status != "deprecated" {
+		t.Errorf("deprecated entry status = %q", got[1].Status)
+	}
+	if got[1].StatusMessage != "unmaintained; use @ex/live instead" {
+		t.Errorf("status message = %q, want the publisher's reason", got[1].StatusMessage)
+	}
+	if got[2].Status != "" {
+		t.Errorf("entry with no _meta = %q, want empty", got[2].Status)
+	}
+}
+
+// The wire tag is a namespaced literal, so a typo in it would silently yield no
+// badge for every row. Assert the exact key upstream publishes.
+func TestNormaliseRegistryResponse_MetaKeyIsTheNamespacedOne(t *testing.T) {
+	deprecated := []byte(`{"servers":[{"server":{"name":"x",
+	  "remotes":[{"type":"http","url":"https://x"}]},
+	  "_meta":{"io.modelcontextprotocol.registry/official":{"status":"deprecated"}}}]}`)
+	wrongKey := []byte(`{"servers":[{"server":{"name":"x",
+	  "remotes":[{"type":"http","url":"https://x"}]},
+	  "_meta":{"official":{"status":"deprecated"}}}]}`)
+
+	if got := normaliseRegistryResponse(deprecated); len(got) != 1 || got[0].Status != "deprecated" {
+		t.Errorf("namespaced key not read: %+v", got)
+	}
+	if got := normaliseRegistryResponse(wrongKey); len(got) != 1 || got[0].Status != "" {
+		t.Errorf("an unnamespaced key must not be read: %+v", got)
+	}
+}
+
 func TestNormaliseRegistryResponse_SkipsUnsupportedPackages(t *testing.T) {
 	body := []byte(`{
 		"servers": [

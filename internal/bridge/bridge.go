@@ -2,7 +2,6 @@
 package bridge
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -19,12 +18,20 @@ import (
 // Compile-time interface assertion.
 var _ api.ACPBridge = (*Bridge)(nil)
 
-// scannerLineCap is the bufio.Scanner line cap for the bridge's stdout.
+// scannerLineCap is the per-frame content cap for the bridge's stdout.
 // Must accommodate a full fsWriteCap (4 MiB) content payload inside a
 // JSON envelope after worst-case escaping (non-ASCII, control chars).
 // 16 MiB is the safe pick: 4 MiB content + ~100% worst-case JSON
 // overhead + envelope slack.
+//
+// Exceeding it is survivable, not fatal: the frame is drained to its terminator
+// and dropped, and the stream continues. See bridge_frame.go.
 const scannerLineCap = 16 << 20
+
+// stdoutBufSize is the ReadSlice window for the stdout frame reader. It is NOT
+// the frame cap: a frame larger than this is assembled across several
+// ErrBufferFull reads, up to scannerLineCap.
+const stdoutBufSize = 64 * 1024
 
 // stderrLineCap bounds a single kiro-cli stderr line before we drop
 // the rest. 64 KiB is generous for panic traces and progress lines;
@@ -70,7 +77,7 @@ type Bridge struct {
 	lifecycleCtx context.Context
 	stdin        io.WriteCloser
 	modes        atomic.Pointer[[]api.SessionMode]
-	stdout       *bufio.Scanner
+	stdout       *frameReader
 	pending      map[int64]chan *api.RPCResponse
 	notifCh      chan *api.RPCResponse
 	done         chan struct{}
@@ -92,8 +99,12 @@ type Bridge struct {
 	// process this bridge starts. The install manager's active version
 	// directory leads PATH through it, so `kiro-cli` resolves any sibling it
 	// needs out of the same verified install rather than through whatever else
-	// $TOOLS/bin holds. Empty leaves the environment fully inherited.
+	// $TOOLS/bin holds. Empty leaves the inherited environment (screened, see
+	// bridge_env.go) as the whole environment.
 	extraEnv []string
+	// envAllow re-permits names the credential screen would otherwise drop
+	// (bridge_env.go, EnvAllowVar). Nil is the shipped configuration.
+	envAllow map[string]struct{}
 	// extraArgs are the filtered operator launch flags for this spawn
 	// (StartOpts.ExtraArgs). Immutable after Start, like agentEngine.
 	extraArgs   []string
@@ -117,6 +128,13 @@ type Option func(*Bridge)
 // manager's active version directory first on PATH.
 func WithEnv(env []string) Option {
 	return func(b *Bridge) { b.extraEnv = env }
+}
+
+// WithEnvAllow re-permits credential-shaped names the inherit screen would drop.
+// Built by ParseEnvAllowlist from EnvAllowVar; see bridge_env.go for which
+// direction the screen guards.
+func WithEnvAllow(allowed map[string]struct{}) Option {
+	return func(b *Bridge) { b.envAllow = allowed }
 }
 
 // New returns a fresh bridge that runs the kiro-cli binary at cliPath. Call

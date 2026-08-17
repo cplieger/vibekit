@@ -27,9 +27,28 @@ const (
 	// through the target. The verb refuses a mid-turn session and a concurrent
 	// revert itself, server-side, so vibekit does not police either.
 	//
-	// This replaced session/fork. A fork made a SECOND chat; a revert edits the
-	// one you are in, which is what rewinding was always meant to mean.
+	// For REWINDING this replaced session/fork. A fork made a SECOND chat; a
+	// revert edits the one you are in, which is what rewinding was always meant
+	// to mean. That did not retire the fork verb — see MethodSessionFork, which
+	// serves the operation a second chat is the RIGHT answer to.
 	MethodCheckpointRevertMultiple = "_kiro/checkpoint/revertMultiple"
+	// MethodSessionFork branches a session: KAS creates a new one carrying the
+	// forked session's context and returns `{sessionId}`. Note the namespace —
+	// `session/*`, not `_kiro/*`, and it is still in the live method table
+	// (measured against the 2.18.0 sidecar: `session_fork:"session/fork"`).
+	//
+	// Params `{sessionId, cwd, _meta:{kiro:{…}}}`, where the `_meta.kiro` block is
+	// entirely CALLER-supplied. Two keys matter here: `createdReason`, which KAS
+	// stores and reports back on a later `session/load` beside `parentSessionId`
+	// and `title`; and `title`, the tangent's name in KAS's own metadata.
+	//
+	// `messageId` is NOT required, and that is measured rather than inferred:
+	// KAS's own /tangent calls `fork({createdReason:"tangent", title})` with no
+	// message id at all, while only its /rewind path passes one. So a tangent
+	// fork needs no addressable user message — but see command/fork.go, which
+	// keeps a priming fallback anyway, because a refusal must not cost the user
+	// the feature.
+	MethodSessionFork = "session/fork"
 	// MethodSessionCompact summarizes the conversation and replaces it with the
 	// summary, emitting the `summarization_completed` frame the translate layer
 	// already maps.
@@ -96,9 +115,16 @@ const (
 	MethodElicitationCreate = "_kiro/mcp/elicitation"
 )
 
-// There is no createdReason constant. It labelled a FORKED session in KAS's
-// roster, and vibekit no longer forks: a rewind reverts the session it is in
-// rather than creating a second one, so there is no child session to label.
+// CreatedReasonTangent labels a forked session in KAS's roster, travelling as
+// `_meta.kiro.createdReason` on MethodSessionFork and reported back on a later
+// `session/load` beside `parentSessionId`.
+//
+// This used to read "there is no createdReason constant", on the reasoning that
+// vibekit no longer forks — true while a rewind was the only thing that had
+// wanted to. A tangent is the operation a second session IS the right answer to,
+// so the label is back, and the value is KAS's own spelling for it: its /tangent
+// sends exactly this string.
+const CreatedReasonTangent = "tangent"
 
 // Agent user-input method name. On v3 (KAS, 2.14+) the agent's user_input
 // tool (structured questions: plan-mode clarifications, spec gates) is

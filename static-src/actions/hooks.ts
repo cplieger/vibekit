@@ -1,9 +1,16 @@
-// Hook-management actions: enable/disable and run a workspace hook.
+// Hook actions: enable/disable a workspace hook. ONE action, and there used to
+// be two.
+//
+// `hooks.run` is DELETED with Run-now. It posted to a route that made the server
+// run `sh -c` on a command a hook file specifies, and the whole path (route,
+// handler, the `_kiro/hooks/executeHook` responder) went with it. Hooks get what
+// every other `.kiro` document gets — open, delete — plus this toggle.
 //
 // The hook list is server-canonical (it lives in the .kiro/hooks/*.json files,
 // read via KAS on the utility bridge — see internal/hub/hooks.go) and is
 // refetched after every mutation (the server also broadcasts hooks_changed),
-// so these actions carry no optimistic state. See hooks.ts.
+// so this action carries no optimistic state. Its reader is the configuration
+// browser's Hooks tab (docs.ts).
 // ---------------------------------------------------------------------------
 
 import { apiAction } from "./index.js";
@@ -31,30 +38,4 @@ export const setHookEnabled = apiAction<SetEnabledArgs, void>({
     body: { enabled },
   }),
   error: "Couldn't update hook",
-});
-
-// --- hooks.run ---
-
-interface RunArgs {
-  id: string;
-}
-
-/** hookRunResult mirrors internal/hub/hooks.go hookTriggerResponse. */
-export interface HookRunResult {
-  output: string;
-  exit_code: number;
-  ran: boolean;
-}
-
-/** POST /api/hooks/{id}/trigger — run a runCommand hook now and return its
- *  captured output. No auto-retry: re-running a command that may already have
- *  executed is unsafe. `error: false` — the row surfaces the failure inline. */
-export const runHook = apiAction<RunArgs, HookRunResult>({
-  name: "hooks.run",
-  dedupe: (args) => `hooks.run:${args.id}`,
-  request: ({ id }) => ({
-    method: "POST",
-    path: `${HOOKS_API}/${encodeURIComponent(id)}/trigger`,
-  }),
-  error: false,
 });

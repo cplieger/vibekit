@@ -35,10 +35,17 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { createPopup } from "@cplieger/ui-primitives/popup";
+import type { PopupController } from "@cplieger/ui-primitives/popup";
 import { $, byId } from "./dom.js";
 import { setUserScrolledUp } from "./scroll.js";
 import { runServerSearch, resetServerSearch } from "./chat-search.js";
 import { getActiveId } from "./store.js";
+import { BUS_TAB_CHANGED, onBus } from "./bus.js";
+import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
+import { createSearchShell, searchIconButton } from "./search-shell.js";
+import type { SearchShell } from "./search-shell.js";
+import type { SearchHit } from "./chat-search.js";
 
 const HIT_CLASS = "chat-find-hit";
 const CURRENT_CLASS = "chat-find-hit-current";
@@ -46,10 +53,11 @@ const CURRENT_CLASS = "chat-find-hit-current";
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
 
-// Debounce for search-as-you-type and for live re-runs while the transcript
-// changes (streaming). Small enough to feel instant, large enough to coalesce
-// a burst of keystrokes / streamed chunks.
-const TYPE_DEBOUNCE_MS = 90;
+// Debounce for live re-runs while the transcript changes (streaming): large
+// enough to coalesce a burst of streamed chunks. The TYPING debounce is
+// search-shell.ts's SEARCH_DEBOUNCE_MS — it was authored here and in
+// files-search.ts with the same value and a comment in each saying so, which is
+// what a shared constant is for.
 const RERUN_DEBOUNCE_MS = 150;
 
 // ---------------------------------------------------------------------------
@@ -103,17 +111,28 @@ function isSearchableElement(elem: Element): boolean {
   return true;
 }
 
-/** Wrap each case-insensitive occurrence of `lc` (length `needleLen`) in `node`
- *  with a `<mark>`, preserving original casing. Appends created marks to `out`.
- *  Only text nodes are touched — element nodes (and their listeners) are never
- *  disturbed. */
-function wrapMatchesInNode(node: Text, needleLen: number, lc: string, out: HTMLElement[]): void {
+/** Wrap each occurrence of `needle` (length `needleLen`) in `node` with a
+ *  `<mark>`, preserving original casing. Appends created marks to `out`. Only
+ *  text nodes are touched — element nodes (and their listeners) are never
+ *  disturbed.
+ *
+ *  `needle` arrives already folded when the search is case-INSENSITIVE, so the
+ *  haystack is folded to match; a case-SENSITIVE search compares both verbatim.
+ *  `needleLen` is passed separately because the slice below has to come out of
+ *  the ORIGINAL text either way. */
+function wrapMatchesInNode(
+  node: Text,
+  needleLen: number,
+  needle: string,
+  caseSensitive: boolean,
+  out: HTMLElement[],
+): void {
   const text = node.nodeValue ?? "";
   if (text === "") {
     return;
   }
-  const hay = text.toLowerCase();
-  let idx = hay.indexOf(lc);
+  const hay = caseSensitive ? text : text.toLowerCase();
+  let idx = hay.indexOf(needle);
   if (idx < 0) {
     return;
   }
@@ -127,7 +146,7 @@ function wrapMatchesInNode(node: Text, needleLen: number, lc: string, out: HTMLE
     frag.appendChild(hit);
     out.push(hit);
     last = idx + needleLen;
-    idx = hay.indexOf(lc, last);
+    idx = hay.indexOf(needle, last);
   }
   if (last < text.length) {
     frag.appendChild(document.createTextNode(text.slice(last)));
@@ -176,16 +195,16 @@ export class FindEngine {
   /** Re-highlight `query` across the root. Clears any prior highlight first.
    *  Resets the current match to the first (index 0), or -1 when there are
    *  none. Returns the total match count. */
-  search(query: string): number {
+  search(query: string, caseSensitive = false): number {
     this.clear();
     this.lastQuery = query;
     if (query === "") {
       return 0;
     }
-    const lc = query.toLowerCase();
+    const needle = caseSensitive ? query : query.toLowerCase();
     const marks: HTMLElement[] = [];
     for (const node of this.collectTextNodes()) {
-      wrapMatchesInNode(node, query.length, lc, marks);
+      wrapMatchesInNode(node, query.length, needle, caseSensitive, marks);
     }
     this.marks = marks;
     this.current = marks.length > 0 ? 0 : -1;
@@ -277,14 +296,29 @@ export class FindEngine {
 // ---------------------------------------------------------------------------
 
 let overlayEl: HTMLElement | null = null;
-let inputEl: HTMLInputElement | null = null;
+let shell: SearchShell | null = null;
+let popup: PopupController | null = null;
 let countEl: HTMLElement | null = null;
 let engine: FindEngine | null = null;
-let isOpen = false;
 let lastFocus: HTMLElement | null = null;
-let typeTimer: ReturnType<typeof setTimeout> | undefined;
 let rerunTimer: ReturnType<typeof setTimeout> | undefined;
 let observer: MutationObserver | null = null;
+/** Unsubscribe for the tab-change teardown, so a rebuilt module does not stack
+ *  a second subscriber on the bus. */
+let unsubTab: (() => void) | null = null;
+
+/** Open state lives on the popup and NOWHERE ELSE.
+ *
+ *  It used to be a module boolean, and that is what made a tab switch leave the
+ *  feature half-alive: hiding the view left the flag true, the MutationObserver
+ *  connected, the <mark> elements welded into the transcript and every fold the
+ *  search had opened still open, so returning to the chat re-revealed a search
+ *  mid-flight. One source of truth means every close path — the ×, Escape
+ *  anywhere in the document, an outside click, the trigger, a tab switch — runs
+ *  the same teardown, because they all run through hide(). */
+function isOpen(): boolean {
+  return popup?.isOpen === true;
+}
 
 function prefersReducedMotion(): boolean {
   return (
@@ -293,25 +327,16 @@ function prefersReducedMotion(): boolean {
   );
 }
 
+/** The bar's nav buttons: SVG glyphs, so `align-items: center` centres the ink
+ *  rather than a line box. See search-shell.ts's searchIconButton for why a text
+ *  `×` or `↑` cannot be centred by any authored value. */
 function navButton(
   label: string,
-  glyph: string,
   hint: string,
+  icon: string,
   onClick: () => void,
 ): HTMLButtonElement {
-  const btn = el(
-    "button",
-    {
-      type: "button",
-      className: "chat-find-btn",
-      "aria-label": label,
-      title: hint,
-      tabindex: "0",
-    },
-    glyph,
-  ) as HTMLButtonElement;
-  btn.addEventListener("click", onClick);
-  return btn;
+  return searchIconButton("chat-find-btn", label, hint, icon, onClick);
 }
 
 function ensureBuilt(): void {
@@ -320,19 +345,6 @@ function ensureBuilt(): void {
   }
   engine = new FindEngine($.messages);
 
-  const input = el("input", {
-    id: "chat-find-input",
-    type: "text",
-    className: "chat-find-input",
-    placeholder: "Find in chat\u2026",
-    "aria-label": "Find in conversation",
-    autocomplete: "off",
-    autocapitalize: "off",
-    spellcheck: "false",
-    enterkeyhint: "search",
-    title: "Find in chat. Press Ctrl+F again to use the browser's find.",
-  }) as HTMLInputElement;
-
   const count = el("span", {
     id: "chat-find-count",
     className: "chat-find-count",
@@ -340,68 +352,162 @@ function ensureBuilt(): void {
     "aria-live": "polite",
     "aria-atomic": "true",
   });
+  countEl = count;
 
-  const prevBtn = navButton("Previous match", "\u2191", "Previous (Shift+Enter)", () => {
+  const prevBtn = navButton("Previous match", "Previous (Shift+Enter)", ICON_CHEVRON_UP, () => {
     step(-1);
   });
-  const nextBtn = navButton("Next match", "\u2193", "Next (Enter)", () => {
+  const nextBtn = navButton("Next match", "Next (Enter)", ICON_CHEVRON_DOWN, () => {
     step(1);
   });
-  const closeBtn = navButton("Close find", "\u00d7", "Close (Esc)", () => {
-    closeFindInChat();
-  });
 
-  const nav = el("div", { className: "chat-find-nav" }, prevBtn, nextBtn, closeBtn);
-  const overlay = el(
-    "div",
-    {
-      id: "chat-find",
-      className: "chat-find hidden",
-      role: "search",
-      "aria-label": "Find in conversation",
+  // The COUNTER and the prev/next pair are this surface's alone — a cursor has a
+  // position in a document, which a ranked list does not — so they arrive
+  // through `compose` as ordinary controls rather than becoming shell features.
+  const built = createSearchShell<SearchHit[]>({
+    id: "chat-find",
+    regionClass: "chat-find uip-popup",
+    inputClass: "chat-find-input",
+    buttonClass: "chat-find-btn",
+    caseClass: "chat-find-case",
+    label: "Find in conversation",
+    placeholder: "Find in chat\u2026",
+    inputTitle: "Find in chat. Press Ctrl+F again to use the browser's find.",
+    matchCase: true,
+    closeButton: true,
+    compose: ({ input, caseButton, closeButton }) => [
+      input,
+      count,
+      el("div", { className: "chat-find-nav" }, caseButton, prevBtn, nextBtn, closeButton),
+    ],
+    query: async (query, ctx) => {
+      if (engine === null) {
+        return null;
+      }
+      // The LOCAL pass runs first and synchronously, so typing stays responsive
+      // on what is already resident. The server pre-pass below is what makes the
+      // count honest: the DOM walker prunes hidden and collapsed subtrees, so a
+      // folded turn's hit is invisible to it until the reveal lands.
+      applyEngine(() => {
+        engine?.search(query, ctx.caseSensitive);
+      });
+      updateCounter(query);
+      revealCurrent();
+      return runServerSearch(getActiveId(), query, ctx.caseSensitive);
     },
-    input,
-    count,
-    nav,
-  );
-
-  input.addEventListener("input", () => {
-    if (typeTimer !== undefined) {
-      clearTimeout(typeTimer);
-    }
-    typeTimer = setTimeout(() => {
-      typeTimer = undefined;
-      runSearch(input.value);
-    }, TYPE_DEBOUNCE_MS);
+    render: (hits, query) => {
+      if (hits === null || hits.length === 0) {
+        return;
+      }
+      // Re-run over the now-revealed DOM so the marks and the count cover the
+      // turns the reveal opened.
+      applyEngine(() => {
+        engine?.search(query, shell?.caseSensitive ?? false);
+      });
+      updateCounter(query);
+      revealCurrent();
+    },
+    onDismiss: () => {
+      closeChatFind();
+    },
+    onSubmit: (shift) => {
+      step(shift ? -1 : 1);
+    },
   });
+  shell = built;
 
-  input.addEventListener("keydown", (e: KeyboardEvent) => {
-    switch (e.key) {
-      case "Enter":
-        e.preventDefault();
-        step(e.shiftKey ? -1 : 1);
-        break;
-      case "ArrowDown":
-        e.preventDefault();
-        step(1);
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        step(-1);
-        break;
-      case "Escape":
-        e.preventDefault();
-        e.stopPropagation();
-        closeFindInChat();
-        break;
+  built.input.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      step(1);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      step(-1);
     }
   });
 
   // Anchor over the transcript (messages-wrap-outer is position:relative).
-  byId("messages-wrap-outer").appendChild(overlay);
-  overlayEl = overlay;
-  inputEl = input;
-  countEl = count;
+  //
+  // HIDDEN BEFORE THE FIRST OPEN, and this is not cosmetic. The primitive only
+  // writes `[hidden]` at the END of a leave, so a freshly built panel is visible
+  // to the layout — and this one is `position: absolute` at `z-index: 60` over
+  // the transcript with `opacity: 0`, so without this it would swallow every
+  // click in its rectangle before search had ever been opened. pill-expand.ts
+  // normalizes the same way for the same reason.
+  built.region.hidden = true;
+  byId("messages-wrap-outer").appendChild(built.region);
+  overlayEl = built.region;
+
+  // The reveal lifecycle is the primitive's: outside-click dismissal,
+  // document-level Escape, the trigger's ARIA, single-open coordination, and the
+  // is-open / is-leaving pair that lets BOTH legs animate. It drives the
+  // `[hidden]` attribute rather than the `.hidden` class, which is what removes
+  // the `display: none !important` the close could never animate out of.
+  //
+  // `isolateEscape: false` so the app's global Escape coordinator still sees the
+  // key, the same contract pill-expand.ts keeps.
+  //
+  // The trigger is looked up defensively: the popup only needs it to write ARIA
+  // and to exempt it from outside-click, and a fixture without the toolbar must
+  // still be able to open the box.
+  popup = createPopup(built.region, {
+    trigger: document.getElementById("find-btn"),
+    group: "app-search",
+    isolateEscape: false,
+    haspopup: "dialog",
+    onOpen: () => {
+      startObserving();
+      // aria-pressed, not aria-expanded: find is a TOGGLE, not a disclosure of
+      // this button's own content, and `.active` in this app means "this
+      // singleton tab is active" (tabs.ts syncSidebarButtons owns that class).
+      // 70-selection.css already styles `.icon-btn[aria-pressed="true"]`, so the
+      // visual is the app's one selected treatment with no local rule.
+      //
+      // The primitive writes aria-expanded on the same element and that is left
+      // in place: it is the truthful description of a revealable panel, no rule
+      // matches it, and removing it would fight the primitive on every open.
+      document.getElementById("find-btn")?.setAttribute("aria-pressed", "true");
+      built.focus();
+      built.run();
+    },
+    onClose: () => {
+      teardown();
+      document.getElementById("find-btn")?.setAttribute("aria-pressed", "false");
+      const target = lastFocus;
+      lastFocus = null;
+      if (target?.isConnected === true) {
+        target.focus();
+      }
+    },
+  });
+
+  // A tab switch CLOSES the search rather than hiding it. Subscribed here, once,
+  // at build time; the unsubscribe exists so a rebuilt module cannot stack two.
+  unsubTab?.();
+  unsubTab = onBus(BUS_TAB_CHANGED, () => {
+    closeChatFind();
+  });
+}
+
+/** Everything the open state owns, released in one place.
+ *
+ *  Called from the popup's onClose, so it runs on EVERY close path. The mark
+ *  unwrap and the server-search reset are the two that cannot be skipped: marks
+ *  left behind are welded into the transcript for the rest of the session, and a
+ *  skipped reset leaves the turns the search opened open, permanently
+ *  rearranging a transcript as a side effect of having searched it. */
+function teardown(): void {
+  stopObserving();
+  shell?.cancel();
+  if (rerunTimer !== undefined) {
+    clearTimeout(rerunTimer);
+    rerunTimer = undefined;
+  }
+  applyEngine(() => {
+    engine?.clear();
+  });
+  resetServerSearch(getActiveId());
+  updateCounter("");
 }
 
 /** Run a DOM-mutating engine op with the transcript observer disconnected, so
@@ -416,61 +522,20 @@ function applyEngine(fn: () => void): void {
   try {
     fn();
   } finally {
-    if (wasObserving && isOpen) {
+    if (wasObserving && isOpen()) {
       startObserving();
     }
   }
 }
 
-function runSearch(query: string): void {
-  if (engine === null) {
-    return;
-  }
-  // The SERVER pre-pass runs first and reveals the turns holding hits, because
-  // the DOM walker below prunes hidden and collapsed subtrees — so a folded
-  // turn's hit is invisible to it until the fold is lifted. Enumerating in the
-  // DOM alone was a silent miss on non-resident pages, on rows whose
-  // `content-visibility: auto` reports invisible, and on anything folded.
-  //
-  // The local pass still runs unconditionally rather than waiting: it keeps
-  // typing responsive on what IS resident, and the reveal simply widens what it
-  // can see when it lands a moment later.
-  applyEngine(() => {
-    engine?.search(query);
-  });
-  updateCounter();
-  revealCurrent();
-
-  const chatID = getActiveId();
-  void runServerSearch(chatID, query)
-    .then((hits) => {
-      if (!isOpen || inputEl?.value !== query) {
-        return; // superseded by newer typing, or the overlay closed
-      }
-      if (hits.length === 0) {
-        return;
-      }
-      // Re-run over the now-revealed DOM so the marks and the count cover the
-      // turns the reveal opened.
-      applyEngine(() => {
-        engine?.search(query);
-      });
-      updateCounter();
-      revealCurrent();
-    })
-    .catch((e: unknown) => {
-      console.warn("[find] server search failed", e);
-    });
-}
-
 function step(dir: 1 | -1): void {
-  if (engine === null || inputEl === null) {
+  if (engine === null || shell === null) {
     return;
   }
   // If the query changed since the last search (fast type-then-Enter), search
   // first — that lands on the first match, matching native find's behaviour.
-  if (engine.query !== inputEl.value) {
-    runSearch(inputEl.value);
+  if (engine.query !== shell.value) {
+    shell.run();
     return;
   }
   applyEngine(() => {
@@ -480,16 +545,20 @@ function step(dir: 1 | -1): void {
       engine?.prev();
     }
   });
-  updateCounter();
+  updateCounter(shell.value);
   revealCurrent();
 }
 
-function updateCounter(): void {
-  if (countEl === null || engine === null || inputEl === null) {
+/** Paint the counter for `query`.
+ *
+ *  The query is a PARAMETER rather than a read of the box, so a count can never
+ *  describe a search other than the one that produced it. */
+function updateCounter(query: string): void {
+  if (countEl === null || engine === null) {
     return;
   }
-  countEl.textContent = formatCount(engine.total, engine.currentIndex, inputEl.value);
-  const noResults = inputEl.value !== "" && engine.total === 0;
+  countEl.textContent = formatCount(engine.total, engine.currentIndex, query);
+  const noResults = query !== "" && engine.total === 0;
   overlayEl?.classList.toggle("chat-find-no-results", noResults);
 }
 
@@ -539,64 +608,60 @@ function scheduleRerun(): void {
   }
   rerunTimer = setTimeout(() => {
     rerunTimer = undefined;
-    if (!isOpen || engine === null || inputEl === null) {
+    if (!isOpen() || engine === null || shell === null) {
       return;
     }
     const prevIndex = engine.currentIndex;
+    const query = shell.value;
     applyEngine(() => {
-      engine?.search(inputEl?.value ?? "");
+      engine?.search(query, shell?.caseSensitive ?? false);
       engine?.setCurrent(prevIndex);
     });
-    updateCounter();
+    updateCounter(query);
   }, RERUN_DEBOUNCE_MS);
 }
 
 function openFindInChat(): void {
   ensureBuilt();
-  if (overlayEl === null || inputEl === null) {
+  if (popup === null) {
     return;
   }
-  if (!isOpen) {
+  if (!popup.isOpen) {
     lastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    overlayEl.classList.remove("hidden");
-    isOpen = true;
-    startObserving();
   }
-  inputEl.focus();
-  inputEl.select();
-  runSearch(inputEl.value);
+  // show() on an already-open popup is a no-op reveal, so re-focus and re-run
+  // here rather than in onOpen alone: the toolbar button and the hotkey both
+  // reach an open box and both should land the caret in it.
+  popup.show();
+  shell?.focus();
+  shell?.run();
 }
 
-function closeFindInChat(): void {
-  if (!isOpen || overlayEl === null) {
+/** Close the transcript search, running the full teardown.
+ *
+ *  Exported because the close is no longer only this module's business: the tab
+ *  store's switch and the app's Escape coordinator both need it, and a caller
+ *  that hid the box instead would leave the observer, the marks and the folds
+ *  behind. Idempotent — the popup's hide() is a no-op when already closed. */
+export function closeChatFind(): void {
+  popup?.hide();
+}
+
+/** Toggle the transcript search. What the toolbar button means.
+ *
+ *  The button used to call the OPEN path, so a second click re-focused,
+ *  re-selected and re-ran the search of a box that was already open — a control
+ *  that looks like a toggle and is not. `files-search.ts` already had this shape
+ *  and `tabs.ts`'s toggleSingleton is the same idea for a whole view. */
+export function toggleChatFind(): void {
+  if (!chatFindActiveContext()) {
     return;
   }
-  stopObserving();
-  if (typeTimer !== undefined) {
-    clearTimeout(typeTimer);
-    typeTimer = undefined;
+  if (isOpen()) {
+    closeChatFind();
+    return;
   }
-  if (rerunTimer !== undefined) {
-    clearTimeout(rerunTimer);
-    rerunTimer = undefined;
-  }
-  applyEngine(() => {
-    engine?.clear();
-  });
-  // Turns opened BY SEARCH re-fold; turns the reader opened by hand carry a
-  // persisted override and are left alone. A search must not permanently
-  // rearrange the transcript as a side effect of having been used.
-  resetServerSearch(getActiveId());
-  overlayEl.classList.add("hidden");
-  isOpen = false;
-  updateCounter();
-  const target = lastFocus;
-  lastFocus = null;
-  if (target?.isConnected === true) {
-    target.focus();
-  } else {
-    $.promptInput.focus();
-  }
+  openFindInChat();
 }
 
 /** True when the chat transcript is the active context: the chat view is
@@ -615,32 +680,24 @@ function chatFindActiveContext(): boolean {
 }
 
 function findInputFocused(): boolean {
-  return inputEl !== null && document.activeElement === inputEl;
+  return shell !== null && document.activeElement === shell.input;
 }
 
-/** Global Ctrl-F / Cmd-F handler, registered on document from app.ts. Opens
- *  (or refocuses) the in-chat find widget when the chat view is active. A
- *  second Ctrl-F while the find field already has focus falls through to the
- *  browser's native find (the escape hatch). */
-/** Open the transcript search from a control rather than the hotkey.
+/** Global Ctrl-F / Cmd-F handler, registered on document from app.ts via
+ *  find-dispatch. Opens (or refocuses) the in-chat find widget when the chat
+ *  view is active. A second Ctrl-F while the find field already has focus falls
+ *  through to the browser's native find (the escape hatch).
  *
- *  Ctrl+F was the ONLY way in, which made a whole feature undiscoverable — and
- *  on a tablet with no keyboard, unreachable. The toolbar button calls this.
- *  Guarded the same way the hotkey is: search only means something over a
- *  visible transcript. */
-export function openChatFind(): void {
-  if (!chatFindActiveContext()) {
-    return;
-  }
-  openFindInChat();
-}
-
+ *  The HOTKEY opens rather than toggles, deliberately: a second Ctrl-F is the
+ *  escape hatch to native find, so making it close would spend the app's only
+ *  a11y justification for overriding the chord. The BUTTON toggles
+ *  (toggleChatFind) because a button that only ever opens is not a toggle. */
 export function handleFindHotkey(e: KeyboardEvent): void {
   if (e.key.toLowerCase() !== "f" || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) {
     return;
   }
   // Escape hatch: let the browser's native find open on a repeat press.
-  if (isOpen && findInputFocused()) {
+  if (isOpen() && findInputFocused()) {
     return;
   }
   if (!chatFindActiveContext()) {
@@ -648,4 +705,9 @@ export function handleFindHotkey(e: KeyboardEvent): void {
   }
   e.preventDefault();
   openFindInChat();
+}
+
+/** @internal Test seam: whether the transcript search is open. */
+export function _isChatFindOpen(): boolean {
+  return isOpen();
 }

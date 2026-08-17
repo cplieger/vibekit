@@ -1,9 +1,7 @@
 package translate
 
 import (
-	"bytes"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -254,93 +252,6 @@ func TestToolCallUpdate_TerminalStatusEmitsWorkingLabel(t *testing.T) {
 	}
 }
 
-// TestAdoptTerminalOutput_MissIsLogged pins the signal that makes this whole
-// adoption path diagnosable: a terminal link that resolves to no record. An
-// empty card is otherwise indistinguishable from a command that printed
-// nothing — which is exactly how agent output stayed invisible for the whole
-// life of the feature. The benign cases must stay silent or the signal is
-// worthless.
-//
-// Not parallel: captureSlog swaps the process-global slog default.
-func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
-	const warning = "terminal output missing at completion"
-	tests := []struct {
-		name string
-		// terminal, when non-nil, is registered under the id the tool call links.
-		terminal *termRendered
-		// priorOutput, when set, arrives on an earlier in_progress frame — the
-		// fold applies a same-frame content block AFTER adoption, so this is the
-		// only way to have text on the call before the miss.
-		priorOutput  string
-		linkTerminal bool
-		wantWarn     bool
-		wantBytes    string
-		reason       string
-	}{{
-		name: "GoneAndNothingToShow", linkTerminal: true, wantWarn: true, wantBytes: "output_bytes=0",
-		reason: "the record is absent and the card will render empty: the actionable miss",
-	}, {
-		name: "GoneWithAFragmentAlreadyOnTheCall", linkTerminal: true,
-		priorOutput: "partial", wantWarn: true, wantBytes: "output_bytes=8",
-		reason: "still a miss (the full output is lost); the byte count is what tells a reader it is a fragment",
-	}, {
-		name: "Found", linkTerminal: true, terminal: &termRendered{text: "hi\n"}, wantWarn: false,
-		reason: "adoption succeeded",
-	}, {
-		name: "FoundButEmpty", linkTerminal: true, terminal: &termRendered{text: ""}, wantWarn: false,
-		reason: "a genuinely silent command is registered and empty, not missing",
-	}, {
-		name: "NoTerminalAtAll", wantWarn: false,
-		reason: "most tool calls have no terminal; warning here would drown the signal",
-	}}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			const termID = "term-1"
-			var logs bytes.Buffer
-			t.Cleanup(captureSlog(&logs))
-
-			tr, _, deps, _, chatID := primeToolCall(t)
-			if tt.terminal != nil {
-				deps.terminals[termID] = *tt.terminal
-			}
-			if tt.priorOutput != "" {
-				tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
-					"toolCallId": "tc-1", "status": "in_progress",
-					"content": []map[string]any{
-						{"type": "content", "content": map[string]any{"text": tt.priorOutput}},
-					},
-				}), "")
-			}
-			update := map[string]any{"toolCallId": "tc-1", "status": "completed"}
-			if tt.linkTerminal {
-				update["content"] = []map[string]any{
-					{"type": "terminal", "terminalId": termID},
-				}
-			}
-			tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, update), "")
-
-			if got := strings.Contains(logs.String(), warning); got != tt.wantWarn {
-				t.Errorf("logged miss = %v, want %v (%s)\nlogs: %s",
-					got, tt.wantWarn, tt.reason, logs.String())
-			}
-			if !tt.wantWarn {
-				return
-			}
-			// The line has to be actionable: the terminal id is the only handle on
-			// the hub-side record, and the byte count is what separates an empty
-			// card from a surviving fragment.
-			for _, want := range []string{
-				"terminal_id=" + termID, "tool_call_id=tc-1",
-				"chat_id=" + string(chatID), tt.wantBytes,
-			} {
-				if !strings.Contains(logs.String(), want) {
-					t.Errorf("log line missing %q, want it for diagnosis\nlogs: %s", want, logs.String())
-				}
-			}
-		})
-	}
-}
-
 // TestToolCallUpdate_OutputAppendedWhenContentPresent pins that content
 // text in an update is sanitized, newline-terminated, and appended to
 // the tool call's Output.
@@ -511,7 +422,7 @@ func TestRelPath(t *testing.T) {
 		// the absolute path to the client.
 		{name: "DotDotPrefixedDirIsRelative", workDir: "/work", abs: "/work/..drafts/x.go", want: "..drafts/x.go"},
 		{name: "ParentEscapeReturnsAbs", workDir: "/work", abs: "/x.go", want: "/x.go"},
-		// KAS sends some tool-call paths as file:// URIs (measured: a
+		// BF14. KAS sends some tool-call paths as file:// URIs (measured: a
 		// shell-written file arrived as "file:///workspace/hello.sh"). Every
 		// consumer treats the value as a path, so the URI has to be gone by the
 		// time it leaves here. filepath.Clean turns "file:///work/x.go" into the
@@ -524,14 +435,20 @@ func TestRelPath(t *testing.T) {
 		// returning the spelling this function exists to remove.
 		{name: "FileURIOutsideWorkDirIsStillAPath", workDir: "/work", abs: "file:///elsewhere/x.go", want: "/elsewhere/x.go"},
 		{name: "FileURIWithEmptyWorkDirIsStillAPath", workDir: "", abs: "file:///a/b.go", want: "/a/b.go"},
+		{name: "LocalhostAuthorityIsAccepted", workDir: "/work", abs: "file://localhost/work/x.go", want: "x.go"},
 		// A remote authority names a file this process cannot open, so it is
 		// left alone rather than rewritten into a local path that would then be
 		// resolved against the local filesystem.
 		{name: "RemoteAuthorityIsLeftAlone", workDir: "/work", abs: "file://host/share/x.go", want: "file://host/share/x.go"},
 		{name: "NonFileSchemeIsLeftAlone", workDir: "/work", abs: "https://example.com/x.go", want: "https://example.com/x.go"},
-		// A filename may legitimately contain "://"; it parses to no scheme and
-		// must survive untouched.
-		{name: "PathContainingSchemeSeparator", workDir: "/work", abs: "/work/a:/'/b.go", want: "a:/'/b.go"},
+		// A filename may legitimately contain "://", which trips the cheap gate
+		// but parses to NO scheme, so it must come back through as a path. The
+		// duplicate slashes collapse because filepath.Clean does that to every
+		// path this function handles — pre-existing and orthogonal to the URI
+		// branch, which is what this case is pinning.
+		{name: "PathContainingSchemeSeparator", workDir: "/work", abs: "/work/weird:///name.go", want: "weird:/name.go"},
+		// An unparseable reference is returned as-is rather than mangled.
+		{name: "MalformedURIIsLeftAlone", workDir: "/work", abs: "file://%zz/x.go", want: "file://%zz/x.go"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -73,8 +73,14 @@ type Server struct {
 	// downloading nothing. It backs the loopback repair hook; nil when there is
 	// no manager, and then the route is not mounted at all.
 	kiroRescan func(context.Context) (bool, error)
-	configDir  string
-	workDir    string
+	// authUnavailable reports whether the last attempt to vend a KAS access
+	// token failed. It reads a LATCH written on the session-creation path
+	// (hub.AuthTokenUnavailable), never a probe: this is consulted per
+	// /api/health, and a probe here would spawn kiro-cli on a monitor's poll and
+	// could block on an SSO-OIDC refresh. Nil = unwired, no auth leg.
+	authUnavailable func() bool
+	configDir       string
+	workDir         string
 	// trustedProxies is the reverse-proxy network set passed to
 	// webhttp.WithClientIP so the access log's client_ip resolves the
 	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
@@ -180,6 +186,15 @@ func WithKiroReady(ready func() (bool, pinstall.Reason)) Option {
 	return func(s *Server) { s.kiroReady = ready }
 }
 
+// WithAuthUnavailable sets the sign-in leg /api/health reports after the
+// kiro-cli leg. It must be a LATCH read, not a probe: the readiness handler runs
+// per request and stays a lock and two field reads, so vending a token here to
+// find out would spawn kiro-cli on every monitor poll and could block on an
+// SSO-OIDC refresh. Unset leaves readiness with no auth leg.
+func WithAuthUnavailable(unavailable func() bool) Option {
+	return func(s *Server) { s.authUnavailable = unavailable }
+}
+
 // WithKiroRescan sets the disk-rescan hook the loopback repair route exposes.
 // Unset leaves the route unmounted.
 func WithKiroRescan(rescan func(context.Context) (bool, error)) Option {
@@ -235,8 +250,13 @@ func (s *Server) ListenAndServe() error {
 	// (see WithKiroRescan): with no pins in the environment there is nothing to
 	// rescan, so the route is absent rather than answering a misleading 503.
 	if s.kiroRescan != nil {
-		mux.Handle("POST "+kiroRescanPath, loopbackOnly(http.HandlerFunc(s.handleKiroRescan)))
+		mux.Handle("POST "+kiroRescanPath, loopbackOnly(kiroRescanSurface, http.HandlerFunc(s.handleKiroRescan)))
 	}
+	// Runtime profiles, same loopback gate. Unconditional unlike the repair hook
+	// above: that route depends on this server owning the install, while a
+	// goroutine dump is a property of the process and is always answerable. See
+	// pprof.go for which profiles are mounted and which are deliberately not.
+	mux.Handle("GET "+pprofPath, pprofHandler())
 	s.auth.RegisterRoutes(mux)
 	mux.HandleFunc("/api/steering", s.handleSteering)
 	// Tools REST surface: the toolbelt httpapi projection, mounted at
@@ -472,6 +492,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			unready(kiroReasonText(why))
 			return
 		}
+	}
+	// The kiro-cli leg stays FIRST: an uninstalled runtime is the superset
+	// failure, since with no binary there is nothing to vend a token, and the
+	// envelope carries one reason. This leg is the narrower one below it, and it
+	// reads a latch rather than probing (see WithAuthUnavailable).
+	if s.authUnavailable != nil && s.authUnavailable() {
+		unready(reasonSignIn)
+		return
 	}
 	api.WriteJSON(w, healthBody{Status: "ok"})
 }

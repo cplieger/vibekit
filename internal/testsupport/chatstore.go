@@ -34,6 +34,9 @@ func (NopChatStore) Mutate(context.Context, api.ChatID, func(*api.Chat, bool) bo
 	return nil
 }
 
+// SetDraft is a no-op; implements api.ChatStore.
+func (NopChatStore) SetDraft(context.Context, api.ChatID, string) error { return nil }
+
 // Delete is a no-op; implements api.ChatStore.
 func (NopChatStore) Delete(context.Context, api.ChatID) error { return nil }
 
@@ -129,6 +132,20 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id api.ChatID, mutate fun
 		} else {
 			s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_updated", ChatID: id, Payload: c.Header()})
 		}
+	}
+	return nil
+}
+
+// SetDraft stores the chat's draft without touching UpdatedAt and without
+// broadcasting, which is the contract api.ChatStore states for it. A fake that
+// went through Mutate would stamp activity and make a test unable to observe the
+// one property the real method exists to hold. Absent chat: no-op, like the real
+// store's load-then-write.
+func (s *RecordingChatStore) SetDraft(_ context.Context, id api.ChatID, text string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.Chats[id]; ok {
+		c.Draft = text
 	}
 	return nil
 }

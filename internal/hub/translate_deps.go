@@ -9,7 +9,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/redact"
+	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -69,8 +69,8 @@ func (h *Hub) PendingPermsAdd(requestID int64, evt api.ServerEvent) {
 }
 
 // NotifyPush sends a push notification.
-func (h *Hub) NotifyPush(ctx context.Context, body string, kind api.PushKind) {
-	h.coord.NotifyPush(ctx, body, kind)
+func (h *Hub) NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID) {
+	h.coord.NotifyPush(ctx, body, kind, chatID)
 }
 
 // BufferStore returns the buffer store for streaming handlers.
@@ -96,27 +96,43 @@ func (h *Hub) LineTracker() translate.LineRecorder {
 // live registry is empty by the time this is called. And the sanitize-then-parse
 // order here is the same one the live pump uses, so the persisted text and the
 // streamed text cannot disagree about what an escape meant.
+//
+// ok reports whether the terminal is KNOWN, not whether it printed anything. A
+// registered terminal with no output answers ("", nil, true), because a silent
+// command is a different fact from a lost record and only the second one is
+// worth warning about.
 func (h *Hub) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
 	h.agentTerms.mu.Lock()
 	term, live := h.agentTerms.terms[terminalID]
 	h.agentTerms.mu.Unlock()
 
 	var raw string
-	switch {
-	case live:
-		raw = term.output.String()
-	default:
-		var ok bool
-		raw, ok = h.agentTerms.takeRetired(terminalID)
-		if !ok {
+	if live {
+		raw = term.rawOutput()
+	} else {
+		var known bool
+		raw, known = h.agentTerms.peekRetired(terminalID)
+		if !known {
 			return "", nil, false
 		}
 	}
 	if raw == "" {
-		return "", nil, false
+		return "", nil, true
 	}
-	text, spans := ansitext.Parse(redact.Output(api.SanitizeUnicode(raw)))
+	text, spans := ansitext.Parse(api.SanitizeUnicode(raw))
 	return text, wireSpans(spans), true
+}
+
+// IsScheduledRun reports whether a run was launched by a schedule.
+//
+// The run's LEASE is already the record of that — it is what gates the deny-fast
+// permission floor — so this exports the fact rather than tracking it twice.
+// Granted between `new` and `invoke` in launchRun, which is before the first
+// lifecycle frame can arrive, so a run_start reaching translate always sees the
+// origin its launch recorded.
+func (h *Hub) IsScheduledRun(workflowID string) bool {
+	l, ok := h.lease(workflowID)
+	return ok && l.Origin == runlease.OriginScheduled
 }
 
 // IsHookStatusEnabled returns whether hook status display is enabled.

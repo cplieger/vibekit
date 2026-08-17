@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 
@@ -24,7 +25,7 @@ var _ api.PushService = (*Service)(nil)
 // DefaultTitle is the notification title used for all Web Push messages.
 const DefaultTitle = "Vibekit"
 
-// pushDebounce is the per-kind quiet window; pushResponseCap bounds
+// pushDebounce is the per-subject quiet window; pushResponseCap bounds
 // body drain for keep-alive-friendly reads; pushBodyCap caps the
 // combined title+body payload so an accidental megabyte send doesn't
 // get silently rejected by the push vendor.
@@ -33,6 +34,64 @@ const (
 	pushResponseCap = 64 << 10 // 64 KiB — vendors return tiny bodies
 	pushBodyCap     = 3000     // title+body ceiling; pre-pad room under 4096 record
 	pushFanOutLimit = 3        // max concurrent push sends per notification
+
+	pushMaxAttempts = 3 // total tries for a retryable delivery failure
+
+	// debounceHighWater is when preflightSend prunes expired debounce entries.
+	//
+	// Keying the window by subject makes the map's size a function of how many
+	// distinct things have been notified about rather than of how many kinds
+	// exist, so a process running for weeks would otherwise hold one slot per
+	// chat and pull request it ever sent about. An entry older than the window
+	// can no longer suppress anything, so dropping it is free; the high-water
+	// mark just keeps the sweep off the common path.
+	debounceHighWater = 64
+)
+
+// pushSubjectGlobal is the debounce subject for a notification with nothing single
+// behind it (an empty api.PushSubject — see its doc comment).
+//
+// Named rather than left as the empty string so the workspace-global window is a
+// stated member of the key space instead of an accident of a zero value. It is
+// deliberately not a legal subject spelling: a chat id cannot contain a space and a
+// PR key is prefixed `pr:`, so nothing real can land in this slot.
+const pushSubjectGlobal = "<workspace global>"
+
+// pushDebounceKey is what a quiet window belongs to: one KIND about one SUBJECT.
+//
+// Kind alone was wrong and silently lossy. The poller gives each pull request its
+// own subject so two PRs settling together occupy their own tray slots, but a
+// kind-only window dropped the second send inside five seconds — and the poller had
+// already advanced its `seen` state for that PR, so the notification was never
+// retried. Coalescing repeats of ONE subject is the behaviour worth having;
+// coalescing two different subjects is data loss.
+type pushDebounceKey struct {
+	kind    api.PushKind
+	subject string
+}
+
+// debounceKey builds the window key for one send.
+func debounceKey(kind api.PushKind, subject api.PushSubject) pushDebounceKey {
+	switch {
+	case subject.ChatID != "":
+		return pushDebounceKey{kind: kind, subject: string(subject.ChatID)}
+	case subject.Key != "":
+		return pushDebounceKey{kind: kind, subject: subject.Key}
+	default:
+		return pushDebounceKey{kind: kind, subject: pushSubjectGlobal}
+	}
+}
+
+// Retry timing for a retryable delivery failure (429 or 5xx). Vars, not
+// consts, so a test can collapse the ladder instead of sleeping through it
+// (the fleet's usual delay-override pattern).
+//
+// The budget is the notification's USEFULNESS window, not a generous transport
+// allowance: a permission ask is moot once answered and "agent finished" is
+// moot an hour later, so a delivery landing after this is worse than none.
+var (
+	pushRetryBudget = 60 * time.Second
+	pushRetryBase   = 1 * time.Second
 )
 
 type vapidKeys struct {
@@ -48,7 +107,7 @@ type Service struct {
 	writeLoopDone chan struct{}
 	cancel        context.CancelFunc
 	client        *http.Client
-	lastPush      map[api.PushKind]time.Time
+	lastPush      map[pushDebounceKey]time.Time
 	subs          map[string]api.PushSubscription
 	prefs         map[api.PushKind]bool
 	keys          vapidKeys
@@ -76,7 +135,7 @@ func New(ctx context.Context, configDir, subject string) *Service {
 	}
 	s := &Service{
 		subs:          make(map[string]api.PushSubscription),
-		lastPush:      make(map[api.PushKind]time.Time),
+		lastPush:      make(map[pushDebounceKey]time.Time),
 		subject:       subject,
 		dir:           configDir,
 		ctx:           ctx,
@@ -193,21 +252,74 @@ func (s *Service) HasSubscribers() bool {
 // key, and kind constant are co-located. The init() below validates that
 // every registered kind passes api.PushKind.Valid(), ensuring the registry
 // and the api-level Valid() switch cannot drift.
-var kindRegistry = []struct {
+//
+// An EMPTY SettingsKey means the kind has no writable preference: it is a
+// floor, always DefaultOn, and loadPreferences never looks for a value it
+// could be overridden by. PushKindPermission is the one such kind — see the
+// "no notify_permission key" note in internal/settings/defaults.go for why
+// silencing a turn-blocking ask is a defect rather than a preference.
+var kindRegistry = []KindPref{
+	{api.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
+	{api.PushKindPRStatus, settings.KeyNotifyPRStatus, true},
+	{api.PushKindPermission, "", true},
+}
+
+// KindPref is one registered kind. Named rather than anonymous so
+// validateKindRegistry can take a table — including a deliberately wrong one in
+// a test, which is the only way to exercise a rule whose production form is a
+// panic at init.
+//
+// Exported so the settings write path can DERIVE its preference map from the
+// registry instead of keeping a third hand-maintained copy of the kind set beside
+// this one and api.pushKinds. That third copy was the reason a new kind's toggle
+// could persist to config.json and never reach the running service until the next
+// SSE reconnect.
+type KindPref struct {
 	Kind        api.PushKind
 	SettingsKey string
 	DefaultOn   bool
-}{
-	{api.PushKindAgentFinished, settings.KeyNotifyAgentFinished, true},
-	{api.PushKindPermission, settings.KeyNotifyPermission, true},
 }
 
+// Kinds returns the registered kinds and their settings keys.
+//
+// The caller that wants only the CONFIGURABLE ones filters on a non-empty
+// SettingsKey; the permission floor is the one member without one, and it is
+// deliberately still in this list so a caller building a preference map seeds it
+// too. Returns a copy so no consumer can reorder or extend the registry.
+func Kinds() []KindPref { return slices.Clone(kindRegistry) }
+
 func init() {
-	for _, kr := range kindRegistry {
+	if err := validateKindRegistry(kindRegistry); err != nil {
+		panic("push: " + err.Error())
+	}
+}
+
+// validateKindRegistry enforces the two rules the registry's types cannot.
+//
+// The first keeps the registry and api.PushKind.Valid() from drifting. The
+// second is why the keyless convention is safe to have at all: an empty
+// SettingsKey MEANS "unconfigurable floor", and nothing distinguishes that from
+// an entry whose author simply forgot the key — so a future kind added with a
+// missing key would become permanently on and unwritable, silently. Only the
+// permission ask earns the exemption, and only as an always-on floor.
+func validateKindRegistry(entries []KindPref) error {
+	for _, kr := range entries {
 		if !kr.Kind.Valid() {
-			panic("push: kindRegistry contains invalid PushKind: " + string(kr.Kind))
+			return errors.New("kindRegistry contains invalid PushKind: " + string(kr.Kind))
+		}
+		if kr.SettingsKey != "" {
+			continue
+		}
+		if kr.Kind != api.PushKindPermission {
+			return errors.New("kindRegistry entry " + string(kr.Kind) +
+				" declares no settings key; only the permission floor may omit one")
+		}
+		if !kr.DefaultOn {
+			return errors.New("the keyless permission floor must be DefaultOn: " +
+				"an unanswered ask blocks the turn")
 		}
 	}
+	return nil
 }
 
 // ReloadPreferences deduplicates concurrent preference reloads via
@@ -264,6 +376,13 @@ func (s *Service) loadPreferences(ctx context.Context) {
 	// Build local prefs map without holding mu — settings.Field does disk I/O.
 	local := make(map[api.PushKind]bool, len(kindRegistry))
 	for _, kr := range kindRegistry {
+		// A keyless kind is a floor: no disk read, so no config.json value —
+		// current, hand-edited or left over from an older release — can turn
+		// it off.
+		if kr.SettingsKey == "" {
+			local[kr.Kind] = kr.DefaultOn
+			continue
+		}
 		if v, ok := settings.Field[bool](ctx, s.dir, kr.SettingsKey, kr.SettingsKey); ok {
 			local[kr.Kind] = v
 		} else {

@@ -13,7 +13,12 @@
 //   GET    /api/forges/{id}/repos/{owner}/{name}/prs    — list PRs
 //   POST   /api/forges/{id}/repos/{owner}/{name}/prs    — create PR
 //   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/merge — merge
+//            ?method=merge|squash|rebase  merge strategy
+//            ?head_sha=<sha>              refuse the merge if the head moved
+//            ?auto=1                      arm the forge's auto-merge instead
 //   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/close — close
+//   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/reopen — reopen
+//   POST   /api/forges/{id}/repos/{owner}/{name}/prs/{n}/rerun — re-run failed CI
 //   GET    /api/forges/{id}/repos/{owner}/{name}/issues       — list issues
 //   POST   /api/forges/{id}/repos/{owner}/{name}/issues       — create issue
 //   POST   /api/forges/{id}/repos/{owner}/{name}/issues/{n}/close — close
@@ -43,6 +48,7 @@ type ForgeErrCode string
 const (
 	ForgeErrCLINotInstalled ForgeErrCode = "cli_not_installed"
 	ForgeErrNotLoggedIn     ForgeErrCode = "not_logged_in"
+	ForgeErrNotSupported    ForgeErrCode = "not_supported"
 )
 
 // HTTPHandler exposes the forges package over HTTP.
@@ -254,6 +260,9 @@ func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotLoggedIn):
 		api.WriteJSONStatus(w, http.StatusUnauthorized,
 			api.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
+	case errors.Is(err, ErrNotSupported):
+		api.WriteJSONStatus(w, http.StatusNotImplemented,
+			api.ErrorJSONWithCode(err.Error(), string(ForgeErrNotSupported)))
 	default:
 		slog.Debug("forges: ops error", "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,

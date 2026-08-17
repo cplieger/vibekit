@@ -16,6 +16,7 @@ type CommandType string
 const (
 	CmdCreateChat          CommandType = "create_chat"
 	CmdResumeSession       CommandType = "resume_session"
+	CmdForkChat            CommandType = "fork_chat"
 	CmdPrompt              CommandType = "prompt"
 	CmdCancel              CommandType = "cancel"
 	CmdDeleteChat          CommandType = "delete_chat"
@@ -27,6 +28,7 @@ const (
 	CmdRewindChat          CommandType = "rewind_chat"
 	CmdCompact             CommandType = "compact"
 	CmdSetEffort           CommandType = "set_effort"
+	CmdSetDraft            CommandType = "set_draft"
 	CmdSetMode             CommandType = "set_mode"
 	CmdCreateHook          CommandType = "create_hook"
 	CmdSetSupervisedMode   CommandType = "set_supervised_mode"
@@ -88,6 +90,38 @@ type ResumeSessionCommand struct {
 	// Name seeds the chat title, normally the session title KAS reported.
 	Name string `json:"name,omitempty"`
 }
+
+// ForkChatCommand is the payload for type="fork_chat": start a TANGENT off
+// another chat — a new chat that begins with the parent's real conversation
+// behind it and then diverges, with nothing syncing the two afterwards.
+//
+// ChatID on the envelope is the NEW chat (client-generated, like every chat id);
+// ParentChatID names the one being forked. The server calls KAS's own
+// `session/fork` on the parent's live session and binds the reply's session id
+// to the new chat, so the context is the parent's actual context rather than a
+// re-narration of it.
+//
+// Title is optional and rides `_meta.kiro.title` into KAS's session metadata,
+// which is where its own /tangent puts a tangent's name. Vibekit does not use it
+// as the chat name — that stays the ordinary naming precedence (the agent's focus
+// title, then the first prompt's truncation).
+type ForkChatCommand struct {
+	ParentChatID ChatID `json:"parent_chat_id"`
+	Title        string `json:"title,omitempty"`
+}
+
+// ForkOutcomePrimed and ForkOutcomeForked are the two paths fork_chat can take,
+// reported back so the client and the log agree on which one ran.
+//
+// `forked` is the real thing: KAS returned a new session id carrying the parent's
+// context. `primed` is the degraded path — the fork was refused, so the tangent
+// is a fresh chat whose first session gets the parent's transcript injected as an
+// invisible priming prompt, bounded by the priming budget. The tangent opens
+// either way; only its fidelity differs.
+const (
+	ForkOutcomeForked = "forked"
+	ForkOutcomePrimed = "primed"
+)
 
 // SwitchModelCommand is the payload for type="switch_model". Ends the
 // current ACP session and starts a fresh one with a new model, priming
@@ -169,6 +203,18 @@ type RewindChatCommand struct {
 // Applies a reasoning effort level to the active session.
 type SetEffortCommand struct {
 	Level EffortLevel `json:"level"` // "low" | "medium" | "high" | "xhigh" | "max"
+}
+
+// SetDraftCommand is the payload for type="set_draft": the composer text the
+// user has typed into this chat and not sent.
+//
+// Text is capped at MaxDraftBytes and may be empty — an empty draft is how a
+// sent or abandoned message is cleared, so it is a value rather than a missing
+// field. The command is a NO-OP on a chat that is not a server record yet
+// (every chat is client-side until its first prompt); auto-creating one would
+// put a row in every client's sidebar for a chat nobody has sent anything to.
+type SetDraftCommand struct {
+	Text string `json:"text"`
 }
 
 // SetModeCommand is the payload for type="set_mode". ModeID is the id of
