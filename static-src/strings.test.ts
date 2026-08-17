@@ -195,7 +195,6 @@ describe("windowOutput", () => {
   });
 });
 
-
 describe("windowOutput kept ranges", () => {
   it("reports source ranges whose slices reconstruct the windowed text", async () => {
     const { windowOutput } = await import("./strings.js");
