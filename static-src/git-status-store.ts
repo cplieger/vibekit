@@ -21,6 +21,7 @@
 import { apiAction, defineAction, pollAction } from "./actions/index.js";
 import { onSSE } from "./bus.js";
 import { signal, subscribe } from "@cplieger/reactive";
+import { absPath, workspaceRoot } from "./workspace.js";
 import type { GitRepoStatus } from "./git-types.js";
 import { statusLetter } from "./git-types.js";
 
@@ -58,11 +59,19 @@ const repos = signal<readonly GitRepoStatus[]>([]);
  *  times per paint. */
 let index = new Map<string, string>();
 
-/** Absolute-path index: "<repo>/<rel>" → status letter.
+/** Absolute-path index: the file's absolute path → status letter.
  *
  *  The file browser has absolute paths and no idea which repo a path belongs to,
  *  and making it resolve that itself would put a second copy of the repo-split
- *  rule beside the docs page's. One more map off the SAME poll costs nothing. */
+ *  rule beside the docs page's. One more map off the SAME poll costs nothing.
+ *
+ *  The keys are genuinely absolute. They used to be composed as
+ *  "<repoName>/<relPath>" — which is workspace-RELATIVE, because `repo` is a
+ *  bare directory name under the workspace, not a path — while every lookup
+ *  passed a real absolute path. No key could ever match, so the file browser's
+ *  status letters and every directory rollup were silently empty for every file.
+ *  The join goes through workspace.ts's absPath, the one owner of the
+ *  relative→absolute rule. */
 let absIndex = new Map<string, string>();
 
 /** Ancestor rollup: absolute directory path → the worst letter beneath it.
@@ -100,6 +109,11 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
     if (!r.is_repo) {
       continue;
     }
+    // `r.repo` is a directory NAME under the workspace, and "." means the
+    // workspace root IS the repo. So the absolute form of the repo's own
+    // directory is the root itself in that case, and the root joined with the
+    // name otherwise.
+    const repoAbs = r.repo === "." ? workspaceRoot() : absPath(r.repo);
     for (const f of r.files) {
       const key = `${r.repo}\u0000${f.path}`;
       const letter = statusLetter(f.status);
@@ -111,7 +125,7 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
       if (letter === "") {
         continue;
       }
-      const abs = `${r.repo}/${f.path}`;
+      const abs = repoAbs === "" ? f.path : `${repoAbs}/${f.path}`;
       if (!nextAbs.has(abs)) {
         nextAbs.set(abs, letter);
       }
@@ -120,7 +134,7 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
       while (cut > 0) {
         const dir = abs.slice(0, cut);
         nextDir.set(dir, worse(nextDir.get(dir) ?? "", letter));
-        if (dir === r.repo) {
+        if (dir === repoAbs) {
           break;
         }
         cut = dir.lastIndexOf("/");

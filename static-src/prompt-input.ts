@@ -102,6 +102,43 @@ class PromptInputController {
   // Send-button state
   private state: SendState = { kind: "idle" };
   private onCancel: Cancel = () => undefined;
+  private onSubmit: Submit = () => undefined;
+
+  /** Send whatever is in the composer. THE send path: the form's submit
+   *  handler, Enter, and the keyboard shortcut all call this.
+   *
+   *  Nothing fakes a submit event any more, and that mattered. Enter and the
+   *  shortcut used to run `form.dispatchEvent(new Event("submit"))`, and
+   *  `new Event()` is `cancelable: false`, so the handler's preventDefault() was
+   *  a no-op: the browser went on to perform the form's NATIVE submission on
+   *  every Enter. What stopped that being a full page navigation was the
+   *  `action="javascript:void 0"` backstop in index.html plus CSP
+   *  `form-action 'self'`, which turned it into a console violation instead —
+   *  the exact failure that backstop's comment describes. Calling the send
+   *  directly removes the cause rather than the symptom. (form.requestSubmit()
+   *  would also fire a cancelable event, but it runs form validation, and the
+   *  decision dock's fields live inside this same form, so a required
+   *  elicitation field would silently block Enter from sending.)
+   *
+   *  submit.ts decides what a send MEANS: a prompt on an idle chat, a steer into
+   *  a turn already running. Nothing here refuses it. A previous send having
+   *  failed is precisely when the user wants to press again, so the retry is the
+   *  plain path rather than a special one. */
+  private sendComposer(): void {
+    const input = $.promptInput;
+    const text = input.value.trim();
+    if (text === "") {
+      return;
+    }
+    this.exitCycling();
+    this.onSubmit(text);
+    input.value = "";
+  }
+
+  /** Public alias of sendComposer for the keyboard shortcut. */
+  send(): void {
+    this.sendComposer();
+  }
 
   private exitCycling(): void {
     this.idx = -1;
@@ -212,6 +249,7 @@ class PromptInputController {
     // The one button's streaming-click = cancel. type=button in that state
     // keeps the click out of the form's submit path entirely.
     this.onCancel = onCancel;
+    this.onSubmit = onSubmit;
     $.sendBtn.addEventListener("click", (e: MouseEvent) => {
       if (this.state.kind === "streaming") {
         e.preventDefault();
@@ -231,18 +269,7 @@ class PromptInputController {
 
     form.addEventListener("submit", (e: Event) => {
       e.preventDefault();
-      // Enter is defined independently of the label, and submit.ts decides what
-      // it means: a prompt on an idle chat, a steer into a turn already running.
-      // Nothing here refuses it. A previous send having failed is precisely when
-      // the user wants to press this again, so the retry is the plain path
-      // rather than a special one.
-      const text = input.value.trim();
-      if (text === "") {
-        return;
-      }
-      this.exitCycling();
-      onSubmit(text);
-      input.value = "";
+      this.sendComposer();
     });
 
     input.addEventListener("keydown", (e: KeyboardEvent) => {
@@ -253,7 +280,7 @@ class PromptInputController {
 
       if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey) {
         e.preventDefault();
-        form.dispatchEvent(new Event("submit"));
+        this.sendComposer();
         return;
       }
 
@@ -335,4 +362,14 @@ export function restorePromptText(text: string): void {
 
 export function initPromptInput(onSubmit: Submit, onCancel: Cancel): void {
   instance.init(onSubmit, onCancel);
+}
+
+/** Send the composer's contents. The keyboard shortcut's entry point, and the
+ *  same path Enter and the send button take.
+ *
+ *  Exported rather than left as a synthetic submit event on the form: see
+ *  sendComposer's own comment for why faking that event silently performed a
+ *  native form submission on every send. */
+export function sendComposer(): void {
+  instance.send();
 }

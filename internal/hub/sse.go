@@ -83,11 +83,17 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 // The handshake's ConnectedPayload carries the ring-buffer floor (oldest
 // replayable event ID) and head (newest) so the client can detect a replay
 // gap: a last-seen ID below the floor means events were lost and it must
-// refetch authoritative state. The hook runs after the library's
+// refetch authoritative state. It also carries the workspace root, the one
+// server fact the client cannot derive and needs before it can open a file
+// named by a relative path. The hook runs after the library's
 // Last-Event-ID replay, so the bounds are consistent with what the client
 // has already received.
 func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter api.ChatID) error {
-	connectedEvt := api.NewEvent(api.EventConnected, "", api.ConnectedPayload{Floor: floor, Head: head})
+	connectedEvt := api.NewEvent(api.EventConnected, "", api.ConnectedPayload{
+		Workspace: h.lifecycle.workDir,
+		Floor:     floor,
+		Head:      head,
+	})
 	connectedData, err := json.Marshal(connectedEvt)
 	if err != nil {
 		slog.Error("marshal connected event", "error", err)

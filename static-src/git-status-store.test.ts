@@ -11,6 +11,7 @@ import {
   currentRepos,
 } from "./git-status-store.js";
 import type { GitRepoStatus } from "./git-types.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 function repo(
   name: string,
@@ -35,6 +36,7 @@ function repo(
 }
 
 beforeEach(() => {
+  resetWorkspace();
   _setReposForTest([]);
 });
 
@@ -93,57 +95,98 @@ describe("statusFor", () => {
   });
 });
 
+// The absolute-path lookups exist because the file browser holds real
+// filesystem paths and does not know which repo one belongs to.
+//
+// THE FIXTURE SHAPE IS THE POINT. `/api/git/status-all` reports each repo by a
+// bare directory NAME under the workspace ("." when the workspace root is
+// itself a repo), never by an absolute path — see discoverRepos. These cases
+// used to fabricate absolute names (`repo("/w/r", …)`), which made the index
+// keys look absolute and the assertions pass while the real product built keys
+// like "vibekit/static-src/a.ts" and looked them up with
+// "/workspace/vibekit/static-src/a.ts". No key ever matched, so the browser's
+// status letters and every directory rollup were silently empty for every file,
+// with a green suite. The join now goes through workspace.ts.
 describe("statusForPath", () => {
+  beforeEach(() => {
+    setWorkspaceRoot("/workspace");
+  });
+
   it("answers for an absolute path, so a consumer needs no repo split rule", () => {
-    _setReposForTest([repo("/workspace/vibekit", [{ path: "static-src/files.ts", status: "M" }])]);
+    _setReposForTest([repo("vibekit", [{ path: "static-src/files.ts", status: "M" }])]);
     expect(statusForPath("/workspace/vibekit/static-src/files.ts")).toBe("M");
   });
 
+  it("answers for a file in the workspace-root repo, reported as '.'", () => {
+    // The shape that produced the original report: a file written straight into
+    // the workspace root, whose repo name is "." rather than a directory.
+    _setReposForTest([repo(".", [{ path: "hello.sh", status: "?" }])]);
+    expect(statusForPath("/workspace/hello.sh")).toBe("?");
+  });
+
   it("returns empty for a clean path and for a directory (that is statusUnder's job)", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a/b.md", status: "M" }])]);
-    expect(statusForPath("/w/r/a/other.md")).toBe("");
-    expect(statusForPath("/w/r/a")).toBe("");
+    _setReposForTest([repo("r", [{ path: "a/b.md", status: "M" }])]);
+    expect(statusForPath("/workspace/r/a/other.md")).toBe("");
+    expect(statusForPath("/workspace/r/a")).toBe("");
   });
 
   it("tolerates a trailing slash", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a.md", status: "A" }])]);
-    expect(statusForPath("/w/r/a.md/")).toBe("A");
+    _setReposForTest([repo("r", [{ path: "a.md", status: "A" }])]);
+    expect(statusForPath("/workspace/r/a.md/")).toBe("A");
+  });
+
+  it("returns empty before the handshake states the workspace root", () => {
+    // Nothing can be keyed absolutely yet, so the honest answer is no letter
+    // rather than a letter derived from a guessed root.
+    resetWorkspace();
+    _setReposForTest([repo("r", [{ path: "a.md", status: "M" }])]);
+    expect(statusForPath("/workspace/r/a.md")).toBe("");
   });
 });
 
 describe("statusUnder", () => {
+  beforeEach(() => {
+    setWorkspaceRoot("/workspace");
+  });
+
   it("rolls a nested change up to every ancestor, including the repo root", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a/b/c.md", status: "M" }])]);
-    expect(statusUnder("/w/r/a/b")).toBe("M");
-    expect(statusUnder("/w/r/a")).toBe("M");
-    expect(statusUnder("/w/r")).toBe("M");
+    _setReposForTest([repo("r", [{ path: "a/b/c.md", status: "M" }])]);
+    expect(statusUnder("/workspace/r/a/b")).toBe("M");
+    expect(statusUnder("/workspace/r/a")).toBe("M");
+    expect(statusUnder("/workspace/r")).toBe("M");
   });
 
   it("stops at the repo root — a sibling repo's parent is not decorated", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a.md", status: "M" }])]);
-    expect(statusUnder("/w")).toBe("");
+    _setReposForTest([repo("r", [{ path: "a.md", status: "M" }])]);
+    expect(statusUnder("/workspace")).toBe("");
+  });
+
+  it("rolls up to the workspace root for the '.' repo, which IS that root", () => {
+    _setReposForTest([repo(".", [{ path: "a/b.md", status: "M" }])]);
+    expect(statusUnder("/workspace/a")).toBe("M");
+    expect(statusUnder("/workspace")).toBe("M");
   });
 
   it("reports the WORST letter beneath it, so a conflict outranks an untracked file", () => {
     _setReposForTest([
-      repo("/w/r", [
+      repo("r", [
         { path: "a/untracked.md", status: "?" },
         { path: "a/conflict.md", status: "U" },
         { path: "a/mod.md", status: "M" },
       ]),
     ]);
-    expect(statusUnder("/w/r/a")).toBe("U");
+    expect(statusUnder("/workspace/r/a")).toBe("U");
   });
 
   it("orders the whole precedence chain U > D > M > R > A > ?", () => {
     const worst = (letters: string[]): string => {
       _setReposForTest([
         repo(
-          "/w/r",
+          "r",
           letters.map((s, i) => ({ path: `a/f${String(i)}.md`, status: s })),
         ),
       ]);
-      return statusUnder("/w/r/a");
+      return statusUnder("/workspace/r/a");
     };
     expect(worst(["?", "A"])).toBe("A");
     expect(worst(["A", "R"])).toBe("R");
@@ -154,24 +197,24 @@ describe("statusUnder", () => {
 
   it("does not let an unrecognised letter win by accident", () => {
     _setReposForTest([
-      repo("/w/r", [
+      repo("r", [
         { path: "a/x.md", status: "Z" },
         { path: "a/y.md", status: "?" },
       ]),
     ]);
-    expect(statusUnder("/w/r/a")).toBe("?");
+    expect(statusUnder("/workspace/r/a")).toBe("?");
   });
 
   it("returns empty for a directory with nothing changed beneath it", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a/b.md", status: "M" }])]);
-    expect(statusUnder("/w/r/other")).toBe("");
+    _setReposForTest([repo("r", [{ path: "a/b.md", status: "M" }])]);
+    expect(statusUnder("/workspace/r/other")).toBe("");
   });
 
   it("clears the rollup when the tree goes clean", () => {
-    _setReposForTest([repo("/w/r", [{ path: "a/b.md", status: "M" }])]);
-    expect(statusUnder("/w/r/a")).toBe("M");
-    _setReposForTest([repo("/w/r", [])]);
-    expect(statusUnder("/w/r/a")).toBe("");
+    _setReposForTest([repo("r", [{ path: "a/b.md", status: "M" }])]);
+    expect(statusUnder("/workspace/r/a")).toBe("M");
+    _setReposForTest([repo("r", [])]);
+    expect(statusUnder("/workspace/r/a")).toBe("");
   });
 });
 

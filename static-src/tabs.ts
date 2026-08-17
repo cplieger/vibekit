@@ -94,6 +94,9 @@ const TAB_FILES = "__files__";
 const TAB_HISTORY = "__history__";
 const TAB_DOCS = "__docs__";
 
+/** Id prefix for the one non-singleton tab kind keyed by a path. */
+const EDITOR_TAB_PREFIX = "editor:";
+
 const ICONS: Readonly<Record<TabKind, string>> = {
   chat: ICON_TAB_CHAT,
   plan: ICON_TAB_PLAN,
@@ -248,15 +251,31 @@ export function closeTab(id: string, opts?: { skipOnClose?: boolean }): void {
     closeTab(child.id, opts);
   }
 
+  // REMOVE, then notify. The order is the store's re-entrancy guarantee, not a
+  // detail: onClose is a TEARDOWN callback, so it must observe a state the tab
+  // has already left. Notifying first made every callback that closes its own
+  // tab an infinite loop — the editor's teardown does exactly that
+  // (closeEditorFile ends in closeTab), so the tab still being present meant
+  // closeTab re-entered, fired onClose again, and recursed until the stack
+  // died. Every editor tab was unclosable by ×, middle-click and Delete.
+  //
+  // The index is re-found because the children cascade above spliced the array,
+  // and a missing tab means a child's teardown already closed this one, whose
+  // onClose therefore already ran.
+  const at = state.tabs.findIndex((t) => t.id === id);
+  if (at < 0) {
+    return;
+  }
+  state.tabs.splice(at, 1);
+
   // `owns: false` tears down nothing: the tab is a view, and dismissing a view
   // must not kill the work it was watching.
   if (!opts?.skipOnClose && tab.owns !== false) {
     tab.onClose?.();
   }
-  state.tabs.splice(idx, 1);
 
   if (state.active === id) {
-    const next = state.tabs[Math.min(idx, state.tabs.length - 1)];
+    const next = state.tabs[Math.min(at, state.tabs.length - 1)];
     if (next !== undefined) {
       state.active = next.id;
       emit();
@@ -917,13 +936,28 @@ export function openRunTab(
   });
 }
 
+/** The tab id for an open editor file, and the predicate that recognises one.
+ *
+ *  Both live here because the convention was being composed and tested by hand
+ *  in three modules (this one, the editor's dirty-indicator binding, and the
+ *  reconnect-gap handler's tab reconcile), which is one string literal away
+ *  from a silent mismatch. */
+export function editorTabID(filePath: string): string {
+  return EDITOR_TAB_PREFIX + filePath;
+}
+
+/** Whether a tab id names an editor tab. */
+export function isEditorTabID(id: string): boolean {
+  return id.startsWith(EDITOR_TAB_PREFIX);
+}
+
 export function openEditorView(
   filePath: string,
   onShow: () => void,
   onClose?: () => void,
   opts?: { activate?: boolean },
 ): void {
-  const id = `editor:${filePath}`;
+  const id = editorTabID(filePath);
   const name = filePath.split("/").pop() ?? filePath;
   openTab(
     {

@@ -27,6 +27,7 @@ vi.mock("../tabs.js", () => ({
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
   getOpenTabIDs: () => mockGetOpenTabIDs(),
+  isEditorTabID: (id: string) => id.startsWith("editor:"),
 }));
 
 vi.mock("../settings.js", () => ({ syncSettings: vi.fn(() => Promise.resolve({})) }));
