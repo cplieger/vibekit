@@ -13,7 +13,7 @@
 // send-btn-contrast.test.ts gives: a second implementation is a second thing to
 // be wrong, and the numbers in the stylesheet comments were measured with the
 // first one. It uses `ansi-check --tsv`, which emits every measurement in one
-// process; 578 gated checks as individual `pair` calls would be 578 subprocesses.
+// process; 640 gated checks as individual `pair` calls would be 640 subprocesses.
 //
 // The script READS 15-ansi.css, so these floors are asserted against what ships.
 // That direction matters: the old report kept its own copy of the palette and had
@@ -105,8 +105,12 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
     const offenders: string[] = [];
     text.split("\n").forEach((line, i) => {
       // A colour-valued declaration whose value is anything but a var() read.
+      // `transparent` is admitted, and only that keyword: it is the ABSENCE of
+      // ink (`.ansi-hidden`'s conceal), so there is no theme for it to be wrong
+      // in and it declares no part of the palette. Any other non-var() value is
+      // a second declaration of a colour and fails.
       const m = /(?:^|[\s;{])(color|background-color|background)\s*:\s*([^;}]+)/.exec(line);
-      if (m && !/^var\(/.test(m[2]!.trim())) {
+      if (m && !/^var\(/.test(m[2]!.trim()) && m[2]!.trim() !== "transparent") {
         offenders.push(`15-ansi.css:${i + 1} ${m[1]}: ${m[2]!.trim()}`);
       }
       // A raw colour anywhere else in the file (a shadow, a gradient stop).
@@ -122,9 +126,9 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
   });
 
   it("declares all 16 codes in both roles, so no code falls back to the default ink", () => {
-    // A missing class is invisible rather than wrong: ansi_up emits it, nothing
-    // styles it, and the span silently inherits. That reads as "this program
-    // used no colour" instead of as a gap.
+    // A missing class is invisible rather than wrong: output-render.ts emits it,
+    // nothing styles it, and the span silently inherits. That reads as "this
+    // program used no colour" instead of as a gap.
     const text = stripComments(readFileSync(sheet, "utf8"));
     const missing: string[] = [];
     for (const code of CODES) {
@@ -139,11 +143,70 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
     expect(missing, "every ANSI code needs both an ink and a fill").toEqual([]);
   });
 
+  it("declares every attribute class output-render.ts can emit", () => {
+    // The same invisible-failure shape as the codes above, one axis over: an
+    // unstyled attribute class means a program's strikethrough or conceal simply
+    // does not happen, and the transcript looks like the program never asked.
+    // ATTR_* in output-render.ts is the authority for the list.
+    const text = stripComments(readFileSync(sheet, "utf8"));
+    const missing = [
+      "ansi-bold",
+      "ansi-dim",
+      "ansi-italic",
+      "ansi-underline",
+      "ansi-double-underline",
+      "ansi-overline",
+      "ansi-strike",
+      "ansi-hidden",
+      "ansi-blink",
+      "ansi-inverse-ink",
+      "ansi-inverse-fill",
+    ].filter((cls) => !new RegExp(`\\.${cls}\\s*\\{[^}]*[a-z]`).test(text));
+    expect(missing, "an attribute output-render.ts emits must have a rule").toEqual([]);
+  });
+
+  it("keeps the inverse fallbacks out of the palette namespace, one property each", () => {
+    // TWO rules in one, and both were measured rather than reasoned about.
+    //
+    // NAMESPACE: `.ansi-<x>-fg` / `.ansi-<x>-bg` is the 16-code palette, and
+    // css-contrast.py parses that shape out of this file. Naming the inverse
+    // fallbacks `.ansi-inverse-fg` / `-bg` made the report treat them as a 17th
+    // code: 782 measurements with 72 FAIL, including the tautology
+    // `inverse-fg on --c-bg-secondary: 1.000`, because a fallback for the
+    // DEFAULT colour is not a colour a program can select on its own. Under the
+    // -ink/-fill names the report reads 704 with 0 FAIL.
+    //
+    // ONE PROPERTY EACH: a rule setting both would also match a HALF-explicit
+    // inverse and override the swapped palette class on the side that did have a
+    // colour — inverse red-on-blue rendering as the default inverse pair.
+    const src = stripComments(readFileSync(sheet, "utf8"));
+    expect(
+      /\.ansi-inverse-(fg|bg)\s*\{/.test(src),
+      "inverse must not use the palette suffixes",
+    ).toBe(false);
+    for (const [cls, prop, banned] of [
+      ["ansi-inverse-ink", "color", "background-color"],
+      ["ansi-inverse-fill", "background-color", "color"],
+    ] as const) {
+      const body = new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`).exec(src)?.[1] ?? "";
+      expect(new RegExp(`(?<![-\\w])${prop}\\s*:`).test(body), `${cls} must set ${prop}`).toBe(
+        true,
+      );
+      expect(
+        new RegExp(`(?<![-\\w])${banned}\\s*:`).test(body),
+        `${cls} must NOT also set ${banned} — that overrides the explicit side`,
+      ).toBe(false);
+    }
+  });
+
   it("clears 4.5:1 for every ink on both surfaces it renders on, in both themes", () => {
-    // The two surfaces are traced, not assumed: a tool card's `.tool-output pre`
-    // resolves to --c-bg-secondary via `.tool-call`, and an agent terminal's
-    // `pre.agent-term-output` to --c-term-bg via `.agent-term-pane`. The old
-    // report measured --c-bg-primary and --c-code-bg, neither of which is either.
+    // ONE surface is traced now: a tool card's `.tool-output pre` resolves to
+    // --c-bg-secondary via `.tool-call`. Agent command output moved into the card
+    // that spawned it, so `.agent-term-pane` and its --c-term-bg are gone; the
+    // report still measures that token as a second surface, which makes this a
+    // stricter check than the app needs rather than a wrong one. Tightening
+    // ANSI_SURFACES to one entry is a css-contrast.py change and would drop the
+    // count below to 32.
     const misses = rows()
       .filter((r) => r.kind === "fg-surface" && r.floor !== null && r.ratio < r.floor)
       .map(
@@ -181,7 +244,8 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
   it("clears 4.5:1 for the container's own ink on every fill", () => {
     // The other half of the pairing, and the one easy to forget: `ESC[41m` with
     // no colour set arrives as a fill with the CONTAINER's ink on it —
-    // --c-text-secondary in a tool card, --c-term-fg in an agent terminal.
+    // --c-text-secondary in a tool card, and --c-term-fg kept beside it as the
+    // live terminal's default ink.
     const misses = rows()
       .filter((r) => r.kind === "ink-fill" && r.floor !== null && r.ratio < r.floor)
       .map((r) => `${r.theme} ${r.name} on ${r.context}: ${String(r.ratio)}:1`);
@@ -192,16 +256,14 @@ describe.skipIf(!existsSync(script))("the ANSI palette", () => {
     ).toEqual([]);
   });
 
-  it("clears 4.5:1 for the exit-status footer through its own opacity", () => {
-    // .agent-term-status carries opacity 0.85, so the token is not what a reader
-    // sees — the composite over --c-term-bg is. Measuring the raw token would
-    // report a colour the app never paints.
-    const status = rows().filter((r) => r.kind === "status");
-    expect(status.length, "is-ok and is-err, both themes").toBe(4);
-    const misses = status
-      .filter((r) => r.floor !== null && r.ratio < r.floor)
-      .map((r) => `${r.theme} ${r.name}: ${String(r.ratio)}:1`);
-    expect(misses, "the footer is text, composited or not").toEqual([]);
+  it("measures no exit-status footer, because there is no longer one to paint", () => {
+    // `.agent-term-status` was the agent-terminal pane's "exited (code N)" line
+    // and the pane is gone: the card's own status glyph carries the outcome now,
+    // so a second rendering of it would be a second thing to keep true. The
+    // report finds the rules by reading this stylesheet, so its `status` section
+    // empties out on its own — asserted rather than deleted so the rule cannot
+    // creep back in without a reader.
+    expect(rows().filter((r) => r.kind === "status")).toEqual([]);
   });
 
   it("keeps the fill-vs-surface figures on the record without gating them", () => {

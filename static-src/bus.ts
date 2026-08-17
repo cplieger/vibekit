@@ -45,6 +45,9 @@ import type {
   GovernanceStatePayload,
   ToolJobChangedPayload,
   ToolJobOutputPayload,
+  TerminalCreatedPayload,
+  TerminalOutputPayload,
+  TerminalExitedPayload,
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
@@ -101,17 +104,13 @@ export interface SSEPayloads {
   readonly open_external_url: OpenExternalURLPayload;
   readonly compaction_started: undefined;
   readonly working_label: { readonly label: string };
-  readonly terminal_created: {
-    readonly terminal_id: string;
-    readonly command: string;
-    readonly args?: string[];
-  };
-  readonly terminal_output: { readonly terminal_id: string; readonly data: string };
-  readonly terminal_exited: {
-    readonly terminal_id: string;
-    readonly exit_code?: number;
-    readonly signal?: string;
-  };
+  // The generated wire types, not a hand-written restatement of them. The three
+  // shapes here used to be inline object literals that had already fallen behind
+  // the server: `terminal_output` gained `spans` and `offset`, and a payload
+  // shape declared twice tracks the server in only one of its copies.
+  readonly terminal_created: TerminalCreatedPayload;
+  readonly terminal_output: TerminalOutputPayload;
+  readonly terminal_exited: TerminalExitedPayload;
   readonly forges_changed: undefined;
   readonly hooks_changed: undefined;
   readonly tool_job_changed: ToolJobChangedPayload;

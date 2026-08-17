@@ -179,9 +179,12 @@
      *
      * SWEPT, NOT PICKED — `css-contrast.py ansi` prints every figure and reads
      * these through 15-ansi.css itself, so it cannot drift from what ships.
-     * ANSI output renders on exactly two surfaces: --c-bg-secondary (a tool
-     * card, via `.tool-output pre` -> `.tool-call`) and --c-term-bg (an agent
-     * terminal, via `.agent-term-pane`). --c-bg-secondary BINDS in both themes —
+     * ANSI output renders on ONE surface — --c-bg-secondary, a tool card, via
+     * `.tool-output pre` -> `.tool-call` — since agent command output moved into
+     * the card that spawned it and the agent-terminal pane went away. The report
+     * still measures --c-term-bg as a second surface, which is now a stricter
+     * check than the app needs rather than a claim about where a class lands.
+     * --c-bg-secondary BINDS in both themes —
      * it is the lighter of the two under dark and the darker under light — so an
      * ink clearing it clears the other for free. Held: every ink >= 4.5:1 on both
      * surfaces; every ink >= 4.5:1 on all 16 fills (256 pairs, because a program

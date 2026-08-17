@@ -408,14 +408,44 @@ describe("shell.ts: resize handle", () => {
   });
 });
 
+describe("shell.ts: fullscreen toggle", () => {
+  // The toggle moved here from agent-terminal.ts when that module was deleted.
+  // Nothing else wired this button, so without the move it would have gone dead
+  // silently — the panel's CLOSE path already cleared the class, so the only
+  // visible symptom was a header button that did nothing.
+  it("enters fullscreen and mirrors the state on aria-pressed", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("false");
+
+    h.shellFullscreenBtn.click();
+    expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(true);
+    expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("leaves through the transient class so the exit has something to animate", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellFullscreenBtn.click();
+
+    h.shellFullscreenBtn.click();
+    // aria-pressed flips immediately; the class is held for one animation.
+    expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("false");
+    expect(h.shellPanel.classList.contains("shell-fullscreen-leaving")).toBe(true);
+
+    h.shellPanel.dispatchEvent(new Event("animationend"));
+    expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(false);
+    expect(h.shellPanel.classList.contains("shell-fullscreen-leaving")).toBe(false);
+  });
+});
+
 describe("shell.ts: close behavior", () => {
   it("clears fullscreen (class + aria-pressed) when closing", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click(); // open
-    // Simulate the agent-terminal fullscreen toggle having been used.
-    h.shellPanel.classList.add("shell-fullscreen");
-    h.shellFullscreenBtn.setAttribute("aria-pressed", "true");
+    h.shellFullscreenBtn.click();
+    expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(true);
 
     h.shellToggleBtn.click(); // close
     expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(false);

@@ -273,8 +273,9 @@ under `static/chunks/` (the dynamic `import()` sites), bundles `sw.ts` into
 (`@cplieger/web-terminal-ui`'s `MANIFEST.touch`, then `static-src/css/MANIFEST`)
 into `static/style.css`. Serving compression is the server's job: it gzips
 assets at startup, so the bundle writes no precompressed `.gz` siblings. The
-`@cplieger/*` library sources and `ansi_up` are bundled in, so nothing is
-served from `/vendor/` and the page carries no importmap. All bundle outputs
+`@cplieger/*` library sources are bundled in, so nothing is
+served from `/vendor/` and the page carries no importmap. Those are all
+first-party: the browser bundle has no third-party JavaScript in it. All bundle outputs
 are gitignored; only the hand-written assets in `static/` are committed.
 
 To produce a servable `static/` locally (for `go build` + a local run), use

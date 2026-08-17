@@ -1,6 +1,7 @@
 /*
- * ANSI terminal color classes for ansi_up (use_classes=true mode).
- * Standard 8 colors + bright variants, plus modifiers.
+ * ANSI terminal colour classes, emitted by output-render.ts from the style spans
+ * the server parsed off command output (internal/ansitext).
+ * Standard 8 colours + bright variants, plus the attribute modifiers.
  *
  * EVERY value here is a token read. There are no literals left, and that is the
  * point: this file used to carry 32 hardcoded hexes "tuned for dark backgrounds",
@@ -174,27 +175,71 @@
   text-decoration: underline;
 }
 
-/* --- Agent terminal exit-status footer --- */
-/* Rendered by agent-terminal.ts when a terminal process exits: a small
- * "exited (code N)" / "killed (SIGNAL)" line below the output. Green on a
- * clean exit, red otherwise; the colours ARE the ansi green/red above, read
- * from the same tokens rather than restated as literals.
+.ansi-double-underline {
+  text-decoration: underline double;
+}
+
+.ansi-overline {
+  text-decoration: overline;
+}
+
+.ansi-strike {
+  text-decoration: line-through;
+}
+
+/* Conceal. Transparent ink rather than `visibility: hidden` or `display: none`,
+ * because a transcript's job is to be selectable and copyable and both of those
+ * take the text out of the selection. It is also the only declaration in this
+ * file whose value is not a token read: `transparent` is the absence of ink, not
+ * a colour choice, so there is no theme for it to be wrong in. A concealed span
+ * carries no foreground at all — output-render.ts skips emitting one — so this is
+ * the whole of its ink and nothing outranks it. */
+.ansi-hidden {
+  color: transparent;
+}
+
+/* Inverse is applied by swapping the colour VALUES in output-render.ts, since
+ * only that code knows what the two colours resolve to once defaults are in
+ * play. These two cover the side that was DEFAULT before the swap and so has
+ * nothing concrete to become.
  *
- * This element is a child of .agent-term-pane, so it sits on --c-term-bg, and
- * the opacity below composites against that surface — `css-contrast.py ansi`
- * measures the composited result, not the raw token, because the raw token is
- * not what a reader sees. */
-.agent-term-status {
-  padding: 0.25rem 0.5rem;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.85em;
-  opacity: 0.85;
+ * ONE PROPERTY EACH, deliberately. A single rule setting both would also apply
+ * to a half-explicit inverse and override the swapped palette class on the side
+ * that DID have a colour, which is how inverse red-on-blue used to render as the
+ * default inverse pair.
+ *
+ * They read --c-bg-secondary / --c-text-secondary rather than the --c-term-*
+ * pair because those two ARE the resting pair on the only surface these classes
+ * land on (a tool card and its default ink), so this is the swap of what the text
+ * would otherwise have been. The pair is measured at 8.06:1 dark / 7.29:1 light,
+ * and contrast is symmetric, so the swapped direction is gated by that same
+ * figure. Named -ink/-fill rather than -fg/-bg on purpose: the `.ansi-*-fg` /
+ * `.ansi-*-bg` namespace is the 16-code palette, which `css-contrast.py` parses
+ * out of this file, and a fallback for the default colour is not a 17th code. */
+.ansi-inverse-ink {
+  color: var(--c-bg-secondary);
 }
 
-.agent-term-status.is-ok {
-  color: var(--c-term-green);
+.ansi-inverse-fill {
+  background-color: var(--c-text-secondary);
 }
 
-.agent-term-status.is-err {
-  color: var(--c-term-red);
+/* prefers-reduced-motion is honoured because a blinking region in a long build
+ * log is exactly the pattern the media query exists for. The reduced fallback
+ * still marks the span, since blink is a signal the program chose to send. */
+.ansi-blink {
+  animation: ansi-blink 1s step-end infinite;
+}
+
+@keyframes ansi-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ansi-blink {
+    animation: none;
+    opacity: 0.75;
+  }
 }

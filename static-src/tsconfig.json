@@ -34,8 +34,7 @@
     "actions/*.ts",
     "actions/__test-helpers__/*.ts",
     "__test-helpers__/*.ts",
-    "lib/**/*.ts",
-    "vendor-types/*.d.ts"
+    "lib/**/*.ts"
   ],
   "exclude": [
     "vitest.config.ts",

@@ -58,7 +58,6 @@
 .tab.active:not(.dragging),
 .settings-tab.active,
 .mcp-modal-tab.active,
-.shell-tab.active,
 .pill-model-item.active,
 .pill-role-item.active,
 .popup-item.active,
@@ -96,7 +95,6 @@
 @media (any-hover: hover) {
   .settings-tab.active:hover,
   .mcp-modal-tab.active:hover,
-  .shell-tab.active:hover,
   .pill-model-item.active:hover,
   .pill-role-item.active:hover,
   .popup-item.active:hover,
@@ -136,7 +134,6 @@
 
 .settings-tab.active:active,
 .mcp-modal-tab.active:active,
-.shell-tab.active:active,
 .pill-model-item.active:active,
 .pill-role-item.active:active,
 .popup-item.active:active,
@@ -238,16 +235,6 @@
    reader which definition a run will use, so it must survive selection. */
 .pill-role-item.active .pill-role-shadow {
   color: var(--c-selected-yellow-fg);
-}
-
-/* The agent terminal's exit glyph. Shape carries the outcome as well as colour
-   (a check against a cross), so this is a legibility fix, not the only channel. */
-.shell-tab.active.term-exited-ok::after {
-  color: var(--c-selected-green-fg);
-}
-
-.shell-tab.active.term-exited-err::after {
-  color: var(--c-selected-red-fg);
 }
 
 /* The tab activity dot (12-tabs.css). It is the largest single consumer of this

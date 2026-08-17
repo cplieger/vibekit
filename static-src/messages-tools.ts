@@ -14,7 +14,7 @@
 // diffs). The parent (messages.ts) passes module-internal state via init().
 // ---------------------------------------------------------------------------
 
-import type { ToolCall, ToolStatus, ToolDiff } from "./types.js";
+import type { ToolCall, ToolStatus, ToolDiff, TextSpan } from "./types.js";
 import { ensureToolCallSig, clearToolCallSig } from "./store-signals.js";
 import { effect, el } from "@cplieger/reactive";
 import type { ReconcileSpec } from "./reconcile.js";
@@ -22,8 +22,8 @@ import type { ReconcileSpec } from "./reconcile.js";
 import { maybeCollapseGroup, formatDuration, untrackInProgress } from "./tool-group.js";
 import { isToolDone, type ToolKind } from "./tool-schema.js";
 import { buildToolCard, insertDiffPreview, expandToolDetails, applyOutcome } from "./tool-card.js";
-import { windowOutput } from "./strings.js";
-import { ansiToHtml } from "./ansi.js";
+import { windowOutput, windowSpans } from "./strings.js";
+import { renderOutput, appendOutput as appendOutputChunk } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
 import { bindLoadingState } from "./actions/index.js";
 
@@ -33,6 +33,53 @@ import { bindLoadingState } from "./actions/index.js";
 
 /** Tool-call DOM elements, keyed on tool_call.id. */
 const toolEls = new Map<string, HTMLDivElement>();
+
+/** terminal_id → tool_call.id, for routing an agent terminal's live output to
+ *  the card that spawned it. Populated from ToolCall.terminal_id, which arrives
+ *  on the ACP `terminal` content block. */
+const termToTool = new Map<string, string>();
+
+/** Live chunks that arrived before a card claimed their terminal id, per id.
+ *
+ *  Needed because the two facts arrive in the wrong order: KAS creates the
+ *  terminal and its first output lands BEFORE the tool_call_update that names
+ *  the terminal on the tool call. Without a short hold, the opening lines of
+ *  every command would be missing from the live view and only appear at
+ *  completion, when the server's authoritative output replaces it. */
+interface PendingHold {
+  chunks: { text: string; spans: TextSpan[]; base: number }[];
+  /** Characters held, tracked rather than recomputed so appending N chunks is
+   *  linear instead of quadratic. */
+  chars: number;
+  /** Set once a chunk did not fit under the cap. Nothing further is accepted
+   *  after that, so the hold is always a contiguous PREFIX of the stream —
+   *  see holdChunk for why a hole would be invisible. */
+  full: boolean;
+}
+const pendingChunks = new Map<string, PendingHold>();
+
+/** Cap on held characters per terminal. A command can produce megabytes before
+ *  its link arrives; the completion snapshot is authoritative anyway, so the
+ *  hold only has to cover the opening moments. */
+const PENDING_CHARS_CAP = 64 * 1024;
+
+/** Cap on how many terminals may be held at once.
+ *
+ *  A per-id cap alone is not a bound: a terminal that NEVER links keeps its
+ *  entry until the whole chat is disposed, and nothing else evicts it, so a run
+ *  of interrupted or unlinked commands retains PENDING_CHARS_CAP each without
+ *  limit. When the cap is reached the OLDEST hold is dropped, since the newest
+ *  is the one most likely still to find its card. */
+const PENDING_TERMINALS_CAP = 16;
+
+/** Cap on the live text a card's output region may hold before the authoritative
+ *  snapshot replaces it at completion.
+ *
+ *  The surface this replaced capped at the same figure; without it a chatty
+ *  long-running command grows the DOM for the life of the page. Trimming keeps
+ *  the TAIL, matching the server ring and the old terminal pane: a build's last
+ *  lines say how it ended. */
+const LIVE_OUTPUT_CHARS_CAP = 256 * 1024;
 
 /** Per-tool-call effect cleanups. Disposed on unmount or chat-switch. */
 const toolEffects = new Map<string, () => void>();
@@ -53,6 +100,134 @@ export function disposeAllToolEffects(): void {
   }
   toolEffects.clear();
   toolEls.clear();
+  termToTool.clear();
+  pendingChunks.clear();
+}
+
+/** Record a tool call's terminal link and settle anything already held for it.
+ *  Idempotent: the same link arrives on every later update.
+ *
+ *  A hold is FLUSHED only when the tool call carries no output of its own. When
+ *  it does, that output is the server's whole-stream snapshot and the card has
+ *  already rendered it, so appending the held chunks would print the opening
+ *  lines twice — reachable whenever a fast command's first frame arrives already
+ *  completed while its early chunks were still waiting for a card to claim them.
+ *  The snapshot supersedes the hold; the hold is dropped either way, because a
+ *  second call must not flush what the first discarded. */
+function linkTerminal(tc: ToolCall): void {
+  const termID = tc.terminal_id;
+  if (termID === undefined || termID === "" || termToTool.get(termID) === tc.id) {
+    return;
+  }
+  termToTool.set(termID, tc.id);
+  const held = pendingChunks.get(termID);
+  if (held === undefined) {
+    return;
+  }
+  pendingChunks.delete(termID);
+  if (tc.output !== undefined && tc.output !== "") {
+    return;
+  }
+  for (const chunk of held.chunks) {
+    appendTerminalChunk(termID, chunk.text, chunk.spans, chunk.base);
+  }
+}
+
+/** Forget a terminal that will never send more output. Called on terminal_exited
+ *  so an unclaimed hold is released at the one moment the server tells us the
+ *  terminal is finished, rather than waiting for the chat to be disposed. */
+export function forgetTerminal(termID: string): void {
+  pendingChunks.delete(termID);
+}
+
+/**
+ * Append one live chunk of an agent terminal's output to the card that spawned
+ * it. Called by terminal-stream.ts on every terminal_output event.
+ *
+ * This is the whole of what "agent terminals render inline" means: the terminal
+ * is the tool call's, so the tool call's card is where its output goes. There is
+ * no separate terminal surface to keep in sync with the transcript.
+ *
+ * The live text is provisional. At completion the server stamps the terminal's
+ * full output onto the tool call and applyOutputUpdate replaces this content
+ * with it, which is also what a page reload renders. So a chunk lost here costs
+ * smoothness, never the record.
+ */
+export function appendTerminalChunk(
+  termID: string,
+  text: string,
+  spans: TextSpan[],
+  base: number,
+): void {
+  const toolID = termToTool.get(termID);
+  if (toolID === undefined) {
+    holdChunk(termID, text, spans, base);
+    return;
+  }
+  const card = toolEls.get(toolID);
+  if (card === undefined) {
+    return;
+  }
+  const out = card.querySelector(".tool-output");
+  if (out === null) {
+    return;
+  }
+  // The card's own snapshot rendering owns the <pre>; create one only if no
+  // update has built it yet, so the two paths never fight over the element.
+  const existing = out.querySelector("pre");
+  const pre = existing ?? (el("pre") as HTMLPreElement);
+  if (existing === null) {
+    out.appendChild(pre);
+  }
+  appendOutputChunk(pre, text, spans, base);
+  trimToLiveCap(pre);
+  linkifyPaths(pre, { insidePre: true });
+}
+
+function holdChunk(termID: string, text: string, spans: TextSpan[], base: number): void {
+  let held = pendingChunks.get(termID);
+  if (held === undefined) {
+    // Evict the oldest hold first: Map iterates in insertion order, so the
+    // first key is the least recently started terminal.
+    while (pendingChunks.size >= PENDING_TERMINALS_CAP) {
+      const oldest = pendingChunks.keys().next();
+      if (oldest.done === true) {
+        break;
+      }
+      pendingChunks.delete(oldest.value);
+    }
+    held = { chunks: [], chars: 0, full: false };
+    pendingChunks.set(termID, held);
+  }
+  if (held.full || held.chars + text.length > PENDING_CHARS_CAP) {
+    // Refusing everything after the first chunk that did not fit is what keeps
+    // the hold a contiguous PREFIX. Skipping only the oversized chunk and taking
+    // later smaller ones leaves a HOLE that nothing marks: each chunk is rebased
+    // by its own `base`, so the two sides of the gap render as though they were
+    // adjacent and the missing middle is invisible. A prefix is enough because
+    // the completion snapshot replaces all of it.
+    held.full = true;
+    return;
+  }
+  held.chunks.push({ text, spans, base });
+  held.chars += text.length;
+}
+
+/** Drop leading nodes until the element is under the live cap, keeping the tail.
+ *
+ *  Node-granular rather than character-exact: a node is a text run or one styled
+ *  span, so dropping whole nodes keeps every remaining span's styling intact. An
+ *  exact trim would have to split a node and re-derive its style. */
+function trimToLiveCap(pre: HTMLElement): void {
+  let total = pre.textContent?.length ?? 0;
+  while (total > LIVE_OUTPUT_CHARS_CAP) {
+    const first = pre.firstChild;
+    if (first === null) {
+      return;
+    }
+    total -= first.textContent?.length ?? 0;
+    first.remove();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +281,9 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     if (tc.output !== undefined) {
       opts.output = tc.output;
     }
+    if (tc.output_spans !== undefined && tc.output_spans.length > 0) {
+      opts.outputSpans = tc.output_spans;
+    }
     if (tc.diffs !== undefined && tc.diffs.length > 0) {
       opts.diffs = tc.diffs;
     }
@@ -120,6 +298,10 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     }
     const card = buildToolCard(opts);
     toolEls.set(tc.id, card);
+    // After buildToolCard, deliberately: the card is what a held chunk would be
+    // appended to, and whether the hold is flushed at all depends on the output
+    // this build just rendered.
+    linkTerminal(tc);
 
     const sig = ensureToolCallSig(tc.id, tc);
     let lastApplied = tc;
@@ -160,6 +342,7 @@ export function updateToolCall(el: HTMLElement, tc: ToolCall): void {
 
 /** Apply a ToolCall snapshot's updatable fields to its DOM card. Idempotent. */
 function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
+  linkTerminal(tc);
   if (tc.status !== undefined) {
     applyStatusUpdate(el, tc.status, tc.duration_ms, tc.id);
   }
@@ -167,7 +350,7 @@ function applyToolCallUpdate(el: HTMLDivElement, tc: ToolCall): void {
     applyTitleUpdate(el, tc.title);
   }
   if (tc.output !== undefined && tc.output !== "") {
-    applyOutputUpdate(el, tc.output);
+    applyOutputUpdate(el, tc.output, tc.output_spans ?? []);
   }
   if (tc.diffs !== undefined && tc.diffs.length > 0) {
     applyDiffUpdate(el, tc.diffs);
@@ -265,7 +448,11 @@ function applyTitleUpdate(el: HTMLDivElement, title: string): void {
  *  card's <pre> must be REPLACED, not appended. Appending each cumulative
  *  snapshot compounds it (two updates "A" then "AB" → "AAB"). Exported for
  *  unit testing. */
-export function applyOutputUpdate(card: HTMLDivElement, output: string): void {
+export function applyOutputUpdate(
+  card: HTMLDivElement,
+  output: string,
+  spans: readonly TextSpan[] = [],
+): void {
   const out = card.querySelector(".tool-output");
   if (out === null) {
     return;
@@ -278,12 +465,17 @@ export function applyOutputUpdate(card: HTMLDivElement, output: string): void {
   // the middle of a 5,000-line build into the card would undo the window on the
   // first update, and the reveal control is what re-offers the full text.
   const windowed = card.dataset["depth1"] === "output";
-  const shown = windowed ? windowOutput(output) : { text: output, elided: 0 };
+  const shown = windowed
+    ? windowOutput(output)
+    : { text: output, elided: 0, kept: [{ from: 0, to: output.length, at: 0 }] };
 
   const existingPre = out.querySelector("pre");
   const pre = existingPre ?? el("pre");
-  pre.innerHTML = ansiToHtml(shown.text);
-  linkifyPaths(pre, { insidePre: true });
+  const paint = (text: string, s: readonly TextSpan[]): void => {
+    renderOutput(pre, text, s);
+    linkifyPaths(pre, { insidePre: true });
+  };
+  paint(shown.text, windowSpans(spans, shown.kept));
   if (existingPre === null) {
     out.appendChild(pre);
   }
@@ -298,8 +490,7 @@ export function applyOutputUpdate(card: HTMLDivElement, output: string): void {
     );
     reveal.addEventListener("click", (e: Event) => {
       e.stopPropagation();
-      pre.innerHTML = ansiToHtml(output);
-      linkifyPaths(pre, { insidePre: true });
+      paint(output, spans);
       reveal.remove();
     });
     out.appendChild(reveal);

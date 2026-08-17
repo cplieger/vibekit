@@ -58,7 +58,7 @@ import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
 import { initAwaySummary } from "./away-summary.js";
-import { initAgentTerminals } from "./agent-terminal.js";
+import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
@@ -223,7 +223,7 @@ function init(): void {
   onRetentionChange(syncHistoryBtn);
   syncHistoryBtn();
   initAwaySummary();
-  initAgentTerminals();
+  initTerminalStream();
   initTooltips();
   // initGovernance() moved to initPostAuth(): its /api/governance snapshot
   // (and settings.ts's version/git-badge fetches) shouldn't fire on the

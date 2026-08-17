@@ -132,7 +132,6 @@ sets the press fill. Got body: ${press.body.trim().slice(0, 200)}`,
       ".fb-row.fb-row-selected .fb-meta",
       ".commands-popover-row.selected .commands-popover-desc",
       ".commands-popover-row.selected .commands-popover-name",
-      ".shell-tab.active.term-exited-err::after",
     ]) {
       const rule = ruleContaining(sel, selector);
       expect(
