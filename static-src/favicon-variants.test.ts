@@ -8,14 +8,13 @@
 // icon sink is wired yet.
 //
 // The names are the convention @cplieger/web-terminal-ui's `iconVariantHref`
-// rewrites to and `scripts/gen-attention-icons.py` writes: the `favicon` token of
+// rewrites to and `.kiro/scripts/gen-attention-icons.py` writes: the `favicon` token of
 // the filename gains `-<variant>`, extension preserved. Three variants for four
 // cues, because `crashed` and `failed` both render as `alert`.
 //
-// Regenerate with:
-//   python3 scripts/gen-attention-icons.py --app vibekit --static ../vibekit/static
-// from a web-terminal-ui checkout, which reads the base icon and appends one dot
-// rather than redrawing anything.
+// Regenerate from the workspace root with:
+//   python3 .kiro/scripts/gen-attention-icons.py --app vibekit --static vibekit/static
+// which reads the base icon and appends one dot rather than redrawing anything.
 //
 // Skipped under Stryker: its sandbox copies static-src only (ignorePatterns
 // excludes ../static), so the real assets are absent there.
@@ -28,7 +27,7 @@ import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
  *
  *  `token` + `oklch` are what the generator is HANDED: vibekit has no --status-*
  *  family, so its APPS entry names these three tab-dot tokens by their oklch
- *  parameters (gen-attention-icons.py, in the web-terminal-ui checkout). `fill` is
+ *  parameters (.kiro/scripts/gen-attention-icons.py). `fill` is
  *  what it WRITES — the sRGB hex those parameters resolve to, which is the only
  *  form an SVG fill can carry.
  *
