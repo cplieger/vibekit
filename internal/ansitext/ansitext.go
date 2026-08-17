@@ -185,9 +185,6 @@ func RGB(r, g, b uint8) int32 {
 	return rgbFlag | int32(r)<<16 | int32(g)<<8 | int32(b)
 }
 
-// IsRGB reports whether c is packed 24-bit colour rather than a palette index.
-func IsRGB(c int32) bool { return c >= rgbFlag }
-
 // style is the parser's current SGR state.
 type style struct {
 	fg    int32
@@ -385,13 +382,6 @@ func Parse(s string) (text string, spans []Span) {
 		spans = append(spans, tailSpans...)
 	}
 	return text, spans
-}
-
-// Strip returns only the plain text, for callers that need the searchable form
-// and no styling.
-func Strip(s string) string {
-	text, _ := Parse(s)
-	return text
 }
 
 // scanEscape examines an escape sequence starting at b[0]==ESC.
