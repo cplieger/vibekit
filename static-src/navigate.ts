@@ -36,6 +36,7 @@ import { openFile, openFileGitDiff } from "./editor-openers.js";
 import { toggleGitView } from "./tabs.js";
 import { setGitTab } from "./git-tabs.js";
 import { isSafeURL } from "./url-safety.js";
+import { absPath } from "./workspace.js";
 
 /** Open a file's CHANGE — its diff against HEAD.
  *
@@ -43,12 +44,22 @@ import { isSafeURL } from "./url-safety.js";
  *  honest source for a "let me look" click: the write has already landed, so the
  *  working tree IS the after state and git holds the before. A card's own pair
  *  answers the narrower "what did THIS call do", which is what its `+N −M` link
- *  is for. */
+ *  is for.
+ *
+ *  This is the seam between the client's two path spaces, and the ONE place the
+ *  crossing happens. Its callers do not agree on the form they hold and cannot
+ *  be made to: three of them (the turn footer's ledger row, a tool card's
+ *  filename, a turn-approval file row) carry the agent's workspace-RELATIVE
+ *  path, while the file browser carries an absolute one. The editor addresses
+ *  files absolutely, so every caller is normalised here rather than each
+ *  learning the rule. Before this, the three relative callers produced
+ *  `GET /api/file?path=hello.sh`, which the granted-roots allow-list denied with
+ *  403 — so clicking a changed filename could never load its diff. */
 export function openChange(path: string, ref = "HEAD"): void {
   if (path === "") {
     return;
   }
-  openFileGitDiff(path, ref);
+  openFileGitDiff(absPath(path), ref);
 }
 
 /** Open a MULTI-FILE review — the git view's changes tab.
@@ -67,12 +78,17 @@ export function openChangeSet(): void {
   toggleGitView("changes");
 }
 
-/** Open the editor at a line — a search hit, or a `path:line` reference. */
+/** Open the editor at a line — a search hit, or a `path:line` reference.
+ *
+ *  Normalised through the same seam as openChange, and for the same reason: a
+ *  read card's filename and a `path:line` reference in the agent's prose are
+ *  both workspace-RELATIVE, so both produced `GET /api/file?path=…` requests the
+ *  granted-roots allow-list denied. An absolute path passes through. */
 export function openAtLine(path: string, line?: number): void {
   if (path === "") {
     return;
   }
-  openFile(path, line);
+  openFile(absPath(path), line);
 }
 
 /** Surface a URL the agent fetched. Returns false when the URL is not safe to

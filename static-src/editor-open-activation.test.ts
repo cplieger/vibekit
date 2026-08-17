@@ -34,7 +34,7 @@ vi.mock("./tabs.js", () => ({
   openEditorView: (path: string, onShow: () => void, onClose?: () => void) =>
     openEditorView(path, onShow, onClose),
   getActiveTabId: () => activeTab,
-  closeTab: vi.fn(),
+  editorTabID: (path: string) => `editor:${path}`,
   setTabDirty: vi.fn(),
 }));
 vi.mock("./api-client.js", () => ({

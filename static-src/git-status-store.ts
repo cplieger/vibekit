@@ -21,6 +21,7 @@
 import { apiAction, defineAction, pollAction } from "./actions/index.js";
 import { onSSE } from "./bus.js";
 import { signal, subscribe } from "@cplieger/reactive";
+import { absPath, onWorkspaceRoot, workspaceRoot } from "./workspace.js";
 import type { GitRepoStatus } from "./git-types.js";
 import { statusLetter } from "./git-types.js";
 
@@ -58,11 +59,19 @@ const repos = signal<readonly GitRepoStatus[]>([]);
  *  times per paint. */
 let index = new Map<string, string>();
 
-/** Absolute-path index: "<repo>/<rel>" → status letter.
+/** Absolute-path index: the file's absolute path → status letter.
  *
  *  The file browser has absolute paths and no idea which repo a path belongs to,
  *  and making it resolve that itself would put a second copy of the repo-split
- *  rule beside the docs page's. One more map off the SAME poll costs nothing. */
+ *  rule beside the docs page's. One more map off the SAME poll costs nothing.
+ *
+ *  The keys are genuinely absolute now. They used to be composed as
+ *  "<repoName>/<relPath>" — which is workspace-RELATIVE, because `repo` is a bare
+ *  directory name under the workspace (or "." for the root), not a path — while
+ *  every lookup passed a real absolute path. No key could ever match, so the file
+ *  browser's status letters and every directory rollup were silently empty for
+ *  every file. The join goes through workspace.ts's absPath, the one owner of the
+ *  relative→absolute rule. */
 let absIndex = new Map<string, string>();
 
 /** Ancestor rollup: absolute directory path → the worst letter beneath it.
@@ -96,10 +105,20 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
   const next = new Map<string, string>();
   const nextAbs = new Map<string, string>();
   const nextDir = new Map<string, string>();
+  // The repo-relative index needs no root; the two absolute ones cannot be built
+  // without it. Declining to build them is the honest answer, and it is why the
+  // lookups return "" before the handshake instead of returning a letter derived
+  // from a guessed root.
+  const rooted = workspaceRoot() !== "";
   for (const r of list) {
     if (!r.is_repo) {
       continue;
     }
+    // `r.repo` is a directory NAME under the workspace (discoverRepos), and "."
+    // means the workspace root IS the repo — so the absolute form of the repo's
+    // own directory is the root itself in that case, and the root joined with the
+    // name otherwise.
+    const repoAbs = r.repo === "." ? workspaceRoot() : absPath(r.repo);
     for (const f of r.files) {
       const key = `${r.repo}\u0000${f.path}`;
       const letter = statusLetter(f.status);
@@ -108,10 +127,10 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
       if (!next.has(key)) {
         next.set(key, letter);
       }
-      if (letter === "") {
+      if (letter === "" || !rooted) {
         continue;
       }
-      const abs = `${r.repo}/${f.path}`;
+      const abs = `${repoAbs}/${f.path}`;
       if (!nextAbs.has(abs)) {
         nextAbs.set(abs, letter);
       }
@@ -120,7 +139,7 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
       while (cut > 0) {
         const dir = abs.slice(0, cut);
         nextDir.set(dir, worse(nextDir.get(dir) ?? "", letter));
-        if (dir === r.repo) {
+        if (dir === repoAbs) {
           break;
         }
         cut = dir.lastIndexOf("/");
@@ -131,6 +150,21 @@ function rebuildIndex(list: readonly GitRepoStatus[]): void {
   absIndex = nextAbs;
   dirIndex = nextDir;
 }
+
+// The handshake that states the workspace root and the first status poll race,
+// with no ordering between them: pollAction fires its first tick synchronously
+// when the store starts, while the root arrives on an SSE frame. A poll that wins
+// that race built an index with no absolute keys at all, and the browser's status
+// letters would have stayed blank until the next poll 15s later. Rebuilding when
+// the root lands removes the ordering question; republishing is what repaints the
+// rows that were painted letter-less in the meantime.
+onWorkspaceRoot(() => {
+  const list = repos.peek();
+  rebuildIndex(list);
+  // A new array identity, because the INDEX changed while the data did not, and
+  // `repos` is the only thing consumers watch.
+  repos.value = [...list];
+});
 
 /** Start the poll. Idempotent — safe to call from several init paths. */
 export function initGitStatusStore(): void {

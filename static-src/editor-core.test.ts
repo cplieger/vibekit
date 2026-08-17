@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { effect } from "@cplieger/reactive";
 import { routeForPath } from "./editor-core.js";
 import { freshState, fileStates, setActiveFilePath, activeDirty } from "./editor-types.js";
+import { setWorkspaceRoot, _resetForTest as resetWorkspace } from "./workspace.js";
 
 // There are no isPendingPath / parsePendingPath tests: the `pending:` virtual
 // path family is gone with vibekit's staging store. A path is a real file path
@@ -24,6 +25,32 @@ describe("routeForPath", () => {
     const r = routeForPath("");
     expect(r.readURL).toBe("/api/file?path=");
     expect(r.displayPath).toBe("");
+  });
+
+  // The editor ADDRESSES a file absolutely (that is the namespace /api/file*
+  // serves, and the form the file browser hands over) and DISPLAYS it relative
+  // to the workspace, because "/workspace/" on every filename is noise the
+  // reader already knows.
+  describe("displayPath against the workspace root", () => {
+    beforeEach(() => {
+      resetWorkspace();
+    });
+
+    it("addresses absolutely and displays relatively", () => {
+      setWorkspaceRoot("/workspace");
+      const r = routeForPath("/workspace/sub/a.go");
+      expect(r.readURL).toBe("/api/file?path=%2Fworkspace%2Fsub%2Fa.go");
+      expect(r.displayPath).toBe("sub/a.go");
+    });
+
+    it("shows another granted mount in full, since it is not under the workspace", () => {
+      setWorkspaceRoot("/workspace");
+      expect(routeForPath("/config/mcp.json").displayPath).toBe("/config/mcp.json");
+    });
+
+    it("shows the absolute path before the handshake, rather than guessing a root", () => {
+      expect(routeForPath("/workspace/sub/a.go").displayPath).toBe("/workspace/sub/a.go");
+    });
   });
 });
 

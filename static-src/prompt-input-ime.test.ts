@@ -23,6 +23,11 @@ vi.mock("./store.js", () => ({
   getActiveId: () => "c1",
 }));
 
+// Sends, counted at the controller's own onSubmit. It used to count the form's
+// `submit` events, because Enter faked one — which is the defect that shape was
+// hiding: `new Event("submit")` is not cancelable, so the handler's
+// preventDefault() was a no-op and the browser performed the native submission
+// too. The send is the subject; the event was only ever a proxy for it.
 let submits = 0;
 
 /** Press Enter with an explicit IME state. `keyCode` is set through the init
@@ -55,15 +60,16 @@ beforeEach(async () => {
       </div>
       <button id="send-btn" type="submit"></button>
     </form>`;
-  document.getElementById("prompt-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    submits += 1;
-  });
   const mod = await import("./prompt-input.js");
   mod.initPromptInput(
-    () => undefined,
+    () => {
+      submits += 1;
+    },
     () => undefined,
   );
+  // A send needs text: every case below asks whether Enter reached the send, so
+  // an empty box would make a blocked Enter and a delivered one indistinguishable.
+  (document.getElementById("prompt-input") as HTMLTextAreaElement).value = "hello";
 });
 
 afterEach(() => {
@@ -72,7 +78,6 @@ afterEach(() => {
 
 describe("Enter with no composition in flight", () => {
   it("submits", () => {
-    (document.getElementById("prompt-input") as HTMLTextAreaElement).value = "hello";
     const e = pressEnter();
     expect(submits).toBe(1);
     expect(e.defaultPrevented).toBe(true);
@@ -165,7 +170,6 @@ describe("resetting a stuck composition", () => {
 describe("what the guard must NOT change", () => {
   it("keeps Shift+Enter inserting a newline", () => {
     const input = document.getElementById("prompt-input") as HTMLTextAreaElement;
-    input.value = "hello";
     const e = new KeyboardEvent("keydown", {
       key: "Enter",
       shiftKey: true,

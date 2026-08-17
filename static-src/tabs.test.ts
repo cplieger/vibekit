@@ -60,6 +60,9 @@ import {
   renameTab,
   hasTab,
   getActiveTabId,
+  getOpenTabIDs,
+  editorTabID,
+  isEditorTabID,
   setTabPinned,
   promoteTab,
   restoreTabState,
@@ -234,6 +237,124 @@ describe("closeTab", () => {
     for (const id of expectGone) {
       expect(hasTab(id)).toBe(false);
     }
+  });
+
+  // The store REMOVES a tab before notifying, and these are the properties that
+  // depend on it. onClose is a teardown callback, so a callback that closes its
+  // own tab must find it already gone; notifying first made every such callback an
+  // infinite loop. The editor's teardown did exactly that (closeEditorFile ended
+  // in closeTab), so an editor tab could not be closed by ×, middle-click or
+  // Delete — the click recursed until the stack died.
+  it("a teardown that closes its own tab does not recurse", () => {
+    expect.assertions(3);
+    let closes = 0;
+    openTab({
+      ...makeTab("self-closing"),
+      onClose: () => {
+        closes++;
+        closeTab("self-closing");
+      },
+    });
+    closeTab("self-closing");
+    expect(closes).toBe(1);
+    expect(hasTab("self-closing")).toBe(false);
+    expect(getActiveTabId()).toBe("");
+  });
+
+  it("a teardown observes the tab as already gone", () => {
+    expect.assertions(1);
+    let presentDuringTeardown = true;
+    openTab({
+      ...makeTab("t"),
+      onClose: () => {
+        presentDuringTeardown = hasTab("t");
+      },
+    });
+    closeTab("t");
+    expect(presentDuringTeardown).toBe(false);
+  });
+
+  it("a child teardown that closes the parent leaves the parent's onClose run once", () => {
+    expect.assertions(3);
+    let parentCloses = 0;
+    openTab({ ...makeTab("p"), onClose: () => void parentCloses++ });
+    openTab({
+      ...makeTab("c"),
+      parentId: "p",
+      onClose: () => {
+        closeTab("p");
+      },
+    });
+    closeTab("p");
+    expect(parentCloses).toBe(1);
+    expect(hasTab("p")).toBe(false);
+    expect(hasTab("c")).toBe(false);
+  });
+
+  // The re-find after the children cascade is what makes the splice index honest.
+  // It is only reachable while THIS invariant holds, so the invariant is pinned
+  // here rather than assumed: a child is always positioned after its parent, so
+  // closing the children cannot shift the parent leftwards.
+  it("keeps every child after its parent, whatever else moves", () => {
+    expect.assertions(2);
+    openTab(makeTab("first"));
+    openTab(makeTab("p"));
+    openTab({ ...makeTab("c1"), parentId: "p" });
+    openTab({ ...makeTab("c2"), parentId: "p" });
+    openTab(makeTab("last"));
+    setTabPinned("last", true);
+    const ids = getOpenTabIDs();
+    expect(ids.indexOf("c1")).toBeGreaterThan(ids.indexOf("p"));
+    expect(ids.indexOf("c2")).toBeGreaterThan(ids.indexOf("p"));
+  });
+
+  it("removes the named tab and only that tab when a cascade precedes the splice", () => {
+    expect.assertions(4);
+    openTab(makeTab("before"));
+    openTab(makeTab("p"));
+    openTab({ ...makeTab("c"), parentId: "p" });
+    openTab(makeTab("after"));
+    closeTab("p");
+    expect(hasTab("p")).toBe(false);
+    expect(hasTab("c")).toBe(false);
+    expect(hasTab("before")).toBe(true);
+    expect(hasTab("after")).toBe(true);
+  });
+});
+
+// The `editor:` convention was composed and tested by hand in three modules,
+// which is one string literal away from a silent mismatch.
+describe("editor tab ids", () => {
+  it("round-trips a path and recognises its own ids", () => {
+    expect.assertions(3);
+    const id = editorTabID("/workspace/hello.sh");
+    expect(id).toBe("editor:/workspace/hello.sh");
+    expect(isEditorTabID(id)).toBe(true);
+    expect(isEditorTabID("__settings__")).toBe(false);
+  });
+
+  it("openEditorView keys its tab by editorTabID", () => {
+    expect.assertions(1);
+    openEditorView("/workspace/hello.sh", () => undefined);
+    expect(hasTab(editorTabID("/workspace/hello.sh"))).toBe(true);
+  });
+
+  it("an editor tab closes on the first close, running its teardown once", () => {
+    // The whole of bug 3 in one case: the editor's real onClose closes the file
+    // state and the tab store closes the tab, and the two used to call each other.
+    expect.assertions(2);
+    let teardowns = 0;
+    const path = "/workspace/hello.sh";
+    openEditorView(
+      path,
+      () => undefined,
+      () => {
+        teardowns++;
+      },
+    );
+    closeTab(editorTabID(path));
+    expect(hasTab(editorTabID(path))).toBe(false);
+    expect(teardowns).toBe(1);
   });
 });
 

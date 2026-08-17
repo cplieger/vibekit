@@ -52,7 +52,7 @@ vi.mock("./tabs.js", () => ({
   // No tab is active before the open, so onShow fires and `open` skips its
   // already-active fallback — one activation, which is what a real first open is.
   getActiveTabId: () => "",
-  closeTab: () => undefined,
+  editorTabID: (path: string) => `editor:${path}`,
   setTabDirty: () => undefined,
 }));
 vi.mock("./router.js", () => ({ pushRoute: () => undefined }));

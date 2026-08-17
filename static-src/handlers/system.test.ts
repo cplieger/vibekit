@@ -11,6 +11,7 @@
 
 import { vi, describe, it, expect, beforeEach } from "vitest";
 import { setSessions, setActive, get, recordSteerQueued, steerCount } from "../store.js";
+import { workspaceRoot, _resetForTest as resetWorkspace, setWorkspaceRoot } from "../workspace.js";
 import type { Session } from "../types.js";
 
 vi.mock("../store-load.js", () => ({
@@ -27,6 +28,7 @@ vi.mock("../tabs.js", () => ({
   closeTab: mockCloseTab,
   hasTab: mockHasTab,
   getOpenTabIDs: () => mockGetOpenTabIDs(),
+  isEditorTabID: (id: string) => id.startsWith("editor:"),
 }));
 
 vi.mock("../settings.js", () => ({ syncSettings: vi.fn(() => Promise.resolve({})) }));
@@ -85,6 +87,40 @@ beforeEach(() => {
   mockLoadList.mockReturnValue(Promise.resolve(true));
   mockLoadMessages.mockReturnValue(Promise.resolve(true));
   setSessions([]);
+  resetWorkspace();
+});
+
+// The handshake is the only channel that states where the workspace is, and every
+// relative agent path needs it to become openable (workspace.ts). It is recorded
+// HERE rather than in transport.ts, whose own handshake hook returns early on the
+// first connection of a page load — the connection that matters.
+describe("connected handshake", () => {
+  it("records the workspace root", () => {
+    expect.assertions(1);
+    fireSSE("connected", "", { workspace: "/workspace", floor: 1, head: 9 });
+    expect(workspaceRoot()).toBe("/workspace");
+  });
+
+  it("ignores a handshake that carries no workspace", () => {
+    // An older server, or a frame that lost the field: leaving the root unknown
+    // makes the file request fail as it did before rather than being rewritten.
+    expect.assertions(1);
+    fireSSE("connected", "", { floor: 1, head: 9 });
+    expect(workspaceRoot()).toBe("");
+  });
+
+  it("ignores an empty workspace rather than recording it as the root", () => {
+    expect.assertions(1);
+    setWorkspaceRoot("/workspace");
+    fireSSE("connected", "", { workspace: "", floor: 1, head: 9 });
+    expect(workspaceRoot()).toBe("/workspace");
+  });
+
+  it("ignores a non-string workspace", () => {
+    expect.assertions(1);
+    fireSSE("connected", "", { workspace: 42, floor: 1, head: 9 });
+    expect(workspaceRoot()).toBe("");
+  });
 });
 
 describe("BUS_TRANSPORT_GAP handler", () => {
@@ -116,6 +152,23 @@ describe("BUS_TRANSPORT_GAP handler", () => {
 
     expect(mockCloseTab).toHaveBeenCalledWith("s2");
     expect(mockCloseTab).toHaveBeenCalledWith("s3");
+    expect(mockCloseTab).not.toHaveBeenCalledWith("s1");
+  });
+
+  it("never closes an editor or singleton tab — neither is a chat", async () => {
+    // The reconcile compares tab ids against SESSION ids, so any tab whose id is
+    // not a chat id has to be excluded by kind. Editor tabs go through
+    // isEditorTabID rather than a hand-written prefix test.
+    expect.assertions(3);
+    setSessions([makeSession("s1")]);
+    mockGetOpenTabIDs.mockReturnValue(["s1", "editor:/workspace/a.ts", "__files__"]);
+    mockHasTab.mockReturnValue(true);
+
+    fireGap();
+    await mockLoadList();
+
+    expect(mockCloseTab).not.toHaveBeenCalledWith("editor:/workspace/a.ts");
+    expect(mockCloseTab).not.toHaveBeenCalledWith("__files__");
     expect(mockCloseTab).not.toHaveBeenCalledWith("s1");
   });
 

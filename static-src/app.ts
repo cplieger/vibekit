@@ -80,7 +80,7 @@ import { initModelSwitcher } from "./model-switcher.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
-import { initPromptInput } from "./prompt-input.js";
+import { initPromptInput, sendComposer } from "./prompt-input.js";
 import { initComposerState } from "./composer-state.js";
 import { initComposerResize } from "./composer-resize.js";
 import { initPendingSteers } from "./pending-steers.js";
@@ -247,7 +247,9 @@ function init(): void {
     toggleSettings: () => {
       $.settingsBtn.click();
     },
-    sendMessage: () => $.promptForm.dispatchEvent(new Event("submit")),
+    sendMessage: () => {
+      sendComposer();
+    },
     showShortcuts: openShortcutsSheet,
   });
 
