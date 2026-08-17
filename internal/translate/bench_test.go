@@ -24,6 +24,15 @@ type baseDeps struct {
 	// parent is returned by ParentACPSession; zero value "" preserves the
 	// historical "parent unknown" behavior for existing callers.
 	parent string
+	// terminals stands in for the hub's agent-terminal registry, keyed by
+	// terminal id, so adoptTerminalOutput is exercisable without one.
+	terminals map[string]termRendered
+}
+
+// termRendered is one terminal's rendered output in the stub registry.
+type termRendered struct {
+	text  string
+	spans []api.TextSpan
 }
 
 func newBaseDeps() *baseDeps {
@@ -31,6 +40,7 @@ func newBaseDeps() *baseDeps {
 		store:       testsupport.NopChatStore{},
 		bufStore:    buffer.NewStore(),
 		lineTracker: buffer.NewLineTracker(),
+		terminals:   map[string]termRendered{},
 	}
 }
 
@@ -42,6 +52,11 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
 func (d *baseDeps) ChatStore() api.ChatStore           { return d.store }
 func (d *baseDeps) ParentACPSession(api.ChatID) string { return d.parent }
 func (d *baseDeps) WorkDir() string                    { return "/tmp" }
+func (d *baseDeps) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
+	t, ok := d.terminals[terminalID]
+	return t.text, t.spans, ok
+}
+
 func (d *baseDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]any) error {
 	return nil
 }

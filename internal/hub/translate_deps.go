@@ -7,7 +7,9 @@ package hub
 import (
 	"context"
 
+	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/redact"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -79,6 +81,42 @@ func (h *Hub) BufferStore() translate.BufferAccess {
 // LineTracker returns the line tracker for file-change recording.
 func (h *Hub) LineTracker() translate.LineRecorder {
 	return h.lines
+}
+
+// TerminalOutput returns an agent terminal's output for the translate layer to
+// persist onto the owning tool call. See translate.StreamingAccess for why the
+// tool call needs it.
+//
+// It reads the RAW ring and renders on demand rather than returning a
+// pre-accumulated copy. Three things fall out of that. The rendering is
+// derivable, so there is no second buffer to keep in step and no second cap: the
+// ring already bounds the bytes and keeps the tail. It works for a terminal that
+// has already been released, because `retire` kept those bytes under the same id
+// — which matters because KAS releases before it reports the result, so the
+// live registry is empty by the time this is called. And the sanitize-then-parse
+// order here is the same one the live pump uses, so the persisted text and the
+// streamed text cannot disagree about what an escape meant.
+func (h *Hub) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
+	h.agentTerms.mu.Lock()
+	term, live := h.agentTerms.terms[terminalID]
+	h.agentTerms.mu.Unlock()
+
+	var raw string
+	switch {
+	case live:
+		raw = term.output.String()
+	default:
+		var ok bool
+		raw, ok = h.agentTerms.takeRetired(terminalID)
+		if !ok {
+			return "", nil, false
+		}
+	}
+	if raw == "" {
+		return "", nil, false
+	}
+	text, spans := ansitext.Parse(redact.Output(api.SanitizeUnicode(raw)))
+	return text, wireSpans(spans), true
 }
 
 // IsHookStatusEnabled returns whether hook status display is enabled.

@@ -371,7 +371,7 @@ describe("shell.ts: close behavior", () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click(); // open
-    // Simulate the agent-terminal fullscreen toggle having been used.
+    // Simulate the fullscreen toggle having been used.
     h.shellPanel.classList.add("shell-fullscreen");
     h.shellFullscreenBtn.setAttribute("aria-pressed", "true");
 

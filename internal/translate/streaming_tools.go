@@ -5,6 +5,8 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,14 +47,12 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 	if wf := tc.Meta.Kiro.Workflow.SubtaskID(); wf != "" {
 		subtask = wf
 	}
-	var diffs []api.ToolDiff
-	for _, c := range tc.Content {
-		if c.Type == ContentTypeDiff && c.Path != "" {
-			diffs = append(diffs, api.ToolDiff{
-				Path: t.relPath(c.Path), OldText: c.OldText, NewText: c.NewText,
-			})
-		}
-	}
+	// One parser for both frames, so the ACP content union is decoded in one
+	// place. The create frame deliberately does NOT adopt content.output: the
+	// initial tool_call has never fed Output, and folding it in here would
+	// double-render whatever the following update repeats.
+	content := t.parseToolUpdateContent(tc.Content)
+	diffs := content.diffs
 	call := api.ToolCall{
 		ID:             tc.ToolCallID,
 		Title:          tc.Title,
@@ -61,6 +61,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID api.ChatID, raw 
 		Input:          redact.RawJSON(tc.RawInput),
 		SubSessionID:   subSessionID,
 		AgentSubtaskID: subtask,
+		TerminalID:     content.terminalID,
 		Locations:      tc.Locations,
 		Diffs:          diffs,
 		Ts:             time.Now().UnixMilli(),
@@ -95,44 +96,59 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID api.ChatID
 	if json.Unmarshal(raw, &tu) != nil {
 		return
 	}
-	output, diffs := t.parseToolUpdateContent(tu.Content)
+	content := t.parseToolUpdateContent(tu.Content)
 	buf := t.deps.BufferStore().GetOrInit(chatID)
 	idx, ok := buf.ToolCallIndex[tu.ToolCallID]
 	if !ok || idx >= len(buf.ToolCalls) {
 		return
 	}
-	t.applyToolCallUpdate(ctx, chatID, buf, idx, &tu, output, diffs, subSessionID)
+	t.applyToolCallUpdate(ctx, chatID, buf, idx, &tu, content, subSessionID)
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventToolCallUpdate, chatID, api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: buf.ToolCalls[idx]}))
 }
 
-// parseToolUpdateContent extracts the sanitized output delta and any
-// file diffs from a tool_call_update's content blocks. Diff paths are
+// parseToolUpdateContent extracts the sanitized output delta, any file diffs,
+// and the terminal id from a tool_call_update's content blocks. Diff paths are
 // normalized to workspace-relative form.
-func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) (output string, diffs []api.ToolDiff) {
+//
+// A type:"terminal" block is ACP's statement that this tool call's output is a
+// terminal's stream. Its text is deliberately NOT folded into the output delta:
+// the bytes arrive on the terminal/* surface instead, and the id is what lets
+// the tool CARD subscribe to that stream and later persist it. Consuming both
+// would double-render.
+func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) toolUpdateContent {
+	var out toolUpdateContent
 	var outputDelta strings.Builder
 	for _, item := range items {
-		// Only "content" (text) and "diff" blocks are consumed here. The
-		// execute tool's type:"terminal" content blocks are intentionally
-		// ignored: that output already streams to the client through the
-		// terminal/* SSE surface (terminal_output), so decoding it here
-		// would double-render it on the tool card.
-		if item.Type == ContentTypeContent && item.Content.Text != "" {
+		switch {
+		case item.Type == ContentTypeContent && item.Content.Text != "":
 			outputDelta.WriteString(redact.Output(api.SanitizeOutput(item.Content.Text)))
 			outputDelta.WriteByte('\n')
-		} else if item.Type == ContentTypeDiff && item.Path != "" {
-			diffs = append(diffs, api.ToolDiff{
+		case item.Type == ContentTypeDiff && item.Path != "":
+			out.diffs = append(out.diffs, api.ToolDiff{
 				Path: t.relPath(item.Path), OldText: item.OldText, NewText: item.NewText,
 			})
+		case item.Type == ContentTypeTerminal && item.TerminalID != "":
+			out.terminalID = item.TerminalID
 		}
 	}
-	return outputDelta.String(), diffs
+	out.output = outputDelta.String()
+	return out
+}
+
+// toolUpdateContent is one tool_call_update's parsed content blocks. A struct
+// rather than three return values because applyToolCallUpdate already carries
+// enough parameters, and because the set grows with the ACP content union.
+type toolUpdateContent struct {
+	output     string
+	terminalID string
+	diffs      []api.ToolDiff
 }
 
 // applyToolCallUpdate folds a parsed tool_call_update into the buffered
 // tool call at idx: status (emitting a working label on terminal
 // status), appended output, replaced locations, appended diffs (with
 // line tracking), and a first-seen subsession id.
-func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, idx int, tu *ACPToolCallUpdateWire, output string, diffs []api.ToolDiff, subSessionID string) {
+func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, idx int, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
 	tc := &buf.ToolCalls[idx]
 	// A mid-flight update may refine the card's title/kind (KAS sends them
 	// nullish on tool_call_update); apply only when present so an update
@@ -143,26 +159,22 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 	if tu.Kind != "" {
 		tc.Kind = tu.Kind
 	}
-	if tu.Status != "" {
-		tc.Status = tu.Status
-		if tu.Status == api.ToolCompleted || tu.Status == api.ToolFailed {
-			tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
-			t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID,
-				api.WorkingLabelPayload{Label: api.WorkingLabelThinking}))
-		}
+	// Adopt the terminal link BEFORE the status fold. Order matters: a single
+	// frame can carry both the link and `completed`, and with the status fold
+	// first that frame's adoption looked up an id the tool call did not yet
+	// have, so the output was never persisted and never would be — the update
+	// carrying the link had already gone by.
+	if tc.TerminalID == "" && content.terminalID != "" {
+		tc.TerminalID = content.terminalID
 	}
-	if output != "" {
-		tc.Output += output
+	t.applyToolCallStatus(ctx, chatID, buf, tc, tu)
+	if content.output != "" {
+		tc.Output += content.output
 	}
 	if len(tu.Locations) > 0 {
 		tc.Locations = tu.Locations
 	}
-	if len(diffs) > 0 {
-		tc.Diffs = append(tc.Diffs, diffs...)
-		buf.TrackFileChanges(diffs, false)
-		turn := len(buf.ToolCalls)
-		t.deps.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
-	}
+	t.applyToolCallDiffs(chatID, buf, tc, content.diffs)
 	if tc.SubSessionID == "" && subSessionID != "" {
 		tc.SubSessionID = subSessionID
 	}
@@ -175,6 +187,95 @@ func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID api.ChatID,
 		}
 	}
 	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
+}
+
+// applyToolCallStatus folds an update's status in, and on a terminal status
+// stamps the duration and takes the terminal's output for keeping. Split out of
+// applyToolCallUpdate to keep that function a flat list of per-field folds.
+func (t *Translator) applyToolCallStatus(
+	ctx context.Context, chatID api.ChatID, buf *buffer.Buffer,
+	tc *api.ToolCall, tu *ACPToolCallUpdateWire,
+) {
+	if tu.Status == "" {
+		return
+	}
+	tc.Status = tu.Status
+	if tu.Status != api.ToolCompleted && tu.Status != api.ToolFailed {
+		return
+	}
+	tc.DurationMs = buf.ComputeDuration(tu.ToolCallID)
+	t.adoptTerminalOutput(chatID, tc)
+	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID,
+		api.WorkingLabelPayload{Label: api.WorkingLabelThinking}))
+}
+
+// applyToolCallDiffs appends an update's diffs and records the file changes they
+// describe. Split out of applyToolCallUpdate to keep that function readable as a
+// list of per-field folds.
+func (t *Translator) applyToolCallDiffs(
+	chatID api.ChatID, buf *buffer.Buffer, tc *api.ToolCall, diffs []api.ToolDiff,
+) {
+	if len(diffs) == 0 {
+		return
+	}
+	tc.Diffs = append(tc.Diffs, diffs...)
+	buf.TrackFileChanges(diffs, false)
+	turn := len(buf.ToolCalls)
+	t.deps.LineTracker().RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
+}
+
+// adoptTerminalOutput copies a finished terminal's output onto its tool call, so
+// the command's output survives a page reload.
+//
+// The terminal owns the output while it runs and the tool call owns it once the
+// command is done, which is why this is a copy at ONE moment rather than
+// incremental bookkeeping: a terminal's first output arrives before the update
+// that names it, so there is no earlier point where an append could be both
+// correct and complete. The hub keeps a released terminal's bytes under the same
+// id for the rest of the turn, so this still works after KAS has released it —
+// which it always has by now.
+//
+// The terminal's output WINS over anything already on the tool call, and that is
+// deliberate. Two things can have put text there: an earlier ACP content block
+// (a progress line, a partial), or KAS's synthesized explanation for a command
+// that never spawned. The first is a fragment of what the terminal holds in
+// full, so preferring the tool call would persist the fragment. The second only
+// happens when there IS no terminal, so this never reaches it.
+//
+// A miss is LOGGED, because a silent one is the shape of every bug this function
+// exists to prevent. The output of an agent command was invisible for the whole
+// life of this feature and nothing said so — a card that renders empty looks
+// exactly like a command that printed nothing. So every link that resolves to no
+// record gets a line: the terminal existed (KAS named it), and its bytes are gone
+// at the one moment they were needed. That covers the failure shapes no test
+// predicted — a terminal released twice, an id reused, a record evicted before
+// its turn ended.
+//
+// The line carries what the tool call currently HAS rather than suppressing
+// itself when that is non-empty, because the two readings are different and only
+// the reader can tell which applies: `output_bytes=0` is a card that will render
+// empty, while a non-zero count is a fragment from an earlier content block (or a
+// duplicate `completed` frame finding what the first one already adopted). A
+// condition here would have hidden the first case behind the second, and the fold
+// order makes it unknowable anyway — a same-frame content block is applied after
+// this runs.
+func (t *Translator) adoptTerminalOutput(chatID api.ChatID, tc *api.ToolCall) {
+	if tc.TerminalID == "" {
+		return
+	}
+	text, spans, ok := t.deps.TerminalOutput(tc.TerminalID)
+	if !ok {
+		slog.Warn("terminal output missing at completion",
+			"chat_id", chatID, "tool_call_id", tc.ID,
+			"terminal_id", tc.TerminalID, "status", tc.Status,
+			"output_bytes", len(tc.Output))
+		return
+	}
+	if text == "" {
+		return
+	}
+	tc.Output = text
+	tc.OutputSpans = spans
 }
 
 // mergeCheckpoint folds a tool_call_update's _meta.kiro.checkpoint into the
@@ -204,15 +305,57 @@ func mergeCheckpoint(tc *api.ToolCall, in *ACPCheckpointMeta) {
 	}
 }
 
+// localPath converts a wire path REFERENCE to a local filesystem path.
+//
+// KAS sends some tool-call paths as file:// URIs rather than as paths —
+// measured 2026-08-17, a shell-written file arrived as
+// "file:///workspace/hello.sh" in a diff content block. Every consumer
+// downstream treats the value as a path, and none of them survived a URI:
+// filepath.Rel refuses it (Clean turns it into the RELATIVE
+// "file:/workspace/hello.sh", so Rel against an absolute root errors), so it
+// passed through relPath untouched into the turn footer's label and into
+// GET /api/file?path=…, which denied it as outside the granted roots. The
+// user-visible symptom was a changed-file row labelled with a URI whose diff
+// could never load.
+//
+// Anything that is not a local file:// URI is returned unchanged: a path is
+// already a path, and a remote authority ("file://host/share") names a file
+// this process cannot open, so leaving it alone lets the normal
+// outside-the-workspace handling reject it.
+func localPath(ref string) string {
+	// Cheap gate: a filesystem path has no scheme, and this runs on every
+	// location and diff of every tool call.
+	if !strings.Contains(ref, "://") {
+		return ref
+	}
+	u, err := url.Parse(ref)
+	if err != nil || u.Scheme != "file" || u.Path == "" {
+		return ref
+	}
+	if u.Host != "" && u.Host != "localhost" {
+		return ref
+	}
+	// u.Path is percent-DECODED, which is what a filesystem call needs:
+	// "file:///workspace/hello%20world.sh" is the file "hello world.sh".
+	return u.Path
+}
+
 // relPath strips the workspace root prefix from an absolute path. A path that
 // is not under the workspace is returned unchanged.
+//
+// It is the ONE funnel every ACP-supplied path crosses on its way to the
+// client, so normalising the wire's URI spelling belongs here rather than at
+// each of the four call sites. Normalising FIRST also matters: the
+// not-under-the-workspace branch returns its input, and returning the raw URI
+// there would leak the spelling this function exists to remove.
 //
 // The escape test is pathinside.RelEscapes on the rel this function already
 // computes for its result, not a leading-".." string prefix: the
 // separator-precise rule keeps a file under a workspace directory whose name
 // merely BEGINS with two dots ("..drafts/main.go") relative, where the string
 // test leaked the absolute path to the client.
-func (t *Translator) relPath(abs string) string {
+func (t *Translator) relPath(ref string) string {
+	abs := localPath(ref)
 	workDir := t.deps.WorkDir()
 	if workDir == "" {
 		return abs

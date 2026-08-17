@@ -45,6 +45,9 @@ import type {
   GovernanceStatePayload,
   ToolJobChangedPayload,
   ToolJobOutputPayload,
+  TerminalCreatedPayload,
+  TerminalOutputPayload,
+  TerminalExitedPayload,
   RunStartedPayload,
   RunProgressPayload,
   RunFinishedPayload,
@@ -101,17 +104,9 @@ export interface SSEPayloads {
   readonly open_external_url: OpenExternalURLPayload;
   readonly compaction_started: undefined;
   readonly working_label: { readonly label: string };
-  readonly terminal_created: {
-    readonly terminal_id: string;
-    readonly command: string;
-    readonly args?: string[];
-  };
-  readonly terminal_output: { readonly terminal_id: string; readonly data: string };
-  readonly terminal_exited: {
-    readonly terminal_id: string;
-    readonly exit_code?: number;
-    readonly signal?: string;
-  };
+  readonly terminal_created: TerminalCreatedPayload;
+  readonly terminal_output: TerminalOutputPayload;
+  readonly terminal_exited: TerminalExitedPayload;
   readonly forges_changed: undefined;
   readonly hooks_changed: undefined;
   readonly tool_job_changed: ToolJobChangedPayload;

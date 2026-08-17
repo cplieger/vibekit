@@ -346,78 +346,6 @@
   color: var(--c-text-primary);
 }
 
-/* Shell tab bar for agent terminal tabs */
-.shell-tabs {
-  display: flex;
-  gap: 1px;
-  align-items: center;
-  margin-inline: var(--sp-2);
-  flex: 1;
-  overflow-x: auto;
-}
-
-/* With zero agent terminals the bar holds only the hardcoded "User" tab —
-   a lone, permanently-active pill labelling the same thing as the "Shell"
-   title. Hide the row until a second tab exists; createTab/evictIfOverCap
-   keep this self-maintaining. (.shell-title has flex:1, so the header's
-   status text and buttons stay right-aligned when the bar is hidden.) */
-.shell-tabs:has(> :only-child) {
-  display: none;
-}
-
-.shell-tab {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: var(--sp-1) var(--sp-2);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color var(--dur-micro) var(--ease-micro);
-}
-
-.shell-tab:hover {
-  color: var(--c-text-secondary);
-}
-
-.shell-tab.active {
-  color: var(--c-text-primary);
-  border-bottom-color: var(--c-accent);
-}
-
-.shell-tab.term-exited-ok::after {
-  content: " \2713";
-  color: var(--c-green);
-}
-
-.shell-tab.term-exited-err::after {
-  content: " \2717";
-  color: var(--c-red);
-}
-
-/* Agent terminal output panes */
-.agent-terminals {
-  flex: 1;
-  overflow: hidden;
-}
-
-.agent-term-pane {
-  height: 100%;
-  overflow-y: auto;
-  background: var(--c-term-bg);
-  padding: var(--sp-2);
-}
-
-.agent-term-output {
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  color: var(--c-term-fg);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  margin: 0;
-}
-
 /* Shell full-screen mode */
 /* stylelint-disable declaration-no-important -- fullscreen override needs specificity */
 .shell-panel.shell-fullscreen {
@@ -438,8 +366,8 @@
 }
 
 /* Leaving is its own class because the panel has already left the fullscreen
- * state by the time CSS could react to the class being dropped (agent-terminal.ts
- * holds it for one animation). */
+ * state by the time CSS could react to the class being dropped (shell.ts's
+ * wireFullscreenToggle holds it for one animation). */
 .shell-panel.shell-fullscreen-leaving {
   animation: vk-shell-fs-out var(--dur-exit) var(--ease-exit) both;
 }

@@ -1,7 +1,13 @@
 /*
- * ANSI terminal color classes for ansi_up (use_classes=true mode).
- * Standard 8 colors + bright variants, plus modifiers.
- * Colors tuned for dark backgrounds (vibekit's default theme).
+ * Terminal colour and attribute classes for command output rendered in the
+ * chat transcript (output-render.ts).
+ *
+ * The 16 basic colours are classes; the extended 256-colour palette and
+ * truecolour arrive as computed rgb() values from output-render.ts, since that
+ * palette is algorithmic and writing it out would be 240 declarations saying
+ * what one formula says.
+ *
+ * Colours are tuned for dark backgrounds (vibekit's default theme).
  */
 
 /* --- Foreground --- */
@@ -134,7 +140,11 @@
   background-color: #fff;
 }
 
-/* --- Modifiers --- */
+/* --- Attributes ---
+ * All ten the server can emit. The five below dim/italic were unreachable
+ * before: the ansi_up library this replaced parsed inverse, strike, blink,
+ * conceal and overline and then silently ignored them, so real `ESC[7m` output
+ * rendered unstyled. */
 .ansi-bold {
   font-weight: 700;
 }
@@ -151,21 +161,55 @@
   text-decoration: underline;
 }
 
-/* --- Agent terminal exit-status footer --- */
-/* Rendered by agent-terminal.ts when a terminal process exits: a small
- * "exited (code N)" / "killed (SIGNAL)" line below the output. Green on a
- * clean exit, red otherwise; colours match the ansi green/red above. */
-.agent-term-status {
-  padding: 0.25rem 0.5rem;
-  font-family: var(--font-mono, monospace);
-  font-size: 0.85em;
-  opacity: 0.85;
+.ansi-double-underline {
+  text-decoration: underline double;
 }
 
-.agent-term-status.is-ok {
-  color: #5f5;
+.ansi-overline {
+  text-decoration: overline;
 }
 
-.agent-term-status.is-err {
-  color: #f55;
+.ansi-strike {
+  text-decoration: line-through;
+}
+
+/* Inverse is applied by swapping the colour VALUES in output-render.ts, since
+ * only that code knows what the two colours resolve to once defaults are in
+ * play. These two cover the sides that were DEFAULT before the swap and so have
+ * no palette class of their own.
+ *
+ * One property each, deliberately. A single rule setting both would override the
+ * swapped palette class on the explicit side, so inverse red-on-blue rendered as
+ * the default inverse pair instead of blue-on-red. */
+.ansi-inverse-fg {
+  color: var(--c-term-bg, #000);
+}
+
+.ansi-inverse-bg {
+  background-color: var(--c-term-fg, #ccc);
+}
+
+/* Conceal. Kept selectable rather than `display: none` so the text can still be
+ * copied out of the transcript, which is the point of a transcript. */
+.ansi-hidden {
+  color: transparent;
+}
+
+/* prefers-reduced-motion is honoured because a blinking region in a long build
+ * log is exactly the pattern the media query exists for. */
+.ansi-blink {
+  animation: ansi-blink 1s step-end infinite;
+}
+
+@keyframes ansi-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ansi-blink {
+    animation: none;
+    opacity: 0.75;
+  }
 }

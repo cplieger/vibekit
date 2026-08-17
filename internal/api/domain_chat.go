@@ -174,6 +174,12 @@ type ToolCall struct {
 	// to its nested agent_message_chunk / agent_thought_chunk deltas
 	// (which carry the same id) so the client can render them nested.
 	AgentSubtaskID string `json:"agent_subtask_id,omitempty"`
+	// TerminalID links an execute tool call to the agent terminal running it,
+	// taken from the ACP type:"terminal" content block KAS sends on the tool
+	// call. It is what lets the CARD be the terminal's rendering surface: the
+	// client subscribes the card's output region to this terminal's live
+	// stream. Empty on every tool call that spawned no process.
+	TerminalID string `json:"terminal_id,omitempty"`
 	// Checkpoint is KAS's snapshot mapping for a tool call that wrote a
 	// file, taken from _meta.kiro.checkpoint. Nil for every tool call that
 	// touched no file — which is most of them. Placed ahead of the slices
@@ -183,8 +189,37 @@ type ToolCall struct {
 	Input      json.RawMessage `json:"input,omitempty"`
 	Locations  []ToolLocation  `json:"locations,omitempty"`
 	Diffs      []ToolDiff      `json:"diffs,omitempty"`
-	DurationMs int             `json:"duration_ms,omitempty"`
-	Ts         int64           `json:"ts"`
+	// OutputSpans styles ranges of Output. Parsed once server-side by
+	// internal/ansitext, so Output stays plain searchable text and the client
+	// paints spans without ever building HTML from agent-controlled bytes.
+	// Empty for the ~99.75% of real command outputs that carry no escape.
+	OutputSpans []TextSpan `json:"output_spans,omitempty"`
+	DurationMs  int        `json:"duration_ms,omitempty"`
+	Ts          int64      `json:"ts"`
+}
+
+// TextSpan styles the half-open range [Start,End) of a sibling text field.
+// It mirrors internal/ansitext.Span; the wire type lives here because
+// internal/api owns every shape codegen projects into TypeScript, and Attrs
+// values match web-terminal-engine's WireRun.a so the terminal renderer and the
+// transcript renderer share one attribute vocabulary.
+type TextSpan struct {
+	// Start is the inclusive offset into the styled text, in UTF-16 CODE UNITS
+	// rather than bytes, because the consumer indexes with JavaScript string
+	// offsets. A byte offset would point into the middle of a character the
+	// moment output contained a box-drawing glyph or an accented name.
+	Start int `json:"start"`
+	// End is the exclusive offset into the styled text, in UTF-16 code units.
+	End int `json:"end"`
+	// FG is the foreground colour: -1 for default, 0-255 for a palette index,
+	// or 0x1000000|RGB for 24-bit colour.
+	FG int32 `json:"fg"`
+	// BG is the background colour, encoded like FG.
+	BG int32 `json:"bg"`
+	// Attrs is a bitfield: 1=bold, 2=italic, 4=underline, 8=inverse,
+	// 16=strike, 32=dim, 64=hidden, 128=blink, 256=overline,
+	// 512=double-underline.
+	Attrs uint16 `json:"attrs"`
 }
 
 // ToolCheckpoint is KAS's pre/post-image mapping for one file write,

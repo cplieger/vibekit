@@ -170,7 +170,11 @@ describe("windowOutput", () => {
   it("keeps everything when it fits", async () => {
     const { windowOutput } = await import("./strings.js");
     const text = "a\nb\nc";
-    expect(windowOutput(text, 20)).toEqual({ text, elided: 0 });
+    expect(windowOutput(text, 20)).toEqual({
+      text,
+      elided: 0,
+      kept: [{ from: 0, to: text.length, at: 0 }],
+    });
   });
 
   it("keeps the first and last N lines and reports the elided middle", async () => {
@@ -188,5 +192,72 @@ describe("windowOutput", () => {
   it("does not count a trailing newline as a line", async () => {
     const { windowOutput } = await import("./strings.js");
     expect(windowOutput("a\nb\n", 1).elided).toBe(0);
+  });
+});
+
+
+describe("windowOutput kept ranges", () => {
+  it("reports source ranges whose slices reconstruct the windowed text", async () => {
+    const { windowOutput } = await import("./strings.js");
+    const lines = Array.from({ length: 50 }, (_, i) => `line${String(i)}`);
+    const text = lines.join("\n") + "\n";
+    const win = windowOutput(text, 3);
+
+    // The ranges are the contract: slicing the SOURCE by them, in order, must
+    // reproduce the windowed text (bar the join newline the window inserts).
+    expect(win.kept).toHaveLength(2);
+    const pieces = win.kept.map((r) => text.slice(r.from, r.to));
+    expect(pieces.join("\n")).toBe(win.text);
+    // And each range must land where it says it lands.
+    for (const r of win.kept) {
+      expect(win.text.slice(r.at, r.at + (r.to - r.from))).toBe(text.slice(r.from, r.to));
+    }
+  });
+});
+
+describe("windowSpans", () => {
+  const span = (start: number, end: number) => ({ start, end, fg: 1, bg: -1, attrs: 0 });
+
+  it("passes spans through unchanged when nothing was elided", async () => {
+    const { windowOutput, windowSpans } = await import("./strings.js");
+    const win = windowOutput("a\nb\nc", 20);
+    expect(windowSpans([span(2, 3)], win.kept)).toEqual([span(2, 3)]);
+  });
+
+  it("drops a span that fell entirely in the elided middle", async () => {
+    const { windowOutput, windowSpans } = await import("./strings.js");
+    const lines = Array.from({ length: 50 }, (_, i) => `line${String(i)}`);
+    const text = lines.join("\n") + "\n";
+    const win = windowOutput(text, 3);
+    const middle = text.indexOf("line25");
+    expect(windowSpans([span(middle, middle + 6)], win.kept)).toEqual([]);
+  });
+
+  it("splits a span straddling the elision into one piece per side", async () => {
+    const { windowOutput, windowSpans } = await import("./strings.js");
+    const lines = Array.from({ length: 50 }, (_, i) => `line${String(i)}`);
+    const text = lines.join("\n") + "\n";
+    const win = windowOutput(text, 3);
+    // One span covering the whole output survives as two, one per kept range.
+    const out = windowSpans([span(0, text.length)], win.kept);
+    expect(out).toHaveLength(2);
+    // Each piece must address real text in the WINDOWED string.
+    for (const s of out) {
+      expect(s.start).toBeGreaterThanOrEqual(0);
+      expect(s.end).toBeLessThanOrEqual(win.text.length);
+      expect(s.end).toBeGreaterThan(s.start);
+    }
+  });
+
+  it("rebases a tail span onto its position in the windowed text", async () => {
+    const { windowOutput, windowSpans } = await import("./strings.js");
+    const lines = Array.from({ length: 50 }, (_, i) => `line${String(i)}`);
+    const text = lines.join("\n") + "\n";
+    const win = windowOutput(text, 3);
+    const at = text.lastIndexOf("line49");
+    const out = windowSpans([span(at, at + 6)], win.kept);
+    expect(out).toHaveLength(1);
+    // The rebased offsets must select the same word in the windowed text.
+    expect(win.text.slice(out[0]!.start, out[0]!.end)).toBe("line49");
   });
 });

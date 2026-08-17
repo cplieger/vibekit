@@ -32,6 +32,7 @@ func main() {
 		wiregen.TypeRef[api.ToolLocation](),
 		wiregen.TypeRef[api.ToolDiff](),
 		wiregen.TypeRef[api.ToolCheckpoint](),
+		wiregen.TypeRef[api.TextSpan](),
 		wiregen.TypeRef[api.ToolCall](),
 		wiregen.TypeRef[api.PlanEntry](),
 		wiregen.TypeRef[api.Block](),
@@ -104,6 +105,9 @@ func main() {
 		wiregen.TypeRef[api.RunFinishedPayload](),
 		wiregen.TypeRef[api.ToolJobChangedPayload](),
 		wiregen.TypeRef[api.ToolJobOutputPayload](),
+		wiregen.TypeRef[api.TerminalCreatedPayload](),
+		wiregen.TypeRef[api.TerminalOutputPayload](),
+		wiregen.TypeRef[api.TerminalExitedPayload](),
 		wiregen.TypeRef[forges.ConfiguredForge](),
 		wiregen.TypeRef[forges.Repo](),
 		wiregen.TypeRef[forges.PR](),
@@ -179,6 +183,13 @@ func main() {
 		{EventType: "steer_queued", TypeName: "SteerQueuedPayload"},
 		{EventType: "steer_injected", TypeName: "SteerInjectedPayload"},
 		{EventType: "steer_cleared", TypeName: "SteerClearedPayload"},
+		// The agent-terminal trio. These were the only SSE events with no
+		// generated decoder, so their payloads were hand-declared in bus.ts and
+		// carried no runtime validation — which is exactly the shape a path
+		// nothing exercises ends up in.
+		{EventType: "terminal_created", TypeName: "TerminalCreatedPayload"},
+		{EventType: "terminal_output", TypeName: "TerminalOutputPayload"},
+		{EventType: "terminal_exited", TypeName: "TerminalExitedPayload"},
 		{EventType: "turn_ended", TypeName: "TurnEndedPayload"},
 		{EventType: "turn_state", TypeName: "TurnStatePayload"},
 	}
