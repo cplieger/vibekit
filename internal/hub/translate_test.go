@@ -468,11 +468,7 @@ func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
 	// Pre-register a terminal owned by "c1" so termOutput resolves it
 	// and responds through the registered respondingBridge.
 	h.agentTerms.mu.Lock()
-	h.agentTerms.terms["term-1"] = &agentTerminal{
-		done:   make(chan struct{}),
-		output: newByteRing(64),
-		chatID: "c1",
-	}
+	h.agentTerms.terms["term-1"] = newAgentTerminal(nil, "c1", 64)
 	h.agentTerms.mu.Unlock()
 
 	id := int64(7110)

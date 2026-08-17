@@ -430,9 +430,17 @@ type ToolCallUpdatePayload struct {
 }
 
 // TerminalOutputPayload is the payload for type="terminal_output".
+//
+// Data is PLAIN text with escape sequences already removed and secrets already
+// redacted; Spans style ranges of it. The parse happens server-side
+// (internal/ansitext) so the browser never builds HTML out of agent-controlled
+// bytes, and Offset says where this chunk's Data begins in the terminal's
+// accumulated output, so a client that missed a chunk can tell.
 type TerminalOutputPayload struct {
-	TerminalID string `json:"terminal_id"`
-	Data       string `json:"data"`
+	TerminalID string     `json:"terminal_id"`
+	Data       string     `json:"data"`
+	Spans      []TextSpan `json:"spans,omitempty"`
+	Offset     int        `json:"offset"`
 }
 
 // TerminalExitedPayload is the payload for type="terminal_exited". A

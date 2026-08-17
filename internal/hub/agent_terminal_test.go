@@ -3,6 +3,7 @@ package hub
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,7 +57,7 @@ func TestAgentTerminalsNewAndLookup(t *testing.T) {
 	if len(terms.terms) != 0 {
 		t.Errorf("expected empty, got %d", len(terms.terms))
 	}
-	terms.terms["test"] = &agentTerminal{done: make(chan struct{})}
+	terms.terms["test"] = newAgentTerminal(nil, "", 1024)
 	if _, ok := terms.terms["test"]; !ok {
 		t.Error("expected to find terminal 'test'")
 	}
@@ -162,7 +163,7 @@ func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
 	at := newAgentTerminals()
 	done := make(chan struct{})
 	close(done) // already exited
-	at.terms["t1"] = &agentTerminal{done: done}
+	at.terms["t1"] = func() *agentTerminal { t := newAgentTerminal(nil, "", 1024); t.done = done; return t }()
 	at.byChatID["c1"] = []string{"t1"}
 
 	at.drainAll()
@@ -179,8 +180,8 @@ func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
 // its id from the chat's slice) and reports (nil,false) for an unknown id.
 func TestAgentTerminals_Release(t *testing.T) {
 	at := newAgentTerminals()
-	at.terms["t1"] = &agentTerminal{chatID: "c1", done: make(chan struct{})}
-	at.terms["t2"] = &agentTerminal{chatID: "c1", done: make(chan struct{})}
+	at.terms["t1"] = newAgentTerminal(nil, "c1", 1024)
+	at.terms["t2"] = newAgentTerminal(nil, "c1", 1024)
 	at.byChatID["c1"] = []string{"t1", "t2"}
 
 	term, ok := at.release("t1")
@@ -207,10 +208,12 @@ func TestAgentTerminals_Release(t *testing.T) {
 
 // ringEvent is a decoded terminal_* SSE event captured from the replay ring.
 type ringEvent struct {
-	typ     string
-	termID  string
-	data    string
-	eventID uint64
+	typ       string
+	termID    string
+	data      string
+	eventID   uint64
+	offset    int
+	spanCount int
 }
 
 // captureTerminalEvents reads the hub's replay ring and returns every
@@ -224,8 +227,10 @@ func captureTerminalEvents(t *testing.T, h *Hub) []ringEvent {
 		var env struct {
 			Type    string `json:"type"`
 			Payload struct {
-				TerminalID string `json:"terminal_id"`
-				Data       string `json:"data"`
+				TerminalID string         `json:"terminal_id"`
+				Data       string         `json:"data"`
+				Offset     int            `json:"offset"`
+				Spans      []api.TextSpan `json:"spans"`
 			} `json:"payload"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
@@ -234,10 +239,12 @@ func captureTerminalEvents(t *testing.T, h *Hub) []ringEvent {
 		switch env.Type {
 		case string(api.EventTerminalCreated), string(api.EventTerminalOutput), string(api.EventTerminalExited):
 			out = append(out, ringEvent{
-				eventID: e.ID,
-				typ:     env.Type,
-				termID:  env.Payload.TerminalID,
-				data:    env.Payload.Data,
+				eventID:   e.ID,
+				typ:       env.Type,
+				termID:    env.Payload.TerminalID,
+				data:      env.Payload.Data,
+				offset:    env.Payload.Offset,
+				spanCount: len(env.Payload.Spans),
 			})
 		}
 	}
@@ -345,7 +352,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 // still receives every raw byte.
 func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
 	h := New(t.TempDir(), func() api.ACPBridge { return newFakeBridge() }, newFakeChatStore())
-	term := &agentTerminal{done: make(chan struct{}), output: newByteRing(1024)}
+	term := newAgentTerminal(nil, "", 1024)
 	// "aé€😀" with reads that split every multi-byte rune internally:
 	// é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
 	r := &chunkReader{chunks: [][]byte{
@@ -447,7 +454,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 		}
 		chunkSize := int(chunkRaw)%8 + 1
 		_, preSeq := h.sse.hub.Bounds()
-		term := &agentTerminal{done: make(chan struct{}), output: newByteRing(1 << 20)}
+		term := newAgentTerminal(nil, "", 1<<20)
 		h.pumpTerminalOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
 
 		// The ring receives every raw byte exactly once, for any input.
@@ -572,4 +579,496 @@ func processAlive(pid int) bool {
 		return false
 	}
 	return s[i+2] != 'Z'
+}
+
+// --- terminal/create command-line handling ---
+
+// agentCommand decides between "the sender split the argv" and "the sender
+// handed me a command line". KAS only ever does the latter (it leaves `args`
+// unset and puts the whole line in `command`), so the shell branch is the one
+// that carries every real agent command.
+func TestAgentCommand_BareCommandRunsThroughAShell(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		args    *[]string
+		want    string
+	}{
+		// The regression: before agentCommand, `command` went to exec.Command
+		// as the executable PATH, so anything with a space died with
+		// `executable file not found in $PATH` and only bare binaries ran.
+		{name: "quoted argument", command: `printf '%s' 'hello world'`, want: "hello world"},
+		{name: "shell operator", command: `printf a; printf b`, want: "ab"},
+		{name: "pipeline", command: `printf 'x\ny\n' | grep -c .`, want: "2\n"},
+		{name: "variable expansion", command: `V=ok; printf '%s' "$V"`, want: "ok"},
+		// A bare binary still works; it is simply `sh -c whoami` now.
+		{name: "single token", command: `printf ok`, want: "ok"},
+		// A populated args means the sender pre-split, and is exec'd directly.
+		{name: "pre-split argv", command: "printf", args: &[]string{"%s", "split"}, want: "split"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := agentCommand(t.Context(), tc.command, tc.args).Output()
+			if err != nil {
+				t.Fatalf("agentCommand(%q, %v): %v", tc.command, tc.args, err)
+			}
+			if got := string(out); got != tc.want {
+				t.Errorf("output = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A pre-split argv must NOT be re-interpreted by a shell: the sender already
+// decided where the word boundaries are, so an argument containing shell
+// metacharacters has to survive as one literal argument.
+func TestAgentCommand_PreSplitArgvIsNotShellInterpreted(t *testing.T) {
+	out, err := agentCommand(t.Context(), "printf", &[]string{"%s", "a; rm -rf /"}).Output()
+	if err != nil {
+		t.Fatalf("agentCommand: %v", err)
+	}
+	if got := string(out); got != "a; rm -rf /" {
+		t.Errorf("output = %q, want the argument passed through literally", got)
+	}
+}
+
+// End-to-end through the ACP handler: a command line with spaces must spawn,
+// broadcast its output and exit cleanly. This is the shape that failed in
+// production for every agent command, so it is asserted over the real wire
+// path rather than against agentCommand alone.
+func TestTermCreate_CommandLineWithSpacesProducesOutput(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	msg := termCreateMsg(t, 1, `printf 'hello world'`, nil, nil)
+
+	h.translateACPEvent("c1", msg)
+	term := singleTerm(t, h)
+	waitClosed(t, term.done, "terminal")
+
+	var evs []ringEvent
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		evs = captureTerminalEvents(t, h)
+		if hasType(evs, api.EventTerminalOutput) && hasType(evs, api.EventTerminalExited) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	var sb strings.Builder
+	for _, e := range evs {
+		if e.typ == string(api.EventTerminalOutput) {
+			sb.WriteString(e.data)
+		}
+	}
+	if got := sb.String(); got != "hello world" {
+		t.Errorf("broadcast output = %q, want %q (a spaced command line must run through a shell)", got, "hello world")
+	}
+	if !hasType(evs, api.EventTerminalExited) {
+		t.Error("no terminal_exited event: the command never reported completion")
+	}
+}
+
+// A terminal/create that cannot spawn must leave a server-side trace. This is
+// the observability half of the exec-without-a-shell bug: six failure paths in
+// termCreate answered the agent and logged NOTHING, broadcast no event and made
+// no tab, so the only party that ever learned a command had failed was the
+// agent, in its own tool result. Every failure now goes through failTermCreate.
+func TestTermCreate_FailedSpawnIsLogged(t *testing.T) {
+	logs := captureLogs(t)
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+
+	// An argv the sender pre-split, naming an executable that does not exist:
+	// the args branch skips the shell, so cmd.Start fails for real.
+	msg := termCreateMsg(t, 1, "/nonexistent/definitely-not-a-binary", []string{"--flag"}, nil)
+	h.translateACPEvent("c1", msg)
+
+	got := logs.String()
+	if !strings.Contains(got, "agent terminal create failed") {
+		t.Errorf("no failure log for a spawn that could not start; captured:\n%s", got)
+	}
+	if !strings.Contains(got, "/nonexistent/definitely-not-a-binary") {
+		t.Errorf("failure log does not name the command that failed; captured:\n%s", got)
+	}
+}
+
+// --- awaitTerminalExit ordering and drain bound ---
+//
+// Both tests drive the REAL pipe and the REAL pump rather than a stand-in
+// channel, because the mechanism under test IS the pipe: the previous shape
+// waited for the drain before cmd.Wait, which put the grace clock on the wrong
+// side of the process, and a mocked channel cannot tell the two shapes apart.
+
+// exitFixture starts a command that has already finished and returns the pieces
+// awaitTerminalExit needs, with the pump reading a caller-owned pipe.
+func exitFixture(t *testing.T, h *Hub, termID string) (*agentTerminal, *exec.Cmd, *os.File, *os.File, <-chan struct{}, func() bool, context.CancelFunc) {
+	t.Helper()
+	cmdCtx, cmdCancel := context.WithCancel(context.WithoutCancel(t.Context()))
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	cmd := agentCommand(cmdCtx, "true", nil)
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	term := newAgentTerminal(cmd, "c1", 1024)
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		h.pumpTerminalOutput(term, termID, "c1", pr)
+	}()
+	return term, cmd, pr, pw, drained, func() bool { return true }, cmdCancel
+}
+
+// terminal_exited must not be observable before the output it describes.
+// Measured in production 2026-08-16: `whoami` broadcast its exit as event 365
+// and its own "root\n" as 368, so the client painted the exit footer above the
+// line that produced it.
+func TestAwaitTerminalExit_OutputPrecedesExit(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	term, cmd, pr, pw, drained, stop, cancel := exitFixture(t, h, "t-order")
+	defer cancel()
+
+	// Write output, then close every write handle so the pump reaches EOF.
+	if _, err := pw.WriteString("first\nsecond\n"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := pw.Close(); err != nil {
+		t.Fatalf("close write end: %v", err)
+	}
+
+	h.awaitTerminalExit(term, "t-order", "c1", cmd, stop, cancel, drained, pr)
+
+	evs := captureTerminalEvents(t, h)
+	exitedID, ok := firstEventID(evs, api.EventTerminalExited)
+	if !ok {
+		t.Fatal("terminal_exited was never broadcast")
+	}
+	sawOutput := false
+	for _, e := range evs {
+		if e.typ != string(api.EventTerminalOutput) {
+			continue
+		}
+		sawOutput = true
+		if e.eventID > exitedID {
+			t.Errorf("terminal_output event id %d > terminal_exited id %d: output was broadcast after the exit it belongs to", e.eventID, exitedID)
+		}
+	}
+	if !sawOutput {
+		t.Fatal("no terminal_output captured, so the ordering assertion is vacuous")
+	}
+}
+
+// The drain wait is BOUNDED, and the bound RELEASES the reader rather than just
+// giving up on it. A command that leaves a grandchild holding the write end
+// (`some-daemon &`) keeps the pipe open past the head's exit, so a plain timeout
+// would leave the pump blocked on Read for as long as that grandchild lived.
+// Closing the read end is what unblocks it.
+func TestAwaitTerminalExit_BoundReleasesAReaderHeldOpen(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	term, cmd, pr, pw, drained, stop, cancel := exitFixture(t, h, "t-held")
+	defer cancel()
+
+	// A second handle on the write end stands in for the grandchild: the command
+	// has exited but the pipe stays open, so the pump cannot reach EOF.
+	held, err := os.Open("/dev/null")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = held.Close() }()
+	// pw is deliberately NOT closed.
+	defer func() { _ = pw.Close() }()
+
+	start := time.Now()
+	h.awaitTerminalExit(term, "t-held", "c1", cmd, stop, cancel, drained, pr)
+	elapsed := time.Since(start)
+
+	if elapsed < terminalDrainGrace {
+		t.Errorf("returned in %v, before the %v grace: the bound cannot have been honoured", elapsed, terminalDrainGrace)
+	}
+	if elapsed > terminalDrainGrace+10*time.Second {
+		t.Fatalf("returned in %v: the drain wait is effectively unbounded", elapsed)
+	}
+	if !hasType(captureTerminalEvents(t, h), api.EventTerminalExited) {
+		t.Error("terminal_exited was never broadcast after the drain grace expired")
+	}
+	// The pump must have been released, not merely abandoned.
+	select {
+	case <-drained:
+	case <-time.After(5 * time.Second):
+		t.Error("the pump goroutine is still blocked on Read: closing the read end did not release it")
+	}
+}
+
+// --- the emitter seam: sanitize, redact, parse ---
+//
+// This is the seam that had no test, and the gap cost a shipped defect: the
+// emitter called api.SanitizeOutput, which strips ANSI to a fixed point, so the
+// parser never saw a sequence and every chunk produced zero spans. Agent output
+// rendered entirely unstyled, worse than the library it replaced. Both the
+// parser and the client renderer were tested in isolation and both passed.
+
+// pumpOnce runs one string through the real pump and returns the broadcast
+// terminal_output events.
+func pumpOnce(t *testing.T, raw string) (*Hub, []ringEvent) {
+	t.Helper()
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	term := newAgentTerminal(nil, "c1", 1<<20)
+	h.pumpTerminalOutput(term, "t-emit", "c1", strings.NewReader(raw))
+	var out []ringEvent
+	for _, e := range captureTerminalEvents(t, h) {
+		if e.typ == string(api.EventTerminalOutput) {
+			out = append(out, e)
+		}
+	}
+	return h, out
+}
+
+// joinData concatenates the broadcast chunks of a terminal's output.
+func joinData(evs []ringEvent) string {
+	var sb strings.Builder
+	for _, e := range evs {
+		sb.WriteString(e.data)
+	}
+	return sb.String()
+}
+
+func TestTerminalEmitter_SGRBecomesSpansNotStrippedText(t *testing.T) {
+	// The exact shape measured in real tool output: gitleaks' zerolog writer.
+	_, evs := pumpOnce(t, "\x1b[90m1:47AM\x1b[0m \x1b[32mINF\x1b[0m ok\n")
+	if len(evs) == 0 {
+		t.Fatal("no terminal_output broadcast")
+	}
+	text := joinData(evs)
+	spanCount := 0
+	for _, e := range evs {
+		spanCount += e.spanCount
+	}
+	if text != "1:47AM INF ok\n" {
+		t.Errorf("text = %q, want the escapes removed from it", text)
+	}
+	if spanCount == 0 {
+		t.Error("zero spans: the SGR sequences were stripped before the parser saw them, so the output renders unstyled")
+	}
+}
+
+func TestTerminalEmitter_TextNeverCarriesAnEscape(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{name: "sgr", raw: "\x1b[31mred\x1b[0m"},
+		{name: "cursor move", raw: "a\x1b[2Ab"},
+		{name: "osc title", raw: "a\x1b]0;title\x07b"},
+		{name: "charset", raw: "a\x1b(Bb"},
+		{name: "dcs", raw: "a\x1bPq~~\x1b\\b"},
+		{name: "lone escape", raw: "ab\x1b"},
+		// A zero-width space hiding an escape: SanitizeUnicode removes it FIRST,
+		// which is what lets the parser see and drop the completed sequence. This
+		// is the property api.SanitizeOutput's fixed-point iteration provided,
+		// preserved here by the order rather than by stripping.
+		{name: "escape hidden behind a zero-width space", raw: "a\x1b\u200b[31mb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, evs := pumpOnce(t, tc.raw)
+			if text := joinData(evs); strings.ContainsRune(text, 0x1b) {
+				t.Errorf("broadcast text still contains ESC: %q", text)
+			}
+		})
+	}
+}
+
+func TestTerminalEmitter_RedactsSecretsAndStripsHiddenUnicode(t *testing.T) {
+	_, evs := pumpOnce(t, "token ghp_0123456789abcdefghijklmnopqrstuvwx and a\u200bb\n")
+	text := joinData(evs)
+	if strings.Contains(text, "ghp_0123456789abcdefghijklmnopqrstuvwx") {
+		t.Error("the GitHub token reached the wire unredacted")
+	}
+	if strings.ContainsRune(text, 0x200b) {
+		t.Error("a zero-width space survived into the wire text")
+	}
+}
+
+// Offset is in UTF-16 code units because the spans it travels with are, and the
+// client rebases those spans by it. A byte base shifted live styling onto the
+// wrong characters for any non-ASCII output.
+func TestTerminalEmitter_OffsetIsInUTF16Units(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	term := newAgentTerminal(nil, "c1", 1<<20)
+
+	emit := h.terminalEmitter(t.Context(), term, "t-off", "c1")
+	// "é" is 2 bytes but 1 UTF-16 unit; the emoji is 4 bytes and 2 units.
+	emit("caf\u00e9 \U0001F600")
+	emit("x")
+
+	var offsets []int
+	for _, e := range captureTerminalEvents(t, h) {
+		if e.typ == string(api.EventTerminalOutput) {
+			offsets = append(offsets, e.offset)
+		}
+	}
+	if len(offsets) != 2 {
+		t.Fatalf("got %d output events, want 2", len(offsets))
+	}
+	if offsets[0] != 0 {
+		t.Errorf("first offset = %d, want 0", offsets[0])
+	}
+	// "café " is 5 units, the emoji 2 → the second chunk starts at 7. In bytes
+	// it would be 10, which is what the defect reported.
+	if offsets[1] != 7 {
+		t.Errorf("second offset = %d, want 7 UTF-16 units (10 would be the byte count)", offsets[1])
+	}
+}
+
+// --- output survives the terminal ---
+
+// KAS releases a terminal as soon as it has read the output and only THEN
+// reports the tool call's result, so a lookup at completion finds nothing. The
+// hub keeps a retired terminal's bytes for the rest of the turn.
+func TestTerminalOutput_SurvivesRelease(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	term := newAgentTerminal(nil, "c1", 1<<20)
+	term.output.Write([]byte("\x1b[31mred\x1b[0m output\n"))
+
+	h.agentTerms.mu.Lock()
+	h.agentTerms.terms["t-live"] = term
+	h.agentTerms.byChatID["c1"] = append(h.agentTerms.byChatID["c1"], "t-live")
+	h.agentTerms.mu.Unlock()
+
+	// While live, the output reads from the ring.
+	text, spans, ok := h.TerminalOutput("t-live")
+	if !ok || text != "red output\n" {
+		t.Fatalf("live read = (%q, %v), want the rendered ring", text, ok)
+	}
+	if len(spans) == 0 {
+		t.Error("live read produced no spans for coloured output")
+	}
+
+	// KAS releases the terminal. The output must still be reachable.
+	if _, released := h.agentTerms.release("t-live"); !released {
+		t.Fatal("release reported the terminal was not present")
+	}
+	if _, stillLive := h.agentTerms.terms["t-live"]; stillLive {
+		t.Fatal("release left the terminal in the live registry")
+	}
+	text, spans, ok = h.TerminalOutput("t-live")
+	if !ok {
+		t.Fatal("output was lost when the terminal was released: a tool call completing now persists nothing")
+	}
+	if text != "red output\n" {
+		t.Errorf("retired read = %q, want %q", text, "red output\n")
+	}
+	if len(spans) == 0 {
+		t.Error("retired read produced no spans for coloured output")
+	}
+}
+
+// A retired record is evicted at the turn boundary, so it cannot grow with the
+// session. A turn ends only after every tool call in it has settled, so anything
+// still held has already had its chance to be adopted.
+func TestRetiredOutput_EvictedAtTurnEnd(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	term := newAgentTerminal(nil, "c1", 1<<20)
+	term.output.Write([]byte("output\n"))
+
+	h.agentTerms.mu.Lock()
+	term.turnSeq = h.agentTerms.currentTurn("c1")
+	h.agentTerms.terms["t-evict"] = term
+	h.agentTerms.mu.Unlock()
+
+	if _, ok := h.agentTerms.release("t-evict"); !ok {
+		t.Fatal("release reported the terminal was not present")
+	}
+	if _, _, ok := h.TerminalOutput("t-evict"); !ok {
+		t.Fatal("the record was not retained across release")
+	}
+
+	// Re-retire it, then close the turn.
+	h.agentTerms.mu.Lock()
+	h.agentTerms.terms["t-evict"] = term
+	h.agentTerms.mu.Unlock()
+	if _, ok := h.agentTerms.release("t-evict"); !ok {
+		t.Fatal("second release failed")
+	}
+	h.agentTerms.AdvanceTurn("c1")
+	if _, _, ok := h.TerminalOutput("t-evict"); ok {
+		t.Error("the retired record survived the turn boundary, so it grows with the session")
+	}
+}
+
+// Deleting a chat drops its records: there is no transcript left to adopt into.
+func TestRetiredOutput_DroppedWithTheChat(t *testing.T) {
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+	term := newAgentTerminal(&exec.Cmd{}, "c1", 1<<20)
+	term.output.Write([]byte("output\n"))
+
+	h.agentTerms.mu.Lock()
+	h.agentTerms.terms["t-chat"] = term
+	h.agentTerms.byChatID["c1"] = append(h.agentTerms.byChatID["c1"], "t-chat")
+	h.agentTerms.mu.Unlock()
+	if _, ok := h.agentTerms.release("t-chat"); !ok {
+		t.Fatal("release failed")
+	}
+
+	h.agentTerms.KillForChat("c1")
+	if _, _, ok := h.TerminalOutput("t-chat"); ok {
+		t.Error("a deleted chat's terminal output was retained")
+	}
+}
+
+// An ACP request may supply args EXPLICITLY EMPTY, which is a different
+// statement from omitting the field: it says "exec this program with no
+// arguments". A length test collapses the two, so a program name containing a
+// space or a shell metacharacter would be handed to bash despite the sender
+// having said it was a bare name.
+func TestAgentCommand_ArgsPresenceNotLength(t *testing.T) {
+	empty := []string{}
+	cases := []struct {
+		name      string
+		args      *[]string
+		wantShell bool
+	}{
+		{name: "omitted args runs through a shell", args: nil, wantShell: true},
+		{name: "explicitly empty args execs directly", args: &empty, wantShell: false},
+		{name: "populated args execs directly", args: &[]string{"ok"}, wantShell: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := agentCommand(t.Context(), "printf", tc.args)
+			viaShell := cmd.Path == agentShell()
+			if viaShell != tc.wantShell {
+				t.Errorf("cmd.Path = %q, shell=%v, want shell=%v", cmd.Path, viaShell, tc.wantShell)
+			}
+		})
+	}
+}
+
+// The same distinction end to end: an explicitly empty args must not be
+// re-interpreted by a shell, so a command name holding a metacharacter fails to
+// exec rather than being run as a pipeline.
+func TestTermCreate_ExplicitlyEmptyArgsIsNotShellInterpreted(t *testing.T) {
+	logs := captureLogs(t)
+	br := newRecordingTermBridge()
+	h := hubWithBridge(t, t.TempDir(), br)
+
+	id := int64(1)
+	params := map[string]any{"command": "printf ok", "args": []string{}}
+	msg := &api.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
+	h.translateACPEvent("c1", msg)
+
+	if !strings.Contains(logs.String(), "agent terminal create failed") {
+		t.Error("an explicitly empty args was interpreted by a shell; it must exec the literal program name and fail")
+	}
 }

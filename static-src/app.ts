@@ -55,7 +55,7 @@ import { initFilePicker } from "./files-picker.js";
 import { initChatAttach } from "./files-drop.js";
 import { initTaskListPill } from "./task-list.js";
 import { initAwaySummary } from "./away-summary.js";
-import { initAgentTerminals } from "./agent-terminal.js";
+import { initTerminalStream } from "./terminal-stream.js";
 import { initTooltips } from "./tooltip.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
@@ -75,7 +75,7 @@ import { initModelSwitcher } from "./model-switcher.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
-import { initPromptInput } from "./prompt-input.js";
+import { initPromptInput, sendComposer } from "./prompt-input.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
@@ -207,7 +207,7 @@ function init(): void {
   onRetentionChange(syncHistoryBtn);
   syncHistoryBtn();
   initAwaySummary();
-  initAgentTerminals();
+  initTerminalStream();
   initTooltips();
   // initGovernance() moved to initPostAuth(): its /api/governance snapshot
   // (and settings.ts's version/git-badge fetches) shouldn't fire on the
@@ -231,7 +231,9 @@ function init(): void {
     toggleSettings: () => {
       $.settingsBtn.click();
     },
-    sendMessage: () => $.promptForm.dispatchEvent(new Event("submit")),
+    sendMessage: () => {
+      sendComposer();
+    },
   });
 
   // Find in Chat (Ctrl-F / Cmd-F). Capture phase so we can preventDefault the

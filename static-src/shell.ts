@@ -101,6 +101,41 @@ let initialized = false;
  * terminal itself is NOT created here — it is built lazily on first open (see
  * ensureTerminal), so a session that never opens the shell opens no WebSocket.
  */
+/** Wire the panel's full-screen toggle. aria-pressed mirrors the panel class so
+ *  the button reads as a toggle; setShellOpen resets both when the panel closes.
+ *
+ *  This lived in agent-terminal.ts until that module was deleted, which was
+ *  always the wrong home: it is the shell panel's own control and has nothing to
+ *  do with agent output. */
+function wireFullscreenToggle(): void {
+  const fsBtn = $.shellFullscreenBtn;
+  fsBtn.setAttribute("aria-pressed", "false");
+  fsBtn.addEventListener("click", () => {
+    const panel = $.shellPanel;
+    if (!panel.classList.contains("shell-fullscreen")) {
+      panel.classList.add("shell-fullscreen");
+      fsBtn.setAttribute("aria-pressed", "true");
+      return;
+    }
+    // Leaving: the panel's geometry has to SNAP back (its fullscreen height is
+    // an `!important` 100vh that cannot be tweened to a docked height without
+    // replaying the old grow-downwards motion), so the exit is a fade held by
+    // a transient class. Without it the class drop is instantaneous and there
+    // is nothing to animate — CSS cannot transition an element out of a state
+    // it has already left.
+    panel.classList.add("shell-fullscreen-leaving");
+    fsBtn.setAttribute("aria-pressed", "false");
+    const done = (): void => {
+      panel.classList.remove("shell-fullscreen", "shell-fullscreen-leaving");
+    };
+    panel.addEventListener("animationend", done, { once: true });
+    // Belt and braces: reduced-motion zeroes the animation, and a suppressed
+    // renderer may never fire animationend, which would strand the panel
+    // fullscreen with the button already reading "off".
+    setTimeout(done, 250);
+  });
+}
+
 export function initShellPanel(): void {
   if (initialized) {
     return;
@@ -118,6 +153,8 @@ export function initShellPanel(): void {
   $.shellClearBtn.addEventListener("click", () => {
     hostReset();
   });
+
+  wireFullscreenToggle();
 
   // Code-block "run in shell" → type the command into the live terminal.
   setShellRunCallback((cmd: string) => {

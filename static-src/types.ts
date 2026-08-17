@@ -99,6 +99,10 @@ export type {
   SteerQueuedPayload,
   SteerInjectedPayload,
   SteerClearedPayload,
+  TextSpan,
+  TerminalCreatedPayload,
+  TerminalOutputPayload,
+  TerminalExitedPayload,
   TurnEndedPayload,
   TurnStatePayload,
 } from "./wire/types.gen.js";

@@ -35,10 +35,6 @@ RUN TS_ARCH=$([ "$(dpkg --print-architecture)" = "arm64" ] && echo "arm64" || ec
     "https://registry.npmjs.org/@typescript/typescript-linux-${TS_ARCH}/-/typescript-linux-${TS_ARCH}-${TS_VERSION}.tgz" \
     | tar -xz -C /tmp
 
-# ansi_up: lightweight ANSI→HTML converter for agent-terminal <pre> panels.
-# renovate: datasource=npm depName=ansi_up
-ARG ANSI_UP_VERSION=6.0.6
-
 # Build Go server
 WORKDIR /build
 COPY go.mod go.sum ./
@@ -65,14 +61,6 @@ ARG TOOLBELT_TOOLCATALOG_VERSION=v2.4.12
 RUN curl --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 20 --max-time 300 --retry 3 --retry-delay 5 -fsSL -o /tmp/tool-catalog.json "${TOOL_CATALOG_URL}" && \
     go run "github.com/cplieger/toolbelt/v2/cmd/toolcatalog@${TOOLBELT_TOOLCATALOG_VERSION}" \
       verify -catalog /tmp/tool-catalog.json -require required-tools.txt
-
-# Fetch ansi_up (the only third-party JS dependency now that xterm.js is
-# gone). Extracted as a full package into static-src/node_modules/ so the
-# bundler resolves the bare `ansi_up` specifier like the @cplieger/* libs;
-# it is bundled into app.js, not served standalone.
-RUN mkdir -p static-src/node_modules/ansi_up && \
-    curl -fsSL "https://registry.npmjs.org/ansi_up/-/ansi_up-${ANSI_UP_VERSION}.tgz" \
-      | tar -xz -C static-src/node_modules/ansi_up --strip-components=1
 
 # Fetch @cplieger/actions TS source from npm registry. The lib publishes
 # TS only (no precompiled JS) — same pattern as @cplieger/reactive and

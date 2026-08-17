@@ -9,9 +9,9 @@
 // it into a tool group or equivalent container.
 // ---------------------------------------------------------------------------
 
-import type { ToolStatus, ToolLocation, ToolDiff } from "./types.js";
-import { escText, windowOutput } from "./strings.js";
-import { ansiToHtml } from "./ansi.js";
+import type { ToolStatus, ToolLocation, ToolDiff, TextSpan } from "./types.js";
+import { escText, windowOutput, windowSpans } from "./strings.js";
+import { renderOutput } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
 import { fileIcon, toolIcon, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { iconEl } from "./icon-el.js";
@@ -40,6 +40,9 @@ export interface BuildToolCardOpts {
   status: ToolStatus;
   input?: Record<string, unknown>;
   output?: string;
+  /** Style spans for `output`, parsed server-side. Empty for output with no
+   *  escape sequences, which is nearly all of it. */
+  outputSpans?: TextSpan[];
   locations?: ToolLocation[];
   diffs?: ToolDiff[];
   /** Live mode: show spinner + start timestamp + show-raw-input block +
@@ -93,7 +96,7 @@ export function buildToolCard(opts: BuildToolCardOpts): HTMLDivElement {
   if (hasDepth1(info.kind)) {
     node.insertAdjacentHTML("beforeend", buildDetails(opts));
     if (opts.output !== undefined && opts.output !== "") {
-      appendOutput(node, opts.output, depth1 === "output");
+      appendOutput(node, opts.output, opts.outputSpans ?? [], depth1 === "output");
     }
     wireToggle(node);
   }
@@ -368,24 +371,31 @@ export function expandToolDetails(card: HTMLElement): void {
  *  finished command's historical bytes into it would present them as part of the
  *  current stream, where the next server frame can interleave or erase them, and
  *  would corrupt a surface the user may be using for something else. */
-function appendOutput(node: HTMLElement, output: string, windowed: boolean): void {
+function appendOutput(
+  node: HTMLElement,
+  output: string,
+  spans: readonly TextSpan[],
+  windowed: boolean,
+): void {
   const out = node.querySelector(".tool-output");
   if (out === null) {
     return;
   }
   const pre = el("pre");
-  if (!windowed) {
-    pre.innerHTML = ansiToHtml(output);
+  const paint = (text: string, s: readonly TextSpan[]): void => {
+    renderOutput(pre, text, s);
     // A search tool's output IS its result list — `path:line: match` per hit —
     // so linkifying it is the search-hit seam. It ran on prose and turn headers
     // but never on tool output, which is where the hits actually are.
     linkifyPaths(pre, { insidePre: true });
+  };
+  if (!windowed) {
+    paint(output, spans);
     out.appendChild(pre);
     return;
   }
   const win = windowOutput(output);
-  pre.innerHTML = ansiToHtml(win.text);
-  linkifyPaths(pre, { insidePre: true });
+  paint(win.text, windowSpans(spans, win.kept));
   out.appendChild(pre);
   if (win.elided === 0) {
     return;
@@ -397,8 +407,7 @@ function appendOutput(node: HTMLElement, output: string, windowed: boolean): voi
   );
   reveal.addEventListener("click", (e: Event) => {
     e.stopPropagation();
-    pre.innerHTML = ansiToHtml(output);
-    linkifyPaths(pre, { insidePre: true });
+    paint(output, spans);
     reveal.remove();
   });
   out.appendChild(reveal);

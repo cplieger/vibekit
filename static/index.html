@@ -929,9 +929,6 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
             <span id="shell-title-text">Shell</span>
           </span>
-          <div id="shell-tabs" class="shell-tabs" role="tablist" aria-label="Terminal tabs">
-            <button type="button" class="shell-tab active" data-shell-tab="user" role="tab" aria-selected="true">User</button>
-          </div>
           <span id="shell-status" class="shell-status"></span>
           <button type="button" id="shell-clear-btn" class="shell-header-btn" data-tooltip="Reset terminal" aria-label="Reset terminal">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M4 4l16 16"/></svg>
@@ -948,7 +945,6 @@
              context menu, connection banner) into #shell-terminal. shell.ts
              calls it lazily on first panel open. -->
         <div id="shell-terminal" class="shell-terminal"></div>
-        <div id="agent-terminals" class="agent-terminals hidden"></div>
       </div>
     </main>
   </div>
