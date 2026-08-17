@@ -466,7 +466,7 @@ h3.section-title {
 
 .list-group-label {
   font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
+  color: var(--c-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.0313rem;
   padding: var(--sp-1) var(--sp-2);

@@ -198,7 +198,7 @@
    control with a reason attached. */
 .docs-badge-link {
   background: var(--c-bg-tertiary);
-  color: var(--c-text-tertiary);
+  color: var(--c-text-secondary);
   font-style: italic;
 }
 

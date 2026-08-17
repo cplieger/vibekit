@@ -368,3 +368,61 @@ describe("an achromatic colour leaves its hue powerless", () => {
     ).toEqual([]);
   });
 });
+
+describe("an ink is only paired with a fill it clears", () => {
+  // Two inks are sized against the PAGE and are not general-purpose, so pairing
+  // them with a raised fill is a rule violation rather than a taste call. That
+  // makes it a stylesheet question, which is why it lives here instead of in
+  // scripts/css-contrast.py: the script can only measure the cross product of
+  // every token against every surface, and reporting a combination the app does
+  // not contain puts standing failures in its output.
+  //
+  // The hint ink measures 4.244:1 on the second rung, 3.203:1 on the third and
+  // 2.401:1 on the top one, all under AA. Seven rules paired it with one anyway
+  // — a picker's metadata, a badge, two gutters, a group label, a footer and a
+  // link badge — and each was found by grep rather than by a gate.
+  const RAISED = /background(?:-color)?\s*:\s*[^;]*var\(--c-bg-(?:secondary|tertiary|elevated)\)/;
+  // Anchored so `border-color` and `outline-color` are not swept up with it:
+  // an EDGE is a graphic at a 3:1 floor and the hint ink can legitimately draw
+  // one. Only the text ink is at issue.
+  const HINT = /(?<![-\w])color:\s*var\(--c-text-tertiary\)/;
+
+  it("keeps the hint ink off a raised fill", () => {
+    const offenders: string[] = [];
+    for (const sheet of appSheets) {
+      const text = stripComments(sheet.text);
+      // Innermost blocks only. A nested state that raises the fill while the ink
+      // sits on its parent is a real pairing too, but it is not decidable from
+      // one block, and this catches the shape that actually recurred.
+      for (const m of text.matchAll(/\{([^{}]*)\}/g)) {
+        const body = m[1];
+        if (RAISED.test(body) && HINT.test(body)) {
+          offenders.push(`${sheet.name}:${text.slice(0, m.index).split("\n").length}`);
+        }
+      }
+    }
+    expect(
+      offenders,
+      "--c-text-tertiary is sized against --c-bg-primary and clears 4.5:1 on " +
+        "nothing above it. On a raised fill, step up to --c-text-secondary.",
+    ).toEqual([]);
+  });
+
+  it("keeps a status ink off the top rung", () => {
+    // red 2.797, danger 2.585 and warning 2.980 against --c-bg-elevated, under
+    // the 3:1 a coloured glyph needs. Today the only element with that fill is
+    // .pill:active and it carries the primary ink, so this guards the next one.
+    const hue = /(?<![-\w])color:\s*var\(--c-(?:red|danger|warning)\)/;
+    const top = /background(?:-color)?\s*:\s*[^;]*var\(--c-bg-elevated\)/;
+    const offenders: string[] = [];
+    for (const sheet of appSheets) {
+      const text = stripComments(sheet.text);
+      for (const m of text.matchAll(/\{([^{}]*)\}/g)) {
+        if (top.test(m[1]) && hue.test(m[1])) {
+          offenders.push(`${sheet.name}:${text.slice(0, m.index).split("\n").length}`);
+        }
+      }
+    }
+    expect(offenders, "Use the on-selected ink family, or a lower rung.").toEqual([]);
+  });
+});

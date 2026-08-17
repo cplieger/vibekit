@@ -56,7 +56,7 @@
   font-size: var(--fs-sm);
   line-height: 1.6;
   tab-size: 4;
-  color: var(--c-text-tertiary);
+  color: var(--c-text-secondary);
   text-align: end;
   user-select: none;
   border-inline-end: 1px solid var(--c-border);

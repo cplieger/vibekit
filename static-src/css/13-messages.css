@@ -151,9 +151,14 @@
     font-weight: var(--fw-medium);
   }
 
+  /* Secondary, not the hint ink: this sits on the CARD's fill rather than the
+     page's, and the hint ink is sized against the page. It measures 4.244:1 on
+     the card at rest and 3.203:1 once the card is hovered, both under AA for
+     11px text. The selected case is already handled a layer up, by
+     70-selection.css's on-selected muted ink. */
   & .picker-meta {
     font-size: var(--fs-xs);
-    color: var(--c-text-tertiary);
+    color: var(--c-text-secondary);
   }
 }
 

@@ -943,7 +943,19 @@ def main() -> int:
         text_pairs: list[tuple[str, str, str, float | None]] = []
         for t in ("--c-text-primary", "--c-text-secondary", "--c-text-tertiary", "--c-text-control"):
             for s in surfaces:
-                text_pairs.append((f"{t.replace('--c-text-', '')} on {s.replace('--c-bg-', '')}", t, s, 4.5))
+                # The hint ink is sized against the PAGE and is not a
+                # general-purpose ink: it clears 4.5:1 on --c-bg-primary and on
+                # nothing above it. So pairing it with a raised fill is a rule
+                # violation rather than a contrast result, and reporting it here
+                # as FAIL puts eight permanent failures in the output for
+                # combinations the app does not contain — which teaches a reader
+                # to skip the whole section. The rule is asserted where it can
+                # actually be checked, over the stylesheets:
+                # css-tokens.test.ts, "keeps the hint ink off a raised fill".
+                floor = None if t == "--c-text-tertiary" and s != "--c-bg-primary" else 4.5
+                text_pairs.append(
+                    (f"{t.replace('--c-text-', '')} on {s.replace('--c-bg-', '')}", t, s, floor)
+                )
         # A control's label sits on its own HOVER wash more often than on the top
         # ramp rung, now that hover is a wash rather than a jump to that rung.
         for t in ("--c-text-control", "--c-text-primary"):
@@ -959,6 +971,36 @@ def main() -> int:
             ("yellow on bg-primary", "--c-yellow", "--c-bg-primary", 4.5),
             ("danger on bg-primary", "--c-danger", "--c-bg-primary", 4.5),
         ]
+        # A status hue is INK as often as it is a fill — a red row label, an
+        # accent link inside a card, a yellow badge — and until this block
+        # existed each one was only ever measured against the PAGE, which is the
+        # one surface they all pass on. 3:1 rather than 4.5:1 because most of
+        # these land on a glyph or a badge; a hue used for small body text needs
+        # the stricter floor and its own row above.
+        for hue in ("--c-green", "--c-red", "--c-yellow", "--c-blue", "--c-danger", "--c-warning"):
+            for s in ("--c-bg-secondary", "--c-bg-tertiary", "--c-bg-elevated"):
+                # Same reasoning as the hint ink above for the TOP rung: red,
+                # danger and warning land between 2.58 and 2.98 there, and the
+                # only element in the app with an --c-bg-elevated fill is
+                # .pill:active, which carries the primary ink. The structural
+                # guard covers it; a floor here would be three standing failures.
+                floor = None if s == "--c-bg-elevated" else 3.0
+                text_pairs.append(
+                    (
+                        f"{hue.replace('--c-', '')} ink on {s.replace('--c-bg-', '')}",
+                        hue,
+                        s,
+                        floor,
+                    )
+                )
+        # The focus ring, against every surface it can be drawn over. 35 outlines
+        # in the app and every one is the accent, so one token answers for all of
+        # them — but it is a GRAPHIC under 1.4.11, so it has a floor and nothing
+        # was checking it.
+        for s in surfaces:
+            text_pairs.append(
+                (f"focus ring on {s.replace('--c-bg-', '')}", "--c-accent", s, 3.0)
+            )
         show_pairs(themes, text_pairs)
 
     if cmd in ("selected", "all"):

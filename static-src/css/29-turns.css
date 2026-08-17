@@ -301,7 +301,7 @@
   align-items: center;
   gap: var(--sp-1) var(--sp-2);
   font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
+  color: var(--c-text-secondary);
   padding: var(--sp-1) var(--sp-3);
   font-variant-numeric: tabular-nums;
   background: var(--c-bg-tertiary);
