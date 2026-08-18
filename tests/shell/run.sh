@@ -27,13 +27,22 @@
 # What remains here is what the entrypoint still does, and its most consequential
 # branches are the ones that REFUSE or that cross the boundary INTO the server: a
 # root `rm -rf` aimed at a symlinked or unconfirmable agent-runtime store, a
-# /config that cannot be created, and the pins-plus-install-root contract the
-# server reads (pins_export_test.sh). A healthy image never takes the refusals, so
-# tests/image-smoke.sh — which boots the assembled image and waits for its
-# HEALTHCHECK — structurally cannot reach them: it can only prove the paths a
-# working container walks. And the boundary test covers what a smoke test cannot
-# SEE: a dropped export leaves a container that boots, reports healthy, and
-# installs nothing.
+# /config that cannot be created, the pins-plus-install-root contract the
+# server reads (pins_export_test.sh), and what does or does not reach `apt-get
+# install` from APT_PACKAGES (apt_packages_test.sh). A healthy image never takes
+# the refusals, so tests/image-smoke.sh — which boots the assembled image and
+# waits for its HEALTHCHECK — structurally cannot reach them: it can only prove
+# the paths a working container walks. And the boundary test covers what a smoke
+# test cannot SEE: a dropped export leaves a container that boots, reports
+# healthy, and installs nothing.
+#
+# apt_packages_test.sh is a VERBATIM copy of sister app web-terminal-kiro's,
+# because the block it drives is a verbatim copy too: that env var is untrusted
+# operator content handed to a root package manager, and every guard in it was
+# paid for by a measured failure there (a grammar-valid typo reaching apt's
+# regex fallback plans 337 packages). Keeping the test identical is what makes
+# the two copies checkable against each other; if the block is ever extracted
+# into cplieger/ci, this file goes with it.
 #
 # The refusals also need asserting DIRECTLY rather than through an exit code,
 # for two reasons specific to this file. First, the boot runs without `set -e`
