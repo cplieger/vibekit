@@ -242,6 +242,13 @@ ARG PKG_REFRESH=static
 # dialect at the next ARG/ENV and shellchecks the rest of the stage as POSIX
 # sh. Docker-side a no-op (same shell, no layer); it keeps the SC checks live.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+# libatomic1 is a RUNTIME dependency of the Node.js the tools engine
+# installs, not a build tool: node's official linux-x64 binaries link
+# libatomic.so.1 from v25 onward (measured — v24.18.0 does not, v26.7.0
+# does). Nothing else in this list pulls it, so without it every
+# npm-sourced tool fails with a bare `npm failed: exit status 127` and
+# `node: error while loading shared libraries: libatomic.so.1` — which
+# took out pyright, typescript and typescript-language-server together.
 # hadolint ignore=DL3008
 RUN echo "OS package refresh: ${PKG_REFRESH}" \
     && apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
@@ -249,6 +256,7 @@ RUN echo "OS package refresh: ${PKG_REFRESH}" \
     curl \
     git \
     jq \
+    libatomic1 \
     openssh-client \
     unzip \
     xz-utils \
