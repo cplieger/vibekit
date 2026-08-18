@@ -34,7 +34,10 @@ type Dependencies interface {
 	ChatAccess
 	PendingPermAccess
 	TerminalAccess
-	InfraDeps
+	WorkspaceAccess
+	LifecycleAccess
+	MCPAccess
+	TurnOutcomeAccess
 	Draining() bool
 	CheckDedup(reqID string) ([]byte, bool)
 	RecordDedup(reqID string, result []byte)

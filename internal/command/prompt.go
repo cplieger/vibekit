@@ -278,7 +278,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	// (see Dependencies.TurnContext): a mid-turn client disconnect must not
 	// cancel the in-flight bridge Call, or the turn fails before it can
 	// finalize and persist the assistant buffer.
-	ctx, cancel := deps.TurnContext(ctx)
+	ctx, cancel := d.Lifecycle().TurnContext(ctx)
 	defer cancel()
 	sb, err := deps.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
@@ -301,8 +301,8 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	sb.BeginPromptCall(cancelPrompt)
 	defer sb.EndPromptCall()
 
-	deps.InflightAdd(1)
-	defer deps.InflightDone()
+	d.Lifecycle().InflightAdd(1)
+	defer d.Lifecycle().InflightDone()
 
 	// 3. Prime with history if the bridge needs it.
 	if !sb.IsPrimed() {
@@ -311,7 +311,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	}
 
 	// 4. Send the prompt to kiro-cli.
-	if !deps.MCPWaitForReady(ctx, 30*time.Second) {
+	if !d.MCP().MCPWaitForReady(ctx, 30*time.Second) {
 		slog.Warn("MCP readiness timeout, proceeding anyway", "chat_id", cmd.ChatID)
 	}
 	var creditsBeforeTurn float64
@@ -322,7 +322,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		// switch_model's fast path can land any time from now on — including
 		// before the old model has emitted anything, which is precisely when the
 		// first-frame read attributed one model's answer to another.
-		deps.LatchTurnModel(cmd.ChatID, chat.Model)
+		d.TurnOutcome().LatchTurnModel(cmd.ChatID, chat.Model)
 	}
 	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
 	start := time.Now()
@@ -337,7 +337,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		// under this dead turn's message id: one persisted assistant message
 		// holding two turns' replies. The partial is persisted rather than
 		// dropped -- see AbandonInFlightTurn for why that direction.
-		deps.AbandonInFlightTurn(ctx, cmd.ChatID)
+		d.TurnOutcome().AbandonInFlightTurn(ctx, cmd.ChatID)
 		// ONE rendering of the cause on both channels. The SSE frame and this
 		// POST's error body land on the same send-button tooltip and the client
 		// paints whichever arrives last, so handing the raw error to RespondErr
@@ -361,12 +361,12 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	if chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID); ok {
 		creditsDelta = chat.Usage.Credits - creditsBeforeTurn
 	}
-	deps.EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, creditsDelta, float64(elapsed.Milliseconds()))
+	d.TurnOutcome().EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, creditsDelta, float64(elapsed.Milliseconds()))
 	d.RespondOK(w, cmd.RequestID)
 }
 
 // BuildPromptParams constructs the full session/prompt parameter map.
-func BuildPromptParams(ctx context.Context, deps Dependencies, sb Bridge, p *api.PromptCommand) map[string]any {
+func BuildPromptParams(ctx context.Context, deps WorkspaceAccess, sb Bridge, p *api.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
 		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
 	})

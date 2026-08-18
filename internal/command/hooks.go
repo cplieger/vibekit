@@ -246,7 +246,6 @@ func buildHookDoc(p *hookCreatePayload) hookDoc {
 
 // CmdCreateHook creates a hook file from chat context.
 func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
 	p, safeName, code, vErr := validateHookPayload(cmd)
 	if vErr != nil {
 		d.RespondErr(w, code, vErr)
@@ -254,7 +253,7 @@ func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 	hook := buildHookDoc(&p)
 
-	hookPath := filepath.Join(deps.WorkDir(), ".kiro", "hooks", safeName+".json")
+	hookPath := filepath.Join(d.Workspace().WorkDir(), ".kiro", "hooks", safeName+".json")
 	if _, err := os.Stat(hookPath); err == nil {
 		d.RespondErr(w, http.StatusConflict,
 			errors.New("a hook with this name already exists"))

@@ -275,64 +275,24 @@ type MergeOptions struct {
 // provider through Manager.Provider(id), which resolves the persisted
 // ConfiguredForge record first, so they already hold both fields. Adding
 // identity accessors back would duplicate that record on an ephemeral value.
+//
+// It is a COMPOSITE, and it exists only because the two places that hand a
+// provider out — factory.New and Manager.Provider — must return one value that
+// can do everything a route might ask of it. Nothing consumes all fifteen
+// methods: each member below is declared beside the handler that needs it (see
+// http_repos.go and pr_status_source.go), so a handler's signature says what it
+// touches and a test stubs three methods instead of fifteen. This used to be one
+// flat list, which is what made `p ForgeOps` on handleIssues — a function that
+// calls exactly three of them — indistinguishable from `p ForgeOps` on the
+// dispatcher above it.
 type ForgeOps interface {
-	// Whoami returns the authenticated account, or an error if not
-	// logged in (or the CLI is not installed).
-	Whoami(ctx context.Context) (*User, error)
-
-	// ListRepos returns repositories accessible to the authenticated
-	// account (owned + member).
-	ListRepos(ctx context.Context) ([]Repo, error)
-
-	// ListPRs lists pull/merge requests for repo.
-	ListPRs(ctx context.Context, repo string, state ListState) ([]PR, error)
-
-	// CreatePR opens a new pull/merge request.
-	CreatePR(ctx context.Context, repo string, p *CreatePRParams) (*PR, error)
-
-	// MergePR merges an open PR, or arms the forge's own auto-merge
-	// when opts.Auto is set.
-	MergePR(ctx context.Context, repo string, number int, opts MergeOptions) error
-
-	// ClosePR closes (without merging) an open PR.
-	ClosePR(ctx context.Context, repo string, number int) error
-
-	// ReopenPR reopens a closed PR.
-	ReopenPR(ctx context.Context, repo string, number int) error
-
-	// ListIssues lists issues for repo.
-	ListIssues(ctx context.Context, repo string, state ListState) ([]Issue, error)
-
-	// CreateIssue files a new issue.
-	CreateIssue(ctx context.Context, repo string, p CreateIssueParams) (*Issue, error)
-
-	// CloseIssue closes an open issue.
-	CloseIssue(ctx context.Context, repo string, number int) error
-
-	// CommitStatus returns CI checks for a commit ref (branch / SHA).
-	CommitStatus(ctx context.Context, repo, ref string) ([]Check, error)
-
-	// RerunFailedChecks re-runs the failed CI of a PR's CURRENT head.
-	// Returns an ErrNotSupported-wrapped error on a forge with no re-run
-	// verb.
-	//
-	// headSHA is the commit the caller's row was rendered from, and it is
-	// a PRECONDITION exactly like MergeOptions.HeadSHA: an implementation
-	// must refuse rather than re-run when the PR has moved since, because
-	// a re-run can carry deployment side effects and a row displaying one
-	// commit's red status must not act on another's. Empty means the
-	// caller had no head to pin (the forge reported none), and the re-run
-	// proceeds against whatever the PR's head is now.
-	RerunFailedChecks(ctx context.Context, repo string, number int, headSHA string) error
-
-	// ListReleases returns recent releases for repo.
-	ListReleases(ctx context.Context, repo string) ([]Release, error)
-
-	// CreateRelease cuts a new release.
-	CreateRelease(ctx context.Context, repo string, p CreateReleaseParams) (*Release, error)
-
-	// ListLabels returns labels defined on repo.
-	ListLabels(ctx context.Context, repo string) ([]Label, error)
+	whoamier
+	repoLister
+	prOps
+	issueOps
+	checkOps
+	releaseOps
+	labelOps
 }
 
 // CmdTimeout is the default per-command timeout. Long enough for

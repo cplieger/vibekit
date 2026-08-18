@@ -107,10 +107,20 @@ func (s *managerPRSource) OpenAuthoredPRs(ctx context.Context) ([]WatchedPR, err
 	return out, nil
 }
 
+// whoamier is the identity read. Declared here because this is the only
+// consumer: the author filter for open PRs is client-side (no forge CLI takes an
+// author filter in the shape vibekit calls them), so the connected login has to
+// be resolved before the listing can be filtered.
+type whoamier interface {
+	// Whoami returns the authenticated account, or an error if not
+	// logged in (or the CLI is not installed).
+	Whoami(ctx context.Context) (*User, error)
+}
+
 // whoamiLogin resolves a forge's connected login, answering "" when it cannot.
 // Logged at Debug: a forge the user disconnected is an ordinary state here, not a
 // fault, and a Warn per tick would fill the log for a box with one stale config.
-func whoamiLogin(ctx context.Context, provider ForgeOps, forgeID string) string {
+func whoamiLogin(ctx context.Context, provider whoamier, forgeID string) string {
 	user, err := provider.Whoami(ctx)
 	if err != nil || user == nil {
 		slog.Debug("pr status: whoami failed", "forge", forgeID, "error", err)

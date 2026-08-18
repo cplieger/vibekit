@@ -96,8 +96,8 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		defer sb.ReleaseAfterPrompt()
 	}
 
-	deps.InflightAdd(1)
-	defer deps.InflightDone()
+	d.Lifecycle().InflightAdd(1)
+	defer d.Lifecycle().InflightDone()
 
 	// Persist the user message.
 	userMsg := api.Message{
@@ -123,7 +123,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	defer cancel()
 
 	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd)
-	shellProc.Dir = deps.WorkDir()
+	shellProc.Dir = d.Workspace().WorkDir()
 	var capped ShellCappedBuffer
 	shellProc.Stdout = &capped
 	shellProc.Stderr = &capped

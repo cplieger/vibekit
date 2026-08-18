@@ -8,6 +8,14 @@ package command
 // The Dependencies interface remains as the composite that Hub
 // satisfies. These narrow interfaces are embedded into Dependencies
 // for compile-time verification.
+//
+// InfraDeps used to sit at the bottom of this file as the outlier: ten
+// unrelated methods behind one name, in a file whose other members were already
+// correctly segregated. Its own doc comment named the seams (workspace,
+// lifecycle, MCP readiness) so it is split along them, plus a fourth its comment
+// omitted — the four turn-outcome methods. The "dedup" seam that comment also
+// named had already left for Dependencies, which is how long the description had
+// been drifting from the members.
 
 import (
 	"context"
@@ -86,11 +94,26 @@ type TerminalAccess interface {
 	KillTurnTerminals(chatID api.ChatID)
 }
 
-// InfraDeps provides shared infrastructure operations (workspace,
-// lifecycle, dedup, MCP readiness) used across multiple handlers.
-type InfraDeps interface {
+// WorkspaceAccess provides the workspace and config paths handlers resolve
+// against: the hook writer and the shell spawn need the working directory, the
+// prompt reads a setting out of the config directory, and an attachment path is
+// confined to the workspace before it is read.
+type WorkspaceAccess interface {
 	WorkDir() string
 	ConfigDir() string
+	// ResolveInsideWorkDir validates a path is inside the workspace. Passed as a
+	// function value to BuildPromptBlocks, which is why it is here rather than
+	// beside the turn methods: it is a path rule, not a turn rule.
+	ResolveInsideWorkDir(rel string) (string, error)
+}
+
+// LifecycleAccess is the process-lifetime seam: the context a turn runs under,
+// and the in-flight accounting that makes hub shutdown wait for it.
+//
+// The three belong together because they are one protocol. A handler that starts
+// long-lived work takes a turn context, registers itself as in-flight, and
+// deregisters on return; shutdown cancels the first and waits on the second.
+type LifecycleAccess interface {
 	// TurnContext returns the context an in-flight turn runs under, plus the
 	// teardown its handler defers. It replaced a ShutdownCtx() accessor that
 	// handed out the hub's raw lifetime context and left every consumer to
@@ -99,8 +122,18 @@ type InfraDeps interface {
 	TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc)
 	InflightAdd(delta int)
 	InflightDone()
+}
+
+// MCPAccess is the MCP readiness gate a prompt waits on, so a first turn does
+// not reach the model before the workspace's MCP servers have connected.
+type MCPAccess interface {
 	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool
-	ResolveInsideWorkDir(rel string) (string, error)
+}
+
+// TurnOutcomeAccess is what a prompt handler needs to finish a turn: classify
+// it, record which model ran it, publish its stats, and abandon it when the
+// bridge died mid-flight.
+type TurnOutcomeAccess interface {
 	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
 	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
 	AbandonInFlightTurn(ctx context.Context, chatID api.ChatID)
@@ -129,3 +162,15 @@ func (d *Dispatcher) PendingPerms() PendingPermAccess { return d.deps }
 
 // Terminals returns the TerminalAccess subset of dependencies.
 func (d *Dispatcher) Terminals() TerminalAccess { return d.deps }
+
+// Workspace returns the WorkspaceAccess subset of dependencies.
+func (d *Dispatcher) Workspace() WorkspaceAccess { return d.deps }
+
+// Lifecycle returns the LifecycleAccess subset of dependencies.
+func (d *Dispatcher) Lifecycle() LifecycleAccess { return d.deps }
+
+// MCP returns the MCPAccess subset of dependencies.
+func (d *Dispatcher) MCP() MCPAccess { return d.deps }
+
+// TurnOutcome returns the TurnOutcomeAccess subset of dependencies.
+func (d *Dispatcher) TurnOutcome() TurnOutcomeAccess { return d.deps }
