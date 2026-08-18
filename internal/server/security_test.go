@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,14 +23,19 @@ func helloMux() http.Handler {
 	})
 }
 
-// testCSP is a fixed CSP string for the security middleware tests that
-// don't care about importmap hashing — they assert structural
-// properties (origin checks, headers set, etc.) of the middleware.
-// Production uses buildCSPPolicy(staticFS) instead.
-func testCSP() string { return fallbackCSPPolicy() }
+// fallbackCSPPolicy assembles the CSP with the script-src hash slot relaxed to
+// 'unsafe-inline' instead of a pinned hash. It lives in the TEST file by design:
+// production always goes through buildCSPPolicy against the real embedded
+// index.html and never relaxes script-src, so a relaxed builder must not be
+// reachable from — or even compiled into — the production binary. Tests that
+// assert structural properties of the middleware (origin checks, headers set)
+// rather than the inline-script hashing use it as their policy stand-in.
+func fallbackCSPPolicy() string {
+	return fmt.Sprintf(cspTemplate, "'unsafe-inline'")
+}
 
 func TestSecurityMiddleware_SetsCSP(t *testing.T) {
-	h := securityMiddleware(testCSP(), nil, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -65,7 +71,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 		{"DELETE cross-origin blocked", http.MethodDelete, "http://attacker.example", http.StatusForbidden},
 	}
 
-	h := securityMiddleware(testCSP(), nil, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var body *strings.Reader
@@ -109,7 +115,7 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)
 	}
-	h := securityMiddleware(testCSP(), policy, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), policy, helloMux())
 
 	do := func(method, host, origin, remoteAddr string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "http://"+host+"/x", strings.NewReader(""))
@@ -166,7 +172,7 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	})
 
 	t.Run("nil policy is a pass-through", func(t *testing.T) {
-		open := securityMiddleware(testCSP(), nil, helloMux())
+		open := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 		req := httptest.NewRequest(http.MethodGet, "http://anything.example/x", http.NoBody)
 		rec := httptest.NewRecorder()
 		open.ServeHTTP(rec, req)
@@ -177,7 +183,7 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 }
 
 func BenchmarkSecurityMiddleware(b *testing.B) {
-	h := securityMiddleware(testCSP(), nil, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 
 	b.Run("GET_headers_only", func(b *testing.B) {
 		req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
@@ -293,7 +299,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 	f.Add("PUT", "null", "example.com")
 	f.Add("PATCH", "http://example.com", "example.com:443")
 
-	h := securityMiddleware(testCSP(), nil, helloMux())
+	h := securityMiddleware(fallbackCSPPolicy(), nil, helloMux())
 
 	f.Fuzz(func(t *testing.T, method, origin, host string) {
 		if method == "" {
@@ -333,7 +339,7 @@ func FuzzSecurityMiddleware_OriginCheck(f *testing.F) {
 }
 
 func TestCSPPolicy_StructuralInvariants(t *testing.T) {
-	policy := testCSP()
+	policy := fallbackCSPPolicy()
 	directives := make(map[string]string)
 	for part := range strings.SplitSeq(policy, "; ") {
 		fields := strings.SplitN(part, " ", 2)

@@ -81,15 +81,6 @@ func buildCSPPolicy(staticFS fs.FS) (string, error) {
 	return fmt.Sprintf(cspTemplate, hashes[0]), nil
 }
 
-// fallbackCSPPolicy assembles a CSP without an importmap hash — used
-// only in tests that don't care about the importmap directive. The
-// 'unsafe-inline' relaxation makes those tests pass; production never
-// goes through this path because Server construction always runs
-// buildCSPPolicy against the real embedded FS.
-func fallbackCSPPolicy() string {
-	return fmt.Sprintf(cspTemplate, "'unsafe-inline'")
-}
-
 // securityMiddleware sets the response security-header baseline via
 // webhttp.SecurityHeaders, applies the ALLOWED_HOSTS exact-match Host
 // allowlist (webhttp.HostPolicy), and wraps the handler with
