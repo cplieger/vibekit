@@ -75,14 +75,15 @@ const (
 	EventMessageUpdated    EventType = "message_updated"
 	EventModeChanged       EventType = "mode_changed"
 	EventOpenExternalURL   EventType = "open_external_url"
-	// There are no pending_change_* or pending_trust_* events. Staged writes
-	// are KAS's, and a turn's verdict rides EventPermissionNeeded below.
+	// EventPermissionNeeded carries a turn's verdict as well as an individual
+	// tool ask. There are no pending_change_* or pending_trust_* events:
+	// staged writes are KAS's.
 	EventPermissionNeeded   EventType = "permission_needed"
 	EventPermissionsChanged EventType = "permissions_changed"
 	EventPolicyError        EventType = "policy_error"
-	// Workflow runs. Three, not six — see domain_workflow.go for what the
-	// other three would have been and why none of them can exist. All ride the
-	// launching chat's topic.
+	// EventRunStarted and the two below are the workflow-run lifecycle. Three,
+	// not six — see domain_workflow.go for what the other three would have been
+	// and why none of them can exist. All ride the launching chat's topic.
 	EventRunStarted       EventType = "run_started"
 	EventRunProgress      EventType = "run_progress"
 	EventRunFinished      EventType = "run_finished"
@@ -92,13 +93,13 @@ const (
 	EventSafetyStatus     EventType = "safety_status"
 	EventSafetyProperties EventType = "safety_properties"
 	EventSettingsUpdated  EventType = "settings_updated"
-	// Mid-turn steering, mirroring KAS's own three signals rather than
-	// collapsing them. Each answers a different question the chip row asks:
-	// queued = it reached the buffer, injected = the model has actually read
-	// it, cleared = the turn boundary dropped whatever was still unread. A
-	// single "steer_changed" event would make "sent but not yet seen"
-	// indistinguishable from "seen", which is the one distinction a user
-	// steering a live turn cares about.
+	// EventSteerQueued and the two below mirror KAS's own three mid-turn
+	// steering signals rather than collapsing them. Each answers a different
+	// question the chip row asks: queued = it reached the buffer, injected =
+	// the model has actually read it, cleared = the turn boundary dropped
+	// whatever was still unread. A single "steer_changed" event would make
+	// "sent but not yet seen" indistinguishable from "seen", which is the one
+	// distinction a user steering a live turn cares about.
 	EventSteerQueued   EventType = "steer_queued"
 	EventSteerInjected EventType = "steer_injected"
 	EventSteerCleared  EventType = "steer_cleared"

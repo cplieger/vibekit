@@ -758,6 +758,3 @@ func mapGiteaConclusion(s string) string {
 	}
 	return ""
 }
-
-// strconv import is unused otherwise — it was used by the removed
-// strconvItoa helper. Keep the import only if other call sites exist.

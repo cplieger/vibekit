@@ -561,18 +561,6 @@ func repoNamesFor(ctx context.Context, kind forges.Kind, host string) []string {
 // code intelligence. Detection uses the inventory's catalog-derived
 // Lsp marker, so any enabled LSP (seeded template or hand-added)
 // silences it.
-// buildToolsEngine constructs the shared toolbelt engine with vibekit's
-// SSE adapters and enqueues the boot jobs: the full reconcile first,
-// then the boot catalog fetch (the engine's schedule has no
-// fire-on-start; an immediate enqueue inside New would land ahead of
-// boot-critical work on the single-flight queue). Failures to enqueue
-// are logged, not fatal: installed tools persist on the volume and
-// keep-last-good absorbs an unreachable publisher.
-//
-// (nil, nil) is the DEGRADED verdict, not an omission: the root-integrity
-// refusal (Config.VerifyRootIntegrity below) returns no engine and no error,
-// and Build carries on tool-less. Every other New failure still returns an
-// error and stops the boot, exactly as it did before the check existed.
 // wireToolsEngine builds the tools engine and, when the root is intact,
 // wires its consumers. A nil engine is the root-integrity degraded verdict
 // (buildToolsEngine), not an error. The tools-dependent wiring is skipped
@@ -599,6 +587,18 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbelt
 	return toolsEngine, nil
 }
 
+// buildToolsEngine constructs the shared toolbelt engine with vibekit's
+// SSE adapters and enqueues the boot jobs: the full reconcile first,
+// then the boot catalog fetch (the engine's schedule has no
+// fire-on-start; an immediate enqueue inside New would land ahead of
+// boot-critical work on the single-flight queue). Failures to enqueue
+// are logged, not fatal: installed tools persist on the volume and
+// keep-last-good absorbs an unreachable publisher.
+//
+// (nil, nil) is the DEGRADED verdict, not an omission: the root-integrity
+// refusal (Config.VerifyRootIntegrity below) returns no engine and no error,
+// and Build carries on tool-less. Every other New failure still returns an
+// error and stops the boot, exactly as it did before the check existed.
 func buildToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,

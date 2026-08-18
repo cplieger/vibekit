@@ -147,12 +147,6 @@ func (t *Translator) applyFocusTitle(ctx context.Context, chatID api.ChatID, tit
 	}
 }
 
-// titleIsPromptDerived reports whether title is KAS's first-prompt
-// derivation rather than an agent-authored name. A derived title is the
-// trimmed prompt text verbatim (short prompt) or its "..."-suffixed
-// truncation (long prompt); the prompt KAS saw is either one of the
-// chat's user messages or, on a freshly primed session, the priming
-// preamble + transcript.
 // titleIsPrimeDerived reports whether an ellipsized title is the head of any
 // priming preamble. Split out so titleIsPromptDerived stays inside the
 // complexity budget as preambles are added.
@@ -165,6 +159,12 @@ func titleIsPrimeDerived(stripped string) bool {
 	return false
 }
 
+// titleIsPromptDerived reports whether title is KAS's first-prompt
+// derivation rather than an agent-authored name. A derived title is the
+// trimmed prompt text verbatim (short prompt) or its "..."-suffixed
+// truncation (long prompt); the prompt KAS saw is either one of the
+// chat's user messages or, on a freshly primed session, the priming
+// preamble + transcript.
 func titleIsPromptDerived(title string, c *api.Chat) bool {
 	stripped, ellipsized := strings.CutSuffix(title, derivedTitleEllipsis)
 	// The prime is always far longer than the title cap, so a prime-derived
