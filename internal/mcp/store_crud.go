@@ -120,7 +120,7 @@ func (s *Store) Create(ctx context.Context, in *Server) (*Server, error) {
 	s.mu.Unlock()
 	slog.Info("mcp: server created", "id", rec.ID, "name", rec.Name,
 		"transport", rec.Transport, "enabled", rec.Enabled)
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return maskedCopy(rec), nil
 }
 
@@ -207,7 +207,7 @@ func (s *Store) ImportServers(ctx context.Context, in []*Server) ([]ImportResult
 	}
 	s.mu.Unlock()
 	slog.Info("mcp: servers imported", "created", created, "entries", len(in))
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return results, nil
 }
 
@@ -298,7 +298,7 @@ func (s *Store) Update(ctx context.Context, id ServerID, in *Server) (*Server, e
 	s.mu.Unlock()
 	slog.Info("mcp: server updated", "id", rec.ID, "name", rec.Name,
 		"transport", rec.Transport, "enabled", rec.Enabled)
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return maskedCopy(rec), nil
 }
 
@@ -332,7 +332,7 @@ func (s *Store) SetEnabled(ctx context.Context, id ServerID, enabled bool) (*Ser
 	out := maskedCopy(s.servers[idx])
 	s.mu.Unlock()
 	slog.Info("mcp: server enabled toggled", "id", id, "enabled", enabled)
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return out, nil
 }
 
@@ -358,7 +358,7 @@ func (s *Store) Delete(ctx context.Context, id ServerID) error {
 	// vibekit-generated at Create (newID base32), which breaks the
 	// user-input taint chain a raw path segment would carry into the log.
 	slog.Info("mcp: server deleted", "id", removed.ID)
-	s.notifyChange(ctx)
+	s.notifyChange()
 	return nil
 }
 

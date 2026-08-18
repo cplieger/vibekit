@@ -201,6 +201,16 @@ type Store struct {
 // KAS file deleted out from under us, is reconciled at boot rather than on the
 // next edit.
 func New(ctx context.Context, configDir string, onChange func(context.Context), opts ...Option) (*Store, error) {
+	// Required, not defaulted. ctx IS the store's lifetime, and notifyChange
+	// parents fire-and-forget callback work on it (see there). This used to be
+	// accepted as nil and substituted with context.Background() at the point of
+	// use, which meant a caller who forgot it got a goroutine running MCP prewarm
+	// that no shutdown could cancel and nothing waited on — silently, because
+	// the substitution happened deep in an unexported method. Refusing here makes
+	// the mistake a startup error at the one construction site instead.
+	if ctx == nil {
+		return nil, errors.New("mcp: New requires a non-nil ctx: it is the store's lifetime and parents the change callback")
+	}
 	s := &Store{
 		ctx:      ctx,
 		path:     filepath.Join(configDir, "mcp.json"),
@@ -300,18 +310,24 @@ func (s *Store) load() error {
 // moment the handler returned — and the production callback runs MCP prewarm,
 // which is exactly the fire-and-forget work that must survive the response.
 // This is the use the ctx field was stored for.
-func (s *Store) notifyChange(context.Context) {
+//
+// It deliberately takes NO context. It used to accept one and discard it (the
+// parameter was unnamed), which read at all five call sites as though the
+// caller's ctx mattered here; it never did, and the signature said the opposite
+// of the doc comment. New now rejects a nil store ctx, so the
+// context.Background() substitution this used to make is gone: that fallback
+// turned a forgotten ctx into a prewarm goroutine no shutdown could cancel and
+// nothing waited on.
+func (s *Store) notifyChange() {
 	s.mu.RLock()
 	cb := s.onChange
 	s.mu.RUnlock()
 	if cb == nil {
 		return
 	}
-	ctx := s.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	go cb(ctx)
+	// s.ctx is write-once in New and never mutated, so it needs no lock;
+	// s.onChange is swappable via SetOnChange, which is why that one does.
+	go cb(s.ctx)
 }
 
 func (s *Store) indexLocked(id ServerID) int {
