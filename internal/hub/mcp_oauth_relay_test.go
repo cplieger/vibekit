@@ -6,10 +6,11 @@ package hub
 // The listener in these tests is a real httptest server on 127.0.0.1, so the
 // dial half is exercised end to end rather than mocked: httptest binds an
 // ephemeral loopback port, which is exactly the shape KAS's own redirect
-// listener has, and it is what relayClient's loopback address policy must
+// listener has, and it is what relayClientFor's loopback address policy must
 // accept. A stubbed transport would have proved nothing about that policy.
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -19,6 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cplieger/ssrf/v4"
 )
 
 // authURLFor builds the authorization URL KAS would have stored for a flow
@@ -704,4 +707,86 @@ func FuzzValidateRelayAddress(f *testing.F) {
 			t.Errorf("accepted state %q against advertised state %q", q.Get("state"), s)
 		}
 	})
+}
+
+// The relay's client is pinned to the ONE port it was built for. This is the
+// invariant that replaced a transport with the port check switched off: a
+// standing client could only ever express a range, so nothing stopped a
+// validated callback on port A from being replayed to port B. Building per
+// attempt makes the allowlist exactly the port about to be dialed, and this
+// test is what would fail if that were widened back to a range.
+func TestRelayClientForPinsTheOnePort(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	target, err := url.Parse(srv.URL + "/callback?code=abc&state=xyz")
+	if err != nil {
+		t.Fatalf("url.Parse(%q) error = %v", srv.URL, err)
+	}
+	client, err := relayClientFor(target)
+	if err != nil {
+		t.Fatalf("relayClientFor(%q) error = %v, want a client", target, err)
+	}
+
+	// The port it was built for works.
+	resp, err := client.Get(target.String())
+	if err != nil {
+		t.Fatalf("GET the pinned port error = %v, want it allowed", err)
+	}
+	_ = resp.Body.Close()
+
+	// A DIFFERENT loopback port does not, even though it is loopback and
+	// unprivileged. No listener is needed: the refusal precedes the dial.
+	port, err := strconv.ParseUint(target.Port(), 10, 16)
+	if err != nil {
+		t.Fatalf("ParseUint(%q) error = %v", target.Port(), err)
+	}
+	other := uint16(port) + 1
+	if other < relayMinPort {
+		other = relayMinPort
+	}
+	//nolint:bodyclose // the request is expected to fail before a response exists
+	_, err = client.Get("http://127.0.0.1:" + strconv.Itoa(int(other)) + "/callback")
+	if err == nil {
+		t.Fatalf("GET port %d with a client pinned to %d succeeded, want it refused", other, port)
+	}
+	// Assert the REASON, not merely that it failed. Nothing listens on the other
+	// port, so a widened allowlist still produces a connection-refused error and
+	// an `err != nil` check would pass while the pin was gone.
+	var se *ssrf.Error
+	if !errors.As(err, &se) || se.Kind != ssrf.KindBadPort {
+		t.Errorf("GET port %d error = %v, want an ssrf KindBadPort refusal (the pin, not a dial failure)", other, err)
+	}
+}
+
+// A port parseLoopbackCallback would have rejected is rejected here too, so the
+// two layers cannot disagree about what is dialable.
+func TestRelayClientForRefusesBadPorts(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"privileged", "http://127.0.0.1:80/callback"},
+		{"port zero", "http://127.0.0.1:0/callback"},
+		{"no port", "http://127.0.0.1/callback"},
+		{"unparseable", "http://127.0.0.1:notaport/callback"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			u, err := url.Parse(tc.raw)
+			if err != nil {
+				// An unparseable port can fail at url.Parse, which is also a refusal.
+				return
+			}
+			if _, err := relayClientFor(u); err == nil {
+				t.Errorf("relayClientFor(%q) = nil error, want the port refused", tc.raw)
+			}
+		})
+	}
 }

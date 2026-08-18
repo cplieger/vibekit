@@ -57,7 +57,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/ssrf/v3"
+	"github.com/cplieger/ssrf/v4"
 	"github.com/cplieger/vibekit/internal/api"
 )
 
@@ -123,30 +123,52 @@ var (
 	errRelayStateDrift  = errors.New("that address belongs to a different sign-in")
 )
 
-// relayClient replays the callback. Built once: a per-request transport would
-// leak idle connections or pay a fresh dialer every paste.
+// relayClientFor returns the client for ONE validated callback target, pinned
+// to that target's port. Built per attempt rather than once at init: the
+// destination is not known until a callback is pasted and checked, and an
+// allowlist of exactly the port about to be dialed is a stronger check than any
+// standing policy a package-level client could carry. ssrf offers no way to
+// lift its port restriction, which is the library being right — the earlier
+// shape here switched the port check off entirely and leaned on
+// parseLoopbackCallback as the only guard.
+//
+// The cost this pays is a fresh dialer per paste, which is the right trade: a
+// paste is a rare human action, and keep-alives are disabled because this is
+// one GET to a listener that stops as soon as it answers, so there is no pooled
+// connection worth preserving between attempts.
 //
 // READ THE OPTIONS BEFORE ASSUMING THE DEFAULTS. `ssrf.SafeTransport`'s default
 // posture is the opposite of what this needs — it allows only PUBLIC addresses
-// and only port 443 — and both are inverted here. It is used anyway, rather
+// and only port 443 — and both are replaced here. It is used anyway, rather
 // than hand-rolling a loopback check, for the one guarantee a hand-roll gets
 // wrong: the library re-validates the ACTUALLY-CONNECTED address in a dialer
 // Control hook, which it owns and a caller cannot supply. That closes DNS
 // rebinding, and rebinding is live here because `localhost` is an accepted host
 // and is a DNS name — a resolver answering `localhost` with a routable address
 // would otherwise turn this route into an outbound request generator.
-var relayClient = &http.Client{
-	Timeout: relayTotalTimeout,
-	Transport: ssrf.SafeTransport(
+func relayClientFor(target *url.URL) (*http.Client, error) {
+	// parseLoopbackCallback already accepted this port, so a failure here means
+	// the two disagree; refuse rather than guess.
+	port, err := strconv.ParseUint(target.Port(), 10, 16)
+	if err != nil || port < relayMinPort {
+		return nil, errRelayBadPort
+	}
+	tr := ssrf.SafeTransport(
 		ssrf.WithAddressPolicy(func(a netip.Addr) bool { return a.IsLoopback() }),
-		ssrf.WithAnyPort(),
+		ssrf.WithAllowedPorts(uint16(port)),
 		ssrf.WithDialer(&net.Dialer{Timeout: relayDialTimeout}),
-	),
-	// Do not follow a redirect: return it as the response instead. Following
-	// would let KAS's handler steer the relay onward, and the status is all this
-	// needs. ErrUseLastResponse rather than an error so a 3xx stays a delivered
-	// callback rather than becoming a transport failure.
-	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	)
+	// One request, one connection, no pool: the listener is about to exit.
+	tr.DisableKeepAlives = true
+	return &http.Client{
+		Timeout:   relayTotalTimeout,
+		Transport: tr,
+		// Do not follow a redirect: return it as the response instead. Following
+		// would let KAS's handler steer the relay onward, and the status is all
+		// this needs. ErrUseLastResponse rather than an error so a 3xx stays a
+		// delivered callback rather than becoming a transport failure.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}, nil
 }
 
 type mcpOAuthRelayReq struct {
@@ -166,7 +188,7 @@ type mcpOAuthRelayResp struct {
 // Registered by RegisterRoutes. It is NOT wrapped in webhttp.LoopbackOnly and
 // must not be: the whole point is that a REMOTE browser reaches it, and that
 // helper's provenance check rejects a browser outright. The loopback constraint
-// belongs on the outbound half instead, which is relayClient's address policy.
+// belongs on the outbound half instead, which is relayClientFor's address policy.
 func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		api.MethodNotAllowed(w, http.MethodPost)
@@ -237,17 +259,22 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 
 // replayCallback performs the one GET and returns the listener's status.
 func (r *mcpRegistry) replayCallback(ctx context.Context, target *url.URL) (int, error) {
+	client, err := relayClientFor(target)
+	if err != nil {
+		return 0, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), http.NoBody)
 	if err != nil {
 		return 0, err
 	}
-	resp, err := relayClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// Drain a bounded prefix so the connection can be reused and a hostile
-	// listener cannot stream forever; the body itself is not read for meaning.
+	// Drain a bounded prefix so a hostile listener cannot stream forever; the
+	// body itself is not read for meaning. Connection reuse is NOT a reason
+	// here — keep-alives are off — so the cap is the whole point.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, relayBodyCap))
 	return resp.StatusCode, nil
 }
@@ -431,7 +458,7 @@ func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url
 
 // isLoopbackHost reports whether host is one of the three spellings a loopback
 // redirect uses. A fixed set rather than a resolve-and-check: the resolved
-// address is re-validated at socket time by relayClient's policy, and this gate
+// address is re-validated at socket time by relayClientFor's policy, and this gate
 // exists to reject the whole class of remote hosts before any lookup happens.
 //
 // RFC 8252 §7.3 prefers the literals over `localhost` precisely because the name
