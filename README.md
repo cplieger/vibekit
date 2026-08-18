@@ -247,6 +247,21 @@ environment:
   VIBEKIT_ALLOW_BRIDGE_ENV: "BUILDKITE_AGENT_TOKEN"
 ```
 
+### OS packages (`APT_PACKAGES`)
+
+The tools engine installs language servers, runtimes and CLIs onto `/config`, but it does not install OS packages, and that boundary is deliberate. Everything it manages survives a container recreate because it lives on the volume; an `apt` package lives in the container layer and does not, so an engine that recorded one as installed would be wrong after every recreate. A shared library also ships no binary, and the engine proves an install by running it.
+
+So OS packages are this variable's job. They are `apt-get install`ed at every container start, whitespace-separated:
+
+```yaml
+environment:
+  APT_PACKAGES: "gcc libc6-dev"
+```
+
+Two things need it in practice. Go work that runs `go test -race` needs a C compiler, and the image ships none. And a runtime the engine installs can link a shared library the image does not carry, in which case the tool installs and then refuses to start; the tools panel names the missing library on the runtime's own row, and adding its package here fixes it without waiting for a new image.
+
+Plain package names only. A version pin (`pkg=1.2`), `pkg:arch`, `pkg/release`, a trailing `-` (apt reads that as a removal), a name absent from the package index (so a typo like `python3.` cannot expand into hundreds of packages), and a pure virtual package such as `awk` (name a concrete provider such as `mawk`) are each skipped with a warning in the container log. An install failure warns without blocking startup.
+
 ### Runtime profiles
 
 `GET /debug/pprof/` serves Go's standard runtime profiles, behind the same loopback check as the `kiro-cli` repair hook (`POST /api/kiro-cli/rescan`): the socket peer and the `Host` header must both be loopback, and requests carrying proxy or browser headers are refused. So it is reachable from inside the container and nowhere else, which also means a browser tab gets a 403 and `curl` is how you read it:
@@ -274,6 +289,7 @@ Every knob, including the ones detailed above. A malformed duration value logs a
 | `KIRO_WORK_DIR` | Directory chats and the shell start in. Must exist and be a directory; startup fails otherwise. | `/workspace` |
 | `KIRO_CONFIG_DIR` | Persistent state root (chats, kiro-cli home, installed tools, settings). Must exist and be writable; startup fails otherwise. | `/config` |
 | `KIRO_HOME` | Where vibekit resolves kiro-cli's per-user state tree (steering, settings, session files). | `$HOME/.kiro` |
+| `APT_PACKAGES` | OS packages `apt-get install`ed at every container start, whitespace-separated. See [OS packages](#os-packages-apt_packages). | _(unset)_ |
 | `VIBEKIT_TOOLS_DIR` | Tools engine install tree (`bin/`, `opt/`, `npm/`, `python/`) on the persistent volume. | `<KIRO_CONFIG_DIR>/tools` |
 | `VIBEKIT_TOOL_CATALOG` | Image-baked tool catalog used at first boot and when offline, until a successfully fetched catalog replaces it. | `/opt/vibekit/tool-catalog.json` |
 | `VIBEKIT_TOOL_CATALOG_URL` | Where catalog refreshes fetch from. Point it at a fork or mirror to decouple from the default publisher. | the [tool-catalog](https://github.com/cplieger/tool-catalog) latest-release artifact |
