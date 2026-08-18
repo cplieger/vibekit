@@ -8,6 +8,7 @@
   "typescriptChecker": {
     "prioritizePerformanceOverAccuracy": false
   },
+  "inPlace": true,
   "mutate": [
     "strings.ts",
     "bus.ts",
