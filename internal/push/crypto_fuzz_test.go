@@ -71,7 +71,7 @@ func FuzzDeriveKeyNonce(f *testing.F) {
 	f.Add(shared, authSecret, realPub, serverPub, salt)
 
 	f.Fuzz(func(t *testing.T, shared, authSecret, clientPub, serverPub, salt []byte) {
-		cek, nonce, err := deriveKeyNonce(shared, authSecret, clientPub, serverPub, salt)
+		cek, nonce, err := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: authSecret, ClientPub: clientPub, ServerPub: serverPub, Salt: salt})
 		if err != nil {
 			return // errors are acceptable
 		}
@@ -84,7 +84,7 @@ func FuzzDeriveKeyNonce(f *testing.F) {
 			t.Fatalf("nonce length = %d, want 12", len(nonce))
 		}
 		// Invariant 3: deterministic — same inputs produce same outputs.
-		cek2, nonce2, err2 := deriveKeyNonce(shared, authSecret, clientPub, serverPub, salt)
+		cek2, nonce2, err2 := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: authSecret, ClientPub: clientPub, ServerPub: serverPub, Salt: salt})
 		if err2 != nil {
 			t.Fatalf("second call errored but first succeeded: %v", err2)
 		}

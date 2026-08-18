@@ -113,11 +113,11 @@ func TestDeriveKeyNonce_Deterministic(t *testing.T) {
 	salt := make([]byte, 16)
 
 	// Same inputs should produce same outputs.
-	cek1, nonce1, err := deriveKeyNonce(shared, auth, clientPub, serverPub, salt)
+	cek1, nonce1, err := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: auth, ClientPub: clientPub, ServerPub: serverPub, Salt: salt})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cek2, nonce2, err := deriveKeyNonce(shared, auth, clientPub, serverPub, salt)
+	cek2, nonce2, err := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: auth, ClientPub: clientPub, ServerPub: serverPub, Salt: salt})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +146,8 @@ func TestDeriveKeyNonce_DifferentSalts(t *testing.T) {
 	salt2 := make([]byte, 16)
 	salt2[0] = 2
 
-	cek1, _, _ := deriveKeyNonce(shared, auth, clientPub, serverPub, salt1)
-	cek2, _, _ := deriveKeyNonce(shared, auth, clientPub, serverPub, salt2)
+	cek1, _, _ := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: auth, ClientPub: clientPub, ServerPub: serverPub, Salt: salt1})
+	cek2, _, _ := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: auth, ClientPub: clientPub, ServerPub: serverPub, Salt: salt2})
 	if string(cek1) == string(cek2) {
 		t.Error("different salts should produce different CEKs")
 	}
@@ -170,8 +170,13 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 
 	// Server encrypts.
 	shared, _ := serverPriv.ECDH(clientPriv.PublicKey())
-	cek, nonce, err := deriveKeyNonce(shared, authSecret,
-		clientPriv.PublicKey().Bytes(), serverPriv.PublicKey().Bytes(), salt)
+	cek, nonce, err := deriveKeyNonce(keyMaterial{
+		Shared:     shared,
+		AuthSecret: authSecret,
+		ClientPub:  clientPriv.PublicKey().Bytes(),
+		ServerPub:  serverPriv.PublicKey().Bytes(),
+		Salt:       salt,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,8 +193,13 @@ func TestEncryptDecryptRoundTrip(t *testing.T) {
 
 	// Client decrypts (same shared secret from the other direction).
 	shared2, _ := clientPriv.ECDH(serverPriv.PublicKey())
-	cek2, nonce2, _ := deriveKeyNonce(shared2, authSecret,
-		clientPriv.PublicKey().Bytes(), serverPriv.PublicKey().Bytes(), salt)
+	cek2, nonce2, _ := deriveKeyNonce(keyMaterial{
+		Shared:     shared2,
+		AuthSecret: authSecret,
+		ClientPub:  clientPriv.PublicKey().Bytes(),
+		ServerPub:  serverPriv.PublicKey().Bytes(),
+		Salt:       salt,
+	})
 
 	if string(cek) != string(cek2) {
 		t.Fatal("CEK mismatch between encrypt and decrypt sides")
@@ -242,7 +252,7 @@ func BenchmarkPushEncrypt(b *testing.B) {
 		if _, err := rand.Read(salt); err != nil {
 			b.Fatal(err)
 		}
-		cek, nonce, err := deriveKeyNonce(shared, authSecret, clientPubBytes, ephPriv.PublicKey().Bytes(), salt)
+		cek, nonce, err := deriveKeyNonce(keyMaterial{Shared: shared, AuthSecret: authSecret, ClientPub: clientPubBytes, ServerPub: ephPriv.PublicKey().Bytes(), Salt: salt})
 		if err != nil {
 			b.Fatal(err)
 		}

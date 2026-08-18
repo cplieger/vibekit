@@ -450,7 +450,13 @@ func encryptPayload(sub api.PushSubscription, payload []byte) ([]byte, error) {
 	if _, saltErr := rand.Read(salt); saltErr != nil {
 		return nil, saltErr
 	}
-	cek, nonce, err := deriveKeyNonce(shared, authSecret, clientPubBytes, ephPriv.PublicKey().Bytes(), salt)
+	cek, nonce, err := deriveKeyNonce(keyMaterial{
+		Shared:     shared,
+		AuthSecret: authSecret,
+		ClientPub:  clientPubBytes,
+		ServerPub:  ephPriv.PublicKey().Bytes(),
+		Salt:       salt,
+	})
 	if err != nil {
 		return nil, err
 	}
