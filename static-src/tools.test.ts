@@ -237,6 +237,78 @@ describe("row actions", () => {
     await flush();
     expect(mocks.deleteDispatch).not.toHaveBeenCalled();
   });
+
+  it("delete asks once and forces when the row already names its dependents", async () => {
+    initWith(listWith([tool({ name: "java", dependents: ["jdtls"] })]));
+    mocks.confirm.mockResolvedValue(true);
+    mocks.deleteDispatch.mockResolvedValue({ job: { id: "tj-4" } });
+
+    rowFor("java")?.querySelector<HTMLButtonElement>('button[aria-label="Remove java"]')?.click();
+    await flush();
+    await flush();
+
+    // No unforced probe: the refusal was already known, so the round trip
+    // the 409 used to buy is gone.
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(String(mocks.confirm.mock.calls[0]?.[0])).toContain("jdtls");
+    expect(mocks.deleteDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteDispatch).toHaveBeenCalledWith({ name: "java", force: true });
+  });
+
+  it("disable asks once and forces when the row already names its dependents", async () => {
+    initWith(listWith([tool({ name: "typescript", dependents: ["typescript-language-server"] })]));
+    mocks.confirm.mockResolvedValue(true);
+    mocks.patchDispatch.mockResolvedValue({ job: { id: "tj-5" } });
+
+    rowFor("typescript")?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click();
+    await flush();
+    await flush();
+
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(String(mocks.confirm.mock.calls[0]?.[0])).toContain("typescript-language-server");
+    expect(mocks.patchDispatch).toHaveBeenCalledTimes(1);
+    expect(mocks.patchDispatch).toHaveBeenCalledWith({
+      name: "typescript",
+      disabled: true,
+      force: true,
+    });
+  });
+
+  it("restores the switch when the disable pre-flight is declined", async () => {
+    initWith(listWith([tool({ name: "java", dependents: ["jdtls"] })]));
+    mocks.confirm.mockResolvedValue(false);
+    const box = rowFor("java")?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    box?.click();
+    await flush();
+    await flush();
+
+    // Nothing moved server-side, so every keyed component is unchanged and
+    // reconcile reuses the node — the switch has to be put back by hand.
+    expect(mocks.patchDispatch).not.toHaveBeenCalled();
+    expect(box?.checked).toBe(true);
+    expect(box?.disabled).toBe(false);
+  });
+
+  it("still cascades through the 409 when the row named no dependents", async () => {
+    // The field is advisory: the engine re-derives the set under the manifest
+    // lock, so a row rendered before a dependent was enabled is still refused.
+    initWith(listWith([tool({ name: "java" })]));
+    mocks.confirm.mockResolvedValue(true);
+    mocks.patchDispatch
+      .mockResolvedValueOnce({ code: "has_dependents", dependents: ["jdtls"] })
+      .mockResolvedValueOnce({ job: { id: "tj-6" } });
+
+    rowFor("java")?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click();
+    await flush();
+    await flush();
+
+    expect(mocks.patchDispatch).toHaveBeenNthCalledWith(1, { name: "java", disabled: true });
+    expect(mocks.patchDispatch).toHaveBeenNthCalledWith(2, {
+      name: "java",
+      disabled: true,
+      force: true,
+    });
+  });
 });
 
 describe("add modal", () => {
@@ -426,10 +498,18 @@ describe("tools list keys", () => {
 
   it("emits verbatim components for ordinary tool rows", () => {
     initWith(listWith([tool({ name: "gh", latest: "2.97.0", pin: true })]));
-    // Nine components: marker, name, version, latest, installed, installing,
-    // pin, disabled, error-state.
-    expect(keyFor("gh")).toBe("tool:gh:1.0.0:2.97.0:true:false:true:false:ok");
-    expect(split(keyFor("gh"))).toHaveLength(9);
+    // Ten components: marker, name, version, latest, installed, installing,
+    // pin, disabled, dependents, error-state.
+    expect(keyFor("gh")).toBe("tool:gh:1.0.0:2.97.0:true:false:true:false::ok");
+    expect(split(keyFor("gh"))).toHaveLength(10);
+  });
+
+  it("keys the dependents set so a pre-flight cannot read a stale row", () => {
+    // The disable/remove pre-flight reads the row's captured ToolInfo, and
+    // enabling a dependent elsewhere changes this set without touching any
+    // other component. Out of the key, the row would never remount.
+    initWith(listWith([tool({ name: "java", dependents: ["jdtls", "kotlin-ls"] })]));
+    expect(split(keyFor("java"))[8]).toBe("jdtls,kotlin-ls");
   });
 
   it("keys the label and system branches in their own namespaces", () => {
@@ -441,7 +521,7 @@ describe("tools list keys", () => {
 
   it("escapes a component that carries the separator instead of shifting the split", () => {
     // A colon in a version string would have added a component under the old
-    // array-join; escaped, the key still splits into exactly nine.
+    // array-join; escaped, the key still splits into exactly ten.
     initWith(listWith([tool({ name: "odd", version: "1.0:beta" })]));
     const key = keyFor("odd");
     expect(key).toContain("1.0\\:beta");
@@ -454,6 +534,7 @@ describe("tools list keys", () => {
       "false",
       "false",
       "false",
+      "",
       "ok",
     ]);
   });

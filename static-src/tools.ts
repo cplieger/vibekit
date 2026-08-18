@@ -331,6 +331,12 @@ class ToolsManager {
               String(e.tool.installing),
               String(e.tool.pin ?? false),
               String(e.tool.disabled ?? false),
+              // `dependents` is read by the disable/remove pre-flight, which
+              // reads the row's captured ToolInfo. Enabling or removing an
+              // entry elsewhere changes who depends on this one without
+              // touching any other field here, so the set has to be in the
+              // key or the pre-flight asks its question from a stale answer.
+              (e.tool.dependents ?? []).join(","),
               e.tool.last_error === undefined || e.tool.last_error === "" ? "ok" : "err",
             );
         }
@@ -437,8 +443,17 @@ class ToolsManager {
     }) as HTMLInputElement;
     toggleInput.checked = !disabled;
     toggleInput.addEventListener("change", () => {
+      const nextDisabled = !toggleInput.checked;
       toggleInput.disabled = true;
-      void this.toggleDisabled(t.name, !toggleInput.checked);
+      void this.toggleDisabled(t, nextDisabled).then((changed) => {
+        if (!changed) {
+          // Nothing moved server-side, so every keyed field is unchanged and
+          // reconcile reuses this exact node — a refetch cannot put the switch
+          // back. Restore it to the state the row was rendered from.
+          toggleInput.checked = !disabled;
+          toggleInput.disabled = false;
+        }
+      });
     });
     const toggle = el(
       "label",
@@ -478,7 +493,7 @@ class ToolsManager {
       iconEl(ICON_TRASH),
     );
     delBtn.addEventListener("click", () => {
-      void this.runDelete(t.name);
+      void this.runDelete(t);
     });
 
     if (disabled) {
@@ -499,43 +514,83 @@ class ToolsManager {
     this.loadToolsList();
   }
 
-  /** Flip the enabled/disabled state. Disabling a tool that enabled
-   *  entries require answers 409 with the dependents — confirm the
-   *  forced cascade like delete does. */
-  private async toggleDisabled(name: string, disabled: boolean): Promise<void> {
-    const d = await patchTool.dispatch({ name, disabled });
-    if (disabled && d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
-      const list = d.dependents.join(", ");
+  /** Flip the enabled/disabled state. `dependents` names the enabled entries
+   *  that require this one, so when disabling is going to cascade the question
+   *  is asked BEFORE the request and the answer rides on it. The engine
+   *  re-derives the set under the manifest lock and still answers 409, which
+   *  is what makes the field safe to trust: a stale inventory is refused, not
+   *  obeyed, and the 409 branch below is that fallback.
+   *
+   *  Returns whether anything reached the server, so a declined confirm can
+   *  put the switch back. */
+  private async toggleDisabled(t: ToolInfo, disabled: boolean): Promise<boolean> {
+    const known = t.dependents ?? [];
+    if (disabled && known.length > 0) {
       const force = await confirmDialog(
-        `${name} is required by: ${list}. Disable it anyway?`,
+        `${t.name} is required by: ${known.join(", ")}. Disable it anyway?`,
         "Disable",
         "destructive",
       );
-      if (force) {
-        await patchTool.dispatch({ name, disabled, force: true });
+      if (!force) {
+        return false;
       }
+      await patchTool.dispatch({ name: t.name, disabled, force: true });
+      this.loadToolsList();
+      return true;
+    }
+
+    const d = await patchTool.dispatch({ name: t.name, disabled });
+    if (disabled && d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
+      const list = d.dependents.join(", ");
+      const force = await confirmDialog(
+        `${t.name} is required by: ${list}. Disable it anyway?`,
+        "Disable",
+        "destructive",
+      );
+      if (!force) {
+        return false;
+      }
+      await patchTool.dispatch({ name: t.name, disabled, force: true });
     }
     this.loadToolsList();
+    return true;
   }
 
-  /** Delete with cascade-aware confirm (409 lists dependents). */
-  private async runDelete(name: string): Promise<void> {
-    const ok = await confirmDialog(`Remove ${name}?`, "Remove", "destructive");
+  /** Remove, asking once. A tool with known dependents puts them in the first
+   *  dialog and forces in one request; the 409 branch stays as the fallback
+   *  for an inventory that went stale between the render and the click. */
+  private async runDelete(t: ToolInfo): Promise<void> {
+    const known = t.dependents ?? [];
+    if (known.length > 0) {
+      const ok = await confirmDialog(
+        `Remove ${t.name}? It is required by: ${known.join(", ")}. Removing it removes them too.`,
+        "Remove all",
+        "destructive",
+      );
+      if (!ok) {
+        return;
+      }
+      await deleteTool.dispatch({ name: t.name, force: true });
+      this.loadToolsList();
+      return;
+    }
+
+    const ok = await confirmDialog(`Remove ${t.name}?`, "Remove", "destructive");
     if (!ok) {
       return;
     }
-    const d = await deleteTool.dispatch({ name });
+    const d = await deleteTool.dispatch({ name: t.name });
     if (d !== null && d.code === "has_dependents" && d.dependents !== undefined) {
       const list = d.dependents.join(", ");
       const force = await confirmDialog(
-        `${name} is required by: ${list}. Remove all of them?`,
+        `${t.name} is required by: ${list}. Remove all of them?`,
         "Remove all",
         "destructive",
       );
       if (!force) {
         return;
       }
-      await deleteTool.dispatch({ name, force: true });
+      await deleteTool.dispatch({ name: t.name, force: true });
     }
     this.loadToolsList();
   }

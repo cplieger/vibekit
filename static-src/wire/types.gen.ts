@@ -1588,6 +1588,20 @@ export interface ToolInfo {
   latest?: string;
   last_error?: string;
   requires?: string[];
+  /**
+ * Dependents names the ENABLED entries that require this tool,
+ * directly (their Requires) or as the implied backend of their source
+ * kind. It is the answer a consumer needs BEFORE it sends a disable
+ * or a remove: without it, the only way to learn that typescript is
+ * holding up typescript-language-server is to send the request and
+ * read the 409 — a round trip whose refusal a browser also records as
+ * a console error, for an outcome that was never exceptional.
+ * //
+ * Advisory, and deliberately not a substitute for the refusal: the
+ * engine re-derives the set under the manifest lock, so a consumer
+ * acting on a stale inventory is still refused.
+ */
+  dependents?: string[];
   pin?: boolean;
   disabled?: boolean;
   /**
