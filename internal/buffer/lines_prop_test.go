@@ -37,7 +37,7 @@ func TestLineTracker_RapidEviction(t *testing.T) {
 			startLine := rapid.IntRange(0, 1000).Draw(rt, fmt.Sprintf("start_%d", turn))
 			endLine := startLine + rapid.IntRange(0, 50).Draw(rt, fmt.Sprintf("span_%d", turn))
 
-			lt.Record(chatIDs[chatIdx], paths[pathIdx], startLine, endLine, turn, "edit")
+			lt.Record(chatIDs[chatIdx], paths[pathIdx], LineRange{StartLine: startLine, EndLine: endLine, Turn: turn, Kind: "edit"})
 		}
 
 		// Assert invariants.

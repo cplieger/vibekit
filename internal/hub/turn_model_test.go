@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // Which model served a turn.
@@ -47,7 +48,7 @@ func turnEndedModel(t *testing.T, h *Hub) (model string, present bool) {
 func endTurn(t *testing.T, h *Hub, chatID api.ChatID) {
 	t.Helper()
 	h.EmitTurnEndedWithStats(t.Context(), chatID,
-		&api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+		&api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 }
 
 func TestTurnModel_StampedOnThePersistedTurnAndOnTheSSE(t *testing.T) {

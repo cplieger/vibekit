@@ -67,7 +67,7 @@ func TestPolicyViewFileFallback(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	// Seed a user file so the fallback has something to read.
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, home, work)
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
 	if err := policyfile.Save(t.Context(), up, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"sudo *"}}},
 	}); err != nil {
@@ -100,7 +100,7 @@ func TestPolicyRuleAddDefaultsToAsk(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
 	f, err := policyfile.Load(wp)
 	if err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestPolicyRuleAddExplicitAllow(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, home, work)
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
 	f, _ := policyfile.Load(up)
 	if len(f.Rules) != 1 || f.Rules[0].Effect != "allow" || f.Rules[0].Capability != "web_fetch" {
 		t.Errorf("written rule = %+v", f.Rules)
@@ -154,7 +154,7 @@ func TestPolicyRuleUnrecognisedCapabilityRoundTrips(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (KAS is the authority on the vocabulary)", rec.Code)
 	}
-	up, _ := policyfile.PathFor(policyfile.ScopeUser, home, work)
+	up, _ := policyfile.PathFor(policyfile.ScopeUser, policyfile.Roots{Home: home, WorkDir: work})
 	f, err := policyfile.Load(up)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -239,7 +239,7 @@ func TestPolicyRuleRemoveDenyRequiresConfirm(t *testing.T) {
 	work := t.TempDir()
 	t.Setenv("HOME", home)
 	// Seed a deny rule.
-	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
+	wp, _ := policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
 	if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 		Rules: []policyfile.Rule{{Capability: "shell", Effect: "deny", Match: []string{"rm -rf *"}}},
 	}); err != nil {
@@ -317,7 +317,7 @@ func TestPolicyRuleUpdate(t *testing.T) {
 		home := t.TempDir()
 		work := t.TempDir()
 		t.Setenv("HOME", home)
-		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, home, work)
+		wp, _ = policyfile.PathFor(policyfile.ScopeWorkspace, policyfile.Roots{Home: home, WorkDir: work})
 		if err := policyfile.Save(t.Context(), wp, &policyfile.File{
 			Rules: []policyfile.Rule{
 				{Capability: "shell", Effect: "ask", Match: []string{"rm *"}},

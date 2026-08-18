@@ -6,6 +6,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // Tests for bridge_buffer.go: buffer.Buffer lifecycle + emitTurnEndedWithStats
@@ -108,7 +109,7 @@ func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 
 	// Start a turn: one chunk then end.
 	h.translateACPEvent("c1", newChunkMsg(t, "finished"))
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -127,7 +128,7 @@ func TestEmitTurnEnded_CancelledAppendsEventMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 || c.Messages[0].Role != api.RoleEvent || c.Messages[0].EventKind != api.EventCancelled {
@@ -139,7 +140,7 @@ func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 0 {
@@ -154,7 +155,7 @@ func TestEmitTurnEnded_CancelledMarksToolsFailed(t *testing.T) {
 	// Simulate a tool call in progress.
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
 	// Cancel the turn.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	// Should have the assistant message + the cancelled event.
@@ -225,7 +226,7 @@ func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 	})
 
 	// End the turn.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -259,7 +260,7 @@ func TestToolCallDurationMs(t *testing.T) {
 	})
 
 	// End the turn and check the persisted tool call has a duration.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -283,7 +284,7 @@ func TestEmitTurnEnded_DifferentChatID(t *testing.T) {
 
 	// Start a turn on a different chat ID to exercise the chatID parameter.
 	h.translateACPEvent("c2", newChunkMsg(t, "hello from c2"))
-	h.EmitTurnEndedWithStats(t.Context(), "c2", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c2", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c2")
 	if len(c.Messages) != 1 {

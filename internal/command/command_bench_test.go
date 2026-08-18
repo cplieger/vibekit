@@ -47,7 +47,7 @@ func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)         { retur
 func (d *benchDeps) PrimeIfNeeded(context.Context, api.ChatID, Bridge)   {}
 func (d *benchDeps) PrimeFromChat(api.ChatID, api.ChatID)                {}
 func (d *benchDeps) IsEmptyTurn(*api.RPCResponse, api.ChatID) bool       { return false }
-func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPCResponse, float64, float64) {
+func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPCResponse, TurnStats) {
 }
 
 func (d *benchDeps) AbandonInFlightTurn(context.Context, api.ChatID) {}
@@ -149,7 +149,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 		if d.IsEmptyTurn(nil, "x") {
 			t.Error("IsEmptyTurn should be false")
 		}
-		d.EmitTurnEndedWithStats(t.Context(), "x", nil, 0, 0)
+		d.EmitTurnEndedWithStats(t.Context(), "x", nil, TurnStats{})
 		if _, err := d.GetOrCreateBridge(t.Context(), "x", ""); err != nil {
 			t.Errorf("GetOrCreateBridge returned error: %v", err)
 		}

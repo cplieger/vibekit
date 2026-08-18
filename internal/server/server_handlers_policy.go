@@ -116,7 +116,7 @@ func (s *Server) policyRulesFromFiles(scope string) []api.PolicyRule {
 		if scope != "" && scope != sc {
 			continue
 		}
-		path, perr := policyfile.PathFor(sc, home, s.workDir)
+		path, perr := policyfile.PathFor(sc, policyfile.Roots{Home: home, WorkDir: s.workDir})
 		if perr != nil {
 			continue
 		}
@@ -223,7 +223,7 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 		api.InternalError(w, err)
 		return
 	}
-	path, err := policyfile.PathFor(body.Scope, home, s.workDir)
+	path, err := policyfile.PathFor(body.Scope, policyfile.Roots{Home: home, WorkDir: s.workDir})
 	if err != nil {
 		api.BadRequest(w, err.Error())
 		return

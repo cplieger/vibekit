@@ -10,9 +10,9 @@ import (
 
 func TestLineTrackerRecord(t *testing.T) {
 	lt := buffer.NewLineTracker()
-	lt.Record("chat1", "main.go", 1, 10, 1, "edit")
-	lt.Record("chat1", "main.go", 15, 20, 2, "edit")
-	lt.Record("chat1", "util.go", 5, 8, 1, "create")
+	lt.Record("chat1", "main.go", buffer.LineRange{StartLine: 1, EndLine: 10, Turn: 1, Kind: "edit"})
+	lt.Record("chat1", "main.go", buffer.LineRange{StartLine: 15, EndLine: 20, Turn: 2, Kind: "edit"})
+	lt.Record("chat1", "util.go", buffer.LineRange{StartLine: 5, EndLine: 8, Turn: 1, Kind: "create"})
 
 	got := lt.Get("chat1", "main.go")
 	if len(got) != 2 {
@@ -65,7 +65,7 @@ func TestLineTrackerRecordFromDiffs(t *testing.T) {
 
 func TestLineTrackerClear(t *testing.T) {
 	lt := buffer.NewLineTracker()
-	lt.Record("c1", "f.go", 1, 5, 1, "edit")
+	lt.Record("c1", "f.go", buffer.LineRange{StartLine: 1, EndLine: 5, Turn: 1, Kind: "edit"})
 	lt.Clear("c1")
 	if lt.Get("c1", "f.go") != nil {
 		t.Error("expected nil after clear")
@@ -74,7 +74,7 @@ func TestLineTrackerClear(t *testing.T) {
 
 func TestLineTrackerGet(t *testing.T) {
 	lt := buffer.NewLineTracker()
-	lt.Record("c1", "main.go", 1, 10, 1, "edit")
+	lt.Record("c1", "main.go", buffer.LineRange{StartLine: 1, EndLine: 10, Turn: 1, Kind: "edit"})
 
 	// Missing path returns nil.
 	if got := lt.Get("c1", ""); got != nil {
@@ -102,12 +102,12 @@ func BenchmarkLineTrackerRecord(b *testing.B) {
 			lt := buffer.NewLineTracker()
 			// Pre-fill with n ranges.
 			for i := range n {
-				lt.Record("c1", "main.go", i*10, i*10+5, i, "edit")
+				lt.Record("c1", "main.go", buffer.LineRange{StartLine: i * 10, EndLine: i*10 + 5, Turn: i, Kind: "edit"})
 			}
 			b.ResetTimer()
 			b.ReportAllocs()
 			for i := range b.N {
-				lt.Record("c1", "main.go", i*10+5000, i*10+5005, i, "edit")
+				lt.Record("c1", "main.go", buffer.LineRange{StartLine: i*10 + 5000, EndLine: i*10 + 5005, Turn: i, Kind: "edit"})
 			}
 		})
 	}

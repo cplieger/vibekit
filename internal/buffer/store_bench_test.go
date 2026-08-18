@@ -44,7 +44,7 @@ func BenchmarkLineTracker_Parallel(b *testing.B) {
 		turn := 0
 		for pb.Next() {
 			turn++
-			lt.Record(chatID, fmt.Sprintf("file-%d.go", turn%100), 1, 10, turn, "edit")
+			lt.Record(chatID, fmt.Sprintf("file-%d.go", turn%100), LineRange{StartLine: 1, EndLine: 10, Turn: turn, Kind: "edit"})
 			lt.Get(chatID, fmt.Sprintf("file-%d.go", turn%100))
 		}
 	})
@@ -77,13 +77,13 @@ func BenchmarkLineTrackerEviction(b *testing.B) {
 
 	// Pre-populate to capacity (500 files).
 	for i := range maxFilesPerChat {
-		lt.Record(chatID, fmt.Sprintf("pre-file-%d.go", i), 1, 10, i, "edit")
+		lt.Record(chatID, fmt.Sprintf("pre-file-%d.go", i), LineRange{StartLine: 1, EndLine: 10, Turn: i, Kind: "edit"})
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := range b.N {
 		// Each Record triggers eviction since we're at capacity with a new file.
-		lt.Record(chatID, fmt.Sprintf("new-file-%d.go", i), 1, 10, maxFilesPerChat+i, "edit")
+		lt.Record(chatID, fmt.Sprintf("new-file-%d.go", i), LineRange{StartLine: 1, EndLine: 10, Turn: maxFilesPerChat + i, Kind: "edit"})
 	}
 }

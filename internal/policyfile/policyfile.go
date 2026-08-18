@@ -244,15 +244,35 @@ func canonicalWorkDir(workDir string) string {
 	return filepath.Clean(abs)
 }
 
-// PathFor returns the permissions.yaml path for the given scope. home is the
-// base KAS resolves from ($HOME); workDir is the bridge's cwd (only needed
-// for the workspace scope).
-func PathFor(scope, home, workDir string) (string, error) {
+// Roots are the two filesystem roots a permissions.yaml path resolves against.
+//
+// A struct because PathFor used to take them as `(scope, home, workDir string)`
+// and two of those three were paths: a transposition compiled, resolved, and
+// wrote a security policy file under the wrong root — user-scope rules landing
+// beneath a workspace hash KAS reads for a different workspace, or workspace
+// rules at the user path where they apply everywhere. Nothing detects that; the
+// file is valid YAML at a valid location and KAS loads it. Named fields make the
+// swap unrepresentable, and a runtime guard could not have caught it at all
+// (both values are absolute directories that exist).
+type Roots struct {
+	// Home is the base KAS resolves both scopes from ($HOME).
+	Home string
+	// WorkDir is the bridge's cwd, needed only for the workspace scope.
+	WorkDir string
+}
+
+// PathFor returns the permissions.yaml path for the given scope.
+//
+// scope stays a separate parameter: it is the discriminator this switches on,
+// and confusing it with a root is already loud (a path is not "user" or
+// "workspace", so it returns ErrInvalidScope). The silent mistake was the pair.
+func PathFor(scope string, roots Roots) (string, error) {
 	switch scope {
 	case ScopeUser:
-		return filepath.Join(home, ".kiro", "settings", filename), nil
+		return filepath.Join(roots.Home, ".kiro", "settings", filename), nil
 	case ScopeWorkspace:
-		return filepath.Join(home, ".kiro", "workspace-roots", WorkspaceHash(workDir), filename), nil
+		return filepath.Join(roots.Home, ".kiro", "workspace-roots",
+			WorkspaceHash(roots.WorkDir), filename), nil
 	default:
 		return "", ErrInvalidScope
 	}

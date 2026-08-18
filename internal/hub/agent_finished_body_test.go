@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 func TestAgentFinishedBodyFrom(t *testing.T) {
@@ -71,7 +72,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	})
 
 	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, 0, 0)
+	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
 
 	select {
 	case body := <-fp.sends:
@@ -102,7 +103,7 @@ func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, 0, 0)
+	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
 
 	select {
 	case <-fp.sends:

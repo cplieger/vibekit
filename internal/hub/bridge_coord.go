@@ -646,7 +646,7 @@ func (bc *BridgeCoordinator) TakeBuffer(chatID api.ChatID) (*buffer.Buffer, bool
 
 // EmitTurnEndedWithStats finalizes any in-flight assistant message
 // and broadcasts turn_ended with the credit delta and elapsed time.
-func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
+func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, stats command.TurnStats) {
 	stopReason := extractStopReason(resp)
 	// Read BEFORE the turn_ended broadcast below: emit() clears the chat's status
 	// as that event goes out, so a read at the push site always finds nothing. See
@@ -674,7 +674,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			}
 		}
 
-		msg := assistantTurnMessage(buf, creditsDelta, elapsedMs)
+		msg := assistantTurnMessage(buf, stats)
 		bc.persistTurn(ctx, chatID, &msg)
 	}
 
@@ -695,8 +695,8 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 			StopReason:   stopReason,
 			Refusal:      refusal,
 			Model:        model,
-			CreditsDelta: creditsDelta,
-			ElapsedMs:    elapsedMs,
+			CreditsDelta: stats.CreditsDelta,
+			ElapsedMs:    stats.ElapsedMs,
 			ChangedFiles: changedFiles,
 		}))
 	}
@@ -822,7 +822,7 @@ func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chat
 // path (EmitTurnEndedWithStats) cannot drift: every field below exists because
 // something in the client reads it after a reload, so a second hand-written
 // literal would quietly lose one of them.
-func assistantTurnMessage(buf *buffer.Buffer, creditsDelta, elapsedMs float64) api.Message {
+func assistantTurnMessage(buf *buffer.Buffer, stats command.TurnStats) api.Message {
 	return api.Message{
 		ID:        buf.MessageID,
 		Role:      api.RoleAssistant,
@@ -848,8 +848,8 @@ func assistantTurnMessage(buf *buffer.Buffer, creditsDelta, elapsedMs float64) a
 		// the message so the turn footer survives reload. The same values
 		// ride the turn_ended SSE for the live render; omitempty drops the
 		// zero/nil cases (a read-only or zero-cost turn carries no footer).
-		TurnCredits:   creditsDelta,
-		TurnElapsedMs: elapsedMs,
+		TurnCredits:   stats.CreditsDelta,
+		TurnElapsedMs: stats.ElapsedMs,
 		ChangedFiles:  buf.ChangedFiles,
 		// Which model answered, latched when the turn opened rather than read
 		// from the chat now: the chat's Model is the CURRENT one, and a footer
@@ -891,7 +891,10 @@ func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID api
 			api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: changed[i]}))
 	}
 
-	msg := assistantTurnMessage(buf, 0, 0)
+	// No stats: an abandoned turn has no credit delta to attribute and no
+	// meaningful elapsed time, so the footer is deliberately empty rather than
+	// carrying whatever the failed call happened to have consumed.
+	msg := assistantTurnMessage(buf, command.TurnStats{})
 	bc.persistTurn(ctx, chatID, &msg)
 
 	evt := api.Message{

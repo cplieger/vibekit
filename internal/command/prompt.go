@@ -361,7 +361,10 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	if chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID); ok {
 		creditsDelta = chat.Usage.Credits - creditsBeforeTurn
 	}
-	d.TurnOutcome().EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, creditsDelta, float64(elapsed.Milliseconds()))
+	d.TurnOutcome().EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, TurnStats{
+		CreditsDelta: creditsDelta,
+		ElapsedMs:    float64(elapsed.Milliseconds()),
+	})
 	d.RespondOK(w, cmd.RequestID)
 }
 

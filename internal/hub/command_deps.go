@@ -185,8 +185,8 @@ func (h *Hub) IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool {
 // EmitTurnEndedWithStats broadcasts turn_ended with usage stats, and closes
 // the chat's terminal-attribution turn: terminals created after this belong
 // to the NEXT turn.
-func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64) {
-	h.coord.EmitTurnEndedWithStats(ctx, chatID, resp, creditsDelta, elapsedMs)
+func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, stats command.TurnStats) {
+	h.coord.EmitTurnEndedWithStats(ctx, chatID, resp, stats)
 	h.agentTerms.AdvanceTurn(chatID)
 }
 

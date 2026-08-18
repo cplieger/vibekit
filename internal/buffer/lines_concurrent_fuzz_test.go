@@ -45,7 +45,7 @@ func FuzzLineTrackerConcurrentRecordGet(f *testing.F) {
 					switch b & 0x03 {
 					case 0: // Record
 						fileIdx := int(b>>2) % 600
-						lt.Record(chatID, fmt.Sprintf("f%d.go", fileIdx), i, i+1, i, "edit")
+						lt.Record(chatID, fmt.Sprintf("f%d.go", fileIdx), LineRange{StartLine: i, EndLine: i + 1, Turn: i, Kind: "edit"})
 					case 1: // Get
 						lt.Get(chatID, fmt.Sprintf("f%d.go", int(b>>2)%600))
 					case 2: // Clear

@@ -21,6 +21,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat"
+	"github.com/cplieger/vibekit/internal/command"
 )
 
 // hubWithRealStore builds a hub backed by an on-disk chat store, seeded with
@@ -99,7 +100,7 @@ func runTerminalTurn(t *testing.T, h *Hub, frames ...string) {
 	for _, f := range frames {
 		h.translateACPEvent("c1", sessionUpdate(t, f))
 	}
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{}, command.TurnStats{})
 }
 
 const completedWithTerminal = `{"sessionUpdate":"tool_call_update","toolCallId":"tc-1",` +
@@ -124,7 +125,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 		t.Fatal("release reported the terminal was not present")
 	}
 	h.translateACPEvent("c1", sessionUpdate(t, completedWithTerminal))
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{}, 0, 0)
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{}, command.TurnStats{})
 
 	tc := storedToolCall(t, dir)
 	if tc.Output != "red output\n" {

@@ -130,12 +130,30 @@ type MCPAccess interface {
 	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool
 }
 
+// TurnStats is a finished turn's two measurements.
+//
+// A struct because EmitTurnEndedWithStats took them as an adjacent
+// `creditsDelta, elapsedMs float64` pair — on an interface METHOD, so the
+// declaration, the two implementations and the call site could each be read
+// without the others. A transposition compiles and is silent in both
+// directions: the turn footer reports ~40,000 credits for a 40-second turn and
+// 0.04 ms of elapsed time, and both values are persisted on the message, so the
+// wrong numbers survive a reload with nothing to compare them against. No
+// runtime guard is possible — every value either field can hold is legal in the
+// other.
+type TurnStats struct {
+	// CreditsDelta is the chat's credit usage attributable to this turn.
+	CreditsDelta float64
+	// ElapsedMs is the turn's wall-clock duration in milliseconds.
+	ElapsedMs float64
+}
+
 // TurnOutcomeAccess is what a prompt handler needs to finish a turn: classify
 // it, record which model ran it, publish its stats, and abandon it when the
 // bridge died mid-flight.
 type TurnOutcomeAccess interface {
 	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
-	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, creditsDelta, elapsedMs float64)
+	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, stats TurnStats)
 	AbandonInFlightTurn(ctx context.Context, chatID api.ChatID)
 	// LatchTurnModel records which model this turn was DISPATCHED under, before
 	// the prompt call can race a concurrent switch_model. First write wins, so

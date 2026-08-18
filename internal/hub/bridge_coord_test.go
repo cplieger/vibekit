@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/kirosession"
 )
 
@@ -177,7 +178,7 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, 0, 0)
+	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
 
 	select {
 	case body := <-fp.sends:
@@ -226,7 +227,7 @@ func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 
 	logs := captureLogs(t)
 	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
-	h.EmitTurnEndedWithStats(ctx, "c1", resp, 0, 0)
+	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
 
 	got := logs.String()
 	if strings.Contains(got, "persist assistant turn") {

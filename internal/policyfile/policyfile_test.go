@@ -59,16 +59,16 @@ func TestWorkspaceHashGolden(t *testing.T) {
 func TestPathFor(t *testing.T) {
 	home := "/home/u"
 	wd := "/work/space"
-	up, err := PathFor(ScopeUser, home, wd)
+	up, err := PathFor(ScopeUser, Roots{Home: home, WorkDir: wd})
 	if err != nil || up != filepath.Join(home, ".kiro", "settings", "permissions.yaml") {
 		t.Errorf("user path = %q, err = %v", up, err)
 	}
-	wp, err := PathFor(ScopeWorkspace, home, wd)
+	wp, err := PathFor(ScopeWorkspace, Roots{Home: home, WorkDir: wd})
 	wantWP := filepath.Join(home, ".kiro", "workspace-roots", WorkspaceHash(wd), "permissions.yaml")
 	if err != nil || wp != wantWP {
 		t.Errorf("workspace path = %q, want %q, err = %v", wp, wantWP, err)
 	}
-	if _, err := PathFor("agent", home, wd); err != ErrInvalidScope {
+	if _, err := PathFor("agent", Roots{Home: home, WorkDir: wd}); err != ErrInvalidScope {
 		t.Errorf("agent scope err = %v, want ErrInvalidScope", err)
 	}
 }

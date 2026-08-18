@@ -25,7 +25,7 @@ func FuzzLineTrackerRecord(f *testing.F) {
 			kindIdx := turn % len(kinds)
 
 			filePath := fmt.Sprintf("file-%d.go", fileIdx%600)
-			lt.Record(chats[chatIdx], filePath, startLine, endLine, turn, kinds[kindIdx])
+			lt.Record(chats[chatIdx], filePath, LineRange{StartLine: startLine, EndLine: endLine, Turn: turn, Kind: kinds[kindIdx]})
 		}
 
 		// Verify invariants

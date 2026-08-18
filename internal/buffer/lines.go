@@ -65,7 +65,16 @@ func NewLineTracker() *LineTracker {
 }
 
 // Record adds a line range for a file change.
-func (lt *LineTracker) Record(chatID api.ChatID, filePath string, startLine, endLine, turn int, kind string) {
+//
+// The range travels as a LineRange rather than as `startLine, endLine, turn int,
+// kind string`: three adjacent ints with no relationship the compiler can see,
+// where a transposition is silent. Swapping start and end stores an inverted
+// range the editor's changed-line gutter then paints backwards or not at all;
+// swapping either with turn corrupts the eviction key, because the heap orders
+// files by lastTurn and a line number used as a turn makes the wrong file the
+// oldest. The struct is the one the tracker stores anyway, so this also deletes
+// a field-by-field copy that could drift from it.
+func (lt *LineTracker) Record(chatID api.ChatID, filePath string, r LineRange) {
 	lt.mu.Lock()
 	defer lt.mu.Unlock()
 	state := lt.data[chatID]
@@ -86,18 +95,13 @@ func (lt *LineTracker) Record(chatID api.ChatID, filePath string, startLine, end
 	if len(existing) >= maxLineRangesPerFile {
 		existing = existing[1:]
 	}
-	state.ranges[filePath] = append(existing, LineRange{
-		StartLine: startLine,
-		EndLine:   endLine,
-		Turn:      turn,
-		Kind:      kind,
-	})
+	state.ranges[filePath] = append(existing, r)
 	// Update or insert heap entry.
 	if e, ok := state.entries[filePath]; ok {
-		e.lastTurn = turn
+		e.lastTurn = r.Turn
 		heap.Fix(&state.h, e.index)
 	} else {
-		e = &fileHeapEntry{path: filePath, lastTurn: turn}
+		e = &fileHeapEntry{path: filePath, lastTurn: r.Turn}
 		state.entries[filePath] = e
 		heap.Push(&state.h, e)
 	}
@@ -116,7 +120,7 @@ func (lt *LineTracker) RecordFromDiffs(chatID api.ChatID, diffs []api.ToolDiff, 
 		if lines == 0 {
 			lines = 1
 		}
-		lt.Record(chatID, d.Path, 1, lines, turn, kind)
+		lt.Record(chatID, d.Path, LineRange{StartLine: 1, EndLine: lines, Turn: turn, Kind: kind})
 	}
 }
 
