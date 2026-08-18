@@ -33,6 +33,10 @@ static/style.css
 # Stryker mutation-testing artifacts (weekly-stryker.yaml / local npx stryker run)
 reports/
 .stryker-tmp/
+# `inPlace: true` runs Stryker in the real tree (see static-src/stryker.config.json),
+# so the vitest-runner writes its per-worker setup files into static-src/ instead
+# of into the sandbox, and nothing removes them afterwards.
+static-src/stryker-setup-*.js
 
 # Review/audit evidence notes (functional-review runs)
 .audit/
