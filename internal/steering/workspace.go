@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/fileutil"
+	"github.com/cplieger/vibekit/internal/git"
 )
 
 func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, forgeKinds map[string]bool) {
@@ -19,7 +19,7 @@ func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, for
 	}
 	repos, dirs := classifyEntries(ctx, entries, workDir)
 	foundFiles := findNotableFiles(workDir)
-	isRoot := fileutil.IsGitRepo(ctx, workDir)
+	isRoot := git.IsRepo(ctx, workDir)
 	b.WriteString("## Workspace\n\n")
 	if isRoot {
 		b.WriteString("The workspace root (`/workspace`) is itself a git repository.\n\n")
@@ -291,7 +291,7 @@ func classifyEntries(ctx context.Context, entries []os.DirEntry, workDir string)
 		if !e.IsDir() || name == ".git" {
 			continue
 		}
-		if fileutil.IsGitRepo(ctx, filepath.Join(workDir, name)) {
+		if git.IsRepo(ctx, filepath.Join(workDir, name)) {
 			repos = append(repos, name)
 		} else if !strings.HasPrefix(name, ".") {
 			dirs = append(dirs, name)

@@ -73,7 +73,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/fileutil"
+	"github.com/cplieger/vibekit/internal/filemode"
 )
 
 // Bounds. The measured blobs are 90–211 bytes, so both limits are far above
@@ -151,7 +151,7 @@ func (s *Store) load() error {
 	// verifiers, and the package doc is explicit that the base64 is an encoding,
 	// NOT encryption: the file's 0600 is its whole protection. os.Chmod only ASKS
 	// for that mode, so on a filesystem that stores 0660 for the request the old
-	// code tightened nothing and reported nothing. EnforceFileMode re-stats the
+	// code tightened nothing and reported nothing. EnforceFile re-stats the
 	// descriptor it chmod'ed, and refuses a symlink at the name rather than
 	// tightening whatever the name points at this instant.
 	//
@@ -169,7 +169,7 @@ func (s *Store) load() error {
 	// boot with no path to recovery, trading a reported confidentiality problem
 	// for repeated silent data loss. The exposure of a file that was already wide
 	// when we found it is not ours to undo; growing it is.
-	if _, chErr := fileutil.EnforceFileMode(s.path, fileMode); chErr != nil {
+	if _, chErr := filemode.EnforceFile(s.path, fileMode); chErr != nil {
 		return fmt.Errorf("refusing to use %s: its mode could not be verified as %#o, so the credentials in it may be readable by other users on this host: %w",
 			fileName, fileMode, chErr)
 	}

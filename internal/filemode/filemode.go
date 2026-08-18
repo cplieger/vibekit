@@ -1,27 +1,24 @@
-// Package fileutil provides small filesystem helper utilities used across vibekit packages.
-package fileutil
+// Package filemode makes a file's mode a fact rather than a request.
+//
+// A mode ARGUMENT is a request: open(2) and mkdir(2) put it through umask, and a
+// filesystem carrying an inheritable group-write ACL stores 0660 for a 0o600 ask
+// (measured on a ZFS nfs4acl dataset). Everything here reads the mode off a
+// DESCRIPTOR, so what it reports is what the filesystem kept.
+//
+// This was half of internal/fileutil, a package holding two capabilities bound
+// only by a suffix: these two functions and a git-repo predicate that shared
+// nothing with them but the word "file". The predicate moved to internal/git,
+// where the rest of the git knowledge is.
+package filemode
 
 import (
-	"context"
 	"os"
-	"path/filepath"
 	"syscall"
 
 	"github.com/cplieger/atomicfile/v2"
 )
 
-// IsGitRepo reports whether dir contains a .git entry (directory for
-// regular repos, regular file for worktrees and submodules, or a
-// symlink to either — os.Stat follows symlinks).
-func IsGitRepo(ctx context.Context, dir string) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(dir, ".git"))
-	return err == nil
-}
-
-// EnforceFileMode makes the regular file at path carry want, and returns the
+// EnforceFile makes the regular file at path carry want, and returns the
 // mode the FILESYSTEM stored rather than the one that was asked for.
 //
 // It replaces os.Chmod at the three 0600/0700 objects vibekit keeps in
@@ -55,11 +52,11 @@ func IsGitRepo(ctx context.Context, dir string) bool {
 // old code was quiet on quiet: a read-only bind mount holding an already-0600
 // file rejects every chmod, and warning about it on every boot would train the
 // operator to ignore the line that matters.
-func EnforceFileMode(path string, want os.FileMode) (os.FileMode, error) {
+func EnforceFile(path string, want os.FileMode) (os.FileMode, error) {
 	return enforceMode(path, want, 0)
 }
 
-// EnforceDirMode is EnforceFileMode for a directory. O_DIRECTORY makes the
+// EnforceDir is EnforceFile for a directory. O_DIRECTORY makes the
 // kernel refuse anything that is not a directory at the name, so a regular file
 // or a FIFO planted there is rejected rather than chmod'ed; a directory is an
 // *os.File like any other, and atomicfile.EnforceMode compares only the bits
@@ -68,7 +65,7 @@ func EnforceFileMode(path string, want os.FileMode) (os.FileMode, error) {
 // The comparison DOES include setgid, deliberately: Linux gives a directory
 // created under a setgid parent the bit whether or not it was asked for, which
 // is a real difference between the request and the disk.
-func EnforceDirMode(path string, want os.FileMode) (os.FileMode, error) {
+func EnforceDir(path string, want os.FileMode) (os.FileMode, error) {
 	return enforceMode(path, want, syscall.O_DIRECTORY)
 }
 

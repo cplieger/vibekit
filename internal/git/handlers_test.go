@@ -2829,7 +2829,7 @@ func TestCollectStatus_HasGH(t *testing.T) {
 	mkRepo := func(t *testing.T) string {
 		t.Helper()
 		repo := t.TempDir()
-		// A bare .git directory is enough for IsGitRepo (os.Stat-based);
+		// A bare .git directory is enough for IsRepo (os.Stat-based);
 		// the gh lookup is reached regardless of git availability.
 		if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
 			t.Fatal(err)

@@ -31,7 +31,7 @@ func captureStoreSlog(t *testing.T) *bytes.Buffer {
 // TestEnsureAdminSocketDir_verifiesTheModeItCreated.
 //
 // Honest limit, worth knowing before trusting this test: the mode ASSERTION here
-// does not distinguish EnforceDirMode from the bare os.Chmod it replaced —
+// does not distinguish EnforceDir from the bare os.Chmod it replaced —
 // chmod(2) clears setgid either way, and no filesystem a test can create stores a
 // mode other than the one chmod asked for. What the enforcement adds is the
 // read-back, and the observable proof of the read-back is the logged mode plus

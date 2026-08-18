@@ -1,4 +1,4 @@
-package fileutil
+package git
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestIsGitRepo(t *testing.T) {
+func TestIsRepo(t *testing.T) {
 	tests := []struct {
 		setup func(t *testing.T, dir string)
 		name  string
@@ -82,25 +82,25 @@ func TestIsGitRepo(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			tt.setup(t, dir)
-			got := IsGitRepo(t.Context(), dir)
+			got := IsRepo(t.Context(), dir)
 			if got != tt.want {
-				t.Errorf("IsGitRepo(%s) = %v, want %v", tt.name, got, tt.want)
+				t.Errorf("IsRepo(%s) = %v, want %v", tt.name, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestIsGitRepo_CancelledContext short-circuits to false when the context
+// TestIsRepo_CancelledContext short-circuits to false when the context
 // is already cancelled, even though a .git entry exists: the context guard
 // must run before the filesystem stat.
-func TestIsGitRepo_CancelledContext(t *testing.T) {
+func TestIsRepo_CancelledContext(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, ".git"), 0o755); err != nil {
 		t.Fatalf("Mkdir error = %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if IsGitRepo(ctx, dir) {
-		t.Error("IsGitRepo with cancelled context = true, want false (ctx guard must short-circuit the stat)")
+	if IsRepo(ctx, dir) {
+		t.Error("IsRepo with cancelled context = true, want false (ctx guard must short-circuit the stat)")
 	}
 }

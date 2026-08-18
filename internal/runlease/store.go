@@ -46,14 +46,14 @@ type file struct {
 // THE 0600 IS VERIFIED, NOT MERELY REQUESTED, and it is verified by the WRITE
 // rather than by a pass afterwards. A mode argument is normally a request — open(2)
 // puts it through umask and an inheritable ACL can store something wider — which
-// is why this repo has fileutil.EnforceFileMode for the objects it chmods by name.
+// is why this repo has filemode.EnforceFile for the objects it chmods by name.
 // atomicfile.WriteFile does not need it: finalizeTempFile runs
 // atomicfile.EnforceMode on the OPEN TEMP DESCRIPTOR (fchmod then fstat, one
 // handle) and FAILS the write with ErrModeNotStored rather than publishing a wider
 // file, and the rename then publishes that same verified inode. So the mode on disk
 // is a fact by the time this returns, and TestStore_WritesA0600File pins it.
 //
-// Do not add a second EnforceFileMode on s.path after the write: it would re-verify
+// Do not add a second EnforceFile on s.path after the write: it would re-verify
 // what the temp handle already established, by NAME, which is the weaker of the two
 // checks. The one thing genuinely not covered is a mode widened by something else
 // BETWEEN two writes, which is out of a write's reach and low-consequence here —

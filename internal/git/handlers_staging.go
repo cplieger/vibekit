@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/fileutil"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
@@ -19,7 +18,7 @@ import (
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
-	if !fileutil.IsGitRepo(ctx, dir) {
+	if !IsRepo(ctx, dir) {
 		api.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
 		return
 	}
@@ -33,7 +32,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 // skips the network fetch (useful for the multi-repo dashboard where
 // fetching N repos in parallel would be costly + noisy).
 func collectStatus(ctx context.Context, dir string, timeouts gitTimeouts, fetchFlight *singleflight.Group, doFetch bool) gitStatusResp {
-	if !fileutil.IsGitRepo(ctx, dir) {
+	if !IsRepo(ctx, dir) {
 		return gitStatusResp{IsRepo: false, Files: []gitFile{}}
 	}
 	st := gitStatusResp{IsRepo: true}

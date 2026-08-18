@@ -55,7 +55,8 @@ func LimitBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
 // taxonomy (the bare {"error":…} named helpers below) is layered on top.
 
 // JSONHeaders sets the standard JSON response headers (Content-Type
-// and X-Content-Type-Options). Exported for use by internal/fileutil.
+// and X-Content-Type-Options). Exported for the handler packages that write
+// a JSON body without going through the named helpers below.
 func JSONHeaders(w http.ResponseWriter) {
 	webhttp.JSONHeaders(w)
 }

@@ -19,7 +19,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat/archive"
-	"github.com/cplieger/vibekit/internal/fileutil"
+	"github.com/cplieger/vibekit/internal/filemode"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -95,7 +95,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 	// or not it was asked for, and an inheritable group-write ACL stores 0770 for
 	// a 0o700 mkdir. So the enforcement covers both a pre-existing directory a
 	// user-mounted config volume left wide and a fresh one the kernel widened —
-	// and EnforceDirMode re-stats the descriptor it chmod'ed, which is the only
+	// and EnforceDir re-stats the descriptor it chmod'ed, which is the only
 	// thing that makes the mode below a fact rather than a request. It refuses a
 	// symlink or a non-directory at the name instead of chmod'ing through it.
 	//
@@ -105,7 +105,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 	// abort boot, because the operator's way IN to repair /config is the container
 	// coming up (vibekit invariant 6). The doc comment above is corrected to say
 	// what the code does.
-	stored, err := fileutil.EnforceDirMode(dir, dirMode)
+	stored, err := filemode.EnforceDir(dir, dirMode)
 	mode := stored.String()
 	if err != nil {
 		slog.Warn("chat store: chat dir is not 0700 and could not be made 0700; chat content may be readable by other users on this host",

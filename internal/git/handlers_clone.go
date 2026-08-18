@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/fileutil"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +83,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "cannot re-clone workspace root")
 		return
 	}
-	if !fileutil.IsGitRepo(r.Context(), dir) {
+	if !IsRepo(r.Context(), dir) {
 		api.BadRequest(w, msgNotAGitRepo)
 		return
 	}

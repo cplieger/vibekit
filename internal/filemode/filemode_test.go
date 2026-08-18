@@ -1,4 +1,4 @@
-package fileutil
+package filemode
 
 import (
 	"errors"
@@ -9,7 +9,7 @@ import (
 	"github.com/cplieger/atomicfile/v2"
 )
 
-// TestEnforceFileMode_VerifiesTheModeItStored pins that the returned mode is an
+// TestEnforceFile_VerifiesTheModeItStored pins that the returned mode is an
 // OBSERVATION of the file rather than an echo of the argument: the drift is
 // driven by an explicit widening chmod, and the enforcement is what brings it
 // back.
@@ -18,7 +18,7 @@ import (
 // test refuses to store 0666, there is no drift to correct and every assertion
 // below would hold vacuously — so the test declares itself INVALID instead of
 // passing.
-func TestEnforceFileMode_VerifiesTheModeItStored(t *testing.T) {
+func TestEnforceFile_VerifiesTheModeItStored(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "f.json")
 	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
@@ -34,9 +34,9 @@ func TestEnforceFileMode_VerifiesTheModeItStored(t *testing.T) {
 		t.Skipf("filesystem stored %v for a 0o666 chmod; there is no drift here to enforce away", wfi.Mode().Perm())
 	}
 
-	stored, err := EnforceFileMode(path, 0o600)
+	stored, err := EnforceFile(path, 0o600)
 	if err != nil {
-		t.Fatalf("EnforceFileMode: %v", err)
+		t.Fatalf("EnforceFile: %v", err)
 	}
 	if stored != 0o600 {
 		t.Errorf("returned mode = %v, want 0600", stored)
@@ -53,12 +53,12 @@ func TestEnforceFileMode_VerifiesTheModeItStored(t *testing.T) {
 	}
 }
 
-// TestEnforceFileMode_RefusesASymlinkAtTheName is the assertion that separates
+// TestEnforceFile_RefusesASymlinkAtTheName is the assertion that separates
 // this primitive from the os.Chmod it replaced. os.Chmod(path) tightens whatever
 // the NAME resolves to, so a symlink planted at the name sends the chmod at a
 // file somebody else chose; O_NOFOLLOW makes the kernel refuse the open, so the
 // target keeps the mode it had.
-func TestEnforceFileMode_RefusesASymlinkAtTheName(t *testing.T) {
+func TestEnforceFile_RefusesASymlinkAtTheName(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(t.TempDir(), "target.json")
 	if err := os.WriteFile(target, []byte("{}"), 0o600); err != nil {
@@ -80,8 +80,8 @@ func TestEnforceFileMode_RefusesASymlinkAtTheName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := EnforceFileMode(link, 0o600); err == nil {
-		t.Fatal("EnforceFileMode through a symlink = nil, want a refusal")
+	if _, err := EnforceFile(link, 0o600); err == nil {
+		t.Fatal("EnforceFile through a symlink = nil, want a refusal")
 	}
 	fi, err := os.Lstat(target)
 	if err != nil {
@@ -92,14 +92,14 @@ func TestEnforceFileMode_RefusesASymlinkAtTheName(t *testing.T) {
 	}
 }
 
-// TestEnforceDirMode_VerifiesTheModeTheKernelStored uses the one widening a test
+// TestEnforceDir_VerifiesTheModeTheKernelStored uses the one widening a test
 // can create for real: Linux gives a directory created under a setgid parent the
 // setgid bit whether or not it was asked for. atomicfile.EnforceMode compares
 // setgid deliberately, so this is a genuine request-versus-disk difference.
 //
 // The witness skips the test as invalid if the kernel stops inheriting the bit,
 // rather than letting it pass on a filesystem where there was nothing to catch.
-func TestEnforceDirMode_VerifiesTheModeTheKernelStored(t *testing.T) {
+func TestEnforceDir_VerifiesTheModeTheKernelStored(t *testing.T) {
 	parent := t.TempDir()
 	if err := os.Chmod(parent, 0o700|os.ModeSetgid); err != nil {
 		t.Fatal(err)
@@ -121,9 +121,9 @@ func TestEnforceDirMode_VerifiesTheModeTheKernelStored(t *testing.T) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := EnforceDirMode(dir, 0o700)
+	stored, err := EnforceDir(dir, 0o700)
 	if err != nil {
-		t.Fatalf("EnforceDirMode: %v", err)
+		t.Fatalf("EnforceDir: %v", err)
 	}
 	if stored != 0o700 {
 		t.Errorf("returned mode = %v, want 0700 (setgid must be gone)", stored)
@@ -138,24 +138,24 @@ func TestEnforceDirMode_VerifiesTheModeTheKernelStored(t *testing.T) {
 	}
 }
 
-// TestEnforceDirMode_RefusesANonDirectoryAtTheName pins the O_DIRECTORY half:
+// TestEnforceDir_RefusesANonDirectoryAtTheName pins the O_DIRECTORY half:
 // a regular file planted where a directory is expected is refused rather than
 // chmod'ed.
-func TestEnforceDirMode_RefusesANonDirectoryAtTheName(t *testing.T) {
+func TestEnforceDir_RefusesANonDirectoryAtTheName(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notadir")
 	if err := os.WriteFile(path, nil, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnforceDirMode(path, 0o700); err == nil {
-		t.Fatal("EnforceDirMode on a regular file = nil, want a refusal")
+	if _, err := EnforceDir(path, 0o700); err == nil {
+		t.Fatal("EnforceDir on a regular file = nil, want a refusal")
 	}
 }
 
-// TestEnforceFileMode_LeavesAnAlreadyCorrectModeAlone pins the skip that keeps a
+// TestEnforceFile_LeavesAnAlreadyCorrectModeAlone pins the skip that keeps a
 // read-only mount holding an already-0600 file quiet: the mode is read off the
 // descriptor, and nothing is asked for when the answer is already right. Without
 // it every boot on such a volume warns about an exposure that does not exist.
-func TestEnforceFileMode_LeavesAnAlreadyCorrectModeAlone(t *testing.T) {
+func TestEnforceFile_LeavesAnAlreadyCorrectModeAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "f.json")
 	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
@@ -163,20 +163,20 @@ func TestEnforceFileMode_LeavesAnAlreadyCorrectModeAlone(t *testing.T) {
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stored, err := EnforceFileMode(path, 0o600)
+	stored, err := EnforceFile(path, 0o600)
 	if err != nil {
-		t.Fatalf("EnforceFileMode: %v", err)
+		t.Fatalf("EnforceFile: %v", err)
 	}
 	if stored != 0o600 {
 		t.Errorf("returned mode = %v, want 0600", stored)
 	}
 }
 
-// TestEnforceFileMode_ReportsAMissingFileAsNotExist pins that a caller can still
+// TestEnforceFile_ReportsAMissingFileAsNotExist pins that a caller can still
 // tell "no file here" from "a file I could not secure" — the mcp store's
 // warn-only site and the secret store's refusal both read the error.
-func TestEnforceFileMode_ReportsAMissingFileAsNotExist(t *testing.T) {
-	_, err := EnforceFileMode(filepath.Join(t.TempDir(), "absent.json"), 0o600)
+func TestEnforceFile_ReportsAMissingFileAsNotExist(t *testing.T) {
+	_, err := EnforceFile(filepath.Join(t.TempDir(), "absent.json"), 0o600)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("error = %v, want one matching os.ErrNotExist", err)
 	}

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/fileutil"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -110,7 +109,7 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := h.repoDir(repoFromQuery(r))
-	if !fileutil.IsGitRepo(r.Context(), dir) {
+	if !IsRepo(r.Context(), dir) {
 		api.BadRequest(w, msgNotAGitRepo)
 		return
 	}
