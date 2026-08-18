@@ -734,12 +734,17 @@ DOT_SWEEP_CHROMA = (0.05, 0.28, 0.005)
 
 # The base favicon's own artwork under the attention badge, and why the badge's
 # ink is a separate question from the tab dot's. static/favicon.svg is an opaque
-# 48-unit rounded rect filled `linearGradient(#A468FF -> #7E2FF0)` on the (0,0)
-# -> (1,1) diagonal; the badge centre sits at (35.25, 12.75) of 48, where that
-# gradient's offset is (x + y) / 2 = 0.500 — its exact midpoint. So the badge is
-# never seen against a theme surface, which is what decides which theme's value
-# it must carry.
-FAVICON_BADGE_BACKDROP = ("#A468FF", "#7E2FF0")
+# 48-unit rounded rect filled FLAT with the light theme's `--c-accent`, so the
+# badge is never seen against a theme surface, which is what decides which
+# theme's value it must carry.
+#
+# The hex is written out because that is what an SVG fill can carry — a var()
+# would not resolve in an icon file, and `oklch(50% 0.254 295.8deg)` is the token
+# it copies. The two are checked against each other below rather than trusted:
+# retuning the accent without regenerating the icons would otherwise leave this
+# whole table measuring a backdrop no shipped asset has.
+FAVICON_BADGE_BACKDROP = "#771edf"
+FAVICON_BACKDROP_TOKEN = ("light", "--c-accent")
 FAVICON_CUES = [
     ("input", "--c-dot-input"),
     ("done", "--c-dot-done"),
@@ -1028,13 +1033,30 @@ def show_dot_sizing(themes: list[Theme]) -> None:
 def show_favicon_badge(themes: list[Theme]) -> None:
     print("ATTENTION FAVICON BADGE: the same three cue inks, measured where they")
     print("are actually seen. The badge is composited onto static/favicon.svg,")
-    print("whose own artwork is an opaque violet gradient, so its backdrop is")
+    print("whose own artwork is a flat saturated violet, so its backdrop is")
     print("NEITHER theme's surface — which is what decides that ONE icon serving")
     print("both themes is correct, and which value it has to carry.")
     print()
-    start, end = (from_hex(h) for h in FAVICON_BADGE_BACKDROP)
-    mid = Colour((start.r + end.r) / 2, (start.g + end.g) / 2, (start.b + end.b) / 2)
-    print(f"  badge sits at the gradient midpoint: {mid.hex()}")
+    backdrop = from_hex(FAVICON_BADGE_BACKDROP)
+    theme_name, token = FAVICON_BACKDROP_TOKEN
+    print(f"  badge sits on the icon's flat fill: {backdrop.hex()}")
+    # The icon carries a literal hex, so a retuned accent cannot reach it. Saying
+    # so is the whole point of the check: a divergence means the icons are stale,
+    # not that this figure is wrong.
+    source = next((th for th in themes if th.name == theme_name), None)
+    if source is None:
+        print(f"  (cannot check against {theme_name} {token}: theme not parsed)")
+    else:
+        declared = source.colour(token)
+        agrees = declared.hex() == backdrop.hex().lstrip("#")
+        print(
+            f"  copied from {theme_name} {token}: {declared.hex()} "
+            + (
+                "matches"
+                if agrees
+                else "DIVERGED — regenerate the icons (gen-attention-icons.py)"
+            )
+        )
     print()
     print(
         f"  {'cue':<8} {'token':<12} "
@@ -1045,7 +1067,7 @@ def show_favicon_badge(themes: list[Theme]) -> None:
         cells, clipped = [], []
         for th in themes:
             c = th.colour(token)
-            cells.append(f"{c.hex()} {fmt(contrast(c, mid))}:1")
+            cells.append(f"{c.hex()} {fmt(contrast(c, backdrop))}:1")
             if c.clipped:
                 clipped.append(th.name)
         # An out-of-gamut ink is a real defect HERE and nowhere else in this
