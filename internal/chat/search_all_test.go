@@ -158,7 +158,7 @@ func TestSearchAll_RanksTitleMatchFirst(t *testing.T) {
 // match-case toggle belongs to the in-chat search, which is a different question
 // on a different endpoint (handleSearch, which DOES read `case`). Two halves have
 // to hold for that to be true end to end — the body scan and the title boost —
-// because titleHits folds independently of SearchChat.
+// because titleHits folds independently of Search.
 //
 // If a future change adds a case parameter here, this test is the record of what
 // it is overturning, and the client's toggle has to arrive in the same commit.
@@ -180,7 +180,7 @@ func TestSearchAll_IsAlwaysCaseInsensitive(t *testing.T) {
 			t.Parallel()
 			s, _ := newTestStore(t)
 			// One chat matches only in its TITLE (the titleHits half), the other
-			// only in its BODY (the SearchChat half), and both are spelled in a
+			// only in its BODY (the Search half), and both are spelled in a
 			// case the queries above disagree with.
 			seedChat(t, s, "c-aaaaaaaa", "REDIS migration", []api.Message{
 				msg("m1", api.RoleUser, "moved the cache over"),

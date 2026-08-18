@@ -22,14 +22,14 @@ import (
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/chat/archive"
 	"github.com/cplieger/vibekit/internal/filebrowse"
-	forgesPkg "github.com/cplieger/vibekit/internal/forges"
+	"github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/git"
 	"github.com/cplieger/vibekit/internal/hub"
 	"github.com/cplieger/vibekit/internal/kirosession"
 	"github.com/cplieger/vibekit/internal/logctl"
-	mcpPkg "github.com/cplieger/vibekit/internal/mcp"
+	"github.com/cplieger/vibekit/internal/mcp"
 	"github.com/cplieger/vibekit/internal/mcp/prewarm"
-	pushPkg "github.com/cplieger/vibekit/internal/push"
+	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/server"
@@ -136,7 +136,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
 	}
 
-	mcpStore, err := mcpPkg.New(ctx, cfg.ConfigDir, nil)
+	mcpStore, err := mcp.New(ctx, cfg.ConfigDir, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	scheduleStore := openScheduleStore(cfg.ConfigDir)
 	leaseStore := openRunLeaseStore(cfg.ConfigDir)
 
-	pushSvc := pushPkg.New(ctx, cfg.ConfigDir, cfg.VapidSub)
+	pushSvc := push.New(ctx, cfg.ConfigDir, cfg.VapidSub)
 
 	// vibekit owns kiro-cli/KAS session cleanup end to end (cleanup.periodDays
 	// pinned to 0/never): reap a chat's session state on delete, and orphans
@@ -173,7 +173,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	startScheduleRunner(ctx, scheduleStore, h)
 
-	mcpRegistry := mcpPkg.NewRegistryProxy()
+	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
 	mcpPrewarm.OnStatus = func(pkg string, state prewarm.State) {
 		h.Broadcast(ctx, api.NewEvent(api.EventMCPPrewarm, "", api.MCPPrewarmPayload{
@@ -207,7 +207,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		return nil, err
 	}
 
-	forgesManager := forgesPkg.NewManager()
+	forgesManager := forges.NewManager()
 	if refreshErr := forgesManager.Refresh(ctx); refreshErr != nil {
 		// Non-fatal: refreshing CLI configs may fail if no CLIs are
 		// installed yet. The manager starts with an empty list.
@@ -223,7 +223,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	authHandler := auth.NewHandler(kiro.cliPath,
 		auth.WithConfig(cfg.AuthConfig),
 		auth.WithTrustedProxies(cfg.TrustedProxies))
-	forgesHTTP := forgesPkg.NewHTTPHandler(forgesManager, h)
+	forgesHTTP := forges.NewHTTPHandler(forgesManager, h)
 
 	// The forge snapshot shells out to the forge CLIs (gh repo list is a
 	// network round trip, 5s cap per forge), and steering.Generate runs
@@ -263,7 +263,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// move to an archive directory, so the purge scans the SAME directory live
 	// chats live in — this predicate is what keeps an old-but-open conversation
 	// out of it.
-	chat.WithLiveChats(h.HasLiveBridge)(chatStore)
+	chat.WithLive(h.HasLiveBridge)(chatStore)
 	chat.WithOnPurge(func(_ api.ChatID, sessionChain []string) {
 		for _, id := range sessionChain {
 			sessionReaper.Reap(id)
@@ -514,7 +514,7 @@ func (c *forgeSnapshotCache) rebuild() {
 // configured forge, each enriched (best-effort) with its repo list.
 // It is the body of the forgeSnapshotCache rebuild, extracted so
 // Build stays within the cognitive-complexity ceiling.
-func forgeSnapshot(ctx context.Context, forgesManager *forgesPkg.Manager) steering.ForgeSnapshot {
+func forgeSnapshot(ctx context.Context, forgesManager *forges.Manager) steering.ForgeSnapshot {
 	fctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	configured := forgesManager.List(fctx)
@@ -537,8 +537,8 @@ func forgeSnapshot(ctx context.Context, forgesManager *forgesPkg.Manager) steeri
 // listing fails. Enrichment is best-effort: a forge whose repos can't
 // be listed is still surfaced, just without a repo list. A 5s timeout
 // bounds the CLI call.
-func repoNamesFor(ctx context.Context, kind forgesPkg.Kind, host string) []string {
-	ops, err := forgesPkg.New(kind, host)
+func repoNamesFor(ctx context.Context, kind forges.Kind, host string) []string {
+	ops, err := forges.New(kind, host)
 	if err != nil {
 		return nil
 	}
@@ -594,7 +594,7 @@ func wireToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbelt
 		// Installed-tool changes matter to the agent (kiro-cli scans PATH
 		// for language servers); regenerate the steering env on each list
 		// read is overkill, but forge logins need synchronous installs:
-		forgesPkg.EnsureTool = toolsEngine.EnsureInstalled
+		forges.EnsureTool = toolsEngine.EnsureInstalled
 	}
 	return toolsEngine, nil
 }
@@ -796,21 +796,21 @@ func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Lau
 // has a connected account, and neither package should reach into the other. The
 // lookup runs per SWEEP rather than once here, so a repo cloned after boot and a
 // forge logged into after boot both start being watched without a restart.
-func startPRStatusPoller(ctx context.Context, mgr *forgesPkg.Manager,
-	gitHandler *git.Handler, notifier forgesPkg.PRNotifier,
+func startPRStatusPoller(ctx context.Context, mgr *forges.Manager,
+	gitHandler *git.Handler, notifier forges.PRNotifier,
 ) (stop func()) {
-	repos := func(rctx context.Context) []forgesPkg.PRRepo {
+	repos := func(rctx context.Context) []forges.PRRepo {
 		remotes := gitHandler.RepoRemotes(rctx)
 		if len(remotes) == 0 {
 			return nil
 		}
-		origins := make([]forgesPkg.RepoOrigin, 0, len(remotes))
+		origins := make([]forges.RepoOrigin, 0, len(remotes))
 		for _, r := range remotes {
-			origins = append(origins, forgesPkg.RepoOrigin{Host: r.Host, Slug: r.Slug})
+			origins = append(origins, forges.RepoOrigin{Host: r.Host, Slug: r.Slug})
 		}
-		return forgesPkg.MatchRepoForges(mgr.List(rctx), origins)
+		return forges.MatchRepoForges(mgr.List(rctx), origins)
 	}
-	poller := forgesPkg.NewPRStatusPoller(forgesPkg.NewManagerPRSource(mgr, repos), notifier)
+	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(mgr, repos), notifier)
 	return runBackground(ctx, "pr status poller", poller.Run)
 }
 

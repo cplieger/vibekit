@@ -124,7 +124,7 @@ func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 	return q
 }
 
-// SearchChat scans a chat's messages for a query.
+// Search scans a chat's messages for a query.
 //
 // Turn numbers come from the same projection the timeline rail draws, so a hit's
 // turn number and a rail marker's number are the same thing by construction
@@ -134,7 +134,7 @@ func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 // in-chat search have to agree on it — the client highlights and counts in the
 // DOM while this enumerates session-wide — so the flag travels on the request
 // rather than being a server default either side could get wrong.
-func SearchChat(msgs []api.Message, raw string, caseSensitive bool) []SearchHit {
+func Search(msgs []api.Message, raw string, caseSensitive bool) []SearchHit {
 	q := parseSearchQuery(raw, caseSensitive)
 	if q.text == "" && q.file == "" && q.tool == "" && q.role == "" && q.turn < 0 {
 		return []SearchHit{}

@@ -9,7 +9,7 @@ package chat
 // of every hit — the answer is a conversation to open, not a position to jump
 // to. Once the chat is open, its own search takes over.
 //
-// Lexical and index-free, consistent with SearchChat: the substrate is the same
+// Lexical and index-free, consistent with Search: the substrate is the same
 // per-chat scan fanned out over the existing bounded-parallel reader.
 
 import (
@@ -122,7 +122,7 @@ func searchOneChat(ce chatEntry, query string) Match {
 	// search, which is a different question on a different endpoint; a
 	// cross-chat "which conversation was that in" is asked from memory, and
 	// memory does not remember capitalisation.
-	hits := SearchChat(c.Messages, query, false)
+	hits := Search(c.Messages, query, false)
 	// A chat whose TITLE names the subject is a result even when its body never
 	// repeats the word — dropping it on content hits alone would make the title
 	// boost unreachable in exactly the case it exists for.

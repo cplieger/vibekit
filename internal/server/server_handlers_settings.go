@@ -98,7 +98,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 func handleSettingsGet(w http.ResponseWriter, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		api.WriteJSON(w, settings.DefaultSettings())
+		api.WriteJSON(w, settings.Default())
 		return
 	}
 	w.Header().Set("Content-Type", api.MIMETypeJSON)

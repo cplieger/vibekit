@@ -1,6 +1,6 @@
 // Centralized defaults and the known-keys validation set for
 // vibekit-managed `<configDir>/config.json`. The HTTP GET handler
-// emits DefaultSettings() when the file is missing; PATCH/PUT
+// emits Default() when the file is missing; PATCH/PUT
 // handlers call WarnUnknownKeys to surface typos and CLI/UI drift
 // without rejecting forward-compatible keys (per AUTH/SET design
 // discussion in the rewrite-analysis docs: a `knownKeys` warning
@@ -93,9 +93,9 @@ func DefaultAgentIgnoreFiles() []string {
 	return []string{".gitignore", ".kiroignore"}
 }
 
-// DefaultSettings returns the canonical defaults the GET /api/settings
+// Default returns the canonical defaults the GET /api/settings
 // handler emits when config.json is missing or unreadable. Every key it emits
-// must also be in KnownKeys (enforced by TestDefaultSettings_OnlyKnownKeys) so
+// must also be in KnownKeys (enforced by TestDefault_OnlyKnownKeys) so
 // a fresh GET response round-tripped back as a PATCH never trips the
 // unknown-key warning.
 //
@@ -104,7 +104,7 @@ func DefaultAgentIgnoreFiles() []string {
 // advertises it. Preferences NOT listed here apply their default in-process
 // near their consumer (e.g. logctl.go's false for debug_logs) because the
 // consumer owns the fail-mode policy; those need not ride this wire shape.
-func DefaultSettings() map[string]any {
+func Default() map[string]any {
 	return map[string]any{
 		KeyAgentIgnoreFiles:  DefaultAgentIgnoreFiles(),
 		KeyChatRetentionDays: DefaultChatRetentionDays,

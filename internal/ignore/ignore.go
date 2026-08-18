@@ -52,16 +52,16 @@ import (
 	"sync"
 	"time"
 
-	cfgsettings "github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/settings"
 	"golang.org/x/sync/singleflight"
 )
 
 // maxIgnoreFileSize caps each listed ignore file — delegates to
 // settings.MaxBytes (1 MiB) so the cap is maintained in one place.
-const maxIgnoreFileSize = cfgsettings.MaxBytes
+const maxIgnoreFileSize = settings.MaxBytes
 
 // settingsFilename delegates to settings.Filename — single source of truth.
-const settingsFilename = cfgsettings.Filename
+const settingsFilename = settings.Filename
 
 // Matcher evaluates read paths against a set of ignore files
 // listed in the server settings. Patterns are re-parsed on demand
@@ -289,7 +289,7 @@ func loadRules(files []string, sizeHint int) (rules []rule, mtimes map[string]ti
 // json.Unmarshal calls when multiple callers read config.json.
 func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 	var list []string
-	if !cfgsettings.FieldInto(ctx, m.configDir, cfgsettings.KeyAgentIgnoreFiles, "agent_ignore_files", &list) {
+	if !settings.FieldInto(ctx, m.configDir, settings.KeyAgentIgnoreFiles, "agent_ignore_files", &list) {
 		// Key unset: fresh install (no config.json), a config.json that
 		// predates the key, or a transient read/parse failure. Fall back to
 		// the seeded default so the agent read filter is ON out of the box
@@ -297,7 +297,7 @@ func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 		// recognizes). An explicit "agent_ignore_files":[] is a real opt-out —
 		// FieldInto returns true with an empty list, so this branch does not
 		// run and no filtering happens.
-		list = cfgsettings.DefaultAgentIgnoreFiles()
+		list = settings.DefaultAgentIgnoreFiles()
 	}
 	out := make([]string, 0, len(list))
 	for _, entry := range list {

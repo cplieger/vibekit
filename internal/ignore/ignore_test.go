@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	cfgsettings "github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/settings"
 )
 
 // writeIgnoreSettings writes config.json listing the given ignore files.
@@ -67,7 +67,7 @@ func TestIgnoreMatcher_FreshInstallDefaultFiltersGitignored(t *testing.T) {
 
 	// The seeded default must be non-empty (otherwise a fresh install would
 	// filter nothing) and drive the workspace .gitignore.
-	def := cfgsettings.DefaultAgentIgnoreFiles()
+	def := settings.DefaultAgentIgnoreFiles()
 	if len(def) == 0 {
 		t.Fatal("DefaultAgentIgnoreFiles() is empty; fresh install would not filter agent reads")
 	}
@@ -92,7 +92,7 @@ func TestIgnoreMatcher_FreshInstallDefaultFiltersGitignored(t *testing.T) {
 func TestIgnoreMatcher_FreshInstallDefaultHonorsKiroignore(t *testing.T) {
 	// The seeded default also covers .kiroignore, so a workspace .kiroignore
 	// filters agent reads with no config.json present.
-	if !slices.Contains(cfgsettings.DefaultAgentIgnoreFiles(), ".kiroignore") {
+	if !slices.Contains(settings.DefaultAgentIgnoreFiles(), ".kiroignore") {
 		t.Skip("default does not seed .kiroignore")
 	}
 	dir := t.TempDir() // no config.json

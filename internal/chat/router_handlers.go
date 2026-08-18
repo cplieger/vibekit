@@ -164,7 +164,7 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ap
 	// which is the behaviour every existing client gets.
 	caseSensitive := r.URL.Query().Get("case") == "1"
 	api.WriteJSON(w, map[string]any{
-		"hits": SearchChat(c.Messages, r.URL.Query().Get("q"), caseSensitive),
+		"hits": Search(c.Messages, r.URL.Query().Get("q"), caseSensitive),
 	})
 }
 

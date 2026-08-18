@@ -144,9 +144,9 @@ func WithBroadcaster(b api.Broadcaster) StoreOption {
 	return func(s *Store) { s.broadcast = b }
 }
 
-// WithLiveChats registers the live-chat predicate purging exempts. See
+// WithLive registers the live-chat predicate purging exempts. See
 // archive.WithLiveChats.
-func WithLiveChats(fn func(chatID api.ChatID) bool) StoreOption {
+func WithLive(fn func(chatID api.ChatID) bool) StoreOption {
 	return func(s *Store) { s.isLive = fn }
 }
 

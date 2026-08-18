@@ -19,11 +19,11 @@ import (
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/composition"
 	"github.com/cplieger/vibekit/internal/filebrowse"
-	forgesPkg "github.com/cplieger/vibekit/internal/forges"
+	"github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/git"
 	"github.com/cplieger/vibekit/internal/hub"
-	mcpPkg "github.com/cplieger/vibekit/internal/mcp"
-	pushPkg "github.com/cplieger/vibekit/internal/push"
+	"github.com/cplieger/vibekit/internal/mcp"
+	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/steering"
 	"github.com/cplieger/vibekit/internal/workspace"
@@ -39,10 +39,10 @@ var (
 	_ api.RouteHandler         = (*git.Handler)(nil)
 	_ api.RouteHandler         = (*filebrowse.Handler)(nil)
 	_ api.RouteHandler         = (*auth.Handler)(nil)
-	_ api.PushService          = (*pushPkg.Service)(nil)
-	_ api.MCPConfig            = (*mcpPkg.Store)(nil)
-	_ api.RouteHandler         = (*mcpPkg.Store)(nil)
-	_ api.RouteHandler         = (*mcpPkg.RegistryProxy)(nil)
+	_ api.PushService          = (*push.Service)(nil)
+	_ api.MCPConfig            = (*mcp.Store)(nil)
+	_ api.RouteHandler         = (*mcp.Store)(nil)
+	_ api.RouteHandler         = (*mcp.RegistryProxy)(nil)
 )
 
 // requiredToolsList is the same required-tools.txt the image build
@@ -94,6 +94,6 @@ func runMain() int {
 // Keep interface satisfaction checks reachable. These imports are used
 // only by the compile-time var block above.
 var (
-	_ = forgesPkg.NewManager
+	_ = forges.NewManager
 	_ = server.New
 )

@@ -15,7 +15,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
-	cfgsettings "github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/settings"
 )
 
 // validatePromptPayload parses and validates the prompt command payload.
@@ -182,7 +182,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 // the last thing making it look otherwise.
 func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 	var b bool
-	if !cfgsettings.FieldInto(ctx, configDir, cfgsettings.KeySupervisedDefault, cfgsettings.KeySupervisedDefault, &b) {
+	if !settings.FieldInto(ctx, configDir, settings.KeySupervisedDefault, settings.KeySupervisedDefault, &b) {
 		return false
 	}
 	return b
