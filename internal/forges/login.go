@@ -20,8 +20,9 @@ import (
 	"fmt"
 )
 
-// PollResult is the per-poll status the HTTP surface returns. Deliberately
-// tokenless — see deviceTokenResult, which is the token-bearing half.
+// PollResult is the per-poll status of the GitHub device flow. Deliberately
+// tokenless: the access token never leaves the server. pollDeviceToken carries
+// it as far as `gh auth login --with-token` and no further.
 type PollResult struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`

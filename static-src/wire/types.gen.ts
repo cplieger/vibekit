@@ -937,7 +937,11 @@ export interface PolicyView {
   available: boolean;
 }
 
-/** PollResult is the per-poll status during the device flow. */
+/**
+ * PollResult is the per-poll status of the GitHub device flow. Deliberately
+ * tokenless: the access token never leaves the server. pollDeviceToken carries
+ * it as far as `gh auth login --with-token` and no further.
+ */
 export interface PollResult {
   status: string;
   error?: string;

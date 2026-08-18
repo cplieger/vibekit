@@ -99,10 +99,10 @@ method (ServerID).String
 # --- 6. error-interface machinery. Error() is called by whatever formats
 # the error; Unwrap() is what makes errors.Is/As walk the chain. Call
 # sites: internal/command/prompt.go errors.AsType[*api.TransportError],
-# and internal/forges/cliexec constructs &CmdError{Err: ...} as an error.
+# and internal/forges/exec.go constructs &cmdError{Err: ...} as an error.
 method (*TransportError).Unwrap
-method (*CmdError).Error
-method (*CmdError).Unwrap
+method (*cmdError).Error
+method (*cmdError).Unwrap
 
 # --- 7. container/heap.Interface method sets. The stdlib calls Len/Less/
 # Swap/Push/Pop through the interface: internal/buffer/lines.go uses
