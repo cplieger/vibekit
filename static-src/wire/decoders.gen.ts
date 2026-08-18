@@ -1157,6 +1157,7 @@ export const decodeToolInfo: Decoder<ToolInfo> = (v) => {
   const lastError = o["last_error"] === null ? undefined : optStr(o, "last_error", "$.tool_info");
   if (lastError !== undefined) out.last_error = lastError;
   if (o["requires"] !== undefined && o["requires"] !== null) out.requires = decodeArray(o["requires"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_info.requires");
+  if (o["dependents"] !== undefined && o["dependents"] !== null) out.dependents = decodeArray(o["dependents"], (v) => { if (typeof v !== "string") throw new TypeError("expected string"); return v as string; }, "$.tool_info.dependents");
   const pin = o["pin"] === null ? undefined : optBool(o, "pin", "$.tool_info");
   if (pin !== undefined) out.pin = pin;
   const disabled = o["disabled"] === null ? undefined : optBool(o, "disabled", "$.tool_info");
