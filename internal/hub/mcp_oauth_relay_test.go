@@ -745,10 +745,7 @@ func TestRelayClientForPinsTheOnePort(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseUint(%q) error = %v", target.Port(), err)
 	}
-	other := uint16(port) + 1
-	if other < relayMinPort {
-		other = relayMinPort
-	}
+	other := max(uint16(port)+1, relayMinPort)
 	//nolint:bodyclose // the request is expected to fail before a response exists
 	_, err = client.Get("http://127.0.0.1:" + strconv.Itoa(int(other)) + "/callback")
 	if err == nil {
