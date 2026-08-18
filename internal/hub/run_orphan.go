@@ -259,11 +259,7 @@ type inspectRunState struct {
 // inspectRun reads one run's inspect reply, reporting false when it cannot be
 // read or decoded at all.
 func (h *Hub) inspectRun(ctx context.Context, workflowID string) (inspectRunState, bool) {
-	u := h.ensureUtility()
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
-		callerParams(map[string]any{keyWorkflowID: workflowID}))
+	raw, err := h.rawInspectRun(ctx, workflowID)
 	if err != nil {
 		slog.Warn("could not read a paused run's state, so it is left alone",
 			"workflow_id", workflowID, "error", err)

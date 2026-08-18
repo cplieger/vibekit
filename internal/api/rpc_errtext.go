@@ -37,9 +37,9 @@ type rpcDetailer interface {
 //
 // Returning "" for an error whose text is in `error.message` is why this is not
 // the function callers should reach for: use RPCErrorText, which composes both.
-// It stays exported because IsUnknownMethod-style feature detection wants the
-// data half specifically, and matching the marker against the message too would
-// widen it to any error that merely quotes KAS.
+// It stays exported because workflow.Classify's feature detection wants the data
+// half specifically, and matching its marker against the message too would widen
+// it to any error that merely quotes KAS.
 func RPCDetails(err error) string {
 	var d rpcDetailer
 	if !errors.As(err, &d) {

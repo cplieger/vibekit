@@ -55,6 +55,24 @@ import (
 	"github.com/cplieger/vibekit/internal/workflow"
 )
 
+// rawInspectRun issues `_kiro/workflow/inspect` for one run and TYPES its failure
+// at the boundary: an unregistered verb comes back wrapping
+// workflow.ErrUnknownMethod, so callers ask errors.Is instead of re-reading KAS's
+// error text. One helper rather than a copy per caller because the classification
+// has to happen where the RPC error still carries its `error.data` — a caller
+// that wrapped first and asked second would be sniffing its own message.
+func (h *Hub) rawInspectRun(ctx context.Context, workflowID string) (json.RawMessage, error) {
+	u := h.ensureUtility()
+	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
+	defer cancel()
+	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
+		callerParams(map[string]any{keyWorkflowID: workflowID}))
+	if err != nil {
+		return nil, workflow.Classify(err)
+	}
+	return raw, nil
+}
+
 // handleRun: GET /api/runs/{workflowId} → one run's full state.
 //
 // Two things happen besides the passthrough, and both are about telling the user
@@ -82,13 +100,9 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, "missing workflow id")
 		return
 	}
-	u := h.ensureUtility()
-	cctx, cancel := context.WithTimeout(r.Context(), sessionListTimeout)
-	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
-		callerParams(map[string]any{keyWorkflowID: id}))
+	raw, err := h.rawInspectRun(r.Context(), id)
 	if err != nil {
-		if workflow.IsUnknownMethod(err) {
+		if errors.Is(err, workflow.ErrUnknownMethod) {
 			slog.Warn("workflow inspect: engine not available on this kiro-cli",
 				"workflow_id", id, "detail", api.RPCDetails(err))
 			api.WriteJSONStatus(w, http.StatusServiceUnavailable,
@@ -112,16 +126,12 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 // buttons from is by definition older than the click. This is one round trip on
 // a deliberate user action, not a hot path.
 func (h *Hub) runStatus(ctx context.Context, workflowID string) (string, error) {
-	u := h.ensureUtility()
-	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
-	defer cancel()
-	raw, err := u.session.rawCall(cctx, "workflow inspect call", methodKiroWorkflowInspect,
-		callerParams(map[string]any{keyWorkflowID: workflowID}))
+	raw, err := h.rawInspectRun(ctx, workflowID)
 	if err != nil {
 		// An unknown run and an unavailable engine are both "no status to gate
 		// on" rather than a fault to report: the caller 404s, and the verb is
 		// not attempted.
-		if workflow.IsUnknownMethod(err) {
+		if errors.Is(err, workflow.ErrUnknownMethod) {
 			return "", nil
 		}
 		return "", err

@@ -31,6 +31,8 @@
 package workflow
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -102,16 +104,32 @@ func walk(n *Node, out *[]StepSession) {
 // usable feature-detection signal in the absence of a capability flag.
 const unknownMethodMarker = "has no persistence classification"
 
-// IsUnknownMethod reports whether an RPC error means the method does not exist
-// on this KAS build, as opposed to failing.
+// ErrUnknownMethod means the verb does not exist on this KAS build, as opposed
+// to existing and failing.
 //
 // The distinction matters because the two demand opposite responses: an
-// unimplemented verb is a permanent capability answer to cache, while a failure
-// is transient and worth retrying or surfacing.
-func IsUnknownMethod(err error) bool {
+// unimplemented verb is a permanent capability answer, while a failure is
+// transient and worth retrying or surfacing. Callers ask errors.Is.
+var ErrUnknownMethod = errors.New("workflow verb not registered on this kiro-cli build")
+
+// Classify types a `_kiro/workflow/*` RPC failure AT THE BOUNDARY: call it on
+// what the RPC returned, and an unregistered verb comes back wrapping
+// ErrUnknownMethod with the original error still unwrappable beneath it.
+//
+// It reads the boundary error's own `error.data` (RPCDetails walks to the
+// *api.RPCError with errors.As) and nothing else. It deliberately does NOT
+// search the rendered message chain: RPCError.Error() is the bare
+// `error.message`, which for this shape is the literal "Internal error", so the
+// text search matched only when some intermediate layer had already rendered the
+// details into its own message — and any layer that quotes KAS then reads as an
+// unregistered verb. Typing it here is what keeps the answer a property of the
+// response rather than of how many wrappers it collected on the way out.
+func Classify(err error) error {
 	if err == nil {
-		return false
+		return nil
 	}
-	return strings.Contains(api.RPCDetails(err), unknownMethodMarker) ||
-		strings.Contains(err.Error(), unknownMethodMarker)
+	if strings.Contains(api.RPCDetails(err), unknownMethodMarker) {
+		return fmt.Errorf("%w: %w", ErrUnknownMethod, err)
+	}
+	return err
 }
