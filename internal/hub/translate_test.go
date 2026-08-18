@@ -30,7 +30,9 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	h.translateACPEvent("c1", msg)
 
 	gotTypes := extractTypes(t, bufferedSince(h, before))
-	wantSubset(t, gotTypes, "message_created", "message_chunk")
+	if missing := missingEvents(gotTypes, "message_created", "message_chunk"); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, gotTypes)
+	}
 
 	buf := h.bridge.assistantBufs.GetOrInit("c1")
 	if !buf.Started || buf.Content.String() != "hello " {
@@ -228,7 +230,9 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	h.translateACPEvent("c1", msg)
 
 	types := extractTypes(t, bufferedSince(h, before))
-	wantSubset(t, types, "permission_needed")
+	if missing := missingEvents(types, "permission_needed"); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, types)
+	}
 }
 
 func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {

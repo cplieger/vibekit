@@ -46,6 +46,7 @@ package translate
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -491,10 +492,13 @@ func (p *Projection) flushUser() {
 	})
 }
 
-// Messages closes any still-open turn and returns the projected transcript.
-// Safe to call once; the projection is spent afterwards.
+// Messages closes any still-open turn and returns the projected transcript as
+// a fresh slice, so a caller appending to it cannot write into the
+// projection's own backing array. Idempotent: closeTurn and flushUser are
+// both no-ops once they have run, so a second call returns the same
+// transcript rather than a truncated one.
 func (p *Projection) Messages() []api.Message {
 	p.closeTurn()
 	p.flushUser()
-	return p.messages
+	return slices.Clone(p.messages)
 }

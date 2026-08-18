@@ -47,7 +47,9 @@ func TestHandleOpenExternalURL(t *testing.T) {
 		_, before := h.sse.hub.Bounds()
 		h.translateACPEvent("c1", openExternalURLMsg(t, 1, "https://auth.example.com/oauth"))
 		types := extractTypes(t, bufferedSince(h, before))
-		wantSubset(t, types, string(api.EventOpenExternalURL))
+		if missing := missingEvents(types, string(api.EventOpenExternalURL)); len(missing) > 0 {
+			t.Errorf("missing events %v; got %v", missing, types)
+		}
 	})
 
 	t.Run("UnsafeURLDoesNotBroadcast", func(t *testing.T) {
@@ -133,7 +135,10 @@ func TestAccessTokenFailureBroadcastsTheAuthError(t *testing.T) {
 	})
 
 	events := bufferedSince(h, before)
-	wantSubset(t, extractTypes(t, events), string(api.EventError))
+	types := extractTypes(t, events)
+	if missing := missingEvents(types, string(api.EventError)); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, types)
+	}
 
 	var found bool
 	for _, e := range events {

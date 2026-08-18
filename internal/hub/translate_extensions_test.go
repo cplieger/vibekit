@@ -77,7 +77,9 @@ func TestTranslateMCPStatus(t *testing.T) {
 			}
 			if len(tc.wantEvents) > 0 {
 				types := extractTypes(t, bufferedSince(h, before))
-				wantSubset(t, types, tc.wantEvents...)
+				if missing := missingEvents(types, tc.wantEvents...); len(missing) > 0 {
+					t.Errorf("missing events %v; got %v", missing, types)
+				}
 			}
 		})
 	}
@@ -138,7 +140,9 @@ func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 	h.translateACPEvent("c1", msg)
 
 	types := extractTypes(t, bufferedSince(h, before))
-	wantSubset(t, types, "compaction_started")
+	if missing := missingEvents(types, "compaction_started"); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, types)
+	}
 }
 
 func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
@@ -220,7 +224,9 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 		t.Errorf("current_mode_id = %q, want vibe", c.CurrentModeID)
 	}
 	types := extractTypes(t, bufferedSince(h, before))
-	wantSubset(t, types, "error")
+	if missing := missingEvents(types, "error"); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, types)
+	}
 }
 
 func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
@@ -236,7 +242,9 @@ func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 	types := extractTypes(t, bufferedSince(h, before))
-	wantSubset(t, types, "error")
+	if missing := missingEvents(types, "error"); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, types)
+	}
 }
 
 func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
@@ -251,7 +259,9 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 	}
 	h.translateACPEvent("c1", msg)
 	types := extractTypes(t, bufferedSince(h, before))
-	wantSubset(t, types, "error")
+	if missing := missingEvents(types, "error"); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, types)
+	}
 }
 
 // --- System notify (v3 replacement for session/retry) ---
@@ -269,5 +279,7 @@ func TestTranslateSystemNotify_EmitsError(t *testing.T) {
 	}
 	h.translateACPEvent("", msg)
 	types := extractTypes(t, bufferedSince(h, before))
-	wantSubset(t, types, "error")
+	if missing := missingEvents(types, "error"); len(missing) > 0 {
+		t.Errorf("missing events %v; got %v", missing, types)
+	}
 }

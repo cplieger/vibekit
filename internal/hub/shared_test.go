@@ -81,15 +81,18 @@ func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 	return out
 }
 
-// wantSubset fails the test if any of `want` is missing from `got`.
-// Order is not checked; this is for "did these events fire?" assertions.
-func wantSubset(t *testing.T, got []string, want ...string) {
-	t.Helper()
+// missingEvents returns the members of `want` absent from `got`, in the order
+// they were asked for. Order within `got` is not checked; this backs "did
+// these events fire?" assertions, which stay at the call site so a failure
+// names the case that produced the events rather than a shared helper.
+func missingEvents(got []string, want ...string) []string {
+	var missing []string
 	for _, w := range want {
 		if !slices.Contains(got, w) {
-			t.Errorf("missing event %q in %v", w, got)
+			missing = append(missing, w)
 		}
 	}
+	return missing
 }
 
 // mustJSON marshals v or fails the test.
