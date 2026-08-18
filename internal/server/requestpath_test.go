@@ -244,13 +244,13 @@ func TestCanonicalAPIPath_RefusalIsVibekitsEnvelope(t *testing.T) {
 
 // TestMiddlewareStack_GuardOrder pins the PLACEMENT, read off the production
 // stack (s.middlewareStack) rather than a hand-assembled copy: the canonical
-// -path gate runs inside the WT_ALLOWED_HOSTS allowlist and inside the CSRF check,
+// -path gate runs inside the ALLOWED_HOSTS allowlist and inside the CSRF check,
 // so neither 403 is shadowed by a 400 about spelling, and it runs outside the
 // routes it protects.
 func TestMiddlewareStack_GuardOrder(t *testing.T) {
 	policy, invalid := webhttp.ParseHostList([]string{"vibekit.example.com"},
 		webhttp.WithLoopbackExempt(),
-		webhttp.WithHostAllowlistError("", "host not allowed; add it to WT_ALLOWED_HOSTS to serve this hostname"))
+		webhttp.WithHostAllowlistError("", "host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)
 	}
@@ -278,7 +278,7 @@ func TestMiddlewareStack_GuardOrder(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403 (the host gate must stay outside the path guard)", rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "WT_ALLOWED_HOSTS") {
+		if !strings.Contains(rec.Body.String(), "ALLOWED_HOSTS") {
 			t.Errorf("403 body = %q, want the host-gate refusal", rec.Body.String())
 		}
 	})

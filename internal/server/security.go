@@ -1,4 +1,4 @@
-// Package server — security middleware: CSP headers, the WT_ALLOWED_HOSTS
+// Package server — security middleware: CSP headers, the ALLOWED_HOSTS
 // anti-DNS-rebinding gate, and stdlib CSRF protection.
 //
 // Applied once at the top of the mux in ListenAndServe. CSP is a
@@ -91,7 +91,7 @@ func fallbackCSPPolicy() string {
 }
 
 // securityMiddleware sets the response security-header baseline via
-// webhttp.SecurityHeaders, applies the WT_ALLOWED_HOSTS exact-match Host
+// webhttp.SecurityHeaders, applies the ALLOWED_HOSTS exact-match Host
 // allowlist (webhttp.HostPolicy), and wraps the handler with
 // http.NewCrossOriginProtection (Go 1.25+ stdlib) for CSRF, a concern
 // webhttp does not ship so it stays app-side. SecurityHeaders sets

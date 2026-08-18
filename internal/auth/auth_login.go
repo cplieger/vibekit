@@ -117,7 +117,7 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 // HTTP request (device-flow login takes minutes while the user completes
 // the browser flow; r.Context() would cancel it as soon as the response
 // is written) — see the context.WithTimeout below which caps the
-// subprocess at the LoginProcessCap wall-clock budget.
+// subprocess at the LoginTimeout wall-clock budget.
 //
 // Only one login may be in flight at a time: a concurrent POST gets
 // HTTP 409. vibekit is single-user, and a double-click/LAN-probe
@@ -132,7 +132,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Loki. client_ip is the spoof-safe resolved client host from
 	// webhttp.ClientIP: the unspoofable socket peer when directly
 	// exposed, or the real client from a trusted X-Forwarded-For when
-	// WT_TRUSTED_PROXIES is set. Single-user deployment, so cardinality on
+	// TRUSTED_PROXIES is set. Single-user deployment, so cardinality on
 	// client_ip + user_agent is bounded.
 	slog.Info("login: request received",
 		"client_ip", webhttp.ClientIP(r, h.trusted...),
@@ -171,7 +171,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// abandoned flows (tab closed, network lost) at AWS's
 	// device-code TTL + 1m grace. The select below separately
 	// bounds the URL-discovery phase at LoginURLTimeout.
-	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginProcessCap)
+	ctx, cancel := context.WithTimeout(context.Background(), h.cfg.LoginTimeout)
 	cmd := exec.CommandContext(ctx, h.cliPath(), buildLoginArgs(provider, region)...) //nolint:gosec // G204: binary path from config
 	setLoginProcAttr(cmd)
 	stdout, err := cmd.StdoutPipe()
@@ -226,7 +226,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// exit status and release the subprocess resources. On success
 	// this goroutine outlives the HTTP handler (the login runs
 	// until the user finishes the browser flow or the outer
-	// LoginProcessCap fires). On timeout we kill the process
+	// LoginTimeout fires). On timeout we kill the process
 	// group (CommandContext's default cancel only kills the PID,
 	// which orphans bun/Node helper children that keep the stdout
 	// pipe open and wedge cmd.Wait for the full sleep), and wait

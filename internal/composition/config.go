@@ -52,13 +52,13 @@ type Config struct {
 	// TrustedProxies is the set of reverse-proxy networks whose
 	// X-Forwarded-For header webhttp.ClientIP is allowed to trust when
 	// resolving the real client IP (access log + login/logout audit
-	// logs). Parsed once from WT_TRUSTED_PROXIES at startup. Empty/unset =
+	// logs). Parsed once from TRUSTED_PROXIES at startup. Empty/unset =
 	// trust nothing = log the unspoofable socket peer (the spoof-safe
 	// default for a directly-exposed deployment).
 	TrustedProxies []*net.IPNet
 	// TrustedInstallUIDs names identities whose write access to the kiro-cli
 	// install tree does not invalidate custody, parsed from
-	// WT_TRUSTED_INSTALL_UIDS. Empty is the default and the right setting for
+	// TRUSTED_INSTALL_UIDS. Empty is the default and the right setting for
 	// almost every deployment: pinstall then refuses to install into a tree any
 	// other identity can write, which is what stops a planted binary being run
 	// as this container's user. It is deliberately NOT a compiled-in value —
@@ -67,7 +67,7 @@ type Config struct {
 	// behalf of every deployment that pulled the image.
 	TrustedInstallUIDs []int
 	// HostPolicy is the exact-match Host allowlist parsed once from
-	// WT_ALLOWED_HOSTS at startup (webhttp.HostPolicy) — the anti-DNS-rebinding
+	// ALLOWED_HOSTS at startup (webhttp.HostPolicy) — the anti-DNS-rebinding
 	// gate the security middleware applies before the CSRF check. Unset or
 	// blank = an inactive policy = any Host accepted (backward compatible;
 	// the server warns at listen time).
@@ -104,7 +104,7 @@ type Config struct {
 func ConfigFromEnv() Config {
 	ac := auth.DefaultConfig
 	ac.LoginURLTimeout = envx.Duration("VIBEKIT_AUTH_LOGIN_URL_TIMEOUT", ac.LoginURLTimeout)
-	ac.LoginProcessCap = envx.Duration("VIBEKIT_AUTH_LOGIN_PROCESS_CAP", ac.LoginProcessCap)
+	ac.LoginTimeout = envx.Duration("VIBEKIT_AUTH_LOGIN_TIMEOUT", ac.LoginTimeout)
 	ac.LogoutTimeout = envx.Duration("VIBEKIT_AUTH_LOGOUT_TIMEOUT", ac.LogoutTimeout)
 	ac.WhoamiTimeout = envx.Duration("VIBEKIT_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
 
@@ -124,9 +124,9 @@ func ConfigFromEnv() Config {
 		ToolCatalogRefresh: toolbelt.ParseCatalogRefresh(
 			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH"), "VIBEKIT_TOOL_CATALOG_REFRESH"),
 		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),
-		TrustedProxies:      parseTrustedProxies(os.Getenv("WT_TRUSTED_PROXIES")),
-		TrustedInstallUIDs:  parseTrustedInstallUIDs(os.Getenv("WT_TRUSTED_INSTALL_UIDS")),
-		HostPolicy:          parseAllowedHosts(os.Getenv("WT_ALLOWED_HOSTS")),
+		TrustedProxies:      parseTrustedProxies(os.Getenv("TRUSTED_PROXIES")),
+		TrustedInstallUIDs:  parseTrustedInstallUIDs(os.Getenv("TRUSTED_INSTALL_UIDS")),
+		HostPolicy:          parseAllowedHosts(os.Getenv("ALLOWED_HOSTS")),
 		BrowseRoots:         browseRoots(workDir, configDir, os.Getenv("VIBEKIT_BROWSE_ROOTS")),
 		ACPArgs:             bridge.ParseACPArgs(os.Getenv("VIBEKIT_KIRO_ACP_ARGS")),
 		BridgeEnvAllow:      bridge.ParseEnvAllowlist(os.Getenv(bridge.EnvAllowVar)),
@@ -183,7 +183,7 @@ func browseRoots(workDir, configDir, raw string) []string {
 // "2001:db8::/32") or a bare IP ("192.0.2.10"), which is treated as a
 // single-host network (/32 or /128) so an operator can list a proxy's
 // address without remembering the mask; surrounding whitespace is trimmed
-// and empty entries are skipped, so an unset or empty WT_TRUSTED_PROXIES
+// and empty entries are skipped, so an unset or empty TRUSTED_PROXIES
 // yields nil: trust nothing, i.e. log the unspoofable socket peer — the
 // spoof-safe default for a directly-exposed deployment.
 //
@@ -196,13 +196,13 @@ func browseRoots(workDir, configDir, raw string) []string {
 func parseTrustedProxies(raw string) []*net.IPNet {
 	nets, invalid := webhttp.ParseCIDRs(strings.Split(raw, ","))
 	if len(invalid) > 0 {
-		slog.Warn("config: ignoring malformed WT_TRUSTED_PROXIES entries (want CIDR or IP)",
+		slog.Warn("config: ignoring malformed TRUSTED_PROXIES entries (want CIDR or IP)",
 			"entries", invalid)
 	}
 	return nets
 }
 
-// parseTrustedInstallUIDs parses the comma-separated WT_TRUSTED_INSTALL_UIDS
+// parseTrustedInstallUIDs parses the comma-separated TRUSTED_INSTALL_UIDS
 // list of numeric uids whose write access to the kiro-cli install tree does not
 // invalidate pinstall's custody check. Unset or empty yields nil, which leaves
 // the check fully enforcing — the correct default, and the one the image ships.
@@ -234,14 +234,14 @@ func parseTrustedProxies(raw string) []*net.IPNet {
 func parseTrustedInstallUIDs(raw string) []int {
 	uids, rejected := pinstall.ParseIdentities(raw)
 	if rejected > 0 {
-		slog.Warn("config: ignoring unusable WT_TRUSTED_INSTALL_UIDS entries (want whole numbers above 0)",
+		slog.Warn("config: ignoring unusable TRUSTED_INSTALL_UIDS entries (want whole numbers above 0)",
 			"invalid_count", rejected,
 			"hint", "list only numeric uids, comma-separated, each an account already at least as privileged as this server")
 	}
 	return uids
 }
 
-// parseAllowedHosts parses the comma-separated WT_ALLOWED_HOSTS list of exact
+// parseAllowedHosts parses the comma-separated ALLOWED_HOSTS list of exact
 // hostnames / IPs vibekit answers for into a webhttp.HostPolicy — the shared
 // exact-match Host allowlist that closes the DNS-rebinding hole the CSRF
 // check alone leaves open (a rebinding attack makes Origin and Host AGREE,
@@ -251,7 +251,7 @@ func parseTrustedInstallUIDs(raw string) []int {
 // mechanism (webhttp.CanonicalHost canonicalization, X-Forwarded-Host
 // ignored, the loopback peer+Host carve-out that keeps the image's own
 // healthcheck working under any allowlist); this parser owns the app policy:
-// the carve-out is enabled, the 403 names WT_ALLOWED_HOSTS, and — like
+// the carve-out is enabled, the 403 names ALLOWED_HOSTS, and — like
 // parseTrustedProxies above — it is the LENIENT caller: malformed entries
 // (a pasted URL, a lone ":8080") are logged and dropped per ParseHostList's
 // drop-and-report contract, never aborting startup.
@@ -266,14 +266,14 @@ func parseAllowedHosts(raw string) *webhttp.HostPolicy {
 	policy, invalid := webhttp.ParseHostList(strings.Split(raw, ","),
 		webhttp.WithLoopbackExempt(),
 		webhttp.WithHostAllowlistError("",
-			"host not allowed; add it to WT_ALLOWED_HOSTS to serve this hostname"))
+			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
-		slog.Warn("config: dropping malformed WT_ALLOWED_HOSTS entries; they cannot match any browser-sent Host",
+		slog.Warn("config: dropping malformed ALLOWED_HOSTS entries; they cannot match any browser-sent Host",
 			"entries", invalid,
 			"hint", "use bare hostnames or IPs only (no scheme, path, or CIDR), e.g. localhost,192.168.1.5,vibekit.example.com")
 	}
 	if policy.Active() && policy.Size() == 0 {
-		slog.Warn("config: WT_ALLOWED_HOSTS has no usable entries; rejecting every non-loopback request (fail closed)",
+		slog.Warn("config: ALLOWED_HOSTS has no usable entries; rejecting every non-loopback request (fail closed)",
 			"hint", "fix the entries listed in the preceding warning to restore browser access")
 	}
 	return policy

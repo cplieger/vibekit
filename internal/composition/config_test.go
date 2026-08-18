@@ -26,8 +26,8 @@ func TestConfigFromEnv_Defaults(t *testing.T) {
 	if cfg.AuthConfig.LoginURLTimeout <= 0 {
 		t.Error("LoginURLTimeout is zero/negative, want positive default")
 	}
-	if cfg.AuthConfig.LoginProcessCap <= 0 {
-		t.Error("LoginProcessCap is zero/negative, want positive default")
+	if cfg.AuthConfig.LoginTimeout <= 0 {
+		t.Error("LoginTimeout is zero/negative, want positive default")
 	}
 	if cfg.AuthConfig.LogoutTimeout <= 0 {
 		t.Error("LogoutTimeout is zero/negative, want positive default")
@@ -73,7 +73,7 @@ func containsIP(nets []*net.IPNet, ipStr string) bool {
 	return false
 }
 
-// TestParseAllowedHosts pins the WT_ALLOWED_HOSTS parser (the config-layer
+// TestParseAllowedHosts pins the ALLOWED_HOSTS parser (the config-layer
 // wrapper over webhttp.ParseHostList): unset/blank yields an INACTIVE policy
 // (any Host accepted, the backward-compatible default), a valid list becomes
 // an active canonicalized exact-match gate with the loopback carve-out, a
@@ -238,18 +238,18 @@ func TestParseTrustedProxies(t *testing.T) {
 	}
 }
 
-// TestConfigFromEnv_TrustedProxies pins that WT_TRUSTED_PROXIES flows from
+// TestConfigFromEnv_TrustedProxies pins that TRUSTED_PROXIES flows from
 // the environment into Config: unset leaves the spoof-safe nil default,
 // and a comma-separated value parses to the network set.
 func TestConfigFromEnv_TrustedProxies(t *testing.T) {
 	t.Run("unset yields nil (socket-peer default)", func(t *testing.T) {
-		t.Setenv("WT_TRUSTED_PROXIES", "")
+		t.Setenv("TRUSTED_PROXIES", "")
 		if cfg := ConfigFromEnv(); cfg.TrustedProxies != nil {
 			t.Errorf("TrustedProxies = %v, want nil when unset", cfg.TrustedProxies)
 		}
 	})
 	t.Run("set parses to network set", func(t *testing.T) {
-		t.Setenv("WT_TRUSTED_PROXIES", "10.0.0.0/8, 192.168.0.0/16")
+		t.Setenv("TRUSTED_PROXIES", "10.0.0.0/8, 192.168.0.0/16")
 		cfg := ConfigFromEnv()
 		if len(cfg.TrustedProxies) != 2 {
 			t.Fatalf("len(TrustedProxies) = %d, want 2", len(cfg.TrustedProxies))

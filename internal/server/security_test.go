@@ -90,7 +90,7 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 	}
 }
 
-// TestSecurityMiddleware_HostAllowlist pins the WT_ALLOWED_HOSTS
+// TestSecurityMiddleware_HostAllowlist pins the ALLOWED_HOSTS
 // anti-DNS-rebinding gate inside the real security middleware: a rebinding
 // attack makes an attacker-controlled hostname resolve to this server, so
 // Origin and Host AGREE and the CSRF layer alone admits the request — the
@@ -99,13 +99,13 @@ func TestSecurityMiddleware_OriginCheck(t *testing.T) {
 // (which still rejects a forged cross-origin POST). The loopback peer+Host
 // carve-out keeps the image's own healthcheck working under a browser-facing
 // allowlist, a forged loopback Host from a remote peer stays rejected, and a
-// nil policy is a pass-through (unset WT_ALLOWED_HOSTS stays backward
+// nil policy is a pass-through (unset ALLOWED_HOSTS stays backward
 // compatible).
 func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 	policy, invalid := webhttp.ParseHostList([]string{"vibekit.example.com"},
 		webhttp.WithLoopbackExempt(),
 		webhttp.WithHostAllowlistError("",
-			"host not allowed; add it to WT_ALLOWED_HOSTS to serve this hostname"))
+			"host not allowed; add it to ALLOWED_HOSTS to serve this hostname"))
 	if len(invalid) > 0 {
 		t.Fatalf("test allowlist has invalid entries: %v", invalid)
 	}
@@ -129,8 +129,8 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("status = %d, want 403 (Origin/Host agreement must not admit a rebound host)", rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "WT_ALLOWED_HOSTS") {
-			t.Errorf("403 body = %q, want it to name WT_ALLOWED_HOSTS", rec.Body.String())
+		if !strings.Contains(rec.Body.String(), "ALLOWED_HOSTS") {
+			t.Errorf("403 body = %q, want it to name ALLOWED_HOSTS", rec.Body.String())
 		}
 		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
 			t.Error("host-gate 403 lost the baseline security headers")
@@ -171,7 +171,7 @@ func TestSecurityMiddleware_HostAllowlist(t *testing.T) {
 		rec := httptest.NewRecorder()
 		open.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200 (unset WT_ALLOWED_HOSTS must stay backward compatible)", rec.Code)
+			t.Errorf("status = %d, want 200 (unset ALLOWED_HOSTS must stay backward compatible)", rec.Code)
 		}
 	})
 }

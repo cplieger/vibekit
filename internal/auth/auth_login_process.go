@@ -75,7 +75,7 @@ func (h *Handler) reapLoginProcess(r loginReap) {
 		slog.Info("login: subprocess completed cleanly")
 	case errors.Is(r.ctx.Err(), context.DeadlineExceeded):
 		attrs := make([]any, 0, 4)
-		attrs = append(attrs, "cap", h.cfg.LoginProcessCap)
+		attrs = append(attrs, "cap", h.cfg.LoginTimeout)
 		attrs = append(attrs, stderrAttr(r.stderrBuf)...)
 		slog.Warn("login: subprocess hit hard cap", attrs...)
 	default:

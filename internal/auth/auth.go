@@ -27,7 +27,7 @@ var _ api.RouteHandler = (*Handler)(nil)
 // passes a config built by the composition layer's ConfigFromEnv.
 type Config struct {
 	LoginURLTimeout time.Duration
-	LoginProcessCap time.Duration
+	LoginTimeout    time.Duration
 	LogoutTimeout   time.Duration
 	WhoamiTimeout   time.Duration
 }
@@ -35,7 +35,7 @@ type Config struct {
 // DefaultConfig is the production configuration.
 var DefaultConfig = Config{
 	LoginURLTimeout: 10 * time.Second,
-	LoginProcessCap: 16 * time.Minute,
+	LoginTimeout:    16 * time.Minute,
 	LogoutTimeout:   10 * time.Second,
 	WhoamiTimeout:   5 * time.Second,
 }
@@ -90,7 +90,7 @@ var awsRegionRe = regexp.MustCompile(`^[a-z]{2}(?:-[a-z]+)+-\d+$`)
 // full device-flow lifetime: vibekit is single-user, and a browser
 // double-click or LAN probe would otherwise spawn duplicate kiro-cli
 // subprocesses each pinning their own AWS device code for the full
-// LoginProcessCap (16m). The semaphore is released by the reap
+// LoginTimeout (16m). The semaphore is released by the reap
 // goroutine when cmd.Wait returns (user completes flow, or hard cap
 // fires), not when the HTTP handler returns — so a second POST that
 // arrives after the first URL has been emitted but while the first

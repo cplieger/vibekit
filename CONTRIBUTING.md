@@ -59,7 +59,7 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
   install into a tree another identity can write, and reads access-control lists
   to find that out. `TrustedUIDs` carries the identities a deployment vouches
   for, and it is deliberately NOT a compiled-in value — it comes from
-  `WT_TRUSTED_INSTALL_UIDS` (parsed by `parseTrustedInstallUIDs` in
+  `TRUSTED_INSTALL_UIDS` (parsed by `parseTrustedInstallUIDs` in
   `internal/composition/config.go`), because only the deployment knows which
   account on its volume already holds at least this process's privilege. The
   image ships it unset, which leaves the check fully enforcing. `Untrusted`

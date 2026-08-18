@@ -762,7 +762,7 @@ func TestHandleLogin_TimesOutWhenCLIProducesNoURL(t *testing.T) {
 	path := writeFakeCLIScript(t, "sleep 10\n")
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: 50 * time.Millisecond,
-		LoginProcessCap: DefaultConfig.LoginProcessCap,
+		LoginTimeout:    DefaultConfig.LoginTimeout,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
@@ -1004,7 +1004,7 @@ func TestHandleWhoami_TimesOutWhenCLIHangs(t *testing.T) {
 	path := writeFakeCLIScript(t, "sleep 10\n")
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginProcessCap: DefaultConfig.LoginProcessCap,
+		LoginTimeout:    DefaultConfig.LoginTimeout,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
 		WhoamiTimeout:   50 * time.Millisecond,
 	}))
@@ -1077,7 +1077,7 @@ func TestHandleLogout_TimesOut(t *testing.T) {
 	path := writeFakeCLIScript(t, "sleep 10\n")
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginProcessCap: DefaultConfig.LoginProcessCap,
+		LoginTimeout:    DefaultConfig.LoginTimeout,
 		LogoutTimeout:   50 * time.Millisecond,
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
@@ -1223,7 +1223,7 @@ func TestHandleLogin_ConcurrentAttemptReturns409(t *testing.T) {
 	// details of the first.
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: 100 * time.Millisecond,
-		LoginProcessCap: DefaultConfig.LoginProcessCap,
+		LoginTimeout:    DefaultConfig.LoginTimeout,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))
@@ -1270,12 +1270,12 @@ func TestHandleLogin_SecondAttemptAfterURLEmittedReturns409(t *testing.T) {
 	path := writeFakeCLIScript(t,
 		"echo 'Open this URL: https://example.com/auth'\n"+
 			"sleep 30\n")
-	// Shrink LoginProcessCap so the test doesn't hold the
+	// Shrink LoginTimeout so the test doesn't hold the
 	// subprocess for 16 minutes. The sleep is 30s; a 500ms hard
 	// cap forces the reap goroutine to SIGKILL long before.
 	h := NewHandler(fixedPath(path), WithConfig(Config{
 		LoginURLTimeout: DefaultConfig.LoginURLTimeout,
-		LoginProcessCap: 500 * time.Millisecond,
+		LoginTimeout:    500 * time.Millisecond,
 		LogoutTimeout:   DefaultConfig.LogoutTimeout,
 		WhoamiTimeout:   DefaultConfig.WhoamiTimeout,
 	}))

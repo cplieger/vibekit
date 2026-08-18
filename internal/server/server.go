@@ -86,7 +86,7 @@ type Server struct {
 	// real client from a trusted X-Forwarded-For. Nil (unconfigured) =
 	// log the unspoofable socket peer.
 	trustedProxies []*net.IPNet
-	// hostPolicy is the WT_ALLOWED_HOSTS exact-match Host allowlist the
+	// hostPolicy is the ALLOWED_HOSTS exact-match Host allowlist the
 	// security middleware applies before the CSRF check (anti-DNS-rebinding;
 	// see internal/composition parseAllowedHosts). Nil/inactive = any Host
 	// accepted.
@@ -216,7 +216,7 @@ func WithTrustedProxies(trusted []*net.IPNet) Option {
 }
 
 // WithHostPolicy sets the exact-match Host allowlist (parsed from
-// WT_ALLOWED_HOSTS) that the security middleware applies before the CSRF
+// ALLOWED_HOSTS) that the security middleware applies before the CSRF
 // check — the anti-DNS-rebinding gate. A nil or inactive policy is a
 // pass-through (any Host accepted, the backward-compatible default).
 func WithHostPolicy(p *webhttp.HostPolicy) Option {
@@ -337,8 +337,8 @@ func (s *Server) ListenAndServe() error {
 	// included) carries no auth of its own — the exact-Host allowlist is
 	// the gate that closes it (see internal/composition parseAllowedHosts).
 	if !s.hostPolicy.Active() {
-		slog.Warn("WT_ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
-			"hint", "set WT_ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
+		slog.Warn("ALLOWED_HOSTS is unset or blank; any Host header is accepted, leaving DNS rebinding open even on loopback/private binds",
+			"hint", "set ALLOWED_HOSTS to the exact hostnames/IPs you browse to (e.g. localhost,192.168.1.5,vibekit.example.com)")
 	}
 
 	// webhttp.Run owns the serve/shutdown sequence (default 5s grace, matching
@@ -357,7 +357,7 @@ func (s *Server) ListenAndServe() error {
 
 // middlewareStack returns the middleware wrapping the route mux, OUTERMOST
 // FIRST (webhttp.Chain's order): request-id access logging, then panic
-// recovery, then the security layer (dynamic CSP + the WT_ALLOWED_HOSTS host
+// recovery, then the security layer (dynamic CSP + the ALLOWED_HOSTS host
 // allowlist + stdlib CSRF), then the canonical-path gate over the API surface,
 // then the REST idempotency dedup, then the mux.
 //
@@ -369,7 +369,7 @@ func (s *Server) ListenAndServe() error {
 //
 // webhttp.WithClientIP adds a spoof-safe "client_ip" to every access line:
 // with no trusted proxies it is the unspoofable socket peer; when
-// WT_TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
+// TRUSTED_PROXIES lists the reverse proxy's CIDRs it is the real client
 // resolved from a trusted X-Forwarded-For. It costs nothing on the skipped
 // streaming paths.
 func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []webhttp.Middleware {
@@ -400,7 +400,7 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 		),
 		webhttp.Recoverer(),
 		func(next http.Handler) http.Handler { return securityMiddleware(cspPolicy, s.hostPolicy, next) },
-		// The canonical-path gate (requestpath.go) sits INSIDE the WT_ALLOWED_HOSTS
+		// The canonical-path gate (requestpath.go) sits INSIDE the ALLOWED_HOSTS
 		// allowlist and the CSRF check and OUTSIDE every route: the two
 		// request-authorization gates answer 403 and must not be shadowed by a
 		// 400 about spelling, so a rebound-Host or forged cross-origin request
