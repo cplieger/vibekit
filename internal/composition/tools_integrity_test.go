@@ -112,7 +112,7 @@ func fitTree(t *testing.T) (configDir, toolsDir string) {
 // what actually broke.
 func testHub(t *testing.T) *hub.Hub {
 	t.Helper()
-	h := hub.New(t.TempDir(), nil, nil)
+	h := hub.New(t.Context(), t.TempDir(), nil, nil)
 	t.Cleanup(h.Shutdown)
 	return h
 }
@@ -210,7 +210,7 @@ func TestBuildToolsEngineDegradesOnRootIntegrityRefusal(t *testing.T) {
 			slices.Sort(want)
 
 			logs := captureDefaultLogger(t)
-			engine, err := buildToolsEngine(&Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
+			engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
 			if err != nil {
 				t.Fatalf("an unfit root stopped the boot; a dev box whose volume drifted cannot be repaired from inside a container that will not start: %v", err)
 			}
@@ -241,7 +241,7 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	}
 	captureDefaultLogger(t)
 
-	engine, err := buildToolsEngine(&Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
+	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
 	if err != nil || engine != nil {
 		t.Fatalf("buildToolsEngine = (%v, %v), want the degraded (nil, nil)", engine, err)
 	}
@@ -253,8 +253,8 @@ func TestAppShutdownToleratesTheDegradedEngine(t *testing.T) {
 	// This hub is Shutdown by the App under test, so it is deliberately not
 	// the t.Cleanup-registered testHub.
 	app := &App{
-		Hub:            hub.New(t.TempDir(), nil, chatStore),
-		purgeScheduler: chat.NewPurgeScheduler(t.Context(), chatStore, func() time.Duration { return 0 }),
+		Hub:            hub.New(t.Context(), t.TempDir(), nil, chatStore),
+		purgeScheduler: chat.NewPurgeScheduler(chatStore, func() time.Duration { return 0 }),
 		mcpPrewarm:     prewarm.NewRunner(t.Context(), nil),
 		tools:          engine,
 		stopKiro:       func() {},
@@ -280,7 +280,7 @@ func TestBuildToolsEngineKeepsNonIntegrityFailuresFatal(t *testing.T) {
 	}
 	logs := captureDefaultLogger(t)
 
-	engine, err := buildToolsEngine(&Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
+	engine, err := buildToolsEngine(t.Context(), &Config{ConfigDir: configDir, ToolsDir: toolsDir}, testHub(t))
 
 	if err == nil {
 		t.Fatal("a manifest-version failure was absorbed into a tool-less boot; only the root-integrity refusal may degrade")

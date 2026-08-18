@@ -52,7 +52,7 @@ func newRecordingStartHub(t *testing.T) (*Hub, *fakeChatStore, *recordingStartBr
 	t.Helper()
 	cs := newFakeChatStore()
 	rb := newRecordingStartBridge()
-	h := New("/tmp/rec-start", func() api.ACPBridge { return rb }, cs)
+	h := New(t.Context(), "/tmp/rec-start", func() api.ACPBridge { return rb }, cs)
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	return h, cs, rb
@@ -170,7 +170,7 @@ func TestForward_ClearsRegistryOnlyWhenLastBridge(t *testing.T) {
 func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	cs := newFakeChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New("/tmp/push", func() api.ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := New(t.Context(), "/tmp/push", func() api.ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	ctx := t.Context()
@@ -354,7 +354,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 			// sweepSessionsLoop, which reads these fields, so assigning them
 			// afterwards is a data race (caught by -race, not by plain go test).
 			cs := newFakeChatStore()
-			h := New("/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs,
+			h := New(t.Context(), "/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir),
 					func(context.Context) (map[string]struct{}, bool) {
@@ -391,7 +391,7 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	// this test needs bridges with distinct session ids, so build the hub with
 	// a per-spawn factory instead.
 	cs := newFakeChatStore()
-	h := New("/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs)
+	h := New(t.Context(), "/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs)
 	cs.Bus = h
 
 	setSession := func(chatID api.ChatID, sessionID string) {
@@ -526,7 +526,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			}
 
 			cs := newFakeChatStore()
-			h := New("/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs,
+			h := New(t.Context(), "/tmp/work", func() api.ACPBridge { return newFakeBridge() }, cs,
 				WithSessionReaper(
 					kirosession.New(sessionsDir),
 					func(context.Context) (map[string]struct{}, bool) {

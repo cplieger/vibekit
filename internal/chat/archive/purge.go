@@ -182,8 +182,13 @@ func logPurgeResult(purged, kept, errs int, maxAge time.Duration) {
 
 // PurgeScheduler owns the retention-purge lifecycle. Uses a dedicated
 // goroutine with a trigger channel for true collapse semantics.
+//
+// It holds NO context. The scheduler's context arrives at Start, the method that
+// runs the loop, and is threaded down as a parameter from there — which is the
+// shape the fleet's rule asks for wherever a component has a run method, and it
+// is what makes the loop's two exit conditions (ctx cancelled, Stop called)
+// readable at the one place both are selected on.
 type PurgeScheduler struct {
-	ctx       context.Context
 	svc       *Service
 	retention func() time.Duration
 	triggerCh chan struct{}
@@ -196,9 +201,8 @@ type PurgeScheduler struct {
 
 // NewPurgeScheduler builds a scheduler that runs purges based on the
 // retention value returned by `retention`.
-func NewPurgeScheduler(ctx context.Context, svc *Service, retention func() time.Duration) *PurgeScheduler {
+func NewPurgeScheduler(svc *Service, retention func() time.Duration) *PurgeScheduler {
 	return &PurgeScheduler{
-		ctx:       ctx,
 		svc:       svc,
 		retention: retention,
 		triggerCh: make(chan struct{}, 1),
@@ -207,12 +211,13 @@ func NewPurgeScheduler(ctx context.Context, svc *Service, retention func() time.
 	}
 }
 
-// Start launches the scheduler goroutine and runs an initial evaluation.
-func (p *PurgeScheduler) Start() {
+// Start launches the scheduler goroutine under ctx and runs an initial
+// evaluation. The loop returns when ctx is cancelled or Stop is called.
+func (p *PurgeScheduler) Start(ctx context.Context) {
 	p.mu.Lock()
 	p.started = true
 	p.mu.Unlock()
-	go p.loop()
+	go p.loop(ctx)
 	p.Trigger()
 }
 
@@ -245,13 +250,13 @@ func (p *PurgeScheduler) Trigger() {
 }
 
 // loop is the scheduler goroutine.
-func (p *PurgeScheduler) loop() {
+func (p *PurgeScheduler) loop(ctx context.Context) {
 	defer close(p.done)
 	var timer *time.Timer
 	var timerC <-chan time.Time
 	for {
 		select {
-		case <-p.ctx.Done():
+		case <-ctx.Done():
 			stopTimer(timer)
 			return
 		case <-p.stopCh:
@@ -261,7 +266,7 @@ func (p *PurgeScheduler) loop() {
 		case <-timerC:
 		}
 		stopTimer(timer)
-		timer, timerC = p.purgeAndReschedule()
+		timer, timerC = p.purgeAndReschedule(ctx)
 	}
 }
 
@@ -291,14 +296,14 @@ func stopTimer(t *time.Timer) {
 // setting change could shorten it. Re-checking at most maxWait later costs one
 // directory stat per interval and makes every retention change take effect
 // within one interval regardless of what was armed when it happened.
-func (p *PurgeScheduler) purgeAndReschedule() (timer *time.Timer, timerC <-chan time.Time) {
+func (p *PurgeScheduler) purgeAndReschedule(ctx context.Context) (timer *time.Timer, timerC <-chan time.Time) {
 	retention := p.retention()
 	if retention > 0 {
-		purgeCtx, purgeCancel := context.WithTimeout(p.ctx, 5*time.Minute)
+		purgeCtx, purgeCancel := context.WithTimeout(ctx, 5*time.Minute)
 		p.svc.Purge(purgeCtx, retention)
 		purgeCancel()
 	}
-	wait, hadWork := p.armWait(retention)
+	wait, hadWork := p.armWait(ctx, retention)
 	slog.Debug("chat purge scheduled", "in", wait, "retention", retention, "had_work", hadWork)
 	t := time.NewTimer(wait)
 	return t, t.C
@@ -311,8 +316,8 @@ func (p *PurgeScheduler) purgeAndReschedule() (timer *time.Timer, timerC <-chan 
 // actually arms. It was inline, and the test asserted `min(natural, cap) == cap`
 // by recomputing the clamp itself — which stayed green when the clamp was deleted
 // from production, because the test was proving arithmetic rather than behaviour.
-func (p *PurgeScheduler) armWait(retention time.Duration) (wait time.Duration, hadWork bool) {
-	natural, ok := p.nextWait(retention)
+func (p *PurgeScheduler) armWait(ctx context.Context, retention time.Duration) (wait time.Duration, hadWork bool) {
+	natural, ok := p.nextWait(ctx, retention)
 	if !ok {
 		// Nothing to purge right now (retention off, or no chats yet). Re-check
 		// on the poll interval rather than going dark. hadWork is returned so the
@@ -331,11 +336,11 @@ const maxWait = 1 * time.Hour
 // nextWait computes how long to sleep before the next purge: the oldest
 // chat file's age plus the retention window, floored at minWait.
 // Returns ok=false when retention is disabled or the directory is empty.
-func (p *PurgeScheduler) nextWait(retention time.Duration) (time.Duration, bool) {
+func (p *PurgeScheduler) nextWait(ctx context.Context, retention time.Duration) (time.Duration, bool) {
 	if retention <= 0 {
 		return 0, false
 	}
-	oldest, ok := OldestChatMTime(p.ctx, p.svc.store.Dir())
+	oldest, ok := OldestChatMTime(ctx, p.svc.store.Dir())
 	if !ok {
 		return 0, false
 	}

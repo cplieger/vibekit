@@ -62,10 +62,19 @@ const (
 
 // Runner owns the lifecycle of npx pre-installs.
 type Runner struct {
-	Lister   ServerLister
-	running  map[string]struct{}
-	sem      chan struct{}
-	ctx      context.Context
+	Lister  ServerLister
+	running map[string]struct{}
+	sem     chan struct{}
+	// lifetime is the RUNNER's own cancellable context, which Stop cancels, and
+	// it is a second fact from the per-pass ctx Run takes: a pass ends when its
+	// caller's ctx does, while an install already in flight must also die when
+	// the runner is stopped. installOne composes BOTH (see there) rather than
+	// picking either, so this cannot become a parameter without losing the Stop
+	// signal.
+	//
+	// Named for what it is rather than `ctx`, so it cannot be read as the
+	// ambient context at the three sites that consume it.
+	lifetime context.Context
 	cancel   context.CancelFunc
 	OnStatus func(pkg string, state State)
 	mu       sync.Mutex
@@ -74,14 +83,18 @@ type Runner struct {
 
 // NewRunner returns a runner. Call Run to kick an initial pass at
 // container boot; subsequent passes fire from the store's onChange.
+//
+// ctx is the runner's lifetime and is required — it goes straight to
+// context.WithCancel, which refuses a nil one at this single construction site
+// rather than defaulting into installs no Stop could reach.
 func NewRunner(ctx context.Context, lister ServerLister) *Runner {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Runner{
-		Lister:  lister,
-		running: make(map[string]struct{}),
-		sem:     make(chan struct{}, maxConcurrentInstalls),
-		ctx:     ctx,
-		cancel:  cancel,
+		Lister:   lister,
+		running:  make(map[string]struct{}),
+		sem:      make(chan struct{}, maxConcurrentInstalls),
+		lifetime: ctx,
+		cancel:   cancel,
 	}
 }
 
@@ -92,8 +105,11 @@ func (p *Runner) Stop() {
 
 // Run enumerates enabled prewarm-flagged npx servers and kicks off a
 // background install for each.
+//
+// ctx bounds THIS pass. The runner's own lifetime is separate and both are
+// honoured: see the field and installOne.
 func (p *Runner) Run(ctx context.Context) {
-	if p.ctx.Err() != nil {
+	if p.lifetime.Err() != nil {
 		return
 	}
 	if p.Disabled.Load() {
@@ -123,7 +139,7 @@ func (p *Runner) Run(ctx context.Context) {
 		go func(pkg string) {
 			select {
 			case p.sem <- struct{}{}:
-			case <-p.ctx.Done():
+			case <-p.lifetime.Done():
 				p.mu.Lock()
 				delete(p.running, pkg)
 				p.mu.Unlock()
@@ -175,8 +191,12 @@ func (p *Runner) installOne(ctx context.Context, pkg string) {
 		p.mu.Unlock()
 	}()
 
+	// The pass ctx and the runner's lifetime are BOTH honoured: mergedCtx dies
+	// with the pass, and the AfterFunc makes Stop() reach an install already
+	// running. Merging the two into one parameter would drop whichever signal
+	// was not passed.
 	mergedCtx, mergedCancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(p.ctx, mergedCancel)
+	stop := context.AfterFunc(p.lifetime, mergedCancel)
 
 	installCtx, installCancel := context.WithTimeout(mergedCtx, 5*time.Minute)
 	defer installCancel()

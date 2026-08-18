@@ -208,7 +208,7 @@ func TestClose_CancelsInternalContext(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 
 	select {
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 		t.Fatal("context already Done before Close")
 	default:
 	}
@@ -216,7 +216,7 @@ func TestClose_CancelsInternalContext(t *testing.T) {
 	s.Close()
 
 	select {
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 		// expected
 	case <-time.After(100 * time.Millisecond):
 		t.Error("context not Done after Close")

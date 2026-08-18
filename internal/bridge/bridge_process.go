@@ -22,15 +22,17 @@ import (
 // session (acpSessionID == "") or loads an existing one. Exactly one call
 // per bridge instance.
 //
-// ctx bounds the startup handshake only; opts.Lifetime bounds the subprocess.
+// ctx bounds the startup handshake only; opts.Lifetime bounds the subprocess
+// and is required.
 func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	// The subprocess outlives this call. Start's ctx bounds the handshake
 	// below; opts.Lifetime bounds the process. See api.StartOpts.Lifetime for
-	// what taking the process lifetime from a turn context measured like.
-	b.lifecycleCtx = opts.Lifetime
-	if b.lifecycleCtx == nil {
-		b.lifecycleCtx = context.WithoutCancel(ctx)
+	// what taking the process lifetime from a turn context measured like, and
+	// for why the field is required rather than defaulted here.
+	if opts.Lifetime == nil {
+		return errors.New("bridge: StartOpts.Lifetime is required: it bounds the kiro-cli subprocess, and every default for it is a subprocess nothing can cancel")
 	}
+	b.lifecycleCtx = opts.Lifetime
 	// Immutable after Start; read lock-free by SetModel / initialize.
 	b.agentEngine = opts.AgentEngine
 	b.enableHooks = opts.EnableHooks
@@ -153,13 +155,12 @@ func (b *Bridge) startProcess(engine string) error {
 	args := append(buildACPArgs(engine), b.extraArgs...)
 	// Normal teardown is owned by Stop(). lifecycleCtx is the hub's shutdown
 	// context: a belt-and-braces kill so a bridge cannot outlive the process
-	// if Stop() races or panics. Start guarantees it is non-nil, and it is
-	// never a request or turn context — see api.StartOpts.Lifetime.
-	ctx := b.lifecycleCtx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	b.cmd = exec.CommandContext(ctx, b.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
+	// if Stop() races or panics. Start refuses a nil StartOpts.Lifetime, so
+	// this is non-nil by construction and needs no fallback — the
+	// context.Background() one that used to live here was a second
+	// uncancellable substitution behind Start's own. It is never a request or
+	// turn context — see api.StartOpts.Lifetime.
+	b.cmd = exec.CommandContext(b.lifecycleCtx, b.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	// Own process group, so teardown can reclaim the whole tree. Closing stdin
 	// first is still what gives kiro-cli a chance to exit on its own, but it is
 	// no longer sufficient: see procgroup.Kill for the 2.18.0 measurement.

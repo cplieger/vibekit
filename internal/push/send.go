@@ -352,7 +352,7 @@ func (s *Service) pruneStale(stale []string) {
 		delete(s.subs, ep)
 	}
 	s.mu.Unlock()
-	s.saveSubs(s.ctx)
+	s.saveSubs(s.lifetime)
 }
 
 // push performs RFC 8291 encryption and delivers the payload to a
@@ -384,11 +384,11 @@ func (s *Service) push(
 
 	// Derive the request context from BOTH the caller's ctx and the
 	// service lifecycle, unconditionally. The previous fast path merged
-	// only when s.ctx was ALREADY canceled, so a send started while
+	// only when s.lifetime was ALREADY canceled, so a send started while
 	// healthy never observed a later Service.Close and ran until the
 	// client timeout. Three small allocations per subscriber per push is
 	// noise at push frequency.
-	reqCtx, mergeCleanup := mergeCtx(ctx, s.ctx)
+	reqCtx, mergeCleanup := mergeCtx(ctx, s.lifetime)
 	defer mergeCleanup()
 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, sub.Endpoint, bytes.NewReader(body))

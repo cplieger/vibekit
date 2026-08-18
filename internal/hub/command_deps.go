@@ -88,9 +88,35 @@ func (h *Hub) ConfigDir() string {
 	return h.lifecycle.configDir
 }
 
-// ShutdownCtx returns the context cancelled on shutdown.
-func (h *Hub) ShutdownCtx() context.Context {
-	return h.lifecycle.shutdownCtx
+// TurnContext returns the context a turn runs under, plus the teardown its
+// handler must defer.
+//
+// It replaced an exported ShutdownCtx() accessor, and the replacement is the
+// point: a command handler never wanted the hub's raw lifetime context, it
+// wanted a turn context derived from it, and handing out the lifetime made every
+// consumer responsible for deriving one correctly. The hub is what knows its own
+// lifetime, so the derivation lives here.
+//
+// The turn is DETACHED from reqCtx's cancellation while keeping its values: the
+// prompt POST's context dies when the handler returns, and a turn that died with
+// it failed before it could finalize and persist the assistant buffer, even
+// though kiro-cli kept running the turn to completion. Cancellation is
+// re-attached to the hub's shutdown context via AfterFunc so the turn still dies
+// on shutdown; the returned cancel tears it down on handler return and
+// unregisters that AfterFunc so it cannot leak. Explicit user cancellation is
+// unaffected — it goes through session/cancel (Notify), not this context.
+//
+// This mirrors the pattern in agent_terminal.go, which runs agent-spawned
+// subprocesses under context.WithCancel(context.WithoutCancel(ctx)) +
+// AfterFunc(shutdownCtx, cancel) for the same reason: a per-request ctx must not
+// tear down longer-lived work.
+func (h *Hub) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(reqCtx))
+	stop := context.AfterFunc(h.lifecycle.shutdownCtx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
 }
 
 // InflightAdd increments the inflight counter.

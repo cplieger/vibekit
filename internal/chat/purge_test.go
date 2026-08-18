@@ -160,8 +160,8 @@ func TestPurgeScheduler_TriggerWithZeroRetentionIsNoOp(t *testing.T) {
 		calls.Add(1)
 		return 0
 	}
-	p := NewPurgeScheduler(t.Context(), s, retention)
-	p.Start()
+	p := NewPurgeScheduler(s, retention)
+	p.Start(t.Context())
 	defer p.Stop()
 
 	p.Trigger()
@@ -174,8 +174,8 @@ func TestPurgeScheduler_TriggerRunsPurgeWhenRetentionPositive(t *testing.T) {
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
-	p.Start()
+	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
+	p.Start(t.Context())
 	defer p.Stop()
 
 	if !waitForPurge(t, chatPath, 2*time.Second) {
@@ -191,8 +191,8 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 	chatPath := filepath.Join(s.dir, "c1.json")
 
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(t.Context(), s, retention)
-	p.Start()
+	p := NewPurgeScheduler(s, retention)
+	p.Start(t.Context())
 	defer p.Stop()
 
 	// Wait for a pass to actually run before asserting it kept the file.
@@ -207,8 +207,8 @@ func TestPurgeScheduler_TriggerSchedulesForRemainingEntry(t *testing.T) {
 func TestPurgeScheduler_TriggerWithNoChatsIsNoOp(t *testing.T) {
 	s, _ := newTestStore(t)
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(t.Context(), s, retention)
-	p.Start()
+	p := NewPurgeScheduler(s, retention)
+	p.Start(t.Context())
 	defer p.Stop()
 
 	p.Trigger()
@@ -222,7 +222,7 @@ func TestPurgeScheduler_StopPreventsFutureTriggers(t *testing.T) {
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
+	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
 	// Stop before Start — the goroutine never runs.
 	p.Stop()
 	p.Trigger()
@@ -243,10 +243,10 @@ func TestPurgeScheduler_StartInvokesTrigger(t *testing.T) {
 	chatPath := filepath.Join(s.dir, "c1.json")
 	ageChat(t, s, "c1", 48*time.Hour)
 
-	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return 24 * time.Hour })
+	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
 	defer p.Stop()
 
-	p.Start()
+	p.Start(t.Context())
 
 	if !waitForPurge(t, chatPath, 2*time.Second) {
 		t.Error("chat file survived Start() after 2s")
@@ -260,8 +260,8 @@ func TestPurgeScheduler_CollapsesConcurrentTriggers(t *testing.T) {
 	_ = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	retention, calls := countingRetention(24 * time.Hour)
-	p := NewPurgeScheduler(t.Context(), s, retention)
-	p.Start()
+	p := NewPurgeScheduler(s, retention)
+	p.Start(t.Context())
 	defer p.Stop()
 
 	// Fire multiple triggers rapidly.
@@ -285,8 +285,8 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 	_ = s.Mutate(t.Context(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
 	c2Path := filepath.Join(s.dir, "c2.json")
 
-	p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return time.Second })
-	p.Start()
+	p := NewPurgeScheduler(s, func() time.Duration { return time.Second })
+	p.Start(t.Context())
 	defer p.Stop()
 
 	if !waitForPurge(t, chatPath, 2*time.Second) {
@@ -301,8 +301,8 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	p := NewPurgeScheduler(ctx, s, func() time.Duration { return 24 * time.Hour })
-	p.Start()
+	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
+	p.Start(ctx)
 
 	cancel()
 	// The done channel should close promptly.
@@ -334,8 +334,8 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		ageChat(t, s, "old1", 72*time.Hour)
 
 		retention := 24 * time.Hour
-		p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return retention })
-		p.Start()
+		p := NewPurgeScheduler(s, func() time.Duration { return retention })
+		p.Start(t.Context())
 		defer p.Stop()
 
 		p.Trigger()
@@ -352,8 +352,8 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		// Fresh activity, so the retention window has not elapsed.
 
 		retention, calls := countingRetention(48 * time.Hour)
-		p := NewPurgeScheduler(t.Context(), s, retention)
-		p.Start()
+		p := NewPurgeScheduler(s, retention)
+		p.Start(t.Context())
 		defer p.Stop()
 
 		p.Trigger()
@@ -373,10 +373,10 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		ageChat(t, s, "stop1", 72*time.Hour)
 
 		retention := 24 * time.Hour
-		p := NewPurgeScheduler(t.Context(), s, func() time.Duration { return retention })
+		p := NewPurgeScheduler(s, func() time.Duration { return retention })
 		// Stop before Start — the goroutine never runs.
 		p.Stop()
-		p.Start() // Start after Stop should be a no-op.
+		p.Start(t.Context()) // Start after Stop should be a no-op.
 
 		// Trigger after stop should be no-op.
 		p.Trigger()
@@ -401,8 +401,8 @@ func TestPurgeScheduler_PropertyInvariants(t *testing.T) {
 		ageChat(t, s, "dup1", 72*time.Hour)
 
 		retention, calls := countingRetention(24 * time.Hour)
-		p := NewPurgeScheduler(t.Context(), s, retention)
-		p.Start()
+		p := NewPurgeScheduler(s, retention)
+		p.Start(t.Context())
 		defer p.Stop()
 
 		// Multiple triggers should not cause issues.

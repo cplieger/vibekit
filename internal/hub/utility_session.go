@@ -80,6 +80,13 @@ type utilitySessionHooks struct {
 // context. Lazily started on first acquire, culled after 30 minutes of
 // inactivity (same as chat bridges).
 type utilitySession struct {
+	// shutdownCtx is the HUB's lifetime, required by the constructor and never a
+	// request context. It is a lifetime handle rather than a stashed caller
+	// context, and it has no run method to take it: the session is started
+	// lazily from acquire, whose ctx belongs to whichever request happened to
+	// arrive first. The two are deliberately not merged — startLocked's ctx picks
+	// the model and dies with the request, while the subprocess this field bounds
+	// must outlive it.
 	shutdownCtx   context.Context
 	bridgeFactory api.ACPBridgeFactory
 	hubModels     func() []api.SessionModel
@@ -109,6 +116,9 @@ type utilitySession struct {
 
 // newUtilitySession constructs a stopped session with the initialization
 // invariants explicit: started=false, gen=0, lastActiveAt=zero.
+//
+// shutdownCtx is required, positionally: it is the session's lifetime, and every
+// default for a lifetime is a lifetime nothing can cancel.
 func newUtilitySession(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
 	return &utilitySession{
 		shutdownCtx:   shutdownCtx,

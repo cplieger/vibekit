@@ -57,6 +57,15 @@ type App struct {
 	// documented "shutdown is context cancellation" contract true rather than
 	// merely masked by runMain exiting the process straight afterwards.
 	stopPRPoller func()
+	// stopApp ends the app's LIFETIME: the context every component that must die
+	// with the process is parented on, and the one hub.New requires.
+	//
+	// It exists because the app's lifetime used to be invented inside the hub
+	// (context.Background() in hub.New) and fetched back out through an exported
+	// ShutdownCtx() accessor, which is how four goroutines wired here came to
+	// take their context from a component they are not part of. The composition
+	// root owns the lifetime now and hands the same one down.
+	stopApp func()
 }
 
 // Build constructs all services and wires them together. staticFS is
@@ -75,6 +84,23 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	if err := validateConfig(ctx, cfg); err != nil {
 		return nil, fmt.Errorf("config validation failed:\n  %w", err)
 	}
+
+	// The app's lifetime. Build's ctx is context.Background() in production
+	// (main.go), so it can never end; appCtx is the cancellable child that CAN,
+	// and it is what every component whose work must not outlive the process is
+	// parented on. App.Shutdown ends it (see stopApp).
+	//
+	// Deriving it here rather than inside a component is the point: the hub used
+	// to root its own lifetime at context.Background() and expose it as
+	// ShutdownCtx(), so a goroutine wired in this file took its context out of
+	// the hub. Now the lifetime flows the other way.
+	appCtx, stopApp := context.WithCancel(ctx)
+	// A boot that does not return an App is the one case nothing can call
+	// App.Shutdown, so the lifetime is ended here instead. That includes the
+	// (nil, nil) root-integrity degraded verdict below, not just the error
+	// returns.
+	built := false
+	defer cancelUnless(&built, stopApp)
 
 	// kiro-cli is installed and selected by the manager startKiroCLI builds: the
 	// bridge's argv and environment, the auth shell-outs, the CLI runner and the
@@ -124,7 +150,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// pinned to 0/never): reap a chat's session state on delete, and orphans
 	// via a periodic sweep that spares every active/archived chat's session.
 	sessionReaper := kirosession.New(filepath.Join(workspace.KiroHome(), "sessions"))
-	h := hub.New(cfg.WorkDir, bridgeFactory, chatStore,
+	h := hub.New(appCtx, cfg.WorkDir, bridgeFactory, chatStore,
 		hub.WithConfigDir(cfg.ConfigDir), hub.WithMCPConfig(mcpStore), hub.WithPush(pushSvc),
 		hub.WithACPArgs(cfg.ACPArgs),
 		hub.WithKiroCLIPath(kiro.cliPath, kiro.env),
@@ -138,17 +164,17 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// first tick is a minute out, but relying on that would make correctness a
 	// property of the tick interval.
 	//
-	// On the HUB's context, never this function's: Build's ctx is
+	// On the APP's lifetime, never this function's: Build's ctx is
 	// context.Background() in production, so a sweep started on it would outlive
 	// App.Shutdown. In the background because the sweep issues one RPC per lease
 	// over a utility bridge whose kiro-cli may still be installing; a boot must not
 	// wait on that.
-	go h.SweepOrphanedRuns(h.ShutdownCtx())
+	go h.SweepOrphanedRuns(appCtx)
 
 	startScheduleRunner(ctx, scheduleStore, h)
 
 	mcpRegistry := mcpPkg.NewRegistryProxy()
-	mcpPrewarm := prewarm.NewRunner(ctx, mcpStore)
+	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
 	mcpPrewarm.OnStatus = func(pkg string, state prewarm.State) {
 		h.Broadcast(ctx, api.NewEvent(api.EventMCPPrewarm, "", api.MCPPrewarmPayload{
 			Package: pkg,
@@ -167,7 +193,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	steer.SetMCPSnapshot(func() steering.MCPSnapshot {
 		return steering.MCPSnapshot{Servers: h.MCPSnapshot()}
 	})
-	h.SetMCPOnChange(func() { steer.Generate(h.ShutdownCtx()) })
+	h.SetMCPOnChange(func() { steer.Generate(appCtx) })
 	h.SetPreBridgeSpawn(func(ctx context.Context) { steer.Generate(ctx) })
 
 	// Tools engine: the cplieger/toolbelt reconciler owns tools.json v2
@@ -176,7 +202,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// disabled LSP + gh templates on fresh volumes (toggled on in
 	// Settings -> Tools). Boot reconciles async — installed tools
 	// persist on the volume, so nothing blocks server start.
-	toolsEngine, err := wireToolsEngine(cfg, h)
+	toolsEngine, err := wireToolsEngine(appCtx, cfg, h)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +231,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// snapshot the generator reads is a never-blocking cache. It is
 	// primed off the boot path and refreshed on forge changes and on a
 	// TTL, each refresh regenerating environment.md when data changed.
-	forgeCache := newForgeSnapshotCache(ctx, steer, func(bctx context.Context) steering.ForgeSnapshot {
+	forgeCache := newForgeSnapshotCache(appCtx, steer, func(bctx context.Context) steering.ForgeSnapshot {
 		return forgeSnapshot(bctx, forgesManager)
 	})
 	steer.SetForgeSnapshot(forgeCache.snapshot)
@@ -232,7 +258,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		}
 		return time.Duration(days) * 24 * time.Hour
 	}
-	purgeScheduler := chat.NewPurgeScheduler(ctx, chatStore, retention)
+	purgeScheduler := chat.NewPurgeScheduler(chatStore, retention)
 	// Retention must never delete a chat someone is using. Chats no longer
 	// move to an archive directory, so the purge scans the SAME directory live
 	// chats live in — this predicate is what keeps an old-but-open conversation
@@ -243,7 +269,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 			sessionReaper.Reap(id)
 		}
 	})(chatStore)
-	purgeScheduler.Start()
+	purgeScheduler.Start(appCtx)
 
 	srv := server.New(
 		server.WithSteering(steer),
@@ -273,6 +299,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		server.WithHostPolicy(cfg.HostPolicy),
 	)
 
+	built = true
 	return &App{
 		Hub:            h,
 		Server:         srv,
@@ -281,6 +308,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		tools:          toolsEngine,
 		stopKiro:       kiro.stop,
 		stopPRPoller:   stopPRPoller,
+		stopApp:        stopApp,
 	}, nil
 }
 
@@ -322,6 +350,13 @@ func (a *App) Shutdown() {
 	if a.tools != nil {
 		a.tools.Close()
 	}
+	// The app's lifetime ends immediately BEFORE the hub's own teardown, not
+	// after it: the hub's shutdown context is a child of this one, so cancelling
+	// here is the same instant the app-lifetime goroutines used to lose the
+	// context they took out of the hub via ShutdownCtx(). Doing it earlier would
+	// signal the push service's Done before the poller that consults it has been
+	// stopped, which is what the ordering above exists to prevent.
+	callIfSet(a.stopApp)
 	if a.Hub != nil {
 		a.Hub.Shutdown()
 	}
@@ -332,6 +367,15 @@ func (a *App) Shutdown() {
 func callIfSet(fn func()) {
 	if fn != nil {
 		fn()
+	}
+}
+
+// cancelUnless calls cancel unless *built is true. Deferred by Build, and a named
+// function rather than a closure so the guard does not count against Build's
+// complexity ceiling: `built` is read at call time through the pointer.
+func cancelUnless(built *bool, cancel context.CancelFunc) {
+	if !*built {
+		cancel()
 	}
 }
 
@@ -380,6 +424,13 @@ const forgeSnapshotTTL = 5 * time.Minute
 // snapshot actually changed, so logins/disconnects propagate to
 // environment.md within one CLI round trip.
 type forgeSnapshotCache struct {
+	// appCtx is the app's lifetime, required at construction. It cannot be a
+	// method parameter: the cache's entry points are a steering callback of
+	// signature func() steering.ForgeSnapshot (snapshot) and a change hook of
+	// signature func() (refresh), neither of which carries a context, and both
+	// reach rebuild — which shells out to the forge CLIs and regenerates the
+	// steering file. The rebuild is the work that must not outlive the process,
+	// so the lifetime is held here.
 	appCtx context.Context
 	build  func(context.Context) steering.ForgeSnapshot
 	steer  *steering.Generator
@@ -393,6 +444,9 @@ type forgeSnapshotCache struct {
 // newForgeSnapshotCache wires a cache around build (the CLI-backed
 // forgeSnapshot in production; injectable for tests) that regenerates
 // steer on data changes.
+//
+// ctx is the app's lifetime and is required; see the appCtx field for why it
+// cannot arrive at a method instead.
 func newForgeSnapshotCache(ctx context.Context, steer *steering.Generator,
 	build func(context.Context) steering.ForgeSnapshot,
 ) *forgeSnapshotCache {
@@ -527,8 +581,11 @@ func repoNamesFor(ctx context.Context, kind forgesPkg.Kind, host string) []strin
 // /api/tools mount for a nil engine. forges.EnsureTool left nil makes a
 // forge login report "gh is not installed (tools engine unavailable)"
 // instead of panicking.
-func wireToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
-	toolsEngine, err := buildToolsEngine(cfg, h)
+//
+// appCtx is the app's lifetime, forwarded to buildToolsEngine, which parents
+// the two code-intelligence activations on it.
+func wireToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
+	toolsEngine, err := buildToolsEngine(appCtx, cfg, h)
 	if err != nil {
 		return nil, err
 	}
@@ -542,7 +599,7 @@ func wireToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 	return toolsEngine, nil
 }
 
-func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
+func buildToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 	catalogRefresh := &toolbelt.CatalogRefresh{
 		URL:      cfg.ToolCatalogURL,
 		Require:  cfg.ToolCatalogRequire,
@@ -576,10 +633,10 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 			// no lsp tool is enabled+installed). Async — job callbacks
 			// must not block (fired under the queue lock).
 			if j != nil && j.State == toolbelt.JobDone {
-				// The hub's shutdown context, not Background: this goroutine
-				// writes lsp.json, and a Background parent meant SIGTERM
-				// abandoned it mid-write instead of unwinding it.
-				go h.EnsureCodeIntelligence(h.ShutdownCtx())
+				// The app's lifetime, not Background: this goroutine writes
+				// lsp.json, and a Background parent meant SIGTERM abandoned it
+				// mid-write instead of unwinding it.
+				go h.EnsureCodeIntelligence(appCtx)
 			}
 		},
 		OnJobOutput: func(jobID string, lines []string) {
@@ -616,8 +673,8 @@ func buildToolsEngine(cfg *Config, h *hub.Hub) (*toolbelt.Engine, error) {
 		}
 		return false
 	})
-	// Shutdown context, not Background — see the OnJobChanged spawn above.
-	go h.EnsureCodeIntelligence(h.ShutdownCtx())
+	// The app's lifetime, not Background — see the OnJobChanged spawn above.
+	go h.EnsureCodeIntelligence(appCtx)
 	return toolsEngine, nil
 }
 

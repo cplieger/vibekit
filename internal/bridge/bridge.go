@@ -74,6 +74,11 @@ const (
 
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
+	// lifecycleCtx bounds the subprocess: the receiving half of
+	// api.StartOpts.Lifetime, assigned by Start, which refuses a nil one. It is
+	// a lifetime HANDLE rather than a stashed caller context — never a request
+	// or turn context — which is why it is required at the method that runs the
+	// process instead of defaulted anywhere.
 	lifecycleCtx context.Context
 	stdin        io.WriteCloser
 	modes        atomic.Pointer[[]api.SessionMode]

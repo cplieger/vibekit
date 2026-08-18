@@ -149,12 +149,15 @@ func (bc *BridgeCoordinator) hasSecretStorage() bool {
 //
 // It must never be the caller's ctx. Every spawn here is reached from a command
 // handler, and CmdPrompt's is a per-turn context it cancels on return — see
-// api.StartOpts.Lifetime for what that measured like. Nil-safe for tests that
-// build a coordinator without a lifecycle plane.
+// api.StartOpts.Lifetime for what that measured like.
+//
+// It is a plain field read: hub.New requires the hub's lifetime context, so
+// there is nothing to be nil-safe against. The context.Background() fallback
+// that used to sit here existed for tests building a coordinator without a
+// lifecycle plane, and it was the third uncancellable substitution on this one
+// path — a test that wants a Stop-owned subprocess says so in its own
+// StartOpts now.
 func (bc *BridgeCoordinator) processLifetimeCtx() context.Context {
-	if bc.lifecycle == nil || bc.lifecycle.shutdownCtx == nil {
-		return context.Background()
-	}
 	return bc.lifecycle.shutdownCtx
 }
 

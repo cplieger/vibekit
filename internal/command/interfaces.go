@@ -91,7 +91,12 @@ type TerminalAccess interface {
 type InfraDeps interface {
 	WorkDir() string
 	ConfigDir() string
-	ShutdownCtx() context.Context
+	// TurnContext returns the context an in-flight turn runs under, plus the
+	// teardown its handler defers. It replaced a ShutdownCtx() accessor that
+	// handed out the hub's raw lifetime context and left every consumer to
+	// derive a turn context correctly; the one consumer wanted the derivation,
+	// not the lifetime.
+	TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc)
 	InflightAdd(delta int)
 	InflightDone()
 	MCPWaitForReady(ctx context.Context, timeout time.Duration) bool

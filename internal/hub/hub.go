@@ -55,6 +55,20 @@ const (
 // lifecyclePlane groups Hub fields related to process lifecycle,
 // shutdown coordination, and workspace paths.
 type lifecyclePlane struct {
+	// shutdownCtx is the hub's own cancellable child of the lifetime context
+	// New requires, and it is a lifetime HANDLE rather than a stashed caller
+	// context: it is read by the shell manager, the agent terminals, the
+	// projection writer and every Broadcast, none of which a run-method
+	// parameter could reach. Shutdown() cancels it, so the hub can be torn
+	// down on its own without the app's lifetime ending — which is what
+	// App.Shutdown relies on.
+	//
+	// It used to be rooted at context.Background() inside New, which is why
+	// callers had to fetch it back out through an exported ShutdownCtx()
+	// accessor. That accessor is gone: the composition root owns the app's
+	// lifetime and hands the same one to every component, and the one consumer
+	// that needed a context DERIVED from this asks for that instead (see
+	// TurnContext).
 	shutdownCtx    context.Context
 	done           chan struct{}
 	shutdownCancel context.CancelFunc
@@ -255,13 +269,26 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 // New constructs a Hub. Bridges spawn with a fixed kiro-cli acp arg set
 // (agent engine + model + effort); tool-call authorization is owned by
 // kiro-cli's native Cedar policy on v3, not by CLI trust flags.
-func New(workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, opts ...Option) *Hub {
+//
+// ctx is the hub's LIFETIME and is required. The hub has no run method to take
+// it — it is handed to server.New as a route provider and the process then
+// blocks in ListenAndServe — so the fleet's rule for that case applies: require
+// the lifetime at construction rather than default it. There is deliberately no
+// nil check and no WithLifetime option: a nil ctx panics in context.WithCancel
+// below, at the one construction site, which is the refusal; an option would be
+// a default wearing a nicer name, and every default for a lifetime is a
+// lifetime nothing can cancel.
+//
+// New does NOT take ownership of ctx's cancellation. Shutdown cancels the hub's
+// own child of it, so the caller may tear the hub down first and end the app's
+// lifetime afterwards.
+func New(ctx context.Context, workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, opts ...Option) *Hub {
 	sseHub := sse.NewHub(sse.WithReplay(replayBufSize), sse.WithKeepalive(keepaliveInterval))
 	lc := &lifecyclePlane{
 		workDir: workDir,
 		done:    make(chan struct{}),
 	}
-	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(context.Background())
+	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 
 	h := &Hub{
 		lifecycle: lc,

@@ -131,9 +131,9 @@ func TestPurgeScheduler_InitialEvaluationPurges(t *testing.T) {
 		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	writeAgedChat(t, dir, "sched1", 48*time.Hour)
 
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 24 * time.Hour })
-	sched.Start()
+	sched.Start(t.Context())
 	defer sched.Stop()
 
 	if got := recvWithin(t, purged, 3*time.Second); got != "sched1" {
@@ -149,9 +149,9 @@ func TestPurgeScheduler_ReArmsAndProcessesSecondTrigger(t *testing.T) {
 		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	writeAgedChat(t, dir, "first", 48*time.Hour)
 
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 24 * time.Hour })
-	sched.Start()
+	sched.Start(t.Context())
 	defer sched.Stop()
 
 	if got := recvWithin(t, purged, 3*time.Second); got != "first" {
@@ -175,9 +175,9 @@ func TestPurgeScheduler_ZeroRetentionSkipsPurge(t *testing.T) {
 		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
 	chatPath := writeAgedChat(t, dir, "keepforever", 9000*time.Hour)
 
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 0 })
-	sched.Start()
+	sched.Start(t.Context())
 	sched.Stop() // waits for the loop goroutine to finish its cycle and exit
 
 	select {
@@ -194,9 +194,9 @@ func TestPurgeScheduler_ZeroRetentionSkipsPurge(t *testing.T) {
 // goroutine (its done channel closes) and is safe to call more than once.
 func TestPurgeScheduler_StopClosesDone(t *testing.T) {
 	svc, _, _ := newPurgeTestService(t)
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 24 * time.Hour })
-	sched.Start()
+	sched.Start(t.Context())
 	sched.Stop()
 
 	select {
@@ -209,15 +209,15 @@ func TestPurgeScheduler_StopClosesDone(t *testing.T) {
 }
 
 // TestPurgeScheduler_ContextCancellationStopsLoop pins the loop's OTHER
-// exit path: cancelling the context the scheduler was built with must
+// exit path: cancelling the context the scheduler was STARTED with must
 // drain the goroutine without any Stop() call (Stop closes stopCh, which
 // is a different select arm — asserting through it would pass even if the
 // ctx arm were gone).
 func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
 	svc, _, _ := newPurgeTestService(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	sched := NewPurgeScheduler(ctx, svc, func() time.Duration { return 24 * time.Hour })
-	sched.Start()
+	sched := NewPurgeScheduler(svc, func() time.Duration { return 24 * time.Hour })
+	sched.Start(ctx)
 
 	cancel()
 	timer := time.NewTimer(2 * time.Second)
@@ -233,9 +233,9 @@ func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
 // no-op once the scheduler is stopped.
 func TestPurgeScheduler_TriggerAfterStopIsNoop(t *testing.T) {
 	svc, _, _ := newPurgeTestService(t)
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 24 * time.Hour })
-	sched.Start()
+	sched.Start(t.Context())
 	sched.Stop()
 	sched.Trigger() // must return without panic
 }
@@ -244,7 +244,7 @@ func TestPurgeScheduler_TriggerAfterStopIsNoop(t *testing.T) {
 // (it must not block waiting on a goroutine that never launched).
 func TestPurgeScheduler_StopWithoutStart(t *testing.T) {
 	svc, _, _ := newPurgeTestService(t)
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 24 * time.Hour })
 	sched.Stop()
 }
@@ -386,9 +386,9 @@ func TestPurgeScheduler_RescheduleWithZeroRetentionDoesNotPurge(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t, WithOnPurge(rec.recordPurge))
 	chatPath := writeAgedChat(t, dir, "keepforever", 9000*time.Hour)
 
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 0 })
-	timer, _ := sched.purgeAndReschedule()
+	timer, _ := sched.purgeAndReschedule(t.Context())
 	if timer != nil {
 		timer.Stop()
 	}
@@ -409,10 +409,10 @@ func TestPurgeScheduler_NextWaitZeroRetentionReturnsFalse(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t)
 	writeAgedChat(t, dir, "present", 1*time.Hour)
 
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 24 * time.Hour })
 
-	if _, ok := sched.nextWait(0); ok {
+	if _, ok := sched.nextWait(t.Context(), 0); ok {
 		t.Error("nextWait(0) ok = true, want false: retention 0 disables scheduling")
 	}
 }
@@ -425,10 +425,10 @@ func TestPurgeScheduler_NextWaitPositiveRetentionReturnsTrue(t *testing.T) {
 	svc, _, dir := newPurgeTestService(t)
 	writeAgedChat(t, dir, "present", 1*time.Hour)
 
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 24 * time.Hour })
 
-	if _, ok := sched.nextWait(24 * time.Hour); !ok {
+	if _, ok := sched.nextWait(t.Context(), 24*time.Hour); !ok {
 		t.Error("nextWait(24h) ok = false, want true: a non-empty chat dir with positive retention must schedule a wake-up")
 	}
 }
@@ -444,10 +444,10 @@ func TestPurgeScheduler_NextWaitFloorsAtMinWait(t *testing.T) {
 	// result must clamp to the minWait floor.
 	writeAgedChat(t, dir, "ancient", 100*time.Hour)
 
-	sched := NewPurgeScheduler(t.Context(), svc,
+	sched := NewPurgeScheduler(svc,
 		func() time.Duration { return 1 * time.Hour })
 
-	wait, ok := sched.nextWait(1 * time.Hour)
+	wait, ok := sched.nextWait(t.Context(), 1*time.Hour)
 	if !ok {
 		t.Fatal("nextWait ok = false, want true for a non-empty chat dir")
 	}
@@ -578,10 +578,10 @@ func TestPurgeScheduler_AlwaysArmsATimer(t *testing.T) {
 			if tc.aged {
 				writeAgedChat(t, dir, "aged", 48*time.Hour)
 			}
-			sched := NewPurgeScheduler(t.Context(), svc,
+			sched := NewPurgeScheduler(svc,
 				func() time.Duration { return tc.retention })
 
-			timer, timerC := sched.purgeAndReschedule()
+			timer, timerC := sched.purgeAndReschedule(t.Context())
 			if timer == nil || timerC == nil {
 				t.Fatalf("purgeAndReschedule() = (%v, %v), want an armed timer: "+
 					"a nil channel leaves the loop with no wake-up and it never purges again",
@@ -608,9 +608,9 @@ func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 	// the ceiling, which is the case the cap exists for.
 	writeAgedChat(t, dir, "fresh", 0)
 	retention := 30 * 24 * time.Hour
-	sched := NewPurgeScheduler(t.Context(), svc, func() time.Duration { return retention })
+	sched := NewPurgeScheduler(svc, func() time.Duration { return retention })
 
-	natural, ok := sched.nextWait(retention)
+	natural, ok := sched.nextWait(t.Context(), retention)
 	if !ok {
 		t.Fatal("nextWait reported no work for a chat that exists")
 	}
@@ -623,13 +623,13 @@ func TestPurgeScheduler_CapsTheArmedWait(t *testing.T) {
 	// here. An earlier version of this test computed min(natural, maxWait) itself
 	// and asserted it equalled maxWait, which is arithmetically true whatever
 	// production does — it stayed green with the clamp deleted from purge.go.
-	if armed, _ := sched.armWait(retention); armed != maxWait {
+	if armed, _ := sched.armWait(t.Context(), retention); armed != maxWait {
 		t.Errorf("armWait = %v, want the %v ceiling (natural wait was %v)",
 			armed, maxWait, natural)
 	}
 
 	// And the loop really does arm a timer on this path.
-	timer, timerC := sched.purgeAndReschedule()
+	timer, timerC := sched.purgeAndReschedule(t.Context())
 	if timer == nil || timerC == nil {
 		t.Fatal("purgeAndReschedule returned no timer")
 	}

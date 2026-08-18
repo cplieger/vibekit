@@ -63,7 +63,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	cs := newFakeChatStore()
 	hb := newHangingBridge()
 	factory := func() api.ACPBridge { return hb }
-	h := New("/tmp/work", factory, cs)
+	h := New(t.Context(), "/tmp/work", factory, cs)
 	cs.Bus = h
 
 	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })

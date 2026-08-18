@@ -59,7 +59,7 @@ func hubForFSTest(t *testing.T, workDir string) (*Hub, *respondingBridge) {
 	cs := newFakeChatStore()
 	br := newRespondingBridge()
 	factory := func() api.ACPBridge { return br }
-	h := New(workDir, factory, cs)
+	h := New(t.Context(), workDir, factory, cs)
 	cs.Bus = h
 	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
 	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")

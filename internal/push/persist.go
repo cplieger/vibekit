@@ -109,7 +109,7 @@ func (s *Service) saveSubsAsync(ctx context.Context) {
 	done := make(chan struct{})
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 	}
 }
 
@@ -129,15 +129,18 @@ func (s *Service) saveSubs(ctx context.Context) {
 	done := make(chan struct{})
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-		// Guard the completion wait with ctx too: if Close() raced this send
-		// and writeLoop already exited, nothing will ever close `done` —
-		// without this guard the goroutine (an inflight.Go member) would block
-		// forever and hang inflight.Wait() at shutdown.
+		// Guard the completion wait with the service LIFETIME as well as the
+		// send: if Close() raced this send and writeLoop already exited,
+		// nothing will ever close `done` — without this guard the goroutine (an
+		// inflight.Go member) would block forever and hang inflight.Wait() at
+		// shutdown. This is the second signal, and it is why the lifetime stays
+		// a field rather than becoming a parameter: a caller's ctx cannot say
+		// whether the write loop is still alive.
 		select {
 		case <-done:
-		case <-s.ctx.Done():
+		case <-s.lifetime.Done():
 		}
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 	}
 }
 
@@ -154,15 +157,18 @@ func (s *Service) flushSaves() {
 	s.mu.Unlock()
 	select {
 	case s.saveCh <- saveRequest{subs: subs, done: done}:
-		// Guard the completion wait with ctx too: if Close() raced this send
-		// and writeLoop already exited, nothing will ever close `done` —
-		// without this guard the goroutine (an inflight.Go member) would block
-		// forever and hang inflight.Wait() at shutdown.
+		// Guard the completion wait with the service LIFETIME as well as the
+		// send: if Close() raced this send and writeLoop already exited,
+		// nothing will ever close `done` — without this guard the goroutine (an
+		// inflight.Go member) would block forever and hang inflight.Wait() at
+		// shutdown. This is the second signal, and it is why the lifetime stays
+		// a field rather than becoming a parameter: a caller's ctx cannot say
+		// whether the write loop is still alive.
 		select {
 		case <-done:
-		case <-s.ctx.Done():
+		case <-s.lifetime.Done():
 		}
-	case <-s.ctx.Done():
+	case <-s.lifetime.Done():
 	}
 }
 

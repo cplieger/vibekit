@@ -13,7 +13,9 @@ import (
 func ACPBridgeContractTest(t *testing.T, b api.ACPBridge) {
 	t.Helper()
 
-	if err := b.Start(context.Background(), &api.StartOpts{}); err != nil {
+	// Lifetime is required by the contract (api.StartOpts.Lifetime), so it is
+	// part of what this suite asserts an implementation accepts.
+	if err := b.Start(context.Background(), &api.StartOpts{Lifetime: t.Context()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 

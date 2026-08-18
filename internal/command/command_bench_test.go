@@ -28,12 +28,14 @@ func (d *benchDeps) GetBridge(api.ChatID) Bridge                { return nil }
 func (d *benchDeps) GetOrCreateBridge(context.Context, api.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
-func (d *benchDeps) CloseBridge(api.ChatID)                              {}
-func (d *benchDeps) ClearPendingPermsForChat(api.ChatID)                 {}
-func (d *benchDeps) TakePendingPerm(int64, api.SettledBy) bool           { return true }
-func (d *benchDeps) WorkDir() string                                     { return "/tmp" }
-func (d *benchDeps) ConfigDir() string                                   { return "/tmp" }
-func (d *benchDeps) ShutdownCtx() context.Context                        { return context.Background() }
+func (d *benchDeps) CloseBridge(api.ChatID)                    {}
+func (d *benchDeps) ClearPendingPermsForChat(api.ChatID)       {}
+func (d *benchDeps) TakePendingPerm(int64, api.SettledBy) bool { return true }
+func (d *benchDeps) WorkDir() string                           { return "/tmp" }
+func (d *benchDeps) ConfigDir() string                         { return "/tmp" }
+func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithCancel(context.WithoutCancel(reqCtx))
+}
 func (d *benchDeps) InflightAdd(int)                                     {}
 func (d *benchDeps) InflightDone()                                       {}
 func (d *benchDeps) CleanupChatState(context.Context, api.ChatID)        {}
@@ -75,8 +77,10 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	if d.ConfigDir() == "" {
 		t.Error("ConfigDir() returned empty")
 	}
-	if d.ShutdownCtx() == nil {
-		t.Error("ShutdownCtx() returned nil")
+	if turnCtx, cancel := d.TurnContext(t.Context()); turnCtx == nil {
+		t.Error("TurnContext() returned a nil context")
+	} else {
+		cancel()
 	}
 	if !d.MCPWaitForReady(t.Context(), time.Millisecond) {
 		t.Error("MCPWaitForReady returned false")
@@ -115,8 +119,10 @@ func TestBenchDeps_Contract(t *testing.T) {
 		if d.WorkDir() == "" {
 			t.Error("WorkDir must be non-empty")
 		}
-		if d.ShutdownCtx() == nil {
-			t.Error("ShutdownCtx must be non-nil")
+		if turnCtx, cancel := d.TurnContext(t.Context()); turnCtx == nil {
+			t.Error("TurnContext must return a non-nil context")
+		} else {
+			cancel()
 		}
 	})
 

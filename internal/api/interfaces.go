@@ -125,20 +125,36 @@ type Hub interface {
 	Shutdown()
 }
 
-// StartOpts collects the parameters for ACPBridge.Start. All fields are
-// optional; a zero-value StartOpts creates a new session with no model
-// override.
+// StartOpts collects the parameters for ACPBridge.Start. Lifetime is
+// REQUIRED; every other field is optional, so a StartOpts carrying nothing but
+// a Lifetime creates a new session with no model override.
 //
 // There is no MCPServers field. The user's MCP servers reach KAS through its own
 // config file, which vibekit renders — passing them on session/new would OUTRANK
 // that file and freeze the set for the session's lifetime.
 type StartOpts struct {
 	// Lifetime bounds the kiro-cli SUBPROCESS. Cancelling it closes the
-	// process's stdin and signals its tree; nil leaves the process owned
-	// solely by Stop().
+	// process's stdin and signals its tree.
+	//
+	// It is REQUIRED, and Start refuses a nil one. This is the canonical
+	// statement of the fleet's rule for a lifetime context: a long-lived
+	// component takes it as a parameter to the method that runs, and where
+	// that context must outlive the call it is REQUIRED there rather than
+	// defaulted, because every default for a lifetime is a lifetime nothing
+	// can cancel. Start used to substitute context.WithoutCancel(ctx) —
+	// literally an uncancellable context — for a caller who forgot this
+	// field, and startProcess had a second context.Background() fallback
+	// behind that one. Both are gone; a caller that genuinely wants a
+	// subprocess owned solely by Stop() now says so by passing
+	// context.Background() at the call site, which is a decision in the
+	// diff rather than an omission nobody reviews.
 	//
 	// It is deliberately NOT Start's ctx, which bounds only the startup
-	// handshake. Conflating the two is a defect with a measured signature:
+	// handshake. Two contexts, one parameter each, is also why the lifetime
+	// rides this struct instead of becoming a second positional argument:
+	// adjacent same-typed parameters are the misuse-proof-signature hazard
+	// this fleet fixes elsewhere, and a swap here is silent. Conflating the
+	// two is a defect with a measured signature:
 	// CmdPrompt runs a turn under a per-turn context and cancels it on
 	// handler return, so a bridge that took its lifetime from there had its
 	// stdin closed and its head signalled the moment the FIRST prompt
@@ -210,8 +226,10 @@ type ACPBridge interface {
 	// (session/load). Exactly one call per bridge instance.
 	//
 	// ctx bounds the startup handshake ONLY. The subprocess's own lifetime
-	// comes from StartOpts.Lifetime, so a caller may pass a request-scoped
-	// ctx here without killing the bridge when that request returns.
+	// comes from StartOpts.Lifetime, which is REQUIRED — Start returns an
+	// error on a nil one rather than substituting a context nothing can
+	// cancel — so a caller may pass a request-scoped ctx here without
+	// killing the bridge when that request returns.
 	Start(ctx context.Context, opts *StartOpts) error
 	// Stop kills the subprocess. NotifCh closes. Must be called at most
 	// once per bridge instance.

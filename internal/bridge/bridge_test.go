@@ -718,7 +718,7 @@ done
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -729,7 +729,7 @@ done
 
 	t.Run("Start_with_existing_session", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{SessionID: "existing-sess", Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), SessionID: "existing-sess", Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -740,7 +740,7 @@ done
 
 	t.Run("Call_returns_response", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -755,7 +755,7 @@ done
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -766,7 +766,7 @@ done
 
 	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		ch := b.NotifCh()
@@ -784,7 +784,7 @@ done
 
 	t.Run("ModelID_returns_value", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -929,7 +929,7 @@ done
 	// and "sonnet" is the value under test. A requested model would legitimately
 	// override it via session/set_config_option — see
 	// TestNewSession_AppliesRequestedModelAndEffort.
-	if err := b.Start(t.Context(), &api.StartOpts{}); err != nil {
+	if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context()}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if id := b.SessionID(); id != "lifecycle-001" {
@@ -1253,11 +1253,21 @@ func TestStop_NoKillErrorLogOnLiveProcess(t *testing.T) {
 
 // --- bridge_process.go: startProcess ---
 
-// startProcess substitutes context.Background() for a nil lifecycleCtx
-// (the state right after New), so it must not panic on a nil ctx.
-func TestStartProcess_NilLifecycleCtxFallsBackToBackground(t *testing.T) {
+// startProcess reports a spawn failure rather than swallowing it.
+//
+// This was TestStartProcess_NilLifecycleCtxFallsBackToBackground, which pinned a
+// context.Background() substitution for a nil lifecycleCtx — the state right
+// after New. That fallback is deleted: Start refuses a nil StartOpts.Lifetime
+// (TestStart_RefusesNilLifetime), so the only path into startProcess has already
+// assigned a real lifetime, and a nil arriving here would be a bug worth the
+// panic rather than a case to absorb into an uncancellable subprocess. The
+// assertion that stood on its own survives.
+func TestStartProcess_ReportsSpawnFailure(t *testing.T) {
 	bogus := filepath.Join(t.TempDir(), "no-such-kiro-cli")
 	b := New(bogus, t.TempDir())
+	// Not t.Context(): lifecycleCtx is what CommandContext binds the subprocess
+	// to, and it must outlive the t.Cleanup(b.Stop) teardown below.
+	b.lifecycleCtx = context.Background()
 	t.Cleanup(b.Stop)
 	err := b.startProcess("")
 	if err == nil {
@@ -1558,7 +1568,7 @@ done
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
 		b := New(scriptPath, dir)
-		if err := b.Start(t.Context(), &api.StartOpts{Model: "m", EnableHooks: enableHooks}); err != nil {
+		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "m", EnableHooks: enableHooks}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -1738,7 +1748,7 @@ func metaKiroSettings(t *testing.T, line string) map[string]any {
 // no workflow steering doc. Nothing logged it and no method 404'd, so a fixture
 // on this exact call is the only thing that notices.
 func TestSessionNewCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/new", &api.StartOpts{Model: "m"})
+	line := captureRequest(t, "session/new", &api.StartOpts{Lifetime: t.Context(), Model: "m"})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
 	if !ok {
@@ -1764,7 +1774,7 @@ door. Captured:
 // fresh chat has the workflow tools and a resumed one silently does not, which is
 // the worst shape of the two: it looks like the fix landed.
 func TestSessionLoadCarriesWorkflowsAtSessionDoor(t *testing.T) {
-	line := captureRequest(t, "session/load", &api.StartOpts{Model: "m", SessionID: "sess_resume_door"})
+	line := captureRequest(t, "session/load", &api.StartOpts{Lifetime: t.Context(), Model: "m", SessionID: "sess_resume_door"})
 	settings := metaKiroSettings(t, line)
 	got, ok := settings["workflows"].(map[string]any)
 	if !ok {
@@ -1798,7 +1808,7 @@ func TestSessionDoorOmitsMetaWhenDisabled(t *testing.T) {
 	t.Setenv("RPC_CAPTURE", capturePath)
 
 	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &api.StartOpts{Model: "m"}); err != nil {
+	if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "m"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -2020,8 +2030,8 @@ done
 		opts   *api.StartOpts
 		method string
 	}{
-		{"session/new", &api.StartOpts{Model: "m"}, "session/new"},
-		{"session/load", &api.StartOpts{SessionID: "existing", Model: "m"}, "session/load"},
+		{"session/new", &api.StartOpts{Lifetime: t.Context(), Model: "m"}, "session/new"},
+		{"session/load", &api.StartOpts{Lifetime: t.Context(), SessionID: "existing", Model: "m"}, "session/load"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2114,7 +2124,7 @@ done
 	}
 
 	b := New(scriptPath, dir)
-	if err := b.Start(t.Context(), &api.StartOpts{Model: "m"}); err != nil {
+	if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "m"}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	b.Stop()
@@ -2244,6 +2254,7 @@ done
 		t.Setenv("INIT_CAPTURE", capturePath)
 		b := New(scriptPath, dir)
 		err := b.Start(t.Context(), &api.StartOpts{
+			Lifetime:      t.Context(),
 			Model:         "m",
 			SecretStorage: tc.secretStorage,
 			EnableHooks:   tc.enableHooks,

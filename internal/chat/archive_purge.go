@@ -1,7 +1,6 @@
 package chat
 
 import (
-	"context"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/chat/archive"
@@ -10,6 +9,9 @@ import (
 // NewPurgeScheduler builds a scheduler that runs purges based on the
 // retention value returned by `retention`. Delegates to the archive
 // sub-package.
-func NewPurgeScheduler(ctx context.Context, store *Store, retention func() time.Duration) *archive.PurgeScheduler {
-	return archive.NewPurgeScheduler(ctx, store.archiveSvc(), retention)
+//
+// The scheduler's context is not a construction input: it arrives at
+// PurgeScheduler.Start, the method that runs the loop.
+func NewPurgeScheduler(store *Store, retention func() time.Duration) *archive.PurgeScheduler {
+	return archive.NewPurgeScheduler(store.archiveSvc(), retention)
 }

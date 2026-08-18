@@ -318,7 +318,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 // the guard (and fails later decoding p256dh), while pushBodyCap+1 is
 // rejected as too large before any work.
 func TestPush_PayloadSizeBoundary(t *testing.T) {
-	s := &Service{ctx: t.Context()}
+	s := &Service{lifetime: t.Context()}
 	sub := api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/size"}
 	sub.Keys.P256dh = "###not-base64###" // invalid → "decode p256dh" once past the guard
 	sub.Keys.Auth = "AAAA"

@@ -5,6 +5,7 @@ package hub
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -20,11 +21,15 @@ import (
 
 // --- Hub construction helpers ---
 
+// newTestHub builds a Hub on context.Background(), which is what New itself used
+// to root its lifetime at before that context became a required parameter — so
+// every one of the ~200 callers keeps exactly the lifetime it had, and a test
+// that wants the hub torn down calls Shutdown as it always did.
 func newTestHub() (*Hub, *fakeChatStore, *fakeBridge) {
 	cs := newFakeChatStore()
 	br := newFakeBridge()
 	factory := func() api.ACPBridge { return br }
-	h := New("/tmp/work", factory, cs)
+	h := New(context.Background(), "/tmp/work", factory, cs)
 	cs.Bus = h
 	// Signal MCP readiness immediately so tests don't wait 30 seconds.
 	h.mcpRegistry.signalReady()

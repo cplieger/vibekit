@@ -247,32 +247,6 @@ func hasMessageID(c *api.Chat, id string) bool {
 	return false
 }
 
-// turnContext derives the context an in-flight turn runs under. It
-// deliberately severs the caller's (prompt POST r.Context()) cancellation
-// via context.WithoutCancel: a mid-turn client drop — iOS backgrounding,
-// a proxy timeout, a network blip — must NOT cancel the bridge Call. If
-// it did, CmdPrompt would emit prompt_failed and return BEFORE
-// EmitTurnEndedWithStats, so no turn_ended fires and the assistant buffer
-// is never persisted, even though kiro-cli keeps running the turn to
-// completion. Request-scoped values are preserved. Cancellation is
-// re-attached to the hub shutdown context via AfterFunc so the turn still
-// dies on hub shutdown; the returned cancel also tears it down on handler
-// return. Explicit user cancellation is unaffected — it goes through
-// session/cancel (Notify), not this context.
-//
-// This mirrors the established pattern in hub/agent_terminal.go, which
-// runs agent-spawned subprocesses under context.WithCancel(
-// context.WithoutCancel(ctx)) + AfterFunc(shutdownCtx, cancel) for the
-// same reason (a per-request ctx must not tear down longer-lived work).
-func turnContext(reqCtx, shutdownCtx context.Context) (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.WithoutCancel(reqCtx))
-	stop := context.AfterFunc(shutdownCtx, cancel)
-	return ctx, func() {
-		stop()
-		cancel()
-	}
-}
-
 // CmdPrompt handles the prompt command.
 func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
@@ -301,10 +275,10 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 
 	// 2. Ensure the bridge exists and serialize per-chat prompts. The turn
 	// runs under a context detached from the prompt POST's r.Context()
-	// (see turnContext): a mid-turn client disconnect must not cancel the
-	// in-flight bridge Call, or the turn fails before it can finalize and
-	// persist the assistant buffer.
-	ctx, cancel := turnContext(ctx, deps.ShutdownCtx())
+	// (see Dependencies.TurnContext): a mid-turn client disconnect must not
+	// cancel the in-flight bridge Call, or the turn fails before it can
+	// finalize and persist the assistant buffer.
+	ctx, cancel := deps.TurnContext(ctx)
 	defer cancel()
 	sb, err := deps.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {

@@ -157,7 +157,9 @@ func TestSaveSubsAsync_CtxGuard(t *testing.T) {
 		return &Service{
 			subs:   map[string]api.PushSubscription{},
 			saveCh: make(chan saveRequest, 1),
-			ctx:    t.Context(), // service ctx active so the send path is taken
+			// The service lifetime is live so the send path is taken; the
+			// per-call guard ctx is what each case varies.
+			lifetime: t.Context(),
 		}
 	}
 

@@ -101,7 +101,23 @@ type vapidKeys struct {
 
 // Service manages push subscriptions and sends notifications.
 type Service struct {
-	ctx           context.Context
+	// lifetime is the service's OWN cancellable child of the context New
+	// requires, and it must stay a field: it is the writeLoop-LIVENESS signal,
+	// which is a second, independent fact from any caller's ctx.
+	//
+	// Converting it into a method parameter would merge the two, and that merge
+	// has already cost a shutdown hang: saveSubs and flushSaves send a snapshot
+	// to writeLoop and then wait for `done` to close, and if Close() raced that
+	// send, writeLoop has already exited and nothing will ever close it. The
+	// caller's ctx says nothing about whether the loop is alive; only this does.
+	// See persist.go's guarded waits and the in-code note there. The same holds
+	// for send.go's mergeCtx, which composes a request ctx WITH this one rather
+	// than picking either.
+	//
+	// Named for what it is, not `ctx`: a field called ctx reads like an ambient
+	// context at the dozen sites that consume it, and that reading is exactly
+	// what invites merging it with a caller's.
+	lifetime      context.Context
 	prefsFlight   singleflight.Group
 	saveCh        chan saveRequest
 	writeLoopDone chan struct{}
@@ -127,6 +143,10 @@ type saveRequest struct {
 
 // New creates a Service, loads persisted subscriptions and preferences, and starts the write loop.
 // subject is the VAPID subject (mailto: or https: URI identifying the sender).
+//
+// ctx is the service's lifetime and is required — it is passed straight to
+// context.WithCancel, so a nil one is refused there, at the single construction
+// site, rather than defaulted into a service nothing can stop.
 func New(ctx context.Context, configDir, subject string) *Service {
 	ctx, cancel := context.WithCancel(ctx)
 	prefs := make(map[api.PushKind]bool, len(kindRegistry))
@@ -138,7 +158,7 @@ func New(ctx context.Context, configDir, subject string) *Service {
 		lastPush:      make(map[pushDebounceKey]time.Time),
 		subject:       subject,
 		dir:           configDir,
-		ctx:           ctx,
+		lifetime:      ctx,
 		cancel:        cancel,
 		prefs:         prefs,
 		saveCh:        make(chan saveRequest, 1),
@@ -189,7 +209,7 @@ func New(ctx context.Context, configDir, subject string) *Service {
 	}
 	s.loadKeys()
 	s.loadSubs()
-	s.loadPreferences(s.ctx)
+	s.loadPreferences(s.lifetime)
 	go s.writeLoop()
 	s.mu.Lock()
 	n := len(s.subs)
@@ -201,6 +221,10 @@ func New(ctx context.Context, configDir, subject string) *Service {
 // Close cancels any in-flight pushes and waits for the write loop to
 // drain pending saves. Call from the hub's shutdown path so pending
 // sends don't hold the shutdown up to 10s each.
+//
+// It SIGNALS and WAITS, which is the half of the rule the lifetime field serves:
+// cancelling s.lifetime is the signal, and <-s.writeLoopDone is the proof the
+// loop went quiet.
 func (s *Service) Close() {
 	s.cancel()
 	<-s.writeLoopDone
@@ -221,7 +245,7 @@ func (s *Service) Subscribe(sub api.PushSubscription) {
 	s.mu.Lock()
 	s.subs[sub.Endpoint] = sub
 	s.mu.Unlock()
-	s.saveSubsAsync(s.ctx)
+	s.saveSubsAsync(s.lifetime)
 	// Log only the host so the per-subscriber token in the URL
 	// path doesn't leak into Loki. Host alone is enough to
 	// distinguish Chrome/Firefox/Safari subscribers for debugging.
@@ -237,7 +261,7 @@ func (s *Service) Unsubscribe(endpoint string) {
 	s.mu.Lock()
 	delete(s.subs, endpoint)
 	s.mu.Unlock()
-	s.saveSubsAsync(s.ctx)
+	s.saveSubsAsync(s.lifetime)
 }
 
 // HasSubscribers reports whether any push subscriptions are currently registered.
@@ -351,7 +375,7 @@ func (s *Service) writeLoop() {
 			}
 			s.writeSubsSnapshot(req.subs)
 			close(req.done)
-		case <-s.ctx.Done():
+		case <-s.lifetime.Done():
 			// Drain remaining on shutdown.
 			for {
 				select {
