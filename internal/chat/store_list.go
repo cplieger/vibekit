@@ -17,12 +17,11 @@ import (
 
 // sfDo is a typed wrapper around singleflight.Group.Do that eliminates
 // the need for a type assertion on the result. The closure always
-// returns the concrete type T, so the assertion is guaranteed by
-// construction.
-func sfDo[T any](sf *singleflight.Group, key string, fn func() T) T {
+// returns a listResult, so the assertion is guaranteed by construction.
+func sfDo(sf *singleflight.Group, key string, fn func() listResult) listResult {
 	v, _, _ := sf.Do(key, func() (any, error) { return fn(), nil })
-	t, _ := v.(T)
-	return t
+	r, _ := v.(listResult)
+	return r
 }
 
 // List returns every chat's header (no messages) sorted by UpdatedAt desc.

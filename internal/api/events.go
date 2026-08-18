@@ -12,19 +12,15 @@ package api
 // error and the full event vocabulary discoverable via IDE completion.
 type EventType string
 
-// Event is the server→client event envelope, generic over payload type.
-// JSON serialization is identical to ServerEvent: {type, chat_id, payload}.
-// Used as a construction helper via NewEvent to provide compile-time type
-// safety at emit sites; the result is converted to ServerEvent for broadcast.
-type Event[T any] struct {
-	Payload T         `json:"payload,omitempty"`
+// ServerEvent is the server→client event envelope broadcast to every SSE
+// client: {type, chat_id, payload}. Payload is the event-specific JSON
+// object; handlers type-assert based on Type. Construct it through NewEvent,
+// which keeps the payload typed at the emit site.
+type ServerEvent struct {
+	Payload any       `json:"payload,omitempty"`
 	Type    EventType `json:"type"`
 	ChatID  ChatID    `json:"chat_id,omitempty"`
 }
-
-// ServerEvent is the envelope broadcast to every SSE client. Payload is
-// the event-specific JSON object; handlers type-assert based on Type.
-type ServerEvent = Event[any]
 
 // NewEvent constructs a ServerEvent with a typed payload, providing
 // compile-time type safety at the construction site.

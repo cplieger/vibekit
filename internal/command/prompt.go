@@ -43,7 +43,7 @@ func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, erro
 }
 
 // retryWithBackoff retries fn up to maxAttempts times with a fixed delay.
-func retryWithBackoff[T any](ctx context.Context, maxAttempts int, delay time.Duration, shouldRetry func(error) bool, fn func() (T, error)) (T, error) {
+func retryWithBackoff(ctx context.Context, maxAttempts int, delay time.Duration, shouldRetry func(error) bool, fn func() (*api.RPCResponse, error)) (*api.RPCResponse, error) {
 	result, err := fn()
 	if err == nil || !shouldRetry(err) {
 		return result, err
