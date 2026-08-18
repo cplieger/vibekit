@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/filehandler"
+	"github.com/cplieger/vibekit/internal/filebrowse"
 )
 
 // These cases need a REAL filesystem, not fstest.MapFS: the whole subject is
@@ -263,7 +263,7 @@ func TestKiroDocsGuard_ASymlinkedRootIsItsOwnBoundary(t *testing.T) {
 //
 // It is driven through the predicate rather than a fixture under /config, because
 // the entries are absolute container paths a test cannot create. What this pins
-// is that the guard consults filehandler.IsSensitive on the RESOLVED path — the
+// is that the guard consults filebrowse.IsSensitive on the RESOLVED path — the
 // only form that can match — which is the half a naive "call IsSensitive on the
 // walk path" implementation gets wrong while looking correct.
 func TestKiroDocsGuard_ConsultsTheSharedSensitiveDenylist(t *testing.T) {
@@ -272,7 +272,7 @@ func TestKiroDocsGuard_ConsultsTheSharedSensitiveDenylist(t *testing.T) {
 		"/config/chats/abc.md",
 		"/config/mcp.json",
 	} {
-		if !filehandler.IsSensitive(sensitive) {
+		if !filebrowse.IsSensitive(sensitive) {
 			t.Fatalf("fixture wrong: %q is not on the shared denylist", sensitive)
 		}
 	}

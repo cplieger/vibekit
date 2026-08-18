@@ -5,7 +5,7 @@
 // listing, so there is nothing here to search recursively, and the server owns
 // the confinement (the granted-roots allow-list plus one kernel-confined root
 // per mount) that a walk has to run inside. Wire contract:
-// internal/filehandler/filehandler_search.go.
+// internal/filebrowse/search.go.
 //
 // TWO SURFACES, ONE VOCABULARY. The bar deliberately mirrors find-in-chat's:
 // the same `Aa` latched match-case toggle spelled with the same `aria-pressed`,
@@ -41,7 +41,7 @@ import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 // Hand-declared beside the feature, the chat-search-types.ts precedent: one
 // endpoint, one record, no codegen registration.
 
-/** One matching line; mirrors filehandler.FileMatch. */
+/** One matching line; mirrors filebrowse.FileMatch. */
 export interface FileSearchMatch {
   /** Container-absolute path, the namespace every /api/file* route speaks. */
   path: string;
@@ -49,7 +49,7 @@ export interface FileSearchMatch {
   line: number;
 }
 
-/** Mirrors filehandler.FileSearchResult. */
+/** Mirrors filebrowse.FileSearchResult. */
 export interface FileSearchResult {
   matches: FileSearchMatch[];
   /** How many files the scan took up. */

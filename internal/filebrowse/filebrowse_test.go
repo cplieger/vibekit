@@ -1,4 +1,4 @@
-package filehandler
+package filebrowse
 
 import (
 	"archive/zip"

@@ -1,4 +1,4 @@
-package filehandler
+package filebrowse
 
 import (
 	"context"
@@ -30,14 +30,14 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		// (400). Client disconnects during upload are dropped at
 		// Debug — there's nothing to respond to.
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			slog.Warn("filehandler: upload too large",
+			slog.Warn("filebrowse: upload too large",
 				"limit", maxUploadSize, "error", err)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				api.ErrorJSON("upload too large"))
 		} else if errors.Is(err, context.Canceled) {
-			slog.Debug("filehandler: upload cancelled by client")
+			slog.Debug("filebrowse: upload cancelled by client")
 		} else {
-			slog.Warn("filehandler: upload form parse failed", "error", err)
+			slog.Warn("filebrowse: upload form parse failed", "error", err)
 			api.BadRequest(w, "invalid multipart form")
 		}
 		return
@@ -58,12 +58,12 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// the final per-file path (in writeUploads below) is the second
 	// layer; this gate is the first.
 	if isProtectedDir(dirLoc.abs) {
-		slog.Warn("filehandler: upload blocked on protected dir", "dir", dirLoc.abs)
+		slog.Warn("filebrowse: upload blocked on protected dir", "dir", dirLoc.abs)
 		api.Forbidden(w, "upload target is protected")
 		return
 	}
 	if err := dirLoc.m.root.MkdirAll(dirLoc.rel(), 0o755); err != nil {
-		slog.Warn("filehandler: upload mkdir failed", "path", dirLoc.abs, "error", err)
+		slog.Warn("filebrowse: upload mkdir failed", "path", dirLoc.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON("upload failed"))
 		return
@@ -78,7 +78,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		respondUploadError(w, dirLoc.abs, uploaded, err)
 		return
 	}
-	slog.Info("filehandler: upload",
+	slog.Info("filebrowse: upload",
 		"dir", dirLoc.abs, "count", len(uploaded), "bytes", totalBytes)
 	api.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
 }
@@ -110,13 +110,13 @@ func respondUploadError(w http.ResponseWriter, dir string, uploaded []string, er
 		return
 	}
 	if errors.Is(err, atomicfile.ErrFileTooLarge) {
-		slog.Warn("filehandler: upload too large",
+		slog.Warn("filebrowse: upload too large",
 			"limit", maxUploadSize, "uploaded", len(uploaded), "error", err)
 		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			uploadErrorJSON("upload too large", uploaded))
 		return
 	}
-	slog.Warn("filehandler: upload write failed",
+	slog.Warn("filebrowse: upload write failed",
 		"dir", dir, "uploaded", len(uploaded), "error", err)
 	api.WriteJSONStatus(w, http.StatusInternalServerError,
 		uploadErrorJSON("upload failed", uploaded))
@@ -153,7 +153,7 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 		}
 		name := filepath.Base(fh.Filename)
 		if name == "" || name == "." || name == ".." {
-			slog.Warn("filehandler: upload rejected: invalid filename",
+			slog.Warn("filebrowse: upload rejected: invalid filename",
 				"raw_name", fh.Filename, "base", name, "target_dir", dirLoc.abs)
 			return uploaded, total, fmt.Errorf("%w: %q", errInvalidFilename, fh.Filename)
 		}
@@ -165,7 +165,7 @@ func writeUploads(ctx context.Context, dirLoc loc, files []*multipart.FileHeader
 		// is a non-sensitive parent that enclosures the sensitive
 		// file. Mirrors the rename-destination check in actionRename.
 		if IsSensitive(dest) {
-			slog.Warn("filehandler: upload rejected: sensitive dest",
+			slog.Warn("filebrowse: upload rejected: sensitive dest",
 				"raw_name", fh.Filename, "dest", dest)
 			return uploaded, total, fmt.Errorf("%w: %q (protected)", errInvalidFilename, fh.Filename)
 		}

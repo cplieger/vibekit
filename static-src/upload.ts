@@ -18,7 +18,7 @@ export interface UploadOptions {
   /** Called on failure. `uploaded` carries the paths that DID land before the
    *  batch stopped, because a partially-failed batch is not rolled back: the
    *  server reports what it wrote (see respondUploadError in
-   *  internal/filehandler/filehandler_upload.go) and the caller can still use
+   *  internal/filebrowse/upload.go) and the caller can still use
    *  those files. Empty on a transport failure, where nothing is known. */
   onError?: (msg: string, uploaded: string[]) => void;
   /** Optional signal for programmatic cancellation (e.g. chat delete, navigation). */

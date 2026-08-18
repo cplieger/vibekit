@@ -1,4 +1,4 @@
-package filehandler
+package filebrowse
 
 // Tests for the allow-list mount machinery itself: grant parsing,
 // mount opening, longest-prefix matching for nested grants, and

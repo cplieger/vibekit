@@ -18,7 +18,7 @@ import (
 	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/composition"
-	"github.com/cplieger/vibekit/internal/filehandler"
+	"github.com/cplieger/vibekit/internal/filebrowse"
 	forgesPkg "github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/git"
 	"github.com/cplieger/vibekit/internal/hub"
@@ -37,7 +37,7 @@ var (
 	_ api.Hub                  = (*hub.Hub)(nil)
 	_ server.SteeringGenerator = (*steering.Generator)(nil)
 	_ api.RouteHandler         = (*git.Handler)(nil)
-	_ api.RouteHandler         = (*filehandler.Handler)(nil)
+	_ api.RouteHandler         = (*filebrowse.Handler)(nil)
 	_ api.RouteHandler         = (*auth.Handler)(nil)
 	_ api.PushService          = (*pushPkg.Service)(nil)
 	_ api.MCPConfig            = (*mcpPkg.Store)(nil)

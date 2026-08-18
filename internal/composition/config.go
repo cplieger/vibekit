@@ -14,7 +14,7 @@ import (
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
-	"github.com/cplieger/vibekit/internal/filehandler"
+	"github.com/cplieger/vibekit/internal/filebrowse"
 	"github.com/cplieger/webhttp"
 )
 
@@ -166,7 +166,7 @@ func overlayFiles(explicit string) []string {
 // deployment config must not take the whole UI down, and the two
 // standard mounts always survive.
 func browseRoots(workDir, configDir, raw string) []string {
-	extra, invalid := filehandler.ParseBrowseRoots(raw)
+	extra, invalid := filebrowse.ParseBrowseRoots(raw)
 	if len(invalid) > 0 {
 		slog.Warn("config: ignoring malformed VIBEKIT_BROWSE_ROOTS entries (want absolute paths, colon-separated)",
 			"entries", invalid)

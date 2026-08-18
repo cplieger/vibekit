@@ -37,7 +37,7 @@
 //     (a stat storm on a walk) and can return a DIFFERENT mount when an in-tree
 //     symlink crosses grants, which would silently re-root the walk mid-flight.
 
-package filehandler
+package filebrowse
 
 import (
 	"bytes"
@@ -128,7 +128,7 @@ const (
 // errSearchBinary marks a candidate rejected by the binary sniff. It is not a
 // failure and never logged: a match inside a binary is noise the reader cannot
 // act on, so the file is opened, sniffed and dropped.
-var errSearchBinary = errors.New("filehandler: binary file")
+var errSearchBinary = errors.New("filebrowse: binary file")
 
 // FileMatch is one matching LINE. A line number rather than a byte offset
 // because the client opens the result at `/file/{path}#L<line>`, which is the
@@ -441,7 +441,7 @@ func openSearchRoot(l loc) (*os.File, error) {
 	for i, name := range names {
 		if name == "" || name == "." || name == ".." {
 			_ = dir.Close()
-			return nil, fmt.Errorf("filehandler: search root %q has a non-component segment %q", l.abs, name)
+			return nil, fmt.Errorf("filebrowse: search root %q has a non-component segment %q", l.abs, name)
 		}
 		flags := searchDirFlags
 		if i == len(names)-1 {
@@ -466,14 +466,14 @@ func (s *fileScan) addRoot(l loc) bool {
 		// the other mounts still answer — so the reply would otherwise present a
 		// scan of some mounts as a scan of all of them.
 		s.truncated = true
-		slog.Warn("filehandler: search open failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: search open failed", "path", l.abs, "error", err)
 		return true
 	}
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
 		s.truncated = true
-		slog.Warn("filehandler: search stat failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: search stat failed", "path", l.abs, "error", err)
 		return true
 	}
 	if !info.IsDir() {
@@ -535,7 +535,7 @@ func (s *fileScan) walkDir(d searchDir) bool {
 				// never enumerated, so entries the search would have matched are
 				// unaccounted for. EOF is the ordinary end and says nothing.
 				s.truncated = true
-				slog.Warn("filehandler: search readdir failed", "path", d.abs, "error", err)
+				slog.Warn("filebrowse: search readdir failed", "path", d.abs, "error", err)
 			}
 			return true
 		}
@@ -649,7 +649,7 @@ func (s *fileScan) descend(d searchDir, name string) bool {
 	if d.depth+1 > maxSearchDepth {
 		// Refusing to descend leaves files unread, which is what Truncated says.
 		s.truncated = true
-		slog.Debug("filehandler: search depth cap reached", "path", abs)
+		slog.Debug("filebrowse: search depth cap reached", "path", abs)
 		return true
 	}
 	f, err := openChild(d.f, name, abs, searchDirFlags)
@@ -662,7 +662,7 @@ func (s *fileScan) descend(d searchDir, name string) bool {
 		// gets the reason from the log, the caller gets told the answer is partial.
 		if !errors.Is(err, fs.ErrNotExist) && !isSwapRefusal(err) {
 			s.truncated = true
-			slog.Warn("filehandler: search opendir failed", "path", abs, "error", err)
+			slog.Warn("filebrowse: search opendir failed", "path", abs, "error", err)
 		}
 		return true
 	}
@@ -843,10 +843,10 @@ func logSearchReadError(abs string, err error) (lost bool) {
 		return false
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, atomicfile.ErrNotRegular),
 		errors.Is(err, atomicfile.ErrFileTooLarge), isSwapRefusal(err):
-		slog.Debug("filehandler: search skipped file", "path", abs, "error", err)
+		slog.Debug("filebrowse: search skipped file", "path", abs, "error", err)
 		return false
 	default:
-		slog.Warn("filehandler: search read failed", "path", abs, "error", err)
+		slog.Warn("filebrowse: search read failed", "path", abs, "error", err)
 		return true
 	}
 }

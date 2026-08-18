@@ -1,5 +1,5 @@
-// Package filehandler provides HTTP endpoints for browsing, reading,
-// editing, uploading, and downloading files. The browsable surface is
+// Package filebrowse serves the browser's file surface: browsing, reading,
+// editing, uploading, and downloading. The browsable surface is
 // an ALLOW-LIST of granted roots (the /workspace and /config mounts by
 // default, plus any VIBEKIT_BROWSE_ROOTS grants), each kernel-confined
 // through its own os.Root; everything outside the grants is denied by
@@ -7,6 +7,10 @@
 // and state files living inside /config. The URL namespace is the
 // container-absolute path ("/workspace/...", "/config/..."), and "/"
 // lists the granted mounts.
+//
+// It was internal/filehandler, which named the KIND of thing it is rather than
+// the job it does — every HTTP package here is a handler, so the only
+// information in that name was already in the import path.
 //
 // Defense layers are documented on paths.go. The handler is the
 // gatekeeper for everything the user can do from the browser; every
@@ -18,8 +22,8 @@
 // two RECURSIVE routes (the zip download and the content search)
 // resolve their root once and then stay in that mount by
 // construction, re-checking the sensitive-path list per entry —
-// see filehandler_search.go for why both halves are required.
-package filehandler
+// see search.go for why both halves are required.
+package filebrowse
 
 import (
 	"errors"
@@ -80,10 +84,10 @@ var _ api.RouteHandler = (*Handler)(nil)
 func New(rootDirs ...string) (*Handler, error) {
 	mounts, errs := openMounts(rootDirs)
 	for _, err := range errs {
-		slog.Warn("filehandler: skipping browse root", "error", err)
+		slog.Warn("filebrowse: skipping browse root", "error", err)
 	}
 	if len(mounts) == 0 {
-		return nil, fmt.Errorf("filehandler: no usable browse roots in %q", rootDirs)
+		return nil, fmt.Errorf("filebrowse: no usable browse roots in %q", rootDirs)
 	}
 	return &Handler{mounts: mounts}, nil
 }
@@ -112,7 +116,7 @@ var errHandled = errors.New("handled")
 func (h *Handler) resolveOrForbid(w http.ResponseWriter, reqPath string) (loc, bool) {
 	l, err := h.resolvePath(reqPath)
 	if err != nil {
-		slog.Warn("filehandler: path rejected",
+		slog.Warn("filebrowse: path rejected",
 			"path", reqPath, "reason", err.Error())
 		api.Forbidden(w, err.Error())
 		return loc{}, false

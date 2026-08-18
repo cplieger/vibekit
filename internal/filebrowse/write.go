@@ -1,4 +1,4 @@
-package filehandler
+package filebrowse
 
 import (
 	"encoding/json"
@@ -29,7 +29,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			slog.Warn("filehandler: write body too large",
+			slog.Warn("filebrowse: write body too large",
 				"path", l.abs, "limit", maxFileSize, "error", maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				api.ErrorJSON(errFileTooLarge))
@@ -60,12 +60,12 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		current, rErr := atomicfile.ReadBoundedInRoot(r.Context(), l.m.root, l.rel(), maxFileSize)
 		switch {
 		case rErr != nil && !errors.Is(rErr, fs.ErrNotExist):
-			slog.Warn("filehandler: stale-check read failed", "path", l.abs, "error", rErr)
+			slog.Warn("filebrowse: stale-check read failed", "path", l.abs, "error", rErr)
 			api.WriteJSONStatus(w, http.StatusInternalServerError, api.ErrorJSON("write failed"))
 			return
 		case rErr == nil:
 			if got := contentHash(current); got != body.ExpectedHash {
-				slog.Info("filehandler: refused a stale write",
+				slog.Info("filebrowse: refused a stale write",
 					"path", l.abs, "expected", body.ExpectedHash, "actual", got)
 				// The current content rides the 409 so the client can show what
 				// changed instead of asking the user to reload and compare by eye.
@@ -84,7 +84,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	// log label for operator diagnosis. Collapses three parallel 5-line
 	// blocks into three 1-line calls.
 	fail := func(stage string, err error) {
-		slog.Warn("filehandler: "+stage, "path", l.abs, "error", err)
+		slog.Warn("filebrowse: "+stage, "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON("write failed"))
 	}
@@ -108,6 +108,6 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		fail("write close failed", err)
 		return
 	}
-	slog.Info("filehandler: file written", "path", l.abs, "bytes", len(body.Content))
+	slog.Info("filebrowse: file written", "path", l.abs, "bytes", len(body.Content))
 	api.Ok(w)
 }

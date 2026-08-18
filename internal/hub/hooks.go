@@ -122,7 +122,7 @@ type kasHookResult struct {
 // is workspace-relative for workspace hooks (the client's editor link target);
 // for global hooks it is a ~-prefixed DISPLAY path only — the global dir lives
 // under the container HOME, which the file-editor surface deny-lists
-// (internal/filehandler sensitive paths), so the client renders it without an
+// (internal/filebrowse sensitive paths), so the client renders it without an
 // open affordance.
 type hookInfo struct {
 	ID             string `json:"id"`

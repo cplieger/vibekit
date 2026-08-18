@@ -1,4 +1,4 @@
-package filehandler
+package filebrowse
 
 import (
 	"context"
@@ -49,7 +49,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			api.NotFound(w, "not found")
 			return
 		}
-		slog.Warn("filehandler: readdir failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: readdir failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
@@ -57,7 +57,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	entries, err := f.ReadDir(-1)
 	f.Close()
 	if err != nil {
-		slog.Warn("filehandler: readdir failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: readdir failed", "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(errReadFailed))
 		return
@@ -113,7 +113,7 @@ func listEntries(ctx context.Context, entries []os.DirEntry, resolved string) []
 			// here. Debug level so agent-driven directory churn doesn't
 			// create noise; operators can flip the level when the
 			// "some files missing from UI" report comes in.
-			slog.Debug("filehandler: listEntries entry stat failed",
+			slog.Debug("filebrowse: listEntries entry stat failed",
 				"dir", resolved, "name", name, "error", err)
 			continue
 		}
@@ -150,10 +150,10 @@ func (h *Handler) isWritable(l loc) bool {
 		return false
 	}
 	if closeErr := f.Close(); closeErr != nil {
-		slog.Debug("filehandler: probe close failed", "path", rel, "error", closeErr)
+		slog.Debug("filebrowse: probe close failed", "path", rel, "error", closeErr)
 	}
 	if rmErr := l.m.root.Remove(rel); rmErr != nil {
-		slog.Warn("filehandler: probe cleanup failed", "path", rel, "error", rmErr)
+		slog.Warn("filebrowse: probe cleanup failed", "path", rel, "error", rmErr)
 	}
 	return true
 }

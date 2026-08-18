@@ -1,4 +1,4 @@
-package filehandler
+package filebrowse
 
 import (
 	"context"
@@ -52,7 +52,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 	var body fileAction
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			slog.Warn("filehandler: action body too large",
+			slog.Warn("filebrowse: action body too large",
 				"limit", api.MaxJSONBody, "error", maxErr)
 			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				api.ErrorJSON("request body too large"))
@@ -78,7 +78,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, errHandled) {
 			return
 		}
-		slog.Warn("filehandler: action failed",
+		slog.Warn("filebrowse: action failed",
 			"action", body.Action, "path", l.abs, "error", err)
 		api.WriteJSONStatus(w, http.StatusInternalServerError,
 			api.ErrorJSON(body.Action+" failed"))
@@ -91,7 +91,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 // aimed at a granted root itself. Mounts are boot-time configuration;
 // the UI must not be able to remove or shadow one.
 func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
-	slog.Warn("filehandler: "+action+" blocked on granted root", "path", l.abs)
+	slog.Warn("filebrowse: "+action+" blocked on granted root", "path", l.abs)
 	api.Forbidden(w, "refusing to "+action+" a granted root")
 	return errHandled
 }
@@ -102,7 +102,7 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	// cold-boot request with `mkdir /config/chats` can't pre-empt the
 	// chat store's own directory before it's materialised.
 	if isProtectedDir(l.abs) {
-		slog.Warn("filehandler: mkdir blocked on protected dir", "path", l.abs)
+		slog.Warn("filebrowse: mkdir blocked on protected dir", "path", l.abs)
 		api.Forbidden(w, "refusing to mkdir protected directory")
 		return errHandled
 	}
@@ -115,7 +115,7 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	if err := l.m.root.MkdirAll(l.rel(), 0o755); err != nil {
 		return err
 	}
-	slog.Info("filehandler: mkdir", "path", l.abs)
+	slog.Info("filebrowse: mkdir", "path", l.abs)
 	return nil
 }
 
@@ -124,7 +124,7 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	// an exact-match sensitive file (e.g. /config/push-subs.json)
 	// is refused before it ever hits the filesystem.
 	if IsSensitive(l.abs) || isProtectedDir(l.abs) {
-		slog.Warn("filehandler: touch blocked on protected path", "path", l.abs)
+		slog.Warn("filebrowse: touch blocked on protected path", "path", l.abs)
 		api.Forbidden(w, "refusing to touch protected path")
 		return errHandled
 	}
@@ -138,7 +138,7 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	if closeErr := f.Close(); closeErr != nil {
 		return closeErr
 	}
-	slog.Info("filehandler: touch", "path", l.abs)
+	slog.Info("filebrowse: touch", "path", l.abs)
 	return nil
 }
 
@@ -155,14 +155,14 @@ func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc,
 	// files inside. The isProtectedDir helper closes that gap by
 	// blocking the container directories of every sensitive path too.
 	if isProtectedDir(l.abs) {
-		slog.Warn("filehandler: delete blocked on protected dir", "path", l.abs)
+		slog.Warn("filebrowse: delete blocked on protected dir", "path", l.abs)
 		api.Forbidden(w, "refusing to delete protected directory")
 		return errHandled
 	}
 	if err := l.m.root.RemoveAll(l.rel()); err != nil {
 		return err
 	}
-	slog.Info("filehandler: delete", "path", l.abs)
+	slog.Info("filebrowse: delete", "path", l.abs)
 	return nil
 }
 
@@ -178,7 +178,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 		return refuseMountPoint(w, "rename", l)
 	}
 	if isProtectedDir(l.abs) {
-		slog.Warn("filehandler: rename blocked on protected dir", "path", l.abs)
+		slog.Warn("filebrowse: rename blocked on protected dir", "path", l.abs)
 		api.Forbidden(w, "refusing to rename protected directory")
 		return errHandled
 	}
@@ -200,7 +200,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	// the same way copy/move enforce them via resolveCopyMoveDest.
 	destLoc, err := h.resolvePath(dest)
 	if err != nil {
-		slog.Warn("filehandler: rename dest rejected",
+		slog.Warn("filebrowse: rename dest rejected",
 			"from", l.abs, "to", dest, "reason", err.Error())
 		api.Forbidden(w, err.Error())
 		return errHandled
@@ -222,7 +222,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	// is also refused; a destination naming a granted root is the
 	// mount-shadowing variant of the same attack.
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
-		slog.Warn("filehandler: rename blocked on sensitive dest",
+		slog.Warn("filebrowse: rename blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		api.Forbidden(w, "rename target is protected")
 		return errHandled
@@ -230,7 +230,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	if err := l.m.root.Rename(l.rel(), l.relOf(destLoc.abs)); err != nil {
 		return err
 	}
-	slog.Info("filehandler: rename", "from", l.abs, "to", destLoc.abs)
+	slog.Info("filebrowse: rename", "from", l.abs, "to", destLoc.abs)
 	return nil
 }
 
@@ -245,7 +245,7 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l l
 	// and move. Cross-mount copies are fine: the stream reads from
 	// the source mount's root and writes through the destination's.
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
-		slog.Warn("filehandler: copy blocked on sensitive dest",
+		slog.Warn("filebrowse: copy blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		api.Forbidden(w, "copy target is protected")
 		return errHandled
@@ -259,7 +259,7 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l l
 		}
 		return scErr
 	}
-	slog.Info("filehandler: copy", "from", l.abs, "to", destLoc.abs, "bytes", n)
+	slog.Info("filebrowse: copy", "from", l.abs, "to", destLoc.abs, "bytes", n)
 	return nil
 }
 
@@ -282,7 +282,7 @@ func streamCopy(ctx context.Context, src, dest loc, sizeCap int64) (int64, error
 	// allocating the destination and burning IO bandwidth.
 	info, statErr := in.Stat()
 	if statErr != nil {
-		slog.Debug("filehandler: copy source stat failed, relying on LimitReader",
+		slog.Debug("filebrowse: copy source stat failed, relying on LimitReader",
 			"path", src.abs, "error", statErr)
 	} else if info.Size() > sizeCap {
 		return 0, errOversize
@@ -318,7 +318,7 @@ func streamCopy(ctx context.Context, src, dest loc, sizeCap int64) (int64, error
 	}
 	if n > sizeCap {
 		_ = tmp.Close()
-		slog.Warn("filehandler: copy source exceeded cap after stat",
+		slog.Warn("filebrowse: copy source exceeded cap after stat",
 			"path", src.abs, "copied_bytes", n)
 		return 0, errOversize
 	}
@@ -345,7 +345,7 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 		return refuseMountPoint(w, "move", l)
 	}
 	if isProtectedDir(l.abs) {
-		slog.Warn("filehandler: move blocked on protected dir", "path", l.abs)
+		slog.Warn("filebrowse: move blocked on protected dir", "path", l.abs)
 		api.Forbidden(w, "refusing to move protected directory")
 		return errHandled
 	}
@@ -356,7 +356,7 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 	// Destination guard mirrors actionRename: sensitive files,
 	// protected directories, and granted roots are off-limits.
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
-		slog.Warn("filehandler: move blocked on sensitive dest",
+		slog.Warn("filebrowse: move blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
 		api.Forbidden(w, "move target is protected")
 		return errHandled
@@ -372,7 +372,7 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 	if err := l.m.root.Rename(l.rel(), destLoc.rel()); err != nil {
 		return err
 	}
-	slog.Info("filehandler: move", "from", l.abs, "to", destLoc.abs)
+	slog.Info("filebrowse: move", "from", l.abs, "to", destLoc.abs)
 	return nil
 }
 
@@ -385,7 +385,7 @@ func resolveCopyMoveDest(w http.ResponseWriter, body fileAction, h *Handler) (lo
 	}
 	destLoc, err := h.resolvePath(body.Dest)
 	if err != nil {
-		slog.Warn("filehandler: dest path rejected",
+		slog.Warn("filebrowse: dest path rejected",
 			"dest", body.Dest, "reason", err.Error())
 		api.Forbidden(w, err.Error())
 		return loc{}, errHandled

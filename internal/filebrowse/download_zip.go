@@ -1,4 +1,4 @@
-package filehandler
+package filebrowse
 
 import (
 	"archive/zip"
@@ -106,14 +106,14 @@ func (z *zipStream) add(l loc, zipName string) bool {
 	}
 	f, err := l.m.root.Open(l.rel())
 	if err != nil {
-		slog.Warn("filehandler: zip open failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: zip open failed", "path", l.abs, "error", err)
 		return true // skip
 	}
 	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil {
-		slog.Warn("filehandler: zip stat failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: zip stat failed", "path", l.abs, "error", err)
 		return true
 	}
 	if info.IsDir() {
@@ -128,7 +128,7 @@ func (z *zipStream) add(l loc, zipName string) bool {
 func (z *zipStream) addDir(f *os.File, l loc, zipName string) bool {
 	entries, err := f.ReadDir(-1)
 	if err != nil {
-		slog.Warn("filehandler: zip readdir failed", "path", l.abs, "error", err)
+		slog.Warn("filebrowse: zip readdir failed", "path", l.abs, "error", err)
 		return true
 	}
 	for _, e := range entries {
@@ -154,11 +154,11 @@ func (z *zipStream) writeFile(f *os.File, zipName string) bool {
 		z.flusher.Flush()
 	}
 	if z.totalBytes >= maxZipBytes {
-		slog.Warn("filehandler: zip size cap reached", "bytes", z.totalBytes)
+		slog.Warn("filebrowse: zip size cap reached", "bytes", z.totalBytes)
 		return false
 	}
 	if z.fileCount >= maxZipFiles {
-		slog.Warn("filehandler: zip file cap reached", "count", z.fileCount)
+		slog.Warn("filebrowse: zip file cap reached", "count", z.fileCount)
 		return false
 	}
 	return true

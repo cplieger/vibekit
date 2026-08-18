@@ -31,7 +31,7 @@ import (
 // OOM the container by committing a multi-GiB README or tools.json.
 // The workspace hosts agent-cloned upstreams whose contents are
 // attacker-controlled from our point of view; everywhere else in
-// vibekit (bridge_fs, checkpoint blobs, forges, filehandler) clamps
+// vibekit (bridge_fs, checkpoint blobs, forges, filebrowse) clamps
 // reads via io.LimitReader for the same reason.
 const (
 	firstLineReadCap = 4 << 10 // README first non-heading line fits easily in 4 KiB

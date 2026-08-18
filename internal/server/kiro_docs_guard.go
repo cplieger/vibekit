@@ -14,7 +14,7 @@
 //     `.kiro/steering -> /config` is walked as if it were the steering
 //     directory. Every entry is resolved and refused if it leaves the root.
 //
-//  2. filehandler.IsSensitive, the SAME predicate the browser file surface
+//  2. filebrowse.IsSensitive, the SAME predicate the browser file surface
 //     applies — called, not copied. Two scanners disagreeing about what is off
 //     limits is the inconsistency that becomes a leak the next time a root is
 //     widened.
@@ -42,7 +42,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/filehandler"
+	"github.com/cplieger/vibekit/internal/filebrowse"
 )
 
 // docVerdict is the guard's answer about one entry: whether the scan may read it,
@@ -56,9 +56,9 @@ import (
 //
 // # There is no writability bit here, and there was: D67a is WITHDRAWN
 //
-// It claimed a symlinked entry could not be saved, because internal/filehandler
+// It claimed a symlinked entry could not be saved, because internal/filebrowse
 // opens with syscall.O_NOFOLLOW. That is not what happens. resolvePath calls
-// EvalSymlinks and returns the RESOLVED path as loc.abs (filehandler/paths.go), and
+// EvalSymlinks and returns the RESOLVED path as loc.abs (filebrowse/paths.go), and
 // writeFile applies O_NOFOLLOW to that already-canonical target — so the flag
 // refuses a symlink PLANTED at the final component between resolution and open, not
 // a link the user deliberately followed. Saving an aliased steering doc works
@@ -146,7 +146,7 @@ func (g *rootGuard) allow(rel string) docVerdict {
 			"category", g.category, "path", rel, "root", g.dir)
 		return docVerdict{}
 	}
-	if filehandler.IsSensitive(resolved) {
+	if filebrowse.IsSensitive(resolved) {
 		slog.Warn("kiro docs: refusing a path on the sensitive denylist",
 			"category", g.category, "path", rel)
 		return docVerdict{}

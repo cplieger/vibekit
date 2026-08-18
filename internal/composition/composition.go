@@ -21,7 +21,7 @@ import (
 	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/chat/archive"
-	"github.com/cplieger/vibekit/internal/filehandler"
+	"github.com/cplieger/vibekit/internal/filebrowse"
 	forgesPkg "github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/git"
 	"github.com/cplieger/vibekit/internal/hub"
@@ -216,7 +216,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 
 	gitHandler := git.NewHandler(cfg.WorkDir)
 	gitAIHandler := git.NewAIHandler(cfg.WorkDir, h)
-	fileHandler, err := filehandler.New(cfg.BrowseRoots...)
+	fileHandler, err := filebrowse.New(cfg.BrowseRoots...)
 	if err != nil {
 		return nil, err
 	}

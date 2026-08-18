@@ -20,7 +20,7 @@
 //     Catch destructive operations aimed at sensitive paths that the
 //     lexical layer protects only as leaves, not as containers.
 
-package filehandler
+package filebrowse
 
 import (
 	"errors"

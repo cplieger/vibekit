@@ -873,7 +873,7 @@ function splitRepoPath(path: string): { repo: string; rel: string } {
  *  They are three questions, not three levels of one:
  *
  *  - `reachable` — can the file surface reach this path at all? A GLOBAL hook's
- *    file lives under the container HOME, which `internal/filehandler` deny-lists
+ *    file lives under the container HOME, which `internal/filebrowse` deny-lists
  *    as a sensitive path (the whole `/config/home` tree is blocked, and its
  *    `~`-prefixed display path would not even resolve first). Nothing there is
  *    openable, editable or deletable.
