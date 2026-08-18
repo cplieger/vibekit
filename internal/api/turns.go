@@ -81,7 +81,7 @@ func ProjectTurnSummaries(msgs []Message, thinking bool) []TurnSummary {
 	for i := range msgs {
 		m := &msgs[i]
 		if m.Role == RoleUser || len(out) == 0 {
-			body := []Message{}
+			var body []Message
 			if m.Role != RoleUser {
 				body = append(body, *m)
 			}

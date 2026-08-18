@@ -50,6 +50,19 @@ type pushPayload struct {
 //
 // subject names what the notification is about; see api.PushSubject. Pass a zero
 // value for a workspace-global notification with nothing single behind it.
+//
+// The nil check below reads a two-valued answer from one slice: nil means DO NOT
+// SEND — a gate refused (unhealthy, kind disabled, unknown kind, still inside the
+// debounce window) — while a non-nil EMPTY slice means send to nobody, i.e. every
+// gate passed and there are no subscribers. Only the first is a return. The
+// second falls through and fans out to zero endpoints, which matters because
+// preflightSend stamps the debounce timestamp before it snapshots the
+// subscribers: an app nobody has subscribed to still burns the window, so a
+// subscription registered within pushDebounce of a notification is debounced out
+// of the next one. Nothing is lost that was deliverable at the time, and closing
+// it would mean either stamping after the snapshot (reopening the TOCTOU that
+// hold is there to close) or treating an empty subscriber set as a refusal, which
+// is a different claim than the gates make.
 func (s *Service) Send(ctx context.Context, title, body string, notifyType api.PushKind, subject api.PushSubject) {
 	slog.Debug("push: send", "kind", string(notifyType))
 	// Trim against the *marshaled* size, not the raw title+body length. The
@@ -289,6 +302,11 @@ func parseRetryAfter(h string) time.Duration {
 // POST to — or nil if the send should be dropped. Holding mu across
 // the decision + stamp closes the TOCTOU between "should send" and
 // "record last-push".
+//
+// nil and an empty non-nil slice are DIFFERENT answers: nil is "a gate refused",
+// empty is "nothing refused and there is nobody subscribed". See Send for what
+// the caller does with each, and for the consequence of stamping before the
+// snapshot.
 //
 // The window is per kind AND subject. A kind-only window meant the second of two
 // pull requests settling in one poll was dropped inside five seconds while the

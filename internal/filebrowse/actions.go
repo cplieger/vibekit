@@ -234,7 +234,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	return nil
 }
 
-func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) (err error) {
+func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
 	destLoc, err := resolveCopyMoveDest(w, body, h)
 	if err != nil {
 		return err

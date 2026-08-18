@@ -217,7 +217,12 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 		api.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
 		return
 	}
-	lines := []string{}
+	// Not pinned to []string{} the way `branches` below is: git log answering
+	// successfully means at least one commit line, and the no-commits repo takes
+	// the error path above, which writes the empty array explicitly. The client
+	// reads `entries ?? []`, so the unreachable null would degrade to the same
+	// empty state anyway.
+	var lines []string
 	for line := range strings.SplitSeq(out, "\n") {
 		if line != "" {
 			lines = append(lines, line)
