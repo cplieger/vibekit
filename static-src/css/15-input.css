@@ -16,8 +16,40 @@
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
-  /* Positioning context for the top-edge resize handle, which is absolute. */
-  position: relative;
+
+  /* ONE INSET FOR THE WHOLE BOX'S CHROME. The distance from this box's inner
+     edge to a control is the same on the left, on the right and at the bottom,
+     and the same as the gap BETWEEN controls, so the pill row reads as one
+     block rather than as three unrelated measurements. It was
+     `var(--sp-1) var(--sp-2)` — sides 8px, bottom 4px, gaps 4px — which is
+     three values where the eye expects one. Consumed by .prompt-pills and
+     .attachment-row; the textarea keeps its own roomier
+     padding, because text has no border of its own to sit behind. */
+  --pill-inset: var(--sp-1);
+
+  /* CONCENTRIC WITH THIS BOX, not a rung off the radius ladder.
+     A border-radius corner is a quarter circle whose centre sits `radius` in
+     from both edges it joins. The inner corner shares the outer corner's centre
+     — which is what "nested" means to the eye — only when
+         inner = outer − gap,
+     where `gap` is the perpendicular distance between the two border edges:
+     this box's own 1px border plus the inset. 12 − 1 − 4 = 7px.
+     Measured over the first pill's bottom-left corner, the background between
+     the two arcs then holds 4.00px the whole way round the corner. At --r-md
+     (8px) it runs 4.00..4.41px, and with the old asymmetric padding it ran
+     4.00..8.10px — that widening is what read as wrong.
+     Note the precondition, which is why the padding fix had to come first:
+     equal centres require the inset to be equal on BOTH edges of the corner,
+     so while the sides were 8px and the bottom 4px NO single radius could nest.
+     This cannot be a token. --r-md is also the rung for controls inside the
+     8px-padded expand cards, where the same formula gives 3px; a nested radius
+     is a per-container derivation, not a shared value.
+     Rule: Cloud Four, "The Math Behind Nesting Rounded Corners"
+     (https://cloudfour.com/thinks/the-math-behind-nesting-rounded-corners/),
+     which omits the border term; the `gap = border-width + padding` form is the
+     correct one. Restated in vibekit-ui.md "Design". */
+  --pill-radius: calc(var(--r-lg) - 1px - var(--pill-inset));
+
   transition:
     border-color var(--dur-micro),
     box-shadow var(--dur-micro) var(--ease-standard);
@@ -50,48 +82,6 @@
     box-shadow: 0 0 0 1px var(--c-accent);
     background: color-mix(in srgb, var(--c-accent) 3%, var(--c-bg-secondary));
   }
-
-  /* Live resize drag: the pointer must track 1:1, not ease behind it. */
-  &.resizing {
-    transition: none;
-  }
-}
-
-/* --- Composer resize handle (top edge) --- */
-
-.composer-resize {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 0.1875rem;
-  cursor: ns-resize;
-  background: transparent;
-  z-index: 1;
-  /* The box's own rounding, so hovering the handle cannot paint square corners
-     over the accent-lit border beneath it. */
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
-
-  /* Touch drags must fire pointermove, not pan/scroll the page. */
-  touch-action: none;
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-/* Design system: ~24px minimum hit target (WCAG 2.5.8); the visual bar stays
-   3px. Symmetric like the shell handle's, so the downward half stops inside the
-   textarea's own top padding: growing it further would swallow clicks meant to
-   place the caret on the first line of text, and the upward half lands in the
-   bottom bar's padding rather than on the transcript. */
-.composer-resize::before {
-  content: "";
-  position: absolute;
-  inset: -0.625rem 0;
-}
-
-.composer-resize:hover,
-.composer-resize:focus-visible,
-.composer-resize.dragging {
-  background: var(--c-accent);
 }
 
 [id="prompt-input"] {
@@ -99,17 +89,21 @@
   background: transparent;
   color: var(--c-text-primary);
   border: none;
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  /* The box's INNER curve, not its outer one. This textarea is flush against
+     the border (inset 0), so the corner it has to follow is the padding-box arc
+     — one border-width shorter than the 12px the box paints. It carries no
+     background today, so the difference shows only through a focus ring or any
+     future fill; the honest value costs nothing. */
+  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
   padding: var(--sp-3) var(--sp-4) var(--sp-1);
   font-size: var(--fs-md);
   font-family: var(--font-sans);
   resize: none;
-  /* A CEILING the drag handle raises, not a fixed height: field-sizing keeps the
-     box at its content's size underneath, so a one-line message stays one line
-     however tall the ceiling is. `resize: none` stays — the native grabber
-     cannot be clamped against the transcript or persisted, so the handle
-     replaces it rather than sitting beside it. */
-  max-height: var(--composer-h, 12.5rem);
+  /* A fixed CEILING, not a height: `field-sizing: content` keeps the box at its
+     content's size underneath, so a one-line message stays one line. `resize:
+     none` stays — a native grabber cannot be clamped against the transcript, and
+     the box needs no manual sizing when it already tracks what is typed. */
+  max-height: 12.5rem;
   field-sizing: content;
   min-height: 2.5rem;
   line-height: 1.4;
@@ -124,7 +118,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2) 0;
+  padding: var(--pill-inset) var(--pill-inset) 0;
 }
 
 .attachment-pill {
@@ -210,203 +204,13 @@
   opacity: 1;
 }
 
-/* --- Steer chips (mid-turn messages KAS is holding for the agent) --- */
-/* Distinct from attachment pills and from sent user bubbles. Two states, and
-   the difference is the row's whole job:
-
-   WAITING  dashed border + breathing hourglass — in KAS's buffer, unread.
-   READ     solid border + steady check — the model has consumed it.
-
-   The state is carried by BORDER STYLE and GLYPH, not by colour alone, so it
-   survives a colour-vision difference and a monochrome display (WCAG 1.4.1).
-   The animation stops on read because a breathing icon means "still waiting". */
-
-.queued-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2) 0;
-}
-
-.queued-count {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.15rem 0.4rem;
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
-  color: var(--c-text-secondary);
-  list-style: none;
-}
-
-.queued-prompt {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  max-width: min(20rem, 100%);
-  padding: 0.15rem 0.3rem 0.15rem 0.5rem;
-  border: 1px dashed color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
-  border-radius: var(--r);
-  background: color-mix(in srgb, var(--c-accent) 6%, var(--c-bg-secondary));
-  font-size: var(--fs-xs);
-  list-style: none;
-  transition:
-    opacity var(--dur-enter) var(--ease-enter),
-    transform var(--dur-enter) var(--ease-enter);
-
-  @starting-style {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-}
-
-.queued-icon {
-  display: inline-flex;
-  flex: none;
-  color: var(--c-accent);
-}
-
-.queued-icon svg {
-  width: 0.8rem;
-  height: 0.8rem;
-  animation: vk-breathe 2s var(--ease-standard) infinite;
-}
-
-/* Read: settled. Solid border, no breathing, and the glyph goes green — the
-   same success vocabulary a completed tool card uses. */
-.queued-prompt.steer-read {
-  border-style: solid;
-  border-color: color-mix(in srgb, var(--c-green) 45%, var(--c-border));
-  background: color-mix(in srgb, var(--c-green) 6%, var(--c-bg-secondary));
-}
-
-.queued-prompt.steer-read .queued-icon {
-  color: var(--c-green);
-}
-
-.queued-prompt.steer-read .queued-icon svg {
-  animation: none;
-}
-
-/* A notification did not come from the user — vibekit refuses to SEND a message
-   KAS would classify that way, so one arriving is a workflow step or a subagent
-   reporting in. Marked as somebody else's voice: no accent tint, and the
-   severity drives the edge. */
-.queued-prompt.steer-notice {
-  border-style: solid;
-  border-color: var(--c-border);
-  background: var(--c-bg-secondary);
-}
-
-.queued-prompt.steer-notice .queued-icon {
-  color: var(--c-text-secondary);
-}
-
-.queued-prompt.steer-notice[data-severity="warning"] {
-  border-color: color-mix(in srgb, var(--c-warning) 45%, var(--c-border));
-}
-
-.queued-prompt.steer-notice[data-severity="error"] {
-  border-color: color-mix(in srgb, var(--c-danger) 45%, var(--c-border));
-}
-
-/* The discard control is the ROW's, not a chip's: _session/steer/clear takes a
-   session and nothing else, so there is no per-message removal to offer. */
-.queued-discard {
-  display: inline-flex;
-  align-items: center;
-  list-style: none;
-}
-
-.queued-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--c-text-secondary);
-}
-
-/* What the agent said it did about the steer, from its own acknowledgement
-   marker. Present only on a read chip, so it is styled as the settled half of
-   the row: the green the read state already established, one step down in
-   weight from the message itself, and given the remaining width because the
-   message above it is the part the reader wrote and already knows. */
-.queued-ack {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: color-mix(in srgb, var(--c-green) 70%, var(--c-text-secondary));
-}
-
-/* A chip carrying two facts needs room for both, and only that chip does: the
-   width is widened on the ack's presence rather than on the read state, so a
-   read chip the agent never answered stays the size of every other one. */
-.queued-prompt:has(> .queued-ack) {
-  max-width: min(30rem, 100%);
-}
-
-/* The separator is a border rather than a glyph so it cannot be read aloud or
-   selected as text: the accessible name already spells the relationship out. */
-.queued-ack::before {
-  content: "";
-  display: inline-block;
-  width: 1px;
-  height: 0.7em;
-  margin-inline-end: 0.375rem;
-  vertical-align: -0.05em;
-  background: color-mix(in srgb, var(--c-green) 35%, transparent);
-}
-
-.queued-cancel {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 1rem;
-  height: 1rem;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  border-radius: var(--r-sm);
-  font-size: 0.9em;
-  line-height: 1;
-  color: inherit;
-  opacity: 0.6;
-  cursor: pointer;
-  touch-action: manipulation;
-  transition:
-    opacity var(--dur-micro) var(--ease-standard),
-    background var(--dur-micro) var(--ease-standard);
-}
-
-.queued-cancel:hover {
-  opacity: 1;
-  background: var(--c-hover);
-}
-
-.queued-cancel:focus-visible {
-  opacity: 1;
-  outline: 2px solid var(--c-accent);
-  outline-offset: 1px;
-}
-
-/* Expand the cancel hit target to ~44px on touch without growing the glyph. */
-@media (pointer: coarse) {
-  .queued-cancel::after {
-    content: "";
-    position: absolute;
-    inset: -0.9rem;
-  }
-}
-
 /* --- Pill row (bottom of prompt box) --- */
 
 .prompt-pills {
   display: flex;
   align-items: center;
-  gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2);
+  gap: var(--pill-inset);
+  padding: var(--pill-inset);
   border-block-start: 1px solid color-mix(in srgb, var(--c-border) 50%, transparent);
   container-type: inline-size;
   container-name: pill-row;
@@ -426,17 +230,17 @@
   gap: 0.25rem;
   padding: 0 var(--sp-2);
   /* Matches .send-btn height so the prompt-pills row reads as one
-   * uniform line of controls; border-radius = height/2 keeps the
-   * pill perfectly rounded. */
+   * uniform line of controls. */
   height: 2rem;
   border: 1px solid var(--c-border);
 
-  /* The INNER rung, not height/2. A stadium reads as a tag — something
-     labelled — where this is something pressed, and a control sitting inside
-     the 12px .prompt-box takes the rung below its container's so the two
-     radii read as nested rather than as the child being rounder than the
-     parent. .send-btn takes the same rung; they are one row of controls. */
-  border-radius: var(--r-md);
+  /* The CONCENTRIC radius, not height/2 and not the ladder's --r-md. A stadium
+     reads as a tag — something labelled — where this is something pressed, and
+     a control sitting in the corner of the 12px .prompt-box nests only at the
+     radius that shares the box's corner centre. .send-btn takes the same value;
+     they are one row of controls. Derivation and measurements: --pill-radius on
+     .prompt-box. */
+  border-radius: var(--pill-radius);
   background: var(--c-bg-primary);
 
   /* The full ink, not --c-text-secondary, and not --c-text-control either.
@@ -728,6 +532,24 @@
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
   padding: var(--sp-2) var(--sp-3);
+
+  /* THE CARD FAMILY'S NESTED RADIUS, derived once here for every card that
+     holds rounded rows. Same rule as --pill-radius on .prompt-box: an inner
+     corner shares the outer corner's centre only at
+         inner = outer − border − inset,
+     so 12 − 1 − 8 = 3px. The rows that read it (.chat-opt-btn, .chat-opt-row,
+     .chat-opt-form, .pill-model-item, .pill-role-item, .effort-btn) each sat at
+     6px or 8px, which put 8.00..10.07px of background around the card's corner
+     where the straight edges hold 8.00px.
+
+     --card-inset names the BLOCK padding above, which is what the three cards
+     with rounded rows use on all four sides. This base rule keeps a wider
+     INLINE padding for the one-line detail strips (the context and status
+     popups), whose rows carry no radius; a rounded row added to one of those
+     could not nest until its card's padding is made uniform. */
+  --card-inset: var(--sp-2);
+  --card-radius: calc(var(--r-lg) - 1px - var(--card-inset));
+
   box-shadow:
     var(--shadow-ambient),
     0 -0.25rem 1rem oklch(0% 0 none / 12%);
@@ -829,15 +651,32 @@
   text-align: right;
 }
 
-/* Model list expand: vertical list of model buttons. */
+/* Model list expand: a scrolling list of models with the effort section
+ * pinned below it. The CARD does not scroll — `.pill-model-scroll` does — so
+ * the effort tiers stay in place however long the model list grows, and the
+ * card gives up its own padding so that section can bleed to both edges. */
 .pill-model-list {
   flex-direction: column;
   align-items: stretch;
-  gap: var(--sp-1);
+  gap: 0;
   min-width: 12rem;
   max-height: 16rem;
-  overflow-y: auto;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The only scrolling part of the card. It carries the padding the card gave
+ * up, which is what keeps the model rows inset while the effort section below
+ * them runs the full width. */
+.pill-model-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--sp-1);
+  min-height: 0;
   padding: var(--sp-2);
+  overflow-y: auto;
 }
 
 .pill-model-item {
@@ -848,7 +687,7 @@
   padding: var(--sp-1) var(--sp-2);
   border: none;
   background: transparent;
-  border-radius: var(--r);
+  border-radius: var(--card-radius);
   color: var(--c-text-primary);
   font-size: var(--fs-sm);
   cursor: pointer;
@@ -910,7 +749,7 @@
   padding: var(--sp-1) var(--sp-2);
   border: none;
   background: transparent;
-  border-radius: var(--r);
+  border-radius: var(--card-radius);
   color: var(--c-text-primary);
   font-size: var(--fs-sm);
   cursor: pointer;
@@ -972,15 +811,18 @@
   margin-inline-start: 0;
 }
 
-/* Effort row: pinned at the top of the model expand list. Five tier
- * buttons in a horizontal row with a label. */
+/* Effort section: the bottom section of the model card, outside the scroller,
+ * so the five tier buttons stay put while the models scroll. Full-bleed — the
+ * card's padding moved to the scroller — so the rule above it reads as a
+ * section edge rather than an inset line, and the block padding is symmetric
+ * so the tier buttons sit on the section's centre line. */
 .effort-row {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2);
-  margin-block-end: var(--sp-1);
-  border-bottom: 1px solid var(--c-border);
+  padding: var(--sp-2);
+  border-top: 1px solid var(--c-border);
 }
 
 .effort-label {
@@ -994,7 +836,7 @@
   font-size: var(--fs-xs);
   padding: 0.125rem var(--sp-1);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
+  border-radius: var(--card-radius);
   background: transparent;
   color: var(--c-text-secondary);
   cursor: pointer;
@@ -1013,15 +855,16 @@
 
 /* Status dot expand: the dot lives in the sidebar footer at the very
  * bottom of the viewport, so growing downward pushes off-screen. Pop
- * upward instead, with the dot's status colour as a subtle left-border
- * accent on the expanded card. Min-width ensures readability even when
- * the individual status lines are short. */
+ * upward instead. The card carries the status colour as an 8% wash only —
+ * it had a 2px status-coloured left border too, which said the same thing
+ * the dot two pixels away already says, in the one channel the card uses
+ * for its own edge. Min-width ensures readability even when the individual
+ * status lines are short. */
 .pill-status-content {
   bottom: calc(100% + var(--sp-1));
   top: auto;
   left: 0;
   transform-origin: bottom left;
-  border-inline-start: 2px solid var(--status-color, var(--c-border));
   background: color-mix(
     in srgb,
     var(--status-color, var(--c-bg-secondary)) 8%,
@@ -1124,7 +967,9 @@
   align-items: flex-start;
   cursor: pointer;
   text-align: start;
-  border-radius: var(--r-md);
+  /* The card's derived rung, not --r-md: the first and last rows sit in the
+     card's own corners. See --card-radius on .pill-expand-content. */
+  border-radius: var(--card-radius);
   padding: var(--sp-1);
 }
 
@@ -1147,6 +992,20 @@
    * depressing, so the press is the fill alone. */
   &:active {
     background: var(--c-press);
+  }
+
+  /* Unavailable rather than offering an error: the tangent row is disabled until
+   * its chat holds a conversation to branch. Kept visible (not hidden) so the
+   * card does not reflow the moment the first message lands, and the row's own
+   * hint says what to do next. */
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  &:disabled:hover,
+  &:disabled:active {
+    background: none;
   }
 }
 
@@ -1179,7 +1038,7 @@
   flex-direction: column;
   gap: var(--sp-1);
   padding: var(--sp-2);
-  border-radius: var(--r-md);
+  border-radius: var(--card-radius);
   background: var(--c-bg-primary);
   border: 1px solid var(--c-border);
 }
@@ -1275,8 +1134,9 @@
      kept the 2rem height that matches `.pill` beside it. */
   border: 1px solid var(--send-hue);
 
-  /* Same rung as .pill: the send button is the last control in that row. */
-  border-radius: var(--r-md);
+  /* Same value as .pill: the send button is the last control in that row, and
+     its bottom-right corner sits in the box's bottom-right corner. */
+  border-radius: var(--pill-radius);
   background: color-mix(in oklch, var(--send-hue) var(--send-depth), var(--c-bg-primary));
   color: var(--c-text-primary);
   cursor: pointer;

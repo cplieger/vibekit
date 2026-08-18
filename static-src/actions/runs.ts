@@ -108,3 +108,21 @@ export const retryRun = runControl("retry", "Couldn't retry the run");
  *  reloads the run from disk — which is why the button is offered on any paused
  *  run rather than only on one this browser started. */
 export const resumeRun = runControl("resume", "Couldn't resume the run");
+
+/** Delete a run and its on-disk state.
+ *
+ *  Not a `runControl`: it is a DELETE on the run's own path rather than a POST to
+ *  a sub-path, and it is the one run verb that cannot be undone. KAS cancels a
+ *  non-terminal run itself before removing it, so this is legal from any status —
+ *  which it has to be, because this is the only way a run leaves the History page.
+ *
+ *  The caller confirms first (`modals.ts`); an action cannot, and a destructive
+ *  verb that fires on the first click is the shape this page must not have. */
+export const deleteRun = apiAction<string, { ok: boolean }>({
+  name: "runs.delete",
+  request: (workflowID) => ({
+    method: "DELETE",
+    path: `/api/runs/${encodeURIComponent(workflowID)}`,
+  }),
+  error: "Couldn't delete the run",
+});

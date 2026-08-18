@@ -1,7 +1,20 @@
 // ---------------------------------------------------------------------------
-// Large-card model picker: shown when an empty chat needs a model and
-// as the fallback view for the switch button when no active session
-// exists yet.
+// Large-card model picker: the empty-chat view, shown while a conversation has
+// nothing in it yet.
+//
+// VISIBILITY IS DERIVED, NOT COMMANDED. The picker is a full-bleed overlay
+// (`position: absolute; inset: 0; z-index: 5` inside #messages-wrap), so a
+// missed hide does not degrade, it covers the transcript and lets it scroll
+// underneath. It used to be driven by two imperative call sites in chat.ts, and
+// every sender that did not route through one of them left it up: the goal row
+// and the tangent row call submitPrompt directly, so `/goal` in a fresh chat
+// opened a conversation behind a picker that never went away.
+//
+// The condition is "this chat has nothing in it AND nothing is on its way":
+// `isEmptyChat` alone would hold the picker up for the round trip between Send
+// and the server's `message_appended` echo, and `thinking` is set synchronously
+// by the send action, so it is the signal that closes that window without any
+// optimistic rendering.
 //
 // The models cache is populated by app.ts from two sources (REST at
 // startup, per-session via bridge afterwards). The bridge already
@@ -9,13 +22,13 @@
 // filtering of its own. [Internal] previews are kept on purpose.
 // ---------------------------------------------------------------------------
 
-import type { ModelInfo } from "./types.js";
+import type { ModelInfo, Session } from "./types.js";
 import { humanName } from "./strings.js";
 import { $ } from "./dom.js";
-import { getActive } from "./store.js";
+import { getActive, activeSession, isEmptyChat } from "./store.js";
 import { rovingFocus, type RovingFocusController } from "@cplieger/ui-primitives/roving-focus";
 import { reconcile } from "./reconcile.js";
-import { el } from "@cplieger/reactive";
+import { el, computed, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_MODEL_20 } from "./icons.js";
 
@@ -24,6 +37,18 @@ import { ICON_MODEL_20 } from "./icons.js";
  *  so the old "full tool access…" copy was describing the wrong thing. */
 const PICKER_LABEL = "Choose a model";
 const PICKER_DESCRIPTION = "Pick the model for this conversation. You can switch it anytime.";
+
+/** The model to offer for `s`, or "" when the picker has no business showing.
+ *
+ *  An ABSENT session yields "" even though `isEmptyChat(undefined)` is true: a
+ *  chat that does not exist has no model to choose, and the pre-session case is
+ *  the model pill's inline list, not this overlay. */
+function pickerModelFor(s: Session | undefined): string {
+  if (s === undefined || !isEmptyChat(s) || s.thinking) {
+    return "";
+  }
+  return s.model;
+}
 
 class ModelPickerController {
   private models: ModelInfo[] = [];
@@ -39,13 +64,33 @@ class ModelPickerController {
     return this.models;
   }
 
-  show(currentModelId: string, onSelect: (modelId: string) => void): void {
+  /** Bind visibility to store state. The callback is registered once here
+   *  rather than per show(), because nothing calls show() from outside now.
+   *
+   *  Keyed on a computed STRING so the effect dedups by value: `activeSession`
+   *  re-derives on every streaming chunk, and show() reconciles the grid and
+   *  moves focus, which must not happen on each frame of a turn. The three
+   *  transitions the key expresses are hidden→shown, shown→hidden, and a model
+   *  change while shown (which re-renders to move the active card). */
+  bindVisibility(onSelect: (modelId: string) => void): void {
+    this.callback = onSelect;
+    const wanted = computed(() => pickerModelFor(activeSession.value));
+    effect(() => {
+      const modelID = wanted.value;
+      if (modelID === "") {
+        this.hide();
+        return;
+      }
+      this.show(modelID);
+    });
+  }
+
+  show(currentModelId: string): void {
     const picker = $.modelPicker;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const grid = picker.querySelector<HTMLElement>(".picker-grid")!;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const label = picker.querySelector(".picker-label")!;
-    this.callback = onSelect;
     this.currentId = currentModelId;
     picker.setAttribute("aria-label", PICKER_LABEL);
 
@@ -136,7 +181,10 @@ class ModelPickerController {
 
   hide(): void {
     $.modelPicker.classList.add("hidden");
-    this.callback = null;
+    // The callback is NOT cleared: it is registered once at bind and outlives
+    // every show/hide cycle. Clearing it here used to be safe because chat.ts
+    // re-supplied one on each show, and it is exactly what would make a derived
+    // re-show render dead cards.
     this.currentId = "";
   }
 
@@ -154,7 +202,7 @@ class ModelPickerController {
 
     const hasRealButtons = grid.querySelector(".picker-btn:not(.picker-loading)") !== null;
     if (!hasRealButtons) {
-      this.show(effectiveId, this.callback);
+      this.show(effectiveId);
       return;
     }
 
@@ -169,11 +217,13 @@ class ModelPickerController {
     }
     const activeBtn = grid.querySelector(".picker-btn.active");
     const currentId = activeBtn?.getAttribute("data-model") ?? effectiveId;
-    this.show(currentId, this.callback);
+    this.show(currentId);
   }
 }
 
 const instance = new ModelPickerController();
+
+let bound = false;
 
 export function setPickerModels(models: ModelInfo[]): void {
   instance.setModels(models);
@@ -183,14 +233,24 @@ export function getCachedModels(): ModelInfo[] {
   return instance.getCachedModels();
 }
 
-export function showModelPicker(currentModelId: string, onSelect: (modelId: string) => void): void {
-  instance.show(currentModelId, onSelect);
+/** Bind the picker to store state. Idempotent; called once from app.ts.
+ *
+ *  `onSelect` is injected rather than imported because it lives in
+ *  model-switcher.ts, which imports THIS module — app.ts is the composition
+ *  root that can see both. */
+export function initModelPicker(onSelect: (modelId: string) => void): void {
+  if (bound) {
+    return;
+  }
+  bound = true;
+  instance.bindVisibility(onSelect);
 }
 
-export function hideModelPicker(): void {
-  instance.hide();
-}
-
+/** Re-render an already-visible picker.
+ *
+ *  Still needed after the visibility effect: the model CATALOG is not session
+ *  state, so a late `setPickerModels` (the REST fetch, or a bridge's own list)
+ *  changes what the grid should contain without changing the effect's key. */
 export function refreshPickerIfVisible(overrideModelId?: string): void {
   instance.refreshIfVisible(overrideModelId);
 }

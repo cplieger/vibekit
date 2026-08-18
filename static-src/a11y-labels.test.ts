@@ -197,7 +197,7 @@ describe("a11y: keyboard navigation on picker grid", () => {
 // createPopup, which owns and tests it.
 
 describe("a11y: tool-card aria-expanded on toggle", () => {
-  it("tool-toggle button starts with aria-expanded=false and aria-label", async () => {
+  it("tool-disclosure button starts with aria-expanded=false and aria-label", async () => {
     vi.resetModules();
     vi.doMock("./scroll.js", () =>
       import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
@@ -226,13 +226,13 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
       live: false,
     });
 
-    const toggle = el.querySelector<HTMLElement>(".tool-toggle")!;
+    const toggle = el.querySelector<HTMLElement>(".tool-disclosure")!;
     expect(toggle).not.toBeNull();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(toggle.getAttribute("aria-label")).toBe("Toggle tool details");
   });
 
-  it("tool-toggle aria-expanded toggles on click", async () => {
+  it("tool-disclosure aria-expanded toggles on click", async () => {
     vi.resetModules();
     vi.doMock("./scroll.js", () =>
       import("./__test-helpers__/scroll-mock.js").then((m) => m.scrollMock),
@@ -262,7 +262,7 @@ describe("a11y: tool-card aria-expanded on toggle", () => {
     });
     document.body.appendChild(el);
 
-    const toggle = el.querySelector<HTMLElement>(".tool-toggle")!;
+    const toggle = el.querySelector<HTMLElement>(".tool-disclosure")!;
     toggle.click();
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
@@ -378,7 +378,7 @@ describe("a11y: failed tool aria-expanded", () => {
     });
     document.body.appendChild(card);
 
-    const toggle = card.querySelector<HTMLElement>(".tool-toggle")!;
+    const toggle = card.querySelector<HTMLElement>(".tool-disclosure")!;
     const details = card.querySelector<HTMLElement>(".tool-details")!;
     // Precondition: a live (in_progress) medium-tier card starts collapsed —
     // the disclosure controller marks the region aria-hidden + inert.
@@ -429,10 +429,16 @@ describe("a11y: History row accessible names", () => {
           }),
         cancel: noop,
       },
+      deleteChat: { dispatch: noop },
     }));
     vi.doMock("./actions/chat-search.js", () => ({
       searchChats: { dispatch: noop, cancel: noop },
     }));
+    // The row's delete control: two actions plus the confirm dialog, stubbed for
+    // the same reason the others are — actions/index.js is reduced to one symbol
+    // here, so an unmocked action def cannot build.
+    vi.doMock("./actions/runs.js", () => ({ deleteRun: { dispatch: noop } }));
+    vi.doMock("./confirm.js", () => ({ confirm: async () => false }));
     vi.doMock("./actions/index.js", () => ({ registerCleanup: noop }));
     vi.doMock("./chat.js", () => ({ openPreviousSession: noop, openChatTab: noop }));
     vi.doMock("./run-view.js", () => ({ openRunView: noop }));
@@ -441,6 +447,7 @@ describe("a11y: History row accessible names", () => {
         onShow();
       },
       hasTab: () => false,
+      closeTab: noop,
     }));
     vi.doMock("@cplieger/ui-primitives/skeleton", () => ({
       skeletonTiming: () => ({ cancel: noop }),

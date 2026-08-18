@@ -266,7 +266,20 @@
   align-items: center;
   gap: var(--sp-1);
   flex-shrink: 0;
-  padding: var(--sp-1) var(--sp-3);
+
+  /* Asymmetric inline insets, for the reason 24-find.css derives in full on
+     `.chat-find`: the row's height is a button's, so the close × is flush with
+     the block padding, and its ink is the same `(--btn-h − icon)/2` inside its
+     own box on every side. The end inset therefore has to equal the block
+     padding or the × reads as pushed off the right edge (measured: 23px from the
+     border against 15px above and below).
+
+     The START inset stays `--sp-3` because this bar is FULL WIDTH and that value
+     is the editor gutter's, so the input's left edge lines up with the code
+     under it. That is a stronger claim on this bar than the input's own symmetry,
+     which is what wins on the transcript's floating box. */
+  padding-block: var(--sp-1);
+  padding-inline: var(--sp-3) var(--sp-1);
   background: var(--c-bg-secondary);
   border-block-end: 1px solid var(--c-border);
 }

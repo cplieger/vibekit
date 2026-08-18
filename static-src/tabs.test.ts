@@ -63,10 +63,13 @@ import {
   getOpenTabIDs,
   editorTabID,
   isEditorTabID,
+  setOnEmpty,
   setTabPinned,
   promoteTab,
   restoreTabState,
   restorableSingletonIDs,
+  showFilesView,
+  toggleFilesView,
   _resetForTest,
 } from "./tabs.js";
 import { attachDrag, setReorderCallback } from "./tabs-drag.js";
@@ -319,6 +322,58 @@ describe("closeTab", () => {
     expect(hasTab("c")).toBe(false);
     expect(hasTab("before")).toBe(true);
     expect(hasTab("after")).toBe(true);
+  });
+});
+
+// Closing the LAST tab is the one close whose store state is indistinguishable
+// from the pre-boot state, and the DOM subscriber used to skip it on exactly that
+// test. So the closed row kept its slot in the strip, un-animated, until the NEXT
+// render — which is the one the empty-state respawn triggers 500ms later. Both
+// animations then played at once and the new row was inserted in front of a row
+// that still occupied the strip, so it appeared beside its predecessor and moved
+// when the predecessor finally collapsed.
+describe("closing the last tab", () => {
+  function flushRender(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  }
+
+  function rows(): HTMLElement[] {
+    const list = document.getElementById("tab-list");
+    return [...(list?.querySelectorAll<HTMLElement>("[data-tab-id]") ?? [])];
+  }
+
+  it("starts the closed row's exit on close, not on the respawn", async () => {
+    expect.assertions(2);
+    openTab(makeTab("only"));
+    await flushRender();
+    closeTab("only");
+    await flushRender();
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]?.classList.contains("exiting")).toBe(true);
+  });
+
+  // The whole point of rendering the empty state: the respawn must find an empty
+  // strip. happy-dom runs no animations, so the removal is driven by hand here —
+  // the browser's animationend does it, and the exit is 0.18s against the 500ms
+  // empty-state delay.
+  it("leaves the strip empty before the empty-state callback fires", async () => {
+    expect.assertions(3);
+    const onEmpty = vi.fn();
+    setOnEmpty(onEmpty);
+    openTab(makeTab("only"));
+    await flushRender();
+    closeTab("only");
+    await flushRender();
+    rows()[0]?.dispatchEvent(new Event("animationend"));
+    expect(rows()).toHaveLength(0);
+    expect(onEmpty).not.toHaveBeenCalled();
+    // Re-opening cancels the pending respawn, so no timer outlives the test.
+    openTab(makeTab("respawned"));
+    expect(onEmpty).not.toHaveBeenCalled();
   });
 });
 
@@ -1022,5 +1077,54 @@ describe("restorableSingletonIDs", () => {
 
   it("treats an id with no availability entry as unconditional", () => {
     expect(restorableSingletonIDs(["__git__"], {})).toEqual(["__git__"]);
+  });
+});
+
+describe("showFilesView vs toggleFilesView", () => {
+  // "Toggle" and "go to" are different verbs, and the files view only had the
+  // toggle. So a caller whose intent was "the browser must be visible for what I
+  // am about to render into it" CLOSED it whenever it already was — which is what
+  // find-in-files did from the browser's own search button. The search bar then
+  // opened over a departed view and the browser came back in search mode on its
+  // next open, read by the user as a search state leaking between tabs.
+  const noop = (): void => undefined;
+
+  it("shows the browser when it is not open", () => {
+    openTab(makeTab("c-1"));
+    showFilesView(noop);
+    expect(hasTab("__files__")).toBe(true);
+    expect(getActiveTabId()).toBe("__files__");
+  });
+
+  it("activates the browser when it is open but not active", () => {
+    showFilesView(noop);
+    openTab(makeTab("c-1"));
+    expect(getActiveTabId()).toBe("c-1");
+    showFilesView(noop);
+    expect(getActiveTabId()).toBe("__files__");
+  });
+
+  it("is a NO-OP when the browser is already active, where the toggle closes", () => {
+    showFilesView(noop);
+    expect(getActiveTabId()).toBe("__files__");
+
+    showFilesView(noop);
+    expect(hasTab("__files__"), "show must never close the tab it is asked to show").toBe(true);
+    expect(getActiveTabId()).toBe("__files__");
+
+    // The contrast is the point: the toolbar button still wants a toggle.
+    toggleFilesView(noop);
+    expect(hasTab("__files__")).toBe(false);
+  });
+
+  it("does not fire onClose, so the browser's reset does not run behind a show", () => {
+    // resetFileBrowser is the files view's onClose, and it drops the search bar
+    // with the listing. A show that closed the tab ran that teardown against a
+    // search the caller was in the middle of opening.
+    let closes = 0;
+    const onClose = (): void => void closes++;
+    showFilesView(noop, onClose);
+    showFilesView(noop, onClose);
+    expect(closes).toBe(0);
   });
 });

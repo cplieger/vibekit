@@ -130,6 +130,21 @@ export function isThinking(id: string): boolean {
   return get(id)?.thinking ?? false;
 }
 
+/** Whether a chat holds no conversation at all: nothing on the record and
+ *  nothing resident.
+ *
+ *  BOTH halves are load-bearing, which is why this is one predicate rather than
+ *  a field read at each site. `message_count` is the server's count and is 0 on
+ *  a chat it has never heard of (every new chat is client-side only until its
+ *  first prompt), while `messages` is the paginated window a `session/load`
+ *  replay can fill before a header refresh restates the count.
+ *
+ *  An absent chat is empty: an id with no row holds no conversation either, so
+ *  callers gating on "is there something here" need no second null check. */
+export function isEmptyChat(s: Session | undefined): boolean {
+  return s === undefined || (s.message_count === 0 && s.messages.length === 0);
+}
+
 export function setThinking(id: string, v: boolean): void {
   sessions.update(id, (s) => {
     const next: Session = {
@@ -178,15 +193,17 @@ export function clearTurnFailed(id: string): void {
   });
 }
 
-/** Latch that this chat's turn finished while nobody was watching it.
+/** Latch that this chat's last turn finished.
  *
  *  The mirror of `setTurnFailed`, and it exists for the same reason: `turn_ended`
  *  always arrives, while the agent's own `completed` status only arrives when the
- *  model calls its status tool. Without the latch, "your background chat
- *  finished" held only for the turns where it did.
+ *  model calls its status tool. Without the latch, "this chat finished" held only
+ *  for the turns where it did.
  *
- *  The caller decides whether the reader was watching — `handlers/turn.ts` owns
- *  that test, because it is the layer that knows which chat is on screen. */
+ *  The only condition the caller applies is the stop reason (`handlers/turn.ts`:
+ *  a cancelled turn finished nothing). It used to apply a second one — skip the
+ *  chat the reader is watching — and that is what made a turn completing in front
+ *  of you fall back to hollow `idle`. */
 export function setTurnDone(id: string): void {
   const s = get(id);
   if (s === undefined || s.turn_done === true) {
@@ -195,10 +212,16 @@ export function setTurnDone(id: string): void {
   sessions.update(id, (prev) => ({ ...prev, turn_done: true }));
 }
 
-/** Clear the finished latch. Two callers: activating the chat (seeing it is what
- *  settles it) and the transport-gap reconciler, for the same reason it clears
- *  the failure latch — after a dropped stream the client can no longer support
- *  either claim. */
+/** Clear the finished latch. ONE caller, the transport-gap reconciler, for the
+ *  same reason it clears the failure latch — after a dropped stream the client can
+ *  no longer support either claim. The ordinary clear is not a call at all: the
+ *  next `setThinking(id, true)` drops it with every other verdict the previous
+ *  turn left behind.
+ *
+ *  Opening the chat deliberately does NOT clear it. Seeing a finished turn does
+ *  not un-finish it, and the green dot standing until the next turn is what
+ *  web-terminal-kiro's engine-side latch does. What keeps a watched chat out of
+ *  the title count is the acknowledgement pass in attention.ts, not this. */
 export function clearTurnDone(id: string): void {
   if (get(id)?.turn_done !== true) {
     return;
@@ -235,14 +258,19 @@ export function clearTurnDone(id: string): void {
  *   - `done` has TWO producers and they are not equivalent. The agent's
  *     `completed` status is the higher-fidelity signal and the one to prefer,
  *     but it only arrives when the model calls `update_session_information`, so
- *     a turn ending without one used to fall to `idle` — which made "your
- *     background chat finished" true only sometimes. `turn_done` is the
- *     transport's own verdict (`turn_ended` always arrives) and it is what makes
- *     the promise hold; see types.ts for its clear discipline.
+ *     a turn ending without one used to fall to `idle` — which made "this chat
+ *     finished" true only sometimes. `turn_done` is the transport's own verdict
+ *     (`turn_ended` always arrives) and it is what makes the promise hold; see
+ *     types.ts for its clear discipline. Neither producer asks who is watching:
+ *     a turn that completes on the tab in front of you paints green there too,
+ *     which is the state web-terminal-kiro's engine latches the same way.
  *   - `idle` is the FLOOR for a real chat, not an absence. A chat tab always
  *     shows a dot, which is what keeps the strip's leading column aligned and
  *     what makes "nothing is happening here" readable rather than inferred.
- *     Only an unknown chat yields "".
+ *     Only an unknown chat yields "". Note how NARROW it is now that `done`
+ *     stands until the next turn: a chat reaches `idle` before its first turn,
+ *     after a cancelled one, and after a transport gap drops the latches — not
+ *     merely by being finished and read.
  *
  *  `pendingAsk` is passed rather than read because the queue of unanswered
  *  decisions lives in `decision-dock.ts`, which imports this module — so the
@@ -326,11 +354,8 @@ export function steerCount(id: string): number {
  *  Idempotent by id: the same `steer_queued` can arrive twice through an SSE
  *  reconnect replay, and a second chip for one message would misreport how much
  *  the agent has been told. A repeat refreshes the entry rather than being
- *  dropped, so a corrected text or a late severity still lands. */
-export function recordSteerQueued(
-  id: string,
-  steer: { id: string; text: string; severity?: string },
-): void {
+ *  dropped, so a corrected text still lands. */
+export function recordSteerQueued(id: string, steer: { id: string; text: string }): void {
   const s = get(id);
   if (s === undefined || steer.id === "") {
     return;
@@ -339,7 +364,6 @@ export function recordSteerQueued(
     id: steer.id,
     text: steer.text,
     injected: false,
-    ...(steer.severity !== undefined && steer.severity !== "" ? { severity: steer.severity } : {}),
   };
   const existing = s.steers ?? [];
   const at = existing.findIndex((e) => e.id === steer.id);
@@ -472,13 +496,28 @@ export function upsertHeader(h: ChatHeader): void {
       const next: Session = {
         ...s,
         name: h.name,
-        model: h.model ?? "",
+        // `model` is the ONE header field the CLIENT can legitimately be ahead of
+        // the server on: a pick before the first prompt applies locally and rides
+        // that prompt (see applyLocalModel), so until then the record genuinely
+        // has no model. `Model` is `omitempty` on the wire, which makes "not set"
+        // and "cleared" the same frame, and taking it as a clear is what reset the
+        // pill to "auto" and unselected every row in the model list the moment
+        // `set_effort` or `set_mode` auto-created the record for a chat whose
+        // model only the client knew. Absent means no news — the same rule
+        // ingestMessage applies to message content.
+        model: h.model !== undefined && h.model !== "" ? h.model : s.model,
         acp_session_id: h.acp_session_id ?? "",
         current_mode_id: h.current_mode_id ?? "",
         available_modes: h.available_modes ?? [],
         available_models: h.available_models ?? [],
         supervised_mode: h.supervised_mode ?? false,
         effort: h.effort ?? "",
+        // The live effort vocabulary and the tier the session runs at. Absent
+        // means the server has no session catalog to report (a chat with no
+        // bridge, or a header built before session/new answered), NOT that the
+        // tiers went away — same rule as `model` above.
+        effort_levels: h.effort_levels ?? s.effort_levels ?? [],
+        effort_active: h.effort_active ?? s.effort_active ?? "",
         usage: h.usage,
         message_count: Math.max(s.message_count, h.message_count),
       };
@@ -504,6 +543,8 @@ export function upsertHeader(h: ChatHeader): void {
     available_models: h.available_models ?? [],
     supervised_mode: h.supervised_mode ?? false,
     effort: h.effort ?? "",
+    effort_levels: h.effort_levels ?? [],
+    effort_active: h.effort_active ?? "",
     usage: h.usage,
     message_count: h.message_count,
     messages: [],

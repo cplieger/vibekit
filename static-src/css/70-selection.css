@@ -54,7 +54,18 @@
   border-block-end-color: var(--c-border);
 }
 
-/* THE treatment. */
+/* THE treatment.
+
+   `.status-dot` is excluded from all three rules below. Its fill IS its state
+   (green connected, yellow connecting, red disconnected), and it is the only
+   channel an 8px disc has, so the selected fill erased the connection colour
+   the moment the popup opened — click the dot, lose the green. Specificity was
+   never going to save it either: the dot's own rules live in the one
+   `@layer components` file and this file is unlayered, so the fill won whatever
+   the selectors scored. A state indicator is not a selected surface — what
+   marks it open is the card, not a repaint of the disc — and it cannot take the
+   other two channels at all, because `all: unset` (10-shell-app.css) leaves it
+   with no border and no text. */
 .tab.active:not(.dragging),
 .settings-tab.active,
 .mcp-modal-tab.active,
@@ -71,7 +82,7 @@
 .sched-day.on,
 .recipe-sched-btn.on,
 .pill[aria-pressed="true"],
-.pill-expandable.pill-expanded,
+.pill-expandable.pill-expanded:not(.status-dot),
 .icon-btn.active,
 .icon-btn[aria-pressed="true"],
 .turn-action-btn[aria-pressed="true"],
@@ -108,7 +119,7 @@
   .sched-day.on:hover,
   .recipe-sched-btn.on:hover,
   .pill[aria-pressed="true"]:hover,
-  .pill-expandable.pill-expanded:hover,
+  .pill-expandable.pill-expanded:not(.status-dot):hover,
   .icon-btn.active:hover,
   .icon-btn[aria-pressed="true"]:hover,
   .turn-action-btn[aria-pressed="true"]:hover,
@@ -147,7 +158,7 @@
 .sched-day.on:active,
 .recipe-sched-btn.on:active,
 .pill[aria-pressed="true"]:active,
-.pill-expandable.pill-expanded:active,
+.pill-expandable.pill-expanded:not(.status-dot):active,
 .icon-btn.active:active,
 .icon-btn[aria-pressed="true"]:active,
 .turn-action-btn[aria-pressed="true"]:active,
@@ -240,19 +251,23 @@
 /* The tab activity dot (12-tabs.css). It is the largest single consumer of this
    block, because it paints a status hue on the one row in the strip that is
    always selected, and it declares its own colour — so `--c-selected-fg` never
-   reaches it and the resting hues measure 3.797:1 (accent) down to 2.706:1 (red)
-   on the selected fill.
+   reaches it. Left raw, those hues land between 4.570:1 and 3.068:1 on the dark
+   selected fill and between 3.562:1 and 2.793:1 on the light one, so light is what
+   makes the family necessary rather than merely tidy.
 
    Each state re-points ONE custom property rather than restating a background,
    which is why the dot resolves everything through `--dot-color`: the disc, both
    hollow borders, the hard ring's 30% mix and the reduced-motion donut all follow
    from one declaration, so a state cannot get its selected ink in one layer and
    miss it in another. All six clear WCAG 1.4.11's 3:1 on the resting AND
-   hovered selected fill in both themes, worst 4.541:1 (`css-contrast.py dot`).
+   hovered selected fill in both themes, worst 4.210:1 (`css-contrast.py dot`).
 
-   `working` and `input` moved off the accent and yellow in 2026-08, when the dot
-   hues were aligned with web-terminal-ui's --status-* family; `waiting` and
-   `input` had shared the yellow line until then and now take separate ones.
+   The four chat states moved onto the --c-selected-dot-*-fg members in 2026-08,
+   when the dot's inks were re-aligned from @cplieger/web-terminal-ui's library
+   defaults to web-terminal-kiro's own overrides of them. `waiting` and `input`
+   take the SAME member, because they share one hue and separate on fill; the
+   `--c-selected-{blue,green,red,yellow}-fg` members stay for their other
+   consumers above.
 
    This REPLACED two hand-rolled compensations that predated the ink family:
    `.tab.active .tab-dot-thinking` and `.tab.active .tab-dot-dirty` both mixed
@@ -264,7 +279,7 @@
 }
 
 .tab.active .tab-status-dot[data-status="working"] {
-  --dot-color: var(--c-selected-blue-fg);
+  --dot-color: var(--c-selected-dot-working-fg);
 }
 
 .tab.active .tab-status-dot[data-status="dirty"] {
@@ -272,17 +287,17 @@
 }
 
 .tab.active .tab-status-dot[data-status="waiting"] {
-  --dot-color: var(--c-selected-yellow-fg);
+  --dot-color: var(--c-selected-dot-input-fg);
 }
 
 .tab.active .tab-status-dot[data-status="input"] {
-  --dot-color: var(--c-selected-orange-fg);
+  --dot-color: var(--c-selected-dot-input-fg);
 }
 
 .tab.active .tab-status-dot[data-status="failed"] {
-  --dot-color: var(--c-selected-red-fg);
+  --dot-color: var(--c-selected-dot-failed-fg);
 }
 
 .tab.active .tab-status-dot[data-status="done"] {
-  --dot-color: var(--c-selected-green-fg);
+  --dot-color: var(--c-selected-dot-done-fg);
 }

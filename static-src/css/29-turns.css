@@ -40,29 +40,14 @@
    * `.turn-body` sets `min-width: 0`, prose wraps with `overflow-wrap: anywhere`
    * and `pre` scrolls on its own axis. */
 
-  /* Outcome as a hairline down the leading edge. Present on the whole card
-   * rather than only the footer so a turn taller than the viewport still
-   * declares its result while you read the middle of it.
-   *
-   * 1px, matching every other edge. It was 0.1875rem, which made the card
-   * visibly asymmetric — and on the COMMON case bought nothing for it, since a
-   * completed turn's leading edge resolves to the same `--c-border` as the
-   * other three, so the extra weight was carrying no signal at all. Colour is
-   * the whole channel; keeping the width uniform also means a turn changing
-   * outcome cannot reflow its own content. */
-  border-inline-start: 1px solid var(--c-border);
-
-  &[data-outcome="running"] {
-    border-inline-start-color: var(--c-accent);
-  }
-
-  &[data-outcome="interrupted"] {
-    border-inline-start-color: var(--c-yellow);
-  }
-
-  &[data-outcome="failed"] {
-    border-inline-start-color: var(--c-red);
-  }
+  /* Outcome is deliberately NOT drawn on the leading edge. It used to be a
+   * coloured hairline down the whole card, which made a FOURTH channel for one
+   * fact: the tab dot, the header dot and the footer glyph already carry it,
+   * and on the common case (completed) the edge resolved to the same
+   * `--c-border` as the other three, so it was a marker on every row of the
+   * transcript for the state that needs no marker. Same reasoning as the
+   * header dot and the footer glyph hiding themselves on a clean turn. The
+   * card keeps the uniform 1px border declared above. */
 }
 
 /* Entry animation moved from `.msg-wrap` to the card: a turn arrives as one
@@ -101,7 +86,14 @@
   align-items: center;
   gap: var(--sp-2);
   font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
+  /* SECONDARY, not the hint ink: `.turn-header` above fills with
+     `--c-bg-tertiary`, and hint ink measures 3.601:1 dark / 3.900:1 light on
+     that rung — under the 4.5:1 this row's 11px timestamp needs. The two-rung
+     contract on `--c-text-tertiary` (01-tokens.css) is exactly this case, and it
+     was missed because the fill and the ink sit in two different blocks, which is
+     the shape the stylesheet gate cannot decide. `.turn-n` beside it is already
+     secondary and stays distinct on weight and the mono face. */
+  color: var(--c-text-secondary);
 }
 
 .turn-n {
@@ -257,10 +249,12 @@
 }
 
 /* A turn the user did not ask for: a typed trigger line rather than a
- * fabricated user message. */
+ * fabricated user message. Subordinate PROSE, so it takes `--c-text-aside`
+ * rather than the hint ink — it sat on hint ink over the header band's
+ * `--c-bg-tertiary` at 3.601:1 dark, and it is running text at 14px. */
 .turn-header[data-trigger="system"] .turn-req-text {
   font-style: italic;
-  color: var(--c-text-tertiary);
+  color: var(--c-text-aside);
 }
 
 /* --------------------------------------------------------------------------
@@ -409,16 +403,11 @@
   background: var(--c-red);
 }
 
-/* A chevron drawn in CSS rather than shipped as an icon: it is two borders,
- * and it rotates to point down when the list is open. */
+/* The ledger's chevron. Was two rotated borders — its own third technique, with
+ * a hardcoded 1.5px stroke that scaled with nothing — now the shared
+ * `.disclosure-chevron` (chevron.ts). */
 .turn-ledger-caret {
-  width: 0.375rem;
-  height: 0.375rem;
-  flex-shrink: 0;
-  border-right: 1.5px solid currentcolor;
-  border-bottom: 1.5px solid currentcolor;
-  transform: rotate(-45deg);
-  transition: transform var(--dur-micro) var(--ease-standard);
+  --chev-size: 0.75rem;
 }
 
 .turn-ledger-summary:disabled .turn-ledger-caret {
@@ -426,7 +415,7 @@
 }
 
 .turn-footer[data-files="open"] .turn-ledger-caret {
-  transform: rotate(45deg);
+  --chev-turn: 0deg;
 }
 
 .turn-ledger-files {
@@ -656,7 +645,11 @@
   color: var(--c-text-tertiary);
   font-family: var(--font-mono);
   font-size: 0.5625rem;
-  opacity: 0.65;
+  /* NO `opacity`. It was 0.65, which took hint ink to 2.983:1 dark / 2.785:1
+     light at 9px — the smallest text in the app and the lowest contrast in it.
+     The rail sits on `--c-bg-primary`, which is the one rung the hint ink IS
+     sized for (6.321:1 dark), so the token alone is the right dimness and the
+     multiplier was undoing the measurement. */
 }
 
 /* A dashed tick above the label. Anchored to the gap row itself (hence the
@@ -811,21 +804,24 @@
 .turn[data-folded] .turn-fold-summary {
   display: inline;
   margin-inline-start: var(--sp-2);
-  color: var(--c-text-tertiary);
+  /* Secondary for the same reason as `.turn-head-row`: this sits in
+     `.turn-footer`, which fills with `--c-bg-tertiary`. */
+  color: var(--c-text-secondary);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   white-space: nowrap;
 }
 
-/* The fold toggle: a chevron drawn from two borders, rotated by state. Pointing
-   down when open (the body hangs below), right when folded. */
+/* The fold toggle: a bare hit target holding the shared `.disclosure-chevron`
+   (chevron.ts), which replaced a chevron drawn from two rotated borders. The
+   rotation is on the glyph rather than the button, so the focus ring below stays
+   axis-aligned. */
 .turn-fold-toggle {
   width: 1rem;
   height: 1rem;
   flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   padding: 0;
   border: 0;
   background: none;
@@ -833,18 +829,16 @@
   cursor: pointer;
 }
 
-.turn-fold-toggle::before {
-  content: "";
-  width: 0.3125rem;
-  height: 0.3125rem;
-  border-right: 1.5px solid currentcolor;
-  border-bottom: 1.5px solid currentcolor;
-  transform: rotate(45deg);
-  transition: transform var(--dur-micro) var(--ease-standard);
+/* Open: the chevron turns down. Stated with `:not([data-folded])` because a turn
+   renders EXPANDED by default and marks the folded state with an attribute — the
+   same inversion the subagent card has. Written as the open case anyway, so
+   `-90deg` stays declared exactly once, in the base rule. */
+.turn:not([data-folded]) .turn-fold-toggle > .disclosure-chevron {
+  --chev-turn: 0deg;
 }
 
-.turn[data-folded] .turn-fold-toggle::before {
-  transform: rotate(-45deg);
+.turn-fold-toggle > .disclosure-chevron {
+  --chev-size: 0.75rem;
 }
 
 .turn-fold-toggle:hover {

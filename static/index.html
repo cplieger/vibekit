@@ -73,14 +73,6 @@
         </button>
       </div>
       <div id="tab-list" role="tablist" aria-label="Tabs"></div>
-      <div id="sidebar-history" class="sidebar-history hidden">
-        <button type="button" id="history-toggle" class="sidebar-history-toggle">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          History
-          <span id="history-count" class="sidebar-history-count hidden">0</span>
-        </button>
-        <div id="history-list" class="sidebar-history-list hidden"></div>
-      </div>
       <div class="sidebar-footer">
         <div class="popup-anchor">
           <button id="status-dot" class="status-dot pill-expandable" type="button" aria-label="Connection status"></button>
@@ -178,16 +170,23 @@
                than a composer feature because a workflow-run tab has no
                composer and still has to be able to ask. -->
           <div id="decision-dock" class="decision-dock hidden" role="group" aria-label="Waiting for your decision"></div>
+          <!-- Mid-turn messages KAS is holding, oldest at the top: a new one
+               appears at the bottom and pushes the older ones up. A SIBLING of
+               .prompt-box for the same reason the dock is one — these are
+               messages already SENT, so they belong beside the box rather than
+               inside it, and the bar grows upward to expose them. Below the dock
+               on purpose: a permission ask blocks the turn, so it outranks a
+               record of what has already gone. -->
+          <ul id="steer-stack" class="steer-stack hidden" aria-label="Messages sent to the running turn"></ul>
           <div id="prompt-box" class="prompt-box">
-            <!-- Top-edge drag handle: raises the message box's CEILING (the
-                 textarea keeps auto-growing with its content under it), persisted
-                 per device. A bare div here; composer-resize.ts sets the
-                 role=separator contract so the markup carries no a11y state that
-                 could drift from the behaviour. -->
-            <div id="composer-resize" class="composer-resize"></div>
+            <!-- No top-edge drag handle here. The message box sizes itself:
+                 `field-sizing: content` grows it with what is typed, up to a
+                 fixed ceiling. A drag handle on this edge reads as the shell
+                 panel's resizer (same 3px accent bar, same ns-resize cursor) on
+                 a box that does not need one. The shell panel keeps its handle,
+                 which is the one place a height IS the user's to choose. -->
             <textarea id="prompt-input" placeholder="Message Kiro..." rows="1" aria-label="Message" autofocus></textarea>
             <ul id="attachment-row" class="attachment-row hidden" aria-label="Attachments"></ul>
-            <ul id="queued-row" class="queued-row hidden" aria-label="Prompts queued to send"></ul>
             <div class="prompt-pills">
               <!-- Each expandable pill sits in a .pill-slot with its card as a
                    SIBLING, never a child: a pressed pill must not scale its own
@@ -707,10 +706,6 @@
               </select>
             </label>
           </header>
-          <!-- Host for the metadata filter, built by docs.ts through the shared
-               search shell. Metadata only: the inventory carries names,
-               descriptions, front-matter and triggers, never document bodies. -->
-          <div id="docs-filter-host"></div>
           <div data-docs-panel="steering" class="list-container docs-panel"></div>
           <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
           <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
@@ -751,15 +746,6 @@
           <!-- Changes tab -->
           <div data-git-panel="changes" class="git-panel">
             <div class="git-tab-toolbar">
-              <span class="git-tab-filter-wrap">
-                <svg class="git-tab-filter-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="11" cy="11" r="7"/>
-                  <path d="M21 21l-4.35-4.35"/>
-                </svg>
-                <input type="search" id="git-changes-filter" class="tool-form-input"
-                  placeholder="Filter by path…" autocomplete="off" spellcheck="false"
-                  aria-label="Filter changes by path">
-              </span>
               <button type="button" id="git-refresh-all-btn" class="icon-btn" data-tooltip="Refresh all repos" aria-label="Refresh all repos"></button>
             </div>
             <div id="git-changes-mount" class="git-multirepo-mount" aria-live="polite"></div>
@@ -768,15 +754,6 @@
           <!-- Pull requests tab -->
           <div data-git-panel="prs" class="git-panel hidden">
             <div class="git-tab-toolbar">
-              <span class="git-tab-filter-wrap">
-                <svg class="git-tab-filter-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="11" cy="11" r="7"/>
-                  <path d="M21 21l-4.35-4.35"/>
-                </svg>
-                <input type="search" id="git-prs-filter" class="tool-form-input"
-                  placeholder="Filter pull requests…" autocomplete="off" spellcheck="false"
-                  aria-label="Filter pull requests">
-              </span>
               <button type="button" id="git-refresh-prs-btn" class="icon-btn" data-tooltip="Refresh pull requests" aria-label="Refresh pull requests"></button>
             </div>
             <div id="git-prs-mount" class="git-multirepo-mount" aria-live="polite"></div>
@@ -939,11 +916,6 @@
       <div id="history-view" class="hidden" data-tab-view>
         <div class="page-content">
           <h2 class="page-title">History</h2>
-          <!-- The box itself is built by history.ts through the shared search
-               shell (static-src/search-shell.ts), so its role, its field's
-               attributes, its debounce and its note come from the same place as
-               the transcript's and the browser's. This is only its host. -->
-          <div id="hist-search-host"></div>
           <div id="history-table" class="list-container">
             <div class="list-empty">No previous sessions in this workspace.</div>
           </div>
@@ -976,8 +948,8 @@
           <button type="button" id="shell-restart-btn" class="shell-header-btn" data-tooltip="Restart shell" aria-label="Restart shell">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 019-9 9 9 0 016.7 3H21m0 0V3m0 3h-3M21 12a9 9 0 01-9 9 9 9 0 01-6.7-3H3m0 0v3m0-3h3"/></svg>
           </button>
-          <button type="button" id="shell-fullscreen-btn" class="shell-header-btn" data-tooltip="Full screen" aria-label="Toggle full screen">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
+          <button type="button" id="shell-fullscreen-btn" class="shell-header-btn" data-tooltip="Full screen" aria-label="Full screen">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
           </button>
           <button type="button" id="shell-toggle-btn" class="shell-header-btn" data-tooltip="Close shell" aria-label="Close shell">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>

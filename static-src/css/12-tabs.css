@@ -69,12 +69,14 @@
    prints the channel matrix and fails if any two states are separable by hue
    alone, with motion available AND with it removed.
 
-   The HUES are the source's too, adopted 2026-08 so a user reading both apps
-   learns one signal: `working` takes the blue web-terminal-ui pins as
-   `--status-working`, `input` the orange it pins as `--status-input`, and
-   `failed` / `done` were already red and green. Only the hue is shared, not the
-   value — see --c-orange in 01-tokens.css for why copying the package's fixed
-   sRGB hexes would break light mode. */
+   THE INKS ARE web-terminal-kiro's, adopted in 2026-08 so a reader moving between
+   the two apps learns one signal: violet `working`, green `done`, yellow for the
+   two states that want you, red `failed`. They arrive through the --c-dot-*
+   family (01-tokens.css), which carries the provenance, the per-theme sizing, and
+   the one ink that had to move for contrast. What this replaced was an alignment
+   to the wrong end of the same family — @cplieger/web-terminal-ui's library
+   DEFAULTS, every one of which web-terminal-kiro overrides — so `working` was
+   blue here and violet there while both claimed to match. */
 .tab-status-dot {
   /* Hidden until a status is written. That is the source's `.wt-reports` gate
      expressed as an attribute rather than a class: an editor tab with nothing
@@ -125,12 +127,12 @@
 
 /* Working — a turn is in flight. The ONLY animated state, which is what the
    source's motion axis means: motion is "in flight", stillness is "settled".
-   BLUE, not the accent: web-terminal-ui pins `--status-working` to a fixed blue
-   rather than to its own `--accent`, and vibekit overrides that accent to its
-   violet through shell.ts's SHELL_THEME — so before this change a terminal tab's
-   working dot was blue while a chat tab's was violet, in the same window. The
-   editor's `dirty` mark keeps the accent, which separates it from `working` as a
-   side effect rather than as the goal.
+   VIOLET, web-terminal-kiro's `--status-working`, which is very nearly this app's
+   own accent — the source makes the same choice for the same reason, and the
+   editor's `dirty` mark keeps the literal accent and separates from `working` by
+   MOTION. It was BLUE until 2026-08, because the library default this token
+   replaces is blue and web-terminal-kiro overrides it; a terminal tab's working
+   dot and a chat tab's working dot therefore disagreed in the same window.
    Two cues, the status-badge "processing" idiom: the disc holds full opacity
    while a pre-painted overlay GLOWS through it, and a ::after WAVE travels off
    the disc's edge and dissolves, re-emitted each cycle.
@@ -151,7 +153,7 @@
   position: relative;
   transform: translateZ(0);
 
-  --dot-color: var(--c-blue);
+  --dot-color: var(--c-dot-working);
 }
 
 /* The glow beat, compositor-only. The disc itself never changes; this
@@ -206,28 +208,34 @@
    so. It is the source's exclusive vocabulary for "blocked, waiting on you", so
    both states carry it and nothing else does.
 
-   THEY USED TO SHARE ONE VISUAL, both solid discs in --c-yellow, split only by
-   the announced phrase. That was recorded as a hard limit — six chat states
-   against four non-colour channels — and it was not one: the pair was aliased
-   because it had been given ONE hue, and the source system separates the same two
-   meanings BY hue on purpose (its own comment: yellow is "deliberately not amber
-   -- amber would collide with --status-input's"). Giving `input` the source's
-   orange took the pair apart, and the fill channel then had a slot free for
-   `waiting`.
+   THEY SHARE ONE INK, deliberately: web-terminal-kiro's `--status-input` yellow,
+   the ink that means "action required" over there. Both states mean exactly that,
+   and the source has no second hue to lend — its `--status-warning` is three hue
+   degrees off its input yellow, which it can afford only because it never paints
+   that state. Two near-identical yellows side by side in one strip would read as
+   an accident, so FILL carries the pair apart instead:
 
-   So: `input` is a SOLID orange disc in a ring — a decision is open and the turn
-   is frozen mid-flight, which is substance waiting on you. `waiting` is a HOLLOW
-   yellow disc in a ring — the agent declared waiting_on_user and its turn is
-   OVER, so there is nothing in flight to fill the disc with. Fill therefore keeps
-   the meaning it has everywhere else in this vocabulary, and the ring keeps its
-   one meaning across both. The remedy is still the same either way (open the tab
-   and answer), so the phrases stay unlike each other too.
+   `input` is a SOLID disc in a ring — a decision is open and the turn is frozen
+   mid-flight, which is substance waiting on you. `waiting` is a HOLLOW disc in a
+   ring — the agent declared waiting_on_user and its turn is OVER, so there is
+   nothing in flight to fill the disc with. Fill therefore keeps the meaning it has
+   everywhere else in this vocabulary, and the ring keeps its one meaning across
+   both. The remedy is the same either way (open the tab and answer), so the
+   announced phrases stay unlike each other too.
+
+   This is what the WCAG 1.4.1 check demands and it is why no alias is declared:
+   `css-contrast.py dot` requires every pair of chat states to differ on a channel
+   that is not colour, and fill is one. An earlier pass reached the same place from
+   the other direction — the pair had shared one hue AND one visual, and giving
+   `input` the library's orange took them apart by hue first, freeing the hollow +
+   ring slot for `waiting`. The hue went back when the whole palette moved to the
+   sibling app's; the fill split is what survived, and it is the half that was
+   load-bearing.
 
    Dropping `waiting`'s ring instead was the obvious reading of "separate them on
    the surround" and it does not work: a solid ringless disc is exactly `done`, so
-   the collision moves rather than closing. hollow+ring is the only free
-   combination in the declared vocabulary, and `css-contrast.py dot` now proves
-   the pair separates with NO alias declared.
+   the collision moves rather than closing. hollow + ring is the only free
+   combination in the declared vocabulary.
 
    The ring declaration is repeated rather than factored into a shared selector
    list, so every state in this block stays exactly ONE rule. That is what lets
@@ -238,14 +246,14 @@
   border: 1.5px solid var(--dot-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
 
-  --dot-color: var(--c-yellow);
+  --dot-color: var(--c-dot-input);
 }
 
 .tab-status-dot[data-status="input"] {
   background: var(--dot-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dot-color) 30%, transparent);
 
-  --dot-color: var(--c-orange);
+  --dot-color: var(--c-dot-input);
 }
 
 /* Failed — the chat's last turn or bridge operation errored. Still, because
@@ -256,10 +264,10 @@
    A DIAMOND, which is the one deviation from the source's geometry and it is
    forced by measurement. `failed` and `done` are both settled solid discs, so
    with motion spent on `working` and the ring spent on the wants-you pair they
-   had only hue left — and they are 4.145:1 vs 4.490:1 in light, i.e. Y 0.150 vs
-   0.134, indistinguishable in greyscale. The source vocabulary has the same gap
-   between `crashed` and `done`; porting it would have shipped a 1.4.1 failure.
-   8px rather than 9px because a rotated square's diagonal is its footprint. */
+   had only hue left — and in greyscale they are close enough to alias. The source
+   vocabulary has the same gap between `crashed` and `done`; porting it would have
+   shipped a 1.4.1 failure. 8px rather than 9px because a rotated square's
+   diagonal is its footprint. */
 .tab-status-dot[data-status="failed"] {
   width: 8px;
   height: 8px;
@@ -267,7 +275,7 @@
   border-radius: 1.5px;
   transform: rotate(45deg);
 
-  --dot-color: var(--c-red);
+  --dot-color: var(--c-dot-failed);
 }
 
 /* The leading slot's margin is derived from the 9px disc, so the 8px diamond
@@ -281,13 +289,15 @@
   margin-inline: calc((0.875rem - 8px) / 2);
 }
 
-/* Done — the turn finished: the agent declared it complete, or it simply ended
-   while nobody was watching (store.ts explains why the second producer exists).
-   A bare still disc, the source's `done` verbatim. */
+/* Done — the turn finished: the agent declared it complete, or `turn_ended`
+   arrived and the transport's own verdict stands in (store.ts explains why the
+   second producer exists). A bare still disc, the source's `done` verbatim, and it
+   holds until the next turn starts — the same lifetime web-terminal-kiro's
+   engine-side latch gives it. */
 .tab-status-dot[data-status="done"] {
   background: var(--dot-color);
 
-  --dot-color: var(--c-green);
+  --dot-color: var(--c-dot-done);
 }
 
 /* Dirty — an editor tab's unsaved changes. Not a chat state: editor tabs never

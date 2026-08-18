@@ -16,10 +16,17 @@
 //                                           the subagent's own blocks, rendered
 //                                           by this same dispatcher — full parity)
 //
-// Contiguous blocks sharing a non-empty agent_subtask_id are grouped into one
-// SubagentBlock; the subagent's tool cards / reasoning / text render inside it
-// exactly as they do at the top level. There is no separate legacy path and no
-// text-preview fold.
+// Blocks sharing a non-empty agent_subtask_id are grouped into one
+// SubagentBlock, whether or not they are adjacent: the card is keyed by subtask
+// id in a per-message Map that nothing closes, so a delegate's blocks join the
+// card it opened even when the parent agent emitted something between them. The
+// consequence worth knowing is ORDER, not grouping — the card is appended at the
+// subtask's FIRST appearance, so a parent block that arrived between two of a
+// delegate's blocks renders AFTER the whole card. (Tool GROUPS are the opposite
+// and deliberately so: `toolGroups` is keyed by container and any text block
+// closes it, so those really are contiguous runs.) The subagent's tool cards /
+// reasoning / text render inside its card exactly as they do at the top level.
+// There is no separate legacy path and no text-preview fold.
 // ---------------------------------------------------------------------------
 
 import type { Message, Block, ToolCall, PlanStatus, FileChange } from "./types.js";

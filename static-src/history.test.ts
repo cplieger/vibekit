@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { PageFind } from "./find-registry.js";
 
 const dispatch = vi.fn();
 const cancelSessions = vi.fn();
@@ -7,9 +8,28 @@ const openPreviousSession = vi.fn();
 const openRunView = vi.fn();
 const openChatTab = vi.fn();
 const searchDispatch = vi.fn(async () => ({ matches: [], scanned: 0, truncated: false }));
+const deleteChatDispatch = vi.fn(async () => ({ ok: true }));
+const deleteRunDispatch = vi.fn(async () => ({ ok: true }));
+const confirmMock = vi.fn(async () => true);
+const closeTab = vi.fn();
 
 vi.mock("./actions/chat.js", () => ({
   loadSessions: { dispatch, cancel: cancelSessions },
+  deleteChat: { dispatch: deleteChatDispatch },
+}));
+// The row's delete reaches two actions and the confirm dialog. Stubbed for the
+// same reason the search action is: unmocked they build through actions/index.js,
+// which this suite reduces to one symbol.
+vi.mock("./actions/runs.js", () => ({
+  deleteRun: { dispatch: deleteRunDispatch },
+}));
+vi.mock("./confirm.js", () => ({ confirm: confirmMock }));
+// The facts line joins each row against the chat record this client already
+// holds, so the store is a real input to the row builder here.
+const storeGet = vi.fn((_id: string): unknown => undefined);
+vi.mock("./store.js", () => ({ get: storeGet }));
+vi.mock("./roles.js", () => ({
+  labelForMode: (id: string) => (id === "vibe" ? "Default" : id),
 }));
 vi.mock("./actions/index.js", () => ({
   registerCleanup: vi.fn(),
@@ -25,7 +45,7 @@ const toggleHistoryView = vi.fn((onShow: () => void) => {
   onShow();
 });
 const hasTab = vi.fn((_id: string) => false);
-vi.mock("./tabs.js", () => ({ toggleHistoryView, hasTab }));
+vi.mock("./tabs.js", () => ({ toggleHistoryView, hasTab, closeTab }));
 vi.mock("@cplieger/ui-primitives/skeleton", () => ({
   skeletonTiming: () => ({ cancel: vi.fn() }),
 }));
@@ -492,20 +512,34 @@ const match = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** Mount the view with a search box present, then type a query. */
+/** The page's find, reached the way Ctrl-F and the toolbar magnifier reach it. */
+async function openFind(): Promise<PageFind> {
+  const { pageFind } = await import("./find-registry.js");
+  const find = pageFind("history");
+  if (find === undefined) {
+    throw new Error("the history page registered no find");
+  }
+  // A POPUP: nothing is built until it opens, so there is no field to type into
+  // before this call.
+  find.open();
+  return find;
+}
+
+/** Mount the view, open the search popup, then type a query. */
 async function search(
   result: unknown,
   query = "redis",
-): Promise<{ table: HTMLElement; note: HTMLElement }> {
-  // Only the HOST is markup now. The box itself — its role, its field's
-  // attributes, its debounce, its supersession guard and its note — is built by
-  // the shared search shell (search-shell.ts), which is what stops this box, the
+): Promise<{ table: HTMLElement; note: HTMLElement; find: PageFind }> {
+  // No host markup at all now: the box is the shared page popup
+  // (search-popup.ts over search-shell.ts), mounted into the view itself and
+  // positioned against the viewport, which is what stops this box, the
   // transcript's and the file browser's from drifting apart again.
-  document.body.innerHTML = `<div id="history-table"></div><div id="hist-search-host"></div>`;
+  document.body.innerHTML = `<div id="history-view"><div id="history-table"></div></div>`;
   dispatch.mockResolvedValue({ sessions: [], runs: [] });
   searchDispatch.mockResolvedValue(result as never);
   const { showHistoryView } = await import("./history.js");
   showHistoryView();
+  const find = await openFind();
 
   const input = document.getElementById("hist-search-input") as HTMLInputElement;
   input.value = query;
@@ -523,6 +557,7 @@ async function search(
   return {
     table: document.getElementById("history-table")!,
     note: document.getElementById("hist-search-note")!,
+    find,
   };
 }
 
@@ -590,10 +625,14 @@ describe("history: cross-chat search", () => {
     const region = document.getElementById("hist-search");
     expect(region?.getAttribute("role")).toBe("search");
     expect(region?.getAttribute("aria-label")).toBe("Search conversations");
+    // The same popup the transcript's find is, by class as well as by behaviour.
+    expect(region?.className).toContain("page-find");
+    expect(region?.className).toContain("search-pop");
+    expect(region?.className).toContain("uip-popup");
     const input = document.getElementById("hist-search-input") as HTMLInputElement;
     expect(input.getAttribute("autocomplete")).toBe("off");
     expect(input.getAttribute("enterkeyhint")).toBe("search");
-    expect(input.placeholder, "the one string the four boxes genuinely differ on").toBe(
+    expect(input.placeholder, "the one string the page boxes genuinely differ on").toBe(
       "Search conversations\u2026",
     );
   });
@@ -611,12 +650,33 @@ describe("history: cross-chat search", () => {
     expect(searchDispatch).toHaveBeenLastCalledWith("redis");
   });
 
-  it("keeps its magnifier, because it is a SEARCH and not a filter", async () => {
+  it("carries the MAGNIFIER, because it reaches past what is on screen", async () => {
     // The server reads every chat file on disk, so this box finds conversations
     // the loaded list does not contain. A funnel would promise it only narrows
-    // what is on screen; 18-pages.css records the distinction.
+    // what is here, which is what the docs and git boxes DO promise — same
+    // component, the other glyph.
     await search({ matches: [match()], scanned: 3, truncated: false });
-    expect(document.querySelector("#hist-search .hist-search-icon")).not.toBeNull();
+    expect(document.querySelector("#hist-search .page-find-icon circle")).not.toBeNull();
+    expect(document.querySelector("#hist-search .page-find-icon polygon")).toBeNull();
+    // And the × says which of the two it is closing.
+    expect(document.querySelector('#hist-search [aria-label="Close search"]')).not.toBeNull();
+  });
+
+  it("closes on Escape, and the close is what returns the full list", async () => {
+    const { table, find } = await search({ matches: [match()], scanned: 3, truncated: false });
+    dispatch.mockResolvedValue({ sessions: [chatRow], runs: [] });
+    const input = document.getElementById("hist-search-input") as HTMLInputElement;
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+    expect(find.focused()).toBe(false);
+    expect(input.value).toBe("");
+    await vi.waitFor(() => {
+      if (table.querySelectorAll("[data-key]").length === 0) {
+        throw new Error("list not restored");
+      }
+    });
+    expect(table.querySelector("[data-search-chat]")).toBeNull();
   });
 
   it("returns to the full list when the box is cleared", async () => {
@@ -632,5 +692,158 @@ describe("history: cross-chat search", () => {
       }
     });
     expect(table.querySelector("[data-search-chat]")).toBeNull();
+  });
+});
+
+describe("history: the per-row delete", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    hasTab.mockReturnValue(false);
+    confirmMock.mockResolvedValue(true);
+    deleteChatDispatch.mockResolvedValue({ ok: true });
+    deleteRunDispatch.mockResolvedValue({ ok: true });
+    toggleHistoryView.mockImplementation((onShow: () => void) => {
+      onShow();
+    });
+  });
+
+  it("gives every row a delete button, chats and runs alike", async () => {
+    const c = await render({ sessions: [ownedRow], runs: [runRow] });
+    for (const key of ["s:sess_owned", "r:wf_1"]) {
+      const btn = c.querySelector(`[data-key="${key}"] [data-history-delete]`);
+      expect(btn, `${key} has no delete button`).not.toBeNull();
+      // Named for the row, so a screen reader announces which thing it removes.
+      expect(btn?.getAttribute("aria-label")).toMatch(/^Delete /);
+    }
+  });
+
+  it("deletes a conversation through the chat-delete command and closes its tab", async () => {
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    (c.querySelector("[data-history-delete]") as HTMLElement).click();
+    await vi.waitFor(() => {
+      expect(deleteChatDispatch).toHaveBeenCalledWith("c-existing");
+    });
+    // delete_chat is the ONE path that also reaps the chat's KAS session chain,
+    // which is what makes this delete reach the underlying files.
+    expect(closeTab).toHaveBeenCalledWith("c-existing", { skipOnClose: true });
+    expect(deleteRunDispatch).not.toHaveBeenCalled();
+  });
+
+  it("deletes a run through the run-delete endpoint", async () => {
+    const c = await render({ sessions: [], runs: [runRow] });
+    (c.querySelector("[data-history-delete]") as HTMLElement).click();
+    await vi.waitFor(() => {
+      expect(deleteRunDispatch).toHaveBeenCalledWith("wf_1");
+    });
+    expect(deleteChatDispatch).not.toHaveBeenCalled();
+    // A run is not a tab, so nothing closes.
+    expect(closeTab).not.toHaveBeenCalled();
+  });
+
+  it("does not ALSO open the row it is deleting", async () => {
+    // The button sits inside a role=button row, so its click reaches the row's
+    // own delegated handler too. Without the guard the confirm dialog would open
+    // over a chat that had just been activated behind it.
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    (c.querySelector("[data-history-delete]") as HTMLElement).click();
+    await vi.waitFor(() => {
+      expect(deleteChatDispatch).toHaveBeenCalled();
+    });
+    expect(openPreviousSession).not.toHaveBeenCalled();
+    expect(openRunView).not.toHaveBeenCalled();
+  });
+
+  it("deletes nothing when the confirm is declined", async () => {
+    confirmMock.mockResolvedValue(false);
+    const c = await render({ sessions: [ownedRow], runs: [runRow] });
+    (c.querySelector('[data-key="s:sess_owned"] [data-history-delete]') as HTMLElement).click();
+    (c.querySelector('[data-key="r:wf_1"] [data-history-delete]') as HTMLElement).click();
+    await vi.waitFor(() => {
+      expect(confirmMock).toHaveBeenCalledTimes(2);
+    });
+    expect(deleteChatDispatch).not.toHaveBeenCalled();
+    expect(deleteRunDispatch).not.toHaveBeenCalled();
+    expect(closeTab).not.toHaveBeenCalled();
+  });
+
+  it("leaves the tab open when the delete failed", async () => {
+    // The action returns null on a non-2xx, and closing the tab then would hide a
+    // chat the server still holds.
+    deleteChatDispatch.mockResolvedValue(null as never);
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    (c.querySelector("[data-history-delete]") as HTMLElement).click();
+    await vi.waitFor(() => {
+      expect(deleteChatDispatch).toHaveBeenCalled();
+    });
+    expect(closeTab).not.toHaveBeenCalled();
+  });
+});
+
+describe("history: the row's facts line", () => {
+  function header(over: Record<string, unknown> = {}): unknown {
+    return {
+      id: "c-existing",
+      model: "claude-opus-5",
+      current_mode_id: "vibe",
+      message_count: 34,
+      usage: { turn_count: 17, credits: 12.5, context_pct: 0, context_size: 0 },
+      ...over,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    hasTab.mockReturnValue(false);
+    storeGet.mockReturnValue(undefined);
+    toggleHistoryView.mockImplementation((onShow: () => void) => {
+      onShow();
+    });
+  });
+
+  it("states model, mode, turns, messages and credits from the chat record", async () => {
+    // Every field comes from /api/chats, which the store already holds, so the
+    // richer row costs no request and no new field on /api/sessions — KAS's
+    // session row carries none of this.
+    storeGet.mockReturnValue(header());
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    const facts = c.querySelector('[data-key="s:sess_owned"] .history-facts')?.textContent;
+    expect(facts).toBe("claude-opus-5 · Default · 17 turns · 34 msg · 12.50 cr");
+  });
+
+  it("omits a zero credit total rather than printing 0.00", async () => {
+    // An unmetered chat would otherwise carry a cost column that says nothing on
+    // every row.
+    storeGet.mockReturnValue(header({ usage: { turn_count: 1, credits: 0 } }));
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    const facts = c.querySelector('[data-key="s:sess_owned"] .history-facts')?.textContent;
+    expect(facts).toBe("claude-opus-5 · Default · 1 turn · 34 msg");
+  });
+
+  it("renders NO facts line for a chat the store does not know", async () => {
+    // The alternative is placeholders, and "unknown model · 0 turns" reads as
+    // fact. A row with nothing to say keeps its old height instead.
+    storeGet.mockReturnValue(undefined);
+    const c = await render({ sessions: [ownedRow], runs: [] });
+    expect(c.querySelector('[data-key="s:sess_owned"] .history-facts')).toBeNull();
+  });
+
+  it("states a run's duration, and nothing when it never started", async () => {
+    const c = await render({
+      sessions: [],
+      runs: [
+        {
+          workflow_id: "wf_timed",
+          name: "nightly",
+          status: "completed",
+          started_at: 1000,
+          updated_at: 901000,
+        },
+        { workflow_id: "wf_untimed", name: "never-ran", status: "failed", updated_at: 2000 },
+      ],
+    });
+    expect(c.querySelector('[data-key="r:wf_timed"] .history-facts')?.textContent).toBe("15m");
+    expect(c.querySelector('[data-key="r:wf_untimed"] .history-facts')).toBeNull();
   });
 });

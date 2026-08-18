@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { chevronEl } from "./chevron.js";
 import { setUserScrolledUp, preserveReadingPosition } from "./scroll.js";
 import type { ToolKind } from "./tool-schema.js";
 import { registerCleanup } from "./actions/index.js";
@@ -119,6 +120,11 @@ export function buildToolGroupShell(): HTMLDivElement {
   const header = el(
     "div",
     { className: "tool-group-header", role: "button", tabindex: "0", "aria-expanded": "true" },
+    // The shared disclosure chevron, replacing a `content: "▸ "` that appeared
+    // ONLY when the group was collapsed — so an expanded group advertised
+    // nothing and the affordance had to be discovered. It is present in both
+    // states now and rotates, like every other disclosure in the app.
+    chevronEl(),
     // Same glyph slot as a member card, tinted by refreshGroupHeader to the
     // worst status inside. One vocabulary, learned once.
     el("span", { className: "tool-group-icon tool-icon" }),

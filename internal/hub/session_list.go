@@ -156,6 +156,34 @@ func (h *Hub) claimedSessions(ctx context.Context) map[string]api.ChatID {
 
 // toResumable filters the raw rows down to what belongs in a chat picker and
 // marks the ones a vibekit chat already owns.
+//
+// The population is TAB CONVERSATIONS: a row survives only when a vibekit chat
+// claims its session. That is the rule, and every other filter here is a
+// consequence of it rather than a separate policy:
+//
+//   - A workflow STEP session is not a chat, and the explicit check stays because
+//     it is the cheaper test and it documents the majority case (93 of 399 rows in
+//     the measurement).
+//   - vibekit's OWN utility session is not a chat either. It reached users as the
+//     bug this rule exists to end: the utility bridge's `session/new` is an
+//     ordinary session in the workspace cwd, so it sat at the TOP of the History
+//     page (newest updatedAt) reading "New Session", permanently, because a live
+//     bridge's session is exempt from the orphan sweep too. Clicking it adopted
+//     vibekit's own machinery as a chat, whose replay has no user turn, so the
+//     page rendered blank and an empty chat was left behind.
+//   - A SUBAGENT cannot reach this list at all: KAS models one as a sub-EXECUTION
+//     inside its parent session and folds its messages into the parent's stream,
+//     so it has no session directory and no index entry.
+//
+// The chat store is therefore the authority on WHAT is offered, and `session/list`
+// on whether KAS can still resume it — a chat whose session KAS no longer holds is
+// not restorable, and offering it would be a row that fails on click.
+//
+// The cost, stated: a session vibekit does not own is no longer adoptable. That
+// covers a session started by `kiro-cli` inside the container, and a session whose
+// chat was deleted while KAS still held it. Neither is reachable from this UI now,
+// and the trade is deliberate — an unclaimed row was indistinguishable from
+// vibekit's own machinery, and every instance a user actually met was machinery.
 func (h *Hub) toResumable(claimed map[string]api.ChatID, rows []kasSessionRow) []api.ResumableSession {
 	out := make([]api.ResumableSession, 0, len(rows))
 	for i := range rows {
@@ -163,10 +191,11 @@ func (h *Hub) toResumable(claimed map[string]api.ChatID, rows []kasSessionRow) [
 		if row.SessionID == "" {
 			continue
 		}
-		// Workflow steps are not chats. They are the majority of the raw list
-		// in a workspace that runs them, so an unfiltered picker would bury
-		// the user's conversations in run machinery.
 		if len(row.Meta.Kiro.Workflow) > 0 {
+			continue
+		}
+		chatID := claimed[row.SessionID]
+		if chatID == "" {
 			continue
 		}
 		out = append(out, api.ResumableSession{
@@ -177,15 +206,66 @@ func (h *Hub) toResumable(claimed map[string]api.ChatID, rows []kasSessionRow) [
 			AgentMode:   row.Meta.Kiro.AgentMode,
 			Status:      row.Meta.Kiro.Status,
 			Description: row.Meta.Kiro.Description,
-			ChatID:      string(claimed[row.SessionID]),
+			ChatID:      string(chatID),
 		})
 	}
+	out = collapseClaimedByChat(out)
 	// Stable: ties must keep insertion order or the session list reshuffles
 	// between polls.
 	slices.SortStableFunc(out, func(a, b api.ResumableSession) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	return out
+}
+
+// collapseClaimedByChat keeps ONE row per owning chat, the most recently
+// updated.
+//
+// A row is a door to a chat, and a chat has one identity, so two rows opening the
+// same chat is a duplicate by construction — which is exactly what the History
+// page showed: the same conversation twice, at two different times. The cause is
+// that `claimed` is keyed on the whole session CHAIN (it has to be, or a chat's
+// retired sessions read as unowned strangers), and every chat that ever changed
+// session has more than one member: a failed session/load, a model-switch
+// fallback, or empty-turn recovery. A `/goal` launch used to hit the last of those
+// on every send, which is how a one-message-old chat managed to appear twice.
+//
+// Every row reaching here is claimed (toResumable drops the rest), so there is no
+// unclaimed case to exempt: folding on the empty chat id can no longer happen.
+//
+// Newest wins because UpdatedAt is what the row displays and what the sort
+// orders on; it is also the chat's live session in every case that produces a
+// chain.
+func collapseClaimedByChat(rows []api.ResumableSession) []api.ResumableSession {
+	newestFor := map[string]int{}
+	drop := map[int]bool{}
+	for i := range rows {
+		chatID := rows[i].ChatID
+		if chatID == "" {
+			continue
+		}
+		best, seen := newestFor[chatID]
+		if !seen {
+			newestFor[chatID] = i
+			continue
+		}
+		if rows[i].UpdatedAt > rows[best].UpdatedAt {
+			newestFor[chatID] = i
+			drop[best] = true
+			continue
+		}
+		drop[i] = true
+	}
+	if len(drop) == 0 {
+		return rows
+	}
+	kept := make([]api.ResumableSession, 0, len(rows)-len(drop))
+	for i := range rows {
+		if !drop[i] {
+			kept = append(kept, rows[i])
+		}
+	}
+	return kept
 }
 
 // parseKASTime converts KAS's RFC3339 timestamps to the epoch millis the rest
@@ -253,10 +333,35 @@ func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]api.ChatID) (
 	if uErr := json.Unmarshal(raw, &list); uErr != nil {
 		return nil, uErr
 	}
-	out := make([]api.WorkflowRun, 0, len(list.Runs))
-	for i := range list.Runs {
-		r := &list.Runs[i]
+	return h.toWorkflowRuns(claimed, list.Runs), nil
+}
+
+// toWorkflowRuns maps the raw run inventory to the wire rows, dropping the ones
+// that do not belong in a history list. Split out of workflowRuns for the reason
+// toResumable is split out of resumableSessions: the filtering is the part worth
+// testing and the RPC is not.
+func (h *Hub) toWorkflowRuns(claimed map[string]api.ChatID, runs []kasWorkflowRun) []api.WorkflowRun {
+	out := make([]api.WorkflowRun, 0, len(runs))
+	for i := range runs {
+		r := &runs[i]
 		if r.WorkflowID == "" {
+			continue
+		}
+		// Attributed through the launching session's chain, so a run launched by
+		// a chat that has since changed session still resolves.
+		parentChatID := string(claimed[r.ParentSessionID])
+		// PARENTLESS runs only. A run a chat launched is that conversation's
+		// work: it already renders in the chat's transcript, its outcome is the
+		// agent's to handle, and recovering it is the agent's job — so a second
+		// row here duplicates a thing the user reaches by opening the chat, and
+		// the run rows a user can actually act on get buried under it. Six of
+		// the six runs in the live workspace were agent-launched `/goal` runs
+		// off three chats.
+		//
+		// A manual or scheduled run has no other home: nothing pushes on a
+		// finished run (api.PushKind has no member for it), so this page is the
+		// only place its outcome is ever read.
+		if parentChatID != "" {
 			continue
 		}
 		out = append(out, api.WorkflowRun{
@@ -266,9 +371,12 @@ func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]api.ChatID) (
 			CreatedAt:  parseKASTime(r.CreatedAt),
 			UpdatedAt:  parseKASTime(r.UpdatedAt),
 			StartedAt:  parseKASTime(r.StartedAt),
-			// Attributed through the launching session's chain, so a run
-			// launched by a chat that has since changed session still resolves.
-			ParentChatID: string(claimed[r.ParentSessionID]),
+			// Always empty now, and kept on the wire rather than removed: the
+			// client reads it to decide the outcome glyph and the Retry
+			// affordance, both of which are "parentless" questions, and a field
+			// that says so explicitly beats a client that infers it from the
+			// row's presence.
+			ParentChatID: parentChatID,
 			// Joined from the host, because KAS has no field for it: both run
 			// bounds stop a run through the same cancel a person does, so the
 			// reason has to come from the side that decided. "" for everything
@@ -281,5 +389,5 @@ func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]api.ChatID) (
 	slices.SortStableFunc(out, func(a, b api.WorkflowRun) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
-	return out, nil
+	return out
 }

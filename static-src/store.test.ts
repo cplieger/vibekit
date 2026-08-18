@@ -23,8 +23,9 @@ import {
   getActiveId,
   markGhostChat,
   isGhostChat,
+  setModel,
 } from "./store.js";
-import type { Session } from "./types.js";
+import type { ChatHeader, Session } from "./types.js";
 import { effect, flushSync } from "@cplieger/reactive";
 
 // Arbitrary generators for domain types.
@@ -65,6 +66,27 @@ function makeSession(chatID: string): Session {
 function resetStore(chatID: string): void {
   setSessions([makeSession(chatID)]);
   setActive(chatID);
+}
+
+/** A minimal server header for `chatID`. `model` is deliberately absent, which
+ *  is the shape the wire produces for a chat whose model the server has not been
+ *  told yet (`Model` is `omitempty`). */
+function headerFor(chatID: string): ChatHeader {
+  return {
+    id: chatID,
+    name: chatID,
+    usage: {
+      context_pct: 0,
+      context_size: 0,
+      credits: 0,
+      turn_count: 0,
+      last_turn_ms: 0,
+      has_real_data: false,
+    },
+    message_count: 0,
+    created_at: 0,
+    updated_at: 0,
+  };
 }
 
 describe("Store idempotency (property-based)", () => {
@@ -236,6 +258,36 @@ describe("activeSession reactivity (two-tier tracking + batch)", () => {
     });
 
     expect(activeSession.value?.id).toBe("ghost");
+  });
+
+  it("a header that omits the model leaves a locally-chosen one alone", () => {
+    // A model picked before the first prompt is client-only — it rides that
+    // prompt — and `Model` is `omitempty` on the wire, so the record that
+    // `set_effort` / `set_mode` auto-creates broadcasts a header carrying no
+    // model at all. Reading that as a clear is what reset the pill to "auto" and
+    // unselected every row in the model list on the first effort click in a
+    // fresh chat, which looked like the effort control changing the model.
+    setSessions([makeSession("hm-keep")]);
+    setActive("hm-keep");
+    setModel("hm-keep", "claude-opus-5");
+
+    upsertHeader({ ...headerFor("hm-keep"), effort: "high" });
+
+    expect(get("hm-keep")?.model).toBe("claude-opus-5");
+    expect(get("hm-keep")?.effort).toBe("high");
+  });
+
+  it("a header that names a model overwrites the local one", () => {
+    // The other direction, so the rule above cannot be read as "the client wins":
+    // once the server knows a model it is authoritative, which is what makes a
+    // switch performed on another device land here.
+    setSessions([makeSession("hm-take")]);
+    setActive("hm-take");
+    setModel("hm-take", "claude-opus-5");
+
+    upsertHeader({ ...headerFor("hm-take"), model: "claude-sonnet-5" });
+
+    expect(get("hm-take")?.model).toBe("claude-sonnet-5");
   });
 
   it("removeChat of active does not double-render", () => {
@@ -481,12 +533,6 @@ describe("Store steer projection", () => {
     expect(get("chat-1")?.steers).toEqual([
       { id: "steer-ghost", text: "from another tab", injected: true },
     ]);
-  });
-
-  it("carries a notification severity when KAS classified one", () => {
-    resetStore("chat-1");
-    recordSteerQueued("chat-1", { id: "notify-1", text: "step failed", severity: "error" });
-    expect(get("chat-1")?.steers?.[0]?.severity).toBe("error");
   });
 
   // Two steer_injected frames, one id: KAS's read frame carries the text, the

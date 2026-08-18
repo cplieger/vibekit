@@ -27,6 +27,10 @@ vi.mock("./store.js", () => ({
   upsertHeader: vi.fn(),
   markGhostChat: vi.fn(),
   isGhostChat: vi.fn(() => false),
+  // The real predicate, transcribed: the model-picker branch keys on it, so a
+  // stub returning a constant would send every fixture down one arm.
+  isEmptyChat: (s: { message_count: number; messages: unknown[] } | undefined) =>
+    s === undefined || (s.message_count === 0 && s.messages.length === 0),
   contextSizeFor: vi.fn(() => 0),
   defaultUsage: vi.fn(() => ({
     context_pct: 0,
@@ -38,9 +42,9 @@ vi.mock("./store.js", () => ({
   })),
   activeSession: { value: undefined },
   removeChat: vi.fn(),
-  // The dot's seed at tab creation and its clear at activation. Both are real
-  // store reads in production; here the module is mocked wholesale, so they only
-  // need to exist and be inert.
+  // The dot's seed at tab creation, plus the clear chat.ts no longer calls. The
+  // mock keeps `clearTurnDone` so the absence assertion below has something to
+  // assert against; the module is mocked wholesale, so both are inert here.
   tabStatusFor: vi.fn(() => ""),
   clearTurnDone: vi.fn(),
 }));
@@ -132,7 +136,7 @@ import {
   isGhostChat,
   clearTurnDone,
 } from "./store.js";
-import { loadMessages } from "./store-load.js";
+import { loadList, loadMessages } from "./store-load.js";
 import { seedComposerDraft } from "./composer-state.js";
 import { isRetentionEnabled } from "./retention.js";
 import { closeChat, deleteChat } from "./actions/chat.js";
@@ -280,15 +284,19 @@ describe("openChatTab onClose retention gate", () => {
   // queue is keyed by chat id, a queue left behind was RESURRECTED by reopening
   // the same id: the card came back and the tab dot said the chat needed a
   // decision that no longer existed.
-  // Opening the chat is what settles a `done` dot: the mark means "this finished
-  // while you were away", so arriving is the event that answers it. Without this
-  // the only clear was the next prompt, so a green dot sat on a chat the reader had
-  // already read.
-  it("settles the finished-turn mark when the chat is activated", () => {
+  // A `done` dot is NOT settled by opening the chat, and this pins the absence.
+  // Until 2026-08 activation cleared it, because the mark meant "finished while you
+  // were away" — paired with a latch that skipped the watched chat, which together
+  // made the dot fall back to hollow `idle` at the exact moment a turn completed in
+  // front of the reader. The mark now means "the last turn finished" and stands
+  // until the next one, matching web-terminal-kiro's engine-side latch. What keeps a
+  // read chat out of the title count is attention.ts's acknowledgement pass, which
+  // does not touch the store.
+  it("does not settle the finished-turn mark when the chat is activated", () => {
     openChatTab("c-open", "chat");
     const spec = vi.mocked(openTab).mock.calls.at(-1)?.[0] as { onShow?: () => void };
     spec.onShow?.();
-    expect(clearTurnDone).toHaveBeenCalledWith("c-open");
+    expect(clearTurnDone).not.toHaveBeenCalled();
   });
 
   it("drops the chat's unanswered asks on close, in every retention mode", () => {
@@ -442,5 +450,141 @@ describe("the chat tab's tooltip carries the mode as well as the activity", () =
   it("clears the tooltip when there is neither", () => {
     driveEffect({ current_mode_id: "" });
     expect(setTabTooltip).toHaveBeenCalledWith("c1", "");
+  });
+});
+
+describe("a superseded activation paints no failure", () => {
+  // The History page activates a chat TWICE — openChatTab activates the tab
+  // (onShow → activateChatView) and openPreviousSession activates it again — and
+  // store-load keys its abort controller by chat id, so the second fetch aborts
+  // the first. loadMessages reports that abort the same way it reports a real
+  // failure, so the superseded activation used to append its retry box and the
+  // user opening a previous chat got "Failed to load messages." sitting beside a
+  // transcript that had loaded fine (reconcile leaves unkeyed siblings alone, so
+  // it stayed there).
+  function loadedChat(): never {
+    return {
+      id: "c-loaded",
+      model: "",
+      message_count: 3,
+      messages: [{ id: "m1" }],
+      usage: { context_size: 0 },
+      has_more: false,
+    } as never;
+  }
+
+  beforeEach(() => {
+    messagesEl.replaceChildren();
+  });
+
+  it("shows no retry box when a newer activation superseded the fetch", async () => {
+    vi.mocked(get).mockReturnValue(loadedChat());
+    // First fetch aborted (false), second one fine — what the two activations
+    // produce in production.
+    vi.mocked(loadMessages).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+    const row = { chat_id: "c-loaded", session_id: "s1", title: "t", updated_at: 1 };
+    openPreviousSession(row);
+    openPreviousSession(row);
+
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledTimes(2);
+    });
+    await Promise.resolve();
+    expect(messagesEl.textContent).not.toContain("Failed to load messages");
+  });
+
+  it("still shows the retry box when the load genuinely failed", async () => {
+    // The guard must not swallow a real failure: one activation, one failure.
+    vi.mocked(get).mockReturnValue(loadedChat());
+    vi.mocked(loadMessages).mockResolvedValue(false);
+
+    openPreviousSession({ chat_id: "c-loaded", session_id: "s1", title: "t", updated_at: 1 });
+
+    await vi.waitFor(() => {
+      expect(messagesEl.textContent).toContain("Failed to load messages");
+    });
+  });
+});
+
+describe("restore: opening a closed conversation from History", () => {
+  // The reported symptom was a blank chat page, so the assertion is that the
+  // transcript is actually FETCHED and the tab actually opens. Every row the
+  // History page offers now carries a chat_id (the server lists a session only
+  // when a vibekit chat owns it), so this one path is the whole restore.
+  function closedChat(): never {
+    return {
+      id: "c-closed",
+      name: "Yesterday's work",
+      model: "",
+      message_count: 12,
+      messages: [],
+      usage: { context_size: 0 },
+      has_more: true,
+    } as never;
+  }
+
+  const row = {
+    chat_id: "c-closed",
+    session_id: "sess_closed",
+    title: "Yesterday's work",
+    updated_at: 1,
+  };
+
+  beforeEach(() => {
+    messagesEl.replaceChildren();
+  });
+
+  it("opens the tab and fetches the transcript", async () => {
+    vi.mocked(get).mockReturnValue(closedChat());
+    openPreviousSession(row);
+
+    // The store already holds the row, so no list refetch is needed.
+    expect(loadList).not.toHaveBeenCalled();
+    // The tab is what makes it reachable again; its id IS the chat id.
+    const spec = vi.mocked(openTab).mock.calls.at(-1)?.[0] as { id: string; name: string };
+    expect(spec.id).toBe("c-closed");
+    // The store's name wins over the row's title: the chat record is the
+    // authority on its own name, and KAS's copy can be a stale derivation.
+    expect(spec.name).toBe("Yesterday's work");
+    await vi.waitFor(() => {
+      expect(loadMessages).toHaveBeenCalledWith("c-closed");
+    });
+    expect(messagesEl.textContent).not.toContain("Failed to load messages");
+  });
+
+  it("fetches the chat list first when this device dropped the store row", async () => {
+    // The ordinary case for this page: closing a tab calls removeChat, so a chat
+    // closed in this session is absent from the store while its file survives.
+    // activateChatView returns early on a missing row and loadMessages refuses to
+    // write into one, so activating before the header lands renders an empty chat
+    // view and stops — the blank page, reached from the other side.
+    vi.mocked(get).mockReturnValue(undefined);
+    vi.mocked(loadList).mockResolvedValue(true);
+    openPreviousSession(row);
+
+    await vi.waitFor(() => {
+      expect(loadList).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      const spec = vi.mocked(openTab).mock.calls.at(-1)?.[0] as { id: string } | undefined;
+      if (spec?.id !== "c-closed") {
+        throw new Error("tab not opened");
+      }
+    });
+    // The tab opens only AFTER the list lands, or it would activate against the
+    // same empty store the guard exists for.
+    const listOrder = vi.mocked(loadList).mock.invocationCallOrder[0] ?? 0;
+    const tabOrder = vi.mocked(openTab).mock.invocationCallOrder[0] ?? 0;
+    expect(listOrder).toBeLessThan(tabOrder);
+  });
+
+  it("ignores a row with no owning chat", async () => {
+    // The adoption path is gone: an unclaimed row was always vibekit's own
+    // utility session, and adopting it produced the blank page plus a junk chat.
+    // The server no longer emits one; this is the belt-and-braces half.
+    openPreviousSession({ ...row, chat_id: "" });
+    expect(openTab).not.toHaveBeenCalled();
+    expect(loadMessages).not.toHaveBeenCalled();
   });
 });

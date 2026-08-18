@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -21,6 +22,27 @@ func row(id, title, updated string, workflow bool) kasSessionRow {
 	return r
 }
 
+// ownedBy seeds a chat store where each chat id owns its listed session ids, in
+// order, so the last one is the chat's current session. Every test below needs
+// this now: the picker offers TAB CONVERSATIONS, so a row with no owning chat is
+// not a row at all and a fixture of bare session ids would assert nothing.
+func ownedBy(t *testing.T, owners map[string][]string) *Hub {
+	t.Helper()
+	store := testsupport.NewInMemoryChatStore()
+	for chatID, sessions := range owners {
+		if err := store.Mutate(t.Context(), api.ChatID(chatID), func(c *api.Chat, _ bool) bool {
+			c.Name = chatID
+			for _, sid := range sessions {
+				c.RecordSession(sid)
+			}
+			return true
+		}); err != nil {
+			t.Fatalf("seed chat %s: %v", chatID, err)
+		}
+	}
+	return &Hub{chatStore: store}
+}
+
 // TestToResumable_ExcludesWorkflowSessions pins the discriminator that makes a
 // KAS-sourced picker usable at all.
 //
@@ -34,7 +56,12 @@ func row(id, title, updated string, workflow bool) kasSessionRow {
 // chat from a workflow step". createdReason IS still null on all 399 — the
 // discriminator is just a different field.
 func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
-	h := &Hub{chatStore: testsupport.NewInMemoryChatStore()}
+	// The step session is CLAIMED here on purpose: a workflow step runs on a
+	// chat-owned session when an agent launched the run, so the workflow marker
+	// has to win over ownership rather than the other way round.
+	h := ownedBy(t, map[string][]string{
+		"c1": {"sess_a"}, "c2": {"sess_b"}, "c3": {"sess_wf"},
+	})
 	got := h.toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		row("sess_a", "A real conversation", "2026-08-02T10:00:00.000Z", false),
 		row("sess_wf", "workflow step 3", "2026-08-02T11:00:00.000Z", true),
@@ -60,7 +87,7 @@ func TestToResumable_ExcludesWorkflowSessions(t *testing.T) {
 // order them lexically — which happens to work for same-format dates and would
 // hide the bug until a timezone or precision difference appeared.
 func TestToResumable_NewestFirst(t *testing.T) {
-	h := &Hub{chatStore: testsupport.NewInMemoryChatStore()}
+	h := ownedBy(t, map[string][]string{"c1": {"old"}, "c2": {"new"}, "c3": {"mid"}})
 	got := h.toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
 		row("old", "older", "2026-08-01T10:00:00.000Z", false),
 		row("new", "newer", "2026-08-02T10:00:00.000Z", false),
@@ -86,7 +113,14 @@ func TestToResumable_NewestFirst(t *testing.T) {
 // empty-turn recovery all call RecordSession, retiring the old id into
 // PriorACPSessionIDs. Keying on ACPSessionID alone would offer a chat's own
 // retired sessions back to the user as separate resumable conversations.
-func TestToResumable_MarksSessionsAChatAlreadyOwns(t *testing.T) {
+//
+// The chain claim and the collapse are ONE property from the reader's side:
+// however many sessions a chat has held, it is one conversation and earns one
+// row. Asserted here as an absence, because that is what the History page
+// showed when it was wrong — the same chat listed twice at two different times,
+// which every `/goal` launch produced while a goal turn was being misread as an
+// empty turn.
+func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
 	if err := store.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
@@ -109,15 +143,63 @@ func TestToResumable_MarksSessionsAChatAlreadyOwns(t *testing.T) {
 	for i := range got {
 		byID[got[i].SessionID] = got[i]
 	}
+	if len(got) != 1 {
+		t.Fatalf("rows = %d, want 1 (one per chat; the orphan is not a tab conversation): %+v",
+			len(got), got)
+	}
+	// The NEWEST member survives, because UpdatedAt is what the row displays and
+	// what the list sorts on, and it is the chat's live session in every case
+	// that produces a chain.
 	if byID["sess_current"].ChatID != "c1" {
 		t.Errorf("current session chat_id = %q, want c1", byID["sess_current"].ChatID)
 	}
-	if byID["sess_retired"].ChatID != "c1" {
-		t.Errorf("RETIRED session chat_id = %q, want c1 — the claim must cover the whole chain",
-			byID["sess_retired"].ChatID)
+	if _, present := byID["sess_retired"]; present {
+		t.Error("the retired session earned its own row: one chat must offer one row")
 	}
-	if byID["sess_orphan"].ChatID != "" {
-		t.Errorf("orphan session chat_id = %q, want empty", byID["sess_orphan"].ChatID)
+	if _, present := byID["sess_orphan"]; present {
+		t.Error("a session no chat owns reached the picker")
+	}
+}
+
+// The population is TAB CONVERSATIONS, and this is the rule that makes the
+// History page's row set MECE. Everything a user met that was not a conversation
+// arrived through the unclaimed branch:
+//
+//   - vibekit's own UTILITY-bridge session. Its `session/new` is an ordinary
+//     session in the workspace cwd, so it sat at the TOP of the page (newest
+//     updatedAt) reading "New Session", permanently — a live bridge's session is
+//     exempt from the orphan sweep too. Clicking it adopted vibekit's machinery as
+//     a chat, whose replay has no user turn, so the page rendered blank and an
+//     empty chat was left behind. Measured on the live volume: 3 of 10 workspace
+//     sessions were this.
+//   - a session from a `kiro-cli` run inside the container.
+//
+// Ownership is the only test that separates them, and it has to be: session/list
+// carries NO message count (KAS's SessionSummary has none), so emptiness is not on
+// the wire, and a utility turn — a commit message, an error explanation — gives its
+// session real messages and a derived title, so such a row can look exactly like a
+// conversation. `createdAt` and `lastModifiedAt` differ by ~30ms even on a session
+// that never ran a turn, so an equality test does not separate them either.
+func TestToResumable_ExcludesEverySessionNoChatOwns(t *testing.T) {
+	h := ownedBy(t, map[string][]string{"c1": {"sess_real"}})
+	got := h.toResumable(h.claimedSessions(t.Context()), []kasSessionRow{
+		// Newest, so without the rule it sorts first — which is where the user met it.
+		row("sess_utility_live", "New Session", "2026-08-02T13:00:00.000Z", false),
+		row("sess_real", "A real conversation", "2026-08-02T12:00:00.000Z", false),
+		// A retired utility session keeps the title of whatever turn it ran.
+		row("sess_utility_retired", "Write a commit message", "2026-08-02T11:00:00.000Z", false),
+		row("sess_tui", "Started from the terminal", "2026-08-02T10:00:00.000Z", false),
+	})
+
+	if len(got) != 1 {
+		var ids []string
+		for i := range got {
+			ids = append(ids, got[i].SessionID)
+		}
+		t.Fatalf("got %d sessions %v, want 1 (only the chat-owned one)", len(got), ids)
+	}
+	if got[0].SessionID != "sess_real" || got[0].ChatID != "c1" {
+		t.Errorf("surviving row = %+v, want sess_real owned by c1", got[0])
 	}
 }
 
@@ -180,7 +262,7 @@ func TestWorkflowRunAttribution(t *testing.T) {
 // presented as runs: it would put dozens of entries in the history for one
 // run, and their status is idle regardless of the run's outcome.
 func TestStepSessionsAreNotRuns(t *testing.T) {
-	h := &Hub{chatStore: testsupport.NewInMemoryChatStore()}
+	h := ownedBy(t, map[string][]string{"c1": {"sess_chat"}})
 	rows := make([]kasSessionRow, 0, 77)
 	rows = append(rows, row("sess_chat", "A real conversation", "2026-08-01T03:00:00.000Z", false))
 	// One run's loop, as measured.
@@ -196,5 +278,53 @@ func TestStepSessionsAreNotRuns(t *testing.T) {
 	}
 	if got[0].SessionID != "sess_chat" {
 		t.Errorf("surviving entry is %q, want the chat", got[0].SessionID)
+	}
+}
+
+// wfRun builds a _kiro/workflow/list row.
+func wfRun(id, name, status, parentSession, updated string) kasWorkflowRun {
+	return kasWorkflowRun{
+		WorkflowID:      id,
+		Name:            name,
+		Status:          status,
+		ParentSessionID: parentSession,
+		UpdatedAt:       updated,
+	}
+}
+
+// A run a CHAT launched is that conversation's work, not a history entry of its
+// own: it renders in the chat's transcript, its outcome is the agent's to handle,
+// and its recovery is the agent's job. Listing it put a second door on something
+// the user reaches by opening the chat, and buried the runs a user can act on —
+// all six runs in the live workspace were agent-launched `/goal` runs off three
+// chats, so the page was six duplicates and nothing else.
+//
+// A manual or scheduled run is the opposite case and must survive: nothing pushes
+// on a finished run, so this page is the only place its outcome is ever read.
+func TestToWorkflowRuns_KeepsOnlyParentlessRuns(t *testing.T) {
+	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_now"}})
+	got := h.toWorkflowRuns(h.claimedSessions(t.Context()), []kasWorkflowRun{
+		wfRun("wf_manual", "nightly", "completed", "", "2026-08-02T12:00:00.000Z"),
+		wfRun("wf_agent", "goal", "completed", "sess_now", "2026-08-02T11:00:00.000Z"),
+		// Launched from a session the chat has since RETIRED. The chain claim is
+		// what catches this one; matching the current id alone would read it as
+		// parentless and list it.
+		wfRun("wf_agent_retired", "goal", "aborted", "sess_retired", "2026-08-02T10:00:00.000Z"),
+		wfRun("wf_scheduled", "backup", "failed", "", "2026-08-02T09:00:00.000Z"),
+	})
+
+	var ids []string
+	for i := range got {
+		ids = append(ids, got[i].WorkflowID)
+	}
+	want := []string{"wf_manual", "wf_scheduled"}
+	if !slices.Equal(ids, want) {
+		t.Fatalf("runs = %v, want %v (parentless only, newest first)", ids, want)
+	}
+	for i := range got {
+		if got[i].ParentChatID != "" {
+			t.Errorf("%s carries parent_chat_id %q: every surviving run is parentless",
+				got[i].WorkflowID, got[i].ParentChatID)
+		}
 	}
 }

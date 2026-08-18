@@ -36,6 +36,15 @@ import type { Recipe, WorkflowRunRow } from "./types.js";
 /** Last fetched recipe list, kept so a repaint needs no refetch. */
 let recipes: Recipe[] = [];
 
+/** The folded filter query the configuration browser's box is applying.
+ *
+ *  MODULE state, not a render parameter, and that distinction is load-bearing:
+ *  this panel repaints itself on its own schedule (the run poll, the schedules
+ *  fetch, the settings SSE), and a parameter threaded only through the render
+ *  call would be dropped by the next one — so the filter would silently lift
+ *  seconds after it was typed. */
+let filterText = "";
+
 /** Live (non-terminal) run per recipe NAME. The single-run rule makes the name
  *  a sufficient key: at most one live run per definition exists. */
 let liveRuns = new Map<string, WorkflowRunRow>();
@@ -43,10 +52,53 @@ let liveRuns = new Map<string, WorkflowRunRow>();
 let container: HTMLElement | null = null;
 let wired = false;
 
+/** How many recipes exist and how many the filter is showing, so the page's one
+ *  note reads the same on this tab as on the five document tabs. */
+export interface RecipeCounts {
+  total: number;
+  shown: number;
+}
+
+/** Every field of a recipe row a reader could plausibly type at, folded once.
+ *
+ *  `plan` is deliberately absent. It is KAS's node tree as raw JSON, so folding
+ *  it in would match on punctuation and internal key names (`nodeId`, `type`)
+ *  that nobody is typing at, and a filter that matched invisible text would be
+ *  answering a different question than the box appears to ask. `built_in`
+ *  contributes the literal the row DISPLAYS as its badge, for the same reason
+ *  docs.ts folds the badges it renders. */
+function filterHaystack(r: Recipe): string {
+  return [
+    r.name,
+    r.description ?? "",
+    r.source,
+    ...Object.keys(r.inputs ?? {}),
+    r.built_in === true ? "bundled" : "",
+  ]
+    .join("\n")
+    .toLowerCase();
+}
+
+function visibleRecipes(): Recipe[] {
+  if (filterText === "") {
+    return recipes;
+  }
+  return recipes.filter((r) => filterHaystack(r).includes(filterText));
+}
+
 /** Render the Workflows tab into its panel. Called by docs.ts on tab switch
- *  and on its inventory refetches; fetches recipes + runs and repaints. */
-export function renderRecipesPanel(panel: HTMLElement): void {
+ *  and on its inventory refetches; fetches recipes + runs and repaints.
+ *
+ *  Takes the page's filter, because the box lives on docs.ts and the rows live
+ *  here. What it is SHOWING travels back the other way, through the counts
+ *  listener below — one writer, on every repaint path, rather than a return value
+ *  the async refetch would immediately contradict. */
+export function renderRecipesPanel(panel: HTMLElement, filter = ""): void {
   container = panel;
+  // Folded HERE, so no caller has to know the convention. docs.ts already hands
+  // over a folded query; taking it on trust would make this function's answer
+  // depend on a rule stated in another module.
+  filterText = filter.trim().toLowerCase();
   if (!wired) {
     wired = true;
     // A run starting or finishing flips a row's button. The bus event fires on
@@ -67,6 +119,12 @@ export function renderRecipesPanel(panel: HTMLElement): void {
   }
   if (recipes.length === 0) {
     panel.replaceChildren(el("div", { className: "list-empty" }, "Loading workflows…"));
+    onCounts?.(counts());
+  } else {
+    // Already fetched: paint (and report) in this tick, so a tab switch does not
+    // leave the previous tab's count sitting under the box until the refetch
+    // lands.
+    paint();
   }
   void (async () => {
     const [r] = await Promise.all([loadRecipes.dispatch(undefined), refreshRuns()]);
@@ -79,6 +137,20 @@ export function renderRecipesPanel(panel: HTMLElement): void {
     void refreshSchedules();
     void refreshAutoApprove();
   })();
+}
+
+/** What the current filter is showing, for the page's note. */
+function counts(): RecipeCounts {
+  return { total: recipes.length, shown: visibleRecipes().length };
+}
+
+/** Where a repaint's counts go. Set once by docs.ts, because the recipe fetch
+ *  lands long after `renderRecipesPanel` returned its first answer — without
+ *  this, the tab's note would read "0 of 0 shown." until the next keystroke. */
+let onCounts: ((c: RecipeCounts) => void) | null = null;
+
+export function setRecipeCountsListener(fn: (c: RecipeCounts) => void): void {
+  onCounts = fn;
 }
 
 /** The auto-approve setting's current value, for the schedule form's unattended
@@ -224,8 +296,22 @@ function paint(): void {
   if (container === null) {
     return;
   }
-  if (recipes.length === 0) {
-    container.replaceChildren(el("div", { className: "list-empty" }, "No workflows available."));
+  const rows = visibleRecipes();
+  // Every repaint path reports, not just the fetch: the note describes what is on
+  // screen, so whichever caller changed what is on screen owes the update.
+  onCounts?.(counts());
+  if (rows.length === 0) {
+    // Two different sentences, because they answer different questions. "No
+    // workflows available." under an active filter is the same lie docs.ts
+    // records for its category text: the workflows exist, they are one keystroke
+    // away.
+    container.replaceChildren(
+      el(
+        "div",
+        { className: "list-empty" },
+        recipes.length === 0 ? "No workflows available." : "No workflows match the filter.",
+      ),
+    );
     return;
   }
   for (const child of [...container.children]) {
@@ -233,7 +319,12 @@ function paint(): void {
       child.remove();
     }
   }
-  reconcile(container, recipes, {
+  // Keyed on `source`, which is stable across a filter change — so a keystroke
+  // removes and re-adds the rows that left and arrived rather than rebuilding the
+  // list. `recipeRow`'s click-time lookup deliberately stays against the
+  // UNFILTERED `recipes`: a row is clicked for the recipe it names, whatever the
+  // box says.
+  reconcile(container, rows, {
     key: (r: Recipe) => r.source,
     mount: (r: Recipe) => recipeRow(r),
     update: (row: HTMLElement, r: Recipe) => {

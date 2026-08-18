@@ -69,16 +69,32 @@
     --c-text-secondary: oklch(80.5% 0.04 273.9deg);
 
     /* Hint ink, and hint ink only — the label of something clickable takes
-     * --c-text-control instead.
+     * --c-text-control instead, and subordinate running text takes
+     * --c-text-aside.
      *
-     * Lifted from L 55% because the ramp moved out from under it: the surfaces
-     * it sits on are all lighter now, and at 55% it fell to 2.30:1 on
-     * --c-bg-tertiary (from 2.74:1). At 63% it reads 5.62 / 4.23 / 3.19 across
-     * the first three rungs, better than the old 3.36 / 3.08 / 2.74 everywhere,
-     * and it clears 3:1 on every rung so a hint stays legible as UI text. Ink
-     * and surfaces move together; changing one without re-measuring the other
-     * is how this token fell behind in the first place. */
-    --c-text-tertiary: oklch(63% 0.034 277.1deg);
+     * VALID ON RUNGS 1 AND 2 ONLY. Measured at L 66%: 6.321:1 on
+     * --c-bg-primary, 4.771:1 on --c-bg-secondary and 4.744:1 on a hovered
+     * primary surface, all clearing the 4.5:1 WCAG 1.4.3 asks of small text —
+     * but 3.601:1 on --c-bg-tertiary and 2.699:1 on --c-bg-elevated, which no
+     * lift fixes: reaching 4.5:1 on the top rung needs L 80.1%, and
+     * --c-text-secondary is L 80.5%, so the third ink level would stop being a
+     * level. On those two rungs a hint steps up to --c-text-secondary.
+     *
+     * Lifted twice for the same reason, and the second time is what this comment
+     * records. From L 55% to 63% when the surfaces moved up under it. From 63%
+     * to 66% when the app was MEASURED rather than reasoned about: a rendered
+     * sweep of one chat found 8 of 106 text-painting elements on
+     * --c-bg-primary against 62 on --c-bg-secondary, so an ink sized against
+     * the page was sized against 8% of the text it carries. 63% read 4.244:1 on
+     * that dominant surface — under AA on the surface almost every card, row and
+     * panel in the app uses. The ramp is 100 / 80.5 / 66; the second gap
+     * narrowed from 17.5 to 14.5 points and the three levels stay distinct.
+     * Ink and surfaces move together; changing one without re-measuring the
+     * other is how this token fell behind in the first place, and an `opacity`
+     * on the element or any ancestor is a THIRD mover that neither
+     * scripts/css-contrast.py nor css-tokens.test.ts can see — see the opacity
+     * gate in that test. */
+    --c-text-tertiary: oklch(66% 0.034 277.1deg);
 
     /* Accent is THEME-SPLIT: dark mode carries web-terminal-kiro's pastel
      * violet family (#c099ff) because the old deep purple (#9046FF,
@@ -101,36 +117,6 @@
     --c-green: oklch(85.8% 0.109 142.7deg);
     --c-red: oklch(75.6% 0.13 2.8deg);
     --c-yellow: oklch(91.9% 0.07 86.5deg);
-
-    /* ORANGE, at @cplieger/web-terminal-ui's --status-input hue. That package
-     * declares `#fb923c` for "action required" and says of its yellow that it is
-     * "deliberately not amber -- amber would collide with --status-input's", so
-     * the two states it separates by HUE are the two vibekit had collapsed onto
-     * one. `#fb923c` converts to oklch 75.8% 0.159 55.9deg, and 55.9deg is the
-     * part adopted here: the package's tokens are fixed sRGB values tuned for a
-     * dark terminal, so copying the hex would put a pastel on white in light mode
-     * and clear no floor this design holds.
-     *
-     * L AND C ARE SWEPT, NOT PICKED (`css-contrast.py dot` prints the sweep).
-     * Over each theme's OWN status-seed band — the L and C range its existing
-     * green/red/yellow/blue/teal/warning already occupy — the sweep maximises the
-     * SMALLER of the two separations that matter, oklab distance to --c-yellow and
-     * to --c-red, among the values that clear 3:1 on all four held tab-row fills
-     * and land inside sRGB. The orange sits between those two hues in the dot
-     * vocabulary, so being confusable with either is the only way this token can
-     * fail. Dark lands at 0.126, light at 0.086; both are yellow-bound, and for
-     * scale this palette already ships --c-blue against --c-accent at 0.096 as
-     * two distinct signals. The pair the light figure is thinnest for, `waiting`
-     * against `input`, also differs by FILL, so hue is not carrying it alone.
-     *
-     * The in-gamut constraint is the one that moved the answer, and it is not
-     * tidiness: every other seed is in gamut, and outside sRGB a browser reduces
-     * chroma while `gen-attention-icons.py` clamps per channel — so an
-     * out-of-gamut orange would paint the tab dot and the tab ICON two different
-     * colours, which is exactly what the attention badge exists to keep in step.
-     * Dropping it would have given 0.128 / 0.101 at oklch(81% 0.13) and
-     * oklch(54% 0.15), both of which clip. */
-    --c-orange: oklch(81% 0.125 55.9deg);
 
     /* Secondary status hues, theme-split like green/red/yellow. danger and
      * warning were undeclared tokens resolving through per-site fallback
@@ -286,6 +272,68 @@
      * is a higher status fraction at that site, not an opaque border here. */
     --c-border: color-mix(in oklch, var(--c-text-primary) 16%, transparent);
 
+    /* ---- THE TAB ACTIVITY DOT -------------------------------------------- *
+     * Four state inks plus the idle ring below. THE VALUES ARE
+     * web-terminal-kiro's, not this palette's, and that is the whole point: the
+     * two apps put an activity dot on a tab strip for the same reasons, a reader
+     * moves between them, and a signal that means one thing must not carry two
+     * colours. web-terminal-kiro themes `@cplieger/web-terminal-ui`'s
+     * `--status-*` family in its own `static-src/app.ts`; these are those
+     * overrides, so violet = a turn in flight, green = the turn finished, yellow
+     * = the chat wants you, red = it failed.
+     *
+     * This REPLACED a set of tokens aligned to the wrong reference. The earlier
+     * pass adopted the LIBRARY DEFAULTS (`--status-working` #52a9fe blue,
+     * `--status-input` #fb923c orange, `--status-done` #22c55e) — which
+     * web-terminal-kiro overrides on every one of them — so the two apps agreed
+     * with the package and disagreed with each other, most visibly on `working`:
+     * blue here, violet there, in the same window. `--c-blue` / `--c-green` /
+     * `--c-red` / `--c-yellow` keep their many other consumers and no longer
+     * reach the dot; `--c-orange` had no other consumer and is deleted.
+     *
+     * THE HUE IS THE SOURCE'S IN BOTH THEMES; L AND C ARE SIZED PER THEME, which
+     * is the only variation there is. web-terminal-kiro has one theme and a
+     * near-black tab chip, while vibekit's rows sit on --c-bg-secondary under a
+     * 15%-ink hover wash (#464654 in dark, #c5c5cb in light), so a value tuned
+     * for one backdrop does not clear WCAG 1.4.11's 3:1 on the other. Three of
+     * the four dark inks are the source's LITERAL value because they do clear it
+     * here (4.360:1 working, 4.894:1 done, 4.637:1 input on the worst held fill);
+     * `failed` is the exception and is documented on its own line.
+     * `css-contrast.py dot` prints every ratio and the sizing sweep behind the
+     * light siblings.
+     *
+     * WORKING IS A HEX WHERE ITS SIBLINGS ARE oklch, and it is copied that way
+     * from the source for the source's own reason: the family formula at this hue,
+     * oklch(78% 0.15 300deg), is outside sRGB AND outside Display P3, so no
+     * display we ship to can render it as declared and every one shows a
+     * gamut-mapped approximation of the browser's choosing. #c6a0ff is that
+     * approximation made explicit. It also lands within a hair of --c-accent
+     * (oklch 75.8% 0.147 300.4deg), which is deliberate and matches the source,
+     * where the working dot is the brand violet too; the editor's `dirty` dot
+     * keeps the accent and separates from `working` by MOTION, and it can never
+     * share a strip position with a chat state anyway. */
+    --c-dot-working: #c6a0ff;
+    --c-dot-input: oklch(78% 0.15 95deg);
+    --c-dot-done: oklch(78% 0.15 150deg);
+
+    /* FAILED is the one ink that is not the source's literal value, and vibekit's
+     * own chrome is what moved it. web-terminal-kiro pins `--status-failed` to
+     * #dc2626 (oklch 57.7% 0.215 27.3deg), which reads 1.920:1 against this
+     * theme's hovered sidebar row — a red nobody can see is worse than a red that
+     * is a shade off. The HUE is kept exactly (27.3deg, against the 2.8deg of the
+     * `--c-red` this replaces, which is why the old dot read pink rather than
+     * red) and L is raised until the dot clears the floor with the margin the
+     * light siblings hold: 3.297:1 at L 70%, where the in-gamut chroma ceiling at
+     * this hue is ~0.13.
+     *
+     * The one measured cost, recorded because nothing else would notice it: the
+     * attention favicon's `alert` badge is composited on the icon's violet
+     * artwork, where this ink reads 1.625:1 against the old 1.975:1. The badge is
+     * a 5.5-unit mark that also carries the DIAMOND silhouette, and the title's
+     * unread count carries the same fact without colour, so the tab dot's floor
+     * wins the conflict. */
+    --c-dot-failed: oklch(70% 0.125 27.3deg);
+
     /* The tab activity dot's IDLE ring: "this chat exists and nothing is
      * happening in it". A wash off the ink for the same reason --c-border is
      * one — a chat tab is either on the sidebar (--c-bg-secondary) or under the
@@ -300,7 +348,7 @@
      * lands at 2.633:1 on the hovered light row, which misses.
      *
      * It is still the QUIETEST member of the vocabulary, though only just:
-     * 3.046:1 against `failed`'s 3.059:1 on that same worst fill, and clearly
+     * 3.046:1 against `failed`'s 3.157:1 on that same worst fill, and clearly
      * quieter on the other three. So holding idle to the same floor as the
      * states that matter does not invert the hierarchy — that was the worry, and
      * the measurement answered it. There is no trade here.
@@ -487,11 +535,24 @@
     --c-selected-yellow-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-yellow));
     --c-selected-blue-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-blue));
 
-    /* The orange joins at the SHARED fraction rather than widening it: swept on
-     * its own it needs 52% to clear 4.5:1 (light's hovered selected fill binds at
-     * 4.549:1), which is below red's 56, so the family's one number still covers
-     * every member. A new hue that had needed 57 would have moved all five. */
-    --c-selected-orange-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-orange));
+    /* The DOT's four state inks join at the SHARED fraction too. They are the
+     * family's only members that are never TEXT — a 9px disc is a graphical
+     * object, so its floor is 1.4.11's 3:1 rather than 4.5:1 — and all four clear
+     * that with room to spare on the resting and hovered selected fill in both
+     * themes (worst 4.210:1, `css-contrast.py dot`). Mixing them at 56% anyway
+     * keeps ONE construction for the whole family rather than a second fraction
+     * that exists only because these four could get away with less.
+     *
+     * `waiting` has no member of its own: it takes the input ink, because the two
+     * states share one hue by design and separate on FILL (see 12-tabs.css). */
+    --c-selected-dot-working-fg: color-mix(
+      in oklch,
+      var(--c-selected-fg) 56%,
+      var(--c-dot-working)
+    );
+    --c-selected-dot-input-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-input));
+    --c-selected-dot-done-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-done));
+    --c-selected-dot-failed-fg: color-mix(in oklch, var(--c-selected-fg) 56%, var(--c-dot-failed));
 
     /* The accent takes the same rung, and it is the one the old code called out
      * as impossible: `.commands-popover-name` is accent ink and the selected fill
@@ -509,6 +570,21 @@
      * `.subagent-toggle`) and both now take this. The next control gets it
      * right by picking the token instead of choosing between two greys. */
     --c-text-control: var(--c-text-secondary);
+
+    /* Subordinate running TEXT — a reasoning trace, a system-trigger line.
+     * Named for the rule like --c-text-control above: a paragraph is text, so
+     * WCAG 1.4.3 wants 4.5:1, and hint ink does not carry running text on a card
+     * (3.601:1 dark on --c-bg-tertiary, where the turn header band sits). Both
+     * consumers were on hint ink; the reasoning trace also sat under an
+     * `opacity: 0.7`, which took it to 2.792:1 — under the 3:1 floor that applies
+     * to a mere GRAPHIC, for the model's whole thinking.
+     *
+     * Subordination is not this token's job and it does not need to be: the two
+     * consumers carry it on italic, the --fs-sm step, a disclosure that is
+     * collapsed by default, and the block's own accent bar. Four channels that
+     * survive at any contrast ratio, so dimming the ink was buying a fifth at the
+     * cost of legibility. */
+    --c-text-aside: var(--c-text-secondary);
 
     /* The code-block inset. Derived off the ink for the same reason the border
      * is: as a fixed 30% BLACK wash it depended on the surface being light
@@ -548,9 +624,18 @@
      * encodes and the one thing the previous two rungs could not express.
      *
      *   --r-lg  12px  containers (.prompt-box, an expand card, a panel)
-     *   --r-md   8px  a control INSIDE a 12px container (.pill, .send-btn)
+     *   --r-md   8px  a control inside a 12px container, away from its corners
      *   --r      6px  a standalone control or small chip
      *   --r-sm   4px  a tiny box (a 16-24px icon button, an inline marker)
+     *
+     * THE LADDER DOES NOT ANSWER A CORNER. A control whose own corner sits in
+     * its container's corner nests only at `container − border − inset`, which
+     * varies per container: 7px for a .pill inset --sp-1 inside .prompt-box, 3px
+     * for a .chat-opt-btn inset --sp-2 inside an expand card. So that value is
+     * DERIVED at the container (see --pill-radius in 15-input.css), and --r-md
+     * stays a free-standing rung for everything not in a corner. Reading --r-md
+     * for a corner control is the mistake this note exists to name; the geometry
+     * is in vibekit-ui.md "Design".
      *
      * --r-lg was not a token at all before this: it was READ three times in
      * 15-input.css through `var(--r-lg, 0.75rem)` and never declared, so the
@@ -648,8 +733,17 @@
 
     /* Deepened from L 55% for the mirror-image reason dark's was lifted: light's
      * surfaces moved DOWN, so its hint ink has to move down too or it closes on
-     * them. 3.91:1 on --c-bg-tertiary and 3.19:1 on --c-bg-elevated, against
-     * 3.94 / n-a before. */
+     * them. 5.733:1 on --c-bg-primary and 4.719:1 on --c-bg-secondary, so the
+     * two-rung contract stated on dark's token holds here already with no
+     * change; 3.900:1 on --c-bg-tertiary and 3.184:1 on --c-bg-elevated take the
+     * step up to --c-text-secondary.
+     *
+     * NOT deepened alongside dark's 63->66 lift, deliberately. L 46% would reach
+     * 4.669:1 on --c-bg-tertiary, but light's ramp is 20 / 40 / 50, so the second
+     * gap is 10 points against dark's 17.5 — deepening to 46% leaves 6 and the
+     * hint stops being distinguishable from the secondary ink beside it. The
+     * asymmetry is in the L value only; the CONTRACT is the same in both themes,
+     * which is what a reader needs to hold. */
     --c-text-tertiary: oklch(50% 0.015 277.1deg);
     --c-accent: oklch(50% 0.254 295.8deg);
     --c-accent-hover: oklch(45% 0.247 293deg);
@@ -663,12 +757,25 @@
      * read as text on white (60% was 3.1:1 as pill text; 49% is 6:1). */
     --c-yellow: oklch(49% 0.09 86.5deg);
 
-    /* Same hue as dark's, same sweep; light binds harder because a deep orange
-     * and a deep yellow are both browns. 54% is the largest L in the band that
-     * still clears 3:1 (55% misses at 2.94:1), so the sweep's winner sits at
-     * 3.065:1 on the hovered row — thinner margin than dark's, and level with
-     * --c-red's 3.059:1 and --c-dot-idle's 3.046:1 on that same fill. */
-    --c-orange: oklch(54% 0.13 55.9deg);
+    /* THE TAB ACTIVITY DOT, at the dark block's hues exactly. Only L and C move,
+     * because a pastel tuned for a near-black row is invisible on a white one —
+     * dark's own four inks read 1.099-1.678:1 here. Each value is the LARGEST L at
+     * its hue that still clears 3:1 on the resting AND hovered row (the sweep in
+     * `css-contrast.py dot` prints the band), so the dot drifts from its dark
+     * sibling by as little as the contrast allows: 3.297:1 working, 3.217:1 input,
+     * 3.285:1 done, 3.157:1 failed.
+     *
+     * Chroma is where the hues stop behaving alike, and it is a gamut fact rather
+     * than a choice. Violet holds 0.22 at L 54% and yellow cannot hold 0.11 at all
+     * below L 52% — oklch(51% 0.11 95deg) clips — so `input` lands at 0.105, in
+     * the same deep-gold register as --c-yellow above and for the same reason.
+     * `failed` keeps nearly all of #dc2626's chroma (0.215 of 0.2152) and lands one
+     * rung below its L, which is the closest any of the four gets to the source's
+     * own literal in this theme. */
+    --c-dot-working: oklch(54% 0.22 301.7deg);
+    --c-dot-input: oklch(52% 0.105 95deg);
+    --c-dot-done: oklch(50% 0.12 150deg);
+    --c-dot-failed: oklch(55% 0.215 27.3deg);
     --c-blue: oklch(48% 0.13 259.9deg);
     --c-teal: oklch(47% 0.09 168.3deg);
     --c-danger: oklch(50% 0.14 25deg);

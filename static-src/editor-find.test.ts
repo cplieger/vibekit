@@ -18,8 +18,10 @@ vi.mock("./editor-scroll.js", () => ({
 
 import { findInBuffer, formatBufferCount } from "./editor-find.js";
 import type * as EditorFind from "./editor-find.js";
+import type * as Bus from "./bus.js";
 
 type EditorFindModule = typeof EditorFind;
+type BusModule = typeof Bus;
 
 describe("findInBuffer", () => {
   it("reports the 1-based line of every hit", () => {
@@ -139,6 +141,7 @@ async function openFile(
 
 describe("the in-file find bar", () => {
   let mod: EditorFindModule;
+  let bus: BusModule;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -146,6 +149,9 @@ describe("the in-file find bar", () => {
     flashLine.mockReset();
     editorDOM();
     mod = await import("./editor-find.js");
+    // The SAME module registry `mod` came from, or the emit reaches a second copy
+    // of the bus that this bar never subscribed to.
+    bus = await import("./bus.js");
   });
 
   function input(): HTMLInputElement | null {
@@ -250,22 +256,81 @@ describe("the in-file find bar", () => {
     expect(count()).toBe("1 of 1");
   });
 
-  it("DECLINES over rendered markdown, a diff pane and an image", async () => {
-    // No fixed line height in any of the three, so a counted match could not be
-    // reached — and the browser's own find reads all three perfectly well.
-    const cases: { path: string; mode: "edit" | "diff" | "image"; why: string }[] = [
-      { path: "/workspace/notes.md", mode: "edit", why: "rendered markdown reflows" },
-      { path: "/workspace/a.go", mode: "diff", why: "the diff pane has its own rows" },
-      { path: "/workspace/pic.png", mode: "image", why: "an image has no lines" },
+  it("DECLINES over an image only, because that is the one surface with no text", async () => {
+    // It used to decline over rendered markdown and a diff pane too, on the
+    // reasoning that neither has a fixed line height — true, and an argument
+    // against LINE arithmetic rather than against searching. Both are rendered
+    // DOM text, so they take the shared mark engine instead, and the chord stops
+    // changing meaning on one tab depending on its mode.
+    vi.resetModules();
+    editorDOM();
+    const fresh = await import("./editor-find.js");
+    await openFile("/workspace/pic.png", "image");
+    expect(fresh.openEditorFind()).toBe(false);
+    expect(document.querySelector(".editor-find")).toBeNull();
+  });
+
+  it("ACCEPTS over rendered markdown and a diff pane, marking the hits", async () => {
+    const cases: { path: string; mode: "edit" | "diff"; host: string }[] = [
+      { path: "/workspace/notes.md", mode: "edit", host: "editor-markdown" },
+      { path: "/workspace/a.go", mode: "diff", host: "editor-diff-pane" },
     ];
     for (const c of cases) {
       vi.resetModules();
       editorDOM();
       const fresh = await import("./editor-find.js");
       await openFile(c.path, c.mode);
-      expect(fresh.openEditorFind(), c.why).toBe(false);
-      expect(document.querySelector(".editor-find"), c.why).toBeNull();
+      // The rendered surface is what a `dom` search walks, so it has to be the
+      // visible one — `editor-modes.ts` owns that toggle and this asks the DOM
+      // which one it revealed rather than re-deriving the mode.
+      const host = document.getElementById(c.host);
+      if (host === null) {
+        throw new Error(`missing ${c.host}`);
+      }
+      host.classList.remove("hidden");
+      host.replaceChildren(document.createTextNode("alpha beta alpha"));
+
+      expect(fresh.openEditorFind(), c.host).toBe(true);
+      const input = document.getElementById("editor-find-input") as HTMLInputElement;
+      input.value = "alpha";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+
+      expect(host.querySelectorAll("mark.find-hit").length, c.host).toBe(2);
+      expect(document.getElementById("editor-find-count")?.textContent).toBe("1 of 2");
+
+      // The marks go with the box: one left behind is welded into the pane for the
+      // rest of the session, and the next render would reconcile around it.
+      fresh.closeEditorFind();
+      expect(host.querySelectorAll("mark.find-hit").length, c.host).toBe(0);
+      expect(host.textContent, "the text comes back intact").toBe("alpha beta alpha");
     }
+  });
+
+  it("steps between marks on a rendered surface, wrapping like the transcript", async () => {
+    vi.resetModules();
+    editorDOM();
+    const fresh = await import("./editor-find.js");
+    await openFile("/workspace/a.go", "diff");
+    const host = document.getElementById("editor-diff-pane");
+    if (host === null) {
+      throw new Error("missing pane");
+    }
+    host.classList.remove("hidden");
+    host.replaceChildren(document.createTextNode("x1 x2 x3"));
+    fresh.openEditorFind();
+    const input = document.getElementById("editor-find-input") as HTMLInputElement;
+    input.value = "x";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+    expect(document.getElementById("editor-find-count")?.textContent).toBe("1 of 3");
+    // Enter on the query already searched steps rather than re-running.
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+    expect(document.getElementById("editor-find-count")?.textContent).toBe("2 of 3");
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, cancelable: true }),
+    );
+    expect(document.getElementById("editor-find-count")?.textContent).toBe("1 of 3");
+    expect(host.querySelectorAll("mark.find-hit-current").length).toBe(1);
+    fresh.closeEditorFind();
   });
 
   it("declines with no file open at all", async () => {
@@ -274,13 +339,22 @@ describe("the in-file find bar", () => {
     expect(mod.openEditorFind()).toBe(false);
   });
 
-  it("declines for a file whose content has not loaded yet", async () => {
+  it("OPENS for a file whose content has not loaded yet, and finds nothing in it", async () => {
+    // Refusing to open was the old answer, and it made the chord do nothing at all
+    // while a file read was in flight. The bar opens on the SURFACE and reports an
+    // honest zero until the bytes land; the availability answer never gated on
+    // `loaded` either, so the two now agree.
     const types = await import("./editor-types.js");
     const state = types.freshState("/workspace/slow.go");
     state.loaded = false;
     types.fileStates.set("/workspace/slow.go", state);
     types.setActiveFilePath("/workspace/slow.go");
-    expect(mod.openEditorFind()).toBe(false);
+    expect(mod.openEditorFind()).toBe(true);
+    const input = document.getElementById("editor-find-input") as HTMLInputElement;
+    input.value = "anything";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", cancelable: true }));
+    expect(document.getElementById("editor-find-count")?.textContent).toBe("No matches");
+    mod.closeEditorFind();
   });
 
   it("hands the chord back when it declines, so native find opens", async () => {
@@ -357,6 +431,19 @@ describe("the in-file find bar", () => {
     expect(mod._isEditorFindOpen()).toBe(true);
     mod.toggleEditorFind();
     expect(mod._isEditorFindOpen()).toBe(false);
+  });
+
+  it("FORGETS the query on a tab switch, so the next file's find opens empty", async () => {
+    // One bar serves every editor tab, so a retained query searched the NEXT file
+    // for a string typed against the previous one and reported a count for it.
+    // Closing the bar alone left the text in place, and the open path re-runs.
+    await openFile("/workspace/a.go", "edit", "target here\n");
+    mod.openEditorFind();
+    type("target");
+    const el = document.getElementById("editor-find-input") as HTMLInputElement;
+    expect(el.value).toBe("target");
+    bus.emitBus(bus.BUS_TAB_CHANGED, { to: "editor:/workspace/b.go", kind: "editor" });
+    expect(el.value, "a retained query is inherited by the next editor tab").toBe("");
   });
 
   it("re-runs on the Aa toggle without retyping, and honours case", async () => {

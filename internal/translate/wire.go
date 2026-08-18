@@ -189,7 +189,7 @@ type ACPWorkflowMeta struct {
 // parent agent's block.
 //
 // Reusing `agent_subtask_id` rather than adding a parallel channel is deliberate:
-// the client already groups contiguous same-subtask blocks into a collapsible
+// the client already groups same-subtask blocks into a collapsible
 // delegated-work block, so a step renders as delegated work with no client
 // change at all. The `wf:` prefix keeps the two id spaces from ever colliding —
 // KAS's subtask ids are uuids.

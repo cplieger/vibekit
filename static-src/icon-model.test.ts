@@ -1,15 +1,24 @@
 // The model glyph's geometry, derived rather than snapshotted.
 //
-// This icon renders at 12px and at 20px, and the 12px size is what broke it: the
-// previous drawing had STROKED eyes (r=2.5, stroke-width 2) whose outer edges
-// left one user unit between them, which is 0.50 CSS px at 12px. Under a device
-// pixel, so the two rings bridged into a blob, and because the centres sat on
-// integers the 1-unit wall split 25/75 across two pixel columns and painted two
-// greys instead of a gap.
+// This icon renders at 12px and at 20px, and the 12px size is what shaped it
+// twice. First the eyes: they were STROKED rings (r=2.5, stroke-width 2) whose
+// outer edges left one user unit between them, which is 0.50 CSS px at 12px.
+// Under a device pixel, so the two rings bridged into a blob, and because the
+// centres sat on integers the 1-unit wall split 25/75 across two pixel columns
+// and painted two greys instead of a gap.
 //
-// The invariant worth pinning is therefore not "the eyes are circles" but "the
-// gap between them survives quantisation at the SMALLEST size this icon is
-// rendered at". Everything here is computed from the shipped string.
+// Then the head. An antenna dot and stem owned the top 6 of the 22 units a
+// centred content bbox gets, so the head was 15 units tall and its INTERIOR 13
+// — 6.5 CSS px at 12px to hold two eyes and a mouth, with the mouth's stroke
+// ending half a unit off the inner bottom. The antenna itself quantises to a 1px
+// tick at that size, so it was buying nothing with the room it took. The head
+// now fills the box and the face has 18 interior units.
+//
+// The invariants worth pinning are therefore not "the eyes are circles" or "there
+// is an antenna" but: the gap between the eyes survives quantisation at the
+// SMALLEST size this icon is rendered at, the head owns the whole square, and the
+// face fits inside it with the mouth's dip counted. Everything here is computed
+// from the shipped string.
 //
 // Node environment: no DOM, the icon is text.
 
@@ -50,9 +59,10 @@ function viewBoxSide(svg: string): number {
   return Number(m![1]);
 }
 
-/** The eyes are the only pair of circles sharing a radius AND a y — the antenna
- *  dot is alone on both counts. Found by that property rather than by index, so
- *  reordering the markup cannot make this test read the wrong two shapes. */
+/** The eyes are the only pair of circles sharing a radius AND a y. Found by that
+ *  property rather than by index, so reordering the markup cannot make this test
+ *  read the wrong two shapes — and if a third circle is ever added, this fails
+ *  loudly instead of silently measuring it. */
 function eyes(svg: string): [Circle, Circle] {
   const groups = new Map<string, Circle[]>();
   for (const c of circles(svg)) {
@@ -63,6 +73,37 @@ function eyes(svg: string): [Circle, Circle] {
   expect(pair.length, "expected exactly one pair of circles sharing cy and r").toBe(1);
   const [a, b] = [...pair[0]!].sort((p, q) => p.cx - q.cx);
   return [a!, b!];
+}
+
+/** Declared once on the root, so every stroked edge spends half of it outward. */
+function strokeWidth(svg: string): number {
+  return attr(/^<svg[^>]*>/.exec(svg)![0], "stroke-width");
+}
+
+/** The head: the glyph's only rect, and its whole silhouette. */
+function headRect(svg: string): { x: number; y: number; width: number; height: number } {
+  const tag = /<rect [^>]*\/>/.exec(svg);
+  expect(tag, "expected the head rect").not.toBeNull();
+  return {
+    x: attr(tag![0], "x"),
+    y: attr(tag![0], "y"),
+    width: attr(tag![0], "width"),
+    height: attr(tag![0], "height"),
+  };
+}
+
+/** The mouth, as a start point plus the span and dip of one quadratic. The
+ *  trailing ` 0` in the pattern is the curve ending level with its start, which
+ *  is what makes the dip the only thing that can reach past the geometry. */
+function mouth(svg: string): { x0: number; y0: number; dx: number; dip: number } {
+  const m = /<path d="M([\d.]+) ([\d.]+)q([\d.]+) ([\d.]+) ([\d.]+) 0"\/>/.exec(svg);
+  expect(m, "expected the mouth as one quadratic ending level with its start").not.toBeNull();
+  return {
+    x0: Number(m![1]),
+    y0: Number(m![2]),
+    dx: Number(m![5]),
+    dip: Number(m![4]) / 2,
+  };
 }
 
 describe("the model glyph's eye gap", () => {
@@ -131,63 +172,84 @@ describe("the model glyph", () => {
     }
   });
 
-  it("has a square content bbox, centred in its viewBox", () => {
+  it("gives the whole box to the head", () => {
+    // The head's stroked rect IS the content bbox — there is nothing else
+    // outside it. That is the fix this drawing exists for: an antenna dot and
+    // stem used to own the top 6 units, so the head was 15 tall of the 22 a
+    // centred bbox gets and its interior 13, which is 6.5 CSS px at 12px for two
+    // eyes and a mouth. Any element added above the head takes that room back,
+    // and it will show up here as a margin over one unit or a non-square box.
     const svg = ICON_MODEL;
     const side = viewBoxSide(svg);
-    const strokeWidth = attr(/^<svg[^>]*>/.exec(svg)![0], "stroke-width");
-
-    // Two elements define the extremes: the antenna dot is the topmost painted
-    // thing and the head's stroked rect is the other three edges. Everything else
-    // sits inside the head.
-    const dot = circles(svg).find((c) => c.r !== eyes(svg)[0].r);
-    expect(dot, "expected an antenna dot distinct from the eyes").toBeDefined();
-    const rectTag = /<rect [^>]*\/>/.exec(svg);
-    expect(rectTag, "expected the head rect").not.toBeNull();
-    const rx = attr(rectTag![0], "x");
-    const ry = attr(rectTag![0], "y");
-    const rw = attr(rectTag![0], "width");
-    const rh = attr(rectTag![0], "height");
-
-    const half = strokeWidth / 2;
+    const half = strokeWidth(svg) / 2;
+    const h = headRect(svg);
     const box = {
-      top: dot!.cy - dot!.r,
-      bottom: ry + rh + half,
-      left: rx - half,
-      right: rx + rw + half,
+      top: h.y - half,
+      bottom: h.y + h.height + half,
+      left: h.x - half,
+      right: h.x + h.width + half,
     };
 
+    expect(box.right - box.left, "the head's painted box must be square").toBe(
+      box.bottom - box.top,
+    );
+    expect(box.left + box.right, "the box must be centred horizontally in the viewBox").toBe(side);
+    expect(box.top + box.bottom, "the box must be centred vertically too").toBe(side);
     expect(
-      box.right - box.left,
-      "the content bbox must be square; it was 22 x 21.5 before the head moved down",
-    ).toBe(box.bottom - box.top);
-    expect(box.left + box.right, "the bbox must be centred horizontally in the viewBox").toBe(side);
-    expect(
-      box.top + box.bottom,
-      "the bbox must be centred vertically too. Squaring it by extending only upward reaches " +
-        "22 x 22 flush against the top edge with 2 units below, which is square and still off-centre",
-    ).toBe(side);
+      box.left,
+      "the head must reach the 1-unit margin on every side; a bigger margin means something " +
+        "else is claiming space in the viewBox, which is what the antenna did",
+    ).toBeLessThanOrEqual(1);
   });
 
-  it("keeps the mouth inside the head, dip included", () => {
+  it("keeps the face inside the head, mouth dip included", () => {
     // The mouth is the one element whose painted extent is not its own
     // coordinates: it is a quadratic, and a quadratic's dip is HALF its control
-    // offset. The previous drawing's dip was 1 unit (0.5 px at 12px, a dash);
-    // deepening it is only safe while the curve plus its stroke stays off the
-    // head's inner edge.
+    // offset. Deepening the dip (1 unit read as a straight dash at 12px) is only
+    // safe while the curve plus its stroke stays off the head's inner edge.
     const svg = ICON_MODEL;
-    const strokeWidth = attr(/^<svg[^>]*>/.exec(svg)![0], "stroke-width");
-    const m = /<path d="M([\d.]+) ([\d.]+)q([\d.]+) ([\d.]+) ([\d.]+) 0"\/>/.exec(svg);
-    expect(m, "expected the mouth as one quadratic ending level with its start").not.toBeNull();
-    const [y0, cdy] = [Number(m![2]), Number(m![4])];
-    const dip = cdy / 2;
+    const half = strokeWidth(svg) / 2;
+    const h = headRect(svg);
+    const m = mouth(svg);
+    const [left, right] = eyes(svg);
 
-    const rectTag = /<rect [^>]*\/>/.exec(svg)!;
-    const headInnerBottom = attr(rectTag[0], "y") + attr(rectTag[0], "height") - strokeWidth / 2;
+    const inner = {
+      top: h.y + half,
+      bottom: h.y + h.height - half,
+      left: h.x + half,
+      right: h.x + h.width - half,
+    };
+    const face = {
+      top: Math.min(left.cy - left.r, right.cy - right.r),
+      bottom: m.y0 + m.dip + half,
+      left: Math.min(left.cx - left.r, m.x0 - half),
+      right: Math.max(right.cx + right.r, m.x0 + m.dx + half),
+    };
 
-    expect(dip, "a dip under 2 units renders as a straight dash at 12px").toBeGreaterThanOrEqual(2);
+    expect(m.dip, "a dip under 2 units renders as a straight dash at 12px").toBeGreaterThanOrEqual(
+      2,
+    );
     expect(
-      y0 + dip + strokeWidth / 2,
-      `the mouth's lowest painted edge must stay above the head's inner bottom (${String(headInnerBottom)})`,
-    ).toBeLessThanOrEqual(headInnerBottom);
+      face.bottom,
+      `the mouth's lowest painted edge must stay above the head's inner bottom (${String(inner.bottom)})`,
+    ).toBeLessThanOrEqual(inner.bottom);
+    expect(face.top, "the eyes must stay below the head's inner top").toBeGreaterThanOrEqual(
+      inner.top,
+    );
+    expect(face.left, "the face must stay inside the head's left wall").toBeGreaterThanOrEqual(
+      inner.left,
+    );
+    expect(face.right, "the face must stay inside the head's right wall").toBeLessThanOrEqual(
+      inner.right,
+    );
+
+    // Centred within a unit. The head is symmetric, so a face drifting toward
+    // one wall is a composition bug rather than a rendering one — worth a floor
+    // because the eye and mouth rows are tuned by hand and half a unit is
+    // 0.25 CSS px at 12px, invisible in review and cumulative across edits.
+    expect(
+      Math.abs((face.top + face.bottom) / 2 - (inner.top + inner.bottom) / 2),
+      "the face must sit within a unit of the head interior's vertical centre",
+    ).toBeLessThanOrEqual(1);
   });
 });

@@ -682,7 +682,9 @@ function setCardFolded(card: HTMLElement, folded: boolean): void {
  *  structural variation. */
 function buildTurn(t: Turn): HTMLElement {
   const card = el("div", { className: "turn" });
-  card.dataset["outcome"] = t.outcome;
+  // No `data-outcome` on the CARD: the outcome is carried by the header dot,
+  // the footer glyph and the rail marker, and the leading-edge hairline that
+  // was this attribute's only reader is gone (29-turns.css).
   // The permalink target. `#turn-{n}` addresses a turn from a ledger row, a
   // search hit or the rail.
   card.id = turnAnchorID(t.n);
@@ -710,7 +712,6 @@ function buildTurn(t: Turn): HTMLElement {
 }
 
 function updateTurn(card: HTMLElement, t: Turn): void {
-  card.dataset["outcome"] = t.outcome;
   const header = card.querySelector<HTMLElement>(":scope > .turn-header");
   if (header !== null) {
     updateTurnHeader(header, headerData(t));

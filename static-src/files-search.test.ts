@@ -31,6 +31,7 @@ vi.mock("./icons.js", () => ({ fileIcon: () => "<svg></svg>" }));
 vi.mock("./icon-el.js", () => ({ iconEl: () => document.createElement("span") }));
 
 const mod = await import("./files-search.js");
+const bus = await import("./bus.js");
 const {
   searchURL,
   searchNote,
@@ -368,5 +369,57 @@ describe("the Ctrl-F hotkey", () => {
       expect(e.defaultPrevented).toBe(false);
     }
     expect(_isFilesSearchOpen()).toBe(false);
+  });
+});
+
+describe("a tab switch", () => {
+  // This bar was the one search surface that survived a tab switch — the
+  // transcript's and the editor's have closed on it for as long as they have
+  // existed. So the browser kept a stale hit list and a stale query where its
+  // directory listing belongs, and the next visit to the file browser opened in
+  // search mode. Reported as a chat's search being inherited by the files tab,
+  // because that is the gesture that exposes it.
+  function leaveBrowser(): void {
+    bus.emitBus(bus.BUS_TAB_CHANGED, { to: "c-1", kind: "chat" });
+  }
+
+  it("closes the bar and restores the listing when you LEAVE the browser", async () => {
+    apiGet.mockResolvedValue(result({ scanned: 3 }));
+    openFilesSearch();
+    input().value = "Foo";
+    input().dispatchEvent(new Event("input"));
+    await settle();
+    expect(_isFilesSearchOpen()).toBe(true);
+
+    leaveBrowser();
+    expect(_isFilesSearchOpen()).toBe(false);
+    expect(document.getElementById("fb-list")?.classList.contains("hidden")).toBe(false);
+    expect(_filesSearchResults().children).toHaveLength(0);
+  });
+
+  it("forgets the query AND the globs, so nothing narrows a later search invisibly", async () => {
+    openFilesSearch();
+    input().value = "Foo";
+    const include = document.getElementById("fb-search-include") as HTMLInputElement;
+    const exclude = document.getElementById("fb-search-exclude") as HTMLInputElement;
+    include.value = "*.go";
+    exclude.value = "node_modules";
+    await settle();
+
+    leaveBrowser();
+    expect(input().value).toBe("");
+    expect(include.value).toBe("");
+    expect(exclude.value, "a stale exclude silently narrows a search nobody scoped").toBe("");
+  });
+
+  it("does NOT close when the switch is ARRIVING at the browser", () => {
+    // openFilesSearch activates the files tab before it opens the bar, and the tab
+    // store announces that switch from a batched effect — so a subscriber keyed on
+    // "any change" would fire after the open landed and shut the bar the user just
+    // asked for. Keying on the destination kind is what makes the order irrelevant.
+    openFilesSearch();
+    expect(_isFilesSearchOpen()).toBe(true);
+    bus.emitBus(bus.BUS_TAB_CHANGED, { to: "__files__", kind: "files" });
+    expect(_isFilesSearchOpen()).toBe(true);
   });
 });

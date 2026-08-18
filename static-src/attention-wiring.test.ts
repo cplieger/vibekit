@@ -80,7 +80,6 @@ import {
   browserAttentionEnv,
   createAttention,
   initAttention,
-  isWatching,
   pageVisible,
   rowsInView,
   CUE_SEEN_KEY,
@@ -444,7 +443,7 @@ describe("rowsInView", () => {
   });
 });
 
-describe("pageVisible and isWatching", () => {
+describe("pageVisible", () => {
   beforeEach(() => {
     hidePage(false);
     setActive("");
@@ -459,13 +458,14 @@ describe("pageVisible and isWatching", () => {
     expect(pageVisible()).toBe(false);
   });
 
-  it("watches only the active chat, and only while the page is visible", () => {
-    setActive("a");
-    expect(isWatching("a")).toBe(true);
-    expect(isWatching("b")).toBe(false);
-    hidePage(true);
-    expect(isWatching("a")).toBe(false);
-  });
+  // An `isWatching(chatID)` sat here until 2026-08, giving the `turn_done` latch
+  // and the acknowledgement pass one definition of "looking at it". The latch
+  // stopped asking (a finished turn is `done` whoever is watching), which left the
+  // pass as its only reader — and that derives the condition from its own injected
+  // wiring, so the exported helper had no production caller left. The behaviour it
+  // described is still pinned, by the two cases in the raise-rule block below:
+  // a cue on the active visible chat raises nothing, and the same cue on a hidden
+  // page raises the count.
 });
 
 // ---------------------------------------------------------------------------

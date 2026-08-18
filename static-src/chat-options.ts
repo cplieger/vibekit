@@ -24,7 +24,7 @@
 
 import { el, effect } from "@cplieger/reactive";
 import { $ } from "./dom.js";
-import { activeSession, isThinking } from "./store.js";
+import { activeSession, isThinking, isEmptyChat } from "./store.js";
 import { makeExpandable, collapseAll } from "./pill-expand.js";
 import { iconEl } from "./icon-el.js";
 import { setSupervised } from "./actions/chat.js";
@@ -72,13 +72,18 @@ export function initChatOptions(): void {
   makeExpandable(pill, card, { haspopup: "dialog" });
 }
 
-/** A menu row that DOES something: glyph, name, one-line hint. */
+/** A menu row that DOES something: glyph, name, one-line hint.
+ *
+ *  Returns the row plus its button and hint, because a row whose availability is
+ *  a function of chat state needs to reach both after construction: the button to
+ *  disable, the hint to say why. */
 function actionRow(opts: {
   icon: string;
   name: string;
   hint: string;
   onClick: (row: HTMLElement) => void;
-}): HTMLElement {
+}): { row: HTMLElement; btn: HTMLButtonElement; hint: HTMLElement } {
+  const hint = el("span", { className: "chat-opt-hint" }, opts.hint);
   const btn = el(
     "button",
     { type: "button", className: "chat-opt-btn" },
@@ -87,14 +92,14 @@ function actionRow(opts: {
       "span",
       { className: "chat-opt-text" },
       el("span", { className: "chat-opt-name" }, opts.name),
-      el("span", { className: "chat-opt-hint" }, opts.hint),
+      hint,
     ),
   ) as HTMLButtonElement;
   const row = el("div", { className: "chat-opt-entry" }, btn);
   btn.addEventListener("click", () => {
     opts.onClick(row);
   });
-  return row;
+  return { row, btn, hint };
 }
 
 /** Attach a file. The former paperclip pill, moved here unchanged in behaviour.
@@ -122,28 +127,56 @@ function attachRow(): HTMLElement {
       collapseAll();
       openFilePicker();
     },
-  });
+  }).row;
 }
 
-/** Start a tangent off the active chat. */
+/** The hints the tangent row swaps between. The disabled one names what to do
+ *  next rather than what went wrong, because the row is unavailable before the
+ *  user has done anything, not after a mistake. */
+const TANGENT_HINT = "Branch this conversation into a sub-chat that keeps its context";
+const TANGENT_HINT_EMPTY = "Send a message first; a tangent inherits the conversation";
+
+/** Start a tangent off the active chat.
+ *
+ *  UNAVAILABLE until the chat holds a conversation, and disabled rather than
+ *  error-toasting: on a brand-new chat the fork had nothing to branch from, so it
+ *  404'd server-side (`errForkParentUnknown` — a chat is client-side only until
+ *  its first prompt) AFTER `openTangentChat` had already opened and activated the
+ *  sub-tab. The user was left holding a stray empty sub-tab plus a failure
+ *  notice, which is exactly the shape the disabled control avoids. */
 function tangentRow(): HTMLElement {
-  return actionRow({
+  const { row, btn, hint } = actionRow({
     icon: ICON_TANGENT,
     name: "Start a tangent",
-    hint: "Branch this conversation into a sub-chat that keeps its context",
+    hint: TANGENT_HINT,
     onClick: () => {
-      const id = activeSession.peek()?.id ?? "";
-      if (id === "") {
-        // Nothing to branch from. A tangent inherits a conversation, so there is
-        // no degraded version of one taken off a chat that has none — the New
-        // chat button is that.
-        toast.error("Open a chat first, then start a tangent from it");
+      // Re-read at CLICK time, never captured when the card was built: the card
+      // is built once at init and outlives every chat switch. A disabled button
+      // fires no click, so this is the guard for the window between a signal
+      // write and the effect below, not the user-facing refusal.
+      const session = activeSession.peek();
+      if (session === undefined || isEmptyChat(session)) {
+        toast.error("Send a message first, then start a tangent from it");
         return;
       }
       collapseAll();
-      openTangentChat(id);
+      openTangentChat(session.id);
     },
   });
+
+  // A projection of the ACTIVE chat, like the supervised checkbox below: the menu
+  // remembers nothing, so switching tabs re-reads. Guarded on the value because
+  // `activeSession` re-derives on every streaming chunk.
+  effect(() => {
+    const empty = isEmptyChat(activeSession.value);
+    if (btn.disabled === empty) {
+      return;
+    }
+    btn.disabled = empty;
+    hint.textContent = empty ? TANGENT_HINT_EMPTY : TANGENT_HINT;
+  });
+
+  return row;
 }
 
 /** Set a goal: send the command KAS's own parser claims.
@@ -179,7 +212,7 @@ function goalRow(): HTMLElement {
     name: "Set a goal",
     hint: "The agent iterates toward it until it reports success",
     onClick: openGoalForm,
-  });
+  }).row;
 }
 
 /** Toggle the inline goal form on the row. */

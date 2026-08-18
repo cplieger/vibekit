@@ -10,16 +10,17 @@
 // tabs). The engine (@cplieger/web-terminal-engine) underneath owns the wire
 // protocol, the reconnect/resume reliability layer, and the render/scroll
 // modules. vibekit keeps only its panel chrome (the slide-up panel, the header
-// open/close/reset buttons) and its lifecycle (ui-state persistence).
+// open/close/restart/full-screen buttons) and its lifecycle (ui-state
+// persistence, and the bounded reattach policy below).
 //
-// The terminal handle carries the host controls (ui v4): send(bytes) routes
+// The terminal handle carries the host controls (ui v6): send(bytes) routes
 // through the kernel's sanitizing funnel for the code-block "run in shell"
-// button, and reset() clears the local scrollback + screen (the same reset the
-// engine performs on a server restart) for the header Reset button, which then
-// redraws the prompt with a Ctrl+L. layout: "container" makes #shell-terminal
-// the terminal's own styling/positioning boundary, so the panel needs no
-// containment workarounds and the served CSS is the component-only
-// MANIFEST.touch bundle (no page reset, no fonts, no @layer quarantine).
+// button, and reattach() attaches to the PTY the server put in place of one that
+// ended, which is what the header Restart button and the onSessionEnded handler
+// below both drive. layout: "container" makes #shell-terminal the terminal's own
+// styling/positioning boundary, so the panel needs no containment workarounds
+// and the served CSS is the component-only MANIFEST.touch bundle (no page
+// reset, no fonts, no @layer quarantine).
 // ---------------------------------------------------------------------------
 
 import { createTerminal, localScrollbackStorage } from "@cplieger/web-terminal-ui";
@@ -72,6 +73,91 @@ function hostSend(bytes: Uint8Array): void {
   handle?.send(bytes);
 }
 
+// --- Reattaching after the PTY ends ---
+//
+// A session that ends leaves this panel dead until something reattaches, and the
+// panel is the only thing that can decide to. The engine's process-exited close
+// is DEFINITIVE, so it does not reconnect, and it is right not to on a
+// per-session server, where reconnecting would earn the same close again.
+//
+// vibekit's server is the other shape. It holds ONE handler for a global PTY and
+// replaces a spent one lazily, inside the next CONNECT (ShellManager.current), so
+// the connection the engine declines is exactly what produces a new shell. That
+// mismatch stranded the panel in both directions: the Restart button killed the
+// PTY server-side and then only cleared the local screen, and typing `exit` left
+// the same corpse. handle.reattach() (ui v6.1.0) fixes both, and the library owns
+// the ORDER inside it — drop the local buffer, leave the ended state, then
+// reconnect — so a host cannot resume against the old PTY's line-index space or
+// leave the banner contradicting a blanked screen.
+//
+// What stays here is the POLICY, which the library deliberately does not own:
+// whether a reattach can succeed at all is a fact about this server, and so is
+// how many are worth making.
+
+/** How long a session must have run for its end to count as a fresh incident
+ *  rather than another failure of the spawn that replaced the last one. Above
+ *  the ladder's longest step, or a storm would reset its own backoff. */
+const REATTACH_STABLE_MS = 3000;
+/** Consecutive reattaches before the panel gives up and leaves "Session ended"
+ *  standing. A shell that dies as fast as it is spawned (a login file that
+ *  exits, a missing interpreter) must not be respawned forever; four attempts
+ *  across ~2s ride out a transient and stop well short of a hot loop. */
+const REATTACH_MAX = 4;
+/** First backoff step; each later attempt doubles it (0, 250, 500, 1000ms). */
+const REATTACH_BASE_MS = 250;
+
+let reattachAttempts = 0;
+/** When the last reattach actually ran (0 = never), for the stability window. */
+let reattachedAt = 0;
+/** Counts reattaches so an awaiting caller can tell whether one landed while it
+ *  was waiting. The restart POST and the ended close race each other, and this
+ *  is what keeps the winner from being reconnected over. */
+let reattachSeq = 0;
+let reattachTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Queue ONE reattach, backing off across consecutive failures. Idempotent: a
+ *  second call while a reattach is already pending is the two triggers (the
+ *  ended close and the restart response) naming the same incident, not two
+ *  incidents.
+ *
+ *  The FIRST attempt runs synchronously, because by the time either trigger
+ *  fires the server has already installed the replacement handler — the swap
+ *  precedes the kill that closes the socket, and the restart response comes
+ *  after both — so there is nothing to wait for. The delay is the backoff
+ *  between repeated failures, not a settling period.
+ *
+ *  A user gesture always earns a fresh ladder: clicking Restart is a new
+ *  decision, not the continuation of a failing respawn. */
+function scheduleReattach(reason: "ended" | "restart"): void {
+  // No terminal means no connection to reattach; the first panel open connects.
+  if (handle === null || reattachTimer !== null) {
+    return;
+  }
+  if (reason === "restart" || Date.now() - reattachedAt > REATTACH_STABLE_MS) {
+    reattachAttempts = 0;
+  }
+  if (reattachAttempts >= REATTACH_MAX) {
+    return;
+  }
+  const delay = reattachAttempts === 0 ? 0 : REATTACH_BASE_MS * 2 ** (reattachAttempts - 1);
+  reattachAttempts++;
+  if (delay === 0) {
+    reattachShell();
+    return;
+  }
+  reattachTimer = setTimeout(() => {
+    reattachTimer = null;
+    reattachShell();
+  }, delay);
+}
+
+/** Attach to the PTY the server now serves. */
+function reattachShell(): void {
+  reattachedAt = Date.now();
+  reattachSeq++;
+  handle?.reattach();
+}
+
 /** Kill the PTY and get a fresh one.
  *
  *  This replaced a Reset button that dropped the local scrollback and sent
@@ -84,9 +170,11 @@ function hostSend(bytes: Uint8Array): void {
  *
  *  Confirmed, because unlike the clear it destroys whatever is running.
  *
- *  The local reset runs after the server has replaced the PTY, so the client's
- *  scrollback is dropped in the same gesture; the engine's own reconnect then
- *  draws the new shell's first prompt. */
+ *  The server's kill closes this client's socket, so onSessionEnded usually
+ *  reattaches before this call returns; the seq check is what stops a second,
+ *  redundant reattach from landing on the prompt the first one drew. The
+ *  schedule is still made when nothing moved, so the panel does not depend on a
+ *  close frame arriving to come back. */
 async function hostRestart(): Promise<void> {
   const ok = await confirmDialog(
     "Restart the shell? Anything running in it is killed.",
@@ -96,14 +184,48 @@ async function hostRestart(): Promise<void> {
   if (!ok) {
     return;
   }
+  const seq = reattachSeq;
   if ((await restartShell.dispatch()) === null) {
     return; // the action framework toasts the failure
   }
-  handle?.reset();
+  if (reattachSeq === seq) {
+    scheduleReattach("restart");
+  }
 }
 
 let handle: TerminalHandle | null = null;
 let initialized = false;
+
+/** The toggle's two faces, both Lucide (`maximize` / `minimize`) flattened into
+ *  one path: four corners pointing OUT to enter full screen, the same four
+ *  pointing IN to leave. Rotating the glyph is not the same icon — the corner
+ *  set is rotationally symmetric, so only the arc sweep distinguishes them.
+ *  index.html paints the enter face so the button is not blank before boot;
+ *  from then on setFullscreenBtnState owns it. */
+const FS_ICON_ENTER =
+  "M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3";
+const FS_ICON_LEAVE =
+  "M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3";
+
+/** Write every part of the toggle that depends on whether the panel is full
+ *  screen: the pressed flag, the label, and the glyph. ONE writer, because
+ *  three sites change that state (boot, the click, the close path) and a face
+ *  left behind by one of them is the bug this exists to prevent — the button
+ *  offered "expand" while the panel was already expanded, so the only cue that
+ *  clicking again would shrink it was aria-pressed, which nothing renders.
+ *
+ *  The label names what the click DOES rather than the state it is in, matching
+ *  the editor's diff toggle and the turn's raw-source toggle. */
+function setFullscreenBtnState(on: boolean): void {
+  const fsBtn = $.shellFullscreenBtn;
+  fsBtn.setAttribute("aria-pressed", on ? "true" : "false");
+  const label = on ? "Exit full screen" : "Full screen";
+  fsBtn.setAttribute("data-tooltip", label);
+  fsBtn.setAttribute("aria-label", label);
+  // Optional chained: the panel's glyph is markup this module does not build,
+  // and a missing one is no reason to drop the rest of the state.
+  fsBtn.querySelector("path")?.setAttribute("d", on ? FS_ICON_LEAVE : FS_ICON_ENTER);
+}
 
 /** Wire the panel's full-screen toggle. aria-pressed mirrors the panel class so
  *  the button reads as a toggle; setShellOpen resets both when the panel closes.
@@ -113,12 +235,12 @@ let initialized = false;
  *  do with agent output. */
 function wireFullscreenToggle(): void {
   const fsBtn = $.shellFullscreenBtn;
-  fsBtn.setAttribute("aria-pressed", "false");
+  setFullscreenBtnState(false);
   fsBtn.addEventListener("click", () => {
     const panel = $.shellPanel;
     if (!panel.classList.contains("shell-fullscreen")) {
       panel.classList.add("shell-fullscreen");
-      fsBtn.setAttribute("aria-pressed", "true");
+      setFullscreenBtnState(true);
       return;
     }
     // Leaving: the panel's geometry has to SNAP back (its fullscreen height is
@@ -128,7 +250,7 @@ function wireFullscreenToggle(): void {
     // is nothing to animate — CSS cannot transition an element out of a state
     // it has already left.
     panel.classList.add("shell-fullscreen-leaving");
-    fsBtn.setAttribute("aria-pressed", "false");
+    setFullscreenBtnState(false);
     const done = (): void => {
       panel.classList.remove("shell-fullscreen", "shell-fullscreen-leaving");
     };
@@ -294,6 +416,13 @@ function ensureTerminal(): void {
     wsPath: SHELL_WS_PATH,
     fontReady: SHELL_FONT_READY,
     theme: SHELL_THEME,
+    // The shell died and nothing is retrying. On this server that is recoverable
+    // (the next connect gets a fresh PTY), so typing `exit` or wedging a child
+    // ends with a new prompt rather than a dead panel. The ladder is ours; the
+    // library reports the end and refuses to guess a policy from it.
+    onSessionEnded: () => {
+      scheduleReattach("ended");
+    },
     // Restore the shell's scrollback from this device rather than pulling it back
     // over the wire. The server holds the PTY across a reload, but the client
     // comes back holding nothing, so a reopened panel refills its whole buffer
@@ -348,7 +477,7 @@ function setShellOpen(open: boolean, opts: { focus?: boolean } = {}): void {
     // !important (un-animatable collapse), and a persisted class would make
     // the next open start fullscreen.
     $.shellPanel.classList.remove("shell-fullscreen");
-    $.shellFullscreenBtn.setAttribute("aria-pressed", "false");
+    setFullscreenBtnState(false);
     // The panel usually holds focus (the terminal's hidden textarea); hiding
     // it would drop focus to <body> and restart Tab order from the document
     // top (WCAG 2.4.3). Hand focus back to the toolbar button instead.

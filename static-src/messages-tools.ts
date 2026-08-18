@@ -265,8 +265,8 @@ export const toolSpec: ReconcileSpec<ToolCall> = {
     // Every tool call — including a subagent's nested tools — renders as a
     // real tool card. Subagent GROUPING (the invocation → a SubagentBlock
     // header, the nested tools → cards inside its body) is handled one level
-    // up in messages-blocks.ts by contiguous agent_subtask_id runs, so this
-    // spec has no subagent-specific branches.
+    // up in messages-blocks.ts, keyed by agent_subtask_id, so this spec has no
+    // subagent-specific branches.
     const opts: Parameters<typeof buildToolCard>[0] = {
       id: tc.id,
       title: tc.title,

@@ -106,6 +106,35 @@ interface HealthBody {
   reason?: string;
 }
 
+// --- The status popup's agent-runtime line ---
+//
+// The sidebar status card reads connection / agent runtime / account, and the
+// middle line had no writer from the first commit — it showed a literal "-"
+// forever, because the readiness verdict it wanted did not exist until the
+// install moved into the server. It lives HERE rather than in status.ts for the
+// reason the header gives: this module is the only reader of the /api/health
+// reason vocabulary, and a second one is exactly the drift that comment warns
+// about.
+//
+// A kiro-cli reason renders VERBATIM. The server already phrases it as a status
+// line ("kiro-cli installing", "kiro-cli unavailable"), so restating it here
+// would add a translation table with nothing to say. Only the three states that
+// carry no reason are named below.
+
+const LINE_READY = "kiro-cli ready";
+const LINE_SIGNED_OUT = "kiro-cli signed out";
+
+/** Neither ready nor degraded: the server is starting up or shutting down, or
+ *  the probe never reached it. The connection line above carries that story. */
+const LINE_UNKNOWN = "kiro-cli unknown";
+
+let runtimeLine = LINE_UNKNOWN;
+
+/** The agent-runtime line as of the last probe. Painted by status.ts. */
+export function runtimeStatusLine(): string {
+  return runtimeLine;
+}
+
 function reasonOf(body: unknown): string {
   if (typeof body === "object" && body !== null) {
     const r = (body as HealthBody).reason;
@@ -128,6 +157,7 @@ export async function checkRuntimeHealth(): Promise<void> {
   const res = await apiGetOrError<HealthBody>("/api/health");
   const reason = reasonOf(res.body);
   if (!res.ok && reason.startsWith(AUTH_REASON_PREFIX)) {
+    runtimeLine = LINE_SIGNED_OUT;
     // Not dismissible, for the same reason as the install family: it blocks the
     // product's core function and clears itself on the next check once a token
     // vends. The CTA is the login modal rather than Run Diagnostics — the
@@ -141,6 +171,7 @@ export async function checkRuntimeHealth(): Promise<void> {
     return;
   }
   if (!res.ok && reason.startsWith(KIRO_REASON_PREFIX)) {
+    runtimeLine = reason;
     // An unknown kiro-cli reason falls back to the terminal wording rather than
     // being ignored: a state the server can report and the client cannot name
     // still blocks chats, and saying so is better than silence.
@@ -164,6 +195,7 @@ export async function checkRuntimeHealth(): Promise<void> {
   // Healthy, network failure, or a startup/shutdown 503: clear BOTH families.
   // The transient cases re-assert on the next gap check if still degraded;
   // a stale banner over a working runtime is the worse failure mode.
+  runtimeLine = res.ok ? LINE_READY : LINE_UNKNOWN;
   clearBannerCodes(GLOBAL_BANNER, [CODE, AUTH_CODE]);
 }
 

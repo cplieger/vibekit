@@ -69,17 +69,26 @@ type kasConfigChoice struct {
 	Options     []kasConfigChoice `json:"options"` // grouped selects nest
 	Meta        struct {
 		Kiro struct {
-			RateMultiplier float64 `json:"rateMultiplier"`
-			HasEffort      bool    `json:"hasEffort"`
+			// The model's own default tier. The TIER LIST is not here — it is the
+			// `effortLevel` option's own options[]. See api.SessionModel.
+			DefaultEffortLevel string  `json:"defaultEffortLevel"`
+			RateMultiplier     float64 `json:"rateMultiplier"`
+			HasEffort          bool    `json:"hasEffort"`
 		} `json:"kiro"`
 	} `json:"_meta"`
 }
 
 // configTemplateResponse is the GET /api/config-template reply.
 type configTemplateResponse struct {
-	DefaultModel string             `json:"default_model,omitempty"`
-	Modes        []api.SessionMode  `json:"modes"`
-	Models       []api.SessionModel `json:"models"`
+	DefaultModel string `json:"default_model,omitempty"`
+	// EffortActive is the `effortLevel` option's currentValue in the template:
+	// the tier a fresh session would run at. Pre-session, this is the only
+	// evidence of a live level, and without it the effort control rendered with
+	// nothing selected on every chat before its first pick.
+	EffortActive string                   `json:"effort_active,omitempty"`
+	Modes        []api.SessionMode        `json:"modes"`
+	Models       []api.SessionModel       `json:"models"`
+	EffortLevels []api.SessionEffortLevel `json:"effort_levels"`
 }
 
 // handleConfigTemplate: GET /api/config-template → the pre-session mode +
@@ -123,15 +132,41 @@ func templateToResponse(tpl *kasConfigTemplate) configTemplateResponse {
 			Source:      m.Meta.Kiro.Source,
 		})
 	}
-	out := configTemplateResponse{Modes: modes, Models: []api.SessionModel{}}
+	out := configTemplateResponse{
+		Modes:        modes,
+		Models:       []api.SessionModel{},
+		EffortLevels: []api.SessionEffortLevel{},
+	}
 	for i := range tpl.ConfigOptions {
 		opt := &tpl.ConfigOptions[i]
-		if opt.ID != api.ConfigOptionModel {
+		switch opt.ID {
+		case api.ConfigOptionModel:
+			_ = json.Unmarshal(opt.CurrentValue, &out.DefaultModel) // string; ignore non-string
+			out.Models = flattenTemplateModels(opt.Options)
+		case api.ConfigOptionEffort:
+			_ = json.Unmarshal(opt.CurrentValue, &out.EffortActive) // string; ignore non-string
+			out.EffortLevels = flattenTemplateEfforts(opt.Options)
+		}
+	}
+	return out
+}
+
+// flattenTemplateEfforts converts the effortLevel option's choices into the
+// domain tier list. Same shape as the translate-side flattener; the two feeds
+// stay separate because their wire structs are (one is KAS's session frame, one
+// is the template result).
+func flattenTemplateEfforts(choices []kasConfigChoice) []api.SessionEffortLevel {
+	out := make([]api.SessionEffortLevel, 0, len(choices))
+	for i := range choices {
+		c := &choices[i]
+		if len(c.Options) > 0 {
+			out = append(out, flattenTemplateEfforts(c.Options)...)
 			continue
 		}
-		_ = json.Unmarshal(opt.CurrentValue, &out.DefaultModel) // string; ignore non-string
-		out.Models = flattenTemplateModels(opt.Options)
-		break
+		if c.Value == "" {
+			continue
+		}
+		out = append(out, api.SessionEffortLevel{ID: c.Value, Name: c.Name})
 	}
 	return out
 }
@@ -150,11 +185,12 @@ func flattenTemplateModels(choices []kasConfigChoice) []api.SessionModel {
 			continue
 		}
 		out = append(out, api.SessionModel{
-			ID:             c.Value,
-			Name:           c.Name,
-			Description:    c.Description,
-			RateMultiplier: c.Meta.Kiro.RateMultiplier,
-			HasEffort:      c.Meta.Kiro.HasEffort,
+			ID:                 c.Value,
+			Name:               c.Name,
+			Description:        c.Description,
+			RateMultiplier:     c.Meta.Kiro.RateMultiplier,
+			HasEffort:          c.Meta.Kiro.HasEffort,
+			DefaultEffortLevel: c.Meta.Kiro.DefaultEffortLevel,
 		})
 	}
 	return out

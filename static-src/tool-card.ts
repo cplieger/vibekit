@@ -13,8 +13,9 @@ import type { ToolStatus, ToolLocation, ToolDiff, TextSpan } from "./types.js";
 import { escText, windowOutput, windowSpans } from "./strings.js";
 import { renderOutput } from "./output-render.js";
 import { linkifyPaths } from "./linkify.js";
-import { fileIcon, toolIcon, ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
+import { fileIcon, toolIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
+import { chevronEl } from "./chevron.js";
 import { openFileDiff } from "./editor-openers.js";
 import { openChange, openAtLine } from "./navigate.js";
 import { lineDiff, windowHunks, stats as diffStats } from "./diff.js";
@@ -241,11 +242,11 @@ function buildHeader(
       el(
         "button",
         {
-          className: "tool-toggle",
+          className: "tool-disclosure",
           "aria-expanded": "false",
           "aria-label": "Toggle tool details",
         },
-        iconEl(ICON_CHEVRON_DOWN),
+        chevronEl(),
       ),
     );
   }
@@ -432,7 +433,7 @@ function wireFileLink(el: HTMLElement, filePath: string, isChange: boolean): voi
 const detailCtls = new WeakMap<HTMLElement, DisclosureController>();
 
 function wireToggle(el: HTMLElement): void {
-  const toggle = el.querySelector<HTMLElement>(".tool-toggle");
+  const toggle = el.querySelector<HTMLElement>(".tool-disclosure");
   const details = el.querySelector<HTMLElement>(".tool-details");
   if (toggle === null || details === null) {
     return;
@@ -440,12 +441,17 @@ function wireToggle(el: HTMLElement): void {
   // The disclosure primitive owns aria-expanded/aria-controls, activation,
   // and the animated height 0↔auto with aria-hidden + inert on the collapsed
   // region (which the old class flip never set — collapsed details stayed in
-  // the accessibility tree). The chevron swap and the scroll-freeze on a
-  // user collapse stay vibekit's, via onToggle.
+  // the accessibility tree). Only the scroll-freeze on a user collapse stays
+  // vibekit's, via onToggle.
+  //
+  // The chevron is NOT swapped here any more. Direction is CSS's, keyed off the
+  // `aria-expanded` this controller already writes (`.disclosure-chevron` in
+  // 10-shell-app.css, flipped in 14-tools.css) — so the glyph animates into its
+  // new direction instead of being replaced mid-transition, and one convention
+  // covers all eight disclosures in the app rather than this one.
   const ctl = createDisclosure(toggle, details, {
     open: false,
     onToggle: (open, source) => {
-      toggle.replaceChildren(iconEl(open ? ICON_CHEVRON_UP : ICON_CHEVRON_DOWN));
       if (!open && source === "user") {
         setUserScrolledUp(true);
       }
@@ -455,8 +461,8 @@ function wireToggle(el: HTMLElement): void {
 }
 
 /** Force-open a card's details (e.g. when the tool fails so the error output
- *  is visible without a click). The chevron follows via the controller's
- *  onToggle; a card without wired details is a no-op. */
+ *  is visible without a click). The chevron follows from the `aria-expanded`
+ *  the controller writes; a card without wired details is a no-op. */
 export function expandToolDetails(card: HTMLElement): void {
   detailCtls.get(card)?.open();
 }

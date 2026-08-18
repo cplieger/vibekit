@@ -46,6 +46,16 @@ export function getGitTab(): GitTab {
   return activeTab.peek();
 }
 
+/** The active sub-tab as a REACTIVE read: called inside an `effect` it
+ *  subscribes, so a derived output re-runs on a switch. Separate verb rather than
+ *  a flag on `getGitTab`, which peeks on purpose — most callers want the value at
+ *  a moment (a click, a refresh) and a subscription there would be an accident.
+ *  Its reader is the toolbar's search affordance, which has to collapse on the
+ *  Sources tab. */
+export function readGitTab(): GitTab {
+  return activeTab.value;
+}
+
 /** Externally force the active sub-tab WITHOUT pushing a URL — used by the
  *  router when back/forward navigation lands on a /git/<tab> URL. Mirrors
  *  forceSettingsTab. Safe to call before the git view tab exists (the

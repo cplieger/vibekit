@@ -65,15 +65,26 @@ export const EVENT_RENDER_MAP: Readonly<Record<EventKind, EventRenderStrategy>> 
     labelFn: (c) =>
       c ? `Infrastructure Safety blocked: ${c}` : "Infrastructure Safety blocked a change",
   },
-  // A turn cut short by a server restart, recovered from its .partial file.
-  // Without a visible boundary the recovered (often mid-sentence) turn reads
-  // as a short but complete answer — so render a red "failed"-styled divider.
-  // Reuses the existing .boundary-failed styling (no new CSS).
+  // A turn that ended without a proper completion event. Two paths reach it,
+  // and NEITHER is a server restart: a prompt RPC that failed with a started
+  // assistant buffer (AbandonInFlightTurn), and an empty-turn recovery that
+  // recreated the session (recoverEmptyTurn). The label used to name a restart
+  // and a `.partial` sidecar recovery; that sidecar is deleted (see
+  // hub/bridge_coord.go) and nothing in the tree detects a restart, so the
+  // string was a claim about a mechanism that no longer exists.
+  //
+  // labelFn is what makes the server's own reason visible. Without it `content`
+  // was decoded, carried across the wire and then dropped by this renderer, so
+  // "Session refreshed, retrying..." never reached the screen.
+  //
+  // Still red "failed"-styled: a turn cut short reads as a short but complete
+  // answer without a visible boundary.
   interrupted: {
     kind: "boundary",
     boundary: "failed",
     icon: "\u26a0",
-    defaultLabel: "Interrupted by server restart",
+    defaultLabel: "Turn interrupted",
+    labelFn: (c) => (c ? c : "Turn interrupted"),
   },
   cancelled: { kind: "skip" },
 } satisfies Record<EventKind, EventRenderStrategy>;

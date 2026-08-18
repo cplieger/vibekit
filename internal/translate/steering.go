@@ -12,6 +12,12 @@ package translate
 //	steering_injected → EventSteerInjected  the model has read it
 //	steering_cleared  → EventSteerCleared   the boundary dropped it unread
 //
+// A FOURTH event leaves here, off the queued sub-kind: KAS delivers an agent's
+// own progress notice through the same buffer (it is the only inbound channel
+// into a live turn), distinguishable only by the severity it carries. That
+// becomes EventAgentNotice, because the user's outbound messages and the agent's
+// notices belong on different surfaces. See handleSteeringUpdate.
+//
 // Unlike focus / summarization / contextUsage, these carry no sub-block to key
 // off: KAS's buildSessionInfoUpdate spreads the update flat into _meta.kiro and
 // its legacyFields() returns {} for all three. So this is the one place the
@@ -50,15 +56,29 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID api.ChatID
 		if k.MessageID == "" {
 			return true
 		}
+		// KAS multiplexes two different authors onto this one sub-kind, and the
+		// severity is the only thing that separates them: it is set when KAS
+		// sniffed a `[notification/<severity>]` prefix, which vibekit refuses to
+		// send (command/steer.go), so a severity here means a workflow step or a
+		// subagent is reporting into this chat rather than the user speaking.
+		//
+		// They leave as different events because their surfaces are different.
+		// A steer belongs on the composer's chip row, which is about messages the
+		// user is waiting for the agent to read; a notice belongs on the
+		// ephemeral stack, because nobody is waiting on it and nobody can
+		// discard it. Forwarding both as one event pushed the deciding onto every
+		// consumer, and the client got it wrong: an agent's own progress line
+		// rendered inside the message box as something the user had typed.
+		if k.NotificationSeverity != "" {
+			t.deps.Broadcast(ctx, api.NewEvent(api.EventAgentNotice, chatID, api.AgentNoticePayload{
+				Severity: k.NotificationSeverity,
+				Text:     k.Content,
+			}))
+			return true
+		}
 		t.deps.Broadcast(ctx, api.NewEvent(api.EventSteerQueued, chatID, api.SteerQueuedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
-			// Set only for a notification KAS classified by sniffing the text.
-			// vibekit refuses to SEND one of those, so a severity arriving here
-			// means the message came from a workflow step or a subagent rather
-			// than from the user — the client styles it as a notice, not as
-			// something the user said.
-			Severity: k.NotificationSeverity,
 		}))
 		return true
 

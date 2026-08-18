@@ -53,15 +53,36 @@
   opacity: 0;
 }
 
-/* Desktop tab bar: segmented-control pills. */
+/* Desktop tab bar: segmented-control pills.
+ *
+ * THIS PAIR IS DERIVED THE OTHER WAY ROUND, and that is the interesting half.
+ * The nesting rule is inner = outer − border − inset, so with a 6px bar, a 1px
+ * border and a 4px inset the segment would have to be 1px — square, on the one
+ * element whose whole job is to read as a pressable pill. The rule does not care
+ * which side moves, only that the two corner centres coincide, so the SEGMENT
+ * keeps its shape and the bar takes 4 + 1 + 4 = 9px.
+ *
+ * It shipped as `calc(var(--r) - 0.125rem)` on the segment: the padding term was
+ * 2px where the padding is 4px, and the border term was missing entirely, so the
+ * segments sat at 4px against a bar whose corner wanted 1px.
+ *
+ * No rung of the radius ladder can satisfy this pair. The ladder steps 12/8/6/4
+ * and the gap here is 5px, so one side of a nested pair is always a derived
+ * value; that is why this is a calc rather than a token. Rule and sources:
+ * web.md "A nested rounded corner". The `.mcp-modal-tabs` bar (60-mcp.css) is
+ * the same component under another name and carries the same derivation. */
 .settings-tab-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem;
+
+  --seg-inset: 0.25rem;
+  --seg-radius: var(--r-sm);
+
+  gap: var(--seg-inset);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  padding: 0.25rem;
+  border-radius: calc(var(--seg-radius) + 1px + var(--seg-inset));
+  padding: var(--seg-inset);
 }
 
 .settings-tab {
@@ -70,7 +91,7 @@
   padding: var(--sp-2) var(--sp-3);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: calc(var(--r) - 0.125rem);
+  border-radius: var(--seg-radius);
   color: var(--c-text-secondary);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);
@@ -366,14 +387,16 @@
   background: var(--c-bg-tertiary);
 }
 
+/* Site colour and size only; glyph, centring and rotation are the shared
+   `.disclosure-chevron`'s (chevron.ts). */
 .forge-account-repos-chevron {
-  display: inline-block;
+  --chev-size: 0.75rem;
+
   color: var(--c-text-tertiary);
-  transition: transform var(--dur-micro) var(--ease-standard);
 }
 
 .forge-account-repos[open] > .forge-account-repos-summary > .forge-account-repos-chevron {
-  transform: rotate(90deg);
+  --chev-turn: 0deg;
 }
 
 /* Shell is the canonical empty state in 18-pages.css. */
@@ -572,8 +595,11 @@
   color: var(--c-accent);
 }
 
-/* PAT form layout (used inside .forge-kind-slot). */
-.forge-pat-body {
+/* Section body inside .forge-add-pane-section (OAuth device prompt, or
+ * the PAT help line + form). Stacks its children on the pane's own
+ * rhythm; without it the help paragraph (margin: 0) sits flush against
+ * the token input. */
+.forge-add-pane-body {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
@@ -1896,7 +1922,7 @@ select.native-rule-effect:focus-visible {
   block-size: 0.85rem;
 }
 
-/* --- History (full-page table + sidebar): keyboard rows, skeleton, error --- */
+/* --- History (full-page table): keyboard rows, skeleton, error --- */
 
 /* The title block restores the chat on click/Enter/Space (role="button"). */
 [id="history-table"] .list-row-title {
@@ -1907,11 +1933,6 @@ select.native-rule-effect:focus-visible {
 [id="history-table"] .list-row-title:focus-visible {
   outline: 2px solid var(--c-accent);
   outline-offset: -2px;
-}
-
-[id="history-list"] .history-restore:focus-visible {
-  outline: 2px solid var(--c-accent);
-  outline-offset: 2px;
 }
 
 /* Load-failure state: message + Retry, so it's never a dead end. */

@@ -212,6 +212,7 @@ describe("the close × is a real element, not a character", () => {
       "files-search.ts",
       "editor-find.ts",
       "search-shell.ts",
+      "search-popup.ts",
     ]) {
       const src = readFileSync(join(here, file), "utf8");
       // Comments explain the glyphs, so they are stripped before the scan.
@@ -223,6 +224,44 @@ describe("the close × is a real element, not a character", () => {
             `align-items centres, so the ink lands off-centre by a font-dependent amount`,
         ).not.toContain(glyph);
       }
+    }
+  });
+});
+
+describe("the page search popup's × takes the same shape", () => {
+  // A FOURTH bar, and the one that is four surfaces: History, the configuration
+  // browser and the git view's two panels all share `.page-find` (search-popup.ts),
+  // so one rule is the whole population. It is absent from the BARS table above
+  // because it has no `Aa` to centre — none of those four endpoints can honour a
+  // match-case flag — and a table entry with an empty column would read as a gap
+  // rather than a decision.
+  const decls = body("24-find.css", ".page-find-btn");
+
+  it("collapses the strut around its SVG", () => {
+    expect(decls).toMatch(/line-height:\s*0\s*;/);
+  });
+
+  it("centres on both axes and holds the app's button square", () => {
+    expect(decls).toMatch(/align-items:\s*center/);
+    expect(decls).toMatch(/justify-content:\s*center/);
+    expect(decls).toMatch(/inline-size:\s*var\(--btn-h\)/);
+    expect(decls).toMatch(/block-size:\s*var\(--btn-h\)/);
+  });
+
+  it("declares no font-size, because there is no text in it", () => {
+    expect(decls).not.toMatch(/font-size:/);
+  });
+
+  it("has no match-case rule to carry, in any stylesheet", () => {
+    // The tell that its absence is deliberate rather than forgotten: no
+    // `.page-find-case` exists anywhere, so nothing is styled for a control the
+    // builder does not make.
+    const files = ["24-find.css", "70-selection.css"];
+    for (const file of files) {
+      expect(
+        loadCSS(file),
+        `${file} must not style a toggle this bar has no reason to hold`,
+      ).not.toContain(".page-find-case");
     }
   });
 });

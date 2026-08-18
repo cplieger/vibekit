@@ -103,9 +103,22 @@ const (
 	// single "steer_changed" event would make "sent but not yet seen"
 	// indistinguishable from "seen", which is the one distinction a user
 	// steering a live turn cares about.
-	EventSteerQueued     EventType = "steer_queued"
-	EventSteerInjected   EventType = "steer_injected"
-	EventSteerCleared    EventType = "steer_cleared"
+	EventSteerQueued   EventType = "steer_queued"
+	EventSteerInjected EventType = "steer_injected"
+	EventSteerCleared  EventType = "steer_cleared"
+	// A notice the AGENT produced, not the user: a workflow step or a subagent
+	// reporting progress into the session that launched it.
+	//
+	// It arrives on KAS's steering channel because that buffer is the only
+	// inbound path into a live turn, and it used to be forwarded as a
+	// steer_queued carrying a severity. That put it on the chip row inside the
+	// composer, whose entire vocabulary is about the USER's outbound messages:
+	// waiting for the agent, read by the agent, discard the ones it has not
+	// read. None of those is true of text the agent wrote itself, and the
+	// discard control cannot meaningfully act on it. So it is its own event,
+	// and the severity is a required field of it rather than an optional flag
+	// on somebody else's payload.
+	EventAgentNotice     EventType = "agent_notice"
 	EventTerminalCreated EventType = "terminal_created"
 	EventTerminalExited  EventType = "terminal_exited"
 	EventTerminalOutput  EventType = "terminal_output"

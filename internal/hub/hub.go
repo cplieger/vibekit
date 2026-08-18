@@ -388,6 +388,7 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs/{id}/pause", h.handleRunPause)
 	mux.HandleFunc("POST /api/runs/{id}/resume", h.handleRunResume)
 	mux.HandleFunc("POST /api/runs/{id}/retry", h.handleRunRetry)
+	mux.HandleFunc("DELETE /api/runs/{id}", h.handleRunDelete)
 	mux.HandleFunc("POST /api/runs/{id}/step", h.handleRunStepStatus)
 	mux.HandleFunc("GET /api/recipes", h.handleRecipes)
 	h.registerScheduleRoutes(mux)

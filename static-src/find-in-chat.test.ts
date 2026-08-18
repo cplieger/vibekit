@@ -17,7 +17,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("./scroll.js", () => ({ setUserScrolledUp: vi.fn() }));
 
-import { FindEngine, formatCount } from "./find-in-chat.js";
+import { FindEngine, formatCount } from "./find-engine.js";
 
 function root(html: string): HTMLElement {
   const d = document.createElement("div");
@@ -27,7 +27,7 @@ function root(html: string): HTMLElement {
 }
 
 function marks(el: HTMLElement): HTMLElement[] {
-  return [...el.querySelectorAll<HTMLElement>("mark.chat-find-hit")];
+  return [...el.querySelectorAll<HTMLElement>("mark.find-hit")];
 }
 
 // ---------------------------------------------------------------------------
@@ -69,8 +69,8 @@ describe("FindEngine matching", () => {
     expect(marks(el)).toHaveLength(2);
     expect(eng.currentIndex).toBe(0);
     expect(eng.currentMark()).toBe(marks(el)[0]);
-    expect(marks(el)[0]?.classList.contains("chat-find-hit-current")).toBe(true);
-    expect(marks(el)[1]?.classList.contains("chat-find-hit-current")).toBe(false);
+    expect(marks(el)[0]?.classList.contains("find-hit-current")).toBe(true);
+    expect(marks(el)[1]?.classList.contains("find-hit-current")).toBe(false);
   });
 
   it("matches case-insensitively but preserves the original casing in the mark", () => {
@@ -229,8 +229,8 @@ describe("FindEngine stepping", () => {
     const { el, eng } = threeHits();
     eng.next();
     const ms = marks(el);
-    expect(ms[0]?.classList.contains("chat-find-hit-current")).toBe(false);
-    expect(ms[1]?.classList.contains("chat-find-hit-current")).toBe(true);
+    expect(ms[0]?.classList.contains("find-hit-current")).toBe(false);
+    expect(ms[1]?.classList.contains("find-hit-current")).toBe(true);
     expect(eng.currentMark()).toBe(ms[1]);
   });
 
@@ -349,8 +349,13 @@ describe("Ctrl-F overlay", () => {
     // `.is-open` restores them.
     const { loadCSS, ruleContaining } = await import("./__test-helpers__/css-rules.js");
     const css = loadCSS("24-find.css");
-    expect(ruleContaining(css, ".chat-find", "top").body).toMatch(/pointer-events:\s*none/);
-    expect(ruleContaining(css, ".chat-find.is-open", "top").body).toMatch(/pointer-events:\s*auto/);
+    // On `.search-pop`, the skin class this box shares with the four page search
+    // popups: they are positioned over their own content and inherit the same
+    // hazard, so the pair belongs to the shared layer rather than to this box.
+    expect(ruleContaining(css, ".search-pop", "top").body).toMatch(/pointer-events:\s*none/);
+    expect(ruleContaining(css, ".search-pop.is-open", "top").body).toMatch(
+      /pointer-events:\s*auto/,
+    );
   });
 
   it("opens on Ctrl-F when the chat view is active and preventDefaults the browser find", () => {
@@ -384,7 +389,7 @@ describe("Ctrl-F overlay", () => {
 
     // Type "TODO" + Enter: lands on the first of three matches.
     typeAndEnter("TODO");
-    expect(document.querySelectorAll("mark.chat-find-hit")).toHaveLength(3);
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(3);
     expect(count?.textContent).toBe("1 of 3");
 
     // Enter again steps forward; Shift+Enter steps back.
@@ -399,7 +404,7 @@ describe("Ctrl-F overlay", () => {
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
     expect(boxIsOpen()).toBe(false);
-    expect(document.querySelectorAll("mark.chat-find-hit")).toHaveLength(0);
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
   });
 
   it("re-runs the search when the match-case toggle flips, without retyping", () => {
@@ -418,7 +423,7 @@ describe("Ctrl-F overlay", () => {
     expect(toggle?.getAttribute("aria-pressed")).toBe("true");
     // The transcript says "TODO" three times and "todo" never.
     expect(count?.textContent).toBe("No matches");
-    expect(document.querySelectorAll("mark.chat-find-hit")).toHaveLength(0);
+    expect(document.querySelectorAll("mark.find-hit")).toHaveLength(0);
 
     toggle?.click();
     expect(toggle?.getAttribute("aria-pressed")).toBe("false");
@@ -466,7 +471,7 @@ describe("Ctrl-F overlay", () => {
   function openWithMatches(): void {
     onHotkey(ctrlF());
     typeAndEnter("TODO");
-    expect(document.querySelectorAll("mark.chat-find-hit").length).toBeGreaterThan(0);
+    expect(document.querySelectorAll("mark.find-hit").length).toBeGreaterThan(0);
     expect(isOpenFn()).toBe(true);
   }
 
@@ -474,7 +479,7 @@ describe("Ctrl-F overlay", () => {
     expect(isOpenFn(), `${path}: the box should be closed`).toBe(false);
     expect(boxIsOpen(), `${path}: is-open should be gone`).toBe(false);
     expect(
-      document.querySelectorAll("mark.chat-find-hit"),
+      document.querySelectorAll("mark.find-hit"),
       `${path}: every <mark> must be unwrapped, or highlights stay welded into the transcript`,
     ).toHaveLength(0);
     expect(
@@ -523,6 +528,25 @@ describe("Ctrl-F overlay", () => {
     openWithMatches();
     switchTab();
     expectFullyTornDown("tab switch");
+  });
+
+  it("FORGETS the query on a tab switch, so the next tab's find opens empty", () => {
+    // Closing alone was not enough. The box kept its text, and the open path runs
+    // the search — so the next chat's find opened holding the previous chat's
+    // query and immediately searched a transcript that query was never typed
+    // against. Reported as the search state being global rather than per tab.
+    openWithMatches();
+    expect(input()?.value).toBe("TODO");
+    switchTab();
+    expect(input()?.value, "a retained query is inherited by whatever tab is opened next").toBe("");
+  });
+
+  it("KEEPS the query across an ordinary close, the way the browser's find does", () => {
+    // The split is deliberate: only a tab switch is a change of subject. Reopening
+    // on the same chat should still remember what you were looking for.
+    openWithMatches();
+    close();
+    expect(input()?.value).toBe("TODO");
   });
 
   it("closes on the toolbar toggle, and a second toggle re-opens", () => {

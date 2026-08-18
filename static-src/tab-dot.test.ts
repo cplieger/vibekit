@@ -441,18 +441,20 @@ describe("prefers-reduced-motion stops the dot's animation", () => {
 describe("every dot state has an on-selected ink", () => {
   it("re-points --dot-color for all six states on the active row", () => {
     // The dot declares its own colour, so `--c-selected-fg` never reaches it and
-    // the resting hues measure 3.797:1 (accent) down to 2.706:1 (red) on the
-    // selected fill. A state added to 12-tabs.css without a line here would look
-    // right on every unselected row and fail on the one row that is always
-    // selected — which is the failure mode this whole file exists to catch.
+    // the raw hues drop to 2.793:1 on the light selected fill. A state added to
+    // 12-tabs.css without a line here would look right on every unselected row and
+    // fail on the one row that is always selected — which is the failure mode this
+    // whole file exists to catch.
     const sel = loadCSS("70-selection.css");
     const inks: [string, string][] = [
       ["idle", "--c-selected-muted-fg"],
-      ["working", "--c-selected-blue-fg"],
-      ["waiting", "--c-selected-yellow-fg"],
-      ["input", "--c-selected-orange-fg"],
-      ["failed", "--c-selected-red-fg"],
-      ["done", "--c-selected-green-fg"],
+      ["working", "--c-selected-dot-working-fg"],
+      // The wants-you pair shares one ink here for the same reason it shares one
+      // seed: the states separate on fill, not on hue.
+      ["waiting", "--c-selected-dot-input-fg"],
+      ["input", "--c-selected-dot-input-fg"],
+      ["failed", "--c-selected-dot-failed-fg"],
+      ["done", "--c-selected-dot-done-fg"],
       ["dirty", "--c-selected-accent-fg"],
     ];
     for (const [state, token] of inks) {
@@ -491,31 +493,32 @@ describe("every dot state has an on-selected ink", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4b. The hue vocabulary, shared with @cplieger/web-terminal-ui.
+// 4b. The ink vocabulary, shared with web-terminal-kiro.
 //
 // The two apps sit in the same window (vibekit hosts a web-terminal panel), so a
-// state that means one thing must not carry two colours between them. Before
-// 2026-08 it did: `working` was vibekit's violet accent while the terminal's was
-// --status-working's blue, and vibekit overrides the terminal's accent to that
-// same violet through shell.ts's SHELL_THEME, so both dots were on screen
-// disagreeing.
+// state that means one thing must not carry two colours between them. It did
+// twice over. First `working` was vibekit's violet accent while the terminal's was
+// blue. Then the fix aligned these tokens to @cplieger/web-terminal-ui's LIBRARY
+// DEFAULTS — which web-terminal-kiro overrides on every member — so the two apps
+// agreed with the package and still disagreed with each other. The values are now
+// web-terminal-kiro's own, hue-exact in both themes with L and C sized per theme.
 // ---------------------------------------------------------------------------
 
-describe("the dot hues are web-terminal-ui's status vocabulary", () => {
+describe("the dot inks are web-terminal-kiro's status vocabulary", () => {
   const tabs = loadCSS("12-tabs.css");
 
-  it("gives each state the token carrying the source system's hue", () => {
-    // Tokens, not values: vibekit's are theme-split and contrast-measured while
-    // the package's are fixed sRGB tuned for a dark terminal, so the hue is what
-    // travels. See --c-orange in 01-tokens.css.
-    const hues: [string, string][] = [
-      ["working", "--c-blue"], // --status-working #52a9fe
-      ["waiting", "--c-yellow"],
-      ["input", "--c-orange"], // --status-input  #fb923c
-      ["failed", "--c-red"], // --status-failed #dc2626
-      ["done", "--c-green"], // --status-done   #22c55e
+  it("gives each state the token carrying the source system's ink", () => {
+    // Tokens, not values: the source has one theme and vibekit has two, so the
+    // token is where the per-theme sizing lives. See the --c-dot-* block in
+    // 01-tokens.css for each value's provenance.
+    const inks: [string, string][] = [
+      ["working", "--c-dot-working"], // --status-working #c6a0ff
+      ["waiting", "--c-dot-input"],
+      ["input", "--c-dot-input"], // --status-input  oklch(78% 0.15 95deg)
+      ["failed", "--c-dot-failed"], // --status-failed #dc2626, lightened to be visible
+      ["done", "--c-dot-done"], // --status-done   oklch(78% 0.15 150deg)
     ];
-    for (const [state, token] of hues) {
+    for (const [state, token] of inks) {
       const rule = ruleContaining(tabs, `.tab-status-dot[data-status="${state}"]`, "top");
       expect(
         rule.body.includes(`--dot-color: var(${token})`),
@@ -524,28 +527,29 @@ describe("the dot hues are web-terminal-ui's status vocabulary", () => {
     }
   });
 
-  it("keeps the editor's mark off the working hue, and working off the accent", () => {
-    // `dirty` and `working` were BOTH --c-accent, which is how an editor tab with
-    // unsaved changes and a chat mid-turn came to look identical. They separate
-    // now, and the separation must not close from either side.
+  it("keeps the editor's mark on the accent token, and working off it", () => {
+    // `dirty` and `working` were BOTH literally --c-accent, which is how an editor
+    // tab with unsaved changes and a chat mid-turn came to look identical. They
+    // read different tokens now. The VALUES are close again — the source's working
+    // violet is nearly this app's accent, deliberately — and what separates them is
+    // MOTION, plus the structural fact that a tab is never both a chat and a file.
     const working = ruleContaining(tabs, '.tab-status-dot[data-status="working"]', "top");
     const dirty = ruleContaining(tabs, '.tab-status-dot[data-status="dirty"]', "top");
     expect(working.body).not.toContain("--c-accent");
     expect(dirty.body).toContain("--dot-color: var(--c-accent)");
   });
 
-  it("un-merges waiting from input on fill as well as hue", () => {
-    // They shared ONE visual until the hues were aligned, and the alias that
-    // exempted the pair from the non-colour-channel check is gone with it. Hue
-    // alone would put the pair straight back into a WCAG 1.4.1 failure, so the
-    // fill difference is what makes the un-merge real: `input` is solid (a turn
-    // frozen mid-flight), `waiting` is hollow (its turn is over).
+  it("un-merges waiting from input on fill, which is the only channel it has", () => {
+    // The pair shares ONE ink on purpose: both mean "action required", which is the
+    // single thing the source's --status-input says. So fill is what carries them
+    // apart, and it is load-bearing rather than decorative — the alias that used to
+    // exempt this pair from the non-colour-channel check is gone, so hue alone
+    // would be a WCAG 1.4.1 failure. `input` is solid (a turn frozen mid-flight),
+    // `waiting` is hollow (its turn is over).
     const waiting = ruleContaining(tabs, '.tab-status-dot[data-status="waiting"]', "top");
     const input = ruleContaining(tabs, '.tab-status-dot[data-status="input"]', "top");
     expect(waiting.body).toContain("background: transparent");
     expect(input.body).toContain("background: var(--dot-color)");
-    expect(waiting.body).not.toContain("--c-orange");
-    expect(input.body).not.toContain("--c-yellow");
     // The ring is the wants-you marker and BOTH keep it: that is the half of the
     // treatment they still share, and it is why the phrases still have to differ.
     for (const rule of [waiting, input]) {
@@ -573,10 +577,11 @@ describe("the dot hues are web-terminal-ui's status vocabulary", () => {
 
   it("keeps the tool's alias list empty, which is where the un-merge is proven", () => {
     // scripts/css-contrast.py fails when two chat states differ by hue alone, and
-    // DOT_ALIASES is the list of pairs it has been told not to look at. The pair
-    // was in it. An entry re-appearing here would let the merge come back with
-    // the check still reporting PASS, which is the one failure mode a mechanical
-    // gate has that a human reviewer does not.
+    // DOT_ALIASES is the list of pairs it has been told not to look at. The
+    // wants-you pair was in it, and it now shares one INK, so an entry re-appearing
+    // here would exempt from the check the exact pair whose only separator is fill —
+    // letting a merge come back with the check still reporting PASS, which is the
+    // one failure mode a mechanical gate has that a human reviewer does not.
     const here = dirname(fileURLToPath(import.meta.url));
     const script = readFileSync(join(here, "..", "scripts", "css-contrast.py"), "utf8");
     expect(script).toContain("DOT_ALIASES: list[tuple[str, str]] = []");
@@ -589,9 +594,9 @@ describe("the dot hues are web-terminal-ui's status vocabulary", () => {
 // `agent_status === "completed"` is the higher-fidelity signal for "this turn is
 // over" and it is NOT a guaranteed one: it only arrives when the model calls
 // `update_session_information`. So a turn that ended without one fell to `idle`,
-// and "your background chat finished" — the headline promise of the whole strip —
-// held only for the turns where the agent happened to say so. `turn_ended` always
-// arrives, so a client-side latch is what makes the promise total.
+// and "this chat finished" — the headline promise of the whole strip — held only
+// for the turns where the agent happened to say so. `turn_ended` always arrives,
+// so a client-side latch is what makes the promise total.
 // ---------------------------------------------------------------------------
 
 describe("the finished-turn latch reports done without the agent's tool call", () => {
@@ -634,10 +639,19 @@ describe("the finished-turn latch reports done without the agent's tool call", (
     expect(tabStatusFor(get("c2"))).toBe("working");
   });
 
-  it("is cleared by seeing it", () => {
-    // The chat's own activation is what settles the mark, because the mark means
-    // "this finished while you were away". chat.ts calls this from
-    // activateChatView.
+  it("is NOT cleared by seeing it, so the dot can turn green while you watch", () => {
+    // The one caller of clearTurnDone is the transport-gap reconciler. Opening the
+    // chat used to clear it, back when the mark meant "finished while you were
+    // away" — and the cost of that pair of rules (skip the latch for a watched
+    // chat, clear it on activation) was the dot falling back to hollow `idle` at
+    // the exact moment a turn completed in front of the reader. web-terminal-kiro
+    // latches its own `done` in the engine, focus-blind and cleared only by the
+    // next turn's progress state, and this is now the same rule.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const chat = readFileSync(join(here, "chat.ts"), "utf8");
+    expect(chat).not.toContain("clearTurnDone");
+    // The function still exists and still works; nothing but a dropped stream is
+    // entitled to call it.
     setSessions([session({ id: "c1", turn_done: true })]);
     clearTurnDone("c1");
     expect(tabStatusFor(get("c1"))).toBe("idle");

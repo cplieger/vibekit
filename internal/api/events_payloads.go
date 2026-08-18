@@ -541,15 +541,34 @@ type SettingsUpdatedPayload struct{}
 // after a reconnect. The chip row is a projection of server state, so it has to
 // be reconstructible from the events alone.
 //
-// Severity is set only when KAS classified the message as a system notification
-// instead of a user steer, which it decides by sniffing the text (see
-// command/steer.go). vibekit refuses to send such a steer, so a non-empty
-// Severity here means the notification came from somewhere else — a workflow
-// step or a subagent reporting into this chat — and it is not the user's words.
+// Everything here is the USER's own outbound message. A notice KAS classified as
+// coming from a workflow step or a subagent arrives on the same wire channel but
+// leaves as EventAgentNotice, so no consumer of this payload has to ask whose
+// words it is holding.
 type SteerQueuedPayload struct {
-	SteerID  string `json:"steer_id"`
+	SteerID string `json:"steer_id"`
+	Text    string `json:"text"`
+}
+
+// AgentNoticePayload is the payload for type="agent_notice": a progress notice a
+// workflow step or a subagent reported into the session that launched it.
+//
+// KAS decides this by sniffing the text for a `[notification/<severity>]` prefix
+// and delivers it through the steering buffer, which is the only inbound channel
+// into a live turn. vibekit refuses to SEND that shape (command/steer.go), so a
+// notice reaching here is never the user's words.
+//
+// Severity is one of info/success/warning/error and is what makes this its own
+// event rather than a field on a steer: it maps onto the client's toast levels,
+// and the whole point of separating them is that a consumer never has to decide
+// whose voice a message is in.
+//
+// There is no id. A steer needs one because its chip has to be updated when the
+// model reads it and cleared when the boundary drops it; a notice has no later
+// state, so nothing would ever address it.
+type AgentNoticePayload struct {
+	Severity string `json:"severity"`
 	Text     string `json:"text"`
-	Severity string `json:"severity,omitempty"`
 }
 
 // SteerInjectedPayload is the payload for type="steer_injected": the model has

@@ -272,7 +272,7 @@ describe("the depth ladder", () => {
       live: false,
     });
     expect(card.querySelector(".tool-details")).toBeNull();
-    expect(card.querySelector(".tool-toggle")).toBeNull();
+    expect(card.querySelector(".tool-disclosure")).toBeNull();
   });
 
   it("an edit gets a details region — the old tier axis gave it none", async () => {
@@ -286,7 +286,7 @@ describe("the depth ladder", () => {
       live: false,
     });
     expect(card.querySelector(".tool-details")).not.toBeNull();
-    expect(card.querySelector(".tool-toggle")).not.toBeNull();
+    expect(card.querySelector(".tool-disclosure")).not.toBeNull();
   });
 
   it("has no second View diff button — the subject is the link", async () => {

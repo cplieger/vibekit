@@ -1,9 +1,20 @@
 /* ==========================================================================
-   Find in Chat (Ctrl-F overlay)
+   The search popup, in two layers.
 
-   A floating search bar anchored top-right over the transcript, plus the
-   <mark> highlight styles. Unlayered (like the other component slices) so it
-   wins over the layered base by source order.
+   `.search-pop` is the SKIN and the reveal, shared by every search box in the
+   app that floats: the transcript's Ctrl-F bar and the four page boxes below it
+   (History, the configuration browser, and the git view's two panels). Those
+   four used to be permanent in-flow fields — two built through the shared shell,
+   two hand-authored into index.html with their own magnifier — so a reader who
+   learned find on a chat met a different control on every other page, and on the
+   git view met a toolbar magnifier that did nothing at all.
+
+   `.chat-find` and `.page-find` add only PLACEMENT and LAYOUT, which is where
+   the two genuinely differ: the transcript's is anchored inside a wrapper that
+   does not scroll and lays its controls out in one row around a match counter;
+   a page's view IS its scroller, so a box positioned inside it would scroll away
+   from the toolbar button that opened it, and its status line is a sentence
+   rather than a counter.
 
    BOTH LEGS ANIMATE, and getting there took removing the mechanism rather than
    adding one. The box was shown and hidden through the global `.hidden` utility,
@@ -31,25 +42,8 @@
    transition would have needed its own reduced-motion answer; this one does not.
    ========================================================================== */
 
-/* Anchored top-right of the transcript but BELOW the toolbar, not over it. It
-   used to sit at the same `--sp-2` inset as the toolbar with z-index 60 against
-   the toolbar's 10, so opening search covered the File/Git/Shell/Docs/History
-   buttons entirely — measured: a 198px horizontal overlap at 1440px wide. That
-   is also why the feature read as "does nothing": it opened underneath the
-   chrome. The offset is derived from the toolbar's own metrics (its `--sp-3`
-   top inset + a `--btn-h` row + its 2×0.125rem padding) so the two cannot drift
-   apart. */
-.chat-find {
-  position: absolute;
-  inset-block-start: calc(
-    var(--sp-3) + var(--btn-h) + 0.25rem + var(--sp-2) + env(safe-area-inset-top, 0)
-  );
-  inset-inline-end: var(--sp-3);
+.search-pop {
   z-index: 60;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  padding: var(--sp-1) var(--sp-2);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
   border-radius: var(--r);
@@ -67,22 +61,191 @@
     opacity var(--dur-exit) var(--ease-exit),
     transform var(--dur-exit) var(--ease-exit);
 
-  /* The leave keeps the box in the layout until its transition ends, and this
-     box is absolutely positioned over the transcript at z-index 60 — so for the
-     length of the fade a fully transparent rectangle would still be taking
-     clicks meant for the messages under it. Restored on .is-open below. */
+  /* The leave keeps the box in the layout until its transition ends, and it is
+     positioned over the page at z-index 60 — so for the length of the fade a
+     fully transparent rectangle would still be taking clicks meant for the
+     content under it. Restored on .is-open below. */
   pointer-events: none;
 }
 
 /* Open. The library adds this after a forced reflow, so the transition from the
    resting state above plays rather than collapsing into one frame. */
-.chat-find.is-open {
+.search-pop.is-open {
   opacity: 1;
   transform: none;
   pointer-events: auto;
   transition:
     opacity var(--dur-enter) var(--ease-enter),
     transform var(--dur-enter) var(--ease-enter);
+}
+
+/* Anchored top-right of the transcript but BELOW the toolbar, not over it. It
+   used to sit at the same `--sp-2` inset as the toolbar with z-index 60 against
+   the toolbar's 10, so opening search covered the File/Git/Shell/Docs/History
+   buttons entirely — measured: a 198px horizontal overlap at 1440px wide. That
+   is also why the feature read as "does nothing": it opened underneath the
+   chrome. The offset is derived from the toolbar's own metrics (its `--sp-3`
+   top inset + a `--btn-h` row + its 2×0.125rem padding) so the two cannot drift
+   apart. `--search-pop-top` is that derivation, named once here because
+   `.page-find` needs the same number against the viewport. */
+.chat-find {
+  position: absolute;
+  inset-block-start: var(--search-pop-top);
+  inset-inline-end: var(--sp-3);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+
+  /* THE TWO INLINE INSETS ARE DIFFERENT ON PURPOSE, and the reason is that the
+     bar's two edge children have different heights. The row's height is set by
+     the buttons (`--btn-h`), so a button fills it and the input does not.
+
+     What a reader compares against the bar's border is the INK, and for an icon
+     button the ink sits `(--btn-h − icon)/2` inside its own box on every side.
+     That slack is the same term vertically and horizontally, so the two gaps are
+     equal only when the block padding and the inline-END padding are equal:
+     `--sp-2` at the end put the × 19px from the border against 15px above and
+     below it, which is the mismatch this reads as. `--sp-1` at both makes it
+     15px on all three, at any `--btn-h` (the mobile 2.75rem included, which is
+     why that block needs no second answer).
+
+     The INPUT gets the wider `--sp-2` at the start for the same reason read the
+     other way: its own box is shorter than the row, so `align-items: center`
+     already gives it 4px of slack above and below on top of the block padding —
+     8px from the border either way, which the start inset then has to match.
+     Setting both insets to `--sp-1` would fix the × by breaking the input. */
+  padding-block: var(--sp-1);
+  padding-inline: var(--sp-2) var(--sp-1);
+}
+
+:root {
+  --search-pop-top: calc(
+    var(--sp-3) + var(--btn-h) + 0.25rem + var(--sp-2) + env(safe-area-inset-top, 0)
+  );
+}
+
+/* ==========================================================================
+   The page search popup: History, the configuration browser, the git panels.
+
+   FIXED, not absolute, and that is forced rather than chosen. `#history-view`,
+   `#docs-view` and `#git-view` are each their own scroller (16-login.css), so a
+   box positioned inside one would scroll up out of sight while the list it is
+   filtering stays put — and it would scroll away from the toolbar button that
+   opened it. Fixed against the viewport puts it in the SAME place the
+   transcript's box occupies, which is the whole point of sharing the skin: one
+   control, one position, whatever page you are on. The right edge is the
+   viewport's because the content area is flush right; the sidebar is on the
+   left.
+
+   A COLUMN, unlike the transcript's row: the note here is a sentence ("No
+   matches in the 12 most recent conversations…", "3 of 47 shown."), not a "3 of
+   17" counter that fits between two buttons.
+   ========================================================================== */
+
+.page-find {
+  position: fixed;
+  inset-block-start: var(--search-pop-top);
+  inset-inline-end: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-block: var(--sp-1);
+  padding-inline: var(--sp-2) var(--sp-1);
+  inline-size: min(24rem, calc(100vw - 2 * var(--sp-3)));
+}
+
+.page-find-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+/* The kind's glyph, and the ONE place a reader learns which of the two this box
+   is: a MAGNIFIER reaches past what is on screen (History reads every chat file
+   on disk), a FUNNEL only narrows rows already loaded (the configuration
+   browser, the git panels). It is the same node the toolbar button paints, from
+   the same producer (`findGlyph`), so the control that opened the box and the box
+   itself cannot tell a reader two different stories.
+
+   This is a revision of an earlier answer, recorded because the earlier one was
+   defensible: with every box opened BY a magnifier, a second glyph inside the
+   field looked like the same thing twice. It is not the same thing — the button
+   says WHERE the box is, the glyph says WHAT it does — and dropping it flattened a
+   distinction the page boxes genuinely have. */
+.page-find-icon {
+  flex-shrink: 0;
+  color: var(--c-text-tertiary);
+}
+
+/* No in-field magnifier on any of these, and that retires a question rather
+   than answering it. The two shell-built boxes disagreed — History carried a
+   magnifier (it reaches past what is on screen) and the docs filter carried
+   nothing (it narrows what is already there) — while the two git boxes carried a
+   third spelling, an absolutely-positioned SVG with the input padded around it.
+   The glyph is now the KIND's (see `.page-find-icon` above), one producer for the
+   box and the toolbar button, so the disagreement cannot come back. */
+.page-find-input {
+  flex: 1;
+  min-inline-size: 0;
+  font: inherit;
+  padding: var(--sp-1) var(--sp-2);
+  color: var(--c-text-primary);
+  background: var(--c-bg-primary);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r);
+  touch-action: manipulation;
+  transition: border-color var(--dur-micro) var(--ease-standard);
+
+  &:focus-visible {
+    outline: none;
+    border-color: var(--c-accent);
+  }
+
+  &::placeholder {
+    color: var(--c-text-tertiary);
+  }
+}
+
+/* The note reports what was NOT read (a truncated cross-chat scan) or how much
+   of a list is showing. Tertiary ink because it describes the results rather
+   than being one — the same correction `.fb-search-note` needed. */
+.page-find-note {
+  min-block-size: 1rem;
+  color: var(--c-text-tertiary);
+  font-size: var(--fs-xs);
+}
+
+/* Takes the same shape as the transcript bar's buttons, for the same reasons:
+   see `.chat-find-btn` below for why `line-height: 0` is the centring lever for
+   a replaced element and why these glyphs are SVG rather than text. */
+.page-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  inline-size: var(--btn-h);
+  block-size: var(--btn-h);
+  padding: 0;
+  color: var(--c-text-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--r);
+  line-height: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.page-find-btn:hover {
+  color: var(--c-text-primary);
+  background: var(--c-hover);
+}
+
+.page-find-btn:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
 }
 
 .chat-find-input {
@@ -203,16 +366,22 @@
   color: var(--c-red);
 }
 
-/* Match highlights. `scroll-margin` keeps a match clear of the floating bar
-   (and any sticky chrome) when scrolled into view. */
-mark.chat-find-hit {
+/* Match highlights, for EVERY surface that highlights: the transcript's find and
+   the editor's find over a diff pane or rendered markdown share one engine
+   (find-engine.ts), so they share one colour. The pair was prefixed `chat-` when
+   the engine lived in find-in-chat.ts; a chat-named mark inside a diff would be
+   the same drift the search-box audit removed everywhere else.
+
+   `scroll-margin` keeps a match clear of the floating bar (and any sticky chrome)
+   when scrolled into view. */
+mark.find-hit {
   color: inherit;
   background: color-mix(in srgb, var(--c-accent) 32%, transparent);
   border-radius: var(--r-sm);
   scroll-margin-block: 20vh;
 }
 
-mark.chat-find-hit-current {
+mark.find-hit-current {
   color: var(--c-on-accent);
   background: var(--c-accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-accent) 45%, transparent);
@@ -228,6 +397,11 @@ mark.chat-find-hit-current {
     inset-inline: var(--sp-2);
   }
 
+  .page-find {
+    inset-inline: var(--sp-2);
+    inline-size: auto;
+  }
+
   .chat-find-input {
     flex: 1;
     inline-size: auto;
@@ -235,7 +409,13 @@ mark.chat-find-hit-current {
     font-size: 16px;
   }
 
-  .chat-find-btn {
+  /* 16px defeats iOS focus-zoom. */
+  .page-find-input {
+    font-size: 16px;
+  }
+
+  .chat-find-btn,
+  .page-find-btn {
     inline-size: 2.75rem;
     block-size: 2.75rem;
   }

@@ -19,7 +19,7 @@
 //     so a run opens the read-only run view rather than a chat.
 // ---------------------------------------------------------------------------
 
-import { toggleHistoryView, hasTab } from "./tabs.js";
+import { toggleHistoryView, hasTab, closeTab } from "./tabs.js";
 import { onBus, BUS_RUNS_CHANGED } from "./bus.js";
 import { el } from "@cplieger/reactive";
 import { reconcile } from "./reconcile.js";
@@ -30,12 +30,17 @@ import { openPreviousSession, openChatTab } from "./chat.js";
 import { searchChats } from "./actions/chat-search.js";
 import type { ChatSearchMatch } from "./chat-search-types.js";
 import { openRunView } from "./run-view.js";
+import { deleteRun } from "./actions/runs.js";
+import { deleteChat as deleteChatAction } from "./actions/chat.js";
+import { confirm } from "./confirm.js";
+import { get } from "./store.js";
+import { labelForMode } from "./roles.js";
 import { applyOutcome } from "./tool-card.js";
 import type { ToolRenderInfo } from "./tool-schema.js";
-import { ICON_TAB_RUN } from "./icons.js";
+import { ICON_TAB_RUN, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
-import { createSearchShell, searchGlyph } from "./search-shell.js";
-import type { SearchShell } from "./search-shell.js";
+import { createSearchPopup } from "./search-popup.js";
+import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
 import type { ResumableSessionRow, WorkflowRunRow } from "./types.js";
 
@@ -54,8 +59,88 @@ interface HistoryRow {
   /** The verdict this row states as a glyph, or null when there is none to
    *  state: any chat, an agent-parented run, and a run that is still moving. */
   outcome: RunVerdict | null;
+  /** The row's third line: what this conversation or run WAS, in facts. Empty
+   *  entries are dropped by the builder, so a chat vibekit knows nothing about
+   *  renders two lines like before rather than an empty strip. */
+  facts: string[];
   session?: ResumableSessionRow;
   run?: WorkflowRunRow;
+}
+
+/** The facts line for a chat row, from the chat record this client already holds.
+ *
+ *  Every field is read from the STORE rather than added to `/api/sessions`, and
+ *  that is the whole reason this is cheap: `/api/chats` already carries the header
+ *  for every chat (model, mode, usage, message count) and `loadList` has already
+ *  put it in the store, so a richer row costs no request and no new wire field.
+ *  KAS's session row carries none of it — no usage, no model, no message count —
+ *  which is why the join happens here and not on the server.
+ *
+ *  A chat the store does not know yields an EMPTY list rather than placeholders:
+ *  "unknown model · 0 turns" reads as fact and would be a lie.
+ *
+ *  Deliberately NOT here: lines changed. That total is not on the chat header —
+ *  `changed_files` is stamped per TURN on each final assistant message, and the
+ *  header read deliberately token-skips the message array without decoding it, so
+ *  summing churn would mean decoding every message of every chat on every poll.
+ *  It needs a counter maintained at turn end and persisted on the chat; see the
+ *  note in vibekit-acp.md. */
+function chatFacts(chatID: string): string[] {
+  const s = get(chatID);
+  if (s === undefined) {
+    return [];
+  }
+  const facts: string[] = [];
+  if (s.model !== "") {
+    facts.push(s.model);
+  }
+  if (s.current_mode_id !== "") {
+    facts.push(labelForMode(s.current_mode_id, s.available_modes));
+  }
+  // Turns is the agent's own count and messages is what is on disk; they answer
+  // different questions ("how long a conversation" vs "how much is stored"), and
+  // a chat resumed across sessions can have turns reset while messages persist.
+  const turns = s.usage.turn_count;
+  if (turns > 0) {
+    facts.push(`${String(turns)} ${turns === 1 ? "turn" : "turns"}`);
+  }
+  if (s.message_count > 0) {
+    facts.push(`${String(s.message_count)} msg`);
+  }
+  // Credits only when metered: a 0.00 on every unmetered row is noise, and this
+  // is the one number that answers "what did that conversation cost".
+  if (s.usage.credits > 0) {
+    facts.push(`${s.usage.credits.toFixed(2)} cr`);
+  }
+  return facts;
+}
+
+/** The facts line for a run row. KAS's run inventory is thin by comparison, so
+ *  this is the run's shape rather than its cost: how long it took, and the status
+ *  word when the glyph is not already carrying it. */
+function runFacts(r: WorkflowRunRow): string[] {
+  const facts: string[] = [];
+  const started = r.started_at ?? 0;
+  const ended = r.updated_at;
+  if (started > 0 && ended > started) {
+    facts.push(formatDuration(ended - started));
+  }
+  return facts;
+}
+
+/** A coarse duration, because the reader wants an order of magnitude rather than
+ *  a stopwatch: seconds under a minute, minutes under an hour, then hours. */
+function formatDuration(ms: number): string {
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) {
+    return `${String(secs)}s`;
+  }
+  const mins = Math.round(secs / 60);
+  if (mins < 60) {
+    return `${String(mins)}m`;
+  }
+  const hours = Math.floor(mins / 60);
+  return `${String(hours)}h ${String(mins % 60)}m`;
 }
 
 /** The run statuses that carry a verdict. Two are `ToolStatus` members and the
@@ -151,6 +236,7 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
       detail: s.description ?? "",
       status: s.status ?? "",
       outcome: null,
+      facts: chatFacts(s.chat_id ?? ""),
       session: s,
     });
   }
@@ -174,6 +260,7 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
       detail: END_REASON_TEXT[endReason] ?? "",
       status: r.status ?? "",
       outcome: parentless ? runVerdict(r.status ?? "", endReason) : null,
+      facts: runFacts(r),
       run: r,
     });
   }
@@ -185,9 +272,14 @@ function toRows(sessions: ResumableSessionRow[], runs: WorkflowRunRow[]): Histor
 
 class HistoryController {
   private abort: AbortController | null = null;
-  /** The shared search box. Built once and left mounted: unlike the transcript's
-   *  and the browser's, this box is PERMANENT page furniture — it is the page's
-   *  second mode selector, so there is nothing to reveal and nothing to dismiss.
+  /** The page's search box, as a popup.
+   *
+   *  It used to be a permanent in-flow field above the list, which is why the
+   *  page had a `focus` verb and no way to close one. It is the transcript's
+   *  popup now (search-popup.ts), reached by the toolbar's magnifier and Ctrl-F,
+   *  and closing it clears the query — a hidden box holding `redis` would leave
+   *  the page showing three of forty conversations with nothing on screen saying
+   *  why.
    *
    *  It carries NO match-case toggle, and that is the endpoint's decision rather
    *  than a gap. `chat.searchOneChat` states it: "Case-INSENSITIVE, always. The
@@ -196,25 +288,39 @@ class HistoryController {
    *  in' is asked from memory, and memory does not remember capitalisation." So
    *  `GET /api/chats/search` reads no `case` parameter and `titleHits` folds
    *  unconditionally. A toggle here would be wired to nothing. */
-  private shell: SearchShell | null = null;
+  readonly search: SearchPopup = createSearchPopup<null>({
+    id: "hist-search",
+    // A SEARCH, so it carries the magnifier: the server reads every chat file on
+    // disk, so this box finds conversations the loaded list does not contain. A
+    // funnel would promise it only narrows what is on screen.
+    kind: "search",
+    label: "Search conversations",
+    // The one string the page popups genuinely differ on, which is why the
+    // helper takes it as a parameter: this box answers "which conversation was
+    // that in", so it names the unit it returns rather than the place it looks —
+    // and "Search", not "Filter", because the server reads every chat file on
+    // disk and finds conversations the loaded list does not contain.
+    placeholder: "Search conversations\u2026",
+    note: true,
+    // The scan is over up to 500 chat files, so the pause is longer than the
+    // shell's default: a search is per-pause here, not per-keystroke.
+    debounceMs: SEARCH_DEBOUNCE_MS,
+    host: () => document.getElementById("history-view"),
+    query: (q) => {
+      this.query = q.trim();
+      return null;
+    },
+    render: () => {
+      void this.refresh();
+    },
+  });
   private query = "";
 
-  /** Wire the search box and load, the body every path that opens this page
-   *  shares. Separate from showView() because the tab-restore path already has
-   *  the tab and must not toggle it. */
+  /** Load, the body every path that opens this page shares. Separate from
+   *  showView() because the tab-restore path already has the tab and must not
+   *  toggle it. */
   mount(): void {
-    this.wireSearch();
     void this.refresh();
-  }
-
-  /** Put the caret in the box. What Ctrl-F means on this page. */
-  focusSearch(): boolean {
-    this.wireSearch();
-    if (this.shell === null) {
-      return false;
-    }
-    this.shell.focus();
-    return true;
   }
 
   showView(): void {
@@ -233,66 +339,10 @@ class HistoryController {
     searchChats.cancel();
     this.abort?.abort();
     this.abort = null;
-    this.shell?.cancel();
-  }
-
-  /** Build the search box once into its host; the element outlives a view
-   *  close. */
-  private wireSearch(): void {
-    if (this.shell !== null) {
-      return;
-    }
-    const host = document.getElementById("hist-search-host");
-    if (host === null) {
-      return;
-    }
-    this.shell = createSearchShell<null>({
-      id: "hist-search",
-      regionClass: "hist-search",
-      inputClass: "hist-search-input",
-      buttonClass: "hist-search-btn",
-      noteClass: "hist-search-note",
-      label: "Search conversations",
-      // The one string the four boxes genuinely differ on, which is why the
-      // shell takes it as a parameter: this box answers "which conversation was
-      // that in", so it names the unit it returns rather than the place it looks.
-      placeholder: "Search conversations\u2026",
-      inputType: "search",
-      note: true,
-      // The scan is over up to 500 chat files, so the pause is longer than the
-      // shell's default: a search is per-pause here, not per-keystroke.
-      debounceMs: SEARCH_DEBOUNCE_MS,
-      compose: ({ input, note }) => {
-        // The magnifier stays: it is a SEARCH, not a filter — the server reads
-        // every chat file on disk, so it finds conversations the loaded list does
-        // not contain, and a funnel would promise it only narrows what is on
-        // screen. 18-pages.css records that reasoning.
-        const field = el("span", { className: "hist-search-field" });
-        field.appendChild(searchGlyph("hist-search-icon"));
-        field.appendChild(input);
-        return [field, note];
-      },
-      query: (q) => {
-        this.query = q.trim();
-        return null;
-      },
-      render: () => {
-        void this.refresh();
-      },
-      onDismiss: () => {
-        // Escape CLEARS rather than closes: a permanent box has nothing to
-        // dismiss, so the useful meaning is "back to the full list".
-        if (this.shell === null || this.shell.input.value === "") {
-          return;
-        }
-        this.shell.input.value = "";
-        this.shell.run();
-      },
-      onSubmit: () => {
-        this.shell?.run();
-      },
-    });
-    host.appendChild(this.shell.region);
+    // reset() rather than close(): the close's clear repaints the full list, and
+    // that repaint is a fetch this page no longer has a reader for.
+    this.query = "";
+    this.search.reset();
   }
 
   /** Route to the list or to search, depending on the box. */
@@ -306,7 +356,7 @@ class HistoryController {
   }
 
   private setNote(text: string): void {
-    this.shell?.setNote(text);
+    this.search.shell?.setNote(text);
   }
 
   /** Render matching CHATS for the current query. */
@@ -410,14 +460,28 @@ class HistoryController {
     container.addEventListener(
       "click",
       (e) => {
-        const rowEl = (e.target as HTMLElement).closest<HTMLElement>("[data-key]");
+        const target = e.target as HTMLElement;
+        const rowEl = target.closest<HTMLElement>("[data-key]");
         if (rowEl === null) {
           return;
         }
         const row = rows.find((r) => r.key === rowEl.getAttribute("data-key"));
-        if (row !== undefined) {
-          openRow(row);
+        if (row === undefined) {
+          return;
         }
+        // The delete button lives INSIDE the row, so its click reaches here too;
+        // without this branch a delete would also open the row behind the confirm
+        // dialog. A successful delete refreshes rather than waiting for the runs
+        // bus event, which only fires for runs.
+        if (target.closest("[data-history-delete]") !== null) {
+          void deleteRow(row).then((gone) => {
+            if (gone) {
+              void this.refresh();
+            }
+          });
+          return;
+        }
+        openRow(row);
       },
       { signal },
     );
@@ -440,13 +504,66 @@ class HistoryController {
 /** Open a history row: a chat resumes, a run opens its read-only review. */
 function openRow(row: HistoryRow): void {
   if (row.kind === "run" && row.run !== undefined) {
-    // Only a parentless run offers Retry on its page (user decision).
+    // Only a parentless run offers Retry on its page (user decision). Every run
+    // reaching this page is parentless now, so the argument is always true; it
+    // stays explicit because run-view's own contract is written in those terms.
     openRunView(row.run.workflow_id, row.title, (row.run.parent_chat_id ?? "") === "");
     return;
   }
   if (row.session !== undefined) {
     openPreviousSession(row.session);
   }
+}
+
+/** Delete a history row and the files behind it, after confirming.
+ *
+ *  This is the page's only destructive affordance and the only manual control
+ *  over what History holds. Everything else that removes a row is automatic and
+ *  invisible: the retention purge (a chat older than `chat_retention_days`), the
+ *  hourly orphan sweep (KAS session state no chat references), and a tab close in
+ *  the retention-off mode. None of those is addressable, so a row a user wants
+ *  gone had no way to go.
+ *
+ *  Both kinds delete their own underlying state, and neither is recoverable:
+ *
+ *    - a CHAT row runs the `delete_chat` command, vibekit's single chat-deletion
+ *      path, which removes the chat file AND reaps every KAS session in the
+ *      chat's chain (`reapChatSession`).
+ *    - a RUN row runs `_kiro/workflow/delete`, which cancels the run if it is
+ *      still moving and then removes its run directory, plus vibekit's own lease,
+ *      timer and recorded end reason.
+ *
+ *  Returns true when the row is gone, so the caller can refresh rather than wait
+ *  for a poll. */
+async function deleteRow(row: HistoryRow): Promise<boolean> {
+  const label = row.kind === "run" ? "run" : "conversation";
+  const ok = await confirm(
+    `Delete this ${label}? "${row.title}" and its stored history are removed for good.`,
+    "Delete",
+    "destructive",
+  );
+  if (!ok) {
+    return false;
+  }
+  if (row.kind === "run" && row.run !== undefined) {
+    return (await deleteRun.dispatch(row.run.workflow_id)) !== null;
+  }
+  const chatID = row.session?.chat_id ?? "";
+  if (chatID === "") {
+    return false;
+  }
+  // Closing the tab first would run its own teardown against a chat that is
+  // about to stop existing, so the tab goes only after the delete lands. A chat
+  // open on ANOTHER device keeps its tab there until the chat_deleted frame
+  // arrives, which is the same path an ordinary delete takes.
+  const done = (await deleteChatAction.dispatch(chatID)) !== null;
+  if (done) {
+    // `skipOnClose` because the chat is already gone server-side: the tab's own
+    // onClose is the close/delete dispatch, and running it here would fire a
+    // second delete against an id the store no longer holds.
+    closeTab(chatID, { skipOnClose: true });
+  }
+  return done;
 }
 
 function buildRow(row: HistoryRow): HTMLElement {
@@ -461,6 +578,13 @@ function buildRow(row: HistoryRow): HTMLElement {
     { className: "list-row-title" },
     el("span", { className: "list-row-name" }, row.title),
     row.detail !== "" ? el("span", { className: "list-row-summary" }, row.detail) : null,
+    // The facts line. Present only when there is something factual to say, so a
+    // row vibekit knows nothing about keeps its old two-line height instead of
+    // reserving a blank strip. Rendered as one element with separators rather
+    // than a chip per fact: these are read left to right as a sentence about the
+    // conversation, and six bordered chips per row would compete with the kind
+    // chip that actually needs to stand out.
+    row.facts.length > 0 ? el("span", { className: "history-facts" }, row.facts.join(" · ")) : null,
   );
   // A status is shown only when it says something. KAS reports `idle` for every
   // settled session, which is noise; `failed` and `waiting_on_user` are not. A
@@ -488,6 +612,7 @@ function buildRow(row: HistoryRow): HTMLElement {
       { className: "list-row-meta" },
       row.updatedAt > 0 ? new Date(row.updatedAt).toLocaleString() : "",
     ),
+    buildDeleteButton(row),
   );
   if (row.outcome !== null) {
     // ONE writer for the vocabulary: tint, shape and word all come from
@@ -497,6 +622,29 @@ function buildRow(row: HistoryRow): HTMLElement {
     applyOutcome(node, row.outcome, `Open ${row.title}`, ROW_RENDER_INFO);
   }
   return node;
+}
+
+/** The row's delete control.
+ *
+ *  A real `<button>` inside the row, which is a `role="button"` div rather than a
+ *  native button, so this is an ordinary child element and assistive tech reads
+ *  two controls rather than one flattened one. It carries `data-history-delete` so
+ *  the container's one delegated listener can tell a delete click from an open
+ *  click, and the open handler bails on it — otherwise every delete would also
+ *  open the thing it is deleting.
+ *
+ *  Named for the row, not the glyph: "Delete X" is what a screen reader announces,
+ *  beside the row's own "Open X". */
+function buildDeleteButton(row: HistoryRow): HTMLElement {
+  const btn = el("button", {
+    type: "button",
+    className: "history-delete",
+    "data-history-delete": row.key,
+    "aria-label": `Delete ${row.title}`,
+    "data-tooltip": "Delete",
+  });
+  btn.appendChild(iconEl(ICON_TRASH));
+  return btn;
 }
 
 // ---------------------------------------------------------------------------
@@ -581,18 +729,18 @@ registerCleanup(() => {
   historyCtrl.teardown();
 });
 
-/** Put the caret in the cross-chat search box. What Ctrl-F and the toolbar's
- *  search button mean on this page.
+/** This page's find, handed to the dispatcher rather than imported by it: this
+ *  module is lazily loaded (it pulls chat.ts in behind it) and the dispatcher must
+ *  not put it on the boot path.
  *
- *  Registered with find-dispatch rather than imported by it, because this module
- *  is lazily loaded (it pulls chat.ts in behind it) and the dispatcher must not
- *  put it on the boot path. */
-function focusHistorySearch(): boolean {
-  return historyCtrl.focusSearch();
-}
+ *  The popup already answers the three questions `PageFind` asks, so there is
+ *  nothing to adapt. It declares no `available`: the cross-chat box is reachable
+ *  in every state this page renders in, so the toolbar's magnifier always has a
+ *  destination here. */
+const historyFind = historyCtrl.search;
 
 export function showHistoryView(): void {
-  registerFind("history", focusHistorySearch);
+  registerFind("history", historyFind);
   historyCtrl.showView();
 }
 
@@ -602,7 +750,7 @@ export function showHistoryView(): void {
  *  toggles, so firing it from the `onShow` of an already-open, already-active
  *  tab would hit `hasTab && active` and CLOSE the tab it was meant to fill. */
 export function loadHistoryView(): void {
-  registerFind("history", focusHistorySearch);
+  registerFind("history", historyFind);
   historyCtrl.mount();
 }
 

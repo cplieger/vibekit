@@ -11,6 +11,7 @@ import { $ } from "./dom.js";
 import { formatTokens, formatMetering, contextReserve } from "./status-format.js";
 import { humanName } from "./strings.js";
 import { fetchKiroSetting, CancellableSlot } from "./api-client.js";
+import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
 import { registerCleanup } from "./actions/index.js";
 import { el } from "@cplieger/reactive";
 import { announce } from "@cplieger/ui-primitives/announce";
@@ -208,6 +209,22 @@ export function setStatus(s: ConnectionStatus): void {
 
 export function updateContextBar(opts: ContextBarUpdate): void {
   contextBar.update(opts);
+}
+
+/** Paint the status card's agent-runtime line, then re-probe so an open card is
+ *  never as stale as the last transport gap (the boot probe and the gap probe
+ *  are the only other times /api/health is read). Painted twice on purpose: the
+ *  cached line lands in the same frame the card opens in, and the fresh one
+ *  replaces it when the probe answers. The probe also reconciles the global
+ *  degraded banner, which is wanted — opening the status surface is exactly
+ *  when a stale banner should clear and a real one should appear.
+ *  `runtime-health.ts` owns the reason vocabulary; this only renders its line.
+ *  Called on popup expand. */
+export function refreshRuntimeLine(): void {
+  $.stKiro.textContent = runtimeStatusLine();
+  void checkRuntimeHealth().then(() => {
+    $.stKiro.textContent = runtimeStatusLine();
+  });
 }
 
 // The send button's face (and the "context nearly full" placeholder) has a

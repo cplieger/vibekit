@@ -428,25 +428,26 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
   /** refresh is the RAISE rule, and it is two observations plus the fold.
    *
    *  A cue raises when the chat is NOT (active AND page-visible) and its state is
-   *  an unacknowledged cue. Both halves of that condition are required, for the
-   *  reason handlers/turn.ts states for `isWatching`: keyed on "is this the active
-   *  chat" alone it swallows the cue of the very chat the reader left running,
-   *  which is the single-chat case — one chat is necessarily the active one — and
-   *  precisely the case these surfaces exist for. So a cue latching on a HIDDEN
-   *  page raises them, and is acknowledged when the reader comes back.
+   *  an unacknowledged cue. Both halves of that condition are required: keyed on
+   *  "is this the active chat" alone it swallows the cue of the very chat the
+   *  reader left running, which is the single-chat case — one chat is necessarily
+   *  the active one — and precisely the case these surfaces exist for. So a cue
+   *  latching on a HIDDEN page raises them, and is acknowledged when the reader
+   *  comes back.
    *
    *  Both rules are safe to run as a SWEEP rather than on a transition, which is
    *  what lets this be the funnel: the un-acknowledge is idempotent, and
    *  observing a watched chat's cue is a fact about the present, not an event.
    *
-   *  Which branches this leaves, given what vibekit already does structurally:
-   *  `handlers/turn.ts` skips `setTurnDone` for a watched chat, so `done` from
-   *  the `turn_ended` transport verdict never latches on a chat the reader is
-   *  looking at and is pre-acknowledged by construction. Its OTHER producer,
-   *  `agent_status === "completed"`, latches regardless — as do `input` (an
-   *  unanswered decision), `waiting` (`waiting_on_user`) and `failed`
-   *  (`turn_failed`). So all four cues need the acknowledgement path; `done` just
-   *  reaches it less often. */
+   *  Which branches this leaves: every cue latches regardless of what the reader
+   *  is looking at — `done` (both producers: the `turn_ended` transport verdict
+   *  and `agent_status === "completed"`), `input` (an unanswered decision),
+   *  `waiting` (`waiting_on_user`) and `failed` (`turn_failed`). So the
+   *  acknowledgement path below is what keeps a watched chat out of the count, and
+   *  it is the ONLY thing that does. `done` used to be pre-acknowledged by
+   *  construction, because `handlers/turn.ts` skipped the latch for a watched
+   *  chat; it no longer does (the dot has to be able to turn green while you
+   *  watch), so this pass carries all four. */
   function refresh(): void {
     const watched = wiring.pageVisible() ? wiring.activeChatID() : "";
     for (const candidate of wiring.candidates()) {
@@ -525,22 +526,15 @@ export function createAttentionController(wiring: AttentionWiring): AttentionCon
 
 /** Is the page in front of the reader? visibilityState is the only reliable
  *  test: document.hasFocus() is false for a visible-but-unfocused window, where
- *  the chat IS on screen. Same signal notify.ts reads, for the same decision. */
+ *  the chat IS on screen. Same signal notify.ts reads, for the same decision.
+ *
+ *  There is no `isWatching(chatID)` beside it any more. It existed to give the
+ *  `turn_done` latch and this file's acknowledgement pass ONE definition of
+ *  "looking at it", and the latch stopped asking the question in 2026-08 — a
+ *  finished turn is now `done` whoever is watching, so `refresh` is the only
+ *  reader of that condition and derives it from its own injected wiring. */
 export function pageVisible(): boolean {
   return document.visibilityState !== "hidden";
-}
-
-/** Is the reader looking at this chat right now? The active chat with the page in
- *  front of them, which is the one case where a finished-turn mark says nothing
- *  the transcript is not already showing.
- *
- *  Here rather than in the store because the store just holds the latch; this is
- *  the layer that knows what is on screen. `handlers/turn.ts` reads it to decide
- *  whether to latch `turn_done`, and the refresh pass above reads the same rule
- *  to decide whether a cue is already observed — one definition, so the latch and
- *  the acknowledgement cannot disagree. */
-export function isWatching(chatID: string): boolean {
-  return chatID === getActiveId() && pageVisible();
 }
 
 /** Whether an element is presented to the reader at all: not hidden by CSS, and

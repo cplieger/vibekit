@@ -159,6 +159,10 @@ interface Callbacks {
 interface Internal {
   emptyTimer: ReturnType<typeof setTimeout> | null;
   renderQueued: boolean;
+  /** Whether a tab has ever entered the store. The DOM subscriber keys its no-op
+   *  on this rather than on an empty store, because the two differ on exactly one
+   *  transition: the one INTO empty. See the render effect. */
+  everOpened: boolean;
 }
 
 interface State {
@@ -168,7 +172,7 @@ interface State {
 
 const state: State = { tabs: [], active: "" };
 const callbacks: Callbacks = { onActivate: null, onEmpty: null, onClosed: null };
-const internal: Internal = { emptyTimer: null, renderQueued: false };
+const internal: Internal = { emptyTimer: null, renderQueued: false, everOpened: false };
 
 /** Reactive version counter. Effects subscribed via `tabsEffect()` re-run
  *  on every emit(). State is mutated in place; this counter is the
@@ -245,6 +249,8 @@ function childrenOf(id: string): TabSpec[] {
  *  the keyboard order need no grouping logic of their own — the array already
  *  reads the way the strip looks. */
 function insertSpec(spec: TabSpec): void {
+  // The one place a tab enters the store, so the one place this is recorded.
+  internal.everOpened = true;
   const parent = spec.parentId;
   if (parent === undefined) {
     state.tabs.push(spec);
@@ -747,6 +753,11 @@ function scheduleEmpty(): void {
   if (internal.emptyTimer !== null) {
     clearTimeout(internal.emptyTimer);
   }
+  // Longer than the closed row's exit animation (`.tab.exiting`, 0.18s in
+  // 10-shell-app.css) on purpose: the respawned tab's row must be built into an
+  // EMPTY strip, or its entry animation plays against the departing row and it
+  // lands beside it until that row collapses. Shortening this below the exit
+  // duration brings that overlap back.
   internal.emptyTimer = setTimeout(() => {
     internal.emptyTimer = null;
     callbacks.onEmpty?.();
@@ -799,9 +810,12 @@ let lastAnnouncedTab = "";
 
 /** Register module-level subscribers. Extracted into a function so
  *  _resetForTest can re-register them after clearing the subscriber set.
- *  Effects defer their work until state has tabs — this matches the
- *  old subscribe-based pattern where callbacks only fired on emit
- *  (i.e. after at least one openTab call). */
+ *  Every effect body runs once on subscribe, before any tab exists, so each one
+ *  opens with a guard against acting on the initial state — matching the old
+ *  subscribe-based pattern, where callbacks only fired on emit (i.e. after at
+ *  least one openTab call). The guards are not the same test: persistence and
+ *  view/route ask whether the store is empty, the DOM render asks whether a tab
+ *  has ever opened, and the render effect's own comment says why. */
 function registerModuleSubscribers(): void {
   // Clear empty timer on any activation.
   tabsEffect(() => {
@@ -856,8 +870,25 @@ function registerModuleSubscribers(): void {
   });
 
   // DOM rendering.
+  //
+  // Guarded on "no tab has ever opened" rather than on "the store is empty",
+  // which is what the two subscribers above still test. The two guards differ on
+  // exactly one transition, and it is a transition only this subscriber has work
+  // for: closing the LAST tab leaves both state fields at their initial values,
+  // so an empty-store guard skipped the render that had to remove the closed
+  // row. The row therefore kept its slot in the strip, un-animated, until the
+  // NEXT render — which is the one the 500ms empty-state respawn triggers. The
+  // closed row's exit animation and its replacement's entry animation then
+  // played together, and the new row was inserted in front of a row that still
+  // occupied the strip, so it appeared beside its predecessor and moved when the
+  // predecessor finally collapsed.
+  //
+  // Rendering the empty state gives the closed row its exit at close time, and
+  // that ordering is what the respawn depends on: the exit is 0.18s
+  // (`.tab.exiting`, 10-shell-app.css) against `scheduleEmpty`'s 500ms, so the
+  // strip is genuinely empty before a replacement is built.
   tabsEffect(() => {
-    if (state.tabs.length === 0 && state.active === "") {
+    if (!internal.everOpened) {
       return;
     }
     if (internal.renderQueued) {
@@ -1062,11 +1093,27 @@ function createTabEl(tab: TabSpec): HTMLElement {
 
   const name = el("span", { className: "tab-name" }, tab.name);
 
-  const close = el(
-    "button",
-    { className: "tab-close", "aria-label": `Close ${tab.name}` },
-    iconEl(ICON_CLOSE),
-  );
+  // A SPAN, not a button, and that is forced by the row's own role: `role="tab"`
+  // is Children Presentational in WAI-ARIA, so every descendant of this row is
+  // pruned from the accessibility tree. A <button> in here was therefore a
+  // control assistive tech could not name or reach while still holding a place in
+  // the page tab sequence — one dead tab stop per open tab, and axe's
+  // `nested-interactive` (serious) on every row.
+  //
+  // Measured against axe 4 (probe: a role="tab" row per variant): `aria-hidden`
+  // plus `tabindex="-1"` does NOT clear it, because a tabindex="-1" element is
+  // still focusable by click and by script. Only two shapes pass — a
+  // non-focusable element, or a DISABLED button, which fires no click at all and
+  // so cannot be this. Hence a span carrying the pointer handler.
+  //
+  // Nothing is lost that was reachable: closing from the keyboard is the APG's
+  // own contract for a deletable tab, Delete (and Backspace) on the focused row,
+  // which the keydown handler in attachTabInteraction implements. The standards
+  // answer for a real button here is `aria-actions`, which references a control
+  // OUTSIDE the tab; it is experimental with no AT support, so not yet. The
+  // `aria-label` went with the button: nothing could announce it, and renderDOM
+  // never refreshed it on rename, so it was stale as well as silent.
+  const close = el("span", { className: "tab-close", "aria-hidden": "true" }, iconEl(ICON_CLOSE));
   close.addEventListener("pointerup", (e) => {
     e.stopPropagation();
     closeTab(tab.id);
@@ -1200,10 +1247,27 @@ function attachTabInteraction(el: HTMLElement, id: string, draggable: boolean): 
         activateTab(id);
         break;
       case "Delete":
-      case "Backspace":
+      case "Backspace": {
         e.preventDefault();
+        // Focus has to be moved by hand, or Delete drops the keyboard user out
+        // of the strip and onto <body>: the row they were standing on is the
+        // element being removed. The APG's Delete contract is that focus lands
+        // on the tab that took the closed one's place, so the successor list is
+        // "everything after me, then everything before me in reverse".
+        //
+        // The candidates are captured BEFORE the close and re-checked against
+        // the STORE after it, which is what makes this independent of when the
+        // render effect flushes: closeTab splices the store synchronously, so a
+        // row whose id has left it is going away whatever the DOM still shows.
+        // That check is also what handles closing a parent — its sub-tabs
+        // cascade shut, and they are exactly the rows sitting next to it.
+        const siblings = [...(el.parentElement?.children ?? [])] as HTMLElement[];
+        const self = siblings.indexOf(el);
+        const successors = [...siblings.slice(self + 1), ...siblings.slice(0, self).reverse()];
         closeTab(id);
+        successors.find((n) => state.tabs.some((t) => t.id === n.dataset["tabId"]))?.focus();
         break;
+      }
       case "ArrowDown":
       case "ArrowRight":
       case "ArrowUp":
@@ -1299,8 +1363,10 @@ export function toggleGitView(tab: GitTab = "changes", onShow?: () => void): voi
   });
 }
 
-export function toggleFilesView(onShow: () => void, onClose?: () => void): void {
-  toggleSingleton({
+/** The files singleton's TabSpec, shared by the toggle and the show below so the
+ *  two verbs cannot describe the tab differently. */
+function filesSpec(onShow: () => void, onClose?: () => void): TabSpec {
+  return {
     id: TAB_FILES,
     name: "Files",
     kind: "files",
@@ -1308,7 +1374,30 @@ export function toggleFilesView(onShow: () => void, onClose?: () => void): void 
     route: { kind: "files", path: "." },
     onShow,
     onClose,
-  });
+  };
+}
+
+export function toggleFilesView(onShow: () => void, onClose?: () => void): void {
+  toggleSingleton(filesSpec(onShow, onClose));
+}
+
+/** Bring the file browser forward. NEVER closes it, which is the whole reason
+ *  this exists beside the toggle.
+ *
+ *  "Toggle" and "go to" are different verbs, and this module already draws that
+ *  line for sub-tabs (setSettingsTab, setGitTab, setDocsTab all refuse to toggle).
+ *  The files view had only the toggle, so a caller whose intent was "the browser
+ *  has to be visible for what I am about to show in it" closed it instead
+ *  whenever it already was — which is exactly what find-in-files did from the
+ *  browser's own search button, leaving the bar open over a departed view and the
+ *  browser in search mode the next time it opened. A verb that cannot close is
+ *  the fix, rather than a caller remembering to check first. */
+export function showFilesView(onShow: () => void, onClose?: () => void): void {
+  const spec = filesSpec(onShow, onClose);
+  if (hasTab(spec.id) && state.active === spec.id) {
+    return;
+  }
+  openTab(spec);
 }
 
 export function toggleHistoryView(onShow: () => void, onClose?: () => void): void {
@@ -1421,6 +1510,7 @@ export function _resetForTest(): void {
   }
   internal.emptyTimer = null;
   internal.renderQueued = false;
+  internal.everOpened = false;
   savedUIState = null;
   bootDone = false;
   lastAnnouncedTab = "";

@@ -43,15 +43,28 @@ const {
 let activeID = "";
 let supervised: boolean | undefined;
 let thinking = false;
+let messageCount = 3;
+
+/** The active chat as the menu sees it. `message_count` is what decides whether
+ *  the chat holds a conversation, so it is a knob here: the tangent row is
+ *  unavailable until it does. */
+function session():
+  { id: string; supervised_mode: boolean | undefined; message_count: number } | undefined {
+  return activeID === ""
+    ? undefined
+    : { id: activeID, supervised_mode: supervised, message_count: messageCount };
+}
 
 vi.mock("./store.js", () => ({
   activeSession: {
-    peek: () => (activeID === "" ? undefined : { id: activeID, supervised_mode: supervised }),
+    peek: () => session(),
     get value() {
-      return activeID === "" ? undefined : { id: activeID, supervised_mode: supervised };
+      return session();
     },
   },
   isThinking: (id: string) => id === activeID && thinking,
+  isEmptyChat: (s: { message_count: number } | undefined) =>
+    s === undefined || s.message_count === 0,
 }));
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker }));
@@ -126,10 +139,14 @@ async function mountMenu(): Promise<{ card: HTMLElement; mod: typeof ChatOptions
 
 /** Click the row whose visible name matches. */
 function clickRow(card: HTMLElement, name: string): void {
+  rowButton(card, name).click();
+}
+
+/** The button of the row whose visible name matches. */
+function rowButton(card: HTMLElement, name: string): HTMLButtonElement {
   for (const btn of Array.from(card.querySelectorAll<HTMLButtonElement>(".chat-opt-btn"))) {
     if (btn.querySelector(".chat-opt-name")?.textContent === name) {
-      btn.click();
-      return;
+      return btn;
     }
   }
   throw new Error(`no row named ${name}`);
@@ -140,6 +157,7 @@ beforeEach(() => {
   activeID = "c-active";
   supervised = false;
   thinking = false;
+  messageCount = 3;
   // Left armed on purpose. Nothing on the goal path should reach the recipe list
   // any more, and a resolved reply means a regression that did would proceed far
   // enough to be caught by the explicit negative rather than dying in an
@@ -179,6 +197,19 @@ describe("the chat-actions menu", () => {
     const { card } = await mountMenu();
     for (const btn of Array.from(card.querySelectorAll(".chat-opt-btn"))) {
       expect(btn.closest("#chat-options-btn")).toBeNull();
+    }
+  });
+
+  // Every hint is a sentence a user reads, so no em dashes — the attach row's
+  // own test checks its cap text, this one covers the whole card including the
+  // hint the tangent row swaps in when it is unavailable.
+  it("carries no em dash in any hint, in either tangent state", async () => {
+    for (const count of [0, 3]) {
+      messageCount = count;
+      const { card } = await mountMenu();
+      for (const hint of Array.from(card.querySelectorAll(".chat-opt-hint"))) {
+        expect(hint.textContent).not.toContain("\u2014");
+      }
     }
   });
 });
@@ -227,12 +258,53 @@ describe("start a tangent", () => {
     expect(collapseAll).toHaveBeenCalled();
   });
 
-  // A tangent inherits a conversation, so there is no degraded version of one
-  // taken off a chat that has none.
-  it("refuses when no chat is active", async () => {
-    activeID = "";
+  // The row is UNAVAILABLE rather than error-toasting on a chat with no
+  // conversation, and that is the whole point of it: a chat is client-side only
+  // until its first prompt, so the fork 404'd server-side (errForkParentUnknown)
+  // AFTER openTangentChat had already opened and activated the sub-tab — a stray
+  // empty sub-tab plus a failure notice, for a control that read as available.
+  it.each([
+    ["a brand-new chat with no messages", "c-active", 0],
+    ["no active chat at all", "", 3],
+  ])("disables the row on %s", async (_desc, id, count) => {
+    activeID = id;
+    messageCount = count;
+    const { card } = await mountMenu();
+    expect(rowButton(card, "Start a tangent").disabled).toBe(true);
+  });
+
+  it("enables the row once the chat holds a conversation", async () => {
+    const { card } = await mountMenu();
+    expect(rowButton(card, "Start a tangent").disabled).toBe(false);
+  });
+
+  // The hint says what to do NEXT, not what went wrong: the row is unavailable
+  // before the user has done anything, so naming the missing message is the only
+  // useful thing it can say.
+  it("swaps the hint for one naming what unlocks the row", async () => {
+    messageCount = 0;
+    const { card } = await mountMenu();
+    const hint = rowButton(card, "Start a tangent").querySelector(".chat-opt-hint")?.textContent;
+    expect(hint).toContain("Send a message first");
+  });
+
+  // The disabled attribute is the refusal, so pressing it says nothing at all.
+  // A toast here would be the old behaviour wearing a dimmed row: an error for a
+  // control the user was told is unavailable.
+  it("dispatches nothing and says nothing when pressed with no conversation", async () => {
+    messageCount = 0;
     const { card } = await mountMenu();
     clickRow(card, "Start a tangent");
+    expect(openTangentChat).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("refuses in the handler as well, so a stale enabled row cannot fork nothing", async () => {
+    const { card } = await mountMenu();
+    messageCount = 0;
+    const btn = rowButton(card, "Start a tangent");
+    btn.disabled = false;
+    btn.click();
     expect(openTangentChat).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledTimes(1);
   });

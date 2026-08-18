@@ -84,9 +84,11 @@
   flex: 0 0 3ch;
   text-align: right;
   padding: 0 var(--sp-1);
-  color: var(--c-text-secondary);
+  /* Hint ink with NO `opacity`. Secondary under `opacity: 0.7` measured 3.565:1
+     in light mode — under AA for a line number the reader uses to carry their
+     place across a click. The hint ink alone is 4.771 / 4.719 and reads the same. */
+  color: var(--c-text-tertiary);
   user-select: none;
-  opacity: 0.7;
   background: var(--c-bg-secondary);
 }
 
@@ -590,13 +592,21 @@
   gap: var(--sp-3);
 }
 
+/* Same segmented control as `.settings-tab-bar` (17-settings.css) under another
+ * name, so it carries the same derivation: the segment keeps its 4px shape and
+ * the bar takes 4 + 1 + 4 = 9px, because deriving the segment from a 6px bar with
+ * a 4px inset would make it 1px. Rule: web.md "A nested rounded corner". */
 .mcp-modal-tabs {
   display: flex;
-  gap: 0.25rem;
+
+  --seg-inset: 0.25rem;
+  --seg-radius: var(--r-sm);
+
+  gap: var(--seg-inset);
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
-  border-radius: var(--r);
-  padding: 0.25rem;
+  border-radius: calc(var(--seg-radius) + 1px + var(--seg-inset));
+  padding: var(--seg-inset);
   flex-wrap: wrap;
 }
 
@@ -606,7 +616,7 @@
   padding: var(--sp-1) var(--sp-2);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: calc(var(--r) - 0.125rem);
+  border-radius: var(--seg-radius);
   color: var(--c-text-secondary);
   font-size: var(--fs-sm);
   font-weight: var(--fw-medium);

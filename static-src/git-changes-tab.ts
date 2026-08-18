@@ -20,6 +20,9 @@ import { stage, discard, pull, push, stash, stashPop, unstage } from "./actions/
 import { bindLoadingState, registerCleanup } from "./actions/index.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
+import { chevronEl } from "./chevron.js";
+import { createSearchPopup } from "./search-popup.js";
+import type { SearchPopup } from "./search-popup.js";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { escAttr as escapeHTML } from "./strings.js";
 import { renderRecentCommits, renderCommitArea, type CommitDeps } from "./git-changes-commit.js";
@@ -101,19 +104,41 @@ function commitDeps(): CommitDeps {
 
 // --- Public API ---
 
-/** Initialise the Changes tab. Wires the filter input, the global
- *  refresh button, and the SSE forge-changed event. Idempotent. */
+/** The tab's filter box.
+ *
+ *  A POPUP since the search-box audit. It was an `<input type="search">`
+ *  hand-authored into index.html with its own magnifier SVG beside it — the one
+ *  page-level search in the app that did not go through the shared shell, and the
+ *  reason the toolbar's magnifier was a DEAD DOOR on the git view: `find-dispatch`
+ *  had no branch for this tab, so Ctrl-F fell through to the transcript's handler,
+ *  which declined because the chat view was hidden.
+ *
+ *  Its close CLEARS, which matters more here than on a permanent box: this filter
+ *  also drives each repo section's expansion default, so a query left applied
+ *  behind a closed box would leave the page both narrowed and expanded with
+ *  nothing on screen explaining either. */
+export const changesFind: SearchPopup = createSearchPopup<null>({
+  id: "git-changes-filter",
+  kind: "filter",
+  label: "Filter changes by path",
+  placeholder: "Filter by path\u2026",
+  host: () => document.getElementById("git-view"),
+  query: (q) => {
+    filterText = q.trim().toLowerCase();
+    return null;
+  },
+  render: () => {
+    paint();
+  },
+});
+
+/** Initialise the Changes tab. Wires the global refresh button and the SSE
+ *  forge-changed event. Idempotent. */
 export function initChangesTab(): void {
   if (inited) {
     return;
   }
   inited = true;
-  const filterEl = document.getElementById("git-changes-filter") as HTMLInputElement | null;
-  filterEl?.addEventListener("input", () => {
-    filterText = filterEl.value.trim().toLowerCase();
-    paint();
-  });
-
   // Fire deferred paint when commit textarea loses focus.
   // Scoped to the mount container so the listener is tied to the tab's
   // DOM lifetime. focusout bubbles, so it reaches the container.
@@ -410,6 +435,12 @@ function renderRepoSection(r: RepoStatus): HTMLElement | null {
     className: "git-repo-section-header",
   });
   header.innerHTML = renderHeaderHTML(r);
+  // The chevron is prepended as an ELEMENT rather than written into the template
+  // above, so `chevronEl()` stays the app's one construction of it. Safe against
+  // being wiped: `renderHeaderHTML` has exactly this one call site.
+  const chevron = chevronEl();
+  chevron.classList.add("git-repo-section-chevron");
+  header.prepend(chevron);
 
   // Preserve the branch-chip interception: a click on the branch chip must open
   // the branch switcher, NOT toggle the section. createDisclosure adds its own
@@ -508,7 +539,6 @@ function renderHeaderHTML(r: RepoStatus): string {
   // to openBranchSwitcher, so the disclosure trigger's click never fires
   // for chip clicks.
   return `
-    <span class="git-repo-section-chevron" aria-hidden="true">▸</span>
     <span class="git-repo-section-name">${escapeHTML(r.repo)}</span>${dirty}
     <span class="git-repo-section-meta">
       <span class="git-repo-branch-chip" data-branch-trigger="${escapeHTML(r.repo)}" data-tooltip="Switch branch">${branch}</span>${ahead}${behind}${stashes}
