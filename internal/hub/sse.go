@@ -185,7 +185,9 @@ func (h *Hub) replayBounds() (floor, head uint64) {
 // So an old card is still a live question, and skipping it would strand the turn
 // waiting for an answer no surface is offering any more. List returns exactly the
 // set TakeIfPresent will still accept an answer for, so the card a client is
-// shown and the answer the server will take cannot disagree.
+// shown and the answer the server will take cannot disagree. The ORDER is List's
+// too — ascending request id, i.e. the order the agent asked — so this loop
+// writes the queue rather than a set.
 func (h *Hub) replayPendingPermissions(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
 	for _, evt := range h.sse.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {

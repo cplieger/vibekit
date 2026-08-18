@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/api"
@@ -104,14 +105,36 @@ func (t *pendingPermsTracker) ClearForChat(chatID api.ChatID) {
 // filtered to a single chat. This feeds the connect-time replay, and it returns
 // every tracked entry: the set it offers is exactly the set TakeIfPresent will
 // still accept an answer for.
+//
+// ORDER IS PART OF THE CONTRACT, ascending by request id. The ids come from the
+// JSON-RPC boundary, which assigns them monotonically, so ascending id is the
+// order the agent asked — and a replay that hands the cards over in ask order is
+// the only way a reconnecting surface renders the same queue the one before it
+// did. Iterating the map directly gave Go's randomized order, so two tabs
+// reconnecting to the same chat could stack the same three cards differently and
+// a single tab reordered them on every reconnect. The server is canonical here:
+// ordering a replay client-side would need a request id every client agrees to
+// sort on, which is the server's own key by another name.
+//
+// There is deliberately NO per-bridge grouping. A bridge is an implementation
+// detail of which chat a card belongs to, and chatFilter already answers that;
+// grouping by it would lift a newer chat's ask above an older one's for no
+// reason a reader could see. The one sequence that matters is the whole queue's,
+// and it covers permission, elicitation and structured-question cards alike
+// because all three are tracked here under the same id space.
 func (t *pendingPermsTracker) List(chatFilter api.ChatID) []api.ServerEvent {
 	t.mu.Lock()
-	result := make([]api.ServerEvent, 0, len(t.perms))
-	for _, evt := range t.perms {
+	ids := make([]int64, 0, len(t.perms))
+	for id, evt := range t.perms {
 		if chatFilter != "" && evt.ChatID != "" && evt.ChatID != chatFilter {
 			continue
 		}
-		result = append(result, evt)
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	result := make([]api.ServerEvent, 0, len(ids))
+	for _, id := range ids {
+		result = append(result, t.perms[id])
 	}
 	t.mu.Unlock()
 	return result
