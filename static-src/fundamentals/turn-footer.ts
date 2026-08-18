@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { chevronEl } from "../chevron.js";
 import { openChange, openChangeSet } from "../navigate.js";
 import type { FileChange } from "../types.js";
 import type { TurnOutcome } from "../turns.js";
@@ -86,7 +87,9 @@ export function buildTurnFooter(d: TurnSummaryData): HTMLDivElement {
   }) as HTMLButtonElement;
   summary.appendChild(el("span", { className: "turn-ledger-glyph" }));
   summary.appendChild(el("span", { className: "turn-ledger-text" }));
-  summary.appendChild(el("span", { className: "turn-ledger-caret" }));
+  const caret = chevronEl();
+  caret.classList.add("turn-ledger-caret");
+  summary.appendChild(caret);
   summary.addEventListener("click", () => {
     setFilesOpen(footer, !filesOpen(footer));
   });

@@ -86,21 +86,23 @@ describe("infra_safety_blocked event (Kiro Infrastructure-Safety enforce block)"
   });
 });
 
-describe("interrupted event (partial-turn recovery badge)", () => {
-  it("renders a visible boundary instead of being skipped", () => {
+describe("interrupted event (turn cut short)", () => {
+  it("renders the server's own reason, not a generic label", () => {
     const node = buildEvent({
       id: "i1",
       role: "event",
       event_kind: "interrupted",
-      content: "Turn interrupted by server restart",
+      content: "Session refreshed, retrying",
       ts: 0,
     } as Message);
     expect(node).not.toBeNull();
     expect(node?.className).toContain("boundary");
-    expect(node?.textContent ?? "").toContain("Interrupted by server restart");
+    // The reason travelled on the wire and used to be discarded here, so the
+    // divider blamed a server restart whatever had actually happened.
+    expect(node?.textContent ?? "").toContain("Session refreshed, retrying");
   });
 
-  it("shows the badge even when the event carries no content", () => {
+  it("falls back to a generic label when the event carries no content", () => {
     const node = buildEvent({
       id: "i2",
       role: "event",
@@ -108,7 +110,19 @@ describe("interrupted event (partial-turn recovery badge)", () => {
       ts: 0,
     } as Message);
     expect(node).not.toBeNull();
-    expect(node?.textContent ?? "").toContain("Interrupted by server restart");
+    expect(node?.textContent ?? "").toContain("Turn interrupted");
+  });
+
+  // Nothing in the tree detects a restart: the `.partial` sidecar that claim
+  // came from is deleted. Pinned so the string cannot come back.
+  it("never blames a server restart", () => {
+    const node = buildEvent({
+      id: "i3",
+      role: "event",
+      event_kind: "interrupted",
+      ts: 0,
+    } as Message);
+    expect(node?.textContent ?? "").not.toContain("restart");
   });
 });
 

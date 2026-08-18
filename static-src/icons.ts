@@ -68,8 +68,6 @@ export const ICON_X =
   '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
 export const ICON_PLAY = svg(14, '<polygon points="5 3 19 12 5 21 5 3"/>');
 export const ICON_CHEVRON_DOWN = svg(16, '<path d="M6 9l6 6 6-6"/>');
-export const ICON_CHEVRON_DOWN_SM =
-  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
 export const ICON_CHEVRON_UP = svg(16, '<path d="M18 15l-6-6-6 6"/>');
 export const ICON_SEND = svg(16, '<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>'); // Busy-state spinner rendered INTO the send button. Uses xmlns so it
 // renders correctly when injected via innerHTML. CSS `.icon-spinner`
@@ -94,45 +92,41 @@ export const ICON_CANCEL = svg(
  * to be two byte-identical literals in static/index.html with nothing tying
  * them together.
  *
- * REDRAWN for the 12px size, where the previous geometry collapsed. Its eyes
- * were STROKED rings at r=2.5 with stroke-width 2, so each ring measured 7
- * units across with only a 3-unit hole, and with centres 8 units apart the
- * outer edges left ONE unit between them — 0.50 CSS px at 12px, under a device
- * pixel, so the two rings bridged into a single blob and the 1px wall split
- * 25/75 across two pixel columns and rendered as two greys. There was nowhere
- * for the gap to grow either: the pair spanned 15 of the head's 18 interior
- * units.
+ * THE HEAD IS THE WHOLE SILHOUETTE, and that is this drawing's entire point.
+ * There used to be an antenna — a dot plus a stem — and it took the top 6 of
+ * the 22 units a centred content bbox gets, which left the head 15 units tall
+ * and its INTERIOR 13, or 6.5 CSS px at 12px, to hold two eyes and a mouth
+ * whose stroke ended half a unit off the head's inner bottom. At 20px that
+ * reads fine; at 12px the face is the only thing there is, and it was being
+ * compressed to pay for an aerial that quantises to a 1px tick. So the box goes
+ * to the head: 20 units square, interior 18, face centred in it with ~3 units
+ * of clearance above and below. A rounded square with two eyes and a smile
+ * still reads as a bot.
  *
- * Two changes fix it, and both are about what survives quantisation:
+ * Three properties carry over from the 12px eye redraw and must not be undone:
  *
- *   The eyes are FILLED dots (r=2), not rings. A ring at this size has to hold
- *   two features — a wall and a hole — inside 1.5 CSS px, and neither survives;
- *   a dot has one feature and degrades to a softer dot. The antenna dot already
- *   worked this way, so this is the icon's own convention rather than a new one.
+ *   The eyes are FILLED dots, not stroked rings. A ring at this size has to
+ *   hold two features — a wall and a hole — inside 1.5 CSS px and keeps
+ *   neither; a dot has one feature and degrades to a softer dot. The rings this
+ *   replaced left ONE unit between their outer edges and bridged into a single
+ *   blob, with the wall splitting 25/75 across two pixel columns as two greys.
  *
- *   The gap is 4 units, not 1: inner edges at x=10 and x=14. At 12px that is
- *   2.00 CSS px landing exactly on pixel columns 5 and 6 (1 unit = 0.5 px, so
- *   even unit values ARE pixel boundaries), and at 20px it is 3.33 px. The pair
- *   now spans 12 of the 18 interior units, so there is room either side.
+ *   The gap between them is 4 units: inner edges at x=10 and x=14. At 12px that
+ *   is 2.00 CSS px with edges landing exactly on 5.00 and 7.00 (1 unit = 0.5 px,
+ *   so even unit values ARE pixel boundaries), and 3.33 px at 20px.
  *
- * The mouth's dip went from 1 unit to 2 (`q3.5 4 7 0` — a quadratic's dip is
- * half its control offset), because at 12px a 1-unit dip is 0.5 px and reads as
- * a straight dash.
+ *   The mouth's dip is 2 units (`q4 4 8 0` — a quadratic's dip is half its
+ *   control offset), because a 1-unit dip is 0.5 px at 12px and reads as a
+ *   straight dash.
  *
- * SQUARE, and centred: the content bbox is x 1..23 by y 1..23 — 22 x 22 with a
- * 1-unit margin all round. It used to be 22 x 21.5 sitting 0.75 units high,
- * because the head was 2 units higher and 1 unit taller. Squaring it by
- * extending only upward would have made it 22 x 22 flush against the top edge
- * with 2 units below, which is square and still off-centre; moving the head
- * down instead costs nothing and buys both. A test derives the bbox from these
- * coordinates rather than snapshotting them. */
+ * SQUARE, and centred: the stroked head alone spans 1..23 on both axes, so
+ * there is nothing left outside it to take height from the face again. A test
+ * derives all of that from these coordinates rather than snapshotting them. */
 const MODEL_ROBOT_D =
-  '<circle cx="12" cy="2.5" r="1.5" fill="currentColor" stroke="none"/>' +
-  '<path d="M12 4v3"/>' +
-  '<rect x="2" y="7" width="20" height="15" rx="2"/>' +
-  '<circle cx="8" cy="13" r="2" fill="currentColor" stroke="none"/>' +
-  '<circle cx="16" cy="13" r="2" fill="currentColor" stroke="none"/>' +
-  '<path d="M8.5 17.5q3.5 4 7 0"/>';
+  '<rect x="2" y="2" width="20" height="20" rx="5"/>' +
+  '<circle cx="7.5" cy="9" r="2.5" fill="currentColor" stroke="none"/>' +
+  '<circle cx="16.5" cy="9" r="2.5" fill="currentColor" stroke="none"/>' +
+  '<path d="M8 15q4 4 8 0"/>';
 export const ICON_MODEL = svg(12, MODEL_ROBOT_D);
 export const ICON_MODEL_20 = svg(20, MODEL_ROBOT_D);
 
@@ -149,6 +143,27 @@ export const ICON_FILTER =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>' +
   "</svg>";
+
+/** The find affordance's two glyphs, drawn at the caller's size.
+ *
+ *  A MAGNIFIER for a box that reaches PAST what is on screen — the transcript's
+ *  server-enumerated find, the file browser's recursive grep, the editor's buffer
+ *  scan, History's read of every chat file on disk. A FUNNEL for one that only
+ *  NARROWS rows already loaded — the configuration browser's inventory and the
+ *  git view's two panels. The distinction is the reader's, not an implementation
+ *  detail: a funnel promises the answer is limited to what is here, and a
+ *  magnifier promises it is not.
+ *
+ *  ONE producer, consumed by the toolbar button and by the box it opens, so the
+ *  two can never disagree about which of the two a page is. */
+export function findGlyph(kind: "search" | "filter", size: number): string {
+  return svg(
+    size,
+    kind === "search"
+      ? '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>'
+      : '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+  );
+}
 
 export const ICON_REPO_EMPTY =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +

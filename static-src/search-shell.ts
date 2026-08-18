@@ -1,13 +1,14 @@
 // ---------------------------------------------------------------------------
 // The search box every surface shares.
 //
-// Four surfaces ask a reader to type a query: the transcript's Ctrl-F, the file
-// browser's recursive grep, the History page's cross-chat search, and the
-// configuration browser's metadata filter. They had three hand-authored copies
-// of the same box between them — the input's attribute set alone was duplicated
-// in three places — and the copies had already drifted: two spellings of the
-// match-case toggle's size, two debounce constants with the same value, and one
-// box with `role="search"` and one without.
+// Six surfaces ask a reader to type a query: the transcript's Ctrl-F, the file
+// browser's recursive grep, the editor's in-buffer find, the History page's
+// cross-chat search, the configuration browser's metadata filter, and the git
+// view's two panel filters. They had four hand-authored copies of the same box
+// between them — the input's attribute set alone was duplicated in three places
+// — and the copies had already drifted: two spellings of the match-case toggle's
+// size, two debounce constants with the same value, and one box with
+// `role="search"` and one without.
 //
 // WHAT IS SHARED IS MECHANICAL, NOT VISUAL. This module owns the box shell, the
 // input's attributes, the debounce, the supersession guard, the `Aa` latched
@@ -15,30 +16,32 @@
 // contract. Each consumer supplies a placeholder, a query function and a
 // renderer.
 //
-// WHAT IS DELIBERATELY NOT SHARED, because the surfaces genuinely differ:
+// PLACEMENT AND REVEAL ARE STILL NOT HERE, and that is unchanged — but the
+// population underneath it has changed. Two groups own it now instead of six
+// one-offs:
 //
-//   - PLACEMENT. Floating when the results annotate a scroller that keeps moving
-//     under the box (the transcript), in-flow when they REPLACE the container
-//     (the file browser, History). 19-files.css already records that reasoning;
-//     this module does not overrule it, which is why `compose` hands the built
-//     parts back to the consumer to arrange rather than laying them out here.
-//   - REVEAL AND DISMISS. The transcript's box is a popup with a trigger, the
-//     browser's is a panel whose results live OUTSIDE it (so an outside click
-//     must not close it), and History's is a permanent field with nothing to
-//     dismiss. `wireSearchKeys` shares the KEY CONTRACT and takes the dismiss
-//     action from the caller, because what dismiss means is placement's
-//     consequence.
-//   - THE COUNTER VERSUS THE NOTE. A cursor reports "3 of 17"; a ranked list
-//     reports how much it read. Those answer different questions.
-//   - THE CURSOR HALF. Marks, prev/next and scroll-into-view belong to the one
-//     surface that has a position in a document. It arrives through `compose`
-//     as ordinary controls.
+//   - search-popup.ts is the FLOATING form: the four page boxes (History, the
+//     configuration browser, the git view's two panels), which share one popup
+//     lifecycle, one position and one clear-on-close rule. It sits ON TOP of this
+//     module rather than inside it.
+//   - The transcript's box is its own popup call (find-in-chat.ts), because it
+//     has a cursor and a teardown that unwraps DOM it wrote into the page; the
+//     file browser's and the editor's stay IN-FLOW, because each changes the
+//     layout of the thing it searches — the browser's results REPLACE the
+//     listing, and a docked editor bar shrinks the scroller instead of covering
+//     the first lines of the file. 19-files.css and 20-editor.css record that.
+//
+// THE COUNTER VERSUS THE NOTE stays a real difference: a cursor reports "3 of
+// 17"; a ranked list reports how much it read. Those answer different questions.
+// And THE CURSOR HALF — marks, prev/next, scroll-into-view — belongs to the two
+// surfaces that have a position in a document, arriving through `compose` as
+// ordinary controls.
 //
 // There is NO mode flag, and that is a decision this codebase has already taken
 // once: settings-highlight.ts refused a registry for the same reason. A flag
-// would put the four surfaces' differences inside one function's branches, where
-// the next surface adds a fifth value and every existing branch has to be
-// re-read to know whether it applies.
+// would put the surfaces' differences inside one function's branches, where the
+// next surface adds another value and every existing branch has to be re-read to
+// know whether it applies.
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
@@ -54,25 +57,14 @@ import { iconEl } from "./icon-el.js";
  *  guard — not the number. */
 export const SEARCH_DEBOUNCE_MS = 90;
 
-/** The magnifier for an icon-led field.
- *
- *  A MAGNIFIER, never a funnel, on any box that reaches past what is on screen:
- *  18-pages.css records the distinction for the History box, where the server
- *  reads every chat file on disk, so a funnel would promise it only narrows the
- *  loaded list. Lives here rather than in icons.ts because it is furniture of
- *  this component, and both icon-led consumers get the same glyph by
- *  construction. */
-const SEARCH_GLYPH =
-  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-  'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>';
-
-/** The magnifier as a node, for a `compose` that wants an icon-led field. */
-export function searchGlyph(className: string): Element {
-  const icon = iconEl(SEARCH_GLYPH);
-  icon.setAttribute("class", className);
-  return icon;
-}
+/* THERE IS NO IN-FIELD MAGNIFIER HERE ANY MORE, and its removal retired a
+   question rather than answering it. This module used to export one, with a rule
+   attached: a magnifier on a box that reaches past what is on screen, nothing on
+   a box that only narrows it. Two consumers disagreed under that rule — History
+   carried the glyph, the docs filter carried none — and the git panels carried a
+   third spelling of their own. Every page box is opened BY a magnifier now (the
+   toolbar's, through find-dispatch), so a second one inside the field is the same
+   glyph twice; what a box reaches is stated in its placeholder instead. */
 
 /** The close ×, local for the same reason the magnifier is: it is this
  *  component's own furniture, and importing it from icons.ts would make every
@@ -227,9 +219,8 @@ function searchRegion(opts: { id: string; className: string; label: string }): H
 
 /** Escape and Enter on a search field.
  *
- *  Both actions are the caller's: Escape means close a revealable box and clear
- *  a permanent one, and Enter means step to the next match on a cursor and
- *  re-run on a list. What is shared is that Escape is CONSUMED here
+ *  Both actions are the caller's: Escape closes a revealable box, and Enter means
+ *  step to the next match on a cursor and re-run on a list. What is shared is that Escape is CONSUMED here
  *  (`stopPropagation`) so it does not also reach a modal or a global handler
  *  behind the box. */
 export function wireSearchKeys(
@@ -278,8 +269,8 @@ export interface SearchShellSpec<R> {
   noteClass?: string;
   label: string;
   placeholder: string;
-  /** Tooltip on the field. The two boxes reached by Ctrl-F state the
-   *  second-press escape hatch here; a permanent box has nothing to say. */
+  /** Tooltip on the field. Every box reached by Ctrl-F states the second-press
+   *  escape hatch here. */
   inputTitle?: string;
   inputType?: "text" | "search";
   /** Offer the `Aa` toggle. FALSE is a real answer, not a default: the
@@ -290,6 +281,10 @@ export interface SearchShellSpec<R> {
   note?: boolean;
   /** Offer a × that calls `onDismiss`. */
   closeButton?: boolean;
+  /** What the × closes, for its accessible name: "Close find" by default, so a
+   *  box that is a FILTER can say so instead. The word a reader hears has to
+   *  match the glyph they see. */
+  closeNoun?: string;
   /** Typing pause before a run. Defaults to SEARCH_DEBOUNCE_MS. */
   debounceMs?: number;
   /** Arrange the built parts into the region. Extra controls (a glob row, a
@@ -298,9 +293,9 @@ export interface SearchShellSpec<R> {
   /** Run one query. Returning null means "nothing to render" (a failed fetch is
    *  already logged centrally by the api client).
    *
-   *  MAY BE SYNCHRONOUS, and two of the four boxes are: the editor's find reads a
-   *  string already in memory and the docs filter narrows an already-fetched
-   *  inventory. A synchronous answer renders in the same tick, which matters
+   *  MAY BE SYNCHRONOUS, and four of the six boxes are: the editor's find reads a
+   *  string already in memory, and the docs filter and the git view's two filters
+   *  narrow an inventory that is already here. A synchronous answer renders in the same tick, which matters
    *  because a counter that appears a microtask late is a counter a keystroke can
    *  overtake — and it keeps the substrate out of the contract, so a box does not
    *  have to pretend to be asynchronous to use this shell. */
@@ -389,7 +384,13 @@ export function createSearchShell<R>(spec: SearchShellSpec<R>): SearchShell {
 
   const closeButton =
     spec.closeButton === true
-      ? searchIconButton(spec.buttonClass, "Close find", "Close (Esc)", CLOSE_GLYPH, dismiss)
+      ? searchIconButton(
+          spec.buttonClass,
+          `Close ${spec.closeNoun ?? "find"}`,
+          "Close (Esc)",
+          CLOSE_GLYPH,
+          dismiss,
+        )
       : null;
 
   const region = searchRegion({

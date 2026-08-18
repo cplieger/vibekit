@@ -95,10 +95,10 @@ describe("EVENT_BOUNDARY_META", () => {
     expect(meta.defaultLabel).toBe("Conversation compacted");
   });
 
-  it("interrupted is a visible boundary (recovered-turn badge), not skipped", () => {
+  it("interrupted is a visible boundary (turn-cut-short badge), not skipped", () => {
     expect.assertions(2);
     const meta = EVENT_BOUNDARY_META["interrupted"]!;
     expect(meta).toBeDefined();
-    expect(meta.defaultLabel).toBe("Interrupted by server restart");
+    expect(meta.defaultLabel).toBe("Turn interrupted");
   });
 });

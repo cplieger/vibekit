@@ -35,6 +35,7 @@ import { fileIcon } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { caseParam, createSearchShell, searchField, wireSearchKeys } from "./search-shell.js";
 import type { SearchShell } from "./search-shell.js";
+import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 
 // --- Wire types ------------------------------------------------------------
 // Hand-declared beside the feature, the chat-search-types.ts precedent: one
@@ -77,8 +78,12 @@ export interface FilesSearchCtx {
    *
    *  Ctrl-F in an EDITOR tab means find-in-files, and this surface lives inside
    *  the (hidden) files view, so the tab has to be activated first. Injected
-   *  rather than imported: the opener is files.ts's (toggleFilesView takes that
-   *  module's loader and reset), so reaching for it here would be a cycle. */
+   *  rather than imported: the opener is files.ts's (showFilesView takes that
+   *  module's loader and reset), so reaching for it here would be a cycle.
+   *
+   *  It must SHOW, never toggle. Two of this module's three callers run with the
+   *  files tab already active, where a toggle closed the very view the bar is
+   *  about to render into. `tabs.ts` showFilesView is the verb that cannot. */
   activateBrowser: () => void;
 }
 
@@ -92,6 +97,9 @@ let excludeEl: HTMLInputElement | null = null;
  *  make a search and a directory load cancel each other. */
 let shell: SearchShell | null = null;
 let lastMatches: FileSearchMatch[] = [];
+/** Unsubscribe for the tab-change teardown, so a rebuilt module does not stack a
+ *  second subscriber on the bus. Mirrors find-in-chat.ts and editor-find.ts. */
+let unsubTab: (() => void) | null = null;
 
 // --- Pure helpers (exported for tests) -------------------------------------
 
@@ -258,6 +266,27 @@ function ensureBuilt(): void {
   $.fbList.insertAdjacentElement("afterend", results);
   barEl = built.region;
   resultsEl = results;
+
+  // LEAVING the browser drops the search; ARRIVING at it never does, and the
+  // asymmetry is what makes the subscription safe to add at all. `openFilesSearch`
+  // activates the files tab before it opens the bar, and the tab store announces
+  // that switch from a BATCHED effect — so a subscriber that closed on every
+  // change would fire after the open had already landed and shut the bar the user
+  // just asked for. Keying on the DESTINATION kind sidesteps the ordering
+  // entirely: that emit carries `files`.
+  //
+  // Without the close half, this bar was the one search surface that survived a
+  // tab switch (find-in-chat.ts and editor-find.ts have closed on this event for
+  // as long as they have existed), so the browser kept a stale hit list and a
+  // stale query in place of its directory listing until someone dismissed it by
+  // hand.
+  unsubTab?.();
+  unsubTab = onBus(BUS_TAB_CHANGED, (e) => {
+    if (e.kind === "files") {
+      return;
+    }
+    resetFilesSearch();
+  });
 }
 
 function hitRow(m: FileSearchMatch, label: string): HTMLElement {
@@ -358,13 +387,28 @@ export function closeFilesSearch(): void {
   shell?.setNote("");
 }
 
-/** Drop the search when the browser resets (tab close). Mirrors
- *  resetFileBrowser's own DOM clear: rows kept while hidden would replay their
- *  entry animation in unison on the next open. */
+/** Drop the search entirely: close it AND forget what was typed.
+ *
+ *  Two callers, one meaning — the next time this browser is looked at, it is a
+ *  directory listing rather than someone's old query. `resetFileBrowser` calls it
+ *  on tab close (its own DOM clear is there for the same reason: rows kept while
+ *  hidden replay their entry animation in unison on the next open), and the
+ *  tab-change subscriber calls it on leaving.
+ *
+ *  The GLOBS are cleared with the query. They are part of the search the reader
+ *  composed, not a standing preference, and an `Exclude: node_modules` still
+ *  sitting in the bar an hour later silently narrows a search nobody asked it to
+ *  narrow. */
 export function resetFilesSearch(): void {
   closeFilesSearch();
   if (shell !== null) {
     shell.input.value = "";
+  }
+  if (includeEl !== null) {
+    includeEl.value = "";
+  }
+  if (excludeEl !== null) {
+    excludeEl.value = "";
   }
 }
 

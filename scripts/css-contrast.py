@@ -649,32 +649,32 @@ DOT_STATES: list[tuple[str, str, str, dict[str, str]]] = [
     ),
     (
         "working",
-        "--c-blue",
-        "--c-selected-blue-fg",
+        "--c-dot-working",
+        "--c-selected-dot-working-fg",
         {"fill": "solid", "surround": "none", "motion": "animated", "shape": "circle"},
     ),
     (
         "waiting",
-        "--c-yellow",
-        "--c-selected-yellow-fg",
+        "--c-dot-input",
+        "--c-selected-dot-input-fg",
         {"fill": "hollow", "surround": "ring", "motion": "still", "shape": "circle"},
     ),
     (
         "input",
-        "--c-orange",
-        "--c-selected-orange-fg",
+        "--c-dot-input",
+        "--c-selected-dot-input-fg",
         {"fill": "solid", "surround": "ring", "motion": "still", "shape": "circle"},
     ),
     (
         "failed",
-        "--c-red",
-        "--c-selected-red-fg",
+        "--c-dot-failed",
+        "--c-selected-dot-failed-fg",
         {"fill": "solid", "surround": "none", "motion": "still", "shape": "diamond"},
     ),
     (
         "done",
-        "--c-green",
-        "--c-selected-green-fg",
+        "--c-dot-done",
+        "--c-selected-dot-done-fg",
         {"fill": "solid", "surround": "none", "motion": "still", "shape": "circle"},
     ),
     # Editor tabs only. It can never share a strip position with a chat state,
@@ -687,13 +687,13 @@ DOT_STATES: list[tuple[str, str, str, dict[str, str]]] = [
     ),
 ]
 
-# NO ALIASES, and the empty list is the finding. `waiting` and `input` used to be
-# declared here as one intended visual, on the reasoning that six chat states
-# against four non-colour channels left the pair nothing. What actually left them
-# nothing was sharing ONE hue: with `input` moved to web-terminal-ui's orange, the
-# fill channel had a slot free (hollow + ring) and the pair separates on fill as
-# well as hue, so the exemption is not needed. Keep it empty — an entry here is a
-# state the check has been told not to look at.
+# NO ALIASES, and the empty list is the finding. `waiting` and `input` share ONE
+# ink on purpose — both mean "action required", which is the single thing
+# web-terminal-kiro's --status-input says — and they separate on FILL: hollow disc
+# in a ring against solid disc in a ring. That is exactly what the pairwise check
+# below demands, so the pair needs no exemption, and an entry here is a state the
+# check has been told not to look at. It was declared here once, when the pair
+# shared one hue AND one visual; the fill split is what closed it.
 DOT_ALIASES: list[tuple[str, str]] = []
 
 # `dirty` is an editor-tab state; every other member is a chat state.
@@ -707,27 +707,30 @@ DOT_FLOOR = 3.0
 # would put a false signal on the one state that needs nothing from the reader.
 REDUCED_MOTION_SUBSTITUTION = {"fill": "donut", "motion": "still"}
 
-# The hue whose two vibekit tokens carry it, and the source token they answer to.
-# Printed with the orange sweep so the alignment claim is checkable rather than
-# asserted in a comment.
+# The sibling app's own declaration for each state, and the vibekit token that
+# answers to it. web-terminal-kiro themes @cplieger/web-terminal-ui's --status-*
+# family in its static-src/app.ts, so THESE are the reference — not the library
+# defaults, which it overrides on every member and which an earlier pass aligned to
+# by mistake. Its values are carried as it writes them, hex and oklch both, so the
+# hue and the value are compared against the source rather than against a rounding
+# of it. The claim is the VALUE where the value is in reach and the HUE where it is
+# not; `show_dot_sizing` below prints which is which and why.
 DOT_SOURCE_HUES = [
-    ("working", "--c-blue", "--status-working", "#52a9fe"),
-    ("input", "--c-orange", "--status-input", "#fb923c"),
-    ("failed", "--c-red", "--status-failed", "#dc2626"),
-    ("done", "--c-green", "--status-done", "#22c55e"),
+    ("working", "--c-dot-working", "--status-working", "#c6a0ff"),
+    ("input", "--c-dot-input", "--status-input", "oklch(78% 0.15 95deg)"),
+    ("failed", "--c-dot-failed", "--status-failed", "#dc2626"),
+    ("done", "--c-dot-done", "--status-done", "oklch(78% 0.15 150deg)"),
 ]
 
-# The status seeds whose L/C range defines "inside this theme's own palette" for
-# the orange sweep below. Read rather than asserted, so a retuned theme moves the
-# admissible band with it.
-DOT_SEED_BAND = [
-    "--c-green",
-    "--c-red",
-    "--c-yellow",
-    "--c-blue",
-    "--c-teal",
-    "--c-warning",
-]
+# The sweep's search space when a source value misses this app's floor: every
+# in-gamut L and C at the source's own hue. Deliberately WIDER than the theme's own
+# status-seed band, which is what the retired orange sweep searched — that band
+# answered "is this hue at home in this palette", and the question here is the
+# opposite one, "how close to the sibling app's value can this get and still be
+# visible". Ranking is nearest-L first, so a value stays as near the source as the
+# contrast allows.
+DOT_SWEEP_LIGHTNESS = range(30, 93)
+DOT_SWEEP_CHROMA = (0.05, 0.28, 0.005)
 
 # The base favicon's own artwork under the attention badge, and why the badge's
 # ink is a separate question from the tab dot's. static/favicon.svg is an opaque
@@ -737,7 +740,11 @@ DOT_SEED_BAND = [
 # never seen against a theme surface, which is what decides which theme's value
 # it must carry.
 FAVICON_BADGE_BACKDROP = ("#A468FF", "#7E2FF0")
-FAVICON_CUES = [("input", "--c-orange"), ("done", "--c-green"), ("alert", "--c-red")]
+FAVICON_CUES = [
+    ("input", "--c-dot-input"),
+    ("done", "--c-dot-done"),
+    ("alert", "--c-dot-failed"),
+]
 
 
 def as_expr(ink: str) -> str:
@@ -806,7 +813,7 @@ def show_dot(themes: list[Theme]) -> None:
     print()
 
     show_dot_hues(themes)
-    show_orange_sweep(themes)
+    show_dot_sizing(themes)
 
     print("NON-COLOUR CHANNELS (WCAG 1.4.1: colour may not be the only means of")
     print("conveying a state). Every pair of chat states must differ on at least one")
@@ -878,117 +885,142 @@ def from_hex(value: str) -> Colour:
     )
 
 
-def oklab_distance(th: Theme, expr_a: str, expr_b: str) -> float:
-    """Perceptual distance between two inks as they land on an unselected row."""
-    bg = th.flat("--c-bg-secondary")
-    a = colour_to_oklab(th.resolve(expr_a).over(bg))
-    b = colour_to_oklab(th.resolve(expr_b).over(bg))
-    return math.dist(a, b)
-
-
 def show_dot_hues(themes: list[Theme]) -> None:
-    print("SOURCE HUES: which colour FAMILY carries each meaning, against")
-    print("@cplieger/web-terminal-ui's --status-* tokens. The claim is the family,")
-    print("not the value: each app draws from its own palette, so a few degrees of")
-    print("drift is expected and 24deg is too where a palette's red is a pinkish")
-    print("one. What would be a finding is a state whose FAMILY differs — a violet")
-    print("`working` against a blue one, which is what this replaced.")
+    print("SOURCE VALUES: the dot's inks against web-terminal-kiro's own, which is")
+    print("the reference the two apps share. It themes @cplieger/web-terminal-ui's")
+    print("--status-* family in its static-src/app.ts, so the library defaults are")
+    print("NOT the comparison — aligning to those is what put a blue `working` here")
+    print("against a violet one there. The HUE must match to a rounding step; the")
+    print("VALUE matches too wherever the source's own value clears this app's floor")
+    print("(the sizing report below says which ones did not, and why).")
     print()
     print(
-        f"  {'state':<10} {'source token':<18} {'source':<10} {'hue':<8} {'vibekit token':<12} dark hue   light hue"
+        f"  {'state':<8} {'source token':<18} {'source value':<22} {'hue':<8} "
+        f"{'vibekit token':<20} dark                 light"
     )
-    for state, token, src_token, src_hex in DOT_SOURCE_HUES:
-        _, _, src_hue = colour_to_oklch(from_hex(src_hex))
+    for state, token, src_token, src_expr in DOT_SOURCE_HUES:
+        src = themes[0].resolve(src_expr)
+        _, _, src_hue = colour_to_oklch(src)
         cells = []
         for th in themes:
-            _, _, hue = colour_to_oklch(th.colour(token))
-            cells.append(f"{fmt(hue)}deg ({fmt(abs(hue - src_hue))} off)")
+            colour = th.colour(token)
+            _, _, hue = colour_to_oklch(colour)
+            same = "same value" if colour.hex() == src.hex() else ""
+            cells.append(f"{fmt(hue)}deg ({fmt(abs(hue - src_hue))} off) {same:<11}")
         print(
-            f"  {state:<10} {src_token:<18} {src_hex:<10} {fmt(src_hue):<8} {token:<12} "
-            + "  ".join(cells)
+            f"  {state:<8} {src_token:<18} {src_expr:<22} {fmt(src_hue):<8} {token:<20} "
+            + " ".join(cells)
         )
     print()
 
 
-def show_orange_sweep(themes: list[Theme]) -> None:
-    print("ORANGE SWEEP, which sizes --c-orange. The HUE is fixed by the source")
-    print("token (--status-input #fb923c). L and C are swept in 1% / 0.005 steps")
-    print("over the L and C range this theme's OWN status seeds occupy, keeping")
-    print("only values that clear the floor on all four held fills AND land inside")
-    print("sRGB, and the winner MAXIMISES the smaller of two oklab distances: to")
-    print("--c-yellow and to --c-red. Those are the orange's neighbours in the dot")
-    print("vocabulary, so being confusable with either is the only way the token")
-    print("can fail.")
-    print()
-    print("The in-gamut constraint is not tidiness. Every other seed is in gamut,")
-    print("and outside it a browser reduces chroma while the favicon generator")
-    print("clamps per channel — so an out-of-gamut orange would paint the tab dot")
-    print("and the tab ICON two different colours, which is the one thing the")
-    print("attention badge exists to keep in step.")
-    print()
-    # Rounded to the precision a token would carry, so the declared value is one
-    # of the candidates the sweep ranks rather than a near miss it cannot match.
-    _, _, exact = colour_to_oklch(from_hex("#fb923c"))
-    hue = f"{round(exact, 1):g}"
-    for th in themes:
-        lightnesses, chromas = [], []
-        for token in DOT_SEED_BAND:
-            lightness, chroma, _ = colour_to_oklch(th.colour(token))
-            lightnesses.append(round(lightness * 100))
+def dot_held_worst(th: Theme, expr: str) -> tuple[str, float]:
+    """The worst contrast an ink reads on any HELD tab-row fill.
+
+    The raw ink is what an unselected row paints; a selected row switches
+    --dot-color to that ink's member of the on-selected family, so the selected
+    columns are measured through the same 56% mix the token file declares.
+    """
+    held = []
+    for cols, is_sel in ((DOT_FILLS, False), (DOT_SELECTED_FILLS, True)):
+        ink = (
+            f"color-mix(in oklch, var(--c-selected-fg) 56%, {expr})" if is_sel else expr
+        )
+        for col, fill in cols:
+            if col not in DOT_HELD:
+                continue
+            bg = th.flat(fill)
+            held.append((col, contrast(th.resolve(ink).over(bg), bg)))
+    return min(held, key=lambda kv: kv[1])
+
+
+def dot_admissible(th: Theme, hue: float) -> list[tuple[int, float, float, float]]:
+    """Per lightness at one hue: the in-gamut chroma range that clears the floor.
+
+    Reported as a BAND rather than a ranked winner, because there is no single
+    scalar to rank by: the hue is fixed by the source, and L and C then trade
+    against each other (a deeper ink clears the floor more easily, a more chromatic
+    one keeps the source's colour identity), with the sRGB boundary cutting the
+    corner off. The declared token is placed in this band instead.
+    """
+    label = f"{round(hue, 1):g}"
+    lo, hi, step = DOT_SWEEP_CHROMA
+    rows = []
+    for pct in DOT_SWEEP_LIGHTNESS:
+        chromas, worst_seen = [], 0.0
+        for i in range(round((hi - lo) / step) + 1):
+            chroma = round(lo + i * step, 3)
+            expr = f"oklch({pct}% {chroma:g} {label}deg)"
+            if th.resolve(expr).clipped:
+                continue
+            _col, worst = dot_held_worst(th, expr)
+            if worst < DOT_FLOOR:
+                continue
             chromas.append(chroma)
-        rows = []
-        for pct in range(min(lightnesses), max(lightnesses) + 1):
-            steps = round((max(chromas) - min(chromas)) / 0.005)
-            for i in range(steps + 1):
-                chroma = round(min(chromas) + i * 0.005, 3)
-                expr = f"oklch({pct}% {chroma:g} {hue}deg)"
-                if th.resolve(expr).clipped:
+            worst_seen = max(worst_seen, worst)
+        if chromas:
+            rows.append((pct, min(chromas), max(chromas), worst_seen))
+    return rows
+
+
+def show_dot_sizing(themes: list[Theme]) -> None:
+    print("SIZING, which is the only thing that varies per theme. The hue is the")
+    print("source's in both; L and C are this app's, because web-terminal-kiro has")
+    print("one theme and a near-black tab chip while these rows sit on")
+    print("--c-bg-secondary under a 15%-ink hover wash. For each state this measures")
+    print("the SOURCE value on this theme's fills, and when it misses, prints the")
+    print("admissible band at the source's own hue — the lightnesses that clear the")
+    print("floor and the in-gamut chroma range at each — with the declared token")
+    print("placed in it. A band rather than a winner, because L and C trade against")
+    print("each other and the sRGB boundary cuts the corner off, so there is no one")
+    print("number to rank by.")
+    print()
+    print("The in-gamut constraint is not tidiness: outside sRGB a browser reduces")
+    print("chroma while the favicon generator clamps per channel, so an out-of-gamut")
+    print("ink would paint the tab dot and the tab ICON two different colours, which")
+    print("is the one thing the attention badge exists to keep in step.")
+    print()
+    for th in themes:
+        print(f"  {th.name}:")
+        for state, token, _src_token, src_expr in DOT_SOURCE_HUES:
+            declared = th.decls.get(token, "").strip().rstrip(";")
+            src = th.resolve(src_expr)
+            src_lightness, src_chroma, src_hue = colour_to_oklch(src)
+            col, worst = dot_held_worst(th, src_expr)
+            ok = worst >= DOT_FLOOR
+            mark = "<--" if declared.lower() == src_expr.lower() else "   "
+            print(
+                f"    {state:<8} {mark} source {src.hex():<9} "
+                f"L {src_lightness * 100:5.1f}% C {fmt(src_chroma):<6} "
+                f"{col} {fmt(worst)}:1  {'PASS' if ok else 'MISSES the floor'}"
+            )
+            if ok:
+                continue
+            band = dot_admissible(th, src_hue)
+            if not band:
+                print(f"    {'':<8}     nothing in gamut at this hue clears the floor")
+                continue
+            lightnesses = [pct for pct, _lo, _hi, _w in band]
+            print(
+                f"    {'':<8}     admissible L {min(lightnesses)}..{max(lightnesses)}%"
+                f" at hue {round(src_hue, 1):g}deg"
+                f" (source L {src_lightness * 100:.1f}% misses)"
+            )
+            declared_colour = th.colour(token)
+            dec_lightness, dec_chroma, _dec_hue = colour_to_oklch(declared_colour)
+            dec_pct = round(dec_lightness * 100)
+            for pct, chroma_lo, chroma_hi, _best in band:
+                if abs(pct - dec_pct) > 1:
                     continue
-                held = []
-                for cols, is_sel in ((DOT_FILLS, False), (DOT_SELECTED_FILLS, True)):
-                    ink = (
-                        f"color-mix(in oklch, var(--c-selected-fg) 56%, {expr})"
-                        if is_sel
-                        else expr
-                    )
-                    for col, fill in cols:
-                        if col not in DOT_HELD:
-                            continue
-                        bg = th.flat(fill)
-                        held.append((col, contrast(th.resolve(ink).over(bg), bg)))
-                worst = min(held, key=lambda kv: kv[1])
-                if worst[1] < DOT_FLOOR:
-                    continue
-                separation = min(
-                    oklab_distance(th, expr, "var(--c-yellow)"),
-                    oklab_distance(th, expr, "var(--c-red)"),
+                print(
+                    f"    {'':<8}     L {pct}%  clears at C {fmt(chroma_lo)}"
+                    f"..{fmt(chroma_hi)}"
                 )
-                rows.append((separation, expr, worst, th.resolve(expr).hex()))
-        rows.sort(key=lambda r: -r[0])
-        band = (
-            f"L {min(lightnesses)}..{max(lightnesses)}  "
-            f"C {fmt(min(chromas))}..{fmt(max(chromas))}"
-        )
-        print(f"  {th.name}: {len(rows)} admissible in the seed band ({band})")
-        print(
-            f"    {'':<4} {'construction':<28} {'hex':<9} {'separation':<11} worst held"
-        )
-        declared = th.decls.get("--c-orange", "")
-        for rank, (separation, expr, worst, hexv) in enumerate(rows[:5]):
-            mark = (
-                "<--"
-                if expr.replace(" ", "") == declared.replace(" ", "")
-                else f"#{rank + 1}"
-            )
+            dec_col, dec_worst = dot_held_worst(th, f"var({token})")
             print(
-                f"    {mark:<4} {expr:<28} {hexv:<9} {fmt(separation):<11} "
-                f"{worst[0]} {fmt(worst[1])}:1"
-            )
-        if declared and all(
-            r[1].replace(" ", "") != declared.replace(" ", "") for r in rows[:5]
-        ):
-            print(
-                f"    NOTE --c-orange is declared {declared!r}, outside the top 5 above"
+                f"    {'':<8} <-- {declared:<30} {declared_colour.hex():<9} "
+                f"L {dec_lightness * 100:5.1f}% C {fmt(dec_chroma):<6} "
+                f"{dec_col} {fmt(dec_worst)}:1"
             )
         print()
 
@@ -1455,19 +1487,28 @@ def main() -> int:
             "--c-text-secondary",
             "--c-text-tertiary",
             "--c-text-control",
+            "--c-text-aside",
         ):
             for s in surfaces:
-                # The hint ink is sized against the PAGE and is not a
-                # general-purpose ink: it clears 4.5:1 on --c-bg-primary and on
-                # nothing above it. So pairing it with a raised fill is a rule
-                # violation rather than a contrast result, and reporting it here
-                # as FAIL puts eight permanent failures in the output for
-                # combinations the app does not contain — which teaches a reader
-                # to skip the whole section. The rule is asserted where it can
-                # actually be checked, over the stylesheets:
+                # The hint ink is sized against the PAGE and the CARD and is not a
+                # general-purpose ink: it clears 4.5:1 on --c-bg-primary and
+                # --c-bg-secondary and on neither rung above them. So pairing it
+                # with one of those two is a rule violation rather than a contrast
+                # result, and reporting it here as FAIL puts permanent failures in
+                # the output for combinations the app does not contain — which
+                # teaches a reader to skip the whole section. The rule is asserted
+                # where it can actually be checked, over the stylesheets:
                 # css-tokens.test.ts, "keeps the hint ink off a raised fill".
+                #
+                # NEITHER gate sees an `opacity`, which multiplies whatever is
+                # measured here. That hole is covered by a third check in the same
+                # file, "never dims a text ink with opacity"; a rendered sweep is
+                # the only thing that catches an ancestor-supplied surface.
                 floor = (
-                    None if t == "--c-text-tertiary" and s != "--c-bg-primary" else 4.5
+                    None
+                    if t == "--c-text-tertiary"
+                    and s in ("--c-bg-tertiary", "--c-bg-elevated")
+                    else 4.5
                 )
                 text_pairs.append(
                     (

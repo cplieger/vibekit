@@ -323,16 +323,21 @@ describe("turn_ended side effects", () => {
     expect(tabStatusFor(get("chat-1"))).toBe("idle");
   });
 
-  it("latches nothing for the chat the reader is watching", () => {
-    // `done` means "finished while you were away". The active tab with the page in
-    // front of the reader needs no mark, and not latching is better than latching
-    // and clearing: a green dot on the row you are reading is noise, and it would
-    // then only clear on your next visit or your next prompt.
+  it("latches done for the chat the reader is watching too", () => {
+    // The dot has to be able to turn GREEN in front of the reader. It could not
+    // until 2026-08: `done` meant "finished while you were away", so the active tab
+    // with the page in front of you was skipped and its dot fell back to hollow
+    // `idle` at the exact moment its turn completed — the one state that says "I am
+    // done" was the one state you could never watch happen. web-terminal-kiro
+    // latches its own `done` in the engine, focus-blind, so this is the same rule.
+    // Nothing is lost on the attention side: attention.ts acknowledges a cue on the
+    // watched chat as it observes it, so the title count and favicon still ignore
+    // this one (attention-wiring.test.ts pins that half).
     setSessions([makeSession("chat-1", { thinking: true })]);
     setActive("chat-1");
 
     fireSSE("turn_ended", "chat-1", { stop_reason: "end_turn" });
-    expect(tabStatusFor(get("chat-1"))).toBe("idle");
+    expect(tabStatusFor(get("chat-1"))).toBe("done");
   });
 
   it("still prefers the agent's own verdict where it lands", () => {

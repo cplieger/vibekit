@@ -188,7 +188,10 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	us.responseCh = responseCh
 	us.forwardDone = forwardDone
 
-	slog.Info("utility bridge started", "model", model)
+	// The session id is logged because this bridge's session is the one that
+	// appears in `session/list` owned by no chat, so a row nobody can explain is
+	// diagnosed by grepping for it. See toResumable.
+	slog.Info("utility bridge started", "model", model, "session_id", string(bridge.SessionID()))
 	return nil
 }
 

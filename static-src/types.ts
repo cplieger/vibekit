@@ -47,6 +47,7 @@ export type {
   PolicyRule,
   PolicyView,
   PolicyExplainResult,
+  SessionEffortLevel,
   SessionMode,
   SessionModel,
   ToolCall,
@@ -103,6 +104,7 @@ export type {
   SteerQueuedPayload,
   SteerInjectedPayload,
   SteerClearedPayload,
+  AgentNoticePayload,
   TextSpan,
   TerminalCreatedPayload,
   TerminalOutputPayload,
@@ -115,7 +117,13 @@ export type {
 // the generated naming. The generated type is PermissionNeededPayload.
 export type { PermissionNeededPayload as PermissionNeeded } from "./wire/types.gen.js";
 
-import type { Message, SessionMode, SessionModel, Usage } from "./wire/types.gen.js";
+import type {
+  Message,
+  SessionEffortLevel,
+  SessionMode,
+  SessionModel,
+  Usage,
+} from "./wire/types.gen.js";
 
 // --- Client-only types ---
 
@@ -141,6 +149,16 @@ export interface ModelInfo {
   model_id: string;
   rate_multiplier: number;
   description?: string;
+  /** Whether this model has reasoning-effort levels at all (KAS
+   *  `_meta.kiro.hasEffort`). Absent on every model = the catalog does not carry
+   *  the capability, which the effort control reads as "show it anyway". */
+  has_effort?: boolean;
+  /** This model's own default tier (`_meta.kiro.defaultEffortLevel`), which
+   *  kiro-cli's own picker labels `[default]`. The pre-session fallback for the
+   *  live-level highlight: before a session exists there is no currentValue to
+   *  read, and a chat with no pick of its own would otherwise render with nothing
+   *  selected. The tier LIST is not a per-model field — see Session.effort_levels. */
+  default_effort_level?: string;
 }
 
 /** Connection status flag, surfaced through the status bar. */
@@ -154,6 +172,10 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected";
  *  `steer_cleared`) rather than by the code that sent it. The client keeps no
  *  independent copy: there is nothing to drain, nothing to retry and no order
  *  to preserve, because the buffer and its delivery are KAS's.
+ *
+ *  Always the USER's own message. An agent's progress notice travels the same
+ *  KAS buffer but arrives as `agent_notice`, so nothing here needs a field for
+ *  whose words it holds.
  *
  *  It replaced a `QueuedPrompt` FIFO that held text until `turn_ended` and then
  *  sent it as a NEW turn — so a correction always arrived after the work it was
@@ -175,11 +197,6 @@ export interface PendingSteer {
    *  Absent until the marker closes, and absent for good if the agent never
    *  emits one. */
   ack?: string;
-  /** Present only when KAS classified the message as a system notification
-   *  instead of a user steer, which it decides by sniffing the text. vibekit
-   *  refuses to SEND such a message, so a severity here means the notice came
-   *  from a workflow step or a subagent rather than from the user. */
-  severity?: string;
 }
 
 // --- Local session state (client-only projection of server chat) ---
@@ -192,6 +209,14 @@ export interface Session {
   current_mode_id: string;
   available_modes: SessionMode[];
   available_models: SessionModel[];
+  /** The reasoning-effort tiers this session offers (the `effortLevel` config
+   *  option's own choices). Empty means the current model has no tiers, which is
+   *  what kiro-cli's TUI treats as "effort is not available on this model". */
+  effort_levels?: SessionEffortLevel[];
+  /** The tier the session is RUNNING at (that option's currentValue). Distinct
+   *  from `effort`, which is what this chat CHOSE: a chat that never picked has
+   *  an empty `effort` and still runs at a level. */
+  effort_active?: string;
   usage: Usage;
   messages: Message[];
   message_count: number;
@@ -214,22 +239,24 @@ export interface Session {
    *  another's send button. Cleared by the next `setThinking(id, true)` and by
    *  the transport-gap reconciler, exactly like `agent_status`. */
   turn_failed?: boolean;
-  /** This chat's last turn finished while the reader was looking somewhere else.
-   *  Client-only and latched, the mirror of `turn_failed`.
+  /** This chat's last turn finished. Client-only and latched, the mirror of
+   *  `turn_failed`.
    *
    *  It exists because the agent-declared `completed` status is the higher-
    *  fidelity signal and NOT a guaranteed one: it only arrives when the model
    *  calls `update_session_information`, so a turn that ended without one fell
-   *  to `idle` and "your background chat finished" — the whole point of the tab
-   *  dot — was true only sometimes. `turn_ended` always arrives, so the latch is
-   *  what makes the promise hold; `completed` still wins where it lands, because
-   *  it is the agent's own verdict rather than the transport's.
+   *  to `idle` and "this chat finished" — the whole point of the tab dot — was
+   *  true only sometimes. `turn_ended` always arrives, so the latch is what makes
+   *  the promise hold; `completed` still wins where it lands, because it is the
+   *  agent's own verdict rather than the transport's.
    *
-   *  Set only when the chat is NOT being watched (not the active tab, or the page
-   *  is hidden), so the state means "finished while you were away". Cleared by
-   *  activating the chat (seeing it settles it), by the next
-   *  `setThinking(id, true)`, and by the transport-gap reconciler, exactly like
-   *  `turn_failed`. Never set for a cancelled turn: nothing was finished. */
+   *  Set on EVERY finished turn, whoever is watching. It used to be set only for
+   *  a chat the reader was NOT looking at, so it meant "finished while you were
+   *  away" — and the cost of that was the dot falling back to hollow `idle` at
+   *  the one moment the reader was watching a turn complete. Cleared by the next
+   *  `setThinking(id, true)` and by the transport-gap reconciler, exactly like
+   *  `turn_failed`; NOT by opening the chat, because seeing a finished turn does
+   *  not un-finish it. Never set for a cancelled turn: nothing was finished. */
   turn_done?: boolean;
   /** Mid-turn steers KAS is holding or has just delivered for this chat.
    *  A pure projection of the three steer SSE events; cleared at every turn

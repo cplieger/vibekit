@@ -8,7 +8,7 @@
 
 import { $, maybeViewTransition } from "./dom.js";
 import { onBus, BUS_KEYS_ESCAPE } from "./bus.js";
-import { getActiveTabKind, toggleFilesView } from "./tabs.js";
+import { getActiveTabKind, showFilesView, toggleFilesView } from "./tabs.js";
 import { openFile } from "./editor-openers.js";
 import { openChange } from "./navigate.js";
 import { fileDownloadURL } from "./utils-url.js";
@@ -124,12 +124,20 @@ export function initFileBrowser(): void {
   });
   initFilesSearch({
     getSearchPath: () => state.currentPath,
-    // Ctrl-F in an editor tab means find-in-files, and the search surface lives
-    // in the files view. toggleSingleton only CLOSES a tab that is already
-    // active, so calling it from another tab's context opens rather than
-    // toggles.
+    // SHOW, never toggle. The search surface lives inside the files view, so a
+    // Ctrl-F raised from another tab has to bring the browser forward first — and
+    // this used to call `toggleFilesView` on the reasoning that the caller is
+    // always another tab's context. That was true when find-in-files was only
+    // reachable from an editor tab, and false for the two callers it has now: the
+    // browser's own search button and Ctrl-F on the files tab both run with the
+    // files tab ALREADY ACTIVE, where the toggle CLOSED it. The bar then opened
+    // over a departed view, the user was bounced to whichever chat took the slot,
+    // and the files view was left in search mode for the next time it opened —
+    // which is what a reader sees as "the file browser opens in search mode" one
+    // gesture later, so the leak was reported as inherited search state rather
+    // than as a tab that closed itself.
     activateBrowser: () => {
-      toggleFilesView(loadDir, resetFileBrowser);
+      showFilesView(loadDir, resetFileBrowser);
     },
   });
 

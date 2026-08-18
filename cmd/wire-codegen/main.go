@@ -51,6 +51,7 @@ func main() {
 		wiregen.TypeRef[api.Usage](),
 		wiregen.TypeRef[api.SessionMode](),
 		wiregen.TypeRef[api.SessionModel](),
+		wiregen.TypeRef[api.SessionEffortLevel](),
 		wiregen.TypeRef[api.ChatHeader](),
 		wiregen.TypeRef[api.PermissionOption](),
 		wiregen.TypeRef[api.ApprovalFile](),
@@ -61,6 +62,7 @@ func main() {
 		wiregen.TypeRef[api.SteerQueuedPayload](),
 		wiregen.TypeRef[api.SteerInjectedPayload](),
 		wiregen.TypeRef[api.SteerClearedPayload](),
+		wiregen.TypeRef[api.AgentNoticePayload](),
 		wiregen.TypeRef[api.TurnStatePayload](),
 		wiregen.TypeRef[api.PermissionNeededPayload](),
 		wiregen.TypeRef[api.ErrorPayload](),
@@ -191,6 +193,7 @@ func main() {
 		{EventType: "steer_queued", TypeName: "SteerQueuedPayload"},
 		{EventType: "steer_injected", TypeName: "SteerInjectedPayload"},
 		{EventType: "steer_cleared", TypeName: "SteerClearedPayload"},
+		{EventType: "agent_notice", TypeName: "AgentNoticePayload"},
 		// The agent-terminal trio. These were the only SSE events with no
 		// generated decoder, so their payloads were hand-declared in bus.ts and
 		// carried no runtime validation — which is exactly the shape a path

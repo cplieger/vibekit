@@ -102,6 +102,71 @@ describe("the tail", () => {
     expect(lines).toEqual(["three", "four", "five"]);
     sa.root.remove();
   });
+
+  // A LINE IS A BLOCK. This is the shape the block dispatcher actually appends —
+  // elements, whose text carries no newline characters — and it is the shape the
+  // test above cannot produce. Reading `body.textContent.split("\n")` here yields
+  // ONE line of glued words (`✓ Grep Search spaghetti ✓ File Search …`), which the
+  // nowrap + ellipsis then clips at the card width: the beginning of the whole
+  // run instead of its last three lines.
+  it("takes one line per BLOCK, not per newline in concatenated text", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+
+    const bubble = (t: string): HTMLElement => {
+      const d = document.createElement("div");
+      d.className = "message assistant";
+      const p = document.createElement("p");
+      p.textContent = t;
+      d.appendChild(p);
+      return d;
+    };
+    const card = (title: string, sub: string): HTMLElement => {
+      const d = document.createElement("div");
+      d.className = "tool-call";
+      const icon = document.createElement("span");
+      icon.textContent = "\u2713";
+      const name = document.createElement("span");
+      name.textContent = title;
+      const subtitle = document.createElement("div");
+      subtitle.textContent = sub;
+      d.append(icon, name, subtitle);
+      return d;
+    };
+
+    sa.body.append(
+      card("Grep Search", "spaghetti"),
+      bubble("The workspace is a multi-repo tree."),
+      card("Grep Search", "."),
+      bubble("I've counted 47 Go modules."),
+      card("Send Message", "report"),
+    );
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+
+    const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
+    expect(lines).toEqual([
+      "\u2713 Grep Search .",
+      "I've counted 47 Go modules.",
+      "\u2713 Send Message report",
+    ]);
+    sa.root.remove();
+  });
+
+  // A block carrying real newlines (a <pre> of command output) still splits, so
+  // the last lines of a long output are the tail rather than its first line.
+  it("splits a block that does carry newlines, and takes its LAST lines", async () => {
+    const sa = buildSubagentBlock("Subagent", "in_progress");
+    document.body.appendChild(sa.root);
+    const pre = document.createElement("pre");
+    pre.textContent = "line one\nline two\nline three\nline four";
+    sa.body.appendChild(pre);
+    await new Promise((r) => requestAnimationFrame(() => r(undefined)));
+    await new Promise((r) => setTimeout(r, 20));
+    const lines = [...sa.root.querySelectorAll(".subagent-tail-line")].map((n) => n.textContent);
+    expect(lines).toEqual(["line two", "line three", "line four"]);
+    sa.root.remove();
+  });
 });
 
 describe("the footer", () => {

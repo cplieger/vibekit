@@ -47,14 +47,13 @@ func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 	if p.SteerID != "steer-1" || p.Text != "use tabs" {
 		t.Errorf("payload = %+v, want steer-1 / use tabs", p)
 	}
-	// Absent severity must stay absent: a non-empty value is what tells the client
-	// the message did NOT come from the user.
-	if p.Severity != "" {
-		t.Errorf("severity = %q, want empty for a user steer", p.Severity)
-	}
 }
 
-func TestSteeringQueued_CarriesTheNotificationSeverity(t *testing.T) {
+// The agent's own notice leaves as its own event, never as a steer. KAS delivers
+// it through the same buffer and the severity is the only thing distinguishing
+// it, so the split has to happen here: forwarding it as a steer put the agent's
+// words on the composer's chip row as though the user had typed them.
+func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
 	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{
@@ -63,12 +62,22 @@ func TestSteeringQueued_CarriesTheNotificationSeverity(t *testing.T) {
 			"notificationSeverity": "error",
 		}), "")
 
-	p, ok := (*events)[0].Payload.(api.SteerQueuedPayload)
+	if len(*events) != 1 {
+		t.Fatalf("broadcast %d events, want 1", len(*events))
+	}
+	e := (*events)[0]
+	if e.Type != api.EventAgentNotice {
+		t.Fatalf("type = %q, want %q", e.Type, api.EventAgentNotice)
+	}
+	p, ok := e.Payload.(api.AgentNoticePayload)
 	if !ok {
-		t.Fatalf("payload type = %T", (*events)[0].Payload)
+		t.Fatalf("payload type = %T", e.Payload)
 	}
 	if p.Severity != "error" {
 		t.Errorf("severity = %q, want error", p.Severity)
+	}
+	if p.Text != "[notification/error] a step failed" {
+		t.Errorf("text = %q, want the notice verbatim", p.Text)
 	}
 }
 

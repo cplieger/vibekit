@@ -42,6 +42,9 @@ vi.mock("./store.js", () => ({
     },
   },
   isThinking: () => false,
+  // The tangent row is disabled on an empty chat, and this file drives the menu
+  // for a chat that has one, so every row it presses is a live one.
+  isEmptyChat: () => false,
 }));
 vi.mock("./pill-expand.js", () => ({ makeExpandable: vi.fn(), collapseAll }));
 vi.mock("./files-picker.js", () => ({ openFilePicker: vi.fn() }));

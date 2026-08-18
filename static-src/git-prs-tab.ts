@@ -35,6 +35,9 @@ import { bindLoadingState } from "./actions/index.js";
 import { bindPRPaint, getPRGroups, setPRGroups } from "./git-prs-state.js";
 import { reconcile } from "./reconcile.js";
 import { el } from "@cplieger/reactive";
+import { chevronEl } from "./chevron.js";
+import { createSearchPopup } from "./search-popup.js";
+import type { SearchPopup } from "./search-popup.js";
 import { createDialog, type DialogController } from "@cplieger/ui-primitives/dialog";
 import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import { iconEl } from "./icon-el.js";
@@ -69,18 +72,27 @@ registerCleanup(() => refreshController?.abort());
 
 let prsInited = false;
 
+export const prsFind: SearchPopup = createSearchPopup<null>({
+  id: "git-prs-filter",
+  kind: "filter",
+  label: "Filter pull requests",
+  placeholder: "Filter pull requests\u2026",
+  host: () => document.getElementById("git-view"),
+  query: (q) => {
+    filterText = q.trim().toLowerCase();
+    return null;
+  },
+  render: () => {
+    paint();
+  },
+});
+
 export function initPRsTab(): void {
   if (prsInited) {
     return;
   }
   prsInited = true;
   bindPRPaint(paint);
-
-  const filterEl = document.getElementById("git-prs-filter") as HTMLInputElement | null;
-  filterEl?.addEventListener("input", () => {
-    filterText = filterEl.value.trim().toLowerCase();
-    paint();
-  });
 
   // Manual refresh button next to the filter — mirrors the
   // pattern on the Changes tab. Spinner replaces the icon while
@@ -386,8 +398,10 @@ function renderGroup(g: RepoGroup): HTMLElement {
   });
   const count = g.prs.length;
   const countText = count === 0 ? "no open PRs" : `${count} open`;
+  const chevron = chevronEl();
+  chevron.classList.add("git-repo-section-chevron");
   toggle.append(
-    el("span", { className: "git-repo-section-chevron", "aria-hidden": "true" }, "▸"),
+    chevron,
     el(
       "span",
       {

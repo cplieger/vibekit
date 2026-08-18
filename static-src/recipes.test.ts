@@ -81,7 +81,7 @@ vi.mock("./actions/schedules.js", () => ({
   deleteSchedule: { dispatch: vi.fn(async () => null) },
 }));
 
-import { renderRecipesPanel } from "./recipes.js";
+import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { openLiveRunView } from "./run-view.js";
 import { launchRun, cancelRun } from "./actions/runs.js";
 import type { RecipesResponse, WorkflowRunRow, ResumableSessionRow } from "./types.js";
@@ -101,15 +101,19 @@ function run(name: string, id: string, status: string): WorkflowRunRow {
   return { workflow_id: id, name, status, updated_at: 0 };
 }
 
-async function render(): Promise<HTMLElement> {
+async function render(filter = ""): Promise<HTMLElement> {
   const panel = document.createElement("div");
   document.body.appendChild(panel);
-  renderRecipesPanel(panel);
+  renderRecipesPanel(panel, filter);
   // renderRecipesPanel awaits its two fetches before painting.
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
   return panel;
+}
+
+function names(panel: HTMLElement): string[] {
+  return [...panel.querySelectorAll(".list-row-name")].map((e) => e.textContent ?? "");
 }
 
 function buttonFor(panel: HTMLElement, source: string): HTMLButtonElement | null {
@@ -385,9 +389,15 @@ describe("the muted classes are gone rather than defined", () => {
 
   it("gives every former use site a component rule that carries its ink", () => {
     const pages = loadCSS("18-pages.css");
-    for (const sel of [".run-id", ".run-output-empty", ".hist-search-note"]) {
+    for (const sel of [".run-id", ".run-output-empty"]) {
       expect(/color:\s*var\(--c-text-tertiary\)/.test(ruleBody(pages, sel))).toBe(true);
     }
+    // The History search note moved with its box: the page search boxes are one
+    // popup now (24-find.css `.page-find`), so `.hist-search-note` is gone and
+    // `.page-find-note` carries the ink for all four of them.
+    expect(
+      /color:\s*var\(--c-text-tertiary\)/.test(ruleBody(loadCSS("24-find.css"), ".page-find-note")),
+    ).toBe(true);
     // The agent name does the same job as the type beside it, so it joined that
     // rule instead of getting one of its own.
     const node = ruleContaining(pages, ".run-node-agent", "top");
@@ -399,5 +409,98 @@ describe("the muted classes are gone rather than defined", () => {
         ruleBody(loadCSS("19-files.css"), ".fb-search-note"),
       ),
     ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The filter, which this tab did not have.
+//
+// The configuration browser's box was HIDDEN on this tab, on the reasoning that
+// Workflows is RPC-sourced and escapes here before any docs logic runs — true
+// about where the rows come from, and not the same claim as "nothing to filter".
+// A recipe has a name, a description, a source and declared inputs, so the box
+// reaches this panel now instead of hiding from it.
+// ---------------------------------------------------------------------------
+
+describe("the filter", () => {
+  it("narrows by name, case-insensitively", async () => {
+    recipesReply = { recipes: [recipe("goal"), recipe("triage")] };
+    expect(names(await render())).toEqual(["goal", "triage"]);
+    expect(names(await render("GOA"))).toEqual(["goal"]);
+  });
+
+  it("reaches a description, a source and a declared input name", async () => {
+    recipesReply = {
+      recipes: [
+        { name: "one", source: "bundled://one", description: "reviews a pull request" },
+        { name: "two", source: "workspace/.kiro/flows/deploy.workflow.json" },
+        { name: "three", source: "bundled://three", inputs: { branch: "string" } },
+      ],
+    };
+    expect(names(await render("pull request"))).toEqual(["one"]);
+    expect(names(await render("deploy.workflow"))).toEqual(["two"]);
+    expect(names(await render("branch"))).toEqual(["three"]);
+  });
+
+  it("matches the badge a bundled row DISPLAYS", async () => {
+    // Same rule docs.ts applies to its own badges: a reader types at what they can
+    // see.
+    recipesReply = {
+      recipes: [
+        { name: "one", source: "bundled://one", built_in: true },
+        { name: "two", source: "b://two" },
+      ],
+    };
+    expect(names(await render("bundled"))).toEqual(["one"]);
+  });
+
+  it("cannot reach the node PLAN, which is raw JSON nobody types at", async () => {
+    // Folding it in would match on punctuation and internal key names, so the box
+    // would be answering a different question than it appears to ask.
+    recipesReply = {
+      recipes: [
+        {
+          name: "one",
+          source: "bundled://one",
+          plan: JSON.stringify({ nodeId: "n1", agentName: "reviewer" }),
+        } as RecipesResponse["recipes"][0],
+      ],
+    };
+    expect(names(await render("nodeId"))).toEqual([]);
+    expect(names(await render(""))).toEqual(["one"]);
+  });
+
+  it("says NO MATCHES rather than claiming there are no workflows", async () => {
+    // "No workflows available." under an active filter is the same lie docs.ts
+    // records for its category text: they exist, they are one keystroke away.
+    recipesReply = { recipes: [recipe("goal")] };
+    const filtered = await render("zzzz");
+    expect(filtered.textContent).toContain("No workflows match the filter");
+    expect(filtered.textContent).not.toContain("No workflows available");
+    recipesReply = { recipes: [] };
+    expect((await render()).textContent).toContain("No workflows available");
+  });
+
+  it("reports its counts on every repaint, not only on the fetch", async () => {
+    // The note describes what is on screen, so whichever caller changed what is on
+    // screen owes the update — the run poll and the schedules fetch repaint too.
+    const seen: { total: number; shown: number }[] = [];
+    setRecipeCountsListener((c) => {
+      seen.push(c);
+    });
+    recipesReply = { recipes: [recipe("goal"), recipe("triage")] };
+    await render("goal");
+    expect(seen.at(-1)).toEqual({ total: 2, shown: 1 });
+    setRecipeCountsListener(() => undefined);
+  });
+
+  it("keeps a row's click bound to the recipe it names, not to the filtered index", async () => {
+    // recipeRow resolves at CLICK time against the UNFILTERED list, which is what
+    // survives reconcile keeping a row across a keystroke.
+    recipesReply = { recipes: [recipe("goal"), recipe("triage")] };
+    const panel = await render("triage");
+    buttonFor(panel, "bundled://triage")?.click();
+    expect(dispatched.filter((d) => d.name === "launch")).toHaveLength(1);
+    expect(dispatched.at(-1)?.args).toMatchObject({ source: "bundled://triage" });
   });
 });

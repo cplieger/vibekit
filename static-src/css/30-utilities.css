@@ -43,10 +43,11 @@
   padding: var(--sp-4);
 }
 
+/* Matches the real card's box: a tool card carries no indent (see .tool-call in
+   14-tools.css), so neither may its skeleton, or the list shifts on load. */
 .skeleton-tool {
   height: 2.25rem;
   border-radius: var(--r);
-  margin-inline-start: calc(1.5rem + var(--sp-2));
 }
 
 .skeleton-git-row {

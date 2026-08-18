@@ -86,6 +86,29 @@ export interface AccountUsageBreakdown {
   has_limit?: boolean;
 }
 
+/**
+ * AgentNoticePayload is the payload for type="agent_notice": a progress notice a
+ * workflow step or a subagent reported into the session that launched it.
+ * //
+ * KAS decides this by sniffing the text for a `[notification/<severity>]` prefix
+ * and delivers it through the steering buffer, which is the only inbound channel
+ * into a live turn. vibekit refuses to SEND that shape (command/steer.go), so a
+ * notice reaching here is never the user's words.
+ * //
+ * Severity is one of info/success/warning/error and is what makes this its own
+ * event rather than a field on a steer: it maps onto the client's toast levels,
+ * and the whole point of separating them is that a consumer never has to decide
+ * whose voice a message is in.
+ * //
+ * There is no id. A steer needs one because its chip has to be updated when the
+ * model reads it and cleared when the boundary drops it; a notice has no later
+ * state, so nothing would ever address it.
+ */
+export interface AgentNoticePayload {
+  severity: string;
+  text: string;
+}
+
 /** ApprovalFile is one file a turn wants to write, as offered for review. */
 export interface ApprovalFile {
   /** Path is workspace-relative (KAS sends it absolute; translate normalizes). */
@@ -209,6 +232,13 @@ export interface ChatHeader {
  * mirrored — see the comment on that field.
  */
   effort?: string;
+  /**
+ * EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
+ * the control renders from the ACTIVE chat's header, and an empty chat never
+ * fetches its full record.
+ */
+  effort_active?: string;
+  effort_levels?: SessionEffortLevel[];
   id: string;
   compaction_watermark?: string;
   available_models?: SessionModel[];
@@ -1159,6 +1189,20 @@ export interface SearchResponse {
 }
 
 /**
+ * SessionEffortLevel is one reasoning-effort tier the running session offers,
+ * from the `effortLevel` config option's own `options[]` (value + name).
+ * //
+ * The tiers are NOT a fixed five and NOT a per-model list on the model choice:
+ * kiro-cli 2.18.0 builds its picker from this option and errors "Effort is not
+ * available on the current model" when the list is empty, so the list IS the
+ * capability. Sending a tier that is absent here is a level the service rejects.
+ */
+export interface SessionEffortLevel {
+  id: string;
+  name?: string;
+}
+
+/**
  * SessionMode describes one mode the running agent supports. Populated
  * from the `modes.availableModes` field of kiro-cli's session/new or
  * session/load response; kept on the chat so the UI can render a mode
@@ -1186,17 +1230,30 @@ export interface SessionModel {
   id: string;
   name: string;
   description?: string;
+  /**
+ * DefaultEffortLevel is the level this MODEL defaults to, from the model
+ * choice's `_meta.kiro.defaultEffortLevel`. Read off kiro-cli 2.18.0's own
+ * TUI, which resolves the same field the same way
+ * (`kasAvailableModels.find(m => m.id === currentModelId)?.defaultEffortLevel`)
+ * and labels that tier `[default]`. vibekit uses it for a chat with no
+ * session yet, where no live level exists to read. NOT persisted onto
+ * Chat.Effort: seeding a chat's CHOICE from a service default would pin it to
+ * every later session through StartOpts.Effort.
+ */
+  default_effort_level?: string;
   rate_multiplier?: number;
   /**
- * HasEffort reports whether this model supports a reasoning-effort level.
- * KAS's config_option_update stamps _meta.kiro.hasEffort on each model
- * choice (true when the model has effort levels). The model picker hides
- * the effort row for the current model when the catalog carries
- * has_effort:true on some model but not the current one; a catalog with no
- * has_effort anywhere (e.g. the pre-session REST list) safely shows it. A
- * non-effort model omits the field (client reads it as undefined), which is
- * why the client's gate keys off "any model advertises effort" rather than
- * a per-model false.
+ * HasEffort reports whether this model supports a reasoning-effort level,
+ * from `_meta.kiro.hasEffort`.
+ * //
+ * **kiro-cli 2.18.0 does not stamp it** (the literal appears nowhere in the
+ * chat sidecar; measured 2026-08). So this is false on every entry, the
+ * client's gate reads that as "the catalog does not carry the capability" and
+ * shows the control anyway. The capability question is answered by
+ * Chat.EffortLevels instead — an empty list is exactly what kiro-cli's TUI
+ * treats as "Effort is not available on the current model". Kept because a
+ * catalog that DOES stamp it (another engine build) is still honoured; do not
+ * build new gating on it.
  */
   has_effort?: boolean;
 }
@@ -1251,16 +1308,14 @@ export interface SteerInjectedPayload {
  * after a reconnect. The chip row is a projection of server state, so it has to
  * be reconstructible from the events alone.
  * //
- * Severity is set only when KAS classified the message as a system notification
- * instead of a user steer, which it decides by sniffing the text (see
- * command/steer.go). vibekit refuses to send such a steer, so a non-empty
- * Severity here means the notification came from somewhere else — a workflow
- * step or a subagent reporting into this chat — and it is not the user's words.
+ * Everything here is the USER's own outbound message. A notice KAS classified as
+ * coming from a workflow step or a subagent arrives on the same wire channel but
+ * leaves as EventAgentNotice, so no consumer of this payload has to ask whose
+ * words it is holding.
  */
 export interface SteerQueuedPayload {
   steer_id: string;
   text: string;
-  severity?: string;
 }
 
 /** SystemTool is one image-baked binary surfaced read-only (Config.System). */

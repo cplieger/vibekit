@@ -27,6 +27,7 @@ interface Harness {
   localScrollbackStorage: ReturnType<typeof vi.fn>;
   resetSpy: ReturnType<typeof vi.fn>;
   sendSpy: ReturnType<typeof vi.fn>;
+  reattachSpy: ReturnType<typeof vi.fn>;
   termFocus: ReturnType<typeof vi.fn>;
   shellBtn: HTMLButtonElement;
   shellToggleBtn: HTMLButtonElement;
@@ -39,6 +40,8 @@ interface Harness {
   restartDispatch: ReturnType<typeof vi.fn>;
   confirmMock: ReturnType<typeof vi.fn>;
   getRunCb: () => ((cmd: string) => void) | null;
+  /** Report the definitive process-exited close, as the kernel does. */
+  endSession: () => void;
 }
 
 /** happy-dom lacks pointer capture; back the three methods with a Set so the
@@ -76,6 +79,10 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   const shellToggleBtn = document.createElement("button");
   const shellRestartBtn = document.createElement("button");
   const shellFullscreenBtn = document.createElement("button");
+  // The real button ships a glyph in index.html and the toggle swaps its `d`,
+  // so the harness carries one too — without it the icon assertions below pass
+  // vacuously against a button that has no path to write.
+  shellFullscreenBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M8 3H5"/></svg>';
   const shellPanel = document.createElement("div");
   shellPanel.classList.add("shell-closed");
   const shellTerminal = document.createElement("div");
@@ -86,14 +93,27 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
   // contains() checks behave; replaceChildren drops the previous test's DOM.
   document.body.replaceChildren(shellPanel, shellBtn);
 
-  // The v4 handle's host controls: send routes the sanitizing funnel, reset
-  // drops the local scrollback + screen.
+  // The v6 handle's host controls: send routes the sanitizing funnel, reset
+  // drops the local scrollback + screen, reattach picks up the PTY the server
+  // serves now.
   const sendSpy = vi.fn();
   const resetSpy = vi.fn();
   const termFocus = vi.fn();
+  const reattachSpy = vi.fn();
+  // The panel's half of the ended contract is the callback it passes, so the mock
+  // captures it. Without that the reattach path would only be reachable through
+  // the Restart button, and the `exit` half of the same defect would go untested.
+  let endedCb: (() => void) | null = null;
   const createTerminal = vi.fn(
-    (_root: HTMLElement, _opts: CreateTerminalOptions): TerminalHandle => {
-      return { focus: termFocus, send: sendSpy, reset: resetSpy, destroy: vi.fn() };
+    (_root: HTMLElement, opts: CreateTerminalOptions): TerminalHandle => {
+      endedCb = opts.onSessionEnded ?? null;
+      return {
+        focus: termFocus,
+        send: sendSpy,
+        reset: resetSpy,
+        reattach: reattachSpy,
+        destroy: vi.fn(),
+      };
     },
   );
   const presetTouch = vi.fn(() => ["preset-feature"]);
@@ -143,6 +163,7 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     localScrollbackStorage,
     resetSpy,
     sendSpy,
+    reattachSpy,
     termFocus,
     shellBtn,
     shellToggleBtn,
@@ -155,6 +176,12 @@ async function setup(uiStateData: { shell_h?: number } = {}): Promise<Harness> {
     restartDispatch,
     confirmMock,
     getRunCb: () => runCb,
+    endSession: () => {
+      if (endedCb === null) {
+        throw new Error("no onSessionEnded handler; open the panel first");
+      }
+      endedCb();
+    },
   };
 }
 
@@ -165,6 +192,7 @@ afterEach(() => {
   vi.doUnmock("./code-blocks.js");
   vi.doUnmock("./ui-state.js");
   vi.doUnmock("./dom.js");
+  vi.useRealTimers();
   vi.resetModules();
 });
 
@@ -241,7 +269,7 @@ describe("shell.ts: host-driven actions", () => {
   // wedged foreground process) leaves a panel that can never start again, and a
   // screen clear cannot help with either. Confirmed, because unlike the clear it
   // kills whatever is running.
-  it("the Restart button confirms, calls the server, then drops the local buffer", async () => {
+  it("the Restart button confirms, calls the server, then reattaches to the new PTY", async () => {
     const h = await setup();
     h.mod.initShellPanel();
     h.shellBtn.click(); // open so the terminal (and its handle) exists
@@ -251,7 +279,13 @@ describe("shell.ts: host-driven actions", () => {
 
     expect(h.confirmMock).toHaveBeenCalledTimes(1);
     expect(h.restartDispatch).toHaveBeenCalledTimes(1);
-    expect(h.resetSpy).toHaveBeenCalledTimes(1);
+    // Reattaching is the half that was missing: the server kills the PTY and
+    // installs a fresh one lazily, INSIDE the next connect, so a client that
+    // only cleared its screen left the panel reading "Session ended" forever.
+    // The clear rides along inside reattach(), which is why this asserts nothing
+    // about reset(): ordering it against the connect is the library's job.
+    expect(h.reattachSpy).toHaveBeenCalledTimes(1);
+    expect(h.resetSpy).not.toHaveBeenCalled();
   });
 
   it("a declined confirm neither calls the server nor touches the terminal", async () => {
@@ -264,11 +298,11 @@ describe("shell.ts: host-driven actions", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(h.restartDispatch).not.toHaveBeenCalled();
-    expect(h.resetSpy).not.toHaveBeenCalled();
+    expect(h.reattachSpy).not.toHaveBeenCalled();
   });
 
-  // A failed restart must not drop the buffer: the old PTY is still live, so
-  // clearing the screen would hide a working shell behind a blank pane.
+  // A failed restart must not reattach: the old PTY is still live, so dropping
+  // the buffer and taking a full replay would blank a working shell for nothing.
   it("a failed restart leaves the terminal alone", async () => {
     const h = await setup();
     h.restartDispatch.mockResolvedValueOnce(null);
@@ -278,7 +312,34 @@ describe("shell.ts: host-driven actions", () => {
     h.shellRestartBtn.click();
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(h.resetSpy).not.toHaveBeenCalled();
+    expect(h.reattachSpy).not.toHaveBeenCalled();
+  });
+
+  // The restart's own kill closes this client's socket, so the ended state
+  // normally reattaches while the POST is still in flight. The response must not
+  // then reconnect a second time over the prompt that reattach just drew.
+  it("does not reattach twice when the ended close won the race", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    let releaseDispatch: (value: { ok: boolean }) => void = () => undefined;
+    h.restartDispatch.mockImplementationOnce(
+      () =>
+        new Promise<{ ok: boolean }>((resolve) => {
+          releaseDispatch = resolve;
+        }),
+    );
+
+    h.shellRestartBtn.click();
+    await new Promise((r) => setTimeout(r, 0)); // confirm resolves, POST in flight
+    expect(h.restartDispatch).toHaveBeenCalledTimes(1);
+
+    h.endSession(); // the server's kill closed the socket
+    releaseDispatch({ ok: true });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(h.reattachSpy).toHaveBeenCalledTimes(1);
   });
 
   // The command lands at the prompt and WAITS. No trailing newline anywhere on
@@ -297,6 +358,81 @@ describe("shell.ts: host-driven actions", () => {
     const sent = h.sendSpy.mock.calls[0]?.[0] as Uint8Array;
     expect(sent.at(-1)).not.toBe(0x0a);
     expect(sent.at(-1)).not.toBe(0x0d);
+  });
+});
+
+describe("shell.ts: reattaching after the session ends", () => {
+  // The other half of the same defect, and the more common one: typing `exit`
+  // ends the child, the engine's process-exited close suppresses its own backoff
+  // reconnect (definitive, not transient), and the server only swaps in a fresh
+  // PTY on the next connect. Nothing was making that connect, so the panel sat
+  // on "Session ended" until a page reload.
+  it("reattaches with no user gesture when the child exits", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    h.endSession();
+
+    expect(h.reattachSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes a handler at all, which is what makes the exit case reachable", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    const [, opts] = h.createTerminal.mock.calls.at(0) as [HTMLElement, CreateTerminalOptions];
+    expect(typeof opts.onSessionEnded).toBe("function");
+  });
+
+  // A shell that dies as fast as it is spawned (a login file that exits, a
+  // missing interpreter) must not be respawned in a loop: the ladder backs off
+  // and then stops, leaving the honest "Session ended" banner standing.
+  it("gives up after four consecutive respawns", async () => {
+    vi.useFakeTimers();
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    // Six deaths, each one landing while the previous spawn is still fresh, so
+    // the ladder never resets: immediate, +250ms, +500ms, +1000ms, then nothing.
+    for (let i = 0; i < 6; i++) {
+      h.endSession();
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+
+    expect(h.reattachSpy).toHaveBeenCalledTimes(4);
+  });
+
+  // A session that ran for a while ended on its own terms, so its end is a new
+  // incident rather than another failure of the spawn that replaced the last one.
+  it("starts a fresh ladder once a session has run for a while", async () => {
+    vi.useFakeTimers();
+    const h = await setup();
+    h.mod.initShellPanel();
+    h.shellBtn.click();
+
+    for (let i = 0; i < 6; i++) {
+      h.endSession();
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    expect(h.reattachSpy).toHaveBeenCalledTimes(4);
+
+    await vi.advanceTimersByTimeAsync(5000); // the replacement stayed up
+    h.endSession();
+
+    expect(h.reattachSpy).toHaveBeenCalledTimes(5);
+  });
+
+  it("does nothing before the terminal exists", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    // No open, so no terminal, no feature and no socket. Nothing can emit the
+    // state here — which is the assertion: the panel's first open is what
+    // connects, so there is no reattach path to take.
+    expect(h.createTerminal).not.toHaveBeenCalled();
+    expect(h.reattachSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -413,6 +549,14 @@ describe("shell.ts: fullscreen toggle", () => {
   // Nothing else wired this button, so without the move it would have gone dead
   // silently — the panel's CLOSE path already cleared the class, so the only
   // visible symptom was a header button that did nothing.
+  const face = (btn: HTMLButtonElement): string =>
+    btn.querySelector("path")?.getAttribute("d") ?? "";
+  /** How many of the glyph's four corner arcs sweep the given way. Sweep is the
+   *  ONLY difference between the two faces — the corner set is rotationally
+   *  symmetric, so this is the assertion that "the corners point the other
+   *  way", and a rotated copy of one face would fail it. */
+  const sweeps = (d: string, flag: "0" | "1"): number => d.split(`a2 2 0 0 ${flag}`).length - 1;
+
   it("enters fullscreen and mirrors the state on aria-pressed", async () => {
     const h = await setup();
     h.mod.initShellPanel();
@@ -421,6 +565,35 @@ describe("shell.ts: fullscreen toggle", () => {
     h.shellFullscreenBtn.click();
     expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(true);
     expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("turns the glyph's corners inward while fullscreen, and back on exit", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    // Boot: corners point outward (enter), all four arcs sweeping one way.
+    expect(face(h.shellFullscreenBtn)).toMatch(/^M8 3H5/);
+    expect(sweeps(face(h.shellFullscreenBtn), "0")).toBe(4);
+
+    h.shellFullscreenBtn.click();
+    expect(face(h.shellFullscreenBtn)).toMatch(/^M8 3v3/);
+    expect(sweeps(face(h.shellFullscreenBtn), "1")).toBe(4);
+
+    // Restored with aria-pressed, on the CLICK rather than at animationend: the
+    // button already reads as off, so its face has to agree immediately.
+    h.shellFullscreenBtn.click();
+    expect(face(h.shellFullscreenBtn)).toMatch(/^M8 3H5/);
+    expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(true);
+  });
+
+  it("labels what the click will do, in both directions", async () => {
+    const h = await setup();
+    h.mod.initShellPanel();
+    expect(h.shellFullscreenBtn.getAttribute("data-tooltip")).toBe("Full screen");
+    expect(h.shellFullscreenBtn.getAttribute("aria-label")).toBe("Full screen");
+
+    h.shellFullscreenBtn.click();
+    expect(h.shellFullscreenBtn.getAttribute("data-tooltip")).toBe("Exit full screen");
+    expect(h.shellFullscreenBtn.getAttribute("aria-label")).toBe("Exit full screen");
   });
 
   it("leaves through the transient class so the exit has something to animate", async () => {
@@ -450,6 +623,9 @@ describe("shell.ts: close behavior", () => {
     h.shellToggleBtn.click(); // close
     expect(h.shellPanel.classList.contains("shell-fullscreen")).toBe(false);
     expect(h.shellFullscreenBtn.getAttribute("aria-pressed")).toBe("false");
+    // The close path is the third writer of this state; it must reset the face
+    // too, or the next open shows a docked panel offering to shrink itself.
+    expect(h.shellFullscreenBtn.querySelector("path")?.getAttribute("d")).toMatch(/^M8 3H5/);
     expect(h.shellPanel.classList.contains("shell-closed")).toBe(true);
   });
 

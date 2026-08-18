@@ -12,6 +12,7 @@
 // the first had already claimed the flag and would then be asserting against a
 // filter that was never built. A fresh module graph is the honest fixture.
 import { describe, it, expect, vi, beforeAll } from "vitest";
+import type { PageFind } from "./find-registry.js";
 
 vi.mock("./toast.js", () => import("./__test-helpers__/toast-mock.js").then((m) => m.toastMock()));
 vi.mock("./api-client.js", () => ({ apiGet: vi.fn(), apiGetTyped: vi.fn() }));
@@ -36,10 +37,22 @@ vi.mock("./git-status-store.js", () => ({
 }));
 vi.mock("./actions/hooks.js", () => ({ setHookEnabled: { dispatch: vi.fn() } }));
 vi.mock("./recipes.js", () => ({
-  renderRecipesPanel: vi.fn((c: HTMLElement) => {
+  // The Workflows panel owns its own rows, so the page hands it the filter and
+  // the panel reports back through the listener. Both halves are stubbed here so
+  // the assertions below can watch the handoff.
+  renderRecipesPanel: vi.fn((c: HTMLElement, filter?: string) => {
     c.replaceChildren();
+    recipeFilter = filter ?? "";
+  }),
+  setRecipeCountsListener: vi.fn((fn: (c: { total: number; shown: number }) => void) => {
+    reportCounts = fn;
   }),
 }));
+
+/** The filter the Workflows panel was last rendered with. */
+let recipeFilter = "";
+/** The panel's way back to the page's note. */
+let reportCounts: ((c: { total: number; shown: number }) => void) | null = null;
 
 type DocRecord = Record<string, unknown>;
 
@@ -47,7 +60,7 @@ let filterInput: HTMLInputElement;
 let setDocs: (d: DocRecord[]) => void;
 let render: () => void;
 let forceTab: (t: string) => void;
-let focusFilter: () => boolean;
+let find: PageFind;
 
 beforeAll(async () => {
   document.body.innerHTML = `
@@ -61,7 +74,6 @@ beforeAll(async () => {
         <button type="button" data-docs-tab="workflows"></button>
       </nav>
       <select id="docs-tab-select"></select>
-      <div id="docs-filter-host"></div>
       <div data-docs-panel="steering" class="list-container docs-panel"></div>
       <div data-docs-panel="skills" class="list-container docs-panel hidden"></div>
       <div data-docs-panel="agents" class="list-container docs-panel hidden"></div>
@@ -78,7 +90,17 @@ beforeAll(async () => {
   setDocs = mod._setDocsForTest as unknown as (d: DocRecord[]) => void;
   render = mod._renderActiveForTest;
   forceTab = mod.forceDocsTab as unknown as (t: string) => void;
-  focusFilter = mod.focusDocsFilter;
+  // The page hands its find to the leaf registry rather than exporting a focuser,
+  // so this is how the box is reached — the same door Ctrl-F and the toolbar
+  // magnifier use.
+  const { pageFind } = await import("./find-registry.js");
+  const registered = pageFind("docs");
+  if (registered === undefined) {
+    throw new Error("the docs page registered no find");
+  }
+  find = registered;
+  // A POPUP: nothing is built until it is opened, so the field does not exist yet.
+  find.open();
   filterInput = document.getElementById("docs-filter-input") as HTMLInputElement;
 });
 
@@ -105,11 +127,15 @@ const steering = (over: DocRecord = {}): DocRecord => ({
 });
 
 describe("the box itself", () => {
-  it("is a role=search landmark built into its host", () => {
+  it("is a role=search landmark, and the same popup the transcript uses", () => {
     const region = document.getElementById("docs-filter");
     expect(region?.getAttribute("role")).toBe("search");
     expect(region?.getAttribute("aria-label")).toBe("Filter documents");
-    expect(region?.parentElement?.id).toBe("docs-filter-host");
+    // The shared skin plus the primitive's hook: one control, one position, on
+    // every page that has a search box.
+    expect(region?.className).toContain("page-find");
+    expect(region?.className).toContain("search-pop");
+    expect(region?.className).toContain("uip-popup");
   });
 
   it("carries the shared field attributes rather than its own spelling of them", () => {
@@ -117,19 +143,27 @@ describe("the box itself", () => {
     expect(filterInput.getAttribute("autocapitalize")).toBe("off");
     expect(filterInput.getAttribute("spellcheck")).toBe("false");
     expect(filterInput.getAttribute("enterkeyhint")).toBe("search");
-    // A permanent box, so the platform's own clear affordance belongs on it.
-    expect(filterInput.type).toBe("search");
+    // NOT type=search: the platform's own clear affordance belongs on a permanent
+    // box, and this one carries its own ×. Two clear controls a thumb-width apart
+    // doing different things is worse than one.
+    expect(filterInput.type).toBe("text");
   });
 
-  it("has NO match-case toggle, matching the app's other three filters", () => {
-    // #git-changes-filter, #git-prs-filter and the branch popover's all fold the
-    // query and the row. A fourth that did not would be a knob one member of a set
-    // of four carries, with nobody having asked for it.
+  it("has NO match-case toggle, because every filter in the app folds both sides", () => {
+    // The query AND the row it is matched against, so a toggle would be wired to
+    // nothing.
     expect(document.querySelector('#docs-filter [aria-label="Match case"]')).toBeNull();
   });
 
-  it("has no × either, because there is nothing to close", () => {
-    expect(document.querySelector('#docs-filter [aria-label="Close find"]')).toBeNull();
+  it("has a × now, because there is something to close, and it says FILTER", () => {
+    expect(document.querySelector('#docs-filter [aria-label="Close filter"]')).not.toBeNull();
+  });
+
+  it("carries the FUNNEL, because it only narrows rows already here", () => {
+    // The magnifier is for a box that reaches past the page — History's, which
+    // reads every chat file on disk. This one cannot see a document's body.
+    expect(document.querySelector("#docs-filter .page-find-icon polygon")).not.toBeNull();
+    expect(document.querySelector("#docs-filter .page-find-icon circle")).toBeNull();
   });
 });
 
@@ -232,43 +266,68 @@ describe("what it says", () => {
   });
 });
 
-describe("Workflows, the tab it cannot serve", () => {
-  it("hides itself there, because a visible box would do nothing", () => {
-    // That tab is RPC-sourced and escapes to recipes.ts before any docs logic
-    // runs, so there is no inventory for a filter to narrow.
-    const region = document.getElementById("docs-filter");
-    forceTab("steering");
-    render();
-    expect(region?.classList.contains("hidden")).toBe(false);
+describe("Workflows, the tab that used to be excluded", () => {
+  // The box was HIDDEN there and Ctrl-F declined, on the reasoning that the tab is
+  // RPC-sourced and escapes to recipes.ts before any docs logic runs. True about
+  // where the rows come from, and not the same claim as "nothing to filter" — a
+  // recipe has a name, a description, a source and declared inputs. The filter
+  // reaches the panel now instead of hiding from it.
+  it("hands its filter through to the panel that owns those rows", () => {
     forceTab("workflows");
-    render();
-    expect(region?.classList.contains("hidden")).toBe(true);
+    type("goal");
+    expect(recipeFilter).toBe("goal");
+    type("");
+    expect(recipeFilter).toBe("");
     forceTab("steering");
     render();
-    expect(region?.classList.contains("hidden")).toBe(false);
   });
 
-  it("declines Ctrl-F there so the browser's own find still opens", () => {
+  it("accepts Ctrl-F there, and the box is the same one", () => {
     forceTab("workflows");
     render();
-    expect(focusFilter()).toBe(false);
+    expect(find.open()).toBe(true);
+    expect(document.activeElement).toBe(filterInput);
     forceTab("steering");
     render();
-    expect(focusFilter()).toBe(true);
-    expect(document.activeElement).toBe(filterInput);
+  });
+
+  it("takes the panel's own counts for the note, so it reads the same on six tabs", () => {
+    forceTab("workflows");
+    type("goal");
+    reportCounts?.({ total: 9, shown: 2 });
+    expect(document.getElementById("docs-filter-note")?.textContent).toBe("2 of 9 shown.");
+    type("");
+    forceTab("steering");
+    render();
   });
 });
 
 describe("dismissal", () => {
-  it("clears back to the full list on Escape, because a permanent box has nothing to close", () => {
+  it("closes on Escape, and the CLOSE is what lifts the filter", () => {
+    // The rule a hidden box needs and a permanent one did not: a popup that closed
+    // holding `alp` would leave the page showing one of two rows with nothing on
+    // screen saying why, and the way back would be a box the reader has no reason
+    // to think is still armed.
     setDocs([steering({ name: "alpha" }), steering({ name: "beta", path: "b.md" })]);
     render();
+    find.open();
     type("alp");
     expect(names()).toEqual(["alpha"]);
     filterInput.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
     );
+    expect(find.focused()).toBe(false);
     expect(filterInput.value).toBe("");
+    expect(names()).toEqual(["alpha", "beta"]);
+  });
+
+  it("lifts the filter on the toolbar button's second click too", () => {
+    setDocs([steering({ name: "alpha" }), steering({ name: "beta", path: "b.md" })]);
+    render();
+    find.open();
+    type("alp");
+    expect(names()).toEqual(["alpha"]);
+    find.toggle();
     expect(names()).toEqual(["alpha", "beta"]);
   });
 });

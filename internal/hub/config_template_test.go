@@ -65,7 +65,7 @@ func TestTemplateToResponseEmpty(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	s := string(b)
-	if s != `{"modes":[],"models":[]}` {
+	if s != `{"modes":[],"models":[],"effort_levels":[]}` {
 		t.Errorf("empty response JSON: %s", s)
 	}
 }

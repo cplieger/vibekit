@@ -172,3 +172,219 @@
     max-height: 8rem;
   }
 }
+
+/* ==========================================================================
+   The steer stack — messages already sent into the running turn
+   ==========================================================================
+
+   The bottom bar's second region, between the interaction dock and the message
+   box. It lives here rather than in 15-input.css because its subject is this
+   file's: a region of the bar ABOVE the box, sharing the bar's background and
+   the box's measure, not a part of the composer. It used to be a horizontal
+   chip row wedged between the textarea and the pill row, where a 60-character
+   preview was all that fitted and the row read as composer furniture instead of
+   as a record of messages that have already gone.
+
+   Ordering in the bar is a ranking: an ask that BLOCKS the turn (the dock) sits
+   above a record of what has already been sent, which sits above the box you
+   type the next one into.
+
+   Rows stack oldest-first, so a new message appears at the bottom nearest the
+   box it was typed into and every earlier one moves up.
+
+   TWO STATES, and the difference is the stack's whole job:
+
+     sent  dashed edge + breathing hourglass + accent — in KAS's buffer, unread
+     read  solid edge + steady check + green — the model has consumed it
+
+   Carried by BORDER STYLE, GLYPH and the state WORD, never by colour alone, so
+   it survives a colour-vision difference and a monochrome display (WCAG 1.4.1).
+   The animation stops on read, because a breathing icon means "still waiting".
+   ========================================================================== */
+
+.steer-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+
+  /* Character-for-character .prompt-box's and .decision-dock's measure, so all
+     three regions share one column and their edges line up. */
+  max-width: var(--content-max-w);
+  width: 100%;
+  margin: 0 auto var(--sp-2);
+  padding: 0;
+  list-style: none;
+}
+
+.steer-row {
+  /* state | message | actions. minmax(0, 1fr) on the middle track is what lets
+     the clamp below actually clamp: an auto track would size to the text and
+     push the actions off the row. */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px dashed color-mix(in srgb, var(--c-accent) 45%, var(--c-border));
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--c-accent) 6%, var(--c-bg-secondary));
+  font-size: var(--fs-sm);
+  transition:
+    opacity var(--dur-enter) var(--ease-enter),
+    transform var(--dur-enter) var(--ease-enter);
+
+  /* Enters from below: a new message arrives at the bottom of the stack. */
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+/* Read: settled. Solid edge and the green a completed tool card already uses. */
+.steer-row[data-state="read"] {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--c-green) 45%, var(--c-border));
+  background: color-mix(in srgb, var(--c-green) 6%, var(--c-bg-secondary));
+}
+
+/* --- State column ------------------------------------------------------- */
+
+.steer-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  /* Nudged onto the message's first line: the column is top-aligned so a
+     two-line message keeps the label beside its start, not its middle. */
+  padding-block-start: 0.05rem;
+  color: var(--c-accent);
+}
+
+.steer-row[data-state="read"] .steer-state {
+  color: var(--c-green);
+}
+
+.steer-state-icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.steer-state-icon svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  animation: vk-breathe 2s var(--ease-standard) infinite;
+}
+
+.steer-row[data-state="read"] .steer-state-icon svg {
+  animation: none;
+}
+
+/* The WORD, not only the glyph. "Sent" is the fact the stack exists to state:
+   the message has left, it is not a draft, and it is waiting. Uppercase and
+   tracked out so it reads as a status rather than as part of the message. */
+.steer-state-label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Below the pill row's container width the label is the first thing to go: the
+   glyph and the colour still carry the state, and the message is what the row
+   is for. */
+@media (width < 30rem) {
+  .steer-state-label {
+    display: none;
+  }
+}
+
+/* --- Message column ----------------------------------------------------- */
+
+.steer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+/* Two lines at the full width of the bar, which is several times what the old
+   fixed-width chip showed. Clamped rather than single-line-ellipsised so a
+   message that does not fit still gives its shape; the row's title attribute
+   and its accessible name carry the whole of it. */
+.steer-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--c-text-primary);
+  line-height: 1.35;
+}
+
+/* What the agent said it DID about the steer, from its own acknowledgement
+   marker. Present only on a read row, so it is styled as the settled half: the
+   green the read state already established, one step down in weight from the
+   message, and clamped to one line because the message above it is the part the
+   reader wrote and already knows. */
+.steer-ack {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+  color: color-mix(in srgb, var(--c-green) 70%, var(--c-text-secondary));
+}
+
+/* --- Actions column ----------------------------------------------------- */
+
+.steer-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.steer-act {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--c-text-secondary);
+  opacity: 0.75;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    opacity var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.steer-act:hover {
+  opacity: 1;
+  background: var(--c-hover);
+  color: var(--c-text-primary);
+}
+
+.steer-act-danger:hover {
+  color: var(--c-red);
+}
+
+.steer-act:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+/* Expand the hit target to ~44px on touch without growing the glyph. */
+@media (pointer: coarse) {
+  .steer-act::after {
+    content: "";
+    position: absolute;
+    inset: -0.6rem;
+  }
+}

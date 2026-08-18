@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { chevronEl } from "./chevron.js";
 import { ICON_DOWNLOAD, ICON_REPO, ICON_TRASH } from "./icons.js";
 import { iconEl } from "./icon-el.js";
 import { withAsyncFeedback } from "./async-button.js";
@@ -36,10 +37,12 @@ export function buildAccountReposDetails(
     deps.expandOnNextPaint.delete(a.id);
   }
 
+  const chevron = chevronEl();
+  chevron.classList.add("forge-account-repos-chevron");
   const summary = el(
     "summary",
     { className: "forge-account-repos-summary" },
-    el("span", { className: "forge-account-repos-chevron", "aria-hidden": "true" }, "▸"),
+    chevron,
     el("span", { className: "forge-account-repos-icon", "aria-hidden": "true" }, iconEl(ICON_REPO)),
     el("span", { className: "forge-account-repos-label" }),
   );

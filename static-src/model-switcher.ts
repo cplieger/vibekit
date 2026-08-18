@@ -10,6 +10,7 @@ import {
   get,
   getActive,
   getActiveId,
+  isEmptyChat,
   isThinking,
   setEffort,
   setModel,
@@ -32,10 +33,18 @@ import { reconcile } from "./reconcile.js";
 import { el, effect } from "@cplieger/reactive";
 import { iconEl } from "./icon-el.js";
 import { ICON_MODEL } from "./icons.js";
-import type { ModelInfo } from "./types.js";
+import type { ModelInfo, Session, SessionEffortLevel } from "./types.js";
 
-/** Canonical effort levels with display labels. Single source of truth
- *  for the UI renderer and the effort row's active-tier check. */
+/** Canonical effort levels with display labels. The FALLBACK vocabulary and the
+ *  label table, not the authority.
+ *
+ *  The authority is the `effortLevel` config option's own choices, which arrive
+ *  per session (`Session.effort_levels`) and pre-session (the config template,
+ *  cached below). Read off kiro-cli 2.18.0: its TUI builds the same picker from
+ *  that option and refuses the command when the list is empty, and there is NO
+ *  per-model tier list on the wire — the model choice carries only
+ *  `defaultEffortLevel`. This list therefore renders when no catalog has landed
+ *  yet, and the id→label map names an id whose catalog entry has no name. */
 const EFFORT_LEVELS = [
   { id: "low", label: "low" },
   { id: "medium", label: "medium" },
@@ -43,6 +52,66 @@ const EFFORT_LEVELS = [
   { id: "xhigh", label: "x-high" },
   { id: "max", label: "max" },
 ] as const;
+
+/** The pre-session effort vocabulary from GET /api/config-template: the tiers a
+ *  fresh session would offer and the level it would run at. A chat with no bridge
+ *  has no session catalog, and this is the only evidence available then. Written
+ *  once at boot by app.ts. */
+let catalogEfforts: readonly SessionEffortLevel[] = [];
+let catalogEffortActive = "";
+
+export function setCatalogEfforts(levels: readonly SessionEffortLevel[], active: string): void {
+  catalogEfforts = levels;
+  catalogEffortActive = active;
+}
+
+/** The label for an effort tier: the catalog's own name when it has one, else the
+ *  house table (so `xhigh` stays "x-high"), else the id verbatim — hiding a tier
+ *  the model offers is worse than an unstyled name. */
+function effortLabel(level: SessionEffortLevel): string {
+  if (level.name !== undefined && level.name !== "") {
+    return level.name;
+  }
+  return EFFORT_LEVELS.find((l) => l.id === level.id)?.label ?? level.id;
+}
+
+/** The tiers to render and the tier that is live, for the active chat.
+ *
+ *  Levels: the session's own catalog, else the pre-session template's, else the
+ *  canonical five (nothing has landed yet — a control with no tiers would be a
+ *  worse answer than a stale one).
+ *
+ *  Live tier: the chat's own choice first, so a click marks instantly through the
+ *  optimistic store write; then the level the session reports running at; then
+ *  the current model's default, which is all that exists before a session. */
+function effortVocabulary(
+  session: Session | undefined,
+  models: readonly ModelInfo[],
+): { levels: readonly SessionEffortLevel[]; active: string } {
+  const fromSession = session?.effort_levels ?? [];
+  const levels =
+    fromSession.length > 0
+      ? fromSession
+      : catalogEfforts.length > 0
+        ? catalogEfforts
+        : EFFORT_LEVELS.map((l) => ({ id: l.id, name: l.label }));
+  const modelDefault =
+    models.find((m) => m.model_id === session?.model)?.default_effort_level ?? "";
+  const active =
+    session?.effort !== undefined && session.effort !== ""
+      ? session.effort
+      : (session?.effort_active ?? "") !== ""
+        ? (session?.effort_active ?? "")
+        : modelDefault !== ""
+          ? modelDefault
+          : catalogEffortActive;
+  return { levels, active };
+}
+
+/** Whether two tier lists are the same sequence — the rebuild test. */
+function sameLevels(a: readonly SessionEffortLevel[], b: readonly SessionEffortLevel[]): boolean {
+  return a.length === b.length && a.every((l, i) => l.id === b[i]?.id && l.name === b[i].name);
+}
 
 // There is no exported EffortLevel type. Its one consumer was AppSettings'
 // `model_effort` field, which is gone: effort is a per-chat string on the chat
@@ -89,18 +158,15 @@ const setEffortAction = transportAction<{ chatID: string; level: string }, { pre
  *  the config catalog (config_option_update `_meta.kiro.hasEffort`). When the
  *  server plumbs it onto the catalog entries, gate the effort row on the CURRENT
  *  model's capability; when it isn't plumbed at all (no entry carries it), fall
- *  back to showing the row so a working control is never silently hidden. Read
- *  defensively so this compiles whether or not the catalog type carries the
- *  field yet. */
+ *  back to showing the row so a working control is never silently hidden. */
 function currentModelHasEffort(models: readonly ModelInfo[], modelID: string): boolean {
   let plumbed = false;
   let current = false;
   for (const m of models) {
-    const cap = (m as { has_effort?: unknown }).has_effort;
-    if (cap !== undefined) {
+    if (m.has_effort !== undefined) {
       plumbed = true;
       if (m.model_id === modelID) {
-        current = cap === true;
+        current = m.has_effort;
       }
     }
   }
@@ -146,11 +212,10 @@ class ModelSwitchController {
 
   private renderCondensedList(): void {
     const list = $.modelSwitchList;
-    list.setAttribute("role", "listbox");
-    list.setAttribute("aria-label", "Available models");
+    const scroll = this.ensureScroll(list);
     const session = getActive();
     if (session === undefined) {
-      reconcile(list, [] as ModelInfo[], {
+      reconcile(scroll, [] as ModelInfo[], {
         key: () => "",
         mount: () => el("div"),
       });
@@ -158,7 +223,7 @@ class ModelSwitchController {
     }
     const current = session.model;
 
-    // Effort row: shown only when the current model advertises reasoning
+    // Effort section: shown only when the current model advertises reasoning
     // effort (KAS `hasEffort`). Falls back to showing it when the catalog
     // doesn't carry the capability at all (see currentModelHasEffort).
     if (currentModelHasEffort(getCachedModels(), current)) {
@@ -167,7 +232,7 @@ class ModelSwitchController {
       this.removeEffortRow();
     }
 
-    reconcile(list, getCachedModels(), {
+    reconcile(scroll, getCachedModels(), {
       key: (m: ModelInfo) => m.model_id,
       mount: (m: ModelInfo) => this.buildModelOption(m),
       update: (node, m) => {
@@ -179,62 +244,129 @@ class ModelSwitchController {
 
   private modelNav: RovingFocusController | null = null;
 
+  private modelScroll: HTMLDivElement | null = null;
+
   private effortRow: HTMLDivElement | null = null;
 
-  /** Remove the effort row from the list (current model doesn't advertise
+  /** The tiers currently rendered as buttons, so a rebuild happens only when the
+   *  vocabulary actually changed. */
+  private effortLevelsShown: readonly SessionEffortLevel[] = [];
+
+  /** The tier marked live, resolved by effortVocabulary (the chat's own choice,
+   *  else the level the session reports, else the model or template default). Not
+   *  persisted anywhere: writing a service default onto the chat would turn it
+   *  into a vibekit choice that `StartOpts.Effort` pins to every later session. */
+  private effortActive = "";
+
+  /** The scrolling half of the card. The model options live in here and the
+   *  effort section is a SIBLING below it, which is what keeps the tiers fixed
+   *  while a long model list scrolls. It also carries the listbox role, because
+   *  it is the element that holds only options — the card holds the section
+   *  too. Created once; reconcile owns its keyed children from then on. */
+  private ensureScroll(list: HTMLElement): HTMLElement {
+    if (this.modelScroll === null) {
+      this.modelScroll = el("div", {
+        className: "pill-model-scroll",
+        role: "listbox",
+        "aria-label": "Available models",
+      }) as HTMLDivElement;
+      list.appendChild(this.modelScroll);
+    }
+    return this.modelScroll;
+  }
+
+  /** Remove the effort section from the card (current model doesn't advertise
    *  effort). Idempotent — re-added by ensureEffortRow when a model that does
    *  advertise it becomes current. */
   private removeEffortRow(): void {
     this.effortRow?.remove();
   }
 
+  /** Build or refresh the effort section for `modelID`.
+   *
+   *  The tier buttons are REBUILT when the model's level vocabulary changes,
+   *  because the set is per model rather than a fixed five: a row built once for
+   *  the first model would keep offering `xhigh` on a model that has no such
+   *  level. `renderCondensedList` runs on every open of the card, so a catalog
+   *  arriving late is picked up the next time the user looks.
+   *
+   *  No settings fetch here. Effort arrives on the chat record (the header
+   *  carries it, so an empty chat that never loads its messages still has one),
+   *  which is also what makes the row correct after a tab switch rather than
+   *  showing whichever chat was open when the page loaded. */
   private ensureEffortRow(list: HTMLElement): void {
-    // No settings fetch here any more. Effort arrives on the chat record (the
-    // header carries it, so an empty chat that never loads its messages still
-    // has one), which is also what makes the row correct after a tab switch
-    // rather than showing whichever chat was open when the page loaded.
+    const { levels, active } = effortVocabulary(getActive(), getCachedModels());
+    this.effortActive = active;
     if (this.effortRow === null) {
-      this.effortRow = el(
-        "div",
-        { className: "effort-row", role: "group", "aria-label": "Reasoning effort" },
-        el("span", { className: "effort-label" }, "Effort"),
-      ) as HTMLDivElement;
-      for (const { id: level, label } of EFFORT_LEVELS) {
-        const btn = el(
-          "button",
-          {
-            type: "button",
-            className: "effort-btn",
-            "data-level": level,
-            "aria-pressed": "false",
-          },
-          label,
-        );
-        btn.addEventListener("click", (e) => {
-          e.stopPropagation();
-          this.setEffort(level);
-        });
-        this.effortRow.appendChild(btn);
-      }
+      this.effortRow = el("div", {
+        className: "effort-row",
+        role: "group",
+        "aria-label": "Reasoning effort",
+      }) as HTMLDivElement;
       // One effect keeps every .effort-btn's active class + aria-pressed in
       // sync with the ACTIVE CHAT's level. Reading activeSession is what makes
       // the row per-chat: a tab switch re-runs this rather than carrying the
       // previous chat's tier over. The row + controller are app-lifetime
       // singletons, so this never needs disposal.
-      const row = this.effortRow;
       effect(() => {
-        const lvl = activeSession.value?.effort ?? "";
-        for (const btn of row.querySelectorAll<HTMLButtonElement>(".effort-btn")) {
-          const active = btn.dataset["level"] === lvl;
-          btn.classList.toggle("active", active);
-          btn.setAttribute("aria-pressed", active ? "true" : "false");
-        }
+        // Reading activeSession is what makes this per-chat: a tab switch or an
+        // optimistic set_effort write re-resolves instead of carrying the previous
+        // value over.
+        this.effortActive = effortVocabulary(activeSession.value, getCachedModels()).active;
+        this.syncEffortActive();
       });
     }
-    // Ensure it's the first child (reconcile manages keyed children
-    // after it; the effort row is un-keyed so reconcile ignores it).
-    if (list.firstElementChild !== this.effortRow) {
-      list.prepend(this.effortRow);
+    if (!sameLevels(this.effortLevelsShown, levels)) {
+      this.buildEffortButtons(levels);
+    }
+    // The effect above only re-runs when the ACTIVE CHAT's own level changes, and
+    // neither a rebuild nor a newly-resolved live tier is a signal read, so
+    // re-apply the mark here.
+    this.syncEffortActive();
+    // Ensure it's the LAST child. It sits below the scroller rather than
+    // inside it, so reconcile — which owns the scroller's keyed children —
+    // never sees this row at all.
+    if (list.lastElementChild !== this.effortRow) {
+      list.appendChild(this.effortRow);
+    }
+  }
+
+  /** Replace the row's contents with one button per tier in `levels`. */
+  private buildEffortButtons(levels: readonly SessionEffortLevel[]): void {
+    const row = this.effortRow;
+    if (row === null) {
+      return;
+    }
+    row.replaceChildren(el("span", { className: "effort-label" }, "Effort"));
+    for (const level of levels) {
+      const btn = el(
+        "button",
+        {
+          type: "button",
+          className: "effort-btn",
+          "data-level": level.id,
+          "aria-pressed": "false",
+        },
+        effortLabel(level),
+      );
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.setEffort(level.id);
+      });
+      row.appendChild(btn);
+    }
+    this.effortLevelsShown = [...levels];
+  }
+
+  /** Mark the live tier, resolved by effortVocabulary. A chat that has chosen
+   *  nothing still RUNS at a level, so marking nothing claimed the session had no
+   *  effort level at all. `aria-pressed` follows the same value, so the visual and
+   *  announced states cannot disagree. */
+  private syncEffortActive(): void {
+    for (const btn of this.effortRow?.querySelectorAll<HTMLButtonElement>(".effort-btn") ?? []) {
+      const on = btn.dataset["level"] === this.effortActive;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
     }
   }
 
@@ -293,7 +425,7 @@ class ModelSwitchController {
       this.applyLocalChoice(modelID);
       return;
     }
-    const isEmpty = session.message_count === 0 && session.messages.length === 0;
+    const isEmpty = isEmptyChat(session);
     if (isEmpty) {
       this.applyLocalChoice(modelID);
       return;

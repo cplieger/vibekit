@@ -3,6 +3,7 @@ package translate
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -67,20 +68,113 @@ func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	}
 }
 
-// TestChoiceHasEffort covers the _meta.kiro.hasEffort extractor directly,
-// including the absent-meta and malformed-meta paths (both → false).
-func TestChoiceHasEffort(t *testing.T) {
+// configEffortUpdate builds a config_option_update carrying the `effortLevel`
+// option — the tier vocabulary plus the level the session runs at. This is the
+// option kiro-cli's own TUI builds its effort picker from; there is no per-model
+// tier list on the wire.
+func configEffortUpdate(t *testing.T, current string, choices []map[string]any) []byte {
+	t.Helper()
+	return mustJSON(t, map[string]any{
+		"configOptions": []map[string]any{
+			{
+				"id":           "effortLevel",
+				"type":         "select",
+				"currentValue": current,
+				"options":      choices,
+			},
+		},
+	})
+}
+
+// TestHandleConfigOptionUpdate_PlumbsEffortOption pins the fix for a control that
+// rendered five tiers with none marked: the effortLevel option's own choices are
+// the tier list, and its currentValue is the level the session is RUNNING at,
+// which is what the UI marks for a chat that has chosen nothing of its own.
+func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(deps)
+
+	raw := configEffortUpdate(t, "medium", []map[string]any{
+		{"value": "low", "name": "Low"},
+		{"value": "medium", "name": "Medium"},
+		{"value": "high", "name": "High"},
+	})
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", raw)
+
+	c, ok := store.Get(t.Context(), "c1")
+	if !ok {
+		t.Fatal("chat c1 missing after config_option_update")
+	}
+	if c.EffortActive != "medium" {
+		t.Errorf("EffortActive = %q, want medium", c.EffortActive)
+	}
+	wantIDs := []string{"low", "medium", "high"}
+	gotIDs := make([]string, 0, len(c.EffortLevels))
+	for _, l := range c.EffortLevels {
+		gotIDs = append(gotIDs, l.ID)
+	}
+	if !slices.Equal(gotIDs, wantIDs) {
+		t.Errorf("EffortLevels = %v, want %v", gotIDs, wantIDs)
+	}
+	if len(c.EffortLevels) > 0 && c.EffortLevels[0].Name != "Low" {
+		t.Errorf("level name = %q, want Low", c.EffortLevels[0].Name)
+	}
+	// The chat's own CHOICE is untouched: the option reports what the session is
+	// doing, and adopting it as the choice would pin a service default into every
+	// later session through StartOpts.Effort.
+	if c.Effort != "" {
+		t.Errorf("Effort = %q, want empty (the option is not a choice)", c.Effort)
+	}
+}
+
+// TestHandleConfigOptionUpdate_EmptyEffortOptionApplies covers the answer that is
+// not a missing answer: kiro-cli reports an EMPTY option list for a model with no
+// effort tiers, and its own TUI reads that as "effort is not available on the
+// current model". So an empty list has to land, or a model without tiers keeps
+// showing the previous model's.
+func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
+	deps, _, store := depsWithStore(t, "c1")
+	tr := New(deps)
+
+	tr.HandleConfigOptionUpdate(t.Context(), "c1",
+		configEffortUpdate(t, "high", []map[string]any{{"value": "high", "name": "High"}}))
+	tr.HandleConfigOptionUpdate(t.Context(), "c1", configEffortUpdate(t, "", nil))
+
+	c, _ := store.Get(t.Context(), "c1")
+	if len(c.EffortLevels) != 0 {
+		t.Errorf("EffortLevels = %v, want empty", c.EffortLevels)
+	}
+	if c.EffortActive != "" {
+		t.Errorf("EffortActive = %q, want empty", c.EffortActive)
+	}
+}
+
+// TestChoiceEffort covers the _meta.kiro effort extractor on a model choice.
+// Two fields only, and the tier LIST is deliberately not one of them: kiro-cli
+// 2.18.0 stamps `defaultEffortLevel` per model and stamps no `hasEffort` at all
+// (measured against the shipped chat sidecar), and the tiers belong to the
+// `effortLevel` option. Absent and malformed meta both decode to the zero value,
+// which the client reads as "not plumbed".
+func TestChoiceEffort(t *testing.T) {
 	cases := []struct {
-		name string
-		meta string
-		want bool
+		name        string
+		meta        string
+		wantHas     bool
+		wantDefault string
 	}{
-		{"nil meta", "", false},
-		{"empty object", `{}`, false},
-		{"kiro.hasEffort true", `{"kiro":{"hasEffort":true}}`, true},
-		{"kiro.hasEffort false", `{"kiro":{"hasEffort":false}}`, false},
-		{"kiro without hasEffort", `{"kiro":{"rateMultiplier":2}}`, false},
-		{"malformed", `{not json`, false},
+		{name: "nil meta"},
+		{name: "empty object", meta: `{}`},
+		{name: "hasEffort only", meta: `{"kiro":{"hasEffort":true}}`, wantHas: true},
+		{name: "hasEffort false", meta: `{"kiro":{"hasEffort":false}}`},
+		{name: "kiro without hasEffort", meta: `{"kiro":{"rateMultiplier":2}}`},
+		{
+			// The 2.18.0 shape: a default tier, no capability flag. Opus 4.7's
+			// service default is xhigh, which other models do not even offer.
+			name:        "default tier, no hasEffort",
+			meta:        `{"kiro":{"rateMultiplier":1,"effortSchemaPath":"reasoning","defaultEffortLevel":"xhigh"}}`,
+			wantDefault: "xhigh",
+		},
+		{name: "malformed", meta: `{not json`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,8 +182,12 @@ func TestChoiceHasEffort(t *testing.T) {
 			if tc.meta != "" {
 				meta = []byte(tc.meta)
 			}
-			if got := choiceHasEffort(meta); got != tc.want {
-				t.Errorf("choiceHasEffort(%q) = %v, want %v", tc.meta, got, tc.want)
+			got := choiceEffort(meta)
+			if got.HasEffort != tc.wantHas {
+				t.Errorf("HasEffort = %v, want %v", got.HasEffort, tc.wantHas)
+			}
+			if got.Default != tc.wantDefault {
+				t.Errorf("Default = %q, want %q", got.Default, tc.wantDefault)
 			}
 		})
 	}

@@ -69,7 +69,13 @@
   .sidebar-actions {
     display: flex;
     gap: var(--sp-1);
-    margin: var(--sp-2);
+
+    /* The horizontal margin MUST equal #tab-list's padding below, or this
+     row is narrower than every tab under it and the sidebar has two left
+     edges. The two values are only coupled by this comment; change one and
+     change the other. The vertical margin is free — it is the gap to the
+     header above and to the first tab below. */
+    margin: var(--sp-2) var(--sp-1);
     padding: 0.125rem;
     background: var(--c-bg-secondary);
     border: 1px solid var(--c-border);
@@ -90,7 +96,11 @@
     gap: var(--sp-2);
     justify-content: center;
     padding: var(--sp-2) var(--sp-3);
-    border-radius: calc(var(--r) - 0.125rem);
+    /* CONCENTRIC with .sidebar-actions: inner = outer − border − inset. This was
+       `calc(var(--r) - 0.125rem)`, which subtracted the 2px padding and forgot
+       the 1px border, so the button sat at 4px where 3px shares the row's corner
+       centre. Rule and sources: web.md "A nested rounded corner". */
+    border-radius: calc(var(--r) - 1px - 0.125rem);
     border: none;
     background: transparent;
     color: var(--c-text-primary);
@@ -127,6 +137,9 @@
     flex: 1;
     overflow-y: auto;
     overscroll-behavior: contain;
+
+    /* .sidebar-actions above matches this value as its horizontal margin so
+     the New chat row and the tabs share one left and right edge. */
     padding: var(--sp-1);
     min-height: 0;
     display: flex;
@@ -750,5 +763,47 @@
     margin-block-start: var(--sp-2);
     white-space: pre-wrap;
     word-break: break-all;
+  }
+
+  /* ========================================================================
+     THE DISCLOSURE CHEVRON — see chevron.ts for why one technique replaced
+     three. This is the whole vocabulary: the glyph is `ICON_CHEVRON_DOWN`, the
+     closed state points along the inline axis, the open state points down at the
+     body below it, and `--chev-size` is the one other knob a site turns.
+
+     Both custom properties are DECLARED here rather than left to a `var()`
+     fallback, per the no-phantom-token rule in vibekit-ui.md: a default that
+     lives only in a fallback is a literal wearing a token's name.
+
+     Declaring them on the chevron also enforces the one hazard worth naming.
+     They inherit, so setting `--chev-turn` on an ancestor (`.turn[data-folded]`,
+     say) would rotate every nested chevron inside it. A declaration on the
+     element beats an inherited value, so a site rule has no choice but to target
+     the chevron itself — which is what every one of them does.
+
+     It lives in `@layer components`, which per MANIFEST ranks BELOW every
+     unlayered feature file, so 14-tools, 29-turns, 17-settings, 22-git and
+     61-mcp each override size and colour with a bare class selector and flip
+     `--chev-turn` from whatever element carries THEIR open state. That is the
+     intended relationship, not a specificity accident.
+
+     The rotation is on this span rather than on the button some sites wrap it
+     in, so a focus ring stays axis-aligned and a hit target stays square. */
+  .disclosure-chevron {
+    --chev-turn: -90deg;
+    --chev-size: 0.875rem;
+
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    line-height: 1;
+    transform: rotate(var(--chev-turn));
+    transition: transform var(--dur-standard) var(--ease-standard);
+  }
+
+  .disclosure-chevron > svg {
+    display: block;
+    inline-size: var(--chev-size);
+    block-size: var(--chev-size);
   }
 }

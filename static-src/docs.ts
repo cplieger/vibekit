@@ -42,10 +42,10 @@ import { signal, subscribe } from "@cplieger/reactive";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
 import { pushRoute } from "./router.js";
 import type { DocsTab } from "./router.js";
-import { renderRecipesPanel } from "./recipes.js";
+import { renderRecipesPanel, setRecipeCountsListener } from "./recipes.js";
 import { setDocsTab as setTabRoute, toggleDocsView } from "./tabs.js";
-import { createSearchShell } from "./search-shell.js";
-import type { SearchShell } from "./search-shell.js";
+import { createSearchPopup } from "./search-popup.js";
+import type { SearchPopup } from "./search-popup.js";
 import { registerFind } from "./find-registry.js";
 
 /** One document row, as the server reports it. Fields are per-category and
@@ -273,20 +273,17 @@ let docs: KiroDoc[] = [];
  *  state on `hooks_changed`. */
 let hooks = new Map<string, HookState>();
 let inited = false;
-/** The metadata filter's box, and the folded query it is applying.
+/** The folded query the metadata filter is applying.
  *
  *  A FILTER, not a search: everything it matches on is already in memory, so
  *  there is no request and no truncation to report. It carries no match-case
- *  toggle for the same reason the app's other three filters
- *  (`#git-changes-filter`, `#git-prs-filter`, the branch filter) carry none —
- *  they all fold the query and the row, and a fourth that did not would be the
- *  odd one out with no user asking for it.
+ *  toggle because every filter in this app folds the query AND the row it matches
+ *  it against, so a toggle would be wired to nothing.
  *
  *  Metadata only, and stated because it bounds the answer: the inventory carries
  *  a name, a description, a path, front-matter and a hook's trigger, never a
  *  document's BODY. Searching bodies is what the file browser's recursive grep
  *  is for, one view away. */
-let docsFilter: SearchShell | null = null;
 let filterText = "";
 
 const loadDocsAction = defineAction<undefined, { docs: KiroDoc[] }>({
@@ -402,11 +399,20 @@ function initDocsView(): void {
     }
   });
   rovingFocus(bar, "[data-docs-tab]", { orientation: "horizontal" });
-  initDocsFilter();
   // Hand Ctrl-F this page's entry point. Through the LEAF registry, not the
   // dispatcher: importing find-dispatch here would drag find-in-chat and
   // scroll.ts's self-initialising singleton into this lazily-loaded page.
-  registerFind("docs", focusDocsFilter);
+  //
+  // No `available` predicate: every one of the six tabs is filterable now that
+  // Workflows narrows its recipes too, so the toolbar's magnifier always has a
+  // destination here. It used to answer `activeTab.value !== "workflows"`.
+  registerFind("docs", docsFilter);
+  // The Workflows panel owns its own rows, so it reports what the filter is
+  // showing rather than the page inferring it. Wired once, here, because the
+  // panel repaints on its own schedule (its run poll, its schedules fetch).
+  setRecipeCountsListener(({ total, shown }) => {
+    docsFilter.shell?.setNote(filterNote(total, shown));
+  });
 
   subscribe(activeTab, (tab) => {
     syncTabChrome(tab);
@@ -516,74 +522,36 @@ function filterNote(total: number, shown: number): string {
   return `${String(shown)} of ${String(total)} shown.`;
 }
 
-/** Build and mount the metadata filter. Idempotent, like the rest of init. */
-function initDocsFilter(): void {
-  if (docsFilter !== null) {
-    return;
-  }
-  const host = document.getElementById("docs-filter-host");
-  if (host === null) {
-    return;
-  }
-  docsFilter = createSearchShell<null>({
-    id: "docs-filter",
-    regionClass: "docs-filter",
-    inputClass: "docs-filter-input",
-    buttonClass: "docs-filter-btn",
-    noteClass: "docs-filter-note",
-    label: "Filter documents",
-    placeholder: "Filter by name, description or trigger\u2026",
-    inputType: "search",
-    note: true,
-    compose: ({ input, note }) => {
-      // A FUNNEL would be the honest glyph here and a magnifier would not: this
-      // narrows the inventory already on the page, unlike the History box. But
-      // the app's three existing filters carry no glyph at all, so this one
-      // matches them and stays unadorned rather than introducing a fourth
-      // convention for a control that is one of four.
-      const field = el("span", { className: "docs-filter-field" }, input);
-      return [field, note];
-    },
-    // Synchronous by nature: the inventory is already here. The filter is
-    // applied in renderActive, which is the ONE place that decides which records
-    // a tab shows, so this hands the work there rather than keeping a second
-    // copy of the decision.
-    query: (query) => {
-      filterText = query.trim().toLowerCase();
-      return null;
-    },
-    render: () => {
-      renderActive();
-    },
-    onDismiss: () => {
-      if (docsFilter === null) {
-        return;
-      }
-      // Escape on a PERMANENT box clears it rather than closing it: there is
-      // nothing to dismiss, and the History box already answers Escape this way.
-      docsFilter.input.value = "";
-      docsFilter.run();
-    },
-    onSubmit: () => {
-      docsFilter?.run();
-    },
-  });
-  host.appendChild(docsFilter.region);
-}
-
-/** Put the caret in the metadata filter. What Ctrl-F means on this page.
+/** Build and mount the metadata filter.
  *
- *  Returns false when there is nothing to focus — the box is not built yet, or
- *  the active tab is Workflows, where it is hidden — so the dispatcher can leave
- *  the chord to the browser's native find instead of swallowing it. */
-export function focusDocsFilter(): boolean {
-  initDocsFilter();
-  if (docsFilter === null || docsFilter.region.classList.contains("hidden")) {
-    return false;
-  }
-  docsFilter.focus();
-  return true;
-}
+ *  A POPUP since the search-box audit, not the permanent in-flow field it was:
+ *  the page's box now looks and behaves like the transcript's, opens from the
+ *  toolbar's magnifier or Ctrl-F, and closes on Escape — and the close clears the
+ *  query, because a hidden box holding `redis` would leave this page showing
+ *  three of forty rows with nothing on screen saying why. */
+const docsFilter: SearchPopup = createSearchPopup<null>({
+  id: "docs-filter",
+  // A FILTER, so it carries the funnel: everything it matches on is already in
+  // memory, and it can only hide rows that are here.
+  kind: "filter",
+  label: "Filter documents",
+  // Names what it reaches, and it reaches metadata only: never a document's
+  // body, which is the file browser's recursive grep one view away.
+  placeholder: "Filter by name, description or trigger\u2026",
+  note: true,
+  host: () => document.getElementById("docs-view"),
+  // Synchronous by nature: the inventory is already here. The filter is
+  // applied in renderActive, which is the ONE place that decides which records
+  // a tab shows, so this hands the work there rather than keeping a second
+  // copy of the decision.
+  query: (query) => {
+    filterText = query.trim().toLowerCase();
+    return null;
+  },
+  render: () => {
+    renderActive();
+  },
+});
 
 // --- Rendering ---
 
@@ -619,17 +587,19 @@ function renderActive(): void {
   if (container === null) {
     return;
   }
-  // The box has nothing to filter on this tab: Workflows is RPC-sourced and
-  // escapes to recipes.ts before any docs logic runs, so a visible box that did
-  // nothing would be the control this codebase refuses to ship.
-  docsFilter?.region.classList.toggle("hidden", tab === "workflows");
+  // Workflows filters too, and it reaches recipes.ts to do it. That tab is
+  // RPC-sourced and escapes before any docs logic runs, so the filter cannot be
+  // applied HERE — but "no inventory of its own" was never the same claim as
+  // "nothing to filter", and hiding the box was answering the second with the
+  // first. The panel reports its own counts through the listener wired in
+  // initDocsView, so the note reads the same on all six tabs.
   if (tab === "workflows") {
-    renderRecipesPanel(container);
+    renderRecipesPanel(container, filterText);
     return;
   }
   const all = tab === "hooks" ? hookRows() : docs.filter((d) => d.category === TAB_CATEGORY[tab]);
   const rows = filterText === "" ? all : all.filter((d) => filterHaystack(d).includes(filterText));
-  docsFilter?.setNote(filterNote(all.length, rows.length));
+  docsFilter.shell?.setNote(filterNote(all.length, rows.length));
   if (rows.length === 0) {
     // The category's empty text is a LIE under an active filter — "No steering
     // docs in .kiro/steering/." when 47 of them are one keystroke away. The

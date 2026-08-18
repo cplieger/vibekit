@@ -474,20 +474,43 @@ type SessionMode struct {
 // declared by kiro-cli's session/new response. Replaces our prior
 // shell-out to `kiro-cli chat --list-models`.
 type SessionModel struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	Description    string  `json:"description,omitempty"`
-	RateMultiplier float64 `json:"rate_multiplier,omitempty"`
-	// HasEffort reports whether this model supports a reasoning-effort level.
-	// KAS's config_option_update stamps _meta.kiro.hasEffort on each model
-	// choice (true when the model has effort levels). The model picker hides
-	// the effort row for the current model when the catalog carries
-	// has_effort:true on some model but not the current one; a catalog with no
-	// has_effort anywhere (e.g. the pre-session REST list) safely shows it. A
-	// non-effort model omits the field (client reads it as undefined), which is
-	// why the client's gate keys off "any model advertises effort" rather than
-	// a per-model false.
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// DefaultEffortLevel is the level this MODEL defaults to, from the model
+	// choice's `_meta.kiro.defaultEffortLevel`. Read off kiro-cli 2.18.0's own
+	// TUI, which resolves the same field the same way
+	// (`kasAvailableModels.find(m => m.id === currentModelId)?.defaultEffortLevel`)
+	// and labels that tier `[default]`. vibekit uses it for a chat with no
+	// session yet, where no live level exists to read. NOT persisted onto
+	// Chat.Effort: seeding a chat's CHOICE from a service default would pin it to
+	// every later session through StartOpts.Effort.
+	DefaultEffortLevel string  `json:"default_effort_level,omitempty"`
+	RateMultiplier     float64 `json:"rate_multiplier,omitempty"`
+	// HasEffort reports whether this model supports a reasoning-effort level,
+	// from `_meta.kiro.hasEffort`.
+	//
+	// **kiro-cli 2.18.0 does not stamp it** (the literal appears nowhere in the
+	// chat sidecar; measured 2026-08). So this is false on every entry, the
+	// client's gate reads that as "the catalog does not carry the capability" and
+	// shows the control anyway. The capability question is answered by
+	// Chat.EffortLevels instead — an empty list is exactly what kiro-cli's TUI
+	// treats as "Effort is not available on the current model". Kept because a
+	// catalog that DOES stamp it (another engine build) is still honoured; do not
+	// build new gating on it.
 	HasEffort bool `json:"has_effort,omitempty"`
+}
+
+// SessionEffortLevel is one reasoning-effort tier the running session offers,
+// from the `effortLevel` config option's own `options[]` (value + name).
+//
+// The tiers are NOT a fixed five and NOT a per-model list on the model choice:
+// kiro-cli 2.18.0 builds its picker from this option and errors "Effort is not
+// available on the current model" when the list is empty, so the list IS the
+// capability. Sending a tier that is absent here is a level the service rejects.
+type SessionEffortLevel struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
 }
 
 // Chat is the full persisted chat. Serialized as <dir>/<id>.json.
@@ -534,8 +557,22 @@ type Chat struct {
 	// nothing, it renders AvailableModels.
 	ServedModelIDs []string      `json:"served_model_ids,omitempty"`
 	AvailableModes []SessionMode `json:"available_modes,omitempty"`
-	Messages       []Message     `json:"messages"`
-	CurrentPlan    []PlanEntry   `json:"current_plan,omitempty"`
+	// EffortLevels is the reasoning-effort vocabulary the last session
+	// advertised, from the `effortLevel` config option's own `options[]`. A live
+	// session catalog like AvailableModels, kept beside it for the same reason:
+	// the control has to render before any frame arrives. EMPTY means the current
+	// model has no effort tiers at all, which is how kiro-cli's own TUI decides to
+	// refuse the command.
+	EffortLevels []SessionEffortLevel `json:"effort_levels,omitempty"`
+	// EffortActive is the level the session is RUNNING at, from that option's
+	// `currentValue`. Distinct from Effort, which is what this chat CHOSE: a chat
+	// that never picked has an empty Effort and still runs at a level, and
+	// rendering nothing selected is what made the control look broken. With a
+	// choice applied the two agree, and the choice is the one StartOpts.Effort
+	// carries into a later session.
+	EffortActive string      `json:"effort_active,omitempty"`
+	Messages     []Message   `json:"messages"`
+	CurrentPlan  []PlanEntry `json:"current_plan,omitempty"`
 	// PriorACPSessionIDs are the KAS sessions this chat USED to run on,
 	// oldest first. ACPSessionID is only the current one, and a chat
 	// routinely changes session: a failed session/load blanks it, a model
@@ -613,6 +650,8 @@ func (c *Chat) Header() ChatHeader {
 		Effort:              c.Effort,
 		AvailableModes:      c.AvailableModes,
 		AvailableModels:     c.AvailableModels,
+		EffortLevels:        c.EffortLevels,
+		EffortActive:        c.EffortActive,
 		Usage:               c.Usage,
 		CreatedAt:           c.CreatedAt,
 		UpdatedAt:           c.UpdatedAt,
@@ -635,11 +674,16 @@ type ChatHeader struct {
 	// client shows the model picker instead of loading messages), so the header
 	// is the only path that reaches every chat. Chat.Draft is deliberately NOT
 	// mirrored — see the comment on that field.
-	Effort              string         `json:"effort,omitempty"`
-	ID                  string         `json:"id"`
-	CompactionWatermark string         `json:"compaction_watermark,omitempty"`
-	AvailableModels     []SessionModel `json:"available_models,omitempty"`
-	AvailableModes      []SessionMode  `json:"available_modes,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	// EffortActive + EffortLevels mirror Chat's, for the same reason Effort does:
+	// the control renders from the ACTIVE chat's header, and an empty chat never
+	// fetches its full record.
+	EffortActive        string               `json:"effort_active,omitempty"`
+	EffortLevels        []SessionEffortLevel `json:"effort_levels,omitempty"`
+	ID                  string               `json:"id"`
+	CompactionWatermark string               `json:"compaction_watermark,omitempty"`
+	AvailableModels     []SessionModel       `json:"available_models,omitempty"`
+	AvailableModes      []SessionMode        `json:"available_modes,omitempty"`
 	// PriorACPSessionIDs mirrors Chat's. Carried on the header because the
 	// retention sweep derives its keep-list from header reads rather than
 	// loading every chat in full.

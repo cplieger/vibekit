@@ -6,7 +6,9 @@
 // second-press fall-through to native find, and a DECLINE that falls through
 // rather than swallowing the key.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Mock } from "vitest";
 import type { TabKind } from "./tabs.js";
+import type { PageFind } from "./find-registry.js";
 
 const chatFind = vi.fn();
 const chatToggle = vi.fn();
@@ -34,10 +36,25 @@ vi.mock("./editor-find.js", () => ({
     return editorClaims;
   },
   toggleEditorFind: () => editorToggle(),
+  editorFindAvailable: () => editorClaims,
 }));
 
-const { handleFindKey, toggleFindForActiveTab } = await import("./find-dispatch.js");
+const { handleFindKey, toggleFindForActiveTab, findAffordanceForActiveTab } =
+  await import("./find-dispatch.js");
 const { registerFind, _resetFindRegistry } = await import("./find-registry.js");
+
+/** A page find that accepts. The three-function shape is the contract every
+ *  destination answers now — the chord opens, the button toggles, and `focused`
+ *  is what separates a second press (which belongs to the browser) from a first. */
+function pageFindStub(over: Partial<PageFind> = {}): PageFind & { open: Mock; toggle: Mock } {
+  return {
+    open: vi.fn(() => true),
+    toggle: vi.fn(),
+    focused: () => false,
+    kind: () => "filter",
+    ...over,
+  } as PageFind & { open: Mock; toggle: Mock };
+}
 
 function ctrlF(): KeyboardEvent {
   return new KeyboardEvent("keydown", { key: "f", ctrlKey: true, cancelable: true });
@@ -96,28 +113,42 @@ describe("handleFindKey", () => {
     expect(filesFind).not.toHaveBeenCalled();
   });
 
-  it("focuses a registered page box on docs and history, consuming the press", () => {
-    for (const kind of ["docs", "history"] as TabKind[]) {
+  it("opens a registered page box on docs, history and git, consuming the press", () => {
+    for (const kind of ["docs", "history", "git"] as TabKind[]) {
       _resetFindRegistry();
       chatFind.mockReset();
-      const focus = vi.fn(() => true);
-      registerFind(kind, focus);
+      const find = pageFindStub();
+      registerFind(kind, find);
       activeKind = kind;
       const e = ctrlF();
       handleFindKey(e);
-      expect(focus).toHaveBeenCalledTimes(1);
+      expect(find.open).toHaveBeenCalledTimes(1);
       expect(e.defaultPrevented).toBe(true);
       expect(chatFind).not.toHaveBeenCalled();
     }
   });
 
-  it("falls through when a page box DECLINES (Workflows has no inventory to filter)", () => {
-    registerFind("docs", () => false);
-    activeKind = "docs";
+  it("falls through when a page box DECLINES (the git Sources tab filters nothing)", () => {
+    registerFind("git", pageFindStub({ open: () => false }));
+    activeKind = "git";
     const e = ctrlF();
     handleFindKey(e);
     expect(chatFind).toHaveBeenCalledTimes(1);
     expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("leaves a SECOND press to the browser, which is the escape hatch", () => {
+    // The a11y justification for overriding the chord at all: a press from inside
+    // the open box is not consumed, so native find still opens. Every other
+    // destination keeps the same hatch.
+    const find = pageFindStub({ focused: () => true });
+    registerFind("docs", find);
+    activeKind = "docs";
+    const e = ctrlF();
+    handleFindKey(e);
+    expect(find.open).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+    expect(chatFind).toHaveBeenCalledTimes(1);
   });
 
   it("falls through when a page never registered at all", () => {
@@ -127,23 +158,44 @@ describe("handleFindKey", () => {
   });
 
   it("does not reach a page box on a non-find chord", () => {
-    const focus = vi.fn(() => true);
-    registerFind("docs", focus);
+    const find = pageFindStub();
+    registerFind("docs", find);
     activeKind = "docs";
     handleFindKey(new KeyboardEvent("keydown", { key: "g", ctrlKey: true, cancelable: true }));
-    expect(focus).not.toHaveBeenCalled();
+    expect(find.open).not.toHaveBeenCalled();
   });
 
-  it("leaves every other tab kind on the chat find, which guards its own context", () => {
-    // find-in-chat already refuses unless the chat view is the active context,
-    // so the default branch cannot open a search over settings or git.
-    for (const kind of ["settings", "git", "run", "plan"] as TabKind[]) {
+  it("routes a plan tab to the transcript, which is the view it shares", () => {
+    activeKind = "plan";
+    handleFindKey(ctrlF());
+    expect(chatFind).toHaveBeenCalledTimes(1);
+    expect(filesFind).not.toHaveBeenCalled();
+  });
+
+  it("leaves the chord ALONE on a page with no search at all", () => {
+    // Settings and a run view. They used to reach the transcript's handler through
+    // the dispatcher's default branch, which declined because the chat view was
+    // hidden — the right outcome by accident, and the reason a visible magnifier
+    // sat there doing nothing. The table names them now, so nothing is offered and
+    // the chord is the browser's.
+    for (const kind of ["settings", "run"] as TabKind[]) {
       chatFind.mockReset();
       filesFind.mockReset();
       activeKind = kind;
-      handleFindKey(ctrlF());
-      expect(chatFind).toHaveBeenCalledTimes(1);
+      const e = ctrlF();
+      handleFindKey(e);
+      expect(chatFind).not.toHaveBeenCalled();
       expect(filesFind).not.toHaveBeenCalled();
+      expect(e.defaultPrevented, "native find must still open").toBe(false);
+    }
+  });
+
+  it("does nothing on the toolbar button there either, rather than half-acting", () => {
+    for (const kind of ["settings", "run"] as TabKind[]) {
+      chatToggle.mockReset();
+      activeKind = kind;
+      toggleFindForActiveTab();
+      expect(chatToggle).not.toHaveBeenCalled();
     }
   });
 
@@ -193,11 +245,14 @@ describe("toggleFindForActiveTab", () => {
   });
 
   it("reaches the same registered box the hotkey does, so button and chord agree", () => {
-    const focus = vi.fn(() => true);
-    registerFind("docs", focus);
+    // The button TOGGLES where the chord OPENS: a second click closes the box,
+    // while a second press hands the chord to the browser.
+    const find = pageFindStub();
+    registerFind("docs", find);
     activeKind = "docs";
     toggleFindForActiveTab();
-    expect(focus).toHaveBeenCalledTimes(1);
+    expect(find.toggle).toHaveBeenCalledTimes(1);
+    expect(find.open).not.toHaveBeenCalled();
     expect(chatToggle).not.toHaveBeenCalled();
   });
 
@@ -207,5 +262,64 @@ describe("toggleFindForActiveTab", () => {
       toggleFindForActiveTab();
     }).not.toThrow();
     expect(chatToggle).not.toHaveBeenCalled();
+  });
+});
+
+describe("findAffordanceForActiveTab", () => {
+  // What the toolbar's magnifier paints, and whether it is painted at all. A
+  // button that stays visible where nothing can answer it is the same dead door
+  // the routing above was written to remove — it was just the other half of it.
+  it("is available on a chat tab and on the files browser", () => {
+    for (const kind of ["chat", "plan", "files"] as TabKind[]) {
+      activeKind = kind;
+      expect(findAffordanceForActiveTab().available).toBe(true);
+    }
+  });
+
+  it("is UNAVAILABLE on a page with no search at all", () => {
+    for (const kind of ["settings", "run"] as TabKind[]) {
+      activeKind = kind;
+      expect(findAffordanceForActiveTab().available).toBe(false);
+    }
+  });
+
+  it("follows the editor's own answer about the surface", () => {
+    activeKind = "editor";
+    editorClaims = true;
+    expect(findAffordanceForActiveTab().available).toBe(true);
+    // A diff pane, an image or rendered markdown.
+    editorClaims = false;
+    expect(findAffordanceForActiveTab().available).toBe(false);
+  });
+
+  it("asks a page's own predicate, and defaults to available when it has none", () => {
+    activeKind = "git";
+    registerFind("git", pageFindStub({ available: () => false }));
+    expect(findAffordanceForActiveTab().available).toBe(false);
+    registerFind("git", pageFindStub());
+    expect(findAffordanceForActiveTab().available).toBe(true);
+  });
+
+  it("is unavailable on a page that registered nothing", () => {
+    activeKind = "docs";
+    expect(findAffordanceForActiveTab().available).toBe(false);
+  });
+
+  it("calls the three built-in finds SEARCHES, because each reaches past the viewport", () => {
+    // The transcript enumerates server-side over the whole conversation, the file
+    // browser greps the tree, and the editor scans a buffer the viewport shows a
+    // fraction of. None of the three is a filter over what is painted.
+    for (const kind of ["chat", "plan", "files", "editor"] as TabKind[]) {
+      activeKind = kind;
+      expect(findAffordanceForActiveTab().kind, kind).toBe("search");
+    }
+  });
+
+  it("takes a page's OWN word for which of the two it is", () => {
+    activeKind = "history";
+    registerFind("history", pageFindStub({ kind: () => "search" }));
+    expect(findAffordanceForActiveTab().kind).toBe("search");
+    registerFind("history", pageFindStub({ kind: () => "filter" }));
+    expect(findAffordanceForActiveTab().kind).toBe("filter");
   });
 });

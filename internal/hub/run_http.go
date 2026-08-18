@@ -208,6 +208,14 @@ func (h *Hub) handleRunRetry(w http.ResponseWriter, r *http.Request) {
 	h.runControlHandler(w, r, runVerbRetry)
 }
 
+// handleRunDelete: DELETE /api/runs/{id} — the History row's delete. Removes the
+// run from KAS (its directory included) and drops vibekit's lease, timer and
+// recorded end reason. Not recoverable, which is why it is the one run verb the
+// client confirms before sending.
+func (h *Hub) handleRunDelete(w http.ResponseWriter, r *http.Request) {
+	h.runControlHandler(w, r, runVerbDelete)
+}
+
 // handleRunStepStatus: POST /api/runs/{id}/step — mark an IN-FLIGHT step
 // completed or failed so a wedged run advances.
 //
@@ -257,6 +265,11 @@ func (h *Hub) handleRunStepStatus(w http.ResponseWriter, r *http.Request) {
 type runVerb struct {
 	name  string
 	issue func(*Hub, context.Context, string) error
+	// method is the HTTP method the verb answers. Set EXPLICITLY on every verb
+	// rather than defaulting to POST when empty: four of the five are POSTs and
+	// the fifth is a DELETE, so an implicit default would make the odd one out the
+	// only verb whose method is stated, which is the wrong way round.
+	method string
 	// from lists the statuses the verb is legal from. Empty means unrestricted.
 	from []string
 }
@@ -269,32 +282,45 @@ var (
 		// Deliberately unrestricted. Cancel is the tab-close gesture and must
 		// never be the verb that fails; KAS is idempotent on an
 		// already-terminal run (it answers ok with the previous status).
-		issue: (*Hub).CancelRun,
+		issue:  (*Hub).CancelRun,
+		method: http.MethodPost,
 	}
 	runVerbPause = runVerb{
-		name:  "pause",
-		issue: (*Hub).PauseRun,
-		from:  []string{"running"},
+		name:   "pause",
+		issue:  (*Hub).PauseRun,
+		method: http.MethodPost,
+		from:   []string{"running"},
 	}
 	runVerbResume = runVerb{
-		name:  "resume",
-		issue: (*Hub).ResumeRun,
-		from:  []string{"paused"},
+		name:   "resume",
+		issue:  (*Hub).ResumeRun,
+		method: http.MethodPost,
+		from:   []string{"paused"},
 	}
 	// Retry's window is exactly the two statuses at which a run's own bridge has
 	// already been closed, which is why RetryRun re-hosts instead of requiring
 	// one. The gate still earns its place: it turns a click on an
 	// already-restarted run into a 409 naming the status.
 	runVerbRetry = runVerb{
-		name:  "retry",
-		issue: (*Hub).RetryRun,
-		from:  []string{"failed", "aborted"},
+		name:   "retry",
+		issue:  (*Hub).RetryRun,
+		method: http.MethodPost,
+		from:   []string{"failed", "aborted"},
+	}
+	// Delete is unrestricted for the same reason cancel is, plus one of its own:
+	// it is the only way a row leaves the History page, so a status that refused
+	// it would be a row the user cannot get rid of. KAS cancels a non-terminal
+	// run itself before removing it.
+	runVerbDelete = runVerb{
+		name:   "delete",
+		issue:  (*Hub).DeleteRun,
+		method: http.MethodDelete,
 	}
 )
 
 func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
-	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+	if r.Method != verb.method {
+		api.MethodNotAllowed(w, verb.method)
 		return
 	}
 	id := r.PathValue("id")

@@ -16,6 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { chevronEl } from "../chevron.js";
 import { linkifyPaths } from "../linkify.js";
 import { iconEl } from "../icon-el.js";
 import { ICON_COPY } from "../icons.js";
@@ -82,11 +83,15 @@ export function buildTurnHeader(d: TurnHeaderData): HTMLElement {
   // The fold toggle leads the row, so the affordance sits where the eye starts
   // and is in the same place whether the turn is open or folded.
   row.appendChild(
-    el("button", {
-      className: "turn-fold-toggle",
-      type: "button",
-      "aria-label": "Expand or collapse this turn",
-    }),
+    el(
+      "button",
+      {
+        className: "turn-fold-toggle",
+        type: "button",
+        "aria-label": "Expand or collapse this turn",
+      },
+      chevronEl(),
+    ),
   );
   row.appendChild(el("span", { className: "turn-n" }, `#${String(d.n)}`));
   row.appendChild(el("span", { className: "turn-dot", role: "img" }));

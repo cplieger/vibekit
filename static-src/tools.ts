@@ -377,7 +377,12 @@ class ToolsManager {
         : name,
       el("span", { className: "list-row-meta" }, metaText(t)),
     ) as HTMLDivElement;
-    if (!t.installed && !t.installing) {
+    if (t.disabled === true) {
+      // Dimming is for a TEMPLATE (a row the user has not opted into),
+      // not for "not installed". An enabled tool that is missing or
+      // whose install failed is the row that most needs attention, and
+      // it already carries a grey or red dot plus an Install/Retry
+      // button — dimming it to tertiary text argued the opposite.
       row.classList.add("list-row-disabled");
     }
     row.appendChild(this.toolActions(t));

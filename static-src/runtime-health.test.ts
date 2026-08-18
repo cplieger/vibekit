@@ -20,7 +20,7 @@ vi.mock("./settings-highlight.js", () => ({ openSetting: mockOpenSetting }));
 const { mockShowLoginModal } = vi.hoisted(() => ({ mockShowLoginModal: vi.fn() }));
 vi.mock("./modals.js", () => ({ showLoginModal: mockShowLoginModal }));
 
-import { checkRuntimeHealth } from "./runtime-health.js";
+import { checkRuntimeHealth, runtimeStatusLine } from "./runtime-health.js";
 import { apiGetOrError } from "./api-client.js";
 import { showBanner, clearBannerCodes } from "./banner-stack.js";
 
@@ -206,5 +206,73 @@ describe("runtime-health: the sign-in family", () => {
     // Both families clear together on a healthy probe: the latch is not sticky,
     // so a recovered sign-in reports ok and the banner must not outlive it.
     expect(mockedClear).toHaveBeenCalledWith("*", ["runtime_degraded", "runtime_signed_out"]);
+  });
+});
+
+// The status card's agent-runtime line. It had no writer from the first commit
+// and rendered a literal "-" forever; these pin that it now follows the same
+// verdict the banner does, so the popup and the banner cannot disagree about
+// whether chats can start.
+describe("runtime-health: the status card's agent-runtime line", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    ["kiro-cli installing"],
+    ["kiro-cli install retrying"],
+    ["kiro-cli unavailable"],
+    ["kiro-cli required settings not enforced"],
+    ["kiro-cli some future state"],
+  ])("renders the %s reason verbatim", async (reason) => {
+    mockedGet.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      data: null,
+      error: "HTTP 503",
+      body: { status: "unready", reason },
+    });
+    await checkRuntimeHealth();
+    // Verbatim on purpose, including an unknown state: the server already
+    // phrases the reason as a status line, so a translation table here would
+    // add a second vocabulary to keep in step and would render a future state
+    // as the wrong one of today's.
+    expect(runtimeStatusLine()).toBe(reason);
+  });
+
+  it("reads ready on a healthy probe", async () => {
+    mockedGet.mockResolvedValueOnce({ ok: true, status: 200, data: { status: "ok" }, error: "" });
+    await checkRuntimeHealth();
+    expect(runtimeStatusLine()).toBe("kiro-cli ready");
+  });
+
+  it("reads signed out for the sign-in family", async () => {
+    mockedGet.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      data: null,
+      error: "HTTP 503",
+      body: { status: "unready", reason: "sign-in required" },
+    });
+    await checkRuntimeHealth();
+    expect(runtimeStatusLine()).toBe("kiro-cli signed out");
+  });
+
+  // Neither ready nor degraded, and the distinction matters: claiming "ready"
+  // here would assert something the probe never established, and reusing a
+  // degraded reason would blame kiro-cli for the server being mid-restart.
+  it.each([
+    ["a startup/shutdown 503", { status: "unready", reason: "starting up or shutting down" }],
+    ["a network failure", undefined],
+  ])("reads unknown for %s", async (_label, body) => {
+    mockedGet.mockResolvedValueOnce({
+      ok: false,
+      status: body === undefined ? 0 : 503,
+      data: null,
+      error: "unreachable",
+      ...(body === undefined ? {} : { body }),
+    });
+    await checkRuntimeHealth();
+    expect(runtimeStatusLine()).toBe("kiro-cli unknown");
   });
 });

@@ -25,6 +25,7 @@ import type {
   SteerQueuedPayload,
   SteerInjectedPayload,
   SteerClearedPayload,
+  AgentNoticePayload,
   TurnStatePayload,
   PermissionNeeded,
   ErrorPayload,
@@ -79,6 +80,10 @@ export interface SSEPayloads {
   readonly steer_queued: SteerQueuedPayload;
   readonly steer_injected: SteerInjectedPayload;
   readonly steer_cleared: SteerClearedPayload;
+  // The agent's voice on the steering channel: a workflow step or a subagent
+  // reporting progress into the session that launched it. Its own event so no
+  // consumer has to decide whose words a steer holds.
+  readonly agent_notice: AgentNoticePayload;
   readonly turn_state: TurnStatePayload;
   readonly permission_needed: PermissionNeeded;
   readonly permissions_changed: PermissionsChangedPayload;

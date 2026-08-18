@@ -102,10 +102,18 @@ func (sm *ShellManager) newHandler() *terminal.Handler {
 	return terminal.NewHandler([]string{"bash", "--login"},
 		terminal.WithWorkDir(sm.workDir),
 		// Latch the handler as spent. No client notification rides this: the
-		// engine closes the socket when the child exits, the client's own
-		// backoff loop reconnects, and that connect lands on a fresh handler
-		// via current(). So `exit` self-heals into a new prompt, which is what
-		// a browser terminal should do, and needs no new SSE event to say so.
+		// engine closes the socket when the child exits with its definitive
+		// process-exited code, and the shell panel answers that by reattaching,
+		// which lands on a fresh handler via current(). So `exit` self-heals
+		// into a new prompt, which is what a browser terminal should do, and
+		// needs no new SSE event to say so.
+		//
+		// The reattach is the CLIENT's, not the engine's: a process-exited close
+		// suppresses the engine's own backoff reconnect (reconnecting would only
+		// earn the same close on a per-session server), so this lazy swap is
+		// reachable only because static-src/shell.ts answers the end with
+		// TerminalHandle.reattach. Do not restate it here as something the
+		// engine does.
 		terminal.WithOnProcessExit(func(err error) {
 			sm.mu.Lock()
 			sm.spent = true

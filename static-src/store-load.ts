@@ -93,6 +93,11 @@ export async function loadList(): Promise<boolean> {
       available_models: h.available_models ?? [],
       supervised_mode: h.supervised_mode ?? false,
       effort: h.effort ?? "",
+      // Keep the client's live effort catalog when the header carries none: this
+      // list endpoint rebuilds a Session from a header, and blanking the tiers
+      // would empty the effort control for every chat on a refresh.
+      effort_levels: h.effort_levels ?? existing?.effort_levels ?? [],
+      effort_active: h.effort_active ?? existing?.effort_active ?? "",
       usage: h.usage,
       message_count: h.message_count,
       messages: existing?.messages ?? [],

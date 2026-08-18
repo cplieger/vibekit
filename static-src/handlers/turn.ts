@@ -23,7 +23,6 @@ import {
   clearSteers,
 } from "../store.js";
 import { notifyIfHidden, isAgentFinishedEnabled, NOTIFY_TITLE } from "../notify.js";
-import { isWatching } from "../attention.js";
 import {
   pushDecision,
   collapseSettledDecision,
@@ -42,11 +41,7 @@ import { ERROR_ROUTES, type ErrorAction } from "./error-routing.js";
 import { refreshTurnRail } from "../turn-rail.js";
 export { ERROR_ROUTES };
 
-// `isWatching` moved to attention.ts, which reads the same rule to decide whether
-// a cue is already observed — one definition, so the `turn_done` latch and the
-// out-of-page acknowledgement cannot disagree about what "looking at it" means.
-//
-// `notifyAndBadge` is gone with it. Its badge half wrote the literal 1 into
+// `notifyAndBadge` is gone. Its badge half wrote the literal 1 into
 // document.title whenever the page was hidden, which is a FLAG where the reader
 // wants a count; the attention fold carries the real number, and two writers
 // fighting over one title would make the count wrong rather than absent. The
@@ -101,15 +96,24 @@ onSSE("turn_ended", (chatID, p) => {
   dropTurnDecisions(chatID);
   // A finished turn is `done` even when the agent never said so. `completed`
   // arrives only if the model calls its status tool, so the transport's own
-  // verdict is what makes "your background chat finished" hold; tabStatusFor
-  // still prefers `completed` where it lands.
+  // verdict is what makes "the last turn finished" hold; tabStatusFor still
+  // prefers `completed` where it lands.
   //
-  // Two conditions, both narrow on purpose. A CANCELLED turn finished nothing,
-  // which is the same line the "Agent finished" notification already draws below.
-  // And a chat the reader is watching needs no mark: `done` means "finished while
-  // you were away", so it is not latched on the visible active tab at all rather
-  // than latched and immediately cleared.
-  if (p.stop_reason !== "cancelled" && !isWatching(chatID)) {
+  // ONE condition, and the second one was removed in 2026-08 (user decision):
+  // the latch used to be skipped for the chat the reader was WATCHING, on the
+  // reasoning that a green dot beside the transcript you are reading is noise.
+  // The effect was that the dot fell back to hollow `idle` at the exact moment a
+  // turn completed in front of you, so the state that means "I am done" was the
+  // one state you could never see happen. web-terminal-kiro latches its own
+  // `done` in the engine, focus-blind and cleared only by the next turn's
+  // progress state (`terminal/events.go`), and this is now the same rule.
+  // Nothing is lost on the attention side: a cue on the watched chat is
+  // acknowledged as it is observed (attention.ts `refresh`), so the title count
+  // and the favicon still ignore it.
+  //
+  // A CANCELLED turn is still not `done` — it finished nothing, which is the
+  // same line the "Agent finished" notification draws below.
+  if (p.stop_reason !== "cancelled") {
     setTurnDone(chatID);
   }
   // Re-derive the per-tab activity dot for the chat whose turn ended, even

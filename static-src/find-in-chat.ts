@@ -9,8 +9,13 @@
 // store-load.ts's PAGE SIZE — pagination, not eviction — and the wrong
 // provenance propagated out of here into a design document before it was caught.
 //
+// The WALKER itself is find-engine.ts now, shared with the editor's find over a
+// diff pane or rendered markdown — the same problem, one implementation. What
+// stays here is the transcript's own half: the server pre-pass, the counter, the
+// streaming re-run, and the popup.
+//
 // The real blind spots are three, and they are why the enumeration moves
-// server-side rather than being patched in this walker: non-resident pages;
+// server-side rather than being patched in that walker: non-resident pages;
 // resident rows whose `content-visibility: auto` makes checkVisibility report
 // false while rendering is skipped; and hidden or collapsed subtrees, which
 // progressive collapse adds a third time.
@@ -44,14 +49,9 @@ import { getActiveId } from "./store.js";
 import { BUS_TAB_CHANGED, onBus } from "./bus.js";
 import { ICON_CHEVRON_DOWN, ICON_CHEVRON_UP } from "./icons.js";
 import { createSearchShell, searchIconButton } from "./search-shell.js";
+import { FindEngine, formatCount } from "./find-engine.js";
 import type { SearchShell } from "./search-shell.js";
 import type { SearchHit } from "./chat-search.js";
-
-const HIT_CLASS = "chat-find-hit";
-const CURRENT_CLASS = "chat-find-hit-current";
-
-const TEXT_NODE = 3;
-const ELEMENT_NODE = 1;
 
 // Debounce for live re-runs while the transcript changes (streaming): large
 // enough to coalesce a burst of streamed chunks. The TYPING debounce is
@@ -59,236 +59,6 @@ const ELEMENT_NODE = 1;
 // files-search.ts with the same value and a comment in each saying so, which is
 // what a shared constant is for.
 const RERUN_DEBOUNCE_MS = 150;
-
-// ---------------------------------------------------------------------------
-// Pure helpers (exported for tests)
-// ---------------------------------------------------------------------------
-
-/** Format the match counter. 1-based for humans; "" when the query is empty,
- *  "No matches" when a non-empty query finds nothing. */
-export function formatCount(total: number, current: number, query: string): string {
-  if (query === "") {
-    return "";
-  }
-  if (total === 0) {
-    return "No matches";
-  }
-  return `${current + 1} of ${total}`;
-}
-
-/** True when `elem` (and thus its descendant text) should be searched. Prunes
- *  script/style, already-wrapped hits, structurally-hidden subtrees (hidden
- *  attr, .hidden class, aria-hidden, closed <details>), the live-streaming
- *  bubble (its markdown writer owns those nodes), and — in a real browser —
- *  anything hidden by CSS via Element.checkVisibility(). The structural checks
- *  work under happy-dom too (checkVisibility is optional and skipped there). */
-function isSearchableElement(elem: Element): boolean {
-  const tag = elem.tagName;
-  if (tag === "SCRIPT" || tag === "STYLE" || tag === "MARK") {
-    return false;
-  }
-  if (elem.hasAttribute("hidden") || elem.getAttribute("aria-hidden") === "true") {
-    return false;
-  }
-  if (elem.classList.contains("hidden")) {
-    return false;
-  }
-  // .streaming is set on the live assistant bubble AND live reasoning block.
-  if (elem.classList.contains("streaming")) {
-    return false;
-  }
-  if (tag === "DETAILS" && !(elem as HTMLDetailsElement).open) {
-    return false;
-  }
-  const cv = (elem as { checkVisibility?: (opts?: unknown) => boolean }).checkVisibility;
-  if (typeof cv === "function") {
-    return cv.call(elem, {
-      contentVisibilityAuto: true,
-      visibilityProperty: true,
-      opacityProperty: false,
-    });
-  }
-  return true;
-}
-
-/** Wrap each occurrence of `needle` (length `needleLen`) in `node` with a
- *  `<mark>`, preserving original casing. Appends created marks to `out`. Only
- *  text nodes are touched — element nodes (and their listeners) are never
- *  disturbed.
- *
- *  `needle` arrives already folded when the search is case-INSENSITIVE, so the
- *  haystack is folded to match; a case-SENSITIVE search compares both verbatim.
- *  `needleLen` is passed separately because the slice below has to come out of
- *  the ORIGINAL text either way. */
-function wrapMatchesInNode(
-  node: Text,
-  needleLen: number,
-  needle: string,
-  caseSensitive: boolean,
-  out: HTMLElement[],
-): void {
-  const text = node.nodeValue ?? "";
-  if (text === "") {
-    return;
-  }
-  const hay = caseSensitive ? text : text.toLowerCase();
-  let idx = hay.indexOf(needle);
-  if (idx < 0) {
-    return;
-  }
-  const frag = document.createDocumentFragment();
-  let last = 0;
-  while (idx >= 0) {
-    if (idx > last) {
-      frag.appendChild(document.createTextNode(text.slice(last, idx)));
-    }
-    const hit = el("mark", { className: HIT_CLASS }, text.slice(idx, idx + needleLen));
-    frag.appendChild(hit);
-    out.push(hit);
-    last = idx + needleLen;
-    idx = hay.indexOf(needle, last);
-  }
-  if (last < text.length) {
-    frag.appendChild(document.createTextNode(text.slice(last)));
-  }
-  node.parentNode?.replaceChild(frag, node);
-}
-
-/** Replace a `<mark>` with a plain text node of its content and merge adjacent
- *  text nodes so the DOM returns to its pre-highlight shape. */
-function unwrapMark(mark: HTMLElement): void {
-  const parent = mark.parentNode;
-  if (parent === null) {
-    return;
-  }
-  parent.replaceChild(document.createTextNode(mark.textContent), mark);
-  parent.normalize();
-}
-
-// ---------------------------------------------------------------------------
-// FindEngine: owns match discovery, highlighting, and step state for one root.
-// DOM-only (no scroll / overlay concerns) so it is unit-testable under happy-dom.
-// ---------------------------------------------------------------------------
-
-export class FindEngine {
-  private readonly root: HTMLElement;
-  private marks: HTMLElement[] = [];
-  private current = -1;
-  private lastQuery = "";
-
-  constructor(root: HTMLElement) {
-    this.root = root;
-  }
-
-  get total(): number {
-    return this.marks.length;
-  }
-
-  get currentIndex(): number {
-    return this.current;
-  }
-
-  get query(): string {
-    return this.lastQuery;
-  }
-
-  /** Re-highlight `query` across the root. Clears any prior highlight first.
-   *  Resets the current match to the first (index 0), or -1 when there are
-   *  none. Returns the total match count. */
-  search(query: string, caseSensitive = false): number {
-    this.clear();
-    this.lastQuery = query;
-    if (query === "") {
-      return 0;
-    }
-    const needle = caseSensitive ? query : query.toLowerCase();
-    const marks: HTMLElement[] = [];
-    for (const node of this.collectTextNodes()) {
-      wrapMatchesInNode(node, query.length, needle, caseSensitive, marks);
-    }
-    this.marks = marks;
-    this.current = marks.length > 0 ? 0 : -1;
-    this.applyCurrentClass();
-    return marks.length;
-  }
-
-  /** Remove all highlight marks and restore the original text nodes. */
-  clear(): void {
-    for (const mark of this.marks) {
-      unwrapMark(mark);
-    }
-    // Defensive sweep in case an external DOM change stranded marks we no
-    // longer track (e.g. a reconcile pass replaced a message element).
-    for (const mark of [...this.root.querySelectorAll<HTMLElement>(`mark.${HIT_CLASS}`)]) {
-      unwrapMark(mark);
-    }
-    this.marks = [];
-    this.current = -1;
-    this.lastQuery = "";
-  }
-
-  next(): void {
-    if (this.marks.length === 0) {
-      return;
-    }
-    this.current = (this.current + 1) % this.marks.length;
-    this.applyCurrentClass();
-  }
-
-  prev(): void {
-    if (this.marks.length === 0) {
-      return;
-    }
-    this.current = (this.current - 1 + this.marks.length) % this.marks.length;
-    this.applyCurrentClass();
-  }
-
-  /** Best-effort restore of the current index (used after a live re-run so the
-   *  highlight doesn't jump back to match 1 on every streamed chunk). Clamped
-   *  to the valid range; no-op when out of range. */
-  setCurrent(index: number): void {
-    if (index < 0 || index >= this.marks.length) {
-      return;
-    }
-    this.current = index;
-    this.applyCurrentClass();
-  }
-
-  currentMark(): HTMLElement | null {
-    return this.marks[this.current] ?? null;
-  }
-
-  private applyCurrentClass(): void {
-    for (let i = 0; i < this.marks.length; i++) {
-      this.marks[i]?.classList.toggle(CURRENT_CLASS, i === this.current);
-    }
-  }
-
-  private collectTextNodes(): Text[] {
-    const out: Text[] = [];
-    const visit = (node: Node): void => {
-      if (node.nodeType === TEXT_NODE) {
-        if ((node.nodeValue ?? "").length > 0) {
-          out.push(node as Text);
-        }
-        return;
-      }
-      if (node.nodeType !== ELEMENT_NODE) {
-        return;
-      }
-      if (!isSearchableElement(node as Element)) {
-        return;
-      }
-      for (const child of node.childNodes) {
-        visit(child);
-      }
-    };
-    for (const child of this.root.childNodes) {
-      visit(child);
-    }
-    return out;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Overlay controller (module singleton) — wires the FindEngine to the live
@@ -366,7 +136,7 @@ function ensureBuilt(): void {
   // through `compose` as ordinary controls rather than becoming shell features.
   const built = createSearchShell<SearchHit[]>({
     id: "chat-find",
-    regionClass: "chat-find uip-popup",
+    regionClass: "chat-find search-pop uip-popup",
     inputClass: "chat-find-input",
     buttonClass: "chat-find-btn",
     caseClass: "chat-find-case",
@@ -481,11 +251,21 @@ function ensureBuilt(): void {
     },
   });
 
-  // A tab switch CLOSES the search rather than hiding it. Subscribed here, once,
+  // A tab switch CLOSES the search and FORGETS the query. Subscribed here, once,
   // at build time; the unsubscribe exists so a rebuilt module cannot stack two.
+  //
+  // Closing alone left the box pre-filled, and `openFindInChat` runs on open — so
+  // the next chat's find opened holding the previous chat's query and immediately
+  // searched a transcript that query was never typed against. Dropping it on the
+  // switch and NOT on an ordinary close is the useful split: reopening the find on
+  // the same chat still remembers what you were looking for, which is what the
+  // browser's own find does.
   unsubTab?.();
   unsubTab = onBus(BUS_TAB_CHANGED, () => {
     closeChatFind();
+    if (shell !== null) {
+      shell.input.value = "";
+    }
   });
 }
 

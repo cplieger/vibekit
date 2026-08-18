@@ -86,6 +86,10 @@ class ScrollController {
 
   private rafPending = false;
 
+  /** Last value written to `--scrollbar-w`, so a resize storm costs at most one
+   *  style invalidation. */
+  private scrollbarWidth = "";
+
   constructor(messagesEl: HTMLElement, scrollEl: HTMLElement) {
     this.messagesEl = messagesEl;
     this.scrollEl = scrollEl;
@@ -93,6 +97,16 @@ class ScrollController {
 
   init(): void {
     const scrollBtn = $.scrollBottom;
+
+    // The transcript's scrollbar belongs in the gutter, not in the measure the
+    // column and the composer share: a classic bar is placed at the scroller's
+    // inline-end border edge and takes its width out of the CONTENT box, so
+    // `#messages` centred inside sits half a scrollbar left of `.prompt-box`
+    // unless the scroller gives that width back. `scrollbar-gutter: stable`
+    // (css/13-messages.css) makes this reading valid whether or not the transcript
+    // overflows, and that file's END inset is what subtracts it.
+    this.publishScrollbarWidth();
+
     this.scrollEl.addEventListener(
       "scroll",
       () => {
@@ -132,6 +146,14 @@ class ScrollController {
     });
 
     const resizeObserver = new ResizeObserver(() => {
+      // Re-measured here rather than on `window.resize`: this fires AFTER layout
+      // and only when the scroller's content box actually moved, which is exactly
+      // when the reserved gutter can have changed (browser zoom moves its width in
+      // CSS pixels; a classic bar swapped for an overlay one frees all 10px). A
+      // window listener read the pre-relayout value and left the bar reserving a
+      // strip that no longer existed. `stable` means overflow alone never resizes
+      // this box, so streaming costs no extra writes.
+      this.publishScrollbarWidth();
       this.autoScrollIfAnchored();
     });
     resizeObserver.observe(this.scrollEl);
@@ -154,6 +176,20 @@ class ScrollController {
     reobserveChildren();
     const childObserver = new MutationObserver(reobserveChildren);
     childObserver.observe(this.messagesEl, { childList: true });
+  }
+
+  /** Write the scroller's reserved gutter to `--scrollbar-w` — the width its own
+   *  inline-END inset gives back so the scrollbar lands in the gutter rather than
+   *  in the measure the column shares with the composer. Reads the real element
+   *  rather than a probe div, so the number is the gutter actually reserved on the
+   *  box being compensated. */
+  private publishScrollbarWidth(): void {
+    const next = `${String(this.scrollEl.offsetWidth - this.scrollEl.clientWidth)}px`;
+    if (next === this.scrollbarWidth) {
+      return;
+    }
+    this.scrollbarWidth = next;
+    document.documentElement.style.setProperty("--scrollbar-w", next);
   }
 
   // --- Public API ---

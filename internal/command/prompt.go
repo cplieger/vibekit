@@ -83,6 +83,15 @@ func callPromptWithRetry(ctx context.Context, sb Bridge, params map[string]any, 
 
 // recoverEmptyTurn handles empty turn recovery: recreate session and retry.
 func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, p *api.PromptCommand, params map[string]any) *api.RPCResponse { //nolint:revive // context-as-argument: dispatcher handler signature
+	// A verb KAS answers itself produces no content BY DESIGN, so an empty turn
+	// is the correct outcome and recovery is pure damage: it would close the
+	// bridge the launched run is parented on, detach the session, badge the turn
+	// interrupted, and re-send the verb — a second run for one request. Checked
+	// before IsEmptyTurn because the buffer state is genuinely empty here; the
+	// prompt TEXT is the only thing that distinguishes expected from broken.
+	if kasClaimsPromptText(p.Text) {
+		return resp
+	}
 	if !deps.IsEmptyTurn(resp, chatID) {
 		return resp
 	}
@@ -100,9 +109,14 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	}); err != nil {
 		slog.Error("empty turn: clear session ID", "chat_id", chatID, keyError, err)
 	}
+	// Content is what the boundary divider RENDERS (messages-events.ts gives
+	// `interrupted` a labelFn), so this is the user-facing account of why the
+	// turn stopped. The other writer of this event, AbandonInFlightTurn, leaves
+	// it empty on purpose: a failed prompt already sends its reason as an error
+	// frame, and the divider falls back to the generic label.
 	evt := api.Message{
 		ID: ids.NewMessageID(), Role: api.RoleEvent, Ts: time.Now().UnixMilli(),
-		EventKind: api.EventInterrupted, Content: "Session refreshed, retrying...",
+		EventKind: api.EventInterrupted, Content: "Session refreshed, retrying",
 	}
 	if err := deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("empty turn: append event", "chat_id", chatID, keyError, err)

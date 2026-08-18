@@ -20,9 +20,9 @@ import {
   activeSession,
   removeChat,
   tabStatusFor,
-  clearTurnDone,
   markGhostChat,
   isGhostChat,
+  isEmptyChat,
 } from "./store.js";
 import { loadList, loadMessages } from "./store-load.js";
 import { effect, el } from "@cplieger/reactive";
@@ -42,7 +42,6 @@ import { hasPendingDecision, dropDecisions } from "./decision-dock.js";
 import { submitPrompt } from "./submit.js";
 import { chatSkeleton } from "./skeleton.js";
 import { skeletonTiming } from "@cplieger/ui-primitives/skeleton";
-import { showModelPicker, hideModelPicker } from "./picker.js";
 import { mountChatView, setLoadMore, scrollToBottom, loadTurnRail } from "./messages.js";
 import { addAttachment } from "./attachments.js";
 import {
@@ -54,7 +53,6 @@ import {
 } from "./composer-state.js";
 import { setCurrentModel, getLastModel } from "./session-context.js";
 import { labelForMode } from "./roles.js";
-import { applyLocalModel } from "./model-switcher.js";
 import { refreshContextUI } from "./context-ui.js";
 import { $ } from "./dom.js";
 import { onBus, BUS_ACTIVATE_CHAT } from "./bus.js";
@@ -63,7 +61,6 @@ import {
   closeChat as closeChatAction,
   deleteChat as deleteChatAction,
   forkChat,
-  resumeSession,
   setMode,
 } from "./actions/chat.js";
 
@@ -162,17 +159,31 @@ function deleteChat(id: string): void {
   void deleteChatAction.dispatch(id);
 }
 
+// --- Activation generation ---
+
+/** Bumped by every activateChatView call.
+ *
+ *  Two activations for one chat are ordinary: the History page opens the tab
+ *  (openChatTab → onShow → activateChatView) and openPreviousSession activates it
+ *  again, and a user can switch away and back while a fetch is in flight.
+ *  store-load keys its abort controller by chat id, so the newer fetch ABORTS the
+ *  older one, and loadMessages reports an abort the same way it reports a failure.
+ *  Without this guard the superseded activation painted its retry box, so opening
+ *  a previous chat showed "Failed to load messages." beside the transcript that
+ *  had just loaded fine.
+ *
+ *  It completes the `getActiveId() !== id` check beside it rather than adding a
+ *  second mechanism: that one catches a newer activation of a DIFFERENT chat, this
+ *  one catches a newer activation of the SAME chat. */
+let activationGen = 0;
+
 function activateChatView(id: string): void {
   // Save-then-restore against the shared composer, the same pair activateFile
   // runs against the shared editor textarea. The save MUST precede setActive:
   // it reads the outgoing chat's id, which nothing can recover afterwards.
   saveComposerState();
-  // Opening the chat is what settles a `done` dot: the mark means "this finished
-  // while you were away", so arriving is the event that answers it. The store
-  // effect below re-derives the dot off this write, so no explicit repaint.
-  clearTurnDone(id);
+  const gen = ++activationGen;
   setActive(id);
-  hideModelPicker();
   restoreComposerState(id);
   ensureBound();
   const session = get(id);
@@ -187,8 +198,9 @@ function activateChatView(id: string): void {
     setModel(id, session.model);
   }
 
-  if (session.message_count === 0 && session.messages.length === 0) {
-    showModelPicker(session.model, applyLocalModel);
+  if (isEmptyChat(session)) {
+    // The picker shows itself: its visibility is an effect over this same
+    // predicate (picker.ts bindVisibility). Only the draft is this branch's.
     seedEmptyChatDraft(id);
   } else {
     // Hydrate messages from the server, then render. Defer the skeleton by
@@ -205,7 +217,7 @@ function activateChatView(id: string): void {
     });
     void loadMessages(id).then((ok) => {
       skeleton.cancel();
-      if (getActiveId() !== id) {
+      if (getActiveId() !== id || activationGen !== gen) {
         return;
       }
       if (!ok) {
@@ -307,8 +319,14 @@ function setupLoadMore(chatID: string): void {
 
 // --- Sending prompts ---
 
+/** Send from the composer.
+ *
+ *  This used to hide the model picker first, which is why every OTHER sender
+ *  (the goal row, the tangent row) left the overlay up: the hide lived on one
+ *  path instead of on the state. `submitPrompt` sets `thinking` synchronously,
+ *  and the picker's own effect keys on it, so the overlay closes for every
+ *  sender now without this function knowing the picker exists. */
 export function sendPrompt(text: string): void {
-  hideModelPicker();
   const chatID = getActiveId();
   if (chatID === "") {
     return;
@@ -363,7 +381,10 @@ function seedLocalChat(model: string): string {
 }
 
 /** Create a new chat. If initialPrompt is non-empty, send it immediately.
- *  Otherwise open the model picker and wait for the user to type. */
+ *
+ *  Nothing shows the picker here: `setActive` on a chat with no messages is
+ *  already the condition its effect watches, and sending a prompt sets
+ *  `thinking`, so both arms of this branch are covered by the same derivation. */
 export function createSession(initialPrompt?: string): void {
   const model = getLastModel();
   const id = seedLocalChat(model);
@@ -373,8 +394,6 @@ export function createSession(initialPrompt?: string): void {
   if (initialPrompt !== undefined && initialPrompt !== "") {
     setCurrentModel(model);
     sendPrompt(initialPrompt);
-  } else {
-    showModelPicker(model, applyLocalModel);
   }
 }
 
@@ -444,39 +463,41 @@ export function attachPathToActiveChat(path: string): void {
 
 /** Open a session the previous-session picker listed.
  *
- *  Two paths, and the difference is whether vibekit already knows the session:
+ *  Every row the picker offers is a TAB CONVERSATION: the server lists a session
+ *  only when a vibekit chat claims it (`toResumable`), so `chat_id` is always
+ *  present and opening a row is just opening that chat.
  *
- *    - `chat_id` set: a chat already owns it (possibly as a RETIRED id in its
- *      chain), so this is just opening that chat. Adopting it again would
- *      create a second chat pointing at one session.
- *    - no `chat_id`: the session is KAS's alone — started from the TUI, or its
- *      chat was deleted while retention kept the session. Adopt it as a new
- *      chat bound to that session id; the transcript then arrives from the
- *      session/load replay, so nothing is copied here.
- *
- *  The adopting client opens and activates the tab itself: the server
- *  broadcasts a generic chat_created to every client, and none of the others
- *  should auto-open a tab. */
+ *  The ADOPTION path is gone with the unclaimed rows that reached it. It ran
+ *  `resume_session` on a session vibekit did not own, and every instance a user
+ *  actually met was vibekit's own utility-bridge session: the adopted chat had no
+ *  user turn to replay, so the page rendered blank and an empty chat was left
+ *  behind. `resumeSession` itself stays — it is the command a future explicit
+ *  "adopt a session" affordance would use, and it is still the only way a session
+ *  vibekit does not own can become a chat. */
 export function openPreviousSession(row: ResumableSessionRow): void {
-  if (row.chat_id !== undefined && row.chat_id !== "") {
-    const existing = get(row.chat_id);
-    openChatTab(row.chat_id, existing?.name ?? row.title);
-    activateChatView(row.chat_id);
+  const chatID = row.chat_id ?? "";
+  if (chatID === "") {
     return;
   }
-  const chatID = `c-${String(Date.now())}-${Math.random().toString(36).slice(2, 8)}`;
-  void resumeSession.dispatch(
-    { chatID, sessionID: row.session_id, name: row.title },
-    {
-      onSuccess: () => {
-        void loadList().then(() => {
-          const s = get(chatID);
-          openChatTab(chatID, s?.name ?? row.title);
-          activateChatView(chatID);
-        });
-      },
-    },
-  );
+  const existing = get(chatID);
+  if (existing === undefined) {
+    // The store holds no row for this chat, which is the ORDINARY case for the
+    // thing this page exists to do: closing a tab calls removeChat, so a chat
+    // closed in this browser session is gone from the store while its file
+    // survives on the server. `loadList` puts it back before anything reads it.
+    //
+    // Required, not defensive. activateChatView returns early on a missing row
+    // and loadMessages refuses to write into one, so activating first renders an
+    // empty chat view and stops — the same blank page as the ghost-row bug,
+    // reached from the other side. Only a reconnect's own loadList hid it.
+    void loadList().then(() => {
+      openChatTab(chatID, get(chatID)?.name ?? row.title);
+      activateChatView(chatID);
+    });
+    return;
+  }
+  openChatTab(chatID, existing.name);
+  activateChatView(chatID);
 }
 
 /** Create a new chat pre-set to the "plan" workflow mode — the share-target

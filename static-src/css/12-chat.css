@@ -16,12 +16,14 @@
 }
 
 .chat-toolbar {
+  --toolbar-gap: 0.125rem;
+
   position: absolute;
   top: calc(var(--sp-3) + env(safe-area-inset-top, 0));
   right: var(--sp-3);
   display: flex;
   align-items: center;
-  gap: 0.125rem;
+  gap: var(--toolbar-gap);
   z-index: 10;
   background: var(--c-bg-secondary);
   border: 1px solid var(--c-border);
@@ -34,12 +36,77 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: calc(var(--r) - 0.125rem);
+    /* CONCENTRIC with the toolbar: inner = outer − border − inset. This was
+       `calc(var(--r) - 0.125rem)`, which subtracted the padding and forgot the
+       1px border, so the buttons sat at 4px where 3px shares the toolbar's
+       corner centre. Rule and sources: web.md "A nested rounded corner". */
+    border-radius: calc(var(--r) - 1px - 0.125rem);
   }
 
   & .mobile-only {
     display: none;
   }
+}
+
+/* ==========================================================================
+   A toolbar button with no destination collapses, and the bar shrinks with it.
+
+   `#find-btn` is the one member: find-dispatch.ts's DESTINATION table says which
+   tab kinds have nothing to search — `/settings`, `/run/{id}`, the git view's
+   Sources tab, and an editor tab showing a diff, an image or rendered markdown —
+   and app.ts writes this class from that answer.
+
+   NOT the `.hidden` utility, which is `display: none !important` (40-a11y.css):
+   `display` is discrete, so the button would vanish in one frame and the bar's
+   width would jump. The dock makes the same choice for the same reason
+   (26-dock.css) and collapses a live element instead. Here the axis is inline,
+   and the toolbar is a right-anchored floating pill whose width follows its
+   content, so collapsing the item IS the bar shrinking — nothing has to animate
+   the bar itself.
+
+   THREE THINGS MUST GO TO ZERO, not one. The box (`inline-size`, and
+   `min-inline-size` because the rule above sets a floor of `--btn-h` that would
+   otherwise hold the width open), the ink (`opacity`), and the GAP the item is
+   still entitled to as a flex child — `gap` is drawn between items whatever their
+   width, so a zero-width button still costs 2px. `--toolbar-gap` is named once
+   and consumed twice, by the `gap` above and by the negative margin here, so the
+   two cannot drift.
+
+   `visibility: hidden` is what takes the button out of the tab order and the
+   accessibility tree, and it is transitioned deliberately rather than applied at
+   once: when either endpoint is `visible`, the property holds `visible` for the
+   whole duration and flips only at the end, so the fade plays out and THEN the
+   control stops existing for a keyboard or a screen reader. A zero-width
+   transparent button that still took focus would be the worst of both.
+
+   The transition list names `transform`, `background` and `color` as well, and
+   that is the trap 03-base.css documents: `:where(…):active` scores (0,1,0) and
+   is unlayered, so a more specific unlayered rule TAKES the whole `transition`
+   property from it. Dropping those three would leave the press scale and the
+   hover wash snapping on every toolbar button, not just this one.
+   ========================================================================== */
+
+.chat-toolbar > .icon-btn {
+  overflow: hidden;
+  transition:
+    opacity var(--dur-exit) var(--ease-exit),
+    inline-size var(--dur-exit) var(--ease-exit),
+    min-inline-size var(--dur-exit) var(--ease-exit),
+    margin-inline-start var(--dur-exit) var(--ease-exit),
+    visibility var(--dur-exit) var(--ease-exit),
+    transform var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro),
+    color var(--dur-micro) var(--ease-standard);
+}
+
+.chat-toolbar > .icon-btn.is-collapsed {
+  visibility: hidden;
+  opacity: 0;
+  inline-size: 0;
+  min-inline-size: 0;
+  padding-inline: 0;
+  margin-inline-start: calc(-1 * var(--toolbar-gap));
+  pointer-events: none;
 }
 
 .toolbar-title {

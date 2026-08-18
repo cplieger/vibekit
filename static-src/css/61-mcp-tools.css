@@ -195,43 +195,21 @@
   margin-left: 0.4rem;
 }
 
-/* Reasoning / thought blocks (collapsible, dimmed) */
-.reasoning-block {
-  border-left: 2px solid var(--c-accent);
-  padding-left: 0.75rem;
-  opacity: 0.7;
-  margin: var(--sp-2) 0;
+/* Reasoning / thought blocks: the BLOCK and its summary are styled in
+   13-messages.css (`.reasoning-block`, `.reasoning-summary`, `.reasoning-body`).
+   A duplicate set lived here — `.reasoning-block` with its own accent
+   border-left + `padding-left: 0.75rem` + opacity + margin, plus a
+   `.reasoning-block summary` copy of `.reasoning-summary` and a
+   `.reasoning-content` rule for a class no builder has ever emitted (the trace
+   element is `.reasoning-body`). Later source order made the block rule win, so
+   a trace carried two bars 14px apart and its text sat 12px right of the prose.
+   Only the chevron sizing belongs here. */
+.reasoning-summary > .disclosure-chevron {
+  --chev-size: 0.75rem;
 }
 
-.reasoning-block summary {
-  cursor: pointer;
-  font-style: italic;
-  color: var(--c-text-secondary);
-  font-size: var(--fs-sm);
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-
-.reasoning-block summary::before {
-  content: "▸";
-  display: inline-block;
-  transition: transform var(--dur-micro) var(--ease-standard);
-}
-
-.reasoning-block[open] summary::before {
-  transform: rotate(90deg);
-}
-
-.reasoning-content {
-  max-height: 300px;
-  overflow-y: auto;
-  font-size: var(--fs-sm);
-  color: var(--c-text-secondary);
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-  padding: var(--sp-2) 0;
+.reasoning-block[open] .reasoning-summary > .disclosure-chevron {
+  --chev-turn: 0deg;
 }
 
 /* Tool duration badge */
@@ -247,10 +225,16 @@
 
 /* Turn actions: single row below the assistant bubble. Left slot
  * holds the turn summary (credits + elapsed); right slot holds the
- * faded copy/export icon buttons. Always visible but muted; hover
- * lifts opacity a notch. Styled to harmonise with the checkpoint
- * line above (both are thin, muted rows of chrome bracketing a
- * turn). */
+ * copy/export icon buttons. Muted at rest; hover steps the ink up.
+ * Styled to harmonise with the checkpoint line above (both are thin,
+ * muted rows of chrome bracketing a turn).
+ *
+ * MUTED BY INK, not by `opacity`. It was `opacity: 0.7` over the hint ink,
+ * which measured 3.088:1 dark / 2.742:1 light on the card — under AA for an
+ * 11px row, and invisible to both contrast gates because one reads the token
+ * graph and the other the stylesheet. The hint ink alone is 4.771 / 4.719 and
+ * looks near-identical; hover lifts the INK instead of the layer, which is what
+ * the child buttons already do for their own hover. */
 .turn-actions {
   display: flex;
   align-items: center;
@@ -259,13 +243,12 @@
   margin-block-end: var(--sp-2);
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
-  opacity: 0.7;
-  transition: opacity var(--dur-micro) var(--ease-standard);
+  transition: color var(--dur-micro) var(--ease-standard);
 }
 
 .turn-actions:hover,
 .msg-wrap-assistant:hover .turn-actions {
-  opacity: 1;
+  color: var(--c-text-secondary);
 }
 
 .turn-actions-summary {
@@ -284,6 +267,13 @@
   flex-shrink: 0;
 }
 
+/* NO resting `opacity`. It was 0.6, and it COMPOUNDED with the row's own 0.7 for
+   an effective 0.42: the copy and export glyphs measured 1.967:1 dark / 1.742:1
+   light against the card, the lowest ratio anywhere in the app and well under the
+   3:1 WCAG 1.4.11 asks of a meaningful graphic. Two stacked multipliers is also
+   why neither contrast gate could report it: each rule looked reasonable alone.
+   The glyph inherits the row's ink (4.771 / 4.719) and hover keeps its own ink
+   and fill lift, which is the whole affordance. */
 .turn-action-btn {
   display: inline-flex;
   align-items: center;
@@ -296,32 +286,24 @@
   border-radius: var(--r);
   color: inherit;
   cursor: pointer;
-  opacity: 0.6;
   transition:
-    opacity var(--dur-micro) var(--ease-standard),
     background var(--dur-micro) var(--ease-standard),
     color var(--dur-micro) var(--ease-standard);
 }
 
 .turn-action-btn:hover {
-  opacity: 1;
   background: var(--c-hover);
   color: var(--c-text-primary);
 }
 
 .turn-action-btn.copied {
-  opacity: 1;
   color: var(--c-green);
 }
 
-/* A LATCHED action rather than a momentary one: the raw-source toggle stays on
-   until it is pressed again, so it has to look pressed. The other buttons in the
-   row carry no aria-pressed and are unaffected. */
-.turn-action-btn[aria-pressed="true"] {
-  /* Fill, edge and ink: 70-selection.css. This latch also cancels the row's
-     resting dim, which is local to it. */
-  opacity: 1;
-}
+/* The latched raw-source toggle takes its fill, edge and ink from
+   70-selection.css. The rule that used to sit here carried `opacity: 1` and
+   nothing else — it existed only to cancel the row's resting dim, and that dim
+   is gone. */
 
 /* The .checkpoint-line dashed separator and its .checkpoint-rewind button are
  * GONE. A turn no longer needs a rule drawn between itself and its neighbour —
@@ -455,11 +437,21 @@
 /* Hit target minimum: 24px desktop, 44px mobile (Vercel guidelines).
    The conflict / diff-hunk / ask buttons are included so the primary conflict
    and per-hunk actions clear the touch-target floor — from their own tiny
-   padding they render well under 24px otherwise. */
+   padding they render well under 24px otherwise.
+
+   Two DIFFERENT controls are named here and they are not the same object:
+   `.tool-disclosure` is the transcript's chevron button and `.tool-toggle` is
+   the Tools settings row switch. Until the chevron was renamed they shared one
+   class, which is how a `min-height` floor came to inflate a switch track sized
+   2.25rem by 1.25rem (measured 36x24 desktop, 44x44 on a phone) — the tall grey
+   pill a comment in 14-tools.css believes it deleted. Kept for now so the switch
+   still clears the floor; the design-correct answer is a hit-target pseudo on
+   the track, which needs a taller `.list-row` (32px today) to sit in. */
 :where(
   .icon-btn,
   .shell-header-btn,
   .chip-remove,
+  .tool-disclosure,
   .tool-toggle,
   .action-pill,
   .pill,
@@ -477,6 +469,7 @@
     .icon-btn,
     .shell-header-btn,
     .chip-remove,
+    .tool-disclosure,
     .tool-toggle,
     .action-pill,
     .pill,
@@ -488,80 +481,6 @@
     min-width: 44px;
     min-height: 44px;
   }
-}
-
-/* Sidebar history section (archived chats) */
-.sidebar-history {
-  padding: 0 var(--sp-2);
-}
-
-.sidebar-history-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-  width: 100%;
-  background: none;
-  border: none;
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-xs);
-  padding: var(--sp-1) var(--sp-2);
-  cursor: pointer;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.sidebar-history-toggle:hover {
-  color: var(--c-text-secondary);
-}
-
-.sidebar-history-count {
-  font-size: 0.5rem;
-  background: var(--c-bg-tertiary);
-  border-radius: var(--r-md);
-  padding: 0 0.25rem;
-  min-width: 0.875rem;
-  text-align: center;
-}
-
-.sidebar-history-list {
-  padding: 0 var(--sp-1);
-}
-
-.history-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--sp-1) var(--sp-2);
-  font-size: var(--fs-sm);
-  border-radius: var(--r);
-  gap: var(--sp-2);
-}
-
-.history-row:hover {
-  background: var(--c-hover);
-}
-
-.history-name-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow: hidden;
-  flex: 1;
-}
-
-.history-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--c-text-secondary);
-}
-
-.history-summary {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--c-text-tertiary);
-  font-size: var(--fs-xs);
 }
 
 /* Shared summary style for history table rows. Lives under the name
@@ -580,22 +499,6 @@
   white-space: nowrap;
   color: var(--c-text-tertiary);
   font-size: var(--fs-xs);
-}
-
-.history-restore {
-  font-size: var(--fs-xs);
-  color: var(--c-accent);
-  background: none;
-  border: 1px solid var(--c-accent);
-  border-radius: var(--r-sm);
-  padding: 1px var(--sp-1);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background var(--dur-micro) var(--ease-standard);
-}
-
-.history-restore:hover {
-  background: color-mix(in srgb, var(--c-accent) 12%, transparent);
 }
 
 /* Tool error explanation button + result */

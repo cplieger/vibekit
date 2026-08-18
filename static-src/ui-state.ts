@@ -21,14 +21,6 @@ export interface UIState {
   shell_open: boolean;
   /** User-dragged shell panel height in px; 0 = use the CSS default (16rem). */
   shell_h: number;
-  /** User-dragged composer CEILING in px; 0 = use the CSS default (12.5rem).
-   *
-   *  A ceiling and not a height: the textarea auto-grows with its content
-   *  (`field-sizing: content`), so pinning a height would make a one-line
-   *  message occupy the dragged size. Per-device beside shell_h and for the same
-   *  reason — how much of a phone screen the message box should take is not a
-   *  claim about the person. */
-  composer_h: number;
   editor_files: string[];
   fb_path: string;
   theme: "dark" | "light" | "system" | null;
@@ -47,7 +39,6 @@ function empty(): UIState {
     active_view: "",
     shell_open: false,
     shell_h: 0,
-    composer_h: 0,
     editor_files: [],
     fb_path: "",
     theme: null,
@@ -88,14 +79,6 @@ function sanitize(d: unknown): UIState {
       typeof o["shell_h"] === "number" && Number.isFinite(o["shell_h"]) && o["shell_h"] >= 0
         ? o["shell_h"]
         : e.shell_h,
-    // Its own leg, not a spread: a non-finite height reaching the sizing math is
-    // exactly the class of bug this field-by-field validation exists for.
-    composer_h:
-      typeof o["composer_h"] === "number" &&
-      Number.isFinite(o["composer_h"]) &&
-      o["composer_h"] >= 0
-        ? o["composer_h"]
-        : e.composer_h,
     editor_files: strArray(o["editor_files"]) ?? e.editor_files,
     fb_path: typeof o["fb_path"] === "string" ? o["fb_path"] : e.fb_path,
     // "system" is a real stored CHOICE, not the absence of one: it means the

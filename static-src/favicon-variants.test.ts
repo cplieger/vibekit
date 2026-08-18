@@ -25,9 +25,9 @@ import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
 /** One entry per cue, and each field pins a different link in the chain the
  *  generator walks.
  *
- *  `token` + `oklch` are what the generator is HANDED: vibekit has no --status-*
- *  family, so its APPS entry names these three tab-dot tokens by their oklch
- *  parameters (.kiro/scripts/gen-attention-icons.py). `fill` is
+ *  `token` + `oklch` are what the generator is HANDED: its APPS entry names these
+ *  three tab-dot tokens by their oklch parameters
+ *  (.kiro/scripts/gen-attention-icons.py). `fill` is
  *  what it WRITES — the sRGB hex those parameters resolve to, which is the only
  *  form an SVG fill can carry.
  *
@@ -38,31 +38,35 @@ import { loadCSS, ruleContaining } from "./__test-helpers__/css-rules.js";
  *  conversion itself is deliberately NOT reimplemented here — porting a colour
  *  space into a test would make the test the thing most likely to be wrong.
  *
- *  `state` and `shape` are the other half of the agreement, added when the cue
- *  inks were aligned with @cplieger/web-terminal-ui's --status-* hues: a cue
- *  stands for one TAB DOT STATE, so the assertions below read that state's own
- *  rule out of 12-tabs.css rather than restating what it should be. `alert` is a
- *  diamond because `failed` is one, and `failed` is one because it and `done`
- *  were otherwise separable by hue alone. */
+ *  `state` and `shape` are the other half of the agreement: a cue stands for one
+ *  TAB DOT STATE, so the assertions below read that state's own rule out of
+ *  12-tabs.css rather than restating what it should be. `alert` is a diamond
+ *  because `failed` is one, and `failed` is one because it and `done` were
+ *  otherwise separable by hue alone.
+ *
+ *  The three values are web-terminal-kiro's own --status-* overrides, adopted in
+ *  2026-08 (see the --c-dot-* block in 01-tokens.css). `input` and `done` are its
+ *  literal declarations; `alert` keeps its hue and moves in L, because #dc2626 is
+ *  invisible on this app's hovered sidebar row. */
 const CUES = {
   input: {
-    token: "--c-orange",
-    oklch: "oklch(81% 0.125 55.9deg)",
-    fill: "#feab6e",
+    token: "--c-dot-input",
+    oklch: "oklch(78% 0.15 95deg)",
+    fill: "#d6b529",
     state: "input",
     shape: "circle",
   },
   done: {
-    token: "--c-green",
-    oklch: "oklch(85.8% 0.109 142.7deg)",
-    fill: "#a6e3a1",
+    token: "--c-dot-done",
+    oklch: "oklch(78% 0.15 150deg)",
+    fill: "#67d283",
     state: "done",
     shape: "circle",
   },
   alert: {
-    token: "--c-red",
-    oklch: "oklch(75.6% 0.13 2.8deg)",
-    fill: "#f38ba8",
+    token: "--c-dot-failed",
+    oklch: "oklch(70% 0.125 27.3deg)",
+    fill: "#e27e73",
     state: "failed",
     shape: "diamond",
   },
@@ -220,10 +224,9 @@ describe("attention favicon variants", () => {
     // The icon and the dot are two renderings of ONE signal, so a cue's shape is
     // read out of the state's CSS rather than restated here. `failed` spends a
     // shape because it and `done` are both settled solid marks with only hue
-    // between them (4.145:1 vs 4.490:1 in light, Y 0.150 vs 0.134), which is a
-    // WCAG 1.4.1 failure; the icon carried a circle for it anyway until 2026-08,
-    // so the one pair where confusing the two matters most was re-merged on the
-    // surface a user glances at without looking.
+    // between them, which is a WCAG 1.4.1 failure; the icon carried a circle for it
+    // anyway until 2026-08, so the one pair where confusing the two matters most
+    // was re-merged on the surface a user glances at without looking.
     const tabs = loadCSS("12-tabs.css");
     for (const variant of VARIANTS) {
       const { state, shape } = CUES[variant];
@@ -251,8 +254,10 @@ describe("attention favicon variants", () => {
     if (svg === null) {
       return;
     }
-    const badges = [...svg.matchAll(/<(?:circle|path)[^>]*fill="#feab6e"/g)];
-    expect(badges, "favicon-input.svg must carry exactly one orange mark").toHaveLength(1);
+    const badges = [
+      ...svg.matchAll(new RegExp(`<(?:circle|path)[^>]*fill="${CUES.input.fill}"`, "g")),
+    ];
+    expect(badges, "favicon-input.svg must carry exactly one input-coloured mark").toHaveLength(1);
     expect(svg).not.toContain("stroke");
   });
 

@@ -21,13 +21,50 @@
 // with `repo=<name>` in the body.
 // ---------------------------------------------------------------------------
 
-import { initGitTabs, onGitTabChange, getGitTab } from "./git-tabs.js";
-import { initChangesTab, refreshChanges } from "./git-changes-tab.js";
-import { initPRsTab } from "./git-prs-tab.js";
+import { initGitTabs, onGitTabChange, getGitTab, readGitTab } from "./git-tabs.js";
+import { initChangesTab, refreshChanges, changesFind } from "./git-changes-tab.js";
+import { initPRsTab, prsFind } from "./git-prs-tab.js";
 import { refreshPRs } from "./actions/git-prs.js";
 import { initSourcesTab, refreshSources } from "./git-sources-tab.js";
 import { initStatusBanner } from "./git-status-banner.js";
 import { initGitBadge, refreshGitBadge as refreshBadgeImpl } from "./git-badge.js";
+import { registerFind } from "./find-registry.js";
+import type { PageFind } from "./find-registry.js";
+import type { SearchPopup } from "./search-popup.js";
+
+/** The git view's find, routed to the ACTIVE panel — the same shape docs.ts uses
+ *  for its six sub-tabs, because the question is the same one: a page with
+ *  sub-tabs has one search affordance and it belongs to whatever is on screen.
+ *
+ *  Sources DECLINES. It lists forge accounts and cloneable repositories fetched
+ *  per forge, not one filterable inventory, so `open` answers false there and the
+ *  chord falls through to the browser's own find. `available` is what collapses
+ *  the toolbar's magnifier rather than leaving it as a button that does nothing. */
+const gitFind: PageFind = {
+  open: () => activeFind()?.open() ?? false,
+  toggle: () => {
+    activeFind()?.toggle();
+  },
+  focused: () => activeFind()?.focused() ?? false,
+  // Both panels FILTER — they narrow rows already fetched — so the toolbar shows a
+  // funnel here rather than the magnifier it shows over a chat. The fallback value
+  // is never rendered: `available` is false on the tab that has no box.
+  kind: () => activeFind()?.kind() ?? "filter",
+  available: () => activeFind() !== null,
+};
+
+function activeFind(): SearchPopup | null {
+  // The REACTIVE read, so the toolbar's affordance effect re-runs on a sub-tab
+  // switch. Outside an effect it is an ordinary read.
+  switch (readGitTab()) {
+    case "changes":
+      return changesFind;
+    case "prs":
+      return prsFind;
+    default:
+      return null;
+  }
+}
 
 let initialized = false;
 
@@ -42,6 +79,10 @@ export function initGitPanel(): void {
     initPRsTab();
     initSourcesTab();
     initGitBadge();
+    // Through the LEAF registry, like /docs and /history: importing
+    // find-dispatch here would drag find-in-chat and scroll.ts's
+    // self-initialising singleton into the git view.
+    registerFind("git", gitFind);
     initStatusBanner({
       // Connect-forge CTA from the banner: switch to the Sources tab,
       // which holds the per-forge account UI.
@@ -75,6 +116,13 @@ export function initGitPanel(): void {
     // navigation, so it opts into the server-side per-repo git fetch
     // (?fetch=1) for fresh ahead/behind data (18-F3).
     onGitTabChange((tab) => {
+      // A filter belongs to ONE panel, so the box does not survive a sub-tab
+      // switch: it would otherwise sit open over the Pull-requests list still
+      // narrowing the Changes list behind it. Closing is what lifts the filter —
+      // search-popup's close clears the query and repaints — so switching back
+      // finds the panel whole rather than narrowed by an empty box.
+      changesFind.close();
+      prsFind.close();
       switch (tab) {
         case "changes":
           void refreshChanges(true);

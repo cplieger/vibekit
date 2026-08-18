@@ -141,11 +141,15 @@
    as the first row when history older than the buffer holds was evicted —
    client cap or a server-reported resume gap). */
 .term-trim-marker {
-  color: var(--c-text-secondary);
+  /* Hint ink with NO `opacity`. It was secondary under `opacity: 0.7`, which
+     measured 3.926:1 in LIGHT mode against the terminal surface — under AA for
+     11px text, and passing in dark at 5.703:1, so the token-graph tool reported
+     a figure neither theme rendered. The hint ink alone is 6.609 / 5.649 and is
+     quieter than secondary was. */
+  color: var(--c-text-tertiary);
   font-size: 0.6875rem;
   text-align: center;
   padding: 2px 0;
-  opacity: 0.7;
   user-select: none;
 }
 

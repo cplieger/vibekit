@@ -7,7 +7,13 @@
 // local mutations.
 // ---------------------------------------------------------------------------
 
-import type { ServerEvent, ModelInfo, SessionMode, SessionModel } from "./types.js";
+import type {
+  ServerEvent,
+  ModelInfo,
+  SessionEffortLevel,
+  SessionMode,
+  SessionModel,
+} from "./types.js";
 import { setCatalogModes } from "./roles.js";
 import {
   MODEL_CONTEXT_SIZES,
@@ -22,7 +28,9 @@ import {
 } from "./store.js";
 import { loadList } from "./store-load.js";
 import { computed, effect } from "@cplieger/reactive";
-import { dispatch } from "./bus.js";
+import { dispatch, onBus, BUS_TAB_CHANGED } from "./bus.js";
+import { findGlyph } from "./icons.js";
+import { iconEl } from "./icon-el.js";
 import { $, byId } from "./dom.js";
 import { guardAction, initSidebarSwipe } from "./platform.js";
 import { initRolePicker } from "./role-picker.js";
@@ -45,8 +53,8 @@ import {
 import { parseRoute, replaceRoute, onPopState, suppressPush } from "./router.js";
 import { chatSkeleton } from "./skeleton.js";
 import type { Route } from "./router.js";
-import { refreshPickerIfVisible, setPickerModels } from "./picker.js";
-import { setStatus } from "./status.js";
+import { refreshPickerIfVisible, setPickerModels, initModelPicker } from "./picker.js";
+import { setStatus, refreshRuntimeLine } from "./status.js";
 import { initShellPanel } from "./shell.js";
 import { showLoginModal, hideLoginModal, initLoginModal } from "./modals.js";
 import { initEditor } from "./editor-core.js";
@@ -64,7 +72,11 @@ import { initTooltips } from "./tooltip.js";
 import { isRetentionEnabled, onRetentionChange, refreshRetention } from "./retention.js";
 import { initKeyboardShortcuts } from "./keys.js";
 import { openShortcutsSheet } from "./shortcuts.js";
-import { handleFindKey, toggleFindForActiveTab } from "./find-dispatch.js";
+import {
+  handleFindKey,
+  toggleFindForActiveTab,
+  findAffordanceForActiveTab,
+} from "./find-dispatch.js";
 import { forceSettingsTab, loadSettingsTabData } from "./settings-tabs.js";
 import { flushURLHighlight } from "./settings-highlight.js";
 import { forceGitTab } from "./git-tabs.js";
@@ -77,13 +89,12 @@ import {
   sendPrompt,
   installStoreSubscribers,
 } from "./chat.js";
-import { initModelSwitcher } from "./model-switcher.js";
+import { initModelSwitcher, applyLocalModel, setCatalogEfforts } from "./model-switcher.js";
 import { makeExpandable } from "./pill-expand.js";
 import { loadAccountUsage } from "./account-usage.js";
 import { initGovernance } from "./governance.js";
 import { initPromptInput, sendComposer } from "./prompt-input.js";
 import { initComposerState } from "./composer-state.js";
-import { initComposerResize } from "./composer-resize.js";
 import { initPendingSteers } from "./pending-steers.js";
 import { initChatOptions } from "./chat-options.js";
 import { mountDecisionDock } from "./decision-dock.js";
@@ -203,6 +214,37 @@ function init(): void {
   $.findBtn.addEventListener("click", () => {
     toggleFindForActiveTab();
   });
+  // …and it collapses where it has no destination: `/settings`, a run view, the
+  // git view's Sources tab, and an editor tab over a diff, an image or rendered
+  // markdown. `is-collapsed` rather than the `.hidden` utility, because that one
+  // is `display: none` and cannot animate out — 12-chat.css fades the button and
+  // takes its width and its gap with it, so the floating toolbar shrinks.
+  //
+  // It also paints WHICH of the two things this page has: a magnifier where the
+  // box reaches past what is on screen, a funnel where it only narrows rows
+  // already loaded. Same glyph producer as the box it opens (`findGlyph`), so the
+  // button cannot promise a search and open a filter.
+  //
+  // Called from inside an `effect` so the signals the answer reads — the editor's
+  // mode, the git sub-tab — re-run it themselves; the bus subscription covers the
+  // tab switch, which is not a signal.
+  const syncFindAffordance = (): void => {
+    const { available, kind } = findAffordanceForActiveTab();
+    $.findBtn.classList.toggle("is-collapsed", !available);
+    if (!available) {
+      // Nothing to repaint: the control is on its way out, and swapping its glyph
+      // mid-fade would be a second thing moving.
+      return;
+    }
+    const verb = kind === "search" ? "Search" : "Filter";
+    $.findBtn.replaceChildren(iconEl(findGlyph(kind, 18)));
+    $.findBtn.setAttribute("aria-label", verb);
+    $.findBtn.setAttribute("data-tooltip", `${verb} (Ctrl+F)`);
+  };
+  effect(() => {
+    syncFindAffordance();
+  });
+  onBus(BUS_TAB_CHANGED, syncFindAffordance);
   $.docsBtn.addEventListener("click", () => {
     void import("./docs.js")
       .then(({ showDocsView }) => {
@@ -586,6 +628,26 @@ function onLoginSuccess(): void {
   markBootDone();
 }
 
+/** One catalog entry, mapped from the wire `SessionModel` to the picker's
+ *  `ModelInfo`. Shared by both feeds (the pre-session REST template and the
+ *  per-session bridge catalog) because a field carried by one and dropped by the
+ *  other is invisible until a control silently loses its input: that is how the
+ *  model's default effort tier went missing here while the server sent it.
+ *  Fields are spread conditionally rather than assigned undefined — the client
+ *  compiles under exactOptionalPropertyTypes. */
+function toModelInfo(m: SessionModel): ModelInfo {
+  return {
+    model_id: m.id,
+    model_name: m.name,
+    ...(m.description === undefined || m.description === "" ? {} : { description: m.description }),
+    rate_multiplier: m.rate_multiplier ?? 1,
+    ...(m.has_effort === undefined ? {} : { has_effort: m.has_effort }),
+    ...(m.default_effort_level === undefined || m.default_effort_level === ""
+      ? {}
+      : { default_effort_level: m.default_effort_level }),
+  };
+}
+
 async function fetchModelsFromREST(): Promise<void> {
   // Pre-conversation catalog: kiro-cli 2.14's session-less
   // _kiro/config/template, surfaced via /api/config-template on the
@@ -597,25 +659,25 @@ async function fetchModelsFromREST(): Promise<void> {
   // /api/workspace/kiro-config inside the role picker). Once a
   // session/new response lands, the per-session path below overwrites
   // with the authoritative catalog for that chat.
-  const d = await apiGet<{ modes: SessionMode[]; models: SessionModel[]; default_model?: string }>(
-    "/api/config-template",
-  );
+  const d = await apiGet<{
+    modes: SessionMode[];
+    models: SessionModel[];
+    default_model?: string;
+    effort_levels?: SessionEffortLevel[];
+    effort_active?: string;
+  }>("/api/config-template");
   if (d === null) {
     return;
   }
+  // Pre-session effort vocabulary: a chat with no bridge has no session catalog,
+  // so without this the effort control has neither its tier list nor the level
+  // the next session would run at.
+  setCatalogEfforts(d.effort_levels ?? [], d.effort_active ?? "");
   if (d.modes.length > 0) {
     setCatalogModes(d.modes);
   }
   if (d.models.length > 0) {
-    const mapped: ModelInfo[] = d.models.map((m) => ({
-      model_id: m.id,
-      model_name: m.name,
-      ...(m.description === undefined || m.description === ""
-        ? {}
-        : { description: m.description }),
-      rate_multiplier: m.rate_multiplier ?? 1,
-    }));
-    populatePickerModels(mapped, "");
+    populatePickerModels(d.models.map(toModelInfo), "");
   }
 }
 
@@ -629,12 +691,7 @@ function fetchModelsFromSession(): void {
   if (active === undefined || active.available_models.length === 0) {
     return;
   }
-  const mapped: ModelInfo[] = active.available_models.map((m) => ({
-    model_id: m.id,
-    model_name: m.name,
-    ...(m.description === "" ? {} : { description: m.description }),
-    rate_multiplier: m.rate_multiplier ?? 1,
-  }));
+  const mapped: ModelInfo[] = active.available_models.map(toModelInfo);
   populatePickerModels(mapped, active.model);
   if (active.usage.context_size === 0 && active.model !== "") {
     active.usage.context_size = contextSizeFor(active.model);
@@ -663,15 +720,14 @@ function populatePickerModels(models: ModelInfo[], activeModel: string): void {
 // ============================================================
 
 function setupInput(): void {
-  // The composer is three peers meeting on one element, wired here rather than
+  // The composer is two peers meeting on one element, wired here rather than
   // from each other: prompt-input owns its BEHAVIOUR (send, history, the IME
-  // guard), composer-state owns its per-chat STATE (the draft and the staged
-  // attachments), composer-resize owns its SIZE. composer-state cannot be wired
-  // from prompt-input — send-state imports prompt-input to push the button state
-  // and transport imports send-state, so reaching the draft action from there
-  // would close an import cycle.
+  // guard) and composer-state owns its per-chat STATE (the draft and the staged
+  // attachments). composer-state cannot be wired from prompt-input — send-state
+  // imports prompt-input to push the button state and transport imports
+  // send-state, so reaching the draft action from there would close an import
+  // cycle. Nothing owns the box's SIZE: it tracks its own content.
   initComposerState();
-  initComposerResize();
   initPromptInput(
     (text: string) => {
       if (getActiveId() === "") {
@@ -705,6 +761,10 @@ function setupInput(): void {
   // The model switcher owns its button click, popover, queue, and
   // outside-click dismissal. See model-switcher.ts.
   initModelSwitcher();
+  // The empty-chat model picker. Its visibility is derived from store state;
+  // only the selection callback is injected, because it lives in
+  // model-switcher.ts, which imports picker.ts.
+  initModelPicker(applyLocalModel);
   // The role picker owns the prompt-bar role pill (expand, list, selection).
   initRolePicker();
   // Queued-prompt chips (pending sends buffered while a turn is in flight).
@@ -720,10 +780,12 @@ function setupInput(): void {
   // than queried inside the button.
   makeExpandable($.contextIndicator, byId("context-card"));
   // Fetch account/subscription usage lazily when the popup opens (it changes
-  // slowly and may be rate-limited); loadAccountUsage throttles.
+  // slowly and may be rate-limited); loadAccountUsage throttles. The
+  // agent-runtime line re-probes /api/health on the same trigger.
   makeExpandable($.statusDot, $.statusCard, {
     onExpand: () => {
       loadAccountUsage();
+      refreshRuntimeLine();
     },
   });
 }

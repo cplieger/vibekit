@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { el } from "@cplieger/reactive";
+import { chevronEl } from "../chevron.js";
 import { preserveReadingPosition } from "../scroll.js";
 
 /** A mounted reasoning block plus its imperative update handle. */
@@ -31,11 +32,12 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
   const root = el("details", {
     className: "reasoning-block msg-reasoning",
   }) as HTMLDetailsElement;
-  const summary = el(
-    "summary",
-    { className: "reasoning-summary" },
-    live ? "Thinking…" : "Reasoning",
-  );
+  // The label is its own element so `seal()` can rewrite it without touching the
+  // chevron beside it. A bare `summary.textContent = …` would delete the glyph,
+  // which is why the chevron replaced a `::before` rather than becoming a plain
+  // child of the summary.
+  const label = el("span", { className: "reasoning-label" }, live ? "Thinking…" : "Reasoning");
+  const summary = el("summary", { className: "reasoning-summary" }, chevronEl(), label);
   const body = el("blockquote", { className: "reasoning-body" }, initial);
   root.append(summary, body);
   if (live) {
@@ -67,7 +69,7 @@ export function buildReasoning(initial: string, live: boolean): ReasoningView {
         return;
       }
       sealed = true;
-      summary.textContent = "Thinking completed";
+      label.textContent = "Thinking completed";
       root.classList.remove("streaming");
       // An IMMEDIATE geometry change — a bare `open = false` on a native
       // <details>, no animation — which still removes height above the reader.

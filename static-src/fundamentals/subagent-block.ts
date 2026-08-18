@@ -39,6 +39,7 @@ import { createDisclosure } from "@cplieger/ui-primitives/disclosure";
 import type { ToolStatus } from "../types.js";
 import { isToolActive } from "../tool-schema.js";
 import { iconEl } from "../icon-el.js";
+import { chevronEl } from "../chevron.js";
 import { ICON_TAB_AGENT } from "../icons.js";
 import {
   buildTurnFooter,
@@ -50,6 +51,64 @@ import {
 /** How many trailing lines the tail shows. Three is enough to tell moving
  *  from stuck; more re-creates the wall of text the collapse exists to stop. */
 const TAIL_LINES = 3;
+
+/** One block's text as lines. Element boundaries become spaces, runs of
+ *  whitespace collapse, and any newlines the block's own text carries (a `<pre>`
+ *  of command output) split it further. */
+function blockLines(node: Node): string[] {
+  const parts: string[] = [];
+  const walk = (n: Node): void => {
+    if (n.nodeType === Node.TEXT_NODE) {
+      parts.push(n.nodeValue ?? "");
+      return;
+    }
+    parts.push(" ");
+    n.childNodes.forEach(walk);
+    parts.push(" ");
+  };
+  walk(node);
+  return parts
+    .join("")
+    .split("\n")
+    .map((l) => l.replace(/\s+/gu, " ").trim())
+    .filter((l) => l !== "");
+}
+
+/** The delegate's trailing progress lines, oldest first.
+ *
+ *  `body.textContent.split("\n")` cannot answer this, and that WAS the bug this
+ *  function replaces. `textContent` concatenates a node tree with no separators,
+ *  and the body holds rendered BLOCKS — bubbles, tool cards, reasoning — whose
+ *  text carries no newline characters at all. So a real body collapsed to ONE
+ *  line, `✓Grep Searchspaghetti✓File Search/workspace/The workspace is…`, which
+ *  `.subagent-tail-line`'s nowrap + ellipsis then clipped at the card's width:
+ *  the reader got the BEGINNING of the whole run, words glued together, instead
+ *  of its last three lines. The unit test passed because it appended a raw text
+ *  node holding literal `\n`s — a shape the block dispatcher never produces.
+ *
+ *  A line is a BLOCK, because that is where the reader's line breaks are.
+ *
+ *  Walks backwards from the last block and stops as soon as it has enough, so
+ *  the cost is the tail rather than the whole transcript. That matters: this
+ *  runs once per animation frame for as long as the delegate streams, and the
+ *  old full-body read grew with everything the delegate had ever emitted.
+ *
+ *  Iterates `childNodes`, not `children`: a bare text node appended straight to
+ *  the body is a block too, and skipping it would put the blind spot back one
+ *  level down. */
+function tailLines(body: HTMLElement, want: number): string[] {
+  const out: string[] = [];
+  const kids = body.childNodes;
+  for (let i = kids.length - 1; i >= 0 && out.length < want; i--) {
+    const child = kids[i];
+    if (child === undefined) {
+      continue;
+    }
+    const lines = blockLines(child);
+    out.unshift(...lines.slice(Math.max(0, lines.length - (want - out.length))));
+  }
+  return out;
+}
 
 /** A mounted delegated-work card plus its imperative handle. */
 export interface SubagentView {
@@ -79,12 +138,16 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
   // The chevron is purely decorative: the HEADER is the disclosure trigger
   // (it carries aria-expanded + activation), so a nested focusable button
   // would be a redundant tab stop announcing a second control.
-  const chevron = el("button", {
-    className: "subagent-toggle",
-    type: "button",
-    "aria-hidden": "true",
-    tabindex: "-1",
-  });
+  const chevron = el(
+    "button",
+    {
+      className: "subagent-toggle",
+      type: "button",
+      "aria-hidden": "true",
+      tabindex: "-1",
+    },
+    chevronEl(),
+  );
   const header = el(
     "div",
     { className: "subagent-header", role: "button", tabindex: "0" },
@@ -124,12 +187,10 @@ export function buildSubagentBlock(name: string, status: ToolStatus): SubagentVi
     tailScheduled = true;
     requestAnimationFrame(() => {
       tailScheduled = false;
-      const lines = body.textContent
-        .split("\n")
-        .map((l) => l.trim())
-        .filter((l) => l !== "");
       tail.replaceChildren(
-        ...lines.slice(-TAIL_LINES).map((l) => el("div", { className: "subagent-tail-line" }, l)),
+        ...tailLines(body, TAIL_LINES).map((l) =>
+          el("div", { className: "subagent-tail-line" }, l),
+        ),
       );
     });
   });

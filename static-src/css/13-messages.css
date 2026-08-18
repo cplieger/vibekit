@@ -27,10 +27,35 @@
    * is the same `--sp-4` `.bottom-bar` uses (19-files.css) — so the transcript
    * and the composer resolve to the same measure at every width. It used to be
    * padding on `#messages` itself, which is border-box, so the cap paid for it
-   * and every turn card came out 2rem narrower than the prompt box. Keep the
-   * two values equal; the timeline rail stays outside this gutter rather than
-   * taking a bite out of it (29-turns.css). */
-  padding-inline: var(--sp-4);
+   * and every turn card came out 2rem narrower than the prompt box. Keep the two
+   * insets equal apart from the scrollbar the block below subtracts; the timeline
+   * rail stays outside this gutter rather than taking a bite out of it
+   * (29-turns.css). */
+
+  /* THE SCROLLBAR SITS IN THE GUTTER, OUTSIDE THAT MEASURE, and giving back the
+   * width here is what puts it there. A classic scrollbar is placed at this box's
+   * inline-END border edge and takes its width out of the CONTENT box, so the
+   * column centred inside landed half a scrollbar LEFT of `.prompt-box` —
+   * measured 445 against 450 at 1440 with Chromium/Linux's 10px bar, both edges
+   * 5px out, which is what read as "the chat is too far left". Subtracting the
+   * measured width from the END inset restores the content box the bar has, so a
+   * turn card keeps the composer's edges and the scrollbar lives in what is left
+   * of the 16px gutter beside it. The bar is NOT the place to fix this: reserving
+   * a matching strip there aligns the two by making both narrower, which puts the
+   * scrollbar back inside the shared measure.
+   *
+   * `stable` is what makes the subtraction unconditional: the gutter then exists
+   * whether or not the transcript overflows, so the column does not grow 10px
+   * wider on a short chat, and it no longer jumps 5px left when the first turn
+   * makes the transcript scroll. `--scrollbar-w` is measured off this element by
+   * `scroll.ts` (`publishScrollbarWidth`), and `max()` covers a platform whose
+   * scrollbar is wider than the gutter it has to fit in — past 16px the gutter is
+   * spent and the column gives up the remainder rather than the inset going
+   * negative. Overlay-scrollbar platforms reserve nothing, so phones are
+   * untouched. Verified 0px on both edges at 1440/1280/1148/1024/900 and on the
+   * ipad and phone presets, transcript overflowing and not. */
+  padding-inline: var(--sp-4) max(0px, calc(var(--sp-4) - var(--scrollbar-w, 0px)));
+  scrollbar-gutter: stable;
 
   /* Smooth user-initiated scrolls (scroll-to-bottom click, keyboard
    * navigation). Streaming auto-scroll calls scrollTo with
@@ -201,7 +226,18 @@
    * 40rem column with a triangle glued to one edge read as a rendering
    * accident. The prose measure now lives on `&.assistant` alone, and evidence
    * (tool cards, diffs, output) is uncapped by not being this element. */
-  padding: var(--sp-3) var(--sp-4);
+
+  /* NO INLINE PADDING, and that is the turn card's one left edge. `var(--sp-4)`
+   * used to sit here, which put the prose TEXT 16px right of every box in the
+   * same body — a tool card's border, a tool group, a subagent card, a todo
+   * list, a plan card, a refusal callout and a reasoning bar all start on
+   * `.turn-body`'s own content edge. The bubble's own edge is invisible, so the
+   * inset read as "the boxes stick out to the left of the reply", loudest on the
+   * reasoning block, whose accent bar is a drawn line at that edge. The card
+   * already has a gutter (`.turn-body` padding), so a second one on the prose
+   * alone was buying nothing and breaking the alignment the body was built for.
+   * `&.system` and `&.inbox-message` set their own padding and are unaffected. */
+  padding: var(--sp-3) 0;
   font-size: var(--fs-md);
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -569,25 +605,50 @@
   outline-offset: 2px;
 }
 
-/* Reasoning/thinking block (collapsible) */
+/* Reasoning/thinking block (collapsible).
+ *
+ * ONE bar, on the disclosure ROOT, sitting on `.turn-body`'s own content edge —
+ * the same left edge the prose text and every evidence card start from, so the
+ * trace reads as a subelement of the reply rather than as something outdented
+ * from it.
+ *
+ * It used to carry TWO. This rule bordered `.reasoning-body` in `--c-border`,
+ * while a legacy `.reasoning-block` rule in 61-mcp-tools.css ("Wave 1")
+ * bordered the ROOT in `--c-accent` and added `padding-left: 0.75rem`. Later
+ * source order made the legacy rule win, so a trace rendered as an accent bar,
+ * 14px of gap, a second grey bar, then text — with the accent bar 16px left of
+ * the prose and the text 12px right of it. The accent bar also smothered the
+ * `.streaming` accent-mix this file used to set on the body's border, by being
+ * permanently at full strength; the breathing pulse dot on the summary is the
+ * live affordance now. */
 .reasoning-block {
   max-width: var(--content-max-w);
-  margin: var(--sp-1) auto;
+  margin: var(--sp-2) 0;
+  border-inline-start: 2px solid var(--c-accent);
   font-size: var(--fs-sm);
-  color: var(--c-text-tertiary);
+  color: var(--c-text-aside);
+
+  /* NO `opacity`. It was 0.7, inherited from the legacy rule, and it took hint
+   * ink to 2.792:1 dark / 2.742:1 light on this surface — under even the 3:1 a
+   * graphic needs, for the model's whole reasoning. Worse, an `opacity` is
+   * invisible to both contrast gates (the token graph and the stylesheet), so the
+   * number the tools reported was never the number on screen. Subordination is
+   * carried by the ink token, the italic, the smaller step and this bar. */
 
   /* No height transition: same per-chunk flicker reasoning as the
    * streaming bubble — let height track content instantly. The
    * details<>summary native open/close animation is still visible. */
 }
 
-/* Live-streaming reasoning block (open + actively receiving chunks):
- * accent left-border + subtle breath on the summary so the user sees
- * the model is actively thinking. Conditioned on `.streaming` (set by
- * mountReasoningBlock and removed in onFinalize) — NOT on `[open]`,
- * because `[open]` flips back to true whenever the user re-expands
- * a finalized thinking trace and we don't want the "actively thinking"
- * pulse to come back for a completed turn. */
+/* Live-streaming reasoning block (open + actively receiving chunks): a subtle
+ * breath on the summary so the user sees the model is actively thinking. It used
+ * to read "accent left-border + subtle breath"; the border half was the
+ * `.reasoning-body` accent-mix that the legacy full-strength accent bar made
+ * invisible, and the bar is now the block's one border, so the dot is the whole
+ * live affordance. Conditioned on `.streaming` (set by mountReasoningBlock and
+ * removed in onFinalize) — NOT on `[open]`, because `[open]` flips back to true
+ * whenever the user re-expands a finalized thinking trace and we don't want the
+ * "actively thinking" pulse to come back for a completed turn. */
 .msg-reasoning.streaming > .reasoning-summary::before {
   content: "";
   display: inline-block;
@@ -600,7 +661,18 @@
   animation: vk-breathe 1.4s var(--ease-standard) infinite;
 }
 
+/* The summary row: chevron + label, on one line. `display: flex` and
+ * `list-style: none` are load-bearing — without them the native `<details>`
+ * marker paints beside the real chevron and the label wraps to its own line.
+ * They lived on a duplicate `.reasoning-block summary` rule in 61-mcp-tools.css
+ * until that whole legacy set was folded in here. The ink is the block's
+ * (`--c-text-aside`); the duplicate declared `--c-text-secondary` here, which is
+ * the same colour reached by a second name. */
 .reasoning-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  list-style: none;
   cursor: pointer;
   user-select: none;
   font-style: italic;
@@ -608,27 +680,23 @@
   transition: color var(--dur-micro) var(--ease-standard);
 }
 
+/* Brightens to PRIMARY on hover. It used to say `--c-text-secondary`, which the
+ * legacy rule above had already set as the resting colour, so the one hover
+ * affordance on the disclosure resolved to the colour it already had. */
 .reasoning-summary:hover {
-  color: var(--c-text-secondary);
+  color: var(--c-text-primary);
 }
 
+/* The trace itself. Indented from the bar by its own padding, which is what
+ * makes it read as content INSIDE the disclosure. No border of its own — see
+ * `.reasoning-block` above for why there is exactly one bar. */
 .reasoning-body {
   max-height: 300px;
   overflow-y: auto;
   margin: 0;
   padding: var(--sp-2) var(--sp-3);
-  border-left: 2px solid var(--c-border);
   font-style: italic;
   white-space: pre-wrap;
-  transition: border-left-color var(--dur-standard) var(--ease-standard);
-}
-
-/* While actively streaming the thinking trace, the body's left border
- * picks up the accent. Same `.streaming`-instead-of-`[open]` rationale
- * as the summary pulse above: `[open]` re-fires when the user expands
- * a finalized trace, and we don't want the "live" affordance back. */
-.msg-reasoning.streaming > .reasoning-body {
-  border-left-color: color-mix(in srgb, var(--c-accent) 60%, var(--c-border));
 }
 
 /* Licensed-code attribution footnote (v3 _kiro/code_references). A quiet,
@@ -1092,6 +1160,9 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--sp-2);
+  /* The hue is here for the octagon GLYPH, which is a graphic at 1.4.11's 3:1
+     floor and clears it (5.802 dark / 3.839 light on this callout's own wash).
+     The title below opts out of inheriting it. */
   color: var(--c-red);
 }
 
@@ -1101,6 +1172,13 @@
 
 .refusal-title {
   font-weight: var(--fw-medium);
+  /* PRIMARY ink rather than the hue it would inherit. `--c-red` is a status hue
+     sized for a glyph or a badge — css-contrast.py measures that family at a 3:1
+     floor and says outright that "a hue used for small body text needs the
+     stricter floor". This is a 12px sentence, and the hue reads 3.839:1 in light
+     mode on the callout's 6% wash, under AA. The red stays on the glyph, the
+     border and the chip fill; the sentence takes an ink sized for sentences. */
+  color: var(--c-text-primary);
 }
 
 .refusal-chip {
@@ -1109,7 +1187,10 @@
   font-size: var(--fs-xs);
   line-height: 1.5;
   white-space: nowrap;
-  color: var(--c-red);
+  /* Same call as the title, and it was worse here: the category label sits on the
+     chip's own 14% red fill over the callout's 6%, where the hue reads 3.228:1
+     light / 4.523:1 dark. The FILL is what carries the status; the label is read. */
+  color: var(--c-text-primary);
   background: color-mix(in srgb, var(--c-red) 14%, transparent);
 }
 

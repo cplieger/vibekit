@@ -423,37 +423,113 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID api.Ch
 	if json.Unmarshal(raw, &p) != nil {
 		return
 	}
-	var models []api.SessionModel
-	currentModel := ""
-	for i := range p.ConfigOptions {
-		opt := &p.ConfigOptions[i]
-		if opt.ID != api.ConfigOptionModel && opt.Category != api.ConfigOptionModel {
-			continue
-		}
-		_ = json.Unmarshal(opt.CurrentValue, &currentModel) // string; ignore non-string
-		models = flattenModelChoices(opt.Options)
-		break
-	}
-	if len(models) == 0 {
+	cat := readConfigCatalog(p.ConfigOptions)
+	if len(cat.models) == 0 && !cat.sawEffort {
 		return
 	}
 	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
-		changed := false
-		if !sameModelIDs(c.AvailableModels, models) {
-			c.AvailableModels = models
-			changed = true
-		}
-		if currentModel != "" && c.Model != currentModel {
-			c.Model = currentModel
-			changed = true
-		}
-		return changed
+		return cat.applyTo(c)
 	}); err != nil {
-		slog.Error("persist v3 model catalog", "chat_id", chatID, "error", err)
+		slog.Error("persist v3 config catalog", "chat_id", chatID, "error", err)
 	}
+}
+
+// configCatalog is what one config_option_update says about the two options
+// vibekit consumes: the model select and the effortLevel select.
+//
+// sawEffort is tracked apart from the list because an EMPTY effort list is a real
+// answer — kiro-cli reports it for a model with no tiers, and its own TUI reads
+// that as "effort is not available on the current model" — so it must be applied,
+// while a frame carrying no effort option at all must leave the chat's tiers
+// alone.
+type configCatalog struct {
+	currentModel  string
+	currentEffort string
+	models        []api.SessionModel
+	efforts       []api.SessionEffortLevel
+	sawEffort     bool
+}
+
+// readConfigCatalog extracts both options from one frame.
+func readConfigCatalog(opts []configOption) configCatalog {
+	var cat configCatalog
+	for i := range opts {
+		opt := &opts[i]
+		switch {
+		case opt.ID == api.ConfigOptionModel || opt.Category == api.ConfigOptionModel:
+			_ = json.Unmarshal(opt.CurrentValue, &cat.currentModel) // string; ignore non-string
+			cat.models = flattenModelChoices(opt.Options)
+		case opt.ID == api.ConfigOptionEffort:
+			cat.sawEffort = true
+			_ = json.Unmarshal(opt.CurrentValue, &cat.currentEffort) // string; ignore non-string
+			cat.efforts = flattenEffortChoices(opt.Options)
+		}
+	}
+	return cat
+}
+
+// applyTo writes the catalog onto the chat, reporting whether anything changed
+// (the store only persists and broadcasts on a change, so a repeated frame must
+// answer false).
+func (cat *configCatalog) applyTo(c *api.Chat) bool {
+	changed := false
+	if len(cat.models) > 0 && !sameModelIDs(c.AvailableModels, cat.models) {
+		c.AvailableModels = cat.models
+		changed = true
+	}
+	if cat.currentModel != "" && c.Model != cat.currentModel {
+		c.Model = cat.currentModel
+		changed = true
+	}
+	if !cat.sawEffort {
+		return changed
+	}
+	if !sameEffortLevels(c.EffortLevels, cat.efforts) {
+		c.EffortLevels = cat.efforts
+		changed = true
+	}
+	if c.EffortActive != cat.currentEffort {
+		c.EffortActive = cat.currentEffort
+		changed = true
+	}
+	return changed
+}
+
+// flattenEffortChoices converts the effortLevel option's choices into the
+// domain tier list. Flat by construction (KAS groups only the model select),
+// but recursing costs one branch and cannot be wrong.
+func flattenEffortChoices(choices []configChoice) []api.SessionEffortLevel {
+	out := make([]api.SessionEffortLevel, 0, len(choices))
+	for i := range choices {
+		c := &choices[i]
+		if len(c.Options) > 0 {
+			out = append(out, flattenEffortChoices(c.Options)...)
+			continue
+		}
+		if c.Value == "" {
+			continue
+		}
+		out = append(out, api.SessionEffortLevel{ID: c.Value, Name: c.Name})
+	}
+	return out
+}
+
+// sameEffortLevels reports whether two tier lists carry the same ids in the
+// same order — the change-detector that keeps a repeated catalog from
+// rewriting the chat file (and broadcasting) on every frame.
+func sameEffortLevels(a, b []api.SessionEffortLevel) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].ID != b[i].ID || a[i].Name != b[i].Name {
+			return false
+		}
+	}
+	return true
 }
 
 // flattenModelChoices converts select choices (flat or grouped) into the
@@ -470,30 +546,46 @@ func flattenModelChoices(choices []configChoice) []api.SessionModel {
 		if c.Value == "" || api.TagExcluded(c.Description, api.HiddenTags) {
 			continue
 		}
+		effort := choiceEffort(c.Meta)
 		out = append(out, api.SessionModel{
 			ID: c.Value, Name: c.Name, Description: c.Description,
-			HasEffort: choiceHasEffort(c.Meta),
+			HasEffort:          effort.HasEffort,
+			DefaultEffortLevel: effort.Default,
 		})
 	}
 	return out
 }
 
-// choiceHasEffort reads _meta.kiro.hasEffort from a config-option model
-// choice. KAS stamps it per model in config_option_update (true when the
-// model has any reasoning-effort levels). Absent meta or a non-effort model
-// yields false, which the client renders as "hide the effort row" for that
-// model (while a catalog with no has_effort anywhere safely shows it).
-func choiceHasEffort(meta json.RawMessage) bool {
+// choiceEffortMeta is the reasoning-effort half of a model choice's
+// `_meta.kiro`. Two fields, and only one of them is live against kiro-cli
+// 2.18.0: `defaultEffortLevel` is stamped and `hasEffort` is not (measured
+// against the shipped chat sidecar). The TIER LIST is deliberately absent here —
+// it belongs to the `effortLevel` config option, not to a model choice.
+type choiceEffortMeta struct {
+	Default   string
+	HasEffort bool
+}
+
+// choiceEffort reads _meta.kiro's effort fields off a config-option model
+// choice (KAS stamps them per model in config_option_update; the levels and the
+// default arrived in 2.16). Absent meta yields the zero value, which the client
+// reads as "not plumbed" and answers with its own canonical level list rather
+// than an empty control.
+func choiceEffort(meta json.RawMessage) choiceEffortMeta {
 	if len(meta) == 0 {
-		return false
+		return choiceEffortMeta{}
 	}
 	var m struct {
 		Kiro struct {
-			HasEffort bool `json:"hasEffort"`
+			DefaultEffortLevel string `json:"defaultEffortLevel"`
+			HasEffort          bool   `json:"hasEffort"`
 		} `json:"kiro"`
 	}
 	_ = json.Unmarshal(meta, &m)
-	return m.Kiro.HasEffort
+	return choiceEffortMeta{
+		HasEffort: m.Kiro.HasEffort,
+		Default:   m.Kiro.DefaultEffortLevel,
+	}
 }
 
 // sameModelIDs reports whether two model catalogs carry the same ids in

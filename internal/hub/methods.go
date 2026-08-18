@@ -158,7 +158,13 @@ const (
 	methodKiroWorkflowNew         = "_kiro/workflow/new"
 	methodKiroWorkflowInvoke      = "_kiro/workflow/invoke"
 	methodKiroWorkflowCancel      = "_kiro/workflow/cancel"
-	methodKiroWorkflowResume      = "_kiro/workflow/resume"
+	// methodKiroWorkflowDelete removes a run and its on-disk state: KAS cancels a
+	// non-terminal run first (target status `aborted`), then removes the run
+	// directory, answering {ok, previousStatus}. It is the only KAS verb that
+	// takes a run OUT of `_kiro/workflow/list`, so it is what a History row's
+	// delete has to reach — cancel only settles a run's status.
+	methodKiroWorkflowDelete = "_kiro/workflow/delete"
+	methodKiroWorkflowResume = "_kiro/workflow/resume"
 	// The two remaining run-control verbs, wired 2026-08 after the 2.16.1
 	// sweep found every one of them already live server-side. Their contracts,
 	// read off the handler bodies rather than inferred:

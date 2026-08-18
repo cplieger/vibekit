@@ -569,9 +569,11 @@ h3.section-title {
   }
 }
 
-/* Disabled (not-yet-enabled) tool rows: dimmed name + meta so the
- * enabled set reads as the "active" inventory and the rest as a
- * catalog the user can opt into. */
+/* Template rows (disabled: true, never opted into): dimmed name + meta
+ * so the enabled set reads as the "active" inventory and the rest as a
+ * catalog the user can opt into. Scoped to disabled ONLY — a missing or
+ * failed enabled tool keeps full contrast, because it is the row that
+ * needs acting on. */
 .list-row-disabled .list-row-name,
 .list-row-disabled .list-row-meta {
   color: var(--c-text-tertiary);
@@ -804,6 +806,78 @@ h3.section-title {
   outline-offset: -2px;
 }
 
+/* Per-row delete. The one destructive control on this page, and the only manual
+   control over what History holds, so it reads as available rather than hidden:
+   dim at rest, danger-tinted on hover, and it does NOT appear only on row hover.
+   A hover-only affordance is unreachable on touch, and this page is used on a
+   phone.
+
+   No auto margin: `.list-row-title` is `flex: 1` and absorbs every spare pixel,
+   so the last flex child already sits at the trailing edge. An auto margin here
+   would compete with that growth and leave a ragged column. */
+.history-delete {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  inline-size: 1.75rem;
+  block-size: 1.75rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--c-text-tertiary);
+  cursor: pointer;
+  transition:
+    color var(--dur-micro) var(--ease-standard),
+    background var(--dur-micro) var(--ease-standard),
+    border-color var(--dur-micro) var(--ease-standard);
+}
+.history-delete svg {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+}
+.history-delete:hover {
+  color: var(--c-danger);
+  border-color: color-mix(in srgb, var(--c-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--c-danger) 12%, transparent);
+}
+.history-delete:focus-visible {
+  outline: 2px solid var(--c-danger);
+  outline-offset: 1px;
+}
+
+/* The facts line: model · mode · turns · messages · credits for a chat, duration
+   for a run. Tertiary in the hierarchy — below the name and the agent's summary —
+   because it is what a reader scans AFTER finding the row they want, so it must
+   not compete with the title. Monospace because it is mostly identifiers and
+   numbers, and a proportional font makes a column of counts ragged. */
+.history-facts {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--c-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The rows are taller because they carry up to three lines now, and the padding
+   grows with them: a 3-line row at the 1-line row's padding reads as cramped
+   against its neighbours. `align-items: start` stops the kind chip, the outcome
+   glyph and the delete button from floating to the vertical middle of a tall row
+   and losing their alignment with the title they belong to; the small block
+   padding on each puts them on the title's own line. */
+.history-table-row {
+  align-items: start;
+  padding-block: var(--sp-2);
+}
+.history-table-row > .history-kind,
+.history-table-row > .history-status,
+.history-table-row > .tool-icon,
+.history-table-row > .list-row-meta,
+.history-table-row > .history-delete {
+  margin-block-start: 0.1rem;
+}
+
 /* --- Read-only workflow run review --------------------------------------- */
 
 .run-summary {
@@ -937,65 +1011,6 @@ h3.section-title {
    was simply capped.
    --------------------------------------------------------------------------- */
 
-.hist-search {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-  margin-block-end: var(--sp-3);
-}
-
-/* It is a SEARCH, not a filter: the server reads every chat file on disk, so it
- * finds conversations the loaded list does not contain. That is why it carries a
- * magnifier and not a funnel — a funnel would promise it only narrows what is
- * already on screen.
- *
- * The icon is inline, reusing the git tab's filter-field shape rather than
- * inventing a second one. Full-width and unadorned, the box read as an empty
- * section panel; capped and icon-led, it reads as a control. */
-.hist-search-field {
-  position: relative;
-  display: flex;
-  align-items: center;
-  max-inline-size: 22rem;
-}
-
-.hist-search-icon {
-  position: absolute;
-  inset-inline-start: var(--sp-2);
-  color: var(--c-text-tertiary);
-  pointer-events: none;
-}
-
-.hist-search-input {
-  font: inherit;
-  width: 100%;
-  color: var(--c-text-primary);
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
-  padding: var(--sp-1) var(--sp-2);
-  padding-inline-start: calc(var(--sp-2) + 14px + var(--sp-2));
-
-  &:focus-visible {
-    outline: none;
-    border-color: var(--c-accent);
-    background: color-mix(in oklch, var(--c-accent) 4%, var(--c-bg-secondary));
-  }
-
-  &::placeholder {
-    color: var(--c-text-tertiary);
-  }
-}
-
-/* Same undefined-`text-muted` story as .fb-search-note and for the same reason:
-   this line reports how many conversations were read, and it was rendering at
-   primary ink over the results it describes. */
-.hist-search-note {
-  font-size: var(--fs-xs);
-  color: var(--c-text-tertiary);
-  min-height: 1rem;
-}
-
 /* ==========================================================================
    Canonical empty state
 
@@ -1031,4 +1046,21 @@ h3.section-title {
   background: none;
   border: 1px dashed var(--c-border);
   border-radius: var(--r);
+}
+
+/* A list with nothing in it draws ONE boundary, not two.
+
+   `.list-container` paints a solid border plus a border-COLOURED background
+   (that background is how its 1px `gap` renders as row separators), so an
+   empty list nested the dashed card inside a solid ring of the same colour AND
+   filled the card's `background: none` with the separator tint — the flush
+   tinted strip the canonical empty state above exists to replace. The dashed
+   card is the boundary of the thing that is empty, so the container drops its
+   own chrome for as long as it holds nothing.
+
+   `border-color: transparent` rather than `border: none`: the 1px stays
+   reserved, so the list does not shift by 2px when its first row arrives. */
+.list-container:has(> .list-empty:only-child) {
+  background: none;
+  border-color: transparent;
 }

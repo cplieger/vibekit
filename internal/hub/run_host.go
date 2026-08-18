@@ -219,6 +219,39 @@ func (h *Hub) cancelRunRPC(ctx context.Context, workflowID string) error {
 	return h.runControl(ctx, workflowID, methodKiroWorkflowCancel, "workflow cancel call")
 }
 
+// DeleteRun removes a run and everything either side keeps about it, on the
+// USER's behalf. It is the History row's delete, and the only run verb that is
+// not recoverable.
+//
+// Order matters and is the opposite of cancel's. KAS's delete cancels a
+// non-terminal run itself before removing the run directory, so vibekit must NOT
+// pre-cancel: taking the termination claim first would record an end reason for a
+// row that is about to stop existing, and `CancelRun`'s own comment explains why a
+// recorded reason outlives the run. So the verb goes first, and vibekit's
+// bookkeeping is dropped only once KAS reports the run gone.
+//
+// The bridge IS closed here, unlike cancel's path. Cancel leaves it open on
+// purpose — the owning process must live to the node boundary to certify the
+// cancelled state — but a deleted run has no state left to certify and no
+// directory to write it to, so waiting for a terminal frame that may never come
+// would leak a kiro-cli subprocess for every deleted run.
+//
+// A failed verb leaves everything in place: the run still exists in KAS, so
+// forgetting the lease would strand a row vibekit could no longer bound or cancel.
+func (h *Hub) DeleteRun(ctx context.Context, workflowID string) error {
+	if workflowID == "" {
+		return errors.New("missing workflow id")
+	}
+	if err := h.runControl(ctx, workflowID, methodKiroWorkflowDelete, "workflow delete call"); err != nil {
+		return err
+	}
+	h.coord.CloseBridge(runChatID(workflowID))
+	h.forgetRunBounds(ctx, workflowID)
+	h.clearRunEnd(workflowID)
+	slog.Info("workflow run deleted", "workflow_id", workflowID)
+	return nil
+}
+
 // errRunNotHosted is returned by a control verb that needs the run's OWN bridge
 // when there is none. Distinct from a KAS refusal so the REST layer can answer
 // 409 with an explanation rather than 500.

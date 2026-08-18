@@ -421,11 +421,13 @@ describe("an ink is only paired with a fill it clears", () => {
   // every token against every surface, and reporting a combination the app does
   // not contain puts standing failures in its output.
   //
-  // The hint ink measures 4.244:1 on the second rung, 3.203:1 on the third and
-  // 2.401:1 on the top one, all under AA. Seven rules paired it with one anyway
-  // — a picker's metadata, a badge, two gutters, a group label, a footer and a
-  // link badge — and each was found by grep rather than by a gate.
-  const RAISED = /background(?:-color)?\s*:\s*[^;]*var\(--c-bg-(?:secondary|tertiary|elevated)\)/;
+  // The hint ink measures 4.771:1 on the second rung, 3.601:1 on the third and
+  // 2.699:1 on the top one — the second rung clears AA since the 63->66 lift,
+  // the top two cannot at any lift (01-tokens.css states the two-rung contract).
+  // Seven rules paired it with a raised fill anyway — a picker's metadata, a
+  // badge, two gutters, a group label, a footer and a link badge — and each was
+  // found by grep rather than by a gate.
+  const RAISED = /background(?:-color)?\s*:\s*[^;]*var\(--c-bg-(?:tertiary|elevated)\)/;
   // Anchored so `border-color` and `outline-color` are not swept up with it:
   // an EDGE is a graphic at a 3:1 floor and the hint ink can legitimately draw
   // one. Only the text ink is at issue.
@@ -447,8 +449,73 @@ describe("an ink is only paired with a fill it clears", () => {
     }
     expect(
       offenders,
-      "--c-text-tertiary is sized against --c-bg-primary and clears 4.5:1 on " +
-        "nothing above it. On a raised fill, step up to --c-text-secondary.",
+      "--c-text-tertiary clears 4.5:1 on --c-bg-primary and --c-bg-secondary and " +
+        "on neither rung above them. On --c-bg-tertiary or --c-bg-elevated, step " +
+        "up to --c-text-secondary.",
+    ).toEqual([]);
+  });
+
+  // The gate above and scripts/css-contrast.py share one blind spot, and it is the
+  // one that shipped a 2.792:1 paragraph: an `opacity` below 1 multiplies whatever
+  // the ink measured, and NEITHER tool can see it. The script resolves the token
+  // GRAPH, where no element and no opacity exists. This file reads the STYLESHEET,
+  // so it can see the declaration — which is what makes this check possible where
+  // the ancestor-supplied-fill case is not. Every offender found so far declared
+  // the ink and the opacity in the SAME block (`.reasoning-block`, `.rail-gap`),
+  // so one block is enough to decide it.
+  //
+  // Chrome and an inactive control are exempt, and the reasons differ: WCAG 1.4.3
+  // exempts an inactive component outright, while a decorative graphic is not text
+  // at all. So the exemption is keyed on the SELECTOR, not on a promise in a
+  // comment — a rule that dims text has to name a state in this list to do it.
+  const INACTIVE_STATE =
+    /:disabled|\[disabled\]|aria-disabled|aria-busy|-cloning\b|-rejected\b|\.btn-loading\b|-disabled\b/;
+  // The declared exceptions: a container whose `color` only ever feeds an svg's
+  // `currentColor`, so it carries no text and answers to WCAG 1.4.11's 3:1 rather
+  // than 1.4.3's 4.5:1. An explicit list rather than a name pattern (`-icon`,
+  // `-btn`) on purpose: a pattern would silently adopt the next control that
+  // happens to be named that way and also happens to hold a label. Each entry
+  // carries its measured ratio against the 3:1 graphic floor, so a surface change
+  // that breaks one is a re-measure rather than a re-argument.
+  const GRAPHIC_ONLY = new Set([
+    // 48px empty-state illustration on --c-bg-primary: 3.582 dark / 3.044 light.
+    ".git-multirepo-empty-icon",
+    // 1.5rem steer-row glyph button on --c-bg-secondary: 5.214 dark / 3.997 light.
+    ".steer-act",
+  ]);
+  const TEXT_INK =
+    /(?<![-\w])color:\s*var\(--c-text-(?:primary|secondary|tertiary|control|aside)\)/;
+  const DIMMED = /(?<![-\w])opacity:\s*0?\.\d+/;
+
+  it("never dims a text ink with opacity", () => {
+    const offenders: string[] = [];
+    for (const sheet of appSheets) {
+      const text = stripComments(sheet.text);
+      for (const m of text.matchAll(INNERMOST_BLOCK)) {
+        const body = capture(m, INNERMOST_BLOCK);
+        if (!TEXT_INK.test(body) || !DIMMED.test(body)) {
+          continue;
+        }
+        const line = text.slice(0, m.index).split("\n").length;
+        // The selector is whatever precedes the block; take the last line of it.
+        const before = text.slice(0, m.index).split("\n");
+        const selector = (before[before.length - 1] ?? "").trim();
+        if (INACTIVE_STATE.test(selector)) {
+          continue;
+        }
+        if (GRAPHIC_ONLY.has(selector.replace(/\s*\{$/, "").trim())) {
+          continue;
+        }
+        offenders.push(`${sheet.name}:${line} ${selector}`);
+      }
+    }
+    expect(
+      offenders,
+      "An `opacity` multiplies the ink's measured contrast and is invisible to " +
+        "both contrast gates, so the number the tools report is not the number on " +
+        "screen. Dim active text by choosing an ink token (--c-text-aside for " +
+        "subordinate prose); keep opacity for chrome and inactive controls, and " +
+        "add a graphic-only container to GRAPHIC_ONLY with its measured ratio.",
     ).toEqual([]);
   });
 
