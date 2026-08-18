@@ -15,7 +15,7 @@ require (
 	github.com/cplieger/atomicfile/v2 v2.9.1
 	github.com/cplieger/envx/yamlenv v1.2.2
 	github.com/cplieger/jsonx v1.4.1
-	github.com/cplieger/keyenc v1.0.2
+	github.com/cplieger/keyenc v1.0.3
 	github.com/cplieger/pathinside v1.0.1
 	github.com/cplieger/pinstall/v2 v2.3.3
 	github.com/cplieger/runesafe v1.4.1
