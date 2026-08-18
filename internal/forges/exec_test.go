@@ -1,4 +1,4 @@
-package cliexec
+package forges
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 // When Stderr is non-empty, Error() uses the stderr form and includes the
 // stderr text (rather than falling through to the wrapped-error form).
 func TestCmdError_stderrBranchIncludesStderr(t *testing.T) {
-	e := &CmdError{
+	e := &cmdError{
 		CLI:      "gh",
 		Args:     []string{"issue"},
 		ExitCode: 1,
@@ -26,7 +26,7 @@ func TestCmdError_stderrBranchIncludesStderr(t *testing.T) {
 // With an empty Stderr, Error() uses the wrapped-error form when Err is set
 // and the exit-code form when Err is nil.
 func TestCmdError_errBranchVsExitCode(t *testing.T) {
-	withErr := &CmdError{
+	withErr := &cmdError{
 		CLI:      "gh",
 		Args:     []string{"pr", "list"},
 		ExitCode: 7,
@@ -41,7 +41,7 @@ func TestCmdError_errBranchVsExitCode(t *testing.T) {
 		t.Errorf("Error() = %q, must not use exit-code form when Err is set", got)
 	}
 
-	noErr := &CmdError{
+	noErr := &cmdError{
 		CLI:      "gh",
 		Args:     []string{"pr", "list"},
 		ExitCode: 7,
@@ -58,7 +58,7 @@ func TestCmdError_errBranchVsExitCode(t *testing.T) {
 // but writes nothing to the underlying buffer.
 func TestCappedWriter_saturatedReturnsLenWithoutWriting(t *testing.T) {
 	var buf bytes.Buffer
-	cw := &CappedWriter{W: &buf, Max: 5, N: 5}
+	cw := &cappedWriter{W: &buf, Max: 5, N: 5}
 
 	n, err := cw.Write([]byte("xyz"))
 	if err != nil {
@@ -75,7 +75,7 @@ func TestCappedWriter_saturatedReturnsLenWithoutWriting(t *testing.T) {
 // Under the cap, the data is written through and N advances.
 func TestCappedWriter_writesWhenUnderCap(t *testing.T) {
 	var buf bytes.Buffer
-	cw := &CappedWriter{W: &buf, Max: 10, N: 0}
+	cw := &cappedWriter{W: &buf, Max: 10, N: 0}
 
 	n, err := cw.Write([]byte("abc"))
 	if err != nil {
@@ -95,7 +95,7 @@ func TestCappedWriter_writesWhenUnderCap(t *testing.T) {
 // A write larger than the remaining capacity is truncated to Max-N bytes.
 func TestCappedWriter_truncatesToRemaining(t *testing.T) {
 	var buf bytes.Buffer
-	cw := &CappedWriter{W: &buf, Max: 5, N: 3}
+	cw := &cappedWriter{W: &buf, Max: 5, N: 3}
 
 	n, err := cw.Write([]byte("abcde"))
 	if err != nil {

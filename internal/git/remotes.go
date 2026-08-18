@@ -14,8 +14,6 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
-
-	"github.com/cplieger/vibekit/internal/gitexec"
 )
 
 // RepoRemote is one workspace repo's origin, resolved into the coordinates a
@@ -43,7 +41,7 @@ func (h *Handler) RepoRemotes(ctx context.Context) []RepoRemote {
 	repos := h.cachedDiscoverRepos(ctx)
 	out := make([]RepoRemote, 0, len(repos))
 	for _, r := range repos {
-		raw, err := gitCmd(ctx, r.Dir, "remote", "get-url", "origin")
+		raw, err := gitCmd(ctx, r.Dir, subRemote, "get-url", "origin")
 		if err != nil {
 			// A repo with no origin is ordinary here (a scratch clone, a local-only
 			// tree), so this is Debug rather than Warn.
@@ -70,17 +68,17 @@ func (h *Handler) RepoRemotes(ctx context.Context) []RepoRemote {
 // address, and truncating it would produce a slug the forge cannot find.
 //
 // Returns ("", "") for anything that does not resolve, which every caller treats
-// as "no forge to ask". Host resolution is gitexec.ParseRemoteHost's, so the
+// as "no forge to ask". Host resolution is parseRemoteHost's, so the
 // control-character and remote-helper refusals are the ones the rest of the git
 // surface already applies rather than a second set.
 func ParseRemoteSlug(raw string) (host, slug string) {
 	raw = strings.TrimSpace(raw)
-	host = gitexec.ParseRemoteHost(raw)
+	host = parseRemoteHost(raw)
 	if host == "" {
 		return "", ""
 	}
 	var path string
-	if _, p, ok := gitexec.ParseSCPStyle(raw); ok {
+	if _, p, ok := parseSCPStyle(raw); ok {
 		path = p
 	} else {
 		u, err := url.Parse(raw)

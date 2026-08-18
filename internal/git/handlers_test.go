@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/singleflight"
 	"pgregory.net/rapid"
 )
@@ -795,58 +794,20 @@ func TestGitExec_ScrubsInheritedEnv(t *testing.T) {
 
 // --- scrubAuth + sanitizeRepoPaths ---
 
-func TestScrubAuth(t *testing.T) {
-	tests := []struct {
-		name, in, want string
-	}{
-		{"empty", "", ""},
-		{"no creds passes through", "plain error", "plain error"},
-		{
-			"https userinfo stripped",
-			"fatal: https://user:token@github.com/org/repo.git",
-			"fatal: https://github.com/org/repo.git",
-		},
-		{
-			"token-only userinfo stripped",
-			"https://ghp_ABC123@github.com/org/repo.git",
-			"https://github.com/org/repo.git",
-		},
-		{
-			"chained @ segments stripped fully",
-			"http://a@b:c@host/path",
-			"http://host/path",
-		},
-		{
-			"query token redacted",
-			"https://gitea.example/repo?access_token=secret",
-			"https://gitea.example/repo?access_token=[REDACTED]",
-		},
-		{
-			"authorization header redacted",
-			"Authorization: Bearer ghp_TOKEN123",
-			"Authorization: Bearer [REDACTED]",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := gitexec.ScrubAuth(tt.in)
-			if got != tt.want {
-				t.Errorf("gitexec.ScrubAuth(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestScrubAuth_Idempotent(t *testing.T) {
 	inputs := []string{
 		"https://user:pwd@host/path",
 		"http://a@b@c@host/",
+		// A git:// URL with a userinfo chain: the scheme the deleted
+		// gitexec-side target contributed, and the one shape the seeds
+		// above do not reach (they are all http/https).
+		"git://a@b@c@host/repo",
 		"?token=secret&other=ok",
 		"Authorization: Bearer abc",
 	}
 	for _, in := range inputs {
-		once := gitexec.ScrubAuth(in)
-		twice := gitexec.ScrubAuth(once)
+		once := scrubAuth(in)
+		twice := scrubAuth(once)
 		if once != twice {
 			t.Errorf("scrubAuth not idempotent: f(%q)=%q, f(f(x))=%q", in, once, twice)
 		}
@@ -1327,7 +1288,7 @@ func behindRepo(t *testing.T) string {
 
 // aheadBehind must report real upstream divergence. The counts come from
 // `git rev-list --left-right --count HEAD...@{upstream}`, so rev-list has to
-// be permitted by the gitexec allowlist; if it is dropped, the command is
+// be permitted by the allowedSubcommands allowlist; if it is dropped, the command is
 // rigged to fail and the counts silently collapse to 0/0 (a dead ahead/behind
 // indicator in the git panel).
 func TestAheadBehind_ReportsUpstreamDivergence(t *testing.T) {
@@ -1659,11 +1620,11 @@ func TestScrubAuth_LongUserInfoChain(t *testing.T) {
 	// bail out at 8 iterations and leak the residual head.
 	in := "http://a@b@c@d@e@f@g@h@i@j@k@l@m@n@o@p@host/path"
 	want := "http://host/path"
-	if got := gitexec.ScrubAuth(in); got != want {
-		t.Errorf("gitexec.ScrubAuth(long chain) = %q, want %q", got, want)
+	if got := scrubAuth(in); got != want {
+		t.Errorf("scrubAuth(long chain) = %q, want %q", got, want)
 	}
 	// Idempotency: a second call must not change the output.
-	if got := gitexec.ScrubAuth(gitexec.ScrubAuth(in)); got != want {
+	if got := scrubAuth(scrubAuth(in)); got != want {
 		t.Errorf("scrubAuth idempotent = %q, want %q", got, want)
 	}
 }
@@ -1675,8 +1636,8 @@ func TestScrubAuth_DeeplyChainedUserinfo(t *testing.T) {
 	// case pinned by TestScrubAuth_LongUserInfoChain.
 	in := "http://a@b@c@d@e@host/path"
 	want := "http://host/path"
-	if got := gitexec.ScrubAuth(in); got != want {
-		t.Errorf("gitexec.ScrubAuth(%q) = %q, want %q", in, got, want)
+	if got := scrubAuth(in); got != want {
+		t.Errorf("scrubAuth(%q) = %q, want %q", in, got, want)
 	}
 }
 
@@ -1971,7 +1932,7 @@ func TestPRRemoteHost(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := gitexec.ParseRemoteHost(tt.in)
+			got := parseRemoteHost(tt.in)
 			if got != tt.want {
 				t.Errorf("ParseRemoteHost(%q) = %q, want %q", tt.in, got, tt.want)
 			}
@@ -1997,7 +1958,7 @@ func TestPRRemoteHost_NeverContainsPathOrUserinfo(t *testing.T) {
 		"/just/a/path",
 	}
 	for _, in := range inputs {
-		got := gitexec.ParseRemoteHost(in)
+		got := parseRemoteHost(in)
 		if got == "" {
 			continue
 		}
@@ -2049,6 +2010,10 @@ func FuzzScrubAuth(f *testing.F) {
 		"Authorization: Bearer ghp_TOKEN123",
 		"https://user:pwd@host/path",
 		"http://a@b@c@host/",
+		// A git:// URL with a userinfo chain: the scheme the deleted
+		// gitexec-side target contributed, and the one shape the seeds
+		// above do not reach (they are all http/https).
+		"git://a@b@c@host/repo",
 		"?token=secret&other=ok",
 		"http://a@b@c@d@e@f@g@h@i@j@k@l@m@n@o@p@host/path",
 	}
@@ -2056,17 +2021,17 @@ func FuzzScrubAuth(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, data string) {
-		result := gitexec.ScrubAuth(data)
+		result := scrubAuth(data)
 		// Post-condition 1: no panic (implicit).
 		// Post-condition 2: idempotent.
-		if twice := gitexec.ScrubAuth(result); twice != result {
+		if twice := scrubAuth(result); twice != result {
 			t.Errorf("scrubAuth not idempotent: f(%q)=%q, f(f(x))=%q", data, result, twice)
 		}
 		// Post-condition 3: no userinfo between :// and the next /.
 		if _, rest, ok := strings.Cut(result, "://"); ok {
 			if hostPart, _, hasSlash := strings.Cut(rest, "/"); hasSlash {
 				if strings.Contains(hostPart, "@") {
-					t.Errorf("gitexec.ScrubAuth(%q) = %q: userinfo '@' remains between :// and /", data, result)
+					t.Errorf("scrubAuth(%q) = %q: userinfo '@' remains between :// and /", data, result)
 				}
 			}
 		}
@@ -2097,7 +2062,7 @@ func FuzzPRRemoteHost(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, data string) {
-		got := gitexec.ParseRemoteHost(data)
+		got := parseRemoteHost(data)
 		if got == "" {
 			return
 		}
@@ -2214,7 +2179,7 @@ func BenchmarkScrubAuth(b *testing.B) {
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			for range b.N {
-				_ = gitexec.ScrubAuth(tc.input)
+				_ = scrubAuth(tc.input)
 			}
 		})
 	}
@@ -2838,7 +2803,7 @@ func TestCollectStatus_RemoteSet(t *testing.T) {
 	initFixtureRepo(t, dir)
 	const url = "https://example.com/x.git"
 	runGit(t, dir, "remote", "add", "origin", url)
-	st := collectStatus(t.Context(), dir, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+	st := collectStatus(t.Context(), dir, defaultTimeouts(), &singleflight.Group{}, false)
 	if st.Remote != url {
 		t.Errorf("Remote = %q, want %q", st.Remote, url)
 	}
@@ -2853,7 +2818,7 @@ func TestCollectStatus_StashCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	runGit(t, dir, "stash")
-	st := collectStatus(t.Context(), dir, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+	st := collectStatus(t.Context(), dir, defaultTimeouts(), &singleflight.Group{}, false)
 	if st.Stashes != 1 {
 		t.Errorf("Stashes = %d, want 1", st.Stashes)
 	}
@@ -2888,7 +2853,7 @@ func TestCollectStatus_HasGH(t *testing.T) {
 		repo := mkRepo(t)
 		t.Setenv("PATH", t.TempDir()) // empty bin dir: gh not found
 		freshHasGH(t)
-		st := collectStatus(t.Context(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+		st := collectStatus(t.Context(), repo, defaultTimeouts(), &singleflight.Group{}, false)
 		if st.HasGH {
 			t.Errorf("HasGH = true with gh absent")
 		}
@@ -2903,7 +2868,7 @@ func TestCollectStatus_HasGH(t *testing.T) {
 		}
 		t.Setenv("PATH", binDir)
 		freshHasGH(t)
-		st := collectStatus(t.Context(), repo, gitexec.DefaultTimeouts(), &singleflight.Group{}, false)
+		st := collectStatus(t.Context(), repo, defaultTimeouts(), &singleflight.Group{}, false)
 		if !st.HasGH {
 			t.Errorf("HasGH = false with gh present")
 		}

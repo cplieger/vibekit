@@ -1,5 +1,14 @@
-// Package oauth implements the GitHub OAuth device flow protocol.
-package oauth
+// The GitHub OAuth device flow: vibekit runs the whole protocol, then hands
+// the resulting token to `gh auth login --with-token` (see login.go).
+//
+// This was internal/forges/oauth, reachable only from here through three
+// forwarding declarations in login.go. Rolling it up deleted them; what stays
+// exported is the pair the HTTP surface serves (DeviceFlowResponse and
+// StartGitHubDeviceFlow), while the raw token poll became pollDeviceToken —
+// unexported, because the exported PollGitHubDeviceFlow is the one that also
+// logs gh in, and a caller must not be able to reach the token-bearing half.
+
+package forges
 
 import (
 	"context"
@@ -13,13 +22,8 @@ import (
 	"time"
 )
 
-// MIMETypeJSON is the Accept header for JSON responses.
-const MIMETypeJSON = "application/json"
-
-// pollStatusError is the PollResult.Status value for non-recoverable
-// errors during the device-flow poll loop. Extracted so the literal
-// "error" doesn't recur enough to trip goconst.
-const pollStatusError = "error"
+// mimeTypeJSON is the Accept header for JSON responses.
+const mimeTypeJSON = "application/json"
 
 // DeviceFlowResponse describes a started OAuth device flow.
 type DeviceFlowResponse struct {
@@ -30,8 +34,10 @@ type DeviceFlowResponse struct {
 	ExpiresIn       int    `json:"expires_in"`
 }
 
-// PollResult is the per-poll status during the device flow.
-type PollResult struct {
+// deviceTokenResult is one raw token-poll outcome. Distinct from PollResult,
+// which is what the HTTP surface returns: this one carries the access token, so
+// it never leaves the package.
+type deviceTokenResult struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
 	Token  string `json:"-"` // populated on success
@@ -61,7 +67,7 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceFlowResponse, error) {
 	if err != nil {
 		return nil, fmt.Errorf("device flow: build request: %w", err)
 	}
-	req.Header.Set("Accept", MIMETypeJSON)
+	req.Header.Set("Accept", mimeTypeJSON)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := oauthHTTPClient.Do(req)
@@ -103,11 +109,11 @@ func parseDeviceFlowResponse(body []byte) (*DeviceFlowResponse, error) {
 	}, nil
 }
 
-// PollGitHubDeviceFlow checks if the user has approved the device.
-// On success, PollResult.Token contains the access token.
-func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, error) {
+// pollDeviceToken checks whether the user has approved the device.
+// On success, deviceTokenResult.Token contains the access token.
+func pollDeviceToken(ctx context.Context, deviceCode string) (deviceTokenResult, error) {
 	if deviceCode == "" {
-		return PollResult{}, errors.New("oauth: missing device_code")
+		return deviceTokenResult{}, errors.New("oauth: missing device_code")
 	}
 	form := url.Values{
 		"client_id":   {githubOAuthClientID},
@@ -118,14 +124,14 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 		"https://github.com/login/oauth/access_token",
 		strings.NewReader(form.Encode()))
 	if err != nil {
-		return PollResult{}, fmt.Errorf("poll: build request: %w", err)
+		return deviceTokenResult{}, fmt.Errorf("poll: build request: %w", err)
 	}
-	req.Header.Set("Accept", MIMETypeJSON)
+	req.Header.Set("Accept", mimeTypeJSON)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
-		return PollResult{}, fmt.Errorf("poll: github contact: %w", err)
+		return deviceTokenResult{}, fmt.Errorf("poll: github contact: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -133,31 +139,31 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string) (PollResult, e
 }
 
 // interpretPollResponse maps a GitHub device-flow token-poll response body
-// to a PollResult. This is the pure, testable core of PollGitHubDeviceFlow:
+// to a deviceTokenResult. This is the pure, testable core of pollDeviceToken:
 // the OAuth error code drives the status, and an empty access_token on an
 // otherwise-successful response is treated as an error, never "complete".
-func interpretPollResponse(body []byte) (PollResult, error) {
+func interpretPollResponse(body []byte) (deviceTokenResult, error) {
 	var raw struct {
 		AccessToken      string `json:"access_token"`
 		Error            string `json:"error"`
 		ErrorDescription string `json:"error_description"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return PollResult{}, fmt.Errorf("poll: decode: %w", err)
+		return deviceTokenResult{}, fmt.Errorf("poll: decode: %w", err)
 	}
 	if raw.Error != "" {
 		switch raw.Error {
 		case "authorization_pending", "slow_down":
-			return PollResult{Status: "pending"}, nil
+			return deviceTokenResult{Status: "pending"}, nil
 		case "expired_token":
-			return PollResult{Status: "expired", Error: "device code expired"}, nil
+			return deviceTokenResult{Status: "expired", Error: "device code expired"}, nil
 		case "access_denied":
-			return PollResult{Status: pollStatusError, Error: "access denied"}, nil
+			return deviceTokenResult{Status: statusError, Error: "access denied"}, nil
 		}
-		return PollResult{Status: pollStatusError, Error: raw.ErrorDescription}, nil
+		return deviceTokenResult{Status: statusError, Error: raw.ErrorDescription}, nil
 	}
 	if raw.AccessToken == "" {
-		return PollResult{Status: pollStatusError, Error: "empty access_token"}, nil
+		return deviceTokenResult{Status: statusError, Error: "empty access_token"}, nil
 	}
-	return PollResult{Status: "complete", Token: raw.AccessToken}, nil
+	return deviceTokenResult{Status: "complete", Token: raw.AccessToken}, nil
 }

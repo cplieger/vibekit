@@ -1,25 +1,25 @@
-package oauth
+package forges
 
 import "testing"
 
 // interpretPollResponse maps each GitHub OAuth device-flow poll outcome to
-// the right PollResult. The empty-access_token case is the security-critical
+// the right deviceTokenResult. The empty-access_token case is the security-critical
 // one: it must be reported as an error, never as a completed login.
 func TestInterpretPollResponse(t *testing.T) {
 	tests := []struct {
 		name    string
 		body    string
-		want    PollResult
+		want    deviceTokenResult
 		wantErr bool
 	}{
-		{name: "authorization_pending", body: `{"error":"authorization_pending"}`, want: PollResult{Status: "pending"}},
-		{name: "slow_down", body: `{"error":"slow_down"}`, want: PollResult{Status: "pending"}},
-		{name: "expired_token", body: `{"error":"expired_token"}`, want: PollResult{Status: "expired", Error: "device code expired"}},
-		{name: "access_denied", body: `{"error":"access_denied"}`, want: PollResult{Status: "error", Error: "access denied"}},
-		{name: "other_error_uses_description", body: `{"error":"unsupported_grant_type","error_description":"bad grant"}`, want: PollResult{Status: "error", Error: "bad grant"}},
-		{name: "success_empty_token_is_error", body: `{"access_token":""}`, want: PollResult{Status: "error", Error: "empty access_token"}},
-		{name: "no_error_no_token_is_error", body: `{}`, want: PollResult{Status: "error", Error: "empty access_token"}},
-		{name: "success_with_token", body: `{"access_token":"gho_secret"}`, want: PollResult{Status: "complete", Token: "gho_secret"}},
+		{name: "authorization_pending", body: `{"error":"authorization_pending"}`, want: deviceTokenResult{Status: "pending"}},
+		{name: "slow_down", body: `{"error":"slow_down"}`, want: deviceTokenResult{Status: "pending"}},
+		{name: "expired_token", body: `{"error":"expired_token"}`, want: deviceTokenResult{Status: "expired", Error: "device code expired"}},
+		{name: "access_denied", body: `{"error":"access_denied"}`, want: deviceTokenResult{Status: "error", Error: "access denied"}},
+		{name: "other_error_uses_description", body: `{"error":"unsupported_grant_type","error_description":"bad grant"}`, want: deviceTokenResult{Status: "error", Error: "bad grant"}},
+		{name: "success_empty_token_is_error", body: `{"access_token":""}`, want: deviceTokenResult{Status: "error", Error: "empty access_token"}},
+		{name: "no_error_no_token_is_error", body: `{}`, want: deviceTokenResult{Status: "error", Error: "empty access_token"}},
+		{name: "success_with_token", body: `{"access_token":"gho_secret"}`, want: deviceTokenResult{Status: "complete", Token: "gho_secret"}},
 		{name: "malformed_json", body: `not json`, wantErr: true},
 	}
 	for _, tt := range tests {

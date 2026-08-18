@@ -1,4 +1,4 @@
-package gitexec
+package git
 
 import (
 	"testing"
@@ -53,22 +53,22 @@ func TestScrubAuth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := ScrubAuth(tt.in)
+			got := scrubAuth(tt.in)
 			if got != tt.want {
-				t.Errorf("ScrubAuth(%q)\n got: %q\nwant: %q", tt.in, got, tt.want)
+				t.Errorf("scrubAuth(%q)\n got: %q\nwant: %q", tt.in, got, tt.want)
 			}
 		})
 	}
 }
 
-func TestCmd(t *testing.T) {
+func TestGitExec_Args(t *testing.T) {
 	t.Parallel()
 
 	ctx := t.Context()
-	cmd := Cmd(ctx, "/tmp", "status")
+	cmd := gitExec(ctx, "/tmp", "status")
 
 	if cmd.Dir != "/tmp" {
-		t.Errorf("Cmd.Dir = %q, want /tmp", cmd.Dir)
+		t.Errorf("gitExec.Dir = %q, want /tmp", cmd.Dir)
 	}
 	// Args include the prepended -c hardening pairs, before the subcommand.
 	// Shape: [git -c protocol.ext.allow=never -c core.fsmonitor= status].
@@ -76,11 +76,11 @@ func TestCmd(t *testing.T) {
 		"git", "-c", "protocol.ext.allow=never", "-c", "core.fsmonitor=", "status",
 	}
 	if len(cmd.Args) != len(wantArgs) {
-		t.Errorf("Cmd.Args length = %d, want %d (%v)", len(cmd.Args), len(wantArgs), cmd.Args)
+		t.Errorf("gitExec.Args length = %d, want %d (%v)", len(cmd.Args), len(wantArgs), cmd.Args)
 	} else {
 		for i, w := range wantArgs {
 			if cmd.Args[i] != w {
-				t.Errorf("Cmd.Args[%d] = %q, want %q", i, cmd.Args[i], w)
+				t.Errorf("gitExec.Args[%d] = %q, want %q", i, cmd.Args[i], w)
 			}
 		}
 	}
@@ -119,7 +119,7 @@ func TestCmd(t *testing.T) {
 	// loading them is required so credential helpers work.
 	for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
 		if got, ok := envMap[k]; ok {
-			t.Errorf("env %s = %q must not be set by Cmd (would disable credential helpers from ~/.gitconfig)", k, got)
+			t.Errorf("env %s = %q must not be set by gitExec (would disable credential helpers from ~/.gitconfig)", k, got)
 		}
 	}
 }
@@ -132,13 +132,13 @@ func TestCmd(t *testing.T) {
 // Asserted as a POSITION rather than mere membership: the pairs must precede the
 // subcommand, because `git status -c x=y` is not a config flag at all, it is an
 // argument to status.
-func TestCmd_ClearsConfigDrivenExecution(t *testing.T) {
+func TestGitExec_ClearsConfigDrivenExecution(t *testing.T) {
 	t.Parallel()
 
 	for _, sub := range []string{"status", "diff", "log", "commit", "push"} {
 		t.Run(sub, func(t *testing.T) {
 			t.Parallel()
-			args := Cmd(t.Context(), "/tmp", sub, "--porcelain").Args
+			args := gitExec(t.Context(), "/tmp", sub, "--porcelain").Args
 			var found bool
 			for i := 0; i+1 < len(args); i++ {
 				if args[i] != "-c" || args[i+1] != "core.fsmonitor=" {
@@ -159,10 +159,10 @@ func TestCmd_ClearsConfigDrivenExecution(t *testing.T) {
 // A refused subcommand must not gain the hardening flags: it never launches git
 // at all, so a flag there would only make the rigged-to-fail command look like a
 // real invocation.
-func TestCmd_RefusedSubcommandGetsNoHardening(t *testing.T) {
+func TestGitExec_RefusedSubcommandGetsNoHardening(t *testing.T) {
 	t.Parallel()
 
-	args := Cmd(t.Context(), "/tmp", "cat-file", "-p", "HEAD").Args
+	args := gitExec(t.Context(), "/tmp", "cat-file", "-p", "HEAD").Args
 	for _, a := range args {
 		if a == "core.fsmonitor=" || a == "protocol.ext.allow=never" {
 			t.Errorf("Args = %v, want no hardening on the refusal path", args)
@@ -215,12 +215,12 @@ func TestFirstSubcommand_skipsFlagValues(t *testing.T) {
 	}
 }
 
-// ParseRemoteHost extracts the host from a well-formed https remote URL.
+// parseRemoteHost extracts the host from a well-formed https remote URL.
 func TestParseRemoteHost_extractsHostFromURL(t *testing.T) {
 	t.Parallel()
 	const in = "https://github.com/foo/bar.git"
-	if got := ParseRemoteHost(in); got != "github.com" {
-		t.Errorf("ParseRemoteHost(%q) = %q, want %q", in, got, "github.com")
+	if got := parseRemoteHost(in); got != "github.com" {
+		t.Errorf("parseRemoteHost(%q) = %q, want %q", in, got, "github.com")
 	}
 }
 
@@ -230,8 +230,8 @@ func TestParseRemoteHost_extractsHostFromURL(t *testing.T) {
 func TestParseRemoteHost_parseErrorReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	const in = "http://ho\x00st.com"
-	if got := ParseRemoteHost(in); got != "" {
-		t.Errorf("ParseRemoteHost(%q) = %q, want empty", in, got)
+	if got := parseRemoteHost(in); got != "" {
+		t.Errorf("parseRemoteHost(%q) = %q, want empty", in, got)
 	}
 }
 
@@ -262,28 +262,28 @@ func TestSanitizeHost_rejectsForbiddenChars(t *testing.T) {
 	}
 }
 
-// A leading '@' means an empty user, which ParseSCPStyle must reject.
+// A leading '@' means an empty user, which parseSCPStyle must reject.
 func TestParseSCPStyle_rejectsEmptyUser(t *testing.T) {
 	t.Parallel()
 	const in = "@host:path"
-	if _, _, ok := ParseSCPStyle(in); ok {
-		t.Errorf("ParseSCPStyle(%q) ok = true, want false (leading '@' = empty user)", in)
+	if _, _, ok := parseSCPStyle(in); ok {
+		t.Errorf("parseSCPStyle(%q) ok = true, want false (leading '@' = empty user)", in)
 	}
 }
 
-// ParseSCPStyle splits user@host:path, returning the host and path after
+// parseSCPStyle splits user@host:path, returning the host and path after
 // the '@' for a valid scp-style remote.
 func TestParseSCPStyle_extractsHostAfterAt(t *testing.T) {
 	t.Parallel()
 	const in = "git@github.com:foo"
-	host, path, ok := ParseSCPStyle(in)
+	host, path, ok := parseSCPStyle(in)
 	if !ok {
-		t.Fatalf("ParseSCPStyle(%q) ok = false, want true", in)
+		t.Fatalf("parseSCPStyle(%q) ok = false, want true", in)
 	}
 	if host != "github.com" {
-		t.Errorf("ParseSCPStyle(%q) host = %q, want %q", in, host, "github.com")
+		t.Errorf("parseSCPStyle(%q) host = %q, want %q", in, host, "github.com")
 	}
 	if path != "foo" {
-		t.Errorf("ParseSCPStyle(%q) path = %q, want %q", in, path, "foo")
+		t.Errorf("parseSCPStyle(%q) path = %q, want %q", in, path, "foo")
 	}
 }

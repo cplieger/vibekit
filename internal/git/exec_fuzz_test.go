@@ -1,4 +1,4 @@
-package gitexec
+package git
 
 import (
 	"slices"
@@ -15,7 +15,7 @@ func FuzzParseSCPStyle(f *testing.F) {
 	f.Add("@host:path")
 
 	f.Fuzz(func(t *testing.T, raw string) {
-		host, _, ok := ParseSCPStyle(raw)
+		host, _, ok := parseSCPStyle(raw)
 		if !ok {
 			return
 		}
@@ -34,24 +34,6 @@ func FuzzParseSCPStyle(f *testing.F) {
 	})
 }
 
-func FuzzScrubAuth(f *testing.F) {
-	f.Add("https://user:pass@github.com/repo")
-	f.Add("https://token@host.com/path")
-	f.Add("git://a@b@c@host/repo")
-	f.Add("?token=secret&foo=bar")
-	f.Add("Authorization: Bearer abc123")
-	f.Add("")
-	f.Add("no credentials here")
-
-	f.Fuzz(func(t *testing.T, s string) {
-		result := ScrubAuth(s)
-		// Idempotent: scrubbing an already-scrubbed string is a no-op.
-		if ScrubAuth(result) != result {
-			t.Fatalf("ScrubAuth not idempotent on %q", s)
-		}
-	})
-}
-
 func FuzzParseRemoteHost(f *testing.F) {
 	f.Add("https://github.com/foo/bar.git")
 	f.Add("git@github.com:foo/bar.git")
@@ -61,7 +43,7 @@ func FuzzParseRemoteHost(f *testing.F) {
 	f.Add("not-a-url")
 
 	f.Fuzz(func(t *testing.T, raw string) {
-		host := ParseRemoteHost(raw)
+		host := parseRemoteHost(raw)
 		if host == "" {
 			return
 		}

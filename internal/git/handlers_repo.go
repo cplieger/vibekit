@@ -12,7 +12,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/fileutil"
-	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -196,8 +195,8 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 			api.WriteJSON(w, map[string]string{"content": ""})
 			return
 		}
-		slog.Warn("git show failed", "repo", dir, "ref", ref, "path", file, "error", err, "out", gitexec.ScrubAuth(out))
-		writeGitError(w, KindShowFailed, gitexec.ScrubAuth(out))
+		slog.Warn("git show failed", "repo", dir, "ref", ref, "path", file, "error", err, "out", scrubAuth(out))
+		writeGitError(w, KindShowFailed, scrubAuth(out))
 		return
 	}
 	api.WriteJSON(w, map[string]string{"content": out})
@@ -215,7 +214,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
-		slog.Debug("git log failed", "repo", dir, "ref", ref, "error", err, "out", gitexec.ScrubAuth(out))
+		slog.Debug("git log failed", "repo", dir, "ref", ref, "error", err, "out", scrubAuth(out))
 		api.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
 		return
 	}
@@ -225,7 +224,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			lines = append(lines, line)
 		}
 	}
-	remote, rErr := gitCmd(ctx, dir, "remote", "get-url", "origin")
+	remote, rErr := gitCmd(ctx, dir, subRemote, "get-url", "origin")
 	if rErr != nil {
 		slog.Debug("git remote get-url failed during log", "repo", dir, "error", rErr)
 	}
@@ -238,7 +237,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	api.WriteJSON(w, map[string]any{"entries": lines, "remote": gitexec.ScrubAuth(remote), "behind": behind})
+	api.WriteJSON(w, map[string]any{"entries": lines, "remote": scrubAuth(remote), "behind": behind})
 }
 
 func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +296,7 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := h.repoDir(body.Repo)
-	args := []string{"checkout"}
+	args := []string{subCheckout}
 	if body.Create {
 		args = append(args, "-b")
 	}

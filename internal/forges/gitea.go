@@ -677,10 +677,10 @@ func (p *giteaProvider) doAPIWith(ctx context.Context, token, method, endpoint s
 	if err != nil {
 		return nil, 0, fmt.Errorf("gitea api: build request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", mimeTypeJSON)
 	req.Header.Set("Authorization", "token "+token)
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", mimeTypeJSON)
 	}
 	//nolint:gosec // G704: the URL authority is the user's own configured forge host (constrained to logged-in forges by manager.Get); only the path varies, so this is not attacker-controlled SSRF
 	resp, err := giteaAPIClient.Do(req)

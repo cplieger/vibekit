@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/cplieger/vibekit/internal/gitexec"
 )
 
 // textconvMarker is what an armed textconv driver prints. It appears in a diff
@@ -85,7 +83,7 @@ func TestTextconv_FixtureIsArmed(t *testing.T) {
 	dir := t.TempDir()
 	armTextconv(t, dir)
 
-	out, _ := gitexec.Run(t.Context(), dir, "diff", "HEAD", "--", "changed.txt")
+	out, _ := gitCmd(t.Context(), dir, "diff", "HEAD", "--", "changed.txt")
 	if !strings.Contains(out, textconvMarker) {
 		t.Fatalf("diff without --no-textconv did not run the driver; the fixture is not armed:\n%s", out)
 	}
@@ -95,14 +93,14 @@ func TestTextconv_FixtureIsArmed(t *testing.T) {
 	// affirms the default rather than closing an open hole; what this asserts is
 	// that the driver is reachable there at all, which is what makes affirming
 	// the default worth the argument.
-	enabled, err := gitexec.Run(t.Context(), dir, "show", "--textconv", "HEAD:changed.txt")
+	enabled, err := gitCmd(t.Context(), dir, "show", "--textconv", "HEAD:changed.txt")
 	if err != nil {
 		t.Fatalf("git show --textconv: %v\n%s", err, enabled)
 	}
 	if !strings.Contains(enabled, textconvMarker) {
 		t.Fatalf("show --textconv did not run the driver; the fixture is not armed:\n%s", enabled)
 	}
-	bare, err := gitexec.Run(t.Context(), dir, "show", "HEAD:changed.txt")
+	bare, err := gitCmd(t.Context(), dir, "show", "HEAD:changed.txt")
 	if err != nil {
 		t.Fatalf("git show: %v\n%s", err, bare)
 	}
@@ -171,9 +169,9 @@ func TestGitShowCmd_ReturnsTheRawBlobNotTextconvOutput(t *testing.T) {
 
 // core.fsmonitor is the other config-driven execution path, and it fires on the
 // two subcommands the git panel uses most. It is cleared centrally in
-// gitexec.Cmd, so this asserts the end-to-end consequence: a repo that sets it
+// gitExec, so this asserts the end-to-end consequence: a repo that sets it
 // cannot get it run.
-func TestGitexec_DoesNotRunARepoFsmonitorHook(t *testing.T) {
+func TestGitExec_DoesNotRunARepoFsmonitorHook(t *testing.T) {
 	dir := t.TempDir()
 	initFixtureRepo(t, dir)
 	marker := filepath.Join(dir, "fsmonitor-ran")
@@ -183,7 +181,7 @@ func TestGitexec_DoesNotRunARepoFsmonitorHook(t *testing.T) {
 		{"status", "--porcelain"},
 		{"diff", "--no-textconv", "HEAD"},
 	} {
-		if out, err := gitexec.Run(t.Context(), dir, args...); err != nil {
+		if out, err := gitCmd(t.Context(), dir, args...); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 		if _, err := os.Stat(marker); err == nil {

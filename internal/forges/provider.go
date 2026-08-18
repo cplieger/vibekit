@@ -25,8 +25,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/cplieger/vibekit/internal/forges/cliexec"
 )
 
 // Kind identifies a forge backend.
@@ -305,16 +303,6 @@ const ListTimeout = 60 * time.Second
 
 // cliTea is the gitea/forgejo CLI binary name.
 const cliTea = "tea"
-
-// ErrNotInstalled signals the backing CLI is not on PATH. Aliased to
-// the cliexec sentinel (which runCmd actually returns) — the package
-// previously declared a SEPARATE errors.New with the same message, so
-// every errors.Is against this symbol silently never matched.
-var ErrNotInstalled = cliexec.ErrNotInstalled
-
-// ErrNotLoggedIn signals the CLI is installed but no auth is configured
-// for this host. Aliased for the same reason as ErrNotInstalled.
-var ErrNotLoggedIn = cliexec.ErrNotLoggedIn
 
 // ErrNotSupported signals the forge has no mechanism for the requested
 // operation — not a failure to reach it, but an absent capability. The

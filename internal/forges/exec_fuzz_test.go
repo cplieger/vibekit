@@ -1,4 +1,4 @@
-package cliexec
+package forges
 
 import (
 	"bytes"
@@ -14,14 +14,14 @@ func FuzzSanitizeEnv(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, joined string) {
 		env := strings.Split(joined, "\n")
-		result := SanitizeEnv(env)
+		result := sanitizeEnv(env)
 		for _, kv := range result {
 			key := kv
 			if i := strings.IndexByte(kv, '='); i > 0 {
 				key = kv[:i]
 			}
-			if ShouldStripEnv(key) {
-				t.Fatalf("SanitizeEnv leaked %q", key)
+			if shouldStripEnv(key) {
+				t.Fatalf("sanitizeEnv leaked %q", key)
 			}
 		}
 	})
@@ -34,20 +34,20 @@ func FuzzIsNotLoggedIn(f *testing.F) {
 	f.Add("")
 
 	f.Fuzz(func(t *testing.T, stderr string) {
-		got := IsNotLoggedIn(stderr)
+		got := isNotLoggedIn(stderr)
 		if !got {
 			return
 		}
 		lower := strings.ToLower(stderr)
 		found := false
-		for _, p := range NotLoggedInPatterns {
+		for _, p := range notLoggedInPatterns {
 			if strings.Contains(lower, p) {
 				found = true
 				break
 			}
 		}
 		if !found {
-			t.Fatalf("IsNotLoggedIn=true but no pattern found in %q", stderr)
+			t.Fatalf("isNotLoggedIn=true but no pattern found in %q", stderr)
 		}
 	})
 }
@@ -62,7 +62,7 @@ func FuzzCappedWriter(f *testing.F) {
 			max = 0
 		}
 		var buf bytes.Buffer
-		cw := &CappedWriter{W: &buf, Max: max}
+		cw := &cappedWriter{W: &buf, Max: max}
 		n, err := cw.Write(data)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -76,7 +76,7 @@ func FuzzCappedWriter(f *testing.F) {
 	})
 }
 
-// FuzzCappedWriterBoundary exercises CappedWriter with successive Write
+// FuzzCappedWriterBoundary exercises cappedWriter with successive Write
 // calls at boundary conditions. Invariants:
 //  1. Write never returns an error (underlying bytes.Buffer doesn't error).
 //  2. The underlying buffer never exceeds Max bytes across writes.
@@ -95,7 +95,7 @@ func FuzzCappedWriterBoundary(f *testing.F) {
 			max = 1 << 20
 		}
 		var buf bytes.Buffer
-		cw := &CappedWriter{W: &buf, Max: max}
+		cw := &cappedWriter{W: &buf, Max: max}
 
 		_, err1 := cw.Write(a)
 		if err1 != nil {
@@ -119,7 +119,7 @@ func FuzzCappedWriterBoundary(f *testing.F) {
 	})
 }
 
-// FuzzCmdErrorFormat exercises CmdError.Error() with arbitrary strings
+// FuzzCmdErrorFormat exercises cmdError.Error() with arbitrary strings
 // to ensure no panic on boundary inputs (empty fields, control bytes)
 // and that it never returns an empty string.
 func FuzzCmdErrorFormat(f *testing.F) {
@@ -129,7 +129,7 @@ func FuzzCmdErrorFormat(f *testing.F) {
 	f.Add("tea", "", "\x00\x01\x02\x03", -1)
 
 	f.Fuzz(func(t *testing.T, cli, args, stderr string, exitCode int) {
-		e := &CmdError{
+		e := &cmdError{
 			CLI:      cli,
 			Args:     []string{args},
 			Stderr:   stderr,
@@ -137,11 +137,11 @@ func FuzzCmdErrorFormat(f *testing.F) {
 			Err:      errors.New("wrapped"),
 		}
 		if s := e.Error(); s == "" {
-			t.Error("CmdError.Error() returned empty string")
+			t.Error("cmdError.Error() returned empty string")
 		}
 
 		// Also exercise the nil-Err, empty-stderr (exit-code) form.
-		e2 := &CmdError{
+		e2 := &cmdError{
 			CLI:      cli,
 			Args:     []string{args},
 			Stderr:   "",
@@ -149,7 +149,7 @@ func FuzzCmdErrorFormat(f *testing.F) {
 			Err:      nil,
 		}
 		if s2 := e2.Error(); s2 == "" {
-			t.Error("CmdError.Error() with nil Err returned empty string")
+			t.Error("cmdError.Error() with nil Err returned empty string")
 		}
 	})
 }

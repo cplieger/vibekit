@@ -11,7 +11,6 @@ import (
 
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -27,12 +26,12 @@ type Handler struct {
 	repoFlight   singleflight.Group
 	statusFlight singleflight.Group
 	workDir      string
-	timeouts     gitexec.Timeouts
+	timeouts     gitTimeouts
 }
 
 // NewHandler returns a Handler scoped to workDir.
 func NewHandler(workDir string, opts ...Option) *Handler {
-	h := &Handler{workDir: workDir, timeouts: gitexec.DefaultTimeouts()}
+	h := &Handler{workDir: workDir, timeouts: defaultTimeouts()}
 	for _, o := range opts {
 		o(h)
 	}
@@ -177,7 +176,7 @@ func parseGitStatus(ctx context.Context, dir string) []gitFile {
 			slog.Debug("git status canceled", "repo", dir, "cause", ctx.Err())
 			return nil
 		}
-		slog.Warn("git status failed", "repo", dir, "error", err, "out", gitexec.ScrubAuth(string(raw)))
+		slog.Warn("git status failed", "repo", dir, "error", err, "out", scrubAuth(string(raw)))
 		return nil
 	}
 	return parseGitStatusOutput(raw)
@@ -218,7 +217,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dir := h.repoDir(body.Repo)
-	remote, err := gitCmd(r.Context(), dir, "remote", "get-url", "origin")
+	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", "origin")
 	if err != nil {
 		slog.Warn("git pr-fetch: origin lookup failed", "repo", body.Repo, "pr", body.Number, "error", err)
 		writeCmdResult(w, remote, err)
@@ -244,7 +243,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 // we default to the GitHub shape — it's the most common and a failed
 // fetch surfaces a clear error to the user.
 func prRefShape(remote string) string {
-	host := gitexec.ParseRemoteHost(remote)
+	host := parseRemoteHost(remote)
 	if strings.Contains(host, "gitlab") {
 		return "refs/merge-requests/%d/head"
 	}

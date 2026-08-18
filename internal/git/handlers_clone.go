@@ -14,7 +14,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/fileutil"
-	"github.com/cplieger/vibekit/internal/gitexec"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +31,7 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isAllowedRemoteScheme(body.URL) {
-		slog.Warn("git clone: invalid scheme rejected", "url", gitexec.ScrubAuth(body.URL))
+		slog.Warn("git clone: invalid scheme rejected", "url", scrubAuth(body.URL))
 		api.BadRequest(w, "only https:// and git@ URLs allowed")
 		return
 	}
@@ -42,7 +41,7 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 	// otherwise interpret leading dashes as flags. The explicit scheme
 	// prefix above already blocks `--flag=...`, but `--` is cheap and
 	// makes the guarantee lexical rather than prefix-based.
-	slog.Info("git clone", "url", gitexec.ScrubAuth(body.URL))
+	slog.Info("git clone", "url", scrubAuth(body.URL))
 	cloneCtx, cancel := context.WithTimeout(r.Context(), h.timeouts.Clone)
 	defer cancel()
 	cmd := gitExec(cloneCtx, h.workDir, "clone", "--", body.URL)
@@ -89,7 +88,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		api.BadRequest(w, msgNotAGitRepo)
 		return
 	}
-	remote, err := gitCmd(r.Context(), dir, "remote", "get-url", "origin")
+	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", "origin")
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
 		api.WriteJSON(w, api.ErrorJSON("no origin remote"))
@@ -120,7 +119,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	cmd := gitExec(r.Context(), h.workDir, "clone", "--", remote, filepath.Base(dir))
 	out, cErr := cmd.CombinedOutput()
 	if cErr != nil {
-		slog.Error("git reclone: clone failed", "repo", body.Repo, "error", cErr, "out", gitexec.ScrubAuth(strings.TrimSpace(string(out))))
+		slog.Error("git reclone: clone failed", "repo", body.Repo, "error", cErr, "out", scrubAuth(strings.TrimSpace(string(out))))
 	} else {
 		slog.Info("git reclone completed", "repo", body.Repo)
 	}

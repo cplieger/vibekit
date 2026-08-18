@@ -25,8 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-
-	"github.com/cplieger/vibekit/internal/forges/cliexec"
 )
 
 // cliLogin stores token in the kind's CLI credential store via the
@@ -66,7 +64,7 @@ func cliLogout(ctx context.Context, kind Kind, host string) error {
 		return nil
 	}
 	if err := m.Logout(ctx, host); err != nil {
-		if errors.Is(err, cliexec.ErrNotLoggedIn) {
+		if errors.Is(err, ErrNotLoggedIn) {
 			return nil
 		}
 		return fmt.Errorf("%s logout: %w", m.CLI, err)

@@ -1,6 +1,11 @@
-// Package gitexec provides hardened git subprocess execution and
-// credential scrubbing shared by the git and forges packages.
-package gitexec
+// Hardened git subprocess execution and credential scrubbing.
+//
+// This was internal/gitexec, a package named after its mechanism whose only
+// importer was this one. Rolling it up here made every name below unexported,
+// which is the point: the allowlist, the hardening flags and the scrubber are
+// implementation detail of the git surface, not an API anyone else calls.
+
+package git
 
 import (
 	"context"
@@ -11,16 +16,15 @@ import (
 	"time"
 )
 
-// PlumbingTimeout bounds a single local-only git plumbing command
+// plumbingTimeout bounds a single local-only git plumbing command
 // (e.g. remote get-url, symbolic-ref). 5 seconds is plenty for
 // local-only operations on a healthy filesystem and tight enough
 // that a wedged filesystem doesn't pin callers forever.
-const PlumbingTimeout = 5 * time.Second
+const plumbingTimeout = 5 * time.Second
 
-// Timeouts consolidates git subprocess timeout budgets into a single
-// policy struct. Each consumer (git.Handler, forges.Registry) accepts
-// a Timeouts value so the budget is explicit and testable.
-type Timeouts struct {
+// gitTimeouts consolidates git subprocess timeout budgets into a single
+// policy struct. Handler holds one so the budget is explicit and testable.
+type gitTimeouts struct {
 	// Plumbing bounds local-only operations: branch, status, rev-parse.
 	Plumbing time.Duration
 	// Fetch bounds network read-only operations: fetch --quiet.
@@ -33,10 +37,10 @@ type Timeouts struct {
 	Clone time.Duration
 }
 
-// DefaultTimeouts returns the production timeout policy.
-func DefaultTimeouts() Timeouts {
-	return Timeouts{
-		Plumbing: PlumbingTimeout,
+// defaultTimeouts returns the production timeout policy.
+func defaultTimeouts() gitTimeouts {
+	return gitTimeouts{
+		Plumbing: plumbingTimeout,
 		Fetch:    5 * time.Second,
 		Push:     60 * time.Second,
 		Clone:    2 * time.Minute,
@@ -63,12 +67,12 @@ var urlQueryTokenPattern = regexp.MustCompile(`([?&](?:token|access_token|privat
 // headers. Case-insensitive on the header name only.
 var authHeaderPattern = regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|token|basic)\s+)\S+`)
 
-// ScrubAuth strips credentials from a git subprocess output string.
+// scrubAuth strips credentials from a git subprocess output string.
 // Idempotent: chained userinfo segments (`http://a@b@c@host`) are
 // consumed until the match set stabilises. The regex strictly shrinks
 // the string on every match (each iteration removes at least one
 // `@segment`), so the loop is bounded by input length with no DoS risk.
-func ScrubAuth(s string) string {
+func scrubAuth(s string) string {
 	if s == "" {
 		return ""
 	}
@@ -87,7 +91,7 @@ func ScrubAuth(s string) string {
 // --- Hardened subprocess execution ---
 
 // allowedSubcommands lists git subcommands that may be invoked through
-// gitexec.Cmd. Any first non-flag argument outside this set causes Cmd
+// gitexec.Cmd. Any first non-flag argument outside this set causes gitExec
 // to return a no-op command that exits with an error, defending against
 // callers that accidentally let untrusted input choose the subcommand.
 //
@@ -95,10 +99,18 @@ func ScrubAuth(s string) string {
 // validation done at HTTP-handler layer (e.g. isValidGitRef on body
 // fields); declaring the allowlist at the exec boundary makes the
 // guarantee local to this package.
+// Subcommand names this package builds argv from in more than one place, so the
+// allowlist entry and every call site are the same token by construction.
+const (
+	subCheckout = "checkout"
+	subRemote   = "remote"
+	subReset    = "reset"
+)
+
 var allowedSubcommands = map[string]struct{}{
 	"add":          {},
 	"branch":       {},
-	"checkout":     {},
+	subCheckout:    {},
 	"clone":        {},
 	"commit":       {},
 	"config":       {},
@@ -111,8 +123,8 @@ var allowedSubcommands = map[string]struct{}{
 	"pull":         {},
 	"push":         {},
 	"rebase":       {},
-	"remote":       {},
-	"reset":        {},
+	subRemote:      {},
+	subReset:       {},
 	"rev-list":     {},
 	"rev-parse":    {},
 	"show":         {},
@@ -148,7 +160,7 @@ func firstSubcommand(args []string) string {
 	return ""
 }
 
-// Cmd builds an *exec.Cmd for a git subprocess with hardening
+// gitExec builds an *exec.Cmd for a git subprocess with hardening
 // applied: protocol.ext.allow=never on the command line (so ext::
 // transports stay blocked even if user gitconfig tries to enable
 // them — `-c` always wins over gitconfig), no terminal/askpass
@@ -200,13 +212,13 @@ func firstSubcommand(args []string) string {
 // "open somebody else's repo" costs.
 //
 // The first non-flag arg in `args` must be one of allowedSubcommands;
-// otherwise Cmd returns a command rigged to fail without launching
+// otherwise gitExec returns a command rigged to fail without launching
 // git. This local guarantee satisfies CodeQL's go/command-injection
 // analyzer and gives defence-in-depth against future callers that
 // don't validate subcommand input upstream.
 //
 // Callers must supply a context with an appropriate timeout.
-func Cmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
+func gitExec(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	sub := firstSubcommand(args)
 	if _, ok := allowedSubcommands[sub]; !ok {
 		// Build a synthetic command that errors out cleanly. /bin/false
@@ -216,7 +228,7 @@ func Cmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		cmd.Dir = dir
 		// Stash a useful error string in Args so callers logging
 		// CombinedOutput see why; /bin/false ignores its args.
-		cmd.Args = append(cmd.Args, "gitexec: subcommand not allowed: "+sub)
+		cmd.Args = append(cmd.Args, "git: subcommand not allowed: "+sub)
 		return cmd
 	}
 	// Prepend hardening -c flags. Command-line -c values take priority
@@ -234,6 +246,7 @@ func Cmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
 		// .git/config.
 		"-c", "core.fsmonitor=",
 	}, args...)
+	//nolint:gosec // G702: the subcommand is checked against allowedSubcommands above and the binary name is the literal "git"; every remaining argv element is a separate token to execve with no shell, and the ref/path-shaped ones are validated at the handler boundary (isValidGitRef, validateFilePath, resolveRepoDir)
 	cmd := exec.CommandContext(ctx, "git", hardenedArgs...)
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(),
@@ -252,13 +265,13 @@ func Cmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// Run executes a git subprocess and returns trimmed combined output.
-func Run(ctx context.Context, dir string, args ...string) (string, error) {
-	out, err := Cmd(ctx, dir, args...).CombinedOutput()
+// gitCmd executes a git subprocess and returns trimmed combined output.
+func gitCmd(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := gitExec(ctx, dir, args...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
 
-// ParseRemoteHost extracts the host segment from an https or scp-style
+// parseRemoteHost extracts the host segment from an https or scp-style
 // git remote URL. Returns "" for unrecognised shapes.
 //
 //	https://github.com/foo/bar.git     → github.com
@@ -266,12 +279,12 @@ func Run(ctx context.Context, dir string, args ...string) (string, error) {
 //	ssh://git@gitlab.com/foo/bar.git   → gitlab.com
 //
 // Rejects ext:: remote-helper prefixes as a defense-in-depth measure.
-func ParseRemoteHost(raw string) string {
+func parseRemoteHost(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return ""
 	}
-	if h, _, ok := ParseSCPStyle(raw); ok {
+	if h, _, ok := parseSCPStyle(raw); ok {
 		return sanitizeHost(h)
 	}
 	u, err := url.Parse(raw)
@@ -291,11 +304,11 @@ func sanitizeHost(h string) string {
 	return h
 }
 
-// ParseSCPStyle recognises git's scp-like remote syntax (user@host:path)
+// parseSCPStyle recognises git's scp-like remote syntax (user@host:path)
 // and returns (host, path, true) on a successful match. Returns ok=false
 // for anything else, including URLs with a :// scheme, strings without @,
 // and ext:: remote-helper prefixes.
-func ParseSCPStyle(raw string) (host, path string, ok bool) {
+func parseSCPStyle(raw string) (host, path string, ok bool) {
 	if strings.Contains(raw, "://") {
 		return "", "", false
 	}
