@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/pathinside"
+	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/gitexec"
 	"golang.org/x/sync/singleflight"
@@ -140,7 +140,7 @@ func (h *Handler) repoDirForDelete(repo string) string {
 		slog.Warn("git remove: cannot resolve the repo's parent", "repo", repo, "error", err)
 		return ""
 	}
-	if parent != root && !pathinside.Inside(root, parent) {
+	if parent != root && !pathinside.Root(root).Contains(parent) {
 		slog.Warn("git remove: refusing a path whose parent resolves outside the workspace",
 			"repo", repo, "resolved_parent", parent)
 		return ""

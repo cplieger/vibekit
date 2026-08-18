@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/pathinside"
+	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/fileutil"
 	"golang.org/x/sync/errgroup"
 )
@@ -112,7 +112,7 @@ func (h *Handler) ownerOf(ctx context.Context, relPath string) (repo, inRepo str
 			}
 			continue
 		}
-		if !pathinside.Inside(e.Name, relPath) || len(e.Name) <= best {
+		if !pathinside.Root(e.Name).Contains(relPath) || len(e.Name) <= best {
 			continue
 		}
 		rest := strings.TrimPrefix(strings.TrimPrefix(relPath, e.Name), "/")

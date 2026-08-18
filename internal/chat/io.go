@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/jsonx/bounded"
-	"github.com/cplieger/pathinside"
+	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/api"
 )
 

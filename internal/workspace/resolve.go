@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/pathinside"
+	"github.com/cplieger/pathinside/v2"
 )
 
 // ResolveInsideAbs is like ResolveInside but accepts an already-absolute

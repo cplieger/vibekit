@@ -30,7 +30,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/pathinside"
+	"github.com/cplieger/pathinside/v2"
 )
 
 // mount is one granted browse root: a cleaned absolute directory plus
@@ -89,7 +89,7 @@ var errOutsideRoots = errors.New("access denied: outside granted roots")
 func (h *Handler) mountFor(clean string) *mount {
 	for i := range h.mounts {
 		m := &h.mounts[i]
-		if pathinside.Inside(m.dir, clean) {
+		if pathinside.Root(m.dir).Contains(clean) {
 			return m
 		}
 	}

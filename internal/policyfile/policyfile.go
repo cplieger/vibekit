@@ -45,7 +45,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/envx/yamlenv"
+	"github.com/cplieger/envx/yamlenv/v2"
 	"go.yaml.in/yaml/v3"
 )
 

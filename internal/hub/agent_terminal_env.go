@@ -26,7 +26,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/envx"
+	"github.com/cplieger/envx/v2"
 )
 
 // envAllowVar lets an operator re-permit specific names, comma-separated. A dev
@@ -104,7 +104,7 @@ func parseAllowedEnv(raw string) map[string]struct{} {
 // because nothing else in this package takes configuration, and once because this
 // keeps the per-request path a map lookup instead of a parse.
 var operatorAllowedEnv = sync.OnceValue(func() map[string]struct{} {
-	return parseAllowedEnv(envx.String(envAllowVar, ""))
+	return parseAllowedEnv(envx.String(envAllowVar))
 })
 
 // screenAgentEnv returns the names vibekit refuses to set for the agent, in the

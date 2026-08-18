@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/pathinside"
+	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 )

@@ -1,6 +1,7 @@
 package composition
 
 import (
+	"cmp"
 	"log/slog"
 	"net"
 	"os"
@@ -8,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/envx"
+	"github.com/cplieger/envx/v2"
 	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/auth"
@@ -107,21 +108,21 @@ func ConfigFromEnv() Config {
 	ac.LogoutTimeout = envx.Duration("VIBEKIT_AUTH_LOGOUT_TIMEOUT", ac.LogoutTimeout)
 	ac.WhoamiTimeout = envx.Duration("VIBEKIT_AUTH_WHOAMI_TIMEOUT", ac.WhoamiTimeout)
 
-	configDir := envx.String("KIRO_CONFIG_DIR", "/config")
-	workDir := envx.String("KIRO_WORK_DIR", "/workspace")
+	configDir := cmp.Or(envx.String("KIRO_CONFIG_DIR"), "/config")
+	workDir := cmp.Or(envx.String("KIRO_WORK_DIR"), "/workspace")
 	return Config{
 		WorkDir:   workDir,
 		ConfigDir: configDir,
 		// The pins the entrypoint exports. Unset outside the container.
-		KiroCLIVersion:     envx.String("KIRO_CLI_VERSION", ""),
-		KiroCLISHA256:      envx.String("KIRO_CLI_SHA256", ""),
-		KiroCLISHA256ARM64: envx.String("KIRO_CLI_SHA256_ARM64", ""),
-		VapidSub:           envx.String("VAPID_SUBJECT", "mailto:vibekit@noreply.invalid"),
-		ToolsDir:           envx.String("VIBEKIT_TOOLS_DIR", filepath.Join(configDir, "tools")),
-		ToolCatalogPath:    envx.String("VIBEKIT_TOOL_CATALOG", "/opt/vibekit/tool-catalog.json"),
-		ToolCatalogURL:     envx.String("VIBEKIT_TOOL_CATALOG_URL", toolbelt.DefaultCatalogURL),
+		KiroCLIVersion:     envx.String("KIRO_CLI_VERSION"),
+		KiroCLISHA256:      envx.String("KIRO_CLI_SHA256"),
+		KiroCLISHA256ARM64: envx.String("KIRO_CLI_SHA256_ARM64"),
+		VapidSub:           cmp.Or(envx.String("VAPID_SUBJECT"), "mailto:vibekit@noreply.invalid"),
+		ToolsDir:           cmp.Or(envx.String("VIBEKIT_TOOLS_DIR"), filepath.Join(configDir, "tools")),
+		ToolCatalogPath:    cmp.Or(envx.String("VIBEKIT_TOOL_CATALOG"), "/opt/vibekit/tool-catalog.json"),
+		ToolCatalogURL:     cmp.Or(envx.String("VIBEKIT_TOOL_CATALOG_URL"), toolbelt.DefaultCatalogURL),
 		ToolCatalogRefresh: toolbelt.ParseCatalogRefresh(
-			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH", ""), "VIBEKIT_TOOL_CATALOG_REFRESH"),
+			envx.String("VIBEKIT_TOOL_CATALOG_REFRESH"), "VIBEKIT_TOOL_CATALOG_REFRESH"),
 		ToolCatalogOverlays: overlayFiles(os.Getenv("VIBEKIT_TOOL_CATALOG_OVERLAY")),
 		TrustedProxies:      parseTrustedProxies(os.Getenv("WT_TRUSTED_PROXIES")),
 		TrustedInstallUIDs:  parseTrustedInstallUIDs(os.Getenv("WT_TRUSTED_INSTALL_UIDS")),

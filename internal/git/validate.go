@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/pathinside"
+	"github.com/cplieger/pathinside/v2"
 )
 
 // --- path validation ---

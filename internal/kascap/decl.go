@@ -23,6 +23,8 @@
 // that needs to read it should gain an accessor returning a copy.
 package kascap
 
+import "github.com/cplieger/envx/v2"
+
 // door names the ACP call that carries a capability key.
 //
 // The two doors have different lifetimes (one handshake per subprocess against
@@ -125,7 +127,11 @@ type decl struct {
 	// would put a JSON null on the wire. It is also the honest shape for what
 	// this is: an off switch for a shipped capability, not a rollout gate for an
 	// unfinished one.
-	env string
+	//
+	// Typed as an envx.Key because it IS a variable name: the type keeps a
+	// value from reaching a getter's key position, and envx validates the
+	// spelling on first read.
+	env envx.Key
 
 	// value is the wire value for an ungated row. Set explicitly on every such
 	// row rather than derived from the resolver, so the table never sends a
