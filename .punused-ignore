@@ -124,11 +124,14 @@ method (*Dispatcher).ServeHTTP
 #   ShellCappedBuffer -> internal/command/shell.go   shellProc.Stdout/Stderr
 #   hookCappedBuffer  -> internal/hub/hooks.go       proc.Stdout/Stderr
 #   RingBuffer        -> internal/mcp/prewarm        cmd.Stdout/Stderr
-#   cappedBuffer      -> internal/server/cli.go      cmd.Stdout
+#   procout.Buffer    -> internal/auth (login/logout/whoami), internal/server/cli.go
+#                        cmd.Stdout and cmd.Stderr; replaced internal/server's
+#                        cappedBuffer, which this list named until the two
+#                        capped writers became one type.
 method (*ShellCappedBuffer).Write
 method (*hookCappedBuffer).Write
 method (*RingBuffer).Write
-method (*cappedBuffer).Write
+method (*Buffer).Write
 
 # --- 10. json.Unmarshaler. encoding/json calls (*mcp.Server).UnmarshalJSON
 # whenever the servers file is decoded; it is the boundary that rejects an
