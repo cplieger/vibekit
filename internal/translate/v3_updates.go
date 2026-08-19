@@ -30,6 +30,7 @@ import (
 	"math"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/modeltext"
 )
 
 // v3Summarization is the compaction status carried under
@@ -543,7 +544,7 @@ func flattenModelChoices(choices []configChoice) []api.SessionModel {
 			out = append(out, flattenModelChoices(c.Options)...)
 			continue
 		}
-		if c.Value == "" || api.TagExcluded(c.Description, api.HiddenTags) {
+		if c.Value == "" || modeltext.Hidden(c.Description) {
 			continue
 		}
 		effort := choiceEffort(c.Meta)

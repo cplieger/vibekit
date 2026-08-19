@@ -209,7 +209,7 @@ func (b *Bridge) Modes() []api.SessionMode {
 
 // Models returns the available model catalog as declared by the agent
 // on session/new or session/load, with [Deprecated] / [Legacy] entries
-// filtered out (see api.TagExcluded). The returned slice is frozen
+// filtered out (see modeltext.Hidden). The returned slice is frozen
 // (never mutated after construction); callers MUST NOT mutate it.
 func (b *Bridge) Models() []api.SessionModel {
 	if p := b.models.Load(); p != nil {

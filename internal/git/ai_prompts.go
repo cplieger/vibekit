@@ -6,7 +6,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/modeltext"
 )
 
 // commitPrefixes is the canonical list of allowed commit-message type
@@ -126,7 +126,7 @@ func extractCommitMessage(raw string) string {
 	msg := strings.TrimSpace(raw)
 	// Strip markdown fences (including language-tagged variants like
 	// ```go / ```markdown / ```diff).
-	msg = api.StripCodeFence(msg)
+	msg = modeltext.StripCodeFence(msg)
 	msg = stripCommitPrefix(msg)
 	msg = stripSurroundingQuotes(msg)
 
@@ -208,7 +208,7 @@ func buildBranchPrompt(branches, context string) string {
 // edges, capped at 60 bytes. Returns "" when nothing usable remains.
 func sanitizeBranchName(raw string) string {
 	s := strings.TrimSpace(raw)
-	s = api.StripCodeFence(s)
+	s = modeltext.StripCodeFence(s)
 	s = stripSurroundingQuotes(s)
 	// First line only: models sometimes add an explanation line.
 	if i := strings.IndexAny(s, "\r\n"); i >= 0 {

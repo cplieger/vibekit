@@ -12,6 +12,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/kascap"
+	"github.com/cplieger/vibekit/internal/modeltext"
 )
 
 type sessionMode struct {
@@ -340,7 +341,7 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 				continue
 			}
 			served = append(served, c.Value)
-			if api.TagExcluded(c.Description, api.HiddenTags) {
+			if modeltext.Hidden(c.Description) {
 				continue
 			}
 			mdls = append(mdls, api.SessionModel{

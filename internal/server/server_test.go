@@ -10,7 +10,9 @@ import (
 	"testing/fstest"
 
 	"github.com/cplieger/pinstall/v2"
+
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/settings"
 )
 
@@ -217,7 +219,7 @@ func TestModelHidden(t *testing.T) {
 		{"", false},
 	}
 	for _, tt := range tests {
-		got := api.TagExcluded(tt.desc, api.HiddenTags)
+		got := modeltext.Hidden(tt.desc)
 		if got != tt.want {
 			t.Errorf("TagExcluded(%q, HiddenTags) = %v, want %v", tt.desc, got, tt.want)
 		}
@@ -241,7 +243,7 @@ func TestStripCodeFence(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := api.StripCodeFence(tt.input)
+			got := modeltext.StripCodeFence(tt.input)
 			if got != tt.want {
 				t.Errorf("StripCodeFence(%q) = %q, want %q", tt.input, got, tt.want)
 			}

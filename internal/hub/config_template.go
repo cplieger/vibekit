@@ -26,8 +26,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/webhttp"
+
+	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/modeltext"
 )
 
 // configTemplateTimeout bounds the template round-trip. First call may
@@ -182,7 +184,7 @@ func flattenTemplateModels(choices []kasConfigChoice) []api.SessionModel {
 			out = append(out, flattenTemplateModels(c.Options)...)
 			continue
 		}
-		if c.Value == "" || api.TagExcluded(c.Description, api.HiddenTags) {
+		if c.Value == "" || modeltext.Hidden(c.Description) {
 			continue
 		}
 		out = append(out, api.SessionModel{

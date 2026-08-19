@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cplieger/webhttp"
+
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/vibekit/internal/modeltext"
 )
 
 // utilityPrompter is the AI text generation this handler needs: one round trip
@@ -188,7 +190,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	// variants like ```markdown / ```diff) via the shared helper so
 	// this flow stays in sync with extractCommitMessage.
 	result = strings.TrimSpace(result)
-	result = api.StripCodeFence(result)
+	result = modeltext.StripCodeFence(result)
 	result = strings.TrimSpace(result)
 
 	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: result})

@@ -4,9 +4,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/cplieger/webhttp"
+
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/vibekit/internal/modeltext"
 )
 
 // handleUtilityExplainError explains a tool error in plain language.
@@ -96,5 +98,5 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
 		return
 	}
-	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: api.StripCodeFence(strings.TrimSpace(result))})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: modeltext.StripCodeFence(strings.TrimSpace(result))})
 }

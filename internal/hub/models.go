@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/modeltext"
 )
 
 // cheapestModel returns the cheapest reliable model id from the current
@@ -37,13 +38,13 @@ func cheapestModel(_ context.Context, catalog []api.SessionModel) string {
 }
 
 // excludedTags are the bracketed markers that disqualify a model from
-// ambient-task selection.
-var excludedTags = func() []string {
-	return append(append([]string{}, api.HiddenTags...), "[internal]", "[experimental]")
-}()
+// ambient-task selection: the hidden set plus two more. [internal] and
+// [experimental] models are SHOWN in the picker and only skipped here, which is
+// why this policy is hub's and modeltext.Hidden is not widened to cover it.
+var excludedTags = append(modeltext.HiddenTags(), "[internal]", "[experimental]")
 
 // modelExcluded returns true if the text contains any bracketed tag
 // that marks the model as unreliable for ambient tasks.
 func modelExcluded(text string) bool {
-	return api.TagExcluded(text, excludedTags)
+	return modeltext.HasAnyTag(text, excludedTags)
 }

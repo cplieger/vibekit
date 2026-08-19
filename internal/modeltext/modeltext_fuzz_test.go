@@ -1,11 +1,11 @@
-package api
+package modeltext
 
 import (
 	"strings"
 	"testing"
 )
 
-func FuzzTagExcluded(f *testing.F) {
+func FuzzHasAnyTag(f *testing.F) {
 	f.Add("[DEPRECATED] model", "[deprecated]")
 	f.Add("[legacy]", "[legacy]")
 	f.Add("café [Legacy]", "[legacy]")
@@ -16,10 +16,10 @@ func FuzzTagExcluded(f *testing.F) {
 			t.Skip("empty tag or text is not a meaningful input")
 		}
 		tags := []string{tag}
-		got := TagExcluded(text, tags)
+		got := HasAnyTag(text, tags)
 		expect := strings.Contains(strings.ToLower(text), tag)
 		if got != expect {
-			t.Errorf("TagExcluded(%q, %q) = %v, want %v", text, tag, got, expect)
+			t.Errorf("HasAnyTag(%q, %q) = %v, want %v", text, tag, got, expect)
 		}
 	})
 }

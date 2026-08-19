@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/cplieger/slogx/capture"
+
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/modeltext"
 )
 
 func TestNew_FieldsAndAccessors(t *testing.T) {
@@ -83,7 +85,7 @@ func TestIsDeprecatedOrLegacy(t *testing.T) {
 		{desc: "Model for legacyapi users", want: false},
 	}
 	for _, tc := range cases {
-		if got := api.TagExcluded(tc.desc, api.HiddenTags); got != tc.want {
+		if got := modeltext.Hidden(tc.desc); got != tc.want {
 			t.Errorf("TagExcluded(%q, HiddenTags) = %v, want %v", tc.desc, got, tc.want)
 		}
 	}
