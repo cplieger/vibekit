@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -38,16 +40,14 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 	}
 
 	want := []int64{1, 2, 5, 7, 9}
-	for range 8 { // repeated because the defect it replaces was order-random
-		got := listIDs(t, tracker.List(""))
-		if len(got) != len(want) {
-			t.Fatalf("List returned %d events, want %d", len(got), len(want))
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("List order = %v, want %v", got, want)
+	// One pass can satisfy an order-random List by luck, so each pass is its own
+	// subtest: a single unlucky pass reports without hiding the rest.
+	for pass := range 8 {
+		t.Run("pass_"+strconv.Itoa(pass), func(t *testing.T) {
+			if got := listIDs(t, tracker.List("")); !slices.Equal(got, want) {
+				t.Errorf("List order = %v, want %v", got, want)
 			}
-		}
+		})
 	}
 }
 
@@ -70,14 +70,20 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 
 	got := tracker.List("chat-1")
 	wantIDs := []int64{12, 20, 31}
-	ids := listIDs(t, got)
-	for i := range wantIDs {
-		if ids[i] != wantIDs[i] {
-			t.Fatalf("List order = %v, want %v", ids, wantIDs)
-		}
-		if got[i].Type != kinds[wantIDs[i]] {
-			t.Errorf("id %d replayed as %q, want %q", wantIDs[i], got[i].Type, kinds[wantIDs[i]])
-		}
+	// Fatal, and the reason is the per-kind subtests below: they index got, so a
+	// short replay would panic the test binary instead of reporting a failure.
+	if len(got) != len(wantIDs) {
+		t.Fatalf("List returned %d events, want %d: %v", len(got), len(wantIDs), listIDs(t, got))
+	}
+	if ids := listIDs(t, got); !slices.Equal(ids, wantIDs) {
+		t.Errorf("List order = %v, want %v", ids, wantIDs)
+	}
+	for i, id := range wantIDs {
+		t.Run(string(kinds[id]), func(t *testing.T) {
+			if got[i].Type != kinds[id] {
+				t.Errorf("id %d replayed as %q, want %q", id, got[i].Type, kinds[id])
+			}
+		})
 	}
 }
 
@@ -97,14 +103,10 @@ func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 		"chat-1": {1, 3, 4},
 		"chat-2": {6, 8},
 	} {
-		got := listIDs(t, tracker.List(chatID))
-		if len(got) != len(want) {
-			t.Fatalf("List(%q) returned %v, want %v", chatID, got, want)
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("List(%q) order = %v, want %v", chatID, got, want)
+		t.Run(string(chatID), func(t *testing.T) {
+			if got := listIDs(t, tracker.List(chatID)); !slices.Equal(got, want) {
+				t.Errorf("List(%q) order = %v, want %v", chatID, got, want)
 			}
-		}
+		})
 	}
 }
