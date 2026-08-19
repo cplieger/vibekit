@@ -753,7 +753,7 @@ func BenchmarkIgnoreMatcherMatches(b *testing.B) {
 
 				b.ReportAllocs()
 				b.ResetTimer()
-				for range b.N {
+				for b.Loop() {
 					m.Matches(b.Context(), pVal, false)
 				}
 			})

@@ -404,7 +404,7 @@ func (s *Service) loadPreferences(ctx context.Context) {
 			local[kr.Kind] = kr.DefaultOn
 			continue
 		}
-		if v, ok := settings.Field[bool](ctx, s.dir, kr.SettingsKey, kr.SettingsKey); ok {
+		if v, ok := settings.Field[bool](ctx, s.dir, kr.SettingsKey); ok {
 			local[kr.Kind] = v
 		} else {
 			local[kr.Kind] = kr.DefaultOn

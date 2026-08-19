@@ -183,7 +183,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID vibekit.Cha
 // the last thing making it look otherwise.
 func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 	var b bool
-	if !settings.FieldInto(ctx, configDir, settings.KeySupervisedDefault, settings.KeySupervisedDefault, &b) {
+	if !settings.FieldInto(ctx, configDir, settings.KeySupervisedDefault, &b) {
 		return false
 	}
 	return b

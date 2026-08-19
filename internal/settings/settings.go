@@ -149,13 +149,12 @@ func ReadBytes(ctx context.Context, configDir string) ([]byte, error) {
 // Field reads config.json, extracts the named key, and
 // json-unmarshals it into the target type T. Returns the zero value
 // and false when the file is missing, the key is absent, or parsing
-// fails. Parse failures are logged at Warn level with the provided
-// tag for diagnostics.
-func Field[T any](ctx context.Context, configDir, key, tag string) (T, bool) {
+// fails. Parse failures are logged at Warn level naming the key.
+func Field[T any](ctx context.Context, configDir, key string) (T, bool) {
 	var zero T
 	raw, err := parsedMap(ctx, configDir)
 	if err != nil {
-		slog.Warn("settings: read config.json for "+tag, "error", err)
+		slog.Warn("settings: read config.json for "+key, "error", err)
 		return zero, false
 	}
 	if raw == nil {
@@ -167,7 +166,7 @@ func Field[T any](ctx context.Context, configDir, key, tag string) (T, bool) {
 	}
 	var out T
 	if err := json.Unmarshal(v, &out); err != nil {
-		slog.Warn("settings: parse "+tag, "error", err)
+		slog.Warn("settings: parse "+key, "error", err)
 		return zero, false
 	}
 	return out, true
@@ -177,10 +176,10 @@ func Field[T any](ctx context.Context, configDir, key, tag string) (T, bool) {
 // json-unmarshals it into the value pointed to by out. Returns true
 // on success. This is the pointer-based variant of Field for callers
 // that need to unmarshal into an existing variable.
-func FieldInto(ctx context.Context, configDir, key, tag string, out any) bool {
+func FieldInto(ctx context.Context, configDir, key string, out any) bool {
 	raw, err := parsedMap(ctx, configDir)
 	if err != nil {
-		slog.Warn("settings: read config.json for "+tag, "error", err)
+		slog.Warn("settings: read config.json for "+key, "error", err)
 		return false
 	}
 	if raw == nil {
@@ -191,7 +190,7 @@ func FieldInto(ctx context.Context, configDir, key, tag string, out any) bool {
 		return false
 	}
 	if err := json.Unmarshal(v, out); err != nil {
-		slog.Warn("settings: parse "+tag, "error", err)
+		slog.Warn("settings: parse "+key, "error", err)
 		return false
 	}
 	return true

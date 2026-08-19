@@ -210,7 +210,7 @@ func permissionToolName(params json.RawMessage) string {
 // missing settings file can never widen what an unattended run may do.
 func scheduledAutoApprove(ctx context.Context, configDir string) bool {
 	var b bool
-	if !settings.FieldInto(ctx, configDir, settings.KeyScheduledAutoApprove, settings.KeyScheduledAutoApprove, &b) {
+	if !settings.FieldInto(ctx, configDir, settings.KeyScheduledAutoApprove, &b) {
 		return false
 	}
 	return b

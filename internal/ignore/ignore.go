@@ -289,7 +289,7 @@ func loadRules(files []string, sizeHint int) (rules []rule, mtimes map[string]ti
 // json.Unmarshal calls when multiple callers read config.json.
 func (m *Matcher) readSettingFiles(ctx context.Context) []string {
 	var list []string
-	if !settings.FieldInto(ctx, m.configDir, settings.KeyAgentIgnoreFiles, "agent_ignore_files", &list) {
+	if !settings.FieldInto(ctx, m.configDir, settings.KeyAgentIgnoreFiles, &list) {
 		// Key unset: fresh install (no config.json), a config.json that
 		// predates the key, or a transient read/parse failure. Fall back to
 		// the seeded default so the agent read filter is ON out of the box

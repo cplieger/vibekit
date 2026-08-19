@@ -37,7 +37,7 @@ func writeSettings(t *testing.T, dir, content string) {
 // (value, ok) matching the settings.Field contract.
 // context.Background() rather than t.Context(): no *testing.T is in scope here.
 func readDebugFlag(dir string) (bool, bool) {
-	return settings.Field[bool](context.Background(), dir, "debug_logs", "debug_logs")
+	return settings.Field[bool](context.Background(), dir, "debug_logs")
 }
 
 func TestReadDebugFlag(t *testing.T) {

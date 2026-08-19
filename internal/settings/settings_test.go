@@ -66,7 +66,7 @@ func TestField_StringKey(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{"name":"alice","age":30}`))
 
-	val, ok := Field[string](t.Context(), dir, "name", "test")
+	val, ok := Field[string](t.Context(), dir, "name")
 	if !ok || val != "alice" {
 		t.Fatalf("got (%q, %v), want (\"alice\", true)", val, ok)
 	}
@@ -77,7 +77,7 @@ func TestField_BoolKey(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{"enabled":true}`))
 
-	val, ok := Field[bool](t.Context(), dir, "enabled", "test")
+	val, ok := Field[bool](t.Context(), dir, "enabled")
 	if !ok || !val {
 		t.Fatalf("got (%v, %v), want (true, true)", val, ok)
 	}
@@ -88,7 +88,7 @@ func TestField_MissingKey(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{"other":"value"}`))
 
-	val, ok := Field[string](t.Context(), dir, "missing", "test")
+	val, ok := Field[string](t.Context(), dir, "missing")
 	if ok {
 		t.Fatalf("expected ok=false for missing key, got val=%q", val)
 	}
@@ -99,7 +99,7 @@ func TestField_InvalidJSON(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`not json`))
 
-	val, ok := Field[string](t.Context(), dir, "key", "test")
+	val, ok := Field[string](t.Context(), dir, "key")
 	if ok {
 		t.Fatalf("expected ok=false for invalid JSON, got val=%q", val)
 	}
@@ -110,7 +110,7 @@ func TestField_TypeMismatch(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{"count":"not a number"}`))
 
-	val, ok := Field[int](t.Context(), dir, "count", "test")
+	val, ok := Field[int](t.Context(), dir, "count")
 	if ok {
 		t.Fatalf("expected ok=false for type mismatch, got val=%d", val)
 	}
@@ -122,7 +122,7 @@ func TestFieldInto_Success(t *testing.T) {
 	writeSettings(t, dir, []byte(`{"items":["a","b","c"]}`))
 
 	var items []string
-	ok := FieldInto(t.Context(), dir, "items", "test", &items)
+	ok := FieldInto(t.Context(), dir, "items", &items)
 	if !ok {
 		t.Fatal("expected ok=true")
 	}
@@ -172,19 +172,19 @@ func TestField_GenInvalidationAfterDeleteRecreate(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"k":"AAA"}`), 0o600); err != nil {
 		t.Fatalf("write A: %v", err)
 	}
-	if v, ok := Field[string](ctx, dir, "k", "test"); !ok || v != "AAA" {
+	if v, ok := Field[string](ctx, dir, "k"); !ok || v != "AAA" {
 		t.Fatalf("read A = (%q,%v), want (AAA,true)", v, ok)
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if _, ok := Field[string](ctx, dir, "k", "test"); ok {
+	if _, ok := Field[string](ctx, dir, "k"); ok {
 		t.Fatalf("read after delete ok = true, want false")
 	}
 	if err := os.WriteFile(path, []byte(`{"k":"BBB"}`), 0o600); err != nil {
 		t.Fatalf("write B: %v", err)
 	}
-	v, ok := Field[string](ctx, dir, "k", "test")
+	v, ok := Field[string](ctx, dir, "k")
 	if !ok || v != "BBB" {
 		t.Errorf("read after recreate = (%q,%v), want (BBB,true) — stale parse cache", v, ok)
 	}
