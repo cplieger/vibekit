@@ -7,7 +7,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
 // baseDeps is a composable Deps implementation for tests and benchmarks.
@@ -47,7 +46,7 @@ type termRendered struct {
 
 func newBaseDeps() *baseDeps {
 	return &baseDeps{
-		store:       testsupport.NopChatStore{},
+		store:       nopChatRecords{},
 		bufStore:    buffer.NewStore(),
 		lineTracker: buffer.NewLineTracker(),
 		terminals:   map[string]termRendered{},
@@ -85,7 +84,7 @@ func (d *baseDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]
 	return nil
 }
 func (d *baseDeps) BridgeRespond(context.Context, api.ChatID, int64, any, error) error { return nil }
-func (d *baseDeps) MCPRecorder() MCPRecorder                                           { return &testsupport.NopMCPRecorder{} }
+func (d *baseDeps) MCPRecorder() MCPRecorder                                           { return nopMCPRecorder{} }
 func (d *baseDeps) SetGovernance(g api.GovernanceStatePayload) {
 	if d.onSetGovernance != nil {
 		d.onSetGovernance(g)

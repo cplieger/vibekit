@@ -142,17 +142,19 @@ method (*Server).UnmarshalJSON
 # packages' TEST binaries share one implementation, so EU1001 is its
 # design, not a defect. The EU1002 members are interface-satisfaction
 # stubs pinned by the compile-time assertions in these files:
-#   var _ chatStoreUnion = NopChatStore{}                (chatstore.go)
 #   var _ chatStoreUnion = (*RecordingChatStore)(nil)    (chatstore.go)
 #   var _ chatStoreUnion = (*InMemoryChatStore)(nil)     (inmem_chatstore.go)
 # chatStoreUnion is the union of what the real consumers declare, since
 # api.ChatStore no longer exists; each consumer names 1 to 5 of the store's 9.
 # Consumers: internal/hub (fakeChatStore = testsupport.RecordingChatStore),
 # internal/command, internal/translate and internal/hub (NewInMemoryChatStore).
-# broadcaster.go is gone: NopBroadcaster and CaptureBroadcaster had no
-# consumer outside their own test file, so they were deleted rather than
-# excused. Each fake's RegisterRoutes no-op went the same way — only
-# internal/server mounts the chat routes, and it does so on the concrete store.
+#
+# Five doubles left the package under the two-consumer rule and are NOT
+# excused here, they are gone: NopACPBridge, NopBroadcaster and
+# CaptureBroadcaster had no consumer outside their own tests; NopChatStore and
+# NopMCPRecorder had one each and moved into internal/translate's own _test.go.
+# Each remaining fake's RegisterRoutes no-op went too — only internal/server
+# mounts the chat routes, and it does so on the concrete store.
 internal/testsupport/chatstore.go
 internal/testsupport/inmem_chatstore.go
 

@@ -18,7 +18,7 @@ var errBoom = errors.New("persist boom")
 // recStore records AppendMessage/Mutate calls and returns configurable
 // errors so HandlePlan's persist branches are observable.
 type recStore struct {
-	testsupport.NopChatStore
+	nopChatRecords
 	appendErr   error
 	mutateErr   error
 	appendCalls int

@@ -1,6 +1,13 @@
-// Package testsupport provides shared test fakes for interfaces defined in
-// the api package. These are intended for use across multiple test packages
-// to avoid duplicating interface implementations.
+// Package testsupport provides the chat-store fakes that more than one sibling
+// package's TEST binary needs, plus the contract suites those packages run
+// against both a fake and the real implementation.
+//
+// Membership has one rule: a double belongs here only while at least two
+// packages consume it. Five members left when that stopped being true —
+// NopACPBridge, NopBroadcaster and CaptureBroadcaster had no consumer outside
+// their own tests, and NopChatStore and NopMCPRecorder had exactly one, so they
+// moved into internal/translate's own _test.go where they could be sized to that
+// package's 3-method contract instead of the widest one going.
 package testsupport
 
 import (
@@ -12,53 +19,19 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// NopChatStore is a no-op chat store for benchmarks.
-// Every method returns zero/nil.
-type NopChatStore struct{}
-
-// Get returns (nil, false).
-func (NopChatStore) Get(context.Context, api.ChatID) (*api.Chat, bool) { return nil, false }
-
-// List returns nil.
-func (NopChatStore) List(context.Context) []api.ChatHeader { return nil }
-
-// BuildHistory returns an empty string.
-func (NopChatStore) BuildHistory(context.Context, api.ChatID) string { return "" }
-
-// Mutate is a no-op.
-func (NopChatStore) Mutate(context.Context, api.ChatID, func(*api.Chat, bool) bool) error {
-	return nil
-}
-
-// SetDraft is a no-op.
-func (NopChatStore) SetDraft(context.Context, api.ChatID, string) error { return nil }
-
-// Delete is a no-op.
-func (NopChatStore) Delete(context.Context, api.ChatID) error { return nil }
-
-// AppendMessage is a no-op.
-func (NopChatStore) AppendMessage(context.Context, api.ChatID, *api.Message) error { return nil }
-
-// UpdateMessage is a no-op.
-func (NopChatStore) UpdateMessage(context.Context, api.ChatID, string, func(*api.Message)) error {
-	return nil
-}
-
-// The union of what the consumers declare, spelled out here rather than named,
-// so a consumer that grows a method fails to compile against this fake instead
-// of silently outgrowing it. It is ChatStoreContract's 7 plus SetDraft, which
-// internal/command needs and the contract suite does not exercise.
+// chatStoreUnion is the union of what the real consumers declare, spelled out
+// here rather than named, so a consumer that grows a method fails to compile
+// against these fakes instead of silently outgrowing them. It is
+// ChatStoreContract's 7 plus SetDraft, which internal/command needs and the
+// contract suite does not exercise.
 //
 // RegisterRoutes is NOT here, and each fake dropped its no-op: only
 // internal/server mounts the chat routes and it does so on the concrete store,
-// so three fakes carried a method no test could reach.
+// so both fakes carried a method no test could reach.
 type chatStoreUnion interface {
 	ChatStoreContract
 	SetDraft(ctx context.Context, id api.ChatID, text string) error
 }
-
-// Compile-time assertion.
-var _ chatStoreUnion = NopChatStore{}
 
 // RecordingChatStore is an in-memory chat store that keeps chats in a
 // map and fires broadcasts via an attached Broadcaster. Suitable for
