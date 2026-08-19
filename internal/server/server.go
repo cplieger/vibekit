@@ -36,7 +36,7 @@ type Server struct {
 	utilityPrompt api.UtilityPrompter
 	accountUsage  AccountUsageProvider
 	policy        policyProvider
-	hub           api.Hub
+	hub           chatHub
 	steering      SteeringGenerator
 	mcpRegistry   api.RouteHandler
 	staticFS      fs.FS
@@ -92,7 +92,7 @@ type Option func(*Server)
 func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steering = g } }
 
 // WithHub sets the hub that manages bridge processes and SSE broadcasts.
-func WithHub(h api.Hub) Option { return func(s *Server) { s.hub = h } }
+func WithHub(h chatHub) Option { return func(s *Server) { s.hub = h } }
 
 // WithChats sets the chat store used for reading and writing chat files.
 func WithChats(c api.ChatStore) Option { return func(s *Server) { s.chats = c } }

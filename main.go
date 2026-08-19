@@ -34,7 +34,6 @@ var (
 	_ api.ChatStore            = (*chat.Store)(nil)
 	_ api.ACPBridge            = (*bridge.Bridge)(nil)
 	_ api.Broadcaster          = (*hub.Hub)(nil)
-	_ api.Hub                  = (*hub.Hub)(nil)
 	_ server.SteeringGenerator = (*steering.Generator)(nil)
 	_ api.RouteHandler         = (*git.Handler)(nil)
 	_ api.RouteHandler         = (*filebrowse.Handler)(nil)

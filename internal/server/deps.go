@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -19,6 +20,36 @@ import (
 //
 // UNEXPORTED by default. An interface here is exported only when the
 // composition root has to name it, and its doc says so.
+
+// routeHandler is a component that wires its own routes under a sub-tree of
+// /api/*. This package is the ROUTER, so it is the only consumer: the six
+// packages that satisfy it (auth, filebrowse, forges, git, mcp's Store and its
+// RegistryProxy) implement it, and an implementor is not a consumer. That is
+// why one declaration here replaces the shared api.RouteHandler rather than
+// eight copies of it.
+//
+// 1 method, which is the whole of it — there is no narrower statement of "owns
+// a mux subset" available.
+type routeHandler interface {
+	RegisterRoutes(mux *http.ServeMux)
+}
+
+// chatHub is the bridge/SSE hub as this package uses it: it mounts /api/events
+// and /api/command, it is the fan-out this package broadcasts a settings change
+// through, and it is what the shutdown path drains. *hub.Hub satisfies it.
+//
+// 3 methods against a *hub.Hub that exports well over a hundred. Exported
+// methods on the concrete type this package must NOT reach — bridge
+// coordination, the utility runtime, the MCP registry, run hosting — are the
+// reason the narrow spelling matters here more than anywhere else in the file.
+type chatHub interface {
+	routeHandler
+
+	// Broadcast fans one event out to every connected SSE client.
+	Broadcast(ctx context.Context, evt api.ServerEvent)
+	// Shutdown drains in-flight prompts and closes all bridges.
+	Shutdown()
+}
 
 // SteeringGenerator generates steering files for kiro-cli.
 // *steering.Generator satisfies it.

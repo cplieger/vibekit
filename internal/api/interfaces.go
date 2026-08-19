@@ -111,20 +111,6 @@ type Broadcaster interface {
 	Broadcast(ctx context.Context, evt ServerEvent)
 }
 
-// Hub manages SSE connections and dispatches POST /api/command.
-type Hub interface {
-	Broadcaster
-	RouteHandler
-
-	// RouteHandler provides RegisterRoutes to wire /api/events (SSE) and
-	// /api/command (POST).
-
-	// Lifecycle
-
-	// Shutdown drains in-flight prompts and closes all bridges.
-	Shutdown()
-}
-
 // StartOpts collects the parameters for ACPBridge.Start. Lifetime is
 // REQUIRED; every other field is optional, so a StartOpts carrying nothing but
 // a Lifetime creates a new session with no model override.
