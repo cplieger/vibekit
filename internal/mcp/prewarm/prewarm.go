@@ -21,9 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/semaphore"
-
 	"github.com/cplieger/vibekit/internal/buffer"
+	"golang.org/x/sync/semaphore"
 )
 
 // ServerInfo is the narrow view of an MCP server that prewarm needs.
