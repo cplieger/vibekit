@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
@@ -399,7 +399,7 @@ func sweepStaleTemps(configDir, workDir string) {
 		dir  string
 		opts []atomicfile.Option
 	}{
-		{configDir, []atomicfile.Option{atomicfile.WithRecursive()}},
+		{configDir, []atomicfile.Option{atomicfile.WithRecursive(true)}},
 		{workDir, nil},
 	} {
 		if _, err := atomicfile.CleanupStaleTemps(sweep.dir, tempMaxAge, sweep.opts...); err != nil {

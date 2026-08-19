@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 )
 
 // FileName is the store's file, beside mcp.json in the config dir.

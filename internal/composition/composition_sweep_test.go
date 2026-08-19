@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 )
 
 // staleTemp writes an atomicfile-shaped temp aged past the sweep cutoff.
@@ -62,6 +62,28 @@ func TestSweepStaleTemps_reaches_every_config_subdir(t *testing.T) {
 	}
 	if _, err := os.Stat(keep); err != nil {
 		t.Errorf("a caller-owned chat file was removed: %v", err)
+	}
+}
+
+// TestSweepStaleTemps_workDir_is_swept_flat pins the other half of the option's
+// argument: workDir is the user's working tree, so descending it on every boot
+// would walk an arbitrarily large checkout to find temps that only ever land at
+// its top level. An orphan in a workDir SUBDIRECTORY is therefore left alone,
+// and the two sweeps must not be "aligned".
+func TestSweepStaleTemps_workDir_is_swept_flat(t *testing.T) {
+	t.Parallel()
+	configDir, workDir := t.TempDir(), t.TempDir()
+
+	top := staleTemp(t, workDir, ".atomicfile-7777777777.tmp")
+	nested := staleTemp(t, filepath.Join(workDir, "vendor", "deep"), ".atomicfile-8888888888.tmp")
+
+	sweepStaleTemps(configDir, workDir)
+
+	if _, err := os.Stat(top); err == nil {
+		t.Errorf("an orphan at the top of workDir survived the sweep: %s", top)
+	}
+	if _, err := os.Stat(nested); err != nil {
+		t.Errorf("the sweep descended into the user's working tree: %v", err)
 	}
 }
 

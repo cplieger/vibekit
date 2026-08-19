@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/cplieger/atomicfile/v2"
+	"github.com/cplieger/atomicfile/v3"
 )
 
 // This file pins ONE rule in both directions: a part of the tree the search meant
