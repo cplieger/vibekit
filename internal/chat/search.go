@@ -64,7 +64,7 @@ type SearchHit struct {
 	// from without a second lookup.
 	Role api.Role `json:"role"`
 	// Turn is the 1-based session-absolute turn ordinal, matching
-	// api.ProjectTurnSummaries so a hit can mark the timeline rail.
+	// projectTurnSummaries so a hit can mark the timeline rail.
 	Turn int `json:"turn"`
 	// Offset is the rune index of the match within the searched text, so the
 	// client can highlight the right occurrence rather than the first.
@@ -160,7 +160,7 @@ func Search(msgs []api.Message, raw string, caseSensitive bool) []SearchHit {
 func turnIndexByMessage(msgs []api.Message) (turns map[string]int, openers map[string]string) {
 	turns = make(map[string]int, len(msgs))
 	openers = make(map[string]string, len(msgs))
-	summaries := api.ProjectTurnSummaries(msgs, false)
+	summaries := projectTurnSummaries(msgs, false)
 	// A summary carries its opening message id; walk the messages in order and
 	// advance the turn whenever the next turn's opener is reached.
 	next := 0

@@ -270,7 +270,7 @@ describe("turnAnchorID", () => {
 // The cross-language pin.
 //
 // The outcome rule exists in two implementations and neither can go: the server
-// derives it for the whole session (internal/api/turns.go), because the rail
+// derives it for the whole session (internal/chat/turns.go), because the rail
 // must describe turns this paginated store does not hold, and the client derives
 // it for the IN-FLIGHT turn, which no fetched summary can know. This runs the
 // same fixture Go's TestTurnOutcomeContract runs, so a rule changed in one
@@ -286,7 +286,7 @@ interface OutcomeFixture {
   }[];
 }
 
-const FIXTURE_PATH = "../internal/api/testdata/turn_outcomes.json";
+const FIXTURE_PATH = "../internal/chat/testdata/turn_outcomes.json";
 
 describe("the turn-outcome contract shared with the Go implementation", () => {
   const raw = readFileSync(new URL(FIXTURE_PATH, import.meta.url), "utf8");

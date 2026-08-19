@@ -1,4 +1,4 @@
-package api
+package chat
 
 import (
 	"encoding/json"
@@ -7,6 +7,8 @@ import (
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/cplieger/vibekit/internal/api"
 )
 
 // outcomeFixture mirrors testdata/turn_outcomes.json. See that file's _comment
@@ -40,35 +42,35 @@ func TestTurnOutcomeContract(t *testing.T) {
 	}
 	for _, tc := range fx.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			body := make([]Message, 0, len(tc.Body))
+			body := make([]api.Message, 0, len(tc.Body))
 			for _, b := range tc.Body {
-				m := Message{Role: RoleAssistant}
+				m := api.Message{Role: api.RoleAssistant}
 				if b.Refusal {
-					m.Refusal = &RefusalInfo{}
+					m.Refusal = &api.RefusalInfo{}
 				}
 				if b.Event != "" {
-					m.Role = RoleEvent
-					m.EventKind = EventKind(b.Event)
+					m.Role = api.RoleEvent
+					m.EventKind = api.EventKind(b.Event)
 				}
 				body = append(body, m)
 			}
-			if got := DeriveTurnOutcome(body, tc.IsLive); string(got) != tc.Want {
-				t.Errorf("DeriveTurnOutcome = %q, want %q", got, tc.Want)
+			if got := deriveTurnOutcome(body, tc.IsLive); string(got) != tc.Want {
+				t.Errorf("deriveTurnOutcome = %q, want %q", got, tc.Want)
 			}
 		})
 	}
 }
 
-func user(id, content string, ts int64) Message {
-	return Message{ID: id, Role: RoleUser, Content: content, Ts: ts}
+func user(id, content string, ts int64) api.Message {
+	return api.Message{ID: id, Role: api.RoleUser, Content: content, Ts: ts}
 }
 
-func assistant(id string, ts int64) Message {
-	return Message{ID: id, Role: RoleAssistant, Content: "ok", Ts: ts}
+func assistant(id string, ts int64) api.Message {
+	return api.Message{ID: id, Role: api.RoleAssistant, Content: "ok", Ts: ts}
 }
 
 func TestProjectTurnSummaries_PromotesTheUserMessageAndNumbersFromOne(t *testing.T) {
-	got := ProjectTurnSummaries([]Message{
+	got := projectTurnSummaries([]api.Message{
 		user("u1", "first thing", 100),
 		assistant("a1", 200),
 		user("u2", "second thing", 300),
@@ -98,7 +100,7 @@ func TestProjectTurnSummaries_PromotesTheUserMessageAndNumbersFromOne(t *testing
 // transcript legitimately begins mid-turn. Marking it lets the rail render it as
 // a non-user marker instead of implying the user asked for it.
 func TestProjectTurnSummaries_MarksAHeaderlessTurn(t *testing.T) {
-	got := ProjectTurnSummaries([]Message{
+	got := projectTurnSummaries([]api.Message{
 		assistant("a1", 100),
 		user("u1", "then this", 200),
 		assistant("a2", 300),
@@ -122,16 +124,16 @@ func TestProjectTurnSummaries_MarksAHeaderlessTurn(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_MarksOnlyTheLastTurnRunning(t *testing.T) {
-	got := ProjectTurnSummaries([]Message{
+	got := projectTurnSummaries([]api.Message{
 		user("u1", "a", 100),
 		assistant("a1", 200),
 		user("u2", "b", 300),
 	}, true)
 
-	if got[0].Outcome != TurnOutcomeCompleted {
+	if got[0].Outcome != api.TurnOutcomeCompleted {
 		t.Errorf("turn 1 outcome = %q, want completed", got[0].Outcome)
 	}
-	if got[1].Outcome != TurnOutcomeRunning {
+	if got[1].Outcome != api.TurnOutcomeRunning {
 		t.Errorf("turn 2 outcome = %q, want running", got[1].Outcome)
 	}
 }
@@ -139,7 +141,7 @@ func TestProjectTurnSummaries_MarksOnlyTheLastTurnRunning(t *testing.T) {
 // An empty result must marshal as [] rather than null: the client iterates it,
 // and a null would be a second empty case for every caller to remember.
 func TestProjectTurnSummaries_EmptyMarshalsAsArray(t *testing.T) {
-	got := ProjectTurnSummaries(nil, false)
+	got := projectTurnSummaries(nil, false)
 	if got == nil {
 		t.Fatal("got nil slice")
 	}
@@ -153,7 +155,7 @@ func TestProjectTurnSummaries_EmptyMarshalsAsArray(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_FirstLineCollapsesWhitespace(t *testing.T) {
-	got := ProjectTurnSummaries([]Message{
+	got := projectTurnSummaries([]api.Message{
 		user("u1", "  line one\n\n\tline two   ", 100),
 	}, false)
 	if got[0].FirstLine != "line one line two" {
@@ -164,7 +166,7 @@ func TestProjectTurnSummaries_FirstLineCollapsesWhitespace(t *testing.T) {
 func TestProjectTurnSummaries_FirstLineTruncatesOnRuneBoundary(t *testing.T) {
 	// Multi-byte runes: a byte-wise cut would split one and produce mojibake.
 	long := strings.Repeat("\u00e9", 200)
-	got := ProjectTurnSummaries([]Message{user("u1", long, 100)}, false)
+	got := projectTurnSummaries([]api.Message{user("u1", long, 100)}, false)
 	line := got[0].FirstLine
 	if !strings.HasSuffix(line, "\u2026") {
 		t.Fatalf("no ellipsis on a truncated line: %q", line)
@@ -179,7 +181,7 @@ func TestProjectTurnSummaries_FirstLineTruncatesOnRuneBoundary(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_FirstLineKeepsAShortRequestWhole(t *testing.T) {
-	got := ProjectTurnSummaries([]Message{user("u1", "short", 100)}, false)
+	got := projectTurnSummaries([]api.Message{user("u1", "short", 100)}, false)
 	if got[0].FirstLine != "short" {
 		t.Errorf("first line = %q", got[0].FirstLine)
 	}

@@ -338,7 +338,7 @@ func TestSearch_CapsTheResultCount(t *testing.T) {
 // projection, so they cannot disagree by construction.
 func TestSearch_TurnNumbersMatchTheRailProjection(t *testing.T) {
 	msgs := transcript()
-	summaries := api.ProjectTurnSummaries(msgs, false)
+	summaries := projectTurnSummaries(msgs, false)
 	byOpener := make(map[string]int, len(summaries))
 	for _, s := range summaries {
 		byOpener[s.ID] = s.N

@@ -136,7 +136,7 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api
 	// thinking=false: the store is the persisted record and knows nothing about
 	// a bridge being mid-turn. The client owns the live turn's outcome, which is
 	// the one turn it always has resident anyway.
-	webhttp.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
+	webhttp.WriteJSON(w, map[string]any{"turns": projectTurnSummaries(c.Messages, false)})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
