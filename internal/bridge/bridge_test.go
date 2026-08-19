@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/modeltext"
 )

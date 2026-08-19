@@ -11,11 +11,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/cplieger/webhttp"
-
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/webhttp"
 )
 
 // handleLogout shells out to `kiro-cli logout`, feeding "y\n" on stdin

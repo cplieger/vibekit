@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
-
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cplieger/pathinside/v2"
-
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/sanitize"

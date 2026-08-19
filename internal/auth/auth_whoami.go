@@ -11,10 +11,9 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cplieger/webhttp"
-
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/webhttp"
 )
 
 // WhoamiResponse is the typed wire shape returned by /api/whoami. The

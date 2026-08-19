@@ -17,12 +17,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat/archive"
 	"github.com/cplieger/vibekit/internal/filemode"
 	"github.com/cplieger/vibekit/internal/ids"
+	"golang.org/x/sync/singleflight"
 )
 
 // errInvalidUTF8 is returned when a chat mutation produces content that
@@ -307,9 +306,9 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID api.ChatID, c *api
 	s.broadcast.Broadcast(ctx, api.NewEvent(evt, chatID, s.header(ctx, c)))
 }
 
-// SetDraft persists the chat's unsent composer text. See api.ChatStore for why
-// this is not a Mutate call: it must leave UpdatedAt alone (the retention purge
-// ages a chat from it) and it broadcasts nothing.
+// SetDraft persists the chat's unsent composer text. Deliberately not a Mutate
+// call: it must leave UpdatedAt alone (the retention purge ages a chat from it)
+// and it broadcasts nothing.
 //
 // Deliberately silent on a missing chat. A chat only becomes a server record on
 // its first prompt, so a draft typed into a brand-new chat has nowhere to land

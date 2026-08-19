@@ -13,12 +13,11 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/cplieger/webhttp"
-
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/webhttp"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope. It is the generic

@@ -11,9 +11,10 @@ import (
 // a *Store reference and delegates all persistence to it, separating
 // the HTTP routing/serialisation concern from the data layer.
 //
-// The Store's RegisterRoutes method delegates to Router.Register so
-// the api.ChatStore interface contract is preserved while the HTTP
-// concern is structurally separated.
+// The Store's RegisterRoutes method delegates to Router.Register, which
+// separates the HTTP concern without changing the Store's method set — so the
+// chat-store contracts its consumers declare (hub/deps.go, command/deps.go) see
+// the same store either way.
 type Router struct {
 	store *Store
 }

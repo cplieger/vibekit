@@ -32,10 +32,14 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 - `main.go` / `embed.go`: the composition root. Load config, construct the
   store, hub, bridge, and push service, register HTTP routes, embed the
   compiled static assets. Wiring only.
-- `internal/api/`: interface contracts (`ChatStore`, `Hub`, `ACPBridge`,
-  `PushService`) plus the domain types (chat, message, tool call, plan, usage).
-  Every other package depends only on this one. Includes `httputil.go` response
-  helpers; use them, never hand-craft JSON.
+- `internal/api/`: the wire and domain TYPE vocabulary (chat, message, tool call,
+  plan, usage) plus the constructors and mappers over it. No interfaces, no
+  behaviour: the contracts are declared at their consumers, and the helpers that
+  used to live here moved to packages named for what they do — `internal/httpreply`
+  (JSON replies), `internal/sanitize` (ANSI + hidden Unicode), `internal/ids`
+  (identifier minting and validation), `internal/rpcerr` (JSON-RPC error text),
+  `internal/modeltext` (model tag policy, markdown fences), `internal/procout`,
+  `internal/ansitext`.
 - `internal/chat/`: persistence, one JSON file per chat, written atomically.
   `Mutate` is the only write path.
 - `internal/hub/`: command dispatch, SSE broadcast, ACP-to-domain event
@@ -132,10 +136,12 @@ These rules exist because breaking them caused real bugs. Preserve them.
   and restarts never delete. A live bridge always implies a live chat record.
 - **Translate ACP events to domain events.** Never emit raw ACP to clients; do
   the translation in the `internal/translate/` handlers.
-- **Use the `internal/api` response helpers.** Never hand-craft JSON error or
-  success bodies (`http.Error` with a JSON string, `fmt.Fprint`,
-  `w.Write([]byte(...))`). Use `Ok`, `WriteJSON`, `BadRequest`, `NotFound`,
-  `Conflict`, `InternalError`, and the rest.
+- **Use the `internal/httpreply` response helpers.** Never hand-craft JSON error
+  or success bodies (`http.Error` with a JSON string, `fmt.Fprint`,
+  `w.Write([]byte(...))`). Use `BadRequest`, `NotFound`, `Conflict`, `Forbidden`,
+  `InternalError`, `ServerError`, `MethodNotAllowed`, `RequireMethod`,
+  `DecodeJSON`, `ErrorJSON` and the rest; `WriteJSON` is `webhttp`'s, called
+  directly for a plain body.
 - **Logs are UTC.** `internal/logctl` installs the logger via `slogx.Setup`,
   whose `UTCTime` `ReplaceAttr` forces every record's timestamp to UTC, so the
   container needs no `TZ` and the binary embeds no `time/tzdata`.

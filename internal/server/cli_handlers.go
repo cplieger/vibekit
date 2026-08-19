@@ -7,11 +7,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/webhttp"
-
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/version"
+	"github.com/cplieger/webhttp"
 )
 
 // The former handleModels (`kiro-cli chat --list-models` shell-out behind

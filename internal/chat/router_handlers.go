@@ -10,11 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/webhttp"
-
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}

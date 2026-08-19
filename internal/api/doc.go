@@ -1,6 +1,13 @@
-// Package api is vibekit's wire and domain TYPE surface: the shapes that cross
-// the server's HTTP and SSE boundaries and the shapes its components pass each
-// other. It declares no interfaces.
+// Package api is vibekit's wire and domain TYPE vocabulary: the shapes that
+// cross the server's HTTP and SSE boundaries, and the shapes its components pass
+// each other.
+//
+// It declares 158 types, 13 methods on them, the constants that enumerate them,
+// and eleven functions — every one of which either constructs one of these types
+// (NewEvent, ChatSubject, PRSubject, the three PermissionOutcome* builders,
+// TextBlock) or maps between them (DecisionKindForEvent, WorkingLabelForKind,
+// ModelServed). It declares no interfaces, and nothing here reads a file, opens
+// a socket, spawns a process, sanitizes a string or validates an identifier.
 //
 // The types are what keep the dependency graph acyclic — api.ServerEvent crosses
 // the hub/translate seam, and hub imports translate rather than the reverse, so
@@ -27,10 +34,21 @@
 //
 // Each removal is recorded at the site it left, with what nobody was calling.
 //
-// HTTP request and response plumbing is NOT here: WriteJSON, BadRequest,
-// MethodNotAllowed, DecodeJSON and the rest live in internal/httpreply, which
-// imports nothing from this package. Atomic file I/O (SaveBytes, bounded reads)
-// lives in the external cplieger/atomicfile package.
+// The BEHAVIOUR is gone the same way, into packages named for what they do. This
+// one used to hold 27 functions across 328 lines, five test files and a fuzz
+// corpus, which is not a thing a type vocabulary needs:
+//
+//	the ANSI + hidden-Unicode sanitizers    -> internal/sanitize
+//	the five identifier validators          -> internal/ids, beside the minting
+//	the session-wide turn projection        -> internal/chat, its one consumer
+//	the JSON-RPC error-to-text pair         -> internal/rpcerr, with its interface
+//	the model tag policy + fence stripper   -> internal/modeltext
+//	the HTTP reply helpers                  -> internal/httpreply
+//	the capped subprocess output capture    -> internal/procout
+//	the ANSI-to-style-span parser           -> internal/ansitext
+//
+// Atomic file I/O (SaveBytes, bounded reads) lives in the external
+// cplieger/atomicfile package.
 //
 // This package imports no other vibekit-internal package. Implementation
 // packages import it, never the reverse.

@@ -7,11 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/webhttp"
-
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/webhttp"
 )
 
 // utilityPrompter is the AI text generation this handler needs: one round trip

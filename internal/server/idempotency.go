@@ -23,9 +23,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/webhttp"
-
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // idempotencyHeader is the request header carrying the client's

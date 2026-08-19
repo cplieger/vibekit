@@ -51,12 +51,11 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/cplieger/webhttp"
-
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/workflow"
+	"github.com/cplieger/webhttp"
 )
 
 // rawInspectRun issues `_kiro/workflow/inspect` for one run and TYPES its failure
