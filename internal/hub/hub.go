@@ -347,8 +347,16 @@ func New(ctx context.Context, workDir string, factory api.ACPBridgeFactory, chat
 	return h
 }
 
-// UtilityPrompt delegates to the utility text-gen agent, satisfying
-// api.UtilityPrompter. The runtime is lazily constructed on first call.
+// UtilityPrompt delegates to the utility text-gen agent. The runtime is lazily
+// constructed on first call. effort is the per-task reasoning-effort level:
+// cheap tasks (summaries, error explanations) pass api.EffortLow, tasks that
+// read a diff or merge code (commit messages, PR descriptions, conflict
+// resolution) pass api.EffortMedium; "" keeps the session's current level.
+// Best-effort — a model with no effort config ignores it.
+//
+// Its consumers declare the one-method contract themselves (internal/server and
+// internal/git); this is not used for chat titles, which come from KAS (see
+// translate/focus.go).
 func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error) {
 	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
 }

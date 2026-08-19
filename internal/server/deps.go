@@ -74,8 +74,7 @@ type AccountUsageProvider interface {
 	AccountUsage(ctx context.Context) (*api.AccountUsage, error)
 }
 
-// policyProvider READS kiro-cli's native Cedar policy over a live bridge,
-// backing GET /api/permissions and the pre-flight simulation at
+// policyProvider READS kiro-cli's native Cedar policy over a live bridge,// backing GET /api/permissions and the pre-flight simulation at
 // POST /api/permissions/explain. *hub.Hub satisfies it.
 //
 // 2 methods, and deliberately not a third: policy/check is never called (it
@@ -85,4 +84,16 @@ type AccountUsageProvider interface {
 type policyProvider interface {
 	PolicyList(ctx context.Context, scope string) ([]api.PolicyRule, error)
 	PolicyExplain(ctx context.Context, req api.PolicyExplainRequest) (*api.PolicyExplainResult, error)
+}
+
+// utilityPrompter is AI-backed text generation for the two endpoints this
+// package serves with it: explain-an-error and explain-a-diff. *hub.Hub
+// satisfies it over the long-lived utility bridge.
+//
+// 1 method. internal/git declares its own copy for its own three endpoints
+// rather than importing this one — a 1-method contract is cheaper to restate
+// than to share, and sharing it is what put it in a hub package in the first
+// place. It is NOT used for chat titles: those come from KAS.
+type utilityPrompter interface {
+	UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error)
 }

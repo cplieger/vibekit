@@ -12,17 +12,30 @@ import (
 	"github.com/cplieger/webhttp"
 )
 
+// utilityPrompter is the AI text generation this handler needs: one round trip
+// that takes a prompt and a reasoning-effort level and returns text.
+//
+// Declared here, at the consumer, rather than in a shared contract package.
+// 1 method against the *hub.Hub that satisfies it, which exports well over a
+// hundred — none of the rest is any business of a commit-message endpoint. The
+// effort level is a parameter rather than a second method because the three
+// endpoints below differ only in what they pass: a branch name is cheap
+// (EffortLow), reading a diff is not (EffortMedium).
+type utilityPrompter interface {
+	UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error)
+}
+
 // AIHandler registers the AI-backed git endpoints (commit-message,
 // pr-description). Separated from Handler because these have a
 // fundamentally different dependency profile: they need an AI bridge
 // but no git subprocess execution beyond basic diff/log.
 type AIHandler struct {
-	prompter api.UtilityPrompter
+	prompter utilityPrompter
 	workDir  string
 }
 
 // NewAIHandler returns an AIHandler. The prompter must be non-nil.
-func NewAIHandler(workDir string, prompter api.UtilityPrompter) *AIHandler {
+func NewAIHandler(workDir string, prompter utilityPrompter) *AIHandler {
 	return &AIHandler{
 		prompter: prompter,
 		workDir:  workDir,

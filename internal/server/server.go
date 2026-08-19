@@ -33,7 +33,7 @@ type Server struct {
 	auth          api.RouteHandler
 	push          api.PushService
 	mcpStatus     api.RouteHandler
-	utilityPrompt api.UtilityPrompter
+	utilityPrompt utilityPrompter
 	accountUsage  AccountUsageProvider
 	policy        policyProvider
 	hub           chatHub
@@ -129,7 +129,7 @@ func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e
 
 // WithUtilityPrompt sets the utility prompter used for AI-assisted tasks
 // (error explanations, commit messages, PR descriptions, conflict resolution).
-func WithUtilityPrompt(p api.UtilityPrompter) Option {
+func WithUtilityPrompt(p utilityPrompter) Option {
 	return func(s *Server) { s.utilityPrompt = p }
 }
 
