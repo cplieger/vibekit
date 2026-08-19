@@ -20,7 +20,7 @@ func newStubSource(ops ForgeOps, repos []PRRepo) PRSource {
 	}
 }
 
-func TestMatchRepoForges(t *testing.T) {
+func TestMatchRepos(t *testing.T) {
 	configured := []ConfiguredForge{
 		{ID: "github:github.com", Kind: KindGitHub, Host: "GitHub.com", Connected: true},
 		{ID: "gitlab:gitlab.com", Kind: KindGitLab, Host: "gitlab.com", Connected: true},
@@ -74,7 +74,7 @@ func TestMatchRepoForges(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := MatchRepoForges(configured, tc.origins)
+			got := MatchRepos(configured, tc.origins)
 			if len(got) != len(tc.want) {
 				t.Fatalf("got %d repos, want %d: %+v", len(got), len(tc.want), got)
 			}

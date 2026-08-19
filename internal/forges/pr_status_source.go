@@ -138,7 +138,7 @@ type RepoOrigin struct {
 	Slug string
 }
 
-// MatchRepoForges pairs each checked-out repo with the configured forge that
+// MatchRepos pairs each checked-out repo with the configured forge that
 // serves its host.
 //
 // It lives here rather than in the composition root because it joins two of this
@@ -150,7 +150,7 @@ type RepoOrigin struct {
 // A repo whose host has no CONNECTED forge is dropped, which is also the gate that
 // keeps the poller quiet on a box with a stale CLI config: a `cli_missing` row is
 // never probed elsewhere either.
-func MatchRepoForges(configured []ConfiguredForge, origins []RepoOrigin) []PRRepo {
+func MatchRepos(configured []ConfiguredForge, origins []RepoOrigin) []PRRepo {
 	byHost := make(map[string]string, len(configured))
 	for _, f := range configured {
 		if !f.Connected || f.CLIMissing {

@@ -249,7 +249,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 		// vibekit owns retention (see settings.KeyChatRetentionDays). <= 0 is
 		// "no purge": 0 = off (chats deleted on close, nothing to purge) and
 		// -1 = forever (archived, never purged). N > 0 = purge after N days.
-		days, ok := settings.Field[int](ctx, cfg.ConfigDir, settings.KeyChatRetentionDays, "chat_retention_days")
+		days, ok := settings.Field[int](ctx, cfg.ConfigDir, settings.KeyChatRetentionDays)
 		if !ok {
 			days = settings.DefaultChatRetentionDays
 		}
@@ -836,7 +836,7 @@ func startPRStatusPoller(ctx context.Context, mgr *forges.Manager,
 		for _, r := range remotes {
 			origins = append(origins, forges.RepoOrigin{Host: r.Host, Slug: r.Slug})
 		}
-		return forges.MatchRepoForges(mgr.List(rctx), origins)
+		return forges.MatchRepos(mgr.List(rctx), origins)
 	}
 	poller := forges.NewPRStatusPoller(forges.NewManagerPRSource(mgr, repos), notifier)
 	return runBackground(ctx, "pr status poller", poller.Run)
