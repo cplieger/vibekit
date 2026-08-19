@@ -12,7 +12,7 @@ import (
 // (removes + stops a bridge for the same chatID). Under -race this
 // catches any missed synchronization on the bridges map.
 func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
-	factory := func() api.ACPBridge { return newNoopBridge() }
+	factory := func() ACPBridge { return newNoopBridge() }
 	bm := newBridgeManager(factory)
 
 	const N = 100
@@ -56,7 +56,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 // and drain don't interfere when run concurrently (e.g. a tab close
 // racing with Shutdown).
 func TestBridgeManager_CloseConcurrentDrain(t *testing.T) {
-	factory := func() api.ACPBridge { return newNoopBridge() }
+	factory := func() ACPBridge { return newNoopBridge() }
 	bm := newBridgeManager(factory)
 
 	// Seed bridges.

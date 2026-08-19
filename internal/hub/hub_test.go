@@ -62,7 +62,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	// otherwise inflight.Wait blocks forever.
 	cs := newFakeChatStore()
 	hb := newHangingBridge()
-	factory := func() api.ACPBridge { return hb }
+	factory := func() ACPBridge { return hb }
 	h := New(t.Context(), "/tmp/work", factory, cs)
 	cs.Bus = h
 
@@ -111,5 +111,5 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 // if the interfaces drift.
 func TestInterfaceSatisfaction(_ *testing.T) {
 	var _ api.ChatStore = (*fakeChatStore)(nil)
-	var _ api.ACPBridge = (*fakeBridge)(nil)
+	var _ ACPBridge = (*fakeBridge)(nil)
 }

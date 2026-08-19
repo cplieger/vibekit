@@ -695,7 +695,7 @@ func (h *Hub) listRecipes(ctx context.Context) ([]api.Recipe, error) {
 }
 
 // workflowNew creates the run on the given bridge and returns its id.
-func (h *Hub) workflowNew(ctx context.Context, bridge api.ACPBridge, source string, inputs map[string]string) (string, error) {
+func (h *Hub) workflowNew(ctx context.Context, bridge acpCaller, source string, inputs map[string]string) (string, error) {
 	// inputs is always a map, never nil: KAS requires the key ("inputs is not
 	// iterable" without it), and an input-less recipe takes {}.
 	in := map[string]any{}

@@ -346,7 +346,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 // the next chunk so every terminal_output chunk is valid UTF-8, while the ring
 // still receives every raw byte.
 func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
-	h := New(t.Context(), t.TempDir(), func() api.ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
 	term := newAgentTerminal(nil, "c1", 1024)
 	// "aé€😀" with reads that split every multi-byte rune internally:
 	// é = C3 A9, € = E2 82 AC, 😀 = F0 9F 98 80.
@@ -442,7 +442,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 	f.Add([]byte("aé€😀z"), uint8(3))
 	f.Add([]byte{0xE2, 0x82, 0xAC}, uint8(1))
 	f.Add([]byte{0xFF, 0x80, 0xE2}, uint8(1)) // invalid + incomplete tail
-	h := New(f.Context(), f.TempDir(), func() api.ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	h := New(f.Context(), f.TempDir(), func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
 	f.Fuzz(func(t *testing.T, data []byte, chunkRaw uint8) {
 		if len(data) > 512 {
 			data = data[:512] // keep this iteration's emits under the 1024-event ring cap

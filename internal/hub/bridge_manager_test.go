@@ -14,7 +14,7 @@ import (
 // newTestBridgeManager builds a bridgeManager whose factory returns a
 // fresh fakeBridge each call.
 func newTestBridgeManager() *bridgeManager {
-	return newBridgeManager(func() api.ACPBridge { return newFakeBridge() })
+	return newBridgeManager(func() ACPBridge { return newFakeBridge() })
 }
 
 // removeIfSame removes the entry only when the stored bridge IS the
@@ -67,7 +67,7 @@ func TestBridgeManager_RemoveIfBridge(t *testing.T) {
 }
 
 func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
-	factory := func() api.ACPBridge { return newNoopBridge() }
+	factory := func() ACPBridge { return newNoopBridge() }
 	bm := newBridgeManager(factory)
 
 	// Pre-populate with some bridges so "exists" path is exercised.

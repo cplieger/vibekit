@@ -15,9 +15,6 @@ import (
 	"github.com/cplieger/vibekit/internal/version"
 )
 
-// Compile-time interface assertion.
-var _ api.ACPBridge = (*Bridge)(nil)
-
 // scannerLineCap is the per-frame content cap for the bridge's stdout.
 // Must accommodate a full fsWriteCap (4 MiB) content payload inside a
 // JSON envelope after worst-case escaping (non-ASCII, control chars).

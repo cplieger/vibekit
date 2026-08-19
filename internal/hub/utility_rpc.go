@@ -14,15 +14,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"github.com/cplieger/vibekit/internal/api"
 )
 
 // rawCall is the shared RPC core: acquire → Call → resetIf-on-error.
 // params receives the leased bridge so session-scoped wrappers can inject
 // the live session id. label prefixes error messages ("account usage
 // call: ...").
-func (us *utilitySession) rawCall(ctx context.Context, label, method string, params func(bridge api.ACPBridge) map[string]any) (json.RawMessage, error) {
+func (us *utilitySession) rawCall(ctx context.Context, label, method string, params func(bridge acpSession) map[string]any) (json.RawMessage, error) {
 	lease, err := us.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -42,14 +40,14 @@ func (us *utilitySession) rawCall(ctx context.Context, label, method string, par
 
 // callerParams adapts a fixed, caller-supplied parameter map (no session
 // id) to rawCall's params signature.
-func callerParams(params map[string]any) func(api.ACPBridge) map[string]any {
-	return func(api.ACPBridge) map[string]any { return params }
+func callerParams(params map[string]any) func(acpSession) map[string]any {
+	return func(acpSession) map[string]any { return params }
 }
 
 // scopedParams builds session-scoped params (session id + extras) from the
 // leased bridge.
-func scopedParams(extra map[string]any) func(api.ACPBridge) map[string]any {
-	return func(bridge api.ACPBridge) map[string]any { return utilitySessionParams(bridge, extra) }
+func scopedParams(extra map[string]any) func(acpSession) map[string]any {
+	return func(bridge acpSession) map[string]any { return utilitySessionParams(bridge, extra) }
 }
 
 // codeIntelligenceInit issues _kiro/codeIntelligence subcommand=init on

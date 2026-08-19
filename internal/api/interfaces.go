@@ -166,74 +166,15 @@ type StartOpts struct {
 	SecretStorage bool
 }
 
-// ACPBridge manages a single kiro-cli ACP subprocess for one chat. Methods
-// are safe for concurrent use; Call and Notify serialize writes to the
-// subprocess stdin internally. The prompt-slot state is the wrapper's;
-// the bridge itself has no "busy" concept.
-type ACPBridge interface {
-	// Start launches a fresh kiro-cli ACP subprocess. If
-	// StartOpts.SessionID is empty, a new ACP session is created
-	// (session/new). If populated, the existing session is resumed
-	// (session/load). Exactly one call per bridge instance.
-	//
-	// ctx bounds the startup handshake ONLY. The subprocess's own lifetime
-	// comes from StartOpts.Lifetime, which is REQUIRED — Start returns an
-	// error on a nil one rather than substituting a context nothing can
-	// cancel — so a caller may pass a request-scoped ctx here without
-	// killing the bridge when that request returns.
-	Start(ctx context.Context, opts *StartOpts) error
-	// Stop kills the subprocess. NotifCh closes. Must be called at most
-	// once per bridge instance.
-	Stop()
-	// Call sends a JSON-RPC request and waits for its matching response.
-	// The provided context enables caller-driven cancellation; if ctx is
-	// cancelled before the response arrives, Call returns ctx.Err().
-	Call(ctx context.Context, method string, params any) (*RPCResponse, error)
-	// Notify sends a JSON-RPC notification (no response expected). ctx
-	// enables cancellation before the write is attempted.
-	Notify(ctx context.Context, method string, params any) error
-	// Respond writes a JSON-RPC response to an incoming request from
-	// kiro-cli (e.g. fs/read_text_file). ctx enables cancellation before
-	// the write is attempted.
-	Respond(ctx context.Context, id int64, result any, err error) error
-	// SessionID returns the ACP session id after Start completes.
-	SessionID() SessionID
-	// ModelID returns the current model id after Start completes.
-	ModelID() ModelID
-	// CurrentMode returns the currently-active session mode id (empty
-	// if the agent doesn't expose modes).
-	CurrentMode() string
-	// SessionTitle returns KAS's own title for the session, from the
-	// session/new or session/load result's flat _meta.title. Creation
-	// always yields the literal "New Session"; load yields the real
-	// stored title. Advisory — the caller adopts it only for a chat that
-	// is still default-named.
-	SessionTitle() string
-	// Modes returns the set of session modes the running agent
-	// supports. Empty for agents that don't expose modes.
-	Modes() []SessionMode
-	// Models returns the set of models the agent can swap to, with
-	// deprecated/internal entries filtered out. Zero fallback: if
-	// kiro-cli returns nothing, the slice is empty.
-	Models() []SessionModel
-	// ServedModels returns every advertised model id, UNFILTERED — the input to
-	// the entitlement check, where Models' display filtering would refuse a
-	// deprecated model the account can still use. Empty means unknowable.
-	ServedModels() []string
-	// SetModel performs an in-session model swap via
-	// session/set_config_option (configId "model") — v3 has no
-	// session/set_model. ctx enables caller-driven cancellation of the
-	// RPC call.
-	SetModel(ctx context.Context, modelID string) error
-	// NotifCh yields incoming ACP notifications. Closes when the
-	// subprocess exits.
-	NotifCh() <-chan *RPCResponse
-}
-
-// ACPBridgeFactory creates new ACPBridge instances. The hub calls it
-// once per chat to spawn a fresh kiro-cli subprocess; each factory
-// invocation is a new bridge.
-type ACPBridgeFactory func() ACPBridge
+// There is no ACPBridge interface here, and no ACPBridgeFactory. The subprocess
+// contract is declared at its consumer (internal/hub) at seven widths, because
+// the hub asks for wildly different things at different sites: 14 methods for a
+// per-chat bridge that starts, prompts, model-switches and stops, 6 for the
+// utility session, 7 for the metadata persist, 2 for a lease, 1 each for the
+// parameter builders and the idle culler. *bridge.Bridge satisfies the widest.
+//
+// StartOpts stays here: it is a type, and internal/bridge decodes it on the
+// implementing side without importing the hub.
 
 // --- HTTP ---
 

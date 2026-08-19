@@ -439,7 +439,7 @@ func adoptKASTitle(c *api.Chat, title string) {
 	c.Name = title
 }
 
-func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID api.ChatID, bridge api.ACPBridge) {
+func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID api.ChatID, bridge acpSessionFacts) {
 	newSessionID := bridge.SessionID()
 	newModelID := bridge.ModelID()
 	currentMode := bridge.CurrentMode()
@@ -534,7 +534,7 @@ type replayProjector interface {
 
 // Forward is the ACP notification → domain event translator, run as a
 // goroutine per bridge.
-func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge api.ACPBridge) {
+func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge ACPBridge) {
 	ch := bridge.NotifCh()
 	for msg := range ch {
 		bc.translateEvent(chatID, msg)

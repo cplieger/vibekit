@@ -27,10 +27,10 @@ import (
 // hubWithBridge wires a hub whose chat "c1" bridge is br, mirroring
 // hubForFSTest but generic over the bridge implementation so a test can
 // supply a context-aware or recording bridge.
-func hubWithBridge(t *testing.T, workDir string, br api.ACPBridge) *Hub {
+func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Hub {
 	t.Helper()
 	cs := newFakeChatStore()
-	factory := func() api.ACPBridge { return br }
+	factory := func() ACPBridge { return br }
 	h := New(t.Context(), workDir, factory, cs)
 	cs.Bus = h
 	if err := cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {

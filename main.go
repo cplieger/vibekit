@@ -15,7 +15,6 @@ import (
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/auth"
-	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/composition"
 	"github.com/cplieger/vibekit/internal/filebrowse"
@@ -31,7 +30,6 @@ import (
 // Compile-time interface satisfaction checks.
 var (
 	_ api.ChatStore            = (*chat.Store)(nil)
-	_ api.ACPBridge            = (*bridge.Bridge)(nil)
 	_ server.SteeringGenerator = (*steering.Generator)(nil)
 	_ api.RouteHandler         = (*git.Handler)(nil)
 	_ api.RouteHandler         = (*filebrowse.Handler)(nil)

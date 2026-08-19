@@ -55,7 +55,7 @@ type utilityRuntime struct {
 }
 
 // newUtilityRuntime wires a session and its agent.
-func newUtilityRuntime(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
+func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
 	session := newUtilitySession(shutdownCtx, factory, hubModels, hooks, secrets, enableHooks)
 	return &utilityRuntime{session: session, agent: newUtilityAgent(session)}
 }
@@ -88,7 +88,7 @@ type utilitySession struct {
 	// the model and dies with the request, while the subprocess this field bounds
 	// must outlive it.
 	shutdownCtx   context.Context
-	bridgeFactory api.ACPBridgeFactory
+	bridgeFactory ACPBridgeFactory
 	hubModels     func() []api.SessionModel
 	// secrets is the hub's credential store, shared not copied, so a
 	// registration obtained on any bridge is visible from every other one.
@@ -101,7 +101,7 @@ type utilitySession struct {
 	// bookkeeping sections — NEVER across a bridge Call — so lifecycle
 	// operations can't be starved by a slow turn.
 	lastActiveAt time.Time
-	bridge       api.ACPBridge
+	bridge       utilityBridge
 	responseCh   chan utilityChunkPayload
 	forwardDone  chan struct{}
 	gen          uint64
@@ -119,7 +119,7 @@ type utilitySession struct {
 //
 // shutdownCtx is required, positionally: it is the session's lifetime, and every
 // default for a lifetime is a lifetime nothing can cancel.
-func newUtilitySession(shutdownCtx context.Context, factory api.ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
+func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
 	return &utilitySession{
 		shutdownCtx:   shutdownCtx,
 		bridgeFactory: factory,
@@ -135,7 +135,7 @@ func newUtilitySession(shutdownCtx context.Context, factory api.ACPBridgeFactory
 // chunk channel the forward goroutine feeds (nil until started via the
 // normal path; a closed channel just ends a drain early).
 type sessionLease struct {
-	bridge api.ACPBridge
+	bridge acpSessionCaller
 	chunks <-chan utilityChunkPayload
 	gen    uint64
 }
@@ -253,7 +253,7 @@ func (us *utilitySession) Stop() {
 func (us *utilitySession) stopIfIdle(cutoff time.Time) bool {
 	us.mu.Lock()
 	shouldStop := us.started && !us.lastActiveAt.IsZero() && us.lastActiveAt.Before(cutoff)
-	var victim api.ACPBridge
+	var victim acpStopper
 	if shouldStop {
 		// Capture the victim INSIDE the lock: startLocked reassigns
 		// us.bridge under us.mu, so reading it after the unlock could
@@ -292,9 +292,11 @@ func (us *utilitySession) shuttingDown() bool {
 }
 
 // utilitySessionParams builds an ACP parameter map with the bridge's
-// session ID injected. Mirrors command.SessionParams but works with the
-// raw ACPBridge interface (which doesn't satisfy command.Bridge).
-func utilitySessionParams(bridge api.ACPBridge, extra map[string]any) map[string]any {
+// session ID injected. Mirrors command.SessionParams, and like it takes the
+// 1-method session reader rather than a whole bridge — the two are separate
+// declarations because the utility session's bridge does not carry the prompt
+// slot command.Bridge requires.
+func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]any {
 	m := map[string]any{api.KeySessionID: bridge.SessionID()}
 	maps.Copy(m, extra)
 	return m
@@ -328,7 +330,7 @@ type utilityChunkPayload struct {
 // reassigns us.bridge can't make this goroutine answer on the wrong pipe.
 // forward takes NO locks: the hooks callbacks are immutable and the chunk
 // send is non-blocking, so a held session mutex can never deadlock it.
-func (us *utilitySession) forward(bridge api.ACPBridge, notifCh <-chan *api.RPCResponse, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
+func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan *api.RPCResponse, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
 	defer close(done)
 	defer close(responseCh)
 	for msg := range notifCh {
@@ -394,7 +396,7 @@ func forwardChunk(msg *api.RPCResponse, responseCh chan<- utilityChunkPayload) {
 // request wedges the turn until the agent drain's 60s ceiling fires and
 // resets the whole session. Denying permissions and erroring fs/terminal
 // requests turns that wedge into an immediate, model-visible tool failure.
-func (us *utilitySession) answerHostRequest(bridge api.ACPBridge, msg *api.RPCResponse) {
+func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *api.RPCResponse) {
 	ctx := context.Background()
 	switch {
 	case msg.Method == methodKiroGetAccessToken:

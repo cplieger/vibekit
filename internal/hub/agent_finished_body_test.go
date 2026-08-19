@@ -58,7 +58,7 @@ func TestAgentFinishedBodyFrom(t *testing.T) {
 func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	cs := newFakeChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New(context.Background(), "/tmp/push-desc", func() api.ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := New(context.Background(), "/tmp/push-desc", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	ctx := t.Context()
@@ -96,7 +96,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
 	cs := newFakeChatStore()
 	fp := &recordingPush{sends: make(chan string, 4)}
-	h := New(context.Background(), "/tmp/push-subject", func() api.ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
+	h := New(context.Background(), "/tmp/push-subject", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	ctx := t.Context()

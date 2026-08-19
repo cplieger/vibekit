@@ -9,8 +9,6 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/cplieger/vibekit/internal/api"
 )
 
 // hubOnLifetime builds a hub whose lifetime the test controls, so a case can end
@@ -18,7 +16,7 @@ import (
 func hubOnLifetime(t *testing.T) (*Hub, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
-	h := New(ctx, "/tmp/work", func() api.ACPBridge { return newFakeBridge() }, newFakeChatStore())
+	h := New(ctx, "/tmp/work", func() ACPBridge { return newFakeBridge() }, newFakeChatStore())
 	return h, cancel
 }
 

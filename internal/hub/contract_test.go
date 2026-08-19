@@ -18,7 +18,7 @@ import (
 // ACPBridge implementation: Start → Call → Notify → Respond → Stop
 // lifecycle. Run against fakeBridge to catch drift when the real
 // bridge's semantics evolve.
-func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
+func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 	t.Helper()
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
@@ -113,7 +113,7 @@ func BridgeContractTest(t *testing.T, newBridge func() api.ACPBridge) {
 }
 
 func TestFakeBridge_Contract(t *testing.T) {
-	BridgeContractTest(t, func() api.ACPBridge {
+	BridgeContractTest(t, func() ACPBridge {
 		return newFakeBridge()
 	})
 }
@@ -122,7 +122,7 @@ func TestFakeBridge_Contract(t *testing.T) {
 // ACPBridgePreStartContractTest from testsupport against fakeBridge to
 // detect pre-Start drift.
 func TestFakeBridge_SharedContract(t *testing.T) {
-	testsupport.ACPBridgePreStartContractTest(t, func() api.ACPBridge {
+	testsupport.ACPBridgePreStartContractTest(t, func() testsupport.ACPPreStartBridge {
 		return newFakeBridge()
 	})
 }

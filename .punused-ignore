@@ -155,13 +155,15 @@ internal/testsupport/inmem_chatstore.go
 
 # --- 12. internal/testsupport shared contract suites. Each is a t.Run
 # battery invoked from another package's _test.go: internal/chat and
-# internal/hub (ChatStoreContractTest), internal/mcp and internal/hub
-# (MCPConfigContractTest), internal/testsupport's own bridge_test.go
-# (ACPBridgeContractTest, post-Start smoke), internal/bridge and
-# internal/hub (ACPBridgePreStartContractTest, pre-Start lifecycle).
+# internal/hub (ChatStoreContractTest), internal/mcp (MCPConfigContractTest),
+# internal/bridge and internal/hub (ACPBridgePreStartContractTest, pre-Start
+# lifecycle).
+#
+# ACPBridgeContractTest is gone with the NopACPBridge it was the only caller
+# of: a no-op fake, a suite, and a test running the suite against the fake
+# was a closed loop that could never observe a production implementation.
 internal/testsupport/chatstore_contract.go
 internal/testsupport/mcpconfig_contract.go
-internal/testsupport/bridge_contract.go
 internal/testsupport/bridge_prestart_contract.go
 
 # --- 13. Test-isolation seam that prevents writing the developer's own

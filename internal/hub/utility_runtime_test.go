@@ -78,7 +78,7 @@ func TestUtilityBridge_StopAndRestart(t *testing.T) {
 // agentForDrainTest builds an agent over a preset started session, for
 // exercising drainResponse directly.
 // context.Background() rather than t.Context(): no *testing.T is in scope here.
-func agentForDrainTest(bridge api.ACPBridge) *utilityAgent {
+func agentForDrainTest(bridge ACPBridge) *utilityAgent {
 	s := &utilitySession{shutdownCtx: context.Background(), bridge: bridge, started: true, gen: 1}
 	return newUtilityAgent(s)
 }
@@ -278,7 +278,7 @@ func TestCheapestModel_RapidInvariants(t *testing.T) {
 func newTestUtilityRuntime() *utilityRuntime {
 	return newUtilityRuntime(
 		context.Background(),
-		func() api.ACPBridge { return newFakeBridge() },
+		func() ACPBridge { return newFakeBridge() },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
@@ -289,7 +289,7 @@ func newTestUtilityRuntime() *utilityRuntime {
 // presetStartedSession marks the runtime's session as started on the given
 // bridge at generation 1 and syncs the agent's counters to it, so a test
 // can preset counters without the generation-mismatch resync zeroing them.
-func presetStartedSession(u *utilityRuntime, bridge api.ACPBridge) {
+func presetStartedSession(u *utilityRuntime, bridge ACPBridge) {
 	u.session.bridge = bridge
 	u.session.started = true
 	u.session.gen = 1
@@ -632,7 +632,7 @@ func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 	br := newFakeBridge()
 	u := newUtilityRuntime(
 		t.Context(),
-		func() api.ACPBridge { return br },
+		func() ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
@@ -666,7 +666,7 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 	br.callErrs = map[string]error{api.MethodSetConfigOption: fmt.Errorf("no such config option")}
 	u := newUtilityRuntime(
 		t.Context(),
-		func() api.ACPBridge { return br },
+		func() ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
@@ -774,7 +774,7 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	br.blockOn = map[string]chan struct{}{api.MethodPrompt: release}
 	u := newUtilityRuntime(
 		t.Context(),
-		func() api.ACPBridge { return br },
+		func() ACPBridge { return br },
 		func() []api.SessionModel { return nil },
 		utilitySessionHooks{},
 		nil, // secrets: no credential store in tests

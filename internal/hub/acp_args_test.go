@@ -14,7 +14,7 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 	cs := newFakeChatStore()
 	br := newFakeBridge()
 	want := []string{"-v"}
-	h := New(context.Background(), "/tmp/work", func() api.ACPBridge { return br }, cs, WithACPArgs(want))
+	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs(want))
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
@@ -42,7 +42,7 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 	cs := newFakeChatStore()
 	br := newFakeBridge()
-	h := New(context.Background(), "/tmp/work", func() api.ACPBridge { return br }, cs, WithACPArgs([]string{"--effort", "max"}))
+	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs([]string{"--effort", "max"}))
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 
@@ -66,7 +66,7 @@ func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 func TestACPArgsUnsetIsEmpty(t *testing.T) {
 	cs := newFakeChatStore()
 	br := newFakeBridge()
-	h := New(context.Background(), "/tmp/work", func() api.ACPBridge { return br }, cs)
+	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })

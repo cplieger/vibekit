@@ -28,7 +28,7 @@ import (
 func newTestHub() (*Hub, *fakeChatStore, *fakeBridge) {
 	cs := newFakeChatStore()
 	br := newFakeBridge()
-	factory := func() api.ACPBridge { return br }
+	factory := func() ACPBridge { return br }
 	h := New(context.Background(), "/tmp/work", factory, cs)
 	cs.Bus = h
 	// Signal MCP readiness immediately so tests don't wait 30 seconds.

@@ -16,11 +16,11 @@ import (
 type bridgeManager struct {
 	spawnSF singleflight.Group
 	bridges map[api.ChatID]*sharedBridge
-	factory api.ACPBridgeFactory
+	factory ACPBridgeFactory
 	mu      sync.Mutex
 }
 
-func newBridgeManager(factory api.ACPBridgeFactory) *bridgeManager {
+func newBridgeManager(factory ACPBridgeFactory) *bridgeManager {
 	return &bridgeManager{
 		bridges: make(map[api.ChatID]*sharedBridge),
 		factory: factory,
@@ -92,9 +92,14 @@ func (bm *bridgeManager) removeIfSame(chatID api.ChatID, sb *sharedBridge) bool 
 	return false
 }
 
-// removeIfBridge removes chatID only if the current entry's bridge
-// matches the given bridge instance.
-func (bm *bridgeManager) removeIfBridge(chatID api.ChatID, bridge api.ACPBridge) bool {
+// removeIfBridge removes chatID only if the current entry's bridge is the SAME
+// INSTANCE as bridge.
+//
+// The parameter is an identity, not a capability: 0 of the 14 methods are
+// called on it. It stays the full ACPBridge anyway, because the comparison is
+// only meaningful against what the map holds, and a narrower type here would
+// let a caller pass something that could never have been registered.
+func (bm *bridgeManager) removeIfBridge(chatID api.ChatID, bridge ACPBridge) bool {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 	if sb, ok := bm.bridges[chatID]; ok && sb.bridge == bridge {

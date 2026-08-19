@@ -57,7 +57,7 @@ func (f *fakeMCPConfig) copyOf(src map[string]struct{}) map[string]struct{} {
 
 func newHubWithMCPConfig(cfg mcpNameSets) *Hub {
 	cs := newFakeChatStore()
-	factory := func() api.ACPBridge { return newFakeBridge() }
+	factory := func() ACPBridge { return newFakeBridge() }
 	var opts []Option
 	if cfg != nil {
 		opts = append(opts, WithMCPConfig(cfg))

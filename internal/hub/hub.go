@@ -82,7 +82,7 @@ type lifecyclePlane struct {
 // bridgePlane groups Hub fields related to ACP bridge management
 // and the utility runtime (session + text-gen agent).
 type bridgePlane struct {
-	factory       api.ACPBridgeFactory
+	factory       ACPBridgeFactory
 	mgr           *bridgeManager
 	assistantBufs *buffer.Store
 	utility       *utilityRuntime
@@ -283,7 +283,7 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 // New does NOT take ownership of ctx's cancellation. Shutdown cancels the hub's
 // own child of it, so the caller may tear the hub down first and end the app's
 // lifetime afterwards.
-func New(ctx context.Context, workDir string, factory api.ACPBridgeFactory, chatStore api.ChatStore, opts ...Option) *Hub {
+func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStore api.ChatStore, opts ...Option) *Hub {
 	sseHub := sse.NewHub(sse.WithReplay(replayBufSize), sse.WithKeepalive(keepaliveInterval))
 	lc := &lifecyclePlane{
 		workDir: workDir,

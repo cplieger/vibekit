@@ -131,7 +131,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// One bridge per chat, so the resolution happens per SPAWN: the bridge is
 	// this app's long-lived kiro-cli consumer, and resolving once per process
 	// would pin every chat to whatever was installed first.
-	bridgeFactory := func() api.ACPBridge {
+	bridgeFactory := func() hub.ACPBridge {
 		return bridge.New(kiro.cliPath(), cfg.WorkDir,
 			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
 	}

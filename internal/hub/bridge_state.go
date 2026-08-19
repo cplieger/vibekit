@@ -23,7 +23,7 @@ const (
 // lifecycle phase so callers can check "busy" via a readable state
 // comparison rather than relying on TryLock as a signal.
 type sharedBridge struct {
-	bridge api.ACPBridge
+	bridge ACPBridge
 
 	// Unresponsive-cancel tracking. session/cancel is a NOTIFICATION, so
 	// nothing acks it: the turn ends only when KAS answers the pending

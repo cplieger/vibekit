@@ -712,7 +712,10 @@ done
 		t.Fatalf("write fake script: %v", err)
 	}
 
-	newBridge := func() api.ACPBridge {
+	// The concrete type, not an interface: this package's own test has no
+	// reason to go through one, and the contract suite that does is
+	// bridge_contract_test.go.
+	newBridge := func() *Bridge {
 		return New(scriptPath, dir)
 	}
 

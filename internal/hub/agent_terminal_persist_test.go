@@ -37,7 +37,7 @@ func hubWithRealStore(t *testing.T) (*Hub, string) {
 		t.Fatalf("chat.NewStore: %v", err)
 	}
 	br := newRecordingTermBridge()
-	h := New(t.Context(), t.TempDir(), func() api.ACPBridge { return br }, cs)
+	h := New(t.Context(), t.TempDir(), func() ACPBridge { return br }, cs)
 	if err := cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
