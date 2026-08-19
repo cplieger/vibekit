@@ -1,6 +1,6 @@
 module github.com/cplieger/vibekit
 
-go 1.26.7
+go 1.27.0
 
 require (
 	github.com/cplieger/httpx/v4 v4.3.2 // indirect
