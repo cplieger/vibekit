@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -80,7 +80,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	})
 	results, _ := v.([]allRepoStatus)
 	// Treated as read-only by every singleflight sharer.
-	httpwire.WriteJSON(w, map[string]any{"repos": results})
+	httpreply.WriteJSON(w, map[string]any{"repos": results})
 }
 
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +89,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	for i, d := range discovered {
 		repos[i] = d.Name
 	}
-	httpwire.WriteJSON(w, map[string]any{"repos": repos})
+	httpreply.WriteJSON(w, map[string]any{"repos": repos})
 }
 
 // handleFileDiff returns the working-tree diff for a single file
@@ -100,17 +100,17 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("path")
 	if file == "" {
-		httpwire.BadRequest(w, "path required")
+		httpreply.BadRequest(w, "path required")
 		return
 	}
 	if !validateFilePath(file) {
 		slog.Warn("git file-diff: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(file))
-		httpwire.BadRequest(w, "invalid path")
+		httpreply.BadRequest(w, "invalid path")
 		return
 	}
 	dir := h.repoDir(repoFromQuery(r))
 	if !IsRepo(r.Context(), dir) {
-		httpwire.BadRequest(w, msgNotAGitRepo)
+		httpreply.BadRequest(w, msgNotAGitRepo)
 		return
 	}
 	// `git diff HEAD -- <path>` gives both staged and unstaged
@@ -132,13 +132,13 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 			out = out2
 		}
 	}
-	httpwire.WriteJSON(w, map[string]string{"diff": out})
+	httpreply.WriteJSON(w, map[string]string{"diff": out})
 }
 
 func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	requested := r.URL.Query().Get("path")
 	if requested == "" {
-		httpwire.BadRequest(w, "path required")
+		httpreply.BadRequest(w, "path required")
 		return
 	}
 	// Reject path traversal and flag smuggling. The client only
@@ -149,7 +149,7 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	// and no invisible bytes survive into downstream tooling.
 	if !validateFilePath(requested) {
 		slog.Warn("git show: invalid path rejected", "repo", h.repoDir(repoFromQuery(r)), "path_len", len(requested))
-		httpwire.BadRequest(w, "invalid path")
+		httpreply.BadRequest(w, "invalid path")
 		return
 	}
 	ref := r.URL.Query().Get("ref")
@@ -158,7 +158,7 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isValidGitRef(ref) {
 		slog.Warn("git show: invalid ref rejected", "repo", h.repoDir(repoFromQuery(r)), "ref", ref)
-		httpwire.BadRequest(w, "invalid ref")
+		httpreply.BadRequest(w, "invalid ref")
 		return
 	}
 	// An absent `repo` means "resolve it": the path is workspace-relative and
@@ -191,14 +191,14 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrPathNotInRef) {
 			// File didn't exist at ref — return empty content so the
 			// diff renders as all-add for new files.
-			httpwire.WriteJSON(w, map[string]string{"content": ""})
+			httpreply.WriteJSON(w, map[string]string{"content": ""})
 			return
 		}
 		slog.Warn("git show failed", "repo", dir, "ref", ref, "path", file, "error", err, "out", scrubAuth(out))
 		writeGitError(w, KindShowFailed, scrubAuth(out))
 		return
 	}
-	httpwire.WriteJSON(w, map[string]string{"content": out})
+	httpreply.WriteJSON(w, map[string]string{"content": out})
 }
 
 func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +214,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
 		slog.Debug("git log failed", "repo", dir, "ref", ref, "error", err, "out", scrubAuth(out))
-		httpwire.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
+		httpreply.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
 		return
 	}
 	// Not pinned to []string{} the way `branches` below is: git log answering
@@ -241,14 +241,14 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	httpwire.WriteJSON(w, map[string]any{"entries": lines, "remote": scrubAuth(remote), "behind": behind})
+	httpreply.WriteJSON(w, map[string]any{"entries": lines, "remote": scrubAuth(remote), "behind": behind})
 }
 
 func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 	dir := h.repoDir(repoFromQuery(r))
 	out, err := gitCmd(r.Context(), dir, "branch", "-a", "--format=%(refname:short)\t%(HEAD)")
 	if err != nil {
-		httpwire.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
+		httpreply.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
 		return
 	}
 	type branchEntry struct {
@@ -269,7 +269,7 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 			current = name
 		}
 	}
-	httpwire.WriteJSON(w, map[string]any{"branches": branches, "current": current})
+	httpreply.WriteJSON(w, map[string]any{"branches": branches, "current": current})
 }
 
 func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
@@ -286,7 +286,7 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Branch == "" {
-		httpwire.BadRequest(w, "branch required")
+		httpreply.BadRequest(w, "branch required")
 		return
 	}
 	// Reject branch names that look like options or contain characters
@@ -296,7 +296,7 @@ func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
 	// not "switch branch".
 	if !isValidGitRef(body.Branch) {
 		slog.Warn("git checkout: invalid branch rejected", "repo", body.Repo, "branch", body.Branch)
-		httpwire.BadRequest(w, "invalid branch name")
+		httpreply.BadRequest(w, "invalid branch name")
 		return
 	}
 	dir := h.repoDir(body.Repo)
@@ -319,7 +319,7 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Repo == "" || body.Repo == "." {
-		httpwire.BadRequest(w, "repo name required (cannot remove workspace root)")
+		httpreply.BadRequest(w, "repo name required (cannot remove workspace root)")
 		return
 	}
 	// The resolved variant, because this is the one handler that DELETES: see
@@ -327,18 +327,18 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 	// cannot see. It answers "" for a path it will not vouch for.
 	dir := h.repoDirForDelete(body.Repo)
 	if dir == "" {
-		httpwire.BadRequest(w, "that repo path is not inside the workspace")
+		httpreply.BadRequest(w, "that repo path is not inside the workspace")
 		return
 	}
 	if dir == h.workDir {
-		httpwire.BadRequest(w, "cannot remove workspace root")
+		httpreply.BadRequest(w, "cannot remove workspace root")
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		slog.Error("git remove: failed", "repo", body.Repo, "error", err)
-		httpwire.WriteJSON(w, httpwire.ErrorJSON("remove failed"))
+		httpreply.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
-	httpwire.Ok(w)
+	httpreply.Ok(w)
 }

@@ -53,7 +53,7 @@ import (
 
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // hookCallTimeout bounds a list / setEnabled round-trip. The only slow path is
@@ -265,7 +265,7 @@ func (h *Hub) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	slices.SortStableFunc(out, func(a, b hookInfo) int {
 		return hookScopeRank(a.Scope) - hookScopeRank(b.Scope)
 	})
-	httpwire.WriteJSON(w, hooksListResponse{Hooks: out})
+	httpreply.WriteJSON(w, hooksListResponse{Hooks: out})
 }
 
 // hookScopeRank orders hook scopes for the dashboard: workspace first.
@@ -289,7 +289,7 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body hookEnabledReq
-	if !httpwire.DecodeJSON(w, r, &body) {
+	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
 	u := h.ensureUtility()
@@ -309,7 +309,7 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.broadcastHooksChanged()
-	httpwire.Ok(w)
+	httpreply.Ok(w)
 }
 
 // broadcastHooksChanged fans out an hooks_changed SSE (workspace-global, empty
@@ -332,7 +332,7 @@ func (h *Hub) broadcastHooksChanged() {
 func hookIDFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 	hookID, err := decodeHookID(r.PathValue("id"))
 	if err != nil || hookID == "" {
-		httpwire.BadRequest(w, "invalid hook id")
+		httpreply.BadRequest(w, "invalid hook id")
 		return "", false
 	}
 	return hookID, true
@@ -354,14 +354,14 @@ func parseHookResult(raw json.RawMessage) kasHookResult {
 // writeHookResultErr maps a {success:false, code} reply to an HTTP status.
 func (h *Hub) writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 	if res.Code == "hook_not_found" {
-		httpwire.NotFound(w, "hook not found")
+		httpreply.NotFound(w, "hook not found")
 		return
 	}
 	msg := strings.TrimSpace(res.Error)
 	if msg == "" {
 		msg = "hook operation failed"
 	}
-	httpwire.BadRequest(w, msg)
+	httpreply.BadRequest(w, msg)
 }
 
 // writeHookErr maps a bridge / kiro-cli failure to 502 with a generic message
@@ -370,7 +370,7 @@ func (h *Hub) writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 // fault, not a "open a chat first" condition.
 func (h *Hub) writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
-	httpwire.WriteJSONStatus(w, http.StatusBadGateway, httpwire.ErrorJSON("hooks request failed"))
+	httpreply.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
 }
 
 // registerHooksRoutes wires the hooks-state endpoints. TWO routes: there is no

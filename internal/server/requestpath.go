@@ -27,7 +27,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
@@ -57,7 +57,7 @@ const msgNonCanonicalPath = "non-canonical request path"
 //
 // # Status and body
 //
-// 400 with vibekit's bare error envelope (httpwire.BadRequest). The status is the
+// 400 with vibekit's bare error envelope (httpreply.BadRequest). The status is the
 // load-bearing half: >= 400 is what makes `curl -f` / `curl -sf` exit non-zero,
 // which is the entire point — the failure has to become visible to the
 // non-following clients above, and any 2xx or 3xx leaves them reporting
@@ -136,7 +136,7 @@ func canonicalAPIPath(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		clean, canonical := webhttp.CanonicalRequestPath(r.URL.Path)
 		if !canonical && onAPISurface(r.URL.Path, clean) {
-			httpwire.BadRequest(w, msgNonCanonicalPath)
+			httpreply.BadRequest(w, msgNonCanonicalPath)
 			return
 		}
 		next.ServeHTTP(w, r)

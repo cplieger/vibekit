@@ -43,7 +43,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // sessionListTimeout bounds the round-trip. The first call may lazily start
@@ -93,7 +93,7 @@ type kasSessionRow struct {
 // reads as "nothing to resume" rather than breaking the view.
 func (h *Hub) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpwire.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	// Chats and runs degrade INDEPENDENTLY: a workflow-list failure must not
@@ -110,7 +110,7 @@ func (h *Hub) handleSessionList(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("workflow run list failed", "error", rErr)
 		runs = []api.WorkflowRun{}
 	}
-	httpwire.WriteJSON(w, map[string]any{"sessions": rows, "runs": runs})
+	httpreply.WriteJSON(w, map[string]any{"sessions": rows, "runs": runs})
 }
 
 // resumableSessions fetches and filters the workspace's stored sessions.

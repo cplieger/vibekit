@@ -11,14 +11,14 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // --- /api/file/upload (POST multipart into a target directory) ---
 
 func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
@@ -32,13 +32,13 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: upload too large",
 				"limit", maxUploadSize, "error", err)
-			httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				httpwire.ErrorJSON("upload too large"))
+			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				httpreply.ErrorJSON("upload too large"))
 		} else if errors.Is(err, context.Canceled) {
 			slog.Debug("filebrowse: upload cancelled by client")
 		} else {
 			slog.Warn("filebrowse: upload form parse failed", "error", err)
-			httpwire.BadRequest(w, "invalid multipart form")
+			httpreply.BadRequest(w, "invalid multipart form")
 		}
 		return
 	}
@@ -59,18 +59,18 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// layer; this gate is the first.
 	if isProtectedDir(dirLoc.abs) {
 		slog.Warn("filebrowse: upload blocked on protected dir", "dir", dirLoc.abs)
-		httpwire.Forbidden(w, "upload target is protected")
+		httpreply.Forbidden(w, "upload target is protected")
 		return
 	}
 	if err := dirLoc.m.root.MkdirAll(dirLoc.rel(), 0o755); err != nil {
 		slog.Warn("filebrowse: upload mkdir failed", "path", dirLoc.abs, "error", err)
-		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpwire.ErrorJSON("upload failed"))
+		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON("upload failed"))
 		return
 	}
 	formFiles := r.MultipartForm.File["files"]
 	if len(formFiles) == 0 {
-		httpwire.BadRequest(w, "no files")
+		httpreply.BadRequest(w, "no files")
 		return
 	}
 	uploaded, totalBytes, err := writeUploads(r.Context(), dirLoc, formFiles)
@@ -80,7 +80,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("filebrowse: upload",
 		"dir", dirLoc.abs, "count", len(uploaded), "bytes", totalBytes)
-	httpwire.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
+	httpreply.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
 }
 
 // respondUploadError maps a writeUploads failure to its HTTP response: an
@@ -98,27 +98,27 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 // response tells the truth instead: these landed, then this failed. The
 // client attaches the ones that landed and names the first that did not.
 //
-// The 400 branch goes through WriteJSONStatus rather than httpwire.BadRequest
+// The 400 branch goes through WriteJSONStatus rather than httpreply.BadRequest
 // because that helper writes {"error": msg} and cannot carry a second key.
 // It keeps err.Error() (an invalid filename is client-caused and safe to
 // echo); 413 and 500 keep their generic sentinels so no raw filesystem error
 // reaches the wire.
 func respondUploadError(w http.ResponseWriter, dir string, uploaded []string, err error) {
 	if errors.Is(err, errInvalidFilename) {
-		httpwire.WriteJSONStatus(w, http.StatusBadRequest,
+		httpreply.WriteJSONStatus(w, http.StatusBadRequest,
 			uploadErrorJSON(err.Error(), uploaded))
 		return
 	}
 	if errors.Is(err, atomicfile.ErrFileTooLarge) {
 		slog.Warn("filebrowse: upload too large",
 			"limit", maxUploadSize, "uploaded", len(uploaded), "error", err)
-		httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+		httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			uploadErrorJSON("upload too large", uploaded))
 		return
 	}
 	slog.Warn("filebrowse: upload write failed",
 		"dir", dir, "uploaded", len(uploaded), "error", err)
-	httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
+	httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
 		uploadErrorJSON("upload failed", uploaded))
 }
 

@@ -3,7 +3,7 @@ package chat
 import (
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // Router owns the HTTP handler surface for the chat package. It holds
@@ -40,8 +40,8 @@ func (rt *Router) Register(mux *http.ServeMux) {
 // in", so it returns chats with their best line rather than every hit.
 func (rt *Router) handleSearchAll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpwire.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	httpwire.WriteJSON(w, rt.store.SearchAll(r.Context(), r.URL.Query().Get("q")))
+	httpreply.WriteJSON(w, rt.store.SearchAll(r.Context(), r.URL.Query().Get("q")))
 }

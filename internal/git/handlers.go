@@ -11,7 +11,7 @@ import (
 
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -206,7 +206,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Number <= 0 || body.Number > 10_000_000 {
 		slog.Warn("git pr-fetch: invalid PR number rejected", "repo", body.Repo, "number", body.Number)
-		httpwire.BadRequest(w, "invalid PR number")
+		httpreply.BadRequest(w, "invalid PR number")
 		return
 	}
 	// body.Head is optional; when set it's used as a local branch name,
@@ -214,7 +214,7 @@ func (h *Handler) handlePRFetch(w http.ResponseWriter, r *http.Request) {
 	// isValidGitRef helper to block flag smuggling and ref-injection.
 	if body.Head != "" && !isValidGitRef(body.Head) {
 		slog.Warn("git pr-fetch: invalid head rejected", "repo", body.Repo, "number", body.Number, "head", body.Head)
-		httpwire.BadRequest(w, "invalid head name")
+		httpreply.BadRequest(w, "invalid head name")
 		return
 	}
 	dir := h.repoDir(body.Repo)

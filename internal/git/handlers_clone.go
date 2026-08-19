@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
@@ -26,12 +26,12 @@ func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.URL == "" {
-		httpwire.BadRequest(w, "url required")
+		httpreply.BadRequest(w, "url required")
 		return
 	}
 	if !isAllowedRemoteScheme(body.URL) {
 		slog.Warn("git clone: invalid scheme rejected", "url", scrubAuth(body.URL))
-		httpwire.BadRequest(w, "only https:// and git@ URLs allowed")
+		httpreply.BadRequest(w, "only https:// and git@ URLs allowed")
 		return
 	}
 	// Defense in depth against git argument-injection CVEs (1000117,
@@ -68,7 +68,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Repo == "" || body.Repo == "." {
-		httpwire.BadRequest(w, "re-clone requires a named repo (cannot target workspace root)")
+		httpreply.BadRequest(w, "re-clone requires a named repo (cannot target workspace root)")
 		return
 	}
 	// The resolved variant, matching handleRemove: this handler DELETES, so it
@@ -76,21 +76,21 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// repoDirForDelete). It answers "" for a path it will not vouch for.
 	dir := h.repoDirForDelete(body.Repo)
 	if dir == "" {
-		httpwire.BadRequest(w, "that repo path is not inside the workspace")
+		httpreply.BadRequest(w, "that repo path is not inside the workspace")
 		return
 	}
 	if dir == h.workDir {
-		httpwire.BadRequest(w, "cannot re-clone workspace root")
+		httpreply.BadRequest(w, "cannot re-clone workspace root")
 		return
 	}
 	if !IsRepo(r.Context(), dir) {
-		httpwire.BadRequest(w, msgNotAGitRepo)
+		httpreply.BadRequest(w, msgNotAGitRepo)
 		return
 	}
 	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", "origin")
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
-		httpwire.WriteJSON(w, httpwire.ErrorJSON("no origin remote"))
+		httpreply.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
 		return
 	}
 	// Defense-in-depth: the origin URL came from git config and could
@@ -101,7 +101,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// os.RemoveAll so a rejected reclone leaves the working tree
 	// intact.
 	if !isAllowedRemoteScheme(remote) {
-		httpwire.WriteJSON(w, httpwire.ErrorJSON("origin has unsupported scheme for re-clone"))
+		httpreply.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
@@ -109,7 +109,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// partial delete doesn't strand the repo in an unreclonable state.
 	if rmErr := os.RemoveAll(dir); rmErr != nil {
 		slog.Error("git reclone: remove failed", "repo", body.Repo, "error", rmErr)
-		httpwire.WriteJSON(w, httpwire.ErrorJSON("remove failed"))
+		httpreply.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	// `--` barrier: the origin URL came from git config, but a prior

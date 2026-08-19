@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os/exec"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // statusBinaries is the set of binaries /api/tools/status probes. Each
@@ -37,5 +37,5 @@ func (s *Server) handleToolStatus(w http.ResponseWriter, _ *http.Request) {
 		_, err := exec.LookPath(b)
 		out[b] = err == nil
 	}
-	httpwire.WriteJSON(w, out)
+	httpreply.WriteJSON(w, out)
 }

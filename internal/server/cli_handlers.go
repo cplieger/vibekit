@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/version"
 )
 
@@ -19,7 +19,7 @@ import (
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpwire.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	payload := map[string]string{"vibekit": version.Build}
@@ -28,7 +28,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if out, err := s.cliRunner.Run(ctx, "--version"); err == nil {
 		payload["kiro_cli"] = strings.TrimSpace(string(out))
 	}
-	httpwire.WriteJSON(w, payload)
+	httpreply.WriteJSON(w, payload)
 }
 
 func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +42,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	out, truncated, err := s.cliRunner.RunStdoutCapped(ctx, diagnosticsMaxBytes, "diagnostic", "--force", "--format", "json-pretty")
 	if err != nil {
 		slog.Warn("diagnostics: kiro-cli exec failed", "error", err)
-		httpwire.WriteJSON(w, httpwire.ErrorJSON("diagnostic command failed"))
+		httpreply.WriteJSON(w, httpreply.ErrorJSON("diagnostic command failed"))
 		return
 	}
 	// Sanitize (ANSI + hidden Unicode) before the report reaches the browser.
@@ -50,7 +50,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if truncated {
 		report += "\n\n[truncated]"
 	}
-	httpwire.WriteJSON(w, map[string]string{"report": report})
+	httpreply.WriteJSON(w, map[string]string{"report": report})
 }
 
 func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +58,7 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		key := safeKiroSetting(r.URL.Query().Get("key"))
 		if key == "" {
-			httpwire.BadRequest(w, "unknown setting key")
+			httpreply.BadRequest(w, "unknown setting key")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Settings)
@@ -67,26 +67,26 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			out = nil
 		}
-		httpwire.WriteJSON(w, map[string]string{"key": key, "value": parseKiroSettingOutput(string(out))})
+		httpreply.WriteJSON(w, map[string]string{"key": key, "value": parseKiroSettingOutput(string(out))})
 	case http.MethodPut:
-		httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
+		httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
 		var body struct {
 			Key   string `json:"key"`
 			Value string `json:"value"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			httpwire.BadRequest(w, "bad request")
+			httpreply.BadRequest(w, "bad request")
 			return
 		}
 		key := safeKiroSetting(body.Key)
 		if key == "" {
-			httpwire.BadRequest(w, "unknown setting key")
+			httpreply.BadRequest(w, "unknown setting key")
 			return
 		}
 		meta := allowedKiroSettings[body.Key]
 		value := safeKiroSettingValueFor(body.Value, meta.Kind)
 		if value == "" {
-			httpwire.BadRequest(w, "invalid setting value")
+			httpreply.BadRequest(w, "invalid setting value")
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), s.cliTimeouts.Settings)
@@ -99,12 +99,12 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 			// fired, and the setting was not written. kiro-cli is the upstream
 			// here and it declined, which is what Bad Gateway means.
 			slog.Warn("kiro-cli settings write refused", "key", key, "error", err)
-			httpwire.WriteJSONStatus(w, http.StatusBadGateway,
-				httpwire.ErrorJSON(strings.TrimSpace(string(out))))
+			httpreply.WriteJSONStatus(w, http.StatusBadGateway,
+				httpreply.ErrorJSON(strings.TrimSpace(string(out))))
 			return
 		}
-		httpwire.Ok(w)
+		httpreply.Ok(w)
 	default:
-		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }

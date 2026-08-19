@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/pinstall/v2"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
@@ -74,7 +74,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ok, err := s.kiroRescan(r.Context())
 	if ok {
-		httpwire.WriteJSON(w, healthBody{Status: "ok"})
+		httpreply.WriteJSON(w, healthBody{Status: "ok"})
 		return
 	}
 	// The manager has already logged the specific fault (and every path it took)
@@ -88,7 +88,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", err)
-	httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+	httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 		Status: "unready",
 		Reason: reason,
 	})
@@ -131,8 +131,8 @@ func loopbackOnly(surface string, next http.Handler) http.Handler {
 		// writer.
 		slog.Warn("loopback-only endpoint refused: not a loopback caller",
 			"surface", surface, "remote", r.RemoteAddr, "host", r.Host)
-		httpwire.WriteJSONStatus(w, http.StatusForbidden,
-			httpwire.ErrorJSON(surface+" is loopback-only; call it from inside the container"))
+		httpreply.WriteJSONStatus(w, http.StatusForbidden,
+			httpreply.ErrorJSON(surface+" is loopback-only; call it from inside the container"))
 	})
 	return webhttp.LoopbackOnly(refuse)(next)
 }

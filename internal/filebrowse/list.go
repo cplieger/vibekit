@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // --- /api/files (GET directory listing) ---
@@ -26,7 +26,7 @@ type fileEntry struct {
 
 func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpwire.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	reqPath := r.URL.Query().Get("path")
@@ -46,24 +46,24 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	f, err := l.m.root.Open(l.rel())
 	if err != nil {
 		if os.IsNotExist(err) {
-			httpwire.NotFound(w, "not found")
+			httpreply.NotFound(w, "not found")
 			return
 		}
 		slog.Warn("filebrowse: readdir failed", "path", l.abs, "error", err)
-		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpwire.ErrorJSON(errReadFailed))
+		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
 	entries, err := f.ReadDir(-1)
 	f.Close()
 	if err != nil {
 		slog.Warn("filebrowse: readdir failed", "path", l.abs, "error", err)
-		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpwire.ErrorJSON(errReadFailed))
+		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
 	files := listEntries(r.Context(), entries, l.abs)
-	httpwire.WriteJSON(w, map[string]any{
+	httpreply.WriteJSON(w, map[string]any{
 		respPath:   reqPath,
 		"files":    files,
 		"writable": h.isWritable(l),
@@ -88,7 +88,7 @@ func (h *Handler) listMounts(w http.ResponseWriter) {
 	// mounts are sorted longest-first for prefix matching; the UI wants
 	// them alphabetical.
 	slices.SortFunc(files, func(a, b fileEntry) int { return strings.Compare(a.Name, b.Name) })
-	httpwire.WriteJSON(w, map[string]any{
+	httpreply.WriteJSON(w, map[string]any{
 		respPath:   "/",
 		"files":    files,
 		"writable": false,

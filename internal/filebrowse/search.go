@@ -58,7 +58,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/parallel"
 )
 
@@ -177,23 +177,23 @@ type FileSearchResult struct {
 
 func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpwire.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	q := r.URL.Query()
 	needle := q.Get("q")
 	if strings.TrimSpace(needle) == "" {
-		httpwire.WriteJSON(w, FileSearchResult{Matches: []FileMatch{}})
+		httpreply.WriteJSON(w, FileSearchResult{Matches: []FileMatch{}})
 		return
 	}
 	include, err := parseGlobs(q["include"])
 	if err != nil {
-		httpwire.BadRequest(w, "invalid include pattern")
+		httpreply.BadRequest(w, "invalid include pattern")
 		return
 	}
 	exclude, err := parseGlobs(q["exclude"])
 	if err != nil {
-		httpwire.BadRequest(w, "invalid exclude pattern")
+		httpreply.BadRequest(w, "invalid exclude pattern")
 		return
 	}
 	roots, ok := h.searchRoots(w, q.Get("path"))
@@ -215,7 +215,7 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return
 	}
-	httpwire.WriteJSON(w, res)
+	httpreply.WriteJSON(w, res)
 }
 
 // searchRoots resolves the request's `path` into the locations to walk.

@@ -4,7 +4,7 @@ import (
 	"maps"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // JSON protocol key constants used across command response maps and
@@ -13,7 +13,7 @@ import (
 // the goconst linter happy and makes renames visible in one place.
 const (
 	keyError = "error"
-	keyName  = httpwire.JSONKeyName
+	keyName  = httpreply.JSONKeyName
 	keyType  = api.ContentKeyType
 )
 

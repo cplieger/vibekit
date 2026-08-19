@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp/sse"
 )
 
@@ -51,7 +51,7 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 	// vibekit's own envelope (the library's drain gate 503s as a backstop
 	// after hub.Shutdown, closing the last-instant-reconnect race).
 	if h.lifecycle.draining.Load() {
-		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, httpwire.ErrorJSON("shutting down"))
+		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("shutting down"))
 		return
 	}
 

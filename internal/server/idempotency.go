@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
@@ -280,7 +280,7 @@ func (c *idempotencyCache) middleware(next http.Handler) http.Handler {
 			// first attempt's network failure), so true-concurrent
 			// duplicates are not the retry pattern we replay; 409 is the
 			// safe, simple answer.
-			httpwire.Conflict(w, "request already in progress")
+			httpreply.Conflict(w, "request already in progress")
 			return
 		}
 

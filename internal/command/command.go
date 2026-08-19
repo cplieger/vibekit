@@ -14,16 +14,16 @@ import (
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope. It is the generic
-// httpwire.MaxJSONBody: the largest payload this endpoint carries is a prompt's text
+// httpreply.MaxJSONBody: the largest payload this endpoint carries is a prompt's text
 // at maxPromptBytes (512 KiB) plus path-only attachment metadata, so 1 MiB is
 // ~2x headroom. It was 5 MiB to fit a 4 MiB user-merged partial-write payload,
 // and that command is gone — KAS decides per action, so there is no merged text
 // to post.
-const maxCommandBody = httpwire.MaxJSONBody
+const maxCommandBody = httpreply.MaxJSONBody
 
 // Handler is the signature for a command handler function.
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)
@@ -80,11 +80,11 @@ func (d *Dispatcher) Respond(w http.ResponseWriter, reqID string, body any) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		slog.Error("respond marshal", keyError, err)
-		httpwire.InternalError(w, err)
+		httpreply.InternalError(w, err)
 		return
 	}
 	d.deps.RecordDedup(reqID, data)
-	httpwire.WriteRawJSON(w, data)
+	httpreply.WriteRawJSON(w, data)
 }
 
 // RespondOK writes the standard {"ok":true} success response and
@@ -110,7 +110,7 @@ type errorResponse struct {
 // error" while the cause sits unread in `error.data`. RPCErrorText is a no-op for
 // every ordinary Go error, so the one call covers both populations.
 func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
-	httpwire.WriteJSONStatus(w, code, errorResponse{Error: api.RPCErrorText(err)})
+	httpreply.WriteJSONStatus(w, code, errorResponse{Error: api.RPCErrorText(err)})
 }
 
 // RequireChatID validates that cmd.ChatID is non-empty and writes a
@@ -126,43 +126,43 @@ func (d *Dispatcher) RequireChatID(w http.ResponseWriter, cmd *api.ClientCommand
 // ServeHTTP is the POST /api/command HTTP handler.
 func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	if d.deps.Draining() {
-		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
+		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
 		return
 	}
 
-	httpwire.LimitBody(w, r, maxCommandBody)
+	httpreply.LimitBody(w, r, maxCommandBody)
 	var cmd api.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("command body too large",
 				"limit", maxCommandBody, keyError, maxErr)
-			httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				errorResponse{Error: "request body too large"})
 			return
 		}
-		httpwire.BadRequest(w, "invalid json")
+		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 
 	if !validRequestID(cmd.RequestID) {
-		httpwire.BadRequest(w, "invalid request_id")
+		httpreply.BadRequest(w, "invalid request_id")
 		return
 	}
 
 	// Idempotent retries: same request_id → cached response.
 	if cached, ok := d.deps.CheckDedup(cmd.RequestID); ok {
 		slog.Debug("idempotent replay", "request_id", cmd.RequestID, keyType, cmd.Type)
-		httpwire.WriteRawJSON(w, cached)
+		httpreply.WriteRawJSON(w, cached)
 		return
 	}
 
 	// Centralised chat_id validation.
 	if cmd.ChatID != "" && !validChatID(cmd.ChatID) {
-		httpwire.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 
@@ -172,7 +172,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		fn(r.Context(), w, &cmd)
 	} else {
-		httpwire.BadRequest(w, "unknown command: "+string(cmd.Type))
+		httpreply.BadRequest(w, "unknown command: "+string(cmd.Type))
 	}
 }
 

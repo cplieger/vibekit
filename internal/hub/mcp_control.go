@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 const (
@@ -163,19 +163,19 @@ type mcpReconnectReq struct {
 // targeted; 0 when no chat is live).
 func (h *Hub) handleMCPReconnect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var body mcpReconnectReq
-	if !httpwire.DecodeJSON(w, r, &body) {
+	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
 	if !h.mcpServerEnabled(r.Context(), body.Server) {
-		httpwire.NotFound(w, "unknown or disabled MCP server")
+		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
 	n := h.reconnectMCPServer(r.Context(), body.Server)
-	httpwire.WriteJSON(w, map[string]int{"reconnected": n})
+	httpreply.WriteJSON(w, map[string]int{"reconnected": n})
 }
 
 type mcpGetPromptReq struct {
@@ -188,19 +188,19 @@ type mcpGetPromptReq struct {
 // the raw MCP prompt result ({messages:[...]}).
 func (h *Hub) handleMCPGetPrompt(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var body mcpGetPromptReq
-	if !httpwire.DecodeJSON(w, r, &body) {
+	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
 	if body.Prompt == "" {
-		httpwire.BadRequest(w, "prompt required")
+		httpreply.BadRequest(w, "prompt required")
 		return
 	}
 	if !h.mcpServerEnabled(r.Context(), body.Server) {
-		httpwire.NotFound(w, "unknown or disabled MCP server")
+		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
 	res, err := h.getMCPPrompt(r.Context(), body.Server, body.Prompt, body.Arguments)
@@ -220,19 +220,19 @@ type mcpGetResourceReq struct {
 // resource result ({contents:[...]}).
 func (h *Hub) handleMCPGetResource(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var body mcpGetResourceReq
-	if !httpwire.DecodeJSON(w, r, &body) {
+	if !httpreply.DecodeJSON(w, r, &body) {
 		return
 	}
 	if body.URI == "" {
-		httpwire.BadRequest(w, "uri required")
+		httpreply.BadRequest(w, "uri required")
 		return
 	}
 	if !h.mcpServerEnabled(r.Context(), body.Server) {
-		httpwire.NotFound(w, "unknown or disabled MCP server")
+		httpreply.NotFound(w, "unknown or disabled MCP server")
 		return
 	}
 	res, err := h.getMCPResource(r.Context(), body.Server, body.URI)
@@ -250,7 +250,7 @@ func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 	if len(res) == 0 {
 		res = json.RawMessage("{}")
 	}
-	httpwire.WriteJSON(w, res)
+	httpreply.WriteJSON(w, res)
 }
 
 // writeMCPFetchErr maps a getPrompt/getResource failure to an HTTP status.
@@ -259,9 +259,9 @@ func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 // often just "Internal error" and the useful detail is logged, not leaked).
 func (h *Hub) writeMCPFetchErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errNoLiveBridge) {
-		httpwire.Conflict(w, "no active chat session — open a chat to use MCP prompts and resources")
+		httpreply.Conflict(w, "no active chat session — open a chat to use MCP prompts and resources")
 		return
 	}
 	slog.Warn("mcp fetch failed", "error", err)
-	httpwire.WriteJSONStatus(w, http.StatusBadGateway, httpwire.ErrorJSON("MCP server request failed"))
+	httpreply.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("MCP server request failed"))
 }

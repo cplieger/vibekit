@@ -35,7 +35,7 @@ import (
 
 	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -113,14 +113,14 @@ func (p *RegistryProxy) RegisterRoutes(mux *http.ServeMux) {
 
 func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpwire.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if len(q) > maxSearchQueryLen {
 		slog.Debug("mcp: registry search query too long",
 			"len", len(q), "cap", maxSearchQueryLen)
-		httpwire.BadRequest(w, "query too long")
+		httpreply.BadRequest(w, "query too long")
 		return
 	}
 	// Control characters can't appear in real search queries; they
@@ -131,7 +131,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if c < 0x20 || c == 0x7f {
 			slog.Debug("mcp: registry search query has control chars",
 				"len", len(q))
-			httpwire.BadRequest(w, "query contains control characters")
+			httpreply.BadRequest(w, "query contains control characters")
 			return
 		}
 	}
@@ -141,7 +141,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			slog.Debug("mcp: registry search bad limit",
 				"limit", s, "error", err)
-			httpwire.BadRequest(w, "invalid limit")
+			httpreply.BadRequest(w, "invalid limit")
 			return
 		}
 		limit = n
@@ -168,7 +168,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		// the slog.Warn above. The error text can leak upstream
 		// operational signals ("refusing redirect to non-registry host
 		// 169.254.169.254") that the browser has no need to see.
-		httpwire.WriteJSONStatus(w, http.StatusBadGateway, map[string]string{
+		httpreply.WriteJSONStatus(w, http.StatusBadGateway, map[string]string{
 			"error": "registry unavailable",
 		})
 		return
@@ -176,7 +176,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	normalised := normaliseRegistryResponse(body)
 	slog.Debug("mcp: registry search",
 		"q", q, "limit", limit, "results", len(normalised), "cached", cached)
-	httpwire.WriteJSON(w, map[string]any{"servers": normalised})
+	httpreply.WriteJSON(w, map[string]any{"servers": normalised})
 }
 
 // fetchSearch returns raw upstream response bytes (from cache when
@@ -245,7 +245,7 @@ func (p *RegistryProxy) doFetch(ctx context.Context, q string, limit int) ([]byt
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", httpwire.MIMETypeJSON)
+	req.Header.Set("Accept", httpreply.MIMETypeJSON)
 	req.Header.Set("User-Agent", "vibekit/1.0")
 
 	resp, err := p.client.Do(req)

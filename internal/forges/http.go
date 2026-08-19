@@ -39,7 +39,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // ForgeErrCode is a typed error code for machine-readable forge HTTP error responses.
@@ -105,11 +105,11 @@ func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {
 // handleForgesList returns all configured forges.
 func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		httpwire.MethodNotAllowed(w, http.MethodGet)
+		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	forges := h.manager.List(r.Context())
-	httpwire.WriteJSON(w, map[string]any{
+	httpreply.WriteJSON(w, map[string]any{
 		"forges": forges,
 		"kinds":  AllKinds(),
 		"oauth":  map[string]bool{string(KindGitHub): true}, // device flow is built-in
@@ -118,21 +118,21 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPHandler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	if err := h.manager.Refresh(r.Context()); err != nil {
-		httpwire.ServerError(w, "refresh failed", err)
+		httpreply.ServerError(w, "refresh failed", err)
 		return
 	}
-	httpwire.Ok(w)
+	httpreply.Ok(w)
 }
 
 // handleForgeItem dispatches to per-forge sub-resources.
 func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	tail := strings.TrimPrefix(r.URL.Path, "/api/forges/")
 	if tail == "" {
-		httpwire.NotFound(w, "missing forge id")
+		httpreply.NotFound(w, "missing forge id")
 		return
 	}
 	// First path segment is either "refresh" / "oauth" (handled
@@ -140,18 +140,18 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	// — the colon could be percent-encoded but we keep it literal.
 	id, sub, _ := splitFirst(tail)
 	if h.manager.Get(id) == nil {
-		httpwire.NotFound(w, "unknown forge id")
+		httpreply.NotFound(w, "unknown forge id")
 		return
 	}
 	if sub == "" {
 		switch r.Method {
 		case http.MethodGet:
 			f := h.manager.Get(id)
-			httpwire.WriteJSON(w, f)
+			httpreply.WriteJSON(w, f)
 		case http.MethodDelete:
 			h.handleDisconnect(w, r, id)
 		default:
-			httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodDelete)
+			httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodDelete)
 		}
 		return
 	}
@@ -164,29 +164,29 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 	case "repos":
 		h.handleRepos(w, r, id, rest)
 	default:
-		httpwire.NotFound(w, "unknown forge sub-resource")
+		httpreply.NotFound(w, "unknown forge sub-resource")
 	}
 }
 
 func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, id string) {
 	f := h.manager.Get(id)
 	if f == nil {
-		httpwire.NotFound(w, "unknown forge")
+		httpreply.NotFound(w, "unknown forge")
 		return
 	}
 	if err := Logout(r.Context(), f.Kind, f.Host); err != nil {
-		httpwire.ServerError(w, "disconnect failed", err)
+		httpreply.ServerError(w, "disconnect failed", err)
 		return
 	}
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
-	httpwire.Ok(w)
+	httpreply.Ok(w)
 }
 
 func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.probeTimeout)
@@ -194,14 +194,14 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	err := h.manager.Probe(ctx, id)
 	f := h.manager.Get(id)
 	if err != nil {
-		httpwire.WriteJSONStatus(w, http.StatusOK, map[string]any{
+		httpreply.WriteJSONStatus(w, http.StatusOK, map[string]any{
 			"connected": false,
 			statusError: err.Error(),
 			"forge":     f,
 		})
 		return
 	}
-	httpwire.WriteJSON(w, map[string]any{
+	httpreply.WriteJSON(w, map[string]any{
 		"connected": true,
 		"forge":     f,
 	})
@@ -212,25 +212,25 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 // kind+host are derived from id.
 func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, sub string) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	op, _, _ := splitFirst(sub)
 	if op != "pat" {
-		httpwire.NotFound(w, "unknown login method")
+		httpreply.NotFound(w, "unknown login method")
 		return
 	}
 	kind, host := splitID(id)
 	if !kind.Valid() {
-		httpwire.BadRequest(w, "invalid forge id")
+		httpreply.BadRequest(w, "invalid forge id")
 		return
 	}
 	var body struct {
 		Token string `json:"token"`
 	}
-	httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
+	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		httpwire.BadRequest(w, "invalid json")
+		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 	if err := LoginWithPAT(r.Context(), LoginPATParams{
@@ -243,31 +243,31 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		// to null → a generic "Network error.", hiding the real reason (bad
 		// credentials, missing scope, wrong host). On a 2xx the PAT form's
 		// inline error branch surfaces err. (Malformed JSON above stays 400.)
-		httpwire.WriteJSON(w, httpwire.ErrorJSON(err.Error()))
+		httpreply.WriteJSON(w, httpreply.ErrorJSON(err.Error()))
 		return
 	}
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
-	httpwire.WriteJSON(w, map[string]string{"status": stateComplete})
+	httpreply.WriteJSON(w, map[string]string{"status": stateComplete})
 }
 
 // writeOpsError maps ForgeOps errors to HTTP status codes.
 func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotInstalled):
-		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable,
-			httpwire.ErrorJSONWithCode(err.Error(), string(ForgeErrCLINotInstalled)))
+		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrCLINotInstalled)))
 	case errors.Is(err, ErrNotLoggedIn):
-		httpwire.WriteJSONStatus(w, http.StatusUnauthorized,
-			httpwire.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
+		httpreply.WriteJSONStatus(w, http.StatusUnauthorized,
+			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
 	case errors.Is(err, ErrNotSupported):
-		httpwire.WriteJSONStatus(w, http.StatusNotImplemented,
-			httpwire.ErrorJSONWithCode(err.Error(), string(ForgeErrNotSupported)))
+		httpreply.WriteJSONStatus(w, http.StatusNotImplemented,
+			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotSupported)))
 	default:
 		slog.Debug("forges: ops error", "error", err)
-		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpwire.ErrorJSON(err.Error()))
+		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON(err.Error()))
 	}
 }
 

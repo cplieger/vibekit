@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // AIHandler registers the AI-backed git endpoints (commit-message,
@@ -105,7 +105,7 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	msg := extractCommitMessage(result)
-	httpwire.WriteJSON(w, map[string]string{jsonKeyOutput: msg})
+	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: msg})
 }
 
 // defaultPRBase is the assumed base branch when a PR-description
@@ -131,7 +131,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 		if !isValidGitRef(body.Branch) {
 			slog.Warn("git pr-description: invalid branch rejected",
 				"repo", body.Repo, "branch", body.Branch)
-			httpwire.BadRequest(w, "invalid branch name")
+			httpreply.BadRequest(w, "invalid branch name")
 			return
 		}
 		base = body.Branch
@@ -177,7 +177,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	result = api.StripCodeFence(result)
 	result = strings.TrimSpace(result)
 
-	httpwire.WriteJSON(w, map[string]string{jsonKeyOutput: result})
+	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: result})
 }
 
 // handleBranchName suggests a branch name for the repo's work in progress.
@@ -225,7 +225,7 @@ func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 		writeGitError(w, KindGenerationFailed, "model returned no usable name")
 		return
 	}
-	httpwire.WriteJSON(w, map[string]string{jsonKeyOutput: name})
+	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: name})
 }
 
 // uncommittedContext summarises the repo's uncommitted state (porcelain

@@ -1,4 +1,4 @@
-package httpwire
+package httpreply
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// Tests for httpwire.go: the JSON writers, LimitBody, the LimitedWriter cap,
+// Tests for httpreply.go: the JSON writers, LimitBody, the LimitedWriter cap,
 // WriteRawJSON, and the two logged error paths.
 
 // captureSlog swaps the default slog logger for a buffer-backed text handler
@@ -261,7 +261,7 @@ func TestInternalError_logs_cause_when_nonnil(t *testing.T) {
 	buf := captureSlog(t)
 	rec := httptest.NewRecorder()
 	InternalError(rec, os.ErrPermission)
-	if !strings.Contains(buf.String(), "httpwire: internal error") {
+	if !strings.Contains(buf.String(), "httpreply: internal error") {
 		t.Errorf("InternalError(err): want error log, got %q", buf.String())
 	}
 	if rec.Code != http.StatusInternalServerError {
@@ -273,7 +273,7 @@ func TestInternalError_does_not_log_when_nil(t *testing.T) {
 	buf := captureSlog(t)
 	rec := httptest.NewRecorder()
 	InternalError(rec, nil)
-	if strings.Contains(buf.String(), "httpwire: internal error") {
+	if strings.Contains(buf.String(), "httpreply: internal error") {
 		t.Errorf("InternalError(nil): want no error log, got %q", buf.String())
 	}
 	if rec.Code != http.StatusInternalServerError {

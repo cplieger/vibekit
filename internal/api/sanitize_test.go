@@ -6,7 +6,7 @@ import (
 
 // Tests for sanitize.go: StripANSI, SanitizeUnicode, isHiddenUnicode and the
 // SanitizeOutput composition. The JSON-writer tests that used to share this
-// file moved with their subject to internal/httpwire.
+// file moved with their subject to internal/httpreply.
 
 // --- StripANSI ---
 

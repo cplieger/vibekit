@@ -9,7 +9,7 @@
 // through internal/wirespec to generate the TypeScript client's decoders.
 //
 // HTTP request and response plumbing is NOT here: WriteJSON, BadRequest,
-// MethodNotAllowed, DecodeJSON and the rest live in internal/httpwire, which
+// MethodNotAllowed, DecodeJSON and the rest live in internal/httpreply, which
 // imports nothing from this package. Atomic file I/O (SaveBytes, bounded
 // reads) lives in the external cplieger/atomicfile package.
 //

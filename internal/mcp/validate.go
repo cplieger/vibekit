@@ -109,7 +109,7 @@ func checkName(name string) error {
 var keyRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,127}$`)
 
 // Length caps on user-supplied fields. These are defense-in-depth
-// bounds: httpwire.MaxJSONBody caps the whole PUT payload, but a single
+// bounds: httpreply.MaxJSONBody caps the whole PUT payload, but a single
 // 500 KB env value still slows every masked read and bloats mcp.json.
 // Values are generous enough to accept any realistic MCP config.
 const (

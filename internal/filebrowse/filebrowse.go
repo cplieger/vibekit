@@ -32,7 +32,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 const (
@@ -119,7 +119,7 @@ func (h *Handler) resolveOrForbid(w http.ResponseWriter, reqPath string) (loc, b
 	if err != nil {
 		slog.Warn("filebrowse: path rejected",
 			"path", reqPath, "reason", err.Error())
-		httpwire.Forbidden(w, err.Error())
+		httpreply.Forbidden(w, err.Error())
 		return loc{}, false
 	}
 	return l, true
@@ -130,7 +130,7 @@ func (h *Handler) resolveOrForbid(w http.ResponseWriter, reqPath string) (loc, b
 func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 	reqPath := r.URL.Query().Get("path")
 	if reqPath == "" {
-		httpwire.BadRequest(w, "missing path")
+		httpreply.BadRequest(w, "missing path")
 		return
 	}
 	l, ok := h.resolveOrForbid(w, reqPath)
@@ -143,6 +143,6 @@ func (h *Handler) handleFile(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		writeFile(w, r, l)
 	default:
-		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
+		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }

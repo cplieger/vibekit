@@ -17,7 +17,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // Compile-time interface assertion.
@@ -153,9 +153,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/logout", h.handleLogout)
 }
 
-// limitedWriter is a package-level alias for httpwire.LimitedWriter.
+// limitedWriter is a package-level alias for httpreply.LimitedWriter.
 // Kept as a type alias so existing construction sites remain unchanged.
-type limitedWriter = httpwire.LimitedWriter
+type limitedWriter = httpreply.LimitedWriter
 
 // stderrAttr returns slog key/value attributes for a captured stderr
 // buffer, omitting the "stderr" key entirely when the buffer is empty.

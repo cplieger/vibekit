@@ -22,7 +22,7 @@ import (
 
 // MaxBytes caps config.json reads. Real settings files are well
 // under 100 KB; 1 MiB is generous headroom and matches the HTTP PUT
-// path's httpwire.MaxJSONBody limit.
+// path's httpreply.MaxJSONBody limit.
 const MaxBytes = 1 << 20
 
 // filename is the canonical settings file name.

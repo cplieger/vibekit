@@ -7,7 +7,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // registerCommandHandlers populates the dispatcher with the concrete
@@ -25,15 +25,15 @@ func (h *Hub) respond(w http.ResponseWriter, reqID string, body any) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		slog.Error("respond marshal", "error", err)
-		httpwire.InternalError(w, err)
+		httpreply.InternalError(w, err)
 		return
 	}
 	h.recordDedup(reqID, data)
-	httpwire.WriteRawJSON(w, data)
+	httpreply.WriteRawJSON(w, data)
 }
 
 func (h *Hub) respondErr(w http.ResponseWriter, code int, err error) {
-	httpwire.WriteJSONStatus(w, code, httpwire.ErrorJSON(err.Error()))
+	httpreply.WriteJSONStatus(w, code, httpreply.ErrorJSON(err.Error()))
 }
 
 // requireChatID validates that cmd.ChatID is non-empty and writes a

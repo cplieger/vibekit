@@ -12,7 +12,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // --- /api/files/action (POST: mkdir, touch, delete, rename, copy, move) ---
@@ -44,21 +44,21 @@ var fileActions = map[string]actionFunc{
 
 func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
+	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
 
 	var body fileAction
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: action body too large",
-				"limit", httpwire.MaxJSONBody, "error", maxErr)
-			httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				httpwire.ErrorJSON("request body too large"))
+				"limit", httpreply.MaxJSONBody, "error", maxErr)
+			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				httpreply.ErrorJSON("request body too large"))
 			return
 		}
-		httpwire.BadRequest(w, "invalid json")
+		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 	l, ok := h.resolveOrForbid(w, body.Path)
@@ -68,7 +68,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 
 	fn, exists := fileActions[body.Action]
 	if !exists {
-		httpwire.BadRequest(w, "unknown action")
+		httpreply.BadRequest(w, "unknown action")
 		return
 	}
 	if err := fn(r.Context(), w, body, l, h); err != nil {
@@ -80,11 +80,11 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("filebrowse: action failed",
 			"action", body.Action, "path", l.abs, "error", err)
-		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpwire.ErrorJSON(body.Action+" failed"))
+		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON(body.Action+" failed"))
 		return
 	}
-	httpwire.Ok(w)
+	httpreply.Ok(w)
 }
 
 // refuseMountPoint writes the shared 403 for create/delete/rename/move
@@ -92,7 +92,7 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 // the UI must not be able to remove or shadow one.
 func refuseMountPoint(w http.ResponseWriter, action string, l loc) error {
 	slog.Warn("filebrowse: "+action+" blocked on granted root", "path", l.abs)
-	httpwire.Forbidden(w, "refusing to "+action+" a granted root")
+	httpreply.Forbidden(w, "refusing to "+action+" a granted root")
 	return errHandled
 }
 
@@ -103,7 +103,7 @@ func actionMkdir(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	// chat store's own directory before it's materialised.
 	if isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: mkdir blocked on protected dir", "path", l.abs)
-		httpwire.Forbidden(w, "refusing to mkdir protected directory")
+		httpreply.Forbidden(w, "refusing to mkdir protected directory")
 		return errHandled
 	}
 	// A granted root always exists; "creating" it is either a no-op or
@@ -125,7 +125,7 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	// is refused before it ever hits the filesystem.
 	if IsSensitive(l.abs) || isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: touch blocked on protected path", "path", l.abs)
-		httpwire.Forbidden(w, "refusing to touch protected path")
+		httpreply.Forbidden(w, "refusing to touch protected path")
 		return errHandled
 	}
 	if l.isMountPoint() {
@@ -156,7 +156,7 @@ func actionDelete(_ context.Context, w http.ResponseWriter, _ fileAction, l loc,
 	// blocking the container directories of every sensitive path too.
 	if isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: delete blocked on protected dir", "path", l.abs)
-		httpwire.Forbidden(w, "refusing to delete protected directory")
+		httpreply.Forbidden(w, "refusing to delete protected directory")
 		return errHandled
 	}
 	if err := l.m.root.RemoveAll(l.rel()); err != nil {
@@ -179,7 +179,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	}
 	if isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: rename blocked on protected dir", "path", l.abs)
-		httpwire.Forbidden(w, "refusing to rename protected directory")
+		httpreply.Forbidden(w, "refusing to rename protected directory")
 		return errHandled
 	}
 	// `name` must be a single-segment, non-empty, non-traversal
@@ -191,7 +191,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	if name == "" || name == "." || name == ".." ||
 		strings.ContainsRune(name, '/') || strings.ContainsRune(name, '\\') ||
 		strings.ContainsRune(name, 0) {
-		httpwire.BadRequest(w, "invalid name")
+		httpreply.BadRequest(w, "invalid name")
 		return errHandled
 	}
 	dest := filepath.Join(filepath.Dir(l.abs), name)
@@ -202,7 +202,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	if err != nil {
 		slog.Warn("filebrowse: rename dest rejected",
 			"from", l.abs, "to", dest, "reason", err.Error())
-		httpwire.Forbidden(w, err.Error())
+		httpreply.Forbidden(w, err.Error())
 		return errHandled
 	}
 	// Paranoia: confirm the resolved destination is still a direct
@@ -210,7 +210,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	// separator surprises on non-Linux filesystems). Same parent
 	// implies same mount, so the source root handle covers both ends.
 	if filepath.Dir(destLoc.abs) != filepath.Dir(l.abs) {
-		httpwire.Forbidden(w, "rename escapes parent directory")
+		httpreply.Forbidden(w, "rename escapes parent directory")
 		return errHandled
 	}
 	// Sensitive-path check on the DESTINATION. Without this the
@@ -224,7 +224,7 @@ func actionRename(_ context.Context, w http.ResponseWriter, body fileAction, l l
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filebrowse: rename blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
-		httpwire.Forbidden(w, "rename target is protected")
+		httpreply.Forbidden(w, "rename target is protected")
 		return errHandled
 	}
 	if err := l.m.root.Rename(l.rel(), l.relOf(destLoc.abs)); err != nil {
@@ -247,14 +247,14 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l l
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filebrowse: copy blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
-		httpwire.Forbidden(w, "copy target is protected")
+		httpreply.Forbidden(w, "copy target is protected")
 		return errHandled
 	}
 	n, scErr := streamCopy(ctx, l, destLoc, maxCopySize)
 	if scErr != nil {
 		if errors.Is(scErr, errOversize) {
-			httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				httpwire.ErrorJSON("source file too large to copy"))
+			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				httpreply.ErrorJSON("source file too large to copy"))
 			return errHandled
 		}
 		return scErr
@@ -346,7 +346,7 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 	}
 	if isProtectedDir(l.abs) {
 		slog.Warn("filebrowse: move blocked on protected dir", "path", l.abs)
-		httpwire.Forbidden(w, "refusing to move protected directory")
+		httpreply.Forbidden(w, "refusing to move protected directory")
 		return errHandled
 	}
 	destLoc, err := resolveCopyMoveDest(w, body, h)
@@ -358,7 +358,7 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 	if IsSensitive(destLoc.abs) || isProtectedDir(destLoc.abs) || destLoc.isMountPoint() {
 		slog.Warn("filebrowse: move blocked on sensitive dest",
 			"from", l.abs, "to", destLoc.abs)
-		httpwire.Forbidden(w, "move target is protected")
+		httpreply.Forbidden(w, "move target is protected")
 		return errHandled
 	}
 	// A rename cannot cross os.Root handles. Moves across granted
@@ -366,7 +366,7 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 	// volumes in the shipped container, so rename returned EXDEV);
 	// surface the honest, actionable error instead.
 	if destLoc.m != l.m {
-		httpwire.BadRequest(w, "cannot move across granted roots; use copy")
+		httpreply.BadRequest(w, "cannot move across granted roots; use copy")
 		return errHandled
 	}
 	if err := l.m.root.Rename(l.rel(), destLoc.rel()); err != nil {
@@ -380,14 +380,14 @@ func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc
 // copy and move. Returns errHandled when it wrote an error response.
 func resolveCopyMoveDest(w http.ResponseWriter, body fileAction, h *Handler) (loc, error) {
 	if body.Dest == "" {
-		httpwire.BadRequest(w, "missing dest")
+		httpreply.BadRequest(w, "missing dest")
 		return loc{}, errHandled
 	}
 	destLoc, err := h.resolvePath(body.Dest)
 	if err != nil {
 		slog.Warn("filebrowse: dest path rejected",
 			"dest", body.Dest, "reason", err.Error())
-		httpwire.Forbidden(w, err.Error())
+		httpreply.Forbidden(w, err.Error())
 		return loc{}, errHandled
 	}
 	return destLoc, nil

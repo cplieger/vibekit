@@ -1,6 +1,9 @@
-// Package httpwire is vibekit's HTTP request and response adapter: the JSON
-// writers, the named error responses, the request-prelude guards, and the body
-// caps every handler package reaches for.
+// Package httpreply writes what vibekit answers an HTTP request with: the
+// named status responses, the error envelope they carry, and the request
+// guards whose failure IS one of those responses.
+//
+// Every symbol here either writes a reply or refuses a request by writing one,
+// which is what the name claims and the whole of what the package does.
 //
 // It exists because this is BEHAVIOUR, and it used to sit in internal/api
 // beside the wire and domain TYPES. That put the 405 helper every handler
@@ -8,13 +11,26 @@
 // cross-language type contract, so neither half could be read or changed
 // without the other in view.
 //
-// The mechanism is the fleet's: webhttp owns the headers, the status, the
-// encode, the body cap and the decode. What is vibekit's, and what makes this
-// an adapter rather than a re-export, is the error TAXONOMY. Every helper here
-// writes the bare {"error": "msg"} envelope vibekit's clients decode, leaving
-// webhttp.ErrorResponse's Code and RequestID fields empty; a handler that
-// hand-rolls that envelope instead is the drift these helpers exist to stop.
-package httpwire
+// The mechanism is the fleet's: webhttp owns the headers, the status and the
+// encode, and handlers call it directly for a plain body. What is vibekit's,
+// and the only reason this package exists at all, is the error TAXONOMY: every
+// helper here writes the bare {"error": "msg"} envelope vibekit's clients
+// decode, leaving webhttp.ErrorResponse's Code and RequestID fields empty. A
+// handler that hand-rolls that envelope instead is the drift these helpers
+// exist to stop, and webhttp's own contract puts the named helpers here — it
+// ships WriteError as the mechanism and leaves each app's taxonomy per app.
+//
+// NOT httpwire, which this package was called for one commit. subflux has a
+// package of that name for the OPPOSITE direction — bridging httpx errors
+// while reading an UPSTREAM response — so one spelling would have named two
+// disjoint concerns and taught a fleet reader that the name carries no
+// information. Fleet alignment aligns concepts, not spellings: the shared
+// concept is "the app's own HTTP boundary vocabulary", and the direction is
+// what the name has to say out loud. NOT apireply either: internal/api is the
+// package being renamed away from api because api names nothing, so borrowing
+// the word for its neighbour would repeat the mistake and leave a reader
+// guessing whether the prefix means the package, the URL space, or the idea.
+package httpreply
 
 import (
 	"encoding/json"
@@ -99,7 +115,7 @@ func WriteJSONStatus(w http.ResponseWriter, code int, v any) {
 func WriteRawJSON(w http.ResponseWriter, data []byte) {
 	jsonHeaders(w)
 	if _, err := w.Write(data); err != nil {
-		slog.Debug("httpwire: raw json write failed", "error", err)
+		slog.Debug("httpreply: raw json write failed", "error", err)
 	}
 }
 
@@ -184,7 +200,7 @@ func MethodNotAllowed(w http.ResponseWriter, method string, more ...string) {
 // error details to HTTP clients.
 func InternalError(w http.ResponseWriter, err error) {
 	if err != nil {
-		slog.Error("httpwire: internal error", "error", err)
+		slog.Error("httpreply: internal error", "error", err)
 	}
 	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: msgInternalError})
 }
@@ -195,7 +211,7 @@ func InternalError(w http.ResponseWriter, err error) {
 // logging the raw error for debugging.
 func ServerError(w http.ResponseWriter, clientMsg string, err error) {
 	if err != nil {
-		slog.Error("httpwire: server error", "client_msg", clientMsg, "error", err)
+		slog.Error("httpreply: server error", "client_msg", clientMsg, "error", err)
 	}
 	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: clientMsg})
 }

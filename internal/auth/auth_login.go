@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
@@ -83,7 +83,7 @@ func buildLoginArgs(provider, region string) []string {
 // body is legitimate (default Builder ID flow) and returns zero
 // values with ok=true.
 func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region string, ok bool) {
-	httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
+	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
 	var body struct {
 		Provider string `json:"provider"`
 		Region   string `json:"region"`
@@ -91,21 +91,21 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("login: body exceeds limit",
-				"limit_bytes", httpwire.MaxJSONBody)
-			httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				httpwire.ErrorJSON("request too large"))
+				"limit_bytes", httpreply.MaxJSONBody)
+			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				httpreply.ErrorJSON("request too large"))
 			return "", "", false
 		}
 		slog.Warn("login: decode body", "error", err)
-		httpwire.BadRequest(w, "invalid JSON body")
+		httpreply.BadRequest(w, "invalid JSON body")
 		return "", "", false
 	}
 	if err := validateProvider(body.Provider); err != nil {
-		httpwire.BadRequest(w, err.Error())
+		httpreply.BadRequest(w, err.Error())
 		return "", "", false
 	}
 	if err := validateRegion(body.Region); err != nil {
-		httpwire.BadRequest(w, err.Error())
+		httpreply.BadRequest(w, err.Error())
 		return "", "", false
 	}
 	return body.Provider, body.Region, true
@@ -124,7 +124,7 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 // would otherwise pin two AWS device codes for 16 minutes each.
 func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	// Audit trail: record every /api/login POST so operators can
@@ -145,7 +145,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// cmd.Start) releases via the semReleased guard before
 		// returning. See Handler doc comment.
 	default:
-		httpwire.Conflict(w, "login in progress")
+		httpreply.Conflict(w, "login in progress")
 		return
 	}
 	// Guarded release: only fires if we return before the reap
@@ -179,8 +179,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		cancel()
 		slog.Error("login: stdout pipe failed",
 			"error", err, "cli_path", h.cliPath())
-		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpwire.ErrorJSON("login unavailable"))
+		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON("login unavailable"))
 		return
 	}
 	// Capture stderr into a bounded buffer separate from stdout so
@@ -192,7 +192,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := cmd.Start(); err != nil {
 		cancel()
 		status := classifyLoginStartErr(err, h.cliPath())
-		httpwire.WriteJSONStatus(w, status, httpwire.ErrorJSON("login unavailable"))
+		httpreply.WriteJSONStatus(w, status, httpreply.ErrorJSON("login unavailable"))
 		return
 	}
 	urlCh := make(chan map[string]string, 1)
@@ -258,7 +258,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			killLoginProcess(cmd)
 			<-waitDone
 		}
-		httpwire.WriteJSON(w, result)
+		httpreply.WriteJSON(w, result)
 	case <-time.After(h.cfg.LoginURLTimeout):
 		killLoginProcess(cmd)
 		<-waitDone // bounded: Kill → SIGKILL → reap
@@ -266,7 +266,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		attrs = append(attrs, "timeout", h.cfg.LoginURLTimeout)
 		attrs = append(attrs, stderrAttr(&stderrBuf)...)
 		slog.Warn("login: timeout waiting for auth URL", attrs...)
-		httpwire.WriteJSONStatus(w, http.StatusGatewayTimeout,
-			httpwire.ErrorJSON("timeout waiting for auth URL"))
+		httpreply.WriteJSONStatus(w, http.StatusGatewayTimeout,
+			httpreply.ErrorJSON("timeout waiting for auth URL"))
 	}
 }

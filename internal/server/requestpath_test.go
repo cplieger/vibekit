@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
@@ -43,7 +43,7 @@ func requestPathMux() (*http.ServeMux, *string) {
 			if v := r.PathValue("name"); v != "" {
 				reached = name + ":" + v
 			}
-			httpwire.WriteJSON(w, healthBody{Status: "ok"})
+			httpreply.WriteJSON(w, healthBody{Status: "ok"})
 		}
 	}
 	mux := http.NewServeMux()
@@ -230,8 +230,8 @@ func TestCanonicalAPIPath_RefusalIsVibekitsEnvelope(t *testing.T) {
 	if rec.Code < 400 {
 		t.Errorf("status = %d, want >= 400 so a `curl -f` sender exits non-zero", rec.Code)
 	}
-	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, httpwire.MIMETypeJSON) {
-		t.Errorf("Content-Type = %q, want %s", got, httpwire.MIMETypeJSON)
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, httpreply.MIMETypeJSON) {
+		t.Errorf("Content-Type = %q, want %s", got, httpreply.MIMETypeJSON)
 	}
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"error":"`+msgNonCanonicalPath+`"}` {
 		t.Errorf("body = %s, want vibekit's bare error envelope", got)

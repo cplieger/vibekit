@@ -1,4 +1,4 @@
-package httpwire
+package httpreply
 
 import (
 	"bytes"

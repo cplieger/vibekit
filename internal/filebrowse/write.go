@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // errStaleWrite is the client sentinel for a refused stale write. Named so the
@@ -18,7 +18,7 @@ import (
 const errStaleWrite = "file changed on disk since you opened it"
 
 func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
-	httpwire.LimitBody(w, r, maxFileSize)
+	httpreply.LimitBody(w, r, maxFileSize)
 	var body struct {
 		Content string `json:"content"`
 		// ExpectedHash is the content_hash the client received when it LOADED the
@@ -31,18 +31,18 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: write body too large",
 				"path", l.abs, "limit", maxFileSize, "error", maxErr)
-			httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-				httpwire.ErrorJSON(errFileTooLarge))
+			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				httpreply.ErrorJSON(errFileTooLarge))
 			return
 		}
-		httpwire.BadRequest(w, "invalid json")
+		httpreply.BadRequest(w, "invalid json")
 		return
 	}
 	// Pre-stat so the user sees a clean 400 for "can't write onto a
 	// directory" rather than a generic 500 with the raw EISDIR text
 	// (which would leak the resolved filesystem path).
 	if info, err := l.m.root.Stat(l.rel()); err == nil && info.IsDir() {
-		httpwire.BadRequest(w, "path is a directory")
+		httpreply.BadRequest(w, "path is a directory")
 		return
 	}
 	// The stale-write guard. The editor's file and the agent's file are the same
@@ -61,7 +61,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		switch {
 		case rErr != nil && !errors.Is(rErr, fs.ErrNotExist):
 			slog.Warn("filebrowse: stale-check read failed", "path", l.abs, "error", rErr)
-			httpwire.WriteJSONStatus(w, http.StatusInternalServerError, httpwire.ErrorJSON("write failed"))
+			httpreply.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON("write failed"))
 			return
 		case rErr == nil:
 			if got := contentHash(current); got != body.ExpectedHash {
@@ -69,7 +69,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 					"path", l.abs, "expected", body.ExpectedHash, "actual", got)
 				// The current content rides the 409 so the client can show what
 				// changed instead of asking the user to reload and compare by eye.
-				httpwire.WriteJSONStatus(w, http.StatusConflict, map[string]string{
+				httpreply.WriteJSONStatus(w, http.StatusConflict, map[string]string{
 					"error":         errStaleWrite,
 					"content":       string(current),
 					"content_hash":  got,
@@ -85,8 +85,8 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	// blocks into three 1-line calls.
 	fail := func(stage string, err error) {
 		slog.Warn("filebrowse: "+stage, "path", l.abs, "error", err)
-		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
-			httpwire.ErrorJSON("write failed"))
+		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpreply.ErrorJSON("write failed"))
 	}
 	// O_NOFOLLOW on the write prevents a dangling symlink planted
 	// between resolvePath's EvalSymlinks and this open from steering
@@ -109,5 +109,5 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		return
 	}
 	slog.Info("filebrowse: file written", "path", l.abs, "bytes", len(body.Content))
-	httpwire.Ok(w)
+	httpreply.Ok(w)
 }

@@ -13,7 +13,7 @@ import (
 	"syscall"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
 
@@ -27,7 +27,7 @@ import (
 // the flow.
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		httpwire.MethodNotAllowed(w, http.MethodPost)
+		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	// Audit trail: record every /api/logout POST. See handleLogin
@@ -74,13 +74,13 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("logout: kiro-cli timed out",
 				"timeout", h.cfg.LogoutTimeout, "output_bytes", len(out))
 			result["error"] = "logout timed out"
-			httpwire.WriteJSONStatus(w, http.StatusGatewayTimeout, result)
+			httpreply.WriteJSONStatus(w, http.StatusGatewayTimeout, result)
 			return
 		case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
 			slog.Error("logout: kiro-cli binary not found",
 				"cli_path", h.cliPath())
 			result["error"] = "logout unavailable"
-			httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, result)
+			httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, result)
 			return
 		default:
 			// Log err details server-side; return a generic
@@ -89,12 +89,12 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("logout: kiro-cli failed",
 				"error", err, "output_bytes", len(out))
 			result["error"] = "logout failed"
-			httpwire.WriteJSONStatus(w, http.StatusBadGateway, result)
+			httpreply.WriteJSONStatus(w, http.StatusBadGateway, result)
 			return
 		}
 	}
 	slog.Info("logout: completed", "output_bytes", len(out))
-	httpwire.WriteJSON(w, result)
+	httpreply.WriteJSON(w, result)
 }
 
 // killLoginProcess sends SIGKILL to the entire process group of the

@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpwire"
+	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -120,7 +120,7 @@ func (h *Hub) Governance(ctx context.Context) api.GovernanceStatePayload {
 // handleGovernance: GET /api/governance → the cached account/workspace
 // governance state. Read-only; the flags are org-controlled, not user-settable.
 func (h *Hub) handleGovernance(w http.ResponseWriter, r *http.Request) {
-	httpwire.WriteJSON(w, h.Governance(r.Context()))
+	httpreply.WriteJSON(w, h.Governance(r.Context()))
 }
 
 // registerGovernanceRoutes wires the governance snapshot endpoint.

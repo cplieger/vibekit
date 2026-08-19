@@ -884,7 +884,7 @@ func TestCommand_IdempotentReplayReturnsSameBytes(t *testing.T) {
 	if rec1.Code != rec2.Code {
 		t.Errorf("replay codes differ: %d vs %d", rec1.Code, rec2.Code)
 	}
-	// Replay must also carry nosniff (httpwire.WriteRawJSON applied).
+	// Replay must also carry nosniff (httpreply.WriteRawJSON applied).
 	if rec2.Header().Get("X-Content-Type-Options") != "nosniff" {
 		t.Errorf("nosniff missing on replay: %v", rec2.Header())
 	}
