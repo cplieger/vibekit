@@ -208,6 +208,80 @@ func TestRecordSession(t *testing.T) {
 	}
 }
 
+// TestSessionChain_ReturnsACopy pins copy-on-return on BOTH branches. The
+// detached branch used to hand back PriorACPSessionIDs itself, so a caller that
+// mutated the chain it was given was correct while a session was attached and
+// silently rewrote the chat's retention set when one was not.
+func TestSessionChain_ReturnsACopy(t *testing.T) {
+	// Spare capacity is part of the fixture: an aliasing chain writes through on
+	// append as well as on assignment, and the append half is invisible without it.
+	freshPrior := func() []string { return append(make([]string, 0, 8), "sess_a", "sess_b") }
+	wantPrior := []string{"sess_a", "sess_b"}
+
+	cases := []struct {
+		name      string
+		current   string
+		wantChain []string
+	}{
+		{
+			name:      "attached to a session",
+			current:   "sess_c",
+			wantChain: []string{"sess_a", "sess_b", "sess_c"},
+		},
+		{
+			name:      "detached from its session",
+			current:   "",
+			wantChain: []string{"sess_a", "sess_b"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("Chat", func(t *testing.T) {
+				c := Chat{ACPSessionID: tc.current, PriorACPSessionIDs: freshPrior()}
+				chain := c.SessionChain()
+				// Fatal: the mutation below indexes chain, and a short one would
+				// make every assertion after it pass for the wrong reason.
+				if !slices.Equal(chain, tc.wantChain) {
+					t.Fatalf("Chat.SessionChain() = %v, want %v", chain, tc.wantChain)
+				}
+				chain[0] = "hijacked"
+				chain = append(chain, "appended")
+				if !slices.Equal(c.PriorACPSessionIDs, wantPrior) {
+					t.Errorf("mutating the chain rewrote Chat.PriorACPSessionIDs to %v, want %v",
+						c.PriorACPSessionIDs, wantPrior)
+				}
+				if c.ACPSessionID != tc.current {
+					t.Errorf("mutating the chain rewrote Chat.ACPSessionID to %q, want %q",
+						c.ACPSessionID, tc.current)
+				}
+				if chain[len(chain)-1] != "appended" {
+					t.Errorf("chain = %v after the mutation, want it to end in appended", chain)
+				}
+			})
+			t.Run("ChatHeader", func(t *testing.T) {
+				h := ChatHeader{ACPSessionID: tc.current, PriorACPSessionIDs: freshPrior()}
+				chain := h.SessionChain()
+				if !slices.Equal(chain, tc.wantChain) {
+					t.Fatalf("ChatHeader.SessionChain() = %v, want %v", chain, tc.wantChain)
+				}
+				chain[0] = "hijacked"
+				chain = append(chain, "appended")
+				if !slices.Equal(h.PriorACPSessionIDs, wantPrior) {
+					t.Errorf("mutating the chain rewrote ChatHeader.PriorACPSessionIDs to %v, want %v",
+						h.PriorACPSessionIDs, wantPrior)
+				}
+				if h.ACPSessionID != tc.current {
+					t.Errorf("mutating the chain rewrote ChatHeader.ACPSessionID to %q, want %q",
+						h.ACPSessionID, tc.current)
+				}
+				if chain[len(chain)-1] != "appended" {
+					t.Errorf("chain = %v after the mutation, want it to end in appended", chain)
+				}
+			})
+		})
+	}
+}
+
 // TestSessionChain pins that the chain is the full keep-set and that Chat and
 // ChatHeader agree on it — the sweep reads headers while the delete path reads
 // chats, so a disagreement means one of them reaps what the other keeps.

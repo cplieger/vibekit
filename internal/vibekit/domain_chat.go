@@ -607,12 +607,19 @@ func (c *Chat) SessionChain() []string {
 // sessionChain composes the current session id and the retired ones into the
 // chat's full chain. Shared by Chat and ChatHeader so the two views cannot
 // disagree about what a chat's retention set is.
+//
+// The returned slice is freshly allocated on EVERY branch. Handing back
+// PriorACPSessionIDs itself would let a caller's append rewrite the chat's own
+// retention set, and copying on only one branch is worse than never copying: a
+// mutating caller would then be correct whenever a session is attached and
+// corrupting when one is not. Elements are strings, so this one level is the
+// whole copy.
 func sessionChain(current string, prior []string) []string {
-	if current == "" {
-		return prior
-	}
 	chain := make([]string, 0, len(prior)+1)
 	chain = append(chain, prior...)
+	if current == "" {
+		return chain
+	}
 	return append(chain, current)
 }
 
