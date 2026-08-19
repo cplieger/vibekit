@@ -46,6 +46,56 @@ type mcpNameSets interface {
 	AllNames(ctx context.Context) map[string]struct{}
 }
 
+// bridgeChatRecords is the chat store as the BRIDGE LIFECYCLE uses it: read a
+// chat, read its transcript to prime a fresh session, write the session metadata
+// a spawn produced, and append the turn's messages. 4 of the 9 methods
+// *chat.Store offers.
+//
+// Delete is deliberately absent, and that absence is an app invariant rather
+// than a preference: only cmdDeleteChat may remove a chat file, so the path that
+// tears bridges down on exit, model switch and restart must not be able to. A
+// bridge exiting has never meant a chat should go, and now it cannot.
+type bridgeChatRecords interface {
+	// Get returns the full chat at id, or false if it does not exist.
+	Get(ctx context.Context, id api.ChatID) (*api.Chat, bool)
+	// BuildHistory returns a plain-text transcript used for compress priming.
+	// Returns "" if the chat is missing or empty.
+	BuildHistory(ctx context.Context, id api.ChatID) string
+	// Mutate is the single write primitive: load, apply, save, broadcast.
+	Mutate(ctx context.Context, id api.ChatID, mutate func(c *api.Chat, exists bool) bool) error
+	// AppendMessage appends msg to the chat's messages.
+	AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error
+}
+
+// chatRecords is the hub's field type, and it is a UNION rather than a usage
+// claim. 7 of the 9 methods *chat.Store offers.
+//
+// The hub itself calls 3 (Get, List, Mutate). It is 7 because the hub is what
+// the composition root hands the store to, and it passes narrower views of the
+// same value on: bridgeChatRecords (4) to the coordinator, command.ChatStore (5)
+// to the dispatcher, translate.ChatRecords (3) to the translator. A field has to
+// satisfy every one of them.
+//
+// The 2 it does NOT carry are the finding worth recording: UpdateMessage and
+// RegisterRoutes are reached through no interface anywhere in the build.
+// RegisterRoutes is called on the concrete store by internal/server, and
+// UpdateMessage is called by nothing at all in production — see the note on
+// (*chat.Store).UpdateMessage.
+type chatRecords interface {
+	bridgeChatRecords
+
+	// List returns every chat's header (no messages) sorted by UpdatedAt
+	// descending. Checks ctx.Err() between per-file reads.
+	List(ctx context.Context) []api.ChatHeader
+	// SetDraft persists the chat's unsent composer text. Passed on to the
+	// command dispatcher; the hub never calls it.
+	SetDraft(ctx context.Context, id api.ChatID, text string) error
+	// Delete removes the chat file and broadcasts chat_deleted. Passed on to
+	// the command dispatcher, whose cmdDeleteChat is the build's only caller;
+	// the hub never calls it, and the coordinator's own view cannot see it.
+	Delete(ctx context.Context, id api.ChatID) error
+}
+
 // pushNotifier is the notification SEND half: ask whether anyone is listening,
 // then send. *push.Service satisfies it.
 //

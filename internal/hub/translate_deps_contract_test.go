@@ -13,10 +13,10 @@ import (
 func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translate.Deps) {
 	t.Helper()
 
-	t.Run("ChatStore_non_nil", func(t *testing.T) {
+	t.Run("ChatRecords_non_nil", func(t *testing.T) {
 		d := newDeps(t)
-		if d.ChatStore() == nil {
-			t.Error("ChatStore() returned nil")
+		if d.ChatRecords() == nil {
+			t.Error("ChatRecords() returned nil")
 		}
 	})
 

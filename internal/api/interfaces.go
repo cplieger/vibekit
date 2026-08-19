@@ -23,50 +23,17 @@ import (
 
 // --- Persistence ---
 
-// ChatStore persists chat sessions as one JSON file per chat under
-// <dir>/<chat_id>.json. The directory listing is the index; there is no
-// separate index file. Mutations go through Mutate (atomic load → apply →
-// save → broadcast); there is no event-sourcing replay.
-type ChatStore interface {
-	RouteHandler
-
-	// Reads
-
-	// Get returns the full chat at id, or false if it does not exist.
-	Get(ctx context.Context, id ChatID) (*Chat, bool)
-	// List returns every chat's header (no messages) sorted by UpdatedAt
-	// descending. Checks ctx.Err() between per-file reads.
-	List(ctx context.Context) []ChatHeader
-	// BuildHistory returns a plain-text transcript used for compress
-	// priming. Returns "" if the chat is missing or empty.
-	BuildHistory(ctx context.Context, id ChatID) string
-
-	// Mutations
-
-	// Mutate is the single write primitive: load → apply → save →
-	// broadcast chat_created / chat_updated.
-	Mutate(ctx context.Context, id ChatID, mutate func(c *Chat, exists bool) bool) error
-	// SetDraft persists the chat's unsent composer text (Chat.Draft).
-	//
-	// Its own method rather than a Mutate call because a draft save is not
-	// ACTIVITY and must not be recorded as any. Mutate stamps UpdatedAt on
-	// every write and the retention purge ages a chat from exactly that field,
-	// so a debounced autosave firing while the user types would push the purge
-	// cutoff out by a whole retention window each time — a chat holding an
-	// abandoned draft would never be purged, and a draft can hold a
-	// credential. It also broadcasts nothing: Draft is not on ChatHeader, so
-	// the frame would carry no draft and only cost every client a re-render.
-	//
-	// A no-op (nil error) for a chat that does not exist: a chat is a server
-	// record from its first prompt onward, and typing must not create one.
-	SetDraft(ctx context.Context, id ChatID, text string) error
-	// Delete removes the chat file and broadcasts chat_deleted.
-	Delete(ctx context.Context, id ChatID) error
-	// AppendMessage appends msg to the chat's messages.
-	AppendMessage(ctx context.Context, chatID ChatID, msg *Message) error
-	// UpdateMessage mutates one message in place (by ID).
-	UpdateMessage(ctx context.Context, chatID ChatID, msgID string, mutate func(*Message)) error
-}
+// There is no ChatStore interface here. *chat.Store offers 9 methods and no
+// consumer wants more than 5 of them:
+//
+//	internal/server        1   RegisterRoutes — the chat router owns its own HTTP surface
+//	internal/translate     3   Get, Mutate, AppendMessage
+//	internal/hub's coord   4   + BuildHistory
+//	internal/command       5   Get, Mutate, AppendMessage, SetDraft, Delete
+//	internal/hub's field   7   the union it passes on, not what it calls
+//
+// Two members were reached through no interface at all: RegisterRoutes (called
+// on the concrete store) and UpdateMessage (called by nothing in production).
 
 // --- Communication ---
 

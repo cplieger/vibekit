@@ -26,7 +26,7 @@ const port = "9847"
 type Server struct {
 	forges        api.RouteHandler
 	mcpConfig     api.RouteHandler
-	chats         api.ChatStore
+	chats         routeHandler
 	git           api.RouteHandler
 	gitAI         api.RouteHandler
 	files         api.RouteHandler
@@ -94,8 +94,14 @@ func WithSteering(g SteeringGenerator) Option { return func(s *Server) { s.steer
 // WithHub sets the hub that manages bridge processes and SSE broadcasts.
 func WithHub(h chatHub) Option { return func(s *Server) { s.hub = h } }
 
-// WithChats sets the chat store used for reading and writing chat files.
-func WithChats(c api.ChatStore) Option { return func(s *Server) { s.chats = c } }
+// WithChats sets the chat store, whose own router owns the chat HTTP surface.
+//
+// The parameter is routeHandler because mounting those routes is the ONLY thing
+// this package does with the store: 1 of its 9 methods. The chat reads
+// (GET /api/chats, /api/chats/{id}, its search and turns endpoints) are
+// registered and served by internal/chat's own router, so the server neither
+// reads nor writes a chat itself. It used to hold all 9 to call one.
+func WithChats(c routeHandler) Option { return func(s *Server) { s.chats = c } }
 
 // WithGit sets the git handler for non-AI git HTTP endpoints.
 func WithGit(g api.RouteHandler) Option { return func(s *Server) { s.git = g } }

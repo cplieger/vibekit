@@ -23,7 +23,7 @@ func newBenchDeps() *benchDeps { return &benchDeps{dedup: make(map[string][]byte
 func (d *benchDeps) CheckDedup(reqID string) ([]byte, bool)     { v, ok := d.dedup[reqID]; return v, ok }
 func (d *benchDeps) RecordDedup(reqID string, data []byte)      { d.dedup[reqID] = data }
 func (d *benchDeps) Draining() bool                             { return false }
-func (d *benchDeps) ChatStore() api.ChatStore                   { return nil }
+func (d *benchDeps) ChatStore() ChatStore                       { return nil }
 func (d *benchDeps) Broadcast(context.Context, api.ServerEvent) {}
 func (d *benchDeps) GetBridge(api.ChatID) Bridge                { return nil }
 func (d *benchDeps) GetOrCreateBridge(context.Context, api.ChatID, string) (Bridge, error) {

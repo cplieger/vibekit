@@ -131,7 +131,7 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID api.ChatID, f
 // flips the tab label live.
 func (t *Translator) applyFocusTitle(ctx context.Context, chatID api.ChatID, title string) {
 	renamed := false
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists || c.Name == title || titleIsPromptDerived(title, c) {
 			return false
 		}

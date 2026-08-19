@@ -13,7 +13,7 @@ func TestNopChatStore_Contract(t *testing.T) {
 	s := NopChatStore{}
 
 	// Verify compile-time assertion holds.
-	var _ api.ChatStore = s
+	var _ ChatStoreContract = s
 
 	t.Run("Get_returns_nil_false", func(t *testing.T) {
 		c, ok := s.Get(t.Context(), "any")
@@ -66,7 +66,6 @@ func TestNopChatStore_Contract(t *testing.T) {
 
 	t.Run("no_panic_on_rapid_calls", func(t *testing.T) {
 		// Exercise all methods in sequence to verify no panics.
-		s.RegisterRoutes(nil)
 		_, _ = s.Get(t.Context(), "x")
 		_ = s.List(t.Context())
 		_ = s.BuildHistory(t.Context(), "x")

@@ -2,7 +2,6 @@ package testsupport
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -10,7 +9,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// InMemoryChatStore is a functional in-memory api.ChatStore with broadcast
+// InMemoryChatStore is a functional in-memory chat store with broadcast
 // support. Suitable for integration-style tests that need real Mutate/Get
 // semantics without filesystem I/O. Assign Bus to fan out lifecycle events
 // (same shape as RecordingChatStore).
@@ -28,9 +27,6 @@ type InMemoryChatStore struct {
 func NewInMemoryChatStore() *InMemoryChatStore {
 	return &InMemoryChatStore{chats: make(map[api.ChatID]*api.Chat)}
 }
-
-// RegisterRoutes is a no-op; implements api.ChatStore.
-func (s *InMemoryChatStore) RegisterRoutes(_ *http.ServeMux) {}
 
 // Get returns a copy of the stored chat for id, or (nil, false) if not found.
 func (s *InMemoryChatStore) Get(_ context.Context, id api.ChatID) (*api.Chat, bool) {
@@ -101,7 +97,7 @@ func (s *InMemoryChatStore) Mutate(_ context.Context, id api.ChatID, mutate func
 }
 
 // SetDraft stores the chat's draft without touching UpdatedAt and without
-// broadcasting; see api.ChatStore for why those two absences are the point.
+// broadcasting; see (*chat.Store).SetDraft for why those two absences are the point.
 // Absent chat: no-op, like the real store's load-then-write.
 func (s *InMemoryChatStore) SetDraft(_ context.Context, id api.ChatID, text string) error {
 	s.mu.Lock()
@@ -154,4 +150,4 @@ func (s *InMemoryChatStore) UpdateMessage(_ context.Context, chatID api.ChatID, 
 }
 
 // Compile-time assertion.
-var _ api.ChatStore = (*InMemoryChatStore)(nil)
+var _ chatStoreUnion = (*InMemoryChatStore)(nil)

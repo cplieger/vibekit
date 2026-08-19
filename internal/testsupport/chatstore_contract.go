@@ -7,11 +7,31 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// ChatStoreContractTest exercises the behavioral expectations of any
-// api.ChatStore implementation. Run against both fakes and real
-// implementations to catch drift. Each behavior lives in its own helper so the
+// ChatStoreContract is the subject of ChatStoreContractTest: the 7 methods of a
+// chat store this suite exercises. There is no shared ChatStore interface any
+// more — each consumer declares 1 to 5 methods of the 9 — and a contract suite
+// has no business naming a method it does not assert on.
+//
+// SetDraft is absent because the suite does not exercise it, and that is a GAP
+// rather than a decision: SetDraft has the subtlest contract of the nine (no
+// UpdatedAt stamp, no broadcast, a silent no-op on a chat that does not exist)
+// and no shared case pins any of it. RegisterRoutes is absent because a store's
+// HTTP mounting is not a storage behaviour.
+type ChatStoreContract interface {
+	Get(ctx context.Context, id api.ChatID) (*api.Chat, bool)
+	List(ctx context.Context) []api.ChatHeader
+	BuildHistory(ctx context.Context, id api.ChatID) string
+	Mutate(ctx context.Context, id api.ChatID, mutate func(c *api.Chat, exists bool) bool) error
+	Delete(ctx context.Context, id api.ChatID) error
+	AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error
+	UpdateMessage(ctx context.Context, chatID api.ChatID, msgID string, mutate func(*api.Message)) error
+}
+
+// ChatStoreContractTest exercises the behavioral expectations of any chat store
+// implementation. Run against both fakes and real implementations to catch
+// drift. Each behavior lives in its own helper so the
 // suite stays flat; this is the dispatcher.
-func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) api.ChatStore) {
+func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) ChatStoreContract) {
 	t.Helper()
 
 	t.Run("Get_missing_returns_false", func(t *testing.T) { testGetMissingReturnsFalse(t, newStore(t)) })
@@ -25,7 +45,7 @@ func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) api.ChatSto
 	t.Run("UpdateMessage_mutates_in_place", func(t *testing.T) { testUpdateMessageMutatesInPlace(t, newStore(t)) })
 }
 
-func testGetMissingReturnsFalse(t *testing.T, s api.ChatStore) {
+func testGetMissingReturnsFalse(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_, ok := s.Get(context.Background(), "nonexistent")
 	if ok {
@@ -33,7 +53,7 @@ func testGetMissingReturnsFalse(t *testing.T, s api.ChatStore) {
 	}
 }
 
-func testMutateCreatesNewChat(t *testing.T, s api.ChatStore) {
+func testMutateCreatesNewChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	err := s.Mutate(context.Background(), "c1", func(c *api.Chat, exists bool) bool {
 		if exists {
@@ -54,7 +74,7 @@ func testMutateCreatesNewChat(t *testing.T, s api.ChatStore) {
 	}
 }
 
-func testMutateUpdatesExistingChat(t *testing.T, s api.ChatStore) {
+func testMutateUpdatesExistingChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "first"
@@ -73,7 +93,7 @@ func testMutateUpdatesExistingChat(t *testing.T, s api.ChatStore) {
 	}
 }
 
-func testMutateNoopWhenFalseReturned(t *testing.T, s api.ChatStore) {
+func testMutateNoopWhenFalseReturned(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "created"
@@ -89,7 +109,7 @@ func testMutateNoopWhenFalseReturned(t *testing.T, s api.ChatStore) {
 	}
 }
 
-func testDeleteRemovesChat(t *testing.T, s api.ChatStore) {
+func testDeleteRemovesChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "doomed"
@@ -104,7 +124,7 @@ func testDeleteRemovesChat(t *testing.T, s api.ChatStore) {
 	}
 }
 
-func testListReturnsCreatedChats(t *testing.T, s api.ChatStore) {
+func testListReturnsCreatedChats(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_ = s.Mutate(context.Background(), "a", func(c *api.Chat, _ bool) bool {
 		c.Name = "alpha"
@@ -120,14 +140,14 @@ func testListReturnsCreatedChats(t *testing.T, s api.ChatStore) {
 	}
 }
 
-func testBuildHistoryEmptyForMissing(t *testing.T, s api.ChatStore) {
+func testBuildHistoryEmptyForMissing(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	if h := s.BuildHistory(context.Background(), "nope"); h != "" {
 		t.Errorf("BuildHistory = %q, want empty", h)
 	}
 }
 
-func testAppendMessageAddsToChat(t *testing.T, s api.ChatStore) {
+func testAppendMessageAddsToChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "test"
@@ -146,7 +166,7 @@ func testAppendMessageAddsToChat(t *testing.T, s api.ChatStore) {
 	}
 }
 
-func testUpdateMessageMutatesInPlace(t *testing.T, s api.ChatStore) {
+func testUpdateMessageMutatesInPlace(t *testing.T, s ChatStoreContract) {
 	t.Helper()
 	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
 		c.Name = "test"

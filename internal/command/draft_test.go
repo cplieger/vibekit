@@ -31,7 +31,7 @@ func draftReq(t *testing.T, chatID api.ChatID, text string) *api.ClientCommand {
 	}
 }
 
-func seedEmptyChat(t *testing.T, store api.ChatStore, id api.ChatID) {
+func seedEmptyChat(t *testing.T, store ChatStore, id api.ChatID) {
 	t.Helper()
 	if err := store.Mutate(t.Context(), id, func(c *api.Chat, _ bool) bool {
 		c.Name = "a chat"

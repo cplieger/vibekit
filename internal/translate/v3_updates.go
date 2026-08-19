@@ -251,7 +251,7 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID api.ChatID, 
 			credits += summaries[i].Usage
 		}
 	}
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -323,7 +323,7 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID api.ChatID, r
 // on (80 = warning, 95 = critical) so a crossing is never rounded away. A
 // change the UI cannot show is not worth a transcript rewrite.
 func (t *Translator) persistUsage(ctx context.Context, chatID api.ChatID, pct float64, size int, credits float64) {
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -427,7 +427,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID api.Ch
 	if len(cat.models) == 0 && !cat.sawEffort {
 		return
 	}
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}

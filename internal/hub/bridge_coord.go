@@ -23,7 +23,7 @@ import (
 // hub's role to HTTP/SSE dispatch.
 type BridgeCoordinator struct {
 	bridge         *bridgePlane
-	chatStore      api.ChatStore
+	chatStore      bridgeChatRecords
 	broadcast      func(ctx context.Context, e api.ServerEvent)
 	translateEvent func(chatID api.ChatID, msg *api.RPCResponse)
 	push           pushNotifier

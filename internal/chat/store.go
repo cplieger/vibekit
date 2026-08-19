@@ -41,9 +41,6 @@ type broadcaster interface {
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 }
 
-// Compile-time interface assertion.
-var _ api.ChatStore = (*Store)(nil)
-
 // Compile-time assertion: Store satisfies archive.StoreAccess.
 var _ archive.StoreAccess = (*Store)(nil)
 

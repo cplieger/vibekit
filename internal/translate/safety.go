@@ -119,7 +119,7 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID api.C
 // breadcrumb never blocks the stream.
 func (t *Translator) persistSafetyBlock(ctx context.Context, chatID api.ChatID, p v3SafetyStatusChanged) {
 	evt := t.newEventMessage(api.EventInfraSafetyBlocked, safetyBlockContent(p))
-	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
+	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("safety: append block event", "chat_id", chatID, "error", err)
 	}
 }

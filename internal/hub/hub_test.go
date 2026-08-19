@@ -110,6 +110,6 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 // interfaces they impersonate. Breaks the build, not just the test suite,
 // if the interfaces drift.
 func TestInterfaceSatisfaction(_ *testing.T) {
-	var _ api.ChatStore = (*fakeChatStore)(nil)
+	var _ chatRecords = (*fakeChatStore)(nil)
 	var _ ACPBridge = (*fakeBridge)(nil)
 }

@@ -129,15 +129,8 @@ func TestFakeBridge_SharedContract(t *testing.T) {
 
 // --- ChatStore contract test ---
 
-// ChatStoreContractTest delegates to the shared testsupport version
-// so all packages run the same contract suite.
-func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) api.ChatStore) {
-	t.Helper()
-	testsupport.ChatStoreContractTest(t, newStore)
-}
-
 func TestFakeChatStore_Contract(t *testing.T) {
-	ChatStoreContractTest(t, func(t *testing.T) api.ChatStore {
+	testsupport.ChatStoreContractTest(t, func(t *testing.T) testsupport.ChatStoreContract {
 		t.Helper()
 		return newFakeChatStore()
 	})

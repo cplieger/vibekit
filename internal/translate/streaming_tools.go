@@ -444,7 +444,7 @@ func (t *Translator) ensureTurnStarted(ctx context.Context, chatID api.ChatID, b
 	// no switch can have raced a dispatch that never happened. Dropping it would
 	// leave those turns with no attribution at all.
 	if !buf.HasModel() {
-		if c, ok := t.deps.ChatStore().Get(ctx, chatID); ok {
+		if c, ok := t.deps.ChatRecords().Get(ctx, chatID); ok {
 			buf.SetModel(c.Model)
 		}
 	}

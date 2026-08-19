@@ -196,7 +196,7 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID api.ChatID, raw json
 		Ts:   time.Now().UnixMilli(),
 		Plan: p.Entries,
 	}
-	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &msg); err != nil {
+	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &msg); err != nil {
 		slog.Error("persist plan", "chat_id", chatID, "error", err)
 	}
 	if ctx.Err() != nil {
@@ -213,7 +213,7 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID api.ChatID, raw json
 	if !allDone {
 		plan = p.Entries
 	}
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -231,7 +231,7 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID api.ChatID, ra
 		return
 	}
 	changed := false
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 		if !ex || c.CurrentModeID == p.ModeID {
 			return false
 		}

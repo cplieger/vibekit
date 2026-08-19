@@ -21,13 +21,13 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID api.C
 		summary = *summaryPtr
 	}
 	evt := t.newEventMessage(api.EventCompacted, summary)
-	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
+	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("compaction: append event", "chat_id", chatID, "error", err)
 	}
 	if ctx.Err() != nil {
 		return
 	}
-	if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -45,7 +45,7 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID api.Chat
 		errMsg = "compaction failed"
 	}
 	evt := t.newEventMessage(api.EventCompactFailed, errMsg)
-	if err := t.deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
+	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
 	}
 	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{Code: api.ErrCodeCompactionFailed, Message: errMsg}))

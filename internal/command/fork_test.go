@@ -35,7 +35,7 @@ func (d *primeRecorder) PrimeFromChat(chatID, sourceChatID api.ChatID) {
 	d.primed[chatID] = sourceChatID
 }
 
-func newForkDispatcher(store api.ChatStore, bridge Bridge) (*Dispatcher, *primeRecorder) {
+func newForkDispatcher(store ChatStore, bridge Bridge) (*Dispatcher, *primeRecorder) {
 	deps := &primeRecorder{bridgeDeps: &bridgeDeps{
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
@@ -59,7 +59,7 @@ func forkReq(t *testing.T, newChat, parent api.ChatID, title string) *api.Client
 
 // seedParent writes a parent chat with a transcript, a model, a mode and a live
 // session id — everything the tangent inherits.
-func seedParent(t *testing.T, store api.ChatStore, id api.ChatID) {
+func seedParent(t *testing.T, store ChatStore, id api.ChatID) {
 	t.Helper()
 	if err := store.Mutate(t.Context(), id, func(c *api.Chat, _ bool) bool {
 		c.Name = "Parent conversation"

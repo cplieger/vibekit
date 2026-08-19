@@ -5,7 +5,6 @@ package testsupport
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -13,45 +12,55 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 )
 
-// NopChatStore is a no-op api.ChatStore implementation for benchmarks.
+// NopChatStore is a no-op chat store for benchmarks.
 // Every method returns zero/nil.
 type NopChatStore struct{}
 
-// RegisterRoutes is a no-op; implements api.ChatStore.
-func (NopChatStore) RegisterRoutes(*http.ServeMux) {}
-
-// Get returns (nil, false); implements api.ChatStore.
+// Get returns (nil, false).
 func (NopChatStore) Get(context.Context, api.ChatID) (*api.Chat, bool) { return nil, false }
 
-// List returns nil; implements api.ChatStore.
+// List returns nil.
 func (NopChatStore) List(context.Context) []api.ChatHeader { return nil }
 
-// BuildHistory returns an empty string; implements api.ChatStore.
+// BuildHistory returns an empty string.
 func (NopChatStore) BuildHistory(context.Context, api.ChatID) string { return "" }
 
-// Mutate is a no-op; implements api.ChatStore.
+// Mutate is a no-op.
 func (NopChatStore) Mutate(context.Context, api.ChatID, func(*api.Chat, bool) bool) error {
 	return nil
 }
 
-// SetDraft is a no-op; implements api.ChatStore.
+// SetDraft is a no-op.
 func (NopChatStore) SetDraft(context.Context, api.ChatID, string) error { return nil }
 
-// Delete is a no-op; implements api.ChatStore.
+// Delete is a no-op.
 func (NopChatStore) Delete(context.Context, api.ChatID) error { return nil }
 
-// AppendMessage is a no-op; implements api.ChatStore.
+// AppendMessage is a no-op.
 func (NopChatStore) AppendMessage(context.Context, api.ChatID, *api.Message) error { return nil }
 
-// UpdateMessage is a no-op; implements api.ChatStore.
+// UpdateMessage is a no-op.
 func (NopChatStore) UpdateMessage(context.Context, api.ChatID, string, func(*api.Message)) error {
 	return nil
 }
 
-// Compile-time assertion.
-var _ api.ChatStore = NopChatStore{}
+// The union of what the consumers declare, spelled out here rather than named,
+// so a consumer that grows a method fails to compile against this fake instead
+// of silently outgrowing it. It is ChatStoreContract's 7 plus SetDraft, which
+// internal/command needs and the contract suite does not exercise.
+//
+// RegisterRoutes is NOT here, and each fake dropped its no-op: only
+// internal/server mounts the chat routes and it does so on the concrete store,
+// so three fakes carried a method no test could reach.
+type chatStoreUnion interface {
+	ChatStoreContract
+	SetDraft(ctx context.Context, id api.ChatID, text string) error
+}
 
-// RecordingChatStore is an in-memory api.ChatStore that stores chats in a
+// Compile-time assertion.
+var _ chatStoreUnion = NopChatStore{}
+
+// RecordingChatStore is an in-memory chat store that keeps chats in a
 // map and fires broadcasts via an attached Broadcaster. Suitable for
 // integration-style tests that need a ChatStore that actually stores things.
 type RecordingChatStore struct {
@@ -70,9 +79,6 @@ type RecordingChatStore struct {
 func NewRecordingChatStore() *RecordingChatStore {
 	return &RecordingChatStore{Chats: make(map[api.ChatID]*api.Chat)}
 }
-
-// RegisterRoutes is a no-op; implements api.ChatStore.
-func (s *RecordingChatStore) RegisterRoutes(_ *http.ServeMux) {}
 
 // Get returns a copy of the stored chat for id, or (nil, false) if not found.
 func (s *RecordingChatStore) Get(_ context.Context, id api.ChatID) (*api.Chat, bool) {
@@ -198,4 +204,4 @@ func (s *RecordingChatStore) UpdateMessage(_ context.Context, chatID api.ChatID,
 }
 
 // Compile-time assertion.
-var _ api.ChatStore = (*RecordingChatStore)(nil)
+var _ chatStoreUnion = (*RecordingChatStore)(nil)

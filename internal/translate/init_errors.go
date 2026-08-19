@@ -41,7 +41,7 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID api.ChatID,
 		return
 	}
 	if p.Fallback != "" && chatID != "" {
-		if err := t.deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+		if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}

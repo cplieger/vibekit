@@ -14,7 +14,7 @@ import (
 // By default all methods are no-ops; set the hook fields to override
 // specific behaviors (e.g. onBroadcast to capture events).
 type baseDeps struct {
-	store       api.ChatStore
+	store       ChatRecords
 	bufStore    *buffer.Store
 	lineTracker *buffer.LineTracker
 	onBroadcast func(context.Context, api.ServerEvent)
@@ -64,7 +64,7 @@ func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
 		d.onBroadcast(ctx, evt)
 	}
 }
-func (d *baseDeps) ChatStore() api.ChatStore           { return d.store }
+func (d *baseDeps) ChatRecords() ChatRecords           { return d.store }
 func (d *baseDeps) ParentACPSession(api.ChatID) string { return d.parent }
 func (d *baseDeps) IsScheduledRun(workflowID string) bool {
 	return d.scheduledRuns[workflowID]

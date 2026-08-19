@@ -15,8 +15,10 @@ import (
 
 var _ translate.Deps = (*Hub)(nil)
 
-// ChatStore returns the hub's chat store.
-func (h *Hub) ChatStore() api.ChatStore { return h.chatStore }
+// ChatRecords returns the hub's chat store as translate reads it (3 of its 9
+// methods). Separate from ChatStore() below it because internal/command needs 5,
+// and one accessor cannot return two narrow types.
+func (h *Hub) ChatRecords() translate.ChatRecords { return h.chatStore }
 
 // ParentACPSession returns the parent ACP session ID for a chat.
 func (h *Hub) ParentACPSession(chatID api.ChatID) string {

@@ -67,7 +67,7 @@ type bridgeDeps struct {
 
 func (d *bridgeDeps) GetBridge(api.ChatID) Bridge { return d.bridge }
 
-func newBridgeDispatcher(store api.ChatStore, bridge Bridge) *Dispatcher {
+func newBridgeDispatcher(store ChatStore, bridge Bridge) *Dispatcher {
 	return New(&bridgeDeps{
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
@@ -89,7 +89,7 @@ func rewindReq(t *testing.T, chatID api.ChatID, messageID string) *api.ClientCom
 }
 
 // seedChat writes a four-message transcript: u1, a1, u2, a2.
-func seedChat(t *testing.T, store api.ChatStore, id api.ChatID) {
+func seedChat(t *testing.T, store ChatStore, id api.ChatID) {
 	t.Helper()
 	err := store.Mutate(t.Context(), id, func(c *api.Chat, _ bool) bool {
 		c.Messages = []api.Message{

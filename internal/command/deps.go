@@ -135,10 +135,45 @@ type BridgeAccess interface {
 	PrimeFromChat(chatID, sourceChatID api.ChatID)
 }
 
+// ChatStore is the chat store as the command handlers use it: read a chat,
+// mutate it, append a message, record a draft, delete it. 5 of the 9 methods
+// *chat.Store offers.
+//
+// The 4 it excludes are each a capability a command handler must not have. It
+// cannot List (that is the chats index endpoint's read, and a dispatcher
+// enumerating every chat is a dispatcher that can leak one into another's
+// response), it cannot BuildHistory (priming is the bridge coordinator's),
+// it cannot UpdateMessage, and it cannot RegisterRoutes.
+//
+// Exported because ChatAccess is exported and *hub.Hub has to name this as its
+// ChatStore() return type. internal/translate declares its own narrower
+// ChatRecords for the same store — see its deps.go for why the two accessors
+// cannot share one name.
+type ChatStore interface {
+	// Get returns the full chat at id, or false if it does not exist.
+	Get(ctx context.Context, id api.ChatID) (*api.Chat, bool)
+	// Mutate is the single write primitive: load, apply, save, broadcast
+	// chat_created / chat_updated.
+	Mutate(ctx context.Context, id api.ChatID, mutate func(c *api.Chat, exists bool) bool) error
+	// AppendMessage appends msg to the chat's messages.
+	AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error
+	// SetDraft persists the chat's unsent composer text. Its own method rather
+	// than a Mutate call because a draft save is not ACTIVITY and must not be
+	// recorded as any: Mutate stamps UpdatedAt, the retention purge ages a chat
+	// from exactly that field, and a debounced autosave would push the cutoff
+	// out by a whole window each keystroke. A no-op for a chat that does not
+	// exist — typing must not create one.
+	SetDraft(ctx context.Context, id api.ChatID, text string) error
+	// Delete removes the chat file and broadcasts chat_deleted. cmdDeleteChat
+	// is the ONLY caller in the build, and that is an invariant: bridge exits,
+	// model switches and restarts never delete.
+	Delete(ctx context.Context, id api.ChatID) error
+}
+
 // ChatAccess provides chat store and broadcast operations needed by
 // create, delete, rewind, and supervised-mode handlers.
 type ChatAccess interface {
-	ChatStore() api.ChatStore
+	ChatStore() ChatStore
 	Broadcast(ctx context.Context, evt api.ServerEvent)
 	CleanupChatState(ctx context.Context, chatID api.ChatID)
 	// CloseChatState is the close path's teardown: same in-memory cleanup,

@@ -38,7 +38,7 @@ func (s *recStore) Mutate(_ context.Context, _ api.ChatID, fn func(*api.Chat, bo
 	return s.mutateErr
 }
 
-var _ api.ChatStore = (*recStore)(nil)
+var _ ChatRecords = (*recStore)(nil)
 
 // captureSlog redirects the default slog logger to buf and returns a
 // restore function. Not parallel-safe (mutates the global slog default).

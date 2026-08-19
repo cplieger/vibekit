@@ -14,12 +14,12 @@ import (
 // store can be asserted on. benchDeps returns nil for ChatStore().
 type storeDeps struct {
 	*benchDeps
-	store api.ChatStore
+	store ChatStore
 }
 
-func (d *storeDeps) ChatStore() api.ChatStore { return d.store }
+func (d *storeDeps) ChatStore() ChatStore { return d.store }
 
-func newTestDispatcher(t *testing.T, store api.ChatStore) *Dispatcher {
+func newTestDispatcher(t *testing.T, store ChatStore) *Dispatcher {
 	t.Helper()
 	return New(&storeDeps{benchDeps: newBenchDeps(), store: store})
 }

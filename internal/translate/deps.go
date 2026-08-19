@@ -9,6 +9,24 @@ import (
 	"github.com/cplieger/vibekit/internal/ids"
 )
 
+// This file is the package's dependency contracts: the role interfaces the
+// Translator reads its host through. Each is shaped by what THIS package
+// invokes, which keeps a test stub small enough to be obviously correct and
+// documents each handler file's actual dependency footprint. Deps remains the
+// composite the Hub satisfies, and the narrow ones are embedded into it so the
+// compiler verifies the decomposition.
+//
+// The chat-store width arithmetic: this package reads and writes chats through
+// 3 of the 9 methods *chat.Store offers. It never lists chats, never builds a
+// history transcript, never deletes one, never touches a draft and never
+// registers a route.
+//
+// The accessor is ChatRecords(), not ChatStore(), and the difference in NAME is
+// load-bearing rather than cosmetic. internal/command also reads the store off
+// the same *hub.Hub, through its own 5-method contract, and Go matches an
+// interface method by exact signature: one accessor cannot return two different
+// narrow types. Two consumers with two contracts therefore need two accessors.
+
 // BufferAccess is the consumer-side interface for buffer store access.
 // Narrows the coupling: translate only needs GetOrInit.
 type BufferAccess interface {
@@ -19,6 +37,20 @@ type BufferAccess interface {
 // Narrows the coupling: translate only needs RecordFromDiffs.
 type LineRecorder interface {
 	RecordFromDiffs(chatID api.ChatID, diffs []api.ToolDiff, turn int, kind string)
+}
+
+// ChatRecords is the chat store as this package uses it: read a chat, mutate it,
+// append a message. 3 of the 9 methods *chat.Store offers.
+//
+// Exported because Deps is exported and *hub.Hub has to name this as its
+// ChatRecords() return type.
+type ChatRecords interface {
+	// Get returns the full chat at id, or false if it does not exist.
+	Get(ctx context.Context, id api.ChatID) (*api.Chat, bool)
+	// Mutate is the single write primitive: load, apply, save, broadcast.
+	Mutate(ctx context.Context, id api.ChatID, mutate func(c *api.Chat, exists bool) bool) error
+	// AppendMessage appends msg to the chat's messages.
+	AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error
 }
 
 // Deps abstracts the Hub methods that stateful translate handlers need.
@@ -122,4 +154,90 @@ func (t *Translator) deriveSubSession(chatID api.ChatID, sessionID string) strin
 // MCP returns the MCP state recorder sub-interface.
 func (t *Translator) MCP() MCPRecorder {
 	return t.deps.MCPRecorder()
+}
+
+// Compile-time assertion: Deps satisfies ChatStoreDeps (not embedded).
+var _ ChatStoreDeps = Deps(nil)
+
+// StreamingAccess provides the methods needed by streaming_content.go /
+// streaming_tools.go for content buffering, partial file recovery, and
+// line tracking.
+type StreamingAccess interface {
+	Broadcast(ctx context.Context, evt api.ServerEvent)
+	BufferStore() BufferAccess
+	LineTracker() LineRecorder
+	IsHookStatusEnabled() bool
+	ChatRecords() ChatRecords
+	ParentACPSession(chatID api.ChatID) string
+	WorkDir() string
+	// TerminalOutput returns an agent terminal's rendered output: plain text
+	// with escapes parsed off, plus the spans styling it.
+	//
+	// ok reports whether the terminal is KNOWN, not whether it printed
+	// anything: a registered terminal that produced no output answers
+	// ("", nil, true). The distinction is the whole value of the boolean —
+	// adoption logs a miss on false, and a silent command reporting as missing
+	// would file that warning on every turn.
+	//
+	// This is what makes the tool CARD the durable home of a command's output.
+	// KAS puts none of it on the tool call — a successful terminal-backed
+	// command's tool_call_update carries no output field at all, so before this
+	// every finished command persisted an empty output and the bytes lived only
+	// in an ephemeral SSE stream that a page reload discarded.
+	TerminalOutput(terminalID string) (text string, spans []api.TextSpan, ok bool)
+}
+
+// PermissionAccess provides the methods needed by permission_handler.go
+// for permission request handling and push notifications. Shell-command
+// authorization is owned by kiro-cli's native Cedar policy: any
+// session/request_permission that reaches vibekit is a genuine ask, so
+// there is no auto-approval surface here. Answering a request is NOT in
+// this surface either: the user's choice arrives as a separate
+// permission_response command and is forwarded to the bridge by
+// internal/command, never from a translate handler.
+type PermissionAccess interface {
+	Broadcast(ctx context.Context, evt api.ServerEvent)
+	ChatRecords() ChatRecords
+	NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID)
+	ParentACPSession(chatID api.ChatID) string
+	PendingPermsAdd(requestID int64, evt api.ServerEvent)
+}
+
+// ChatStoreDeps provides the minimal interface needed by handlers that
+// only require chat store access and broadcast (init_errors).
+type ChatStoreDeps interface {
+	Broadcast(ctx context.Context, evt api.ServerEvent)
+	ChatRecords() ChatRecords
+	ParentACPSession(chatID api.ChatID) string
+}
+
+// RunOriginAccess answers whether a workflow run was launched by a SCHEDULE.
+//
+// One method, because that is the whole question workflow.go asks. The fact lives
+// on the host: the scheduler's launch path carries a schedule id and marks the run
+// with it, and nothing on the ACP wire distinguishes a scheduled run from a manual
+// one (both are parentless, both arrive with an empty chat id). Keyed by workflow
+// id rather than chat id for the same reason — a parentless run's frames carry no
+// topic.
+//
+// In-memory on the host, so a run that OUTLIVES a restart reports false
+// afterwards: the mark is gone, and vibekit genuinely no longer knows the run was
+// scheduled. That is a missing start signal on a resume, not a wrong one.
+type RunOriginAccess interface {
+	IsScheduledRun(workflowID string) bool
+}
+
+// RunBoundsAccess reports a workflow STEP that blew its turn cap.
+//
+// One method, and it takes the breach rather than asking permission for it,
+// because the two halves of the cap live in different places on purpose:
+// COUNTING belongs here (the step's tool frames pass through this package, and
+// `_meta.kiro.workflow` is what identifies them), while ENFORCEMENT belongs on
+// the host (it owns the bridges and the only stop verb, which is run-scoped).
+//
+// The host is expected to cancel the whole RUN, since no per-step stop verb
+// exists on the wire; that is the host's decision to state, not this package's to
+// assume, which is why the name says what happened rather than what to do.
+type RunBoundsAccess interface {
+	StepTurnCapExceeded(workflowID, nodeID string, turns int)
 }

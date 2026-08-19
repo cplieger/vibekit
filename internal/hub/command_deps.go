@@ -16,6 +16,13 @@ import (
 // Compile-time assertion: Hub satisfies command.Dependencies.
 var _ command.Dependencies = (*Hub)(nil)
 
+// ChatStore returns the hub's chat store as the command handlers use it (5 of
+// its 9 methods). Beside ChatRecords() in translate_deps.go, which is the same
+// store at 3 methods for the translator: Go matches an interface method by
+// exact signature, so two consumers with two narrow contracts need two
+// accessors rather than one that returns whichever is wider.
+func (h *Hub) ChatStore() command.ChatStore { return h.chatStore }
+
 // GetBridge returns the active bridge for a chat, or nil.
 func (h *Hub) GetBridge(chatID api.ChatID) command.Bridge {
 	sb := h.coord.GetBridge(chatID)

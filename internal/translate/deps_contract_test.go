@@ -17,9 +17,9 @@ func TestStubDeps_Contract(t *testing.T) {
 
 	ctx := t.Context()
 
-	// ChatStore must be non-nil.
-	if d.ChatStore() == nil {
-		t.Error("ChatStore() returned nil")
+	// ChatRecords must be non-nil.
+	if d.ChatRecords() == nil {
+		t.Error("ChatRecords() returned nil")
 	}
 
 	// WorkDir must be non-empty.
@@ -52,9 +52,9 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	d := newBaseDeps()
 	ctx := t.Context()
 
-	t.Run("ChatStore_non_nil", func(t *testing.T) {
-		if d.ChatStore() == nil {
-			t.Error("ChatStore() returned nil")
+	t.Run("ChatRecords_non_nil", func(t *testing.T) {
+		if d.ChatRecords() == nil {
+			t.Error("ChatRecords() returned nil")
 		}
 	})
 
