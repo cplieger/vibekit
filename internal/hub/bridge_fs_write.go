@@ -91,6 +91,15 @@ func (h *Hub) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg *vi
 		h.respondFSError(ctx, chatID, msg, wErr)
 		return
 	}
+	// Sync before Close: without it a crash between the write and the kernel's
+	// own flush leaves the file TRUNCATED, because O_TRUNC already destroyed the
+	// old contents. A rewrite-in-place cannot be made atomic, so durability of
+	// the new bytes is the whole guard.
+	if sErr := f.Sync(); sErr != nil {
+		_ = f.Close()
+		h.respondFSError(ctx, chatID, msg, sErr)
+		return
+	}
 	if cErr := f.Close(); cErr != nil {
 		h.respondFSError(ctx, chatID, msg, cErr)
 		return
