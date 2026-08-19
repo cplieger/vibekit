@@ -60,6 +60,7 @@ import (
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/parallel"
+	"github.com/cplieger/webhttp"
 )
 
 const (
@@ -183,7 +184,7 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	needle := q.Get("q")
 	if strings.TrimSpace(needle) == "" {
-		httpreply.WriteJSON(w, FileSearchResult{Matches: []FileMatch{}})
+		webhttp.WriteJSON(w, FileSearchResult{Matches: []FileMatch{}})
 		return
 	}
 	include, err := parseGlobs(q["include"])
@@ -215,7 +216,7 @@ func (h *Handler) handleFilesSearch(w http.ResponseWriter, r *http.Request) {
 	if r.Context().Err() != nil {
 		return
 	}
-	httpreply.WriteJSON(w, res)
+	webhttp.WriteJSON(w, res)
 }
 
 // searchRoots resolves the request's `path` into the locations to walk.

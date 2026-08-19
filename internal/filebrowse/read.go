@@ -16,6 +16,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 const (
@@ -38,7 +39,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string)
 		return
 	}
 	if looksBinary(data) {
-		httpreply.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
+		webhttp.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
 			httpreply.ErrorJSON("binary file"))
 		return
 	}
@@ -53,7 +54,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string)
 	// so two writes inside one tick are byte-identical in mtime and an
 	// mtime-based guard would miss exactly the rapid agent write it exists to
 	// catch. See kiro_docs.go's dirSignature for the same finding.
-	httpreply.WriteJSON(w, map[string]string{
+	webhttp.WriteJSON(w, map[string]string{
 		"content":      string(data),
 		"content_hash": contentHash(data),
 		respPath:       reqPath,
@@ -111,7 +112,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("filebrowse: download open failed", "path", l.abs, "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
@@ -119,7 +120,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	info, err := f.Stat()
 	if err != nil {
 		slog.Warn("filebrowse: download stat failed", "path", l.abs, "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
@@ -128,7 +129,7 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if info.Size() > maxCopySize {
-		httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			httpreply.ErrorJSON("file too large to download"))
 		return
 	}
@@ -191,9 +192,9 @@ func readFileError(w http.ResponseWriter, l loc, err error) {
 	case errors.Is(err, atomicfile.ErrNotRegular):
 		httpreply.BadRequest(w, "not a regular file")
 	case errors.Is(err, atomicfile.ErrFileTooLarge):
-		httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpreply.ErrorJSON(errFileTooLarge))
+		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpreply.ErrorJSON(errFileTooLarge))
 	default:
 		slog.Warn("filebrowse: read failed", "path", l.abs, "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(errReadFailed))
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON(errReadFailed))
 	}
 }

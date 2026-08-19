@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // --- /api/files (GET directory listing) ---
@@ -50,7 +51,7 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("filebrowse: readdir failed", "path", l.abs, "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
@@ -58,12 +59,12 @@ func (h *Handler) handleFiles(w http.ResponseWriter, r *http.Request) {
 	f.Close()
 	if err != nil {
 		slog.Warn("filebrowse: readdir failed", "path", l.abs, "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(errReadFailed))
 		return
 	}
 	files := listEntries(r.Context(), entries, l.abs)
-	httpreply.WriteJSON(w, map[string]any{
+	webhttp.WriteJSON(w, map[string]any{
 		respPath:   reqPath,
 		"files":    files,
 		"writable": h.isWritable(l),
@@ -88,7 +89,7 @@ func (h *Handler) listMounts(w http.ResponseWriter) {
 	// mounts are sorted longest-first for prefix matching; the UI wants
 	// them alphabetical.
 	slices.SortFunc(files, func(a, b fileEntry) int { return strings.Compare(a.Name, b.Name) })
-	httpreply.WriteJSON(w, map[string]any{
+	webhttp.WriteJSON(w, map[string]any{
 		respPath:   "/",
 		"files":    files,
 		"writable": false,

@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // repoLister is what handleRepos needs at the collection level: the account's
@@ -36,7 +37,7 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 			h.writeOpsError(w, err)
 			return
 		}
-		httpreply.WriteJSON(w, map[string]any{"repos": repos})
+		webhttp.WriteJSON(w, map[string]any{"repos": repos})
 		return
 	}
 	owner, after, ok := splitFirst(rest)
@@ -124,10 +125,10 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			h.writeOpsError(w, err)
 			return
 		}
-		httpreply.WriteJSON(w, map[string]any{"prs": prs})
+		webhttp.WriteJSON(w, map[string]any{"prs": prs})
 	case http.MethodPost:
 		var params CreatePRParams
-		httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 			httpreply.BadRequest(w, "invalid json")
 			return
@@ -137,7 +138,7 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			h.writeOpsError(w, err)
 			return
 		}
-		httpreply.WriteJSON(w, pr)
+		webhttp.WriteJSON(w, pr)
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
@@ -222,7 +223,7 @@ func (h *HTTPHandler) writeOpResult(w http.ResponseWriter, err error) {
 		h.writeOpsError(w, err)
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // queryTrue reads a boolean query parameter. Both spellings the client
@@ -263,10 +264,10 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 			h.writeOpsError(w, err)
 			return
 		}
-		httpreply.WriteJSON(w, map[string]any{"issues": issues})
+		webhttp.WriteJSON(w, map[string]any{"issues": issues})
 	case http.MethodPost:
 		var params CreateIssueParams
-		httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 			httpreply.BadRequest(w, "invalid json")
 			return
@@ -276,7 +277,7 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 			h.writeOpsError(w, err)
 			return
 		}
-		httpreply.WriteJSON(w, issue)
+		webhttp.WriteJSON(w, issue)
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
@@ -299,7 +300,7 @@ func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, 
 			h.writeOpsError(w, err)
 			return
 		}
-		httpreply.Ok(w)
+		webhttp.Ok(w)
 		return
 	}
 	httpreply.NotFound(w, "unknown issue action")
@@ -326,7 +327,7 @@ func (h *HTTPHandler) handleChecks(w http.ResponseWriter, r *http.Request, p che
 		h.writeOpsError(w, err)
 		return
 	}
-	httpreply.WriteJSON(w, map[string]any{"checks": checks})
+	webhttp.WriteJSON(w, map[string]any{"checks": checks})
 }
 
 // releaseOps is the release surface: list and cut.
@@ -346,10 +347,10 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p r
 			h.writeOpsError(w, err)
 			return
 		}
-		httpreply.WriteJSON(w, map[string]any{"releases": releases})
+		webhttp.WriteJSON(w, map[string]any{"releases": releases})
 	case http.MethodPost:
 		var params CreateReleaseParams
-		httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
 			httpreply.BadRequest(w, "invalid json")
 			return
@@ -359,7 +360,7 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p r
 			h.writeOpsError(w, err)
 			return
 		}
-		httpreply.WriteJSON(w, release)
+		webhttp.WriteJSON(w, release)
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
@@ -381,5 +382,5 @@ func (h *HTTPHandler) handleLabels(w http.ResponseWriter, r *http.Request, p lab
 		h.writeOpsError(w, err)
 		return
 	}
-	httpreply.WriteJSON(w, map[string]any{"labels": labels})
+	webhttp.WriteJSON(w, map[string]any{"labels": labels})
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // --- /api/file/upload (POST multipart into a target directory) ---
@@ -32,7 +33,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: upload too large",
 				"limit", maxUploadSize, "error", err)
-			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON("upload too large"))
 		} else if errors.Is(err, context.Canceled) {
 			slog.Debug("filebrowse: upload cancelled by client")
@@ -64,7 +65,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := dirLoc.m.root.MkdirAll(dirLoc.rel(), 0o755); err != nil {
 		slog.Warn("filebrowse: upload mkdir failed", "path", dirLoc.abs, "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON("upload failed"))
 		return
 	}
@@ -80,7 +81,7 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("filebrowse: upload",
 		"dir", dirLoc.abs, "count", len(uploaded), "bytes", totalBytes)
-	httpreply.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
+	webhttp.WriteJSON(w, map[string]any{"ok": true, "uploaded": uploaded})
 }
 
 // respondUploadError maps a writeUploads failure to its HTTP response: an
@@ -105,20 +106,20 @@ func (h *Handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 // reaches the wire.
 func respondUploadError(w http.ResponseWriter, dir string, uploaded []string, err error) {
 	if errors.Is(err, errInvalidFilename) {
-		httpreply.WriteJSONStatus(w, http.StatusBadRequest,
+		webhttp.WriteJSONStatus(w, http.StatusBadRequest,
 			uploadErrorJSON(err.Error(), uploaded))
 		return
 	}
 	if errors.Is(err, atomicfile.ErrFileTooLarge) {
 		slog.Warn("filebrowse: upload too large",
 			"limit", maxUploadSize, "uploaded", len(uploaded), "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+		webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 			uploadErrorJSON("upload too large", uploaded))
 		return
 	}
 	slog.Warn("filebrowse: upload write failed",
 		"dir", dir, "uploaded", len(uploaded), "error", err)
-	httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+	webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 		uploadErrorJSON("upload failed", uploaded))
 }
 

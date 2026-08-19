@@ -36,7 +36,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // mcpServerState is an alias for the api-level MCPServerState enum.
@@ -444,7 +444,7 @@ func (r *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	for i := range snap {
 		out[i] = statusServer(snap[i])
 	}
-	httpreply.WriteJSON(w, mcpStatusResponse{Servers: out})
+	webhttp.WriteJSON(w, mcpStatusResponse{Servers: out})
 }
 
 // startNotifier launches the single long-lived goroutine that drains

@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // configTemplateTimeout bounds the template round-trip. First call may
@@ -103,16 +103,16 @@ func (h *Hub) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	raw, err := u.session.configTemplateRaw(cctx)
 	if err != nil {
 		slog.Warn("config template failed", "error", err)
-		httpreply.WriteJSON(w, configTemplateResponse{Modes: []api.SessionMode{}, Models: []api.SessionModel{}})
+		webhttp.WriteJSON(w, configTemplateResponse{Modes: []api.SessionMode{}, Models: []api.SessionModel{}})
 		return
 	}
 	var tpl kasConfigTemplate
 	if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
 		slog.Warn("config template decode failed", "error", uErr)
-		httpreply.WriteJSON(w, configTemplateResponse{Modes: []api.SessionMode{}, Models: []api.SessionModel{}})
+		webhttp.WriteJSON(w, configTemplateResponse{Modes: []api.SessionMode{}, Models: []api.SessionModel{}})
 		return
 	}
-	httpreply.WriteJSON(w, templateToResponse(&tpl))
+	webhttp.WriteJSON(w, templateToResponse(&tpl))
 }
 
 // templateToResponse flattens the KAS template into the client-facing

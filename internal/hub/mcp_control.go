@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 const (
@@ -175,7 +176,7 @@ func (h *Hub) handleMCPReconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n := h.reconnectMCPServer(r.Context(), body.Server)
-	httpreply.WriteJSON(w, map[string]int{"reconnected": n})
+	webhttp.WriteJSON(w, map[string]int{"reconnected": n})
 }
 
 type mcpGetPromptReq struct {
@@ -250,7 +251,7 @@ func writeMCPResult(w http.ResponseWriter, res json.RawMessage) {
 	if len(res) == 0 {
 		res = json.RawMessage("{}")
 	}
-	httpreply.WriteJSON(w, res)
+	webhttp.WriteJSON(w, res)
 }
 
 // writeMCPFetchErr maps a getPrompt/getResource failure to an HTTP status.
@@ -263,5 +264,5 @@ func (h *Hub) writeMCPFetchErr(w http.ResponseWriter, err error) {
 		return
 	}
 	slog.Warn("mcp fetch failed", "error", err)
-	httpreply.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("MCP server request failed"))
+	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("MCP server request failed"))
 }

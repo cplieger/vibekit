@@ -2,7 +2,6 @@ package httpreply
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,8 +11,9 @@ import (
 	"testing"
 )
 
-// Tests for httpreply.go: the JSON writers, WriteRawJSON, and the two logged
-// error paths.
+// Tests for httpreply.go: vibekit's bare {"error":…} taxonomy, WriteRawJSON, and
+// the two logged error paths. The mechanism the helpers sit on (headers, status,
+// encode, body cap) is webhttp's and is tested there.
 
 // captureSlog swaps the default slog logger for a buffer-backed text handler
 // (Debug level, so Warn/Error/Debug are all captured) and restores the previous
@@ -29,28 +29,6 @@ func captureSlog(t *testing.T) *bytes.Buffer {
 }
 
 // --- JSON helpers ---
-
-func TestWriteJSON(t *testing.T) {
-	rec := httptest.NewRecorder()
-	WriteJSON(rec, map[string]string{"key": "val"})
-
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q", ct)
-	}
-	if xcto := rec.Header().Get("X-Content-Type-Options"); xcto != "nosniff" {
-		t.Errorf("X-Content-Type-Options = %q", xcto)
-	}
-	var resp map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("Unmarshal error = %v", err)
-	}
-	if resp["key"] != "val" {
-		t.Errorf("body = %+v", resp)
-	}
-	if !strings.HasSuffix(rec.Body.String(), "\n") {
-		t.Errorf("body missing trailing newline")
-	}
-}
 
 func TestNamedResponseHelpers(t *testing.T) {
 	tests := []struct {
@@ -101,12 +79,6 @@ func TestNamedResponseHelpers(t *testing.T) {
 			wantCode: http.StatusInternalServerError,
 			wantBody: `{"error":"internal error"}`,
 		},
-		{
-			name:     "Ok",
-			call:     func(w http.ResponseWriter) { Ok(w) },
-			wantCode: http.StatusOK,
-			wantBody: `{"ok":true}`,
-		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -125,65 +97,6 @@ func TestNamedResponseHelpers(t *testing.T) {
 				t.Errorf("%s X-Content-Type-Options = %q, want nosniff", tt.name, xcto)
 			}
 		})
-	}
-}
-
-func TestLimitBody_caps_read_at_max_bytes(t *testing.T) {
-	body := strings.NewReader(strings.Repeat("a", 100))
-	req := httptest.NewRequest(http.MethodPost, "/x", body)
-	rec := httptest.NewRecorder()
-	LimitBody(rec, req, 10)
-	data, err := io.ReadAll(req.Body)
-	if err == nil {
-		t.Errorf("expected MaxBytesError")
-	}
-	if len(data) > 10 {
-		t.Errorf("read %d bytes, want <= 10", len(data))
-	}
-}
-
-func TestLimitBody_allows_read_under_cap(t *testing.T) {
-	body := strings.NewReader("small")
-	req := httptest.NewRequest(http.MethodPost, "/x", body)
-	rec := httptest.NewRecorder()
-	LimitBody(rec, req, 100)
-	data, err := io.ReadAll(req.Body)
-	if err != nil {
-		t.Fatalf("ReadAll error = %v", err)
-	}
-	if string(data) != "small" {
-		t.Errorf("body = %q, want %q", string(data), "small")
-	}
-}
-
-// --- WriteJSONStatus encode failure ---
-
-func TestWriteJSONStatus_encode_failure_logs_and_does_not_panic(t *testing.T) {
-	buf := captureSlog(t)
-	rec := httptest.NewRecorder()
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("WriteJSONStatus panicked on non-marshalable value: %v", r)
-		}
-	}()
-	WriteJSONStatus(rec, http.StatusAccepted, make(chan int))
-	if rec.Code != http.StatusAccepted {
-		t.Errorf("status = %d, want %d", rec.Code, http.StatusAccepted)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-	// The encode error after the status is committed is logged at Warn.
-	if !strings.Contains(buf.String(), "json encode failed after status committed") {
-		t.Errorf("encode failure: want warn log, got %q", buf.String())
-	}
-}
-
-func TestWriteJSONStatus_no_log_on_success(t *testing.T) {
-	buf := captureSlog(t)
-	WriteJSONStatus(httptest.NewRecorder(), http.StatusOK, map[string]string{"k": "v"})
-	if strings.Contains(buf.String(), "json encode failed") {
-		t.Errorf("clean encode: want no log, got %q", buf.String())
 	}
 }
 

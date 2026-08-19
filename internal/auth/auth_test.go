@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/webhttp"
 )
 
 // drainOne reads a single message from urlCh with a sensible budget so the
@@ -1109,7 +1109,7 @@ func TestHandleLogin_BinaryMissingReturns503(t *testing.T) {
 
 func TestHandleLogin_BodyTooLargeReturns413(t *testing.T) {
 	h := NewHandler(fixedPath("/does-not-exist"))
-	big := strings.Repeat("a", int(httpreply.MaxJSONBody)+1024)
+	big := strings.Repeat("a", int(webhttp.MaxJSONBody)+1024)
 	req := httptest.NewRequest(http.MethodPost, "/api/login",
 		strings.NewReader(`{"provider":"`+big+`"}`))
 	req.Header.Set("Content-Type", "application/json")

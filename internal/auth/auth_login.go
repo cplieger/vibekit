@@ -83,7 +83,7 @@ func buildLoginArgs(provider, region string) []string {
 // body is legitimate (default Builder ID flow) and returns zero
 // values with ok=true.
 func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region string, ok bool) {
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var body struct {
 		Provider string `json:"provider"`
 		Region   string `json:"region"`
@@ -91,8 +91,8 @@ func parseLoginRequest(w http.ResponseWriter, r *http.Request) (provider, region
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
 		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("login: body exceeds limit",
-				"limit_bytes", httpreply.MaxJSONBody)
-			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				"limit_bytes", webhttp.MaxJSONBody)
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON("request too large"))
 			return "", "", false
 		}
@@ -179,7 +179,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		cancel()
 		slog.Error("login: stdout pipe failed",
 			"error", err, "cli_path", h.cliPath())
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON("login unavailable"))
 		return
 	}
@@ -192,7 +192,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := cmd.Start(); err != nil {
 		cancel()
 		status := classifyLoginStartErr(err, h.cliPath())
-		httpreply.WriteJSONStatus(w, status, httpreply.ErrorJSON("login unavailable"))
+		webhttp.WriteJSONStatus(w, status, httpreply.ErrorJSON("login unavailable"))
 		return
 	}
 	urlCh := make(chan map[string]string, 1)
@@ -258,7 +258,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			killLoginProcess(cmd)
 			<-waitDone
 		}
-		httpreply.WriteJSON(w, result)
+		webhttp.WriteJSON(w, result)
 	case <-time.After(h.cfg.LoginURLTimeout):
 		killLoginProcess(cmd)
 		<-waitDone // bounded: Kill → SIGKILL → reap
@@ -266,7 +266,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		attrs = append(attrs, "timeout", h.cfg.LoginURLTimeout)
 		attrs = append(attrs, stderrAttr(stderrBuf)...)
 		slog.Warn("login: timeout waiting for auth URL", attrs...)
-		httpreply.WriteJSONStatus(w, http.StatusGatewayTimeout,
+		webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout,
 			httpreply.ErrorJSON("timeout waiting for auth URL"))
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // AIHandler registers the AI-backed git endpoints (commit-message,
@@ -105,7 +106,7 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	msg := extractCommitMessage(result)
-	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: msg})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: msg})
 }
 
 // defaultPRBase is the assumed base branch when a PR-description
@@ -177,7 +178,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 	result = api.StripCodeFence(result)
 	result = strings.TrimSpace(result)
 
-	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: result})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: result})
 }
 
 // handleBranchName suggests a branch name for the repo's work in progress.
@@ -225,7 +226,7 @@ func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 		writeGitError(w, KindGenerationFailed, "model returned no usable name")
 		return
 	}
-	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: name})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: name})
 }
 
 // uncommittedContext summarises the repo's uncommitted state (porcelain

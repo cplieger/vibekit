@@ -15,15 +15,16 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope. It is the generic
-// httpreply.MaxJSONBody: the largest payload this endpoint carries is a prompt's text
+// webhttp.MaxJSONBody: the largest payload this endpoint carries is a prompt's text
 // at maxPromptBytes (512 KiB) plus path-only attachment metadata, so 1 MiB is
 // ~2x headroom. It was 5 MiB to fit a 4 MiB user-merged partial-write payload,
 // and that command is gone — KAS decides per action, so there is no merged text
 // to post.
-const maxCommandBody = httpreply.MaxJSONBody
+const maxCommandBody = webhttp.MaxJSONBody
 
 // Handler is the signature for a command handler function.
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)
@@ -110,7 +111,7 @@ type errorResponse struct {
 // error" while the cause sits unread in `error.data`. RPCErrorText is a no-op for
 // every ordinary Go error, so the one call covers both populations.
 func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
-	httpreply.WriteJSONStatus(w, code, errorResponse{Error: api.RPCErrorText(err)})
+	webhttp.WriteJSONStatus(w, code, errorResponse{Error: api.RPCErrorText(err)})
 }
 
 // RequireChatID validates that cmd.ChatID is non-empty and writes a
@@ -130,17 +131,17 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.deps.Draining() {
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
 		return
 	}
 
-	httpreply.LimitBody(w, r, maxCommandBody)
+	webhttp.LimitBody(w, r, maxCommandBody)
 	var cmd api.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("command body too large",
 				"limit", maxCommandBody, keyError, maxErr)
-			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				errorResponse{Error: "request body too large"})
 			return
 		}

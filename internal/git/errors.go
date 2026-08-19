@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 const (
@@ -46,7 +47,7 @@ func writeGitError(w http.ResponseWriter, kind ErrorKind, detail string) {
 	if detail != "" {
 		resp["detail"] = detail
 	}
-	httpreply.WriteJSON(w, resp)
+	webhttp.WriteJSON(w, resp)
 }
 
 // --- git show error classification ---

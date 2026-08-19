@@ -59,6 +59,7 @@ import (
 
 	"github.com/cplieger/ssrf/v4"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 const (
@@ -231,7 +232,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 		r.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: could not reach the loopback callback listener",
 			"server", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
-		httpreply.WriteJSONStatus(w, http.StatusBadGateway,
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("the local sign-in listener did not answer, so the code was not delivered; the sign-in may have timed out"))
 		return
 	}
@@ -242,7 +243,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 		r.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
 			"server", body.Server, "port", target.Port(), "status", status)
-		httpreply.WriteJSONStatus(w, http.StatusBadGateway,
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("the local sign-in listener rejected that callback (HTTP "+strconv.Itoa(status)+"); start the sign-in again"))
 		return
 	}
@@ -254,7 +255,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 	// The state transition is NOT invented here — connected is KAS's to report
 	// over `_kiro/mcp/status`, and the token exchange this just unblocked is
 	// still in flight. The client refetches status and waits for that frame.
-	httpreply.WriteJSON(w, mcpOAuthRelayResp{Status: status})
+	webhttp.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
 
 // replayCallback performs the one GET and returns the listener's status.

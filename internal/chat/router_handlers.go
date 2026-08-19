@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
@@ -29,7 +30,7 @@ func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	headers := rt.store.List(r.Context())
-	httpreply.WriteJSON(w, map[string]any{"chats": headers})
+	webhttp.WriteJSON(w, map[string]any{"chats": headers})
 }
 
 // handleOne serves GET /api/chats/{id}?before_id=<id>&limit=<n> and routes
@@ -95,7 +96,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	// what keeps the composer autosave off the SSE fan-out and off the list
 	// response: this is the one request a client makes when it opens a chat it
 	// has no local draft for, which is exactly when it needs the server's copy.
-	httpreply.WriteJSON(w, map[string]any{
+	webhttp.WriteJSON(w, map[string]any{
 		"chat":     rt.store.header(r.Context(), c),
 		"messages": window,
 		"has_more": start > 0,
@@ -133,7 +134,7 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api
 	// thinking=false: the store is the persisted record and knows nothing about
 	// a bridge being mid-turn. The client owns the live turn's outcome, which is
 	// the one turn it always has resident anyway.
-	httpreply.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
+	webhttp.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
@@ -164,7 +165,7 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ap
 	// default either side could get wrong. Absent or anything else = insensitive,
 	// which is the behaviour every existing client gets.
 	caseSensitive := r.URL.Query().Get("case") == "1"
-	httpreply.WriteJSON(w, map[string]any{
+	webhttp.WriteJSON(w, map[string]any{
 		"hits": Search(c.Messages, r.URL.Query().Get("q"), caseSensitive),
 	})
 }
@@ -250,7 +251,7 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID ap
 	if format == exportFormatJSON {
 		w.Header().Set("Content-Disposition",
 			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
-		httpreply.WriteJSON(w, c)
+		webhttp.WriteJSON(w, c)
 		return
 	}
 	w.Header().Set("Content-Disposition",

@@ -7,6 +7,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires /api/push/vapid-key, /api/push/subscribe, and
@@ -23,7 +24,7 @@ type vapidKeyResponse struct {
 }
 
 func (s *Service) handleVAPIDKey(w http.ResponseWriter, _ *http.Request) {
-	httpreply.WriteJSON(w, vapidKeyResponse{PublicKey: s.PublicKey()})
+	webhttp.WriteJSON(w, vapidKeyResponse{PublicKey: s.PublicKey()})
 }
 
 func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +32,7 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var sub api.PushSubscription
 	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil || sub.Endpoint == "" {
 		httpreply.BadRequest(w, "invalid subscription")
@@ -56,7 +57,7 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Subscribe(sub)
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +65,7 @@ func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var body struct {
 		Endpoint string `json:"endpoint"`
 	}
@@ -73,5 +74,5 @@ func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Unsubscribe(body.Endpoint)
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }

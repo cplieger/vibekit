@@ -74,13 +74,13 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("logout: kiro-cli timed out",
 				"timeout", h.cfg.LogoutTimeout, "output_bytes", len(out))
 			result["error"] = "logout timed out"
-			httpreply.WriteJSONStatus(w, http.StatusGatewayTimeout, result)
+			webhttp.WriteJSONStatus(w, http.StatusGatewayTimeout, result)
 			return
 		case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
 			slog.Error("logout: kiro-cli binary not found",
 				"cli_path", h.cliPath())
 			result["error"] = "logout unavailable"
-			httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, result)
+			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, result)
 			return
 		default:
 			// Log err details server-side; return a generic
@@ -89,12 +89,12 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("logout: kiro-cli failed",
 				"error", err, "output_bytes", len(out))
 			result["error"] = "logout failed"
-			httpreply.WriteJSONStatus(w, http.StatusBadGateway, result)
+			webhttp.WriteJSONStatus(w, http.StatusBadGateway, result)
 			return
 		}
 	}
 	slog.Info("logout: completed", "output_bytes", len(out))
-	httpreply.WriteJSON(w, result)
+	webhttp.WriteJSON(w, result)
 }
 
 // killLoginProcess sends SIGKILL to the entire process group of the

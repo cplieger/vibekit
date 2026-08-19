@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/runesafe"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/schedule"
+	"github.com/cplieger/webhttp"
 )
 
 // maxLogFieldBytes bounds one caller-supplied string on its way into a log
@@ -71,7 +72,7 @@ func (h *Hub) handleScheduleList(w http.ResponseWriter, _ *http.Request) {
 	for i := range entries {
 		out = append(out, h.scheduleViewOf(&entries[i]))
 	}
-	httpreply.WriteJSON(w, map[string]any{"schedules": out})
+	webhttp.WriteJSON(w, map[string]any{"schedules": out})
 }
 
 // scheduleViewOf resolves an entry's next run for display. A spec that cannot
@@ -110,7 +111,7 @@ func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		Spec    schedule.Spec `json:"spec"`
 		Enabled bool          `json:"enabled"`
 	}
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpreply.BadRequest(w, "invalid schedule payload")
 		return
@@ -134,7 +135,7 @@ func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("schedule saved", "id", logField(entry.ID), "recipe", logField(recipe.Name),
 		"freq", logField(string(entry.Spec.Freq)), "enabled", entry.Enabled)
-	httpreply.WriteJSON(w, h.scheduleViewOf(&entry))
+	webhttp.WriteJSON(w, h.scheduleViewOf(&entry))
 }
 
 // handleScheduleDelete: DELETE /api/schedules/{id}.
@@ -149,5 +150,5 @@ func (h *Hub) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("schedule deleted", "id", logField(id))
-	httpreply.WriteJSON(w, map[string]any{"ok": true})
+	webhttp.WriteJSON(w, map[string]any{"ok": true})
 }

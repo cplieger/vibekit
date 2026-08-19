@@ -12,6 +12,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // handleFileChanges delegates to the line tracker for
@@ -35,5 +36,5 @@ func (h *Hub) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 	if ranges == nil {
 		ranges = []buffer.LineRange{}
 	}
-	httpreply.WriteJSON(w, map[string]any{"changes": ranges})
+	webhttp.WriteJSON(w, map[string]any{"changes": ranges})
 }

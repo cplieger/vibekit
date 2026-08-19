@@ -11,6 +11,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // errStaleWrite is the client sentinel for a refused stale write. Named so the
@@ -18,7 +19,7 @@ import (
 const errStaleWrite = "file changed on disk since you opened it"
 
 func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
-	httpreply.LimitBody(w, r, maxFileSize)
+	webhttp.LimitBody(w, r, maxFileSize)
 	var body struct {
 		Content string `json:"content"`
 		// ExpectedHash is the content_hash the client received when it LOADED the
@@ -31,7 +32,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: write body too large",
 				"path", l.abs, "limit", maxFileSize, "error", maxErr)
-			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON(errFileTooLarge))
 			return
 		}
@@ -61,7 +62,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		switch {
 		case rErr != nil && !errors.Is(rErr, fs.ErrNotExist):
 			slog.Warn("filebrowse: stale-check read failed", "path", l.abs, "error", rErr)
-			httpreply.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON("write failed"))
+			webhttp.WriteJSONStatus(w, http.StatusInternalServerError, httpreply.ErrorJSON("write failed"))
 			return
 		case rErr == nil:
 			if got := contentHash(current); got != body.ExpectedHash {
@@ -69,7 +70,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 					"path", l.abs, "expected", body.ExpectedHash, "actual", got)
 				// The current content rides the 409 so the client can show what
 				// changed instead of asking the user to reload and compare by eye.
-				httpreply.WriteJSONStatus(w, http.StatusConflict, map[string]string{
+				webhttp.WriteJSONStatus(w, http.StatusConflict, map[string]string{
 					"error":         errStaleWrite,
 					"content":       string(current),
 					"content_hash":  got,
@@ -85,7 +86,7 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 	// blocks into three 1-line calls.
 	fail := func(stage string, err error) {
 		slog.Warn("filebrowse: "+stage, "path", l.abs, "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON("write failed"))
 	}
 	// O_NOFOLLOW on the write prevents a dangling symlink planted
@@ -109,5 +110,5 @@ func writeFile(w http.ResponseWriter, r *http.Request, l loc) {
 		return
 	}
 	slog.Info("filebrowse: file written", "path", l.abs, "bytes", len(body.Content))
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }

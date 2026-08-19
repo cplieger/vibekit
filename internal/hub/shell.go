@@ -31,8 +31,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/web-terminal-engine/v4/terminal"
+	"github.com/cplieger/webhttp"
 )
 
 // shutdownBudget bounds one PTY teardown. Sized above the engine's 5s reap
@@ -168,7 +168,7 @@ func (h *Hub) handleShellWS(w http.ResponseWriter, r *http.Request) {
 // destroys running processes; the client confirms before calling it.
 func (h *Hub) handleShellRestart(w http.ResponseWriter, _ *http.Request) {
 	h.shellMgr.restart()
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // kill ends the PTY session and waits for its teardown: reaping the child and

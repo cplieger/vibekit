@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // requirePOST writes a 405 if the method isn't POST and returns false.
@@ -20,7 +21,7 @@ func requirePOST(w http.ResponseWriter, r *http.Request) bool {
 }
 
 // decodePostBody does the common POST prelude:
-//   - enforces the JSON body size cap (httpreply.MaxJSONBody)
+//   - enforces the JSON body size cap (webhttp.MaxJSONBody)
 //   - decodes into v
 //
 // On decode failure, writes a 400 with the given error message and
@@ -59,10 +60,10 @@ func writeCmdResult(w http.ResponseWriter, out string, err error) {
 		if strings.TrimSpace(msg) == "" {
 			msg = err.Error()
 		}
-		httpreply.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(msg)))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(msg)))
 		return
 	}
-	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: scrubAuth(out)})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: scrubAuth(out)})
 }
 
 // gitCmdWithCreds runs a git subprocess for network operations

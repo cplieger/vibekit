@@ -8,6 +8,7 @@ import (
 	"path"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // RegisterRoutes wires the MCP config endpoints.
@@ -58,13 +59,13 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	httpreply.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
+	webhttp.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
 }
 
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		httpreply.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
+		webhttp.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
 	case http.MethodPost:
 		var in Server
 		if !decodeJSONBody(w, r, &in) {
@@ -75,7 +76,7 @@ func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(w, err)
 			return
 		}
-		httpreply.WriteJSON(w, created)
+		webhttp.WriteJSON(w, created)
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
@@ -117,7 +118,7 @@ func (s *Store) getOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		httpreply.NotFound(w, "server not found")
 		return
 	}
-	httpreply.WriteJSON(w, got)
+	webhttp.WriteJSON(w, got)
 }
 
 // putOne handles PUT /api/mcp/{id}: replace the record (preserving "***"
@@ -132,7 +133,7 @@ func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	httpreply.WriteJSON(w, updated)
+	webhttp.WriteJSON(w, updated)
 }
 
 // patchOne handles PATCH /api/mcp/{id} with body {"enabled": bool}: a
@@ -155,7 +156,7 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	httpreply.WriteJSON(w, updated)
+	webhttp.WriteJSON(w, updated)
 }
 
 // deleteOne handles DELETE /api/mcp/{id}: 200 ok, or map the store error
@@ -165,7 +166,7 @@ func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // decodeJSONBody delegates to httpreply.DecodeJSON for backward compatibility
@@ -192,7 +193,7 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 		} else {
 			slog.Warn("mcp: http persist write failure (infra)", "error", err)
 		}
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON("persist failed"))
 	default:
 		slog.Debug("mcp: http bad request", "error", err)
@@ -223,6 +224,6 @@ func writeValidationErr(w http.ResponseWriter, err error) {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	httpreply.WriteJSONStatus(w, http.StatusBadRequest,
+	webhttp.WriteJSONStatus(w, http.StatusBadRequest,
 		validationErrorBody{Error: err.Error(), Fields: fields})
 }

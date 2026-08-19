@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/policyfile"
+	"github.com/cplieger/webhttp"
 )
 
 // Native Cedar policy endpoints (v3 / KAS).
@@ -50,7 +51,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			view.Rules = rules
 			view.Capabilities = pickerCapabilities(rules)
-			httpreply.WriteJSON(w, view)
+			webhttp.WriteJSON(w, view)
 			return
 		}
 		slog.Warn("policy view: live list failed, falling back to file read", "error", err)
@@ -60,7 +61,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	view.Available = false
 	view.Rules = s.policyRulesFromFiles(scope)
 	view.Capabilities = pickerCapabilities(view.Rules)
-	httpreply.WriteJSON(w, view)
+	webhttp.WriteJSON(w, view)
 }
 
 // pickerCapabilities is what the capability dropdowns offer: vibekit's suggested
@@ -144,7 +145,7 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.policy == nil {
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("policy explain unavailable"))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("policy explain unavailable"))
 		return
 	}
 	var req api.PolicyExplainRequest
@@ -165,10 +166,10 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 	res, err := s.policy.PolicyExplain(r.Context(), req)
 	if err != nil {
 		slog.Warn("policy explain failed", "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("policy explain failed"))
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("policy explain failed"))
 		return
 	}
-	httpreply.WriteJSON(w, res)
+	webhttp.WriteJSON(w, res)
 }
 
 // policyRuleBody is the POST /api/permissions/rules request. op is
@@ -273,7 +274,7 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 	}
 	f, err := policyfile.Load(path)
 	if err != nil {
-		httpreply.WriteJSONStatus(w, http.StatusConflict,
+		webhttp.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("existing policy file could not be parsed; edit it manually"))
 		return
 	}
@@ -283,7 +284,7 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 		return
 	}
 	if !changed {
-		httpreply.Ok(w) // idempotent: identical rule already present
+		webhttp.Ok(w) // idempotent: identical rule already present
 		return
 	}
 	if err := policyfile.Save(r.Context(), path, f); err != nil {
@@ -291,7 +292,7 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 		return
 	}
 	slog.Info("policy rule added", "scope", body.Scope, "capability", rule.Capability, "effect", rule.Effect)
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // guardAllowRule pre-flights an allow-rule write against the LIVE policy
@@ -304,7 +305,7 @@ func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *pol
 // been written.
 func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *policyfile.Rule, resource string) bool {
 	if s.policy == nil {
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSON("cannot verify the rule against the live policy; rule not written"))
 		return false
 	}
@@ -313,12 +314,12 @@ func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *po
 	})
 	if err != nil {
 		slog.Warn("policy rule add: guard explain failed", "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusBadGateway,
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 			httpreply.ErrorJSON("cannot verify the rule against the live policy; rule not written"))
 		return false
 	}
 	if res.IsExplicitAsk {
-		httpreply.WriteJSONStatus(w, http.StatusConflict,
+		webhttp.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("an explicit ask rule covers this command; the new allow rule would be shadowed and was not written"))
 		return false
 	}
@@ -333,7 +334,7 @@ func (s *Server) policyRuleRemove(w http.ResponseWriter, r *http.Request, body *
 	// Removing a deny rule widens access — a destructive change. Require an
 	// explicit confirm so it can't happen by accident.
 	if body.Effect == policyfile.EffectDeny && !body.Confirm {
-		httpreply.WriteJSONStatus(w, http.StatusConflict,
+		webhttp.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("removing a deny rule widens access; resend with confirm=true"))
 		return
 	}
@@ -347,12 +348,12 @@ func (s *Server) policyRuleRemove(w http.ResponseWriter, r *http.Request, body *
 	}
 	f, err := policyfile.Load(path)
 	if err != nil {
-		httpreply.WriteJSONStatus(w, http.StatusConflict,
+		webhttp.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("existing policy file could not be parsed; edit it manually"))
 		return
 	}
 	if !f.Remove(&rule) {
-		httpreply.Ok(w) // idempotent: rule already absent
+		webhttp.Ok(w) // idempotent: rule already absent
 		return
 	}
 	if err := policyfile.Save(r.Context(), path, f); err != nil {
@@ -360,7 +361,7 @@ func (s *Server) policyRuleRemove(w http.ResponseWriter, r *http.Request, body *
 		return
 	}
 	slog.Info("policy rule removed", "scope", body.Scope, "capability", rule.Capability, "effect", rule.Effect)
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // policyRuleUpdate changes an existing rule's effect in place (op=update):
@@ -379,7 +380,7 @@ func (s *Server) policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *
 		return
 	}
 	if effectRank[body.NewEffect] < effectRank[body.Effect] && !body.Confirm {
-		httpreply.WriteJSONStatus(w, http.StatusConflict,
+		webhttp.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("changing "+body.Effect+" to "+body.NewEffect+" widens access; resend with confirm=true"))
 		return
 	}
@@ -393,7 +394,7 @@ func (s *Server) policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *
 	}
 	f, err := policyfile.Load(path)
 	if err != nil {
-		httpreply.WriteJSONStatus(w, http.StatusConflict,
+		webhttp.WriteJSONStatus(w, http.StatusConflict,
 			httpreply.ErrorJSON("existing policy file could not be parsed; edit it manually"))
 		return
 	}
@@ -402,7 +403,7 @@ func (s *Server) policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *
 		target := rule
 		target.Effect = body.NewEffect
 		if f.Has(&target) {
-			httpreply.Ok(w)
+			webhttp.Ok(w)
 			return
 		}
 		httpreply.NotFound(w, "rule not found; refresh the policy view")
@@ -414,5 +415,5 @@ func (s *Server) policyRuleUpdate(w http.ResponseWriter, r *http.Request, body *
 	}
 	slog.Info("policy rule updated", "scope", body.Scope,
 		"capability", rule.Capability, "effect", body.Effect, "new_effect", body.NewEffect)
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }

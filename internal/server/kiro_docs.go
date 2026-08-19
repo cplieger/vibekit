@@ -49,6 +49,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/webhttp"
 )
 
 // Document categories, matching the page's sub-tabs. Wire values; the client
@@ -161,7 +162,7 @@ func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
 	if docs == nil {
 		docs = []kiroDoc{}
 	}
-	httpreply.WriteJSON(w, map[string]any{"docs": docs})
+	webhttp.WriteJSON(w, map[string]any{"docs": docs})
 }
 
 // collectKiroDocs returns the cached inventory, rescanning when the signature

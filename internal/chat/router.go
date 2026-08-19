@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // Router owns the HTTP handler surface for the chat package. It holds
@@ -43,5 +44,5 @@ func (rt *Router) handleSearchAll(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	httpreply.WriteJSON(w, rt.store.SearchAll(r.Context(), r.URL.Query().Get("q")))
+	webhttp.WriteJSON(w, rt.store.SearchAll(r.Context(), r.URL.Query().Get("q")))
 }

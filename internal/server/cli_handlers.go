@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/version"
+	"github.com/cplieger/webhttp"
 )
 
 // The former handleModels (`kiro-cli chat --list-models` shell-out behind
@@ -28,7 +29,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	if out, err := s.cliRunner.Run(ctx, "--version"); err == nil {
 		payload["kiro_cli"] = strings.TrimSpace(string(out))
 	}
-	httpreply.WriteJSON(w, payload)
+	webhttp.WriteJSON(w, payload)
 }
 
 func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +43,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	out, truncated, err := s.cliRunner.RunStdoutCapped(ctx, diagnosticsMaxBytes, "diagnostic", "--force", "--format", "json-pretty")
 	if err != nil {
 		slog.Warn("diagnostics: kiro-cli exec failed", "error", err)
-		httpreply.WriteJSON(w, httpreply.ErrorJSON("diagnostic command failed"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("diagnostic command failed"))
 		return
 	}
 	// Sanitize (ANSI + hidden Unicode) before the report reaches the browser.
@@ -50,7 +51,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 	if truncated {
 		report += "\n\n[truncated]"
 	}
-	httpreply.WriteJSON(w, map[string]string{"report": report})
+	webhttp.WriteJSON(w, map[string]string{"report": report})
 }
 
 func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
@@ -67,9 +68,9 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			out = nil
 		}
-		httpreply.WriteJSON(w, map[string]string{"key": key, "value": parseKiroSettingOutput(string(out))})
+		webhttp.WriteJSON(w, map[string]string{"key": key, "value": parseKiroSettingOutput(string(out))})
 	case http.MethodPut:
-		httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+		webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 		var body struct {
 			Key   string `json:"key"`
 			Value string `json:"value"`
@@ -99,11 +100,11 @@ func (s *Server) handleKiroSettings(w http.ResponseWriter, r *http.Request) {
 			// fired, and the setting was not written. kiro-cli is the upstream
 			// here and it declined, which is what Bad Gateway means.
 			slog.Warn("kiro-cli settings write refused", "key", key, "error", err)
-			httpreply.WriteJSONStatus(w, http.StatusBadGateway,
+			webhttp.WriteJSONStatus(w, http.StatusBadGateway,
 				httpreply.ErrorJSON(strings.TrimSpace(string(out))))
 			return
 		}
-		httpreply.Ok(w)
+		webhttp.Ok(w)
 	default:
 		httpreply.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}

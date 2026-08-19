@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // keySubcommand is the _kiro/knowledge dispatch field naming the operation.
@@ -173,7 +174,7 @@ func (h *Hub) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 		h.writeKnowledgeErr(w, err)
 		return
 	}
-	httpreply.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
+	webhttp.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
 }
 
 type knowledgeAddReq struct {
@@ -213,7 +214,7 @@ func (h *Hub) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, cleanKnowledgeMsg(res.Message))
 		return
 	}
-	httpreply.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
+	webhttp.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
 }
 
 // handleKnowledgeRemove: DELETE /api/knowledge/{name} → drop a context by name
@@ -236,7 +237,7 @@ func (h *Hub) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request) {
 		httpreply.NotFound(w, cleanKnowledgeMsg(res.Message))
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // knowledgeMutate issues a mutating subcommand (add/remove/…) and parses the
@@ -255,7 +256,7 @@ func (h *Hub) knowledgeMutate(ctx context.Context, params map[string]any) (*kasK
 // "open a chat first" condition.
 func (h *Hub) writeKnowledgeErr(w http.ResponseWriter, err error) {
 	slog.Warn("knowledge op failed", "error", err)
-	httpreply.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
+	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("knowledge request failed"))
 }
 
 // registerKnowledgeRoutes wires the knowledge-base management endpoints.

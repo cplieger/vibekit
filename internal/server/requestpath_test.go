@@ -43,7 +43,7 @@ func requestPathMux() (*http.ServeMux, *string) {
 			if v := r.PathValue("name"); v != "" {
 				reached = name + ":" + v
 			}
-			httpreply.WriteJSON(w, healthBody{Status: "ok"})
+			webhttp.WriteJSON(w, healthBody{Status: "ok"})
 		}
 	}
 	mux := http.NewServeMux()

@@ -8,6 +8,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // registerCommandHandlers populates the dispatcher with the concrete
@@ -33,7 +34,7 @@ func (h *Hub) respond(w http.ResponseWriter, reqID string, body any) {
 }
 
 func (h *Hub) respondErr(w http.ResponseWriter, code int, err error) {
-	httpreply.WriteJSONStatus(w, code, httpreply.ErrorJSON(err.Error()))
+	webhttp.WriteJSONStatus(w, code, httpreply.ErrorJSON(err.Error()))
 }
 
 // requireChatID validates that cmd.ChatID is non-empty and writes a

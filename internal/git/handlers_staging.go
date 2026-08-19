@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
@@ -19,11 +20,11 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
 	if !IsRepo(ctx, dir) {
-		httpreply.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
+		webhttp.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
 		return
 	}
 	st := collectStatus(ctx, dir, h.timeouts, &h.fetchFlight, r.URL.Query().Get("quick") == "")
-	httpreply.WriteJSON(w, st)
+	webhttp.WriteJSON(w, st)
 }
 
 // collectStatus runs the same shape of git queries handleStatus uses,
@@ -160,10 +161,10 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git stage", "repo", body.Repo, "files", len(files))
 	args := append([]string{"add", "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		httpreply.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(out)))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(out)))
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
@@ -187,10 +188,10 @@ func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
 	slog.Info("git unstage", "repo", body.Repo, "files", len(files))
 	args := append([]string{subReset, refHEAD, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		httpreply.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(out)))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(out)))
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
@@ -243,8 +244,8 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(errs) > 0 {
-		httpreply.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(strings.Join(errs, "\n"))))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(scrubAuth(strings.Join(errs, "\n"))))
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 func (h *Handler) handleClone(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +91,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	remote, err := gitCmd(r.Context(), dir, subRemote, "get-url", "origin")
 	if err != nil || remote == "" {
 		slog.Warn("git reclone: origin lookup failed", "repo", body.Repo, "error", err)
-		httpreply.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("no origin remote"))
 		return
 	}
 	// Defense-in-depth: the origin URL came from git config and could
@@ -101,7 +102,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// os.RemoveAll so a rejected reclone leaves the working tree
 	// intact.
 	if !isAllowedRemoteScheme(remote) {
-		httpreply.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("origin has unsupported scheme for re-clone"))
 		return
 	}
 	slog.Info("git reclone starting", "repo", body.Repo)
@@ -109,7 +110,7 @@ func (h *Handler) handleReclone(w http.ResponseWriter, r *http.Request) {
 	// partial delete doesn't strand the repo in an unreclonable state.
 	if rmErr := os.RemoveAll(dir); rmErr != nil {
 		slog.Error("git reclone: remove failed", "repo", body.Repo, "error", rmErr)
-		httpreply.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	// `--` barrier: the origin URL came from git config, but a prior

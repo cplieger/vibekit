@@ -54,6 +54,7 @@ import (
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // hookCallTimeout bounds a list / setEnabled round-trip. The only slow path is
@@ -265,7 +266,7 @@ func (h *Hub) handleHooksList(w http.ResponseWriter, r *http.Request) {
 	slices.SortStableFunc(out, func(a, b hookInfo) int {
 		return hookScopeRank(a.Scope) - hookScopeRank(b.Scope)
 	})
-	httpreply.WriteJSON(w, hooksListResponse{Hooks: out})
+	webhttp.WriteJSON(w, hooksListResponse{Hooks: out})
 }
 
 // hookScopeRank orders hook scopes for the dashboard: workspace first.
@@ -309,7 +310,7 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.broadcastHooksChanged()
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // broadcastHooksChanged fans out an hooks_changed SSE (workspace-global, empty
@@ -370,7 +371,7 @@ func (h *Hub) writeHookResultErr(w http.ResponseWriter, res kasHookResult) {
 // fault, not a "open a chat first" condition.
 func (h *Hub) writeHookErr(w http.ResponseWriter, err error) {
 	slog.Warn("hooks op failed", "error", err)
-	httpreply.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
+	webhttp.WriteJSONStatus(w, http.StatusBadGateway, httpreply.ErrorJSON("hooks request failed"))
 }
 
 // registerHooksRoutes wires the hooks-state endpoints. TWO routes: there is no

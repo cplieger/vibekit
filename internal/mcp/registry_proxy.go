@@ -36,6 +36,7 @@ import (
 	"github.com/cplieger/keyenc"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -168,7 +169,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 		// the slog.Warn above. The error text can leak upstream
 		// operational signals ("refusing redirect to non-registry host
 		// 169.254.169.254") that the browser has no need to see.
-		httpreply.WriteJSONStatus(w, http.StatusBadGateway, map[string]string{
+		webhttp.WriteJSONStatus(w, http.StatusBadGateway, map[string]string{
 			"error": "registry unavailable",
 		})
 		return
@@ -176,7 +177,7 @@ func (p *RegistryProxy) handleSearch(w http.ResponseWriter, r *http.Request) {
 	normalised := normaliseRegistryResponse(body)
 	slog.Debug("mcp: registry search",
 		"q", q, "limit", limit, "results", len(normalised), "cached", cached)
-	httpreply.WriteJSON(w, map[string]any{"servers": normalised})
+	webhttp.WriteJSON(w, map[string]any{"servers": normalised})
 }
 
 // fetchSearch returns raw upstream response bytes (from cache when

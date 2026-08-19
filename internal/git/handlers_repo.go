@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -80,7 +81,7 @@ func (h *Handler) handleStatusAll(w http.ResponseWriter, r *http.Request) {
 	})
 	results, _ := v.([]allRepoStatus)
 	// Treated as read-only by every singleflight sharer.
-	httpreply.WriteJSON(w, map[string]any{"repos": results})
+	webhttp.WriteJSON(w, map[string]any{"repos": results})
 }
 
 func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +90,7 @@ func (h *Handler) handleRepos(w http.ResponseWriter, r *http.Request) {
 	for i, d := range discovered {
 		repos[i] = d.Name
 	}
-	httpreply.WriteJSON(w, map[string]any{"repos": repos})
+	webhttp.WriteJSON(w, map[string]any{"repos": repos})
 }
 
 // handleFileDiff returns the working-tree diff for a single file
@@ -132,7 +133,7 @@ func (h *Handler) handleFileDiff(w http.ResponseWriter, r *http.Request) {
 			out = out2
 		}
 	}
-	httpreply.WriteJSON(w, map[string]string{"diff": out})
+	webhttp.WriteJSON(w, map[string]string{"diff": out})
 }
 
 func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
@@ -191,14 +192,14 @@ func (h *Handler) handleShow(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrPathNotInRef) {
 			// File didn't exist at ref — return empty content so the
 			// diff renders as all-add for new files.
-			httpreply.WriteJSON(w, map[string]string{"content": ""})
+			webhttp.WriteJSON(w, map[string]string{"content": ""})
 			return
 		}
 		slog.Warn("git show failed", "repo", dir, "ref", ref, "path", file, "error", err, "out", scrubAuth(out))
 		writeGitError(w, KindShowFailed, scrubAuth(out))
 		return
 	}
-	httpreply.WriteJSON(w, map[string]string{"content": out})
+	webhttp.WriteJSON(w, map[string]string{"content": out})
 }
 
 func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +215,7 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 	out, err := gitCmd(ctx, dir, "log", ref, "--oneline", "-20", "--no-decorate")
 	if err != nil {
 		slog.Debug("git log failed", "repo", dir, "ref", ref, "error", err, "out", scrubAuth(out))
-		httpreply.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
+		webhttp.WriteJSON(w, map[string]any{"entries": []string{}, "remote": "", "behind": 0})
 		return
 	}
 	// Not pinned to []string{} the way `branches` below is: git log answering
@@ -241,14 +242,14 @@ func (h *Handler) handleLog(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	httpreply.WriteJSON(w, map[string]any{"entries": lines, "remote": scrubAuth(remote), "behind": behind})
+	webhttp.WriteJSON(w, map[string]any{"entries": lines, "remote": scrubAuth(remote), "behind": behind})
 }
 
 func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 	dir := h.repoDir(repoFromQuery(r))
 	out, err := gitCmd(r.Context(), dir, "branch", "-a", "--format=%(refname:short)\t%(HEAD)")
 	if err != nil {
-		httpreply.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
+		webhttp.WriteJSON(w, map[string]any{"branches": []any{}, "current": ""})
 		return
 	}
 	type branchEntry struct {
@@ -269,7 +270,7 @@ func (h *Handler) handleBranches(w http.ResponseWriter, r *http.Request) {
 			current = name
 		}
 	}
-	httpreply.WriteJSON(w, map[string]any{"branches": branches, "current": current})
+	webhttp.WriteJSON(w, map[string]any{"branches": branches, "current": current})
 }
 
 func (h *Handler) handleCheckout(w http.ResponseWriter, r *http.Request) {
@@ -336,9 +337,9 @@ func (h *Handler) handleRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		slog.Error("git remove: failed", "repo", body.Repo, "error", err)
-		httpreply.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON("remove failed"))
 		return
 	}
 	slog.Info("git remove", "repo", body.Repo)
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }

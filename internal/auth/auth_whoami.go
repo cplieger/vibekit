@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/webhttp"
 )
 
 // WhoamiResponse is the typed wire shape returned by /api/whoami. The
@@ -99,17 +100,17 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 			attrs = append(attrs, stderrAttr(stderr)...)
 			slog.Warn("whoami: kiro-cli invocation failed", attrs...)
 		}
-		httpreply.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
+		webhttp.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
 		return
 	}
 	info, err := whoamiInfo(out)
 	if err != nil {
 		slog.Warn("whoami: cli output not parseable as json",
 			"error", err, "stdout_bytes", len(out))
-		httpreply.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
+		webhttp.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
 		return
 	}
-	httpreply.WriteJSON(w, info)
+	webhttp.WriteJSON(w, info)
 }
 
 // whoamiInfo parses kiro-cli's --format json whoami output and

@@ -45,7 +45,7 @@ import (
 const JSONKeyError = "error"
 
 // ErrorJSON returns the canonical error response map for JSON encoding.
-// Use with WriteJSONStatus to write error responses consistently.
+// Use with webhttp.WriteJSONStatus to write error responses consistently.
 func ErrorJSON(msg string) map[string]string {
 	return map[string]string{JSONKeyError: msg}
 }
@@ -68,43 +68,13 @@ const JSONKeyName = "name"
 // MIMETypeJSON is the standard MIME type for JSON content.
 const MIMETypeJSON = "application/json"
 
-// MaxJSONBody is the maximum size for JSON request bodies (1 MiB).
-const MaxJSONBody = 1024 * 1024
-
 // msgInternalError is the standard client-facing message for 500 responses.
 const msgInternalError = "internal error"
-
-// LimitBody wraps r.Body with MaxBytesReader to prevent oversized requests.
-// It delegates to webhttp.LimitBody so the body-cap mechanism is shared fleet-wide.
-func LimitBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
-	webhttp.LimitBody(w, r, maxBytes)
-}
 
 // --- JSON response writers ---
 //
 // The mechanism (headers, status, encode) is webhttp's; vibekit's error
 // taxonomy (the bare {"error":…} named helpers below) is layered on top.
-
-// jsonHeaders sets the standard JSON response headers (Content-Type and
-// X-Content-Type-Options). It was exported, on a doc comment claiming the
-// handler packages needed it to write a JSON body without the named helpers
-// below. No handler package ever called it: every JSON body in the tree goes
-// through those helpers, which is the point of having them.
-func jsonHeaders(w http.ResponseWriter) {
-	webhttp.JSONHeaders(w)
-}
-
-// WriteJSON encodes v as JSON with status 200.
-func WriteJSON(w http.ResponseWriter, v any) {
-	webhttp.WriteJSON(w, v)
-}
-
-// WriteJSONStatus sets the JSON headers, writes the status code, and encodes v.
-// An encode failure after the status is committed is logged at Warn (by
-// webhttp) rather than returned, since the response line is already on the wire.
-func WriteJSONStatus(w http.ResponseWriter, code int, v any) {
-	webhttp.WriteJSONStatus(w, code, v)
-}
 
 // WriteRawJSON writes pre-marshalled JSON bytes with the standard
 // Content-Type + X-Content-Type-Options headers. Use for pass-through
@@ -112,7 +82,7 @@ func WriteJSONStatus(w http.ResponseWriter, code int, v any) {
 // slash-command results) where json.Marshal would be a redundant
 // round-trip. Write errors are best-effort (client may have hung up).
 func WriteRawJSON(w http.ResponseWriter, data []byte) {
-	jsonHeaders(w)
+	webhttp.JSONHeaders(w)
 	if _, err := w.Write(data); err != nil {
 		slog.Debug("httpreply: raw json write failed", "error", err)
 	}
@@ -129,22 +99,22 @@ func WriteRawJSON(w http.ResponseWriter, data []byte) {
 
 // BadRequest writes a 400 with {"error": msg}.
 func BadRequest(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusBadRequest, webhttp.ErrorResponse{Error: msg})
+	webhttp.WriteJSONStatus(w, http.StatusBadRequest, webhttp.ErrorResponse{Error: msg})
 }
 
 // Forbidden writes a 403 with {"error": msg}.
 func Forbidden(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusForbidden, webhttp.ErrorResponse{Error: msg})
+	webhttp.WriteJSONStatus(w, http.StatusForbidden, webhttp.ErrorResponse{Error: msg})
 }
 
 // NotFound writes a 404 with {"error": msg}.
 func NotFound(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusNotFound, webhttp.ErrorResponse{Error: msg})
+	webhttp.WriteJSONStatus(w, http.StatusNotFound, webhttp.ErrorResponse{Error: msg})
 }
 
 // Conflict writes a 409 with {"error": msg}.
 func Conflict(w http.ResponseWriter, msg string) {
-	WriteJSONStatus(w, http.StatusConflict, webhttp.ErrorResponse{Error: msg})
+	webhttp.WriteJSONStatus(w, http.StatusConflict, webhttp.ErrorResponse{Error: msg})
 }
 
 // headerAllow is the response-header name RFC 9110 §10.2.1 reserves for the
@@ -191,7 +161,7 @@ func setAllow(w http.ResponseWriter, method string, more ...string) {
 // also 405s.
 func MethodNotAllowed(w http.ResponseWriter, method string, more ...string) {
 	setAllow(w, method, more...)
-	WriteJSONStatus(w, http.StatusMethodNotAllowed, webhttp.ErrorResponse{Error: "method not allowed"})
+	webhttp.WriteJSONStatus(w, http.StatusMethodNotAllowed, webhttp.ErrorResponse{Error: "method not allowed"})
 }
 
 // InternalError writes a 500 with {"error": "internal error"} and logs
@@ -201,7 +171,7 @@ func InternalError(w http.ResponseWriter, err error) {
 	if err != nil {
 		slog.Error("httpreply: internal error", "error", err)
 	}
-	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: msgInternalError})
+	webhttp.WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: msgInternalError})
 }
 
 // ServerError writes a 500 with a caller-specified client-visible message
@@ -212,13 +182,7 @@ func ServerError(w http.ResponseWriter, clientMsg string, err error) {
 	if err != nil {
 		slog.Error("httpreply: server error", "client_msg", clientMsg, "error", err)
 	}
-	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: clientMsg})
-}
-
-// Ok writes a 200 with {"ok": true} — the standard "action succeeded"
-// response used by the handful of endpoints that don't return data.
-func Ok(w http.ResponseWriter) {
-	webhttp.Ok(w)
+	webhttp.WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: clientMsg})
 }
 
 // --- Handler-prelude helpers ---
@@ -243,18 +207,18 @@ func RequireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
 // On any decode failure it writes vibekit's bare {"error":errMsg} 400 and
 // returns false.
 func DecodeBody(w http.ResponseWriter, r *http.Request, v any, errMsg string) bool {
-	if err := webhttp.DecodeJSONInto(w, r, v, MaxJSONBody); err != nil {
+	if err := webhttp.DecodeJSONInto(w, r, v, webhttp.MaxJSONBody); err != nil {
 		BadRequest(w, errMsg)
 		return false
 	}
 	return true
 }
 
-// DecodeBodyOptional applies LimitBody and decodes JSON into v.
+// DecodeBodyOptional caps the body and decodes JSON into v.
 // Unlike DecodeBody, a decode failure is silently ignored (v keeps
 // its zero value) because the caller accepts an empty request body.
 func DecodeBodyOptional(w http.ResponseWriter, r *http.Request, v any) {
-	LimitBody(w, r, MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		_ = err
 	}

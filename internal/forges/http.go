@@ -40,6 +40,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // ForgeErrCode is a typed error code for machine-readable forge HTTP error responses.
@@ -109,7 +110,7 @@ func (h *HTTPHandler) handleForgesList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	forges := h.manager.List(r.Context())
-	httpreply.WriteJSON(w, map[string]any{
+	webhttp.WriteJSON(w, map[string]any{
 		"forges": forges,
 		"kinds":  AllKinds(),
 		"oauth":  map[string]bool{string(KindGitHub): true}, // device flow is built-in
@@ -125,7 +126,7 @@ func (h *HTTPHandler) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		httpreply.ServerError(w, "refresh failed", err)
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // handleForgeItem dispatches to per-forge sub-resources.
@@ -147,7 +148,7 @@ func (h *HTTPHandler) handleForgeItem(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			f := h.manager.Get(id)
-			httpreply.WriteJSON(w, f)
+			webhttp.WriteJSON(w, f)
 		case http.MethodDelete:
 			h.handleDisconnect(w, r, id)
 		default:
@@ -181,7 +182,7 @@ func (h *HTTPHandler) handleDisconnect(w http.ResponseWriter, r *http.Request, i
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id string) {
@@ -194,14 +195,14 @@ func (h *HTTPHandler) handleProbe(w http.ResponseWriter, r *http.Request, id str
 	err := h.manager.Probe(ctx, id)
 	f := h.manager.Get(id)
 	if err != nil {
-		httpreply.WriteJSONStatus(w, http.StatusOK, map[string]any{
+		webhttp.WriteJSONStatus(w, http.StatusOK, map[string]any{
 			"connected": false,
 			statusError: err.Error(),
 			"forge":     f,
 		})
 		return
 	}
-	httpreply.WriteJSON(w, map[string]any{
+	webhttp.WriteJSON(w, map[string]any{
 		"connected": true,
 		"forge":     f,
 	})
@@ -228,7 +229,7 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 	var body struct {
 		Token string `json:"token"`
 	}
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return
@@ -243,30 +244,30 @@ func (h *HTTPHandler) handleLogin(w http.ResponseWriter, r *http.Request, id, su
 		// to null → a generic "Network error.", hiding the real reason (bad
 		// credentials, missing scope, wrong host). On a 2xx the PAT form's
 		// inline error branch surfaces err. (Malformed JSON above stays 400.)
-		httpreply.WriteJSON(w, httpreply.ErrorJSON(err.Error()))
+		webhttp.WriteJSON(w, httpreply.ErrorJSON(err.Error()))
 		return
 	}
 	h.manager.Invalidate()
 	_ = h.manager.Refresh(r.Context())
 	h.notifyChanged(r.Context())
-	httpreply.WriteJSON(w, map[string]string{"status": stateComplete})
+	webhttp.WriteJSON(w, map[string]string{"status": stateComplete})
 }
 
 // writeOpsError maps ForgeOps errors to HTTP status codes.
 func (h *HTTPHandler) writeOpsError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotInstalled):
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable,
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
 			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrCLINotInstalled)))
 	case errors.Is(err, ErrNotLoggedIn):
-		httpreply.WriteJSONStatus(w, http.StatusUnauthorized,
+		webhttp.WriteJSONStatus(w, http.StatusUnauthorized,
 			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotLoggedIn)))
 	case errors.Is(err, ErrNotSupported):
-		httpreply.WriteJSONStatus(w, http.StatusNotImplemented,
+		webhttp.WriteJSONStatus(w, http.StatusNotImplemented,
 			httpreply.ErrorJSONWithCode(err.Error(), string(ForgeErrNotSupported)))
 	default:
 		slog.Debug("forges: ops error", "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(err.Error()))
 	}
 }

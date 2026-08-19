@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // --- /api/files/action (POST: mkdir, touch, delete, rename, copy, move) ---
@@ -47,14 +48,14 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 
 	var body fileAction
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("filebrowse: action body too large",
-				"limit", httpreply.MaxJSONBody, "error", maxErr)
-			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+				"limit", webhttp.MaxJSONBody, "error", maxErr)
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON("request body too large"))
 			return
 		}
@@ -80,11 +81,11 @@ func (h *Handler) handleFilesAction(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("filebrowse: action failed",
 			"action", body.Action, "path", l.abs, "error", err)
-		httpreply.WriteJSONStatus(w, http.StatusInternalServerError,
+		webhttp.WriteJSONStatus(w, http.StatusInternalServerError,
 			httpreply.ErrorJSON(body.Action+" failed"))
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // refuseMountPoint writes the shared 403 for create/delete/rename/move
@@ -253,7 +254,7 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l l
 	n, scErr := streamCopy(ctx, l, destLoc, maxCopySize)
 	if scErr != nil {
 		if errors.Is(scErr, errOversize) {
-			httpreply.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			webhttp.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				httpreply.ErrorJSON("source file too large to copy"))
 			return errHandled
 		}

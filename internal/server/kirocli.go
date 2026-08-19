@@ -74,7 +74,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ok, err := s.kiroRescan(r.Context())
 	if ok {
-		httpreply.WriteJSON(w, healthBody{Status: "ok"})
+		webhttp.WriteJSON(w, healthBody{Status: "ok"})
 		return
 	}
 	// The manager has already logged the specific fault (and every path it took)
@@ -88,7 +88,7 @@ func (s *Server) handleKiroRescan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	slog.Warn("kiro-cli rescan found no usable version", "reason", reason, "error", err)
-	httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+	webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 		Status: "unready",
 		Reason: reason,
 	})
@@ -131,7 +131,7 @@ func loopbackOnly(surface string, next http.Handler) http.Handler {
 		// writer.
 		slog.Warn("loopback-only endpoint refused: not a loopback caller",
 			"surface", surface, "remote", r.RemoteAddr, "host", r.Host)
-		httpreply.WriteJSONStatus(w, http.StatusForbidden,
+		webhttp.WriteJSONStatus(w, http.StatusForbidden,
 			httpreply.ErrorJSON(surface+" is loopback-only; call it from inside the container"))
 	})
 	return webhttp.LoopbackOnly(refuse)(next)

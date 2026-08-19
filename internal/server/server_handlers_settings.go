@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/vibekit/internal/logctl"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/webhttp"
 )
 
 func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
@@ -33,14 +34,14 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 func handleSteeringGet(w http.ResponseWriter, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		httpreply.WriteJSON(w, map[string]string{"content": ""})
+		webhttp.WriteJSON(w, map[string]string{"content": ""})
 		return
 	}
-	httpreply.WriteJSON(w, map[string]string{"content": string(data)})
+	webhttp.WriteJSON(w, map[string]string{"content": string(data)})
 }
 
 func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var body struct {
 		Content string `json:"content"`
 	}
@@ -56,7 +57,7 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 			httpreply.InternalError(w, err)
 			return
 		}
-		httpreply.Ok(w)
+		webhttp.Ok(w)
 		return
 	}
 	if r.Context().Err() != nil {
@@ -81,7 +82,7 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 		slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +100,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 func handleSettingsGet(w http.ResponseWriter, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		httpreply.WriteJSON(w, settings.Default())
+		webhttp.WriteJSON(w, settings.Default())
 		return
 	}
 	w.Header().Set("Content-Type", httpreply.MIMETypeJSON)
@@ -134,7 +135,7 @@ func readExistingSettings(path string) map[string]json.RawMessage {
 }
 
 func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, path string) {
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	var patch map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		httpreply.BadRequest(w, "invalid json")
@@ -199,7 +200,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 		slog.Warn("settings: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 	s.hub.Broadcast(r.Context(), api.NewEvent(api.EventSettingsUpdated, "", api.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(patch)
 	s.syncDebugLogs(patch)

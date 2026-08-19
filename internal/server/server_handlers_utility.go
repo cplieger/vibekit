@@ -6,6 +6,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // handleUtilityExplainError explains a tool error in plain language.
@@ -14,7 +15,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if s.utilityPrompt == nil {
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(api.ErrMsgUtilityUnavailable))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(api.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -35,10 +36,10 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 	prompt += "Error: " + body.Error
 	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt, api.EffortLow)
 	if err != nil {
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
 		return
 	}
-	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
 }
 
 // handleUtilityResolveConflict proposes a merged version of a 3-way
@@ -48,7 +49,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.utilityPrompt == nil {
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(api.ErrMsgUtilityUnavailable))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(api.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -92,8 +93,8 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 	// utility task; a low-effort merge tends to just pick one side.
 	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String(), api.EffortMedium)
 	if err != nil {
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
 		return
 	}
-	httpreply.WriteJSON(w, map[string]string{jsonKeyOutput: api.StripCodeFence(strings.TrimSpace(result))})
+	webhttp.WriteJSON(w, map[string]string{jsonKeyOutput: api.StripCodeFence(strings.TrimSpace(result))})
 }

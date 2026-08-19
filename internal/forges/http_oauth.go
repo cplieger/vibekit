@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Request) {
@@ -17,7 +18,7 @@ func (h *HTTPHandler) handleGitHubDeviceStart(w http.ResponseWriter, r *http.Req
 		httpreply.ServerError(w, "device flow failed", err)
 		return
 	}
-	httpreply.WriteJSON(w, resp)
+	webhttp.WriteJSON(w, resp)
 }
 
 func (h *HTTPHandler) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +29,7 @@ func (h *HTTPHandler) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Requ
 	var body struct {
 		DeviceCode string `json:"device_code"`
 	}
-	httpreply.LimitBody(w, r, httpreply.MaxJSONBody)
+	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		httpreply.BadRequest(w, "invalid json")
 		return
@@ -43,5 +44,5 @@ func (h *HTTPHandler) handleGitHubDevicePoll(w http.ResponseWriter, r *http.Requ
 		_ = h.manager.Refresh(r.Context())
 		h.notifyChanged(r.Context())
 	}
-	httpreply.WriteJSON(w, res)
+	webhttp.WriteJSON(w, res)
 }

@@ -54,6 +54,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/workflow"
+	"github.com/cplieger/webhttp"
 )
 
 // rawInspectRun issues `_kiro/workflow/inspect` for one run and TYPES its failure
@@ -106,7 +107,7 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, workflow.ErrUnknownMethod) {
 			slog.Warn("workflow inspect: engine not available on this kiro-cli",
 				"workflow_id", id, "detail", api.RPCDetails(err))
-			httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
 			return
 		}
@@ -161,7 +162,7 @@ func (h *Hub) handleRecipes(w http.ResponseWriter, r *http.Request) {
 		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
-	httpreply.WriteJSON(w, api.RecipesResponse{Recipes: recipes})
+	webhttp.WriteJSON(w, api.RecipesResponse{Recipes: recipes})
 }
 
 // handleRunLaunch: POST /api/runs → launch one PARENTLESS run and answer with
@@ -190,7 +191,7 @@ func (h *Hub) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, api.RPCErrorText(err))
 		return
 	}
-	httpreply.WriteJSON(w, api.RunLaunchedResponse{WorkflowID: id, Name: name})
+	webhttp.WriteJSON(w, api.RunLaunchedResponse{WorkflowID: id, Name: name})
 }
 
 // handleRunCancel: POST /api/runs/{id}/cancel → ask the run to stop. The
@@ -258,7 +259,7 @@ func (h *Hub) handleRunStepStatus(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }
 
 // runVerb describes one run-control verb: how to issue it, and which run
@@ -372,5 +373,5 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 		httpreply.InternalError(w, errors.New(verb.name+" failed"))
 		return
 	}
-	httpreply.Ok(w)
+	webhttp.Ok(w)
 }

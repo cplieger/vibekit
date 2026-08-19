@@ -479,7 +479,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	// header, so every app in the fleet answers this the same way.
 	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
-		httpreply.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 			Status: "unready",
 			Reason: reason,
 		})
@@ -502,5 +502,5 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		unready(reasonSignIn)
 		return
 	}
-	httpreply.WriteJSON(w, healthBody{Status: "ok"})
+	webhttp.WriteJSON(w, healthBody{Status: "ok"})
 }

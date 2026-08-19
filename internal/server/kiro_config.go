@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/webhttp"
 )
 
 // Per-.kiro-directory scan caps, consistent with the environment.md
@@ -46,7 +47,7 @@ func (s *Server) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	if items == nil {
 		items = []kiroConfigItem{}
 	}
-	httpreply.WriteJSON(w, map[string]any{"items": items})
+	webhttp.WriteJSON(w, map[string]any{"items": items})
 }
 
 func (s *Server) collectKiroConfig(ctx context.Context) []kiroConfigItem {

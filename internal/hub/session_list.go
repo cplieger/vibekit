@@ -44,6 +44,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/webhttp"
 )
 
 // sessionListTimeout bounds the round-trip. The first call may lazily start
@@ -110,7 +111,7 @@ func (h *Hub) handleSessionList(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("workflow run list failed", "error", rErr)
 		runs = []api.WorkflowRun{}
 	}
-	httpreply.WriteJSON(w, map[string]any{"sessions": rows, "runs": runs})
+	webhttp.WriteJSON(w, map[string]any{"sessions": rows, "runs": runs})
 }
 
 // resumableSessions fetches and filters the workspace's stored sessions.
