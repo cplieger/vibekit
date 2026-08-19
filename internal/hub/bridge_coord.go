@@ -26,7 +26,7 @@ type BridgeCoordinator struct {
 	chatStore      api.ChatStore
 	broadcast      func(ctx context.Context, e api.ServerEvent)
 	translateEvent func(chatID api.ChatID, msg *api.RPCResponse)
-	push           api.PushService
+	push           pushNotifier
 	mcpRegistry    *mcpRegistry
 	lifecycle      *lifecyclePlane
 	preBridgeSpawn func(context.Context)

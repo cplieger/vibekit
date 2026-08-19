@@ -120,9 +120,12 @@ type PRSource interface {
 	OpenAuthoredPRs(ctx context.Context) ([]WatchedPR, error)
 }
 
-// PRNotifier is the slice of the push service the poller uses. The signature
-// matches api.PushService.Send exactly, so *push.Service satisfies this directly
-// and there is no adapter to keep in step.
+// PRNotifier is the slice of the push service the poller uses: 2 of the 8
+// methods *push.Service offers. The signatures match the concrete methods
+// exactly, so it satisfies this directly and there is no adapter to keep in
+// step. Identical in shape to internal/hub's pushNotifier, and deliberately a
+// separate declaration — two consumers restating two methods each is cheaper
+// than one contract every package imports.
 type PRNotifier interface {
 	HasSubscribers() bool
 	Send(ctx context.Context, title, body string, kind api.PushKind, subject api.PushSubject)

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -44,16 +43,12 @@ type testPush struct {
 	prefs map[api.PushKind]bool
 }
 
-var _ api.PushService = (*testPush)(nil)
+var _ pushService = (*testPush)(nil)
 
-func (p *testPush) RegisterRoutes(*http.ServeMux)                                       {}
-func (p *testPush) Subscribe(api.PushSubscription)                                      {}
-func (p *testPush) Unsubscribe(string)                                                  {}
-func (p *testPush) Send(context.Context, string, string, api.PushKind, api.PushSubject) {}
-func (p *testPush) HasSubscribers() bool                                                { return false }
-func (p *testPush) SetPreferences(prefs map[api.PushKind]bool)                          { p.prefs = prefs }
-func (p *testPush) ReloadPreferences(context.Context)                                   {}
-func (p *testPush) Close()                                                              {}
+// Two methods, because pushService is two methods. This fake used to carry
+// eight, six of which this package can never call.
+func (p *testPush) RegisterRoutes(*http.ServeMux)              {}
+func (p *testPush) SetPreferences(prefs map[api.PushKind]bool) { p.prefs = prefs }
 
 func TestSafeKiroSetting(t *testing.T) {
 	tests := []struct {

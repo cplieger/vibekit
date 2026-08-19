@@ -19,9 +19,6 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// Compile-time interface assertion.
-var _ api.PushService = (*Service)(nil)
-
 // DefaultTitle is the notification title used for all Web Push messages.
 const DefaultTitle = "Vibekit"
 

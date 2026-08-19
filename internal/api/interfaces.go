@@ -186,24 +186,13 @@ type RouteHandler interface {
 	RegisterRoutes(mux *http.ServeMux)
 }
 
-// PushService manages Web Push subscriptions and sends notifications.
-type PushService interface {
-	RouteHandler
-	Subscribe(sub PushSubscription)
-	Unsubscribe(endpoint string)
-	Send(ctx context.Context, title, body string, notifyType PushKind, subject PushSubject)
-	HasSubscribers() bool
-	SetPreferences(prefs map[PushKind]bool)
-	// ReloadPreferences re-reads notification toggles from disk,
-	// deduplicating concurrent calls via singleflight. Called on SSE
-	// reconnect so externally-edited config.json changes take effect
-	// without a container restart.
-	ReloadPreferences(ctx context.Context)
-	// Close cancels any in-flight pushes via context so the hub's
-	// shutdown path doesn't block on the 10s HTTP client timeout
-	// per pending subscriber.
-	Close()
-}
+// There is no PushService interface here. Its consumers declare what they use:
+// internal/hub 4 of the 8 methods (send, ask, reload, close), internal/server 2
+// (mount the routes, write the toggles), internal/forges 2 (its PRNotifier).
+//
+// Subscribe and Unsubscribe were members no consumer ever reached through an
+// interface — *push.Service's own HTTP handlers call them on itself — so they
+// are simply methods on the concrete type now.
 
 // --- AI Utilities ---
 

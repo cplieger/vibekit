@@ -51,6 +51,20 @@ type chatHub interface {
 	Shutdown()
 }
 
+// pushService is the push surface this package serves: mount the subscription
+// endpoints, and write the notification toggles a PATCH /api/settings changed.
+// *push.Service satisfies it.
+//
+// 2 of the 8 methods the push service offers. Sending is not among them — that
+// is the hub's and the PR poller's — and neither is Subscribe/Unsubscribe, which
+// the service's own handlers call on themselves.
+type pushService interface {
+	routeHandler
+
+	// SetPreferences replaces the per-kind notification toggles.
+	SetPreferences(prefs map[api.PushKind]bool)
+}
+
 // SteeringGenerator generates steering files for kiro-cli.
 // *steering.Generator satisfies it.
 //

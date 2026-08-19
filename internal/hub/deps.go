@@ -46,6 +46,39 @@ type mcpNameSets interface {
 	AllNames(ctx context.Context) map[string]struct{}
 }
 
+// pushNotifier is the notification SEND half: ask whether anyone is listening,
+// then send. *push.Service satisfies it.
+//
+// 2 of the 8 methods the push service offers, and what the bridge coordinator
+// holds — the only thing it does with push is announce a finished turn. It
+// cannot subscribe a device, rewrite the user's preferences or close the
+// service, which is exactly right for a per-chat lifecycle path.
+type pushNotifier interface {
+	// HasSubscribers reports whether any device is registered.
+	HasSubscribers() bool
+	// Send delivers one notification to every subscriber.
+	Send(ctx context.Context, title, body string, notifyType api.PushKind, subject api.PushSubject)
+}
+
+// pushService is the hub's whole view of push: the send half plus the two
+// lifecycle calls the hub owns.
+//
+// 4 of 8. Subscribe and Unsubscribe are absent because nothing ever reached them
+// through an interface — they are called on the concrete *push.Service by its own
+// HTTP handlers — and SetPreferences belongs to the settings endpoint in
+// internal/server, not here.
+type pushService interface {
+	pushNotifier
+
+	// ReloadPreferences re-reads notification toggles from disk, deduplicating
+	// concurrent calls via singleflight. Called on SSE reconnect so an
+	// externally-edited config.json takes effect without a container restart.
+	ReloadPreferences(ctx context.Context)
+	// Close cancels any in-flight pushes via context so the hub's shutdown
+	// path doesn't block on the 10s HTTP client timeout per pending subscriber.
+	Close()
+}
+
 // The ACP-bridge interfaces below are one contract seen at seven different
 // widths, because the hub asks for wildly different things at different sites.
 // *bridge.Bridge satisfies the widest; every narrower one is a statement about

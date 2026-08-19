@@ -117,7 +117,7 @@ type Hub struct {
 	perm      *permPlane
 	coord     *BridgeCoordinator
 
-	push               api.PushService
+	push               pushService
 	chatStore          api.ChatStore
 	mcpConfig          mcpNameSets
 	mcpRegistry        *mcpRegistry
@@ -224,7 +224,7 @@ func WithRunLeases(st *runlease.Store) Option {
 }
 
 // WithPush wires the push notification service at construction time.
-func WithPush(p api.PushService) Option {
+func WithPush(p pushService) Option {
 	return func(h *Hub) { h.push = p }
 }
 

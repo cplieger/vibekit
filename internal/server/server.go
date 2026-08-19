@@ -31,7 +31,7 @@ type Server struct {
 	gitAI         api.RouteHandler
 	files         api.RouteHandler
 	auth          api.RouteHandler
-	push          api.PushService
+	push          pushService
 	mcpStatus     api.RouteHandler
 	utilityPrompt utilityPrompter
 	accountUsage  AccountUsageProvider
@@ -110,7 +110,7 @@ func WithFiles(f api.RouteHandler) Option { return func(s *Server) { s.files = f
 func WithAuth(a api.RouteHandler) Option { return func(s *Server) { s.auth = a } }
 
 // WithPush sets the push service used for Web Push notification delivery.
-func WithPush(p api.PushService) Option { return func(s *Server) { s.push = p } }
+func WithPush(p pushService) Option { return func(s *Server) { s.push = p } }
 
 // WithMCPConfig sets the route handler for MCP server configuration endpoints.
 func WithMCPConfig(r api.RouteHandler) Option { return func(s *Server) { s.mcpConfig = r } }
