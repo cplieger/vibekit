@@ -70,6 +70,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cplieger/atomicfile/v2"
@@ -195,8 +196,17 @@ func (s *Store) load() error {
 // moveCorruptAside renames an unparseable store out of the way so the next
 // write starts clean. Best-effort: a failed rename is logged and the caller
 // proceeds with an empty map, which the next persist overwrites anyway.
+//
+// The quarantine name carries a UTC timestamp and the PID, matching
+// internal/mcp's store, because a FIXED name makes the second corruption
+// destroy the first forensic copy — and the first is the evidence worth
+// keeping, since this file holds OAuth client secrets, refresh tokens and PKCE
+// verifiers. Two boots in the same second are what the PID separates.
 func (s *Store) moveCorruptAside(cause error) {
-	corrupt := s.path + ".corrupt"
+	corrupt := fmt.Sprintf("%s.corrupt.%s.%d",
+		s.path,
+		time.Now().UTC().Format("20060102-150405"),
+		os.Getpid())
 	if rErr := os.Rename(s.path, corrupt); rErr != nil {
 		slog.Error("secretstore: preserve corrupt store failed",
 			"path", s.path, "error", rErr, "parse_error", cause)
