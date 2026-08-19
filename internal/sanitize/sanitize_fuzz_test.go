@@ -88,25 +88,25 @@ func BenchmarkSanitizeOutput(b *testing.B) {
 
 	b.Run("clean_short", func(b *testing.B) {
 		b.ReportAllocs()
-		for range b.N {
+		for b.Loop() {
 			Output(cleanShort)
 		}
 	})
 	b.Run("ansi_heavy", func(b *testing.B) {
 		b.ReportAllocs()
-		for range b.N {
+		for b.Loop() {
 			Output(ansiHeavy)
 		}
 	})
 	b.Run("unicode_heavy", func(b *testing.B) {
 		b.ReportAllocs()
-		for range b.N {
+		for b.Loop() {
 			Output(unicodeHeavy)
 		}
 	})
 	b.Run("mixed_large", func(b *testing.B) {
 		b.ReportAllocs()
-		for range b.N {
+		for b.Loop() {
 			Output(mixedLarge)
 		}
 	})

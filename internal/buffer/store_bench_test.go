@@ -63,7 +63,7 @@ func BenchmarkBufferTrackFileChanges(b *testing.B) {
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				buf := &Buffer{ToolStartTimes: make(map[string]int64)}
 				buf.TrackFileChanges(diffs, false)
 			}
@@ -82,8 +82,10 @@ func BenchmarkLineTrackerEviction(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
+	i := 0
+	for b.Loop() {
 		// Each Record triggers eviction since we're at capacity with a new file.
 		lt.Record(chatID, fmt.Sprintf("new-file-%d.go", i), LineRange{StartLine: 1, EndLine: 10, Turn: maxFilesPerChat + i, Kind: "edit"})
+		i++
 	}
 }

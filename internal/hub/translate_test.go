@@ -304,7 +304,7 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 			}
 			b.ResetTimer()
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				h.translateACPEvent("bench", p.msg)
 			}
 		})

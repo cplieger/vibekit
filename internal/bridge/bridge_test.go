@@ -612,7 +612,7 @@ func BenchmarkBridgeReadLoop(b *testing.B) {
 	notifLine := append(notifMsg, '\n')
 
 	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		b.StopTimer()
 
 		pr, pw, _ := os.Pipe()
@@ -1078,7 +1078,7 @@ func BenchmarkBridgeRespond(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for range b.N {
+	for b.Loop() {
 		if err := br.Respond(ctx, 42, result, nil); err != nil {
 			b.Fatalf("Respond: %v", err)
 		}

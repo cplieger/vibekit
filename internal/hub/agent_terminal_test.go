@@ -129,7 +129,7 @@ func BenchmarkByteRing_Write(b *testing.B) {
 				b.ReportAllocs()
 				b.SetBytes(int64(ws))
 				b.ResetTimer()
-				for range b.N {
+				for b.Loop() {
 					r.Write(data)
 				}
 			})

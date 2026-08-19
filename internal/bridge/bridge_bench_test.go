@@ -25,7 +25,7 @@ func BenchmarkReadLoop_Notifications(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		fr := newFrameReader(bufio.NewReaderSize(strings.NewReader(lineStr+"\n"), stdoutBufSize))
 		for {
 			line, _, rerr := fr.readFrame()
@@ -73,7 +73,7 @@ func BenchmarkReadLoop_Responses(b *testing.B) {
 
 			b.ResetTimer()
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				fr := newFrameReader(bufio.NewReaderSize(strings.NewReader(data), stdoutBufSize))
 				for {
 					line, _, rerr := fr.readFrame()

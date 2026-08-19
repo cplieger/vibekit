@@ -427,7 +427,7 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 				h.mcpRegistry.recordConnected(b.Context(), fmt.Sprintf("server-%02d", i), nil, nil, nil)
 			}
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				_ = h.mcpRegistry.Snapshot()
 			}
 		})

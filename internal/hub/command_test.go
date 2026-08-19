@@ -916,13 +916,15 @@ func BenchmarkHandleCommand(b *testing.B) {
 			body, _ := json.Marshal(cmd)
 			b.ResetTimer()
 			b.ReportAllocs()
-			for i := range b.N {
+			i := 0
+			for b.Loop() {
 				// Unique request_id per iteration to avoid cache hits.
 				unique := fmt.Appendf(body[:0:0], `{"type":%q,"request_id":"r-%d","chat_id":%q,"payload":%s}`,
 					cmd.Type, i, cmd.ChatID, cmd.Payload)
 				req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(string(unique)))
 				rec := httptest.NewRecorder()
 				h.handleCommand(rec, req)
+				i++
 			}
 		})
 	}
@@ -942,7 +944,7 @@ func BenchmarkHandleCommand(b *testing.B) {
 
 		b.ResetTimer()
 		b.ReportAllocs()
-		for range b.N {
+		for b.Loop() {
 			req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(string(body)))
 			rec := httptest.NewRecorder()
 			h.handleCommand(rec, req)

@@ -190,7 +190,7 @@ func BenchmarkSecurityMiddleware(b *testing.B) {
 		rec := httptest.NewRecorder()
 		b.ReportAllocs()
 		b.ResetTimer()
-		for range b.N {
+		for b.Loop() {
 			rec.Body.Reset()
 			h.ServeHTTP(rec, req)
 		}
@@ -202,7 +202,7 @@ func BenchmarkSecurityMiddleware(b *testing.B) {
 		rec := httptest.NewRecorder()
 		b.ReportAllocs()
 		b.ResetTimer()
-		for range b.N {
+		for b.Loop() {
 			rec.Body.Reset()
 			h.ServeHTTP(rec, req)
 		}

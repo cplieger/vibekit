@@ -43,7 +43,7 @@ func BenchmarkCountLineDelta_RepresentativePayloads(b *testing.B) {
 		to := makeModified(from, tc.changed)
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				countLineDelta(b.Context(), from, to)
 			}
 		})
@@ -232,7 +232,7 @@ func BenchmarkCountLineDelta(b *testing.B) {
 		from, to := generate(size)
 		b.Run(fmt.Sprintf("%d_lines", size), func(b *testing.B) {
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				countLineDelta(b.Context(), from, to)
 			}
 		})
@@ -244,7 +244,7 @@ func BenchmarkCountLineDelta(b *testing.B) {
 	from, to := generate(capSize)
 	b.Run("near_cap_fallback", func(b *testing.B) {
 		b.ReportAllocs()
-		for range b.N {
+		for b.Loop() {
 			countLineDelta(b.Context(), from, to)
 		}
 	})

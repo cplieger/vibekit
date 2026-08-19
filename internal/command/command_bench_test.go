@@ -175,7 +175,8 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 
 	b.Run("cache_miss", func(b *testing.B) {
 		b.ReportAllocs()
-		for i := range b.N {
+		i := 0
+		for b.Loop() {
 			// Use unique request IDs to avoid dedup cache hits.
 			reqBody, _ := json.Marshal(vibekit.ClientCommand{
 				Type:      "create_chat",
@@ -185,6 +186,7 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 			req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(reqBody))
 			w := httptest.NewRecorder()
 			d.ServeHTTP(w, req)
+			i++
 		}
 	})
 
@@ -196,7 +198,7 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 
 		b.ReportAllocs()
 		b.ResetTimer()
-		for range b.N {
+		for b.Loop() {
 			req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(body))
 			w := httptest.NewRecorder()
 			d.ServeHTTP(w, req)
@@ -210,7 +212,7 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 			ChatID:    "chat-bench-1",
 		})
 		b.ReportAllocs()
-		for range b.N {
+		for b.Loop() {
 			req := httptest.NewRequest(http.MethodPost, "/api/command", bytes.NewReader(unknownBody))
 			w := httptest.NewRecorder()
 			d.ServeHTTP(w, req)

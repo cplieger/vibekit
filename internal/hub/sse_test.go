@@ -240,7 +240,7 @@ func BenchmarkEmit(b *testing.B) {
 	evt := vibekit.ServerEvent{Type: "chat_updated", ChatID: "bench"}
 	b.ResetTimer()
 	b.ReportAllocs()
-	for range b.N {
+	for b.Loop() {
 		h.emit(evt)
 	}
 }

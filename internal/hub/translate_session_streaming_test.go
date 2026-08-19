@@ -38,7 +38,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 			})
 			b.ResetTimer()
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				h.translator.HandleAssistantChunk(b.Context(), "bench", tc.raw, tc.isReasoning)
 			}
 		})

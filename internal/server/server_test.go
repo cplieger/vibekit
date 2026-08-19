@@ -441,7 +441,7 @@ func BenchmarkScanKiroDirFS(b *testing.B) {
 			m := makeDocs(count)
 			ctx := b.Context()
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				_ = scanKiroDirFS(ctx, m, "test/.kiro")
 			}
 		})

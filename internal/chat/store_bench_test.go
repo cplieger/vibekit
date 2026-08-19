@@ -43,10 +43,12 @@ func BenchmarkStore_AppendMessage(b *testing.B) {
 
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := range b.N {
+	i := 0
+	for b.Loop() {
 		msg.ID = fmt.Sprintf("bench-%d", i)
 		if err := s.AppendMessage(ctx, chatID, msg); err != nil {
 			b.Fatalf("AppendMessage: %v", err)
 		}
+		i++
 	}
 }

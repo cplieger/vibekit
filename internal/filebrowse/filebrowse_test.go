@@ -1912,7 +1912,7 @@ func BenchmarkResolvePath(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				h.resolvePath(tc.path)
 			}
 		})
@@ -2101,7 +2101,7 @@ func BenchmarkFileAction_Copy(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 
-			for range b.N {
+			for b.Loop() {
 				req := httptest.NewRequest(http.MethodPost, "/api/files/action", strings.NewReader(body))
 				req.Header.Set("Content-Type", "application/json")
 				rec := httptest.NewRecorder()

@@ -131,7 +131,7 @@ func BenchmarkUtilityBridge_DrainResponse(b *testing.B) {
 
 			b.ReportAllocs()
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				// Feed the drain through a pre-filled, closed chunk channel:
 				// the drain consumes all n chunks and returns on the close,
 				// measuring the actual collection loop.

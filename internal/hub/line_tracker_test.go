@@ -106,8 +106,10 @@ func BenchmarkLineTrackerRecord(b *testing.B) {
 			}
 			b.ResetTimer()
 			b.ReportAllocs()
-			for i := range b.N {
+			i := 0
+			for b.Loop() {
 				lt.Record("c1", "main.go", buffer.LineRange{StartLine: i*10 + 5000, EndLine: i*10 + 5005, Turn: i, Kind: "edit"})
+				i++
 			}
 		})
 	}
@@ -126,7 +128,7 @@ func BenchmarkLineTrackerRecordFromDiffs(b *testing.B) {
 			}
 			b.ResetTimer()
 			b.ReportAllocs()
-			for range b.N {
+			for b.Loop() {
 				lt.RecordFromDiffs("c1", diffs, 1, "edit")
 			}
 		})
