@@ -15,7 +15,6 @@ import (
 	"github.com/cplieger/pinstall/v2"
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/toolbelt/v2/httpapi"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
@@ -24,21 +23,21 @@ const port = "9847"
 
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
-	forges        api.RouteHandler
-	mcpConfig     api.RouteHandler
+	forges        routeHandler
+	mcpConfig     routeHandler
 	chats         routeHandler
-	git           api.RouteHandler
-	gitAI         api.RouteHandler
-	files         api.RouteHandler
-	auth          api.RouteHandler
+	git           routeHandler
+	gitAI         routeHandler
+	files         routeHandler
+	auth          routeHandler
 	push          pushService
-	mcpStatus     api.RouteHandler
+	mcpStatus     routeHandler
 	utilityPrompt utilityPrompter
 	accountUsage  AccountUsageProvider
 	policy        policyProvider
 	hub           chatHub
 	steering      SteeringGenerator
-	mcpRegistry   api.RouteHandler
+	mcpRegistry   routeHandler
 	staticFS      fs.FS
 	// kiroDocs memoizes the document-oriented .kiro inventory behind a
 	// directory-mtime signature (kiro_docs.go). A pointer so the zero Server
@@ -104,31 +103,31 @@ func WithHub(h chatHub) Option { return func(s *Server) { s.hub = h } }
 func WithChats(c routeHandler) Option { return func(s *Server) { s.chats = c } }
 
 // WithGit sets the git handler for non-AI git HTTP endpoints.
-func WithGit(g api.RouteHandler) Option { return func(s *Server) { s.git = g } }
+func WithGit(g routeHandler) Option { return func(s *Server) { s.git = g } }
 
 // WithGitAI sets the route handler for AI-assisted git operations.
-func WithGitAI(r api.RouteHandler) Option { return func(s *Server) { s.gitAI = r } }
+func WithGitAI(r routeHandler) Option { return func(s *Server) { s.gitAI = r } }
 
 // WithFiles sets the file handler for workspace file read/write endpoints.
-func WithFiles(f api.RouteHandler) Option { return func(s *Server) { s.files = f } }
+func WithFiles(f routeHandler) Option { return func(s *Server) { s.files = f } }
 
 // WithAuth sets the auth handler for login, logout, and whoami endpoints.
-func WithAuth(a api.RouteHandler) Option { return func(s *Server) { s.auth = a } }
+func WithAuth(a routeHandler) Option { return func(s *Server) { s.auth = a } }
 
 // WithPush sets the push service used for Web Push notification delivery.
 func WithPush(p pushService) Option { return func(s *Server) { s.push = p } }
 
 // WithMCPConfig sets the route handler for MCP server configuration endpoints.
-func WithMCPConfig(r api.RouteHandler) Option { return func(s *Server) { s.mcpConfig = r } }
+func WithMCPConfig(r routeHandler) Option { return func(s *Server) { s.mcpConfig = r } }
 
 // WithMCPStatus sets the route handler for the MCP runtime status endpoint.
-func WithMCPStatus(r api.RouteHandler) Option { return func(s *Server) { s.mcpStatus = r } }
+func WithMCPStatus(r routeHandler) Option { return func(s *Server) { s.mcpStatus = r } }
 
 // WithMCPRegistry sets the route handler for the MCP registry proxy endpoint.
-func WithMCPRegistry(r api.RouteHandler) Option { return func(s *Server) { s.mcpRegistry = r } }
+func WithMCPRegistry(r routeHandler) Option { return func(s *Server) { s.mcpRegistry = r } }
 
 // WithForges sets the route handler for forge (GitHub/GitLab/Gitea) HTTP endpoints.
-func WithForges(r api.RouteHandler) Option { return func(s *Server) { s.forges = r } }
+func WithForges(r routeHandler) Option { return func(s *Server) { s.forges = r } }
 
 // WithTools sets the tools engine backing the /api/tools surface.
 func WithTools(e *toolbelt.Engine) Option { return func(s *Server) { s.tools = e } }

@@ -13,27 +13,19 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/toolbelt/v2"
-	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/composition"
-	"github.com/cplieger/vibekit/internal/filebrowse"
 	"github.com/cplieger/vibekit/internal/forges"
-	"github.com/cplieger/vibekit/internal/git"
-	"github.com/cplieger/vibekit/internal/mcp"
 	"github.com/cplieger/vibekit/internal/server"
-	"github.com/cplieger/vibekit/internal/steering"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
-// Compile-time interface satisfaction checks.
-var (
-	_ server.SteeringGenerator = (*steering.Generator)(nil)
-	_ api.RouteHandler         = (*git.Handler)(nil)
-	_ api.RouteHandler         = (*filebrowse.Handler)(nil)
-	_ api.RouteHandler         = (*auth.Handler)(nil)
-	_ api.RouteHandler         = (*mcp.Store)(nil)
-	_ api.RouteHandler         = (*mcp.RegistryProxy)(nil)
-)
+// There are no compile-time interface assertions here any more. Every one this
+// file carried named a type the composition root already passes to the option
+// that consumes it — server.WithGit, WithFiles, WithAuth, WithMCPConfig,
+// WithMCPRegistry, WithSteering — so the compiler checked each satisfaction at
+// the call site whether or not it was also written down. An assertion is worth
+// keeping only where nothing in the build already forces the check, and after
+// this refactor there is no such place left in main.
 
 // requiredToolsList is the same required-tools.txt the image build
 // verifies the baked catalog against, embedded so the RUNTIME catalog

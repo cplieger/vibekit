@@ -102,7 +102,6 @@ func (h *HTTPHandler) notifyChanged(ctx context.Context) {
 }
 
 // Compile-time interface assertion.
-var _ api.RouteHandler = (*HTTPHandler)(nil)
 
 // RegisterRoutes installs the /api/forges/* mux entries.
 func (h *HTTPHandler) RegisterRoutes(mux *http.ServeMux) {

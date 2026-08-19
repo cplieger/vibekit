@@ -34,14 +34,12 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 	"golang.org/x/sync/singleflight"
 )
 
 // Compile-time interface assertion.
-var _ api.RouteHandler = (*RegistryProxy)(nil)
 
 const (
 	registryBaseURL  = "https://registry.modelcontextprotocol.io/v0.1"

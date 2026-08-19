@@ -10,13 +10,11 @@ import (
 	"strings"
 
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"golang.org/x/sync/singleflight"
 )
 
 // Compile-time interface assertion.
-var _ api.RouteHandler = (*Handler)(nil)
 
 // Option configures a Handler at construction time.
 type Option func(*Handler)

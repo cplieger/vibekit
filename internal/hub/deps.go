@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
 )
@@ -44,6 +45,19 @@ type mcpNameSets interface {
 	// Best-effort: a hand-edit can make that file unparseable, so a name this
 	// set misses is reported OriginUnknown rather than dropped.
 	AllNames(ctx context.Context) map[string]struct{}
+}
+
+// RouteRegistrar is a component that mounts its own routes under a sub-tree of
+// /api/*. It is the hub's OUTPUT type, not a dependency: MCPRegistry hands the
+// runtime MCP registry out as one so the composition root can pass it to the
+// server without the registry's concrete type leaving this package.
+//
+// 1 method, which is the whole of it. internal/server declares an identical
+// unexported routeHandler for the eight components it mounts; the two are
+// separate declarations because neither package should name the other's.
+// Exported here only because it is an exported method's return type.
+type RouteRegistrar interface {
+	RegisterRoutes(mux *http.ServeMux)
 }
 
 // bridgeChatRecords is the chat store as the BRIDGE LIFECYCLE uses it: read a

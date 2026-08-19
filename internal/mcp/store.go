@@ -41,11 +41,6 @@ import (
 	"github.com/cplieger/vibekit/internal/filemode"
 )
 
-// Compile-time interface assertion. The name-census methods need none: hub's
-// server.WithMCPConfig / hub.WithMCPConfig call sites in the composition root
-// force that check.
-var _ api.RouteHandler = (*Store)(nil)
-
 // Transport names the MCP transports vibekit accepts in mcp.json.
 // "stdio" is universal; "http" is the Streamable HTTP transport
 // (2025-03-26 MCP spec); "sse" is the legacy HTTP+SSE remote transport.

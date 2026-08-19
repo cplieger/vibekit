@@ -1,25 +1,6 @@
-// Package api defines the internal contracts between vibekit
-// components. All cross-component calls go through these interfaces,
-// enabling testability (mock any component) and swappability.
-//
-// The package holds the contract surface: the interfaces (interfaces.go) and
-// the wire and domain types (domain_chat.go, events.go, commands.go,
-// domain_rpc.go, mcp.go, push_types.go, methods.go, strings.go). The types
-// are what keep the dependency graph acyclic, and cmd/wire-codegen walks them
-// through internal/wirespec to generate the TypeScript client's decoders.
-//
-// HTTP request and response plumbing is NOT here: WriteJSON, BadRequest,
-// MethodNotAllowed, DecodeJSON and the rest live in internal/httpreply, which
-// imports nothing from this package. Atomic file I/O (SaveBytes, bounded
-// reads) lives in the external cplieger/atomicfile package.
-//
-// Implementation packages import api, never the reverse.
 package api
 
-import (
-	"context"
-	"net/http"
-)
+import "context"
 
 // --- Persistence ---
 
@@ -145,13 +126,15 @@ type StartOpts struct {
 
 // --- HTTP ---
 
-// RouteHandler is the minimal contract for any component that wires its
-// own routes under a sub-tree of /api/*. Used by the MCP config store,
-// the MCP runtime registry, and anything else that owns its own mux
-// subset.
-type RouteHandler interface {
-	RegisterRoutes(mux *http.ServeMux)
-}
+// There is no RouteHandler interface here, and it is the one whose measurement
+// is worth keeping. Eight packages referenced it, but only ONE consumed it:
+// internal/server, the router, which calls RegisterRoutes on the eight
+// components it mounts. Five packages merely IMPLEMENTED it (auth, filebrowse,
+// forges, git, mcp's Store and RegistryProxy) and an implementor is not a
+// consumer — each of their var _ assertions was a claim the composition root
+// already forced. So it is declared once, at the router, as an unexported
+// routeHandler. internal/hub declares an exported RouteRegistrar for the one
+// value it hands OUT.
 
 // There is no PushService interface here. Its consumers declare what they use:
 // internal/hub 4 of the 8 methods (send, ask, reload, close), internal/server 2

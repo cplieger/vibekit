@@ -31,7 +31,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
@@ -69,12 +68,10 @@ const (
 	defaultUploadDir = "/workspace/uploads"
 )
 
-// Handler implements api.RouteHandler, serving /api/file/* and /api/files/*.
+// Handler serves /api/file/* and /api/files/*.
 type Handler struct {
 	mounts []mount // sorted longest-dir-first (see openMounts)
 }
-
-var _ api.RouteHandler = (*Handler)(nil)
 
 // New creates a file handler whose browsable surface is exactly
 // rootDirs. Each granted directory gets its own os.Root, so every file

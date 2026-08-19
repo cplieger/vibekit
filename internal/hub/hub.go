@@ -362,11 +362,11 @@ func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.Effor
 	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
 }
 
-// MCPRegistry returns the in-memory registry of currently-connected MCP
-// servers as an api.RouteHandler (the only surface main.go needs — the
-// registry registers its own HTTP routes). Exposing the concrete type
-// would leak an unexported name from an exported method.
-func (h *Hub) MCPRegistry() api.RouteHandler { return h.mcpRegistry }
+// MCPRegistry returns the in-memory registry of currently-connected MCP servers
+// as a RouteRegistrar — route mounting is the only surface the composition root
+// needs from it, and returning the concrete type would leak an unexported name
+// from an exported method.
+func (h *Hub) MCPRegistry() RouteRegistrar { return h.mcpRegistry }
 
 // MCPSnapshot returns a stable-ordered snapshot of the runtime registry
 // so callers outside hub (e.g. the steering generator) can read it
