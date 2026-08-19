@@ -49,7 +49,7 @@ func TestByteRing_MultiWrap(t *testing.T) {
 func TestKillShell_NoShellIsOK(t *testing.T) {
 	h, _, _ := newTestHub()
 	// Should not panic.
-	h.shellMgr.kill()
+	h.shellMgr.kill(t.Context())
 }
 
 func FuzzByteRing(f *testing.F) {

@@ -363,7 +363,7 @@ func TestSweepSessionsOnce_KeepListCompleteness(t *testing.T) {
 					},
 				))
 			cs.Bus = h
-			t.Cleanup(func() { h.Shutdown() })
+			t.Cleanup(func() { shutdownHub(t, h) })
 
 			h.sweepSessionsOnce()
 
@@ -535,7 +535,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 					},
 				))
 			cs.Bus = h
-			t.Cleanup(func() { h.Shutdown() })
+			t.Cleanup(func() { shutdownHub(t, h) })
 
 			ctx := t.Context()
 			if err := cs.Mutate(ctx, "c-owner", func(c *vibekit.Chat, _ bool) bool {

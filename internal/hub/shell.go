@@ -41,15 +41,15 @@ import (
 const shutdownBudget = 10 * time.Second
 
 // retireHandler shuts a handler down and WAITS, bounded. All three teardown
-// paths go through it — the lazy replacement of a spent handler on connect, the
-// explicit restart, and Hub.Shutdown — because engine v4's Shutdown blocks
-// until the child is reaped and attached clients have been told, so a caller
-// that does not wait leaves a process alive past the moment its panel stopped
-// showing it. The budget is per-call rather than inherited: Hub.Shutdown
-// carries no context, and the other two are user actions with nothing to
-// cancel them.
-func retireHandler(h *terminal.Handler, why string) {
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownBudget)
+// paths go through it — lazy replacement, explicit restart, Hub.Shutdown —
+// because engine v4's Shutdown blocks until the child is reaped, so a caller
+// that does not wait leaves a process alive past its panel.
+//
+// shutdownBudget caps ctx: Shutdown passes the one shutdown grace, while the
+// two user actions have nothing to cancel them and pass Background. A spent
+// ctx still SIGNALS — engine Shutdown closes first and waits second.
+func retireHandler(ctx context.Context, h *terminal.Handler, why string) {
+	ctx, cancel := context.WithTimeout(ctx, shutdownBudget)
 	defer cancel()
 	if err := h.Shutdown(ctx); err != nil {
 		slog.Warn("shell teardown did not finish",
@@ -146,7 +146,7 @@ func (sm *ShellManager) restart() {
 	sm.handler = sm.newHandler()
 	sm.spent = false
 	sm.mu.Unlock()
-	retireHandler(retire, "restart")
+	retireHandler(context.Background(), retire, "restart")
 	slog.Info("shell: restarted")
 }
 
@@ -154,7 +154,7 @@ func (sm *ShellManager) restart() {
 func (sm *ShellManager) handleShellWS(w http.ResponseWriter, r *http.Request) {
 	h, retire := sm.current()
 	if retire != nil {
-		retireHandler(retire, "spent")
+		retireHandler(context.Background(), retire, "spent")
 	}
 	h.ServeHTTP(w, r)
 }
@@ -179,9 +179,9 @@ func (h *Hub) handleShellRestart(w http.ResponseWriter, _ *http.Request) {
 // The handler is read under the mutex because restart() can swap it: killing
 // the field directly would race a restart and could tear down the replacement
 // while leaving the one it replaced running.
-func (sm *ShellManager) kill() {
+func (sm *ShellManager) kill(ctx context.Context) {
 	sm.mu.Lock()
 	h := sm.handler
 	sm.mu.Unlock()
-	retireHandler(h, "shutdown")
+	retireHandler(ctx, h, "shutdown")
 }

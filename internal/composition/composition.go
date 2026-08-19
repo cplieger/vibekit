@@ -323,7 +323,7 @@ func (a *App) Run() error {
 	}
 	if err != nil {
 		slog.Error("HTTP server", "error", err)
-		a.Hub.Shutdown()
+		a.shutdownHub()
 	}
 	return err
 }
@@ -357,8 +357,31 @@ func (a *App) Shutdown() {
 	// signal the push service's Done before the poller that consults it has been
 	// stopped, which is what the ordering above exists to prevent.
 	callIfSet(a.stopApp)
-	if a.Hub != nil {
-		a.Hub.Shutdown()
+	a.shutdownHub()
+}
+
+// hubStopGrace bounds the hub teardown App.Shutdown owns.
+//
+// Invented here because there is nothing to inherit: this path runs from
+// runMain's defer and from a serve failure, and the signal context is already
+// cancelled by then, so a derived budget would be zero. 10s is the PTY
+// teardown's own ceiling (hub's shutdownBudget, above the engine's 5s reap) and
+// the largest single step in the sequence, so less would report an expiry for
+// work that was always going to take that long.
+const hubStopGrace = 10 * time.Second
+
+// shutdownHub tears the hub down on that budget and logs an expiry rather than
+// dropping it: both callers are terminal paths with nobody above them to return
+// an error to.
+func (a *App) shutdownHub() {
+	if a.Hub == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hubStopGrace)
+	defer cancel()
+	if err := a.Hub.Shutdown(ctx); err != nil {
+		slog.Error("hub shutdown did not finish within the grace period",
+			"grace", hubStopGrace, "error", err)
 	}
 }
 

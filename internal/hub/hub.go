@@ -17,6 +17,7 @@ package hub
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -34,6 +35,7 @@ import (
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
+	"github.com/cplieger/webhttp"
 	"github.com/cplieger/webhttp/sse"
 )
 
@@ -75,8 +77,14 @@ type lifecyclePlane struct {
 	workDir        string
 	configDir      string
 	inflight       sync.WaitGroup
-	mu             sync.Mutex
-	draining       atomic.Bool
+	// loops covers the background goroutines New starts, which exit on done.
+	// It is a SEPARATE group from inflight and must stay one: Shutdown waits on
+	// inflight only after every bridge has been stopped, and the two groups are
+	// reported apart so a shutdown that times out names a wedged handler or a
+	// wedged loop rather than "something".
+	loops    sync.WaitGroup
+	mu       sync.Mutex
+	draining atomic.Bool
 }
 
 // bridgePlane groups Hub fields related to ACP bridge management
@@ -342,9 +350,9 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 			h.secrets = secrets
 		}
 	}
-	go h.cleanIdempotency()
-	go h.cullIdleUtilityBridge()
-	go h.sweepSessionsLoop()
+	lc.loops.Go(h.cleanIdempotency)
+	lc.loops.Go(h.cullIdleUtilityBridge)
+	lc.loops.Go(h.sweepSessionsLoop)
 	return h
 }
 
@@ -430,22 +438,15 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	h.registerScheduleRoutes(mux)
 }
 
-// Shutdown drains in-flight prompts and closes all bridges.
+// Shutdown drains in-flight prompts and closes all bridges, bounded by ctx.
 //
-// Order matters: we Stop bridges BEFORE waiting on inflight, because
-// blocking on a stuck prompt is exactly the reason the server is
-// shutting down in the first place. Stop closes the bridge's stdin
-// and kills the kiro-cli subprocess, which unblocks any Call waiter
-// via the readLoop sentinel — allowing the prompt handler goroutine
-// to record its error and decrement inflight normally.
+// Bridges are Stopped BEFORE the inflight wait: a stuck prompt Call returns
+// only through its own bridge's teardown, so waiting first deadlocks.
 //
-// Drain vs abort:
-//
-//	draining=true is set first so new commands get 503. Existing
-//	commands are given a chance to finish cleanly; if they can't
-//	(stuck on an unresponsive kiro-cli), the HTTP server's own
-//	shutdown context kills everything after its grace period.
-func (h *Hub) Shutdown() {
+// ctx is the only bound on those waits, and it must be: webhttp.Run's pre-drain
+// hook, where this runs, is synchronous, so an unbounded wait spends the grace
+// the HTTP drain needed. The error names the FIRST wait to exceed the budget.
+func (h *Hub) Shutdown(ctx context.Context) error {
 	slog.Info("hub draining")
 	h.lifecycle.draining.Store(true)
 
@@ -483,19 +484,59 @@ func (h *Hub) Shutdown() {
 		h.push.Close()
 	}
 
+	// Each wait below is bounded by ctx, and an expired one is ABANDONED rather
+	// than cancelled: the process is exiting, and the runtime reclaims it.
+
 	// 2. Wait for in-flight prompt handlers to clean up.
-	h.lifecycle.inflight.Wait()
+	teardownErr := awaitBounded(ctx, "in-flight handlers", h.lifecycle.inflight.Wait)
+
+	// 2b. Join the background loops New started. Step 0 signalled them; this is
+	// the wait that makes "the hub has stopped" true of them.
+	if teardownErr == nil {
+		teardownErr = awaitBounded(ctx, "background loops", h.lifecycle.loops.Wait)
+	}
 
 	// 3. Stop utility bridge.
 	h.stopUtilityBridge()
 
-	// 4b. Kill all agent terminal subprocesses.
-	h.agentTerms.drainAll()
+	// 4b. Kill all agent terminal subprocesses. Their exit waiters decrement
+	// inflight, so this is instant once step 2 returned — and carries its own
+	// bound for the case where step 2 did not.
+	if teardownErr == nil {
+		teardownErr = awaitBounded(ctx, "agent terminals", h.agentTerms.drainAll)
+	}
 
-	// 5. Tear down shell + SSE clients.
-	h.shellMgr.kill()
+	// 5. Tear down shell + SSE clients. These run whatever the budget did: the
+	// PTY child and the SSE clients must be told to go even when nothing is left
+	// to watch them leave with — kill signals first and only then waits on ctx.
+	h.shellMgr.kill(ctx)
 	h.sse.hub.Shutdown()
+	if teardownErr != nil {
+		return teardownErr
+	}
 	slog.Info("hub shutdown complete")
+	return nil
+}
+
+// awaitBounded runs wait to completion or until ctx expires, naming what was
+// still running in the error for the latter.
+//
+// The goroutine is what makes the bound possible: sync.WaitGroup.Wait and a
+// range over exit channels both block unconditionally, so the only way to arm a
+// context against either is to move it off the caller's stack.
+func awaitBounded(ctx context.Context, what string, wait func()) error {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		wait()
+	}()
+	// AwaitDone rather than a two-case select: a wait that finished in the same
+	// instant the budget ran out finished, and a bare select reports it as hung
+	// a fraction of the time.
+	if webhttp.AwaitDone(ctx, done) {
+		return nil
+	}
+	return fmt.Errorf("%s still running: %w", what, ctx.Err())
 }
 
 // bridgeIdleTimeout bounds how long the tab-less utility session may sit
@@ -655,9 +696,10 @@ func (h *Hub) utilityLiveSessionID() string {
 //
 // The h.bridge.utility field read + nil is guarded by h.lifecycle.mu so it
 // serialises with cullIdleUtilityBridgeOnce, which reads the same field under
-// that lock (snapshot-and-release). Only called from Shutdown, where
-// inflight.Wait() has already returned, so no in-flight turn or RPC holds
-// a lease on the session being stopped.
+// that lock (snapshot-and-release). Only called from Shutdown, after the
+// inflight wait, so an in-flight turn holds a lease on the session being
+// stopped only when that wait ran out of budget — the same degradation the cull
+// path takes, where a lease-held chunk channel just closes.
 func (h *Hub) stopUtilityBridge() {
 	h.lifecycle.mu.Lock()
 	u := h.bridge.utility

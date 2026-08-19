@@ -335,10 +335,16 @@ func (s *Server) ListenAndServe() error {
 	// vibekit's hub-before-server ordering: readiness flips, then the hub stops
 	// bridges and cancels the SSE/WebSocket streams, and only then does the
 	// HTTP drain run.
-	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(context.Context) {
+	runErr := webhttp.Run(ctx, srv, ln, nil, webhttp.WithPreDrain(func(drainCtx context.Context) {
 		slog.Info("received signal, shutting down", "cause", context.Cause(ctx))
 		s.ready.Store(false)
-		s.hub.Shutdown()
+		// drainCtx carries the shutdown grace, and Run calls this hook
+		// SYNCHRONOUSLY before srv.Shutdown: an unbounded hub teardown here
+		// would consume the whole grace and leave the HTTP drain none, so the
+		// budget is passed on rather than discarded.
+		if err := s.hub.Shutdown(drainCtx); err != nil {
+			slog.Error("hub shutdown did not finish within the grace period", "error", err)
+		}
 	}))
 	s.ready.Store(false) // no-op on the signal path; covers a serve failure
 	return runErr

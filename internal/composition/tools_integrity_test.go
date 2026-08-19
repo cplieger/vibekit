@@ -25,6 +25,7 @@ package composition
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,7 +114,11 @@ func fitTree(t *testing.T) (configDir, toolsDir string) {
 func testHub(t *testing.T) *hub.Hub {
 	t.Helper()
 	h := hub.New(t.Context(), t.TempDir(), nil, nil)
-	t.Cleanup(h.Shutdown)
+	t.Cleanup(func() {
+		if err := h.Shutdown(context.Background()); err != nil {
+			t.Errorf("hub shutdown: %v", err)
+		}
+	})
 	return h
 }
 

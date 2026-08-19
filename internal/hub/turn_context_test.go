@@ -56,7 +56,7 @@ func TestTurnContext_CancelsOnShutdown(t *testing.T) {
 	turnCtx, cleanup := h.TurnContext(t.Context())
 	defer cleanup()
 
-	h.Shutdown()
+	shutdownHub(t, h)
 
 	select {
 	case <-turnCtx.Done():

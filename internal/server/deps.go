@@ -47,8 +47,9 @@ type chatHub interface {
 
 	// Broadcast fans one event out to every connected SSE client.
 	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
-	// Shutdown drains in-flight prompts and closes all bridges.
-	Shutdown()
+	// Shutdown drains in-flight prompts and closes all bridges, bounded by ctx,
+	// and reports which wait ran out of budget.
+	Shutdown(ctx context.Context) error
 }
 
 // pushService is the push surface this package serves: mount the subscription

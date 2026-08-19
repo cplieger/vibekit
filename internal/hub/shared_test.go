@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/sse"
@@ -34,6 +35,20 @@ func newTestHub() (*Hub, *fakeChatStore, *fakeBridge) {
 	// Signal MCP readiness immediately so tests don't wait 30 seconds.
 	h.mcpRegistry.signalReady()
 	return h, cs, br
+}
+
+// shutdownHub tears h down and fails the test when a wait outlived the budget.
+// Rooted at context.Background() rather than t.Context() because callers reach
+// for it from t.Cleanup, where t.Context() is already cancelled. 30s is far
+// above anything a unit test should need and below go test's own timeout, so an
+// expiry here is a real diagnostic rather than a flake.
+func shutdownHub(t *testing.T, h *Hub) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := h.Shutdown(ctx); err != nil {
+		t.Errorf("hub shutdown: %v", err)
+	}
 }
 
 // handleCommand is a test helper that delegates to the dispatcher.

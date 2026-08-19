@@ -564,7 +564,7 @@ func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
-			defer h.Shutdown()
+			defer shutdownHub(t, h)
 			if tc.registerPS != "" {
 				registerParentSession(t, h, tc.chatID, tc.registerPS)
 			}
