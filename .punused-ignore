@@ -145,12 +145,13 @@ method (*Server).UnmarshalJSON
 #   var _ api.ChatStore  = NopChatStore{}                (chatstore.go)
 #   var _ api.ChatStore  = (*RecordingChatStore)(nil)    (chatstore.go)
 #   var _ api.ChatStore  = (*InMemoryChatStore)(nil)     (inmem_chatstore.go)
-#   var _ api.Broadcaster = (*CaptureBroadcaster)(nil)   (broadcaster.go)
 # Consumers: internal/hub (fakeChatStore = testsupport.RecordingChatStore),
 # internal/command and internal/translate (NewInMemoryChatStore).
+# broadcaster.go is gone: NopBroadcaster and CaptureBroadcaster had no
+# consumer outside their own test file, so they were deleted rather than
+# excused.
 internal/testsupport/chatstore.go
 internal/testsupport/inmem_chatstore.go
-internal/testsupport/broadcaster.go
 
 # --- 12. internal/testsupport shared contract suites. Each is a t.Run
 # battery invoked from another package's _test.go: internal/chat and

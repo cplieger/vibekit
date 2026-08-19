@@ -15,7 +15,11 @@ import (
 // semantics without filesystem I/O. Assign Bus to fan out lifecycle events
 // (same shape as RecordingChatStore).
 type InMemoryChatStore struct {
-	Bus   api.Broadcaster
+	// Bus is the fan-out lifecycle events go to; see RecordingChatStore.Bus
+	// for why the type is spelled out rather than named.
+	Bus interface {
+		Broadcast(ctx context.Context, evt api.ServerEvent)
+	}
 	chats map[api.ChatID]*api.Chat
 	mu    sync.Mutex
 }

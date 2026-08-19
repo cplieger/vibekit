@@ -23,10 +23,8 @@ type fakeStore struct {
 	markedDel   []api.ChatID
 	clearedTomb []api.ChatID
 	// loadResult, when non-nil, makes Load succeed with this chat
-	// (default: Load returns an error). bc, when non-nil, is returned
-	// by Broadcast (default: nil, i.e. no broadcaster).
+	// (default: Load returns an error).
 	loadResult *api.Chat
-	bc         api.Broadcaster
 }
 
 func newFakeStore(dir string) *fakeStore {
@@ -74,8 +72,6 @@ func (f *fakeStore) ClearTombstone(chatID api.ChatID) {
 	f.clearedTomb = append(f.clearedTomb, chatID)
 	f.mu.Unlock()
 }
-
-func (f *fakeStore) Broadcast() api.Broadcaster { return f.bc }
 
 // purgeRecorder collects chat IDs passed to an onPurge
 // callback. Safe for concurrent use (Purge runs callbacks from worker

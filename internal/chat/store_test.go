@@ -28,7 +28,7 @@ type fakeBroadcaster struct {
 	mu     sync.Mutex
 }
 
-var _ api.Broadcaster = (*fakeBroadcaster)(nil)
+var _ broadcaster = (*fakeBroadcaster)(nil)
 
 func (f *fakeBroadcaster) Broadcast(_ context.Context, e api.ServerEvent) {
 	f.mu.Lock()
@@ -195,7 +195,7 @@ func TestMutate_RejectsBadChatID(t *testing.T) {
 // The test is parameterised so it can be reused against any Broadcaster
 // implementation (fakeBroadcaster today, SSE broadcaster in integration
 // tests later).
-func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster) {
+func BroadcasterContractTest(t *testing.T, newBroadcaster func() broadcaster) {
 	t.Helper()
 
 	t.Run("ConcurrentBroadcastsDoNotBlock", func(t *testing.T) {
@@ -255,7 +255,7 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() api.Broadcaster
 }
 
 func TestFakeBroadcaster_ContractCompliance(t *testing.T) {
-	BroadcasterContractTest(t, func() api.Broadcaster {
+	BroadcasterContractTest(t, func() broadcaster {
 		return &fakeBroadcaster{}
 	})
 }

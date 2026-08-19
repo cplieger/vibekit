@@ -55,7 +55,13 @@ var _ api.ChatStore = NopChatStore{}
 // map and fires broadcasts via an attached Broadcaster. Suitable for
 // integration-style tests that need a ChatStore that actually stores things.
 type RecordingChatStore struct {
-	Bus   api.Broadcaster
+	// Bus is the fan-out lifecycle events go to. The type is spelled out
+	// rather than named because there is no shared Broadcaster interface any
+	// more: internal/chat and internal/forges each declare their own 1-method
+	// copy, and this is the union of the two.
+	Bus interface {
+		Broadcast(ctx context.Context, evt api.ServerEvent)
+	}
 	Chats map[api.ChatID]*api.Chat
 	mu    sync.Mutex
 }

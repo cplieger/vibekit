@@ -70,10 +70,11 @@ type ChatStore interface {
 
 // --- Communication ---
 
-// Broadcaster sends events to all connected SSE clients.
-type Broadcaster interface {
-	Broadcast(ctx context.Context, evt ServerEvent)
-}
+// There is no Broadcaster interface here. Sending an event to every connected
+// SSE client is ONE method, and its two consumers declare it themselves:
+// internal/chat (chat and message lifecycle) and internal/forges (a forge
+// connection change). internal/command declares the same method as a member of
+// its ChatAccess role. *hub.Hub satisfies all three.
 
 // StartOpts collects the parameters for ACPBridge.Start. Lifetime is
 // REQUIRED; every other field is optional, so a StartOpts carrying nothing but

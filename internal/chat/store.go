@@ -30,6 +30,17 @@ var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 // errDraftTooLarge is returned when a composer draft exceeds api.MaxDraftBytes.
 var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
 
+// broadcaster is the SSE fan-out this store emits chat lifecycle and message
+// events through. *hub.Hub satisfies it.
+//
+// Declared HERE, at the consumer, rather than in a shared contract package.
+// 1 method — the whole of what a store needs to say "this happened" — against a
+// *hub.Hub that exports well over a hundred. Nothing about a bridge, a session
+// or a turn is any business of a file writer.
+type broadcaster interface {
+	Broadcast(ctx context.Context, evt api.ServerEvent)
+}
+
 // Compile-time interface assertion.
 var _ api.ChatStore = (*Store)(nil)
 
@@ -60,7 +71,7 @@ const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
 // Mutate refuse to create for a recently-deleted id — late writes
 // become no-ops instead of undead resurrections.
 type Store struct {
-	broadcast   api.Broadcaster
+	broadcast   broadcaster
 	listSF      singleflight.Group
 	onPurge     func(chatID api.ChatID, sessionChain []string)
 	isLive      func(chatID api.ChatID) bool
@@ -140,7 +151,7 @@ type StoreOption func(*Store)
 
 // WithBroadcaster sets the SSE broadcaster used by the store to emit
 // chat_created / chat_updated / chat_deleted / message_* events.
-func WithBroadcaster(b api.Broadcaster) StoreOption {
+func WithBroadcaster(b broadcaster) StoreOption {
 	return func(s *Store) { s.broadcast = b }
 }
 

@@ -53,17 +53,27 @@ const (
 	ForgeErrNotSupported    ForgeErrCode = "not_supported"
 )
 
+// broadcaster is the SSE fan-out a forge connection change is announced on, so
+// every client's forge UI refetches /api/forges. *hub.Hub satisfies it.
+//
+// Declared HERE, at the consumer, rather than in a shared contract package.
+// 1 method against a *hub.Hub exporting well over a hundred; this package fires
+// exactly one event kind and needs nothing else from the hub at all.
+type broadcaster interface {
+	Broadcast(ctx context.Context, evt api.ServerEvent)
+}
+
 // HTTPHandler exposes the forges package over HTTP.
 type HTTPHandler struct {
 	manager      *Manager
-	broadcaster  api.Broadcaster
+	broadcaster  broadcaster
 	onChange     func()
 	probeTimeout time.Duration
 }
 
 // NewHTTPHandler builds an HTTPHandler with the given Manager.
 // broadcaster may be nil; when nil, forge change events are silently dropped.
-func NewHTTPHandler(m *Manager, b api.Broadcaster) *HTTPHandler {
+func NewHTTPHandler(m *Manager, b broadcaster) *HTTPHandler {
 	return &HTTPHandler{
 		manager:      m,
 		broadcaster:  b,

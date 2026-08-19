@@ -21,7 +21,6 @@ import (
 	"github.com/cplieger/vibekit/internal/filebrowse"
 	"github.com/cplieger/vibekit/internal/forges"
 	"github.com/cplieger/vibekit/internal/git"
-	"github.com/cplieger/vibekit/internal/hub"
 	"github.com/cplieger/vibekit/internal/mcp"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/server"
@@ -33,7 +32,6 @@ import (
 var (
 	_ api.ChatStore            = (*chat.Store)(nil)
 	_ api.ACPBridge            = (*bridge.Bridge)(nil)
-	_ api.Broadcaster          = (*hub.Hub)(nil)
 	_ server.SteeringGenerator = (*steering.Generator)(nil)
 	_ api.RouteHandler         = (*git.Handler)(nil)
 	_ api.RouteHandler         = (*filebrowse.Handler)(nil)
