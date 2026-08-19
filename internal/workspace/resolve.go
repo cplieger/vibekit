@@ -1,6 +1,6 @@
-// Package workspace provides path-resolution and boundary-assertion
-// primitives for workspace-scoped file operations. These are security
-// primitives that prevent symlink escape and ".." traversal.
+// Package workspace provides path-resolution primitives for
+// workspace-scoped file operations. These are security primitives that
+// prevent symlink escape and ".." traversal.
 package workspace
 
 import (
@@ -15,20 +15,32 @@ import (
 // ResolveInsideAbs is like ResolveInside but accepts an already-absolute
 // workDir, skipping the filepath.Abs call. Use this when the caller
 // stores workDir as an absolute path set once at startup (e.g. Hub.workDir).
+//
+// The boundary is built ONCE, before anything is compared against it, which is
+// what keeps the three containment questions below from being asked backwards:
+// a pathinside.Root held in a named variable has no pair to transpose, unlike a
+// two-argument predicate whose own wrapper read in the opposite order from the
+// filepath.Rel it called.
+//
+// An empty absWork therefore refuses everything rather than confining to the
+// process working directory: Root("") contains nothing, and an unset workDir is
+// a missing configuration value, not a request to sandbox onto whatever
+// directory the process happens to be in.
 func ResolveInsideAbs(absWork, p string) (string, error) {
 	if p == "" {
 		return "", errors.New("empty path")
 	}
+	root := pathinside.Root(absWork)
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(absWork, p)
 	}
 	clean := filepath.Clean(p)
-	if inErr := AssertInside(clean, absWork); inErr != nil {
-		return "", inErr
+	if !root.Contains(clean) {
+		return "", errors.New("path escapes workspace")
 	}
 	if resolved, resErr := filepath.EvalSymlinks(clean); resErr == nil {
-		if inErr := AssertInside(resolved, absWork); inErr != nil {
-			return "", fmt.Errorf("path %q escapes workspace via symlink: %w", p, inErr)
+		if !root.Contains(resolved) {
+			return "", fmt.Errorf("path %q escapes workspace via symlink", p)
 		}
 		return resolved, nil
 	}
@@ -39,28 +51,10 @@ func ResolveInsideAbs(absWork, p string) (string, error) {
 		}
 		return "", err
 	}
-	if inErr := AssertInside(parent, absWork); inErr != nil {
-		return "", fmt.Errorf("path %q escapes workspace via symlink: %w", p, inErr)
+	if !root.Contains(parent) {
+		return "", fmt.Errorf("path %q escapes workspace via symlink", p)
 	}
 	return filepath.Join(parent, filepath.Base(clean)), nil
-}
-
-// AssertInside returns nil iff target is equal to root or contained
-// beneath it. Relies on filepath.Rel: a relative path that starts
-// with ".." signals escape, which pathinside.RelEscapes decides
-// separator-precisely (so a name that merely BEGINS with two dots,
-// like "..extras", is a name and not a traversal). A pair Rel cannot
-// compare returns its error verbatim rather than the escape message,
-// because "not comparable" is not "escaped".
-func AssertInside(target, root string) error {
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return err
-	}
-	if pathinside.RelEscapes(rel) {
-		return errors.New("path escapes workspace")
-	}
-	return nil
 }
 
 // RelPath returns the workspace-relative, forward-slash-normalized path

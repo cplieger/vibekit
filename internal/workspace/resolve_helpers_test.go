@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/cplieger/pathinside/v2"
 )
 
 // ResolveInside turns a client-supplied path into an absolute one
@@ -13,7 +15,8 @@ import (
 // directory and the final target are evaluated.
 //
 // Moved to test-only: the only caller is the fuzz test in this package.
-// Production code uses ResolveInsideAbs instead.
+// Production code uses ResolveInsideAbs instead, and this mirrors its shape —
+// one pathinside.Root built before anything is compared against it.
 func ResolveInside(workDir, p string) (string, error) {
 	if p == "" {
 		return "", errors.New("empty path")
@@ -22,16 +25,17 @@ func ResolveInside(workDir, p string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve workdir: %w", err)
 	}
+	root := pathinside.Root(absWork)
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(absWork, p)
 	}
 	clean := filepath.Clean(p)
-	if inErr := AssertInside(clean, absWork); inErr != nil {
-		return "", inErr
+	if !root.Contains(clean) {
+		return "", errors.New("path escapes workspace")
 	}
 	if resolved, resErr := filepath.EvalSymlinks(clean); resErr == nil {
-		if inErr := AssertInside(resolved, absWork); inErr != nil {
-			return "", fmt.Errorf("path %q escapes workspace via symlink: %w", p, inErr)
+		if !root.Contains(resolved) {
+			return "", fmt.Errorf("path %q escapes workspace via symlink", p)
 		}
 		return resolved, nil
 	}
@@ -42,8 +46,8 @@ func ResolveInside(workDir, p string) (string, error) {
 		}
 		return "", err
 	}
-	if inErr := AssertInside(parent, absWork); inErr != nil {
-		return "", fmt.Errorf("path %q escapes workspace via symlink: %w", p, inErr)
+	if !root.Contains(parent) {
+		return "", fmt.Errorf("path %q escapes workspace via symlink", p)
 	}
 	return filepath.Join(parent, filepath.Base(clean)), nil
 }
