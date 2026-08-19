@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
@@ -24,11 +25,11 @@ func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 // handleList returns all chat headers.
 func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	headers := rt.store.List(r.Context())
-	api.WriteJSON(w, map[string]any{"chats": headers})
+	httpwire.WriteJSON(w, map[string]any{"chats": headers})
 }
 
 // handleOne serves GET /api/chats/{id}?before_id=<id>&limit=<n> and routes
@@ -36,7 +37,7 @@ func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/chats/")
 	if rest == "" || strings.HasPrefix(rest, "/") {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpwire.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 	if id, sub, ok := strings.Cut(rest, "/"); ok {
@@ -57,7 +58,7 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 	case "search":
 		rt.handleSearch(w, r, cid)
 	default:
-		api.NotFound(w, "unknown chat sub-resource")
+		httpwire.NotFound(w, "unknown chat sub-resource")
 	}
 }
 
@@ -65,16 +66,16 @@ func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, c
 // /api/chats/{id} request.
 func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(api.ChatID(id)) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpwire.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 	c, ok := rt.store.Get(r.Context(), api.ChatID(id))
 	if !ok {
-		api.NotFound(w, errMsgChatNotFound)
+		httpwire.NotFound(w, errMsgChatNotFound)
 		return
 	}
 
@@ -94,7 +95,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 	// what keeps the composer autosave off the SSE fan-out and off the list
 	// response: this is the one request a client makes when it opens a chat it
 	// has no local draft for, which is exactly when it needs the server's copy.
-	api.WriteJSON(w, map[string]any{
+	httpwire.WriteJSON(w, map[string]any{
 		"chat":     rt.store.header(r.Context(), c),
 		"messages": window,
 		"has_more": start > 0,
@@ -117,22 +118,22 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // here is serialising a few fields per turn rather than any extra IO.
 func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpwire.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 	c, ok := rt.store.Get(r.Context(), chatID)
 	if !ok {
-		api.NotFound(w, errMsgChatNotFound)
+		httpwire.NotFound(w, errMsgChatNotFound)
 		return
 	}
 	// thinking=false: the store is the persisted record and knows nothing about
 	// a bridge being mid-turn. The client owns the live turn's outcome, which is
 	// the one turn it always has resident anyway.
-	api.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
+	httpwire.WriteJSON(w, map[string]any{"turns": api.ProjectTurnSummaries(c.Messages, false)})
 }
 
 // handleSearch serves GET /api/chats/{id}/search?q=: a lexical scan of the
@@ -145,16 +146,16 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api
 // a data-loss bug. See search.go's header for why there is no index.
 func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpwire.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 	c, ok := rt.store.Get(r.Context(), chatID)
 	if !ok {
-		api.NotFound(w, errMsgChatNotFound)
+		httpwire.NotFound(w, errMsgChatNotFound)
 		return
 	}
 	// `case=1` is the client's match-case toggle. Both halves of the in-chat
@@ -163,7 +164,7 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ap
 	// default either side could get wrong. Absent or anything else = insensitive,
 	// which is the behaviour every existing client gets.
 	caseSensitive := r.URL.Query().Get("case") == "1"
-	api.WriteJSON(w, map[string]any{
+	httpwire.WriteJSON(w, map[string]any{
 		"hits": Search(c.Messages, r.URL.Query().Get("q"), caseSensitive),
 	})
 }
@@ -229,27 +230,27 @@ const (
 // bridge is involved.
 func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	if !chatIDPattern(chatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpwire.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 	format, ok := parseExportFormat(r.URL.Query().Get("format"))
 	if !ok {
-		api.BadRequest(w, "unsupported export format (use md or json)")
+		httpwire.BadRequest(w, "unsupported export format (use md or json)")
 		return
 	}
 	c, found := rt.loadForExport(r.Context(), chatID)
 	if !found {
-		api.NotFound(w, errMsgChatNotFound)
+		httpwire.NotFound(w, errMsgChatNotFound)
 		return
 	}
 	if format == exportFormatJSON {
 		w.Header().Set("Content-Disposition",
 			dispositionAttachment(exportFilename(c.Name, string(chatID), ".json")))
-		api.WriteJSON(w, c)
+		httpwire.WriteJSON(w, c)
 		return
 	}
 	w.Header().Set("Content-Disposition",

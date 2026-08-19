@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 func newRoutedStore(t *testing.T) (*Store, *http.ServeMux) {
@@ -177,9 +177,9 @@ func TestHandleCollection_POST_oversize_is413(t *testing.T) {
 	_, mux := newRoutedStore(t)
 
 	// Build a JSON object whose Name field is big enough that the full
-	// body exceeds api.MaxJSONBody (1 MiB). Using a field that Validate
+	// body exceeds httpwire.MaxJSONBody (1 MiB). Using a field that Validate
 	// will also reject is fine; we're not expecting the body to parse.
-	big := strings.Repeat("a", int(api.MaxJSONBody)+1)
+	big := strings.Repeat("a", int(httpwire.MaxJSONBody)+1)
 	body := `{"transport":"stdio","name":"` + big + `","command":"bash"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/mcp",
 		strings.NewReader(body))

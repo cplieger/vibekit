@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/cplieger/runesafe"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 	"github.com/cplieger/vibekit/internal/schedule"
 )
 
@@ -71,7 +71,7 @@ func (h *Hub) handleScheduleList(w http.ResponseWriter, _ *http.Request) {
 	for i := range entries {
 		out = append(out, h.scheduleViewOf(&entries[i]))
 	}
-	api.WriteJSON(w, map[string]any{"schedules": out})
+	httpwire.WriteJSON(w, map[string]any{"schedules": out})
 }
 
 // scheduleViewOf resolves an entry's next run for display. A spec that cannot
@@ -110,14 +110,14 @@ func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		Spec    schedule.Spec `json:"spec"`
 		Enabled bool          `json:"enabled"`
 	}
-	api.LimitBody(w, r, api.MaxJSONBody)
+	httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		api.BadRequest(w, "invalid schedule payload")
+		httpwire.BadRequest(w, "invalid schedule payload")
 		return
 	}
 	recipe, err := h.recipeBySource(r.Context(), req.Source)
 	if err != nil {
-		api.BadRequest(w, "unknown recipe: "+req.Source)
+		httpwire.BadRequest(w, "unknown recipe: "+req.Source)
 		return
 	}
 	id := req.ID
@@ -129,25 +129,25 @@ func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		Spec: req.Spec, Enabled: req.Enabled,
 	}
 	if err := h.schedules.Put(r.Context(), &entry); err != nil {
-		api.BadRequest(w, err.Error())
+		httpwire.BadRequest(w, err.Error())
 		return
 	}
 	slog.Info("schedule saved", "id", logField(entry.ID), "recipe", logField(recipe.Name),
 		"freq", logField(string(entry.Spec.Freq)), "enabled", entry.Enabled)
-	api.WriteJSON(w, h.scheduleViewOf(&entry))
+	httpwire.WriteJSON(w, h.scheduleViewOf(&entry))
 }
 
 // handleScheduleDelete: DELETE /api/schedules/{id}.
 func (h *Hub) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		api.BadRequest(w, "schedule id is required")
+		httpwire.BadRequest(w, "schedule id is required")
 		return
 	}
 	if err := h.schedules.Delete(r.Context(), id); err != nil {
-		api.ServerError(w, "could not delete schedule", err)
+		httpwire.ServerError(w, "could not delete schedule", err)
 		return
 	}
 	slog.Info("schedule deleted", "id", logField(id))
-	api.WriteJSON(w, map[string]any{"ok": true})
+	httpwire.WriteJSON(w, map[string]any{"ok": true})
 }

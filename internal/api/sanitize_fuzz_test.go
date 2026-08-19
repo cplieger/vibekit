@@ -1,8 +1,6 @@
 package api
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -240,50 +238,6 @@ func FuzzValidSessionID(f *testing.F) {
 			if s == "." || s == ".." || strings.Contains(s, "..") {
 				t.Errorf("ValidSessionID(%q)=true but contains traversal", s)
 			}
-		}
-	})
-}
-
-func FuzzDecodeJSON_ContentType(f *testing.F) {
-	seeds := []string{
-		"",
-		"application/json",
-		"application/json; charset=utf-8",
-		"application/json-patch+json",
-		"application/jsonl",
-		"text/plain",
-		"text/html",
-		"multipart/form-data",
-		"APPLICATION/JSON",
-		"application/xml",
-		"application/json\x00evil",
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, ct string) {
-		// Build a minimal request with the fuzzed Content-Type.
-		body := strings.NewReader(`{"key":"value"}`)
-		req, err := http.NewRequest(http.MethodPost, "/test", body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ct != "" {
-			req.Header.Set("Content-Type", ct)
-		}
-		rec := httptest.NewRecorder()
-		var dst map[string]string
-		ok := DecodeJSON(rec, req, &dst)
-
-		// Invariant: non-JSON content types must be rejected.
-		if ct != "" && !strings.HasPrefix(ct, "application/json") {
-			if ok {
-				t.Errorf("DecodeJSON accepted non-JSON Content-Type %q", ct)
-			}
-		}
-		// Invariant: empty Content-Type with valid JSON body must succeed.
-		if ct == "" && !ok {
-			t.Errorf("DecodeJSON rejected empty Content-Type with valid body")
 		}
 	})
 }

@@ -58,7 +58,7 @@ import (
 	"time"
 
 	"github.com/cplieger/ssrf/v4"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 const (
@@ -191,11 +191,11 @@ type mcpOAuthRelayResp struct {
 // belongs on the outbound half instead, which is relayClientFor's address policy.
 func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var body mcpOAuthRelayReq
-	if !api.DecodeJSON(w, req, &body) {
+	if !httpwire.DecodeJSON(w, req, &body) {
 		return
 	}
 
@@ -211,7 +211,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 	// need no separate reply and this one leaks no inventory.
 	attempt, err := r.beginOAuthRelay(body.Server)
 	if err != nil {
-		api.Conflict(w, err.Error())
+		httpwire.Conflict(w, err.Error())
 		return
 	}
 
@@ -222,7 +222,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 		// quotes either. The user is the one who pasted it and cannot fix it
 		// without being told which part was wrong.
 		r.releaseOAuthRelay(attempt)
-		api.BadRequest(w, err.Error())
+		httpwire.BadRequest(w, err.Error())
 		return
 	}
 
@@ -231,8 +231,8 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 		r.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: could not reach the loopback callback listener",
 			"server", body.Server, "port", target.Port(), "error", dialErrWithoutURL(err))
-		api.WriteJSONStatus(w, http.StatusBadGateway,
-			api.ErrorJSON("the local sign-in listener did not answer, so the code was not delivered; the sign-in may have timed out"))
+		httpwire.WriteJSONStatus(w, http.StatusBadGateway,
+			httpwire.ErrorJSON("the local sign-in listener did not answer, so the code was not delivered; the sign-in may have timed out"))
 		return
 	}
 	if status >= http.StatusBadRequest {
@@ -242,8 +242,8 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 		r.releaseOAuthRelay(attempt)
 		slog.Warn("mcp oauth relay: the loopback listener refused the callback",
 			"server", body.Server, "port", target.Port(), "status", status)
-		api.WriteJSONStatus(w, http.StatusBadGateway,
-			api.ErrorJSON("the local sign-in listener rejected that callback (HTTP "+strconv.Itoa(status)+"); start the sign-in again"))
+		httpwire.WriteJSONStatus(w, http.StatusBadGateway,
+			httpwire.ErrorJSON("the local sign-in listener rejected that callback (HTTP "+strconv.Itoa(status)+"); start the sign-in again"))
 		return
 	}
 
@@ -254,7 +254,7 @@ func (r *mcpRegistry) handleOAuthRelay(w http.ResponseWriter, req *http.Request)
 	// The state transition is NOT invented here — connected is KAS's to report
 	// over `_kiro/mcp/status`, and the token exchange this just unblocked is
 	// still in flight. The client refetches status and waits for that frame.
-	api.WriteJSON(w, mcpOAuthRelayResp{Status: status})
+	httpwire.WriteJSON(w, mcpOAuthRelayResp{Status: status})
 }
 
 // replayCallback performs the one GET and returns the listener's status.

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // benchDeps is a minimal Dependencies stub for benchmarking dispatch overhead.
@@ -163,7 +164,7 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	deps := newBenchDeps()
 	d := New(deps)
 	d.Register("create_chat", func(_ context.Context, w http.ResponseWriter, _ *api.ClientCommand) {
-		api.WriteRawJSON(w, []byte(`{"ok":true}`))
+		httpwire.WriteRawJSON(w, []byte(`{"ok":true}`))
 	})
 
 	body, _ := json.Marshal(api.ClientCommand{

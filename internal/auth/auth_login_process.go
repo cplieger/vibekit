@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // classifyLoginStartErr maps a cmd.Start error to an HTTP status code
@@ -166,7 +167,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 		// recognise instead of the generic "no auth URL" sentinel,
 		// which read as "something broke" to users.
 		if strings.Contains(strings.ToLower(line), "already logged in") {
-			urlCh <- api.ErrorJSON("already_logged_in")
+			urlCh <- httpwire.ErrorJSON("already_logged_in")
 			return
 		}
 		if after, found := strings.CutPrefix(line, "Code:"); found {
@@ -192,7 +193,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 			slog.Warn("login: output line cap hit without auth URL",
 				"lines", lineCount,
 				"first_and_last_sample", ring.Sample())
-			urlCh <- api.ErrorJSON("CLI produced too much output without auth URL")
+			urlCh <- httpwire.ErrorJSON("CLI produced too much output without auth URL")
 			return
 		}
 	}
@@ -203,7 +204,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 		// event on its own.
 		slog.Warn("login: scanner failed before URL",
 			"error", err, "lines_read", lineCount)
-		urlCh <- api.ErrorJSON("scanner error: " + err.Error())
+		urlCh <- httpwire.ErrorJSON("scanner error: " + err.Error())
 		return
 	}
 	// Clean EOF without a URL. No log at this layer — handleLogin's
@@ -211,5 +212,5 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 	// already surface the failure with richer context. Emitting a
 	// second Warn here duplicated every timeout event on Loki's
 	// level=warn stream without adding information.
-	urlCh <- api.ErrorJSON("no auth URL found in CLI output")
+	urlCh <- httpwire.ErrorJSON("no auth URL found in CLI output")
 }

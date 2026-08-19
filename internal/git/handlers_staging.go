@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
@@ -19,11 +19,11 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dir := h.repoDir(repoFromQuery(r))
 	if !IsRepo(ctx, dir) {
-		api.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
+		httpwire.WriteJSON(w, gitStatusResp{IsRepo: false, Files: []gitFile{}})
 		return
 	}
 	st := collectStatus(ctx, dir, h.timeouts, &h.fetchFlight, r.URL.Query().Get("quick") == "")
-	api.WriteJSON(w, st)
+	httpwire.WriteJSON(w, st)
 }
 
 // collectStatus runs the same shape of git queries handleStatus uses,
@@ -153,17 +153,17 @@ func (h *Handler) handleStage(w http.ResponseWriter, r *http.Request) {
 	}
 	files, perr := sanitizeRepoPaths(body.Files)
 	if perr != nil {
-		api.BadRequest(w, perr.Error())
+		httpwire.BadRequest(w, perr.Error())
 		return
 	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git stage", "repo", body.Repo, "files", len(files))
 	args := append([]string{"add", "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		api.WriteJSON(w, api.ErrorJSON(scrubAuth(out)))
+		httpwire.WriteJSON(w, httpwire.ErrorJSON(scrubAuth(out)))
 		return
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
 func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
@@ -180,17 +180,17 @@ func (h *Handler) handleUnstage(w http.ResponseWriter, r *http.Request) {
 	}
 	files, perr := sanitizeRepoPaths(body.Files)
 	if perr != nil {
-		api.BadRequest(w, perr.Error())
+		httpwire.BadRequest(w, perr.Error())
 		return
 	}
 	dir := h.repoDir(body.Repo)
 	slog.Info("git unstage", "repo", body.Repo, "files", len(files))
 	args := append([]string{subReset, refHEAD, "--"}, files...)
 	if out, err := gitCmd(r.Context(), dir, args...); err != nil {
-		api.WriteJSON(w, api.ErrorJSON(scrubAuth(out)))
+		httpwire.WriteJSON(w, httpwire.ErrorJSON(scrubAuth(out)))
 		return
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
 func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
@@ -206,12 +206,12 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.Files) == 0 {
-		api.BadRequest(w, "files required")
+		httpwire.BadRequest(w, "files required")
 		return
 	}
 	files, perr := sanitizeRepoPaths(body.Files)
 	if perr != nil {
-		api.BadRequest(w, perr.Error())
+		httpwire.BadRequest(w, perr.Error())
 		return
 	}
 	ctx := r.Context()
@@ -243,8 +243,8 @@ func (h *Handler) handleDiscard(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(errs) > 0 {
-		api.WriteJSON(w, api.ErrorJSON(scrubAuth(strings.Join(errs, "\n"))))
+		httpwire.WriteJSON(w, httpwire.ErrorJSON(scrubAuth(strings.Join(errs, "\n"))))
 		return
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }

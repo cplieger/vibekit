@@ -14,15 +14,16 @@ import (
 	"sync"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope. It is the generic
-// api.MaxJSONBody: the largest payload this endpoint carries is a prompt's text
+// httpwire.MaxJSONBody: the largest payload this endpoint carries is a prompt's text
 // at maxPromptBytes (512 KiB) plus path-only attachment metadata, so 1 MiB is
 // ~2x headroom. It was 5 MiB to fit a 4 MiB user-merged partial-write payload,
 // and that command is gone — KAS decides per action, so there is no merged text
 // to post.
-const maxCommandBody = api.MaxJSONBody
+const maxCommandBody = httpwire.MaxJSONBody
 
 // Handler is the signature for a command handler function.
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)
@@ -79,11 +80,11 @@ func (d *Dispatcher) Respond(w http.ResponseWriter, reqID string, body any) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		slog.Error("respond marshal", keyError, err)
-		api.InternalError(w, err)
+		httpwire.InternalError(w, err)
 		return
 	}
 	d.deps.RecordDedup(reqID, data)
-	api.WriteRawJSON(w, data)
+	httpwire.WriteRawJSON(w, data)
 }
 
 // RespondOK writes the standard {"ok":true} success response and
@@ -109,7 +110,7 @@ type errorResponse struct {
 // error" while the cause sits unread in `error.data`. RPCErrorText is a no-op for
 // every ordinary Go error, so the one call covers both populations.
 func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
-	api.WriteJSONStatus(w, code, errorResponse{Error: api.RPCErrorText(err)})
+	httpwire.WriteJSONStatus(w, code, errorResponse{Error: api.RPCErrorText(err)})
 }
 
 // RequireChatID validates that cmd.ChatID is non-empty and writes a
@@ -125,43 +126,43 @@ func (d *Dispatcher) RequireChatID(w http.ResponseWriter, cmd *api.ClientCommand
 // ServeHTTP is the POST /api/command HTTP handler.
 func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	if d.deps.Draining() {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
+		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
 		return
 	}
 
-	api.LimitBody(w, r, maxCommandBody)
+	httpwire.LimitBody(w, r, maxCommandBody)
 	var cmd api.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("command body too large",
 				"limit", maxCommandBody, keyError, maxErr)
-			api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
 				errorResponse{Error: "request body too large"})
 			return
 		}
-		api.BadRequest(w, "invalid json")
+		httpwire.BadRequest(w, "invalid json")
 		return
 	}
 
 	if !validRequestID(cmd.RequestID) {
-		api.BadRequest(w, "invalid request_id")
+		httpwire.BadRequest(w, "invalid request_id")
 		return
 	}
 
 	// Idempotent retries: same request_id → cached response.
 	if cached, ok := d.deps.CheckDedup(cmd.RequestID); ok {
 		slog.Debug("idempotent replay", "request_id", cmd.RequestID, keyType, cmd.Type)
-		api.WriteRawJSON(w, cached)
+		httpwire.WriteRawJSON(w, cached)
 		return
 	}
 
 	// Centralised chat_id validation.
 	if cmd.ChatID != "" && !validChatID(cmd.ChatID) {
-		api.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpwire.BadRequest(w, api.ErrMsgInvalidChatID)
 		return
 	}
 
@@ -171,7 +172,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		fn(r.Context(), w, &cmd)
 	} else {
-		api.BadRequest(w, "unknown command: "+string(cmd.Type))
+		httpwire.BadRequest(w, "unknown command: "+string(cmd.Type))
 	}
 }
 

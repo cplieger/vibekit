@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // RegisterRoutes wires /api/push/vapid-key, /api/push/subscribe, and
@@ -22,22 +23,22 @@ type vapidKeyResponse struct {
 }
 
 func (s *Service) handleVAPIDKey(w http.ResponseWriter, _ *http.Request) {
-	api.WriteJSON(w, vapidKeyResponse{PublicKey: s.PublicKey()})
+	httpwire.WriteJSON(w, vapidKeyResponse{PublicKey: s.PublicKey()})
 }
 
 func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	api.LimitBody(w, r, api.MaxJSONBody)
+	httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
 	var sub api.PushSubscription
 	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil || sub.Endpoint == "" {
-		api.BadRequest(w, "invalid subscription")
+		httpwire.BadRequest(w, "invalid subscription")
 		return
 	}
 	if !isAllowedPushEndpoint(sub.Endpoint) {
-		api.BadRequest(w, "push endpoint not from a recognised browser push service")
+		httpwire.BadRequest(w, "push endpoint not from a recognised browser push service")
 		return
 	}
 	// Validate key material at the ingress boundary so Send's hot
@@ -46,31 +47,31 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	// (0x04 || X(32) || Y(32)); auth is 16 random bytes.
 	pub, err := base64.RawURLEncoding.DecodeString(sub.Keys.P256dh)
 	if err != nil || len(pub) != 65 || pub[0] != 0x04 {
-		api.BadRequest(w, "invalid p256dh key")
+		httpwire.BadRequest(w, "invalid p256dh key")
 		return
 	}
 	auth, err := base64.RawURLEncoding.DecodeString(sub.Keys.Auth)
 	if err != nil || len(auth) != 16 {
-		api.BadRequest(w, "invalid auth secret")
+		httpwire.BadRequest(w, "invalid auth secret")
 		return
 	}
 	s.Subscribe(sub)
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
 func (s *Service) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	api.LimitBody(w, r, api.MaxJSONBody)
+	httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
 	var body struct {
 		Endpoint string `json:"endpoint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Endpoint == "" {
-		api.BadRequest(w, "invalid endpoint")
+		httpwire.BadRequest(w, "invalid endpoint")
 		return
 	}
 	s.Unsubscribe(body.Endpoint)
-	api.Ok(w)
+	httpwire.Ok(w)
 }

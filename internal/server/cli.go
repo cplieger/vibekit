@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 const (
-	jsonKeyOutput = api.JSONKeyOutput
+	jsonKeyOutput = httpwire.JSONKeyOutput
 )
 
 const (
@@ -61,7 +61,7 @@ func (r *execCLIRunner) RunStdoutCapped(ctx context.Context, limit int, args ...
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	cmd.Stdout = stdout
-	cmd.Stderr = &api.LimitedWriter{W: &stderr, N: cliStderrCap}
+	cmd.Stderr = &httpwire.LimitedWriter{W: &stderr, N: cliStderrCap}
 	err = cmd.Run()
 	if stderr.Len() > 0 {
 		slog.Debug("cli stderr captured", "args", args, "stderr", stderr.String())

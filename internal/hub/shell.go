@@ -31,7 +31,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 	"github.com/cplieger/web-terminal-engine/v4/terminal"
 )
 
@@ -168,7 +168,7 @@ func (h *Hub) handleShellWS(w http.ResponseWriter, r *http.Request) {
 // destroys running processes; the client confirms before calling it.
 func (h *Hub) handleShellRestart(w http.ResponseWriter, _ *http.Request) {
 	h.shellMgr.restart()
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
 // kill ends the PTY session and waits for its teardown: reaping the child and

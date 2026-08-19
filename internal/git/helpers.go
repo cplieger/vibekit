@@ -10,24 +10,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // requirePOST writes a 405 if the method isn't POST and returns false.
 // Returns true when the caller should proceed.
 func requirePOST(w http.ResponseWriter, r *http.Request) bool {
-	return api.RequireMethod(w, r, http.MethodPost)
+	return httpwire.RequireMethod(w, r, http.MethodPost)
 }
 
 // decodePostBody does the common POST prelude:
-//   - enforces the JSON body size cap (api.MaxJSONBody)
+//   - enforces the JSON body size cap (httpwire.MaxJSONBody)
 //   - decodes into v
 //
 // On decode failure, writes a 400 with the given error message and
 // returns false. Callers that need a method check should call
 // requirePOST first.
 func decodePostBody(w http.ResponseWriter, r *http.Request, v any, decodeErrMsg string) bool {
-	return api.DecodeBody(w, r, v, decodeErrMsg)
+	return httpwire.DecodeBody(w, r, v, decodeErrMsg)
 }
 
 // decodePostBodyOptional enforces the body-size cap and decodes into v.
@@ -36,7 +36,7 @@ func decodePostBody(w http.ResponseWriter, r *http.Request, v any, decodeErrMsg 
 // Used by POST handlers whose JSON body is purely advisory
 // (e.g. push/pull/stash with no required fields).
 func decodePostBodyOptional(w http.ResponseWriter, r *http.Request, v any) {
-	api.DecodeBodyOptional(w, r, v)
+	httpwire.DecodeBodyOptional(w, r, v)
 }
 
 // writeCmdResult writes a git-command result: {jsonKeyOutput:
@@ -59,10 +59,10 @@ func writeCmdResult(w http.ResponseWriter, out string, err error) {
 		if strings.TrimSpace(msg) == "" {
 			msg = err.Error()
 		}
-		api.WriteJSON(w, api.ErrorJSON(scrubAuth(msg)))
+		httpwire.WriteJSON(w, httpwire.ErrorJSON(scrubAuth(msg)))
 		return
 	}
-	api.WriteJSON(w, map[string]string{jsonKeyOutput: scrubAuth(out)})
+	httpwire.WriteJSON(w, map[string]string{jsonKeyOutput: scrubAuth(out)})
 }
 
 // gitCmdWithCreds runs a git subprocess for network operations

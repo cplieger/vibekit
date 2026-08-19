@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 	"github.com/cplieger/vibekit/internal/steering"
 )
 
@@ -39,14 +39,14 @@ type kiroConfigItem struct {
 
 func (s *Server) handleKiroConfig(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	items := s.collectKiroConfig(r.Context())
 	if items == nil {
 		items = []kiroConfigItem{}
 	}
-	api.WriteJSON(w, map[string]any{"items": items})
+	httpwire.WriteJSON(w, map[string]any{"items": items})
 }
 
 func (s *Server) collectKiroConfig(ctx context.Context) []kiroConfigItem {

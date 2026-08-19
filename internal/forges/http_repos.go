@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // repoLister is what handleRepos needs at the collection level: the account's
@@ -22,13 +22,13 @@ type repoLister interface {
 func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, rest string) {
 	provider, err := h.manager.Provider(id)
 	if err != nil {
-		api.NotFound(w, err.Error())
+		httpwire.NotFound(w, err.Error())
 		return
 	}
 	// rest is "" → list repos. Otherwise it's "owner/name[/sub...]".
 	if rest == "" {
 		if r.Method != http.MethodGet {
-			api.MethodNotAllowed(w, http.MethodGet)
+			httpwire.MethodNotAllowed(w, http.MethodGet)
 			return
 		}
 		repos, err := provider.ListRepos(r.Context())
@@ -36,22 +36,22 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 			h.writeOpsError(w, err)
 			return
 		}
-		api.WriteJSON(w, map[string]any{"repos": repos})
+		httpwire.WriteJSON(w, map[string]any{"repos": repos})
 		return
 	}
 	owner, after, ok := splitFirst(rest)
 	if !ok || owner == "" {
-		api.BadRequest(w, "missing repo owner")
+		httpwire.BadRequest(w, "missing repo owner")
 		return
 	}
 	name, after2, _ := splitFirst(after)
 	if name == "" {
-		api.BadRequest(w, "missing repo name")
+		httpwire.BadRequest(w, "missing repo name")
 		return
 	}
 	repo := owner + "/" + name
 	if after2 == "" {
-		api.BadRequest(w, "missing sub-resource (prs/issues/checks/releases/labels)")
+		httpwire.BadRequest(w, "missing sub-resource (prs/issues/checks/releases/labels)")
 		return
 	}
 	op, tail, _ := splitFirst(after2)
@@ -67,7 +67,7 @@ func (h *HTTPHandler) handleRepos(w http.ResponseWriter, r *http.Request, id, re
 	case "labels":
 		h.handleLabels(w, r, provider, repo)
 	default:
-		api.NotFound(w, "unknown repo sub-resource")
+		httpwire.NotFound(w, "unknown repo sub-resource")
 	}
 }
 
@@ -124,12 +124,12 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			h.writeOpsError(w, err)
 			return
 		}
-		api.WriteJSON(w, map[string]any{"prs": prs})
+		httpwire.WriteJSON(w, map[string]any{"prs": prs})
 	case http.MethodPost:
 		var params CreatePRParams
-		api.LimitBody(w, r, api.MaxJSONBody)
+		httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			api.BadRequest(w, "invalid json")
+			httpwire.BadRequest(w, "invalid json")
 			return
 		}
 		pr, err := p.CreatePR(r.Context(), repo, &params)
@@ -137,9 +137,9 @@ func (h *HTTPHandler) handlePRCollection(w http.ResponseWriter, r *http.Request,
 			h.writeOpsError(w, err)
 			return
 		}
-		api.WriteJSON(w, pr)
+		httpwire.WriteJSON(w, pr)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -149,11 +149,11 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p p
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
-		api.BadRequest(w, "invalid PR number")
+		httpwire.BadRequest(w, "invalid PR number")
 		return
 	}
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	switch op {
@@ -166,7 +166,7 @@ func (h *HTTPHandler) handlePRAction(w http.ResponseWriter, r *http.Request, p p
 	case "rerun":
 		h.handlePRRerun(w, r, p, repo, number)
 	default:
-		api.NotFound(w, "unknown PR action")
+		httpwire.NotFound(w, "unknown PR action")
 	}
 }
 
@@ -210,7 +210,7 @@ func (h *HTTPHandler) handlePRRerun(w http.ResponseWriter, r *http.Request, p pr
 // one boundary rather than at each provider.
 func headPinOrBadRequest(w http.ResponseWriter, raw string) (headSHA string, ok bool) {
 	if raw != "" && !isHexSHA(raw) {
-		api.BadRequest(w, "invalid head_sha")
+		httpwire.BadRequest(w, "invalid head_sha")
 		return "", false
 	}
 	return raw, true
@@ -222,7 +222,7 @@ func (h *HTTPHandler) writeOpResult(w http.ResponseWriter, err error) {
 		h.writeOpsError(w, err)
 		return
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
 // queryTrue reads a boolean query parameter. Both spellings the client
@@ -263,12 +263,12 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 			h.writeOpsError(w, err)
 			return
 		}
-		api.WriteJSON(w, map[string]any{"issues": issues})
+		httpwire.WriteJSON(w, map[string]any{"issues": issues})
 	case http.MethodPost:
 		var params CreateIssueParams
-		api.LimitBody(w, r, api.MaxJSONBody)
+		httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			api.BadRequest(w, "invalid json")
+			httpwire.BadRequest(w, "invalid json")
 			return
 		}
 		issue, err := p.CreateIssue(r.Context(), repo, params)
@@ -276,9 +276,9 @@ func (h *HTTPHandler) handleIssueCollection(w http.ResponseWriter, r *http.Reque
 			h.writeOpsError(w, err)
 			return
 		}
-		api.WriteJSON(w, issue)
+		httpwire.WriteJSON(w, issue)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -287,22 +287,22 @@ func (h *HTTPHandler) handleIssueAction(w http.ResponseWriter, r *http.Request, 
 	numStr, op, _ := splitFirst(tail)
 	number, err := strconv.Atoi(numStr)
 	if err != nil {
-		api.BadRequest(w, "invalid issue number")
+		httpwire.BadRequest(w, "invalid issue number")
 		return
 	}
 	if op == stateClose {
 		if r.Method != http.MethodPost {
-			api.MethodNotAllowed(w, http.MethodPost)
+			httpwire.MethodNotAllowed(w, http.MethodPost)
 			return
 		}
 		if err := p.CloseIssue(r.Context(), repo, number); err != nil {
 			h.writeOpsError(w, err)
 			return
 		}
-		api.Ok(w)
+		httpwire.Ok(w)
 		return
 	}
-	api.NotFound(w, "unknown issue action")
+	httpwire.NotFound(w, "unknown issue action")
 }
 
 // checkOps is the CI-status read: one method, one handler.
@@ -313,12 +313,12 @@ type checkOps interface {
 
 func (h *HTTPHandler) handleChecks(w http.ResponseWriter, r *http.Request, p checkOps, repo string) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	ref := r.URL.Query().Get("ref")
 	if ref == "" {
-		api.BadRequest(w, "ref query parameter required")
+		httpwire.BadRequest(w, "ref query parameter required")
 		return
 	}
 	checks, err := p.CommitStatus(r.Context(), repo, ref)
@@ -326,7 +326,7 @@ func (h *HTTPHandler) handleChecks(w http.ResponseWriter, r *http.Request, p che
 		h.writeOpsError(w, err)
 		return
 	}
-	api.WriteJSON(w, map[string]any{"checks": checks})
+	httpwire.WriteJSON(w, map[string]any{"checks": checks})
 }
 
 // releaseOps is the release surface: list and cut.
@@ -346,12 +346,12 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p r
 			h.writeOpsError(w, err)
 			return
 		}
-		api.WriteJSON(w, map[string]any{"releases": releases})
+		httpwire.WriteJSON(w, map[string]any{"releases": releases})
 	case http.MethodPost:
 		var params CreateReleaseParams
-		api.LimitBody(w, r, api.MaxJSONBody)
+		httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
 		if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
-			api.BadRequest(w, "invalid json")
+			httpwire.BadRequest(w, "invalid json")
 			return
 		}
 		release, err := p.CreateRelease(r.Context(), repo, params)
@@ -359,9 +359,9 @@ func (h *HTTPHandler) handleReleases(w http.ResponseWriter, r *http.Request, p r
 			h.writeOpsError(w, err)
 			return
 		}
-		api.WriteJSON(w, release)
+		httpwire.WriteJSON(w, release)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -373,7 +373,7 @@ type labelOps interface {
 
 func (h *HTTPHandler) handleLabels(w http.ResponseWriter, r *http.Request, p labelOps, repo string) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	labels, err := p.ListLabels(r.Context(), repo)
@@ -381,5 +381,5 @@ func (h *HTTPHandler) handleLabels(w http.ResponseWriter, r *http.Request, p lab
 		h.writeOpsError(w, err)
 		return
 	}
-	api.WriteJSON(w, map[string]any{"labels": labels})
+	httpwire.WriteJSON(w, map[string]any{"labels": labels})
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 	"github.com/cplieger/vibekit/internal/logctl"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
@@ -25,26 +26,26 @@ func (s *Server) handleSteering(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		handleSteeringPut(w, r, path)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
+		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPut)
 	}
 }
 
 func handleSteeringGet(w http.ResponseWriter, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		api.WriteJSON(w, map[string]string{"content": ""})
+		httpwire.WriteJSON(w, map[string]string{"content": ""})
 		return
 	}
-	api.WriteJSON(w, map[string]string{"content": string(data)})
+	httpwire.WriteJSON(w, map[string]string{"content": string(data)})
 }
 
 func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
-	api.LimitBody(w, r, api.MaxJSONBody)
+	httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
 	var body struct {
 		Content string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		api.BadRequest(w, "bad request")
+		httpwire.BadRequest(w, "bad request")
 		return
 	}
 	// Empty content (whitespace only) means "no custom instructions":
@@ -52,10 +53,10 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 	// kiro-cli would include the empty file on every agent load.
 	if strings.TrimSpace(body.Content) == "" {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			api.InternalError(w, err)
+			httpwire.InternalError(w, err)
 			return
 		}
-		api.Ok(w)
+		httpwire.Ok(w)
 		return
 	}
 	if r.Context().Err() != nil {
@@ -73,14 +74,14 @@ func handleSteeringPut(w http.ResponseWriter, r *http.Request, path string) {
 	res, err := atomicfile.WriteFile(r.Context(), path, []byte(body.Content),
 		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
 	if err != nil {
-		api.InternalError(w, err)
+		httpwire.InternalError(w, err)
 		return
 	}
 	if !res.Durable {
 		slog.Warn("steering: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -91,17 +92,17 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut, http.MethodPatch:
 		s.handleSettingsWrite(w, r, path)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch)
+		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch)
 	}
 }
 
 func handleSettingsGet(w http.ResponseWriter, path string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		api.WriteJSON(w, settings.Default())
+		httpwire.WriteJSON(w, settings.Default())
 		return
 	}
-	w.Header().Set("Content-Type", api.MIMETypeJSON)
+	w.Header().Set("Content-Type", httpwire.MIMETypeJSON)
 	_, _ = w.Write(data)
 }
 
@@ -133,10 +134,10 @@ func readExistingSettings(path string) map[string]json.RawMessage {
 }
 
 func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, path string) {
-	api.LimitBody(w, r, api.MaxJSONBody)
+	httpwire.LimitBody(w, r, httpwire.MaxJSONBody)
 	var patch map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
-		api.BadRequest(w, "invalid json")
+		httpwire.BadRequest(w, "invalid json")
 		return
 	}
 	// Warn (don't reject) on unknown top-level keys so a typo
@@ -174,7 +175,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 	}
 	pretty, err := json.MarshalIndent(patch, "", "  ")
 	if err != nil {
-		api.BadRequest(w, "invalid json")
+		httpwire.BadRequest(w, "invalid json")
 		return
 	}
 	if r.Context().Err() != nil {
@@ -191,14 +192,14 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 	res, wErr := atomicfile.WriteFile(r.Context(), path, append(pretty, '\n'),
 		atomicfile.WithMode(0o644), atomicfile.WithMkdirMode(0o755))
 	if wErr != nil {
-		api.InternalError(w, wErr)
+		httpwire.InternalError(w, wErr)
 		return
 	}
 	if !res.Durable {
 		slog.Warn("settings: saved but parent-dir fsync unconfirmed; not guaranteed durable across an immediate crash",
 			"path", path)
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 	s.hub.Broadcast(r.Context(), api.NewEvent(api.EventSettingsUpdated, "", api.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(patch)
 	s.syncDebugLogs(patch)

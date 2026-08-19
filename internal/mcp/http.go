@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"path"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // RegisterRoutes wires the MCP config endpoints.
@@ -40,7 +40,7 @@ func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 // read as a silently-dropped field.
 func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var raw json.RawMessage
@@ -58,13 +58,13 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	api.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
+	httpwire.WriteJSON(w, map[string]any{"results": results, "notes": req.notes})
 }
 
 func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		api.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
+		httpwire.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
 	case http.MethodPost:
 		var in Server
 		if !decodeJSONBody(w, r, &in) {
@@ -75,9 +75,9 @@ func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 			s.writeErr(w, err)
 			return
 		}
-		api.WriteJSON(w, created)
+		httpwire.WriteJSON(w, created)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPost)
 	}
 }
 
@@ -88,12 +88,12 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 	// "." on empty input), so only the "mcp" case needs a guard.
 	raw := path.Base(r.URL.Path)
 	if raw == "mcp" {
-		api.NotFound(w, "server not found")
+		httpwire.NotFound(w, "server not found")
 		return
 	}
 	id, err := ParseServerID(raw)
 	if err != nil {
-		api.BadRequest(w, "invalid server id")
+		httpwire.BadRequest(w, "invalid server id")
 		return
 	}
 	switch r.Method {
@@ -106,7 +106,7 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		s.deleteOne(w, r, id)
 	default:
-		api.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodDelete)
+		httpwire.MethodNotAllowed(w, http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodDelete)
 	}
 }
 
@@ -114,10 +114,10 @@ func (s *Store) handleOne(w http.ResponseWriter, r *http.Request) {
 func (s *Store) getOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	got := s.Get(r.Context(), id)
 	if got == nil {
-		api.NotFound(w, "server not found")
+		httpwire.NotFound(w, "server not found")
 		return
 	}
-	api.WriteJSON(w, got)
+	httpwire.WriteJSON(w, got)
 }
 
 // putOne handles PUT /api/mcp/{id}: replace the record (preserving "***"
@@ -132,7 +132,7 @@ func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	api.WriteJSON(w, updated)
+	httpwire.WriteJSON(w, updated)
 }
 
 // patchOne handles PATCH /api/mcp/{id} with body {"enabled": bool}: a
@@ -147,7 +147,7 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	if patch.Enabled == nil {
 		slog.Debug("mcp: http patch missing enabled field",
 			"path", r.URL.Path)
-		api.BadRequest(w, "enabled required")
+		httpwire.BadRequest(w, "enabled required")
 		return
 	}
 	updated, err := s.SetEnabled(r.Context(), id, *patch.Enabled)
@@ -155,7 +155,7 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	api.WriteJSON(w, updated)
+	httpwire.WriteJSON(w, updated)
 }
 
 // deleteOne handles DELETE /api/mcp/{id}: 200 ok, or map the store error
@@ -165,13 +165,13 @@ func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		s.writeErr(w, err)
 		return
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
-// decodeJSONBody delegates to api.DecodeJSON for backward compatibility
+// decodeJSONBody delegates to httpwire.DecodeJSON for backward compatibility
 // within this package. Existing call sites use the local name.
 func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	return api.DecodeJSON(w, r, v)
+	return httpwire.DecodeJSON(w, r, v)
 }
 
 // writeErr maps package-level sentinel errors to the right HTTP status.
@@ -182,18 +182,18 @@ func (*Store) writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		slog.Debug("mcp: http not found", "error", err)
-		api.NotFound(w, err.Error())
+		httpwire.NotFound(w, err.Error())
 	case errors.Is(err, ErrNameConflict):
 		slog.Debug("mcp: http name conflict", "error", err)
-		api.Conflict(w, err.Error())
+		httpwire.Conflict(w, err.Error())
 	case errors.Is(err, ErrPersist):
 		if errors.Is(err, ErrPersistMarshal) {
 			slog.Error("mcp: http persist marshal failure (programmer bug)", "error", err)
 		} else {
 			slog.Warn("mcp: http persist write failure (infra)", "error", err)
 		}
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON("persist failed"))
+		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpwire.ErrorJSON("persist failed"))
 	default:
 		slog.Debug("mcp: http bad request", "error", err)
 		writeValidationErr(w, err)
@@ -220,9 +220,9 @@ type validationErrorBody struct {
 func writeValidationErr(w http.ResponseWriter, err error) {
 	fields := FieldErrors(err)
 	if len(fields) == 0 {
-		api.BadRequest(w, err.Error())
+		httpwire.BadRequest(w, err.Error())
 		return
 	}
-	api.WriteJSONStatus(w, http.StatusBadRequest,
+	httpwire.WriteJSONStatus(w, http.StatusBadRequest,
 		validationErrorBody{Error: err.Error(), Fields: fields})
 }

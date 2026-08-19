@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // handleUtilityExplainError explains a tool error in plain language.
@@ -13,7 +14,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if s.utilityPrompt == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON(api.ErrMsgUtilityUnavailable))
+		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, httpwire.ErrorJSON(api.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -24,7 +25,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if body.Error == "" {
-		api.BadRequest(w, "error is required")
+		httpwire.BadRequest(w, "error is required")
 		return
 	}
 	prompt := "Explain this error in plain language. What went wrong and how to fix it? Be concise (2-3 sentences).\n\n"
@@ -34,10 +35,10 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 	prompt += "Error: " + body.Error
 	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt, api.EffortLow)
 	if err != nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("generation failed"))
+		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, httpwire.ErrorJSON("generation failed"))
 		return
 	}
-	api.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
+	httpwire.WriteJSON(w, map[string]string{jsonKeyOutput: strings.TrimSpace(result)})
 }
 
 // handleUtilityResolveConflict proposes a merged version of a 3-way
@@ -47,7 +48,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.utilityPrompt == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON(api.ErrMsgUtilityUnavailable))
+		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, httpwire.ErrorJSON(api.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -59,7 +60,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if body.Ours == "" && body.Theirs == "" {
-		api.BadRequest(w, "ours or theirs is required")
+		httpwire.BadRequest(w, "ours or theirs is required")
 		return
 	}
 	const sideCap = 4 * 1024
@@ -91,8 +92,8 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 	// utility task; a low-effort merge tends to just pick one side.
 	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String(), api.EffortMedium)
 	if err != nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("generation failed"))
+		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, httpwire.ErrorJSON("generation failed"))
 		return
 	}
-	api.WriteJSON(w, map[string]string{jsonKeyOutput: api.StripCodeFence(strings.TrimSpace(result))})
+	httpwire.WriteJSON(w, map[string]string{jsonKeyOutput: api.StripCodeFence(strings.TrimSpace(result))})
 }

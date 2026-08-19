@@ -11,28 +11,29 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // handleFileChanges delegates to the line tracker for
 // GET /api/file-changes?chat_id=<id>&path=<path>.
 func (h *Hub) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	chatID := r.URL.Query().Get("chat_id")
 	if chatID == "" {
-		api.BadRequest(w, "chat_id is required")
+		httpwire.BadRequest(w, "chat_id is required")
 		return
 	}
 	path := r.URL.Query().Get("path")
 	if path == "" {
-		api.BadRequest(w, "path query param is required")
+		httpwire.BadRequest(w, "path query param is required")
 		return
 	}
 	ranges := h.lines.Get(api.ChatID(chatID), path)
 	if ranges == nil {
 		ranges = []buffer.LineRange{}
 	}
-	api.WriteJSON(w, map[string]any{"changes": ranges})
+	httpwire.WriteJSON(w, map[string]any{"changes": ranges})
 }

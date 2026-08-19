@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 const (
@@ -19,17 +19,17 @@ const (
 
 func (h *Handler) handleDownloadZip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var req struct {
 		Paths []string `json:"paths"`
 	}
-	if !api.DecodeJSON(w, r, &req) {
+	if !httpwire.DecodeJSON(w, r, &req) {
 		return
 	}
 	if len(req.Paths) == 0 {
-		api.BadRequest(w, "no paths provided")
+		httpwire.BadRequest(w, "no paths provided")
 		return
 	}
 

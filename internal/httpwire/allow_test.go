@@ -1,4 +1,4 @@
-package api
+package httpwire
 
 import (
 	"net/http"

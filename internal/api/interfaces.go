@@ -2,16 +2,16 @@
 // components. All cross-component calls go through these interfaces,
 // enabling testability (mock any component) and swappability.
 //
-// This package contains two concern groups:
+// The package holds the contract surface: the interfaces (interfaces.go) and
+// the wire and domain types (domain_chat.go, events.go, commands.go,
+// domain_rpc.go, mcp.go, push_types.go, methods.go, strings.go). The types
+// are what keep the dependency graph acyclic, and cmd/wire-codegen walks them
+// through internal/wirespec to generate the TypeScript client's decoders.
 //
-//  1. Domain types and interfaces — the contract surface (interfaces.go,
-//     domain_chat.go, events.go, commands.go, domain_rpc.go, mcp.go,
-//     push_types.go, methods.go, strings.go).
-//  2. HTTP response/request helpers (httputil.go, decode.go) —
-//     WriteJSON, BadRequest, MethodNotAllowed, etc.
-//
-// Atomic file I/O (SaveBytes, bounded reads) lives in the external
-// cplieger/atomicfile package, not here.
+// HTTP request and response plumbing is NOT here: WriteJSON, BadRequest,
+// MethodNotAllowed, DecodeJSON and the rest live in internal/httpwire, which
+// imports nothing from this package. Atomic file I/O (SaveBytes, bounded
+// reads) lives in the external cplieger/atomicfile package.
 //
 // Implementation packages import api, never the reverse.
 package api

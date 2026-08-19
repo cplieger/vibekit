@@ -47,7 +47,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 	"github.com/cplieger/vibekit/internal/steering"
 )
 
@@ -154,14 +154,14 @@ type docsCache struct {
 
 func (s *Server) handleKiroDocs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	docs := s.collectKiroDocs(r.Context())
 	if docs == nil {
 		docs = []kiroDoc{}
 	}
-	api.WriteJSON(w, map[string]any{"docs": docs})
+	httpwire.WriteJSON(w, map[string]any{"docs": docs})
 }
 
 // collectKiroDocs returns the cached inventory, rescanning when the signature

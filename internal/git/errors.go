@@ -7,11 +7,11 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 const (
-	jsonKeyOutput  = api.JSONKeyOutput
+	jsonKeyOutput  = httpwire.JSONKeyOutput
 	refHEAD        = "HEAD"
 	msgNotAGitRepo = "not a git repo"
 )
@@ -42,11 +42,11 @@ const (
 // writeGitError writes a structured error response with a stable
 // machine-readable kind and an optional human-readable detail field.
 func writeGitError(w http.ResponseWriter, kind ErrorKind, detail string) {
-	resp := api.ErrorJSON(string(kind))
+	resp := httpwire.ErrorJSON(string(kind))
 	if detail != "" {
 		resp["detail"] = detail
 	}
-	api.WriteJSON(w, resp)
+	httpwire.WriteJSON(w, resp)
 }
 
 // --- git show error classification ---

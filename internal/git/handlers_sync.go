@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 func (h *Handler) handleCommit(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +21,7 @@ func (h *Handler) handleCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(body.Message) == "" {
-		api.BadRequest(w, "message required")
+		httpwire.BadRequest(w, "message required")
 		return
 	}
 	dir := h.repoDir(body.Repo)

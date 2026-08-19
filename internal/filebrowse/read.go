@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 const (
@@ -38,8 +38,8 @@ func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string)
 		return
 	}
 	if looksBinary(data) {
-		api.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
-			api.ErrorJSON("binary file"))
+		httpwire.WriteJSONStatus(w, http.StatusUnsupportedMediaType,
+			httpwire.ErrorJSON("binary file"))
 		return
 	}
 	// content_hash is the client's handle on "the bytes I loaded". It comes back
@@ -53,7 +53,7 @@ func readFile(ctx context.Context, w http.ResponseWriter, l loc, reqPath string)
 	// so two writes inside one tick are byte-identical in mtime and an
 	// mtime-based guard would miss exactly the rapid agent write it exists to
 	// catch. See kiro_docs.go's dirSignature for the same finding.
-	api.WriteJSON(w, map[string]string{
+	httpwire.WriteJSON(w, map[string]string{
 		"content":      string(data),
 		"content_hash": contentHash(data),
 		respPath:       reqPath,
@@ -85,12 +85,12 @@ func looksBinary(data []byte) bool {
 
 func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	reqPath := r.URL.Query().Get("path")
 	if reqPath == "" {
-		api.BadRequest(w, "missing path")
+		httpwire.BadRequest(w, "missing path")
 		return
 	}
 	l, ok := h.resolveOrForbid(w, reqPath)
@@ -107,29 +107,29 @@ func (h *Handler) handleDownload(w http.ResponseWriter, r *http.Request) {
 	f, err := l.m.root.Open(l.rel())
 	if err != nil {
 		if os.IsNotExist(err) {
-			api.NotFound(w, "not found")
+			httpwire.NotFound(w, "not found")
 			return
 		}
 		slog.Warn("filebrowse: download open failed", "path", l.abs, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON(errReadFailed))
+		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpwire.ErrorJSON(errReadFailed))
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
 		slog.Warn("filebrowse: download stat failed", "path", l.abs, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError,
-			api.ErrorJSON(errReadFailed))
+		httpwire.WriteJSONStatus(w, http.StatusInternalServerError,
+			httpwire.ErrorJSON(errReadFailed))
 		return
 	}
 	if info.IsDir() {
-		api.BadRequest(w, "cannot download directory")
+		httpwire.BadRequest(w, "cannot download directory")
 		return
 	}
 	if info.Size() > maxCopySize {
-		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
-			api.ErrorJSON("file too large to download"))
+		httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge,
+			httpwire.ErrorJSON("file too large to download"))
 		return
 	}
 	name := filepath.Base(l.abs)
@@ -187,13 +187,13 @@ func readFileError(w http.ResponseWriter, l loc, err error) {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return
 	case errors.Is(err, fs.ErrNotExist):
-		api.NotFound(w, "not found")
+		httpwire.NotFound(w, "not found")
 	case errors.Is(err, atomicfile.ErrNotRegular):
-		api.BadRequest(w, "not a regular file")
+		httpwire.BadRequest(w, "not a regular file")
 	case errors.Is(err, atomicfile.ErrFileTooLarge):
-		api.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, api.ErrorJSON(errFileTooLarge))
+		httpwire.WriteJSONStatus(w, http.StatusRequestEntityTooLarge, httpwire.ErrorJSON(errFileTooLarge))
 	default:
 		slog.Warn("filebrowse: read failed", "path", l.abs, "error", err)
-		api.WriteJSONStatus(w, http.StatusInternalServerError, api.ErrorJSON(errReadFailed))
+		httpwire.WriteJSONStatus(w, http.StatusInternalServerError, httpwire.ErrorJSON(errReadFailed))
 	}
 }

@@ -1,4 +1,20 @@
-package api
+// Package httpwire is vibekit's HTTP request and response adapter: the JSON
+// writers, the named error responses, the request-prelude guards, and the body
+// caps every handler package reaches for.
+//
+// It exists because this is BEHAVIOUR, and it used to sit in internal/api
+// beside the wire and domain TYPES. That put the 405 helper every handler
+// imports inside the one package the code generator walks for the
+// cross-language type contract, so neither half could be read or changed
+// without the other in view.
+//
+// The mechanism is the fleet's: webhttp owns the headers, the status, the
+// encode, the body cap and the decode. What is vibekit's, and what makes this
+// an adapter rather than a re-export, is the error TAXONOMY. Every helper here
+// writes the bare {"error": "msg"} envelope vibekit's clients decode, leaving
+// webhttp.ErrorResponse's Code and RequestID fields empty; a handler that
+// hand-rolls that envelope instead is the drift these helpers exist to stop.
+package httpwire
 
 import (
 	"encoding/json"
@@ -40,8 +56,8 @@ const MIMETypeJSON = "application/json"
 // MaxJSONBody is the maximum size for JSON request bodies (1 MiB).
 const MaxJSONBody = 1024 * 1024
 
-// MsgInternalError is the standard client-facing message for 500 responses.
-const MsgInternalError = "internal error"
+// msgInternalError is the standard client-facing message for 500 responses.
+const msgInternalError = "internal error"
 
 // LimitBody wraps r.Body with MaxBytesReader to prevent oversized requests.
 // It delegates to webhttp.LimitBody so the body-cap mechanism is shared fleet-wide.
@@ -54,10 +70,12 @@ func LimitBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
 // The mechanism (headers, status, encode) is webhttp's; vibekit's error
 // taxonomy (the bare {"error":…} named helpers below) is layered on top.
 
-// JSONHeaders sets the standard JSON response headers (Content-Type
-// and X-Content-Type-Options). Exported for the handler packages that write
-// a JSON body without going through the named helpers below.
-func JSONHeaders(w http.ResponseWriter) {
+// jsonHeaders sets the standard JSON response headers (Content-Type and
+// X-Content-Type-Options). It was exported, on a doc comment claiming the
+// handler packages needed it to write a JSON body without the named helpers
+// below. No handler package ever called it: every JSON body in the tree goes
+// through those helpers, which is the point of having them.
+func jsonHeaders(w http.ResponseWriter) {
 	webhttp.JSONHeaders(w)
 }
 
@@ -79,9 +97,9 @@ func WriteJSONStatus(w http.ResponseWriter, code int, v any) {
 // slash-command results) where json.Marshal would be a redundant
 // round-trip. Write errors are best-effort (client may have hung up).
 func WriteRawJSON(w http.ResponseWriter, data []byte) {
-	JSONHeaders(w)
+	jsonHeaders(w)
 	if _, err := w.Write(data); err != nil {
-		slog.Debug("api: raw json write failed", "error", err)
+		slog.Debug("httpwire: raw json write failed", "error", err)
 	}
 }
 
@@ -166,9 +184,9 @@ func MethodNotAllowed(w http.ResponseWriter, method string, more ...string) {
 // error details to HTTP clients.
 func InternalError(w http.ResponseWriter, err error) {
 	if err != nil {
-		slog.Error("api: internal error", "error", err)
+		slog.Error("httpwire: internal error", "error", err)
 	}
-	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: MsgInternalError})
+	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: msgInternalError})
 }
 
 // ServerError writes a 500 with a caller-specified client-visible message
@@ -177,7 +195,7 @@ func InternalError(w http.ResponseWriter, err error) {
 // logging the raw error for debugging.
 func ServerError(w http.ResponseWriter, clientMsg string, err error) {
 	if err != nil {
-		slog.Error("api: server error", "client_msg", clientMsg, "error", err)
+		slog.Error("httpwire: server error", "client_msg", clientMsg, "error", err)
 	}
 	WriteJSONStatus(w, http.StatusInternalServerError, webhttp.ErrorResponse{Error: clientMsg})
 }

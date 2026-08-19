@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // accountUsageTTL bounds how often the footer fetch hits KAS. Account
@@ -30,7 +31,7 @@ type acctUsageCache struct {
 // last-known snapshot (marked stale) if any, else 503.
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	if s.accountUsage == nil {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("account usage unavailable"))
+		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, httpwire.ErrorJSON("account usage unavailable"))
 		return
 	}
 	c := &s.acctUsage
@@ -40,7 +41,7 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		fresh := *c.data
 		c.mu.Unlock()
 		fresh.Stale = false
-		api.WriteJSON(w, fresh)
+		httpwire.WriteJSON(w, fresh)
 		return
 	}
 	c.mu.Unlock()
@@ -53,11 +54,11 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 		if last != nil {
 			stale := *last
 			stale.Stale = true
-			api.WriteJSON(w, stale)
+			httpwire.WriteJSON(w, stale)
 			return
 		}
 		slog.Warn("account usage fetch failed", "error", err)
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, api.ErrorJSON("account usage unavailable"))
+		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, httpwire.ErrorJSON("account usage unavailable"))
 		return
 	}
 
@@ -65,5 +66,5 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	c.data = usage
 	c.atNanos = time.Now().UnixNano()
 	c.mu.Unlock()
-	api.WriteJSON(w, usage)
+	httpwire.WriteJSON(w, usage)
 }

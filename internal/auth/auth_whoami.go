@@ -11,7 +11,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // WhoamiResponse is the typed wire shape returned by /api/whoami. The
@@ -46,7 +46,7 @@ type WhoamiResponse struct {
 // can't pin the HTTP handler indefinitely.
 func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), h.cfg.WhoamiTimeout)
@@ -98,17 +98,17 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 			attrs = append(attrs, stderrAttr(&stderr)...)
 			slog.Warn("whoami: kiro-cli invocation failed", attrs...)
 		}
-		api.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
+		httpwire.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
 		return
 	}
 	info, err := whoamiInfo(out)
 	if err != nil {
 		slog.Warn("whoami: cli output not parseable as json",
 			"error", err, "stdout_bytes", len(out))
-		api.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
+		httpwire.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})
 		return
 	}
-	api.WriteJSON(w, info)
+	httpwire.WriteJSON(w, info)
 }
 
 // whoamiInfo parses kiro-cli's --format json whoami output and

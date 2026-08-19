@@ -37,7 +37,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 )
 
 // keySubcommand is the _kiro/knowledge dispatch field naming the operation.
@@ -173,7 +173,7 @@ func (h *Hub) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 		h.writeKnowledgeErr(w, err)
 		return
 	}
-	api.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
+	httpwire.WriteJSON(w, knowledgeListResponse{Contexts: ctxs})
 }
 
 type knowledgeAddReq struct {
@@ -187,12 +187,12 @@ type knowledgeAddReq struct {
 // 400 with the KAS message.
 func (h *Hub) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 	var body knowledgeAddReq
-	if !api.DecodeJSON(w, r, &body) {
+	if !httpwire.DecodeJSON(w, r, &body) {
 		return
 	}
 	path := strings.TrimSpace(body.Path)
 	if path == "" {
-		api.BadRequest(w, "path required")
+		httpwire.BadRequest(w, "path required")
 		return
 	}
 	abs := h.resolveKnowledgePath(path)
@@ -210,10 +210,10 @@ func (h *Hub) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !res.Success {
-		api.BadRequest(w, cleanKnowledgeMsg(res.Message))
+		httpwire.BadRequest(w, cleanKnowledgeMsg(res.Message))
 		return
 	}
-	api.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
+	httpwire.WriteJSON(w, knowledgeMessageResponse{Message: res.Message})
 }
 
 // handleKnowledgeRemove: DELETE /api/knowledge/{name} → drop a context by name
@@ -221,7 +221,7 @@ func (h *Hub) handleKnowledgeAdd(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
-		api.BadRequest(w, "name required")
+		httpwire.BadRequest(w, "name required")
 		return
 	}
 	res, err := h.knowledgeMutate(r.Context(), map[string]any{
@@ -233,10 +233,10 @@ func (h *Hub) handleKnowledgeRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !res.Success {
-		api.NotFound(w, cleanKnowledgeMsg(res.Message))
+		httpwire.NotFound(w, cleanKnowledgeMsg(res.Message))
 		return
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
 // knowledgeMutate issues a mutating subcommand (add/remove/…) and parses the
@@ -255,7 +255,7 @@ func (h *Hub) knowledgeMutate(ctx context.Context, params map[string]any) (*kasK
 // "open a chat first" condition.
 func (h *Hub) writeKnowledgeErr(w http.ResponseWriter, err error) {
 	slog.Warn("knowledge op failed", "error", err)
-	api.WriteJSONStatus(w, http.StatusBadGateway, api.ErrorJSON("knowledge request failed"))
+	httpwire.WriteJSONStatus(w, http.StatusBadGateway, httpwire.ErrorJSON("knowledge request failed"))
 }
 
 // registerKnowledgeRoutes wires the knowledge-base management endpoints.

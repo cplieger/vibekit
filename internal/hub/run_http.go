@@ -52,6 +52,7 @@ import (
 	"slices"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 	"github.com/cplieger/vibekit/internal/workflow"
 )
 
@@ -92,12 +93,12 @@ func (h *Hub) rawInspectRun(ctx context.Context, workflowID string) (json.RawMes
 //     been deleted, which is a different and alarming thing.
 func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	id := r.PathValue("id")
 	if id == "" {
-		api.BadRequest(w, "missing workflow id")
+		httpwire.BadRequest(w, "missing workflow id")
 		return
 	}
 	raw, err := h.rawInspectRun(r.Context(), id)
@@ -105,17 +106,17 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, workflow.ErrUnknownMethod) {
 			slog.Warn("workflow inspect: engine not available on this kiro-cli",
 				"workflow_id", id, "detail", api.RPCDetails(err))
-			api.WriteJSONStatus(w, http.StatusServiceUnavailable,
+			httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
 			return
 		}
 		slog.Warn("workflow inspect failed", "workflow_id", id,
 			"error", err, "detail", api.RPCDetails(err))
-		api.NotFound(w, "workflow run not found")
+		httpwire.NotFound(w, "workflow run not found")
 		return
 	}
 	h.translator.RecordRunSteps(raw)
-	api.WriteRawJSON(w, raw)
+	httpwire.WriteRawJSON(w, raw)
 }
 
 // runStatus reads one run's current status via `_kiro/workflow/inspect`.
@@ -151,16 +152,16 @@ func (h *Hub) runStatus(ctx context.Context, workflowID string) (string, error) 
 // workspace, projected to the fields the Workflows tab renders.
 func (h *Hub) handleRecipes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		api.MethodNotAllowed(w, http.MethodGet)
+		httpwire.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
 	recipes, err := h.listRecipes(r.Context())
 	if err != nil {
 		slog.Warn("recipe list failed", "error", err, "detail", api.RPCDetails(err))
-		api.InternalError(w, errors.New("recipe list unavailable"))
+		httpwire.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
-	api.WriteJSON(w, api.RecipesResponse{Recipes: recipes})
+	httpwire.WriteJSON(w, api.RecipesResponse{Recipes: recipes})
 }
 
 // handleRunLaunch: POST /api/runs → launch one PARENTLESS run and answer with
@@ -169,27 +170,27 @@ func (h *Hub) handleRecipes(w http.ResponseWriter, r *http.Request) {
 // button able to name one run.
 func (h *Hub) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	var req api.RunLaunchRequest
-	if !api.DecodeJSON(w, r, &req) {
+	if !httpwire.DecodeJSON(w, r, &req) {
 		return
 	}
 	id, name, err := h.LaunchRun(r.Context(), req.Source, req.Inputs)
 	if err != nil {
 		if errors.Is(err, errRecipeBusy) {
-			api.Conflict(w, errRecipeBusy.Error())
+			httpwire.Conflict(w, errRecipeBusy.Error())
 			return
 		}
 		slog.Warn("run launch failed", "source", req.Source, "error", err, "detail", api.RPCDetails(err))
 		// KAS's launch-time validation is precise (a bad input set, an
 		// unregistered agent) and the message names the problem; forward it
 		// rather than a generic sentinel, because the fix is the user's.
-		api.BadRequest(w, api.RPCErrorText(err))
+		httpwire.BadRequest(w, api.RPCErrorText(err))
 		return
 	}
-	api.WriteJSON(w, api.RunLaunchedResponse{WorkflowID: id, Name: name})
+	httpwire.WriteJSON(w, api.RunLaunchedResponse{WorkflowID: id, Name: name})
 }
 
 // handleRunCancel: POST /api/runs/{id}/cancel → ask the run to stop. The
@@ -233,12 +234,12 @@ func (h *Hub) handleRunDelete(w http.ResponseWriter, r *http.Request) {
 // which status) and the verb table's issue signature is id-only.
 func (h *Hub) handleRunStepStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		api.MethodNotAllowed(w, http.MethodPost)
+		httpwire.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
 	id := r.PathValue("id")
 	if id == "" {
-		api.BadRequest(w, "missing workflow id")
+		httpwire.BadRequest(w, "missing workflow id")
 		return
 	}
 	var body struct {
@@ -246,18 +247,18 @@ func (h *Hub) handleRunStepStatus(w http.ResponseWriter, r *http.Request) {
 		Status string `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		api.BadRequest(w, "invalid step-status payload")
+		httpwire.BadRequest(w, "invalid step-status payload")
 		return
 	}
 	if err := h.SetRunStepStatus(r.Context(), id, body.NodeID, body.Status); err != nil {
 		if errors.Is(err, errRunNotHosted) {
-			api.Conflict(w, err.Error())
+			httpwire.Conflict(w, err.Error())
 			return
 		}
-		api.BadRequest(w, err.Error())
+		httpwire.BadRequest(w, err.Error())
 		return
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }
 
 // runVerb describes one run-control verb: how to issue it, and which run
@@ -330,12 +331,12 @@ var (
 
 func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
 	if r.Method != verb.method {
-		api.MethodNotAllowed(w, verb.method)
+		httpwire.MethodNotAllowed(w, verb.method)
 		return
 	}
 	id := r.PathValue("id")
 	if id == "" {
-		api.BadRequest(w, "missing workflow id")
+		httpwire.BadRequest(w, "missing workflow id")
 		return
 	}
 	if len(verb.from) > 0 {
@@ -343,15 +344,15 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 		if err != nil {
 			slog.Warn("run control: status read failed",
 				"verb", verb.name, "workflow_id", id, "error", err, "detail", api.RPCDetails(err))
-			api.InternalError(w, errors.New(verb.name+" failed"))
+			httpwire.InternalError(w, errors.New(verb.name+" failed"))
 			return
 		}
 		if status == "" {
-			api.NotFound(w, "run not found")
+			httpwire.NotFound(w, "run not found")
 			return
 		}
 		if !slices.Contains(verb.from, status) {
-			api.Conflict(w, verb.name+" is not available for a "+status+" run")
+			httpwire.Conflict(w, verb.name+" is not available for a "+status+" run")
 			return
 		}
 	}
@@ -363,13 +364,13 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 		if errors.Is(err, errRunNotHosted) {
 			slog.Info("run control unavailable: run not hosted here",
 				"verb", verb.name, "workflow_id", id)
-			api.Conflict(w, err.Error())
+			httpwire.Conflict(w, err.Error())
 			return
 		}
 		slog.Warn("run control failed",
 			"verb", verb.name, "workflow_id", id, "error", err, "detail", api.RPCDetails(err))
-		api.InternalError(w, errors.New(verb.name+" failed"))
+		httpwire.InternalError(w, errors.New(verb.name+" failed"))
 		return
 	}
-	api.Ok(w)
+	httpwire.Ok(w)
 }

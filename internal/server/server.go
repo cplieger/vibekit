@@ -16,6 +16,7 @@ import (
 	"github.com/cplieger/toolbelt/v2"
 	"github.com/cplieger/toolbelt/v2/httpapi"
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/httpwire"
 	"github.com/cplieger/webhttp"
 )
 
@@ -419,13 +420,13 @@ func (s *Server) middlewareStack(cspPolicy string, idem *idempotencyCache) []web
 // only POST, so this specialised wrapper avoids an always-identical
 // method argument at call sites.
 func requirePOST(w http.ResponseWriter, r *http.Request) bool {
-	return api.RequireMethod(w, r, http.MethodPost)
+	return httpwire.RequireMethod(w, r, http.MethodPost)
 }
 
 // decodeBody applies LimitBody, decodes JSON into v, and returns true
 // on success. On failure it writes a 400 response and returns false.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	return api.DecodeBody(w, r, v, "bad request")
+	return httpwire.DecodeBody(w, r, v, "bad request")
 }
 
 // healthBody is the readiness envelope handleHealth and the kiro-cli repair
@@ -478,7 +479,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	// header, so every app in the fleet answers this the same way.
 	w.Header().Set("Cache-Control", "no-store")
 	unready := func(reason string) {
-		api.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
+		httpwire.WriteJSONStatus(w, http.StatusServiceUnavailable, healthBody{
 			Status: "unready",
 			Reason: reason,
 		})
@@ -501,5 +502,5 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		unready(reasonSignIn)
 		return
 	}
-	api.WriteJSON(w, healthBody{Status: "ok"})
+	httpwire.WriteJSON(w, healthBody{Status: "ok"})
 }
