@@ -11,7 +11,9 @@
 // (verified to raise no consent prompt), so neither has a side effect on the
 // agent — unlike policy/check, which is deliberately never called.
 //
-// The Hub satisfies api.PolicyProvider.
+// The read pair is declared at its consumer (internal/server's policyProvider);
+// server.WithPolicy(h) in the composition root is what forces the check, so
+// there is no assertion here.
 
 package hub
 
@@ -24,8 +26,6 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 )
-
-var _ api.PolicyProvider = (*Hub)(nil)
 
 // policyCallTimeout bounds one _kiro/permissions/{list,explain} round-trip.
 // Both hold the single utility mutex across bridge.Call, so without a

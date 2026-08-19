@@ -1,7 +1,5 @@
 package api
 
-import "context"
-
 // Native Cedar policy domain types (v3 / KAS).
 //
 // vibekit adopts kiro-cli's native permission policy as the source of
@@ -86,15 +84,6 @@ type PolicyExplainResult struct {
 	Scope         string          `json:"scope,omitempty"`
 	Source        string          `json:"source,omitempty"`
 	IsExplicitAsk bool            `json:"is_explicit_ask"`
-}
-
-// PolicyProvider reads the native Cedar policy via a live bridge (the
-// utility bridge). Implemented by *hub.Hub so the server can serve
-// GET /api/permissions + POST /api/permissions/explain without depending
-// on the full Hub surface.
-type PolicyProvider interface {
-	PolicyList(ctx context.Context, scope string) ([]PolicyRule, error)
-	PolicyExplain(ctx context.Context, req PolicyExplainRequest) (*PolicyExplainResult, error)
 }
 
 // PolicyErrorItem is one entry in a policy/changed or policy/error

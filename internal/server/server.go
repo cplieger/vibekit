@@ -22,23 +22,6 @@ import (
 
 const port = "9847"
 
-// SteeringGenerator generates steering files for kiro-cli. Declared here, at
-// the only consumer, rather than in the api hub: one consumer means the hub
-// would carry a contract nothing else reads. *steering.Generator satisfies it.
-type SteeringGenerator interface {
-	Generate(ctx context.Context)
-	CustomPath() string
-}
-
-// AccountUsageProvider fetches account/subscription-level usage (plan,
-// credits, quota) via the KAS _kiro/account/getUsage request on a live bridge.
-// Narrow by design so this package can serve GET /api/account/usage without
-// depending on the full Hub surface; the concrete *hub.Hub satisfies it via
-// the utility bridge. Declared at the consumer for the same reason as above.
-type AccountUsageProvider interface {
-	AccountUsage(ctx context.Context) (*api.AccountUsage, error)
-}
-
 // Server holds shared state and registers all HTTP handlers.
 type Server struct {
 	forges        api.RouteHandler
@@ -52,7 +35,7 @@ type Server struct {
 	mcpStatus     api.RouteHandler
 	utilityPrompt api.UtilityPrompter
 	accountUsage  AccountUsageProvider
-	policy        api.PolicyProvider
+	policy        policyProvider
 	hub           api.Hub
 	steering      SteeringGenerator
 	mcpRegistry   api.RouteHandler
@@ -160,7 +143,7 @@ func WithAccountUsage(p AccountUsageProvider) Option {
 // policy view at GET /api/permissions and the pre-flight simulation at
 // POST /api/permissions/explain. The rule WRITER at POST /api/permissions/rules
 // needs no provider (it is a file write KAS hot-reloads).
-func WithPolicy(p api.PolicyProvider) Option {
+func WithPolicy(p policyProvider) Option {
 	return func(s *Server) { s.policy = p }
 }
 
