@@ -12,8 +12,8 @@ import (
 	"testing"
 )
 
-// Tests for httpreply.go: the JSON writers, LimitBody, the LimitedWriter cap,
-// WriteRawJSON, and the two logged error paths.
+// Tests for httpreply.go: the JSON writers, WriteRawJSON, and the two logged
+// error paths.
 
 // captureSlog swaps the default slog logger for a buffer-backed text handler
 // (Debug level, so Warn/Error/Debug are all captured) and restores the previous
@@ -279,62 +279,4 @@ func TestInternalError_does_not_log_when_nil(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("InternalError(nil) status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
-}
-
-// --- LimitedWriter cap ---
-
-func TestLimitedWriter_zero_cap_drops_and_reports_full_length(t *testing.T) {
-	var sink bytes.Buffer
-	lw := &LimitedWriter{W: &sink, N: 0}
-	n, err := lw.Write([]byte("abc"))
-	if err != nil {
-		t.Fatalf("LimitedWriter{N:0}.Write err = %v, want nil", err)
-	}
-	// A non-positive cap drops the bytes but reports the full length so callers
-	// treating a short write as an error don't trip.
-	if n != 3 {
-		t.Errorf("LimitedWriter{N:0}.Write(%q) n = %d, want 3", "abc", n)
-	}
-	if sink.Len() != 0 {
-		t.Errorf("LimitedWriter{N:0} wrote %d bytes to sink, want 0", sink.Len())
-	}
-}
-
-func TestLimitedWriter_truncates_over_cap(t *testing.T) {
-	var sink bytes.Buffer
-	lw := &LimitedWriter{W: &sink, N: 2}
-	n, err := lw.Write([]byte("abcd"))
-	if err != nil {
-		t.Fatalf("LimitedWriter{N:2}.Write err = %v, want nil", err)
-	}
-	if n != 2 {
-		t.Errorf("LimitedWriter{N:2}.Write(%q) n = %d, want 2", "abcd", n)
-	}
-	if sink.String() != "ab" {
-		t.Errorf("LimitedWriter{N:2} sink = %q, want %q", sink.String(), "ab")
-	}
-}
-
-// --- LimitedWriter, property side ---
-
-func FuzzLimitedWriter(f *testing.F) {
-	f.Add(int64(0), []byte("hello"))
-	f.Add(int64(3), []byte("hello"))
-	f.Add(int64(100), []byte("hi"))
-	f.Add(int64(-1), []byte("x"))
-	f.Add(int64(1), []byte{})
-
-	f.Fuzz(func(t *testing.T, n int64, p []byte) {
-		var buf bytes.Buffer
-		lw := &LimitedWriter{W: &buf, N: n}
-		wrote, err := lw.Write(p)
-		_ = err // underlying bytes.Buffer never errors
-		if wrote < 0 || wrote > len(p) {
-			t.Errorf("Write returned %d for len(p)=%d", wrote, len(p))
-		}
-		limit := max(n, 0)
-		if int64(buf.Len()) > limit {
-			t.Errorf("underlying got %d bytes, cap was %d", buf.Len(), n)
-		}
-	})
 }

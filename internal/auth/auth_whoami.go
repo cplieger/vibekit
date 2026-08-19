@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
 )
 
 // WhoamiResponse is the typed wire shape returned by /api/whoami. The
@@ -56,14 +57,14 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	// repo-wide gosec G204 exclusion already suppresses the warning;
 	// no //nolint needed.
 	cmd := exec.CommandContext(ctx, h.cliPath(), "whoami", "--format", "json") //nolint:gosec // G204: binary path from config
-	var stderr bytes.Buffer
-	var stdoutBuf bytes.Buffer
+	stderr := procout.NewBuffer(stderrCap)
+	stdoutBuf := procout.NewBuffer(whoamiMaxOutput)
 	// Bounded stderr capture so a runaway or hostile kiro-cli can't
 	// OOM the container via unbounded stderr on this per-page-load
 	// endpoint. Mirrors the login/logout pattern.
-	cmd.Stderr = &limitedWriter{W: &stderr, N: stderrCap}
+	cmd.Stderr = stderr
 	// Bounded stdout capture so a runaway CLI can't OOM the container.
-	cmd.Stdout = &limitedWriter{W: &stdoutBuf, N: whoamiMaxOutput}
+	cmd.Stdout = stdoutBuf
 	err := cmd.Run()
 	out := stdoutBuf.Bytes()
 	if err != nil {
@@ -78,7 +79,7 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			attrs := make([]any, 0, 4)
 			attrs = append(attrs, "timeout", h.cfg.WhoamiTimeout)
-			attrs = append(attrs, stderrAttr(&stderr)...)
+			attrs = append(attrs, stderrAttr(stderr)...)
 			slog.Warn("whoami: kiro-cli timed out", attrs...)
 		case errors.Is(err, exec.ErrNotFound), errors.Is(err, fs.ErrNotExist):
 			// Warn (not Error): /api/whoami fires on every page
@@ -95,7 +96,7 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 			// only needs to see that whoami failed.
 			attrs := make([]any, 0, 6)
 			attrs = append(attrs, "error", err, "stdout_bytes", len(out))
-			attrs = append(attrs, stderrAttr(&stderr)...)
+			attrs = append(attrs, stderrAttr(stderr)...)
 			slog.Warn("whoami: kiro-cli invocation failed", attrs...)
 		}
 		httpreply.WriteJSON(w, &WhoamiResponse{Error: msgWhoamiUnavailable})

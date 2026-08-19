@@ -175,36 +175,6 @@ func TestHandleDiagnostics_MethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestCappedBuffer_CapsAndFlags exercises the capped-buffer cap + overflow
-// tracking that RunStdoutCapped relies on for truncation detection.
-func TestCappedBuffer_CapsAndFlags(t *testing.T) {
-	c := &cappedBuffer{limit: 10}
-
-	n, _ := c.Write([]byte("hello"))
-	if n != 5 || c.overflow || string(c.data) != "hello" {
-		t.Fatalf("under cap: n=%d overflow=%v data=%q", n, c.overflow, c.data)
-	}
-
-	// Crossing the cap keeps the prefix, reports a full write (so exec is
-	// not killed by a short write), and flags overflow.
-	n, _ = c.Write([]byte("world!!!!!"))
-	if n != 10 {
-		t.Errorf("Write must report full input length, got %d", n)
-	}
-	if !c.overflow {
-		t.Errorf("overflow not set after crossing cap")
-	}
-	if string(c.data) != "helloworld" {
-		t.Errorf("data = %q, want %q (capped at 10)", c.data, "helloworld")
-	}
-
-	// Writes past a full buffer are dropped without growth.
-	_, _ = c.Write([]byte("more"))
-	if len(c.data) != 10 {
-		t.Errorf("data grew past cap: len=%d", len(c.data))
-	}
-}
-
 // TestExecCLIRunner_RunStdoutCapped_SeparatesStderr verifies the production
 // runner captures STDOUT only and does not merge stderr into the result.
 func TestExecCLIRunner_RunStdoutCapped_SeparatesStderr(t *testing.T) {

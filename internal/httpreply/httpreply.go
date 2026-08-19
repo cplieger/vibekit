@@ -34,7 +34,6 @@ package httpreply
 
 import (
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -220,29 +219,6 @@ func ServerError(w http.ResponseWriter, clientMsg string, err error) {
 // response used by the handful of endpoints that don't return data.
 func Ok(w http.ResponseWriter) {
 	webhttp.Ok(w)
-}
-
-// --- Capped I/O writers ---
-
-// LimitedWriter writes at most N bytes to W and silently drops the rest.
-// Used for bounded stderr/stdout capture from subprocess handlers so a
-// misbehaving or hostile subprocess can't OOM the container.
-type LimitedWriter struct {
-	W io.Writer
-	N int64
-}
-
-// Write implements io.Writer, enforcing the byte cap.
-func (lw *LimitedWriter) Write(p []byte) (int, error) {
-	if lw.N <= 0 {
-		return len(p), nil // pretend we wrote, drop the bytes
-	}
-	if int64(len(p)) > lw.N {
-		p = p[:lw.N]
-	}
-	n, err := lw.W.Write(p)
-	lw.N -= int64(n)
-	return n, err
 }
 
 // --- Handler-prelude helpers ---

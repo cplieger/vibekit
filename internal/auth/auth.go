@@ -5,7 +5,6 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"net"
 	"net/http"
@@ -17,7 +16,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
-	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
 )
 
 // Compile-time interface assertion.
@@ -153,17 +152,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/logout", h.handleLogout)
 }
 
-// limitedWriter is a package-level alias for httpreply.LimitedWriter.
-// Kept as a type alias so existing construction sites remain unchanged.
-type limitedWriter = httpreply.LimitedWriter
-
 // stderrAttr returns slog key/value attributes for a captured stderr
 // buffer, omitting the "stderr" key entirely when the buffer is empty.
 // The common timeout case is "subprocess stuck on read/sleep wrote
 // nothing"; emitting `stderr=""` pads every such log line with a
 // useless key-value pair and gives the false impression that stderr
 // was empty-but-captured rather than empty-and-unavailable.
-func stderrAttr(stderr *bytes.Buffer) []any {
+func stderrAttr(stderr *procout.Buffer) []any {
 	s := api.SanitizeOutput(strings.TrimSpace(stderr.String()))
 	if s == "" {
 		return nil
@@ -189,7 +184,7 @@ type loginReap struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	cmd        *exec.Cmd
-	stderrBuf  *bytes.Buffer
+	stderrBuf  *procout.Buffer
 	stdoutDone <-chan struct{}
 	waitDone   chan struct{}
 }

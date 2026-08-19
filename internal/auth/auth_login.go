@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/webhttp"
 )
 
@@ -187,8 +187,8 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// stderr chatter (deprecation warnings, debug envs) doesn't
 	// count against the 200-line maxLoginLines cap on the URL
 	// scanner. Logged on timeout / error paths for diagnostics.
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &limitedWriter{W: &stderrBuf, N: stderrCap}
+	stderrBuf := procout.NewBuffer(stderrCap)
+	cmd.Stderr = stderrBuf
 	if err := cmd.Start(); err != nil {
 		cancel()
 		status := classifyLoginStartErr(err, h.cliPath())
@@ -236,7 +236,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		ctx:        ctx,
 		cancel:     cancel,
 		cmd:        cmd,
-		stderrBuf:  &stderrBuf,
+		stderrBuf:  stderrBuf,
 		stdoutDone: stdoutDone,
 		waitDone:   waitDone,
 	})
@@ -264,7 +264,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		<-waitDone // bounded: Kill → SIGKILL → reap
 		attrs := make([]any, 0, 4)
 		attrs = append(attrs, "timeout", h.cfg.LoginURLTimeout)
-		attrs = append(attrs, stderrAttr(&stderrBuf)...)
+		attrs = append(attrs, stderrAttr(stderrBuf)...)
 		slog.Warn("login: timeout waiting for auth URL", attrs...)
 		httpreply.WriteJSONStatus(w, http.StatusGatewayTimeout,
 			httpreply.ErrorJSON("timeout waiting for auth URL"))

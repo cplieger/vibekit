@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
 	"os/exec"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
 )
 
 const (
@@ -57,42 +57,16 @@ func (r *execCLIRunner) Run(ctx context.Context, args ...string) ([]byte, error)
 }
 
 func (r *execCLIRunner) RunStdoutCapped(ctx context.Context, limit int, args ...string) (out []byte, truncated bool, err error) {
-	stdout := &cappedBuffer{limit: limit}
-	var stderr bytes.Buffer
+	stdout := procout.NewBuffer(limit)
+	stderr := procout.NewBuffer(cliStderrCap)
 	cmd := exec.CommandContext(ctx, r.cliPath(), args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	cmd.Stdout = stdout
-	cmd.Stderr = &httpreply.LimitedWriter{W: &stderr, N: cliStderrCap}
+	cmd.Stderr = stderr
 	err = cmd.Run()
 	if stderr.Len() > 0 {
 		slog.Debug("cli stderr captured", "args", args, "stderr", stderr.String())
 	}
-	return stdout.data, stdout.overflow, err
-}
-
-// cappedBuffer is an io.Writer that collects up to limit bytes and drops
-// the rest, recording whether any bytes were dropped (overflow). Write
-// always reports a full write, so a subprocess streaming into it via
-// os/exec is never killed by a short write once the cap is reached.
-type cappedBuffer struct {
-	data     []byte
-	limit    int
-	overflow bool
-}
-
-func (c *cappedBuffer) Write(p []byte) (int, error) {
-	n := len(p)
-	switch room := c.limit - len(c.data); {
-	case room <= 0:
-		if n > 0 {
-			c.overflow = true
-		}
-	case n > room:
-		c.overflow = true
-		c.data = append(c.data, p[:room]...)
-	default:
-		c.data = append(c.data, p...)
-	}
-	return n, nil
+	return stdout.Bytes(), stdout.Truncated(), err
 }
 
 // cliTimeouts holds the timeout budget for each kiro-cli subprocess

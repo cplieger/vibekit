@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
 )
 
 // drainOne reads a single message from urlCh with a sensible budget so the
@@ -910,91 +911,6 @@ func TestNewHandler(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// limitedWriter tests (cycle 3 t-1)
-// ---------------------------------------------------------------------------
-
-func TestLimitedWriter_WithinCap(t *testing.T) {
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: 100}
-
-	n, err := lw.Write([]byte("hello"))
-	if err != nil {
-		t.Fatalf("Write err = %v, want nil", err)
-	}
-	if n != 5 {
-		t.Errorf("Write(%q) n = %d, want 5", "hello", n)
-	}
-	if buf.String() != "hello" {
-		t.Errorf("buf = %q, want %q", buf.String(), "hello")
-	}
-	if lw.N != 95 {
-		t.Errorf("remaining N = %d, want 95", lw.N)
-	}
-}
-
-func TestLimitedWriter_TruncatesAtCap(t *testing.T) {
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: 3}
-
-	n, err := lw.Write([]byte("hello"))
-	if err != nil {
-		t.Fatalf("Write err = %v, want nil", err)
-	}
-	if n != 3 {
-		t.Errorf("Write(%q) n = %d, want 3 (truncated to cap)", "hello", n)
-	}
-	if buf.String() != "hel" {
-		t.Errorf("buf = %q, want %q", buf.String(), "hel")
-	}
-	if lw.N != 0 {
-		t.Errorf("remaining N = %d, want 0 (fully consumed)", lw.N)
-	}
-}
-
-func TestLimitedWriter_SaturatedDropsSilently(t *testing.T) {
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: 0}
-
-	// Contract: when saturated, return len(p) with no error so upstream
-	// io.Copy / cmd.Wait don't report a short write, but drop the bytes.
-	n, err := lw.Write([]byte("overflow"))
-	if err != nil {
-		t.Fatalf("Write err = %v, want nil (saturated writer drops silently)", err)
-	}
-	if n != 8 {
-		t.Errorf("Write(%q) n = %d, want 8 (pretend full write)", "overflow", n)
-	}
-	if buf.Len() != 0 {
-		t.Errorf("buf = %q, want empty (bytes dropped)", buf.String())
-	}
-	if lw.N != 0 {
-		t.Errorf("remaining N = %d, want 0 (unchanged)", lw.N)
-	}
-}
-
-func TestLimitedWriter_SequentialWritesAcrossCap(t *testing.T) {
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: 5}
-
-	n1, err1 := lw.Write([]byte("abc"))
-	if err1 != nil || n1 != 3 {
-		t.Fatalf("first Write = (%d, %v), want (3, nil)", n1, err1)
-	}
-	n2, err2 := lw.Write([]byte("defgh"))
-	if err2 != nil || n2 != 2 {
-		t.Fatalf("second Write = (%d, %v), want (2, nil) — partial at cap", n2, err2)
-	}
-	n3, err3 := lw.Write([]byte("ij"))
-	if err3 != nil || n3 != 2 {
-		t.Fatalf("third Write = (%d, %v), want (2, nil) — post-saturation no-op returning full len", n3, err3)
-	}
-
-	if buf.String() != "abcde" {
-		t.Errorf("buf = %q, want %q (cap=5, rest dropped)", buf.String(), "abcde")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // handleWhoami timeout branch (cycle 3 t-2)
 // ---------------------------------------------------------------------------
 
@@ -1593,14 +1509,14 @@ func (r *drainErrReader) Close() error { return nil }
 // for non-empty stderr, so a failed CLI's diagnostics reach the structured
 // log without emitting an empty attribute on success.
 func TestStderrAttr_EmptyVsNonEmpty(t *testing.T) {
-	var empty bytes.Buffer
-	if got := stderrAttr(&empty); got != nil {
+	empty := procout.NewBuffer(stderrCap)
+	if got := stderrAttr(empty); got != nil {
 		t.Errorf("stderrAttr(empty) = %v, want nil", got)
 	}
 
-	var nonEmpty bytes.Buffer
-	nonEmpty.WriteString("boom")
-	got := stderrAttr(&nonEmpty)
+	nonEmpty := procout.NewBuffer(stderrCap)
+	nonEmpty.Write([]byte("boom"))
+	got := stderrAttr(nonEmpty)
 	if len(got) != 2 {
 		t.Fatalf("stderrAttr(non-empty) len = %d, want 2; got=%v", len(got), got)
 	}

@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io/fs"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/procout"
 	"github.com/cplieger/webhttp"
 )
 
@@ -50,14 +50,14 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	setLoginProcAttr(cmd)
 	cmd.Stdin = strings.NewReader("y\n")
 	// Bounded combined stdout+stderr capture so a runaway CLI
-	// can't OOM the container. Use a single limitedWriter for
-	// both streams: os/exec copies stdout and stderr
-	// concurrently, so two writers sharing one bytes.Buffer
-	// would race.
-	var buf bytes.Buffer
-	lw := &limitedWriter{W: &buf, N: logoutMaxOutput}
-	cmd.Stdout = lw
-	cmd.Stderr = lw
+	// can't OOM the container. Use a single procout.Buffer for
+	// both streams: os/exec compares the two writers and drains
+	// them through one pipe with one goroutine when they are the
+	// same value, so this is the documented way to merge the
+	// streams — two separate writers over one buffer would race.
+	buf := procout.NewBuffer(logoutMaxOutput)
+	cmd.Stdout = buf
+	cmd.Stderr = buf
 	err := cmd.Run()
 	out := buf.Bytes()
 	// SanitizeOutput strips ANSI + hidden Unicode (matches the
