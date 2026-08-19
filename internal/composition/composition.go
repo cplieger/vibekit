@@ -136,7 +136,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 			bridge.WithEnv(kiro.env()), bridge.WithEnvAllow(cfg.BridgeEnvAllow))
 	}
 
-	mcpStore, err := mcp.New(ctx, cfg.ConfigDir, nil)
+	mcpStore, err := mcp.New(appCtx, cfg.ConfigDir, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	scheduleStore := openScheduleStore(cfg.ConfigDir)
 	leaseStore := openRunLeaseStore(cfg.ConfigDir)
 
-	pushSvc := push.New(ctx, cfg.ConfigDir, cfg.VapidSub)
+	pushSvc := push.New(appCtx, cfg.ConfigDir, cfg.VapidSub)
 
 	// vibekit owns kiro-cli/KAS session cleanup end to end (cleanup.periodDays
 	// pinned to 0/never): reap a chat's session state on delete, and orphans
@@ -171,7 +171,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// wait on that.
 	go h.SweepOrphanedRuns(appCtx)
 
-	startScheduleRunner(ctx, scheduleStore, h)
+	startScheduleRunner(appCtx, scheduleStore, h)
 
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
@@ -782,6 +782,11 @@ func openRunLeaseStore(dir string) *runlease.Store {
 // The runner reuses Hub.LaunchRun, which already launches a PARENTLESS run on
 // its own bridge, so a scheduled run needs no host chat and never shows up in
 // the chat list.
+//
+// ctx must be the APP lifetime, not Build's own: Runner.Run's only exit is
+// its ctx.Done arm, so handing it Build's context (context.Background() in
+// production) makes that arm unreachable and the ticker outlives App.Shutdown.
+// stopPRPoller's comment records the same defect for the sibling loop.
 func startScheduleRunner(ctx context.Context, st *schedule.Store, l schedule.Launcher) {
 	if st == nil {
 		return

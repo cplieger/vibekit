@@ -91,7 +91,7 @@ func scrubAuth(s string) string {
 // --- Hardened subprocess execution ---
 
 // allowedSubcommands lists git subcommands that may be invoked through
-// gitexec.Cmd. Any first non-flag argument outside this set causes gitExec
+// gitExec. Any first non-flag argument outside this set causes gitExec
 // to return a no-op command that exits with an error, defending against
 // callers that accidentally let untrusted input choose the subcommand.
 //

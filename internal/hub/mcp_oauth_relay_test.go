@@ -772,14 +772,17 @@ func TestRelayClientForRefusesBadPorts(t *testing.T) {
 		{"privileged", "http://127.0.0.1:80/callback"},
 		{"port zero", "http://127.0.0.1:0/callback"},
 		{"no port", "http://127.0.0.1/callback"},
-		{"unparseable", "http://127.0.0.1:notaport/callback"},
+		// NOT in this table: an unparseable port like ":notaport". url.Parse
+		// always rejects it, so the case never reached relayClientFor and
+		// asserted nothing — it passed with the port validation deleted. The
+		// refusal is real but it belongs to url.Parse, and TestValidateRelayAddress
+		// is where the parse layer is exercised.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			u, err := url.Parse(tc.raw)
 			if err != nil {
-				// An unparseable port can fail at url.Parse, which is also a refusal.
-				return
+				t.Fatalf("url.Parse(%q) error = %v; every case in this table must reach relayClientFor", tc.raw, err)
 			}
 			if _, err := relayClientFor(u); err == nil {
 				t.Errorf("relayClientFor(%q) = nil error, want the port refused", tc.raw)

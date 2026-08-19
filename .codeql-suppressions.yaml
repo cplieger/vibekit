@@ -4,11 +4,11 @@
 suppressions:
   - rule: go/command-injection
     fingerprint: "eb9a4ae3fdf30950:1"
-    path: web/internal/gitexec/gitexec.go
+    path: internal/git/exec.go
     reason: >
       The flagged flow is a user-supplied clone URL passed to `git clone` —
       this IS the feature (cloning a repo the user names). It is mitigated by
       isAllowedRemoteScheme (https:// or git@ only), the `--` argument
       separator that stops flag injection, and the subcommand allowlist in
-      gitexec.Cmd. The taint is the URL value, not an attacker-chosen command.
+      gitExec. The taint is the URL value, not an attacker-chosen command.
       Accepted by design. Dismissed on the GitHub Security tab.

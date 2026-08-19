@@ -799,7 +799,7 @@ func TestScrubAuth_Idempotent(t *testing.T) {
 		"https://user:pwd@host/path",
 		"http://a@b@c@host/",
 		// A git:// URL with a userinfo chain: the scheme the deleted
-		// gitexec-side target contributed, and the one shape the seeds
+		// exec-side target contributed, and the one shape the seeds
 		// above do not reach (they are all http/https).
 		"git://a@b@c@host/repo",
 		"?token=secret&other=ok",
@@ -2011,7 +2011,7 @@ func FuzzScrubAuth(f *testing.F) {
 		"https://user:pwd@host/path",
 		"http://a@b@c@host/",
 		// A git:// URL with a userinfo chain: the scheme the deleted
-		// gitexec-side target contributed, and the one shape the seeds
+		// exec-side target contributed, and the one shape the seeds
 		// above do not reach (they are all http/https).
 		"git://a@b@c@host/repo",
 		"?token=secret&other=ok",
