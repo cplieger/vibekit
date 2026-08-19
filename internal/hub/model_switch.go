@@ -22,6 +22,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // resolveSwitchModel returns the effective model after applying the
@@ -55,7 +56,7 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 		}
 	}
 
-	if !api.ValidIdent(p.Model) {
+	if !ids.ValidIdent(p.Model) {
 		h.respondErr(w, http.StatusBadRequest, command.ErrInvalidPayload)
 		return
 	}

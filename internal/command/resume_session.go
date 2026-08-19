@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // CmdResumeSession creates a chat bound to an existing KAS session so the
@@ -39,7 +40,7 @@ func CmdResumeSession(d *Dispatcher, ctx context.Context, w http.ResponseWriter,
 	// The session id reaches a filesystem path inside KAS and vibekit's own
 	// reaper keep-list, so it is validated on the same pattern as a chat id
 	// rather than trusted from the client.
-	if !api.ValidSessionID(p.SessionID) {
+	if !ids.ValidSessionID(p.SessionID) {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}

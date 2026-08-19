@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/parallel"
 )
 
@@ -88,7 +89,7 @@ func collectPurgeEntries(entries []os.DirEntry, dir string) []purgeEntry {
 			continue
 		}
 		name := strings.TrimSuffix(e.Name(), chatFileSuffix)
-		if !api.ValidChatID(name) {
+		if !ids.ValidChatID(name) {
 			continue
 		}
 		valid = append(valid, purgeEntry{name: name, path: filepath.Join(dir, e.Name())})

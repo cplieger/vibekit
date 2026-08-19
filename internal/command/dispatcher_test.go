@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 func TestDispatcher_MethodNotAllowed(t *testing.T) {
@@ -78,8 +78,8 @@ func TestDispatcher_InvalidChatID(t *testing.T) {
 	}
 	// A non-empty but invalid chat_id must be rejected with the
 	// invalid-chat-id message, not allowed through to dispatch.
-	if got := w.Body.String(); !strings.Contains(got, api.ErrMsgInvalidChatID) {
-		t.Errorf("body = %q, want it to contain %q", got, api.ErrMsgInvalidChatID)
+	if got := w.Body.String(); !strings.Contains(got, ids.ErrMsgInvalidChatID) {
+		t.Errorf("body = %q, want it to contain %q", got, ids.ErrMsgInvalidChatID)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/procgroup"
 )
 
@@ -38,7 +39,7 @@ func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
 	b.enableHooks = opts.EnableHooks
 	b.secretStorage = opts.SecretStorage
 	b.extraArgs = opts.ExtraArgs
-	if opts.SessionID != "" && !api.ValidSessionID(opts.SessionID) {
+	if opts.SessionID != "" && !ids.ValidSessionID(opts.SessionID) {
 		return fmt.Errorf("invalid acp session id: %q", opts.SessionID)
 	}
 	if opts.Model != "" && !validIdent(opts.Model) {

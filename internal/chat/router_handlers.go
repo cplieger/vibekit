@@ -10,9 +10,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cplieger/webhttp"
+
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // RegisterRoutes wires GET /api/chats (list) and GET /api/chats/{id}
@@ -38,7 +40,7 @@ func (rt *Router) handleList(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/chats/")
 	if rest == "" || strings.HasPrefix(rest, "/") {
-		httpreply.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	if id, sub, ok := strings.Cut(rest, "/"); ok {
@@ -71,7 +73,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 	if !chatIDPattern(api.ChatID(id)) {
-		httpreply.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	c, ok := rt.store.Get(r.Context(), api.ChatID(id))
@@ -123,7 +125,7 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api
 		return
 	}
 	if !chatIDPattern(chatID) {
-		httpreply.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	c, ok := rt.store.Get(r.Context(), chatID)
@@ -151,7 +153,7 @@ func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID ap
 		return
 	}
 	if !chatIDPattern(chatID) {
-		httpreply.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	c, ok := rt.store.Get(r.Context(), chatID)
@@ -235,7 +237,7 @@ func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID ap
 		return
 	}
 	if !chatIDPattern(chatID) {
-		httpreply.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 	format, ok := parseExportFormat(r.URL.Query().Get("format"))

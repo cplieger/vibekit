@@ -23,8 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
+
+	"github.com/cplieger/vibekit/internal/httpreply"
 )
 
 // idempotencyHeader is the request header carrying the client's
@@ -54,7 +55,7 @@ const idempotencyMaxBody = 1 << 20 // 1 MiB
 // charset legitimately includes '/', ':', '->', and spaces. 256 bytes
 // comfortably fits the
 // composite filename keys while bounding map-key memory. Mirrors the
-// bounded style of api.ValidRequestID with a wider bound and an opaque
+// bounded style of ids.ValidRequestID with a wider bound and an opaque
 // charset.
 const maxIdempotencyKeyBytes = 256
 

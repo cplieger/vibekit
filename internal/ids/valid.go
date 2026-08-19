@@ -1,11 +1,9 @@
-package api
+package ids
 
 import (
 	"regexp"
 	"strings"
 )
-
-// --- Message/Request ID validation ---
 
 // maxMessageIDBytes caps the length of client-supplied message ids.
 const maxMessageIDBytes = 128
@@ -18,7 +16,7 @@ var validMessageIDRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)
 
 // ValidMessageID reports whether id is safe to echo on SSE and store
 // on disk as the ID field of a message. This is the single source of
-// truth; hub and command packages delegate here.
+// truth; every boundary that accepts a message id delegates here.
 func ValidMessageID(id string) bool {
 	if id == "" || len(id) > maxMessageIDBytes {
 		return false
@@ -45,8 +43,6 @@ func ValidRequestID(id string) bool {
 	return validMessageIDRe.MatchString(id)
 }
 
-// --- Chat ID validation ---
-
 // ErrMsgInvalidChatID is the single source of truth for the HTTP error
 // message returned when a chat ID fails validation.
 const ErrMsgInvalidChatID = "invalid chat_id"
@@ -54,8 +50,11 @@ const ErrMsgInvalidChatID = "invalid chat_id"
 // ValidChatID reports whether id is a valid chat identifier. Accepts
 // ULIDs, UUIDs, and the legacy "chat-<ms>" shape: alphanumerics, hyphens,
 // and underscores only. Rejects empty, >128 chars, and anything containing
-// path separators or traversal segments. This is the single source of truth
-// for chat ID validation; hub/command.go and chat/store.go both delegate here.
+// path separators or traversal segments.
+//
+// A chat id reaches the filesystem as the name of the chat's own JSON file,
+// so this is the gate rather than a format preference, and it is the single
+// source of truth: every boundary that accepts one delegates here.
 func ValidChatID(id string) bool {
 	if id == "" || len(id) > 128 {
 		return false
@@ -70,8 +69,6 @@ func ValidChatID(id string) bool {
 	return true
 }
 
-// --- Identifier validation ---
-
 // identRe is the character set for agent and model identifiers.
 var identRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 
@@ -79,7 +76,7 @@ var identRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 // identifier. Empty strings pass (the field is optional); non-empty
 // strings must match identRe AND must not start with '.' or '-' AND
 // must not be all-dot strings. This is the single source of truth;
-// bridge/bridge.go and hub/command.go both delegate here.
+// every boundary that accepts an agent or model id delegates here.
 func ValidIdent(s string) bool {
 	if s == "" {
 		return true
@@ -103,7 +100,6 @@ func ValidIdent(s string) bool {
 // and parent-dir references. Session ids (v3: `sess_`-prefixed) are
 // concatenated into filesystem paths under $KIRO_HOME/sessions/; this
 // function is the single source of truth for that safety gate.
-// bridge/bridge.go delegates here.
 func ValidSessionID(s string) bool {
 	if s == "" || len(s) > 128 {
 		return false

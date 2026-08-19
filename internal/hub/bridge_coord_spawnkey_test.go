@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
-// bridgeSpawnKey's fields are both validator-restricted today (api.ValidChatID
-// and api.ValidIdent), so a colon-free join is already unambiguous and the
+// bridgeSpawnKey's fields are both validator-restricted today (ids.ValidChatID
+// and ids.ValidIdent), so a colon-free join is already unambiguous and the
 // encoded key must stay byte-identical to the plain concatenation. That
 // identity is the whole reason this adoption is free: it is a pure encoding
 // change with no length, log-readability or comparison surprise.
@@ -24,11 +25,11 @@ func TestBridgeSpawnKey_ByteIdenticalForValidatedFields(t *testing.T) {
 		{"my_chat-01", "claude-sonnet-4.5", "my_chat-01:claude-sonnet-4.5"},
 	}
 	for _, tc := range cases {
-		if !api.ValidChatID(string(tc.chatID)) {
-			t.Fatalf("test case chat id %q does not pass api.ValidChatID", tc.chatID)
+		if !ids.ValidChatID(string(tc.chatID)) {
+			t.Fatalf("test case chat id %q does not pass ids.ValidChatID", tc.chatID)
 		}
-		if !api.ValidIdent(tc.modelOverride) {
-			t.Fatalf("test case model %q does not pass api.ValidIdent", tc.modelOverride)
+		if !ids.ValidIdent(tc.modelOverride) {
+			t.Fatalf("test case model %q does not pass ids.ValidIdent", tc.modelOverride)
 		}
 		if got := bridgeSpawnKey(tc.chatID, tc.modelOverride); got != tc.want {
 			t.Errorf("bridgeSpawnKey(%q, %q) = %q, want %q",
@@ -39,7 +40,7 @@ func TestBridgeSpawnKey_ByteIdenticalForValidatedFields(t *testing.T) {
 
 // The key must stay injective even for field values the current validators
 // reject, because that is the whole point of encoding rather than trusting an
-// alphabet: widening api.ValidIdent (a model id taken verbatim from an upstream
+// alphabet: widening ids.ValidIdent (a model id taken verbatim from an upstream
 // catalog) is an edit in another package that would not look like it touched
 // key encoding. A collapse here makes singleflight hand one caller another
 // caller's bridge — a chat talking to a session started for a different model.

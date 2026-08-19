@@ -43,7 +43,7 @@ type ChatID string
 func (c ChatID) String() string { return string(c) }
 
 // SessionID is a typed wrapper for ACP session identifiers. Values are
-// validated via ValidSessionID before assignment; the type makes
+// validated via ids.ValidSessionID before assignment; the type makes
 // invalid-state propagation a compile-time-visible decision.
 type SessionID string
 
@@ -51,7 +51,7 @@ type SessionID string
 func (s SessionID) String() string { return string(s) }
 
 // ModelID is a typed wrapper for model identifiers. Values are
-// validated via ValidIdent before assignment; the type makes
+// validated via ids.ValidIdent before assignment; the type makes
 // invalid-state propagation a compile-time-visible decision.
 type ModelID string
 

@@ -1,32 +1,88 @@
-package api
+package ids
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 )
 
+// safeRe is the message/request-id charset, restated independently of
+// validMessageIDRe so a target cross-checks the rule rather than the regexp
+// the implementation happens to hold.
+var safeRe = regexp.MustCompile(`^[A-Za-z0-9_.\-:]+$`)
+
+// FuzzValidMessageID absorbed an identical target from internal/hub, which
+// fuzzed this function through a forwarding wrapper while calling it nowhere in
+// production. Its invariants and seeds are the ones kept: the pair here was
+// crash-only, which on a gate this feeds catches nothing but a panic.
 func FuzzValidMessageID(f *testing.F) {
-	f.Add("")
-	f.Add("msg-123")
-	f.Add("a.b-c:d_e")
-	f.Add("msg/bad")
-	f.Add("\x00null")
+	for _, s := range []string{
+		"", "msg-123", "a.b-c:d_e", "msg/bad", "\x00null",
+		"abc123", "msg_id:001", "a", string(make([]byte, 129)), "has\nnewline",
+	} {
+		f.Add(s)
+	}
 
 	f.Fuzz(func(t *testing.T, id string) {
-		// Must not panic.
-		_ = ValidMessageID(id)
+		result := ValidMessageID(id)
+		if result {
+			// Invariant 1: accepted IDs have length in [1, 128].
+			if len(id) == 0 || len(id) > 128 {
+				t.Errorf("accepted id with len %d", len(id))
+			}
+			// Invariant 2: no control characters or newlines.
+			for _, r := range id {
+				if unicode.IsControl(r) {
+					t.Errorf("accepted id with control char %U", r)
+				}
+			}
+			// Invariant 3: matches the safe character set.
+			if !safeRe.MatchString(id) {
+				t.Errorf("accepted id not matching safe regex: %q", id)
+			}
+		}
+		// Empty string always rejected.
+		if id == "" && result {
+			t.Error("empty string accepted")
+		}
+		// Idempotent.
+		if ValidMessageID(id) != result {
+			t.Error("non-idempotent result")
+		}
 	})
 }
 
+// FuzzValidRequestID absorbed internal/hub's target for the reason
+// FuzzValidMessageID gives. Empty is VALID here and rejected there, which is
+// the one asymmetry between the two rules worth a target of its own.
 func FuzzValidRequestID(f *testing.F) {
-	f.Add("")
-	f.Add("req-abc.123")
-	f.Add("req/bad")
-	f.Add("\x00null")
+	for _, s := range []string{
+		"", "req-abc.123", "req/bad", "\x00null",
+		"req-001", "a:b.c_d-e", string(make([]byte, 129)), "has\nnewline",
+	} {
+		f.Add(s)
+	}
 
 	f.Fuzz(func(t *testing.T, id string) {
-		// Must not panic.
-		_ = ValidRequestID(id)
+		result := ValidRequestID(id)
+		if result && id != "" {
+			// Non-empty accepted IDs must be <= 128 and match safe regex.
+			if len(id) > 128 {
+				t.Errorf("accepted request id with len %d", len(id))
+			}
+			if !safeRe.MatchString(id) {
+				t.Errorf("accepted request id not matching safe regex: %q", id)
+			}
+		}
+		// Empty is always accepted for request IDs.
+		if id == "" && !result {
+			t.Error("empty string rejected for request id")
+		}
+		// Idempotent.
+		if ValidRequestID(id) != result {
+			t.Error("non-idempotent result")
+		}
 	})
 }
 

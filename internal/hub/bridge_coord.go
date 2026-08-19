@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
+
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
@@ -199,8 +200,8 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 // bridgeSpawnKey composes the bridge-spawn singleflight key over
 // (chatID, modelOverride).
 //
-// NEITHER field can carry keyenc's ':' separator today — api.ValidChatID
-// restricts a chat id to [a-zA-Z0-9_-] and api.ValidIdent restricts a model
+// NEITHER field can carry keyenc's ':' separator today — ids.ValidChatID
+// restricts a chat id to [a-zA-Z0-9_-] and ids.ValidIdent restricts a model
 // id to [A-Za-z0-9_.-] — so this key is unambiguous either way, and because
 // both alphabets are separator-free the encoded key is BYTE-IDENTICAL to a
 // plain "chatID:modelOverride" concatenation. keyenc is here for uniformity

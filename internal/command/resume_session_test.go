@@ -108,7 +108,7 @@ func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 // TestCmdResumeSession_RejectsPathUnsafeIDs covers the validation, and the case
 // list documents what the guard does and does NOT promise.
 //
-// api.ValidSessionID is a PATH-SAFETY guard: non-empty, <= 128 bytes, no
+// ids.ValidSessionID is a PATH-SAFETY guard: non-empty, <= 128 bytes, no
 // `/ \ NUL`, no `..`. It deliberately does not constrain the alphabet or
 // require the `sess_` prefix, which is why this test does not assert those.
 // Two consequences worth stating rather than discovering later:

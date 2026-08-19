@@ -17,10 +17,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat/archive"
 	"github.com/cplieger/vibekit/internal/filemode"
-	"golang.org/x/sync/singleflight"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // errInvalidUTF8 is returned when a chat mutation produces content that
@@ -168,10 +170,9 @@ func WithOnPurge(fn func(chatID api.ChatID, sessionChain []string)) StoreOption 
 // --- Path helpers ---
 
 // chatIDPattern reports whether id is a valid chat identifier. Delegates
-// to api.ValidChatID — the single source of truth for chat ID validation.
-// Prefer api.ParseChatID when a typed ChatID is needed downstream.
+// to ids.ValidChatID — the single source of truth for chat ID validation.
 func chatIDPattern(id api.ChatID) bool {
-	return api.ValidChatID(string(id))
+	return ids.ValidChatID(string(id))
 }
 
 // --- Public API ---

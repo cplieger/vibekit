@@ -85,7 +85,7 @@ type CreateChatCommand struct {
 // takes the session/load path and the replay projection supplies the
 // transcript — vibekit copies no messages.
 type ResumeSessionCommand struct {
-	// SessionID is the KAS session to adopt. Validated with ValidSessionID.
+	// SessionID is the KAS session to adopt. Validated with ids.ValidSessionID.
 	SessionID string `json:"session_id"`
 	// Name seeds the chat title, normally the session title KAS reported.
 	Name string `json:"name,omitempty"`

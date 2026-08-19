@@ -39,6 +39,7 @@ import (
 	"net/http"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // errForkParentUnknown is returned when the chat being forked has no record.
@@ -62,7 +63,7 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	if !api.ValidChatID(string(p.ParentChatID)) || len(p.Title) > api.MaxChatNameBytes {
+	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > api.MaxChatNameBytes {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
@@ -165,7 +166,7 @@ func forkSession(ctx context.Context, deps Dependencies, p api.ForkChatCommand, 
 	if resp != nil && resp.Result != nil {
 		_ = json.Unmarshal(resp.Result, &out)
 	}
-	if !api.ValidSessionID(out.SessionID) {
+	if !ids.ValidSessionID(out.SessionID) {
 		// A reply with no usable session id is a refusal however it is spelled.
 		// Validated rather than trusted for CmdResumeSession's reason: the value
 		// reaches a filesystem path inside KAS and vibekit's own reaper keep-list.

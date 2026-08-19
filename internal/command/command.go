@@ -13,9 +13,11 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/cplieger/webhttp"
+
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope. It is the generic
@@ -158,7 +160,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Centralised chat_id validation.
 	if cmd.ChatID != "" && !validChatID(cmd.ChatID) {
-		httpreply.BadRequest(w, api.ErrMsgInvalidChatID)
+		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
 

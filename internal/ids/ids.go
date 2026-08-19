@@ -1,6 +1,21 @@
-// Package ids provides random identifier generation for stored records.
-// All callers share the same entropy-minting logic; encoding and length
-// are parameterised so each domain keeps its existing format.
+// Package ids is vibekit's identifier vocabulary: it mints the ids the app
+// owns and validates every id the app accepts.
+//
+// The two halves belong together because they are one rule read in two
+// directions. NewMessageID emits a UUIDv7 and ValidMessageID says what a
+// message id may be; a caller changing either without the other in view is
+// how a minted id becomes one its own boundary rejects. The validators cover
+// ids vibekit does NOT mint as well — an ACP session id, an agent or model
+// identifier, a client-generated chat id — because the question they answer is
+// about the identifier, not about who made it.
+//
+// Three of the five validators are filesystem gates rather than format
+// preferences: a chat id names the chat's own JSON file, and a session id is
+// concatenated into a path under $KIRO_HOME/sessions/.
+//
+// The validators used to live in internal/api beside the wire and domain
+// types, which put a path-traversal gate inside the package the code generator
+// walks for the cross-language type contract.
 package ids
 
 import (

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // FuzzSessionCreatedUnmarshal targets the session/new result parsing.
@@ -29,7 +29,7 @@ func FuzzSessionCreatedUnmarshal(f *testing.F) {
 
 		// Invariant 1: if sessionId passes ValidSessionID, it must not
 		// contain path separators or traversal patterns.
-		if api.ValidSessionID(result.SessionID) {
+		if ids.ValidSessionID(result.SessionID) {
 			for _, ch := range result.SessionID {
 				if ch == '/' || ch == '\\' || ch == 0 {
 					t.Fatalf("ValidSessionID accepted dangerous char in %q", result.SessionID)

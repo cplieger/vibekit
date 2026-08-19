@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/kascap"
 )
 
@@ -90,9 +91,9 @@ type sessionCreated struct {
 // did nothing. The parameter is also lossier — KAS's acpServerToWire drops
 // oauth, oauthScopes, autoApprove, cwd and timeout from a client-supplied entry.
 
-// validIdent delegates to api.ValidIdent.
+// validIdent delegates to ids.ValidIdent.
 func validIdent(s string) bool {
-	return api.ValidIdent(s)
+	return ids.ValidIdent(s)
 }
 
 // withSessionMeta adds the session door's _meta.kiro block to a session/new or
@@ -126,7 +127,7 @@ func (b *Bridge) newSession(ctx context.Context, opts *api.StartOpts) error {
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		return fmt.Errorf("parse session/new: %w", err)
 	}
-	if !api.ValidSessionID(result.SessionID) {
+	if !ids.ValidSessionID(result.SessionID) {
 		return fmt.Errorf("session/new returned invalid session id: %q", result.SessionID)
 	}
 	b.mu.Lock()

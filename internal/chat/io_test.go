@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/ids"
 )
 
 // TestReadCappedFilePathGuard pins the path guard readCappedFile runs
@@ -94,7 +94,7 @@ func TestReadCappedFilePathGuard(t *testing.T) {
 // it cleans down to — true before this adoption and unchanged by it.
 //
 // Containment at this boundary is structural, not lexical: every caller
-// builds the path from store.Dir() plus an api.ValidChatID-checked id,
+// builds the path from store.Dir() plus an ids.ValidChatID-checked id,
 // and that character set ([A-Za-z0-9_-]) admits neither a separator nor
 // a dot, so no chat id can contribute a traversal segment. The assertion
 // on ValidChatID is here rather than in the api package because it is
@@ -123,12 +123,12 @@ func TestReadCappedFileTraversalTestIsVacuousAfterClean(t *testing.T) {
 	// The real gate: a chat id can carry neither a separator nor a dot,
 	// so store.Dir() + id cannot compose a traversal in the first place.
 	for _, id := range []string{"..", ".", "a/b", `a\b`, "a.json", "..extras", ""} {
-		if api.ValidChatID(id) {
-			t.Errorf("api.ValidChatID(%q) = true; readCappedFile's guard relies on this being false", id)
+		if ids.ValidChatID(id) {
+			t.Errorf("ids.ValidChatID(%q) = true; readCappedFile's guard relies on this being false", id)
 		}
 	}
-	if !api.ValidChatID("c1") {
-		t.Error("api.ValidChatID(\"c1\") = false, want true")
+	if !ids.ValidChatID("c1") {
+		t.Error("ids.ValidChatID(\"c1\") = false, want true")
 	}
 }
 
