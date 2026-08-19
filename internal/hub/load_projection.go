@@ -5,7 +5,7 @@ package hub
 //
 // KAS answers session/load by replaying the stored transcript as ordinary
 // session/update notifications tagged `_meta.kiro.replay`. translate.Projection
-// accumulates those into []api.Message; this file owns WHEN one is open, which
+// accumulates those into []vibekit.Message; this file owns WHEN one is open, which
 // frames reach it, and when it is complete.
 //
 // # Why completion needs care
@@ -42,8 +42,8 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // loadProjection is one in-flight session/load's accumulating transcript.
@@ -60,11 +60,11 @@ type loadProjection struct {
 // OpenReplayProjection starts a projection for a chat about to session/load.
 // A projection already open for that chat is discarded: the only way to reach
 // this twice is a re-load (model-switch fallback), whose replay supersedes.
-func (h *Hub) OpenReplayProjection(chatID api.ChatID) {
+func (h *Hub) OpenReplayProjection(chatID vibekit.ChatID) {
 	h.projMu.Lock()
 	defer h.projMu.Unlock()
 	if h.projections == nil {
-		h.projections = make(map[api.ChatID]*loadProjection)
+		h.projections = make(map[vibekit.ChatID]*loadProjection)
 	}
 	if _, dup := h.projections[chatID]; dup {
 		slog.Debug("replay projection: superseding an open one", "chat_id", chatID)
@@ -74,7 +74,7 @@ func (h *Hub) OpenReplayProjection(chatID api.ChatID) {
 
 // MarkReplayLoadDone records that the session/load RPC has returned, which is
 // half of the settle condition. Called from the spawn goroutine.
-func (h *Hub) MarkReplayLoadDone(chatID api.ChatID) {
+func (h *Hub) MarkReplayLoadDone(chatID vibekit.ChatID) {
 	h.projMu.Lock()
 	defer h.projMu.Unlock()
 	if lp := h.projections[chatID]; lp != nil {
@@ -84,7 +84,7 @@ func (h *Hub) MarkReplayLoadDone(chatID api.ChatID) {
 
 // DiscardReplayProjection drops a chat's projection unsettled. Used when the
 // load failed, so a half-built transcript cannot be adopted later.
-func (h *Hub) DiscardReplayProjection(chatID api.ChatID) {
+func (h *Hub) DiscardReplayProjection(chatID vibekit.ChatID) {
 	h.projMu.Lock()
 	defer h.projMu.Unlock()
 	if _, open := h.projections[chatID]; open {
@@ -96,7 +96,7 @@ func (h *Hub) DiscardReplayProjection(chatID api.ChatID) {
 // ingestReplayFrame folds one replay-tagged frame into the chat's open
 // projection. Reports whether a projection consumed it, so the caller can fall
 // back to dropping when a replay arrives with no load in flight.
-func (h *Hub) ingestReplayFrame(chatID api.ChatID, kind api.ACPUpdateKind, raw json.RawMessage) bool {
+func (h *Hub) ingestReplayFrame(chatID vibekit.ChatID, kind vibekit.ACPUpdateKind, raw json.RawMessage) bool {
 	h.projMu.Lock()
 	defer h.projMu.Unlock()
 	lp := h.projections[chatID]
@@ -115,7 +115,7 @@ func (h *Hub) ingestReplayFrame(chatID api.ChatID, kind api.ACPUpdateKind, raw j
 // of the channel depth, for the bridge-exit call.
 //
 // It is a no-op when no projection is open, so callers may call it per frame.
-func (h *Hub) SettleReplayProjection(chatID api.ChatID, buffered int, force bool) {
+func (h *Hub) SettleReplayProjection(chatID vibekit.ChatID, buffered int, force bool) {
 	h.projMu.Lock()
 	lp := h.projections[chatID]
 	if lp == nil || !lp.loadDone || (buffered > 0 && !force) {
@@ -151,9 +151,9 @@ func (h *Hub) SettleReplayProjection(chatID api.ChatID, buffered int, force bool
 // Connected clients that are looking at a stale copy of a chat they did not
 // touch will not see the correction until they refetch, which is the same
 // window the gap/refetch path already covers.
-func (h *Hub) swapProjectedTranscript(chatID api.ChatID, msgs []api.Message, watermark string) {
+func (h *Hub) swapProjectedTranscript(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string) {
 	var before, after int
-	err := h.chatStore.Mutate(h.lifecycle.shutdownCtx, chatID, func(c *api.Chat, exists bool) bool {
+	err := h.chatStore.Mutate(h.lifecycle.shutdownCtx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -185,12 +185,12 @@ func (h *Hub) swapProjectedTranscript(chatID api.ChatID, msgs []api.Message, wat
 // Field order is govet fieldalignment's: the pointer-bearing fields first, the
 // pointer-free mutex last.
 type projectionState struct {
-	projections map[api.ChatID]*loadProjection
+	projections map[vibekit.ChatID]*loadProjection
 	// onProjection receives a settled transcript. Nil until the swap lands, so
 	// today a settle only logs. Called WITHOUT projMu held: the swap writes the
 	// chat store, and holding the projection lock across that would let a store
 	// mutation and a replay frame deadlock against each other.
-	onProjection func(chatID api.ChatID, msgs []api.Message, watermark string)
+	onProjection func(chatID vibekit.ChatID, msgs []vibekit.Message, watermark string)
 	projMu       sync.Mutex
 }
 
@@ -221,7 +221,7 @@ type projectionState struct {
 //
 // Ordering is by timestamp, which the projection can only be trusted to produce
 // because it takes `_meta.kiro.timestamp` from the wire.
-func mergeProjection(existing, projected []api.Message) []api.Message {
+func mergeProjection(existing, projected []vibekit.Message) []vibekit.Message {
 	if len(projected) == 0 {
 		// Nothing was projected — an empty session, or a decode that produced
 		// nothing. Either way the existing record is the better answer.
@@ -237,15 +237,15 @@ func mergeProjection(existing, projected []api.Message) []api.Message {
 		}
 	}
 
-	out := make([]api.Message, 0, len(projected)+len(existing))
+	out := make([]vibekit.Message, 0, len(projected)+len(existing))
 	out = append(out, projected...)
-	// Indexed rather than ranged by value: api.Message is 216 bytes, which
+	// Indexed rather than ranged by value: vibekit.Message is 216 bytes, which
 	// gocritic's rangeValCopy flags.
 	for i := range existing {
 		if _, dup := projectedIDs[existing[i].ID]; dup {
 			continue
 		}
-		if existing[i].Role == api.RoleEvent || existing[i].Ts > newest {
+		if existing[i].Role == vibekit.RoleEvent || existing[i].Ts > newest {
 			out = append(out, existing[i])
 		}
 	}
@@ -253,7 +253,7 @@ func mergeProjection(existing, projected []api.Message) []api.Message {
 	// Stable sort so same-timestamp messages keep the order they were added,
 	// which puts a projected message ahead of a preserved one at the same
 	// instant — the projected copy is the more complete of the two.
-	slices.SortStableFunc(out, func(a, b api.Message) int {
+	slices.SortStableFunc(out, func(a, b vibekit.Message) int {
 		return cmp.Compare(a.Ts, b.Ts)
 	})
 	return out

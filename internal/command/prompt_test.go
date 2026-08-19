@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestValidatePromptPayload(t *testing.T) {
 	valid := func(text, msgID, model string) []byte {
-		b, _ := json.Marshal(api.PromptCommand{Text: text, MessageID: msgID, Model: model})
+		b, _ := json.Marshal(vibekit.PromptCommand{Text: text, MessageID: msgID, Model: model})
 		return b
 	}
 
@@ -34,7 +34,7 @@ func TestValidatePromptPayload(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := &api.ClientCommand{Payload: tc.payload}
+			cmd := &vibekit.ClientCommand{Payload: tc.payload}
 			_, status, err := validatePromptPayload(cmd)
 			if tc.wantErr && err == nil {
 				t.Fatal("expected error, got nil")

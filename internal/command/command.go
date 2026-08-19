@@ -13,10 +13,10 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -29,7 +29,7 @@ import (
 const maxCommandBody = webhttp.MaxJSONBody
 
 // Handler is the signature for a command handler function.
-type Handler func(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand)
+type Handler func(ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand)
 
 // Dependencies defines what the Dispatcher needs from its host (Hub).
 // Composed from the role-based sub-interfaces declared in interfaces.go.
@@ -51,7 +51,7 @@ type Dependencies interface {
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
 	deps     Dependencies
-	handlers map[api.CommandType]Handler
+	handlers map[vibekit.CommandType]Handler
 	mu       sync.RWMutex
 }
 
@@ -59,7 +59,7 @@ type Dispatcher struct {
 func New(deps Dependencies) *Dispatcher {
 	return &Dispatcher{
 		deps:     deps,
-		handlers: make(map[api.CommandType]Handler),
+		handlers: make(map[vibekit.CommandType]Handler),
 	}
 }
 
@@ -67,7 +67,7 @@ func New(deps Dependencies) *Dispatcher {
 func (d *Dispatcher) Deps() Dependencies { return d.deps }
 
 // Register adds a handler for the given command type.
-func (d *Dispatcher) Register(t api.CommandType, h Handler) {
+func (d *Dispatcher) Register(t vibekit.CommandType, h Handler) {
 	d.mu.Lock()
 	d.handlers[t] = h
 	d.mu.Unlock()
@@ -113,7 +113,7 @@ func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
 
 // RequireChatID validates that cmd.ChatID is non-empty and writes a
 // 400 response if not. Returns true when the chat ID is present.
-func (d *Dispatcher) RequireChatID(w http.ResponseWriter, cmd *api.ClientCommand) bool {
+func (d *Dispatcher) RequireChatID(w http.ResponseWriter, cmd *vibekit.ClientCommand) bool {
 	if cmd.ChatID == "" {
 		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
 		return false
@@ -133,7 +133,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	webhttp.LimitBody(w, r, maxCommandBody)
-	var cmd api.ClientCommand
+	var cmd vibekit.ClientCommand
 	if err := json.NewDecoder(r.Body).Decode(&cmd); err != nil {
 		if maxErr, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			slog.Warn("command body too large",

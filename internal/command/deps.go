@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // This file is the package's dependency contracts: the role interfaces the
@@ -39,7 +39,7 @@ import (
 // helper on this path funnels through — has any use for.
 type sessionScoped interface {
 	// SessionID returns the current ACP session ID.
-	SessionID() api.SessionID
+	SessionID() vibekit.SessionID
 }
 
 // bridgeCaller sends one request to kiro-cli and waits for its answer. 1 of 12:
@@ -47,7 +47,7 @@ type sessionScoped interface {
 // parameter would let a future edit reach the prompt slot from inside a retry.
 type bridgeCaller interface {
 	// Call sends an RPC call to kiro-cli.
-	Call(ctx context.Context, method string, params any) (*api.RPCResponse, error)
+	Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error)
 }
 
 // sessionCaller is the commonest shape on this path: one call, addressed to the
@@ -119,10 +119,10 @@ type Bridge interface {
 // BridgeAccess provides bridge lifecycle operations needed by prompt,
 // cancel, subagent, slash, and permission handlers.
 type BridgeAccess interface {
-	GetBridge(chatID api.ChatID) Bridge
-	GetOrCreateBridge(ctx context.Context, chatID api.ChatID, model string) (Bridge, error)
-	CloseBridge(chatID api.ChatID)
-	PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b Bridge)
+	GetBridge(chatID vibekit.ChatID) Bridge
+	GetOrCreateBridge(ctx context.Context, chatID vibekit.ChatID, model string) (Bridge, error)
+	CloseBridge(chatID vibekit.ChatID)
+	PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID, b Bridge)
 	// PrimeFromChat notes that chatID's FIRST session should be primed with
 	// another chat's transcript. The tangent's fallback (command/fork.go): a
 	// refused session/fork leaves the new chat with no inherited session, so the
@@ -132,7 +132,7 @@ type BridgeAccess interface {
 	// session's launch and not the chat: it is consumed by the next spawn and
 	// does not survive a restart, which is correct — by then the tangent has its
 	// own conversation and is owed nothing from its parent.
-	PrimeFromChat(chatID, sourceChatID api.ChatID)
+	PrimeFromChat(chatID, sourceChatID vibekit.ChatID)
 }
 
 // ChatStore is the chat store as the command handlers use it: read a chat,
@@ -151,41 +151,41 @@ type BridgeAccess interface {
 // cannot share one name.
 type ChatStore interface {
 	// Get returns the full chat at id, or false if it does not exist.
-	Get(ctx context.Context, id api.ChatID) (*api.Chat, bool)
+	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	// Mutate is the single write primitive: load, apply, save, broadcast
 	// chat_created / chat_updated.
-	Mutate(ctx context.Context, id api.ChatID, mutate func(c *api.Chat, exists bool) bool) error
+	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
 	// AppendMessage appends msg to the chat's messages.
-	AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error
+	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 	// SetDraft persists the chat's unsent composer text. Its own method rather
 	// than a Mutate call because a draft save is not ACTIVITY and must not be
 	// recorded as any: Mutate stamps UpdatedAt, the retention purge ages a chat
 	// from exactly that field, and a debounced autosave would push the cutoff
 	// out by a whole window each keystroke. A no-op for a chat that does not
 	// exist — typing must not create one.
-	SetDraft(ctx context.Context, id api.ChatID, text string) error
+	SetDraft(ctx context.Context, id vibekit.ChatID, text string) error
 	// Delete removes the chat file and broadcasts chat_deleted. cmdDeleteChat
 	// is the ONLY caller in the build, and that is an invariant: bridge exits,
 	// model switches and restarts never delete.
-	Delete(ctx context.Context, id api.ChatID) error
+	Delete(ctx context.Context, id vibekit.ChatID) error
 }
 
 // ChatAccess provides chat store and broadcast operations needed by
 // create, delete, rewind, and supervised-mode handlers.
 type ChatAccess interface {
 	ChatStore() ChatStore
-	Broadcast(ctx context.Context, evt api.ServerEvent)
-	CleanupChatState(ctx context.Context, chatID api.ChatID)
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
+	CleanupChatState(ctx context.Context, chatID vibekit.ChatID)
 	// CloseChatState is the close path's teardown: same in-memory cleanup,
 	// but it leaves the chat's durable KAS session on disk so the chat can be
 	// reopened and so History can still list it.
-	CloseChatState(ctx context.Context, chatID api.ChatID)
+	CloseChatState(ctx context.Context, chatID vibekit.ChatID)
 	// CancelChatRuns cancels every non-terminal workflow run this chat's
 	// sessions launched. Part of the tab-close contract: closing the tab kills
 	// the work, and a run is durable state a dead process does NOT stop — KAS
 	// reconciles it to paused and a later read revives it, so it must be told
 	// to cancel, per run, before the bridge goes.
-	CancelChatRuns(ctx context.Context, chatID api.ChatID)
+	CancelChatRuns(ctx context.Context, chatID vibekit.ChatID)
 }
 
 // PendingPermAccess provides the pending-PERMISSION bookkeeping handlers need:
@@ -198,7 +198,7 @@ type ChatAccess interface {
 // arrives as an ordinary permission request. Nothing supervised is left here,
 // and a `ChatInSupervisedMode` reader with no consumer went with the gate.
 type PendingPermAccess interface {
-	ClearPendingPermsForChat(chatID api.ChatID)
+	ClearPendingPermsForChat(chatID vibekit.ChatID)
 	// TakePendingPerm claims the request before its answer is sent, and reports
 	// false when another surface already answered it. It replaced a
 	// remove-after-responding call: two tabs could each answer one request, and
@@ -207,8 +207,8 @@ type PendingPermAccess interface {
 	//
 	// settledBy travels with the claim because the winning take is broadcast to
 	// the surfaces that lost, and their card says who answered. From a command
-	// handler that is always api.SettledByUser — a person clicked something.
-	TakePendingPerm(requestID int64, settledBy api.SettledBy) bool
+	// handler that is always vibekit.SettledByUser — a person clicked something.
+	TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool
 }
 
 // TerminalAccess is the interrupt's process half: a turn cancel must reach
@@ -218,7 +218,7 @@ type TerminalAccess interface {
 	// KillTurnTerminals kills the terminals the chat's CURRENT turn created,
 	// and nothing else — a background command an earlier turn left running
 	// on purpose is not the cancel's to kill.
-	KillTurnTerminals(chatID api.ChatID)
+	KillTurnTerminals(chatID vibekit.ChatID)
 }
 
 // WorkspaceAccess provides the workspace and config paths handlers resolve
@@ -279,9 +279,9 @@ type TurnStats struct {
 // it, record which model ran it, publish its stats, and abandon it when the
 // bridge died mid-flight.
 type TurnOutcomeAccess interface {
-	IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool
-	EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, stats TurnStats)
-	AbandonInFlightTurn(ctx context.Context, chatID api.ChatID)
+	IsEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) bool
+	EmitTurnEndedWithStats(ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, stats TurnStats)
+	AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID)
 	// LatchTurnModel records which model this turn was DISPATCHED under, before
 	// the prompt call can race a concurrent switch_model. First write wins, so
 	// the value is immutable for the turn's lifetime.
@@ -289,7 +289,7 @@ type TurnOutcomeAccess interface {
 	// It exists because the turn buffer otherwise latches on the first assistant
 	// FRAME, which can be seconds later: a fast in-session switch landing in that
 	// window stamped the new model onto an answer the previous one produced.
-	LatchTurnModel(chatID api.ChatID, model string)
+	LatchTurnModel(chatID vibekit.ChatID, model string)
 }
 
 // Typed accessors on Dispatcher for narrow interface access.

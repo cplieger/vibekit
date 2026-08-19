@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func BenchmarkHandleAssistantChunk(b *testing.B) {
@@ -32,7 +32,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 	for _, tc := range cases {
 		b.Run(tc.name, func(b *testing.B) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(b.Context(), "bench", func(c *api.Chat, _ bool) bool {
+			_ = cs.Mutate(b.Context(), "bench", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "bench"
 				return true
 			})
@@ -47,7 +47,7 @@ func BenchmarkHandleAssistantChunk(b *testing.B) {
 
 func TestHandlePlan_PersistsAndClearsOnAllDone(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Plan with pending entries → persists as message and sets CurrentPlan.
 	raw := json.RawMessage(`{"entries":[{"content":"step 1","priority":"high","status":"pending"},{"content":"step 2","priority":"medium","status":"pending"}]}`)
@@ -76,7 +76,7 @@ func TestHandlePlan_PersistsAndClearsOnAllDone(t *testing.T) {
 
 func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.CurrentModeID = "code"
 		return true

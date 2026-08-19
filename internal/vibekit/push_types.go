@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 import "strconv"
 
@@ -23,7 +23,7 @@ type PushSubscriptionKeys struct {
 // client's service worker.
 type PushKind string
 
-// Push notification kind constants. These live in the api package so
+// Push notification kind constants. These live in this package so
 // hub callers can reference them without importing the push package
 // (eliminating the hub→push import that existed solely for constant
 // access).

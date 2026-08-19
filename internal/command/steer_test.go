@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // countingDeps makes the "this handler emits nothing" contract observable; the
@@ -25,24 +25,24 @@ type countingDeps struct {
 	events int
 }
 
-func (d *countingDeps) Broadcast(context.Context, api.ServerEvent) { d.events++ }
+func (d *countingDeps) Broadcast(context.Context, vibekit.ServerEvent) { d.events++ }
 
-func steerReq(t *testing.T, chatID api.ChatID, text, messageID string) *api.ClientCommand {
+func steerReq(t *testing.T, chatID vibekit.ChatID, text, messageID string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(api.SteerCommand{Text: text, MessageID: messageID})
+	payload, err := json.Marshal(vibekit.SteerCommand{Text: text, MessageID: messageID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdSteer,
+	return &vibekit.ClientCommand{
+		Type:      vibekit.CmdSteer,
 		ChatID:    chatID,
 		RequestID: "r1",
 		Payload:   payload,
 	}
 }
 
-func clearReq(chatID api.ChatID) *api.ClientCommand {
-	return &api.ClientCommand{Type: api.CmdSteerClear, ChatID: chatID, RequestID: "r1"}
+func clearReq(chatID vibekit.ChatID) *vibekit.ClientCommand {
+	return &vibekit.ClientCommand{Type: vibekit.CmdSteerClear, ChatID: chatID, RequestID: "r1"}
 }
 
 func queuedResult(id string) map[string]any {
@@ -63,10 +63,10 @@ func TestCmdSteer_SendsTheClientsIDOnTheSessionsWire(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
 	}
-	if b.gotMethod != api.MethodSessionSteer {
-		t.Errorf("method = %q, want %q", b.gotMethod, api.MethodSessionSteer)
+	if b.gotMethod != vibekit.MethodSessionSteer {
+		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSessionSteer)
 	}
-	if got := b.gotParams["sessionId"]; got != api.SessionID("sess-1") {
+	if got := b.gotParams["sessionId"]; got != vibekit.SessionID("sess-1") {
 		t.Errorf("sessionId = %v, want sess-1", got)
 	}
 	// Trimmed, because KAS refuses a blank message and a user's trailing newline
@@ -258,8 +258,8 @@ func TestCmdSteerClear_ReportsWhatItDropped(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
 	}
-	if b.gotMethod != api.MethodSessionSteerClear {
-		t.Errorf("method = %q, want %q", b.gotMethod, api.MethodSessionSteerClear)
+	if b.gotMethod != vibekit.MethodSessionSteerClear {
+		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSessionSteerClear)
 	}
 	if body := w.Body.String(); !strings.Contains(body, "steer-1") || !strings.Contains(body, "steer-2") {
 		t.Errorf("body %s does not name the cleared ids", body)

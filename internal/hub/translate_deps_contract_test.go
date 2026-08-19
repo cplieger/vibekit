@@ -3,8 +3,8 @@ package hub
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TranslateDepsContractTest exercises every method of translate.Deps
@@ -29,7 +29,7 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 
 	t.Run("Broadcast_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
-		d.Broadcast(t.Context(), api.ServerEvent{Type: "test_event", ChatID: "chat-1"})
+		d.Broadcast(t.Context(), vibekit.ServerEvent{Type: "test_event", ChatID: "chat-1"})
 	})
 
 	t.Run("ParentACPSession_empty_for_unknown_chat", func(t *testing.T) {
@@ -51,12 +51,12 @@ func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translat
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
-		d.PendingPermsAdd(42, api.ServerEvent{Type: "permission_needed", ChatID: "c1"})
+		d.PendingPermsAdd(42, vibekit.ServerEvent{Type: "permission_needed", ChatID: "c1"})
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
 		d := newDeps(t)
-		d.NotifyPush(t.Context(), "test body", api.PushKindPermission, "")
+		d.NotifyPush(t.Context(), "test body", vibekit.PushKindPermission, "")
 	})
 
 	t.Run("BufferStore_non_nil", func(t *testing.T) {

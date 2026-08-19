@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func (s *Service) keysPath() string { return filepath.Join(s.dir, "vapid-keys.json") }
@@ -70,7 +70,7 @@ func (s *Service) loadSubs() {
 		}
 		return
 	}
-	var subs []api.PushSubscription
+	var subs []vibekit.PushSubscription
 	if err := json.Unmarshal(data, &subs); err != nil {
 		slog.Warn("push: parse subs", "error", err, "size", len(data))
 		return
@@ -100,7 +100,7 @@ func (s *Service) saveSubsAsync(ctx context.Context) {
 	}
 	// Snapshot current subs under mu, then send to the writer goroutine.
 	s.mu.Lock()
-	subs := make([]api.PushSubscription, 0, len(s.subs))
+	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -121,7 +121,7 @@ func (s *Service) saveSubs(ctx context.Context) {
 		return
 	}
 	s.mu.Lock()
-	subs := make([]api.PushSubscription, 0, len(s.subs))
+	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -150,7 +150,7 @@ func (s *Service) saveSubs(ctx context.Context) {
 func (s *Service) flushSaves() {
 	done := make(chan struct{})
 	s.mu.Lock()
-	subs := make([]api.PushSubscription, 0, len(s.subs))
+	subs := make([]vibekit.PushSubscription, 0, len(s.subs))
 	for _, sub := range s.subs {
 		subs = append(subs, sub)
 	}
@@ -173,7 +173,7 @@ func (s *Service) flushSaves() {
 }
 
 // writeSubsSnapshot marshals and persists a subscription snapshot to disk.
-func (s *Service) writeSubsSnapshot(subs []api.PushSubscription) {
+func (s *Service) writeSubsSnapshot(subs []vibekit.PushSubscription) {
 	data, err := json.MarshalIndent(subs, "", "  ")
 	if err != nil {
 		slog.Error("push: marshal subscriptions", "error", err)

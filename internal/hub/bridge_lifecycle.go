@@ -1,6 +1,6 @@
 package hub
 
-import "github.com/cplieger/vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/vibekit"
 
 // primeReason is the reason a bridge needs priming on the next prompt.
 type primeReason string
@@ -18,5 +18,5 @@ const (
 	// FROM — the one case where a chat's own transcript is not the history it
 	// needs, which is why this reason carries a source chat (sharedBridge.primeFrom).
 	primeReasonFork primeReason = "fork_refused"
-	modelAuto                   = api.ModelAuto
+	modelAuto                   = vibekit.ModelAuto
 )

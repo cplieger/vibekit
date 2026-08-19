@@ -5,7 +5,7 @@ package translate
 // KAS answers `session/load` by replaying the session's stored transcript as
 // ordinary `session/update` notifications, each tagged
 // `update._meta.kiro.replay: true`. This file turns that stream back into
-// []api.Message.
+// []vibekit.Message.
 //
 // It is a PURE ACCUMULATOR: no chat store, no broadcaster, no clock beyond an
 // injected id generator. That is deliberate — the replay must be staged and
@@ -50,9 +50,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // replayInfoMeta decodes the `_meta.kiro` block of a replayed
@@ -70,7 +70,7 @@ type replayInfoMeta struct {
 }
 
 // replayTS converts KAS's RFC3339-with-milliseconds timestamp to the epoch
-// millis api.Message carries. A missing or unparseable value yields 0, which
+// millis vibekit.Message carries. A missing or unparseable value yields 0, which
 // callers replace with their own fallback — never with time.Now() at the top
 // level, because stamping replayed history with the load's clock is the bug
 // this function exists to avoid.
@@ -149,7 +149,7 @@ type Projection struct {
 	// session was never compacted.
 	Watermark string
 
-	messages []api.Message
+	messages []vibekit.Message
 
 	userTs    int64
 	turnStart int64
@@ -171,17 +171,17 @@ func NewProjection(newID func() string) *Projection {
 // Ingest folds one replayed session/update frame into the projection.
 // Unknown kinds are ignored: a replay carries catalog and telemetry frames
 // that contribute nothing to a transcript.
-func (p *Projection) Ingest(kind api.ACPUpdateKind, raw json.RawMessage) {
+func (p *Projection) Ingest(kind vibekit.ACPUpdateKind, raw json.RawMessage) {
 	switch kind {
-	case api.ACPUpdateSessionInfo:
+	case vibekit.ACPUpdateSessionInfo:
 		p.ingestInfo(raw)
-	case api.ACPUpdateAgentChunk:
+	case vibekit.ACPUpdateAgentChunk:
 		p.ingestAgentText(raw, false)
-	case api.ACPUpdateThoughtChunk:
+	case vibekit.ACPUpdateThoughtChunk:
 		p.ingestAgentText(raw, true)
-	case api.ACPUpdateToolCall:
+	case vibekit.ACPUpdateToolCall:
 		p.ingestToolCall(raw)
-	case api.ACPUpdateToolUpdate:
+	case vibekit.ACPUpdateToolUpdate:
 		p.ingestToolUpdate(raw)
 	default:
 		// user_message_chunk is handled here rather than in the switch above
@@ -194,10 +194,10 @@ func (p *Projection) Ingest(kind api.ACPUpdateKind, raw json.RawMessage) {
 }
 
 // replayUserChunkKind is KAS's user-message replay frame. vibekit declares no
-// api.ACPUpdate* constant for it because the LIVE path deliberately has no
+// vibekit.ACPUpdate* constant for it because the LIVE path deliberately has no
 // handler (vibekit echoes its own user bubbles), so a replay is the only
 // context in which it means anything.
-const replayUserChunkKind api.ACPUpdateKind = "user_message_chunk"
+const replayUserChunkKind vibekit.ACPUpdateKind = "user_message_chunk"
 
 func (p *Projection) ingestUserText(raw json.RawMessage) {
 	var c replayChunk
@@ -260,7 +260,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 	}
 	p.ensureTurn()
 	p.adoptTurnIdentity(tc.Meta.Kiro.MessageID, tc.Meta.Kiro.Timestamp)
-	call := api.ToolCall{
+	call := vibekit.ToolCall{
 		ID:             tc.ToolCallID,
 		Title:          tc.Title,
 		Kind:           tc.Kind,
@@ -335,7 +335,7 @@ func (p *Projection) ingestInfo(raw json.RawMessage) {
 }
 
 // applySummary appends the compaction event for a replayed summary. It folds
-// onto the SAME domain shape the live path produces (an api.RoleEvent message
+// onto the SAME domain shape the live path produces (an vibekit.RoleEvent message
 // with EventKind compacted, plus a watermark) rather than introducing a second
 // representation of a compacted transcript.
 //
@@ -379,14 +379,14 @@ func (p *Projection) applySummary(sum *struct {
 	if at > 0 {
 		ts = p.messages[at-1].Ts
 	}
-	evt := api.Message{
+	evt := vibekit.Message{
 		ID:        p.newID(),
-		Role:      api.RoleEvent,
-		EventKind: api.EventCompacted,
+		Role:      vibekit.RoleEvent,
+		EventKind: vibekit.EventCompacted,
 		Content:   sum.Content,
 		Ts:        ts,
 	}
-	p.messages = append(p.messages[:at], append([]api.Message{evt}, p.messages[at:]...)...)
+	p.messages = append(p.messages[:at], append([]vibekit.Message{evt}, p.messages[at:]...)...)
 	p.Watermark = evt.ID
 	p.compactAt = -1
 }
@@ -442,9 +442,9 @@ func (p *Projection) closeTurn() {
 	if b.Content.Len() == 0 && b.Reasoning.Len() == 0 && len(b.ToolCalls) == 0 {
 		return
 	}
-	p.messages = append(p.messages, api.Message{
+	p.messages = append(p.messages, vibekit.Message{
 		ID:        p.idOr(p.turnID),
-		Role:      api.RoleAssistant,
+		Role:      vibekit.RoleAssistant,
 		Content:   b.Content.String(),
 		Reasoning: b.Reasoning.String(),
 		Blocks:    b.Blocks,
@@ -485,9 +485,9 @@ func (p *Projection) flushUser() {
 	if text == "" {
 		return
 	}
-	p.messages = append(p.messages, api.Message{
+	p.messages = append(p.messages, vibekit.Message{
 		ID:      p.idOr(id),
-		Role:    api.RoleUser,
+		Role:    vibekit.RoleUser,
 		Content: text,
 		Ts:      ts,
 	})
@@ -498,7 +498,7 @@ func (p *Projection) flushUser() {
 // projection's own backing array. Idempotent: closeTurn and flushUser are
 // both no-ops once they have run, so a second call returns the same
 // transcript rather than a truncated one.
-func (p *Projection) Messages() []api.Message {
+func (p *Projection) Messages() []vibekit.Message {
 	p.closeTurn()
 	p.flushUser()
 	return slices.Clone(p.messages)

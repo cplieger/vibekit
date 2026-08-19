@@ -44,7 +44,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -101,8 +101,8 @@ type kiroReadDirBody struct {
 // per-event ctx is cancelled by translateACPEvent's defer the moment it returns,
 // and Bridge.Respond drops a write on a cancelled ctx, which would hang the
 // agent's Call forever (KAS's `extMethod` has NO timeout: no deadline, no abort).
-func (h *Hub) handleKiroFSRequest(_ context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
-	var handler func(context.Context, api.ChatID, *api.RPCResponse)
+func (h *Hub) handleKiroFSRequest(_ context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+	var handler func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)
 	switch msg.Method {
 	case methodKiroFSStat:
 		handler = h.respondKiroFSStat
@@ -130,7 +130,7 @@ func (h *Hub) handleKiroFSRequest(_ context.Context, chatID api.ChatID, msg *api
 
 // kiroFSPath decodes and confines the request's path. The single place the
 // containment gain is realised, so all three verbs share it.
-func (h *Hub) kiroFSPath(msg *api.RPCResponse) (abs string, err error) {
+func (h *Hub) kiroFSPath(msg *vibekit.RPCResponse) (abs string, err error) {
 	var p kiroFSParams
 	if pErr := parseRequest(msg, &p); pErr != nil {
 		return "", fmt.Errorf("decode %s params: %w", msg.Method, pErr)
@@ -147,7 +147,7 @@ func (h *Hub) kiroFSPath(msg *api.RPCResponse) (abs string, err error) {
 // agent's next move on a false "absent" is to CREATE it, clobbering the very
 // file the user asked to keep out of the way. An honest stat is the safer answer;
 // the listing is where the discovery vector actually is.
-func (h *Hub) respondKiroFSStat(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) respondKiroFSStat(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	abs, err := h.kiroFSPath(msg)
 	if err != nil {
 		h.respondFSError(ctx, chatID, msg, err)
@@ -178,7 +178,7 @@ func (h *Hub) respondKiroFSStat(ctx context.Context, chatID api.ChatID, msg *api
 // A missing directory answers with an empty list rather than an error, matching
 // KAS's NodeFileSystem (it swallows ENOENT and returns []). Diverging would make
 // a probe for an optional directory look like a failure.
-func (h *Hub) respondKiroFSReadDirectory(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) respondKiroFSReadDirectory(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	abs, err := h.kiroFSPath(msg)
 	if err != nil {
 		h.respondFSError(ctx, chatID, msg, err)
@@ -205,7 +205,7 @@ func (h *Hub) respondKiroFSReadDirectory(ctx context.Context, chatID api.ChatID,
 // matching the read handler: resolveInsideWorkDir has already anchored abs under
 // workDir so Rel cannot fail in practice, and dropping a listing silently on an
 // impossible error would be the harder failure to diagnose.
-func (h *Hub) filterDirEntries(ctx context.Context, chatID api.ChatID, abs string, dirEntries []os.DirEntry) []kiroDirEntry {
+func (h *Hub) filterDirEntries(ctx context.Context, chatID vibekit.ChatID, abs string, dirEntries []os.DirEntry) []kiroDirEntry {
 	out := make([]kiroDirEntry, 0, len(dirEntries))
 	for _, e := range dirEntries {
 		entryType := fsTypeFile
@@ -243,7 +243,7 @@ func (h *Hub) filterDirEntries(ctx context.Context, chatID api.ChatID, abs strin
 // write-class and writes follow git semantics (an ignored file stays writable);
 // not gated because KAS checkpoints before the unlink and reviews after it, and a
 // second gate here would intercept its restore write. See the file header.
-func (h *Hub) respondKiroFSDelete(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) respondKiroFSDelete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	abs, err := h.kiroFSPath(msg)
 	if err != nil {
 		h.respondFSError(ctx, chatID, msg, err)

@@ -3,8 +3,8 @@ package hub
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // cheapestModel returns the cheapest reliable model id from the current
@@ -17,7 +17,7 @@ import (
 // Selects by lowest RateMultiplier among eligible models. If no model
 // has a rate (all zero, e.g. session/new doesn't send it), falls back
 // to the first eligible entry.
-func cheapestModel(_ context.Context, catalog []api.SessionModel) string {
+func cheapestModel(_ context.Context, catalog []vibekit.SessionModel) string {
 	var bestID string
 	var bestRate float64
 	for _, m := range catalog {

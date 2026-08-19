@@ -7,7 +7,7 @@
 // declaring `_meta.kiro.secretStorage` in initialize. Declining the capability
 // is what made every bridge spawn re-run `POST /register`.
 //
-// The declaration is CONDITIONAL on a store existing (api.StartOpts.SecretStorage).
+// The declaration is CONDITIONAL on a store existing (vibekit.StartOpts.SecretStorage).
 // Declaring it without one is worse than declining: KAS rethrows a store failure
 // into the MCP connect path, so every OAuth connect fails instead of merely
 // paying one DCR per spawn.
@@ -25,8 +25,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/secretstore"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // secretKeyParams is the shape of a get/delete request: `{key}`.
@@ -57,7 +57,7 @@ type secretGetBody struct {
 // with no network call and no blocking refresh, and KAS issues these inside its
 // MCP connect path — dispatching them async would reorder a store against the
 // get that follows it.
-func (h *Hub) handleKiroSecretRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
+func (h *Hub) handleKiroSecretRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroSecretGet:
 		h.respondBridge(ctx, chatID, msg, secretGetResult(h.secrets, msg.Params), nil)
@@ -108,11 +108,11 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 	if params != nil {
 		if err := json.Unmarshal(params, &p); err != nil {
 			slog.Warn("v3 secret store: undecodable params", "error", err)
-			return nil, &api.RPCError{Code: -32602, Message: "secret/store: params must be {key, value}"}
+			return nil, &vibekit.RPCError{Code: -32602, Message: "secret/store: params must be {key, value}"}
 		}
 	}
 	if p.Key == "" {
-		return nil, &api.RPCError{Code: -32602, Message: "secret/store: key is required"}
+		return nil, &vibekit.RPCError{Code: -32602, Message: "secret/store: key is required"}
 	}
 	if store == nil {
 		// Unreachable in normal operation: a hub with no store does not declare
@@ -120,12 +120,12 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 		// method it was not offered, which is a protocol error and answered as
 		// one rather than reported as a successful write that never happened.
 		slog.Warn("v3 secret store: no store configured, credential not persisted", "key", p.Key)
-		return nil, &api.RPCError{Code: -32603, Message: "secret/store: no credential store configured"}
+		return nil, &vibekit.RPCError{Code: -32603, Message: "secret/store: no credential store configured"}
 	}
 	if err := store.Set(ctx, p.Key, p.Value); err != nil {
 		// Key only — the value is a token or a client secret.
 		slog.Error("v3 secret store: persist failed", "key", p.Key, "error", err)
-		return nil, &api.RPCError{Code: -32603, Message: "secret/store: " + err.Error()}
+		return nil, &vibekit.RPCError{Code: -32603, Message: "secret/store: " + err.Error()}
 	}
 	slog.Debug("v3 secret store: persisted", "key", p.Key)
 	return map[string]any{}, nil
@@ -137,7 +137,7 @@ func secretStoreResult(ctx context.Context, store *secretstore.Store, params jso
 func secretDeleteResult(ctx context.Context, store *secretstore.Store, params json.RawMessage) (map[string]any, error) {
 	p := decodeSecretKey(params)
 	if p.Key == "" {
-		return nil, &api.RPCError{Code: -32602, Message: "secret/delete: key is required"}
+		return nil, &vibekit.RPCError{Code: -32602, Message: "secret/delete: key is required"}
 	}
 	if store == nil {
 		// Nothing was ever stored, so the key is already absent.
@@ -145,7 +145,7 @@ func secretDeleteResult(ctx context.Context, store *secretstore.Store, params js
 	}
 	if err := store.Delete(ctx, p.Key); err != nil {
 		slog.Error("v3 secret delete: persist failed", "key", p.Key, "error", err)
-		return nil, &api.RPCError{Code: -32603, Message: "secret/delete: " + err.Error()}
+		return nil, &vibekit.RPCError{Code: -32603, Message: "secret/delete: " + err.Error()}
 	}
 	return map[string]any{}, nil
 }

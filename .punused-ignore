@@ -17,7 +17,7 @@
 # One entry may report as "matches nothing" on a given run: punused caps a
 # single invocation at a 30s context deadline and drops the rest of the
 # shard silently (the masked error reads "file already closed", which the
-# gate filters), and internal/api is over that budget. The policy.go entry
+# gate filters), and internal/vibekit is over that budget. The policy.go entry
 # is the one that flickers. Entries here are the union of a complete
 # per-FILE scan, so this file stays a superset either way.
 
@@ -59,17 +59,17 @@ field Prompts is
 # elicitation schemas are pass-through JSON-Schema: vibekit forwards the
 # MCP server's form definition to the client verbatim and never inspects a
 # property, which is exactly why no Go code reads these fields.
-internal/api/elicitation.go
-internal/api/policy.go
+internal/vibekit/elicitation.go
+internal/vibekit/policy.go
 
 # --- 3. Inbound envelopes decoded by encoding/json, deliberately not read.
-# internal/api/commands.go holds the client -> server command payloads; the
+# internal/vibekit/commands.go holds the client -> server command payloads; the
 # browser sends every field and json.Unmarshal fills it. Attachment.Name is
 # the only unread one: internal/command/prompt_attachments.go re-derives the
 # display name with filepath.Base(att.Path) rather than trusting a
 # client-supplied string that reaches log lines and agent-visible text.
 # Deleting it would erase the record of what the client actually sends.
-internal/api/commands.go
+internal/vibekit/commands.go
 # RPCResponse.JSONRPC is the inbound half of the ACP JSON-RPC envelope
 # (the outbound RPCRequest/RPCNotification/RPCResponseOut copies ARE set in
 # internal/bridge/bridge_rpc.go). The reader ignores the version field, but
@@ -82,7 +82,7 @@ field JSONRPC is
 # fields are decoded and deliberately unread: _meta.kiro.kind (the
 # "agent-subtask" discriminator — the translator keys off agentSubtaskId
 # instead) and _meta.kiro.refusal.explanation (duplicates the chunk text,
-# so only Category/RecommendedModel flow into api.RefusalInfo). Both
+# so only Category/RecommendedModel flow into vibekit.RefusalInfo). Both
 # document the wire contract at the only place it is expressed in code.
 internal/translate/wire.go
 
@@ -90,7 +90,7 @@ internal/translate/wire.go
 # discover String() by reflection at %s/%v sites, so no reference exists to
 # find. All four are string-kind types whose String() returns the
 # underlying string, giving the ID family one uniform conversion affordance
-# (api.ChatID/SessionID/ModelID, mcp.ServerID).
+# (vibekit.ChatID/SessionID/ModelID, mcp.ServerID).
 method (ChatID).String
 method (SessionID).String
 method (ModelID).String
@@ -98,7 +98,7 @@ method (ServerID).String
 
 # --- 6. error-interface machinery. Error() is called by whatever formats
 # the error; Unwrap() is what makes errors.Is/As walk the chain. Call
-# sites: internal/command/prompt.go errors.AsType[*api.TransportError],
+# sites: internal/command/prompt.go errors.AsType[*vibekit.TransportError],
 # and internal/forges/exec.go constructs &cmdError{Err: ...} as an error.
 method (*TransportError).Unwrap
 method (*cmdError).Error
@@ -145,7 +145,7 @@ method (*Server).UnmarshalJSON
 #   var _ chatStoreUnion = (*RecordingChatStore)(nil)    (chatstore.go)
 #   var _ chatStoreUnion = (*InMemoryChatStore)(nil)     (inmem_chatstore.go)
 # chatStoreUnion is the union of what the real consumers declare, since
-# api.ChatStore no longer exists; each consumer names 1 to 5 of the store's 9.
+# vibekit.ChatStore no longer exists; each consumer names 1 to 5 of the store's 9.
 # Consumers: internal/hub (fakeChatStore = testsupport.RecordingChatStore),
 # internal/command, internal/translate and internal/hub (NewInMemoryChatStore).
 #

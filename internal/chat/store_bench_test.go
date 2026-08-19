@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func BenchmarkStore_AppendMessage(b *testing.B) {
@@ -15,16 +15,16 @@ func BenchmarkStore_AppendMessage(b *testing.B) {
 		b.Fatalf("NewStore: %v", err)
 	}
 
-	chatID := api.ChatID("bench-chat")
+	chatID := vibekit.ChatID("bench-chat")
 	ctx := b.Context()
 
 	// Create chat with 10 pre-existing messages.
-	err = s.Mutate(ctx, chatID, func(c *api.Chat, _ bool) bool {
+	err = s.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "benchmark chat"
 		for i := range 10 {
-			c.Messages = append(c.Messages, api.Message{
+			c.Messages = append(c.Messages, vibekit.Message{
 				ID:      fmt.Sprintf("pre-%d", i),
-				Role:    api.RoleAssistant,
+				Role:    vibekit.RoleAssistant,
 				Content: strings.Repeat("x", 200),
 			})
 		}
@@ -35,9 +35,9 @@ func BenchmarkStore_AppendMessage(b *testing.B) {
 	}
 
 	// Realistic message payload (~500 bytes content).
-	msg := &api.Message{
+	msg := &vibekit.Message{
 		ID:      "bench-msg",
-		Role:    api.RoleAssistant,
+		Role:    vibekit.RoleAssistant,
 		Content: strings.Repeat("benchmark content ", 28), // ~504 bytes
 	}
 

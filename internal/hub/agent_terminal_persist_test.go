@@ -19,9 +19,9 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat"
 	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // hubWithRealStore builds a hub backed by an on-disk chat store, seeded with
@@ -38,7 +38,7 @@ func hubWithRealStore(t *testing.T) (*Hub, string) {
 	}
 	br := newRecordingTermBridge()
 	h := New(t.Context(), t.TempDir(), func() ACPBridge { return br }, cs)
-	if err := cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -49,7 +49,7 @@ func hubWithRealStore(t *testing.T) (*Hub, string) {
 
 // seedTerminal registers a live agent terminal holding raw bytes, the way the
 // output pump would have.
-func seedTerminal(h *Hub, id string, chatID api.ChatID, raw string) {
+func seedTerminal(h *Hub, id string, chatID vibekit.ChatID, raw string) {
 	term := newAgentTerminal(nil, chatID, 1<<20)
 	term.output.Write([]byte(raw))
 	h.agentTerms.mu.Lock()
@@ -59,9 +59,9 @@ func seedTerminal(h *Hub, id string, chatID api.ChatID, raw string) {
 }
 
 // sessionUpdate wraps one ACP session/update frame the way the bridge does.
-func sessionUpdate(t *testing.T, raw string) *api.RPCResponse {
+func sessionUpdate(t *testing.T, raw string) *vibekit.RPCResponse {
 	t.Helper()
-	return &api.RPCResponse{
+	return &vibekit.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": json.RawMessage(raw)}),
 	}
@@ -71,13 +71,13 @@ func sessionUpdate(t *testing.T, raw string) *api.RPCResponse {
 // its last assistant message. Reading the file rather than calling store.Get
 // keeps the assertion honest about what is actually persisted: a Get could in
 // principle be served from memory, a file cannot.
-func storedToolCall(t *testing.T, dir string) api.ToolCall {
+func storedToolCall(t *testing.T, dir string) vibekit.ToolCall {
 	t.Helper()
 	blob, err := os.ReadFile(filepath.Join(dir, "c1.json"))
 	if err != nil {
 		t.Fatalf("read chat file (nothing was persisted): %v", err)
 	}
-	var stored api.Chat
+	var stored vibekit.Chat
 	if err := json.Unmarshal(blob, &stored); err != nil {
 		t.Fatalf("unmarshal chat file: %v", err)
 	}
@@ -87,7 +87,7 @@ func storedToolCall(t *testing.T, dir string) api.ToolCall {
 		}
 	}
 	t.Fatalf("no persisted message carries a tool call; chat file: %s", blob)
-	return api.ToolCall{}
+	return vibekit.ToolCall{}
 }
 
 // runTerminalTurn drives a complete terminal-backed tool call to turn end:
@@ -100,7 +100,7 @@ func runTerminalTurn(t *testing.T, h *Hub, frames ...string) {
 	for _, f := range frames {
 		h.translateACPEvent("c1", sessionUpdate(t, f))
 	}
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{}, command.TurnStats{})
 }
 
 const completedWithTerminal = `{"sessionUpdate":"tool_call_update","toolCallId":"tc-1",` +
@@ -125,7 +125,7 @@ func TestPersistedToolCall_CarriesTerminalOutputAndSpans(t *testing.T) {
 		t.Fatal("release reported the terminal was not present")
 	}
 	h.translateACPEvent("c1", sessionUpdate(t, completedWithTerminal))
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{}, command.TurnStats{})
 
 	tc := storedToolCall(t, dir)
 	if tc.Output != "red output\n" {

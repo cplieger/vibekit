@@ -2,7 +2,7 @@
 // D101 / D104, client side.
 //
 // Three things are pinned here, and the first is a CROSS-LANGUAGE contract with no
-// codegen behind it: the PR subject prefix is spelled in Go (api.PRSubjectPrefix),
+// codegen behind it: the PR subject prefix is spelled in Go (vibekit.PRSubjectPrefix),
 // in the service worker (which compiles standalone and cannot import) and in the
 // page handler. Three copies of one literal is what the read below turns into a
 // test rather than a hope.
@@ -14,9 +14,9 @@ const ROOT = join(import.meta.dirname, "..");
 
 describe("PR subject prefix", () => {
   it("is the same literal in Go, the service worker and the page handler", () => {
-    const go = readFileSync(join(ROOT, "internal/api/push_types.go"), "utf8");
+    const go = readFileSync(join(ROOT, "internal/vibekit/push_types.go"), "utf8");
     const m = /PRSubjectPrefix = "([^"]+)"/.exec(go);
-    expect(m, "api.PRSubjectPrefix not found in internal/api/push_types.go").not.toBeNull();
+    expect(m, "vibekit.PRSubjectPrefix not found in internal/vibekit/push_types.go").not.toBeNull();
     const want = m?.[1] ?? "";
     expect(want).not.toBe("");
     for (const rel of ["static-src/sw.ts", "static-src/handlers/push-message.ts"]) {
@@ -34,9 +34,9 @@ describe("keyed push kinds", () => {
   it("names every kind the server registry gives a settings key, and no other", async () => {
     const { KEYED_PUSH_KINDS } = await import("./notify.js");
     const registry = readFileSync(join(ROOT, "internal/push/service.go"), "utf8");
-    // Each keyed entry reads {api.PushKind<Name>, settings.Key<Name>, <default>};
+    // Each keyed entry reads {vibekit.PushKind<Name>, settings.Key<Name>, <default>};
     // the floor is the one entry whose key is the empty string.
-    const entries = [...registry.matchAll(/\{api\.PushKind(\w+),\s*(settings\.Key\w+|""),/g)];
+    const entries = [...registry.matchAll(/\{vibekit\.PushKind(\w+),\s*(settings\.Key\w+|""),/g)];
     expect(entries.length, "no kindRegistry entries parsed").toBeGreaterThan(1);
     const keyedCount = entries.filter((e) => e[2] !== '""').length;
     expect(Object.keys(KEYED_PUSH_KINDS)).toHaveLength(keyedCount);

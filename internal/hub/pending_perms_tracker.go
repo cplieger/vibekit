@@ -4,7 +4,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // pendingPermsTracker tracks permission_needed events that haven't been
@@ -45,16 +45,16 @@ import (
 // CmdCancel, CmdCloseChat and cleanupChatState (delete and archive). A handful of
 // structs per live chat, freed when that chat's turn ends.
 type pendingPermsTracker struct {
-	perms map[int64]api.ServerEvent
+	perms map[int64]vibekit.ServerEvent
 	mu    sync.Mutex
 }
 
 func newPendingPermsTracker() *pendingPermsTracker {
-	return &pendingPermsTracker{perms: make(map[int64]api.ServerEvent)}
+	return &pendingPermsTracker{perms: make(map[int64]vibekit.ServerEvent)}
 }
 
 // Add records a permission_needed event.
-func (t *pendingPermsTracker) Add(id int64, evt api.ServerEvent) {
+func (t *pendingPermsTracker) Add(id int64, evt vibekit.ServerEvent) {
 	t.mu.Lock()
 	t.perms[id] = evt
 	t.mu.Unlock()
@@ -76,19 +76,19 @@ func (t *pendingPermsTracker) Add(id int64, evt api.ServerEvent) {
 // The returned event is the tracked permission_needed / elicitation_needed /
 // user_input_needed frame, which is what lets the caller announce WHICH kind of
 // decision was settled without holding a second index.
-func (t *pendingPermsTracker) TakeIfPresent(id int64) (api.ServerEvent, bool) {
+func (t *pendingPermsTracker) TakeIfPresent(id int64) (vibekit.ServerEvent, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	evt, ok := t.perms[id]
 	if !ok {
-		return api.ServerEvent{}, false
+		return vibekit.ServerEvent{}, false
 	}
 	delete(t.perms, id)
 	return evt, true
 }
 
 // ClearForChat drops every unresolved permission_needed entry owned by chatID.
-func (t *pendingPermsTracker) ClearForChat(chatID api.ChatID) {
+func (t *pendingPermsTracker) ClearForChat(chatID vibekit.ChatID) {
 	if chatID == "" {
 		return
 	}
@@ -122,7 +122,7 @@ func (t *pendingPermsTracker) ClearForChat(chatID api.ChatID) {
 // reason a reader could see. The one sequence that matters is the whole queue's,
 // and it covers permission, elicitation and structured-question cards alike
 // because all three are tracked here under the same id space.
-func (t *pendingPermsTracker) List(chatFilter api.ChatID) []api.ServerEvent {
+func (t *pendingPermsTracker) List(chatFilter vibekit.ChatID) []vibekit.ServerEvent {
 	t.mu.Lock()
 	ids := make([]int64, 0, len(t.perms))
 	for id, evt := range t.perms {
@@ -132,7 +132,7 @@ func (t *pendingPermsTracker) List(chatFilter api.ChatID) []api.ServerEvent {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	result := make([]api.ServerEvent, 0, len(ids))
+	result := make([]vibekit.ServerEvent, 0, len(ids))
 	for _, id := range ids {
 		result = append(result, t.perms[id])
 	}

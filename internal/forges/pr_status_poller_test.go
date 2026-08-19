@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // fakeSource counts how often it was asked, which is what makes "no forge work"
@@ -33,8 +33,8 @@ func (f *fakeSource) OpenAuthoredPRs(context.Context) ([]WatchedPR, error) {
 
 type sentPush struct {
 	body    string
-	kind    api.PushKind
-	subject api.PushSubject
+	kind    vibekit.PushKind
+	subject vibekit.PushSubject
 }
 
 // fakeNotifier records every Send and reports a configurable subscriber state.
@@ -49,7 +49,7 @@ func (f *fakeNotifier) HasSubscribers() bool {
 	return f.subscribers
 }
 
-func (f *fakeNotifier) Send(_ context.Context, _, body string, kind api.PushKind, subject api.PushSubject) {
+func (f *fakeNotifier) Send(_ context.Context, _, body string, kind vibekit.PushKind, subject vibekit.PushSubject) {
 	f.sent = append(f.sent, sentPush{body: body, kind: kind, subject: subject})
 }
 
@@ -159,8 +159,8 @@ func TestPoller_PushesOnASettledFlip(t *testing.T) {
 					len(n.sent), tc.from, tc.to, n.sent)
 			}
 			got := n.sent[0]
-			if got.kind != api.PushKindPRStatus {
-				t.Errorf("kind = %q, want %q", got.kind, api.PushKindPRStatus)
+			if got.kind != vibekit.PushKindPRStatus {
+				t.Errorf("kind = %q, want %q", got.kind, vibekit.PushKindPRStatus)
 			}
 			if !strings.Contains(got.body, tc.wantBody) {
 				t.Errorf("body %q does not say %q", got.body, tc.wantBody)
@@ -234,7 +234,7 @@ func TestPoller_SubjectIsPerPR(t *testing.T) {
 			n.sent[0].subject.Key)
 	}
 	for _, s := range n.sent {
-		if !strings.HasPrefix(s.subject.Key, api.PRSubjectPrefix) {
+		if !strings.HasPrefix(s.subject.Key, vibekit.PRSubjectPrefix) {
 			t.Errorf("subject %q lacks the PR prefix the client routes on", s.subject.Key)
 		}
 		if s.subject.ChatID != "" {

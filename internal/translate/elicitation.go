@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // HandleElicitationCreate processes a _kiro/mcp/elicitation request from
@@ -20,7 +20,7 @@ import (
 // pending-permissions tracker for SSE replay so a dialog survives a
 // reconnect, exactly like a permission prompt. There is no v3
 // elicitation-complete method (upstream cancel is not signalled).
-func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if msg.ID == nil {
 		// The request must be answerable; without an id we cannot route
 		// a response, so drop rather than show a dialog the user's
@@ -29,17 +29,17 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID api.Cha
 		return
 	}
 	type elicitBody struct {
-		RequestedSchema *api.ElicitationRequestSchema `json:"requestedSchema"`
-		Mode            string                        `json:"mode"`
-		Message         string                        `json:"message"`
-		URL             string                        `json:"url"`
+		RequestedSchema *vibekit.ElicitationRequestSchema `json:"requestedSchema"`
+		Mode            string                            `json:"mode"`
+		Message         string                            `json:"message"`
+		URL             string                            `json:"url"`
 	}
 	type elicitParams struct {
 		SessionID   string     `json:"sessionId"`
 		ToolCallID  string     `json:"toolCallId"`
 		Elicitation elicitBody `json:"elicitation"`
 	}
-	p, ok := unmarshalParams[elicitParams](msg, api.MethodElicitationCreate)
+	p, ok := unmarshalParams[elicitParams](msg, vibekit.MethodElicitationCreate)
 	if !ok {
 		return
 	}
@@ -48,7 +48,7 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID api.Cha
 	reqID := *msg.ID
 
 	step := t.stepRef(p.SessionID)
-	evt := api.NewEvent(api.EventElicitationNeeded, chatID, api.ElicitationNeededPayload{
+	evt := vibekit.NewEvent(vibekit.EventElicitationNeeded, chatID, vibekit.ElicitationNeededPayload{
 		RequestID:       reqID,
 		Mode:            p.Elicitation.Mode,
 		Message:         p.Elicitation.Message,
@@ -61,6 +61,6 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID api.Cha
 	})
 	t.deps.Broadcast(ctx, evt)
 	t.deps.PendingPermsAdd(reqID, evt)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID, api.WorkingLabelPayload{Label: api.WorkingLabelInput}))
-	t.deps.NotifyPush(ctx, "Input needed", api.PushKindPermission, chatID)
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelInput}))
+	t.deps.NotifyPush(ctx, "Input needed", vibekit.PushKindPermission, chatID)
 }

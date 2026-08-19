@@ -10,9 +10,9 @@ import (
 	"testing/fstest"
 
 	"github.com/cplieger/pinstall/v2"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/modeltext"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestSyncPushPreferences(t *testing.T) {
@@ -24,7 +24,7 @@ func TestSyncPushPreferences(t *testing.T) {
 
 	// Both true by default.
 	s.syncPushPreferences(map[string]json.RawMessage{})
-	if !mp.prefs[api.PushKindAgentFinished] || !mp.prefs[api.PushKindPermission] {
+	if !mp.prefs[vibekit.PushKindAgentFinished] || !mp.prefs[vibekit.PushKindPermission] {
 		t.Error("defaults should be true")
 	}
 
@@ -32,24 +32,24 @@ func TestSyncPushPreferences(t *testing.T) {
 	s.syncPushPreferences(map[string]json.RawMessage{
 		"notify_agent_finished": json.RawMessage(`false`),
 	})
-	if mp.prefs[api.PushKindAgentFinished] {
+	if mp.prefs[vibekit.PushKindAgentFinished] {
 		t.Error("agent_finished should be false")
 	}
-	if !mp.prefs[api.PushKindPermission] {
+	if !mp.prefs[vibekit.PushKindPermission] {
 		t.Error("permission should be true")
 	}
 }
 
 type testPush struct {
-	prefs map[api.PushKind]bool
+	prefs map[vibekit.PushKind]bool
 }
 
 var _ pushService = (*testPush)(nil)
 
 // Two methods, because pushService is two methods. This fake used to carry
 // eight, six of which this package can never call.
-func (p *testPush) RegisterRoutes(*http.ServeMux)              {}
-func (p *testPush) SetPreferences(prefs map[api.PushKind]bool) { p.prefs = prefs }
+func (p *testPush) RegisterRoutes(*http.ServeMux)                  {}
+func (p *testPush) SetPreferences(prefs map[vibekit.PushKind]bool) { p.prefs = prefs }
 
 func TestSafeKiroSetting(t *testing.T) {
 	tests := []struct {
@@ -697,7 +697,7 @@ func TestSyncPushPreferences_permissionIsAFloor(t *testing.T) {
 
 			s.syncPushPreferences(patch)
 
-			if !mp.prefs[api.PushKindPermission] {
+			if !mp.prefs[vibekit.PushKindPermission] {
 				t.Errorf("syncPushPreferences(%s) -> prefs[Permission] = false, want true (the ask is a floor)", body)
 			}
 		})

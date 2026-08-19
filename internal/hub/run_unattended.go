@@ -31,8 +31,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // unattendedApprovalBudget is how long a scheduled run's permission request
@@ -75,7 +75,7 @@ const outcomeOverran = "failed: still running when its next slot came due, so it
 
 // workflowIDOf recovers a workflow id from its synthetic chat id. Empty for a
 // chat id that does not name a run.
-func workflowIDOf(chatID api.ChatID) string {
+func workflowIDOf(chatID vibekit.ChatID) string {
 	if !isRunChat(chatID) {
 		return ""
 	}
@@ -88,7 +88,7 @@ func workflowIDOf(chatID api.ChatID) string {
 // page shows the card, and a user with it open can answer inside the budget.
 // What the wrapper adds is a deadline after which vibekit answers for them.
 func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
-	return func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 		inner(ctx, chatID, msg)
 
 		// The lease's own mark, which is why the floor now survives a restart:
@@ -120,7 +120,7 @@ func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 
 // answerUnattendedPermission settles a still-pending request for an absent
 // user: refuse by default, or approve when the operator opted in.
-func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
+func (h *Hub) answerUnattendedPermission(chatID vibekit.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
 	ctx, cancel := h.hubContext()
 	defer cancel()
 
@@ -129,7 +129,7 @@ func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, sch
 		return
 	}
 	approve := scheduledAutoApprove(ctx, h.lifecycle.configDir)
-	outcome := api.PermissionOutcomeCancelled()
+	outcome := vibekit.PermissionOutcomeCancelled()
 	verb := outcomeRefused
 	if approve {
 		opt := autoApproveOptionID(msgParams)
@@ -140,7 +140,7 @@ func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, sch
 			slog.Warn("unattended auto-approve: request offered no allow option, refusing instead",
 				"chat_id", chatID, "tool", tool)
 		} else {
-			outcome = api.PermissionOutcomeSelected(opt)
+			outcome = vibekit.PermissionOutcomeSelected(opt)
 			verb = outcomeApproved
 		}
 	}
@@ -154,7 +154,7 @@ func (h *Hub) answerUnattendedPermission(chatID api.ChatID, requestID int64, sch
 	// Taking it also retires the entry, so nothing below has to, and announces
 	// the answer as the MACHINE's: a card collapsing under a reader who was
 	// deciding must say that a deadline answered it, and which way.
-	if !h.TakePendingPerm(requestID, api.SettledByUnattended) {
+	if !h.TakePendingPerm(requestID, vibekit.SettledByUnattended) {
 		return
 	}
 	// A FIXED message with the outcome as a field, not a message built from the

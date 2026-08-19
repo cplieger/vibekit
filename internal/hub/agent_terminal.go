@@ -25,9 +25,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/cplieger/vibekit/internal/ansitext"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/procgroup"
 	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // keySignal is the wire key for a terminating signal in an ACP terminal
@@ -56,7 +56,7 @@ type agentTerminal struct {
 	// Owned by the pump goroutine alone. Read or write it from anywhere else
 	// and two streams' styles bleed together.
 	ansi   *ansitext.Parser
-	chatID api.ChatID
+	chatID vibekit.ChatID
 	signal string
 	// turnSeq is the chat's turn sequence at creation — which TURN spawned
 	// this terminal. What lets an interrupt kill the turn's own processes
@@ -71,7 +71,7 @@ type agentTerminal struct {
 // are easy to forget and the consequence is not a compile error: without `ansi`
 // the pump nil-panics on the first byte, and without `output` the agent's own
 // terminal/output pull returns nothing.
-func newAgentTerminal(cmd *exec.Cmd, chatID api.ChatID, limit int) *agentTerminal {
+func newAgentTerminal(cmd *exec.Cmd, chatID vibekit.ChatID, limit int) *agentTerminal {
 	return &agentTerminal{
 		cmd:    cmd,
 		done:   make(chan struct{}),
@@ -97,16 +97,16 @@ func (t *agentTerminal) rawOutput() string {
 
 // wireSpans converts the parser's spans to the wire shape. The two structs are
 // deliberately separate: internal/ansitext stays a stdlib-only leaf that owns
-// the parse, and internal/api owns every shape codegen projects into
+// the parse, and internal/vibekit owns every shape codegen projects into
 // TypeScript. Same boundary as the ACP wire types in internal/translate, which
 // convert into api types rather than being them.
-func wireSpans(in []ansitext.Span) []api.TextSpan {
+func wireSpans(in []ansitext.Span) []vibekit.TextSpan {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]api.TextSpan, len(in))
+	out := make([]vibekit.TextSpan, len(in))
 	for i, s := range in {
-		out[i] = api.TextSpan{Start: s.Start, End: s.End, FG: s.FG, BG: s.BG, Attrs: s.Attrs}
+		out[i] = vibekit.TextSpan{Start: s.Start, End: s.End, FG: s.FG, BG: s.BG, Attrs: s.Attrs}
 	}
 	return out
 }
@@ -169,7 +169,7 @@ func exitStatusFromState(st *os.ProcessState) (exitCode int, signal string) {
 // output records of terminals that have since gone away.
 type agentTerminals struct {
 	terms    map[string]*agentTerminal
-	byChatID map[api.ChatID][]string // chatID → []terminalID
+	byChatID map[vibekit.ChatID][]string // chatID → []terminalID
 	// retired holds the RAW output of terminals no longer in terms, keyed by
 	// the same id, because a terminal's output outlives the terminal.
 	//
@@ -193,7 +193,7 @@ type agentTerminals struct {
 	// turn end. A terminal stamps the value at creation, so "this turn's
 	// terminals" is a comparison rather than bookkeeping the create path
 	// has to remember to do.
-	turnSeq map[api.ChatID]uint64
+	turnSeq map[vibekit.ChatID]uint64
 	mu      sync.Mutex
 }
 
@@ -214,16 +214,16 @@ type agentTerminals struct {
 // nothing.
 type retiredOutput struct {
 	raw     string
-	chatID  api.ChatID
+	chatID  vibekit.ChatID
 	turnSeq uint64
 }
 
 func newAgentTerminals() *agentTerminals {
 	return &agentTerminals{
 		terms:    make(map[string]*agentTerminal),
-		byChatID: make(map[api.ChatID][]string),
+		byChatID: make(map[vibekit.ChatID][]string),
 		retired:  make(map[string]retiredOutput),
-		turnSeq:  make(map[api.ChatID]uint64),
+		turnSeq:  make(map[vibekit.ChatID]uint64),
 	}
 }
 
@@ -266,7 +266,7 @@ func (at *agentTerminals) peekRetired(id string) (string, bool) {
 // It is also when retired output records are evicted. A turn ends only after
 // every tool call in it has settled, so any record still here has had its chance
 // to be adopted; holding it longer would grow with the session.
-func (at *agentTerminals) AdvanceTurn(chatID api.ChatID) {
+func (at *agentTerminals) AdvanceTurn(chatID vibekit.ChatID) {
 	at.mu.Lock()
 	closing := at.turnSeq[chatID]
 	at.turnSeq[chatID]++
@@ -279,7 +279,7 @@ func (at *agentTerminals) AdvanceTurn(chatID api.ChatID) {
 }
 
 // currentTurn reads a chat's turn ordinal. Callers hold at.mu.
-func (at *agentTerminals) currentTurn(chatID api.ChatID) uint64 {
+func (at *agentTerminals) currentTurn(chatID vibekit.ChatID) uint64 {
 	return at.turnSeq[chatID]
 }
 
@@ -290,7 +290,7 @@ func (at *agentTerminals) currentTurn(chatID api.ChatID) uint64 {
 // owned by nobody, streaming into a turn that no longer existed. Scoped to
 // the turn rather than the chat deliberately: KillForChat here would also
 // kill a background command an EARLIER turn started on purpose.
-func (at *agentTerminals) KillForTurn(chatID api.ChatID) {
+func (at *agentTerminals) KillForTurn(chatID vibekit.ChatID) {
 	at.mu.Lock()
 	cur := at.currentTurn(chatID)
 	ids := at.byChatID[chatID]
@@ -330,7 +330,7 @@ func (at *agentTerminals) KillForTurn(chatID api.ChatID) {
 // This is the one removal path that does NOT retire the output: the chat is
 // being deleted, so there is no transcript left to adopt into. It drops any
 // record the chat already had for the same reason.
-func (at *agentTerminals) KillForChat(chatID api.ChatID) {
+func (at *agentTerminals) KillForChat(chatID vibekit.ChatID) {
 	at.mu.Lock()
 	ids := at.byChatID[chatID]
 	delete(at.byChatID, chatID)
@@ -377,7 +377,7 @@ func (at *agentTerminals) drainAll() {
 		at.retire(id, term)
 		delete(at.terms, id)
 	}
-	at.byChatID = make(map[api.ChatID][]string)
+	at.byChatID = make(map[vibekit.ChatID][]string)
 	at.mu.Unlock()
 }
 
@@ -406,7 +406,7 @@ func (at *agentTerminals) release(terminalID string) (*agentTerminal, bool) {
 }
 
 // handleTerminalRequest dispatches terminal/* ACP requests.
-func (h *Hub) handleTerminalRequest(ctx context.Context, chatID api.ChatID, method string, msg *api.RPCResponse) {
+func (h *Hub) handleTerminalRequest(ctx context.Context, chatID vibekit.ChatID, method string, msg *vibekit.RPCResponse) {
 	switch method {
 	case methodTermCreate:
 		h.termCreate(ctx, chatID, msg)
@@ -432,8 +432,8 @@ func (h *Hub) handleTerminalRequest(ctx context.Context, chatID api.ChatID, meth
 		slog.Warn("chat bridge: refusing an unimplemented terminal verb",
 			"method", method, "chat_id", chatID, "id", *msg.ID)
 		if err := h.BridgeRespond(ctx, chatID, *msg.ID, nil,
-			&api.RPCError{
-				Code:    api.RPCCodeMethodNotFound,
+			&vibekit.RPCError{
+				Code:    vibekit.RPCCodeMethodNotFound,
 				Message: "unimplemented terminal method: " + method,
 			}); err != nil {
 			slog.Error("chat bridge: terminal refusal could not be delivered; the turn may be wedged",
@@ -502,12 +502,12 @@ func derefArgs(args *[]string) []string {
 // NO server-side trace, broadcast no event and produced no tab, so the only
 // party that ever learned was the agent, in its own tool result. That is how
 // the exec-without-a-shell bug above stayed invisible for as long as it did.
-func (h *Hub) failTermCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse, command, reason string) {
+func (h *Hub) failTermCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, command, reason string) {
 	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", command, "reason", reason)
 	respondErr(ctx, h, chatID, msg, reason)
 }
 
-func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
@@ -643,7 +643,7 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	h.agentTerms.mu.Unlock()
 
 	slog.Info("agent terminal created", "chat_id", chatID, "term_id", termID, "cmd", params.Command)
-	h.Broadcast(ctx, api.NewEvent(api.EventTerminalCreated, chatID, api.TerminalCreatedPayload{
+	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTerminalCreated, chatID, vibekit.TerminalCreatedPayload{
 		TerminalID: termID,
 		Command:    params.Command,
 		// The wire field stays a plain slice: the client only labels the tab
@@ -671,7 +671,7 @@ func (h *Hub) termCreate(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 // pumpTerminalOutput streams a terminal's combined stdout/stderr into
 // its ring buffer and broadcasts each chunk to SSE clients until the
 // reader hits EOF or an error.
-func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID api.ChatID, r io.Reader) {
+func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID vibekit.ChatID, r io.Reader) {
 	// Hub-scoped context: this goroutine outlives the per-event ctx that
 	// spawned it (translateACPEvent cancels that on return), so derive a
 	// fresh one that lives until the reader hits EOF or the hub shuts down.
@@ -756,7 +756,7 @@ func (h *Hub) pumpTerminalOutput(term *agentTerminal, termID string, chatID api.
 // it: it would make the transcript disagree with the tool card's own content
 // blocks about what the command printed.
 func (h *Hub) terminalEmitter(
-	ctx context.Context, term *agentTerminal, termID string, chatID api.ChatID,
+	ctx context.Context, term *agentTerminal, termID string, chatID vibekit.ChatID,
 ) func(string) {
 	return func(raw string) {
 		base := term.ansi.Offset()
@@ -778,10 +778,10 @@ func (h *Hub) terminalEmitter(
 // rebases onto the wrong character the moment output contains anything
 // non-ASCII.
 func (h *Hub) publishTerminalText(
-	ctx context.Context, termID string, chatID api.ChatID,
-	text string, spans []api.TextSpan, base int,
+	ctx context.Context, termID string, chatID vibekit.ChatID,
+	text string, spans []vibekit.TextSpan, base int,
 ) {
-	h.Broadcast(ctx, api.NewEvent(api.EventTerminalOutput, chatID, api.TerminalOutputPayload{
+	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTerminalOutput, chatID, vibekit.TerminalOutputPayload{
 		TerminalID: termID,
 		Data:       text,
 		Spans:      spans,
@@ -824,7 +824,7 @@ func incompleteTailLen(b []byte) int {
 // is -1) rather than exitCode -1, so the exit reports signal:"..." and
 // omits exit_code (KAS's zTerminalExitStatus requires exitCode>=0).
 func (h *Hub) awaitTerminalExit(
-	term *agentTerminal, termID string, chatID api.ChatID, cmd *exec.Cmd,
+	term *agentTerminal, termID string, chatID vibekit.ChatID, cmd *exec.Cmd,
 	stop func() bool, cmdCancel context.CancelFunc,
 	drained <-chan struct{}, pr *os.File,
 ) {
@@ -868,16 +868,16 @@ func (h *Hub) awaitTerminalExit(
 	code := term.exitCode
 	term.mu.Unlock()
 	close(term.done)
-	payload := api.TerminalExitedPayload{TerminalID: termID}
+	payload := vibekit.TerminalExitedPayload{TerminalID: termID}
 	if sig != "" {
 		payload.Signal = sig
 	} else {
 		payload.ExitCode = &code
 	}
-	h.Broadcast(ctx, api.NewEvent(api.EventTerminalExited, chatID, payload))
+	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTerminalExited, chatID, payload))
 }
 
-func (h *Hub) termOutput(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termOutput(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -910,7 +910,7 @@ func (h *Hub) termOutput(ctx context.Context, chatID api.ChatID, msg *api.RPCRes
 	respondOK(ctx, h, chatID, msg, result)
 }
 
-func (h *Hub) termRelease(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termRelease(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -930,7 +930,7 @@ func (h *Hub) termRelease(ctx context.Context, chatID api.ChatID, msg *api.RPCRe
 	respondOK(ctx, h, chatID, msg, map[string]any{})
 }
 
-func (h *Hub) termWaitForExit(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termWaitForExit(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -963,7 +963,7 @@ func (h *Hub) termWaitForExit(ctx context.Context, chatID api.ChatID, msg *api.R
 	})
 }
 
-func (h *Hub) termKill(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) termKill(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}

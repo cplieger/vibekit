@@ -9,24 +9,24 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/sse"
 )
 
 // settledEvents decodes the decision_settled payloads emitted after sinceID.
-func settledEvents(t *testing.T, events []sse.ReplayEvent) []api.DecisionSettledPayload {
+func settledEvents(t *testing.T, events []sse.ReplayEvent) []vibekit.DecisionSettledPayload {
 	t.Helper()
-	var out []api.DecisionSettledPayload
+	var out []vibekit.DecisionSettledPayload
 	for _, e := range events {
 		var envelope struct {
-			Type    api.EventType              `json:"type"`
-			ChatID  api.ChatID                 `json:"chat_id"`
-			Payload api.DecisionSettledPayload `json:"payload"`
+			Type    vibekit.EventType              `json:"type"`
+			ChatID  vibekit.ChatID                 `json:"chat_id"`
+			Payload vibekit.DecisionSettledPayload `json:"payload"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &envelope); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
-		if envelope.Type != api.EventDecisionSettled {
+		if envelope.Type != vibekit.EventDecisionSettled {
 			continue
 		}
 		if envelope.ChatID != "c1" {
@@ -40,36 +40,36 @@ func settledEvents(t *testing.T, events []sse.ReplayEvent) []api.DecisionSettled
 func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
 	cases := []struct {
 		name      string
-		event     api.EventType
-		wantKind  api.DecisionKind
-		settledBy api.SettledBy
+		event     vibekit.EventType
+		wantKind  vibekit.DecisionKind
+		settledBy vibekit.SettledBy
 	}{
 		{
 			name:      "permission answered by a person",
-			event:     api.EventPermissionNeeded,
-			wantKind:  api.DecisionKindPermission,
-			settledBy: api.SettledByUser,
+			event:     vibekit.EventPermissionNeeded,
+			wantKind:  vibekit.DecisionKindPermission,
+			settledBy: vibekit.SettledByUser,
 		},
 		{
 			name:      "elicitation answered by a person",
-			event:     api.EventElicitationNeeded,
-			wantKind:  api.DecisionKindElicitation,
-			settledBy: api.SettledByUser,
+			event:     vibekit.EventElicitationNeeded,
+			wantKind:  vibekit.DecisionKindElicitation,
+			settledBy: vibekit.SettledByUser,
 		},
 		{
 			// The kind travels from the TRACKED event, so a question and a
 			// permission cannot be reported as each other.
 			name:      "question answered by the unattended floor",
-			event:     api.EventUserInputNeeded,
-			wantKind:  api.DecisionKindUserInput,
-			settledBy: api.SettledByUnattended,
+			event:     vibekit.EventUserInputNeeded,
+			wantKind:  vibekit.DecisionKindUserInput,
+			settledBy: vibekit.SettledByUnattended,
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			_, head := h.replayBounds()
-			h.sse.pendingPerms.Add(9, api.NewEvent(tc.event, "c1", api.PermissionNeededPayload{RequestID: 9}))
+			h.sse.pendingPerms.Add(9, vibekit.NewEvent(tc.event, "c1", vibekit.PermissionNeededPayload{RequestID: 9}))
 
 			if !h.TakePendingPerm(9, tc.settledBy) {
 				t.Fatal("TakePendingPerm refused a pending request")
@@ -79,7 +79,7 @@ func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("emitted %d decision_settled events, want 1", len(got))
 			}
-			want := api.DecisionSettledPayload{RequestID: 9, Kind: tc.wantKind, SettledBy: tc.settledBy}
+			want := vibekit.DecisionSettledPayload{RequestID: 9, Kind: tc.wantKind, SettledBy: tc.settledBy}
 			if got[0] != want {
 				t.Errorf("payload = %+v, want %+v", got[0], want)
 			}
@@ -92,14 +92,14 @@ func TestTakePendingPerm_AnnouncesTheSettledDecision(t *testing.T) {
 // and an unanswered request is exactly the one that has to stay on screen.
 func TestTakePendingPerm_LosingClaimAnnouncesNothing(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.sse.pendingPerms.Add(9, api.NewEvent(api.EventPermissionNeeded, "c1",
-		api.PermissionNeededPayload{RequestID: 9}))
-	if !h.TakePendingPerm(9, api.SettledByUser) {
+	h.sse.pendingPerms.Add(9, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
+		vibekit.PermissionNeededPayload{RequestID: 9}))
+	if !h.TakePendingPerm(9, vibekit.SettledByUser) {
 		t.Fatal("first claim refused")
 	}
 
 	_, head := h.replayBounds()
-	if h.TakePendingPerm(9, api.SettledByUser) {
+	if h.TakePendingPerm(9, vibekit.SettledByUser) {
 		t.Error("second claim on one request id succeeded, want refused")
 	}
 	if got := settledEvents(t, bufferedSince(h, head)); len(got) != 0 {

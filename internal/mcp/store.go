@@ -37,8 +37,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/filemode"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Transport names the MCP transports vibekit accepts in mcp.json.
@@ -87,8 +87,8 @@ func (t Transport) Valid() bool {
 	}
 }
 
-// SecretMask references the shared api.SecretMask constant.
-const SecretMask = api.SecretMask
+// SecretMask references the shared vibekit.SecretMask constant.
+const SecretMask = vibekit.SecretMask
 
 // Server is one user-configured MCP server. ID is a short stable
 // identifier used in URLs and events (generated at create time);

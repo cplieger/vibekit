@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // SecretMask is the placeholder value returned for every secret on
 // public reads. Clients send this unchanged on update to keep the

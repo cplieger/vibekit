@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // BF5. A single frame can carry both the type:"terminal" content block and
@@ -26,7 +26,7 @@ func TestAdoptTerminalOutput_LinkAndCompletionInOneFrame(t *testing.T) {
 	tr, _, deps, events, chatID := primeToolCall(t)
 	deps.terminals[termID] = termRendered{
 		text:  "hello\n",
-		spans: []api.TextSpan{{Start: 0, End: 5, FG: 1, BG: -1}},
+		spans: []vibekit.TextSpan{{Start: 0, End: 5, FG: 1, BG: -1}},
 	}
 
 	tr.HandleToolCallUpdate(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -227,10 +227,10 @@ func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	}), "")
 
 	for _, e := range *events {
-		if e.Type != api.EventToolCall {
+		if e.Type != vibekit.EventToolCall {
 			continue
 		}
-		p, ok := e.Payload.(api.ToolCallPayload)
+		p, ok := e.Payload.(vibekit.ToolCallPayload)
 		if !ok {
 			t.Fatalf("tool_call payload = %T", e.Payload)
 		}

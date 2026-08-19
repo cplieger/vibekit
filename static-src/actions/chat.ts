@@ -5,7 +5,7 @@
 //
 // There are no resolve/trust pending-change actions: staging is KAS's, and a
 // turn's writes are approved through the ORDINARY permission reply carrying a
-// per-action fileDecisions map (see api.PermissionOutcomeWithFileDecisions).
+// per-action fileDecisions map (see vibekit.PermissionOutcomeWithFileDecisions).
 // ---------------------------------------------------------------------------
 
 import {

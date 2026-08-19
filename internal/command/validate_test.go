@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestValidRequestID(t *testing.T) {
@@ -61,14 +61,14 @@ func TestValidMessageID(t *testing.T) {
 func TestValidChatID(t *testing.T) {
 	cases := []struct {
 		name string
-		id   api.ChatID
+		id   vibekit.ChatID
 		want bool
 	}{
 		{"empty is invalid", "", false},
 		{"valid uuid", "550e8400-e29b-41d4-a716-446655440000", true},
 		{"alphanumeric", "chat123", true},
 		{"with dashes", "chat-id-1", true},
-		{"too long", api.ChatID(strings.Repeat("a", 129)), false},
+		{"too long", vibekit.ChatID(strings.Repeat("a", 129)), false},
 		{"contains space", "chat id", false},
 	}
 	for _, tc := range cases {
@@ -114,7 +114,7 @@ func FuzzValidChatID(f *testing.F) {
 	f.Add("has/slash")
 	f.Add("../traversal")
 	f.Fuzz(func(t *testing.T, id string) {
-		result := validChatID(api.ChatID(id))
+		result := validChatID(vibekit.ChatID(id))
 		// Path separators must always be rejected.
 		if strings.ContainsAny(id, "/\\") && result {
 			t.Errorf("validChatID(%q) = true, contains path separator", id)

@@ -17,10 +17,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/chat/archive"
 	"github.com/cplieger/vibekit/internal/filemode"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -28,7 +28,7 @@ import (
 // cannot round-trip through JSON (the storage format).
 var errInvalidUTF8 = errors.New("chat: content contains invalid UTF-8")
 
-// errDraftTooLarge is returned when a composer draft exceeds api.MaxDraftBytes.
+// errDraftTooLarge is returned when a composer draft exceeds vibekit.MaxDraftBytes.
 var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
 
 // broadcaster is the SSE fan-out this store emits chat lifecycle and message
@@ -39,7 +39,7 @@ var errDraftTooLarge = errors.New("chat: draft exceeds the size cap")
 // *hub.Hub that exports well over a hundred. Nothing about a bridge, a session
 // or a turn is any business of a file writer.
 type broadcaster interface {
-	Broadcast(ctx context.Context, evt api.ServerEvent)
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 }
 
 // Compile-time assertion: Store satisfies archive.StoreAccess.
@@ -71,9 +71,9 @@ const maxChatFileBytes = 32 * 1024 * 1024 // 32 MiB
 type Store struct {
 	broadcast   broadcaster
 	listSF      singleflight.Group
-	onPurge     func(chatID api.ChatID, sessionChain []string)
-	isLive      func(chatID api.ChatID) bool
-	tombstone   map[api.ChatID]time.Time
+	onPurge     func(chatID vibekit.ChatID, sessionChain []string)
+	isLive      func(chatID vibekit.ChatID) bool
+	tombstone   map[vibekit.ChatID]time.Time
 	archive     *archive.Service
 	locks       sync.Map
 	dir         string
@@ -135,7 +135,7 @@ func NewStore(dir string, opts ...StoreOption) (*Store, error) {
 	slog.Info("chat store: opened", "dir", dir, "mode", mode)
 	s := &Store{
 		dir:       dir,
-		tombstone: make(map[api.ChatID]time.Time),
+		tombstone: make(map[vibekit.ChatID]time.Time),
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -155,14 +155,14 @@ func WithBroadcaster(b broadcaster) StoreOption {
 
 // WithLive registers the live-chat predicate purging exempts. See
 // archive.WithLiveChats.
-func WithLive(fn func(chatID api.ChatID) bool) StoreOption {
+func WithLive(fn func(chatID vibekit.ChatID) bool) StoreOption {
 	return func(s *Store) { s.isLive = fn }
 }
 
 // WithOnPurge registers a callback fired after a retention purge removes a chat.
 // sessionChain carries every KAS session the chat ran on, captured before the
 // chat file was removed, so the purge can reap its own session directories.
-func WithOnPurge(fn func(chatID api.ChatID, sessionChain []string)) StoreOption {
+func WithOnPurge(fn func(chatID vibekit.ChatID, sessionChain []string)) StoreOption {
 	return func(s *Store) { s.onPurge = fn }
 }
 
@@ -170,14 +170,14 @@ func WithOnPurge(fn func(chatID api.ChatID, sessionChain []string)) StoreOption 
 
 // chatIDPattern reports whether id is a valid chat identifier. Delegates
 // to ids.ValidChatID — the single source of truth for chat ID validation.
-func chatIDPattern(id api.ChatID) bool {
+func chatIDPattern(id vibekit.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 
 // --- Public API ---
 
 // Get returns the full chat at chatID, or false if it does not exist.
-func (s *Store) Get(ctx context.Context, chatID api.ChatID) (*api.Chat, bool) {
+func (s *Store) Get(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, bool) {
 	if ctx.Err() != nil {
 		return nil, false
 	}
@@ -210,7 +210,7 @@ func (s *Store) Get(ctx context.Context, chatID api.ChatID) (*api.Chat, bool) {
 // restores it after so a caller that accidentally overwrites it
 // (e.g. by assigning a fresh zero value on the auto-create path) can
 // not corrupt the sidebar sort order or the broadcast payload.
-func (s *Store) Mutate(ctx context.Context, chatID api.ChatID, mutate func(c *api.Chat, exists bool) bool) error {
+func (s *Store) Mutate(ctx context.Context, chatID vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -236,7 +236,7 @@ func (s *Store) Mutate(ctx context.Context, chatID api.ChatID, mutate func(c *ap
 			slog.Info("chat: refused to resurrect tombstoned id", "chat_id", chatID)
 			return nil
 		}
-		c = &api.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
+		c = &vibekit.Chat{ID: string(chatID), CreatedAt: time.Now().UnixMilli()}
 	}
 	// Snapshot the authoritative CreatedAt before the mutator runs.
 	// Mutators have no legitimate reason to reassign it — the value
@@ -276,7 +276,7 @@ func (s *Store) Mutate(ctx context.Context, chatID api.ChatID, mutate func(c *ap
 // through the JSON storage format. Extracted from Mutate so the single write
 // path stays within the cognitive-complexity ceiling without changing
 // behaviour.
-func validateChatUTF8(c *api.Chat) error {
+func validateChatUTF8(c *vibekit.Chat) error {
 	if !utf8.ValidString(c.Name) {
 		return errInvalidUTF8
 	}
@@ -295,15 +295,15 @@ func validateChatUTF8(c *api.Chat) error {
 // Mutate: chat_created for a freshly created chat (exists == false), or
 // chat_updated otherwise. No-op when no broadcaster is wired. The header
 // is computed once and reused for whichever event fires.
-func (s *Store) broadcastMutation(ctx context.Context, chatID api.ChatID, c *api.Chat, exists bool) {
+func (s *Store) broadcastMutation(ctx context.Context, chatID vibekit.ChatID, c *vibekit.Chat, exists bool) {
 	if s.broadcast == nil {
 		return
 	}
-	evt := api.EventChatUpdated
+	evt := vibekit.EventChatUpdated
 	if !exists {
-		evt = api.EventChatCreated
+		evt = vibekit.EventChatCreated
 	}
-	s.broadcast.Broadcast(ctx, api.NewEvent(evt, chatID, s.header(ctx, c)))
+	s.broadcast.Broadcast(ctx, vibekit.NewEvent(evt, chatID, s.header(ctx, c)))
 }
 
 // SetDraft persists the chat's unsent composer text. Deliberately not a Mutate
@@ -315,14 +315,14 @@ func (s *Store) broadcastMutation(ctx context.Context, chatID api.ChatID, c *api
 // yet, and creating the file here would put a row in every client's sidebar for
 // a conversation nobody has started. The client keeps that draft locally until
 // the first prompt creates the record.
-func (s *Store) SetDraft(ctx context.Context, chatID api.ChatID, text string) error {
+func (s *Store) SetDraft(ctx context.Context, chatID vibekit.ChatID, text string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	// Defensive: the command boundary already answers 413 above this cap and 400
 	// on invalid UTF-8, but the store owns what reaches the file, and a draft
 	// that cannot round-trip through JSON would make the chat unloadable.
-	if len(text) > api.MaxDraftBytes {
+	if len(text) > vibekit.MaxDraftBytes {
 		return errDraftTooLarge
 	}
 	if !utf8.ValidString(text) {
@@ -368,7 +368,7 @@ func (s *Store) SetDraft(ctx context.Context, chatID api.ChatID, text string) er
 
 // Delete removes the chat file and broadcasts chat_deleted. Records a tombstone
 // first so a concurrent Mutate cannot resurrect the id as a ghost row.
-func (s *Store) Delete(ctx context.Context, chatID api.ChatID) error {
+func (s *Store) Delete(ctx context.Context, chatID vibekit.ChatID) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -393,7 +393,7 @@ func (s *Store) Delete(ctx context.Context, chatID api.ChatID) error {
 		return rmErr
 	}
 	if s.broadcast != nil {
-		s.broadcast.Broadcast(ctx, api.NewEvent(api.EventChatDeleted, chatID, api.ChatDeletedPayload{ID: string(chatID)}))
+		s.broadcast.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatDeleted, chatID, vibekit.ChatDeletedPayload{ID: string(chatID)}))
 	}
 	if missing {
 		slog.Info("chat delete: no-op on missing chat", "chat_id", chatID)
@@ -417,9 +417,9 @@ func (s *Store) Delete(ctx context.Context, chatID api.ChatID) error {
 // The broadcast fires only after the save succeeds — if the write fails
 // clients never see a phantom event referencing content that was never
 // persisted.
-func (s *Store) AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error {
+func (s *Store) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
 	var appended bool
-	err := s.Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -433,7 +433,7 @@ func (s *Store) AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.M
 	if err != nil || !appended || s.broadcast == nil {
 		return err
 	}
-	s.broadcast.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, msg))
+	s.broadcast.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
 	slog.Debug("chat append", "chat_id", chatID, "msg_id", msg.ID, "role", msg.Role)
 	return nil
 }
@@ -445,9 +445,9 @@ func (s *Store) AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.M
 // The broadcast fires only after the save succeeds — if the write fails
 // clients never see a phantom event referencing content that was never
 // persisted.
-func (s *Store) UpdateMessage(ctx context.Context, chatID api.ChatID, msgID string, mutate func(*api.Message)) error {
-	var updated *api.Message
-	err := s.Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+func (s *Store) UpdateMessage(ctx context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error {
+	var updated *vibekit.Message
+	err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -463,7 +463,7 @@ func (s *Store) UpdateMessage(ctx context.Context, chatID api.ChatID, msgID stri
 	if err != nil || updated == nil || s.broadcast == nil {
 		return err
 	}
-	s.broadcast.Broadcast(ctx, api.NewEvent(api.EventMessageUpdated, chatID, updated))
+	s.broadcast.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageUpdated, chatID, updated))
 	slog.Debug("chat update_message", "chat_id", chatID, "msg_id", msgID)
 	return nil
 }

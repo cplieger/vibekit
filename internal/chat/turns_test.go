@@ -8,7 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // outcomeFixture mirrors testdata/turn_outcomes.json. See that file's _comment
@@ -42,15 +42,15 @@ func TestTurnOutcomeContract(t *testing.T) {
 	}
 	for _, tc := range fx.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			body := make([]api.Message, 0, len(tc.Body))
+			body := make([]vibekit.Message, 0, len(tc.Body))
 			for _, b := range tc.Body {
-				m := api.Message{Role: api.RoleAssistant}
+				m := vibekit.Message{Role: vibekit.RoleAssistant}
 				if b.Refusal {
-					m.Refusal = &api.RefusalInfo{}
+					m.Refusal = &vibekit.RefusalInfo{}
 				}
 				if b.Event != "" {
-					m.Role = api.RoleEvent
-					m.EventKind = api.EventKind(b.Event)
+					m.Role = vibekit.RoleEvent
+					m.EventKind = vibekit.EventKind(b.Event)
 				}
 				body = append(body, m)
 			}
@@ -61,16 +61,16 @@ func TestTurnOutcomeContract(t *testing.T) {
 	}
 }
 
-func user(id, content string, ts int64) api.Message {
-	return api.Message{ID: id, Role: api.RoleUser, Content: content, Ts: ts}
+func user(id, content string, ts int64) vibekit.Message {
+	return vibekit.Message{ID: id, Role: vibekit.RoleUser, Content: content, Ts: ts}
 }
 
-func assistant(id string, ts int64) api.Message {
-	return api.Message{ID: id, Role: api.RoleAssistant, Content: "ok", Ts: ts}
+func assistant(id string, ts int64) vibekit.Message {
+	return vibekit.Message{ID: id, Role: vibekit.RoleAssistant, Content: "ok", Ts: ts}
 }
 
 func TestProjectTurnSummaries_PromotesTheUserMessageAndNumbersFromOne(t *testing.T) {
-	got := projectTurnSummaries([]api.Message{
+	got := projectTurnSummaries([]vibekit.Message{
 		user("u1", "first thing", 100),
 		assistant("a1", 200),
 		user("u2", "second thing", 300),
@@ -100,7 +100,7 @@ func TestProjectTurnSummaries_PromotesTheUserMessageAndNumbersFromOne(t *testing
 // transcript legitimately begins mid-turn. Marking it lets the rail render it as
 // a non-user marker instead of implying the user asked for it.
 func TestProjectTurnSummaries_MarksAHeaderlessTurn(t *testing.T) {
-	got := projectTurnSummaries([]api.Message{
+	got := projectTurnSummaries([]vibekit.Message{
 		assistant("a1", 100),
 		user("u1", "then this", 200),
 		assistant("a2", 300),
@@ -124,16 +124,16 @@ func TestProjectTurnSummaries_MarksAHeaderlessTurn(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_MarksOnlyTheLastTurnRunning(t *testing.T) {
-	got := projectTurnSummaries([]api.Message{
+	got := projectTurnSummaries([]vibekit.Message{
 		user("u1", "a", 100),
 		assistant("a1", 200),
 		user("u2", "b", 300),
 	}, true)
 
-	if got[0].Outcome != api.TurnOutcomeCompleted {
+	if got[0].Outcome != vibekit.TurnOutcomeCompleted {
 		t.Errorf("turn 1 outcome = %q, want completed", got[0].Outcome)
 	}
-	if got[1].Outcome != api.TurnOutcomeRunning {
+	if got[1].Outcome != vibekit.TurnOutcomeRunning {
 		t.Errorf("turn 2 outcome = %q, want running", got[1].Outcome)
 	}
 }
@@ -155,7 +155,7 @@ func TestProjectTurnSummaries_EmptyMarshalsAsArray(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_FirstLineCollapsesWhitespace(t *testing.T) {
-	got := projectTurnSummaries([]api.Message{
+	got := projectTurnSummaries([]vibekit.Message{
 		user("u1", "  line one\n\n\tline two   ", 100),
 	}, false)
 	if got[0].FirstLine != "line one line two" {
@@ -166,7 +166,7 @@ func TestProjectTurnSummaries_FirstLineCollapsesWhitespace(t *testing.T) {
 func TestProjectTurnSummaries_FirstLineTruncatesOnRuneBoundary(t *testing.T) {
 	// Multi-byte runes: a byte-wise cut would split one and produce mojibake.
 	long := strings.Repeat("\u00e9", 200)
-	got := projectTurnSummaries([]api.Message{user("u1", long, 100)}, false)
+	got := projectTurnSummaries([]vibekit.Message{user("u1", long, 100)}, false)
 	line := got[0].FirstLine
 	if !strings.HasSuffix(line, "\u2026") {
 		t.Fatalf("no ellipsis on a truncated line: %q", line)
@@ -181,7 +181,7 @@ func TestProjectTurnSummaries_FirstLineTruncatesOnRuneBoundary(t *testing.T) {
 }
 
 func TestProjectTurnSummaries_FirstLineKeepsAShortRequestWhole(t *testing.T) {
-	got := projectTurnSummaries([]api.Message{user("u1", "short", 100)}, false)
+	got := projectTurnSummaries([]vibekit.Message{user("u1", "short", 100)}, false)
 	if got[0].FirstLine != "short" {
 		t.Errorf("first line = %q", got[0].FirstLine)
 	}

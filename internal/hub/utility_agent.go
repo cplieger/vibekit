@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 const maxUtilityPrompts = 20
@@ -41,7 +41,7 @@ type utilityAgent struct {
 	// summaries) run low; diff-reading tasks (commit messages, PR
 	// descriptions, merge resolution) run medium. Only re-applied when the
 	// requested level differs.
-	currentEffort api.EffortLevel
+	currentEffort vibekit.EffortLevel
 
 	// turnMu serializes text-generation turns. Ambient tasks are not
 	// latency-critical enough to warrant parallelism, and one session
@@ -77,7 +77,7 @@ func newUtilityAgent(session *utilitySession) *utilityAgent {
 // prompt input, whichever comes first, to bound both context bleed and
 // the re-billed dead context each turn drags along. effort is the
 // per-task reasoning-effort level ("" keeps the session's current level).
-func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error) {
+func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error) {
 	ua.turnMu.Lock()
 	defer ua.turnMu.Unlock()
 
@@ -109,8 +109,8 @@ func (ua *utilityAgent) UtilityPrompt(ctx context.Context, prompt string, effort
 	// otherwise read the leftover first).
 	drainLeftoverChunks(lease.chunks)
 
-	resp, err := lease.bridge.Call(ctx, api.MethodPrompt, utilitySessionParams(lease.bridge, map[string]any{
-		"prompt": []map[string]any{api.TextBlock(utilitySystemPrompt + prompt)},
+	resp, err := lease.bridge.Call(ctx, vibekit.MethodPrompt, utilitySessionParams(lease.bridge, map[string]any{
+		"prompt": []map[string]any{vibekit.TextBlock(utilitySystemPrompt + prompt)},
 	}))
 	if err != nil {
 		// Session may be dead; reset (if still this generation) so the
@@ -144,12 +144,12 @@ func (ua *utilityAgent) syncCounters(gen uint64) {
 // effortLevel config option, in which case the failure is latched
 // (effortUnsupported) so subsequent tasks don't re-pay the round-trip
 // until the next session start. Caller holds turnMu.
-func (ua *utilityAgent) applyEffort(ctx context.Context, lease sessionLease, effort api.EffortLevel) {
+func (ua *utilityAgent) applyEffort(ctx context.Context, lease sessionLease, effort vibekit.EffortLevel) {
 	if effort == "" || effort == ua.currentEffort || ua.effortUnsupported || !effort.Valid() {
 		return
 	}
-	_, err := lease.bridge.Call(ctx, api.MethodSetConfigOption, utilitySessionParams(lease.bridge, map[string]any{
-		"configId": api.ConfigOptionEffort,
+	_, err := lease.bridge.Call(ctx, vibekit.MethodSetConfigOption, utilitySessionParams(lease.bridge, map[string]any{
+		"configId": vibekit.ConfigOptionEffort,
 		"value":    string(effort),
 	}))
 	if err != nil {
@@ -205,7 +205,7 @@ func drainAndResetTimer(t *time.Timer, d time.Duration) {
 // between Call returning and the last chunks landing in the channel
 // buffer. Caller-supplied ctx lets HTTP handlers cancel the operation
 // without waiting for the ceiling.
-func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, resp *api.RPCResponse) (string, error) {
+func (ua *utilityAgent) drainResponse(ctx context.Context, lease sessionLease, resp *vibekit.RPCResponse) (string, error) {
 	if resp == nil {
 		return "", errors.New("nil response")
 	}

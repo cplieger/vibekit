@@ -39,9 +39,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // runCeiling is how long any single run may execute before it is cancelled.
@@ -79,7 +79,7 @@ const minRunBudget = 5 * time.Minute
 // The abnormal terminations a run's row can report, and the vocabulary the
 // client's verdict branches on. A user cancel records NOTHING — its absence is
 // what makes these three distinguishable from it, which is the whole point of the
-// field (see api.WorkflowRun.EndReason).
+// field (see vibekit.WorkflowRun.EndReason).
 //
 // FOUR facts, four values, because a user cancel, a blown deadline, a step-cap
 // trip and a restart orphan are four different things that happened and the row
@@ -372,7 +372,7 @@ func (h *Hub) releaseRunTermination(workflowID string) {
 //
 // reason empty means a user cancel: recordRunEnd ignores it, and that absence is
 // what makes the two bounds distinguishable from a person (see
-// api.WorkflowRun.EndReason).
+// vibekit.WorkflowRun.EndReason).
 func (h *Hub) finishRunTermination(ctx context.Context, workflowID, reason string) error {
 	h.disarmRunDeadline(ctx, workflowID)
 	h.recordRunEnd(workflowID, reason)
@@ -613,7 +613,7 @@ func (h *Hub) cancelBoundedRun(workflowID, reason string) {
 // or vibekit restarted, its restart-paused row was never cleared and blocked every
 // later launch of the recipe. The carrier is knowable at the frame, so nothing is
 // left to infer.
-func runStartOrigin(chatID api.ChatID) runlease.Origin {
+func runStartOrigin(chatID vibekit.ChatID) runlease.Origin {
 	if chatID == "" || isRunChat(chatID) {
 		return runlease.OriginManual
 	}
@@ -643,7 +643,7 @@ func runStartOrigin(chatID api.ChatID) runlease.Origin {
 // It also re-arms a RESUMED run, which is why the deadline is parked on a pause:
 // each arm is a fresh budget of EXECUTING time, and a run deliberately parked for
 // a week must not be cancelled for having been parked.
-func (h *Hub) observeRunStart(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) observeRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
 		if _, held := h.lease(f.WorkflowID); !held {
 			h.grantLease(ctx, f.WorkflowID, f.WorkflowName,
@@ -659,7 +659,7 @@ func (h *Hub) observeRunStart(ctx context.Context, chatID api.ChatID, msg *api.R
 // Non-terminal run_complete frames keep the arm: KAS reports an `onMaxIterations`
 // policy pause through this same frame, and that run is still this process's to
 // resume.
-func (h *Hub) observeRunComplete(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) observeRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" && terminalRunStatus(f.Status) {
 		h.forgetRunBounds(ctx, f.WorkflowID)
 	}
@@ -669,8 +669,8 @@ func (h *Hub) observeRunComplete(ctx context.Context, chatID api.ChatID, msg *ap
 // observeRunPaused parks the deadline of a run that stopped executing, then
 // translates. The run-level `paused` kind only: a node-level pause is a step
 // waiting inside a run that is still going.
-func (h *Hub) observeRunPaused(next func(context.Context, api.ChatID, *api.RPCResponse)) func(context.Context, api.ChatID, *api.RPCResponse) {
-	return func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) observeRunPaused(next func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
+	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 		h.disarmRunDeadline(ctx, workflowIDOfFrame(msg))
 		next(ctx, chatID, msg)
 	}
@@ -690,7 +690,7 @@ type lifecycleFrame struct {
 	Status       string `json:"status"`
 }
 
-func decodeLifecycleFrame(msg *api.RPCResponse) lifecycleFrame {
+func decodeLifecycleFrame(msg *vibekit.RPCResponse) lifecycleFrame {
 	var f lifecycleFrame
 	if msg == nil || len(msg.Params) == 0 {
 		return f
@@ -701,6 +701,6 @@ func decodeLifecycleFrame(msg *api.RPCResponse) lifecycleFrame {
 	return f
 }
 
-func workflowIDOfFrame(msg *api.RPCResponse) string {
+func workflowIDOfFrame(msg *vibekit.RPCResponse) string {
 	return decodeLifecycleFrame(msg).WorkflowID
 }

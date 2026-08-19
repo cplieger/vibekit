@@ -13,7 +13,7 @@
 // preferences: a chat id names the chat's own JSON file, and a session id is
 // concatenated into a path under $KIRO_HOME/sessions/.
 //
-// The validators used to live in internal/api beside the wire and domain
+// The validators used to live in internal/vibekit beside the wire and domain
 // types, which put a path-traversal gate inside the package the code generator
 // walks for the cross-language type contract.
 package ids

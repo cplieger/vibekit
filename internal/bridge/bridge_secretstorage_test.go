@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestInitialize_SecretStorageTracksTheStore pins that
@@ -52,7 +52,7 @@ done
 		capture := filepath.Join(t.TempDir(), "init.jsonl")
 		t.Setenv("INIT_CAPTURE", capture)
 		b := New(scriptPath, dir)
-		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "m", SecretStorage: secretStorage}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "m", SecretStorage: secretStorage}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()

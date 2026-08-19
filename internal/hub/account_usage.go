@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // accountUsageCallTimeout bounds one _kiro/account/getUsage round-trip.
@@ -34,7 +34,7 @@ const accountUsageCallTimeout = 45 * time.Second
 // and parses the KAS getUsage result into the domain shape. Lazily
 // constructs the utility bridge (same pattern as UtilityPrompt) so the
 // footer works even when no chat is open. Satisfies server.AccountUsageProvider.
-func (h *Hub) AccountUsage(ctx context.Context) (*api.AccountUsage, error) {
+func (h *Hub) AccountUsage(ctx context.Context) (*vibekit.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()
 	raw, err := h.ensureUtility().session.accountUsageRaw(cctx)
@@ -76,7 +76,7 @@ type kasUsageBreakdown struct {
 // AccountUsage. A success=false reply (e.g. "Invalid profileArn.") is
 // returned as an error; success=true with a nil data object (admin-managed
 // plan) yields an AccountUsage carrying only the note.
-func parseAccountUsage(raw json.RawMessage) (*api.AccountUsage, error) {
+func parseAccountUsage(raw json.RawMessage) (*vibekit.AccountUsage, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("account usage: empty result")
 	}
@@ -91,20 +91,20 @@ func parseAccountUsage(raw json.RawMessage) (*api.AccountUsage, error) {
 		}
 		return nil, errors.New(msg)
 	}
-	out := &api.AccountUsage{FetchedAt: time.Now().UTC().Format(time.RFC3339)}
+	out := &vibekit.AccountUsage{FetchedAt: time.Now().UTC().Format(time.RFC3339)}
 	if r.Data == nil {
 		// Admin-managed plan: success with no breakdowns.
 		out.Note = strings.TrimSpace(r.Message)
-		out.Breakdowns = []api.AccountUsageBreakdown{}
+		out.Breakdowns = []vibekit.AccountUsageBreakdown{}
 		return out, nil
 	}
 	out.PlanName = r.Data.PlanName
 	out.BillingCycleReset = r.Data.BillingCycleReset
 	out.IsEnterprise = r.Data.IsEnterprise
 	out.OveragesEnabled = r.Data.OveragesEnabled
-	out.Breakdowns = make([]api.AccountUsageBreakdown, 0, len(r.Data.UsageBreakdowns))
+	out.Breakdowns = make([]vibekit.AccountUsageBreakdown, 0, len(r.Data.UsageBreakdowns))
 	for _, b := range r.Data.UsageBreakdowns {
-		out.Breakdowns = append(out.Breakdowns, api.AccountUsageBreakdown{
+		out.Breakdowns = append(out.Breakdowns, vibekit.AccountUsageBreakdown{
 			ResourceType:    b.ResourceType,
 			DisplayName:     b.DisplayName,
 			Currency:        b.Currency,

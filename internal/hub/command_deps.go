@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Compile-time assertion: Hub satisfies command.Dependencies.
@@ -24,7 +24,7 @@ var _ command.Dependencies = (*Hub)(nil)
 func (h *Hub) ChatStore() command.ChatStore { return h.chatStore }
 
 // GetBridge returns the active bridge for a chat, or nil.
-func (h *Hub) GetBridge(chatID api.ChatID) command.Bridge {
+func (h *Hub) GetBridge(chatID vibekit.ChatID) command.Bridge {
 	sb := h.coord.GetBridge(chatID)
 	if sb == nil {
 		return nil
@@ -33,7 +33,7 @@ func (h *Hub) GetBridge(chatID api.ChatID) command.Bridge {
 }
 
 // GetOrCreateBridge ensures a bridge exists for the chat.
-func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, model string) (command.Bridge, error) {
+func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID vibekit.ChatID, model string) (command.Bridge, error) {
 	sb, err := h.coord.GetOrCreateBridge(ctx, chatID, model)
 	if err != nil {
 		return nil, err
@@ -42,12 +42,12 @@ func (h *Hub) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, model st
 }
 
 // CloseBridge tears down the bridge for a chat.
-func (h *Hub) CloseBridge(chatID api.ChatID) {
+func (h *Hub) CloseBridge(chatID vibekit.ChatID) {
 	h.coord.CloseBridge(chatID)
 }
 
 // ClearPendingPermsForChat drops unresolved permission_needed entries.
-func (h *Hub) ClearPendingPermsForChat(chatID api.ChatID) {
+func (h *Hub) ClearPendingPermsForChat(chatID vibekit.ChatID) {
 	h.clearPendingPermsForChat(chatID)
 }
 
@@ -67,12 +67,12 @@ func (h *Hub) ClearPendingPermsForChat(chatID api.ChatID) {
 // ("this request is now settled") told to two audiences, and splitting them
 // would let a new answer path claim a request while leaving every other surface
 // showing a live card for it.
-func (h *Hub) TakePendingPerm(requestID int64, settledBy api.SettledBy) bool {
+func (h *Hub) TakePendingPerm(requestID int64, settledBy vibekit.SettledBy) bool {
 	evt, ok := h.sse.pendingPerms.TakeIfPresent(requestID)
 	if !ok {
 		return false
 	}
-	kind, known := api.DecisionKindForEvent(evt.Type)
+	kind, known := vibekit.DecisionKindForEvent(evt.Type)
 	if !known {
 		// Only the three *_needed events are ever tracked, so this is a tracker
 		// misuse rather than something off the wire. The claim still stands (the
@@ -82,7 +82,7 @@ func (h *Hub) TakePendingPerm(requestID int64, settledBy api.SettledBy) bool {
 			"type", evt.Type, "request_id", requestID)
 		return true
 	}
-	h.emit(api.NewEvent(api.EventDecisionSettled, evt.ChatID, api.DecisionSettledPayload{
+	h.emit(vibekit.NewEvent(vibekit.EventDecisionSettled, evt.ChatID, vibekit.DecisionSettledPayload{
 		RequestID: requestID,
 		Kind:      kind,
 		SettledBy: settledBy,
@@ -139,7 +139,7 @@ func (h *Hub) InflightDone() {
 // CleanupChatState tears down all in-memory state for a chat that is being
 // permanently deleted (the delete path), reaping the chat's durable KAS session
 // state too.
-func (h *Hub) CleanupChatState(ctx context.Context, chatID api.ChatID) {
+func (h *Hub) CleanupChatState(ctx context.Context, chatID vibekit.ChatID) {
 	h.cleanupChatState(ctx, chatID, true)
 }
 
@@ -153,7 +153,7 @@ func (h *Hub) CleanupChatState(ctx context.Context, chatID api.ChatID) {
 // session/loads everything back") and cost the user the transcript twice over:
 // the reopened chat had no session to load, and the History page, which lists
 // KAS's sessions, could only ever show chats that were still open.
-func (h *Hub) CloseChatState(ctx context.Context, chatID api.ChatID) {
+func (h *Hub) CloseChatState(ctx context.Context, chatID vibekit.ChatID) {
 	h.cleanupChatState(ctx, chatID, false)
 }
 
@@ -168,7 +168,7 @@ func (h *Hub) ResolveInsideWorkDir(rel string) (string, error) {
 }
 
 // PrimeIfNeeded primes the bridge with history if needed.
-func (h *Hub) PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b command.Bridge) {
+func (h *Hub) PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID, b command.Bridge) {
 	sb, ok := b.(*sharedBridge)
 	if !ok {
 		slog.Error("hub: PrimeIfNeeded called with non-sharedBridge Bridge",
@@ -180,19 +180,19 @@ func (h *Hub) PrimeIfNeeded(ctx context.Context, chatID api.ChatID, b command.Br
 
 // PrimeFromChat notes that a chat's first session should be primed with another
 // chat's transcript — the tangent's fork-refused fallback.
-func (h *Hub) PrimeFromChat(chatID, sourceChatID api.ChatID) {
+func (h *Hub) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
 	h.coord.PrimeFromChat(chatID, sourceChatID)
 }
 
 // IsEmptyTurn checks if a prompt response is an empty turn.
-func (h *Hub) IsEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool {
+func (h *Hub) IsEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) bool {
 	return h.isEmptyTurn(resp, chatID)
 }
 
 // EmitTurnEndedWithStats broadcasts turn_ended with usage stats, and closes
 // the chat's terminal-attribution turn: terminals created after this belong
 // to the NEXT turn.
-func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, stats command.TurnStats) {
+func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, stats command.TurnStats) {
 	h.coord.EmitTurnEndedWithStats(ctx, chatID, resp, stats)
 	h.agentTerms.AdvanceTurn(chatID)
 }
@@ -201,7 +201,7 @@ func (h *Hub) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, res
 // closes its terminal-attribution turn on the way out. It mirrors
 // EmitTurnEndedWithStats' AdvanceTurn call for the same reason: the terminals
 // this turn created must not be attributed to the next one.
-func (h *Hub) AbandonInFlightTurn(ctx context.Context, chatID api.ChatID) {
+func (h *Hub) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID) {
 	h.coord.AbandonInFlightTurn(ctx, chatID)
 	h.agentTerms.AdvanceTurn(chatID)
 }
@@ -209,6 +209,6 @@ func (h *Hub) AbandonInFlightTurn(ctx context.Context, chatID api.ChatID) {
 // KillTurnTerminals kills the terminals the current turn created. The
 // interrupt half of the tab-close contract: cancel stops the model, and this
 // stops the processes the turn already spawned.
-func (h *Hub) KillTurnTerminals(chatID api.ChatID) {
+func (h *Hub) KillTurnTerminals(chatID vibekit.ChatID) {
 	h.agentTerms.KillForTurn(chatID)
 }

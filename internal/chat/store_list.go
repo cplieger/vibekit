@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/runesafe"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -29,7 +29,7 @@ func sfDo(sf *singleflight.Group, key string, fn func() listResult) listResult {
 // must not hide the rest from the sidebar. Always returns a non-nil
 // slice so JSON encoders emit `[]` for an empty registry rather than
 // `null` (which the wire decoder rejects as a type error).
-func (s *Store) List(ctx context.Context) []api.ChatHeader {
+func (s *Store) List(ctx context.Context) []vibekit.ChatHeader {
 	headers, _ := s.listWithCompleteness(ctx)
 	return headers
 }
@@ -37,7 +37,7 @@ func (s *Store) List(ctx context.Context) []api.ChatHeader {
 // listResult pairs a header scan with whether it read every chat that
 // exists, so both travel through one singleflight slot.
 type listResult struct {
-	headers  []api.ChatHeader
+	headers  []vibekit.ChatHeader
 	complete bool
 }
 
@@ -80,24 +80,24 @@ func (s *Store) ReferencedSessionIDs(ctx context.Context) (refs map[string]struc
 // sidebar beats showing none of it.
 //
 // Coalesces concurrent sidebar refreshes into a single directory scan.
-func (s *Store) listWithCompleteness(ctx context.Context) ([]api.ChatHeader, bool) {
+func (s *Store) listWithCompleteness(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 	r := sfDo(&s.listSF, "list", func() listResult {
 		headers, complete := s.listOnce(ctx)
 		return listResult{headers: headers, complete: complete}
 	})
 	if r.headers == nil {
-		return []api.ChatHeader{}, r.complete
+		return []vibekit.ChatHeader{}, r.complete
 	}
 	return r.headers, r.complete
 }
 
-func (s *Store) listOnce(ctx context.Context) ([]api.ChatHeader, bool) {
+func (s *Store) listOnce(ctx context.Context) ([]vibekit.ChatHeader, bool) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		slog.Error("chat list", "dir", s.dir, "error", err)
 		// The directory itself is unreadable, so nothing is known about what
 		// chats exist. Never report that as a complete keep-list.
-		return []api.ChatHeader{}, false
+		return []vibekit.ChatHeader{}, false
 	}
 	// Collect valid filenames first.
 	var valid []chatEntry
@@ -107,7 +107,7 @@ func (s *Store) listOnce(ctx context.Context) ([]api.ChatHeader, bool) {
 			continue
 		}
 		id := strings.TrimSuffix(name, chatFileSuffix)
-		if !chatIDPattern(api.ChatID(id)) {
+		if !chatIDPattern(vibekit.ChatID(id)) {
 			slog.Debug("chat list: skipped non-chat file",
 				"name", name, "reason", "invalid chat id pattern")
 			continue
@@ -115,14 +115,14 @@ func (s *Store) listOnce(ctx context.Context) ([]api.ChatHeader, bool) {
 		valid = append(valid, chatEntry{id: id, path: filepath.Join(s.dir, name)})
 	}
 	if len(valid) == 0 {
-		return []api.ChatHeader{}, true
+		return []vibekit.ChatHeader{}, true
 	}
 
 	// Bounded-parallel header reads. Workers read from a shared index;
 	// no per-chat lock needed because readChatHeader is read-only and
 	// writes use atomic temp+rename (readers always see a complete file).
 	headers, complete := readHeadersParallel(ctx, valid)
-	slices.SortFunc(headers, func(a, b api.ChatHeader) int {
+	slices.SortFunc(headers, func(a, b vibekit.ChatHeader) int {
 		return cmp.Compare(b.UpdatedAt, a.UpdatedAt)
 	})
 	slog.Debug("chat list: scan complete",
@@ -168,7 +168,7 @@ const primeOmissionNotice = "[%d earlier message(s) omitted to fit the priming b
 // is truncated with a marker charged INSIDE the cap (the same rule
 // push.fitToCap follows), because a prime with no final turn cannot resume
 // anything.
-func (s *Store) BuildHistory(ctx context.Context, chatID api.ChatID) string {
+func (s *Store) BuildHistory(ctx context.Context, chatID vibekit.ChatID) string {
 	c, ok := s.Get(ctx, chatID)
 	if !ok || len(c.Messages) == 0 {
 		return ""
@@ -252,14 +252,14 @@ func countRenderable(rendered []string) int {
 
 // renderPrimeMessage renders one message for the priming transcript, or "" for a
 // role this projection does not know how to narrate.
-func renderPrimeMessage(m *api.Message, chatID api.ChatID) string {
+func renderPrimeMessage(m *vibekit.Message, chatID vibekit.ChatID) string {
 	var b strings.Builder
 	switch m.Role {
-	case api.RoleUser:
+	case vibekit.RoleUser:
 		b.WriteString("User: ")
 		b.WriteString(m.Content)
 		b.WriteByte('\n')
-	case api.RoleAssistant:
+	case vibekit.RoleAssistant:
 		b.WriteString("Assistant: ")
 		b.WriteString(m.Content)
 		for j := range m.ToolCalls {
@@ -267,7 +267,7 @@ func renderPrimeMessage(m *api.Message, chatID api.ChatID) string {
 			fmt.Fprintf(&b, "\n  [tool: %s status=%s]", tc.Title, tc.Status)
 		}
 		b.WriteByte('\n')
-	case api.RoleEvent:
+	case vibekit.RoleEvent:
 		b.WriteString("[")
 		b.WriteString(string(m.EventKind))
 		b.WriteString("] ")

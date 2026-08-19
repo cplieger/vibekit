@@ -17,8 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/procgroup"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestRingBuffer(t *testing.T) {
@@ -80,7 +80,7 @@ func TestRingBuffer_StoresBoundedByteCount(t *testing.T) {
 
 func TestParseRequest_NilParamsReturnsError(t *testing.T) {
 	t.Parallel()
-	msg := &api.RPCResponse{Params: nil}
+	msg := &vibekit.RPCResponse{Params: nil}
 	var target struct{ Name string }
 	if err := parseRequest(msg, &target); err == nil {
 		t.Error("parseRequest(nil params) should return error")
@@ -90,7 +90,7 @@ func TestParseRequest_NilParamsReturnsError(t *testing.T) {
 func TestParseRequest_ValidJSON(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"command":"ls","cwd":"/tmp"}`)
-	msg := &api.RPCResponse{Params: raw}
+	msg := &vibekit.RPCResponse{Params: raw}
 	var target struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
@@ -109,7 +109,7 @@ func TestParseRequest_ValidJSON(t *testing.T) {
 func TestParseRequest_MalformedJSON(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{invalid json}`)
-	msg := &api.RPCResponse{Params: raw}
+	msg := &vibekit.RPCResponse{Params: raw}
 	var target struct{ Name string }
 	if err := parseRequest(msg, &target); err == nil {
 		t.Error("parseRequest(malformed JSON) should return error")
@@ -234,7 +234,7 @@ func captureTerminalEvents(t *testing.T, h *Hub) []ringEvent {
 			t.Fatalf("unmarshal ring event: %v", err)
 		}
 		switch env.Type {
-		case string(api.EventTerminalCreated), string(api.EventTerminalOutput), string(api.EventTerminalExited):
+		case string(vibekit.EventTerminalCreated), string(vibekit.EventTerminalOutput), string(vibekit.EventTerminalExited):
 			out = append(out, ringEvent{
 				eventID: e.ID,
 				typ:     env.Type,
@@ -247,7 +247,7 @@ func captureTerminalEvents(t *testing.T, h *Hub) []ringEvent {
 	return out
 }
 
-func hasType(evs []ringEvent, typ api.EventType) bool {
+func hasType(evs []ringEvent, typ vibekit.EventType) bool {
 	for _, e := range evs {
 		if e.typ == string(typ) {
 			return true
@@ -257,7 +257,7 @@ func hasType(evs []ringEvent, typ api.EventType) bool {
 }
 
 // firstEventID returns the lowest event id of the given type (evs is sorted).
-func firstEventID(evs []ringEvent, typ api.EventType) (uint64, bool) {
+func firstEventID(evs []ringEvent, typ vibekit.EventType) (uint64, bool) {
 	for _, e := range evs {
 		if e.typ == string(typ) {
 			return e.eventID, true
@@ -292,25 +292,25 @@ func TestTerminalCreated_BroadcastBeforeOutputAndExited(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		evs = captureTerminalEvents(t, h)
-		if hasType(evs, api.EventTerminalOutput) && hasType(evs, api.EventTerminalExited) {
+		if hasType(evs, vibekit.EventTerminalOutput) && hasType(evs, vibekit.EventTerminalExited) {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	createdID, ok := firstEventID(evs, api.EventTerminalCreated)
+	createdID, ok := firstEventID(evs, vibekit.EventTerminalCreated)
 	if !ok {
 		t.Fatal("terminal_created was never broadcast")
 	}
 	sawOutput, sawExited := false, false
 	for _, e := range evs {
 		switch e.typ {
-		case string(api.EventTerminalOutput):
+		case string(vibekit.EventTerminalOutput):
 			sawOutput = true
 			if e.eventID <= createdID {
 				t.Errorf("terminal_output event id %d <= terminal_created id %d (created must be broadcast first)", e.eventID, createdID)
 			}
-		case string(api.EventTerminalExited):
+		case string(vibekit.EventTerminalExited):
 			sawExited = true
 			if e.eventID <= createdID {
 				t.Errorf("terminal_exited event id %d <= terminal_created id %d (created must be broadcast first)", e.eventID, createdID)
@@ -368,7 +368,7 @@ func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T
 	// equal the original text — the equality check is what proves the fix.
 	var got bytes.Buffer
 	for _, e := range captureTerminalEvents(t, h) {
-		if e.typ == string(api.EventTerminalOutput) {
+		if e.typ == string(vibekit.EventTerminalOutput) {
 			got.WriteString(e.data)
 		}
 	}
@@ -468,7 +468,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 			if err := json.Unmarshal(e.Event.Data, &env); err != nil {
 				t.Fatalf("unmarshal ring event: %v", err)
 			}
-			if env.Type == string(api.EventTerminalOutput) {
+			if env.Type == string(vibekit.EventTerminalOutput) {
 				got = append(got, env.Payload.Data...)
 			}
 		}

@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func seedPolicy(br *fakeBridge, list, explain string) {
@@ -39,7 +39,7 @@ func TestPolicyList(t *testing.T) {
 	// list is session-scoped: the sessionId MUST be injected, and the scope
 	// filter forwarded.
 	p := br.paramsFor(methodV3PermissionsList)
-	if p[api.KeySessionID] == nil || p[api.KeySessionID] == "" {
+	if p[vibekit.KeySessionID] == nil || p[vibekit.KeySessionID] == "" {
 		t.Errorf("permissions/list params missing sessionId: %+v", p)
 	}
 	if p["scope"] != "user" {
@@ -64,7 +64,7 @@ func TestPolicyExplainMapsCamelCase(t *testing.T) {
 		`"isExplicitAsk":true,"matchedRule":{"capability":"fs_write","match":["/x/**"],"effect":"ask"},`+
 		`"scope":"workspace","source":"/w/permissions.yaml"}`)
 
-	res, err := h.PolicyExplain(t.Context(), api.PolicyExplainRequest{Capability: "fs_write", Resource: "/x/y"})
+	res, err := h.PolicyExplain(t.Context(), vibekit.PolicyExplainRequest{Capability: "fs_write", Resource: "/x/y"})
 	if err != nil {
 		t.Fatalf("PolicyExplain: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestPolicyExplainMapsCamelCase(t *testing.T) {
 	}
 	// explain forwards capability + resource + sessionId.
 	p := br.paramsFor(methodV3PermissionsExplain)
-	if p["capability"] != "fs_write" || p["resource"] != "/x/y" || p[api.KeySessionID] == nil {
+	if p["capability"] != "fs_write" || p["resource"] != "/x/y" || p[vibekit.KeySessionID] == nil {
 		t.Errorf("explain params = %+v", p)
 	}
 }
@@ -84,7 +84,7 @@ func TestPolicyExplainMapsCamelCase(t *testing.T) {
 func TestPolicyExplainRequiresTarget(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{}`, `{}`)
-	if _, err := h.PolicyExplain(t.Context(), api.PolicyExplainRequest{}); err == nil {
+	if _, err := h.PolicyExplain(t.Context(), vibekit.PolicyExplainRequest{}); err == nil {
 		t.Error("PolicyExplain with no capability/toolId should error")
 	}
 }

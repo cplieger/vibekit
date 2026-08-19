@@ -3,8 +3,8 @@ package command
 import (
 	"errors"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // maxPromptBytes caps the text field of a prompt command.
@@ -29,7 +29,7 @@ var (
 )
 
 // validChatID reports whether id is safe to use as a chat identifier.
-func validChatID(id api.ChatID) bool {
+func validChatID(id vibekit.ChatID) bool {
 	return ids.ValidChatID(string(id))
 }
 

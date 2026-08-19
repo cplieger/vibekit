@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestTranslateACPEvent_RefusesUnknownRequests is the red check for the wedge
@@ -56,7 +56,7 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 			id := int64(4242)
 
-			h.translateACPEvent("c1", &api.RPCResponse{
+			h.translateACPEvent("c1", &vibekit.RPCResponse{
 				Method: method,
 				ID:     &id,
 			})
@@ -81,14 +81,14 @@ func TestTranslateACPEvent_RefusesUnknownRequests(t *testing.T) {
 			// The CODE matters, not just that it errored. -32601 is what JSON-RPC
 			// 2.0 assigns to method-not-found; -32603 would label a deliberate
 			// refusal an internal fault and make these logs blame the wrong side.
-			var rpcErr *api.RPCError
+			var rpcErr *vibekit.RPCError
 			if !errors.As(got.err, &rpcErr) {
-				t.Fatalf("refusal for %s is not an *api.RPCError (%T); the code is not on the wire",
+				t.Fatalf("refusal for %s is not an *vibekit.RPCError (%T); the code is not on the wire",
 					method, got.err)
 			}
-			if rpcErr.Code != api.RPCCodeMethodNotFound {
+			if rpcErr.Code != vibekit.RPCCodeMethodNotFound {
 				t.Errorf("refusal for %s used code %d, want %d (method not found)",
-					method, rpcErr.Code, api.RPCCodeMethodNotFound)
+					method, rpcErr.Code, vibekit.RPCCodeMethodNotFound)
 			}
 			if !strings.Contains(rpcErr.Message, method) {
 				t.Errorf("refusal message %q does not name the method; a log line would not say what was refused",
@@ -115,7 +115,7 @@ func TestTranslateACPEvent_IgnoresUnknownNotifications(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, br := hubForFSTest(t, t.TempDir())
 
-			h.translateACPEvent("c1", &api.RPCResponse{
+			h.translateACPEvent("c1", &vibekit.RPCResponse{
 				Method: method,
 				ID:     nil,
 			})

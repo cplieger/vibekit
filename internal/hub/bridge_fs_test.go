@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- respondRecorder: captures Respond calls from the fakeBridge ---
@@ -61,7 +61,7 @@ func hubForFSTest(t *testing.T, workDir string) (*Hub, *respondingBridge) {
 	factory := func() ACPBridge { return br }
 	h := New(t.Context(), workDir, factory, cs)
 	cs.Bus = h
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
@@ -190,9 +190,9 @@ func TestRespondFSRead_Success(t *testing.T) {
 	}
 	h, br := hubForFSTest(t, work)
 	id := int64(1)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "hello.txt"}),
 	}
 	h.respondFSRead(t.Context(), "c1", msg)
@@ -207,9 +207,9 @@ func TestRespondFSRead_Success(t *testing.T) {
 func TestRespondFSRead_MissingPath(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(2)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{}),
 	}
 	h.respondFSRead(t.Context(), "c1", msg)
@@ -227,9 +227,9 @@ func TestRespondFSRead_LineLimitWindow(t *testing.T) {
 	}
 	h, br := hubForFSTest(t, work)
 	id := int64(3)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "file.txt", "line": 2, "limit": 2}),
 	}
 	h.respondFSRead(t.Context(), "c1", msg)
@@ -249,9 +249,9 @@ func TestRespondFSRead_SizeCapRejects(t *testing.T) {
 	}
 	h, br := hubForFSTest(t, work)
 	id := int64(4)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "big.txt"}),
 	}
 	h.respondFSRead(t.Context(), "c1", msg)
@@ -268,9 +268,9 @@ func TestRespondFSWrite_Success(t *testing.T) {
 	work := t.TempDir()
 	h, br := hubForFSTest(t, work)
 	id := int64(5)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSWrite,
+		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": "written"}),
 	}
 	h.respondFSWrite(t.Context(), "c1", msg)
@@ -292,9 +292,9 @@ func TestRespondFSWrite_CreatesParentDirs(t *testing.T) {
 	work := t.TempDir()
 	h, br := hubForFSTest(t, work)
 	id := int64(6)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSWrite,
+		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "nested/deeply/out.txt", "content": "ok"}),
 	}
 	h.respondFSWrite(t.Context(), "c1", msg)
@@ -324,9 +324,9 @@ func TestRespondFSWrite_RejectsSymlinkEscape(t *testing.T) {
 	}
 	h, br := hubForFSTest(t, work)
 	id := int64(7)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSWrite,
+		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "escape.txt", "content": "HIJACKED"}),
 	}
 	h.respondFSWrite(t.Context(), "c1", msg)
@@ -350,9 +350,9 @@ func TestRespondFSWrite_CapRejects(t *testing.T) {
 	h, br := hubForFSTest(t, work)
 	id := int64(8)
 	huge := strings.Repeat("x", fsWriteCap+1)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSWrite,
+		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "out.txt", "content": huge}),
 	}
 	h.respondFSWrite(t.Context(), "c1", msg)
@@ -368,7 +368,7 @@ func TestRespondFSWrite_CapRejects(t *testing.T) {
 func TestHandleFSRequest_ReturnsFalseForNonFSMethod(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	id := int64(9)
-	msg := &api.RPCResponse{ID: &id, Method: "session/update", Params: json.RawMessage(`{}`)}
+	msg := &vibekit.RPCResponse{ID: &id, Method: "session/update", Params: json.RawMessage(`{}`)}
 	if h.handleFSRequest(t.Context(), "c1", msg) {
 		t.Error("handleFSRequest claimed non-fs method")
 	}
@@ -381,9 +381,9 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 	}
 	h, br := hubForFSTest(t, work)
 	id := int64(10)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "hi.txt"}),
 	}
 	if !h.handleFSRequest(t.Context(), "c1", msg) {
@@ -402,9 +402,9 @@ func TestHandleFSRequest_DispatchesFSRead(t *testing.T) {
 func TestRespondFSRead_MissingFileRespondsGracefully(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
 	id := int64(901)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "ghost.txt"}),
 	}
 	h.respondFSRead(t.Context(), "c1", msg)
@@ -424,9 +424,9 @@ func TestRespondFSRead_ExactCapBoundarySucceeds(t *testing.T) {
 	}
 	h, br := hubForFSTest(t, work)
 	id := int64(902)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "exact.txt"}),
 	}
 	h.respondFSRead(t.Context(), "c1", msg)
@@ -455,9 +455,9 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 		}
 		h, br := hubForFSTest(t, work)
 		id := int64(8137)
-		msg := &api.RPCResponse{
+		msg := &vibekit.RPCResponse{
 			ID:     &id,
-			Method: api.MethodFSWrite,
+			Method: vibekit.MethodFSWrite,
 			Params: mustJSON(t, map[string]any{"path": "dir-target", "content": "x"}),
 		}
 		h.respondFSWrite(t.Context(), "c1", msg)
@@ -478,9 +478,9 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 		work := t.TempDir()
 		h, br := hubForFSTest(t, work)
 		id := int64(8138)
-		msg := &api.RPCResponse{
+		msg := &vibekit.RPCResponse{
 			ID:     &id,
-			Method: api.MethodFSWrite,
+			Method: vibekit.MethodFSWrite,
 			Params: mustJSON(t, map[string]any{"path": "ok.txt", "content": "hello"}),
 		}
 		h.respondFSWrite(t.Context(), "c1", msg)
@@ -510,7 +510,7 @@ func TestRespondFSWrite_ErrCheck(t *testing.T) {
 func TestRespondBridge_NoErrorLogOnSuccess(t *testing.T) {
 	h, _ := hubForFSTest(t, t.TempDir())
 	id := int64(903)
-	msg := &api.RPCResponse{ID: &id, Method: api.MethodFSRead, Params: mustJSON(t, map[string]any{})}
+	msg := &vibekit.RPCResponse{ID: &id, Method: vibekit.MethodFSRead, Params: mustJSON(t, map[string]any{})}
 
 	logs := captureLogs(t)
 	h.respondBridge(t.Context(), "c1", msg, map[string]any{"ok": true}, nil)

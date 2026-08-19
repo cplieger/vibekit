@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestSendFailureLogBoundsEndpoint pins the endpoint log-attr contract at
@@ -36,7 +36,7 @@ func TestSendFailureLogBoundsEndpoint(t *testing.T) {
 	hostile := "https://evil.example/\x1b]0;pwned\x07/" + strings.Repeat("x", 100)
 	s.Subscribe(pushSubscriptionWithValidKeys(t, hostile))
 
-	s.Send(t.Context(), "t", "b", api.PushKindAgentFinished, api.PushSubject{})
+	s.Send(t.Context(), "t", "b", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
 	got, ok := rec.AttrValue("push: send failed", "endpoint")
 	if !ok {
@@ -59,20 +59,20 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 	defer s.Close()
 	// Subscribe so Send actually reaches the preflight stage;
 	// without subs the early-exit wouldn't prove the gate ran.
-	s.Subscribe(api.PushSubscription{
+	s.Subscribe(vibekit.PushSubscription{
 		Endpoint: "https://fcm.googleapis.com/fcm/send/pref-test",
 	})
 
 	// With agentFinished disabled, Send for agent_finished must
 	// NOT record a last-push timestamp — the preflight gate
 	// short-circuits before the stamp.
-	s.SetPreferences(map[api.PushKind]bool{
-		api.PushKindAgentFinished: false,
-		api.PushKindPermission:    true,
+	s.SetPreferences(map[vibekit.PushKind]bool{
+		vibekit.PushKindAgentFinished: false,
+		vibekit.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, api.PushSubject{})
+	s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 	s.mu.Lock()
-	_, afRecorded := s.lastPush[debounceKey(api.PushKindAgentFinished, api.PushSubject{})]
+	_, afRecorded := s.lastPush[debounceKey(vibekit.PushKindAgentFinished, vibekit.PushSubject{})]
 	s.mu.Unlock()
 	if afRecorded {
 		t.Error("agentFinished=false should prevent Send from recording last-push timestamp")
@@ -83,13 +83,13 @@ func TestSend_PreferenceFiltering(t *testing.T) {
 	// hands SetPreferences a false for this kind (see floor_test.go); asserting
 	// that the gate can silence it would pin a state the app cannot enter. What
 	// matters is that the ask gets through with the other kind switched off.
-	s.SetPreferences(map[api.PushKind]bool{
-		api.PushKindAgentFinished: false,
-		api.PushKindPermission:    true,
+	s.SetPreferences(map[vibekit.PushKind]bool{
+		vibekit.PushKindAgentFinished: false,
+		vibekit.PushKindPermission:    true,
 	})
-	s.Send(t.Context(), "title", "body", api.PushKindPermission, api.PushSubject{})
+	s.Send(t.Context(), "title", "body", vibekit.PushKindPermission, vibekit.PushSubject{})
 	s.mu.Lock()
-	_, pnRecorded := s.lastPush[debounceKey(api.PushKindPermission, api.PushSubject{})]
+	_, pnRecorded := s.lastPush[debounceKey(vibekit.PushKindPermission, vibekit.PushSubject{})]
 	s.mu.Unlock()
 	if !pnRecorded {
 		t.Error("permission push must reach the send path even with agent_finished off")
@@ -103,23 +103,23 @@ func TestSend_Debounce(t *testing.T) {
 
 	// Set the agent_finished/global window to now to trigger debounce.
 	s.mu.Lock()
-	s.lastPush[debounceKey(api.PushKindAgentFinished, api.PushSubject{})] = time.Now()
+	s.lastPush[debounceKey(vibekit.PushKindAgentFinished, vibekit.PushSubject{})] = time.Now()
 	s.mu.Unlock()
 
 	// Immediate second send should be debounced.
 	// Subscribe a dummy endpoint so Send doesn't exit early on empty subs.
-	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/debounce-test"})
+	s.Subscribe(vibekit.PushSubscription{Endpoint: "https://push.example.com/debounce-test"})
 
 	// Record lastPush before Send.
 	s.mu.Lock()
-	before := s.lastPush[debounceKey(api.PushKindAgentFinished, api.PushSubject{})]
+	before := s.lastPush[debounceKey(vibekit.PushKindAgentFinished, vibekit.PushSubject{})]
 	s.mu.Unlock()
 
-	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, api.PushSubject{})
+	s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
 	// lastPush should not have been updated (debounced).
 	s.mu.Lock()
-	after := s.lastPush[debounceKey(api.PushKindAgentFinished, api.PushSubject{})]
+	after := s.lastPush[debounceKey(vibekit.PushKindAgentFinished, vibekit.PushSubject{})]
 	s.mu.Unlock()
 
 	if !after.Equal(before) {
@@ -138,17 +138,17 @@ func TestSend_DebouncePerType(t *testing.T) {
 
 	// Mark agent_finished as just-sent.
 	s.mu.Lock()
-	s.lastPush[debounceKey(api.PushKindAgentFinished, api.PushSubject{})] = time.Now()
+	s.lastPush[debounceKey(vibekit.PushKindAgentFinished, vibekit.PushSubject{})] = time.Now()
 	s.mu.Unlock()
 
 	// permission's window is empty; a permission Send must update
 	// its own last-push timestamp (not blocked by the agent_finished
 	// window).
-	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(t.Context(), "title", "body", api.PushKindPermission, api.PushSubject{})
+	s.Subscribe(vibekit.PushSubscription{Endpoint: "https://push.example.com/x"})
+	s.Send(t.Context(), "title", "body", vibekit.PushKindPermission, vibekit.PushSubject{})
 
 	s.mu.Lock()
-	permTimestamp := s.lastPush[debounceKey(api.PushKindPermission, api.PushSubject{})]
+	permTimestamp := s.lastPush[debounceKey(vibekit.PushKindPermission, vibekit.PushSubject{})]
 	s.mu.Unlock()
 	if permTimestamp.IsZero() {
 		t.Error("permission push was suppressed by agent_finished debounce window")
@@ -161,11 +161,11 @@ func TestSend_UnknownKindRejected(t *testing.T) {
 	dir := t.TempDir()
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
-	s.Subscribe(api.PushSubscription{Endpoint: "https://push.example.com/x"})
-	s.Send(t.Context(), "title", "body", "what-is-this", api.PushSubject{})
+	s.Subscribe(vibekit.PushSubscription{Endpoint: "https://push.example.com/x"})
+	s.Send(t.Context(), "title", "body", "what-is-this", vibekit.PushSubject{})
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.lastPush[debounceKey("what-is-this", api.PushSubject{})]; ok {
+	if _, ok := s.lastPush[debounceKey("what-is-this", vibekit.PushSubject{})]; ok {
 		t.Error("unknown kind should not record a debounce entry")
 	}
 }
@@ -178,7 +178,7 @@ func TestSend_UnhealthySkips(t *testing.T) {
 	s.mu.Unlock()
 
 	// Should return immediately without panicking.
-	s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, api.PushSubject{})
+	s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 }
 
 func TestSend_StatusCodePruning(t *testing.T) {
@@ -204,7 +204,7 @@ func TestSend_StatusCodePruning(t *testing.T) {
 			s.client = srv.Client()
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
-			s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, api.PushSubject{})
+			s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
 			if tt.wantPruned && s.HasSubscribers() {
 				t.Errorf("Send did not prune subscription after %d", tt.status)
@@ -237,7 +237,7 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	body := strings.Repeat("x", 4000)
 
 	// Send should not panic or error — it truncates internally.
-	s.Send(t.Context(), title, body, api.PushKindAgentFinished, api.PushSubject{})
+	s.Send(t.Context(), title, body, vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
 	// Verify the subscriber wasn't pruned (201 = success).
 	if !s.HasSubscribers() {
@@ -249,11 +249,11 @@ func TestSend_TruncatesOversizePayload(t *testing.T) {
 	// delivers it instead of rejecting an oversize record. Sizing on the raw
 	// title+body length — as this code once did — left the ~22-byte envelope
 	// over the cap and the notification was silently dropped.
-	gotTitle, gotBody, truncated := fitToCap(title, body, api.PushSubject{})
+	gotTitle, gotBody, truncated := fitToCap(title, body, vibekit.PushSubject{})
 	if !truncated {
 		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if n := marshaledLen(gotTitle, gotBody, api.PushSubject{}); n > pushBodyCap {
+	if n := marshaledLen(gotTitle, gotBody, vibekit.PushSubject{}); n > pushBodyCap {
 		t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 	}
 	if !strings.HasSuffix(gotBody, "...") {
@@ -276,7 +276,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		capLog := capture.Default(t)
-		s.Send(t.Context(), "aa", "bb", api.PushKindAgentFinished, api.PushSubject{})
+		s.Send(t.Context(), "aa", "bb", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q for a 4-byte payload; want no warn", warnMsg)
 		}
@@ -288,7 +288,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		defer s.Close()
 		capLog := capture.Default(t)
 		s.Send(t.Context(), strings.Repeat("a", 10), strings.Repeat("b", 4000),
-			api.PushKindAgentFinished, api.PushSubject{})
+			vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 		got, ok := capLog.AttrValue(warnMsg, "bytes")
 		if !ok {
 			t.Fatalf("Send did not warn %q for a 4010-byte payload", warnMsg)
@@ -306,7 +306,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 		defer s.Close()
 		capLog := capture.Default(t)
 		s.Send(t.Context(), strings.Repeat("a", 978), strings.Repeat("b", 2000),
-			api.PushKindAgentFinished, api.PushSubject{})
+			vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 		if capLog.CountExact(warnMsg) > 0 {
 			t.Errorf("Send warned %q at exactly the marshaled cap; want no warn", warnMsg)
 		}
@@ -319,7 +319,7 @@ func TestSend_OversizeTruncationWarn(t *testing.T) {
 // rejected as too large before any work.
 func TestPush_PayloadSizeBoundary(t *testing.T) {
 	s := &Service{lifetime: t.Context()}
-	sub := api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/size"}
+	sub := vibekit.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/size"}
 	sub.Keys.P256dh = "###not-base64###" // invalid → "decode p256dh" once past the guard
 	sub.Keys.Auth = "AAAA"
 
@@ -360,7 +360,7 @@ func TestPush_BodyCapacityStaysPositive(t *testing.T) {
 	pushExpectNoPanic(t, s, sub, make([]byte, 100), "large") // payload > ephemeral-key length
 }
 
-func pushExpectNoPanic(t *testing.T, s *Service, sub api.PushSubscription, payload []byte, label string) {
+func pushExpectNoPanic(t *testing.T, s *Service, sub vibekit.PushSubscription, payload []byte, label string) {
 	t.Helper()
 	defer func() {
 		if r := recover(); r != nil {
@@ -430,7 +430,7 @@ func TestSend_ResultStatusLogging(t *testing.T) {
 			s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 			capLog := capture.Default(t)
-			s.Send(t.Context(), "title", "body", api.PushKindAgentFinished, api.PushSubject{})
+			s.Send(t.Context(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
 			if capLog.CountExact(tc.want) == 0 {
 				t.Errorf("status %d: did not log %q", tc.status, tc.want)
@@ -481,7 +481,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(context.Background(), "title", "body", api.PushKindAgentFinished, api.PushSubject{})
+		s.Send(context.Background(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
 		if got := attempts.Load(); got != 2 {
 			t.Errorf("attempts = %d, want 2 (one 429 then one success)", got)
@@ -505,7 +505,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(context.Background(), "title", "body", api.PushKindAgentFinished, api.PushSubject{})
+		s.Send(context.Background(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
 		if got := attempts.Load(); got != int32(pushMaxAttempts) {
 			t.Errorf("attempts = %d, want pushMaxAttempts (%d)", got, pushMaxAttempts)
@@ -532,7 +532,7 @@ func TestSend_RetriesThenSucceeds(t *testing.T) {
 		s.Subscribe(pushSubscriptionWithValidKeys(t, srv.URL))
 
 		capLog := capture.Default(t)
-		s.Send(context.Background(), "title", "body", api.PushKindAgentFinished, api.PushSubject{})
+		s.Send(context.Background(), "title", "body", vibekit.PushKindAgentFinished, vibekit.PushSubject{})
 
 		if got := attempts.Load(); got != 1 {
 			t.Errorf("attempts = %d, want 1 (the retry lands past the budget)", got)
@@ -640,11 +640,11 @@ func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
 	title := "Vibekit"
 	body := strings.Repeat("x", 4000)
 
-	gotTitle, gotBody, truncated := fitToCap(title, body, api.PushSubject{})
+	gotTitle, gotBody, truncated := fitToCap(title, body, vibekit.PushSubject{})
 	if !truncated {
 		t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 	}
-	if n := marshaledLen(gotTitle, gotBody, api.PushSubject{}); n != pushBodyCap {
+	if n := marshaledLen(gotTitle, gotBody, vibekit.PushSubject{}); n != pushBodyCap {
 		t.Errorf("marshaled payload = %d bytes, want exactly %d: the trim must spend the whole budget, marker included", n, pushBodyCap)
 	}
 	if !strings.HasSuffix(gotBody, pushTruncMarker) {
@@ -665,7 +665,7 @@ func TestFitToCap_ChargesTheMarkerInsideTheCap(t *testing.T) {
 func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 	t.Run("body keeps newlines, loses other control runes", func(t *testing.T) {
 		body := "a\x1bb\nc" + strings.Repeat("x", 4000)
-		gotTitle, gotBody, truncated := fitToCap("Vibekit", body, api.PushSubject{})
+		gotTitle, gotBody, truncated := fitToCap("Vibekit", body, vibekit.PushSubject{})
 		if !truncated {
 			t.Fatalf("fitToCap reported no truncation for a %d-byte body", len(body))
 		}
@@ -675,21 +675,21 @@ func TestFitToCap_KeepsTheBodysCRLFAxis(t *testing.T) {
 		if strings.Contains(gotBody, "\x1b") {
 			t.Error("body kept a raw ESC; the sanitize half of the trim did not run")
 		}
-		if n := marshaledLen(gotTitle, gotBody, api.PushSubject{}); n > pushBodyCap {
+		if n := marshaledLen(gotTitle, gotBody, vibekit.PushSubject{}); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 		}
 	})
 
 	t.Run("title loses newlines", func(t *testing.T) {
 		title := "a\x1bb\nc" + strings.Repeat("y", 4000)
-		gotTitle, gotBody, truncated := fitToCap(title, "", api.PushSubject{})
+		gotTitle, gotBody, truncated := fitToCap(title, "", vibekit.PushSubject{})
 		if !truncated {
 			t.Fatalf("fitToCap reported no truncation for a %d-byte title", len(title))
 		}
 		if strings.ContainsAny(gotTitle, "\n\r\x1b") {
 			t.Errorf("title kept a record-forging rune: %q", gotTitle[:min(len(gotTitle), 10)])
 		}
-		if n := marshaledLen(gotTitle, gotBody, api.PushSubject{}); n > pushBodyCap {
+		if n := marshaledLen(gotTitle, gotBody, vibekit.PushSubject{}); n > pushBodyCap {
 			t.Errorf("marshaled payload = %d bytes, exceeds cap %d", n, pushBodyCap)
 		}
 	})

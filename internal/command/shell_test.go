@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestShellCappedBuffer(t *testing.T) {
@@ -193,12 +193,12 @@ func TestShellStatusLine(t *testing.T) {
 // contended, used to exercise the !cmd busy-guard's 409 path.
 type fakeBusyBridge struct{}
 
-func (fakeBusyBridge) Call(context.Context, string, any) (*api.RPCResponse, error) {
+func (fakeBusyBridge) Call(context.Context, string, any) (*vibekit.RPCResponse, error) {
 	return nil, nil
 }
 func (fakeBusyBridge) Notify(context.Context, string, any) error        { return nil }
 func (fakeBusyBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (fakeBusyBridge) SessionID() api.SessionID                         { return "" }
+func (fakeBusyBridge) SessionID() vibekit.SessionID                     { return "" }
 func (fakeBusyBridge) TryAcquireForPrompt() bool                        { return false }
 func (fakeBusyBridge) ReleaseAfterPrompt()                              {}
 func (fakeBusyBridge) BeginPromptCall(context.CancelFunc) uint64        { return 0 }
@@ -215,7 +215,7 @@ type busyGuardDeps struct {
 	bridge Bridge
 }
 
-func (d *busyGuardDeps) GetBridge(api.ChatID) Bridge { return d.bridge }
+func (d *busyGuardDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
 
 // TestHandleShellInterception_BusyReturns409 pins the busy-guard (MED
 // bug): when a bridge exists and its turn lock can't be acquired (a real
@@ -227,8 +227,8 @@ func TestHandleShellInterception_BusyReturns409(t *testing.T) {
 	deps := &busyGuardDeps{benchDeps: newBenchDeps(), bridge: fakeBusyBridge{}}
 	d := New(deps)
 	w := httptest.NewRecorder()
-	cmd := &api.ClientCommand{Type: "prompt", RequestID: "r1", ChatID: "c1"}
-	p := &api.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
+	cmd := &vibekit.ClientCommand{Type: "prompt", RequestID: "r1", ChatID: "c1"}
+	p := &vibekit.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
 	HandleShellInterception(d, deps, t.Context(), w, cmd, p)
 

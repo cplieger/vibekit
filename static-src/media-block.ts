@@ -21,7 +21,7 @@
 // `/` and an extension in FILE_EXTS — and FILE_EXTS carries no audio extensions,
 // so audio is not linkified at all) or as a tool card's subject, which is an EDIT
 // subject rather than a presentation. There is no `resource_link` block and no
-// file block on the transcript wire: `api.BlockType` is text / tool_use /
+// file block on the transcript wire: `vibekit.BlockType` is text / tool_use /
 // thinking, full stop. So `![](…)` is the one place the agent CHOSE to present a
 // file, which is exactly the signal a card should key on.
 // ---------------------------------------------------------------------------

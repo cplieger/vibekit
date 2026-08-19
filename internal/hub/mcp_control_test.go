@@ -14,11 +14,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // insertLiveBridge inserts a live bridge for chatID and returns its fake.
-func insertLiveBridge(t *testing.T, h *Hub, chatID api.ChatID) *fakeBridge {
+func insertLiveBridge(t *testing.T, h *Hub, chatID vibekit.ChatID) *fakeBridge {
 	t.Helper()
 	sb, _ := h.bridge.mgr.getOrInsert(chatID)
 	fb, ok := sb.bridge.(*fakeBridge)
@@ -175,8 +175,8 @@ func TestHandleMCPGetResource_OK(t *testing.T) {
 // captured at connect time surface in the /api/mcp/status snapshot.
 func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
-	prompts := []api.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
-	resources := []api.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
+	prompts := []vibekit.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
+	resources := []vibekit.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
 	h.mcpRegistry.recordConnected(t.Context(), "everything", nil, prompts, resources)
 
 	snap := h.mcpRegistry.Snapshot()

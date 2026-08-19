@@ -5,7 +5,7 @@ package hub
 import (
 	"encoding/json"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // LatchTurnModel stamps the dispatching model onto the chat's turn buffer.
@@ -15,7 +15,7 @@ import (
 // no buffer everywhere it is read — isEmptyTurn above, Snapshot's own guard, the
 // connect-time turn_state replay — because all three key on content, not
 // presence.
-func (h *Hub) LatchTurnModel(chatID api.ChatID, model string) {
+func (h *Hub) LatchTurnModel(chatID vibekit.ChatID, model string) {
 	h.bridge.assistantBufs.GetOrInit(chatID).SetModel(model)
 }
 
@@ -24,17 +24,17 @@ func (h *Hub) LatchTurnModel(chatID api.ChatID, model string) {
 // On v3 the prompt response carries only stopReason/usage — content only ever
 // arrives via session/update — so the buffer is the authoritative content
 // signal (a v2-era `content` array in the response is gone).
-func (h *Hub) isEmptyTurn(resp *api.RPCResponse, chatID api.ChatID) bool {
+func (h *Hub) isEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID) bool {
 	if resp == nil || resp.Result == nil {
 		return false
 	}
 	var result struct {
-		StopReason api.StopReason `json:"stopReason"`
+		StopReason vibekit.StopReason `json:"stopReason"`
 	}
 	if json.Unmarshal(resp.Result, &result) != nil {
 		return false
 	}
-	if result.StopReason != api.StopReasonEndTurn {
+	if result.StopReason != vibekit.StopReasonEndTurn {
 		return false
 	}
 	buf := h.bridge.assistantBufs.Get(chatID)

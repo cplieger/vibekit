@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Server events: the wire shapes broadcast over SSE (/api/events) +
 // per-type payloads. Event dispatch lives in hub/sse.go and the
@@ -40,7 +40,7 @@ const (
 	StopReasonInterrupted StopReason = "interrupted"
 	// StopReasonRefusal is kiro-cli 2.13+'s core ACP stop reason for a model
 	// refusal (content_filtered): the refusal explanation streamed as the last
-	// assistant chunk, tagged with _meta.kiro.refusal (api.RefusalInfo).
+	// assistant chunk, tagged with _meta.kiro.refusal (vibekit.RefusalInfo).
 	StopReasonRefusal StopReason = "refusal"
 )
 

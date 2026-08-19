@@ -14,7 +14,7 @@ package archive
 import (
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 const chatFileSuffix = ".json"
@@ -23,20 +23,20 @@ const chatFileSuffix = ".json"
 // from the chat store. Keeps the dependency minimal and testable.
 type StoreAccess interface {
 	// Lock returns the per-chat mutex for serialization.
-	Lock(chatID api.ChatID) *sync.Mutex
+	Lock(chatID vibekit.ChatID) *sync.Mutex
 	// Dir returns the store's base directory.
 	Dir() string
 	// Load reads a chat from the active directory.
-	Load(chatID api.ChatID) (*api.Chat, error)
+	Load(chatID vibekit.ChatID) (*vibekit.Chat, error)
 }
 
 // Service implements the archive lifecycle operations.
 type Service struct {
 	store   StoreAccess
-	onPurge func(chatID api.ChatID, sessionChain []string)
+	onPurge func(chatID vibekit.ChatID, sessionChain []string)
 	// isLive reports whether a chat is in active use (a running bridge). A
 	// live chat is never purged, however old — see purgeOne.
-	isLive func(chatID api.ChatID) bool
+	isLive func(chatID vibekit.ChatID) bool
 }
 
 // New creates an archive Service backed by the given StoreAccess.
@@ -57,7 +57,7 @@ type Option func(*Service)
 // is never what a retention window meant.
 //
 // Injected because this package cannot see the hub that owns bridges.
-func WithLiveChats(fn func(chatID api.ChatID) bool) Option {
+func WithLiveChats(fn func(chatID vibekit.ChatID) bool) Option {
 	return func(s *Service) { s.isLive = fn }
 }
 
@@ -68,6 +68,6 @@ func WithLiveChats(fn func(chatID api.ChatID) bool) Option {
 // this: retention must not depend on the hourly orphan sweep finding them,
 // because that sweep's keep-list is derived by reading every chat file and is
 // the destructive leg of the system.
-func WithOnPurge(fn func(chatID api.ChatID, sessionChain []string)) Option {
+func WithOnPurge(fn func(chatID vibekit.ChatID, sessionChain []string)) Option {
 	return func(s *Service) { s.onPurge = fn }
 }

@@ -9,7 +9,7 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -45,7 +45,7 @@ func (h *Hub) resolveInsideWorkDir(p string) (string, error) {
 // policy rejections (ignore-list denial, cap-exceeded) stay at Debug and
 // don't trip operator alert dashboards that key off Warn+. Real OS /
 // parse failures remain at Warn for triage.
-func (h *Hub) respondFSError(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse, err error) {
+func (h *Hub) respondFSError(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, err error) {
 	if fsErrorIsRoutine(err) {
 		slog.Debug("fs request denied", "chat_id", chatID, "method", msg.Method, "error", err)
 	} else {
@@ -69,7 +69,7 @@ func fsErrorIsRoutine(err error) bool {
 // respondBridge routes a response back to the bridge that issued the
 // request. msg.ID is required; if the bridge is gone, we drop silently
 // (the agent's Call will time out on its side).
-func (h *Hub) respondBridge(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse, result any, err error) {
+func (h *Hub) respondBridge(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, result any, err error) {
 	if msg.ID == nil {
 		slog.Warn("fs request missing id", "chat_id", chatID, "method", msg.Method)
 		return
@@ -86,14 +86,14 @@ func (h *Hub) respondBridge(ctx context.Context, chatID api.ChatID, msg *api.RPC
 
 // --- ACP request/response helpers (consolidated from bridge_respond.go) ---
 
-func parseRequest(msg *api.RPCResponse, v any) error {
+func parseRequest(msg *vibekit.RPCResponse, v any) error {
 	if msg.Params == nil {
 		return io.ErrUnexpectedEOF
 	}
 	return json.Unmarshal(msg.Params, v)
 }
 
-func respondOK(ctx context.Context, h *Hub, chatID api.ChatID, msg *api.RPCResponse, result any) {
+func respondOK(ctx context.Context, h *Hub, chatID vibekit.ChatID, msg *vibekit.RPCResponse, result any) {
 	if msg.ID == nil {
 		return
 	}
@@ -106,7 +106,7 @@ func respondOK(ctx context.Context, h *Hub, chatID api.ChatID, msg *api.RPCRespo
 	}
 }
 
-func respondErr(ctx context.Context, h *Hub, chatID api.ChatID, msg *api.RPCResponse, errMsg string) {
+func respondErr(ctx context.Context, h *Hub, chatID vibekit.ChatID, msg *vibekit.RPCResponse, errMsg string) {
 	if msg.ID == nil {
 		return
 	}
@@ -114,7 +114,7 @@ func respondErr(ctx context.Context, h *Hub, chatID api.ChatID, msg *api.RPCResp
 	if sb == nil {
 		return
 	}
-	if err := sb.bridge.Respond(ctx, *msg.ID, nil, &api.RPCError{Code: -1, Message: errMsg}); err != nil {
+	if err := sb.bridge.Respond(ctx, *msg.ID, nil, &vibekit.RPCError{Code: -1, Message: errMsg}); err != nil {
 		slog.Warn("respondErr: bridge respond failed", "error", err)
 	}
 }

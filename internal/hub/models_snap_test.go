@@ -6,16 +6,16 @@ package hub
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 type modelsBridge struct {
 	*fakeBridge
 
-	models []api.SessionModel
+	models []vibekit.SessionModel
 }
 
-func (b *modelsBridge) Models() []api.SessionModel { return b.models }
+func (b *modelsBridge) Models() []vibekit.SessionModel { return b.models }
 
 func TestHubModels_EmptyWhenNoBridges(t *testing.T) {
 	h, _, _ := newTestHub()
@@ -26,14 +26,14 @@ func TestHubModels_EmptyWhenNoBridges(t *testing.T) {
 
 func TestHubModels_ReturnsFirstNonEmpty(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
-	_ = cs.Mutate(t.Context(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 
 	// Swap both chats' bridges to ones with distinct model sets.
 	empty := &modelsBridge{fakeBridge: newFakeBridge()}
 	populated := &modelsBridge{
 		fakeBridge: newFakeBridge(),
-		models:     []api.SessionModel{{ID: "claude-3-sonnet", Name: "Sonnet"}},
+		models:     []vibekit.SessionModel{{ID: "claude-3-sonnet", Name: "Sonnet"}},
 	}
 	h.bridge.mgr.mu.Lock()
 	h.bridge.mgr.bridges["c1"] = &sharedBridge{bridge: empty}
@@ -48,7 +48,7 @@ func TestHubModels_ReturnsFirstNonEmpty(t *testing.T) {
 
 func TestHubModels_AllEmptyReturnsNil(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	empty := &modelsBridge{fakeBridge: newFakeBridge()}
 	h.bridge.mgr.mu.Lock()

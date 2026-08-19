@@ -35,12 +35,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
-// mcpServerState is an alias for the api-level MCPServerState enum.
-type mcpServerState = api.MCPServerState
+// mcpServerState is an alias for the vibekit-level MCPServerState enum.
+type mcpServerState = vibekit.MCPServerState
 
 const (
 	mcpStateIdle      mcpServerState = "idle"
@@ -60,12 +60,12 @@ const (
 type mcpServerRuntime struct {
 	Name      string
 	State     mcpServerState
-	Origin    api.Origin
+	Origin    vibekit.Origin
 	OAuthURL  string
 	Error     string
 	Tools     []string
-	Prompts   []api.MCPPromptInfo
-	Resources []api.MCPResourceInfo
+	Prompts   []vibekit.MCPPromptInfo
+	Resources []vibekit.MCPResourceInfo
 	// Relayed is the relay's single-use latch for THIS authorization attempt
 	// (mcp_oauth_relay.go). It is set the moment a relay RESERVES the attempt,
 	// not after the callback lands, and it stays set once the loopback listener
@@ -187,7 +187,7 @@ func (r *mcpRegistry) signalReady() {
 // resources it advertises), broadcasts mcp_connected, and fires onChange.
 // Called from the _kiro/mcp/status handler when a server reports the
 // "connected" state. prompts/resources may be nil (server exposes none).
-func (r *mcpRegistry) recordConnected(ctx context.Context, name string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
+func (r *mcpRegistry) recordConnected(ctx context.Context, name string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
 	origin, ok := r.originFor(ctx, name)
 	if !ok {
 		return
@@ -203,7 +203,7 @@ func (r *mcpRegistry) recordConnected(ctx context.Context, name string, tools []
 	}
 	r.mu.Unlock()
 
-	r.hub.Broadcast(ctx, api.NewEvent(api.EventMCPConnected, "", api.MCPConnectedPayload{Server: name}))
+	r.hub.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPConnected, "", vibekit.MCPConnectedPayload{Server: name}))
 	r.signalChange()
 }
 
@@ -222,7 +222,7 @@ func (r *mcpRegistry) recordOAuth(ctx context.Context, name, url string) {
 	}
 	r.mu.Unlock()
 
-	r.hub.Broadcast(ctx, api.NewEvent(api.EventMCPOAuthNeeded, "", api.MCPOAuthPayload{Server: name, URL: url}))
+	r.hub.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPOAuthNeeded, "", vibekit.MCPOAuthPayload{Server: name, URL: url}))
 	r.signalChange()
 }
 
@@ -244,7 +244,7 @@ func (r *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string
 	}
 	r.mu.Unlock()
 
-	r.hub.Broadcast(ctx, api.NewEvent(api.EventMCPFailed, "", api.MCPFailedPayload{Server: name, Error: errMsg}))
+	r.hub.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPFailed, "", vibekit.MCPFailedPayload{Server: name, Error: errMsg}))
 	r.signalChange()
 }
 
@@ -265,7 +265,7 @@ func (r *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string
 // notification). signalChange still fires so the steering doc regenerates.
 func (r *mcpRegistry) recordDisabled(ctx context.Context, name string) {
 	origin, ok := r.originFor(ctx, name)
-	if !ok || origin == api.OriginUser {
+	if !ok || origin == vibekit.OriginUser {
 		return
 	}
 	r.mu.Lock()
@@ -364,7 +364,7 @@ func (r *mcpRegistry) clearAll(ctx context.Context) {
 		if ctx.Err() != nil {
 			break
 		}
-		r.hub.Broadcast(ctx, api.NewEvent(api.EventMCPDisconnected, "", api.MCPDisconnectedPayload{Server: name}))
+		r.hub.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPDisconnected, "", vibekit.MCPDisconnectedPayload{Server: name}))
 	}
 	r.signalChange()
 }
@@ -388,13 +388,13 @@ func (r *mcpRegistry) clearAll(ctx context.Context) {
 // A nil mcpConfig (test hubs) reports OriginUser for every name, which keeps the
 // pre-existing "no config means record it" behaviour and keeps recordDisabled's
 // drop rule intact for those hubs.
-func (r *mcpRegistry) originFor(ctx context.Context, name string) (api.Origin, bool) {
+func (r *mcpRegistry) originFor(ctx context.Context, name string) (vibekit.Origin, bool) {
 	cfg := r.hub.mcpConfig
 	if cfg == nil {
-		return api.OriginUser, true
+		return vibekit.OriginUser, true
 	}
 	if _, ok := cfg.EnabledNames(ctx)[name]; ok {
-		return api.OriginUser, true
+		return vibekit.OriginUser, true
 	}
 	if _, ok := cfg.ConfiguredNames(ctx)[name]; ok {
 		return "", false
@@ -403,9 +403,9 @@ func (r *mcpRegistry) originFor(ctx context.Context, name string) (api.Origin, b
 	// config file's powers block. This is the only branch that reads the file,
 	// so a configured server's frame never touches the disk.
 	if _, ok := cfg.AllNames(ctx)[name]; ok {
-		return api.OriginPower, true
+		return vibekit.OriginPower, true
 	}
-	return api.OriginUnknown, true
+	return vibekit.OriginUnknown, true
 }
 
 // statusServer is the JSON shape for /api/mcp/status entries.
@@ -418,20 +418,20 @@ type mcpStatusResponse struct {
 // must match that struct: handleStatus converts between them directly, so a
 // reorder here is a compile error rather than a silent field swap.
 type statusServer struct {
-	Name  string             `json:"name"`
-	State api.MCPServerState `json:"state"`
+	Name  string                 `json:"name"`
+	State vibekit.MCPServerState `json:"state"`
 	// Origin is where the server came from. Always sent (not omitempty): the
 	// client withholds edit affordances on anything but "user", and an absent
 	// field would make it guess.
-	Origin   api.Origin `json:"origin"`
-	OAuthURL string     `json:"oauth_url,omitempty"`
-	Error    string     `json:"error,omitempty"`
+	Origin   vibekit.Origin `json:"origin"`
+	OAuthURL string         `json:"oauth_url,omitempty"`
+	Error    string         `json:"error,omitempty"`
 	// Tools is the connected server's tool names. The per-tool deny editor reads
 	// them from here to offer suggestions; they were a persisted config field
 	// (`known_tools`) until the config file became KAS's.
-	Tools     []string              `json:"tools,omitempty"`
-	Prompts   []api.MCPPromptInfo   `json:"prompts,omitempty"`
-	Resources []api.MCPResourceInfo `json:"resources,omitempty"`
+	Tools     []string                  `json:"tools,omitempty"`
+	Prompts   []vibekit.MCPPromptInfo   `json:"prompts,omitempty"`
+	Resources []vibekit.MCPResourceInfo `json:"resources,omitempty"`
 	// Relayed says this attempt's callback is on its way to the loopback listener
 	// or was already delivered to it. On the wire so a reload, or a second
 	// device, does not offer the paste box again for a code that has been spent.

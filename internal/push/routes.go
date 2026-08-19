@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -33,7 +33,7 @@ func (s *Service) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webhttp.LimitBody(w, r, webhttp.MaxJSONBody)
-	var sub api.PushSubscription
+	var sub vibekit.PushSubscription
 	if err := json.NewDecoder(r.Body).Decode(&sub); err != nil || sub.Endpoint == "" {
 		httpreply.BadRequest(w, "invalid subscription")
 		return

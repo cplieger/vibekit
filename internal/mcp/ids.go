@@ -10,7 +10,7 @@ import (
 // ServerID is a validated identifier for an MCP server record. Values
 // are generated at Create time via newID() and are base32-encoded random
 // values. The type prevents accidental Name-as-ID confusion at compile
-// time, mirroring api.ChatID and api.SessionID.
+// time, mirroring vibekit.ChatID and vibekit.SessionID.
 type ServerID string
 
 // IDMaxLen is the byte bound on a server id. Generated ids are 10 chars; the

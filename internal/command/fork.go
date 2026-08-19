@@ -38,8 +38,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // errForkParentUnknown is returned when the chat being forked has no record.
@@ -53,17 +53,17 @@ var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens in
 // CmdForkChat opens a tangent off another chat.
 //
 //nolint:revive // context-as-argument: dispatcher handler signature
-func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.ForkChatCommand
+	var p vibekit.ForkChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > api.MaxChatNameBytes {
+	if !ids.ValidChatID(string(p.ParentChatID)) || len(p.Title) > vibekit.MaxChatNameBytes {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
@@ -83,12 +83,12 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 	// rather than sent by the client: the record is the truth about both, and a
 	// client value could be a tab's stale projection.
 	sessionID := forkSession(ctx, deps, p, cmd.ChatID)
-	outcome := api.ForkOutcomeForked
+	outcome := vibekit.ForkOutcomeForked
 	if sessionID == "" {
-		outcome = api.ForkOutcomePrimed
+		outcome = vibekit.ForkOutcomePrimed
 	}
 
-	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		// Refuse to reshape an existing chat, for CmdResumeSession's reason:
 		// binding a live chat to another session strands its own (the transcript
 		// stays on disk unreferenced, so the reaper sweeps it) and silently
@@ -96,7 +96,7 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		if exists {
 			return false
 		}
-		c.Name = api.DefaultChatName
+		c.Name = vibekit.DefaultChatName
 		c.Model = parent.Model
 		c.CurrentModeID = parent.CurrentModeID
 		c.Effort = parent.Effort
@@ -112,7 +112,7 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		return
 	}
 
-	if outcome == api.ForkOutcomePrimed {
+	if outcome == vibekit.ForkOutcomePrimed {
 		// Marked AFTER the record exists, so nothing can observe a prime note for
 		// a chat that failed to create.
 		deps.PrimeFromChat(cmd.ChatID, p.ParentChatID)
@@ -135,7 +135,7 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 // reasons are still distinguished in the log, since "no bridge" (the parent was
 // never prompted, or its process is gone) and "KAS refused" want different
 // follow-ups.
-func forkSession(ctx context.Context, deps Dependencies, p api.ForkChatCommand, newChat api.ChatID) string {
+func forkSession(ctx context.Context, deps Dependencies, p vibekit.ForkChatCommand, newChat vibekit.ChatID) string {
 	bridge := deps.GetBridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
 		// No live session to branch. Deliberately NOT started here: spawning a
@@ -147,11 +147,11 @@ func forkSession(ctx context.Context, deps Dependencies, p api.ForkChatCommand, 
 		return ""
 	}
 
-	meta := map[string]any{"createdReason": api.CreatedReasonTangent}
+	meta := map[string]any{"createdReason": vibekit.CreatedReasonTangent}
 	if p.Title != "" {
 		meta["title"] = p.Title
 	}
-	resp, err := bridge.Call(ctx, api.MethodSessionFork, SessionParams(bridge, map[string]any{
+	resp, err := bridge.Call(ctx, vibekit.MethodSessionFork, SessionParams(bridge, map[string]any{
 		"cwd":   deps.WorkDir(),
 		"_meta": map[string]any{"kiro": meta},
 	}))

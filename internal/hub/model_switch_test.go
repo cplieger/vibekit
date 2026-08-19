@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- switch_model ---
 
 func TestSwitchModel_MissingChatID(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, api.ClientCommand{Type: "switch_model", RequestID: "r1"})
+	rec := postCmd(t, h, vibekit.ClientCommand{Type: "switch_model", RequestID: "r1"})
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", rec.Code)
 	}
@@ -20,7 +20,7 @@ func TestSwitchModel_MissingChatID(t *testing.T) {
 
 func TestSwitchModel_ChatNotFound(t *testing.T) {
 	h, _, _ := newTestHub()
-	rec := postCmd(t, h, api.ClientCommand{
+	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "nope",
 	})
 	if rec.Code != http.StatusNotFound {
@@ -34,14 +34,14 @@ func TestSwitchModel_ChatNotFound(t *testing.T) {
 // model_switched event (see TestSwitchModel_BareRestart_NoEvent).
 func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old-acp"
 		c.Model = "m-old"
 		return true
 	})
 
-	rec := postCmd(t, h, api.ClientCommand{
+	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
@@ -55,7 +55,7 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	if c.ACPSessionID == "" {
 		t.Errorf("acp_session_id was cleared, want preserved for fast path")
 	}
-	if len(c.Messages) != 1 || c.Messages[0].EventKind != api.EventModelSwitched {
+	if len(c.Messages) != 1 || c.Messages[0].EventKind != vibekit.EventModelSwitched {
 		t.Errorf("expected model_switched event, got %+v", c.Messages)
 	}
 	sb := h.coord.GetBridge("c1")
@@ -69,14 +69,14 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 
 func TestSwitchModel_WithModelOverride(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "claude-opus"
 		c.ACPSessionID = "old-acp"
 		return true
 	})
 
-	rec := postCmd(t, h, api.ClientCommand{
+	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"claude-sonnet"}`),
 	})
@@ -97,17 +97,17 @@ func TestSwitchModel_WithModelOverride(t *testing.T) {
 // commands don't touch Usage — see TestSwitchModel_BareRestart_NoEvent).
 func TestSwitchModel_PreservesContextSize(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old"
 		c.Model = "m-old"
-		c.Usage = api.Usage{
+		c.Usage = vibekit.Usage{
 			ContextSize: 200000, ContextPct: 80, Credits: 1.23, TurnCount: 12,
 		}
 		return true
 	})
 
-	_ = postCmd(t, h, api.ClientCommand{
+	_ = postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-new"}`),
 	})
@@ -127,18 +127,18 @@ func TestSwitchModel_PreservesContextSize(t *testing.T) {
 // counters. Those side effects are reserved for a real model change.
 func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.ACPSessionID = "old"
 		c.Model = "m-same"
-		c.Usage = api.Usage{
+		c.Usage = vibekit.Usage{
 			ContextSize: 200000, ContextPct: 80, Credits: 1.23, TurnCount: 12,
 		}
 		return true
 	})
 
 	// Empty payload: bare restart.
-	rec := postCmd(t, h, api.ClientCommand{
+	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "c1",
 	})
 	if rec.Code != http.StatusOK {
@@ -154,7 +154,7 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 	}
 
 	// Same-model payload: also bare restart, same invariants.
-	rec2 := postCmd(t, h, api.ClientCommand{
+	rec2 := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r2", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-same"}`),
 	})
@@ -176,13 +176,13 @@ func TestSwitchModel_BareRestart_NoEvent(t *testing.T) {
 // persistModelSwitch before bridge.Start rejected it downstream.
 func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		return true
 	})
 
-	rec := postCmd(t, h, api.ClientCommand{
+	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"bad<script>"}`),
 	})
@@ -202,7 +202,7 @@ func TestSwitchModel_RejectsInvalidModel(t *testing.T) {
 // Fast path: in-session model switch (set_config_option) succeeds, bridge stays alive.
 func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "old-model"
 		return true
@@ -215,7 +215,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	fb := sb.bridge.(*fakeBridge)
 	origSessionID := fb.SessionID()
 
-	rec := postCmd(t, h, api.ClientCommand{
+	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"new-model"}`),
 	})
@@ -262,14 +262,14 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 // working bridge to respawn on the same rejected id.
 func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		c.ServedModelIDs = []string{"m-old", "m-other"}
 		return true
 	})
 
-	rec := postCmd(t, h, api.ClientCommand{
+	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-unentitled"}`),
 	})
@@ -302,13 +302,13 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+			_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.Model = "m-old"
 				c.ServedModelIDs = tc.served
 				return true
 			})
-			rec := postCmd(t, h, api.ClientCommand{
+			rec := postCmd(t, h, vibekit.ClientCommand{
 				Type: "switch_model", RequestID: "r1", ChatID: "c1",
 				Payload: json.RawMessage(`{"model":"m-anything"}`),
 			})
@@ -329,17 +329,17 @@ func TestSwitchModel_AllowsWhenEntitlementIsUnknowable(t *testing.T) {
 // unfiltered served set, so a deprecated id present there is allowed.
 func TestSwitchModel_AllowsADeprecatedModelTheAccountStillServes(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-old"
 		// The display list omits it; the served set does not. That divergence is
 		// exactly what applyModelConfigOptionLocked produces.
-		c.AvailableModels = []api.SessionModel{{ID: "m-old", Name: "Old"}}
+		c.AvailableModels = []vibekit.SessionModel{{ID: "m-old", Name: "Old"}}
 		c.ServedModelIDs = []string{"m-old", "m-deprecated"}
 		return true
 	})
 
-	rec := postCmd(t, h, api.ClientCommand{
+	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "switch_model", RequestID: "r1", ChatID: "c1",
 		Payload: json.RawMessage(`{"model":"m-deprecated"}`),
 	})

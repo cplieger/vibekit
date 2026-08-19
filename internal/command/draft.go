@@ -16,7 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // CmdSetDraft records the chat's unsent composer text.
@@ -25,16 +25,16 @@ import (
 // abandoned message is cleared. The reply carries the byte length rather than
 // the text, because echoing a draft back would put the user's unsent words in
 // the response body of a request that already carried them.
-func CmdSetDraft(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdSetDraft(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.SetDraftCommand
+	var p vibekit.SetDraftCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	if len(p.Text) > api.MaxDraftBytes {
+	if len(p.Text) > vibekit.MaxDraftBytes {
 		d.RespondErr(w, http.StatusRequestEntityTooLarge, errDraftTooLong)
 		return
 	}

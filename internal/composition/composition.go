@@ -16,7 +16,6 @@ import (
 
 	"github.com/cplieger/atomicfile/v2"
 	"github.com/cplieger/toolbelt/v2"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/auth"
 	"github.com/cplieger/vibekit/internal/bridge"
 	"github.com/cplieger/vibekit/internal/chat"
@@ -35,6 +34,7 @@ import (
 	"github.com/cplieger/vibekit/internal/server"
 	"github.com/cplieger/vibekit/internal/settings"
 	"github.com/cplieger/vibekit/internal/steering"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -176,13 +176,13 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)
 	mcpPrewarm.OnStatus = func(pkg string, state prewarm.State) {
-		h.Broadcast(ctx, api.NewEvent(api.EventMCPPrewarm, "", api.MCPPrewarmPayload{
+		h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPPrewarm, "", vibekit.MCPPrewarmPayload{
 			Package: pkg,
 			State:   string(state),
 		}))
 	}
 	mcpStore.SetOnChange(func(ctx context.Context) {
-		h.Broadcast(ctx, api.NewEvent(api.EventMCPConfigChanged, "", api.MCPConfigChangedPayload{}))
+		h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMCPConfigChanged, "", vibekit.MCPConfigChangedPayload{}))
 		mcpPrewarm.Run(ctx)
 		// No bridge restart, and nothing to forward: the store's persist renders
 		// KAS's own config file, whose watcher re-merges and reconnects in place.
@@ -264,7 +264,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// chats live in — this predicate is what keeps an old-but-open conversation
 	// out of it.
 	chat.WithLive(h.HasLiveBridge)(chatStore)
-	chat.WithOnPurge(func(_ api.ChatID, sessionChain []string) {
+	chat.WithOnPurge(func(_ vibekit.ChatID, sessionChain []string) {
 		for _, id := range sessionChain {
 			sessionReaper.Reap(id)
 		}
@@ -625,8 +625,8 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbel
 		Seed:                toolbelt.DefaultSeed(),
 		System:              []string{"git", "jq", "curl", "unzip", "xz", "ssh", "tar", "bash"},
 		OnJobChanged: func(j *toolbelt.Job) {
-			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobChanged, "",
-				api.ToolJobChangedPayload{Job: j}))
+			h.Broadcast(context.Background(), vibekit.NewEvent(vibekit.EventToolJobChanged, "",
+				vibekit.ToolJobChangedPayload{Job: j}))
 			// A finished install/reconcile may have just produced the
 			// first enabled language server: activate workspace code
 			// intelligence (idempotent; no-op while lsp.json exists or
@@ -640,8 +640,8 @@ func buildToolsEngine(appCtx context.Context, cfg *Config, h *hub.Hub) (*toolbel
 			}
 		},
 		OnJobOutput: func(jobID string, lines []string) {
-			h.Broadcast(context.Background(), api.NewEvent(api.EventToolJobOutput, "",
-				api.ToolJobOutputPayload{JobID: jobID, Lines: lines}))
+			h.Broadcast(context.Background(), vibekit.NewEvent(vibekit.EventToolJobOutput, "",
+				vibekit.ToolJobOutputPayload{JobID: jobID, Lines: lines}))
 		},
 	})
 	if err != nil {

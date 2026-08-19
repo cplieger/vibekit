@@ -6,7 +6,7 @@
 // shaped that way, and returns the part that is usable. That is one job read
 // over two inputs — the model's description of itself, and the model's answer.
 //
-// It exists because this is BEHAVIOUR, and it used to sit in internal/api beside
+// It exists because this is BEHAVIOUR, and it used to sit in internal/vibekit beside
 // the wire and domain TYPES. Five packages call it (bridge, hub and translate
 // for the tags; git and server for the fences), none of which owns the others.
 // internal/git was the obvious candidate for the fence half, holding 3 of its 4

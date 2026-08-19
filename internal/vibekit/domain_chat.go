@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Chat domain types: session state, messages, tool calls, plans, usage,
 // session modes/models. These are the persisted and over-the-wire shapes
@@ -211,7 +211,7 @@ type ToolCall struct {
 // TextSpan styles the half-open range [Start,End) of a sibling text field.
 //
 // It mirrors internal/ansitext.Span; the wire type lives here because
-// internal/api owns every shape codegen projects into TypeScript and
+// internal/vibekit owns every shape codegen projects into TypeScript and
 // internal/ansitext stays a stdlib-only leaf that knows nothing about the wire.
 //
 // Attrs values match web-terminal-engine's vt.WireRun.A so the terminal
@@ -590,7 +590,7 @@ type Chat struct {
 	// There is no ParentChatID and no RewindFromTurn. Both described a rewind
 	// BRANCH — a second chat truncated at a turn, pointing back at the chat it
 	// came from. A rewind reverts the chat it is in now, so nothing has a parent
-	// and no chat records which turn it started at. (api.WorkflowRun keeps its
+	// and no chat records which turn it started at. (vibekit.WorkflowRun keeps its
 	// own ParentChatID; that one names the chat that LAUNCHED a run and is
 	// unrelated.)
 	MessageCount   int  `json:"message_count"`

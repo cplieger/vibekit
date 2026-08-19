@@ -3,18 +3,18 @@ package hub
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // listIDs reads the request ids back off a List snapshot, which is the only way
 // to assert the order the replay will write the cards in.
-func listIDs(t *testing.T, evts []api.ServerEvent) []int64 {
+func listIDs(t *testing.T, evts []vibekit.ServerEvent) []int64 {
 	t.Helper()
 	ids := make([]int64, 0, len(evts))
 	for _, evt := range evts {
-		p, ok := evt.Payload.(api.PermissionNeededPayload)
+		p, ok := evt.Payload.(vibekit.PermissionNeededPayload)
 		if !ok {
-			t.Fatalf("replayed event carries payload %T, want api.PermissionNeededPayload", evt.Payload)
+			t.Fatalf("replayed event carries payload %T, want vibekit.PermissionNeededPayload", evt.Payload)
 		}
 		ids = append(ids, p.RequestID)
 	}
@@ -33,8 +33,8 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
 	for _, id := range []int64{7, 2, 9, 1, 5} {
-		tracker.Add(id, api.NewEvent(api.EventPermissionNeeded, "chat-1",
-			api.PermissionNeededPayload{RequestID: id}))
+		tracker.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, "chat-1",
+			vibekit.PermissionNeededPayload{RequestID: id}))
 	}
 
 	want := []int64{1, 2, 5, 7, 9}
@@ -59,13 +59,13 @@ func TestPendingPermsTracker_List_OrdersByRequestID(t *testing.T) {
 func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	kinds := map[int64]api.EventType{
-		31: api.EventPermissionNeeded,
-		12: api.EventElicitationNeeded,
-		20: api.EventUserInputNeeded,
+	kinds := map[int64]vibekit.EventType{
+		31: vibekit.EventPermissionNeeded,
+		12: vibekit.EventElicitationNeeded,
+		20: vibekit.EventUserInputNeeded,
 	}
 	for id, kind := range kinds {
-		tracker.Add(id, api.NewEvent(kind, "chat-1", api.PermissionNeededPayload{RequestID: id}))
+		tracker.Add(id, vibekit.NewEvent(kind, "chat-1", vibekit.PermissionNeededPayload{RequestID: id}))
 	}
 
 	got := tracker.List("chat-1")
@@ -87,13 +87,13 @@ func TestPendingPermsTracker_List_OrdersAcrossKinds(t *testing.T) {
 func TestPendingPermsTracker_List_FiltersByChatAndStaysOrdered(t *testing.T) {
 	t.Parallel()
 	tracker := newPendingPermsTracker()
-	owners := map[int64]api.ChatID{4: "chat-1", 8: "chat-2", 1: "chat-1", 6: "chat-2", 3: "chat-1"}
+	owners := map[int64]vibekit.ChatID{4: "chat-1", 8: "chat-2", 1: "chat-1", 6: "chat-2", 3: "chat-1"}
 	for id, chatID := range owners {
-		tracker.Add(id, api.NewEvent(api.EventPermissionNeeded, chatID,
-			api.PermissionNeededPayload{RequestID: id}))
+		tracker.Add(id, vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID,
+			vibekit.PermissionNeededPayload{RequestID: id}))
 	}
 
-	for chatID, want := range map[api.ChatID][]int64{
+	for chatID, want := range map[vibekit.ChatID][]int64{
 		"chat-1": {1, 3, 4},
 		"chat-2": {6, 8},
 	} {

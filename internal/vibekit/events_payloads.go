@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Per-event payload structs for SSE events. The envelope types and
 // event-type constants live in events.go; this file contains only the

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/wiregen/v2"
 )
 
@@ -27,9 +27,9 @@ import (
 // is a type emitted for nobody; a payload declared but unregistered is an
 // event on the wire with no contract behind it.
 
-// apiPkgPath is read off a registration rather than written as a literal, so
-// renaming the api package cannot leave these tests silently scanning nothing.
-var apiPkgPath = wiregen.TypeRef[api.Message]().PkgPath
+// vibekitPkgPath is read off a registration rather than written as a literal, so
+// renaming the package cannot leave these tests silently scanning nothing.
+var vibekitPkgPath = wiregen.TypeRef[vibekit.Message]().PkgPath
 
 // emptySignalPayloads are the payload types deliberately absent from the
 // registry. Each is an empty struct: the event is a pure invalidation signal
@@ -70,7 +70,7 @@ var unboundDataPayloads = []string{
 	"WorkingLabelPayload",
 }
 
-// declaredAPIPayloads parses internal/api and returns every exported type
+// declaredVibekitPayloads parses internal/vibekit and returns every exported type
 // whose name ends in Payload, mapped to the field count of its struct
 // definition.
 //
@@ -84,12 +84,12 @@ var unboundDataPayloads = []string{
 // payload declared behind a build tag is on the wire wherever it does build and
 // needs a registration just the same. Excluding it here would be the loader
 // hiding exactly the case this test is for.
-func declaredAPIPayloads(t *testing.T) map[string]int {
+func declaredVibekitPayloads(t *testing.T) map[string]int {
 	t.Helper()
-	dir := filepath.Join("..", "api")
+	dir := filepath.Join("..", "vibekit")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("read internal/api: %v", err)
+		t.Fatalf("read internal/vibekit: %v", err)
 	}
 	fset := token.NewFileSet()
 	out := map[string]int{}
@@ -121,18 +121,18 @@ func declaredAPIPayloads(t *testing.T) map[string]int {
 		}
 	}
 	if len(out) == 0 {
-		t.Fatal("parsed internal/api and found no exported *Payload types; the scan is broken, not the registry")
+		t.Fatal("parsed internal/vibekit and found no exported *Payload types; the scan is broken, not the registry")
 	}
 	return out
 }
 
-// registeredAPIPayloads returns the names of the api.*Payload types in the
+// registeredVibekitPayloads returns the names of the vibekit.*Payload types in the
 // registry.
-func registeredAPIPayloads(t *testing.T) []string {
+func registeredVibekitPayloads(t *testing.T) []string {
 	t.Helper()
 	var out []string
 	for _, wt := range Registry().Types {
-		if wt.PkgPath == apiPkgPath && strings.HasSuffix(wt.Name, "Payload") {
+		if wt.PkgPath == vibekitPkgPath && strings.HasSuffix(wt.Name, "Payload") {
 			out = append(out, wt.Name)
 		}
 	}
@@ -140,11 +140,11 @@ func registeredAPIPayloads(t *testing.T) []string {
 }
 
 // TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt is the table walk: a
-// new api.*Payload type cannot reach the SSE wire without either a
+// new vibekit.*Payload type cannot reach the SSE wire without either a
 // registration or an explicit entry in one of the two exemption lists above.
 func TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt(t *testing.T) {
-	declared := declaredAPIPayloads(t)
-	registered := registeredAPIPayloads(t)
+	declared := declaredVibekitPayloads(t)
+	registered := registeredVibekitPayloads(t)
 
 	for name := range declared {
 		switch {
@@ -152,8 +152,8 @@ func TestRegistry_EveryDeclaredPayloadIsRegisteredOrExempt(t *testing.T) {
 		case slices.Contains(emptySignalPayloads, name):
 		case slices.Contains(unboundDataPayloads, name):
 		default:
-			t.Errorf("api.%s is declared but has no wire registration.\n"+
-				"Add wiregen.TypeRef[api.%s]() to wireTypes plus its {EventType, TypeName} entry in sseEvents,\n"+
+			t.Errorf("vibekit.%s is declared but has no wire registration.\n"+
+				"Add wiregen.TypeRef[vibekit.%s]() to wireTypes plus its {EventType, TypeName} entry in sseEvents,\n"+
 				"or — if it is an empty invalidation signal with no field to decode — add it to emptySignalPayloads with that reason.",
 				name, name)
 		}
@@ -172,9 +172,9 @@ func TestRegistry_EveryRegisteredPayloadHasAnSSEBinding(t *testing.T) {
 		bound = append(bound, e.TypeName)
 	}
 
-	for _, name := range registeredAPIPayloads(t) {
+	for _, name := range registeredVibekitPayloads(t) {
 		if !slices.Contains(bound, name) {
-			t.Errorf("api.%s is registered in wireTypes but bound to no SSE event.\n"+
+			t.Errorf("vibekit.%s is registered in wireTypes but bound to no SSE event.\n"+
 				"Add its {EventType: \"…\", TypeName: %q} entry to sseEvents, or drop the registration.",
 				name, name)
 		}
@@ -216,15 +216,15 @@ func TestRegistry_NoDuplicateSSEEventTypes(t *testing.T) {
 // to its stated reason. The moment one of those payloads gains a field, the
 // argument for exempting it ("nothing to decode") stops being true.
 func TestPayloadExemptions_AreStillEmptyStructs(t *testing.T) {
-	declared := declaredAPIPayloads(t)
+	declared := declaredVibekitPayloads(t)
 	for _, name := range emptySignalPayloads {
 		fields, ok := declared[name]
 		if !ok {
-			t.Errorf("emptySignalPayloads names api.%s, which no longer exists in internal/api; drop the entry", name)
+			t.Errorf("emptySignalPayloads names vibekit.%s, which no longer exists in internal/vibekit; drop the entry", name)
 			continue
 		}
 		if fields != 0 {
-			t.Errorf("api.%s is exempt as an empty invalidation signal but now has %d field(s).\n"+
+			t.Errorf("vibekit.%s is exempt as an empty invalidation signal but now has %d field(s).\n"+
 				"It carries data, so it needs a registration and an SSE binding; remove it from emptySignalPayloads.",
 				name, fields)
 		}
@@ -236,8 +236,8 @@ func TestPayloadExemptions_AreStillEmptyStructs(t *testing.T) {
 // registered, or whose type is gone, must leave the list — otherwise the list
 // stops describing the gap and starts hiding a fixed one.
 func TestPayloadExemptions_AreNotStale(t *testing.T) {
-	declared := declaredAPIPayloads(t)
-	registered := registeredAPIPayloads(t)
+	declared := declaredVibekitPayloads(t)
+	registered := registeredVibekitPayloads(t)
 
 	for _, list := range []struct {
 		name    string
@@ -248,11 +248,11 @@ func TestPayloadExemptions_AreNotStale(t *testing.T) {
 	} {
 		for _, name := range list.entries {
 			if _, ok := declared[name]; !ok {
-				t.Errorf("%s names api.%s, which is not declared in internal/api any more; drop the entry",
+				t.Errorf("%s names vibekit.%s, which is not declared in internal/vibekit any more; drop the entry",
 					list.name, name)
 			}
 			if slices.Contains(registered, name) {
-				t.Errorf("%s names api.%s, but it IS registered now; drop the entry (the exemption is spent)",
+				t.Errorf("%s names vibekit.%s, but it IS registered now; drop the entry (the exemption is spent)",
 					list.name, name)
 			}
 		}

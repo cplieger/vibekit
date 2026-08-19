@@ -15,7 +15,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // realInspect is trimmed from a measured inspect result. Fields this package
@@ -119,7 +119,7 @@ func TestStepSessions_EmptyInputs(t *testing.T) {
 
 // rpcErr builds the error shape a KAS failure arrives as.
 func rpcErr(message, data string) error {
-	e := &api.RPCError{Code: -32603, Message: message}
+	e := &vibekit.RPCError{Code: -32603, Message: message}
 	if data != "" {
 		e.Data = json.RawMessage(data)
 	}

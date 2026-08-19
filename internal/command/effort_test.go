@@ -14,18 +14,18 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-func effortReq(t *testing.T, chatID api.ChatID, level string) *api.ClientCommand {
+func effortReq(t *testing.T, chatID vibekit.ChatID, level string) *vibekit.ClientCommand {
 	t.Helper()
 	payload, err := json.Marshal(map[string]string{"level": level})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdSetEffort,
+	return &vibekit.ClientCommand{
+		Type:      vibekit.CmdSetEffort,
 		ChatID:    chatID,
 		RequestID: "r1",
 		Payload:   payload,
@@ -51,11 +51,11 @@ func TestCmdSetEffort_PersistsOnTheChatRecord(t *testing.T) {
 	if c.Effort != "high" {
 		t.Errorf("Effort = %q, want %q; the level has to survive a restart to reach StartOpts.Effort", c.Effort, "high")
 	}
-	if b.gotMethod != api.MethodSetConfigOption {
-		t.Errorf("method = %q, want %q", b.gotMethod, api.MethodSetConfigOption)
+	if b.gotMethod != vibekit.MethodSetConfigOption {
+		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodSetConfigOption)
 	}
-	if b.gotParams["configId"] != api.ConfigOptionEffort {
-		t.Errorf("configId = %v, want %q", b.gotParams["configId"], api.ConfigOptionEffort)
+	if b.gotParams["configId"] != vibekit.ConfigOptionEffort {
+		t.Errorf("configId = %v, want %q", b.gotParams["configId"], vibekit.ConfigOptionEffort)
 	}
 	if b.gotParams["value"] != "high" {
 		t.Errorf("value = %v, want high", b.gotParams["value"])
@@ -84,7 +84,7 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 // prompt.
 type noBridgeDeps struct{ *storeDeps }
 
-func (d *noBridgeDeps) GetBridge(api.ChatID) Bridge { return nil }
+func (d *noBridgeDeps) GetBridge(vibekit.ChatID) Bridge { return nil }
 
 // A bridgeless chat used to answer 409, which is why the client had a second
 // path that wrote a GLOBAL setting instead — a different store and a different
@@ -127,7 +127,7 @@ func TestCmdSetEffort_AutoCreatesTheRecordLikeSetMode(t *testing.T) {
 	if c.Effort != "xhigh" {
 		t.Errorf("Effort = %q, want xhigh", c.Effort)
 	}
-	if c.Name != api.DefaultChatName {
+	if c.Name != vibekit.DefaultChatName {
 		t.Errorf("Name = %q, want the default so the row is not blank", c.Name)
 	}
 }
@@ -174,11 +174,11 @@ func TestCmdSetEffort_RejectsAnUnknownLevel(t *testing.T) {
 	}
 }
 
-// api.Chat.Effort is what spawnBridge reads for StartOpts.Effort, so the header
+// vibekit.Chat.Effort is what spawnBridge reads for StartOpts.Effort, so the header
 // has to carry it too: the effort control renders the ACTIVE chat's level, and an
 // empty chat never fetches its full record.
 func TestChatHeader_CarriesEffort(t *testing.T) {
-	c := &api.Chat{ID: "c1", Effort: "high"}
+	c := &vibekit.Chat{ID: "c1", Effort: "high"}
 	if got := c.Header().Effort; got != "high" {
 		t.Errorf("Header().Effort = %q, want high", got)
 	}

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // stepToolFrame builds one workflow-step tool_call frame. nodePath is what makes
@@ -41,7 +41,7 @@ func stepToolFrame(id, workflowID, nodeID string, nodePath []string) map[string]
 func TestStepTurnCap_ReportsOnceAtTheCap(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "id" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 	path := []string{"wf", "step-a"}
 
 	for i := range StepTurnCap + 5 {
@@ -68,7 +68,7 @@ func TestStepTurnCap_StaysSilentBelowTheCap(t *testing.T) {
 	tr := New(deps, withIDGenerator(func() string { return "id" }))
 
 	for i := range StepTurnCap - 1 {
-		tr.HandleToolCall(t.Context(), api.ChatID("c1"),
+		tr.HandleToolCall(t.Context(), vibekit.ChatID("c1"),
 			mustJSON(t, stepToolFrame("tc-"+strconv.Itoa(i), "wf_1", "step-a", []string{"wf", "step-a"})), "")
 	}
 	if len(deps.stepCapBreaches) != 0 {
@@ -85,7 +85,7 @@ func TestStepTurnCap_StaysSilentBelowTheCap(t *testing.T) {
 func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "id" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 
 	half := StepTurnCap / 2
 	for i := range half {
@@ -111,7 +111,7 @@ func TestStepTurnCap_CountsPerStepInstance(t *testing.T) {
 func TestStepTurnCap_IgnoresANonStepToolCall(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "id" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 
 	for i := range StepTurnCap + 5 {
 		tr.HandleToolCall(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -139,7 +139,7 @@ func TestStepTurnCap_IgnoresANonStepToolCall(t *testing.T) {
 func TestStepTurnCap_CountsPerRunNotPerNodePath(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "id" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 	// One shared path. Two DIFFERENT runs — an agent-launched run reaches KAS
 	// directly, so the single-run-per-recipe rule does not keep these apart.
 	path := []string{"wf", "step-a"}
@@ -175,7 +175,7 @@ func TestStepTurnCap_CountsPerRunNotPerNodePath(t *testing.T) {
 func TestStepTurnCap_HalfTheCapEachDoesNotTripEitherRun(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "id" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 	path := []string{"wf", "step-a"}
 
 	for i := range StepTurnCap / 2 {

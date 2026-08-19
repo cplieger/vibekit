@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestTruncateForStaging_Table is GONE with truncateForStaging. It capped the
@@ -21,12 +21,12 @@ import (
 func TestCurrentMessageCount(t *testing.T) {
 	t.Parallel()
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Messages = []api.Message{
-			{Role: api.RoleUser, Content: "a"},
-			{Role: api.RoleAssistant, Content: "b"},
-			{Role: api.RoleUser, Content: "c"},
+		c.Messages = []vibekit.Message{
+			{Role: vibekit.RoleUser, Content: "a"},
+			{Role: vibekit.RoleAssistant, Content: "b"},
+			{Role: vibekit.RoleUser, Content: "c"},
 		}
 		return true
 	})

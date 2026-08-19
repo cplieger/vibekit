@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/schedule"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // leased grants a manual lease so a bounds test has something to arm. A run with
@@ -845,7 +845,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 func TestRunStartOrigin_ClassifiesByTheCarrier(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
-		chatID api.ChatID
+		chatID vibekit.ChatID
 		want   runlease.Origin
 	}{
 		"a run bridge's frame, dispatched with no chat id": {"", runlease.OriginManual},
@@ -1084,7 +1084,7 @@ func TestDecodeLifecycleFrame(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			msg := &api.RPCResponse{Params: json.RawMessage(tc.params)}
+			msg := &vibekit.RPCResponse{Params: json.RawMessage(tc.params)}
 			got := decodeLifecycleFrame(msg)
 			if got.WorkflowID != tc.wantID {
 				t.Errorf("WorkflowID = %q, want %q", got.WorkflowID, tc.wantID)
@@ -1099,7 +1099,7 @@ func TestDecodeLifecycleFrame(t *testing.T) {
 	if got := workflowIDOfFrame(nil); got != "" {
 		t.Errorf("workflowIDOfFrame(nil) = %q, want empty", got)
 	}
-	if got := workflowIDOfFrame(&api.RPCResponse{}); got != "" {
+	if got := workflowIDOfFrame(&vibekit.RPCResponse{}); got != "" {
 		t.Errorf("workflowIDOfFrame(empty) = %q, want empty", got)
 	}
 }

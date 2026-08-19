@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- Shared harness ---
@@ -33,7 +33,7 @@ func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Hub {
 	factory := func() ACPBridge { return br }
 	h := New(t.Context(), workDir, factory, cs)
 	cs.Bus = h
-	if err := cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	if err := cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		return true
 	}); err != nil {
@@ -109,9 +109,9 @@ func TestTranslateACPEvent_FSReadRespondsAfterEventCtxCancel_C1(t *testing.T) {
 	br := newCtxAwareBridge()
 	h := hubWithBridge(t, work, br)
 	id := int64(1)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "c1.txt"}),
 	}
 
@@ -141,9 +141,9 @@ func TestTranslateACPEvent_FSWriteRespondsAfterEventCtxCancel_C1(t *testing.T) {
 	br := newCtxAwareBridge()
 	h := hubWithBridge(t, work, br)
 	id := int64(2)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSWrite,
+		Method: vibekit.MethodFSWrite,
 		Params: mustJSON(t, map[string]any{"path": "c1-out.txt", "content": "C1-written"}),
 	}
 
@@ -207,7 +207,7 @@ func (b *recordingTermBridge) lastResponse() (recordedResp, bool) {
 	return b.resps[len(b.resps)-1], true
 }
 
-func termCreateMsg(t *testing.T, id int64, command string, args []string, env []map[string]string) *api.RPCResponse {
+func termCreateMsg(t *testing.T, id int64, command string, args []string, env []map[string]string) *vibekit.RPCResponse {
 	t.Helper()
 	params := map[string]any{"command": command}
 	if len(args) > 0 {
@@ -216,7 +216,7 @@ func termCreateMsg(t *testing.T, id int64, command string, args []string, env []
 	if env != nil {
 		params["env"] = env
 	}
-	return &api.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
+	return &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
 }
 
 // singleTerm returns the sole registered agent terminal.
@@ -322,7 +322,7 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 	br := newRecordingTermBridge()
 	h := hubWithBridge(t, work, br)
 	id := int64(1)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
 		Method: methodTermOutput,
 		Params: mustJSON(t, map[string]any{"terminalId": "does-not-exist"}),

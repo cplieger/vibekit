@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // FuzzLineTrackerConcurrentRecordGet exercises the LineTracker's RWMutex
@@ -22,7 +22,7 @@ func FuzzLineTrackerConcurrentRecordGet(f *testing.F) {
 			return
 		}
 		lt := NewLineTracker()
-		chats := []api.ChatID{"c0", "c1", "c2"}
+		chats := []vibekit.ChatID{"c0", "c1", "c2"}
 		numWorkers := int(data[0]%3) + 2
 		data = data[1:]
 
@@ -51,7 +51,7 @@ func FuzzLineTrackerConcurrentRecordGet(f *testing.F) {
 					case 2: // Clear
 						lt.Clear(chatID)
 					case 3: // RecordFromDiffs
-						lt.RecordFromDiffs(chatID, []api.ToolDiff{
+						lt.RecordFromDiffs(chatID, []vibekit.ToolDiff{
 							{Path: fmt.Sprintf("d%d.go", int(b>>2)%100), NewText: "line\n"},
 						}, i, "create")
 					}

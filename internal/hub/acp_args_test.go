@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestACPArgsReachChatBridges pins the delivery path: WithACPArgs → the
@@ -17,7 +17,7 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs(want))
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)
@@ -69,7 +69,7 @@ func TestACPArgsUnsetIsEmpty(t *testing.T) {
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)

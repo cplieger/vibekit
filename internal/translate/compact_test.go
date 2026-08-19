@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // summarizationInfo builds a session_info_update payload carrying a
@@ -24,13 +24,13 @@ func summarizationInfo(t *testing.T, status, summary string) json.RawMessage {
 
 // eventMsgsByKind returns the persisted RoleEvent messages on chatID whose
 // EventKind matches.
-func eventMsgsByKind(t *testing.T, store *testsupport.InMemoryChatStore, chatID api.ChatID, kind api.EventKind) []api.Message {
+func eventMsgsByKind(t *testing.T, store *testsupport.InMemoryChatStore, chatID vibekit.ChatID, kind vibekit.EventKind) []vibekit.Message {
 	t.Helper()
 	c, ok := store.Get(t.Context(), chatID)
 	if !ok {
 		return nil
 	}
-	var got []api.Message
+	var got []vibekit.Message
 	for _, m := range c.Messages {
 		if m.EventKind == kind {
 			got = append(got, m)
@@ -40,16 +40,16 @@ func eventMsgsByKind(t *testing.T, store *testsupport.InMemoryChatStore, chatID 
 }
 
 // errorPayloads collects every EventError payload broadcast.
-func errorPayloads(t *testing.T, events *[]api.ServerEvent) []api.ErrorPayload {
+func errorPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.ErrorPayload {
 	t.Helper()
-	var got []api.ErrorPayload
+	var got []vibekit.ErrorPayload
 	for _, e := range *events {
-		if e.Type != api.EventError {
+		if e.Type != vibekit.EventError {
 			continue
 		}
-		p, ok := e.Payload.(api.ErrorPayload)
+		p, ok := e.Payload.(vibekit.ErrorPayload)
 		if !ok {
-			t.Fatalf("EventError payload type = %T, want api.ErrorPayload", e.Payload)
+			t.Fatalf("EventError payload type = %T, want vibekit.ErrorPayload", e.Payload)
 		}
 		got = append(got, p)
 	}
@@ -57,10 +57,10 @@ func errorPayloads(t *testing.T, events *[]api.ServerEvent) []api.ErrorPayload {
 }
 
 // countCompactionStarted counts compaction_started broadcasts.
-func countCompactionStarted(events *[]api.ServerEvent) int {
+func countCompactionStarted(events *[]vibekit.ServerEvent) int {
 	n := 0
 	for _, e := range *events {
-		if e.Type == api.EventCompactionStarted {
+		if e.Type == vibekit.EventCompactionStarted {
 			n++
 		}
 	}
@@ -80,10 +80,10 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, ""), "")
 
-			if msgs := eventMsgsByKind(t, store, "c1", api.EventCompactFailed); len(msgs) != 0 {
+			if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(msgs) != 0 {
 				t.Errorf("EventCompactFailed messages = %d, want 0 (cancel is benign)", len(msgs))
 			}
-			if msgs := eventMsgsByKind(t, store, "c1", api.EventCompacted); len(msgs) != 0 {
+			if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompacted); len(msgs) != 0 {
 				t.Errorf("EventCompacted messages = %d, want 0 (cancel is not a completion)", len(msgs))
 			}
 			if p := errorPayloads(t, events); len(p) != 0 {
@@ -109,7 +109,7 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), "")
 
-	msgs := eventMsgsByKind(t, store, "c1", api.EventCompacted)
+	msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompacted)
 	if len(msgs) != 1 {
 		t.Fatalf("EventCompacted messages = %d, want 1", len(msgs))
 	}
@@ -120,7 +120,7 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	if c.CompactionWatermark != "evt-1" {
 		t.Errorf("CompactionWatermark = %q, want %q (must equal the compacted event id)", c.CompactionWatermark, "evt-1")
 	}
-	if failed := eventMsgsByKind(t, store, "c1", api.EventCompactFailed); len(failed) != 0 {
+	if failed := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(failed) != 0 {
 		t.Errorf("EventCompactFailed messages = %d, want 0 on success", len(failed))
 	}
 	if p := errorPayloads(t, events); len(p) != 0 {
@@ -138,7 +138,7 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), "")
 
-	msgs := eventMsgsByKind(t, store, "c1", api.EventCompactFailed)
+	msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed)
 	if len(msgs) != 1 {
 		t.Fatalf("EventCompactFailed messages = %d, want 1", len(msgs))
 	}
@@ -149,8 +149,8 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	if len(p) != 1 {
 		t.Fatalf("EventError broadcasts = %d, want 1", len(p))
 	}
-	if p[0].Code != api.ErrCodeCompactionFailed {
-		t.Errorf("error code = %q, want %q", p[0].Code, api.ErrCodeCompactionFailed)
+	if p[0].Code != vibekit.ErrCodeCompactionFailed {
+		t.Errorf("error code = %q, want %q", p[0].Code, vibekit.ErrCodeCompactionFailed)
 	}
 	if p[0].Message != "error" {
 		t.Errorf("error message = %q, want %q", p[0].Message, "error")
@@ -172,10 +172,10 @@ func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 	if p := errorPayloads(t, events); len(p) != 0 {
 		t.Errorf("EventError broadcasts = %+v, want none while running", p)
 	}
-	if msgs := eventMsgsByKind(t, store, "c1", api.EventCompacted); len(msgs) != 0 {
+	if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompacted); len(msgs) != 0 {
 		t.Errorf("EventCompacted messages = %d, want 0 while running", len(msgs))
 	}
-	if msgs := eventMsgsByKind(t, store, "c1", api.EventCompactFailed); len(msgs) != 0 {
+	if msgs := eventMsgsByKind(t, store, "c1", vibekit.EventCompactFailed); len(msgs) != 0 {
 		t.Errorf("EventCompactFailed messages = %d, want 0 while running", len(msgs))
 	}
 }

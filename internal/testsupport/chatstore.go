@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // chatStoreUnion is the union of what the real consumers declare, spelled out
@@ -30,7 +30,7 @@ import (
 // so both fakes carried a method no test could reach.
 type chatStoreUnion interface {
 	ChatStoreContract
-	SetDraft(ctx context.Context, id api.ChatID, text string) error
+	SetDraft(ctx context.Context, id vibekit.ChatID, text string) error
 }
 
 // RecordingChatStore is an in-memory chat store that keeps chats in a
@@ -42,19 +42,19 @@ type RecordingChatStore struct {
 	// more: internal/chat and internal/forges each declare their own 1-method
 	// copy, and this is the union of the two.
 	Bus interface {
-		Broadcast(ctx context.Context, evt api.ServerEvent)
+		Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 	}
-	Chats map[api.ChatID]*api.Chat
+	Chats map[vibekit.ChatID]*vibekit.Chat
 	mu    sync.Mutex
 }
 
 // NewRecordingChatStore returns a ready-to-use RecordingChatStore.
 func NewRecordingChatStore() *RecordingChatStore {
-	return &RecordingChatStore{Chats: make(map[api.ChatID]*api.Chat)}
+	return &RecordingChatStore{Chats: make(map[vibekit.ChatID]*vibekit.Chat)}
 }
 
 // Get returns a copy of the stored chat for id, or (nil, false) if not found.
-func (s *RecordingChatStore) Get(_ context.Context, id api.ChatID) (*api.Chat, bool) {
+func (s *RecordingChatStore) Get(_ context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.Chats[id]
@@ -66,10 +66,10 @@ func (s *RecordingChatStore) Get(_ context.Context, id api.ChatID) (*api.Chat, b
 }
 
 // List returns headers for all stored chats.
-func (s *RecordingChatStore) List(_ context.Context) []api.ChatHeader {
+func (s *RecordingChatStore) List(_ context.Context) []vibekit.ChatHeader {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	hs := make([]api.ChatHeader, 0, len(s.Chats))
+	hs := make([]vibekit.ChatHeader, 0, len(s.Chats))
 	for _, c := range s.Chats {
 		hs = append(hs, c.Header())
 	}
@@ -77,7 +77,7 @@ func (s *RecordingChatStore) List(_ context.Context) []api.ChatHeader {
 }
 
 // BuildHistory returns the plain-text transcript for the chat with the given id.
-func (s *RecordingChatStore) BuildHistory(_ context.Context, id api.ChatID) string {
+func (s *RecordingChatStore) BuildHistory(_ context.Context, id vibekit.ChatID) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.Chats[id]
@@ -96,15 +96,15 @@ func (s *RecordingChatStore) BuildHistory(_ context.Context, id api.ChatID) stri
 }
 
 // Mutate applies the mutate function to the chat with the given id, creating it if needed.
-func (s *RecordingChatStore) Mutate(_ context.Context, id api.ChatID, mutate func(*api.Chat, bool) bool) error {
+func (s *RecordingChatStore) Mutate(_ context.Context, id vibekit.ChatID, mutate func(*vibekit.Chat, bool) bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	orig, exists := s.Chats[id]
-	var c api.Chat
+	var c vibekit.Chat
 	if exists {
 		c = *orig
 	} else {
-		c = api.Chat{ID: string(id), CreatedAt: time.Now().UnixMilli()}
+		c = vibekit.Chat{ID: string(id), CreatedAt: time.Now().UnixMilli()}
 	}
 	if !mutate(&c, exists) {
 		return nil
@@ -113,9 +113,9 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id api.ChatID, mutate fun
 	s.Chats[id] = &c
 	if s.Bus != nil {
 		if !exists {
-			s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_created", ChatID: id, Payload: c.Header()})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_created", ChatID: id, Payload: c.Header()})
 		} else {
-			s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_updated", ChatID: id, Payload: c.Header()})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_updated", ChatID: id, Payload: c.Header()})
 		}
 	}
 	return nil
@@ -127,7 +127,7 @@ func (s *RecordingChatStore) Mutate(_ context.Context, id api.ChatID, mutate fun
 // depend on. A fake that went through Mutate would stamp activity and make a
 // test unable to observe the one property the real method exists to hold.
 // Absent chat: no-op, like the real store's load-then-write.
-func (s *RecordingChatStore) SetDraft(_ context.Context, id api.ChatID, text string) error {
+func (s *RecordingChatStore) SetDraft(_ context.Context, id vibekit.ChatID, text string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c, ok := s.Chats[id]; ok {
@@ -137,33 +137,33 @@ func (s *RecordingChatStore) SetDraft(_ context.Context, id api.ChatID, text str
 }
 
 // Delete removes the chat with the given id and broadcasts a chat_deleted event.
-func (s *RecordingChatStore) Delete(_ context.Context, id api.ChatID) error {
+func (s *RecordingChatStore) Delete(_ context.Context, id vibekit.ChatID) error {
 	s.mu.Lock()
 	delete(s.Chats, id)
 	s.mu.Unlock()
 	if s.Bus != nil {
-		s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "chat_deleted", ChatID: id, Payload: map[string]string{"id": string(id)}})
+		s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "chat_deleted", ChatID: id, Payload: map[string]string{"id": string(id)}})
 	}
 	return nil
 }
 
 // AppendMessage appends a message to the stored chat and broadcasts message_appended.
-func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID api.ChatID, msg *api.Message) error {
-	return s.Mutate(context.Background(), chatID, func(c *api.Chat, exists bool) bool {
+func (s *RecordingChatStore) AppendMessage(_ context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+	return s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
 		c.Messages = append(c.Messages, *msg)
 		if s.Bus != nil {
-			s.Bus.Broadcast(context.Background(), api.ServerEvent{Type: "message_appended", ChatID: chatID, Payload: msg})
+			s.Bus.Broadcast(context.Background(), vibekit.ServerEvent{Type: "message_appended", ChatID: chatID, Payload: msg})
 		}
 		return true
 	})
 }
 
 // UpdateMessage applies mutate to the message identified by msgID within the stored chat.
-func (s *RecordingChatStore) UpdateMessage(_ context.Context, chatID api.ChatID, msgID string, mutate func(*api.Message)) error {
-	return s.Mutate(context.Background(), chatID, func(c *api.Chat, exists bool) bool {
+func (s *RecordingChatStore) UpdateMessage(_ context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error {
+	return s.Mutate(context.Background(), chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}

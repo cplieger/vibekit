@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // writeRawChat plants a chat file the store did not write. The store's own API
 // cannot produce a file whose stored id disagrees with its name, which is exactly
 // why the fixture goes around it: the hazard is a file arriving from somewhere
 // else (a truncated write, an operator editing /config by hand).
-func writeRawChat(t *testing.T, dir string, chatID api.ChatID, body string) {
+func writeRawChat(t *testing.T, dir string, chatID vibekit.ChatID, body string) {
 	t.Helper()
 	path := filepath.Join(dir, string(chatID)+chatFileSuffix)
 	if err := os.WriteFile(path, []byte(body), fileMode); err != nil {
@@ -27,7 +27,7 @@ func writeRawChat(t *testing.T, dir string, chatID api.ChatID, body string) {
 // file was not touched. Compared as bytes rather than through Get: the claim is
 // that nothing was written, and a decoded comparison would hide a rewrite that
 // happened to round-trip.
-func readRawChat(t *testing.T, dir string, chatID api.ChatID) string {
+func readRawChat(t *testing.T, dir string, chatID vibekit.ChatID) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dir, string(chatID)+chatFileSuffix))
 	if err != nil {
@@ -37,9 +37,9 @@ func readRawChat(t *testing.T, dir string, chatID api.ChatID) string {
 }
 
 // newChat seeds a persisted chat so SetDraft has a record to write to.
-func newChat(t *testing.T, s *Store, id api.ChatID) {
+func newChat(t *testing.T, s *Store, id vibekit.ChatID) {
 	t.Helper()
-	if err := s.Mutate(t.Context(), id, func(c *api.Chat, _ bool) bool {
+	if err := s.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "a chat"
 		return true
 	}); err != nil {
@@ -126,7 +126,7 @@ func TestSetDraft(t *testing.T) {
 		if err := s.writeChat("c1", c); err != nil {
 			t.Fatalf("writeChat: %v", err)
 		}
-		if err := s.Mutate(t.Context(), "c1", func(ch *api.Chat, _ bool) bool {
+		if err := s.Mutate(t.Context(), "c1", func(ch *vibekit.Chat, _ bool) bool {
 			ch.Name = "renamed"
 			return true
 		}); err != nil {
@@ -181,10 +181,10 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		if err := s.SetDraft(t.Context(), "c1", strings.Repeat("x", api.MaxDraftBytes+1)); err == nil {
+		if err := s.SetDraft(t.Context(), "c1", strings.Repeat("x", vibekit.MaxDraftBytes+1)); err == nil {
 			t.Error("oversize draft accepted")
 		}
-		if err := s.SetDraft(t.Context(), "c1", strings.Repeat("x", api.MaxDraftBytes)); err != nil {
+		if err := s.SetDraft(t.Context(), "c1", strings.Repeat("x", vibekit.MaxDraftBytes)); err != nil {
 			t.Errorf("draft at exactly the cap rejected: %v", err)
 		}
 	})
@@ -262,7 +262,7 @@ func TestSetDraft(t *testing.T) {
 		c2Before := readRawChat(t, dir, "c2")
 		writeRawChat(t, dir, "c1", `{"id":"c2","name":"impostor","messages":[]}`)
 
-		err = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+		err = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Name = "renamed"
 			return true
 		})
@@ -287,7 +287,7 @@ func TestSetDraft(t *testing.T) {
 		newChat(t, s, "c2")
 		c2Before := readRawChat(t, dir, "c2")
 
-		if err := s.writeChat("c1", &api.Chat{ID: "c2", Name: "impostor"}); err == nil {
+		if err := s.writeChat("c1", &vibekit.Chat{ID: "c2", Name: "impostor"}); err == nil {
 			t.Error("writeChat accepted an object whose id is not its destination")
 		}
 		if got := readRawChat(t, dir, "c2"); got != c2Before {
@@ -305,7 +305,7 @@ func TestSetDraft(t *testing.T) {
 			t.Fatalf("NewStore: %v", err)
 		}
 		newChat(t, s, "c1")
-		err = s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+		err = s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 			c.Draft = string([]byte{0xff})
 			return true
 		})

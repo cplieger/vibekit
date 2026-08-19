@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // bridgeState represents the lifecycle state of a sharedBridge.
@@ -48,7 +48,7 @@ type sharedBridge struct {
 	// tangent whose fork was refused needs its PARENT's history, which is the one
 	// case where BuildHistory must be asked about a different chat. Empty
 	// everywhere else, and PrimeIfNeeded reads the bridge's own chat then.
-	primeFrom api.ChatID
+	primeFrom vibekit.ChatID
 
 	turnGen uint64
 	mu      sync.Mutex
@@ -87,7 +87,7 @@ func (sb *sharedBridge) stopCancelTimerLocked() {
 
 // --- command.Bridge implementation on sharedBridge ---
 
-func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*api.RPCResponse, error) {
+func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
 	return sb.bridge.Call(ctx, method, params)
 }
 
@@ -99,7 +99,7 @@ func (sb *sharedBridge) Respond(ctx context.Context, requestID int64, result any
 	return sb.bridge.Respond(ctx, requestID, result, err)
 }
 
-func (sb *sharedBridge) SessionID() api.SessionID {
+func (sb *sharedBridge) SessionID() vibekit.SessionID {
 	return sb.bridge.SessionID()
 }
 

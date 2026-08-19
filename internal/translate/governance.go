@@ -31,7 +31,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // v3GovernanceState is the _kiro/governance/state notification payload.
@@ -56,12 +56,12 @@ type v3GovernanceFeatures struct {
 // payload converts the wire shape into the domain SSE/REST payload, stamping
 // Known=true (this only runs on a real notification). SessionID is intentionally
 // dropped — governance is account-global, not session-scoped.
-func (w v3GovernanceState) payload() api.GovernanceStatePayload {
-	return api.GovernanceStatePayload{
+func (w v3GovernanceState) payload() vibekit.GovernanceStatePayload {
+	return vibekit.GovernanceStatePayload{
 		Known:          true,
 		IsEnterprise:   w.IsEnterprise,
 		DisabledReason: w.DisabledReason,
-		Features: api.GovernanceFeatures{
+		Features: vibekit.GovernanceFeatures{
 			MCPEnabled:           w.Features.MCPEnabled,
 			WebToolsEnabled:      w.Features.WebToolsEnabled,
 			UsageAnalytics:       w.Features.UsageAnalytics,
@@ -77,13 +77,13 @@ func (w v3GovernanceState) payload() api.GovernanceStatePayload {
 // the domain payload. Exported so the hub can reuse it for the copy the utility
 // bridge receives (whose notifications don't flow through this dispatcher) —
 // keeping one wire→domain conversion. Returns false on empty/invalid params.
-func DecodeGovernanceState(raw json.RawMessage) (api.GovernanceStatePayload, bool) {
+func DecodeGovernanceState(raw json.RawMessage) (vibekit.GovernanceStatePayload, bool) {
 	if len(raw) == 0 {
-		return api.GovernanceStatePayload{}, false
+		return vibekit.GovernanceStatePayload{}, false
 	}
 	var w v3GovernanceState
 	if err := json.Unmarshal(raw, &w); err != nil {
-		return api.GovernanceStatePayload{}, false
+		return vibekit.GovernanceStatePayload{}, false
 	}
 	return w.payload(), true
 }
@@ -95,7 +95,7 @@ func DecodeGovernanceState(raw json.RawMessage) (api.GovernanceStatePayload, boo
 // subagent-session copy is skipped (KAS may re-emit per session; the parent
 // copy carries the identical account-global flags) — the same dedup guard
 // safety.go / code_references.go use.
-func (t *Translator) HandleGovernanceState(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleGovernanceState(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[v3GovernanceState](msg, "governance/state")
 	if !ok {
 		return
@@ -105,5 +105,5 @@ func (t *Translator) HandleGovernanceState(ctx context.Context, chatID api.ChatI
 	}
 	payload := p.payload()
 	t.deps.SetGovernance(payload)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventGovernanceState, "", payload))
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventGovernanceState, "", payload))
 }

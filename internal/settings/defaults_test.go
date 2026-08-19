@@ -83,7 +83,7 @@ func TestKnownKeys_CoversFrontendSettings(t *testing.T) {
 		}
 	}
 	// model_effort is deliberately absent from both sides now: reasoning effort
-	// is per-chat, on the chat record (api.Chat.Effort). A key here with no
+	// is per-chat, on the chat record (vibekit.Chat.Effort). A key here with no
 	// frontend writer and no server reader would only invite one back.
 	if _, ok := KnownKeys["model_effort"]; ok {
 		t.Error("KnownKeys still declares model_effort; effort moved to the chat record")

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // benchDeps is a minimal Dependencies stub for benchmarking dispatch overhead.
@@ -20,39 +20,39 @@ type benchDeps struct {
 
 func newBenchDeps() *benchDeps { return &benchDeps{dedup: make(map[string][]byte)} }
 
-func (d *benchDeps) CheckDedup(reqID string) ([]byte, bool)     { v, ok := d.dedup[reqID]; return v, ok }
-func (d *benchDeps) RecordDedup(reqID string, data []byte)      { d.dedup[reqID] = data }
-func (d *benchDeps) Draining() bool                             { return false }
-func (d *benchDeps) ChatStore() ChatStore                       { return nil }
-func (d *benchDeps) Broadcast(context.Context, api.ServerEvent) {}
-func (d *benchDeps) GetBridge(api.ChatID) Bridge                { return nil }
-func (d *benchDeps) GetOrCreateBridge(context.Context, api.ChatID, string) (Bridge, error) {
+func (d *benchDeps) CheckDedup(reqID string) ([]byte, bool)         { v, ok := d.dedup[reqID]; return v, ok }
+func (d *benchDeps) RecordDedup(reqID string, data []byte)          { d.dedup[reqID] = data }
+func (d *benchDeps) Draining() bool                                 { return false }
+func (d *benchDeps) ChatStore() ChatStore                           { return nil }
+func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent) {}
+func (d *benchDeps) GetBridge(vibekit.ChatID) Bridge                { return nil }
+func (d *benchDeps) GetOrCreateBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
-func (d *benchDeps) CloseBridge(api.ChatID)                    {}
-func (d *benchDeps) ClearPendingPermsForChat(api.ChatID)       {}
-func (d *benchDeps) TakePendingPerm(int64, api.SettledBy) bool { return true }
-func (d *benchDeps) WorkDir() string                           { return "/tmp" }
-func (d *benchDeps) ConfigDir() string                         { return "/tmp" }
+func (d *benchDeps) CloseBridge(vibekit.ChatID)                    {}
+func (d *benchDeps) ClearPendingPermsForChat(vibekit.ChatID)       {}
+func (d *benchDeps) TakePendingPerm(int64, vibekit.SettledBy) bool { return true }
+func (d *benchDeps) WorkDir() string                               { return "/tmp" }
+func (d *benchDeps) ConfigDir() string                             { return "/tmp" }
 func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithCancel(context.WithoutCancel(reqCtx))
 }
-func (d *benchDeps) InflightAdd(int)                                     {}
-func (d *benchDeps) InflightDone()                                       {}
-func (d *benchDeps) CleanupChatState(context.Context, api.ChatID)        {}
-func (d *benchDeps) CloseChatState(context.Context, api.ChatID)          {}
-func (d *benchDeps) CancelChatRuns(context.Context, api.ChatID)          {}
-func (d *benchDeps) KillTurnTerminals(api.ChatID)                        {}
-func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool { return true }
-func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)         { return "", nil }
-func (d *benchDeps) PrimeIfNeeded(context.Context, api.ChatID, Bridge)   {}
-func (d *benchDeps) PrimeFromChat(api.ChatID, api.ChatID)                {}
-func (d *benchDeps) IsEmptyTurn(*api.RPCResponse, api.ChatID) bool       { return false }
-func (d *benchDeps) EmitTurnEndedWithStats(context.Context, api.ChatID, *api.RPCResponse, TurnStats) {
+func (d *benchDeps) InflightAdd(int)                                       {}
+func (d *benchDeps) InflightDone()                                         {}
+func (d *benchDeps) CleanupChatState(context.Context, vibekit.ChatID)      {}
+func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)        {}
+func (d *benchDeps) CancelChatRuns(context.Context, vibekit.ChatID)        {}
+func (d *benchDeps) KillTurnTerminals(vibekit.ChatID)                      {}
+func (d *benchDeps) MCPWaitForReady(context.Context, time.Duration) bool   { return true }
+func (d *benchDeps) ResolveInsideWorkDir(string) (string, error)           { return "", nil }
+func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID, Bridge) {}
+func (d *benchDeps) PrimeFromChat(vibekit.ChatID, vibekit.ChatID)          {}
+func (d *benchDeps) IsEmptyTurn(*vibekit.RPCResponse, vibekit.ChatID) bool { return false }
+func (d *benchDeps) EmitTurnEndedWithStats(context.Context, vibekit.ChatID, *vibekit.RPCResponse, TurnStats) {
 }
 
-func (d *benchDeps) AbandonInFlightTurn(context.Context, api.ChatID) {}
-func (d *benchDeps) LatchTurnModel(api.ChatID, string)               {}
+func (d *benchDeps) AbandonInFlightTurn(context.Context, vibekit.ChatID) {}
+func (d *benchDeps) LatchTurnModel(vibekit.ChatID, string)               {}
 
 // TestBenchDeps_NoPanic verifies that every benchDeps method can be called
 // with zero-value arguments without panicking.
@@ -88,10 +88,10 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	}
 
 	// No-op methods must not panic.
-	d.Broadcast(t.Context(), api.ServerEvent{})
+	d.Broadcast(t.Context(), vibekit.ServerEvent{})
 	d.CloseBridge("x")
 	d.ClearPendingPermsForChat("x")
-	d.TakePendingPerm(0, api.SettledByUser)
+	d.TakePendingPerm(0, vibekit.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
 	d.CleanupChatState(t.Context(), "x")
@@ -139,10 +139,10 @@ func TestBenchDeps_Contract(t *testing.T) {
 
 	// --- No-panic on zero-value calls ---
 	t.Run("no_panic_zero_value_calls", func(t *testing.T) {
-		d.Broadcast(t.Context(), api.ServerEvent{})
+		d.Broadcast(t.Context(), vibekit.ServerEvent{})
 		d.CloseBridge("x")
 		d.ClearPendingPermsForChat("x")
-		d.TakePendingPerm(0, api.SettledByUser)
+		d.TakePendingPerm(0, vibekit.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()
 		d.CleanupChatState(t.Context(), "x")
@@ -163,11 +163,11 @@ func TestBenchDeps_Contract(t *testing.T) {
 func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	deps := newBenchDeps()
 	d := New(deps)
-	d.Register("create_chat", func(_ context.Context, w http.ResponseWriter, _ *api.ClientCommand) {
+	d.Register("create_chat", func(_ context.Context, w http.ResponseWriter, _ *vibekit.ClientCommand) {
 		httpreply.WriteRawJSON(w, []byte(`{"ok":true}`))
 	})
 
-	body, _ := json.Marshal(api.ClientCommand{
+	body, _ := json.Marshal(vibekit.ClientCommand{
 		Type:      "create_chat",
 		RequestID: "req-bench-1",
 		ChatID:    "chat-bench-1",
@@ -177,7 +177,7 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 		b.ReportAllocs()
 		for i := range b.N {
 			// Use unique request IDs to avoid dedup cache hits.
-			reqBody, _ := json.Marshal(api.ClientCommand{
+			reqBody, _ := json.Marshal(vibekit.ClientCommand{
 				Type:      "create_chat",
 				RequestID: "req-" + string(rune('A'+i%26)) + string(rune('0'+i%10)),
 				ChatID:    "chat-bench-1",
@@ -204,7 +204,7 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 	})
 
 	b.Run("unknown_command", func(b *testing.B) {
-		unknownBody, _ := json.Marshal(api.ClientCommand{
+		unknownBody, _ := json.Marshal(vibekit.ClientCommand{
 			Type:      "nonexistent_cmd",
 			RequestID: "req-unknown",
 			ChatID:    "chat-bench-1",

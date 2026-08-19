@@ -124,7 +124,7 @@ type kiroDoc struct {
 	// what went is the wrong derivation.
 	//
 	// `omitempty`, so absent means writable and read-only is asserted explicitly.
-	// Same default direction as api.Origin's adaptOrigin (mcp-state.ts), and for
+	// Same default direction as vibekit.Origin's adaptOrigin (mcp-state.ts), and for
 	// the same reason: a read-only row must only ever be produced by the server
 	// saying so, never by a field failing to arrive.
 	ReadOnly bool `json:"read_only,omitempty"`

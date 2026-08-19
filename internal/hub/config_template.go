@@ -26,8 +26,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -72,7 +72,7 @@ type kasConfigChoice struct {
 	Meta        struct {
 		Kiro struct {
 			// The model's own default tier. The TIER LIST is not here — it is the
-			// `effortLevel` option's own options[]. See api.SessionModel.
+			// `effortLevel` option's own options[]. See vibekit.SessionModel.
 			DefaultEffortLevel string  `json:"defaultEffortLevel"`
 			RateMultiplier     float64 `json:"rateMultiplier"`
 			HasEffort          bool    `json:"hasEffort"`
@@ -87,10 +87,10 @@ type configTemplateResponse struct {
 	// the tier a fresh session would run at. Pre-session, this is the only
 	// evidence of a live level, and without it the effort control rendered with
 	// nothing selected on every chat before its first pick.
-	EffortActive string                   `json:"effort_active,omitempty"`
-	Modes        []api.SessionMode        `json:"modes"`
-	Models       []api.SessionModel       `json:"models"`
-	EffortLevels []api.SessionEffortLevel `json:"effort_levels"`
+	EffortActive string                       `json:"effort_active,omitempty"`
+	Modes        []vibekit.SessionMode        `json:"modes"`
+	Models       []vibekit.SessionModel       `json:"models"`
+	EffortLevels []vibekit.SessionEffortLevel `json:"effort_levels"`
 }
 
 // handleConfigTemplate: GET /api/config-template → the pre-session mode +
@@ -104,13 +104,13 @@ func (h *Hub) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 	raw, err := u.session.configTemplateRaw(cctx)
 	if err != nil {
 		slog.Warn("config template failed", "error", err)
-		webhttp.WriteJSON(w, configTemplateResponse{Modes: []api.SessionMode{}, Models: []api.SessionModel{}})
+		webhttp.WriteJSON(w, configTemplateResponse{Modes: []vibekit.SessionMode{}, Models: []vibekit.SessionModel{}})
 		return
 	}
 	var tpl kasConfigTemplate
 	if uErr := json.Unmarshal(raw, &tpl); uErr != nil {
 		slog.Warn("config template decode failed", "error", uErr)
-		webhttp.WriteJSON(w, configTemplateResponse{Modes: []api.SessionMode{}, Models: []api.SessionModel{}})
+		webhttp.WriteJSON(w, configTemplateResponse{Modes: []vibekit.SessionMode{}, Models: []vibekit.SessionModel{}})
 		return
 	}
 	webhttp.WriteJSON(w, templateToResponse(&tpl))
@@ -121,13 +121,13 @@ func (h *Hub) handleConfigTemplate(w http.ResponseWriter, r *http.Request) {
 // carries no workspace entries), and the model catalog with the same
 // [Deprecated]/[Legacy] filtering the per-session paths apply.
 func templateToResponse(tpl *kasConfigTemplate) configTemplateResponse {
-	modes := make([]api.SessionMode, 0, len(tpl.Modes.AvailableModes))
+	modes := make([]vibekit.SessionMode, 0, len(tpl.Modes.AvailableModes))
 	for i := range tpl.Modes.AvailableModes {
 		m := &tpl.Modes.AvailableModes[i]
 		if m.ID == "" {
 			continue
 		}
-		modes = append(modes, api.SessionMode{
+		modes = append(modes, vibekit.SessionMode{
 			ID:          m.ID,
 			Name:        m.Name,
 			Description: m.Description,
@@ -136,16 +136,16 @@ func templateToResponse(tpl *kasConfigTemplate) configTemplateResponse {
 	}
 	out := configTemplateResponse{
 		Modes:        modes,
-		Models:       []api.SessionModel{},
-		EffortLevels: []api.SessionEffortLevel{},
+		Models:       []vibekit.SessionModel{},
+		EffortLevels: []vibekit.SessionEffortLevel{},
 	}
 	for i := range tpl.ConfigOptions {
 		opt := &tpl.ConfigOptions[i]
 		switch opt.ID {
-		case api.ConfigOptionModel:
+		case vibekit.ConfigOptionModel:
 			_ = json.Unmarshal(opt.CurrentValue, &out.DefaultModel) // string; ignore non-string
 			out.Models = flattenTemplateModels(opt.Options)
-		case api.ConfigOptionEffort:
+		case vibekit.ConfigOptionEffort:
 			_ = json.Unmarshal(opt.CurrentValue, &out.EffortActive) // string; ignore non-string
 			out.EffortLevels = flattenTemplateEfforts(opt.Options)
 		}
@@ -157,8 +157,8 @@ func templateToResponse(tpl *kasConfigTemplate) configTemplateResponse {
 // domain tier list. Same shape as the translate-side flattener; the two feeds
 // stay separate because their wire structs are (one is KAS's session frame, one
 // is the template result).
-func flattenTemplateEfforts(choices []kasConfigChoice) []api.SessionEffortLevel {
-	out := make([]api.SessionEffortLevel, 0, len(choices))
+func flattenTemplateEfforts(choices []kasConfigChoice) []vibekit.SessionEffortLevel {
+	out := make([]vibekit.SessionEffortLevel, 0, len(choices))
 	for i := range choices {
 		c := &choices[i]
 		if len(c.Options) > 0 {
@@ -168,15 +168,15 @@ func flattenTemplateEfforts(choices []kasConfigChoice) []api.SessionEffortLevel 
 		if c.Value == "" {
 			continue
 		}
-		out = append(out, api.SessionEffortLevel{ID: c.Value, Name: c.Name})
+		out = append(out, vibekit.SessionEffortLevel{ID: c.Value, Name: c.Name})
 	}
 	return out
 }
 
 // flattenTemplateModels converts the model select's choices (flat or
 // grouped) into the domain catalog, dropping hidden-tagged entries.
-func flattenTemplateModels(choices []kasConfigChoice) []api.SessionModel {
-	out := make([]api.SessionModel, 0, len(choices))
+func flattenTemplateModels(choices []kasConfigChoice) []vibekit.SessionModel {
+	out := make([]vibekit.SessionModel, 0, len(choices))
 	for i := range choices {
 		c := &choices[i]
 		if len(c.Options) > 0 { // grouped: recurse into the group's choices
@@ -186,7 +186,7 @@ func flattenTemplateModels(choices []kasConfigChoice) []api.SessionModel {
 		if c.Value == "" || modeltext.Hidden(c.Description) {
 			continue
 		}
-		out = append(out, api.SessionModel{
+		out = append(out, vibekit.SessionModel{
 			ID:                 c.Value,
 			Name:               c.Name,
 			Description:        c.Description,

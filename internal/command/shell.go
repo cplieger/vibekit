@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
@@ -51,20 +51,20 @@ func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
 // chat's first message, derives an initial chat name from the command text.
 // Returns whether the message was persisted (false when the chat record
 // doesn't exist).
-func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.ChatID, msg *api.Message, text string) (persisted bool, err error) {
-	err = deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID vibekit.ChatID, msg *vibekit.Message, text string) (persisted bool, err error) {
+	err = deps.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
-			c.Name = api.DefaultChatName
+			c.Name = vibekit.DefaultChatName
 		}
 		c.Messages = append(c.Messages, *msg)
-		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
+		if c.Name == vibekit.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(text, 80)
 			if name != text {
 				name += ellipsis
 			}
 			c.Name = name
 		}
-		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, msg))
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
 		persisted = true
 		return true
 	})
@@ -72,7 +72,7 @@ func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID api.C
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
-func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand, p *api.PromptCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand, p *vibekit.PromptCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	shellCmd := strings.TrimPrefix(p.Text, "!")
 	shellCmd = strings.TrimSpace(shellCmd)
 	if shellCmd == "" {
@@ -101,8 +101,8 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	defer d.Lifecycle().InflightDone()
 
 	// Persist the user message.
-	userMsg := api.Message{
-		ID: p.MessageID, Role: api.RoleUser, Ts: time.Now().UnixMilli(),
+	userMsg := vibekit.Message{
+		ID: p.MessageID, Role: vibekit.RoleUser, Ts: time.Now().UnixMilli(),
 		Content: p.Text,
 	}
 	persisted, err := appendShellUserMessage(ctx, deps, cmd.ChatID, &userMsg, p.Text)
@@ -146,8 +146,8 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 
 	content := renderShellResult(output, runErr, timedOut)
 	msgID := ids.NewMessageID()
-	assistantMsg := api.Message{
-		ID: msgID, Role: api.RoleAssistant, Ts: time.Now().UnixMilli(),
+	assistantMsg := vibekit.Message{
+		ID: msgID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli(),
 		Content: content,
 	}
 	appendErr := deps.ChatStore().AppendMessage(ctx, cmd.ChatID, &assistantMsg)
@@ -155,8 +155,8 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		slog.Error("shell interception: persist output", "chat_id", cmd.ChatID, keyError, appendErr)
 	}
 	if _, stillExists := deps.ChatStore().Get(ctx, cmd.ChatID); stillExists {
-		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, cmd.ChatID, &assistantMsg))
-		deps.Broadcast(ctx, api.NewEvent(api.EventTurnEnded, cmd.ChatID, api.TurnEndedPayload{StopReason: api.StopReasonEndTurn}))
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
 	}
 	d.RespondOK(w, cmd.RequestID)
 }

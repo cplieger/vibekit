@@ -42,7 +42,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workflow"
 )
 
@@ -221,7 +221,7 @@ func (t *Translator) RecordRunSteps(raw json.RawMessage) {
 // `workflowMarked` is the frame's own answer when it has one — true when
 // `_meta.kiro.workflow` is present — and is what makes a `session/update` frame
 // classify correctly even on the recovery path where the registry is cold.
-func (t *Translator) ClassifyFrame(chatID api.ChatID, sessionID string, workflowMarked bool) FrameOwner {
+func (t *Translator) ClassifyFrame(chatID vibekit.ChatID, sessionID string, workflowMarked bool) FrameOwner {
 	parent := t.deps.ParentACPSession(chatID)
 	if sessionID == "" || parent == "" || sessionID == parent {
 		return OwnerChat
@@ -248,7 +248,7 @@ func (t *Translator) ClassifyFrame(chatID api.ChatID, sessionID string, workflow
 // user_input) EMIT either way and only need to know whether to LABEL the ask as
 // a subagent's — which is deriveSubSession's narrower question, and a step must
 // answer no there or its ask is attributed to a subagent that does not exist.
-func (t *Translator) foreignSession(chatID api.ChatID, sessionID string) bool {
+func (t *Translator) foreignSession(chatID vibekit.ChatID, sessionID string) bool {
 	return t.ClassifyFrame(chatID, sessionID, false) != OwnerChat
 }
 

@@ -8,26 +8,26 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // handleCompactionCompleted persists the compacted-summary event and records
 // the compaction watermark. KAS self-reorients after summarization, so no
 // context-recovery prompt is injected: the old injectContextRecovery was dead
 // on v3 (it sent session/prompt as a JSON-RPC notification, which KAS drops).
-func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID api.ChatID, summaryPtr *string) {
+func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibekit.ChatID, summaryPtr *string) {
 	summary := ""
 	if summaryPtr != nil {
 		summary = *summaryPtr
 	}
-	evt := t.newEventMessage(api.EventCompacted, summary)
+	evt := t.newEventMessage(vibekit.EventCompacted, summary)
 	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("compaction: append event", "chat_id", chatID, "error", err)
 	}
 	if ctx.Err() != nil {
 		return
 	}
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -40,13 +40,13 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID api.C
 
 // handleCompactionFailed persists a compaction-failed event and broadcasts
 // a typed error to the client.
-func (t *Translator) handleCompactionFailed(ctx context.Context, chatID api.ChatID, errMsg string) {
+func (t *Translator) handleCompactionFailed(ctx context.Context, chatID vibekit.ChatID, errMsg string) {
 	if errMsg == "" {
 		errMsg = "compaction failed"
 	}
-	evt := t.newEventMessage(api.EventCompactFailed, errMsg)
+	evt := t.newEventMessage(vibekit.EventCompactFailed, errMsg)
 	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{Code: api.ErrCodeCompactionFailed, Message: errMsg}))
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeCompactionFailed, Message: errMsg}))
 }

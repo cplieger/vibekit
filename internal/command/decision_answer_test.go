@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // countingBridge counts the answers that reach the wire. Respond is the only
@@ -37,20 +37,20 @@ type takeDeps struct {
 	takeOK bool
 }
 
-func (d *takeDeps) GetBridge(api.ChatID) Bridge { return d.bridge }
+func (d *takeDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
 
-func (d *takeDeps) TakePendingPerm(requestID int64, _ api.SettledBy) bool {
+func (d *takeDeps) TakePendingPerm(requestID int64, _ vibekit.SettledBy) bool {
 	d.takes = append(d.takes, requestID)
 	return d.takeOK
 }
 
-func decisionCommand(t *testing.T, typ api.CommandType, payload any) *api.ClientCommand {
+func decisionCommand(t *testing.T, typ vibekit.CommandType, payload any) *vibekit.ClientCommand {
 	t.Helper()
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	return &api.ClientCommand{Type: typ, ChatID: "c1", RequestID: "r1", Payload: raw}
+	return &vibekit.ClientCommand{Type: typ, ChatID: "c1", RequestID: "r1", Payload: raw}
 }
 
 const decisionRequestID = int64(7)
@@ -62,12 +62,12 @@ func decisionCases(t *testing.T) []struct {
 	run  func(*Dispatcher, http.ResponseWriter)
 } {
 	t.Helper()
-	perm := decisionCommand(t, api.CmdPermissionResponse,
-		api.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"})
-	elicit := decisionCommand(t, api.CmdElicitationResponse,
-		api.ElicitationResponseCommand{RequestID: decisionRequestID, Action: api.ElicitationActionDecline})
-	input := decisionCommand(t, api.CmdUserInputResponse,
-		api.UserInputResponseCommand{RequestID: decisionRequestID, Action: api.UserInputActionDismissed})
+	perm := decisionCommand(t, vibekit.CmdPermissionResponse,
+		vibekit.PermissionResponseCommand{RequestID: decisionRequestID, OptionID: "allow_once"})
+	elicit := decisionCommand(t, vibekit.CmdElicitationResponse,
+		vibekit.ElicitationResponseCommand{RequestID: decisionRequestID, Action: vibekit.ElicitationActionDecline})
+	input := decisionCommand(t, vibekit.CmdUserInputResponse,
+		vibekit.UserInputResponseCommand{RequestID: decisionRequestID, Action: vibekit.UserInputActionDismissed})
 	return []struct {
 		name string
 		run  func(*Dispatcher, http.ResponseWriter)

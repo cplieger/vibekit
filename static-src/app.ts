@@ -683,7 +683,7 @@ async function fetchModelsFromREST(): Promise<void> {
 
 function fetchModelsFromSession(): void {
   // Live per-chat catalog: kiro-cli's session/new response carries
-  // modes.availableModels which the bridge applies onto api.Chat.
+  // modes.availableModels which the bridge applies onto vibekit.Chat.
   // Whenever that list changes on the active session we push the
   // authoritative list into the picker, overwriting whatever the
   // REST fetch seeded at startup.

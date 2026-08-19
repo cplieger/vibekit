@@ -20,15 +20,15 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // resolveSwitchModel returns the effective model after applying the
 // optional payload override.
-func resolveSwitchModel(chat *api.Chat, p api.SwitchModelCommand) (model string, isSwitch bool) {
+func resolveSwitchModel(chat *vibekit.Chat, p vibekit.SwitchModelCommand) (model string, isSwitch bool) {
 	model = chat.Model
 	if p.Model == "" || p.Model == modelAuto || p.Model == model {
 		return model, false
@@ -45,11 +45,11 @@ var hubResponseOK = map[string]bool{"ok": true}
 // some account, so the refusal is about this session's entitlement state.
 var errModelNotServed = errors.New("that model is not available on this account")
 
-func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
 	if !h.requireChatID(w, cmd) {
 		return
 	}
-	var p api.SwitchModelCommand
+	var p vibekit.SwitchModelCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 			h.respondErr(w, http.StatusBadRequest, command.ErrInvalidPayload)
@@ -95,15 +95,15 @@ func (h *Hub) cmdSwitchModel(ctx context.Context, w http.ResponseWriter, cmd *ap
 // inline put that function over the complexity ceiling once the entitlement gate
 // landed. No behaviour moved with it.
 func (h *Hub) switchByRestart(
-	ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand,
-	chat *api.Chat, model string, isSwitch bool,
+	ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand,
+	chat *vibekit.Chat, model string, isSwitch bool,
 ) {
 	h.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID)
 	h.coord.CloseBridge(cmd.ChatID)
 
 	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, model)
 	if err != nil {
-		h.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
+		h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
 		h.respondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -142,11 +142,11 @@ func (h *Hub) switchByRestart(
 // The live session's own advertised set is the evidence when a bridge exists, and
 // it is the UNFILTERED one: validating against the picker's list would refuse a
 // deprecated model the account can still use. An empty set means entitlement is
-// unknowable and api.ModelServed allows it.
+// unknowable and vibekit.ModelServed allows it.
 // It answers whether the request was REFUSED, having already written the response
 // and broadcast the banner, so the caller is one guard clause.
 func (h *Hub) refuseUnservedModel(
-	ctx context.Context, w http.ResponseWriter, chatID api.ChatID, chat *api.Chat, model string,
+	ctx context.Context, w http.ResponseWriter, chatID vibekit.ChatID, chat *vibekit.Chat, model string,
 ) bool {
 	served := chat.ServedModelIDs
 	if sb := h.coord.GetBridge(chatID); sb != nil {
@@ -154,13 +154,13 @@ func (h *Hub) refuseUnservedModel(
 			served = live
 		}
 	}
-	if api.ModelServed(model, served) {
+	if vibekit.ModelServed(model, served) {
 		return false
 	}
 	slog.Warn("refusing a model switch this account does not serve",
 		"chat_id", chatID, "model", model)
-	h.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-		Code:    api.ErrCodeModelNotServed,
+	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		Code:    vibekit.ErrCodeModelNotServed,
 		Message: "\"" + model + "\" is not available on this account. Pick another model.",
 	}))
 	h.respondErr(w, http.StatusConflict, errModelNotServed)

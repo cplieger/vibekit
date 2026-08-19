@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Tests for bridge_lifecycle.go: spawn, lookup, reuse, and teardown of
@@ -19,7 +19,7 @@ func TestGetBridge_ReturnsNilForUnknown(t *testing.T) {
 
 func TestGetOrCreateBridge_ReusesExisting(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	sb1, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
@@ -47,7 +47,7 @@ func TestGetOrCreateBridge_MissingChatIsError(t *testing.T) {
 
 func TestCloseBridge_RemovesAndStops(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {

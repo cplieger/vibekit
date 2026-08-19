@@ -13,7 +13,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -33,12 +33,12 @@ import (
 // via integer overflow on attacker-influenced line/limit params; the
 // immediate bug is fixed in sliceByLines but this wrapper forecloses
 // the whole class.
-func (h *Hub) handleFSRequest(_ context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
-	var handler func(context.Context, api.ChatID, *api.RPCResponse)
+func (h *Hub) handleFSRequest(_ context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
+	var handler func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)
 	switch msg.Method {
-	case api.MethodFSRead:
+	case vibekit.MethodFSRead:
 		handler = h.respondFSRead
-	case api.MethodFSWrite:
+	case vibekit.MethodFSWrite:
 		handler = h.respondFSWrite
 	default:
 		return false
@@ -72,7 +72,7 @@ func (h *Hub) handleFSRequest(_ context.Context, chatID api.ChatID, msg *api.RPC
 //
 // Response: { content: "..." }. Per ACP, line/limit are 1-indexed +
 // inclusive; we slice the read content to that window.
-func (h *Hub) respondFSRead(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) respondFSRead(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		Line  *int   `json:"line,omitempty"`
 		Limit *int   `json:"limit,omitempty"`

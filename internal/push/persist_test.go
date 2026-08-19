@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestNew_PersistsAndReloadsKeys(t *testing.T) {
@@ -35,8 +35,8 @@ func TestNew_PersistsAndReloadsKeys(t *testing.T) {
 func TestSubscriptionPersistence(t *testing.T) {
 	dir := t.TempDir()
 	s1 := New(t.Context(), dir, "mailto:test@example.com")
-	s1.Subscribe(api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/a"})
-	s1.Subscribe(api.PushSubscription{Endpoint: "https://updates.push.services.mozilla.com/b"})
+	s1.Subscribe(vibekit.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/a"})
+	s1.Subscribe(vibekit.PushSubscription{Endpoint: "https://updates.push.services.mozilla.com/b"})
 	s1.flushSaves()
 	s1.Close()
 
@@ -58,7 +58,7 @@ func TestSubscriptionPersistence(t *testing.T) {
 func TestLoadSubs_DropsDisallowedEndpoints(t *testing.T) {
 	dir := t.TempDir()
 	// Write a subs file directly with one allowed + one disallowed.
-	subs := []api.PushSubscription{
+	subs := []vibekit.PushSubscription{
 		{Endpoint: "https://fcm.googleapis.com/fcm/send/ok"},
 		{Endpoint: "http://localhost:6379/SHUTDOWN"},
 	}
@@ -88,7 +88,7 @@ func TestLoadSubs_DropsDisallowedEndpoints(t *testing.T) {
 // an operator can see which endpoint was rejected at load time.
 func TestLoadSubs_DropsDisallowedHostLogged(t *testing.T) {
 	dir := t.TempDir()
-	subs := []api.PushSubscription{
+	subs := []vibekit.PushSubscription{
 		{Endpoint: "https://evil.example.com/steal"},
 	}
 	data, err := json.Marshal(subs)
@@ -100,7 +100,7 @@ func TestLoadSubs_DropsDisallowedHostLogged(t *testing.T) {
 		t.Fatalf("write subs file: %v", werr)
 	}
 
-	s := &Service{dir: dir, subs: make(map[string]api.PushSubscription)}
+	s := &Service{dir: dir, subs: make(map[string]vibekit.PushSubscription)}
 	capLog := capture.Default(t)
 
 	s.loadSubs()
@@ -135,7 +135,7 @@ func TestWriteSubsSnapshot_SuccessNoWarn(t *testing.T) {
 	s := &Service{dir: dir}
 	capLog := capture.Default(t)
 
-	s.writeSubsSnapshot([]api.PushSubscription{
+	s.writeSubsSnapshot([]vibekit.PushSubscription{
 		{Endpoint: "https://fcm.googleapis.com/fcm/send/snap"},
 	})
 
@@ -155,7 +155,7 @@ func TestWriteSubsSnapshot_SuccessNoWarn(t *testing.T) {
 func TestSaveSubsAsync_CtxGuard(t *testing.T) {
 	newSvc := func() *Service {
 		return &Service{
-			subs:   map[string]api.PushSubscription{},
+			subs:   map[string]vibekit.PushSubscription{},
 			saveCh: make(chan saveRequest, 1),
 			// The service lifetime is live so the send path is taken; the
 			// per-call guard ctx is what each case varies.
@@ -192,7 +192,7 @@ func TestSaveSubs_CtxGuard(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		s.mu.Lock()
-		s.subs[ep] = api.PushSubscription{Endpoint: ep}
+		s.subs[ep] = vibekit.PushSubscription{Endpoint: ep}
 		s.mu.Unlock()
 		_ = os.Remove(s.subsPath()) // ensure absent before the call
 
@@ -210,7 +210,7 @@ func TestSaveSubs_CtxGuard(t *testing.T) {
 		s := New(t.Context(), t.TempDir(), testSubject)
 		defer s.Close()
 		s.mu.Lock()
-		s.subs[ep] = api.PushSubscription{Endpoint: ep}
+		s.subs[ep] = vibekit.PushSubscription{Endpoint: ep}
 		s.mu.Unlock()
 		_ = os.Remove(s.subsPath())
 
@@ -229,7 +229,7 @@ func TestSaveSubs_Perm0o600(t *testing.T) {
 	s := New(t.Context(), dir, "mailto:test@example.com")
 	defer s.Close()
 	// Use an allowed endpoint so the file survives a future reload.
-	s.Subscribe(api.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/perm-check"})
+	s.Subscribe(vibekit.PushSubscription{Endpoint: "https://fcm.googleapis.com/fcm/send/perm-check"})
 	s.flushSaves()
 
 	info, err := os.Stat(filepath.Join(dir, "push-subs.json"))

@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -43,7 +43,7 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if id, sub, ok := strings.Cut(rest, "/"); ok {
-		rt.routeChatSubResource(w, r, api.ChatID(id), sub)
+		rt.routeChatSubResource(w, r, vibekit.ChatID(id), sub)
 		return
 	}
 	rt.serveChatMessages(w, r, rest)
@@ -51,7 +51,7 @@ func (rt *Router) handleOne(w http.ResponseWriter, r *http.Request) {
 
 // routeChatSubResource dispatches /api/chats/{id}/<sub> to the handler for
 // the addressed sub-resource.
-func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid api.ChatID, sub string) {
+func (rt *Router) routeChatSubResource(w http.ResponseWriter, r *http.Request, cid vibekit.ChatID, sub string) {
 	switch sub {
 	case "export":
 		rt.handleExport(w, r, cid)
@@ -71,11 +71,11 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
 	}
-	if !chatIDPattern(api.ChatID(id)) {
+	if !chatIDPattern(vibekit.ChatID(id)) {
 		httpreply.BadRequest(w, ids.ErrMsgInvalidChatID)
 		return
 	}
-	c, ok := rt.store.Get(r.Context(), api.ChatID(id))
+	c, ok := rt.store.Get(r.Context(), vibekit.ChatID(id))
 	if !ok {
 		httpreply.NotFound(w, errMsgChatNotFound)
 		return
@@ -90,7 +90,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		end = indexOfMessage(msgs, beforeID)
 	}
 	start := max(end-limit, 0)
-	window := make([]api.Message, end-start)
+	window := make([]vibekit.Message, end-start)
 	copy(window, msgs[start:end])
 
 	// `draft` rides here as its own field rather than on the header, which is
@@ -118,7 +118,7 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 // It is cheap on purpose: `Get` already materialises the whole chat (the
 // paginated read does too, then discards all but a window), so the added cost
 // here is serialising a few fields per turn rather than any extra IO.
-func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -146,7 +146,7 @@ func (rt *Router) handleTurns(w http.ResponseWriter, r *http.Request, chatID api
 // conversation while covering only the resident tail. It is also what makes
 // progressive collapse acceptable: a collapse that hides content from search is
 // a data-loss bug. See search.go's header for why there is no index.
-func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+func (rt *Router) handleSearch(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -209,7 +209,7 @@ func parseLimitParam(r *http.Request) int {
 // An id is exact, so neither failure exists, and it needs no ordering invariant at
 // all. Cost is a backwards scan of an already-materialised slice; the store loads
 // the whole chat for this request either way.
-func indexOfMessage(msgs []api.Message, id string) int {
+func indexOfMessage(msgs []vibekit.Message, id string) int {
 	for i := range slices.Backward(msgs) {
 		if msgs[i].ID == id {
 			return i
@@ -230,7 +230,7 @@ const (
 // the persisted chat to a downloadable Markdown transcript (the default) or
 // the raw chat JSON. The chat store is the source of truth, so no live ACP
 // bridge is involved.
-func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID api.ChatID) {
+func (rt *Router) handleExport(w http.ResponseWriter, r *http.Request, chatID vibekit.ChatID) {
 	if r.Method != http.MethodGet {
 		httpreply.MethodNotAllowed(w, http.MethodGet)
 		return
@@ -280,7 +280,7 @@ func parseExportFormat(v string) (exportFormat, bool) {
 
 // loadForExport returns the chat for chatID. One lookup: chats never move, so
 // there is no second location to fall back to.
-func (rt *Router) loadForExport(ctx context.Context, chatID api.ChatID) (*api.Chat, bool) {
+func (rt *Router) loadForExport(ctx context.Context, chatID vibekit.ChatID) (*vibekit.Chat, bool) {
 	return rt.store.Get(ctx, chatID)
 }
 

@@ -4,21 +4,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // safetyStatusPayloads collects every EventSafetyStatus payload broadcast.
-func safetyStatusPayloads(t *testing.T, events *[]api.ServerEvent) []api.SafetyStatusPayload {
+func safetyStatusPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.SafetyStatusPayload {
 	t.Helper()
-	var got []api.SafetyStatusPayload
+	var got []vibekit.SafetyStatusPayload
 	for _, e := range *events {
-		if e.Type != api.EventSafetyStatus {
+		if e.Type != vibekit.EventSafetyStatus {
 			continue
 		}
-		p, ok := e.Payload.(api.SafetyStatusPayload)
+		p, ok := e.Payload.(vibekit.SafetyStatusPayload)
 		if !ok {
-			t.Fatalf("EventSafetyStatus payload type = %T, want api.SafetyStatusPayload", e.Payload)
+			t.Fatalf("EventSafetyStatus payload type = %T, want vibekit.SafetyStatusPayload", e.Payload)
 		}
 		got = append(got, p)
 	}
@@ -26,16 +26,16 @@ func safetyStatusPayloads(t *testing.T, events *[]api.ServerEvent) []api.SafetyS
 }
 
 // safetyPropsPayloads collects every EventSafetyProperties payload broadcast.
-func safetyPropsPayloads(t *testing.T, events *[]api.ServerEvent) []api.SafetyPropertiesPayload {
+func safetyPropsPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.SafetyPropertiesPayload {
 	t.Helper()
-	var got []api.SafetyPropertiesPayload
+	var got []vibekit.SafetyPropertiesPayload
 	for _, e := range *events {
-		if e.Type != api.EventSafetyProperties {
+		if e.Type != vibekit.EventSafetyProperties {
 			continue
 		}
-		p, ok := e.Payload.(api.SafetyPropertiesPayload)
+		p, ok := e.Payload.(vibekit.SafetyPropertiesPayload)
 		if !ok {
-			t.Fatalf("EventSafetyProperties payload type = %T, want api.SafetyPropertiesPayload", e.Payload)
+			t.Fatalf("EventSafetyProperties payload type = %T, want vibekit.SafetyPropertiesPayload", e.Payload)
 		}
 		got = append(got, p)
 	}
@@ -49,7 +49,7 @@ func TestHandleSafetyStatusChanged_Blocked(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status":            "blocked",
 		"detail":            "\U0001F6E1\uFE0F fs_write blocked",
 		"toolId":            "fs_write",
@@ -61,7 +61,7 @@ func TestHandleSafetyStatusChanged_Blocked(t *testing.T) {
 		t.Fatalf("safety_status count = %d, want 1", len(got))
 	}
 	p := got[0]
-	if p.Status != api.SafetyStatusBlocked {
+	if p.Status != vibekit.SafetyStatusBlocked {
 		t.Errorf("Status = %q, want blocked", p.Status)
 	}
 	if p.ToolID != "fs_write" {
@@ -78,12 +78,12 @@ func TestHandleSafetyStatusChanged_IdleForwarded(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "idle",
 	})})
 
 	got := safetyStatusPayloads(t, events)
-	if len(got) != 1 || got[0].Status != api.SafetyStatusIdle {
+	if len(got) != 1 || got[0].Status != vibekit.SafetyStatusIdle {
 		t.Fatalf("want one idle safety_status, got %+v", got)
 	}
 }
@@ -94,7 +94,7 @@ func TestHandleSafetyStatusChanged_UnknownDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "quantum-entangled",
 	})})
 
@@ -107,7 +107,7 @@ func TestHandleSafetyStatusChanged_UnknownDropped(t *testing.T) {
 func TestHandleSafetyStatusChanged_MalformedNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
-	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: []byte("{")})
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: []byte("{")})
 	if got := safetyStatusPayloads(t, events); len(got) != 0 {
 		t.Fatalf("want no broadcast for malformed params, got %+v", got)
 	}
@@ -119,7 +119,7 @@ func TestHandleSafetyPropertiesChanged_ObjectForm(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"sessionId": "",
 		"reason":    "formalized",
 		"properties": []map[string]any{
@@ -147,7 +147,7 @@ func TestHandleSafetyPropertiesChanged_StringForm(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"properties": []any{"no public S3 buckets", ""},
 	})})
 
@@ -169,7 +169,7 @@ func TestHandleSafetyPropertiesChanged_EmptyDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"properties": []any{},
 	})})
 
@@ -185,7 +185,7 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
 		tr := New(deps)
-		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 			"sessionId":  "sess-sub",
 			"properties": []any{"no public S3 buckets"},
 		})})
@@ -197,7 +197,7 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
 		tr := New(deps)
-		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 			"sessionId":  "sess-parent",
 			"properties": []any{"no public S3 buckets"},
 		})})
@@ -209,15 +209,15 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 
 // infraBlockMessages returns the persisted RoleEvent messages on chatID whose
 // EventKind is infra_safety_blocked.
-func infraBlockMessages(t *testing.T, store *testsupport.InMemoryChatStore, chatID api.ChatID) []api.Message {
+func infraBlockMessages(t *testing.T, store *testsupport.InMemoryChatStore, chatID vibekit.ChatID) []vibekit.Message {
 	t.Helper()
 	c, ok := store.Get(t.Context(), chatID)
 	if !ok {
 		return nil
 	}
-	var got []api.Message
+	var got []vibekit.Message
 	for _, m := range c.Messages {
-		if m.EventKind == api.EventInfraSafetyBlocked {
+		if m.EventKind == vibekit.EventInfraSafetyBlocked {
 			got = append(got, m)
 		}
 	}
@@ -226,12 +226,12 @@ func infraBlockMessages(t *testing.T, store *testsupport.InMemoryChatStore, chat
 
 // depsWithStore wires an InMemoryChatStore into event-capturing deps and seeds
 // chatID (AppendMessage no-ops on a missing chat, so the chat must exist).
-func depsWithStore(t *testing.T, chatID api.ChatID) (*baseDeps, *[]api.ServerEvent, *testsupport.InMemoryChatStore) {
+func depsWithStore(t *testing.T, chatID vibekit.ChatID) (*baseDeps, *[]vibekit.ServerEvent, *testsupport.InMemoryChatStore) {
 	t.Helper()
 	deps, events := newEventCaptureDeps()
 	store := testsupport.NewInMemoryChatStore()
 	deps.store = store
-	if err := store.Mutate(t.Context(), chatID, func(c *api.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
+	if err := store.Mutate(t.Context(), chatID, func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true }); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 	return deps, events, store
@@ -246,7 +246,7 @@ func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status":            "blocked",
 		"detail":            "\U0001F6E1\uFE0F fs_write blocked",
 		"toolId":            "fs_write",
@@ -254,7 +254,7 @@ func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
 	})})
 
 	// Transient banner SSE still fires.
-	if got := safetyStatusPayloads(t, events); len(got) != 1 || got[0].Status != api.SafetyStatusBlocked {
+	if got := safetyStatusPayloads(t, events); len(got) != 1 || got[0].Status != vibekit.SafetyStatusBlocked {
 		t.Fatalf("want one blocked safety_status broadcast, got %+v", got)
 	}
 	// Permanent record: exactly one block event, role=event, carrying the WHY.
@@ -262,7 +262,7 @@ func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("infra_safety_blocked event count = %d, want 1", len(msgs))
 	}
-	if msgs[0].Role != api.RoleEvent {
+	if msgs[0].Role != vibekit.RoleEvent {
 		t.Errorf("Role = %q, want event", msgs[0].Role)
 	}
 	if !strings.Contains(msgs[0].Content, "no public S3 buckets") || !strings.Contains(msgs[0].Content, "encrypt at rest") {
@@ -276,7 +276,7 @@ func TestHandleSafetyStatusChanged_BlockedFallsBackToDetail(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
 	tr := New(deps)
 
-	tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "blocked",
 		"detail": "policy violation",
 	})})
@@ -296,7 +296,7 @@ func TestHandleSafetyStatusChanged_NonBlockedNoPersist(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
 			tr := New(deps)
 
-			tr.HandleSafetyStatusChanged(t.Context(), "c1", &api.RPCResponse{Params: mustJSON(t, map[string]any{
+			tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 				"status": status,
 			})})
 

@@ -23,7 +23,7 @@ import (
 	"sync"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workspace"
 )
 
@@ -53,7 +53,7 @@ const (
 // generator uses. Returned by the snapshot function wired at construct
 // time; steering has no direct dependency on hub internals.
 type MCPSnapshot struct {
-	Servers []api.MCPSnapshotServer
+	Servers []vibekit.MCPSnapshotServer
 }
 
 // ForgeSnapshot describes connected forge providers for the steering file.
@@ -276,7 +276,7 @@ func writeMCP(b *strings.Builder, snap MCPSnapshot) {
 		return
 	}
 	servers := slices.Clone(snap.Servers)
-	slices.SortFunc(servers, func(a, b api.MCPSnapshotServer) int {
+	slices.SortFunc(servers, func(a, b vibekit.MCPSnapshotServer) int {
 		return strings.Compare(a.Name, b.Name)
 	})
 

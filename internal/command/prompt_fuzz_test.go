@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func FuzzValidatePromptPayload(f *testing.F) {
@@ -22,7 +22,7 @@ func FuzzValidatePromptPayload(f *testing.F) {
 	f.Add([]byte(`{broken`))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		cmd := &api.ClientCommand{Payload: json.RawMessage(data)}
+		cmd := &vibekit.ClientCommand{Payload: json.RawMessage(data)}
 		p, code, err := validatePromptPayload(cmd)
 
 		// No panic (implicit).

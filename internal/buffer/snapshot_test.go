@@ -3,13 +3,13 @@ package buffer
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestBufferSnapshot covers the read that replaced hub/turn_mirror.go's parallel
 // replica of the in-flight turn.
 //
-// The mirror re-folded every broadcast event into its own api.Message — a second
+// The mirror re-folded every broadcast event into its own vibekit.Message — a second
 // implementation of the block assembly this package already does, free to drift
 // from it. These cases pin that the buffer's own snapshot carries what the
 // connect-time turn_state needs.
@@ -43,7 +43,7 @@ func TestBufferSnapshot(t *testing.T) {
 		buf.AppendThinkingDelta("pondering", "")
 		buf.Reasoning.WriteString("pondering")
 		buf.AppendToolUseBlock("tool-1", "")
-		buf.ToolCalls = append(buf.ToolCalls, api.ToolCall{ID: "tool-1", Title: "Read File"})
+		buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tool-1", Title: "Read File"})
 		buf.AppendTextDelta("world", "")
 		buf.Content.WriteString("world")
 
@@ -54,7 +54,7 @@ func TestBufferSnapshot(t *testing.T) {
 		if msg.ID != "m1" {
 			t.Errorf("id = %q, want m1", msg.ID)
 		}
-		if msg.Role != api.RoleAssistant {
+		if msg.Role != vibekit.RoleAssistant {
 			t.Errorf("role = %q, want assistant", msg.Role)
 		}
 		if msg.Content != "hello world" {
@@ -89,7 +89,7 @@ func TestBufferSnapshot(t *testing.T) {
 		buf := Buffer{MessageID: "m1"}
 		buf.AppendTextDelta("hi", "")
 		buf.Content.WriteString("hi")
-		buf.ToolCalls = append(buf.ToolCalls, api.ToolCall{ID: "tool-1"})
+		buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tool-1"})
 
 		msg, _, ok := buf.Snapshot()
 		if !ok {

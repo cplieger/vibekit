@@ -9,12 +9,12 @@ package hub
 // This satisfies models.Snapshotter, letting the git handler ask for
 // a cheap model for AI commit messages without anyone shelling out.
 
-import "github.com/cplieger/vibekit/internal/api"
+import "github.com/cplieger/vibekit/internal/vibekit"
 
 // Models is the Snapshotter contract: the first non-empty model list
 // from a live bridge. No aggregation across bridges — they all see
 // the same kiro-cli catalog.
-func (h *Hub) Models() []api.SessionModel {
+func (h *Hub) Models() []vibekit.SessionModel {
 	snapshot := h.bridge.mgr.all()
 	for _, sb := range snapshot {
 		if ms := sb.bridge.Models(); len(ms) > 0 {

@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // storeDeps is benchDeps with a real chat store, so a handler that mutates the
@@ -25,14 +25,14 @@ func newTestDispatcher(t *testing.T, store ChatStore) *Dispatcher {
 }
 
 // resumeReq builds a resume_session command envelope.
-func resumeReq(t *testing.T, chatID api.ChatID, sessionID, name string) *api.ClientCommand {
+func resumeReq(t *testing.T, chatID vibekit.ChatID, sessionID, name string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(api.ResumeSessionCommand{SessionID: sessionID, Name: name})
+	payload, err := json.Marshal(vibekit.ResumeSessionCommand{SessionID: sessionID, Name: name})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdResumeSession,
+	return &vibekit.ClientCommand{
+		Type:      vibekit.CmdResumeSession,
 		ChatID:    chatID,
 		RequestID: "r1",
 		Payload:   payload,
@@ -83,7 +83,7 @@ func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if err := store.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
+	if err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Existing"
 		c.RecordSession("sess_original")
 		return true

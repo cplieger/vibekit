@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // maxBufferBytes caps the per-turn content buffer at 32 MiB. Prevents
@@ -22,9 +22,9 @@ const maxBufferBytes = 32 << 20
 // into buf.Reasoning; regular content chunks flow into buf.Content.
 // The IsReasoning flag is forwarded on the SSE so the client routes
 // each delta to the correct bubble (reasoning details vs content).
-func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID, raw json.RawMessage, isReasoning bool) {
+func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, isReasoning bool) {
 	var chunk ACPChunkWire
-	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != api.ContentTypeText || chunk.Content.Text == "" {
+	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != vibekit.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
 	buf := t.deps.BufferStore().GetOrInit(chatID)
@@ -103,8 +103,8 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 	} else {
 		refusal = nil
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
-		api.MessageChunkPayload{
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+		vibekit.MessageChunkPayload{
 			MessageID:      buf.MessageID,
 			Delta:          text,
 			IsReasoning:    isReasoning,
@@ -126,12 +126,12 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID api.ChatID
 // Text is deliberately EMPTY on this frame. The steer's own text lives in KAS's
 // buffer, not here, so the honest payload carries only what this layer learned;
 // the client merges by id and never overwrites the text it already holds.
-func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID api.ChatID, acks []steerAck) {
+func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.ChatID, acks []steerAck) {
 	for _, ack := range acks {
 		if ack.SteerID == "" || ack.Text == "" {
 			continue
 		}
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventSteerInjected, chatID, api.SteerInjectedPayload{
+		t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: ack.SteerID,
 			Ack:     ack.Text,
 		}))
@@ -150,7 +150,7 @@ func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID api.ChatID, 
 // per frame would be a worse defect than the silence it replaced. The marker goes
 // where the user is looking and the log line goes where an operator is.
 func (t *Translator) announceTruncation(
-	ctx context.Context, chatID api.ChatID, buf *buffer.Buffer, subtask string, buffered int,
+	ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, subtask string, buffered int,
 ) {
 	if !buf.MarkOverCap() {
 		return
@@ -160,8 +160,8 @@ func (t *Translator) announceTruncation(
 	blockIndex, seq := buf.AppendTextDelta(notice, subtask)
 	slog.Warn("turn exceeded the assistant buffer cap; dropping the remainder",
 		"chat_id", chatID, "message_id", buf.MessageID, "buffered_bytes", buffered)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventMessageChunk, chatID,
-		api.MessageChunkPayload{
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+		vibekit.MessageChunkPayload{
 			MessageID:  buf.MessageID,
 			Delta:      notice,
 			BlockIndex: blockIndex,
@@ -173,26 +173,26 @@ func (t *Translator) announceTruncation(
 // The explanation field is dropped — it duplicates the chunk text. A refusal
 // block with no category and no recommended model still marks the turn (the
 // callout renders without a chip; KAS sends all fields optional).
-func refusalInfo(chunk *ACPChunkWire) *api.RefusalInfo {
+func refusalInfo(chunk *ACPChunkWire) *vibekit.RefusalInfo {
 	r := chunk.Meta.Kiro.Refusal
 	if r == nil {
 		return nil
 	}
-	return &api.RefusalInfo{
+	return &vibekit.RefusalInfo{
 		Category:         r.Category,
 		RecommendedModel: r.RecommendedModel,
 	}
 }
 
 // HandlePlan persists a plan message directly.
-func (t *Translator) HandlePlan(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
+func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p ACPPlanWire
 	if json.Unmarshal(raw, &p) != nil {
 		return
 	}
-	msg := api.Message{
+	msg := vibekit.Message{
 		ID:   t.newMsgID(),
-		Role: api.RoleAssistant,
+		Role: vibekit.RoleAssistant,
 		Ts:   time.Now().UnixMilli(),
 		Plan: p.Entries,
 	}
@@ -204,16 +204,16 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID api.ChatID, raw json
 	}
 	allDone := true
 	for _, e := range p.Entries {
-		if e.Status != api.PlanCompleted {
+		if e.Status != vibekit.PlanCompleted {
 			allDone = false
 			break
 		}
 	}
-	var plan []api.PlanEntry
+	var plan []vibekit.PlanEntry
 	if !allDone {
 		plan = p.Entries
 	}
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -225,13 +225,13 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID api.ChatID, raw json
 }
 
 // HandleModeUpdate persists the agent's new mode and broadcasts mode_changed.
-func (t *Translator) HandleModeUpdate(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
+func (t *Translator) HandleModeUpdate(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 	var p ACPModeUpdateWire
 	if json.Unmarshal(raw, &p) != nil || p.ModeID == "" {
 		return
 	}
 	changed := false
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex || c.CurrentModeID == p.ModeID {
 			return false
 		}
@@ -242,6 +242,6 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID api.ChatID, ra
 		slog.Error("mode update persist", "chat_id", chatID, "error", err)
 	}
 	if changed {
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventModeChanged, chatID, api.ModeChangedPayload{ModeID: p.ModeID}))
+		t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, chatID, vibekit.ModeChangedPayload{ModeID: p.ModeID}))
 	}
 }

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/sse"
 )
 
@@ -42,7 +42,7 @@ func (h *Hub) handleCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 // postCmd POSTs a typed ClientCommand to handleCommand and returns the recorder.
-func postCmd(t *testing.T, h *Hub, cmd api.ClientCommand) *httptest.ResponseRecorder {
+func postCmd(t *testing.T, h *Hub, cmd vibekit.ClientCommand) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(cmd)
 	req := httptest.NewRequest(http.MethodPost, "/api/command", strings.NewReader(string(body)))
@@ -72,7 +72,7 @@ func extractTypes(t *testing.T, events []sse.ReplayEvent) []string {
 	t.Helper()
 	out := make([]string, 0, len(events))
 	for _, e := range events {
-		var msg api.ServerEvent
+		var msg vibekit.ServerEvent
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
@@ -107,13 +107,13 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 
 // newChunkMsg builds a session/update agent_message_chunk notification
 // with the given text payload.
-func newChunkMsg(t *testing.T, text string) *api.RPCResponse {
+func newChunkMsg(t *testing.T, text string) *vibekit.RPCResponse {
 	t.Helper()
 	raw := mustJSON(t, map[string]any{
 		"sessionUpdate": "agent_message_chunk",
 		"content":       map[string]any{"type": "text", "text": text},
 	})
-	return &api.RPCResponse{
+	return &vibekit.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	}
@@ -121,7 +121,7 @@ func newChunkMsg(t *testing.T, text string) *api.RPCResponse {
 
 // newToolCallMsg builds a session/update tool_call notification with the
 // given ids / title / status.
-func newToolCallMsg(t *testing.T, id, title, status string) *api.RPCResponse {
+func newToolCallMsg(t *testing.T, id, title, status string) *vibekit.RPCResponse {
 	t.Helper()
 	raw := mustJSON(t, map[string]any{
 		"sessionUpdate": "tool_call",
@@ -130,7 +130,7 @@ func newToolCallMsg(t *testing.T, id, title, status string) *api.RPCResponse {
 		"kind":          "read",
 		"status":        status,
 	})
-	return &api.RPCResponse{
+	return &vibekit.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	}

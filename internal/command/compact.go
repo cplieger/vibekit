@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // errCompactRefused is the ONE failure a caller can surface.
@@ -37,7 +37,7 @@ var errCompactRefused = errors.New("can't compact right now — finish or cancel
 // Requires a LIVE RESIDENT session: compaction operates on the session's own
 // message log, so there is nothing to compact without a bridge, and KAS throws
 // rather than answering for a session it does not hold.
-func CmdCompact(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdCompact(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -47,7 +47,7 @@ func CmdCompact(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 		return
 	}
 
-	resp, err := bridge.Call(ctx, api.MethodSessionCompact, SessionParams(bridge))
+	resp, err := bridge.Call(ctx, vibekit.MethodSessionCompact, SessionParams(bridge))
 	if err != nil {
 		slog.Warn("compact: call failed", "chat", cmd.ChatID, keyError, err)
 		d.RespondErr(w, http.StatusBadGateway, err)

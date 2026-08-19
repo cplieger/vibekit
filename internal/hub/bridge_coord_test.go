@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/kirosession"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- helpers ---
@@ -28,7 +28,7 @@ import (
 // behaving like a fakeBridge for every other method.
 type recordingStartBridge struct {
 	*fakeBridge
-	lastStart api.StartOpts
+	lastStart vibekit.StartOpts
 	recMu     sync.Mutex
 }
 
@@ -36,14 +36,14 @@ func newRecordingStartBridge() *recordingStartBridge {
 	return &recordingStartBridge{fakeBridge: newFakeBridge()}
 }
 
-func (b *recordingStartBridge) Start(ctx context.Context, opts *api.StartOpts) error {
+func (b *recordingStartBridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	b.recMu.Lock()
 	b.lastStart = *opts
 	b.recMu.Unlock()
 	return b.fakeBridge.Start(ctx, opts)
 }
 
-func (b *recordingStartBridge) startOpts() api.StartOpts {
+func (b *recordingStartBridge) startOpts() vibekit.StartOpts {
 	b.recMu.Lock()
 	defer b.recMu.Unlock()
 	return b.lastStart
@@ -64,17 +64,17 @@ func newRecordingStartHub(t *testing.T) (*Hub, *fakeChatStore, *recordingStartBr
 // unsynchronised field is ordered behind the channel handoff).
 type recordingPush struct {
 	sends   chan string
-	subject api.PushSubject
+	subject vibekit.PushSubject
 }
 
-func (p *recordingPush) RegisterRoutes(*http.ServeMux)        {}
-func (p *recordingPush) Subscribe(api.PushSubscription)       {}
-func (p *recordingPush) Unsubscribe(string)                   {}
-func (p *recordingPush) HasSubscribers() bool                 { return true }
-func (p *recordingPush) SetPreferences(map[api.PushKind]bool) {}
-func (p *recordingPush) ReloadPreferences(context.Context)    {}
-func (p *recordingPush) Close()                               {}
-func (p *recordingPush) Send(_ context.Context, _, body string, _ api.PushKind, subject api.PushSubject) {
+func (p *recordingPush) RegisterRoutes(*http.ServeMux)            {}
+func (p *recordingPush) Subscribe(vibekit.PushSubscription)       {}
+func (p *recordingPush) Unsubscribe(string)                       {}
+func (p *recordingPush) HasSubscribers() bool                     { return true }
+func (p *recordingPush) SetPreferences(map[vibekit.PushKind]bool) {}
+func (p *recordingPush) ReloadPreferences(context.Context)        {}
+func (p *recordingPush) Close()                                   {}
+func (p *recordingPush) Send(_ context.Context, _, body string, _ vibekit.PushKind, subject vibekit.PushSubject) {
 	p.subject = subject
 	select {
 	case p.sends <- body:
@@ -90,7 +90,7 @@ func (p *recordingPush) Send(_ context.Context, _, body string, _ api.PushKind, 
 func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 	h, cs, rb := newRecordingStartHub(t)
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.Model = "m-chat"
 		return true // no ACPSessionID -> fresh session/new path
@@ -117,7 +117,7 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 func TestTryFastModelSwitch_SucceedsReturnsTrue(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 	if _, err := h.coord.GetOrCreateBridge(ctx, "c1", ""); err != nil {
 		t.Fatalf("GetOrCreateBridge: %v", err)
 	}
@@ -175,9 +175,9 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
+	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
 
 	select {
@@ -196,9 +196,9 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 func TestPrimeIfNeeded_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Messages = []api.Message{{Role: api.RoleUser, Content: "hi"}}
+		c.Messages = []vibekit.Message{{Role: vibekit.RoleUser, Content: "hi"}}
 		return true
 	})
 	sb, err := h.coord.GetOrCreateBridge(ctx, "c1", "")
@@ -219,14 +219,14 @@ func TestPrimeIfNeeded_NoErrorLogOnSuccess(t *testing.T) {
 func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	buf := h.bridge.assistantBufs.GetOrInit("c1")
 	buf.Started = true
 	buf.MessageID = "m-asst"
 
 	logs := captureLogs(t)
-	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
+	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "cancelled"})}
 	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
 
 	got := logs.String()
@@ -242,7 +242,7 @@ func TestEmitTurnEnded_NoPersistErrorLogOnSuccess(t *testing.T) {
 func TestPersistModelSwitch_NoErrorLogOnSuccess(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
 
 	logs := captureLogs(t)
 	h.coord.PersistModelSwitch(ctx, "c1", "m-new", 1234)
@@ -268,21 +268,21 @@ func TestAdoptKASTitle(t *testing.T) {
 	}{
 		{
 			name:  "adopts a real title onto a default-named chat",
-			start: api.DefaultChatName,
+			start: vibekit.DefaultChatName,
 			title: "Vibekit conversational surface",
 			want:  "Vibekit conversational surface",
 		},
 		{
 			name:  "refuses KAS's own placeholder",
-			start: api.DefaultChatName,
+			start: vibekit.DefaultChatName,
 			title: kasDefaultSessionTitle,
-			want:  api.DefaultChatName,
+			want:  vibekit.DefaultChatName,
 		},
 		{
 			name:  "refuses an empty title",
-			start: api.DefaultChatName,
+			start: vibekit.DefaultChatName,
 			title: "",
-			want:  api.DefaultChatName,
+			want:  vibekit.DefaultChatName,
 		},
 		{
 			name:  "never overwrites a first-prompt label",
@@ -299,7 +299,7 @@ func TestAdoptKASTitle(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &api.Chat{Name: tc.start}
+			c := &vibekit.Chat{Name: tc.start}
 			adoptKASTitle(c, tc.title)
 			if c.Name != tc.want {
 				t.Errorf("adoptKASTitle(%q, %q) left name %q, want %q",
@@ -395,7 +395,7 @@ func TestLiveSessionIDs_CoversEveryBridge(t *testing.T) {
 	h := New(t.Context(), "/tmp/work", func() ACPBridge { return newFakeBridge() }, cs)
 	cs.Bus = h
 
-	setSession := func(chatID api.ChatID, sessionID string) {
+	setSession := func(chatID vibekit.ChatID, sessionID string) {
 		t.Helper()
 		sb, _ := h.bridge.mgr.getOrInsert(chatID)
 		fb, ok := sb.bridge.(*fakeBridge)
@@ -448,7 +448,7 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 			br.mu.Lock()
 			br.currentMode = tc.actual
 			br.mu.Unlock()
-			_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+			_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "A"
 				c.CurrentModeID = tc.requested
 				return true
@@ -465,8 +465,8 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 
 			var reported bool
 			for _, e := range bufferedSince(h, since) {
-				var msg api.ServerEvent
-				if json.Unmarshal(e.Event.Data, &msg) != nil || msg.Type != api.EventError {
+				var msg vibekit.ServerEvent
+				if json.Unmarshal(e.Event.Data, &msg) != nil || msg.Type != vibekit.EventError {
 					continue
 				}
 				// ServerEvent.Payload is an `any`, so round-trip it to read the
@@ -475,8 +475,8 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 				if mErr != nil {
 					continue
 				}
-				var p api.ErrorPayload
-				if json.Unmarshal(raw, &p) == nil && p.Code == api.ErrCodeModeNotApplied {
+				var p vibekit.ErrorPayload
+				if json.Unmarshal(raw, &p) == nil && p.Code == vibekit.ErrCodeModeNotApplied {
 					reported = true
 					if !strings.Contains(p.Message, tc.requested) {
 						t.Errorf("message %q does not name the requested mode %q", p.Message, tc.requested)
@@ -504,17 +504,17 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 	cases := []struct {
 		name        string
-		teardown    func(h *Hub, ctx context.Context, id api.ChatID)
+		teardown    func(h *Hub, ctx context.Context, id vibekit.ChatID)
 		wantSurvive bool
 	}{
 		{
 			name:        "close keeps the session on disk",
-			teardown:    func(h *Hub, ctx context.Context, id api.ChatID) { h.CloseChatState(ctx, id) },
+			teardown:    func(h *Hub, ctx context.Context, id vibekit.ChatID) { h.CloseChatState(ctx, id) },
 			wantSurvive: true,
 		},
 		{
 			name:        "delete reaps it (control)",
-			teardown:    func(h *Hub, ctx context.Context, id api.ChatID) { h.CleanupChatState(ctx, id) },
+			teardown:    func(h *Hub, ctx context.Context, id vibekit.ChatID) { h.CleanupChatState(ctx, id) },
 			wantSurvive: false,
 		},
 	}
@@ -538,7 +538,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 			t.Cleanup(func() { h.Shutdown() })
 
 			ctx := t.Context()
-			if err := cs.Mutate(ctx, "c-owner", func(c *api.Chat, _ bool) bool {
+			if err := cs.Mutate(ctx, "c-owner", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "owner"
 				c.RecordSession("sess_owned")
 				return true

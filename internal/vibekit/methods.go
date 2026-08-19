@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // ACP protocol method name constants. The complete vocabulary lives here
 // so a protocol rename is a single-line change with compile-time

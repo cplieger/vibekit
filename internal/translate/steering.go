@@ -27,7 +27,7 @@ package translate
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Steering sub-kind names as they appear in `_meta.kiro.kind`.
@@ -49,7 +49,7 @@ const (
 // rather than broadcast. It is still consumed (the kind was recognised), because
 // forwarding an event with no id would put a chip on screen that nothing can
 // ever resolve or clear.
-func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID api.ChatID, u *sessionInfoUpdate) bool {
+func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID vibekit.ChatID, u *sessionInfoUpdate) bool {
 	k := &u.Meta.Kiro
 	switch k.Kind {
 	case kindSteeringQueued:
@@ -70,13 +70,13 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID api.ChatID
 		// consumer, and the client got it wrong: an agent's own progress line
 		// rendered inside the message box as something the user had typed.
 		if k.NotificationSeverity != "" {
-			t.deps.Broadcast(ctx, api.NewEvent(api.EventAgentNotice, chatID, api.AgentNoticePayload{
+			t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventAgentNotice, chatID, vibekit.AgentNoticePayload{
 				Severity: k.NotificationSeverity,
 				Text:     k.Content,
 			}))
 			return true
 		}
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventSteerQueued, chatID, api.SteerQueuedPayload{
+		t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerQueued, chatID, vibekit.SteerQueuedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
 		}))
@@ -86,7 +86,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID api.ChatID
 		if k.MessageID == "" {
 			return true
 		}
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventSteerInjected, chatID, api.SteerInjectedPayload{
+		t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: k.MessageID,
 			Text:    k.Content,
 		}))
@@ -99,7 +99,7 @@ func (t *Translator) handleSteeringUpdate(ctx context.Context, chatID api.ChatID
 			// Broadcasting it would put one dead event on the wire per turn.
 			return true
 		}
-		t.deps.Broadcast(ctx, api.NewEvent(api.EventSteerCleared, chatID, api.SteerClearedPayload{
+		t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerCleared, chatID, vibekit.SteerClearedPayload{
 			SteerIDs: k.MessageIDs,
 		}))
 		return true

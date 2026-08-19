@@ -14,25 +14,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // termCreateMsgArgs builds a terminal/create request with EXPLICIT control over
 // whether `args` is present, which the shared termCreateMsg cannot express (it
 // omits the key for an empty slice — and the presence of that key is the whole
 // decision under test).
-func termCreateMsgArgs(t *testing.T, id int64, command string, args *[]string) *api.RPCResponse {
+func termCreateMsgArgs(t *testing.T, id int64, command string, args *[]string) *vibekit.RPCResponse {
 	t.Helper()
 	params := map[string]any{"command": command}
 	if args != nil {
 		params["args"] = *args
 	}
-	return &api.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
+	return &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t, params)}
 }
 
 // waitForTermExit drives one terminal/create to completion and returns the
 // terminal's raw ring output.
-func waitForTermExit(t *testing.T, h *Hub, msg *api.RPCResponse) string {
+func waitForTermExit(t *testing.T, h *Hub, msg *vibekit.RPCResponse) string {
 	t.Helper()
 	h.translateACPEvent("c1", msg)
 	term := singleTerm(t, h)
@@ -113,35 +113,35 @@ func TestTermCreate_PresentArgsExecsDirectly(t *testing.T) {
 func TestTermCreate_EveryFailurePathLogsAndAnswers(t *testing.T) {
 	cases := []struct {
 		name   string
-		msg    func(t *testing.T) *api.RPCResponse
+		msg    func(t *testing.T) *vibekit.RPCResponse
 		reason string
 	}{{
 		name: "InvalidParams",
-		msg: func(t *testing.T) *api.RPCResponse {
+		msg: func(t *testing.T) *vibekit.RPCResponse {
 			t.Helper()
 			id := int64(1)
-			return &api.RPCResponse{ID: &id, Method: methodTermCreate, Params: []byte(`{"command":5}`)}
+			return &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: []byte(`{"command":5}`)}
 		},
 		reason: "a malformed frame",
 	}, {
 		name: "EmptyCommand",
-		msg: func(t *testing.T) *api.RPCResponse {
+		msg: func(t *testing.T) *vibekit.RPCResponse {
 			t.Helper()
 			return termCreateMsgArgs(t, 1, "", nil)
 		},
 		reason: "no command at all",
 	}, {
 		name: "CwdEscapesWorkspace",
-		msg: func(t *testing.T) *api.RPCResponse {
+		msg: func(t *testing.T) *vibekit.RPCResponse {
 			t.Helper()
 			id := int64(1)
-			return &api.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t,
+			return &vibekit.RPCResponse{ID: &id, Method: methodTermCreate, Params: mustJSON(t,
 				map[string]any{"command": "true", "cwd": "/etc"})}
 		},
 		reason: "a cwd outside the workspace",
 	}, {
 		name: "ExecFails",
-		msg: func(t *testing.T) *api.RPCResponse {
+		msg: func(t *testing.T) *vibekit.RPCResponse {
 			t.Helper()
 			nope := []string{}
 			return termCreateMsgArgs(t, 1, "definitely-not-a-real-binary-xyz", &nope)
@@ -185,18 +185,18 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		evs = captureTerminalEvents(t, h)
-		if hasType(evs, api.EventTerminalExited) {
+		if hasType(evs, vibekit.EventTerminalExited) {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	exitedID, ok := firstEventID(evs, api.EventTerminalExited)
+	exitedID, ok := firstEventID(evs, vibekit.EventTerminalExited)
 	if !ok {
 		t.Fatal("terminal_exited was never broadcast")
 	}
 	sawOutput := false
 	for _, e := range evs {
-		if e.typ != string(api.EventTerminalOutput) {
+		if e.typ != string(vibekit.EventTerminalOutput) {
 			continue
 		}
 		sawOutput = true
@@ -252,27 +252,27 @@ func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) 
 
 // terminalOutputPayloads decodes every terminal_output payload the hub has
 // broadcast, in event-id order.
-func terminalOutputPayloads(t *testing.T, h *Hub) []api.TerminalOutputPayload {
+func terminalOutputPayloads(t *testing.T, h *Hub) []vibekit.TerminalOutputPayload {
 	t.Helper()
 	type idPayload struct {
-		p  api.TerminalOutputPayload
+		p  vibekit.TerminalOutputPayload
 		id uint64
 	}
 	var found []idPayload
 	for _, e := range h.sse.hub.Buffered() {
 		var env struct {
-			Type    string                    `json:"type"`
-			Payload api.TerminalOutputPayload `json:"payload"`
+			Type    string                        `json:"type"`
+			Payload vibekit.TerminalOutputPayload `json:"payload"`
 		}
 		if err := json.Unmarshal(e.Event.Data, &env); err != nil {
 			t.Fatalf("unmarshal ring event: %v", err)
 		}
-		if env.Type == string(api.EventTerminalOutput) {
+		if env.Type == string(vibekit.EventTerminalOutput) {
 			found = append(found, idPayload{p: env.Payload, id: e.ID})
 		}
 	}
 	slices.SortFunc(found, func(a, b idPayload) int { return cmp.Compare(a.id, b.id) })
-	out := make([]api.TerminalOutputPayload, len(found))
+	out := make([]vibekit.TerminalOutputPayload, len(found))
 	for i, f := range found {
 		out[i] = f.p
 	}

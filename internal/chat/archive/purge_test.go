@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestPurge_RetentionCutoff is the core retention contract: files whose
@@ -126,9 +126,9 @@ func TestPurge_NilOnPurgeCallback(t *testing.T) {
 // TestPurgeScheduler_InitialEvaluationPurges verifies Start runs an
 // initial purge evaluation that removes an over-retention chat.
 func TestPurgeScheduler_InitialEvaluationPurges(t *testing.T) {
-	purged := make(chan api.ChatID, 8)
+	purged := make(chan vibekit.ChatID, 8)
 	svc, _, dir := newPurgeTestService(t,
-		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
+		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }))
 	writeAgedChat(t, dir, "sched1", 48*time.Hour)
 
 	sched := NewPurgeScheduler(svc,
@@ -144,9 +144,9 @@ func TestPurgeScheduler_InitialEvaluationPurges(t *testing.T) {
 // TestPurgeScheduler_ReArmsAndProcessesSecondTrigger verifies the loop
 // keeps processing triggers after the first pass (it is not one-shot).
 func TestPurgeScheduler_ReArmsAndProcessesSecondTrigger(t *testing.T) {
-	purged := make(chan api.ChatID, 8)
+	purged := make(chan vibekit.ChatID, 8)
 	svc, _, dir := newPurgeTestService(t,
-		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
+		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }))
 	writeAgedChat(t, dir, "first", 48*time.Hour)
 
 	sched := NewPurgeScheduler(svc,
@@ -170,9 +170,9 @@ func TestPurgeScheduler_ReArmsAndProcessesSecondTrigger(t *testing.T) {
 // ("keep forever") disables purging entirely. A bug here would delete
 // every chat, at any age.
 func TestPurgeScheduler_ZeroRetentionSkipsPurge(t *testing.T) {
-	purged := make(chan api.ChatID, 8)
+	purged := make(chan vibekit.ChatID, 8)
 	svc, _, dir := newPurgeTestService(t,
-		WithOnPurge(func(id api.ChatID, _ []string) { purged <- id }))
+		WithOnPurge(func(id vibekit.ChatID, _ []string) { purged <- id }))
 	chatPath := writeAgedChat(t, dir, "keepforever", 9000*time.Hour)
 
 	sched := NewPurgeScheduler(svc,
@@ -336,7 +336,7 @@ func TestOldestChatMTime(t *testing.T) {
 }
 
 // recvWithin receives one chat ID from ch or fails after d.
-func recvWithin(t *testing.T, ch <-chan api.ChatID, d time.Duration) api.ChatID {
+func recvWithin(t *testing.T, ch <-chan vibekit.ChatID, d time.Duration) vibekit.ChatID {
 	t.Helper()
 	select {
 	case id := <-ch:
@@ -474,7 +474,7 @@ func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 	// purgeReferenceTime reads the chat through the STORE now (chats no longer
 	// live in a separate directory the purge package parses itself), so the
 	// chain has to come from the fake's Load.
-	store.loadResult = &api.Chat{
+	store.loadResult = &vibekit.Chat{
 		ID:                 "chained",
 		Name:               "C",
 		ACPSessionID:       "sess_new",
@@ -508,10 +508,10 @@ func TestPurge_HandsTheSessionChainToOnPurge(t *testing.T) {
 // work" from "work in progress".
 func TestPurge_NeverPurgesALiveChat(t *testing.T) {
 	var rec purgeRecorder
-	live := map[api.ChatID]bool{"open": true}
+	live := map[vibekit.ChatID]bool{"open": true}
 	svc, _, dir := newPurgeTestService(t,
 		WithOnPurge(rec.recordPurge),
-		WithLiveChats(func(id api.ChatID) bool { return live[id] }),
+		WithLiveChats(func(id vibekit.ChatID) bool { return live[id] }),
 	)
 
 	// Both are far past the window; only one is in use.

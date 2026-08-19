@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Client commands: the wire shapes for POST /api/command envelopes +
 // per-type payloads. Command routing lives in hub/command.go; this file

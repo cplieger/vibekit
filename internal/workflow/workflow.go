@@ -117,7 +117,7 @@ var ErrUnknownMethod = errors.New("workflow verb not registered on this kiro-cli
 // ErrUnknownMethod with the original error still unwrappable beneath it.
 //
 // It reads the boundary error's own `error.data` (RPCDetails walks to the
-// *api.RPCError with errors.As) and nothing else. It deliberately does NOT
+// *vibekit.RPCError with errors.As) and nothing else. It deliberately does NOT
 // search the rendered message chain: RPCError.Error() is the bare
 // `error.message`, which for this shape is the literal "Internal error", so the
 // text search matched only when some intermediate layer had already rendered the

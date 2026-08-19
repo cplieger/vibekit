@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -16,7 +16,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if s.utilityPrompt == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(api.ErrMsgUtilityUnavailable))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(vibekit.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -35,7 +35,7 @@ func (s *Server) handleUtilityExplainError(w http.ResponseWriter, r *http.Reques
 		prompt += "Context: " + body.Context + "\n\n"
 	}
 	prompt += "Error: " + body.Error
-	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt, api.EffortLow)
+	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), prompt, vibekit.EffortLow)
 	if err != nil {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
 		return
@@ -50,7 +50,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if s.utilityPrompt == nil {
-		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(api.ErrMsgUtilityUnavailable))
+		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON(vibekit.ErrMsgUtilityUnavailable))
 		return
 	}
 	var body struct {
@@ -92,7 +92,7 @@ func (s *Server) handleUtilityResolveConflict(w http.ResponseWriter, r *http.Req
 	sb.WriteString("\n```\n\nMerged:")
 	// Medium effort: merging two divergent code edits is the hardest
 	// utility task; a low-effort merge tends to just pick one side.
-	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String(), api.EffortMedium)
+	result, err := s.utilityPrompt.UtilityPrompt(r.Context(), sb.String(), vibekit.EffortMedium)
 	if err != nil {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("generation failed"))
 		return

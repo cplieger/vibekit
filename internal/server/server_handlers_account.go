@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -22,7 +22,7 @@ const accountUsageTTL = 60 * time.Second
 // a refresh fails (no live bridge, rate limit) so the footer degrades
 // gracefully instead of blanking.
 type acctUsageCache struct {
-	data    *api.AccountUsage
+	data    *vibekit.AccountUsage
 	atNanos int64 // wall-clock UnixNano of the last successful fetch
 	mu      sync.Mutex
 }

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestAgentFinishedBodyFrom(t *testing.T) {
@@ -62,16 +62,16 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// The agent declared what it was doing mid-turn, exactly as
 	// translate/focus.go's chat_status path records it.
-	h.sse.chatStatus.Set("c1", api.ChatStatusPayload{
+	h.sse.chatStatus.Set("c1", vibekit.ChatStatusPayload{
 		Status:      "in_progress",
 		Description: "Wiring the PR status poller",
 	})
 
-	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
+	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
 
 	select {
@@ -100,9 +100,9 @@ func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 	ctx := t.Context()
-	_ = cs.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	resp := &api.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
+	resp := &vibekit.RPCResponse{Result: mustJSON(t, map[string]any{"stopReason": "end_turn"})}
 	h.EmitTurnEndedWithStats(ctx, "c1", resp, command.TurnStats{})
 
 	select {

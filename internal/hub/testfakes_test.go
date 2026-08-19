@@ -9,14 +9,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- Fake ACP bridge ---
 
 type fakeBridge struct {
-	notifCh      chan *api.RPCResponse
+	notifCh      chan *vibekit.RPCResponse
 	callResults  map[string]json.RawMessage
 	callErrs     map[string]error
 	lastParams   map[string]map[string]any
@@ -35,7 +35,7 @@ type fakeBridge struct {
 	// startOpts records the StartOpts of the most recent Start, so a test can
 	// assert what a spawn was actually handed (e.g. that the utility bridge
 	// gets no operator launch flags).
-	startOpts *api.StartOpts
+	startOpts *vibekit.StartOpts
 	mu        sync.Mutex
 	responds  int
 	stopped   bool
@@ -46,11 +46,11 @@ func newFakeBridge() *fakeBridge {
 	return &fakeBridge{
 		sessionID: "fake-sess-" + time.Now().Format("150405.000"),
 		modelID:   "fake-model",
-		notifCh:   make(chan *api.RPCResponse, 16),
+		notifCh:   make(chan *vibekit.RPCResponse, 16),
 	}
 }
 
-func (b *fakeBridge) Start(_ context.Context, opts *api.StartOpts) error {
+func (b *fakeBridge) Start(_ context.Context, opts *vibekit.StartOpts) error {
 	b.mu.Lock()
 	b.started = true
 	b.startOpts = opts
@@ -62,7 +62,7 @@ func (b *fakeBridge) Start(_ context.Context, opts *api.StartOpts) error {
 }
 
 // lastStartOpts returns the StartOpts of the most recent Start, or nil.
-func (b *fakeBridge) lastStartOpts() *api.StartOpts {
+func (b *fakeBridge) lastStartOpts() *vibekit.StartOpts {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.startOpts
@@ -77,7 +77,7 @@ func (b *fakeBridge) Stop() {
 	b.mu.Unlock()
 }
 
-func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*api.RPCResponse, error) {
+func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
 	b.mu.Lock()
 	b.calls = append(b.calls, method)
 	if p, ok := params.(map[string]any); ok {
@@ -119,9 +119,9 @@ func (b *fakeBridge) Call(ctx context.Context, method string, params any) (*api.
 			"sessionUpdate": "agent_message_chunk",
 			"content":       map[string]any{"type": "text", "text": text},
 		})
-		b.notifCh <- &api.RPCResponse{Method: "session/update", Params: p}
+		b.notifCh <- &vibekit.RPCResponse{Method: "session/update", Params: p}
 	}
-	return &api.RPCResponse{Result: res}, nil
+	return &vibekit.RPCResponse{Result: res}, nil
 }
 
 // paramsFor returns the params captured for the most recent Call to method.
@@ -174,16 +174,16 @@ func (b *fakeBridge) lastCall() string {
 	return b.calls[len(b.calls)-1]
 }
 
-func (b *fakeBridge) SessionID() api.SessionID {
+func (b *fakeBridge) SessionID() vibekit.SessionID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return api.SessionID(b.sessionID)
+	return vibekit.SessionID(b.sessionID)
 }
 
-func (b *fakeBridge) ModelID() api.ModelID {
+func (b *fakeBridge) ModelID() vibekit.ModelID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return api.ModelID(b.modelID)
+	return vibekit.ModelID(b.modelID)
 }
 
 // CurrentMode reports the mode the SESSION ended up in, which is not necessarily
@@ -203,11 +203,11 @@ func (b *fakeBridge) SessionTitle() string {
 	return b.sessionTitle
 }
 
-func (b *fakeBridge) Modes() []api.SessionMode   { return nil }
-func (b *fakeBridge) Models() []api.SessionModel { return nil }
+func (b *fakeBridge) Modes() []vibekit.SessionMode   { return nil }
+func (b *fakeBridge) Models() []vibekit.SessionModel { return nil }
 
 // ServedModels reports the ids this fake session advertises. Nil by default, which
-// api.ModelServed reads as "entitlement unknowable" and allows — so a test that
+// vibekit.ModelServed reads as "entitlement unknowable" and allows — so a test that
 // does not care about entitlement is unaffected, and one that does sets it.
 func (b *fakeBridge) ServedModels() []string {
 	b.mu.Lock()
@@ -223,11 +223,11 @@ func (b *fakeBridge) SetModel(_ context.Context, modelID string) error {
 	return nil
 }
 
-func (b *fakeBridge) NotifCh() <-chan *api.RPCResponse { return b.notifCh }
+func (b *fakeBridge) NotifCh() <-chan *vibekit.RPCResponse { return b.notifCh }
 
 // newNoopBridge returns a zero-value fakeBridge suitable for benchmarks
 // where the bridge is never actually called. Replaces the former stubBridge type.
-func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan *api.RPCResponse)} }
+func newNoopBridge() ACPBridge { return &fakeBridge{notifCh: make(chan *vibekit.RPCResponse)} }
 
 // --- Fake ChatStore (delegates to testsupport.RecordingChatStore) ---
 

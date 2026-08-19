@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/cplieger/keyenc"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // BridgeCoordinator encapsulates bridge lifecycle management: creating,
@@ -24,8 +24,8 @@ import (
 type BridgeCoordinator struct {
 	bridge         *bridgePlane
 	chatStore      bridgeChatRecords
-	broadcast      func(ctx context.Context, e api.ServerEvent)
-	translateEvent func(chatID api.ChatID, msg *api.RPCResponse)
+	broadcast      func(ctx context.Context, e vibekit.ServerEvent)
+	translateEvent func(chatID vibekit.ChatID, msg *vibekit.RPCResponse)
 	push           pushNotifier
 	mcpRegistry    *mcpRegistry
 	lifecycle      *lifecyclePlane
@@ -39,12 +39,12 @@ type BridgeCoordinator struct {
 	// spawn path (own goroutine). The hub hangs the restart-paused run resume
 	// sweep here: a rehydrated chat is exactly the moment its runs should heal,
 	// because the chat's process dying is what paused them. Nil in tests.
-	onSessionRehydrated func(api.ChatID)
+	onSessionRehydrated func(vibekit.ChatID)
 	// secretStorage reports whether the hub holds a credential store, read at
 	// SPAWN time rather than captured as a bool, because newBridgeCoordinator
 	// runs before NewHub opens the store — a snapshot here would be false for
 	// every bridge this process ever starts. It gates the
-	// `_meta.kiro.secretStorage` declaration: see api.StartOpts.SecretStorage
+	// `_meta.kiro.secretStorage` declaration: see vibekit.StartOpts.SecretStorage
 	// for why declaring it without a store breaks an MCP connect.
 	secretStorage func() bool
 	// chatStatus reads a chat's last self-declared status, which is what the
@@ -52,7 +52,7 @@ type BridgeCoordinator struct {
 	// than the cache itself so the coordinator keeps taking no dependency on the
 	// SSE plane's internals, and nil-safe for tests that build a coordinator
 	// without one.
-	chatStatus func(api.ChatID) api.ChatStatusPayload
+	chatStatus func(vibekit.ChatID) vibekit.ChatStatusPayload
 	// primeFrom notes which chat's transcript should prime a chat's FIRST
 	// session, for the tangent whose session/fork was refused (command/fork.go).
 	// Consumed by the next spawn and deleted there, so it is a handoff between
@@ -65,7 +65,7 @@ type BridgeCoordinator struct {
 	//
 	// Sits among the pointer fields for govet fieldalignment; its mutex is a
 	// non-pointer and stays at the end of the struct.
-	primeFrom map[api.ChatID]api.ChatID
+	primeFrom map[vibekit.ChatID]vibekit.ChatID
 	// agentEngine is the kiro-cli agent engine for every bridge this
 	// coordinator spawns. Hard-pinned to v3 (KAS) by resolveAgentEngine;
 	// vibekit is v3-only.
@@ -80,14 +80,14 @@ type BridgeCoordinator struct {
 
 // PrimeFromChat records that chatID's first session should be primed with
 // sourceChatID's transcript. See BridgeCoordinator.primeFrom.
-func (bc *BridgeCoordinator) PrimeFromChat(chatID, sourceChatID api.ChatID) {
+func (bc *BridgeCoordinator) PrimeFromChat(chatID, sourceChatID vibekit.ChatID) {
 	if chatID == "" || sourceChatID == "" || chatID == sourceChatID {
 		return
 	}
 	bc.primeFromMu.Lock()
 	defer bc.primeFromMu.Unlock()
 	if bc.primeFrom == nil {
-		bc.primeFrom = make(map[api.ChatID]api.ChatID, 1)
+		bc.primeFrom = make(map[vibekit.ChatID]vibekit.ChatID, 1)
 	}
 	bc.primeFrom[chatID] = sourceChatID
 }
@@ -95,7 +95,7 @@ func (bc *BridgeCoordinator) PrimeFromChat(chatID, sourceChatID api.ChatID) {
 // takePrimeFrom claims and clears a chat's prime note. Claiming rather than
 // reading: the note is spent by the session it primes, so a later bridge for the
 // same chat must not re-inject a history that session has already read.
-func (bc *BridgeCoordinator) takePrimeFrom(chatID api.ChatID) api.ChatID {
+func (bc *BridgeCoordinator) takePrimeFrom(chatID vibekit.ChatID) vibekit.ChatID {
 	bc.primeFromMu.Lock()
 	defer bc.primeFromMu.Unlock()
 	src, ok := bc.primeFrom[chatID]
@@ -124,7 +124,7 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
 		secretStorage:    func() bool { return h.secrets != nil },
-		onSessionRehydrated: func(chatID api.ChatID) {
+		onSessionRehydrated: func(chatID vibekit.ChatID) {
 			ctx, cancel := h.hubContext()
 			defer cancel()
 			h.resumeRestartPausedRuns(ctx, chatID)
@@ -147,7 +147,7 @@ func (bc *BridgeCoordinator) hasSecretStorage() bool {
 //
 // It must never be the caller's ctx. Every spawn here is reached from a command
 // handler, and CmdPrompt's is a per-turn context it cancels on return — see
-// api.StartOpts.Lifetime for what that measured like.
+// vibekit.StartOpts.Lifetime for what that measured like.
 //
 // It is a plain field read: hub.New requires the hub's lifetime context, so
 // there is nothing to be nil-safe against. The context.Background() fallback
@@ -168,7 +168,7 @@ func (bc *BridgeCoordinator) processLifetimeCtx() context.Context {
 // (internal/hub/bridge_v3_auth.go). The v2→v3 wire comparison is in
 // kiro-cli-research.md.
 func resolveAgentEngine() string {
-	return api.AgentEngineV3
+	return vibekit.AgentEngineV3
 }
 
 // GetOrCreateBridge returns an existing bridge for chatID, or creates one.
@@ -176,7 +176,7 @@ func resolveAgentEngine() string {
 // bridgeSpawnKey.
 //
 //nolint:revive // unexported-return: sharedBridge is package-internal; callers within hub use the methods on it. Exporting would leak ACP wiring outside the hub package.
-func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.ChatID, modelOverride string) (*sharedBridge, error) {
+func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Fast path: bridge already exists.
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
 		return sb, nil
@@ -219,7 +219,7 @@ func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID api.C
 // stays injective whatever the fields contain. The key's bytes changed (0x00
 // became ':'); nothing persists it, the singleflight group lives on the
 // in-memory bridge manager for the life of one spawn.
-func bridgeSpawnKey(chatID api.ChatID, modelOverride string) string {
+func bridgeSpawnKey(chatID vibekit.ChatID, modelOverride string) string {
 	return keyenc.Join(string(chatID), modelOverride)
 }
 
@@ -229,7 +229,7 @@ func bridgeSpawnKey(chatID api.ChatID, modelOverride string) string {
 // tries session/load when an ACP session id is stored, and otherwise
 // starts a fresh session/new. On any start failure it rolls the
 // half-registered bridge back out of the map and returns the error.
-func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID, modelOverride string) (*sharedBridge, error) {
+func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Double-check after winning the singleflight race.
 	sb, existed := bc.bridge.mgr.getOrInsert(chatID)
 	if existed {
@@ -265,7 +265,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	//
 	// The evidence is the LAST session's advertised set, because the launch flag
 	// is built before this session has one. Empty means unknowable and allows.
-	if !api.ModelServed(model, chat.ServedModelIDs) {
+	if !vibekit.ModelServed(model, chat.ServedModelIDs) {
 		slog.Warn("withholding a model this account does not serve; using the backend default",
 			"chat_id", chatID, "model", model)
 		model = ""
@@ -309,7 +309,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 	// Supervised is passed at creation and only here: the session/load path below
 	// does not repeat it, because KAS persists `autopilot` in its own session
 	// metadata and a loaded session already carries the value.
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: chat.Effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
+	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), Model: model, Mode: chat.CurrentModeID, Effort: chat.Effort, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, Supervised: chat.SupervisedMode, SecretStorage: bc.hasSecretStorage()}); err != nil {
 		return nil, setupErr(err)
 	}
 	bc.persistNewSessionMetadata(ctx, chatID, sb.bridge)
@@ -336,7 +336,7 @@ func (bc *BridgeCoordinator) spawnBridge(ctx context.Context, chatID api.ChatID,
 
 // tryLoadSession attempts session/load against the stored ACP session id.
 func (bc *BridgeCoordinator) tryLoadSession(
-	ctx context.Context, chatID api.ChatID, sb *sharedBridge, acpSessionID, model string,
+	ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge, acpSessionID, model string,
 ) bool {
 	// EnableHooks:true — the session/load path must opt into the hook engine
 	// too, so hooks autofire on resumed sessions after a container restart
@@ -354,7 +354,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		bc.replayProjection.OpenReplayProjection(chatID)
 	}
 	go bc.Forward(chatID, sb.bridge)
-	if err := sb.bridge.Start(ctx, &api.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage()}); err != nil {
+	if err := sb.bridge.Start(ctx, &vibekit.StartOpts{Lifetime: bc.processLifetimeCtx(), SessionID: acpSessionID, Model: model, AgentEngine: bc.agentEngine, EnableHooks: true, ExtraArgs: bc.acpArgs, SecretStorage: bc.hasSecretStorage()}); err != nil {
 		slog.Warn("session/load failed, starting new",
 			"chat_id", chatID, "acp_session", acpSessionID, "error", err)
 		// A failed load has no transcript to adopt, so whatever partial replay
@@ -369,7 +369,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		// priming, or maybePrime's default arm returns and the agent answers the
 		// next prompt with no idea what came before it.
 		sb.primeReason = primeReasonReload
-		if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+		if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}
@@ -391,7 +391,7 @@ func (bc *BridgeCoordinator) tryLoadSession(
 		bc.replayProjection.MarkReplayLoadDone(chatID)
 	}
 	title := sb.bridge.SessionTitle()
-	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if mErr := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -432,14 +432,14 @@ const kasDefaultSessionTitle = "New Session"
 // vibekit lost. It deliberately never overwrites: `titleIsPromptDerived`
 // (translate/focus.go) implements the top of that ordering on the focus channel,
 // and this implements the bottom.
-func adoptKASTitle(c *api.Chat, title string) {
-	if title == "" || title == kasDefaultSessionTitle || c.Name != api.DefaultChatName {
+func adoptKASTitle(c *vibekit.Chat, title string) {
+	if title == "" || title == kasDefaultSessionTitle || c.Name != vibekit.DefaultChatName {
 		return
 	}
 	c.Name = title
 }
 
-func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID api.ChatID, bridge acpSessionFacts) {
+func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chatID vibekit.ChatID, bridge acpSessionFacts) {
 	newSessionID := bridge.SessionID()
 	newModelID := bridge.ModelID()
 	currentMode := bridge.CurrentMode()
@@ -450,7 +450,7 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 	// requestedMode is the mode the chat asked for, read before the line below
 	// overwrites it with the mode the session actually got.
 	var requestedMode string
-	if err := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -491,14 +491,14 @@ func (bc *BridgeCoordinator) persistNewSessionMetadata(ctx context.Context, chat
 // retry would need a second persisted mode field to remember an intent the record
 // no longer holds. This is not a privilege gate: tool authorization is Cedar's,
 // and the engine default is not the least constrained bundled mode.
-func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID api.ChatID, requested, actual string) {
+func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID vibekit.ChatID, requested, actual string) {
 	if requested == "" || requested == actual {
 		return
 	}
 	slog.Error("session mode not applied; the chat's mode was reset to the session's",
 		"chat_id", chatID, "requested", requested, "actual", actual)
-	bc.broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-		Code: api.ErrCodeModeNotApplied,
+	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		Code: vibekit.ErrCodeModeNotApplied,
 		Message: "Could not start this chat in \"" + requested + "\" mode; it is running as \"" +
 			actual + "\". Pick the mode again to retry.",
 	}))
@@ -507,34 +507,34 @@ func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID ap
 // GetBridge returns the bridge for chatID, or nil.
 //
 //nolint:revive // unexported-return: see GetOrCreateBridge above.
-func (bc *BridgeCoordinator) GetBridge(chatID api.ChatID) *sharedBridge {
+func (bc *BridgeCoordinator) GetBridge(chatID vibekit.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
 
 // HasLiveBridge reports whether a chat currently has a bridge, i.e. whether it
 // is in active use. Retention's exemption reads this: a chat with a live bridge
 // is open work and is never purged, however old (see archive.WithLiveChats).
-func (h *Hub) HasLiveBridge(chatID api.ChatID) bool {
+func (h *Hub) HasLiveBridge(chatID vibekit.ChatID) bool {
 	return h.bridge.mgr.get(chatID) != nil
 }
 
 // CloseBridge stops a bridge and removes it from the map.
-func (bc *BridgeCoordinator) CloseBridge(chatID api.ChatID) {
+func (bc *BridgeCoordinator) CloseBridge(chatID vibekit.ChatID) {
 	bc.bridge.mgr.close(chatID)
 }
 
 // replayProjector is the slice of the Hub's replay-projection lifecycle the
 // coordinator drives. See hub/load_projection.go for the settle barrier.
 type replayProjector interface {
-	OpenReplayProjection(api.ChatID)
-	MarkReplayLoadDone(api.ChatID)
-	DiscardReplayProjection(api.ChatID)
-	SettleReplayProjection(chatID api.ChatID, buffered int, force bool)
+	OpenReplayProjection(vibekit.ChatID)
+	MarkReplayLoadDone(vibekit.ChatID)
+	DiscardReplayProjection(vibekit.ChatID)
+	SettleReplayProjection(chatID vibekit.ChatID, buffered int, force bool)
 }
 
 // Forward is the ACP notification → domain event translator, run as a
 // goroutine per bridge.
-func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge ACPBridge) {
+func (bc *BridgeCoordinator) Forward(chatID vibekit.ChatID, bridge ACPBridge) {
 	ch := bridge.NotifCh()
 	for msg := range ch {
 		bc.translateEvent(chatID, msg)
@@ -572,7 +572,7 @@ func (bc *BridgeCoordinator) Forward(chatID api.ChatID, bridge ACPBridge) {
 
 // PrimeIfNeeded sends the chat history as an ephemeral priming prompt on
 // the current bridge.
-func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatID, sb *sharedBridge) {
+func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID vibekit.ChatID, sb *sharedBridge) {
 	// Preambles live in translate (PrimePreamble*) because the focus-title
 	// derivation filter must recognise a title KAS derives from this prime
 	// text — one definition keeps the filter and the prime in lockstep.
@@ -605,8 +605,8 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 	prime += history
 
 	slog.Info("priming bridge", "chat_id", chatID, "reason", sb.primeReason, "history_from", source)
-	_, err := sb.bridge.Call(ctx, api.MethodPrompt, command.SessionParams(sb, map[string]any{
-		"prompt": []map[string]any{api.TextBlock(prime)},
+	_, err := sb.bridge.Call(ctx, vibekit.MethodPrompt, command.SessionParams(sb, map[string]any{
+		"prompt": []map[string]any{vibekit.TextBlock(prime)},
 	}))
 	if err != nil {
 		slog.Error("prime failed", "chat_id", chatID, "error", err)
@@ -617,42 +617,42 @@ func (bc *BridgeCoordinator) PrimeIfNeeded(ctx context.Context, chatID api.ChatI
 // `model_effort` setting shaped `{last_model, effort}`, so it was keyed by the
 // LAST model rather than by the chat: two chats could not disagree, and
 // switching models discarded the previous model's level outright. It is a field
-// on the chat record now (api.Chat.Effort), read straight off the chat at spawn
+// on the chat record now (vibekit.Chat.Effort), read straight off the chat at spawn
 // and written by CmdSetEffort, so the launch flag needs no settings read.
 
 // NotifyPush sends a push notification about one CHAT if the push service is
 // configured.
 //
-// It keeps its chat-id parameter rather than taking an api.PushSubject: every
+// It keeps its chat-id parameter rather than taking an vibekit.PushSubject: every
 // caller here is chat-scoped (a turn ended, a permission ask, an agent question),
 // so the conversion belongs at this one boundary instead of at each of them. A
 // notification with no chat behind it — the PR poller's — does not come through
 // here at all; it calls push.Send with its own subject.
-func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID) {
+func (bc *BridgeCoordinator) NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID) {
 	if bc.push == nil || !bc.push.HasSubscribers() {
 		return
 	}
 	bc.lifecycle.inflight.Go(func() {
-		bc.push.Send(ctx, push.DefaultTitle, body, kind, api.ChatSubject(chatID))
+		bc.push.Send(ctx, push.DefaultTitle, body, kind, vibekit.ChatSubject(chatID))
 	})
 }
 
 // TakeBuffer returns and removes the chat's assistant buffer.
-func (bc *BridgeCoordinator) TakeBuffer(chatID api.ChatID) (*buffer.Buffer, bool) {
+func (bc *BridgeCoordinator) TakeBuffer(chatID vibekit.ChatID) (*buffer.Buffer, bool) {
 	return bc.bridge.assistantBufs.Take(chatID)
 }
 
 // EmitTurnEndedWithStats finalizes any in-flight assistant message
 // and broadcasts turn_ended with the credit delta and elapsed time.
-func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, stats command.TurnStats) {
+func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, stats command.TurnStats) {
 	stopReason := extractStopReason(resp)
 	// Read BEFORE the turn_ended broadcast below: emit() clears the chat's status
 	// as that event goes out, so a read at the push site always finds nothing. See
 	// statusDescription.
 	statusDesc := bc.statusDescription(chatID)
 
-	var changedFiles map[string]*api.FileChange
-	var refusal *api.RefusalInfo
+	var changedFiles map[string]*vibekit.FileChange
+	var refusal *vibekit.RefusalInfo
 	var model string
 
 	if buf, ok := bc.TakeBuffer(chatID); ok && buf.Started {
@@ -668,7 +668,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 		if stopReason == stopReasonCancelled {
 			changed := buf.MarkCancelledToolsFailed()
 			for i := range changed {
-				bc.broadcast(ctx, api.NewEvent(api.EventToolCallUpdate, chatID, api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: changed[i]}))
+				bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: changed[i]}))
 			}
 		}
 
@@ -677,11 +677,11 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	}
 
 	if stopReason == stopReasonCancelled {
-		evt := api.Message{
+		evt := vibekit.Message{
 			ID:        newMessageID(),
-			Role:      api.RoleEvent,
+			Role:      vibekit.RoleEvent,
 			Ts:        time.Now().UnixMilli(),
-			EventKind: api.EventCancelled,
+			EventKind: vibekit.EventCancelled,
 		}
 		if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
 			slog.Error("persist cancel event", "chat_id", chatID, "error", err)
@@ -689,7 +689,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	}
 
 	if _, stillExists := bc.chatStore.Get(ctx, chatID); stillExists {
-		bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{
+		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID, vibekit.TurnEndedPayload{
 			StopReason:   stopReason,
 			Refusal:      refusal,
 			Model:        model,
@@ -700,7 +700,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 	}
 
 	if stopReason != stopReasonCancelled {
-		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), api.PushKindAgentFinished, chatID)
+		bc.NotifyPush(ctx, agentFinishedBodyFrom(statusDesc), vibekit.PushKindAgentFinished, chatID)
 	}
 }
 
@@ -727,7 +727,7 @@ func (bc *BridgeCoordinator) EmitTurnEndedWithStats(ctx context.Context, chatID 
 // defensive branch. Length needs no cap: fitToCap trims the body against the
 // marshaled payload cap and logs a Warn, so an oversize description is delivered
 // truncated rather than dropped.
-func (bc *BridgeCoordinator) statusDescription(chatID api.ChatID) string {
+func (bc *BridgeCoordinator) statusDescription(chatID vibekit.ChatID) string {
 	if bc.chatStatus == nil {
 		return ""
 	}
@@ -756,7 +756,7 @@ func agentFinishedBodyFrom(description string) string {
 // rebuilds it. What neither covers is the final streaming fragment, which is
 // the durability this deletion gives up; the old .partial gave it up too,
 // within its 500ms throttle.
-func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID api.ChatID, msg *api.Message) {
+func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) {
 	if err := bc.chatStore.AppendMessage(ctx, chatID, msg); err != nil {
 		slog.Error("persist assistant turn; the replay projection is the fallback",
 			"chat_id", chatID, "error", err)
@@ -765,7 +765,7 @@ func (bc *BridgeCoordinator) persistTurn(ctx context.Context, chatID api.ChatID,
 
 // TryFastModelSwitch attempts an in-session model swap via
 // session/set_config_option (configId "model") on the running bridge.
-func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID api.ChatID, model string) bool {
+func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID vibekit.ChatID, model string) bool {
 	sb := bc.bridge.mgr.get(chatID)
 	if sb == nil {
 		return false
@@ -782,23 +782,23 @@ func (bc *BridgeCoordinator) TryFastModelSwitch(ctx context.Context, chatID api.
 
 // PersistModelSwitch records the switch event and updates the chat's
 // model + resets usage counters.
-func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID api.ChatID, model string, contextSize int) {
-	evt := api.Message{
+func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID vibekit.ChatID, model string, contextSize int) {
+	evt := vibekit.Message{
 		ID:        newMessageID(),
-		Role:      api.RoleEvent,
+		Role:      vibekit.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
-		EventKind: api.EventModelSwitched,
+		EventKind: vibekit.EventModelSwitched,
 		Content:   model,
 	}
 	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("switch_model: append event", "chat_id", chatID, "error", err)
 	}
-	if err := bc.chatStore.Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := bc.chatStore.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
 		c.Model = model
-		c.Usage = api.Usage{ContextSize: contextSize}
+		c.Usage = vibekit.Usage{ContextSize: contextSize}
 		return true
 	}); err != nil {
 		slog.Error("switch_model: persist model", "chat_id", chatID, "error", err)
@@ -807,12 +807,12 @@ func (bc *BridgeCoordinator) PersistModelSwitch(ctx context.Context, chatID api.
 
 // FlushInFlightTurnOnSwitch drops the assistant buffer for chatID before a
 // bridge restart, announcing the interruption when a turn was in flight.
-func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID api.ChatID) {
+func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chatID vibekit.ChatID) {
 	buf, ok := bc.TakeBuffer(chatID)
 	if !ok || !buf.Started {
 		return
 	}
-	bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID, api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
+	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonInterrupted}))
 }
 
 // assistantTurnMessage builds the persisted assistant message from a finished
@@ -820,10 +820,10 @@ func (bc *BridgeCoordinator) FlushInFlightTurnOnSwitch(ctx context.Context, chat
 // path (EmitTurnEndedWithStats) cannot drift: every field below exists because
 // something in the client reads it after a reload, so a second hand-written
 // literal would quietly lose one of them.
-func assistantTurnMessage(buf *buffer.Buffer, stats command.TurnStats) api.Message {
-	return api.Message{
+func assistantTurnMessage(buf *buffer.Buffer, stats command.TurnStats) vibekit.Message {
+	return vibekit.Message{
 		ID:        buf.MessageID,
-		Role:      api.RoleAssistant,
+		Role:      vibekit.RoleAssistant,
 		Ts:        time.Now().UnixMilli(),
 		Content:   buf.Content.String(),
 		Reasoning: buf.Reasoning.String(),
@@ -874,7 +874,7 @@ func assistantTurnMessage(buf *buffer.Buffer, stats command.TurnStats) api.Messa
 // vanishing-message class this codebase already paid for once. It also restores
 // the `interrupted` badge for this path, which vibekit-runtime.md records as a
 // casualty of deleting the .partial sidecar.
-func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID api.ChatID) {
+func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID vibekit.ChatID) {
 	buf, ok := bc.TakeBuffer(chatID)
 	if !ok || !buf.Started {
 		return
@@ -885,8 +885,8 @@ func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID api
 	// the same reason EmitTurnEndedWithStats does it on the cancel path.
 	changed := buf.MarkCancelledToolsFailed()
 	for i := range changed {
-		bc.broadcast(ctx, api.NewEvent(api.EventToolCallUpdate, chatID,
-			api.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: changed[i]}))
+		bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID,
+			vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: changed[i]}))
 	}
 
 	// No stats: an abandoned turn has no credit delta to attribute and no
@@ -895,27 +895,27 @@ func (bc *BridgeCoordinator) AbandonInFlightTurn(ctx context.Context, chatID api
 	msg := assistantTurnMessage(buf, command.TurnStats{})
 	bc.persistTurn(ctx, chatID, &msg)
 
-	evt := api.Message{
+	evt := vibekit.Message{
 		ID:        newMessageID(),
-		Role:      api.RoleEvent,
+		Role:      vibekit.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
-		EventKind: api.EventInterrupted,
+		EventKind: vibekit.EventInterrupted,
 	}
 	if err := bc.chatStore.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("persist interrupted event", "chat_id", chatID, "error", err)
 	}
-	bc.broadcast(ctx, api.NewEvent(api.EventTurnEnded, chatID,
-		api.TurnEndedPayload{StopReason: api.StopReasonInterrupted}))
+	bc.broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, chatID,
+		vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonInterrupted}))
 }
 
-const stopReasonCancelled = api.StopReasonCancelled
+const stopReasonCancelled = vibekit.StopReasonCancelled
 
-func extractStopReason(resp *api.RPCResponse) api.StopReason {
+func extractStopReason(resp *vibekit.RPCResponse) vibekit.StopReason {
 	if resp == nil || resp.Result == nil {
 		return ""
 	}
 	var result struct {
-		StopReason api.StopReason `json:"stopReason"`
+		StopReason vibekit.StopReason `json:"stopReason"`
 	}
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
 		slog.Debug("turn_ended: parse result", "error", err)

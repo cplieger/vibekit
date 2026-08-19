@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -23,7 +23,7 @@ import (
 // endpoints below differ only in what they pass: a branch name is cheap
 // (EffortLow), reading a diff is not (EffortMedium).
 type utilityPrompter interface {
-	UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error)
+	UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error)
 }
 
 // AIHandler registers the AI-backed git endpoints (commit-message,
@@ -112,7 +112,7 @@ func (a *AIHandler) handleCommitMessage(w http.ResponseWriter, r *http.Request) 
 
 	// Medium effort: the task reads a full staged diff and must infer the
 	// change's intent; low-effort output on complex diffs reads generic.
-	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortMedium)
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, vibekit.EffortMedium)
 	if err != nil {
 		slog.Error("commit message generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -178,7 +178,7 @@ func (a *AIHandler) handlePRDescription(w http.ResponseWriter, r *http.Request) 
 
 	// Medium effort: reads a branch diff + commit log (same class as the
 	// commit-message task).
-	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortMedium)
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, vibekit.EffortMedium)
 	if err != nil {
 		slog.Error("PR description generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())
@@ -229,7 +229,7 @@ func (a *AIHandler) handleBranchName(w http.ResponseWriter, r *http.Request) {
 
 	// Low effort: a short name from a small context; no diff reasoning
 	// depth needed.
-	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, api.EffortLow)
+	result, err := a.prompter.UtilityPrompt(r.Context(), prompt, vibekit.EffortLow)
 	if err != nil {
 		slog.Error("branch name generation failed", "error", err)
 		writeGitError(w, KindGenerationFailed, err.Error())

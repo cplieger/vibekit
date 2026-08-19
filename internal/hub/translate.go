@@ -27,20 +27,20 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // chatHandler is the unified notification handler type. All handlers
 // receive ctx, chatID, and msg. Global handlers (MCP notifications)
 // receive an empty chatID.
-type chatHandler = func(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse)
+type chatHandler = func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse)
 
 // ignoreSubSession adapts a 3-arg handler (ctx, chatID, raw) to the
 // 4-arg sessionUpdateHandler signature by discarding the subSessionID.
 // Eliminates repeated anonymous closure boilerplate in the dispatch table.
-func ignoreSubSession(fn func(context.Context, api.ChatID, json.RawMessage)) sessionUpdateHandler {
-	return func(ctx context.Context, chatID api.ChatID, raw json.RawMessage, _ string) {
+func ignoreSubSession(fn func(context.Context, vibekit.ChatID, json.RawMessage)) sessionUpdateHandler {
+	return func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, _ string) {
 		fn(ctx, chatID, raw)
 	}
 }
@@ -49,17 +49,17 @@ func ignoreSubSession(fn func(context.Context, api.ChatID, json.RawMessage)) ses
 // translateACPEvent on first use (lazy init avoids a constructor).
 func (h *Hub) initDispatch() {
 	h.chatHandlers = map[string]chatHandler{
-		api.MethodSessionUpdate: h.handleSessionUpdate,
+		vibekit.MethodSessionUpdate: h.handleSessionUpdate,
 		// Wrapped so a SCHEDULED run's request is refused on a short budget
 		// rather than parking the run forever (run_unattended.go). The wrapper
 		// is a no-op for every attended chat.
-		api.MethodRequestPermission: h.permissionWithUnattendedFloor(h.translator.HandlePermissionRequest),
+		vibekit.MethodRequestPermission: h.permissionWithUnattendedFloor(h.translator.HandlePermissionRequest),
 		// _kiro/mcp/elicitation (a request with an id). Routed here by method.
-		api.MethodElicitationCreate: h.translator.HandleElicitationCreate,
+		vibekit.MethodElicitationCreate: h.translator.HandleElicitationCreate,
 		// _kiro/userInput (a request with an id, 2.14+): the agent's
 		// structured question — gated on the _meta.kiro.userInput
 		// initialize capability declared in bridge.go.
-		api.MethodKiroUserInput: h.translator.HandleUserInput,
+		vibekit.MethodKiroUserInput: h.translator.HandleUserInput,
 		// v3 (KAS) _kiro/* notifications.
 		methodV3RateLimit:            h.translator.HandleRateLimit,
 		methodV3CustomAgentNotFound:  h.translator.HandleAgentNotFound,
@@ -93,14 +93,14 @@ func (h *Hub) initDispatch() {
 		methodWFRunStart:    h.observeRunStart,
 		methodWFRunComplete: h.observeRunComplete,
 	}
-	for method, kind := range map[string]api.RunProgressKind{
-		methodWFNodeStart:     api.RunProgressNodeStart,
-		methodWFNodeComplete:  api.RunProgressNodeComplete,
-		methodWFNodePaused:    api.RunProgressNodePaused,
-		methodWFPaused:        api.RunProgressPaused,
-		methodWFLoopIteration: api.RunProgressLoopIteration,
-		methodWFWatchPoll:     api.RunProgressWatchPoll,
-		methodWFStepsQueued:   api.RunProgressStepsQueued,
+	for method, kind := range map[string]vibekit.RunProgressKind{
+		methodWFNodeStart:     vibekit.RunProgressNodeStart,
+		methodWFNodeComplete:  vibekit.RunProgressNodeComplete,
+		methodWFNodePaused:    vibekit.RunProgressNodePaused,
+		methodWFPaused:        vibekit.RunProgressPaused,
+		methodWFLoopIteration: vibekit.RunProgressLoopIteration,
+		methodWFWatchPoll:     vibekit.RunProgressWatchPoll,
+		methodWFStepsQueued:   vibekit.RunProgressStepsQueued,
 	} {
 		h.chatHandlers[method] = h.translator.RunProgressHandler(kind)
 	}
@@ -123,32 +123,32 @@ func (h *Hub) initDispatch() {
 	}
 	// Session-update sub-dispatcher: built eagerly to avoid a data race
 	// when multiple bridge goroutines call sessionUpdateHandlers() concurrently.
-	h.sessUpdateHandlers = map[api.ACPUpdateKind]sessionUpdateHandler{
-		api.ACPUpdateAgentChunk: ignoreSubSession(func(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
+	h.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
+		vibekit.ACPUpdateAgentChunk: ignoreSubSession(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 			h.translator.HandleAssistantChunk(ctx, chatID, raw, false)
 		}),
-		api.ACPUpdateThoughtChunk: ignoreSubSession(func(ctx context.Context, chatID api.ChatID, raw json.RawMessage) {
+		vibekit.ACPUpdateThoughtChunk: ignoreSubSession(func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage) {
 			h.translator.HandleAssistantChunk(ctx, chatID, raw, true)
 		}),
-		api.ACPUpdateToolCall:   h.translator.HandleToolCall,
-		api.ACPUpdateToolUpdate: h.translator.HandleToolCallUpdate,
-		api.ACPUpdatePlan:       ignoreSubSession(h.translator.HandlePlan),
-		api.ACPUpdateModeChange: ignoreSubSession(h.translator.HandleModeUpdate),
+		vibekit.ACPUpdateToolCall:   h.translator.HandleToolCall,
+		vibekit.ACPUpdateToolUpdate: h.translator.HandleToolCallUpdate,
+		vibekit.ACPUpdatePlan:       ignoreSubSession(h.translator.HandlePlan),
+		vibekit.ACPUpdateModeChange: ignoreSubSession(h.translator.HandleModeUpdate),
 		// v3 (KAS) sub-kinds: context-usage + slash-command catalog moved
 		// here from the v2 _kiro.dev/metadata + commands/available notifs.
 		// session_info_update also carries compaction (summarization) state;
 		// usage_update is the primary v3 context-usage channel; and
 		// config_option_update delivers the live model/mode/effort catalog.
-		api.ACPUpdateSessionInfo:  h.translator.HandleSessionInfoUpdate,
-		api.ACPUpdateUsage:        ignoreSubSession(h.translator.HandleUsageUpdate),
-		api.ACPUpdateConfigOption: ignoreSubSession(h.translator.HandleConfigOptionUpdate),
+		vibekit.ACPUpdateSessionInfo:  h.translator.HandleSessionInfoUpdate,
+		vibekit.ACPUpdateUsage:        ignoreSubSession(h.translator.HandleUsageUpdate),
+		vibekit.ACPUpdateConfigOption: ignoreSubSession(h.translator.HandleConfigOptionUpdate),
 	}
 }
 
 // translateACPEvent is the sole entry point from bridge_lifecycle's
 // forward goroutine. Every branch must return promptly; long-running
 // work belongs in goroutines inside the handler (see bridge_fs.go).
-func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	// Derive a context from the hub's shutdownCtx so handlers can
 	// propagate shutdown cancellation to I/O calls.
 	ctx, cancel := h.hubContext()
@@ -206,8 +206,8 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 		slog.Warn("chat bridge: refusing an unexpected peer request",
 			"method", msg.Method, "chat_id", chatID, "id", *msg.ID)
 		if err := h.BridgeRespond(ctx, chatID, *msg.ID, nil,
-			&api.RPCError{
-				Code:    api.RPCCodeMethodNotFound,
+			&vibekit.RPCError{
+				Code:    vibekit.RPCCodeMethodNotFound,
 				Message: "unsupported on the chat session: " + msg.Method,
 			}); err != nil {
 			slog.Error("chat bridge: refusal could not be delivered; the turn may be wedged",
@@ -232,7 +232,7 @@ func (h *Hub) translateACPEvent(chatID api.ChatID, msg *api.RPCResponse) {
 // are separately readable: every arm here owes a response on the wire, and
 // nothing below in the caller does. That is also why the caller's fallthrough is
 // a refusal rather than a log — see its comment.
-func (h *Hub) routeInboundRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
+func (h *Hub) routeInboundRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	if h.handleFSRequest(ctx, chatID, msg) {
 		return true
 	}
@@ -268,7 +268,7 @@ func (h *Hub) routeInboundRequest(ctx context.Context, chatID api.ChatID, msg *a
 // params.sessionId identifies whether this notification belongs to the
 // parent chat or a subagent; we pass it through so tool-call handlers
 // can set SubSessionID on emitted events.
-func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) handleSessionUpdate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var env struct {
 		Params translate.ACPSessionUpdateEnvelope `json:"params"`
 	}
@@ -354,10 +354,10 @@ func (h *Hub) handleSessionUpdate(ctx context.Context, chatID api.ChatID, msg *a
 }
 
 // sessionUpdateHandler is the common signature for session-update sub-handlers.
-type sessionUpdateHandler = func(ctx context.Context, chatID api.ChatID, raw json.RawMessage, subSessionID string)
+type sessionUpdateHandler = func(ctx context.Context, chatID vibekit.ChatID, raw json.RawMessage, subSessionID string)
 
 // sessionUpdateHandlers returns the map of sessionUpdate kind → handler.
 // The map is built eagerly in initDispatch and cached on the Hub.
-func (h *Hub) sessionUpdateHandlers() map[api.ACPUpdateKind]sessionUpdateHandler {
+func (h *Hub) sessionUpdateHandlers() map[vibekit.ACPUpdateKind]sessionUpdateHandler {
 	return h.sessUpdateHandlers
 }

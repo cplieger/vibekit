@@ -5,8 +5,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // row builds a session/list row in the measured wire shape.
@@ -30,7 +30,7 @@ func ownedBy(t *testing.T, owners map[string][]string) *Hub {
 	t.Helper()
 	store := testsupport.NewInMemoryChatStore()
 	for chatID, sessions := range owners {
-		if err := store.Mutate(t.Context(), api.ChatID(chatID), func(c *api.Chat, _ bool) bool {
+		if err := store.Mutate(t.Context(), vibekit.ChatID(chatID), func(c *vibekit.Chat, _ bool) bool {
 			c.Name = chatID
 			for _, sid := range sessions {
 				c.RecordSession(sid)
@@ -123,7 +123,7 @@ func TestToResumable_NewestFirst(t *testing.T) {
 func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if err := store.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
+	if err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Owned"
 		c.RecordSession("sess_retired")
 		c.RecordSession("sess_current")
@@ -139,7 +139,7 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 		row("sess_orphan", "never seen by vibekit", "2026-08-02T10:00:00.000Z", false),
 	})
 
-	byID := map[string]api.ResumableSession{}
+	byID := map[string]vibekit.ResumableSession{}
 	for i := range got {
 		byID[got[i].SessionID] = got[i]
 	}
@@ -230,7 +230,7 @@ func TestParseKASTime(t *testing.T) {
 func TestWorkflowRunAttribution(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	ctx := t.Context()
-	if err := store.Mutate(ctx, "c1", func(c *api.Chat, _ bool) bool {
+	if err := store.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Launcher"
 		c.RecordSession("sess_launched_from") // retired below
 		c.RecordSession("sess_now")

@@ -3,19 +3,19 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // steerAcksFrom pulls the ack-bearing steer_injected frames out of a capture.
 // The read frame KAS sends carries no Ack, so filtering on that field is what
 // separates the two halves of the event rather than counting frames.
-func steerAcksFrom(events []api.ServerEvent) []api.SteerInjectedPayload {
-	var out []api.SteerInjectedPayload
+func steerAcksFrom(events []vibekit.ServerEvent) []vibekit.SteerInjectedPayload {
+	var out []vibekit.SteerInjectedPayload
 	for _, e := range events {
-		if e.Type != api.EventSteerInjected {
+		if e.Type != vibekit.EventSteerInjected {
 			continue
 		}
-		p, ok := e.Payload.(api.SteerInjectedPayload)
+		p, ok := e.Payload.(vibekit.SteerInjectedPayload)
 		if ok && p.Ack != "" {
 			out = append(out, p)
 		}
@@ -24,7 +24,7 @@ func steerAcksFrom(events []api.ServerEvent) []api.SteerInjectedPayload {
 }
 
 // feedChunk streams one text delta through the live handler.
-func feedChunk(t *testing.T, tr *Translator, chatID api.ChatID, text string) {
+func feedChunk(t *testing.T, tr *Translator, chatID vibekit.ChatID, text string) {
 	t.Helper()
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": text},
@@ -36,7 +36,7 @@ func feedChunk(t *testing.T, tr *Translator, chatID api.ChatID, text string) {
 func TestHandleAssistantChunk_BroadcastsTheAgentsAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "m1" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "Done. [STEERING steer-abc: rebased onto main instead]")
 
@@ -64,7 +64,7 @@ func TestHandleAssistantChunk_BroadcastsTheAgentsAcknowledgement(t *testing.T) {
 func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "m1" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "All set.")
 	feedChunk(t, tr, chatID, "[STEERING steer-solo: switched to the new API]")
@@ -89,7 +89,7 @@ func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing
 func TestHandleAssistantChunk_AcknowledgementFiresOnceWhenSplit(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "m1" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 
 	for _, part := range []string{"ok ", "[STEERING ste", "er-split: kept the ", "existing shape]", " bye"} {
 		feedChunk(t, tr, chatID, part)
@@ -110,7 +110,7 @@ func TestHandleAssistantChunk_AcknowledgementFiresOnceWhenSplit(t *testing.T) {
 func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "m1" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
 		"content": map[string]any{"type": "text", "text": "[STEERING steer-x: a thought]"},
@@ -128,7 +128,7 @@ func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 func TestHandleAssistantChunk_EmptyAcknowledgementIsNotBroadcast(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps, withIDGenerator(func() string { return "m1" }))
-	chatID := api.ChatID("c1")
+	chatID := vibekit.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "done [STEERING steer-blank:    ]")
 

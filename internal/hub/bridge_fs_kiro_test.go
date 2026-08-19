@@ -9,14 +9,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ignore"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // kiroFSMsg builds one `_kiro/fs/*` request for the given method and path.
-func kiroFSMsg(t *testing.T, id int64, method, path string) *api.RPCResponse {
+func kiroFSMsg(t *testing.T, id int64, method, path string) *vibekit.RPCResponse {
 	t.Helper()
-	return &api.RPCResponse{
+	return &vibekit.RPCResponse{
 		ID:     &id,
 		Method: method,
 		Params: mustJSON(t, map[string]any{"sessionId": "sess_x", "path": path}),
@@ -359,7 +359,7 @@ func TestKiroFSDeleteDoesNotStage(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, br := hubForFSTest(t, work)
-	_ = h.chatStore.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = h.chatStore.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.SupervisedMode = true
 		return true
 	})
@@ -385,8 +385,8 @@ func TestHandleKiroFSRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 		{methodKiroFSStat, true},
 		{methodKiroFSReadDirectory, true},
 		{methodKiroFSDelete, true},
-		{api.MethodFSRead, false},
-		{api.MethodFSWrite, false},
+		{vibekit.MethodFSRead, false},
+		{vibekit.MethodFSWrite, false},
 		// The read/write rung vibekit deliberately does NOT declare: claiming
 		// it here would silently move reads and writes off the staging path.
 		{"_kiro/fs/read_file", false},

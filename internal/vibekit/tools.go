@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Wire types for the tools engine (Settings -> Tools). The engine is
 // the cplieger/toolbelt library; these aliases keep the shapes in the

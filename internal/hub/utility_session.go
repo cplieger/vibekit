@@ -42,9 +42,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/kiroauth"
 	"github.com/cplieger/vibekit/internal/secretstore"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // utilityRuntime bundles the two halves of the utility subsystem the hub
@@ -55,7 +55,7 @@ type utilityRuntime struct {
 }
 
 // newUtilityRuntime wires a session and its agent.
-func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
+func newUtilityRuntime(shutdownCtx context.Context, factory ACPBridgeFactory, hubModels func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilityRuntime {
 	session := newUtilitySession(shutdownCtx, factory, hubModels, hooks, secrets, enableHooks)
 	return &utilityRuntime{session: session, agent: newUtilityAgent(session)}
 }
@@ -89,7 +89,7 @@ type utilitySession struct {
 	// must outlive it.
 	shutdownCtx   context.Context
 	bridgeFactory ACPBridgeFactory
-	hubModels     func() []api.SessionModel
+	hubModels     func() []vibekit.SessionModel
 	// secrets is the hub's credential store, shared not copied, so a
 	// registration obtained on any bridge is visible from every other one.
 	// Nil when the hub has no configDir; see bridge_v3_secret.go.
@@ -119,7 +119,7 @@ type utilitySession struct {
 //
 // shutdownCtx is required, positionally: it is the session's lifetime, and every
 // default for a lifetime is a lifetime nothing can cancel.
-func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, hubModels func() []api.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
+func newUtilitySession(shutdownCtx context.Context, factory ACPBridgeFactory, hubModels func() []vibekit.SessionModel, hooks utilitySessionHooks, secrets *secretstore.Store, enableHooks bool) *utilitySession {
 	return &utilitySession{
 		shutdownCtx:   shutdownCtx,
 		bridgeFactory: factory,
@@ -185,7 +185,7 @@ func (us *utilitySession) startLocked(ctx context.Context) error {
 	// per-request ctx is only used for the model pick above). Runs v3
 	// (KAS) like every chat bridge — without the engine it would default
 	// to v2, which vibekit can no longer talk to.
-	if err := bridge.Start(us.shutdownCtx, &api.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil}); err != nil {
+	if err := bridge.Start(us.shutdownCtx, &vibekit.StartOpts{Lifetime: us.shutdownCtx, Model: model, AgentEngine: resolveAgentEngine(), EnableHooks: us.enableHooks, SecretStorage: us.secrets != nil}); err != nil {
 		return err
 	}
 	us.bridge = bridge
@@ -297,7 +297,7 @@ func (us *utilitySession) shuttingDown() bool {
 // declarations because the utility session's bridge does not carry the prompt
 // slot command.Bridge requires.
 func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]any {
-	m := map[string]any{api.KeySessionID: bridge.SessionID()}
+	m := map[string]any{vibekit.KeySessionID: bridge.SessionID()}
 	maps.Copy(m, extra)
 	return m
 }
@@ -305,7 +305,7 @@ func utilitySessionParams(bridge acpSession, extra map[string]any) map[string]an
 // utilityUpdateBase extracts the sessionUpdate kind discriminator.
 // Local to the utility runtime to avoid coupling to translate's wire types.
 type utilityUpdateBase struct {
-	Kind api.ACPUpdateKind `json:"sessionUpdate"`
+	Kind vibekit.ACPUpdateKind `json:"sessionUpdate"`
 }
 
 // utilityChunkPayload is the minimal shape the utility runtime needs
@@ -330,7 +330,7 @@ type utilityChunkPayload struct {
 // reassigns us.bridge can't make this goroutine answer on the wrong pipe.
 // forward takes NO locks: the hooks callbacks are immutable and the chunk
 // send is non-blocking, so a held session mutex can never deadlock it.
-func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan *api.RPCResponse, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
+func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan *vibekit.RPCResponse, responseCh chan<- utilityChunkPayload, done chan<- struct{}) {
 	defer close(done)
 	defer close(responseCh)
 	for msg := range notifCh {
@@ -354,12 +354,12 @@ func (us *utilitySession) forward(bridge acpResponder, notifCh <-chan *api.RPCRe
 // forwardChunk forwards an agent_message_chunk's text to responseCh, ignoring
 // every other notification. Split out of forward to keep it under the
 // cognitive-complexity gate.
-func forwardChunk(msg *api.RPCResponse, responseCh chan<- utilityChunkPayload) {
-	if msg.Method != api.MethodSessionUpdate || msg.Params == nil {
+func forwardChunk(msg *vibekit.RPCResponse, responseCh chan<- utilityChunkPayload) {
+	if msg.Method != vibekit.MethodSessionUpdate || msg.Params == nil {
 		return
 	}
 	var base utilityUpdateBase
-	if json.Unmarshal(msg.Params, &base) != nil || base.Kind != api.ACPUpdateAgentChunk {
+	if json.Unmarshal(msg.Params, &base) != nil || base.Kind != vibekit.ACPUpdateAgentChunk {
 		return
 	}
 	var chunk utilityChunkPayload
@@ -396,7 +396,7 @@ func forwardChunk(msg *api.RPCResponse, responseCh chan<- utilityChunkPayload) {
 // request wedges the turn until the agent drain's 60s ceiling fires and
 // resets the whole session. Denying permissions and erroring fs/terminal
 // requests turns that wedge into an immediate, model-visible tool failure.
-func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *api.RPCResponse) {
+func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *vibekit.RPCResponse) {
 	ctx := context.Background()
 	switch {
 	case msg.Method == methodKiroGetAccessToken:
@@ -428,18 +428,18 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *api.RPCRes
 	case msg.Method == methodKiroSecretDelete:
 		result, err := secretDeleteResult(ctx, us.secrets, msg.Params)
 		_ = bridge.Respond(ctx, *msg.ID, result, err)
-	case msg.Method == api.MethodRequestPermission:
+	case msg.Method == vibekit.MethodRequestPermission:
 		// Deny: cancelled outcome, the ACP shape for "the user said no".
 		slog.Warn("utility bridge: denying tool permission request (text-only session)")
-		_ = bridge.Respond(ctx, *msg.ID, api.PermissionOutcomeCancelled(), nil)
-	case msg.Method == api.MethodFSRead || msg.Method == api.MethodFSWrite ||
+		_ = bridge.Respond(ctx, *msg.ID, vibekit.PermissionOutcomeCancelled(), nil)
+	case msg.Method == vibekit.MethodFSRead || msg.Method == vibekit.MethodFSWrite ||
 		strings.HasPrefix(msg.Method, methodTermPrefix):
 		slog.Warn("utility bridge: refusing tool request (text-only session)", "method", msg.Method)
 		// -32601 rather than a bare error, for the reason the sibling refusals
 		// carry it: this is a capability vibekit deliberately does not offer on
 		// this session, not a fault it hit while trying.
-		_ = bridge.Respond(ctx, *msg.ID, nil, &api.RPCError{
-			Code:    api.RPCCodeMethodNotFound,
+		_ = bridge.Respond(ctx, *msg.ID, nil, &vibekit.RPCError{
+			Code:    vibekit.RPCCodeMethodNotFound,
 			Message: "utility session is text-generation only; tools are unavailable",
 		})
 	default:
@@ -449,8 +449,8 @@ func (us *utilitySession) answerHostRequest(bridge acpResponder, msg *api.RPCRes
 		// -32601, for the same reason the chat dispatcher uses it: this is a
 		// deliberate refusal, not an internal fault, and -32603 would make the
 		// log blame the wrong side.
-		_ = bridge.Respond(ctx, *msg.ID, nil, &api.RPCError{
-			Code:    api.RPCCodeMethodNotFound,
+		_ = bridge.Respond(ctx, *msg.ID, nil, &vibekit.RPCError{
+			Code:    vibekit.RPCCodeMethodNotFound,
 			Message: "unsupported on the utility session: " + msg.Method,
 		})
 	}

@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // MCP elicitation types. When an MCP server needs structured input
 // mid-tool-execution it sends elicitation/create to kiro-cli (its MCP

@@ -3,7 +3,7 @@ package hub
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestAbandonInFlightTurn_ReleasesTheBuffer pins the mechanism behind the
@@ -69,10 +69,10 @@ func TestAbandonInFlightTurn_PersistsThePartial(t *testing.T) {
 	var sawPartial, sawInterrupted bool
 	for i := range chat.Messages {
 		m := &chat.Messages[i]
-		if m.Role == api.RoleAssistant && m.Content == partial {
+		if m.Role == vibekit.RoleAssistant && m.Content == partial {
 			sawPartial = true
 		}
-		if m.Role == api.RoleEvent && m.EventKind == api.EventInterrupted {
+		if m.Role == vibekit.RoleEvent && m.EventKind == vibekit.EventInterrupted {
 			sawInterrupted = true
 		}
 	}

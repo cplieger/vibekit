@@ -8,10 +8,10 @@ import (
 	"context"
 
 	"github.com/cplieger/vibekit/internal/ansitext"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 var _ translate.Deps = (*Hub)(nil)
@@ -22,7 +22,7 @@ var _ translate.Deps = (*Hub)(nil)
 func (h *Hub) ChatRecords() translate.ChatRecords { return h.chatStore }
 
 // ParentACPSession returns the parent ACP session ID for a chat.
-func (h *Hub) ParentACPSession(chatID api.ChatID) string {
+func (h *Hub) ParentACPSession(chatID vibekit.ChatID) string {
 	return h.parentACPSession(chatID)
 }
 
@@ -30,7 +30,7 @@ func (h *Hub) ParentACPSession(chatID api.ChatID) string {
 func (h *Hub) WorkDir() string { return h.lifecycle.workDir }
 
 // BridgeRespond sends a response to the bridge for the given chat.
-func (h *Hub) BridgeRespond(ctx context.Context, chatID api.ChatID, requestID int64, result any, err error) error {
+func (h *Hub) BridgeRespond(ctx context.Context, chatID vibekit.ChatID, requestID int64, result any, err error) error {
 	sb := h.bridge.mgr.get(chatID)
 	if sb == nil {
 		return nil
@@ -46,7 +46,7 @@ func (h *Hub) MCPRecorder() translate.MCPRecorder {
 // hubMCPRecorder adapts Hub's MCP internals to the MCPRecorder interface.
 type hubMCPRecorder struct{ h *Hub }
 
-func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo) {
+func (r *hubMCPRecorder) RecordConnected(ctx context.Context, serverName string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
 	r.h.mcpRegistry.recordConnected(ctx, serverName, tools, prompts, resources)
 }
 
@@ -67,12 +67,12 @@ func (r *hubMCPRecorder) SignalReady() {
 }
 
 // PendingPermsAdd tracks a pending permission event for SSE replay.
-func (h *Hub) PendingPermsAdd(requestID int64, evt api.ServerEvent) {
+func (h *Hub) PendingPermsAdd(requestID int64, evt vibekit.ServerEvent) {
 	h.sse.pendingPerms.Add(requestID, evt)
 }
 
 // NotifyPush sends a push notification.
-func (h *Hub) NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID) {
+func (h *Hub) NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID) {
 	h.coord.NotifyPush(ctx, body, kind, chatID)
 }
 
@@ -104,7 +104,7 @@ func (h *Hub) LineTracker() translate.LineRecorder {
 // registered terminal with no output answers ("", nil, true), because a silent
 // command is a different fact from a lost record and only the second one is
 // worth warning about.
-func (h *Hub) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
+func (h *Hub) TerminalOutput(terminalID string) (string, []vibekit.TextSpan, bool) {
 	h.agentTerms.mu.Lock()
 	term, live := h.agentTerms.terms[terminalID]
 	h.agentTerms.mu.Unlock()

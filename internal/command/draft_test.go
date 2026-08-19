@@ -13,27 +13,27 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-func draftReq(t *testing.T, chatID api.ChatID, text string) *api.ClientCommand {
+func draftReq(t *testing.T, chatID vibekit.ChatID, text string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(api.SetDraftCommand{Text: text})
+	payload, err := json.Marshal(vibekit.SetDraftCommand{Text: text})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdSetDraft,
+	return &vibekit.ClientCommand{
+		Type:      vibekit.CmdSetDraft,
 		ChatID:    chatID,
 		RequestID: "r1",
 		Payload:   payload,
 	}
 }
 
-func seedEmptyChat(t *testing.T, store ChatStore, id api.ChatID) {
+func seedEmptyChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
 	t.Helper()
-	if err := store.Mutate(t.Context(), id, func(c *api.Chat, _ bool) bool {
+	if err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "a chat"
 		return true
 	}); err != nil {
@@ -52,8 +52,8 @@ func TestCmdSetDraft(t *testing.T) {
 		// Empty is a VALUE, not a missing field: it is how a sent or abandoned
 		// message is cleared, so it must be accepted rather than rejected.
 		{name: "accepts empty as a clear", text: "", wantStatus: http.StatusOK, wantStored: ""},
-		{name: "accepts a draft at exactly the cap", text: strings.Repeat("x", api.MaxDraftBytes), wantStatus: http.StatusOK, wantStored: strings.Repeat("x", api.MaxDraftBytes)},
-		{name: "refuses one byte over the cap", text: strings.Repeat("x", api.MaxDraftBytes+1), wantStatus: http.StatusRequestEntityTooLarge, wantStored: ""},
+		{name: "accepts a draft at exactly the cap", text: strings.Repeat("x", vibekit.MaxDraftBytes), wantStatus: http.StatusOK, wantStored: strings.Repeat("x", vibekit.MaxDraftBytes)},
+		{name: "refuses one byte over the cap", text: strings.Repeat("x", vibekit.MaxDraftBytes+1), wantStatus: http.StatusRequestEntityTooLarge, wantStored: ""},
 		{name: "keeps multibyte text intact", text: "日本語のドラフト", wantStatus: http.StatusOK, wantStored: "日本語のドラフト"},
 	}
 	for _, tc := range tests {
@@ -98,8 +98,8 @@ func TestCmdSetDraft_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 
 	// Raw bytes, not json.Marshal: marshalling would sanitize them before the
 	// handler ever saw them, which is the same coercion under test.
-	CmdSetDraft(d, t.Context(), w, &api.ClientCommand{
-		Type:      api.CmdSetDraft,
+	CmdSetDraft(d, t.Context(), w, &vibekit.ClientCommand{
+		Type:      vibekit.CmdSetDraft,
 		ChatID:    "c1",
 		RequestID: "r1",
 		Payload:   append(append([]byte(`{"text":"`), 0xff, 0xfe), []byte(`"}`)...),
@@ -132,8 +132,8 @@ func TestCmdSetDraft_RejectsAMalformedPayload(t *testing.T) {
 	d := newBridgeDispatcher(store, &recordingBridge{})
 	w := httptest.NewRecorder()
 
-	CmdSetDraft(d, t.Context(), w, &api.ClientCommand{
-		Type:      api.CmdSetDraft,
+	CmdSetDraft(d, t.Context(), w, &vibekit.ClientCommand{
+		Type:      vibekit.CmdSetDraft,
 		ChatID:    "c1",
 		RequestID: "r1",
 		Payload:   json.RawMessage(`{"text":42}`),
@@ -175,7 +175,7 @@ func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
 	}
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(deps, t.Context(), "c1", &api.PromptCommand{
+	err := appendUserMessage(deps, t.Context(), "c1", &vibekit.PromptCommand{
 		Text:      "the message about to be sent",
 		MessageID: "m-1",
 	})
@@ -205,11 +205,11 @@ func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	atts := []api.Attachment{
+	atts := []vibekit.Attachment{
 		{Path: "out/shot.png", Name: "shot.png"},
 		{Path: "docs/spec.pdf", Name: "spec.pdf"},
 	}
-	err := appendUserMessage(deps, t.Context(), "c1", &api.PromptCommand{
+	err := appendUserMessage(deps, t.Context(), "c1", &vibekit.PromptCommand{
 		Text:        "have a look at these",
 		MessageID:   "m-1",
 		Attachments: atts,
@@ -226,7 +226,7 @@ func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
 		t.Fatalf("messages = %d, want 1", len(c.Messages))
 	}
 	got := c.Messages[0]
-	if got.Role != api.RoleUser {
+	if got.Role != vibekit.RoleUser {
 		t.Errorf("role = %q, want user", got.Role)
 	}
 	if len(got.Attachments) != len(atts) {
@@ -251,7 +251,7 @@ func TestAppendUserMessage_NoAttachmentsPersistsNone(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(deps, t.Context(), "c1", &api.PromptCommand{
+	err := appendUserMessage(deps, t.Context(), "c1", &vibekit.PromptCommand{
 		Text:      "just a question",
 		MessageID: "m-1",
 	})

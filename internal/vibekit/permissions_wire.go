@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // PermissionOutcome is the typed wire shape for ACP permission-outcome
 // responses. Replaces anonymous map[string]any for compile-time safety.

@@ -20,7 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // CmdSetSupervisedMode records the chat's supervised choice and applies it to a
@@ -31,17 +31,17 @@ import (
 // with until the next session, which is the kind of silent lag that makes a
 // safety toggle untrustworthy. On a chat with no bridge yet the persisted value
 // is enough — `spawnBridge` passes it at `session/new`.
-func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.SetSupervisedModeCommand
+	var p vibekit.SetSupervisedModeCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 
-	if err := d.Deps().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	if err := d.Deps().ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.SupervisedMode == p.Enabled {
 			return false
 		}
@@ -56,8 +56,8 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	// ENABLING: the user asked to review writes and would not be asked. The
 	// disabling direction failing is a nuisance, not a hazard.
 	if bridge := d.Deps().GetBridge(cmd.ChatID); bridge != nil {
-		if _, err := bridge.Call(ctx, api.MethodSetConfigOption, SessionParams(bridge, map[string]any{
-			"configId": api.ConfigOptionAutopilot,
+		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
+			"configId": vibekit.ConfigOptionAutopilot,
 			"value":    !p.Enabled,
 		})); err != nil {
 			if p.Enabled {

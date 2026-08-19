@@ -5,7 +5,7 @@
 // two-phase journaled restore. All of it is deleted. KAS snapshots every
 // file its own edit tools touch, unconditionally, and hands the pre- and
 // post-image addresses to the client on the wire (`_meta.kiro.checkpoint`,
-// persisted on api.ToolCall.Checkpoint). So "show this edit's diff" is a
+// persisted on vibekit.ToolCall.Checkpoint). So "show this edit's diff" is a
 // snapshot read plus a file read, and nothing has to reconstruct which
 // files moved between two of vibekit's own tags.
 //

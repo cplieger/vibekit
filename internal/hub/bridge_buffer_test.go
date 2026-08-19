@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Tests for bridge_buffer.go: buffer.Buffer lifecycle + emitTurnEndedWithStats
@@ -14,9 +14,9 @@ import (
 
 func TestTrackFileChanges_Table(t *testing.T) {
 	tests := []struct {
-		wantFiles map[string]*api.FileChange
+		wantFiles map[string]*vibekit.FileChange
 		name      string
-		diffs     []api.ToolDiff
+		diffs     []vibekit.ToolDiff
 		isNewFile bool
 	}{
 		{
@@ -26,48 +26,48 @@ func TestTrackFileChanges_Table(t *testing.T) {
 		},
 		{
 			name:      "empty_path_skipped",
-			diffs:     []api.ToolDiff{{Path: "", NewText: "x\n"}},
-			wantFiles: map[string]*api.FileChange{},
+			diffs:     []vibekit.ToolDiff{{Path: "", NewText: "x\n"}},
+			wantFiles: map[string]*vibekit.FileChange{},
 		},
 		{
 			name:      "single_create",
-			diffs:     []api.ToolDiff{{Path: "a.go", NewText: "line1\nline2\n"}},
+			diffs:     []vibekit.ToolDiff{{Path: "a.go", NewText: "line1\nline2\n"}},
 			isNewFile: true,
-			wantFiles: map[string]*api.FileChange{"a.go": {LinesAdded: 2, IsNewFile: true}},
+			wantFiles: map[string]*vibekit.FileChange{"a.go": {LinesAdded: 2, IsNewFile: true}},
 		},
 		{
 			name:      "single_edit",
-			diffs:     []api.ToolDiff{{Path: "b.go", OldText: "old\n", NewText: "new\nmore\n"}},
-			wantFiles: map[string]*api.FileChange{"b.go": {LinesAdded: 2, LinesRemoved: 1}},
+			diffs:     []vibekit.ToolDiff{{Path: "b.go", OldText: "old\n", NewText: "new\nmore\n"}},
+			wantFiles: map[string]*vibekit.FileChange{"b.go": {LinesAdded: 2, LinesRemoved: 1}},
 		},
 		{
 			name: "multi_diff_same_path_accumulates",
-			diffs: []api.ToolDiff{
+			diffs: []vibekit.ToolDiff{
 				{Path: "c.go", NewText: "a\n"},
 				{Path: "c.go", OldText: "x\ny\n", NewText: "z\n"},
 			},
-			wantFiles: map[string]*api.FileChange{"c.go": {LinesAdded: 2, LinesRemoved: 2}},
+			wantFiles: map[string]*vibekit.FileChange{"c.go": {LinesAdded: 2, LinesRemoved: 2}},
 		},
 		{
 			name: "multi_path",
-			diffs: []api.ToolDiff{
+			diffs: []vibekit.ToolDiff{
 				{Path: "d.go", NewText: "one\n"},
 				{Path: "e.go", OldText: "rm\n"},
 			},
-			wantFiles: map[string]*api.FileChange{
+			wantFiles: map[string]*vibekit.FileChange{
 				"d.go": {LinesAdded: 1},
 				"e.go": {LinesRemoved: 1},
 			},
 		},
 		{
 			name:      "newText_only_counts_added",
-			diffs:     []api.ToolDiff{{Path: "f.go", NewText: "a\nb\nc\n"}},
-			wantFiles: map[string]*api.FileChange{"f.go": {LinesAdded: 3}},
+			diffs:     []vibekit.ToolDiff{{Path: "f.go", NewText: "a\nb\nc\n"}},
+			wantFiles: map[string]*vibekit.FileChange{"f.go": {LinesAdded: 3}},
 		},
 		{
 			name:      "oldText_only_counts_removed",
-			diffs:     []api.ToolDiff{{Path: "g.go", OldText: "x\ny\n"}},
-			wantFiles: map[string]*api.FileChange{"g.go": {LinesRemoved: 2}},
+			diffs:     []vibekit.ToolDiff{{Path: "g.go", OldText: "x\ny\n"}},
+			wantFiles: map[string]*vibekit.FileChange{"g.go": {LinesRemoved: 2}},
 		},
 	}
 	for _, tt := range tests {
@@ -105,17 +105,17 @@ func TestTrackFileChanges_Table(t *testing.T) {
 
 func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Start a turn: one chunk then end.
 	h.translateACPEvent("c1", newChunkMsg(t, "finished"))
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
 		t.Fatalf("messages = %+v", c.Messages)
 	}
-	if c.Messages[0].Role != api.RoleAssistant || c.Messages[0].Content != "finished" {
+	if c.Messages[0].Role != vibekit.RoleAssistant || c.Messages[0].Content != "finished" {
 		t.Errorf("message mismatch: %+v", c.Messages[0])
 	}
 	// Buffer should be cleared.
@@ -126,21 +126,21 @@ func TestEmitTurnEnded_PersistsAssistantMessage(t *testing.T) {
 
 func TestEmitTurnEnded_CancelledAppendsEventMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
-	if len(c.Messages) != 1 || c.Messages[0].Role != api.RoleEvent || c.Messages[0].EventKind != api.EventCancelled {
+	if len(c.Messages) != 1 || c.Messages[0].Role != vibekit.RoleEvent || c.Messages[0].EventKind != vibekit.EventCancelled {
 		t.Errorf("messages = %+v", c.Messages)
 	}
 }
 
 func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 0 {
@@ -150,12 +150,12 @@ func TestEmitTurnEnded_NoBufferNoMessagePersisted(t *testing.T) {
 
 func TestEmitTurnEnded_CancelledMarksToolsFailed(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Simulate a tool call in progress.
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
 	// Cancel the turn.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"cancelled"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	// Should have the assistant message + the cancelled event.
@@ -167,8 +167,8 @@ func TestEmitTurnEnded_CancelledMarksToolsFailed(t *testing.T) {
 	if len(assistantMsg.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call, got %d", len(assistantMsg.ToolCalls))
 	}
-	if assistantMsg.ToolCalls[0].Status != api.ToolFailed {
-		t.Errorf("tool status = %q, want %q", assistantMsg.ToolCalls[0].Status, api.ToolFailed)
+	if assistantMsg.ToolCalls[0].Status != vibekit.ToolFailed {
+		t.Errorf("tool status = %q, want %q", assistantMsg.ToolCalls[0].Status, vibekit.ToolFailed)
 	}
 }
 
@@ -190,43 +190,43 @@ func TestToolStartTimeTracking(t *testing.T) {
 
 func TestMarkCancelledToolsFailed(t *testing.T) {
 	buf := &buffer.Buffer{
-		ToolCalls: []api.ToolCall{
-			{ID: "tc1", Status: api.ToolInProgress},
-			{ID: "tc2", Status: api.ToolCompleted},
-			{ID: "tc3", Status: api.ToolPending},
+		ToolCalls: []vibekit.ToolCall{
+			{ID: "tc1", Status: vibekit.ToolInProgress},
+			{ID: "tc2", Status: vibekit.ToolCompleted},
+			{ID: "tc3", Status: vibekit.ToolPending},
 		},
 	}
 	changed := buf.MarkCancelledToolsFailed()
 	if len(changed) != 2 {
 		t.Fatalf("changed = %d, want 2", len(changed))
 	}
-	if buf.ToolCalls[0].Status != api.ToolFailed {
+	if buf.ToolCalls[0].Status != vibekit.ToolFailed {
 		t.Errorf("tc1 status = %q, want failed", buf.ToolCalls[0].Status)
 	}
-	if buf.ToolCalls[1].Status != api.ToolCompleted {
+	if buf.ToolCalls[1].Status != vibekit.ToolCompleted {
 		t.Errorf("tc2 status = %q, want completed (unchanged)", buf.ToolCalls[1].Status)
 	}
-	if buf.ToolCalls[2].Status != api.ToolFailed {
+	if buf.ToolCalls[2].Status != vibekit.ToolFailed {
 		t.Errorf("tc3 status = %q, want failed", buf.ToolCalls[2].Status)
 	}
 }
 
 func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Send a thought chunk.
 	raw := mustJSON(t, map[string]any{
 		"sessionUpdate": "agent_thought_chunk",
 		"content":       map[string]any{"type": "text", "text": "Let me think..."},
 	})
-	h.translateACPEvent("c1", &api.RPCResponse{
+	h.translateACPEvent("c1", &vibekit.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	})
 
 	// End the turn.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -242,7 +242,7 @@ func TestThoughtChunkPopulatesReasoningField(t *testing.T) {
 
 func TestToolCallDurationMs(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Send a tool call.
 	h.translateACPEvent("c1", newToolCallMsg(t, "tc1", "Reading file", "in_progress"))
@@ -254,13 +254,13 @@ func TestToolCallDurationMs(t *testing.T) {
 		"status":        "completed",
 		"content":       []any{},
 	})
-	h.translateACPEvent("c1", &api.RPCResponse{
+	h.translateACPEvent("c1", &vibekit.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	})
 
 	// End the turn and check the persisted tool call has a duration.
-	h.EmitTurnEndedWithStats(t.Context(), "c1", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c1", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c1")
 	if len(c.Messages) != 1 {
@@ -273,18 +273,18 @@ func TestToolCallDurationMs(t *testing.T) {
 	if tc.DurationMs < 0 {
 		t.Errorf("duration_ms = %d, want >= 0", tc.DurationMs)
 	}
-	if tc.Status != api.ToolCompleted {
+	if tc.Status != vibekit.ToolCompleted {
 		t.Errorf("status = %q, want completed", tc.Status)
 	}
 }
 
 func TestEmitTurnEnded_DifferentChatID(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c2", func(c *api.Chat, _ bool) bool { c.Name = "B"; return true })
+	_ = cs.Mutate(t.Context(), "c2", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
 
 	// Start a turn on a different chat ID to exercise the chatID parameter.
 	h.translateACPEvent("c2", newChunkMsg(t, "hello from c2"))
-	h.EmitTurnEndedWithStats(t.Context(), "c2", &api.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
+	h.EmitTurnEndedWithStats(t.Context(), "c2", &vibekit.RPCResponse{Result: json.RawMessage(`{"stopReason":"end_turn"}`)}, command.TurnStats{})
 
 	c, _ := cs.Get(t.Context(), "c2")
 	if len(c.Messages) != 1 {

@@ -12,7 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // CmdSetMode switches the chat's active session mode. If a live bridge
@@ -22,12 +22,12 @@ import (
 // yet (empty chat, first prompt not sent) there is nothing to switch
 // live — the mode is persisted and applied when the bridge's session/new
 // completes (spawnBridge threads chat.CurrentModeID into StartOpts.Mode).
-func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.SetModeCommand
+	var p vibekit.SetModeCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.ModeID == "" {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -36,7 +36,7 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 	// Switch live first (fail fast) when a bridge is running. When there
 	// is no bridge yet the persisted mode below is applied at session/new.
 	if bridge := deps.GetBridge(cmd.ChatID); bridge != nil {
-		if _, err := bridge.Call(ctx, api.MethodSetMode, SessionParams(bridge, map[string]any{"modeId": p.ModeID})); err != nil {
+		if _, err := bridge.Call(ctx, vibekit.MethodSetMode, SessionParams(bridge, map[string]any{"modeId": p.ModeID})); err != nil {
 			slog.Warn("set_mode: bridge call failed", "chat", cmd.ChatID, keyError, err)
 			d.RespondErr(w, http.StatusBadGateway, err)
 			return
@@ -44,7 +44,7 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 	}
 
 	var changed bool
-	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, ex bool) bool {
+	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			// New chat whose first prompt hasn't been sent — the record
 			// exists only client-side. Auto-create it (mirroring
@@ -52,7 +52,7 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 			// session/new via StartOpts.Mode. Without this every mode
 			// pick on a fresh chat 404'd and the pill silently rolled
 			// back to Default. Tombstoned ids are refused by Mutate.
-			c.Name = api.DefaultChatName
+			c.Name = vibekit.DefaultChatName
 			c.CurrentModeID = p.ModeID
 			changed = true
 			return true
@@ -76,7 +76,7 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 		}
 	}
 	if changed {
-		deps.Broadcast(ctx, api.NewEvent(api.EventModeChanged, cmd.ChatID, api.ModeChangedPayload(p)))
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, cmd.ChatID, vibekit.ModeChangedPayload(p)))
 	}
 	slog.Info("mode set", "chat", cmd.ChatID, "mode", p.ModeID)
 	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"mode_id": p.ModeID}))

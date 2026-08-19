@@ -39,7 +39,7 @@ import { info, success, error } from "../toast.js";
 // announcing for a SCHEDULED run: a manual launch already has the user's
 // attention, since they clicked Run and a run tab opened in front of them. A
 // COMPLETION is worth announcing for any run, because nothing else tells anyone:
-// api.PushKind has no run member, the schedule row only speaks when someone opens
+// vibekit.PushKind has no run member, the schedule row only speaks when someone opens
 // /docs/workflows, and one shared #run-dock element means a background run tab has
 // no on-screen surface at all.
 //

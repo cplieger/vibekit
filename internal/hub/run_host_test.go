@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/runlease"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // bufferedEvents decodes the SSE replay buffer back into typed envelopes, so a
@@ -40,12 +40,12 @@ func bufferedEvents(h *Hub) []struct {
 	return out
 }
 
-func runNotif(method string, params map[string]any) *api.RPCResponse {
+func runNotif(method string, params map[string]any) *vibekit.RPCResponse {
 	raw, err := json.Marshal(params)
 	if err != nil {
 		panic(err)
 	}
-	return &api.RPCResponse{Method: method, Params: raw}
+	return &vibekit.RPCResponse{Method: method, Params: raw}
 }
 
 // TestRunChatID_Namespace pins the synthetic id shape and that a real chat id
@@ -57,7 +57,7 @@ func TestRunChatID_Namespace(t *testing.T) {
 	if !isRunChat("run:wf_1") {
 		t.Error("run:wf_1 not recognised as a run chat")
 	}
-	for _, id := range []api.ChatID{"c-abc123", "", "wf_1", "running-jokes"} {
+	for _, id := range []vibekit.ChatID{"c-abc123", "", "wf_1", "running-jokes"} {
 		if isRunChat(id) {
 			t.Errorf("%q misread as a run chat", id)
 		}
@@ -78,7 +78,7 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("got %d events, want 1: %+v", len(events), events)
 	}
-	if events[0].Type != string(api.EventRunStarted) {
+	if events[0].Type != string(vibekit.EventRunStarted) {
 		t.Errorf("type = %q, want run_started", events[0].Type)
 	}
 	if events[0].ChatID != "" {
@@ -93,7 +93,7 @@ func TestRunDispatch_LifecycleGoesWorkspaceGlobal(t *testing.T) {
 func TestRunDispatch_StepContentIsDropped(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	h.runDispatch(t.Context(), "run:wf_1", runNotif(api.MethodSessionUpdate, map[string]any{
+	h.runDispatch(t.Context(), "run:wf_1", runNotif(vibekit.MethodSessionUpdate, map[string]any{
 		"sessionId": "sess_step",
 		"update": map[string]any{
 			"sessionUpdate": "agent_message_chunk",
@@ -118,7 +118,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 	h, _, _ := newTestHub()
 
 	id := int64(7)
-	msg := runNotif(api.MethodRequestPermission, map[string]any{
+	msg := runNotif(vibekit.MethodRequestPermission, map[string]any{
 		"sessionId": "sess_step",
 		"toolCall":  map[string]any{"toolCallId": "tc1", "title": "write file", "kind": "edit"},
 		"options":   []map[string]any{{"optionId": "allow", "name": "Allow", "kind": "allow_once"}},
@@ -128,7 +128,7 @@ func TestRunDispatch_PermissionKeyedToRunChat(t *testing.T) {
 
 	found := false
 	for _, e := range bufferedEvents(h) {
-		if e.Type == string(api.EventPermissionNeeded) {
+		if e.Type == string(vibekit.EventPermissionNeeded) {
 			found = true
 			if e.ChatID != "run:wf_1" {
 				t.Errorf("permission chat_id = %q, want run:wf_1", e.ChatID)
@@ -277,7 +277,7 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 // command an earlier turn started on purpose alone.
 func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 	at := newAgentTerminals()
-	add := func(id string, chat api.ChatID) {
+	add := func(id string, chat vibekit.ChatID) {
 		at.mu.Lock()
 		term := newAgentTerminal(&exec.Cmd{}, chat, 1024)
 		term.turnSeq = at.currentTurn(chat)

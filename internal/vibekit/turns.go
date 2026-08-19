@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // TurnOutcome is a turn's result, rendered as scannable colour on the timeline
 // rail and as the turn footer's tint.

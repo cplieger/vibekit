@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/dedup"
@@ -34,6 +33,7 @@ import (
 	"github.com/cplieger/vibekit/internal/schedule"
 	"github.com/cplieger/vibekit/internal/secretstore"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp/sse"
 )
 
@@ -125,7 +125,7 @@ type Hub struct {
 	kiroToken          *kiroauth.CLISource
 	preBridgeSpawn     func(context.Context) // optional; fired before each new bridge starts
 	chatHandlers       map[string]chatHandler
-	sessUpdateHandlers map[api.ACPUpdateKind]sessionUpdateHandler
+	sessUpdateHandlers map[vibekit.ACPUpdateKind]sessionUpdateHandler
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
@@ -332,7 +332,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		h.perm.ignore = ignore.NewMatcher(lc.configDir, workDir)
 		// Best-effort: a store that cannot be opened leaves h.secrets nil, and
 		// bridges then do NOT declare `_meta.kiro.secretStorage` (see
-		// api.StartOpts.SecretStorage), so KAS never asks and MCP OAuth
+		// vibekit.StartOpts.SecretStorage), so KAS never asks and MCP OAuth
 		// re-registers per spawn as it did before the capability, rather than
 		// the hub refusing to construct over a credential cache.
 		secrets, err := secretstore.New(lc.configDir)
@@ -350,15 +350,15 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 
 // UtilityPrompt delegates to the utility text-gen agent. The runtime is lazily
 // constructed on first call. effort is the per-task reasoning-effort level:
-// cheap tasks (summaries, error explanations) pass api.EffortLow, tasks that
+// cheap tasks (summaries, error explanations) pass vibekit.EffortLow, tasks that
 // read a diff or merge code (commit messages, PR descriptions, conflict
-// resolution) pass api.EffortMedium; "" keeps the session's current level.
+// resolution) pass vibekit.EffortMedium; "" keeps the session's current level.
 // Best-effort — a model with no effort config ignores it.
 //
 // Its consumers declare the one-method contract themselves (internal/server and
 // internal/git); this is not used for chat titles, which come from KAS (see
 // translate/focus.go).
-func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error) {
+func (h *Hub) UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error) {
 	return h.ensureUtility().agent.UtilityPrompt(ctx, prompt, effort)
 }
 
@@ -374,14 +374,14 @@ func (h *Hub) MCPRegistry() RouteRegistrar { return h.mcpRegistry }
 // connected state are included: the steering file presents the list as
 // "Connected integrations", and a failed or OAuth-pending server has no
 // live tools for the agent to call.
-func (h *Hub) MCPSnapshot() []api.MCPSnapshotServer {
+func (h *Hub) MCPSnapshot() []vibekit.MCPSnapshotServer {
 	snap := h.mcpRegistry.Snapshot()
-	out := make([]api.MCPSnapshotServer, 0, len(snap))
+	out := make([]vibekit.MCPSnapshotServer, 0, len(snap))
 	for i := range snap {
 		if snap[i].State != mcpStateConnected {
 			continue
 		}
-		out = append(out, api.MCPSnapshotServer{Name: snap[i].Name})
+		out = append(out, vibekit.MCPSnapshotServer{Name: snap[i].Name})
 	}
 	return out
 }
@@ -508,7 +508,7 @@ const bridgeIdleTimeout = 30 * time.Minute
 // Broadcast sends a ServerEvent to every connected SSE client. Used by the
 // chat store (chat_created / chat_updated / message_* etc.) and by the hub
 // itself for turn_ended / permission_needed / error.
-func (h *Hub) Broadcast(_ context.Context, evt api.ServerEvent) {
+func (h *Hub) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	h.emit(evt)
 }
 
@@ -542,7 +542,7 @@ func (h *Hub) hubContext() (context.Context, context.CancelFunc) {
 // for chatID, or "" when no bridge exists. Translator helpers use this
 // to short-circuit notifications whose top-level sessionId belongs to
 // a subagent rather than the parent chat.
-func (h *Hub) parentACPSession(chatID api.ChatID) string {
+func (h *Hub) parentACPSession(chatID vibekit.ChatID) string {
 	sb := h.bridge.mgr.get(chatID)
 	if sb == nil {
 		return ""

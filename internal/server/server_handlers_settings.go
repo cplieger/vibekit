@@ -11,11 +11,11 @@ import (
 	"strings"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/logctl"
 	"github.com/cplieger/vibekit/internal/push"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -201,7 +201,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 			"path", path)
 	}
 	webhttp.Ok(w)
-	s.hub.Broadcast(r.Context(), api.NewEvent(api.EventSettingsUpdated, "", api.SettingsUpdatedPayload{}))
+	s.hub.Broadcast(r.Context(), vibekit.NewEvent(vibekit.EventSettingsUpdated, "", vibekit.SettingsUpdatedPayload{}))
 	s.syncPushPreferences(patch)
 	s.syncDebugLogs(patch)
 }
@@ -212,7 +212,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 // It DERIVES the kind set from push.Kinds() rather than naming the kinds here.
 // This used to be a hand-written map with both kinds spelled out and a single
 // `if` reading one key, which made it a THIRD copy of the kind set beside
-// api.pushKinds and push.kindRegistry — so a newly added kind's toggle persisted
+// vibekit.pushKinds and push.kindRegistry — so a newly added kind's toggle persisted
 // to config.json and then never reached the running service until the next SSE
 // reconnect happened to call ReloadPreferences.
 //
@@ -233,7 +233,7 @@ func (s *Server) handleSettingsWrite(w http.ResponseWriter, r *http.Request, pat
 // internal/settings/defaults.go.
 func (s *Server) syncPushPreferences(patch map[string]json.RawMessage) {
 	kinds := push.Kinds()
-	prefs := make(map[api.PushKind]bool, len(kinds))
+	prefs := make(map[vibekit.PushKind]bool, len(kinds))
 	// Read at most once, and only when a key is actually missing: the merged
 	// document every current caller passes needs no disk read at all.
 	var persisted map[string]json.RawMessage

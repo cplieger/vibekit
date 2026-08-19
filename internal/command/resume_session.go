@@ -20,19 +20,19 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // CmdResumeSession creates a chat bound to an existing KAS session so the
 // stored conversation can be opened.
 //
 //nolint:revive // context-as-argument: dispatcher handler signature
-func CmdResumeSession(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) {
+func CmdResumeSession(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.ResumeSessionCommand
+	var p vibekit.ResumeSessionCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -46,14 +46,14 @@ func CmdResumeSession(d *Dispatcher, ctx context.Context, w http.ResponseWriter,
 	}
 	name := p.Name
 	if name == "" {
-		name = api.DefaultChatName
+		name = vibekit.DefaultChatName
 	}
-	if len(name) > api.MaxChatNameBytes {
+	if len(name) > vibekit.MaxChatNameBytes {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
 
-	err := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	err := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		// Refuse to rebind an existing chat. Pointing a live chat at another
 		// session would strand its own session (its transcript still on disk,
 		// no longer referenced, so the reaper sweeps it) and hand the user a

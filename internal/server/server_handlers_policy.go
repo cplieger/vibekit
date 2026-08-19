@@ -7,9 +7,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/policyfile"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -37,7 +37,7 @@ import (
 // (Available=false signals the baseline scopes are missing).
 func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 	scope := r.URL.Query().Get("scope")
-	view := api.PolicyView{
+	view := vibekit.PolicyView{
 		WritableScopes: []string{policyfile.ScopeUser, policyfile.ScopeWorkspace},
 		// The relaxation set travels on BOTH branches: it is a fixed property of
 		// this build, not a projection of the live policy, so the switch stays
@@ -77,7 +77,7 @@ func (s *Server) handlePolicyView(w http.ResponseWriter, r *http.Request) {
 // Deliberately not a filter on what may be WRITTEN: a capability absent from
 // both the snapshot and the current rules is still writable (see SanitizeRule),
 // it just is not suggested.
-func pickerCapabilities(rules []api.PolicyRule) []string {
+func pickerCapabilities(rules []vibekit.PolicyRule) []string {
 	out := policyfile.Capabilities()
 	seen := make(map[string]struct{}, len(out)+len(rules))
 	for _, c := range out {
@@ -106,14 +106,14 @@ func pickerCapabilities(rules []api.PolicyRule) []string {
 }
 
 // policyRulesFromFiles reads the user + workspace permissions.yaml directly
-// and returns them as api.PolicyRule with provenance. Used only as the
+// and returns them as vibekit.PolicyRule with provenance. Used only as the
 // no-bridge fallback for the view.
-func (s *Server) policyRulesFromFiles(scope string) []api.PolicyRule {
+func (s *Server) policyRulesFromFiles(scope string) []vibekit.PolicyRule {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return []api.PolicyRule{}
+		return []vibekit.PolicyRule{}
 	}
-	out := []api.PolicyRule{}
+	out := []vibekit.PolicyRule{}
 	for _, sc := range []string{policyfile.ScopeUser, policyfile.ScopeWorkspace} {
 		if scope != "" && scope != sc {
 			continue
@@ -127,7 +127,7 @@ func (s *Server) policyRulesFromFiles(scope string) []api.PolicyRule {
 			continue
 		}
 		for _, ru := range f.Rules {
-			out = append(out, api.PolicyRule{
+			out = append(out, vibekit.PolicyRule{
 				Capability: ru.Capability, Effect: ru.Effect,
 				Match: ru.Match, Exclude: ru.Exclude,
 				Scope: sc, Source: path,
@@ -148,7 +148,7 @@ func (s *Server) handlePolicyExplain(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, httpreply.ErrorJSON("policy explain unavailable"))
 		return
 	}
-	var req api.PolicyExplainRequest
+	var req vibekit.PolicyExplainRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
@@ -309,7 +309,7 @@ func (s *Server) guardAllowRule(w http.ResponseWriter, r *http.Request, rule *po
 			httpreply.ErrorJSON("cannot verify the rule against the live policy; rule not written"))
 		return false
 	}
-	res, err := s.policy.PolicyExplain(r.Context(), api.PolicyExplainRequest{
+	res, err := s.policy.PolicyExplain(r.Context(), vibekit.PolicyExplainRequest{
 		Capability: rule.Capability, Resource: resource,
 	})
 	if err != nil {

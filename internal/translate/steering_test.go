@@ -10,7 +10,7 @@ import (
 	"maps"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // steerFrame builds a session_info_update whose steering fields sit FLAT beside
@@ -37,10 +37,10 @@ func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 		t.Fatalf("broadcast %d events, want 1", len(*events))
 	}
 	e := (*events)[0]
-	if e.Type != api.EventSteerQueued {
-		t.Fatalf("type = %q, want %q", e.Type, api.EventSteerQueued)
+	if e.Type != vibekit.EventSteerQueued {
+		t.Fatalf("type = %q, want %q", e.Type, vibekit.EventSteerQueued)
 	}
-	p, ok := e.Payload.(api.SteerQueuedPayload)
+	p, ok := e.Payload.(vibekit.SteerQueuedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", e.Payload)
 	}
@@ -66,10 +66,10 @@ func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 		t.Fatalf("broadcast %d events, want 1", len(*events))
 	}
 	e := (*events)[0]
-	if e.Type != api.EventAgentNotice {
-		t.Fatalf("type = %q, want %q", e.Type, api.EventAgentNotice)
+	if e.Type != vibekit.EventAgentNotice {
+		t.Fatalf("type = %q, want %q", e.Type, vibekit.EventAgentNotice)
 	}
-	p, ok := e.Payload.(api.AgentNoticePayload)
+	p, ok := e.Payload.(vibekit.AgentNoticePayload)
 	if !ok {
 		t.Fatalf("payload type = %T", e.Payload)
 	}
@@ -89,10 +89,10 @@ func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
 			"content":   "use tabs",
 		}), "")
 
-	if len(*events) != 1 || (*events)[0].Type != api.EventSteerInjected {
+	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerInjected {
 		t.Fatalf("events = %+v, want one steer_injected", *events)
 	}
-	p, ok := (*events)[0].Payload.(api.SteerInjectedPayload)
+	p, ok := (*events)[0].Payload.(vibekit.SteerInjectedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
@@ -108,10 +108,10 @@ func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
 			"messageIds": []string{"steer-1", "steer-2"},
 		}), "")
 
-	if len(*events) != 1 || (*events)[0].Type != api.EventSteerCleared {
+	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerCleared {
 		t.Fatalf("events = %+v, want one steer_cleared", *events)
 	}
-	p, ok := (*events)[0].Payload.(api.SteerClearedPayload)
+	p, ok := (*events)[0].Payload.(vibekit.SteerClearedPayload)
 	if !ok {
 		t.Fatalf("payload type = %T", (*events)[0].Payload)
 	}
@@ -164,7 +164,7 @@ func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
 			"content":   "use tabs",
 		}), "sub-session-7")
 
-	if len(*events) != 1 || (*events)[0].Type != api.EventSteerInjected {
+	if len(*events) != 1 || (*events)[0].Type != vibekit.EventSteerInjected {
 		t.Fatalf("events = %+v — a steer consumed inside a subagent must still be reported", *events)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func FuzzLineTrackerRecord(f *testing.F) {
@@ -12,7 +12,7 @@ func FuzzLineTrackerRecord(f *testing.F) {
 	f.Add([]byte{0, 0, 1, 10, 1, 0})
 	f.Fuzz(func(t *testing.T, data []byte) {
 		lt := NewLineTracker()
-		chats := []api.ChatID{"chat-0", "chat-1", "chat-2"}
+		chats := []vibekit.ChatID{"chat-0", "chat-1", "chat-2"}
 		kinds := []string{"edit", "create", "delete"}
 
 		// Each record needs 6 bytes: chatIdx, fileIdx(2), startLine, endLine, turn

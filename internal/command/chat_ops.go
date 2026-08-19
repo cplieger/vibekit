@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // cancelGrace is how long a cooperative session/cancel gets to be reflected
@@ -19,11 +19,11 @@ import (
 const cancelGrace = 10 * time.Second
 
 // CmdCreateChat creates a new chat with the given metadata.
-func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.CreateChatCommand
+	var p vibekit.CreateChatCommand
 	if len(cmd.Payload) > 0 {
 		if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
@@ -32,9 +32,9 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	}
 	name := p.Name
 	if name == "" {
-		name = api.DefaultChatName
+		name = vibekit.DefaultChatName
 	}
-	if len(name) > api.MaxChatNameBytes {
+	if len(name) > vibekit.MaxChatNameBytes {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
@@ -42,7 +42,7 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
 	}
-	err := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	err := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if exists {
 			return false
 		}
@@ -68,7 +68,7 @@ func CmdCreateChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 // nothing to order or to half-fail. The transition, its ordering guarantee and
 // the `failed_children` response are all gone rather than kept as a
 // single-element loop.
-func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	// Delete implies close semantics: the chat's runs are cancelled first,
 	// because a run is durable state a dead bridge only PAUSES — without this,
 	// deleting a chat mid-run left the run to revive and edit files attributed
@@ -84,7 +84,7 @@ func CmdDeleteChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 }
 
 // CmdCancel cancels the active turn, if any.
-func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	// Only the pending PERMISSIONS are cleared. There is no staging queue to
 	// flush and no per-turn trust to drop: KAS owns the write gate, and cancelling
 	// a turn reverts its own approval (measured — session/cancel is the documented
@@ -103,7 +103,7 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		d.RespondOK(w, cmd.RequestID)
 		return
 	}
-	if err := sb.Notify(ctx, api.MethodCancel, SessionParams(sb)); err != nil {
+	if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
 		slog.Error("cancel failed", "chat_id", cmd.ChatID, keyError, err)
 	}
 	// Unresponsive-cancel budget. session/cancel is a notification, so nothing
@@ -135,10 +135,10 @@ func CmdCancel(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 // and a paused run later revives and edits files nobody is watching), then the
 // process teardown, which also flushes the in-flight buffer and kills the
 // chat's agent terminals.
-func CmdCloseChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdCloseChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	d.PendingPerms().ClearPendingPermsForChat(cmd.ChatID)
 	if sb := d.Bridge().GetBridge(cmd.ChatID); sb != nil {
-		if err := sb.Notify(ctx, api.MethodCancel, SessionParams(sb)); err != nil {
+		if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", cmd.ChatID, keyError, err)
 		}
 	}
@@ -148,13 +148,13 @@ func CmdCloseChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 }
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
-func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	sb := d.Bridge().GetBridge(cmd.ChatID)
 	if sb == nil {
 		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
 		return
 	}
-	var p api.PermissionResponseCommand
+	var p vibekit.PermissionResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -165,14 +165,14 @@ func CmdPermission(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	// rather than here. Losing the take means somebody else answered, which is
 	// not this request's failure to report as one: 409 with a code the client
 	// can explain.
-	if !d.PendingPerms().TakePendingPerm(p.RequestID, api.SettledByUser) {
+	if !d.PendingPerms().TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
 		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
 		return
 	}
 	// A turn approval answers on the SAME reply, with per-file decisions in
 	// _meta. Built through one helper so the omitted-id-means-reject rule lives in
 	// exactly one place.
-	outcome := api.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
+	outcome := vibekit.PermissionOutcomeWithFileDecisions(p.OptionID, p.FileDecisions)
 	if err := sb.Respond(ctx, p.RequestID, outcome, nil); err != nil {
 		slog.Error("permission response failed", "chat_id", cmd.ChatID, keyError, err)
 	}

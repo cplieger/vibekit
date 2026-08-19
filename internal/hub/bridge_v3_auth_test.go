@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestIsSafeExternalURL(t *testing.T) {
@@ -32,9 +32,9 @@ func TestIsSafeExternalURL(t *testing.T) {
 
 // openExternalURLMsg builds a _kiro/openExternalUrl A→C request with the
 // given url.
-func openExternalURLMsg(t *testing.T, id int64, url string) *api.RPCResponse {
+func openExternalURLMsg(t *testing.T, id int64, url string) *vibekit.RPCResponse {
 	t.Helper()
-	return &api.RPCResponse{
+	return &vibekit.RPCResponse{
 		Method: methodKiroOpenExternalURL,
 		ID:     &id,
 		Params: mustJSON(t, map[string]any{"url": url}),
@@ -47,7 +47,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 		_, before := h.sse.hub.Bounds()
 		h.translateACPEvent("c1", openExternalURLMsg(t, 1, "https://auth.example.com/oauth"))
 		types := extractTypes(t, bufferedSince(h, before))
-		if missing := missingEvents(types, string(api.EventOpenExternalURL)); len(missing) > 0 {
+		if missing := missingEvents(types, string(vibekit.EventOpenExternalURL)); len(missing) > 0 {
 			t.Errorf("missing events %v; got %v", missing, types)
 		}
 	})
@@ -58,7 +58,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 		h.translateACPEvent("c1", openExternalURLMsg(t, 2, "javascript:alert(1)"))
 		types := extractTypes(t, bufferedSince(h, before))
 		for _, ty := range types {
-			if ty == string(api.EventOpenExternalURL) {
+			if ty == string(vibekit.EventOpenExternalURL) {
 				t.Fatalf("unsafe URL must not broadcast open_external_url; got %v", types)
 			}
 		}
@@ -129,36 +129,36 @@ func TestAccessTokenFailureBroadcastsTheAuthError(t *testing.T) {
 
 	// kiroToken is nil on a test hub, so the vend fails with ErrNoSource.
 	id := int64(7)
-	h.respondKiroAccessToken(t.Context(), "c1", &api.RPCResponse{
+	h.respondKiroAccessToken(t.Context(), "c1", &vibekit.RPCResponse{
 		Method: methodKiroGetAccessToken,
 		ID:     &id,
 	})
 
 	events := bufferedSince(h, before)
 	types := extractTypes(t, events)
-	if missing := missingEvents(types, string(api.EventError)); len(missing) > 0 {
+	if missing := missingEvents(types, string(vibekit.EventError)); len(missing) > 0 {
 		t.Errorf("missing events %v; got %v", missing, types)
 	}
 
 	var found bool
 	for _, e := range events {
-		var msg api.ServerEvent
+		var msg vibekit.ServerEvent
 		if err := json.Unmarshal(e.Event.Data, &msg); err != nil {
 			t.Fatalf("unmarshal event: %v", err)
 		}
-		if msg.Type != api.EventError {
+		if msg.Type != vibekit.EventError {
 			continue
 		}
 		raw, err := json.Marshal(msg.Payload)
 		if err != nil {
 			t.Fatalf("remarshal payload: %v", err)
 		}
-		var p api.ErrorPayload
+		var p vibekit.ErrorPayload
 		if err := json.Unmarshal(raw, &p); err != nil {
 			t.Fatalf("unmarshal error payload: %v", err)
 		}
-		if p.Code != api.ErrCodeAuthTokenUnavailable {
-			t.Errorf("code = %q, want %q", p.Code, api.ErrCodeAuthTokenUnavailable)
+		if p.Code != vibekit.ErrCodeAuthTokenUnavailable {
+			t.Errorf("code = %q, want %q", p.Code, vibekit.ErrCodeAuthTokenUnavailable)
 		}
 		if p.Message == "" {
 			t.Error("the frame must carry kiro-cli's own reason: no wording invented here is more specific")

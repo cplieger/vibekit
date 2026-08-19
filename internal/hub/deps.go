@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // The interfaces below are the hub's DEPENDENCY contracts: what it calls on the
@@ -71,14 +71,14 @@ type RouteRegistrar interface {
 // bridge exiting has never meant a chat should go, and now it cannot.
 type bridgeChatRecords interface {
 	// Get returns the full chat at id, or false if it does not exist.
-	Get(ctx context.Context, id api.ChatID) (*api.Chat, bool)
+	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	// BuildHistory returns a plain-text transcript used for compress priming.
 	// Returns "" if the chat is missing or empty.
-	BuildHistory(ctx context.Context, id api.ChatID) string
+	BuildHistory(ctx context.Context, id vibekit.ChatID) string
 	// Mutate is the single write primitive: load, apply, save, broadcast.
-	Mutate(ctx context.Context, id api.ChatID, mutate func(c *api.Chat, exists bool) bool) error
+	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
 	// AppendMessage appends msg to the chat's messages.
-	AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error
+	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 }
 
 // chatRecords is the hub's field type, and it is a UNION rather than a usage
@@ -100,14 +100,14 @@ type chatRecords interface {
 
 	// List returns every chat's header (no messages) sorted by UpdatedAt
 	// descending. Checks ctx.Err() between per-file reads.
-	List(ctx context.Context) []api.ChatHeader
+	List(ctx context.Context) []vibekit.ChatHeader
 	// SetDraft persists the chat's unsent composer text. Passed on to the
 	// command dispatcher; the hub never calls it.
-	SetDraft(ctx context.Context, id api.ChatID, text string) error
+	SetDraft(ctx context.Context, id vibekit.ChatID, text string) error
 	// Delete removes the chat file and broadcasts chat_deleted. Passed on to
 	// the command dispatcher, whose cmdDeleteChat is the build's only caller;
 	// the hub never calls it, and the coordinator's own view cannot see it.
-	Delete(ctx context.Context, id api.ChatID) error
+	Delete(ctx context.Context, id vibekit.ChatID) error
 }
 
 // pushNotifier is the notification SEND half: ask whether anyone is listening,
@@ -121,7 +121,7 @@ type pushNotifier interface {
 	// HasSubscribers reports whether any device is registered.
 	HasSubscribers() bool
 	// Send delivers one notification to every subscriber.
-	Send(ctx context.Context, title, body string, notifyType api.PushKind, subject api.PushSubject)
+	Send(ctx context.Context, title, body string, notifyType vibekit.PushKind, subject vibekit.PushSubject)
 }
 
 // pushService is the hub's whole view of push: the send half plus the two
@@ -158,14 +158,14 @@ type pushService interface {
 // one a parameter-map builder has any use for.
 type acpSession interface {
 	// SessionID returns the ACP session id after Start completes.
-	SessionID() api.SessionID
+	SessionID() vibekit.SessionID
 }
 
 // acpCaller sends a JSON-RPC request and waits for its matching response. 1 of
 // 14. The provided context enables caller-driven cancellation; if it is
 // cancelled before the response arrives, Call returns ctx.Err().
 type acpCaller interface {
-	Call(ctx context.Context, method string, params any) (*api.RPCResponse, error)
+	Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error)
 }
 
 // acpResponder answers an INBOUND request from kiro-cli (fs/read_text_file, the
@@ -201,7 +201,7 @@ type acpSessionFacts interface {
 	acpSession
 
 	// ModelID returns the current model id after Start completes.
-	ModelID() api.ModelID
+	ModelID() vibekit.ModelID
 	// CurrentMode returns the currently-active session mode id (empty if the
 	// agent doesn't expose modes).
 	CurrentMode() string
@@ -213,11 +213,11 @@ type acpSessionFacts interface {
 	SessionTitle() string
 	// Modes returns the set of session modes the running agent supports. Empty
 	// for agents that don't expose modes.
-	Modes() []api.SessionMode
+	Modes() []vibekit.SessionMode
 	// Models returns the set of models the agent can swap to, with
 	// deprecated/internal entries filtered out. Zero fallback: if kiro-cli
 	// returns nothing, the slice is empty.
-	Models() []api.SessionModel
+	Models() []vibekit.SessionModel
 	// ServedModels returns every advertised model id, UNFILTERED — the input to
 	// the entitlement check, where Models' display filtering would refuse a
 	// deprecated model the account can still use. Empty means unknowable.
@@ -240,11 +240,11 @@ type utilityBridge interface {
 	// Start launches a fresh kiro-cli ACP subprocess. ctx bounds the startup
 	// handshake ONLY; the subprocess's lifetime comes from StartOpts.Lifetime,
 	// which is REQUIRED.
-	Start(ctx context.Context, opts *api.StartOpts) error
+	Start(ctx context.Context, opts *vibekit.StartOpts) error
 	// NotifCh yields incoming ACP notifications. Closes when the subprocess
 	// exits. The forward goroutine must be draining it BEFORE Start: on v3
 	// session/new blocks until the host answers requests that arrive here.
-	NotifCh() <-chan *api.RPCResponse
+	NotifCh() <-chan *vibekit.RPCResponse
 }
 
 // ACPBridge manages a single kiro-cli ACP subprocess for one chat: all 14

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- Bridge contract test ---
@@ -23,7 +23,7 @@ func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 
 	t.Run("Start_sets_session_id", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -34,7 +34,7 @@ func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 
 	t.Run("Start_with_existing_session", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), SessionID: "existing-sess", Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), SessionID: "existing-sess", Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -45,7 +45,7 @@ func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 
 	t.Run("Call_returns_response", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -60,7 +60,7 @@ func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 
 	t.Run("Notify_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -71,7 +71,7 @@ func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 
 	t.Run("Respond_does_not_error", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()
@@ -82,7 +82,7 @@ func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 
 	t.Run("Stop_closes_NotifCh", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		ch := b.NotifCh()
@@ -102,7 +102,7 @@ func BridgeContractTest(t *testing.T, newBridge func() ACPBridge) {
 
 	t.Run("ModelID_returns_value", func(t *testing.T) {
 		b := newBridge()
-		if err := b.Start(t.Context(), &api.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
+		if err := b.Start(t.Context(), &vibekit.StartOpts{Lifetime: t.Context(), Model: "model"}); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		defer b.Stop()

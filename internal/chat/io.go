@@ -10,7 +10,7 @@ import (
 
 	"github.com/cplieger/jsonx/bounded"
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // readCappedFile reads a file at path, enforcing the maxChatFileBytes
@@ -73,12 +73,12 @@ func readCappedFile(path, label string) ([]byte, error) {
 
 // readChatFile reads a chat JSON file at path, enforcing the
 // maxChatFileBytes size cap and the TOCTOU grow-during-read guard.
-func readChatFile(path, label string) (*api.Chat, error) {
+func readChatFile(path, label string) (*vibekit.Chat, error) {
 	data, err := readCappedFile(path, label)
 	if err != nil {
 		return nil, err
 	}
-	var c api.Chat
+	var c vibekit.Chat
 	if err := json.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -86,19 +86,19 @@ func readChatFile(path, label string) (*api.Chat, error) {
 }
 
 // chatHeaderOnDisk is a partial-unmarshal struct that skips the Messages
-// array. Embeds api.ChatHeader so new fields automatically flow through
+// array. Embeds vibekit.ChatHeader so new fields automatically flow through
 // without a manual mapping step. json.RawMessage avoids allocating/parsing
 // the message objects, bounding List's memory to O(N × header_size)
 // instead of O(N × full_chat).
 type chatHeaderOnDisk struct {
 	Messages json.RawMessage `json:"messages"`
-	api.ChatHeader
+	vibekit.ChatHeader
 }
 
 // readChatHeader reads a chat JSON file and returns only the header fields,
 // skipping full message deserialization. The message count is derived from
 // counting top-level array elements in the raw JSON.
-func readChatHeader(path, label string) (*api.ChatHeader, error) {
+func readChatHeader(path, label string) (*vibekit.ChatHeader, error) {
 	data, err := readCappedFile(path, label)
 	if err != nil {
 		return nil, err

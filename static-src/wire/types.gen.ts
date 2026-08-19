@@ -974,7 +974,7 @@ export interface Recipe {
  * second representation of it here would be one more thing to keep in sync
  * for no gain. Last of the pointer-bearing fields on purpose — a slice's
  * len/cap words end the GC scan region, where a trailing string would extend
- * it (the api.ToolCall.Checkpoint note records the same rule).
+ * it (the vibekit.ToolCall.Checkpoint note records the same rule).
  */
   plan?: unknown;
   built_in?: boolean;
@@ -1373,7 +1373,7 @@ export interface TerminalOutputPayload {
  * TextSpan styles the half-open range [Start,End) of a sibling text field.
  * //
  * It mirrors internal/ansitext.Span; the wire type lives here because
- * internal/api owns every shape codegen projects into TypeScript and
+ * internal/vibekit owns every shape codegen projects into TypeScript and
  * internal/ansitext stays a stdlib-only leaf that knows nothing about the wire.
  * //
  * Attrs values match web-terminal-engine's vt.WireRun.A so the terminal

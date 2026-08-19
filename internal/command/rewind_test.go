@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // recordingBridge is a CommandBridge that records the one call made through it
@@ -28,10 +28,10 @@ type recordingBridge struct {
 	gotMethod string
 	gotParams map[string]any
 	callCount int
-	sessionID api.SessionID
+	sessionID vibekit.SessionID
 }
 
-func (b *recordingBridge) Call(_ context.Context, method string, params any) (*api.RPCResponse, error) {
+func (b *recordingBridge) Call(_ context.Context, method string, params any) (*vibekit.RPCResponse, error) {
 	b.callCount++
 	b.gotMethod = method
 	if m, ok := params.(map[string]any); ok {
@@ -44,12 +44,12 @@ func (b *recordingBridge) Call(_ context.Context, method string, params any) (*a
 	if err != nil {
 		return nil, err
 	}
-	return &api.RPCResponse{Result: raw}, nil
+	return &vibekit.RPCResponse{Result: raw}, nil
 }
 
 func (b *recordingBridge) Notify(context.Context, string, any) error        { return nil }
 func (b *recordingBridge) Respond(context.Context, int64, any, error) error { return nil }
-func (b *recordingBridge) SessionID() api.SessionID                         { return b.sessionID }
+func (b *recordingBridge) SessionID() vibekit.SessionID                     { return b.sessionID }
 func (b *recordingBridge) TryAcquireForPrompt() bool                        { return true }
 func (b *recordingBridge) ReleaseAfterPrompt()                              {}
 func (b *recordingBridge) BeginPromptCall(context.CancelFunc) uint64        { return 0 }
@@ -65,7 +65,7 @@ type bridgeDeps struct {
 	bridge Bridge
 }
 
-func (d *bridgeDeps) GetBridge(api.ChatID) Bridge { return d.bridge }
+func (d *bridgeDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
 
 func newBridgeDispatcher(store ChatStore, bridge Bridge) *Dispatcher {
 	return New(&bridgeDeps{
@@ -74,14 +74,14 @@ func newBridgeDispatcher(store ChatStore, bridge Bridge) *Dispatcher {
 	})
 }
 
-func rewindReq(t *testing.T, chatID api.ChatID, messageID string) *api.ClientCommand {
+func rewindReq(t *testing.T, chatID vibekit.ChatID, messageID string) *vibekit.ClientCommand {
 	t.Helper()
-	payload, err := json.Marshal(api.RewindChatCommand{MessageID: messageID})
+	payload, err := json.Marshal(vibekit.RewindChatCommand{MessageID: messageID})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	return &api.ClientCommand{
-		Type:      api.CmdRewindChat,
+	return &vibekit.ClientCommand{
+		Type:      vibekit.CmdRewindChat,
 		ChatID:    chatID,
 		RequestID: "r1",
 		Payload:   payload,
@@ -89,14 +89,14 @@ func rewindReq(t *testing.T, chatID api.ChatID, messageID string) *api.ClientCom
 }
 
 // seedChat writes a four-message transcript: u1, a1, u2, a2.
-func seedChat(t *testing.T, store ChatStore, id api.ChatID) {
+func seedChat(t *testing.T, store ChatStore, id vibekit.ChatID) {
 	t.Helper()
-	err := store.Mutate(t.Context(), id, func(c *api.Chat, _ bool) bool {
-		c.Messages = []api.Message{
-			{ID: "u1", Role: api.RoleUser, Content: "first", Ts: 100},
-			{ID: "a1", Role: api.RoleAssistant, Content: "reply one", Ts: 200},
-			{ID: "u2", Role: api.RoleUser, Content: "second", Ts: 300},
-			{ID: "a2", Role: api.RoleAssistant, Content: "reply two", Ts: 400},
+	err := store.Mutate(t.Context(), id, func(c *vibekit.Chat, _ bool) bool {
+		c.Messages = []vibekit.Message{
+			{ID: "u1", Role: vibekit.RoleUser, Content: "first", Ts: 100},
+			{ID: "a1", Role: vibekit.RoleAssistant, Content: "reply one", Ts: 200},
+			{ID: "u2", Role: vibekit.RoleUser, Content: "second", Ts: 300},
+			{ID: "a2", Role: vibekit.RoleAssistant, Content: "reply two", Ts: 400},
 		}
 		c.MessageCount = len(c.Messages)
 		return true
@@ -149,14 +149,14 @@ func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) 
 
 	CmdRewindChat(d, t.Context(), httptest.NewRecorder(), rewindReq(t, "c1", "u1"))
 
-	if b.gotMethod != api.MethodCheckpointRevertMultiple {
-		t.Errorf("method = %q, want %q", b.gotMethod, api.MethodCheckpointRevertMultiple)
+	if b.gotMethod != vibekit.MethodCheckpointRevertMultiple {
+		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodCheckpointRevertMultiple)
 	}
 	if b.gotParams["messageId"] != "u1" {
 		t.Errorf("messageId = %v, want u1", b.gotParams["messageId"])
 	}
 	// SessionParams supplies sessionId; KAS rejects the call without it.
-	if b.gotParams["sessionId"] != api.SessionID("sess-1") {
+	if b.gotParams["sessionId"] != vibekit.SessionID("sess-1") {
 		t.Errorf("sessionId = %v, want sess-1", b.gotParams["sessionId"])
 	}
 }
@@ -309,11 +309,11 @@ func TestCmdRewindChat_ToTheFirstMessageEmptiesTheTranscript(t *testing.T) {
 }
 
 func TestUserMessageIndex(t *testing.T) {
-	msgs := []api.Message{
-		{ID: "u1", Role: api.RoleUser},
-		{ID: "a1", Role: api.RoleAssistant},
-		{ID: "e1", Role: api.RoleEvent},
-		{ID: "u2", Role: api.RoleUser},
+	msgs := []vibekit.Message{
+		{ID: "u1", Role: vibekit.RoleUser},
+		{ID: "a1", Role: vibekit.RoleAssistant},
+		{ID: "e1", Role: vibekit.RoleEvent},
+		{ID: "u2", Role: vibekit.RoleUser},
 	}
 	cases := map[string]int{"u1": 0, "u2": 3, "a1": -1, "e1": -1, "missing": -1, "": -1}
 	for id, want := range cases {

@@ -51,9 +51,9 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/vibekit/internal/workflow"
 	"github.com/cplieger/webhttp"
 )
@@ -163,7 +163,7 @@ func (h *Hub) handleRecipes(w http.ResponseWriter, r *http.Request) {
 		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
-	webhttp.WriteJSON(w, api.RecipesResponse{Recipes: recipes})
+	webhttp.WriteJSON(w, vibekit.RecipesResponse{Recipes: recipes})
 }
 
 // handleRunLaunch: POST /api/runs → launch one PARENTLESS run and answer with
@@ -175,7 +175,7 @@ func (h *Hub) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	var req api.RunLaunchRequest
+	var req vibekit.RunLaunchRequest
 	if !httpreply.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -192,7 +192,7 @@ func (h *Hub) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, rpcerr.Text(err))
 		return
 	}
-	webhttp.WriteJSON(w, api.RunLaunchedResponse{WorkflowID: id, Name: name})
+	webhttp.WriteJSON(w, vibekit.RunLaunchedResponse{WorkflowID: id, Name: name})
 }
 
 // handleRunCancel: POST /api/runs/{id}/cancel → ask the run to stop. The

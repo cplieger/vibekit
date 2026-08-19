@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -18,7 +18,7 @@ func (h *Hub) registerCommandHandlers() {
 	command.RegisterDefaults(h.dispatcher)
 
 	// Register handlers that remain on Hub (complex internal coupling).
-	h.dispatcher.Register(api.CmdSwitchModel, h.cmdSwitchModel)
+	h.dispatcher.Register(vibekit.CmdSwitchModel, h.cmdSwitchModel)
 }
 
 // respond writes a JSON body and caches it for request_id idempotency.
@@ -39,7 +39,7 @@ func (h *Hub) respondErr(w http.ResponseWriter, code int, err error) {
 
 // requireChatID validates that cmd.ChatID is non-empty and writes a
 // 400 response if not.
-func (h *Hub) requireChatID(w http.ResponseWriter, cmd *api.ClientCommand) bool {
+func (h *Hub) requireChatID(w http.ResponseWriter, cmd *vibekit.ClientCommand) bool {
 	if cmd.ChatID == "" {
 		h.respondErr(w, http.StatusBadRequest, command.ErrMissingChatID)
 		return false

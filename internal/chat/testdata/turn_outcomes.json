@@ -3,7 +3,7 @@
     "The turn-outcome rule, as a table both languages must satisfy.",
     "",
     "The rule is implemented twice on purpose and neither copy can go: the server",
-    "derives outcome for the whole session (internal/api/turns.go DeriveTurnOutcome)",
+    "derives outcome for the whole session (internal/chat/turns.go deriveTurnOutcome)",
     "because the timeline rail must describe turns the paginated client store does",
     "not hold, and the client derives the IN-FLIGHT turn's outcome",
     "(static-src/turns.ts deriveOutcome) because no fetched summary can know a turn",

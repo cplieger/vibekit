@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 const jsonRPCVersion = "2.0"
@@ -19,8 +19,8 @@ const jsonRPCVersion = "2.0"
 // compares pointer identity against this value and translates it to
 // errBridgeExited, so "kiro-cli died on its own" and "Stop() races a
 // fresh Call" return the same sentinel without string comparison.
-var bridgeExitedResp = &api.RPCResponse{
-	Error: &api.RPCError{Code: api.RPCCodeBridgeExited, Message: "ACP bridge exited"},
+var bridgeExitedResp = &vibekit.RPCResponse{
+	Error: &vibekit.RPCError{Code: vibekit.RPCCodeBridgeExited, Message: "ACP bridge exited"},
 }
 
 // frameTooLargeResp is the second pointer-identity sentinel, pushed into every
@@ -28,11 +28,11 @@ var bridgeExitedResp = &api.RPCResponse{
 // bridgeExitedResp because the two mean opposite things about the process: this
 // one leaves it running and the session usable, so Call must translate it to a
 // NON-retryable error rather than the retryable dead-bridge one.
-var frameTooLargeResp = &api.RPCResponse{
-	Error: &api.RPCError{Code: api.RPCCodeInternal, Message: api.ErrFrameTooLarge.Error()},
+var frameTooLargeResp = &vibekit.RPCResponse{
+	Error: &vibekit.RPCError{Code: vibekit.RPCCodeInternal, Message: vibekit.ErrFrameTooLarge.Error()},
 }
 
-func (b *Bridge) sendNotif(msg *api.RPCResponse) {
+func (b *Bridge) sendNotif(msg *vibekit.RPCResponse) {
 	select {
 	case b.notifCh <- msg:
 	case <-b.done:
@@ -54,7 +54,7 @@ func (b *Bridge) readLoop() {
 		if dropped > 0 {
 			continue // the frame's bytes are gone; there is nothing to parse
 		}
-		var msg api.RPCResponse
+		var msg vibekit.RPCResponse
 		if uErr := json.Unmarshal(line, &msg); uErr != nil {
 			if b.recordParseError(&tracker, len(line), uErr) {
 				return
@@ -86,7 +86,7 @@ func (b *Bridge) readLoop() {
 //
 // Failing them is also how the user hears about it: the prompt path finalizes
 // through its ordinary failure route (AbandonInFlightTurn plus
-// error{prompt_failed}) carrying api.ErrFrameTooLarge's wording. The process and
+// error{prompt_failed}) carrying vibekit.ErrFrameTooLarge's wording. The process and
 // the ACP session both stay alive, so the chat is immediately promptable. One
 // large tool result now kills the TURN instead of the SESSION.
 //
@@ -120,7 +120,7 @@ func (b *Bridge) drainPendingAndClose() {
 // The non-blocking send is deliberate — every pending channel is buffered with
 // capacity 1 and a Call that already left through ctx.Done or b.done deregisters
 // itself, so a full or abandoned channel must not stall this loop.
-func (b *Bridge) failPending(resp *api.RPCResponse) int {
+func (b *Bridge) failPending(resp *vibekit.RPCResponse) int {
 	b.pendingMu.Lock()
 	n := len(b.pending)
 	for id, ch := range b.pending {
@@ -158,7 +158,7 @@ func (b *Bridge) recordParseError(tracker *parseErrTracker, lineLen int, err err
 // dispatch routes a successfully-decoded frame: a response to one of our
 // requests is handed to the waiting Call; a request from kiro-cli or a
 // server-sent notification is forwarded on notifCh.
-func (b *Bridge) dispatch(msg *api.RPCResponse) {
+func (b *Bridge) dispatch(msg *vibekit.RPCResponse) {
 	switch {
 	case msg.ID != nil && msg.Method == "":
 		// Response to one of our requests.
@@ -212,10 +212,10 @@ func (b *Bridge) deregisterPending(id int64) {
 // turns can legitimately run for hours; the caller owns turn
 // cancellation via Notify("session/cancel", ...). Shutdown ordering is
 // enforced by Stop → readLoop fanout; no in-Call timeout is needed.
-func (b *Bridge) Call(ctx context.Context, method string, params any) (*api.RPCResponse, error) {
+func (b *Bridge) Call(ctx context.Context, method string, params any) (*vibekit.RPCResponse, error) {
 	id := b.nextID.Add(1)
-	req := api.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
-	ch := make(chan *api.RPCResponse, 1)
+	req := vibekit.RPCRequest{JSONRPC: jsonRPCVersion, ID: id, Method: method, Params: params}
+	ch := make(chan *vibekit.RPCResponse, 1)
 	b.pendingMu.Lock()
 	b.pending[id] = ch
 	b.pendingMu.Unlock()
@@ -227,31 +227,31 @@ func (b *Bridge) Call(ctx context.Context, method string, params any) (*api.RPCR
 	data = append(data, '\n')
 	if writeErr := b.writeFrame(data); writeErr != nil {
 		b.deregisterPending(id)
-		return nil, &api.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
+		return nil, &vibekit.TransportError{Err: fmt.Errorf("write to ACP: %w", writeErr), Retryable: true}
 	}
 	select {
 	case resp := <-ch:
 		if resp == bridgeExitedResp {
-			return nil, &api.TransportError{Err: errBridgeExited, Retryable: true}
+			return nil, &vibekit.TransportError{Err: errBridgeExited, Retryable: true}
 		}
 		if resp == frameTooLargeResp {
 			// NOT retryable: the same prompt would very likely produce the same
 			// oversize payload, so retries buy a re-run of an expensive turn and
-			// the same failure. See api.ErrFrameTooLarge.
-			return nil, &api.TransportError{Err: api.ErrFrameTooLarge, Retryable: false}
+			// the same failure. See vibekit.ErrFrameTooLarge.
+			return nil, &vibekit.TransportError{Err: vibekit.ErrFrameTooLarge, Retryable: false}
 		}
 		if resp.Error != nil {
 			// Classify "not idle" at the bridge layer so callers can
-			// use errors.Is(err, api.api.ErrNotIdle) without string matching.
-			if resp.Error.Code == api.RPCCodeNotIdle {
-				return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, api.ErrNotIdle)
+			// use errors.Is(err, vibekit.ErrNotIdle) without string matching.
+			if resp.Error.Code == vibekit.RPCCodeNotIdle {
+				return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, vibekit.ErrNotIdle)
 			}
 			return resp, fmt.Errorf("ACP error %d: %w", resp.Error.Code, resp.Error)
 		}
 		return resp, nil
 	case <-b.done:
 		b.deregisterPending(id)
-		return nil, &api.TransportError{Err: errBridgeExited, Retryable: true}
+		return nil, &vibekit.TransportError{Err: errBridgeExited, Retryable: true}
 	case <-ctx.Done():
 		b.deregisterPending(id)
 		return nil, ctx.Err()
@@ -263,7 +263,7 @@ func (b *Bridge) Notify(ctx context.Context, method string, params any) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	req := api.RPCNotification{JSONRPC: jsonRPCVersion, Method: method, Params: params}
+	req := vibekit.RPCNotification{JSONRPC: jsonRPCVersion, Method: method, Params: params}
 	data, err := json.Marshal(req)
 	if err != nil {
 		return err
@@ -276,20 +276,20 @@ func (b *Bridge) Notify(ctx context.Context, method string, params any) error {
 // kiro-cli (e.g. fs/read_text_file, fs/write_text_file). Pass a non-nil
 // result for success, a non-nil err for failure; exactly one must be
 // set. Errors from the ACP namespace use code -32603 (internal error)
-// unless err unwraps to an *api.RPCError with a specific code.
+// unless err unwraps to an *vibekit.RPCError with a specific code.
 func (b *Bridge) Respond(ctx context.Context, id int64, result any, err error) error {
 	if cErr := ctx.Err(); cErr != nil {
 		return cErr
 	}
-	resp := api.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
+	resp := vibekit.RPCResponseOut{JSONRPC: jsonRPCVersion, ID: id}
 	if err != nil {
-		code := api.RPCCodeInternal
+		code := vibekit.RPCCodeInternal
 		msg := err.Error()
-		if re, ok := errors.AsType[*api.RPCError](err); ok {
+		if re, ok := errors.AsType[*vibekit.RPCError](err); ok {
 			code = re.Code
 			msg = re.Message
 		}
-		resp.Error = &api.RPCErrorOut{Code: code, Message: msg}
+		resp.Error = &vibekit.RPCErrorOut{Code: code, Message: msg}
 	} else {
 		resp.Result = result
 	}

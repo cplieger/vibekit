@@ -13,7 +13,7 @@ package hub
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // --- MCP (v3 consolidated status) ---
@@ -69,7 +69,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			_, before := h.sse.hub.Bounds()
-			msg := &api.RPCResponse{Method: "_kiro/mcp/status", Params: mustJSON(t, tc.params)}
+			msg := &vibekit.RPCResponse{Method: "_kiro/mcp/status", Params: mustJSON(t, tc.params)}
 			h.translateACPEvent("", msg)
 
 			if tc.wantSnap != nil {
@@ -100,11 +100,11 @@ func TestTranslateMCPStatus(t *testing.T) {
 // discoverable on the /docs Skills tab instead.
 func TestTranslateV3_AvailableCommandsUpdateIsIgnored(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
 
-	msg := &api.RPCResponse{
-		Method: api.MethodSessionUpdate,
+	msg := &vibekit.RPCResponse{
+		Method: vibekit.MethodSessionUpdate,
 		Params: mustJSON(t, map[string]any{
 			"update": map[string]any{
 				"sessionUpdate": "available_commands_update",
@@ -125,11 +125,11 @@ func TestTranslateV3_AvailableCommandsUpdateIsIgnored(t *testing.T) {
 
 func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
 
-	msg := &api.RPCResponse{
-		Method: api.MethodSessionUpdate,
+	msg := &vibekit.RPCResponse{
+		Method: vibekit.MethodSessionUpdate,
 		Params: mustJSON(t, map[string]any{
 			"update": map[string]any{
 				"sessionUpdate": "session_info_update",
@@ -147,11 +147,11 @@ func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 
 func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	summary := "summary text"
 
-	msg := &api.RPCResponse{
-		Method: api.MethodSessionUpdate,
+	msg := &vibekit.RPCResponse{
+		Method: vibekit.MethodSessionUpdate,
 		Params: mustJSON(t, map[string]any{
 			"update": map[string]any{
 				"sessionUpdate": "session_info_update",
@@ -168,7 +168,7 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 	if len(chat.Messages) != 1 {
 		t.Fatalf("messages = %d, want 1", len(chat.Messages))
 	}
-	if chat.Messages[0].EventKind != api.EventCompacted {
+	if chat.Messages[0].EventKind != vibekit.EventCompacted {
 		t.Errorf("event_kind = %q", chat.Messages[0].EventKind)
 	}
 	if chat.Messages[0].Content != summary {
@@ -180,10 +180,10 @@ func TestTranslateV3_SummarizationSuccessPersistsEvent(t *testing.T) {
 
 func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	msg := &api.RPCResponse{
-		Method: api.MethodSessionUpdate,
+	msg := &vibekit.RPCResponse{
+		Method: vibekit.MethodSessionUpdate,
 		Params: mustJSON(t, map[string]any{
 			"update": map[string]any{
 				"sessionUpdate": "usage_update",
@@ -204,13 +204,13 @@ func TestTranslateV3_UsageUpdatePersistsContextPct(t *testing.T) {
 
 func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
 		c.CurrentModeID = "nonexistent"
 		return true
 	})
 	_, before := h.sse.hub.Bounds()
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		Method: "_kiro/customAgent/not_found",
 		Params: mustJSON(t, map[string]any{
 			"requestedAgent": "nonexistent",
@@ -231,9 +231,9 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 
 func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		Method: "_kiro/customAgent/config_error",
 		Params: mustJSON(t, map[string]any{
 			"path":  "/home/user/.kiro/agents/broken.md",
@@ -249,9 +249,9 @@ func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 
 func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	_, before := h.sse.hub.Bounds()
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		Method: "_kiro/error/rate_limit",
 		Params: mustJSON(t, map[string]any{
 			"message": "Rate limit exceeded, try again in 30s",
@@ -270,7 +270,7 @@ func TestTranslateSystemNotify_EmitsError(t *testing.T) {
 	h, _, _ := newTestHub()
 	_, before := h.sse.hub.Bounds()
 	// No sessionId on _kiro/system/notify — broadcast at bridge scope.
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		Method: "_kiro/system/notify",
 		Params: mustJSON(t, map[string]any{
 			"level":   "warning",

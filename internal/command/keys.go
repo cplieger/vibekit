@@ -3,8 +3,8 @@ package command
 import (
 	"maps"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // JSON protocol key constants used across command response maps and
@@ -14,11 +14,11 @@ import (
 const (
 	keyError = "error"
 	keyName  = httpreply.JSONKeyName
-	keyType  = api.ContentKeyType
+	keyType  = vibekit.ContentKeyType
 )
 
-// keySessionID references the canonical api.KeySessionID constant.
-const keySessionID = api.KeySessionID
+// keySessionID references the canonical vibekit.KeySessionID constant.
+const keySessionID = vibekit.KeySessionID
 
 // ellipsis is the truncation suffix for display strings (session
 // titles, prompt previews, shell command labels). Kept as a constant

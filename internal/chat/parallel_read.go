@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/parallel"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // chatEntry is a chat file's (id, full path) pair gathered during a
@@ -29,13 +29,13 @@ type chatEntry struct {
 func readHeadersParallel(
 	ctx context.Context,
 	valid []chatEntry,
-) (headersOut []api.ChatHeader, complete bool) {
+) (headersOut []vibekit.ChatHeader, complete bool) {
 	if len(valid) == 0 {
 		return nil, true
 	}
 	const maxWorkers = 8
 	type result struct {
-		header api.ChatHeader
+		header vibekit.ChatHeader
 		ok     bool
 		// lost marks a chat that EXISTS but could not be read. Distinct from
 		// !ok, which also covers a chat that vanished mid-scan.
@@ -60,7 +60,7 @@ func readHeadersParallel(
 		results[idx] = result{header: *h, ok: true}
 	})
 
-	headers := make([]api.ChatHeader, 0, len(valid))
+	headers := make([]vibekit.ChatHeader, 0, len(valid))
 	complete = true
 	for i := range results {
 		switch {

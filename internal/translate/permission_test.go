@@ -3,23 +3,23 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // findPermissionNeeded returns the first permission_needed payload broadcast.
-func findPermissionNeeded(t *testing.T, events *[]api.ServerEvent) (api.PermissionNeededPayload, bool) {
+func findPermissionNeeded(t *testing.T, events *[]vibekit.ServerEvent) (vibekit.PermissionNeededPayload, bool) {
 	t.Helper()
 	for _, e := range *events {
-		if e.Type != api.EventPermissionNeeded {
+		if e.Type != vibekit.EventPermissionNeeded {
 			continue
 		}
-		p, ok := e.Payload.(api.PermissionNeededPayload)
+		p, ok := e.Payload.(vibekit.PermissionNeededPayload)
 		if !ok {
-			t.Fatalf("permission_needed payload type = %T, want api.PermissionNeededPayload", e.Payload)
+			t.Fatalf("permission_needed payload type = %T, want vibekit.PermissionNeededPayload", e.Payload)
 		}
 		return p, true
 	}
-	return api.PermissionNeededPayload{}, false
+	return vibekit.PermissionNeededPayload{}, false
 }
 
 // TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID pins the v3 decode
@@ -34,7 +34,7 @@ func TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID(t *testing.T) {
 	tr := New(deps)
 
 	id := int64(4242)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",
@@ -76,7 +76,7 @@ func TestHandlePermissionRequest_MissingIDDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	tr := New(deps)
 
-	msg := &api.RPCResponse{ // no ID
+	msg := &vibekit.RPCResponse{ // no ID
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "s",
 			"toolCall":  map[string]any{"toolCallId": "tc", "title": "x", "kind": "edit"},
@@ -136,7 +136,7 @@ func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 	tr := New(deps)
 
 	id := int64(77)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID: &id,
 		Params: turnApprovalParams(t, []map[string]any{
 			{"path": "/work/src/a.ts", "snapshotUri": "kiro-snapshot-v2://s:abc/", "toolCallId": "act-1"},
@@ -152,7 +152,7 @@ func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 	if len(got.Files) != 2 {
 		t.Fatalf("Files length = %d, want 2: %+v", len(got.Files), got.Files)
 	}
-	want := []api.ApprovalFile{
+	want := []vibekit.ApprovalFile{
 		{Path: "src/a.ts", SnapshotURI: "kiro-snapshot-v2://s:abc/", ActionID: "act-1"},
 		{Path: "src/b.ts", ActionID: "act-2"},
 	}
@@ -175,7 +175,7 @@ func TestHandlePermissionRequest_SharedActionIDPreserved(t *testing.T) {
 	tr := New(deps)
 
 	id := int64(78)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID: &id,
 		Params: turnApprovalParams(t, []map[string]any{
 			{"path": "/work/old.py", "toolCallId": "ren-1"},
@@ -205,7 +205,7 @@ func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 	id := int64(79)
 	// _meta present but a DIFFERENT type, with files attached: the type is what
 	// decides, not the presence of the array.
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID: &id,
 		Params: mustJSON(t, map[string]any{
 			"sessionId": "sess_x",

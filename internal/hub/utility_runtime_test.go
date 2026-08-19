@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"pgregory.net/rapid"
 )
 
@@ -46,7 +46,7 @@ func TestUtilityBridge_DrainCollectsChunks(t *testing.T) {
 	// this way instead of pre-buffering keeps the test deterministic against
 	// UtilityPrompt's at-start responseCh drain, which would otherwise race
 	// and eat chunks that landed before the Call.
-	br.chunksOnCall = map[string][]string{api.MethodPrompt: {"hello ", "world"}}
+	br.chunksOnCall = map[string][]string{vibekit.MethodPrompt: {"hello ", "world"}}
 
 	result, err := h.UtilityPrompt(t.Context(), "test", "")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestDrainUtilityResponse_ChannelClose(t *testing.T) {
 	chunks := make(chan utilityChunkPayload)
 	close(chunks)
 
-	resp := &api.RPCResponse{Result: json.RawMessage(`{}`)}
+	resp := &vibekit.RPCResponse{Result: json.RawMessage(`{}`)}
 	result, err := ua.drainResponse(t.Context(), sessionLease{gen: 1, chunks: chunks}, resp)
 	if err != nil {
 		t.Fatalf("drainResponse on closed channel: %v", err)
@@ -112,19 +112,19 @@ func TestDrainUtilityResponse_ChannelClose(t *testing.T) {
 }
 
 func BenchmarkUtilityBridge_DrainResponse(b *testing.B) {
-	chunk := func(text string) *api.RPCResponse {
+	chunk := func(text string) *vibekit.RPCResponse {
 		params, _ := json.Marshal(map[string]any{
 			"sessionUpdate": "agent_message_chunk",
 			"content":       map[string]any{"type": "text", "text": text},
 		})
-		return &api.RPCResponse{Method: "session/update", Params: params}
+		return &vibekit.RPCResponse{Method: "session/update", Params: params}
 	}
 
 	payload := "x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]x]" // 50 bytes
 
 	for _, n := range []int{5, 20, 100, 500, 1000} {
 		b.Run(fmt.Sprintf("chunks=%d", n), func(b *testing.B) {
-			msgs := make([]*api.RPCResponse, n)
+			msgs := make([]*vibekit.RPCResponse, n)
 			for i := range msgs {
 				msgs[i] = chunk(payload)
 			}
@@ -144,7 +144,7 @@ func BenchmarkUtilityBridge_DrainResponse(b *testing.B) {
 				close(ch)
 				ua := agentForDrainTest(newFakeBridge())
 
-				resp := &api.RPCResponse{Result: json.RawMessage(`{}`)}
+				resp := &vibekit.RPCResponse{Result: json.RawMessage(`{}`)}
 				result, _ := ua.drainResponse(b.Context(), sessionLease{gen: 1, chunks: ch}, resp)
 				_ = result
 			}
@@ -191,7 +191,7 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 			if stopped {
 				return
 			}
-			freshBr.notifCh <- &api.RPCResponse{Method: "session/update", Params: params}
+			freshBr.notifCh <- &vibekit.RPCResponse{Method: "session/update", Params: params}
 		}
 	}()
 
@@ -231,9 +231,9 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 func TestCheapestModel_RapidInvariants(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(0, 20).Draw(rt, "catalogSize")
-		catalog := make([]api.SessionModel, n)
+		catalog := make([]vibekit.SessionModel, n)
 		for i := range n {
-			catalog[i] = api.SessionModel{
+			catalog[i] = vibekit.SessionModel{
 				ID:             rapid.StringMatching(`[a-z0-9-]{1,20}`).Draw(rt, fmt.Sprintf("id_%d", i)),
 				Name:           rapid.String().Draw(rt, fmt.Sprintf("name_%d", i)),
 				Description:    rapid.String().Draw(rt, fmt.Sprintf("desc_%d", i)),
@@ -279,7 +279,7 @@ func newTestUtilityRuntime() *utilityRuntime {
 	return newUtilityRuntime(
 		context.Background(),
 		func() ACPBridge { return newFakeBridge() },
-		func() []api.SessionModel { return nil },
+		func() []vibekit.SessionModel { return nil },
 		utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
 		false,
@@ -342,7 +342,7 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 	t.Run("shell_type answered with bash", func(t *testing.T) {
 		rb := newRespondingBridge()
 		id := int64(7)
-		(&utilitySession{}).answerHostRequest(rb, &api.RPCResponse{ID: &id, Method: methodKiroShellType})
+		(&utilitySession{}).answerHostRequest(rb, &vibekit.RPCResponse{ID: &id, Method: methodKiroShellType})
 		rb.respMu.Lock()
 		defer rb.respMu.Unlock()
 		if rb.response.id != id {
@@ -357,7 +357,7 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 	t.Run("getAccessToken answered even when no token source", func(t *testing.T) {
 		rb := newRespondingBridge()
 		id := int64(9)
-		(&utilitySession{}).answerHostRequest(rb, &api.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
+		(&utilitySession{}).answerHostRequest(rb, &vibekit.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
 		rb.respMu.Lock()
 		defer rb.respMu.Unlock()
 		// Answered as a JSON-RPC error (no source wired) — never dropped.
@@ -377,7 +377,7 @@ func TestAnswerUtilityHostRequest(t *testing.T) {
 				return map[string]any{"accessToken": "tok", "expiresAt": "2027-01-01T00:00:00Z"}, nil
 			},
 		}}
-		us.answerHostRequest(rb, &api.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
+		us.answerHostRequest(rb, &vibekit.RPCResponse{ID: &id, Method: methodKiroGetAccessToken})
 		rb.respMu.Lock()
 		defer rb.respMu.Unlock()
 		if rb.response.id != id {
@@ -399,8 +399,8 @@ func TestForwardChunk_NonBlockingDropsWhenFull(t *testing.T) {
 	ch := make(chan utilityChunkPayload, 1)
 	ch <- utilityChunkPayload{}
 
-	msg := &api.RPCResponse{
-		Method: api.MethodSessionUpdate,
+	msg := &vibekit.RPCResponse{
+		Method: vibekit.MethodSessionUpdate,
 		Params: mustJSON(t, map[string]any{
 			"sessionUpdate": "agent_message_chunk",
 			"content":       map[string]any{"type": "text", "text": "dropped"},
@@ -516,7 +516,7 @@ func TestPolicyList_CallHasTimeout(t *testing.T) {
 func TestPolicyExplain_CallHasTimeout(t *testing.T) {
 	h, _, br := newTestHub()
 	seedPolicy(br, `{}`, `{"capability":"fs_write","effect":"ask"}`)
-	if _, err := h.PolicyExplain(t.Context(), api.PolicyExplainRequest{Capability: "fs_write"}); err != nil {
+	if _, err := h.PolicyExplain(t.Context(), vibekit.PolicyExplainRequest{Capability: "fs_write"}); err != nil {
 		t.Fatalf("PolicyExplain: %v", err)
 	}
 	if !br.callHadDeadline(methodV3PermissionsExplain) {
@@ -633,28 +633,28 @@ func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 	u := newUtilityRuntime(
 		t.Context(),
 		func() ACPBridge { return br },
-		func() []api.SessionModel { return nil },
+		func() []vibekit.SessionModel { return nil },
 		utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
 		false,
 	)
 	defer u.session.Stop()
 
-	for _, effort := range []api.EffortLevel{api.EffortLow, api.EffortLow, api.EffortMedium} {
+	for _, effort := range []vibekit.EffortLevel{vibekit.EffortLow, vibekit.EffortLow, vibekit.EffortMedium} {
 		if _, err := u.agent.UtilityPrompt(t.Context(), "p", effort); err != nil {
 			t.Fatalf("UtilityPrompt(%s) error = %v, want nil", effort, err)
 		}
 	}
 
-	if n := countCalls(br, api.MethodSetConfigOption); n != 2 {
+	if n := countCalls(br, vibekit.MethodSetConfigOption); n != 2 {
 		t.Errorf("set_config_option calls = %d, want 2 (low once, medium once)", n)
 	}
-	p := br.paramsFor(api.MethodSetConfigOption)
-	if p["configId"] != api.ConfigOptionEffort || p["value"] != string(api.EffortMedium) {
-		t.Errorf("last set_config_option params = %v, want configId=%s value=%s", p, api.ConfigOptionEffort, api.EffortMedium)
+	p := br.paramsFor(vibekit.MethodSetConfigOption)
+	if p["configId"] != vibekit.ConfigOptionEffort || p["value"] != string(vibekit.EffortMedium) {
+		t.Errorf("last set_config_option params = %v, want configId=%s value=%s", p, vibekit.ConfigOptionEffort, vibekit.EffortMedium)
 	}
-	if u.agent.currentEffort != api.EffortMedium {
-		t.Errorf("currentEffort = %q, want %q", u.agent.currentEffort, api.EffortMedium)
+	if u.agent.currentEffort != vibekit.EffortMedium {
+		t.Errorf("currentEffort = %q, want %q", u.agent.currentEffort, vibekit.EffortMedium)
 	}
 }
 
@@ -663,11 +663,11 @@ func TestUtilityPrompt_AppliesEffortPerTask(t *testing.T) {
 // tasks skip the round-trip entirely until the next session start.
 func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 	br := newFakeBridge()
-	br.callErrs = map[string]error{api.MethodSetConfigOption: fmt.Errorf("no such config option")}
+	br.callErrs = map[string]error{vibekit.MethodSetConfigOption: fmt.Errorf("no such config option")}
 	u := newUtilityRuntime(
 		t.Context(),
 		func() ACPBridge { return br },
-		func() []api.SessionModel { return nil },
+		func() []vibekit.SessionModel { return nil },
 		utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
 		false,
@@ -675,7 +675,7 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 	defer u.session.Stop()
 
 	for range 2 {
-		if _, err := u.agent.UtilityPrompt(t.Context(), "p", api.EffortMedium); err != nil {
+		if _, err := u.agent.UtilityPrompt(t.Context(), "p", vibekit.EffortMedium); err != nil {
 			t.Fatalf("UtilityPrompt error = %v, want nil (effort failure must not fail the task)", err)
 		}
 	}
@@ -683,7 +683,7 @@ func TestUtilityPrompt_EffortUnsupportedLatches(t *testing.T) {
 	if !u.agent.effortUnsupported {
 		t.Error("effortUnsupported not latched after a failed set_config_option")
 	}
-	if n := countCalls(br, api.MethodSetConfigOption); n != 1 {
+	if n := countCalls(br, vibekit.MethodSetConfigOption); n != 1 {
 		t.Errorf("set_config_option calls = %d, want 1 (no retry after the latch)", n)
 	}
 }
@@ -698,9 +698,9 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 		wantErr   bool // error response vs result response
 		cancelled bool // result carries outcome=cancelled
 	}{
-		{method: api.MethodRequestPermission, cancelled: true},
-		{method: api.MethodFSRead, wantErr: true},
-		{method: api.MethodFSWrite, wantErr: true},
+		{method: vibekit.MethodRequestPermission, cancelled: true},
+		{method: vibekit.MethodFSRead, wantErr: true},
+		{method: vibekit.MethodFSWrite, wantErr: true},
 		{method: "terminal/create", wantErr: true},
 		{method: "_kiro/some/future_request", wantErr: true},
 		// The security property D69 bought, asserted where a regression would
@@ -715,7 +715,7 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 		t.Run(tc.method, func(t *testing.T) {
 			rb := newRespondingBridge()
 			id := int64(11)
-			(&utilitySession{}).answerHostRequest(rb, &api.RPCResponse{ID: &id, Method: tc.method})
+			(&utilitySession{}).answerHostRequest(rb, &vibekit.RPCResponse{ID: &id, Method: tc.method})
 			rb.respMu.Lock()
 			defer rb.respMu.Unlock()
 			if rb.response.id != id {
@@ -731,9 +731,9 @@ func TestAnswerHostRequest_DeniesToolRequests(t *testing.T) {
 				t.Fatalf("%s: want result response, got error %v", tc.method, rb.response.err)
 			}
 			if tc.cancelled {
-				o, ok := rb.response.result.(*api.PermissionOutcome)
+				o, ok := rb.response.result.(*vibekit.PermissionOutcome)
 				if !ok {
-					t.Fatalf("%s: result type %T, want *api.PermissionOutcome", tc.method, rb.response.result)
+					t.Fatalf("%s: result type %T, want *vibekit.PermissionOutcome", tc.method, rb.response.result)
 				}
 				if o.Outcome.Outcome != "cancelled" {
 					t.Fatalf("%s: result = %+v, want outcome.outcome=cancelled", tc.method, o)
@@ -771,11 +771,11 @@ func TestUtilityLiveSessionID(t *testing.T) {
 func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	br := newFakeBridge()
 	release := make(chan struct{})
-	br.blockOn = map[string]chan struct{}{api.MethodPrompt: release}
+	br.blockOn = map[string]chan struct{}{vibekit.MethodPrompt: release}
 	u := newUtilityRuntime(
 		t.Context(),
 		func() ACPBridge { return br },
-		func() []api.SessionModel { return nil },
+		func() []vibekit.SessionModel { return nil },
 		utilitySessionHooks{},
 		nil, // secrets: no credential store in tests
 		false,
@@ -790,7 +790,7 @@ func TestRPCReadsDoNotQueueBehindTextTurn(t *testing.T) {
 	}()
 	// Wait until the turn's Call is actually in flight.
 	deadline := time.Now().Add(2 * time.Second)
-	for countCalls(br, api.MethodPrompt) == 0 {
+	for countCalls(br, vibekit.MethodPrompt) == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("prompt Call never started")
 		}

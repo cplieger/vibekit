@@ -3,7 +3,7 @@ package hub
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestChatStatusCache covers the one turn_state input the assistant buffer
@@ -17,14 +17,14 @@ func TestChatStatusCache(t *testing.T) {
 		t.Errorf("unknown chat returned %q, want the zero payload", got.Status)
 	}
 
-	c.Set("c1", api.ChatStatusPayload{Status: "in_progress", Description: "reading files"})
+	c.Set("c1", vibekit.ChatStatusPayload{Status: "in_progress", Description: "reading files"})
 	got := c.Get("c1")
 	if got.Status != "in_progress" || got.Description != "reading files" {
 		t.Errorf("got %+v, want in_progress/reading files", got)
 	}
 
 	// Newest wins: the agent re-declares as focus shifts.
-	c.Set("c1", api.ChatStatusPayload{Status: "waiting_on_user", Description: "needs a decision"})
+	c.Set("c1", vibekit.ChatStatusPayload{Status: "waiting_on_user", Description: "needs a decision"})
 	if got := c.Get("c1"); got.Status != "waiting_on_user" {
 		t.Errorf("got %q, want the latest status", got.Status)
 	}
@@ -38,7 +38,7 @@ func TestChatStatusCache(t *testing.T) {
 
 	// An empty chat id is ignored rather than creating a junk entry: global
 	// events carry no chat.
-	c.Set("", api.ChatStatusPayload{Status: "in_progress"})
+	c.Set("", vibekit.ChatStatusPayload{Status: "in_progress"})
 	if got := c.Get(""); got.Status != "" {
 		t.Error("an empty chat id was recorded")
 	}

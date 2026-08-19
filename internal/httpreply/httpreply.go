@@ -5,7 +5,7 @@
 // Every symbol here either writes a reply or refuses a request by writing one,
 // which is what the name claims and the whole of what the package does.
 //
-// It exists because this is BEHAVIOUR, and it used to sit in internal/api
+// It exists because this is BEHAVIOUR, and it used to sit in internal/vibekit
 // beside the wire and domain TYPES. That put the 405 helper every handler
 // imports inside the one package the code generator walks for the
 // cross-language type contract, so neither half could be read or changed
@@ -26,7 +26,7 @@
 // disjoint concerns and taught a fleet reader that the name carries no
 // information. Fleet alignment aligns concepts, not spellings: the shared
 // concept is "the app's own HTTP boundary vocabulary", and the direction is
-// what the name has to say out loud. NOT apireply either: internal/api is the
+// what the name has to say out loud. NOT apireply either: internal/vibekit is the
 // package being renamed away from api because api names nothing, so borrowing
 // the word for its neighbour would repeat the mistake and leave a reader
 // guessing whether the prefix means the package, the URL space, or the idea.

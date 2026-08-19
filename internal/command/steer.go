@@ -28,7 +28,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // maxSteerBytes caps a steer's text. Deliberately the same cap as a prompt's:
@@ -73,11 +73,11 @@ var (
 // precondition — a steer with no turn to join would sit in KAS's buffer until
 // some later turn happened to pick it up, which is a worse outcome than a clear
 // refusal. The client only reaches this path while a turn is streaming.
-func CmdSteer(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdSteer(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.SteerCommand
+	var p vibekit.SteerCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -104,7 +104,7 @@ func CmdSteer(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *ap
 		return
 	}
 
-	resp, err := bridge.Call(ctx, api.MethodSessionSteer, SessionParams(bridge, map[string]any{
+	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteer, SessionParams(bridge, map[string]any{
 		"message":   text,
 		"messageId": p.MessageID,
 	}))
@@ -149,7 +149,7 @@ func CmdSteer(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *ap
 // steers go away. That is KAS's semantic and it is the right one for this
 // command: discarding a message you changed your mind about should not also
 // throw away the work in flight.
-func CmdSteerClear(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdSteerClear(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -161,7 +161,7 @@ func CmdSteerClear(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		return
 	}
 
-	resp, err := bridge.Call(ctx, api.MethodSessionSteerClear, SessionParams(bridge))
+	resp, err := bridge.Call(ctx, vibekit.MethodSessionSteerClear, SessionParams(bridge))
 	if err != nil {
 		slog.Warn("steer_clear: bridge call failed", "chat", cmd.ChatID, keyError, err)
 		d.RespondErr(w, http.StatusBadGateway, err)

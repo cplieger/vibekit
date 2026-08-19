@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/secretstore"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // probeKey is the key shape KAS actually derives, hash and all
@@ -156,13 +156,13 @@ func TestHandleKiroSecretRequestClaimsOnlyItsOwnMethods(t *testing.T) {
 		{methodKiroSecretStore, true},
 		{methodKiroSecretDelete, true},
 		{methodKiroGetAccessToken, false},
-		{api.MethodFSRead, false},
+		{vibekit.MethodFSRead, false},
 		{"_kiro/secret/unknown", false},
 		{"", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.method, func(t *testing.T) {
-			msg := &api.RPCResponse{Method: tc.method, ID: &id}
+			msg := &vibekit.RPCResponse{Method: tc.method, ID: &id}
 			// No bridge is registered, so respondBridge logs and drops the
 			// write; the return value is the whole contract under test.
 			if got := h.handleKiroSecretRequest(t.Context(), "c1", msg); got != tc.want {

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // pendingCaptureDeps augments baseDeps with a PendingPermsAdd capture so
@@ -15,17 +15,17 @@ type pendingCaptureDeps struct {
 	pendingAdds []int64
 }
 
-func (d *pendingCaptureDeps) PendingPermsAdd(id int64, _ api.ServerEvent) {
+func (d *pendingCaptureDeps) PendingPermsAdd(id int64, _ vibekit.ServerEvent) {
 	d.pendingAdds = append(d.pendingAdds, id)
 }
 
-func userInputMsg(t *testing.T, id *int64, params map[string]any) *api.RPCResponse {
+func userInputMsg(t *testing.T, id *int64, params map[string]any) *vibekit.RPCResponse {
 	t.Helper()
 	raw, err := json.Marshal(params)
 	if err != nil {
 		t.Fatalf("marshal params: %v", err)
 	}
-	return &api.RPCResponse{ID: id, Params: raw, Method: api.MethodKiroUserInput}
+	return &vibekit.RPCResponse{ID: id, Params: raw, Method: vibekit.MethodKiroUserInput}
 }
 
 func TestHandleUserInput(t *testing.T) {
@@ -49,10 +49,10 @@ func TestHandleUserInput(t *testing.T) {
 			},
 		}))
 
-		var got *api.UserInputNeededPayload
+		var got *vibekit.UserInputNeededPayload
 		for _, e := range *events {
-			if e.Type == api.EventUserInputNeeded {
-				p := e.Payload.(api.UserInputNeededPayload)
+			if e.Type == vibekit.EventUserInputNeeded {
+				p := e.Payload.(vibekit.UserInputNeededPayload)
 				got = &p
 			}
 		}
@@ -86,8 +86,8 @@ func TestHandleUserInput(t *testing.T) {
 			"question":  "Describe the goal",
 		}))
 		for _, e := range *events {
-			if e.Type == api.EventUserInputNeeded {
-				if p := e.Payload.(api.UserInputNeededPayload); len(p.Options) != 0 {
+			if e.Type == vibekit.EventUserInputNeeded {
+				if p := e.Payload.(vibekit.UserInputNeededPayload); len(p.Options) != 0 {
 					t.Errorf("expected free-form (no options), got %+v", p.Options)
 				}
 				return

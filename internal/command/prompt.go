@@ -13,15 +13,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/settings"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // validatePromptPayload parses and validates the prompt command payload.
-func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, error) {
-	var p api.PromptCommand
+func validatePromptPayload(cmd *vibekit.ClientCommand) (vibekit.PromptCommand, int, error) {
+	var p vibekit.PromptCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		return p, http.StatusBadRequest, ErrInvalidPayload
 	}
@@ -44,7 +44,7 @@ func validatePromptPayload(cmd *api.ClientCommand) (api.PromptCommand, int, erro
 }
 
 // retryWithBackoff retries fn up to maxAttempts times with a fixed delay.
-func retryWithBackoff(ctx context.Context, maxAttempts int, delay time.Duration, shouldRetry func(error) bool, fn func() (*api.RPCResponse, error)) (*api.RPCResponse, error) {
+func retryWithBackoff(ctx context.Context, maxAttempts int, delay time.Duration, shouldRetry func(error) bool, fn func() (*vibekit.RPCResponse, error)) (*vibekit.RPCResponse, error) {
 	result, err := fn()
 	if err == nil || !shouldRetry(err) {
 		return result, err
@@ -70,20 +70,20 @@ func retryWithBackoff(ctx context.Context, maxAttempts int, delay time.Duration,
 // second attempt can actually fix. The class is logged either way, because the
 // old single-boolean version logged "prompt retry" for a dead bridge and nothing
 // at all for a throttle, which is exactly backwards from what a reader needs.
-func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID api.ChatID) (*api.RPCResponse, error) {
+func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID vibekit.ChatID) (*vibekit.RPCResponse, error) {
 	return retryWithBackoff(ctx, 2, 2*time.Second, func(err error) bool {
 		class := classifyPromptFailure(err)
 		retry := class == classBusy || class == classTransient
 		slog.Warn("prompt failure",
 			"chat_id", chatID, "class", class.String(), "retry", retry, keyError, err)
 		return retry
-	}, func() (*api.RPCResponse, error) {
-		return sb.Call(ctx, api.MethodPrompt, params)
+	}, func() (*vibekit.RPCResponse, error) {
+		return sb.Call(ctx, vibekit.MethodPrompt, params)
 	})
 }
 
 // recoverEmptyTurn handles empty turn recovery: recreate session and retry.
-func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID, resp *api.RPCResponse, p *api.PromptCommand, params map[string]any) *api.RPCResponse { //nolint:revive // context-as-argument: dispatcher handler signature
+func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, p *vibekit.PromptCommand, params map[string]any) *vibekit.RPCResponse { //nolint:revive // context-as-argument: dispatcher handler signature
 	// A verb KAS answers itself produces no content BY DESIGN, so an empty turn
 	// is the correct outcome and recovery is pure damage: it would close the
 	// bridge the launched run is parented on, detach the session, badge the turn
@@ -98,7 +98,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	}
 	slog.Warn("empty turn detected, recreating session", "chat_id", chatID)
 	deps.CloseBridge(chatID)
-	if err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, ex bool) bool {
+	if err := deps.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -115,9 +115,9 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	// turn stopped. The other writer of this event, AbandonInFlightTurn, leaves
 	// it empty on purpose: a failed prompt already sends its reason as an error
 	// frame, and the divider falls back to the generic label.
-	evt := api.Message{
-		ID: ids.NewMessageID(), Role: api.RoleEvent, Ts: time.Now().UnixMilli(),
-		EventKind: api.EventInterrupted, Content: "Session refreshed, retrying",
+	evt := vibekit.Message{
+		ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
+		EventKind: vibekit.EventInterrupted, Content: "Session refreshed, retrying",
 	}
 	if err := deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("empty turn: append event", "chat_id", chatID, keyError, err)
@@ -126,8 +126,8 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
 			"chat_id", chatID, keyError, err2)
-		deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-			Code:    api.ErrCodeRecoveryFailed,
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+			Code:    vibekit.ErrCodeRecoveryFailed,
 			Message: "Session refresh failed: " + rpcerr.Text(err2),
 		}))
 		return resp
@@ -159,12 +159,12 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 	sb2.BeginPromptCall(cancelRetry)
 	defer sb2.EndPromptCall()
 
-	params[api.KeySessionID] = sb2.SessionID()
+	params[vibekit.KeySessionID] = sb2.SessionID()
 	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
-		deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-			Code:    api.ErrCodeRecoveryFailed,
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+			Code:    vibekit.ErrCodeRecoveryFailed,
 			Message: "Retry prompt failed: " + rpcerr.Text(retryErr),
 		}))
 		return resp
@@ -190,9 +190,9 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID, p *api.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
+func appendUserMessage(deps Dependencies, ctx context.Context, chatID vibekit.ChatID, p *vibekit.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
 	supervisedDefault := supervisedDefaultSetting(ctx, deps.ConfigDir())
-	err := deps.ChatStore().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	err := deps.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		// Idempotent by message id (the documented invariant): if this id
 		// is already in the store — e.g. a 409-queued prompt whose first
 		// attempt persisted the user message before the busy check, now
@@ -203,13 +203,13 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 			return false
 		}
 		if !exists {
-			c.Name = api.DefaultChatName
+			c.Name = vibekit.DefaultChatName
 			c.Model = p.Model
 			c.SupervisedMode = supervisedDefault
 		}
-		userMsg := api.Message{
+		userMsg := vibekit.Message{
 			ID:      p.MessageID,
-			Role:    api.RoleUser,
+			Role:    vibekit.RoleUser,
 			Ts:      time.Now().UnixMilli(),
 			Content: p.Text,
 			// The attachments belong on the RECORD, not only on the outbound
@@ -223,14 +223,14 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 		// Cleared HERE rather than only by the client's own set_draft: if that
 		// POST is lost, a reload would put the sent message back in the box.
 		c.Draft = ""
-		if c.Name == api.DefaultChatName && len(c.Messages) == 1 {
+		if c.Name == vibekit.DefaultChatName && len(c.Messages) == 1 {
 			name := TruncateRunes(p.Text, 80)
 			if name != p.Text {
 				name += ellipsis
 			}
 			c.Name = name
 		}
-		deps.Broadcast(ctx, api.NewEvent(api.EventMessageAppended, chatID, &userMsg))
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg))
 		return true
 	})
 	return err
@@ -239,7 +239,7 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID api.ChatID
 // hasMessageID reports whether the chat already contains a message with
 // the given id. Scans backwards — a retried prompt's original append is
 // almost always the most recent message.
-func hasMessageID(c *api.Chat, id string) bool {
+func hasMessageID(c *vibekit.Chat, id string) bool {
 	for i := range slices.Backward(c.Messages) {
 		if c.Messages[i].ID == id {
 			return true
@@ -249,7 +249,7 @@ func hasMessageID(c *api.Chat, id string) bool {
 }
 
 // CmdPrompt handles the prompt command.
-func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	deps := d.Deps()
 	if cmd.ChatID == "" {
 		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
@@ -283,7 +283,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	defer cancel()
 	sb, err := deps.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
-		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -347,8 +347,8 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 		// prose promptFailureReason exists to produce. The chain is already in the
 		// log line above; what travels to the user is the reason.
 		reason := promptFailureReason(err)
-		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID,
-			api.ErrorPayload{Code: api.ErrCodePromptFailed, Message: reason}))
+		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID,
+			vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
 		d.RespondErr(w, http.StatusInternalServerError, errors.New(reason))
 		return
 	}
@@ -371,7 +371,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 
 // BuildPromptParams constructs the full session/prompt parameter map. Takes
 // sessionScoped, not Bridge: building a parameter map reads an id, nothing more.
-func BuildPromptParams(ctx context.Context, deps WorkspaceAccess, sb sessionScoped, p *api.PromptCommand) map[string]any {
+func BuildPromptParams(ctx context.Context, deps WorkspaceAccess, sb sessionScoped, p *vibekit.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
 		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
 	})
@@ -441,19 +441,19 @@ func classifyPromptFailure(err error) promptFailureClass {
 	// Order matters: a dead bridge arrives WRAPPED in a TransportError whose
 	// Retryable is true, so the identity check has to win or the corpse gets
 	// retried exactly as before.
-	if errors.Is(err, api.ErrBridgeExited) {
+	if errors.Is(err, vibekit.ErrBridgeExited) {
 		return classPipeDeath
 	}
-	if errors.Is(err, api.ErrNotIdle) {
+	if errors.Is(err, vibekit.ErrNotIdle) {
 		return classBusy
 	}
-	if te, ok := errors.AsType[*api.TransportError](err); ok {
+	if te, ok := errors.AsType[*vibekit.TransportError](err); ok {
 		if te.Retryable {
 			return classTransient
 		}
 		return classFatal
 	}
-	if re, ok := errors.AsType[*api.RPCError](err); ok {
+	if re, ok := errors.AsType[*vibekit.RPCError](err); ok {
 		return classifyRPCFailure(re)
 	}
 	return classFatal
@@ -463,11 +463,11 @@ func classifyPromptFailure(err error) promptFailureClass {
 // so each stays inside the complexity ceiling, and because the two answer
 // different questions: which kind of failure is this, and what does this code
 // mean.
-func classifyRPCFailure(re *api.RPCError) promptFailureClass {
+func classifyRPCFailure(re *vibekit.RPCError) promptFailureClass {
 	switch re.Code {
-	case api.RPCCodeNotIdle:
+	case vibekit.RPCCodeNotIdle:
 		return classBusy
-	case api.RPCCodeBridgeExited:
+	case vibekit.RPCCodeBridgeExited:
 		// KAS's mapped-backend-error code, which happens to share a number with
 		// vibekit's own bridge-exited constant (see its comment). A bridge exit
 		// never arrives here as an RPCError, so this is KAS's.
@@ -481,7 +481,7 @@ func classifyRPCFailure(re *api.RPCError) promptFailureClass {
 			return classThrottled
 		}
 		return classFatal
-	case api.RPCCodeInternal:
+	case vibekit.RPCCodeInternal:
 		// -32603 is KAS's catch-all: a genuine internal fault, and also every
 		// validation failure and every auth failure. Retrying an auth failure is
 		// pure latency, so it is excluded by name.
@@ -496,7 +496,7 @@ func classifyRPCFailure(re *api.RPCError) promptFailureClass {
 // mappedFromData decodes a mapped-error payload. Returns nil when the error
 // carries none, which is every error that is not one of KAS's mapped backend
 // classes.
-func mappedFromData(re *api.RPCError) *mappedErrorData {
+func mappedFromData(re *vibekit.RPCError) *mappedErrorData {
 	raw := re.ErrorData()
 	if len(raw) == 0 {
 		return nil
@@ -514,7 +514,7 @@ func mappedFromData(re *api.RPCError) *mappedErrorData {
 // isAuthShaped reports whether an internal error is really an authentication
 // failure. Matched on the payload rather than the code because KAS collapses
 // both onto -32603, and no amount of retrying fixes an expired token.
-func isAuthShaped(re *api.RPCError) bool {
+func isAuthShaped(re *vibekit.RPCError) bool {
 	hay := re.Message + string(re.ErrorData())
 	markers := []string{
 		"not logged in",
@@ -545,7 +545,7 @@ func isAuthShaped(re *api.RPCError) bool {
 // that. And a request id earns inclusion because it is the handle for an
 // upstream report, and it is in `data` where nothing surfaces it.
 func promptFailureReason(err error) string {
-	re, ok := errors.AsType[*api.RPCError](err)
+	re, ok := errors.AsType[*vibekit.RPCError](err)
 	if !ok {
 		return rpcerr.Text(err)
 	}

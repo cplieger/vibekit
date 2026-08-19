@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // fakeStore is a minimal StoreAccess for purge tests. Only Dir and
@@ -19,23 +19,23 @@ import (
 type fakeStore struct {
 	dir         string
 	mu          sync.Mutex
-	locks       map[api.ChatID]*sync.Mutex
-	markedDel   []api.ChatID
-	clearedTomb []api.ChatID
+	locks       map[vibekit.ChatID]*sync.Mutex
+	markedDel   []vibekit.ChatID
+	clearedTomb []vibekit.ChatID
 	// loadResult, when non-nil, makes Load succeed with this chat
 	// (default: Load returns an error).
-	loadResult *api.Chat
+	loadResult *vibekit.Chat
 }
 
 func newFakeStore(dir string) *fakeStore {
-	return &fakeStore{dir: dir, locks: make(map[api.ChatID]*sync.Mutex)}
+	return &fakeStore{dir: dir, locks: make(map[vibekit.ChatID]*sync.Mutex)}
 }
 
 func (f *fakeStore) Dir() string { return f.dir }
 
 // Lock returns a stable per-chat mutex so the purge code's
 // lock/unlock pairing behaves like the real store.
-func (f *fakeStore) Lock(chatID api.ChatID) *sync.Mutex {
+func (f *fakeStore) Lock(chatID vibekit.ChatID) *sync.Mutex {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m, ok := f.locks[chatID]
@@ -46,28 +46,28 @@ func (f *fakeStore) Lock(chatID api.ChatID) *sync.Mutex {
 	return m
 }
 
-func (f *fakeStore) PathFor(chatID api.ChatID) (string, error) {
+func (f *fakeStore) PathFor(chatID vibekit.ChatID) (string, error) {
 	return filepath.Join(f.dir, string(chatID)+".json"), nil
 }
 
-func (f *fakeStore) Load(api.ChatID) (*api.Chat, error) {
+func (f *fakeStore) Load(vibekit.ChatID) (*vibekit.Chat, error) {
 	if f.loadResult != nil {
 		return f.loadResult, nil
 	}
 	return nil, errors.New("fakeStore: Load not implemented")
 }
 
-func (f *fakeStore) Header(context.Context, *api.Chat) api.ChatHeader {
-	return api.ChatHeader{}
+func (f *fakeStore) Header(context.Context, *vibekit.Chat) vibekit.ChatHeader {
+	return vibekit.ChatHeader{}
 }
 
-func (f *fakeStore) MarkDeleted(chatID api.ChatID) {
+func (f *fakeStore) MarkDeleted(chatID vibekit.ChatID) {
 	f.mu.Lock()
 	f.markedDel = append(f.markedDel, chatID)
 	f.mu.Unlock()
 }
 
-func (f *fakeStore) ClearTombstone(chatID api.ChatID) {
+func (f *fakeStore) ClearTombstone(chatID vibekit.ChatID) {
 	f.mu.Lock()
 	f.clearedTomb = append(f.clearedTomb, chatID)
 	f.mu.Unlock()
@@ -78,24 +78,24 @@ func (f *fakeStore) ClearTombstone(chatID api.ChatID) {
 // goroutines).
 type purgeRecorder struct {
 	mu     sync.Mutex
-	ids    []api.ChatID
-	chains map[api.ChatID][]string
+	ids    []vibekit.ChatID
+	chains map[vibekit.ChatID][]string
 }
 
 // recordPurge satisfies WithOnPurge, keeping the session chain the purge
 // handed over so tests can assert the chat's sessions were offered for reaping.
-func (r *purgeRecorder) recordPurge(id api.ChatID, sessionChain []string) {
+func (r *purgeRecorder) recordPurge(id vibekit.ChatID, sessionChain []string) {
 	r.mu.Lock()
 	r.ids = append(r.ids, id)
 	if r.chains == nil {
-		r.chains = map[api.ChatID][]string{}
+		r.chains = map[vibekit.ChatID][]string{}
 	}
 	r.chains[id] = sessionChain
 	r.mu.Unlock()
 }
 
 // chainFor returns the session chain recorded for a purged chat.
-func (r *purgeRecorder) chainFor(id api.ChatID) []string {
+func (r *purgeRecorder) chainFor(id vibekit.ChatID) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.chains[id]
@@ -107,7 +107,7 @@ func (r *purgeRecorder) sorted() []string {
 	return idsToSortedStrings(r.ids)
 }
 
-func idsToSortedStrings(ids []api.ChatID) []string {
+func idsToSortedStrings(ids []vibekit.ChatID) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {
 		out[i] = string(id)

@@ -32,7 +32,7 @@ the real tree with `go list ./...` or by browsing `internal/` and `static-src/`.
 - `main.go` / `embed.go`: the composition root. Load config, construct the
   store, hub, bridge, and push service, register HTTP routes, embed the
   compiled static assets. Wiring only.
-- `internal/api/`: the wire and domain TYPE vocabulary (chat, message, tool call,
+- `internal/vibekit/`: the wire and domain TYPE vocabulary (chat, message, tool call,
   plan, usage) plus the constructors and mappers over it. No interfaces, no
   behaviour: the contracts are declared at their consumers, and the helpers that
   used to live here moved to packages named for what they do — `internal/httpreply`

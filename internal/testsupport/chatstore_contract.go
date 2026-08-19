@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // ChatStoreContract is the subject of ChatStoreContractTest: the 7 methods of a
@@ -18,13 +18,13 @@ import (
 // and no shared case pins any of it. RegisterRoutes is absent because a store's
 // HTTP mounting is not a storage behaviour.
 type ChatStoreContract interface {
-	Get(ctx context.Context, id api.ChatID) (*api.Chat, bool)
-	List(ctx context.Context) []api.ChatHeader
-	BuildHistory(ctx context.Context, id api.ChatID) string
-	Mutate(ctx context.Context, id api.ChatID, mutate func(c *api.Chat, exists bool) bool) error
-	Delete(ctx context.Context, id api.ChatID) error
-	AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error
-	UpdateMessage(ctx context.Context, chatID api.ChatID, msgID string, mutate func(*api.Message)) error
+	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
+	List(ctx context.Context) []vibekit.ChatHeader
+	BuildHistory(ctx context.Context, id vibekit.ChatID) string
+	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
+	Delete(ctx context.Context, id vibekit.ChatID) error
+	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
+	UpdateMessage(ctx context.Context, chatID vibekit.ChatID, msgID string, mutate func(*vibekit.Message)) error
 }
 
 // ChatStoreContractTest exercises the behavioral expectations of any chat store
@@ -55,7 +55,7 @@ func testGetMissingReturnsFalse(t *testing.T, s ChatStoreContract) {
 
 func testMutateCreatesNewChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	err := s.Mutate(context.Background(), "c1", func(c *api.Chat, exists bool) bool {
+	err := s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		if exists {
 			t.Error("exists should be false for new chat")
 		}
@@ -76,11 +76,11 @@ func testMutateCreatesNewChat(t *testing.T, s ChatStoreContract) {
 
 func testMutateUpdatesExistingChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "first"
 		return true
 	})
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, exists bool) bool {
+	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			t.Error("exists should be true for existing chat")
 		}
@@ -95,11 +95,11 @@ func testMutateUpdatesExistingChat(t *testing.T, s ChatStoreContract) {
 
 func testMutateNoopWhenFalseReturned(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "created"
 		return true
 	})
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "should-not-persist"
 		return false
 	})
@@ -111,7 +111,7 @@ func testMutateNoopWhenFalseReturned(t *testing.T, s ChatStoreContract) {
 
 func testDeleteRemovesChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "doomed"
 		return true
 	})
@@ -126,11 +126,11 @@ func testDeleteRemovesChat(t *testing.T, s ChatStoreContract) {
 
 func testListReturnsCreatedChats(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "a", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(context.Background(), "a", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "alpha"
 		return true
 	})
-	_ = s.Mutate(context.Background(), "b", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(context.Background(), "b", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "beta"
 		return true
 	})
@@ -149,11 +149,11 @@ func testBuildHistoryEmptyForMissing(t *testing.T, s ChatStoreContract) {
 
 func testAppendMessageAddsToChat(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "test"
 		return true
 	})
-	msg := &api.Message{ID: "m1", Role: "user", Content: "hi"}
+	msg := &vibekit.Message{ID: "m1", Role: "user", Content: "hi"}
 	if err := s.AppendMessage(context.Background(), "c1", msg); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
@@ -168,12 +168,12 @@ func testAppendMessageAddsToChat(t *testing.T, s ChatStoreContract) {
 
 func testUpdateMessageMutatesInPlace(t *testing.T, s ChatStoreContract) {
 	t.Helper()
-	_ = s.Mutate(context.Background(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = s.Mutate(context.Background(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "test"
 		return true
 	})
-	_ = s.AppendMessage(context.Background(), "c1", &api.Message{ID: "m1", Role: "assistant", Content: "draft"})
-	err := s.UpdateMessage(context.Background(), "c1", "m1", func(m *api.Message) {
+	_ = s.AppendMessage(context.Background(), "c1", &vibekit.Message{ID: "m1", Role: "assistant", Content: "draft"})
+	err := s.UpdateMessage(context.Background(), "c1", "m1", func(m *vibekit.Message) {
 		m.Content = "final"
 	})
 	if err != nil {

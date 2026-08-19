@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Account/subscription-level usage, distinct from a chat's per-session
 // context ring (which reads the v3 usage_update notification). This is

@@ -11,14 +11,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-func sampleGovernance() api.GovernanceStatePayload {
-	return api.GovernanceStatePayload{
+func sampleGovernance() vibekit.GovernanceStatePayload {
+	return vibekit.GovernanceStatePayload{
 		Known:        true,
 		IsEnterprise: false,
-		Features: api.GovernanceFeatures{
+		Features: vibekit.GovernanceFeatures{
 			MCPEnabled:        true,
 			WebToolsEnabled:   true,
 			ContentCollection: true,
@@ -50,7 +50,7 @@ func TestGovernanceCache_SetGetWarm(t *testing.T) {
 	}
 
 	// A second set must not panic (close-once) and must overwrite.
-	c.set(api.GovernanceStatePayload{Known: true})
+	c.set(vibekit.GovernanceStatePayload{Known: true})
 	if got, _ := c.get(); got.Features.MCPEnabled {
 		t.Error("second set did not overwrite the cached state")
 	}
@@ -66,7 +66,7 @@ func TestHandleGovernance_ServesWarmCache(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	var got api.GovernanceStatePayload
+	var got vibekit.GovernanceStatePayload
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}

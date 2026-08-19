@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Workflow-run domain types.
 //
@@ -159,7 +159,7 @@ type Recipe struct {
 	// second representation of it here would be one more thing to keep in sync
 	// for no gain. Last of the pointer-bearing fields on purpose — a slice's
 	// len/cap words end the GC scan region, where a trailing string would extend
-	// it (the api.ToolCall.Checkpoint note records the same rule).
+	// it (the vibekit.ToolCall.Checkpoint note records the same rule).
 	Plan    json.RawMessage `json:"plan,omitempty"`
 	BuiltIn bool            `json:"built_in,omitempty"`
 }

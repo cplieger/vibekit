@@ -4,7 +4,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // turnFirstLineMax caps the hover label. Long enough to recognise a request,
@@ -21,29 +21,29 @@ const turnFirstLineMax = 120
 //
 // `thinking` marks the LAST turn as running, and is the caller's knowledge — a
 // persisted chat file cannot tell whether a bridge is mid-turn right now.
-func projectTurnSummaries(msgs []api.Message, thinking bool) []api.TurnSummary {
+func projectTurnSummaries(msgs []vibekit.Message, thinking bool) []vibekit.TurnSummary {
 	if len(msgs) == 0 {
-		return []api.TurnSummary{}
+		return []vibekit.TurnSummary{}
 	}
 	// bodies[i] holds turn i's non-trigger messages, which is what the outcome
 	// derivation reads. Kept beside the summaries rather than on them because
 	// the wire shape must not carry a turn's content.
-	out := make([]api.TurnSummary, 0, 8)
-	bodies := make([][]api.Message, 0, 8)
+	out := make([]vibekit.TurnSummary, 0, 8)
+	bodies := make([][]vibekit.Message, 0, 8)
 	for i := range msgs {
 		m := &msgs[i]
-		if m.Role == api.RoleUser || len(out) == 0 {
-			var body []api.Message
-			if m.Role != api.RoleUser {
+		if m.Role == vibekit.RoleUser || len(out) == 0 {
+			var body []vibekit.Message
+			if m.Role != vibekit.RoleUser {
 				body = append(body, *m)
 			}
-			summary := api.TurnSummary{
+			summary := vibekit.TurnSummary{
 				ID:             m.ID,
 				N:              len(out) + 1,
 				Ts:             m.Ts,
-				AgentInitiated: m.Role != api.RoleUser,
+				AgentInitiated: m.Role != vibekit.RoleUser,
 			}
-			if m.Role == api.RoleUser {
+			if m.Role == vibekit.RoleUser {
 				summary.FirstLine = firstLine(m.Content, turnFirstLineMax)
 			}
 			out = append(out, summary)
@@ -67,27 +67,27 @@ func projectTurnSummaries(msgs []api.Message, thinking bool) []api.TurnSummary {
 // A terminal marker beats isLive deliberately. `thinking` can legitimately still
 // be true for the last turn when the next turn's stream has already opened, so
 // trusting it over a marker would repaint a finished failure as in-progress.
-func deriveTurnOutcome(body []api.Message, isLive bool) api.TurnOutcome {
+func deriveTurnOutcome(body []vibekit.Message, isLive bool) vibekit.TurnOutcome {
 	interrupted := false
 	for i := range body {
 		m := &body[i]
 		if m.Refusal != nil {
-			return api.TurnOutcomeFailed
+			return vibekit.TurnOutcomeFailed
 		}
 		switch m.EventKind {
-		case api.EventCompactFailed, api.EventInfraSafetyBlocked:
-			return api.TurnOutcomeFailed
-		case api.EventCancelled, api.EventInterrupted:
+		case vibekit.EventCompactFailed, vibekit.EventInfraSafetyBlocked:
+			return vibekit.TurnOutcomeFailed
+		case vibekit.EventCancelled, vibekit.EventInterrupted:
 			interrupted = true
 		}
 	}
 	if interrupted {
-		return api.TurnOutcomeInterrupted
+		return vibekit.TurnOutcomeInterrupted
 	}
 	if isLive {
-		return api.TurnOutcomeRunning
+		return vibekit.TurnOutcomeRunning
 	}
-	return api.TurnOutcomeCompleted
+	return vibekit.TurnOutcomeCompleted
 }
 
 // firstLine collapses every whitespace run to one space and truncates on a rune

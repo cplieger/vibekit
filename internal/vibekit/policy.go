@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Native Cedar policy domain types (v3 / KAS).
 //

@@ -8,13 +8,13 @@
 // feature detection). It used to live in internal/workflow as Details, reachable
 // only from the run handlers, so the 127-of-137 error frames that carry their
 // text in `error.data` rendered to chat users as the literal
-// "ACP error -32603: Internal error". Then it lived in internal/api beside the
+// "ACP error -32603: Internal error". Then it lived in internal/vibekit beside the
 // wire and domain TYPES, which is what made that package's own claim to declare
 // no interfaces false — the detailer below is the interface it was declaring
 // three files away.
 //
 // Nothing here imports another vibekit package. The one shape it needs is
-// reached through detailer rather than through *api.RPCError, so an error is
+// reached through detailer rather than through *vibekit.RPCError, so an error is
 // found by errors.As at any wrapping depth and this package stays a leaf.
 package rpcerr
 

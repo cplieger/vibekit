@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // respondFSWrite handles fs/write_text_file. Request params:
@@ -29,7 +29,7 @@ import (
 // ordinary fs/write_text_file. Do not gate, stage, snapshot or attribute that
 // write as agent work: it would double-count the changed-files ledger, and
 // under any surviving gate it would deadlock.
-func (h *Hub) respondFSWrite(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) respondFSWrite(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -111,7 +111,7 @@ func (h *Hub) respondFSWrite(ctx context.Context, chatID api.ChatID, msg *api.RP
 // currentMessageCount returns the number of persisted messages for
 // chatID, or 0 if the chat isn't found. Used as the restore watermark
 // on every snapshot.
-func (h *Hub) currentMessageCount(ctx context.Context, chatID api.ChatID) int {
+func (h *Hub) currentMessageCount(ctx context.Context, chatID vibekit.ChatID) int {
 	if c, ok := h.chatStore.Get(ctx, chatID); ok {
 		return len(c.Messages)
 	}

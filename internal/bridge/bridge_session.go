@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/kascap"
 	"github.com/cplieger/vibekit/internal/modeltext"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 type sessionMode struct {
@@ -117,7 +117,7 @@ func (b *Bridge) withSessionMeta(params map[string]any) map[string]any {
 	return params
 }
 
-func (b *Bridge) newSession(ctx context.Context, opts *api.StartOpts) error {
+func (b *Bridge) newSession(ctx context.Context, opts *vibekit.StartOpts) error {
 	resp, err := b.Call(ctx, methodSessionNew, b.withSessionMeta(map[string]any{
 		"cwd": b.workDir, "mcpServers": []any{},
 	}))
@@ -132,7 +132,7 @@ func (b *Bridge) newSession(ctx context.Context, opts *api.StartOpts) error {
 		return fmt.Errorf("session/new returned invalid session id: %q", result.SessionID)
 	}
 	b.mu.Lock()
-	b.sessionID = api.SessionID(result.SessionID)
+	b.sessionID = vibekit.SessionID(result.SessionID)
 	b.applySessionResultLocked(result, "")
 	sid := string(b.sessionID)
 	current := b.currentMode
@@ -165,7 +165,7 @@ func (b *Bridge) newSession(ctx context.Context, opts *api.StartOpts) error {
 // alongside agentMode and effortLevel, so a session/load already carries the
 // choice and re-asserting it would be a round trip that changes nothing.
 func (b *Bridge) applyInitialModel(ctx context.Context, model string) {
-	if model == "" || model == api.ModelAuto {
+	if model == "" || model == vibekit.ModelAuto {
 		return
 	}
 	b.mu.Lock()
@@ -187,13 +187,13 @@ func (b *Bridge) applyInitialModel(ctx context.Context, model string) {
 // either way, so validating here keeps a bad settings value from turning into
 // a failed config-option call on the session-creation path.
 func (b *Bridge) applyInitialEffort(ctx context.Context, sessionID, effort string) {
-	if effort == "" || !api.EffortLevel(effort).Valid() {
+	if effort == "" || !vibekit.EffortLevel(effort).Valid() {
 		return
 	}
-	if _, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
-		api.KeySessionID: sessionID,
-		keyConfigID:      api.ConfigOptionEffort,
-		keyConfigValue:   effort,
+	if _, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
+		vibekit.KeySessionID: sessionID,
+		keyConfigID:          vibekit.ConfigOptionEffort,
+		keyConfigValue:       effort,
 	}); err != nil {
 		slog.Warn("apply initial reasoning effort",
 			"effort", effort, "session_id", sessionID, "error", err)
@@ -214,10 +214,10 @@ func (b *Bridge) applySupervised(ctx context.Context, sessionID string, supervis
 	if !supervised {
 		return
 	}
-	if _, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
-		api.KeySessionID: sessionID,
-		keyConfigID:      api.ConfigOptionAutopilot,
-		keyConfigValue:   false,
+	if _, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
+		vibekit.KeySessionID: sessionID,
+		keyConfigID:          vibekit.ConfigOptionAutopilot,
+		keyConfigValue:       false,
 	}); err != nil {
 		slog.Error("supervised mode not applied; this session will NOT ask before writing",
 			"session_id", sessionID, "error", err)
@@ -234,8 +234,8 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 		return
 	}
 	if _, err := b.Call(ctx, methodSetMode, map[string]any{
-		api.KeySessionID: sessionID,
-		"modeId":         wantMode,
+		vibekit.KeySessionID: sessionID,
+		"modeId":             wantMode,
 	}); err != nil {
 		slog.Warn("apply initial session mode", "mode", wantMode, "session_id", sessionID, "error", err)
 		return
@@ -247,14 +247,14 @@ func (b *Bridge) applyInitialMode(ctx context.Context, sessionID, currentMode, w
 
 func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel string) error {
 	resp, err := b.Call(ctx, methodSessionLoad, b.withSessionMeta(map[string]any{
-		api.KeySessionID: acpSessionID, "cwd": b.workDir, "mcpServers": []any{},
+		vibekit.KeySessionID: acpSessionID, "cwd": b.workDir, "mcpServers": []any{},
 	}))
 	if err != nil {
 		return fmt.Errorf("session/load: %w", err)
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.sessionID = api.SessionID(acpSessionID)
+	b.sessionID = vibekit.SessionID(acpSessionID)
 	if resp.Result != nil {
 		var result sessionCreated
 		parseErr := json.Unmarshal(resp.Result, &result)
@@ -266,7 +266,7 @@ func (b *Bridge) loadSession(ctx context.Context, acpSessionID, fallbackModel st
 			"error", parseErr, "result_len", len(resp.Result))
 	}
 	if b.modelID == "" {
-		b.modelID = api.ModelID(fallbackModel)
+		b.modelID = vibekit.ModelID(fallbackModel)
 	}
 	return nil
 }
@@ -292,9 +292,9 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 			slog.Warn("session reported an empty mode list; keeping the previous catalog",
 				"current_mode", r.Modes.CurrentModeID)
 		} else {
-			modes := make([]api.SessionMode, 0, len(r.Modes.AvailableModes))
+			modes := make([]vibekit.SessionMode, 0, len(r.Modes.AvailableModes))
 			for _, m := range r.Modes.AvailableModes {
-				modes = append(modes, api.SessionMode{
+				modes = append(modes, vibekit.SessionMode{
 					ID: m.ID, Name: m.Name, Description: m.Description, Source: m.Meta.Kiro.Source,
 				})
 			}
@@ -304,7 +304,7 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 	b.sessionTitle = r.Meta.Title
 	b.applyModelConfigOptionLocked(r.ConfigOptions)
 	if b.modelID == "" {
-		b.modelID = api.ModelID(fallbackModel)
+		b.modelID = vibekit.ModelID(fallbackModel)
 	}
 }
 
@@ -326,15 +326,15 @@ func (b *Bridge) applySessionResultLocked(r sessionCreated, fallbackModel string
 func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 	for i := range opts {
 		opt := &opts[i]
-		if opt.ID != api.ConfigOptionModel {
+		if opt.ID != vibekit.ConfigOptionModel {
 			continue
 		}
 		var current string
 		_ = json.Unmarshal(opt.CurrentValue, &current) // string; ignore non-string
 		if current != "" {
-			b.modelID = api.ModelID(current)
+			b.modelID = vibekit.ModelID(current)
 		}
-		mdls := make([]api.SessionModel, 0, len(opt.Options))
+		mdls := make([]vibekit.SessionModel, 0, len(opt.Options))
 		served := make([]string, 0, len(opt.Options))
 		for _, c := range opt.Options {
 			if c.Value == "" {
@@ -344,7 +344,7 @@ func (b *Bridge) applyModelConfigOptionLocked(opts []sessionConfigOption) {
 			if modeltext.Hidden(c.Description) {
 				continue
 			}
-			mdls = append(mdls, api.SessionModel{
+			mdls = append(mdls, vibekit.SessionModel{
 				ID: c.Value, Name: c.Name, Description: c.Description,
 				RateMultiplier: c.Meta.Kiro.RateMultiplier,
 			})

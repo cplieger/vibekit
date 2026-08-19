@@ -19,7 +19,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"golang.org/x/sync/singleflight"
 	"pgregory.net/rapid"
 )
@@ -1887,7 +1887,7 @@ type mockPrompter struct {
 	called bool
 }
 
-func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string, _ api.EffortLevel) (string, error) {
+func (m *mockPrompter) UtilityPrompt(_ context.Context, _ string, _ vibekit.EffortLevel) (string, error) {
 	m.called = true
 	return m.result, m.err
 }
@@ -3015,7 +3015,7 @@ type capturePrompter struct {
 	result string
 }
 
-func (c *capturePrompter) UtilityPrompt(_ context.Context, prompt string, _ api.EffortLevel) (string, error) {
+func (c *capturePrompter) UtilityPrompt(_ context.Context, prompt string, _ vibekit.EffortLevel) (string, error) {
 	c.prompt = prompt
 	return c.result, nil
 }

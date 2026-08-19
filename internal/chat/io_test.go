@@ -97,7 +97,7 @@ func TestReadCappedFilePathGuard(t *testing.T) {
 // builds the path from store.Dir() plus an ids.ValidChatID-checked id,
 // and that character set ([A-Za-z0-9_-]) admits neither a separator nor
 // a dot, so no chat id can contribute a traversal segment. The assertion
-// on ValidChatID is here rather than in the api package because it is
+// on ValidChatID is here rather than in internal/ids because it is
 // THIS guard's missing half; if it ever loosens, this test is the one
 // that should fail.
 //

@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // This file is the package's dependency contracts: the role interfaces the
@@ -30,13 +30,13 @@ import (
 // BufferAccess is the consumer-side interface for buffer store access.
 // Narrows the coupling: translate only needs GetOrInit.
 type BufferAccess interface {
-	GetOrInit(chatID api.ChatID) *buffer.Buffer
+	GetOrInit(chatID vibekit.ChatID) *buffer.Buffer
 }
 
 // LineRecorder is the consumer-side interface for line tracking.
 // Narrows the coupling: translate only needs RecordFromDiffs.
 type LineRecorder interface {
-	RecordFromDiffs(chatID api.ChatID, diffs []api.ToolDiff, turn int, kind string)
+	RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDiff, turn int, kind string)
 }
 
 // ChatRecords is the chat store as this package uses it: read a chat, mutate it,
@@ -46,11 +46,11 @@ type LineRecorder interface {
 // ChatRecords() return type.
 type ChatRecords interface {
 	// Get returns the full chat at id, or false if it does not exist.
-	Get(ctx context.Context, id api.ChatID) (*api.Chat, bool)
+	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
 	// Mutate is the single write primitive: load, apply, save, broadcast.
-	Mutate(ctx context.Context, id api.ChatID, mutate func(c *api.Chat, exists bool) bool) error
+	Mutate(ctx context.Context, id vibekit.ChatID, mutate func(c *vibekit.Chat, exists bool) bool) error
 	// AppendMessage appends msg to the chat's messages.
-	AppendMessage(ctx context.Context, chatID api.ChatID, msg *api.Message) error
+	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 }
 
 // Deps abstracts the Hub methods that stateful translate handlers need.
@@ -65,7 +65,7 @@ type Deps interface {
 	MCPRecorder() MCPRecorder
 	// SetGovernance caches the latest account/workspace governance state so
 	// GET /api/governance can serve it with no chat open (see hub/governance.go).
-	SetGovernance(state api.GovernanceStatePayload)
+	SetGovernance(state vibekit.GovernanceStatePayload)
 }
 
 // MCPRecorder groups MCP server state tracking methods.
@@ -77,7 +77,7 @@ type MCPRecorder interface {
 	// may be nil, and all three arrive together — there is no separate
 	// SetKnownTools, because a second call would be a second write of the same
 	// notification and the record it lands in is replaced wholesale here.
-	RecordConnected(ctx context.Context, serverName string, tools []string, prompts []api.MCPPromptInfo, resources []api.MCPResourceInfo)
+	RecordConnected(ctx context.Context, serverName string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo)
 	RecordOAuth(ctx context.Context, serverName, oauthURL string)
 	RecordInitFailure(ctx context.Context, serverName, errMsg string)
 	// RecordDisabled reports a server KAS says is off. The recorder keeps it
@@ -125,10 +125,10 @@ func withIDGenerator(fn func() string) Option {
 
 // newEventMessage constructs a standard event message with a fresh ID,
 // RoleEvent, and the current timestamp. Eliminates 5-site boilerplate.
-func (t *Translator) newEventMessage(kind api.EventKind, content string) api.Message {
-	return api.Message{
+func (t *Translator) newEventMessage(kind vibekit.EventKind, content string) vibekit.Message {
+	return vibekit.Message{
 		ID:        t.newMsgID(),
-		Role:      api.RoleEvent,
+		Role:      vibekit.RoleEvent,
 		Ts:        time.Now().UnixMilli(),
 		EventKind: kind,
 		Content:   content,
@@ -144,7 +144,7 @@ func (t *Translator) newEventMessage(kind api.EventKind, content string) api.Mes
 // frame and three by stamping SubSessionID. Neither is true of a step, so the
 // step case is answered where it is known (ClassifyFrame) and this function
 // keeps its one narrow meaning. See workflow_steps.go for the whole problem.
-func (t *Translator) deriveSubSession(chatID api.ChatID, sessionID string) string {
+func (t *Translator) deriveSubSession(chatID vibekit.ChatID, sessionID string) string {
 	if t.ClassifyFrame(chatID, sessionID, false) == OwnerSubagent {
 		return sessionID
 	}
@@ -163,12 +163,12 @@ var _ ChatStoreDeps = Deps(nil)
 // streaming_tools.go for content buffering, partial file recovery, and
 // line tracking.
 type StreamingAccess interface {
-	Broadcast(ctx context.Context, evt api.ServerEvent)
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 	BufferStore() BufferAccess
 	LineTracker() LineRecorder
 	IsHookStatusEnabled() bool
 	ChatRecords() ChatRecords
-	ParentACPSession(chatID api.ChatID) string
+	ParentACPSession(chatID vibekit.ChatID) string
 	WorkDir() string
 	// TerminalOutput returns an agent terminal's rendered output: plain text
 	// with escapes parsed off, plus the spans styling it.
@@ -184,7 +184,7 @@ type StreamingAccess interface {
 	// command's tool_call_update carries no output field at all, so before this
 	// every finished command persisted an empty output and the bytes lived only
 	// in an ephemeral SSE stream that a page reload discarded.
-	TerminalOutput(terminalID string) (text string, spans []api.TextSpan, ok bool)
+	TerminalOutput(terminalID string) (text string, spans []vibekit.TextSpan, ok bool)
 }
 
 // PermissionAccess provides the methods needed by permission_handler.go
@@ -196,19 +196,19 @@ type StreamingAccess interface {
 // permission_response command and is forwarded to the bridge by
 // internal/command, never from a translate handler.
 type PermissionAccess interface {
-	Broadcast(ctx context.Context, evt api.ServerEvent)
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 	ChatRecords() ChatRecords
-	NotifyPush(ctx context.Context, body string, kind api.PushKind, chatID api.ChatID)
-	ParentACPSession(chatID api.ChatID) string
-	PendingPermsAdd(requestID int64, evt api.ServerEvent)
+	NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID)
+	ParentACPSession(chatID vibekit.ChatID) string
+	PendingPermsAdd(requestID int64, evt vibekit.ServerEvent)
 }
 
 // ChatStoreDeps provides the minimal interface needed by handlers that
 // only require chat store access and broadcast (init_errors).
 type ChatStoreDeps interface {
-	Broadcast(ctx context.Context, evt api.ServerEvent)
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 	ChatRecords() ChatRecords
-	ParentACPSession(chatID api.ChatID) string
+	ParentACPSession(chatID vibekit.ChatID) string
 }
 
 // RunOriginAccess answers whether a workflow run was launched by a SCHEDULE.

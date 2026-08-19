@@ -39,7 +39,7 @@ interface PushPageMessage {
   body: string;
 }
 
-/** Subject-key prefix for a pull request (api.PRSubjectPrefix, and sw.ts's own
+/** Subject-key prefix for a pull request (vibekit.PRSubjectPrefix, and sw.ts's own
  *  copy). Asserted against the Go constant by push-subject.test.ts. */
 const PR_SUBJECT_PREFIX = "pr:";
 

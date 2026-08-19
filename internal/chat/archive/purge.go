@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/parallel"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // purgeEntry is a chat file's (id, full path) pair gathered during a
@@ -106,10 +106,10 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	// active work, and retention is about abandoned work. Without it, a
 	// long-running conversation older than the window would be deleted out
 	// from under its own tab.
-	if s.isLive != nil && s.isLive(api.ChatID(entry.name)) {
+	if s.isLive != nil && s.isLive(vibekit.ChatID(entry.name)) {
 		return purgeKept
 	}
-	m := s.store.Lock(api.ChatID(entry.name))
+	m := s.store.Lock(vibekit.ChatID(entry.name))
 	m.Lock()
 	info, err := os.Stat(entry.path)
 	if err != nil {
@@ -136,7 +136,7 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 	}
 	m.Unlock()
 	if s.onPurge != nil {
-		s.onPurge(api.ChatID(entry.name), chain)
+		s.onPurge(vibekit.ChatID(entry.name), chain)
 	}
 	return purgePurged
 }
@@ -156,7 +156,7 @@ func (s *Service) purgeOne(entry purgeEntry, cutoff time.Time) purgeOutcome {
 // read costs no extra I/O and needs no second hook. Caller holds the per-chat
 // mutex.
 func (s *Service) purgeReferenceTime(entry purgeEntry, mtime time.Time) (refTime time.Time, sessionChain []string) {
-	c, err := s.store.Load(api.ChatID(entry.name))
+	c, err := s.store.Load(vibekit.ChatID(entry.name))
 	if err != nil {
 		return mtime, nil
 	}

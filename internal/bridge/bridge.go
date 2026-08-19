@@ -10,9 +10,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/kascap"
 	"github.com/cplieger/vibekit/internal/version"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // scannerLineCap is the per-frame content cap for the bridge's stdout.
@@ -44,16 +44,16 @@ const stderrLineCap = 64 * 1024
 // can classify a dead bridge with errors.Is. It must stay an alias rather than
 // its own errors.New: two distinct values with the same text would make the
 // classification silently fail and the retry loop would spin on a corpse again.
-var errBridgeExited = api.ErrBridgeExited
+var errBridgeExited = vibekit.ErrBridgeExited
 
 // ACP RPC method names — re-exported from api for package-local use.
 // The canonical definitions live in api/methods.go so the full protocol
 // vocabulary is discoverable in one place.
 const (
-	methodInitialize  = api.MethodInitialize
-	methodSessionNew  = api.MethodSessionNew
-	methodSessionLoad = api.MethodSessionLoad
-	methodSetMode     = api.MethodSetMode
+	methodInitialize  = vibekit.MethodInitialize
+	methodSessionNew  = vibekit.MethodSessionNew
+	methodSessionLoad = vibekit.MethodSessionLoad
+	methodSetMode     = vibekit.MethodSetMode
 )
 
 // metaKeyKiro is the vendor namespace inside an ACP `_meta` object. Every
@@ -72,26 +72,26 @@ const (
 // Bridge is one kiro-cli ACP subprocess tied to one chat.
 type Bridge struct {
 	// lifecycleCtx bounds the subprocess: the receiving half of
-	// api.StartOpts.Lifetime, assigned by Start, which refuses a nil one. It is
+	// vibekit.StartOpts.Lifetime, assigned by Start, which refuses a nil one. It is
 	// a lifetime HANDLE rather than a stashed caller context — never a request
 	// or turn context — which is why it is required at the method that runs the
 	// process instead of defaulted anywhere.
 	lifecycleCtx context.Context
 	stdin        io.WriteCloser
-	modes        atomic.Pointer[[]api.SessionMode]
+	modes        atomic.Pointer[[]vibekit.SessionMode]
 	stdout       *frameReader
-	pending      map[int64]chan *api.RPCResponse
-	notifCh      chan *api.RPCResponse
+	pending      map[int64]chan *vibekit.RPCResponse
+	notifCh      chan *vibekit.RPCResponse
 	done         chan struct{}
-	models       atomic.Pointer[[]api.SessionModel]
+	models       atomic.Pointer[[]vibekit.SessionModel]
 	// servedModels is every model id session/new advertised, UNFILTERED. models
 	// above drops end-of-life entries for the picker; this one must not, because
 	// it is the input to the entitlement check and a deprecated model the account
 	// can still use has to pass it.
 	servedModels atomic.Pointer[[]string]
 	cmd          *exec.Cmd
-	modelID      api.ModelID
-	sessionID    api.SessionID
+	modelID      vibekit.ModelID
+	sessionID    vibekit.SessionID
 	workDir      string
 	cliPath      string
 	currentMode  string
@@ -149,8 +149,8 @@ func New(cliPath, workDir string, opts ...Option) *Bridge {
 	b := &Bridge{
 		cliPath: cliPath,
 		workDir: workDir,
-		pending: make(map[int64]chan *api.RPCResponse),
-		notifCh: make(chan *api.RPCResponse, 256),
+		pending: make(map[int64]chan *vibekit.RPCResponse),
+		notifCh: make(chan *vibekit.RPCResponse, 256),
 		done:    make(chan struct{}),
 	}
 	for _, o := range opts {
@@ -161,7 +161,7 @@ func New(cliPath, workDir string, opts ...Option) *Bridge {
 
 // SessionID returns the bridge's ACP session id. Safe to call from
 // any goroutine.
-func (b *Bridge) SessionID() api.SessionID {
+func (b *Bridge) SessionID() vibekit.SessionID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sessionID
@@ -169,7 +169,7 @@ func (b *Bridge) SessionID() api.SessionID {
 
 // ModelID returns the currently-selected model id. Safe to call from
 // any goroutine.
-func (b *Bridge) ModelID() api.ModelID {
+func (b *Bridge) ModelID() vibekit.ModelID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.modelID
@@ -200,7 +200,7 @@ func (b *Bridge) SessionTitle() string {
 // Modes returns the available session modes as declared by the agent
 // on session/new or session/load. The returned slice is frozen
 // (never mutated after construction); callers MUST NOT mutate it.
-func (b *Bridge) Modes() []api.SessionMode {
+func (b *Bridge) Modes() []vibekit.SessionMode {
 	if p := b.modes.Load(); p != nil {
 		return *p
 	}
@@ -211,7 +211,7 @@ func (b *Bridge) Modes() []api.SessionMode {
 // on session/new or session/load, with [Deprecated] / [Legacy] entries
 // filtered out (see modeltext.Hidden). The returned slice is frozen
 // (never mutated after construction); callers MUST NOT mutate it.
-func (b *Bridge) Models() []api.SessionModel {
+func (b *Bridge) Models() []vibekit.SessionModel {
 	if p := b.models.Load(); p != nil {
 		return *p
 	}
@@ -230,7 +230,7 @@ func (b *Bridge) ServedModels() []string {
 }
 
 // NotifCh returns the channel of incoming ACP notifications from the bridge subprocess.
-func (b *Bridge) NotifCh() <-chan *api.RPCResponse { return b.notifCh }
+func (b *Bridge) NotifCh() <-chan *vibekit.RPCResponse { return b.notifCh }
 
 // SetModel performs an in-session model swap via session/set_config_option
 // (configId "model") — the v3 (KAS) replacement for the removed
@@ -241,16 +241,16 @@ func (b *Bridge) SetModel(ctx context.Context, modelID string) error {
 	b.mu.Lock()
 	sessionID := b.sessionID
 	b.mu.Unlock()
-	_, err := b.Call(ctx, api.MethodSetConfigOption, map[string]any{
-		api.KeySessionID: sessionID,
-		keyConfigID:      api.ConfigOptionModel,
-		keyConfigValue:   modelID,
+	_, err := b.Call(ctx, vibekit.MethodSetConfigOption, map[string]any{
+		vibekit.KeySessionID: sessionID,
+		keyConfigID:          vibekit.ConfigOptionModel,
+		keyConfigValue:       modelID,
 	})
 	if err != nil {
 		return err
 	}
 	b.mu.Lock()
-	b.modelID = api.ModelID(modelID)
+	b.modelID = vibekit.ModelID(modelID)
 	b.mu.Unlock()
 	return nil
 }

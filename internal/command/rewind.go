@@ -18,7 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // CmdRewindChat reverts the chat to a past turn via KAS's own checkpoint
@@ -43,12 +43,12 @@ import (
 // ("Cannot revert while the agent is still running"), and refuses a concurrent
 // revert per session — so both races are settled upstream and vibekit forwards
 // the reason instead of reimplementing the guard.
-func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.RewindChatCommand
+	var p vibekit.RewindChatCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || p.MessageID == "" {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -83,7 +83,7 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	// Cut at idx, not idx+1: the addressed message is discarded WITH its
 	// successors (KAS slices from the target inclusive), so the prompt at that
 	// turn is gone and has to be retyped. That is the operation, not a bug.
-	if mErr := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	if mErr := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -128,7 +128,7 @@ type revertResult struct {
 // must never read like one that did.
 func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string) (revertResult, int, error) {
 	var result revertResult
-	resp, err := bridge.Call(ctx, api.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
+	resp, err := bridge.Call(ctx, vibekit.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
 		"messageId": messageID,
 	}))
 	if err != nil {
@@ -154,9 +154,9 @@ func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string
 // at all. It echoes back the messageId vibekit sends on session/prompt, while an
 // assistant turn carries KAS's own `<uuid>-say`, so an assistant id would be
 // unknown to the revert regardless of role checking. Returns -1 when absent.
-func userMessageIndex(messages []api.Message, id string) int {
+func userMessageIndex(messages []vibekit.Message, id string) int {
 	for i := range messages {
-		if messages[i].ID == id && messages[i].Role == api.RoleUser {
+		if messages[i].ID == id && messages[i].Role == vibekit.RoleUser {
 			return i
 		}
 	}
@@ -180,12 +180,12 @@ func userMessageIndex(messages []api.Message, id string) int {
 // instead. Auto-create mirrors CmdSetMode for the same reason — a fresh chat is
 // client-side only until its first prompt, so without it every pick before the
 // first message 404'd and the control rolled back.
-func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	deps := d.Deps()
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	var p api.SetEffortCommand
+	var p vibekit.SetEffortCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil || !p.Level.Valid() {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -194,8 +194,8 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 	// Switch live first (fail fast) when a bridge is running, so a refusal is
 	// reported rather than persisted as a level the session never took.
 	if bridge := deps.GetBridge(cmd.ChatID); bridge != nil {
-		if _, err := bridge.Call(ctx, api.MethodSetConfigOption, SessionParams(bridge, map[string]any{
-			"configId": api.ConfigOptionEffort,
+		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
+			"configId": vibekit.ConfigOptionEffort,
 			"value":    string(p.Level),
 		})); err != nil {
 			slog.Warn("set_effort: bridge call failed", "chat", cmd.ChatID, keyError, err)
@@ -204,9 +204,9 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 		}
 	}
 
-	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *api.Chat, exists bool) bool {
+	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
-			c.Name = api.DefaultChatName
+			c.Name = vibekit.DefaultChatName
 			c.Effort = string(p.Level)
 			return true
 		}

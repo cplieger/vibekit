@@ -265,7 +265,7 @@ export interface ServerDiscovery {
 
 export type RuntimeState = "connected" | "needs_auth" | "idle" | "failed" | "disabled";
 
-/** Where a server came from (`internal/api.Origin`).
+/** Where a server came from (`internal/vibekit.Origin`).
  *
  *  `user` is a server this page's config list owns — its row carries every edit
  *  affordance. `power` came from an installed Power, `unknown` from a config

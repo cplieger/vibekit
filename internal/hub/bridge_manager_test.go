@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // newTestBridgeManager builds a bridgeManager whose factory returns a
@@ -72,7 +72,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 
 	// Pre-populate with some bridges so "exists" path is exercised.
 	for i := range 100 {
-		sb, existed := bm.getOrInsert(api.ChatID(fmt.Sprintf("chat-%d", i)))
+		sb, existed := bm.getOrInsert(vibekit.ChatID(fmt.Sprintf("chat-%d", i)))
 		if !existed {
 			sb.state = bridgeIdle
 		}
@@ -82,7 +82,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			i := 0
 			for pb.Next() {
-				bm.getOrInsert(api.ChatID(fmt.Sprintf("chat-%d", i%100)))
+				bm.getOrInsert(vibekit.ChatID(fmt.Sprintf("chat-%d", i%100)))
 				i++
 			}
 		})
@@ -101,7 +101,7 @@ func BenchmarkBridgeManagerGetOrInsert(b *testing.B) {
 				id := fmt.Sprintf("new-%d", counter)
 				mu.Unlock()
 
-				sb, existed := bm2.getOrInsert(api.ChatID(id))
+				sb, existed := bm2.getOrInsert(vibekit.ChatID(id))
 				if !existed {
 					sb.state = bridgeIdle
 				}

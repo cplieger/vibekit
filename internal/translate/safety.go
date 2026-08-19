@@ -36,18 +36,18 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // knownSafetyStatuses gates statusChanged translation to the documented
 // GateStatus set, so an unrecognized/garbage status is dropped rather than
 // surfaced as a mystery banner.
-var knownSafetyStatuses = map[api.SafetyStatus]struct{}{
-	api.SafetyStatusIdle:        {},
-	api.SafetyStatusFormalizing: {},
-	api.SafetyStatusEvaluating:  {},
-	api.SafetyStatusBlocked:     {},
-	api.SafetyStatusError:       {},
+var knownSafetyStatuses = map[vibekit.SafetyStatus]struct{}{
+	vibekit.SafetyStatusIdle:        {},
+	vibekit.SafetyStatusFormalizing: {},
+	vibekit.SafetyStatusEvaluating:  {},
+	vibekit.SafetyStatusBlocked:     {},
+	vibekit.SafetyStatusError:       {},
 }
 
 // v3SafetyStatusChanged is the _kiro/safety/statusChanged wire shape. The
@@ -84,16 +84,16 @@ type v3SafetyPropertiesChanged struct {
 // non-tool-scoped here: the notification's toolId is the tool NAME (fs_write /
 // str_replace / …), not the per-call tool_call id we round-trip, so it cannot
 // be correlated to a specific rendered tool card.
-func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[v3SafetyStatusChanged](msg, "safety/statusChanged")
 	if !ok {
 		return
 	}
-	status := api.SafetyStatus(p.Status)
+	status := vibekit.SafetyStatus(p.Status)
 	if _, known := knownSafetyStatuses[status]; !known {
 		return
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventSafetyStatus, chatID, api.SafetyStatusPayload{
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSafetyStatus, chatID, vibekit.SafetyStatusPayload{
 		Status:            status,
 		Detail:            p.Detail,
 		ToolID:            p.ToolID,
@@ -106,7 +106,7 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID api.C
 	// it as an inline event message so it survives reload and is visible across
 	// devices (server is the source of truth), the same way compaction persists a
 	// `compacted` event alongside its transient `compaction_started` SSE.
-	if status == api.SafetyStatusBlocked {
+	if status == vibekit.SafetyStatusBlocked {
 		t.persistSafetyBlock(ctx, chatID, p)
 	}
 }
@@ -117,8 +117,8 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID api.C
 // params) and its toolId is a tool name, so the refusal annotates the chat, not
 // a specific tool card. Persist failures are logged, not fatal — a missed
 // breadcrumb never blocks the stream.
-func (t *Translator) persistSafetyBlock(ctx context.Context, chatID api.ChatID, p v3SafetyStatusChanged) {
-	evt := t.newEventMessage(api.EventInfraSafetyBlocked, safetyBlockContent(p))
+func (t *Translator) persistSafetyBlock(ctx context.Context, chatID vibekit.ChatID, p v3SafetyStatusChanged) {
+	evt := t.newEventMessage(vibekit.EventInfraSafetyBlocked, safetyBlockContent(p))
 	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("safety: append block event", "chat_id", chatID, "error", err)
 	}
@@ -140,7 +140,7 @@ func safetyBlockContent(p v3SafetyStatusChanged) string {
 // safety_properties SSE (chat-scoped). A subagent-session copy is skipped so a
 // subagent's formalized properties aren't attributed to the parent chat (mirrors
 // code_references' subagent guard).
-func (t *Translator) HandleSafetyPropertiesChanged(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleSafetyPropertiesChanged(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	p, ok := unmarshalParams[v3SafetyPropertiesChanged](msg, "safety/propertiesChanged")
 	if !ok {
 		return
@@ -152,7 +152,7 @@ func (t *Translator) HandleSafetyPropertiesChanged(ctx context.Context, chatID a
 	if len(props) == 0 {
 		return
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventSafetyProperties, chatID, api.SafetyPropertiesPayload{
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSafetyProperties, chatID, vibekit.SafetyPropertiesPayload{
 		Properties: props,
 		Reason:     p.Reason,
 	}))
@@ -160,11 +160,11 @@ func (t *Translator) HandleSafetyPropertiesChanged(ctx context.Context, chatID a
 
 // decodeSafetyProps normalizes the polymorphic properties[] — KAS sends either
 // {index, description, enabled} objects (post-tool-use formalization) or bare
-// strings (getProperties path) — into []api.SafetyProperty. A bare string maps
+// strings (getProperties path) — into []vibekit.SafetyProperty. A bare string maps
 // to a property with that description and Enabled=true; an empty description is
 // dropped.
-func decodeSafetyProps(raw []json.RawMessage) []api.SafetyProperty {
-	out := make([]api.SafetyProperty, 0, len(raw))
+func decodeSafetyProps(raw []json.RawMessage) []vibekit.SafetyProperty {
+	out := make([]vibekit.SafetyProperty, 0, len(raw))
 	for _, r := range raw {
 		var obj struct {
 			Description string `json:"description"`
@@ -172,7 +172,7 @@ func decodeSafetyProps(raw []json.RawMessage) []api.SafetyProperty {
 			Enabled     bool   `json:"enabled"`
 		}
 		if err := json.Unmarshal(r, &obj); err == nil && obj.Description != "" {
-			out = append(out, api.SafetyProperty{
+			out = append(out, vibekit.SafetyProperty{
 				Description: obj.Description,
 				Index:       obj.Index,
 				Enabled:     obj.Enabled,
@@ -181,7 +181,7 @@ func decodeSafetyProps(raw []json.RawMessage) []api.SafetyProperty {
 		}
 		var s string
 		if err := json.Unmarshal(r, &s); err == nil && s != "" {
-			out = append(out, api.SafetyProperty{Description: s, Enabled: true})
+			out = append(out, vibekit.SafetyProperty{Description: s, Enabled: true})
 		}
 	}
 	return out

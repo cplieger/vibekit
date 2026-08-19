@@ -7,20 +7,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-func msg(id string, role api.Role, content string) api.Message {
-	return api.Message{ID: id, Role: role, Content: content, Ts: 100}
+func msg(id string, role vibekit.Role, content string) vibekit.Message {
+	return vibekit.Message{ID: id, Role: role, Content: content, Ts: 100}
 }
 
 // transcript: turn 1 = u1/a1, turn 2 = u2/a2.
-func transcript() []api.Message {
-	return []api.Message{
-		msg("u1", api.RoleUser, "how does the retry work"),
-		msg("a1", api.RoleAssistant, "The retry uses exponential backoff."),
-		msg("u2", api.RoleUser, "now fix the composer"),
-		msg("a2", api.RoleAssistant, "Done, the composer grows upward."),
+func transcript() []vibekit.Message {
+	return []vibekit.Message{
+		msg("u1", vibekit.RoleUser, "how does the retry work"),
+		msg("a1", vibekit.RoleAssistant, "The retry uses exponential backoff."),
+		msg("u2", vibekit.RoleUser, "now fix the composer"),
+		msg("a2", vibekit.RoleAssistant, "Done, the composer grows upward."),
 	}
 }
 
@@ -44,22 +44,22 @@ func TestSearch_FindsTextAndNamesItsTurn(t *testing.T) {
 // filter that suddenly cared about case would be a behaviour change nobody
 // requested by ticking a box labelled "match case".
 func TestSearch_CaseSensitivity(t *testing.T) {
-	msgs := []api.Message{
-		msg("u1", api.RoleUser, "now fix the composer"),
-		msg("a1", api.RoleAssistant, "Done, the Composer grows upward."),
+	msgs := []vibekit.Message{
+		msg("u1", vibekit.RoleUser, "now fix the composer"),
+		msg("a1", vibekit.RoleAssistant, "Done, the Composer grows upward."),
 	}
-	filtered := []api.Message{{
+	filtered := []vibekit.Message{{
 		ID:           "u1",
-		Role:         api.RoleUser,
+		Role:         vibekit.RoleUser,
 		Content:      "look at the Composer",
 		Ts:           100,
-		ChangedFiles: map[string]*api.FileChange{"static-src/Composer.ts": {}},
-		ToolCalls:    []api.ToolCall{{ID: "t1", Title: "ReadFile", Kind: api.ToolKindRead}},
+		ChangedFiles: map[string]*vibekit.FileChange{"static-src/Composer.ts": {}},
+		ToolCalls:    []vibekit.ToolCall{{ID: "t1", Title: "ReadFile", Kind: vibekit.ToolKindRead}},
 	}}
 
 	cases := []struct {
 		name          string
-		msgs          []api.Message
+		msgs          []vibekit.Message
 		query         string
 		caseSensitive bool
 		want          int
@@ -142,7 +142,7 @@ func TestSearch_CaseSensitiveOffsetsStayRuneIndices(t *testing.T) {
 	// folded string in insensitive mode and the original in sensitive mode. Both
 	// have to land on the same rune index for the client to highlight the right
 	// occurrence.
-	msgs := []api.Message{msg("u1", api.RoleUser, "héllo wörld Needle")}
+	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "héllo wörld Needle")}
 	for _, cs := range []bool{false, true} {
 		hits := Search(msgs, "Needle", cs)
 		if len(hits) != 1 {
@@ -155,7 +155,7 @@ func TestSearch_CaseSensitiveOffsetsStayRuneIndices(t *testing.T) {
 }
 
 func TestSearch_ReportsEveryOccurrenceInOneMessage(t *testing.T) {
-	msgs := []api.Message{msg("u1", api.RoleUser, "retry retry retry")}
+	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "retry retry retry")}
 	hits := Search(msgs, "retry", false)
 	if len(hits) != 3 {
 		t.Fatalf("got %d hits, want 3", len(hits))
@@ -170,7 +170,7 @@ func TestSearch_ReportsEveryOccurrenceInOneMessage(t *testing.T) {
 }
 
 func TestSearch_OffsetsAreRuneIndicesNotBytes(t *testing.T) {
-	msgs := []api.Message{msg("u1", api.RoleUser, "héllo wörld needle")}
+	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "héllo wörld needle")}
 	hits := Search(msgs, "needle", false)
 	if len(hits) != 1 {
 		t.Fatalf("got %d hits, want 1", len(hits))
@@ -200,11 +200,11 @@ func TestSearch_NeverReturnsNil(t *testing.T) {
 }
 
 func TestSearch_SearchesReasoningAndToolOutput(t *testing.T) {
-	msgs := []api.Message{
+	msgs := []vibekit.Message{
 		{
-			ID: "a1", Role: api.RoleAssistant, Ts: 1,
+			ID: "a1", Role: vibekit.RoleAssistant, Ts: 1,
 			Reasoning: "considering a mutex here",
-			ToolCalls: []api.ToolCall{{ID: "t1", Title: "shell", Output: "permission denied"}},
+			ToolCalls: []vibekit.ToolCall{{ID: "t1", Title: "shell", Output: "permission denied"}},
 		},
 	}
 	// "which turn printed that error" is asked more often than "which turn
@@ -218,24 +218,24 @@ func TestSearch_SearchesReasoningAndToolOutput(t *testing.T) {
 }
 
 func TestSearch_ScopedFilters(t *testing.T) {
-	msgs := []api.Message{
-		msg("u1", api.RoleUser, "look at auth"),
+	msgs := []vibekit.Message{
+		msg("u1", vibekit.RoleUser, "look at auth"),
 		{
-			ID: "a1", Role: api.RoleAssistant, Ts: 2, Content: "reading it",
-			ToolCalls: []api.ToolCall{
-				{ID: "t1", Title: "readFile", Kind: "read", Locations: []api.ToolLocation{{Path: "internal/auth/token.go"}}},
+			ID: "a1", Role: vibekit.RoleAssistant, Ts: 2, Content: "reading it",
+			ToolCalls: []vibekit.ToolCall{
+				{ID: "t1", Title: "readFile", Kind: "read", Locations: []vibekit.ToolLocation{{Path: "internal/auth/token.go"}}},
 			},
 		},
-		msg("u2", api.RoleUser, "and the composer"),
+		msg("u2", vibekit.RoleUser, "and the composer"),
 		{
-			ID: "a2", Role: api.RoleAssistant, Ts: 4, Content: "editing it",
-			ChangedFiles: map[string]*api.FileChange{"static-src/composer.ts": {LinesAdded: 3}},
+			ID: "a2", Role: vibekit.RoleAssistant, Ts: 4, Content: "editing it",
+			ChangedFiles: map[string]*vibekit.FileChange{"static-src/composer.ts": {LinesAdded: 3}},
 		},
 	}
 
 	t.Run("role", func(t *testing.T) {
 		for _, h := range Search(msgs, "role:user", false) {
-			if h.Role != api.RoleUser {
+			if h.Role != vibekit.RoleUser {
 				t.Errorf("role:user returned a %s message", h.Role)
 			}
 		}
@@ -296,14 +296,14 @@ func TestSearch_ScopedFilters(t *testing.T) {
 
 // A reader typing a URL means it literally, so an unknown prefix stays text.
 func TestSearch_UnknownPrefixStaysFreeText(t *testing.T) {
-	msgs := []api.Message{msg("u1", api.RoleUser, "see https://example.com for more")}
+	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "see https://example.com for more")}
 	if len(Search(msgs, "https://example.com", false)) == 0 {
 		t.Error("a colon-bearing term was parsed as a filter and lost")
 	}
 }
 
 func TestSearch_NonNumericTurnStaysFreeText(t *testing.T) {
-	msgs := []api.Message{msg("u1", api.RoleUser, "the turn:abc marker")}
+	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, "the turn:abc marker")}
 	if len(Search(msgs, "turn:abc", false)) == 0 {
 		t.Error("an unparseable turn filter should fall back to text")
 	}
@@ -311,7 +311,7 @@ func TestSearch_NonNumericTurnStaysFreeText(t *testing.T) {
 
 func TestSearch_ExcerptCarriesContextAndCollapsesWhitespace(t *testing.T) {
 	long := strings.Repeat("a ", 100) + "needle " + strings.Repeat("b ", 100)
-	hits := Search([]api.Message{msg("u1", api.RoleUser, long)}, "needle", false)
+	hits := Search([]vibekit.Message{msg("u1", vibekit.RoleUser, long)}, "needle", false)
 	if len(hits) != 1 {
 		t.Fatalf("got %d hits", len(hits))
 	}
@@ -328,7 +328,7 @@ func TestSearch_ExcerptCarriesContextAndCollapsesWhitespace(t *testing.T) {
 }
 
 func TestSearch_CapsTheResultCount(t *testing.T) {
-	msgs := []api.Message{msg("u1", api.RoleUser, strings.Repeat("hit ", maxSearchHits+50))}
+	msgs := []vibekit.Message{msg("u1", vibekit.RoleUser, strings.Repeat("hit ", maxSearchHits+50))}
 	if got := len(Search(msgs, "hit", false)); got != maxSearchHits {
 		t.Errorf("got %d hits, want the cap of %d", got, maxSearchHits)
 	}
@@ -356,11 +356,11 @@ func TestSearch_TurnNumbersMatchTheRailProjection(t *testing.T) {
 // than being a default either side could get wrong.
 func TestHandleSearch_CaseParam(t *testing.T) {
 	s, _ := newTestStore(t)
-	if err := s.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	if err := s.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "One"
-		c.Messages = []api.Message{
-			msg("u1", api.RoleUser, "now fix the composer"),
-			msg("a1", api.RoleAssistant, "Done, the Composer grows upward."),
+		c.Messages = []vibekit.Message{
+			msg("u1", vibekit.RoleUser, "now fix the composer"),
+			msg("a1", vibekit.RoleAssistant, "Done, the Composer grows upward."),
 		}
 		return true
 	}); err != nil {

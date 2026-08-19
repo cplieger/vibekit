@@ -98,7 +98,7 @@ type docVerdict struct {
 // escaping a real root) while production passes a guard closed over the real
 // directory. A nil guard admits everything with every affordance, which is what the
 // MapFS tests want: absent provenance means unrestricted, and a restriction is
-// asserted rather than inferred (the same default direction as api.Origin's).
+// asserted rather than inferred (the same default direction as vibekit.Origin's).
 type pathGuard func(rel string) docVerdict
 
 func (g pathGuard) allows(rel string) bool {

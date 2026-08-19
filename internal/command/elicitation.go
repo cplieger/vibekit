@@ -12,14 +12,14 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // validElicitationAction reports whether a is an accepted MCP
 // ElicitResult action.
 func validElicitationAction(a string) bool {
 	switch a {
-	case api.ElicitationActionAccept, api.ElicitationActionDecline, api.ElicitationActionCancel:
+	case vibekit.ElicitationActionAccept, vibekit.ElicitationActionDecline, vibekit.ElicitationActionCancel:
 		return true
 	}
 	return false
@@ -27,13 +27,13 @@ func validElicitationAction(a string) bool {
 
 // CmdElicitationResponse forwards the user's elicitation form answer to
 // kiro-cli as the elicitation/create response.
-func CmdElicitationResponse(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdElicitationResponse(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	sb := d.Bridge().GetBridge(cmd.ChatID)
 	if sb == nil {
 		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
 		return
 	}
-	var p api.ElicitationResponseCommand
+	var p vibekit.ElicitationResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -45,13 +45,13 @@ func CmdElicitationResponse(d *Dispatcher, ctx context.Context, w http.ResponseW
 	// Take before responding, for the same reason CmdPermission does: an
 	// elicitation form open in two tabs can be submitted twice, and the second
 	// ElicitResult is dropped by the MCP server's caller without a word.
-	if !d.PendingPerms().TakePendingPerm(p.RequestID, api.SettledByUser) {
+	if !d.PendingPerms().TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
 		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
 		return
 	}
-	result := api.ElicitationResult{Action: p.Action}
+	result := vibekit.ElicitationResult{Action: p.Action}
 	// Content only travels on accept; decline/cancel carry no values.
-	if p.Action == api.ElicitationActionAccept {
+	if p.Action == vibekit.ElicitationActionAccept {
 		result.Content = p.Content
 	}
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {

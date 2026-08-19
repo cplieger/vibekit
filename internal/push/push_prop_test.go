@@ -3,7 +3,7 @@ package push
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"pgregory.net/rapid"
 )
 
@@ -28,9 +28,9 @@ func TestSubscriptionLifecycle_RapidInvariants(t *testing.T) {
 
 			switch op {
 			case 0: // Subscribe
-				svc.Subscribe(api.PushSubscription{
+				svc.Subscribe(vibekit.PushSubscription{
 					Endpoint: endpoint,
-					Keys: api.PushSubscriptionKeys{
+					Keys: vibekit.PushSubscriptionKeys{
 						P256dh: "dGVzdA==",
 						Auth:   "dGVzdA==",
 					},

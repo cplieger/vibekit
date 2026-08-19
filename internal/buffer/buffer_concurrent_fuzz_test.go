@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // FuzzBufferConcurrentBlockAppend exercises the mutex-protected block
@@ -68,10 +68,10 @@ func FuzzBufferConcurrentBlockAppend(f *testing.F) {
 		blocks := buf.Blocks
 		buf.mu.Unlock()
 		for i := 1; i < len(blocks); i++ {
-			if blocks[i].Type == api.BlockText && blocks[i-1].Type == api.BlockText {
+			if blocks[i].Type == vibekit.BlockText && blocks[i-1].Type == vibekit.BlockText {
 				t.Fatalf("adjacent BlockText at indices %d and %d", i-1, i)
 			}
-			if blocks[i].Type == api.BlockThinking && blocks[i-1].Type == api.BlockThinking {
+			if blocks[i].Type == vibekit.BlockThinking && blocks[i-1].Type == vibekit.BlockThinking {
 				t.Fatalf("adjacent BlockThinking at indices %d and %d", i-1, i)
 			}
 		}

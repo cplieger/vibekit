@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // DefaultOutputCap is the shared byte budget for subprocess output
@@ -37,7 +37,7 @@ const DefaultOutputCap = 64 * 1024
 type Buffer struct {
 	ToolStartTimes map[string]int64
 	ToolCallIndex  map[string]int
-	ChangedFiles   map[string]*api.FileChange
+	ChangedFiles   map[string]*vibekit.FileChange
 	MessageID      string
 	// steerCarry is text withheld from this turn because it might still grow
 	// into a steering acknowledgement marker, and steerCarrySubtask is the
@@ -70,10 +70,10 @@ type Buffer struct {
 	// Refusal marks the in-flight turn as a model refusal (kiro-cli 2.13):
 	// set once from the refusal explanation chunk's _meta.kiro.refusal,
 	// persisted onto the final assistant message at turn end. Guarded by mu.
-	Refusal        *api.RefusalInfo
-	ToolCalls      []api.ToolCall
-	Blocks         []api.Block
-	CodeReferences []api.CodeReference
+	Refusal        *vibekit.RefusalInfo
+	ToolCalls      []vibekit.ToolCall
+	Blocks         []vibekit.Block
+	CodeReferences []vibekit.CodeReference
 	// chunkSeq counts text/thinking deltas this turn (1-based). Each
 	// broadcast chunk carries its value (MessageChunkPayload.Seq) so
 	// the connect-time turn_state snapshot can carry a watermark and
@@ -132,10 +132,10 @@ func (buf *Buffer) SetSteerCarry(text, subtaskID string) {
 // broadcast it idempotently (the client replaces its list rather than
 // appending). Empty entries (no license name) are dropped by the caller
 // before this point.
-func (buf *Buffer) AppendCodeReferences(refs []api.CodeReference) []api.CodeReference {
+func (buf *Buffer) AppendCodeReferences(refs []vibekit.CodeReference) []vibekit.CodeReference {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	seen := make(map[api.CodeReference]struct{}, len(buf.CodeReferences))
+	seen := make(map[vibekit.CodeReference]struct{}, len(buf.CodeReferences))
 	for _, r := range buf.CodeReferences {
 		seen[r] = struct{}{}
 	}
@@ -148,7 +148,7 @@ func (buf *Buffer) AppendCodeReferences(refs []api.CodeReference) []api.CodeRefe
 	}
 	// Return a copy so the caller's broadcast can't race a later append
 	// mutating the backing array.
-	out := make([]api.CodeReference, len(buf.CodeReferences))
+	out := make([]vibekit.CodeReference, len(buf.CodeReferences))
 	copy(out, buf.CodeReferences)
 	return out
 }
@@ -182,7 +182,7 @@ func (buf *Buffer) HasModel() bool {
 // SetRefusal records the turn's model-refusal metadata (first write wins —
 // KAS emits at most one refusal chunk per turn, so a duplicate is a replay
 // and keeps the original).
-func (buf *Buffer) SetRefusal(r *api.RefusalInfo) {
+func (buf *Buffer) SetRefusal(r *vibekit.RefusalInfo) {
 	if r == nil {
 		return
 	}
@@ -208,11 +208,11 @@ func (buf *Buffer) AppendTextDelta(delta, subtaskID string) (idx int, seq int64)
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	buf.chunkSeq++
-	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockText && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
+	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == vibekit.BlockText && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
 		buf.Blocks[n-1].Text += delta
 		return n - 1, buf.chunkSeq
 	}
-	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockText, Text: delta, AgentSubtaskID: subtaskID})
+	buf.Blocks = append(buf.Blocks, vibekit.Block{Type: vibekit.BlockText, Text: delta, AgentSubtaskID: subtaskID})
 	return len(buf.Blocks) - 1, buf.chunkSeq
 }
 
@@ -226,11 +226,11 @@ func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) (idx int, seq in
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	buf.chunkSeq++
-	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == api.BlockThinking && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
+	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == vibekit.BlockThinking && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
 		buf.Blocks[n-1].Thinking += delta
 		return n - 1, buf.chunkSeq
 	}
-	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockThinking, Thinking: delta, AgentSubtaskID: subtaskID})
+	buf.Blocks = append(buf.Blocks, vibekit.Block{Type: vibekit.BlockThinking, Thinking: delta, AgentSubtaskID: subtaskID})
 	return len(buf.Blocks) - 1, buf.chunkSeq
 }
 
@@ -242,16 +242,16 @@ func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) (idx int, seq in
 func (buf *Buffer) AppendToolUseBlock(toolCallID, subtaskID string) int {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	buf.Blocks = append(buf.Blocks, api.Block{Type: api.BlockToolUse, ToolCallID: toolCallID, AgentSubtaskID: subtaskID})
+	buf.Blocks = append(buf.Blocks, vibekit.Block{Type: vibekit.BlockToolUse, ToolCallID: toolCallID, AgentSubtaskID: subtaskID})
 	return len(buf.Blocks) - 1
 }
 
 // TrackFileChanges accumulates per-file change stats from tool call diffs.
-func (buf *Buffer) TrackFileChanges(diffs []api.ToolDiff, isNewFile bool) {
+func (buf *Buffer) TrackFileChanges(diffs []vibekit.ToolDiff, isNewFile bool) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	if buf.ChangedFiles == nil {
-		buf.ChangedFiles = make(map[string]*api.FileChange)
+		buf.ChangedFiles = make(map[string]*vibekit.FileChange)
 	}
 	for _, d := range diffs {
 		if d.Path == "" {
@@ -259,7 +259,7 @@ func (buf *Buffer) TrackFileChanges(diffs []api.ToolDiff, isNewFile bool) {
 		}
 		fc, ok := buf.ChangedFiles[d.Path]
 		if !ok {
-			fc = &api.FileChange{IsNewFile: isNewFile}
+			fc = &vibekit.FileChange{IsNewFile: isNewFile}
 			buf.ChangedFiles[d.Path] = fc
 		}
 		if d.NewText != "" {
@@ -297,48 +297,48 @@ func (buf *Buffer) ComputeDuration(toolCallID string) int {
 
 // MarkCancelledToolsFailed sets all in-progress tool calls to failed.
 // Called on cancel so the client doesn't show stuck spinners.
-func (buf *Buffer) MarkCancelledToolsFailed() []api.ToolCall {
+func (buf *Buffer) MarkCancelledToolsFailed() []vibekit.ToolCall {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
-	var changed []api.ToolCall
+	var changed []vibekit.ToolCall
 	for i := range buf.ToolCalls {
-		if buf.ToolCalls[i].Status == api.ToolInProgress || buf.ToolCalls[i].Status == api.ToolPending {
-			buf.ToolCalls[i].Status = api.ToolFailed
+		if buf.ToolCalls[i].Status == vibekit.ToolInProgress || buf.ToolCalls[i].Status == vibekit.ToolPending {
+			buf.ToolCalls[i].Status = vibekit.ToolFailed
 			changed = append(changed, buf.ToolCalls[i])
 		}
 	}
 	return changed
 }
 
-// Snapshot returns the in-flight turn as an api.Message plus the chunk-sequence
+// Snapshot returns the in-flight turn as an vibekit.Message plus the chunk-sequence
 // watermark, for a client that connects mid-turn and needs the accumulated
 // transcript rather than only the next delta.
 //
 // This is the buffer serving its own cross-goroutine read, which the hub used to
 // keep a whole SECOND replica for (hub/turn_mirror.go re-folded every broadcast
-// event into a parallel api.Message — a duplicate implementation of the block
+// event into a parallel vibekit.Message — a duplicate implementation of the block
 // assembly happening right here, and one that could drift from it). Everything
 // that snapshot needs is already in these fields; the only thing missing was a
 // guarded reader, so this is it.
 //
 // Reports false when the turn has produced nothing yet, which the caller sends
 // as a bare busy signal instead of an empty message.
-func (buf *Buffer) Snapshot() (api.Message, int64, bool) {
+func (buf *Buffer) Snapshot() (vibekit.Message, int64, bool) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
 	if buf.MessageID == "" {
-		return api.Message{}, 0, false
+		return vibekit.Message{}, 0, false
 	}
 	if buf.Content.Len() == 0 && buf.Reasoning.Len() == 0 && len(buf.ToolCalls) == 0 {
-		return api.Message{}, buf.chunkSeq, false
+		return vibekit.Message{}, buf.chunkSeq, false
 	}
 	// Field-for-field the same shape bridge_coord assembles at turn end, so a
 	// mid-turn snapshot renders byte-equivalently to the turn that follows it.
 	// Slices are copied: the caller reads them off this goroutine while the
 	// dispatch loop keeps appending.
-	return api.Message{
+	return vibekit.Message{
 		ID:             buf.MessageID,
-		Role:           api.RoleAssistant,
+		Role:           vibekit.RoleAssistant,
 		Ts:             time.Now().UnixMilli(),
 		Content:        buf.Content.String(),
 		Reasoning:      buf.Reasoning.String(),

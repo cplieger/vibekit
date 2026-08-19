@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // rpcErr builds an RPCError with an optional data payload, the way the bridge
 // hands one to the command layer.
 func rpcErr(t *testing.T, code int, msg string, data any) error {
 	t.Helper()
-	e := &api.RPCError{Code: code, Message: msg}
+	e := &vibekit.RPCError{Code: code, Message: msg}
 	if data != nil {
 		raw, err := json.Marshal(data)
 		if err != nil {
@@ -40,47 +40,47 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// it three times against a closed done channel, burning four seconds of
 		// wall clock to arrive at the same error.
 		"dead bridge is not retryable": {
-			err:  &api.TransportError{Err: api.ErrBridgeExited, Retryable: true},
+			err:  &vibekit.TransportError{Err: vibekit.ErrBridgeExited, Retryable: true},
 			want: classPipeDeath,
 		},
 		"dead bridge survives wrapping": {
-			err:  fmt.Errorf("prompt: %w", &api.TransportError{Err: api.ErrBridgeExited, Retryable: true}),
+			err:  fmt.Errorf("prompt: %w", &vibekit.TransportError{Err: vibekit.ErrBridgeExited, Retryable: true}),
 			want: classPipeDeath,
 		},
 		"write failure is transient": {
-			err:  &api.TransportError{Err: errors.New("write to ACP: broken pipe"), Retryable: true},
+			err:  &vibekit.TransportError{Err: errors.New("write to ACP: broken pipe"), Retryable: true},
 			want: classTransient,
 		},
 		"non-retryable transport is fatal": {
-			err:  &api.TransportError{Err: errors.New("bad frame"), Retryable: false},
+			err:  &vibekit.TransportError{Err: errors.New("bad frame"), Retryable: false},
 			want: classFatal,
 		},
 		"session busy by sentinel": {
-			err:  fmt.Errorf("ACP error -32001: %w", api.ErrNotIdle),
+			err:  fmt.Errorf("ACP error -32001: %w", vibekit.ErrNotIdle),
 			want: classBusy,
 		},
 		"session busy by code": {
-			err:  rpcErr(t, api.RPCCodeNotIdle, "session is not idle", nil),
+			err:  rpcErr(t, vibekit.RPCCodeNotIdle, "session is not idle", nil),
 			want: classBusy,
 		},
 		"internal error is transient": {
-			err:  rpcErr(t, api.RPCCodeInternal, "Internal error", map[string]string{"details": "transient upstream fault"}),
+			err:  rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": "transient upstream fault"}),
 			want: classTransient,
 		},
 		// Retrying an expired token is pure latency, and KAS collapses auth
 		// onto the same -32603 as a genuine fault.
 		"auth failure is fatal, not transient": {
-			err:  rpcErr(t, api.RPCCodeInternal, "Internal error", map[string]string{"details": "not logged in"}),
+			err:  rpcErr(t, vibekit.RPCCodeInternal, "Internal error", map[string]string{"details": "not logged in"}),
 			want: classFatal,
 		},
 		"expired token is fatal": {
-			err:  rpcErr(t, api.RPCCodeInternal, "ExpiredToken: refresh required", nil),
+			err:  rpcErr(t, vibekit.RPCCodeInternal, "ExpiredToken: refresh required", nil),
 			want: classFatal,
 		},
 		// KAS reports a throttle on the same -32000 vibekit uses for its own
 		// bridge-exited constant. The data payload is the distinguisher.
 		"throttle is not retryable": {
-			err: rpcErr(t, api.RPCCodeBridgeExited, "Too many requests, please wait.", mappedErrorData{
+			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Too many requests, please wait.", mappedErrorData{
 				ErrorType:      "ClientThrottleError",
 				RetryErrorType: "THROTTLING",
 				RequestID:      "abc-123",
@@ -94,28 +94,28 @@ func TestClassifyPromptFailure(t *testing.T) {
 		// rate limit. A validation failure telling the user to wait and retry is
 		// worse than the bare "Internal error" it replaced.
 		"validation error is not a throttle": {
-			err: rpcErr(t, api.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
+			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
 				ErrorType:      "GenericValidationError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
 			want: classFatal,
 		},
 		"access denied is not a throttle": {
-			err: rpcErr(t, api.RPCCodeBridgeExited, "Access denied.", mappedErrorData{
+			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "Access denied.", mappedErrorData{
 				ErrorType:      "AccessDeniedError",
 				RetryErrorType: "CLIENT_ERROR",
 			}),
 			want: classFatal,
 		},
 		"server error is not a throttle": {
-			err: rpcErr(t, api.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
+			err: rpcErr(t, vibekit.RPCCodeBridgeExited, "The service failed.", mappedErrorData{
 				ErrorType:      "InternalServerError",
 				RetryErrorType: "SERVER_ERROR",
 			}),
 			want: classFatal,
 		},
 		"mapped error with no retry classification is fatal": {
-			err:  rpcErr(t, api.RPCCodeBridgeExited, "some other mapped failure", nil),
+			err:  rpcErr(t, vibekit.RPCCodeBridgeExited, "some other mapped failure", nil),
 			want: classFatal,
 		},
 		"nil is fatal":         {err: nil, want: classFatal},
@@ -151,12 +151,12 @@ func retriesFor(err error) bool {
 // corpse cannot answer, and KAS's own client already spent five adaptive
 // attempts on the throttle before handing it over, so a sixth only deepens it.
 func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
-	dead := &api.TransportError{Err: api.ErrBridgeExited, Retryable: true}
+	dead := &vibekit.TransportError{Err: vibekit.ErrBridgeExited, Retryable: true}
 	if retriesFor(dead) {
 		t.Error("a dead bridge is reported retryable; every attempt fails instantly against a closed done channel")
 	}
 
-	throttle := rpcErr(t, api.RPCCodeBridgeExited, "Too many requests.", mappedErrorData{
+	throttle := rpcErr(t, vibekit.RPCCodeBridgeExited, "Too many requests.", mappedErrorData{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 	})
@@ -166,10 +166,10 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 
 	// The two classes that SHOULD still retry, so the fix cannot be "return
 	// false for everything".
-	if !retriesFor(fmt.Errorf("ACP error -32001: %w", api.ErrNotIdle)) {
+	if !retriesFor(fmt.Errorf("ACP error -32001: %w", vibekit.ErrNotIdle)) {
 		t.Error("a busy session must still be retried")
 	}
-	if !retriesFor(&api.TransportError{Err: errors.New("write to ACP"), Retryable: true}) {
+	if !retriesFor(&vibekit.TransportError{Err: errors.New("write to ACP"), Retryable: true}) {
 		t.Error("a transient write failure must still be retried")
 	}
 }
@@ -180,7 +180,7 @@ func TestRetryPolicy_NeverRetriesADeadBridgeOrAThrottle(t *testing.T) {
 // both are known.
 func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	const kasMsg = "Too many requests, please wait before trying again."
-	err := rpcErr(t, api.RPCCodeBridgeExited, kasMsg, mappedErrorData{
+	err := rpcErr(t, vibekit.RPCCodeBridgeExited, kasMsg, mappedErrorData{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-9",
@@ -201,7 +201,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	}
 
 	// A non-throttle mapped error must NOT gain the wait-and-retry advice.
-	other := rpcErr(t, api.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
+	other := rpcErr(t, vibekit.RPCCodeBridgeExited, "The request was invalid.", mappedErrorData{
 		ErrorType:      "GenericValidationError",
 		RetryErrorType: "CLIENT_ERROR",
 	})
@@ -214,7 +214,7 @@ func TestPromptFailureReason_NamesAThrottle(t *testing.T) {
 	// shapes and would return the JSON verbatim — the rendering this function's
 	// own comment names as the regression. The cases above cannot reach that
 	// branch, because KAS normally fills `message`.
-	blank := rpcErr(t, api.RPCCodeBridgeExited, "", mappedErrorData{
+	blank := rpcErr(t, vibekit.RPCCodeBridgeExited, "", mappedErrorData{
 		ErrorType:      "ClientThrottleError",
 		RetryErrorType: "THROTTLING",
 		RequestID:      "req-11",

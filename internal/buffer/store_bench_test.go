@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func BenchmarkBufferStore_Contention(b *testing.B) {
@@ -21,7 +21,7 @@ func BenchmarkBufferStore_Contention(b *testing.B) {
 				wg.Add(1)
 				go func(id int) {
 					defer wg.Done()
-					chatID := api.ChatID(fmt.Sprintf("chat-%d", id))
+					chatID := vibekit.ChatID(fmt.Sprintf("chat-%d", id))
 					for range perG {
 						buf := store.GetOrInit(chatID)
 						buf.Content.WriteString("x")
@@ -36,7 +36,7 @@ func BenchmarkBufferStore_Contention(b *testing.B) {
 
 func BenchmarkLineTracker_Parallel(b *testing.B) {
 	lt := NewLineTracker()
-	chatID := api.ChatID("bench-chat")
+	chatID := vibekit.ChatID("bench-chat")
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -53,9 +53,9 @@ func BenchmarkLineTracker_Parallel(b *testing.B) {
 func BenchmarkBufferTrackFileChanges(b *testing.B) {
 	for _, numDiffs := range []int{1, 10, 100} {
 		b.Run(fmt.Sprintf("diffs=%d", numDiffs), func(b *testing.B) {
-			diffs := make([]api.ToolDiff, numDiffs)
+			diffs := make([]vibekit.ToolDiff, numDiffs)
 			for i := range diffs {
-				diffs[i] = api.ToolDiff{
+				diffs[i] = vibekit.ToolDiff{
 					Path:    fmt.Sprintf("file-%d.go", i),
 					OldText: "old line\n",
 					NewText: "new line\nnew line 2\n",
@@ -73,7 +73,7 @@ func BenchmarkBufferTrackFileChanges(b *testing.B) {
 
 func BenchmarkLineTrackerEviction(b *testing.B) {
 	lt := NewLineTracker()
-	chatID := api.ChatID("eviction-chat")
+	chatID := vibekit.ChatID("eviction-chat")
 
 	// Pre-populate to capacity (500 files).
 	for i := range maxFilesPerChat {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // FuzzBuildHistory targets the plain-text history builder used for prime
@@ -31,21 +31,21 @@ func FuzzBuildHistory(f *testing.F) {
 			t.Fatalf("NewStore: %v", err)
 		}
 
-		chatID := api.ChatID("fuzz-history-1")
+		chatID := vibekit.ChatID("fuzz-history-1")
 		ctx := t.Context()
 
 		// Create chat with messages of various roles.
-		err = s.Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+		err = s.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 			c.Name = "history-test"
-			c.Messages = []api.Message{
-				{ID: "m1", Role: api.RoleUser, Content: userContent, Ts: 1},
-				{ID: "m2", Role: api.RoleAssistant, Content: assistantContent, Ts: 2},
-				{ID: "m3", Role: api.RoleEvent, EventKind: api.EventCompacted, Content: eventContent, Ts: 3},
+			c.Messages = []vibekit.Message{
+				{ID: "m1", Role: vibekit.RoleUser, Content: userContent, Ts: 1},
+				{ID: "m2", Role: vibekit.RoleAssistant, Content: assistantContent, Ts: 2},
+				{ID: "m3", Role: vibekit.RoleEvent, EventKind: vibekit.EventCompacted, Content: eventContent, Ts: 3},
 			}
 			// Optionally add unknown role based on flags.
 			if flags&1 != 0 {
-				c.Messages = append(c.Messages, api.Message{
-					ID: "m4", Role: api.Role("unknown_role"), Content: "ignored", Ts: 4,
+				c.Messages = append(c.Messages, vibekit.Message{
+					ID: "m4", Role: vibekit.Role("unknown_role"), Content: "ignored", Ts: 4,
 				})
 			}
 			return true
@@ -75,7 +75,7 @@ func FuzzBuildHistory(f *testing.F) {
 		// indistinguishable from a short conversation, so the model would answer
 		// confidently about history it never received.
 		full := len("User: "+userContent+"\n") + len("Assistant: "+assistantContent+"\n") +
-			len("["+string(api.EventCompacted)+"] "+eventContent+"\n")
+			len("["+string(vibekit.EventCompacted)+"] "+eventContent+"\n")
 		if full > primeHistoryCap && !strings.Contains(history, "omitted") &&
 			!strings.Contains(history, "...") {
 			t.Fatalf("BuildHistory trimmed %d bytes to %d without saying so", full, len(history))

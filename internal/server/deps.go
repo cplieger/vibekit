@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // The interfaces below are declared HERE, at the consumer that calls them,
@@ -25,7 +25,7 @@ import (
 // /api/*. This package is the ROUTER, so it is the only consumer: the six
 // packages that satisfy it (auth, filebrowse, forges, git, mcp's Store and its
 // RegistryProxy) implement it, and an implementor is not a consumer. That is
-// why one declaration here replaces the shared api.RouteHandler rather than
+// why one declaration here replaces the shared vibekit.RouteHandler rather than
 // eight copies of it.
 //
 // 1 method, which is the whole of it — there is no narrower statement of "owns
@@ -46,7 +46,7 @@ type chatHub interface {
 	routeHandler
 
 	// Broadcast fans one event out to every connected SSE client.
-	Broadcast(ctx context.Context, evt api.ServerEvent)
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 	// Shutdown drains in-flight prompts and closes all bridges.
 	Shutdown()
 }
@@ -62,7 +62,7 @@ type pushService interface {
 	routeHandler
 
 	// SetPreferences replaces the per-kind notification toggles.
-	SetPreferences(prefs map[api.PushKind]bool)
+	SetPreferences(prefs map[vibekit.PushKind]bool)
 }
 
 // SteeringGenerator generates steering files for kiro-cli.
@@ -85,7 +85,7 @@ type SteeringGenerator interface {
 // statement of what this endpoint needs. Exported because the composition root
 // names it in server.WithAccountUsage.
 type AccountUsageProvider interface {
-	AccountUsage(ctx context.Context) (*api.AccountUsage, error)
+	AccountUsage(ctx context.Context) (*vibekit.AccountUsage, error)
 }
 
 // policyProvider READS kiro-cli's native Cedar policy over a live bridge,// backing GET /api/permissions and the pre-flight simulation at
@@ -96,8 +96,8 @@ type AccountUsageProvider interface {
 // POST /api/permissions/rules needs no provider at all — it is a file write
 // KAS hot-reloads, which is why this contract is read-only.
 type policyProvider interface {
-	PolicyList(ctx context.Context, scope string) ([]api.PolicyRule, error)
-	PolicyExplain(ctx context.Context, req api.PolicyExplainRequest) (*api.PolicyExplainResult, error)
+	PolicyList(ctx context.Context, scope string) ([]vibekit.PolicyRule, error)
+	PolicyExplain(ctx context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error)
 }
 
 // utilityPrompter is AI-backed text generation for the two endpoints this
@@ -109,5 +109,5 @@ type policyProvider interface {
 // than to share, and sharing it is what put it in a hub package in the first
 // place. It is NOT used for chat titles: those come from KAS.
 type utilityPrompter interface {
-	UtilityPrompt(ctx context.Context, prompt string, effort api.EffortLevel) (string, error)
+	UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error)
 }

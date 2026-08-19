@@ -16,7 +16,7 @@ import (
 	"strings"
 
 	"github.com/cplieger/atomicfile/v2"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // MaxHookField caps the per-field size for CmdCreateHook payloads.
@@ -49,7 +49,7 @@ func hookFieldsExceedLimit(p *hookCreatePayload) bool {
 }
 
 // validateHookPayload decodes + validates a CmdCreateHook payload.
-func validateHookPayload(cmd *api.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
+func validateHookPayload(cmd *vibekit.ClientCommand) (p hookCreatePayload, safeName string, code int, err error) {
 	if uErr := json.Unmarshal(cmd.Payload, &p); uErr != nil || p.Name == "" || p.EventType == "" {
 		return p, "", http.StatusBadRequest, ErrInvalidPayload
 	}
@@ -245,7 +245,7 @@ func buildHookDoc(p *hookCreatePayload) hookDoc {
 }
 
 // CmdCreateHook creates a hook file from chat context.
-func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdCreateHook(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	p, safeName, code, vErr := validateHookPayload(cmd)
 	if vErr != nil {
 		d.RespondErr(w, code, vErr)

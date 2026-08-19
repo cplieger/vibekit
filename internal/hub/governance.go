@@ -26,8 +26,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -41,7 +41,7 @@ const governanceWarmTimeout = 12 * time.Second
 // until the first push; warm is closed exactly once (on that first push) so a
 // cold reader can block for it without spinning.
 type governanceCache struct {
-	state *api.GovernanceStatePayload
+	state *vibekit.GovernanceStatePayload
 	warm  chan struct{}
 	mu    sync.RWMutex
 	once  sync.Once
@@ -52,7 +52,7 @@ func newGovernanceCache() *governanceCache {
 }
 
 // set stores a copy of the latest state and closes warm on the first call.
-func (c *governanceCache) set(p api.GovernanceStatePayload) {
+func (c *governanceCache) set(p vibekit.GovernanceStatePayload) {
 	c.mu.Lock()
 	cp := p
 	c.state = &cp
@@ -61,18 +61,18 @@ func (c *governanceCache) set(p api.GovernanceStatePayload) {
 }
 
 // get returns the cached state and whether one has been observed.
-func (c *governanceCache) get() (api.GovernanceStatePayload, bool) {
+func (c *governanceCache) get() (vibekit.GovernanceStatePayload, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.state == nil {
-		return api.GovernanceStatePayload{}, false
+		return vibekit.GovernanceStatePayload{}, false
 	}
 	return *c.state, true
 }
 
 // SetGovernance caches the latest governance state. Satisfies translate.Deps
 // (called by translate.HandleGovernanceState on the chat-bridge path).
-func (h *Hub) SetGovernance(p api.GovernanceStatePayload) {
+func (h *Hub) SetGovernance(p vibekit.GovernanceStatePayload) {
 	h.governance.set(p)
 }
 
@@ -87,7 +87,7 @@ func (h *Hub) cacheGovernanceFromUtility(raw json.RawMessage) {
 		return
 	}
 	h.governance.set(payload)
-	h.Broadcast(h.lifecycle.shutdownCtx, api.NewEvent(api.EventGovernanceState, "", payload))
+	h.Broadcast(h.lifecycle.shutdownCtx, vibekit.NewEvent(vibekit.EventGovernanceState, "", payload))
 }
 
 // Governance returns the cached governance state. On a warm cache it returns
@@ -96,7 +96,7 @@ func (h *Hub) cacheGovernanceFromUtility(raw json.RawMessage) {
 // for the first push. A failure to warm returns a Known=false snapshot so the
 // client leaves governed affordances at their permissive default rather than
 // reading the zero value as "everything disabled".
-func (h *Hub) Governance(ctx context.Context) api.GovernanceStatePayload {
+func (h *Hub) Governance(ctx context.Context) vibekit.GovernanceStatePayload {
 	if p, ok := h.governance.get(); ok {
 		return p
 	}
@@ -105,7 +105,7 @@ func (h *Hub) Governance(ctx context.Context) api.GovernanceStatePayload {
 	defer cancel()
 	if err := u.session.ensureStarted(warmCtx); err != nil {
 		slog.Warn("governance: utility bridge start failed", "error", err)
-		return api.GovernanceStatePayload{}
+		return vibekit.GovernanceStatePayload{}
 	}
 	select {
 	case <-h.governance.warm:
@@ -114,7 +114,7 @@ func (h *Hub) Governance(ctx context.Context) api.GovernanceStatePayload {
 	if p, ok := h.governance.get(); ok {
 		return p
 	}
-	return api.GovernanceStatePayload{}
+	return vibekit.GovernanceStatePayload{}
 }
 
 // handleGovernance: GET /api/governance → the cached account/workspace

@@ -18,7 +18,7 @@
 //     matches only a top-level "node" entry, not "src/node".
 //   - Trailing `/` restricts the rule to directories.
 //   - Directory-match implies descendants: "/secrets" matches
-//     "secrets" AND "secrets/api.key" AND "secrets/sub/deep.json"
+//     "secrets" AND "secrets/vibekit.key" AND "secrets/sub/deep.json"
 //     (standard gitignore semantics).
 //   - Leading `!` negates a previously-matched rule so users can
 //     carve out exceptions ("!/.env.example").

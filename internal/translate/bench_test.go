@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // baseDeps is a composable Deps implementation for tests and benchmarks.
@@ -16,10 +16,10 @@ type baseDeps struct {
 	store       ChatRecords
 	bufStore    *buffer.Store
 	lineTracker *buffer.LineTracker
-	onBroadcast func(context.Context, api.ServerEvent)
+	onBroadcast func(context.Context, vibekit.ServerEvent)
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
 	// assert the hub-side cache write (mirrors onBroadcast).
-	onSetGovernance func(api.GovernanceStatePayload)
+	onSetGovernance func(vibekit.GovernanceStatePayload)
 	// scheduledRuns are the workflow ids IsScheduledRun answers true for, so a
 	// test can stage a scheduled run without a hub or a scheduler.
 	scheduledRuns map[string]bool
@@ -41,7 +41,7 @@ type baseDeps struct {
 // termRendered is one terminal's rendered output in the stub registry.
 type termRendered struct {
 	text  string
-	spans []api.TextSpan
+	spans []vibekit.TextSpan
 }
 
 func newBaseDeps() *baseDeps {
@@ -53,18 +53,18 @@ func newBaseDeps() *baseDeps {
 	}
 }
 
-func (d *baseDeps) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
+func (d *baseDeps) TerminalOutput(terminalID string) (string, []vibekit.TextSpan, bool) {
 	t, ok := d.terminals[terminalID]
 	return t.text, t.spans, ok
 }
 
-func (d *baseDeps) Broadcast(ctx context.Context, evt api.ServerEvent) {
+func (d *baseDeps) Broadcast(ctx context.Context, evt vibekit.ServerEvent) {
 	if d.onBroadcast != nil {
 		d.onBroadcast(ctx, evt)
 	}
 }
-func (d *baseDeps) ChatRecords() ChatRecords           { return d.store }
-func (d *baseDeps) ParentACPSession(api.ChatID) string { return d.parent }
+func (d *baseDeps) ChatRecords() ChatRecords               { return d.store }
+func (d *baseDeps) ParentACPSession(vibekit.ChatID) string { return d.parent }
 func (d *baseDeps) IsScheduledRun(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
@@ -80,29 +80,32 @@ func (d *baseDeps) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
 	d.stepCapBreaches = append(d.stepCapBreaches, stepCapBreach{workflowID, nodeID, turns})
 }
 func (d *baseDeps) WorkDir() string { return "/tmp" }
-func (d *baseDeps) BridgeNotify(context.Context, api.ChatID, string, map[string]any) error {
+func (d *baseDeps) BridgeNotify(context.Context, vibekit.ChatID, string, map[string]any) error {
 	return nil
 }
-func (d *baseDeps) BridgeRespond(context.Context, api.ChatID, int64, any, error) error { return nil }
-func (d *baseDeps) MCPRecorder() MCPRecorder                                           { return nopMCPRecorder{} }
-func (d *baseDeps) SetGovernance(g api.GovernanceStatePayload) {
+
+func (d *baseDeps) BridgeRespond(context.Context, vibekit.ChatID, int64, any, error) error {
+	return nil
+}
+func (d *baseDeps) MCPRecorder() MCPRecorder { return nopMCPRecorder{} }
+func (d *baseDeps) SetGovernance(g vibekit.GovernanceStatePayload) {
 	if d.onSetGovernance != nil {
 		d.onSetGovernance(g)
 	}
 }
-func (d *baseDeps) PendingPermsAdd(int64, api.ServerEvent)                       {}
-func (d *baseDeps) PendingPermsRemove(int64)                                     {}
-func (d *baseDeps) NotifyPush(context.Context, string, api.PushKind, api.ChatID) {}
-func (d *baseDeps) BufferStore() BufferAccess                                    { return d.bufStore }
-func (d *baseDeps) LineTracker() LineRecorder                                    { return d.lineTracker }
-func (d *baseDeps) IsHookStatusEnabled() bool                                    { return false }
+func (d *baseDeps) PendingPermsAdd(int64, vibekit.ServerEvent)                           {}
+func (d *baseDeps) PendingPermsRemove(int64)                                             {}
+func (d *baseDeps) NotifyPush(context.Context, string, vibekit.PushKind, vibekit.ChatID) {}
+func (d *baseDeps) BufferStore() BufferAccess                                            { return d.bufStore }
+func (d *baseDeps) LineTracker() LineRecorder                                            { return d.lineTracker }
+func (d *baseDeps) IsHookStatusEnabled() bool                                            { return false }
 
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 
 func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 	tr := New(newBaseDeps(), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
-	chatID := api.ChatID("bench-chat")
+	chatID := vibekit.ChatID("bench-chat")
 
 	b.ResetTimer()
 	for b.Loop() {
@@ -116,7 +119,7 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 	deps := newBaseDeps()
 	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
-	chatID := api.ChatID("bench-chunk")
+	chatID := vibekit.ChatID("bench-chunk")
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
 
@@ -145,7 +148,7 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		chatID := api.ChatID("bench-turn")
+		chatID := vibekit.ChatID("bench-turn")
 		// Phase 1: initial streaming chunks
 		for range 50 {
 			tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
@@ -166,11 +169,11 @@ func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	deps := newBaseDeps()
 	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
-	chatID := api.ChatID("bench-usage")
+	chatID := vibekit.ChatID("bench-usage")
 	raw := json.RawMessage(`{"size":100000,"used":42500}`)
 
 	// Pre-create a chat so Mutate finds it.
-	_ = deps.store.Mutate(ctx, chatID, func(_ *api.Chat, _ bool) bool { return true })
+	_ = deps.store.Mutate(ctx, chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
 
 	b.ReportAllocs()
 	b.ResetTimer()

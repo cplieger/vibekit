@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Agent user-input question types (kiro-cli v3 _kiro/userInput, 2.14+).
 //

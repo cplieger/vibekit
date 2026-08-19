@@ -3,7 +3,7 @@ package testsupport
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // ACPPreStartBridge is the subject of ACPBridgePreStartContractTest: the 5
@@ -12,11 +12,11 @@ import (
 // widths, up to 14 methods — and a contract suite has no business naming a
 // method it does not exercise.
 type ACPPreStartBridge interface {
-	NotifCh() <-chan *api.RPCResponse
+	NotifCh() <-chan *vibekit.RPCResponse
 	Stop()
 	CurrentMode() string
-	Modes() []api.SessionMode
-	Models() []api.SessionModel
+	Modes() []vibekit.SessionMode
+	Models() []vibekit.SessionModel
 }
 
 // ACPBridgePreStartContractTest verifies behavioral contracts that any ACP

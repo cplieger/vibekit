@@ -16,30 +16,30 @@ import (
 	"testing"
 
 	"github.com/cplieger/slogx/capture"
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 const (
-	testChat   = api.ChatID("chat-1")
+	testChat   = vibekit.ChatID("chat-1")
 	testParent = "sess_parent"
 	testStep   = "sess_step"
 	testSub    = "sess_subagent"
 )
 
 // notif builds an A→C notification frame with the given params.
-func notif(method string, params map[string]any) *api.RPCResponse {
+func notif(method string, params map[string]any) *vibekit.RPCResponse {
 	raw, err := json.Marshal(params)
 	if err != nil {
 		panic(err)
 	}
-	return &api.RPCResponse{Method: method, Params: raw}
+	return &vibekit.RPCResponse{Method: method, Params: raw}
 }
 
 // capturing returns deps that append every broadcast event to the slice.
-func capturing(events *[]api.ServerEvent) *baseDeps {
+func capturing(events *[]vibekit.ServerEvent) *baseDeps {
 	d := newBaseDeps()
 	d.parent = testParent
-	d.onBroadcast = func(_ context.Context, evt api.ServerEvent) {
+	d.onBroadcast = func(_ context.Context, evt vibekit.ServerEvent) {
 		*events = append(*events, evt)
 	}
 	return d
@@ -47,7 +47,7 @@ func capturing(events *[]api.ServerEvent) *baseDeps {
 
 func TestClassifyFrame(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	tr.RecordStepSession(testStep, "wf_1", "s1")
 
@@ -84,7 +84,7 @@ func TestClassifyFrame(t *testing.T) {
 // SubSessionID that names a subagent which does not exist.
 func TestDeriveSubSession_StepIsNotASubagent(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	tr.RecordStepSession(testStep, "wf_1", "s1")
 
@@ -105,7 +105,7 @@ func TestDeriveSubSession_StepIsNotASubagent(t *testing.T) {
 // twice.
 func TestForeignSession_DropsBothNonChatOwners(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	tr.RecordStepSession(testStep, "wf_1", "s1")
 
@@ -133,24 +133,24 @@ func TestRunNotifications_NineBecomeThree(t *testing.T) {
 	cases := []struct {
 		method   string
 		params   map[string]any
-		wantType api.EventType
-		wantKind api.RunProgressKind
+		wantType vibekit.EventType
+		wantKind vibekit.RunProgressKind
 	}{
-		{"run_start", map[string]any{"workflowId": "wf_1", "workflowName": "publish"}, api.EventRunStarted, ""},
-		{"run_complete", map[string]any{"workflowId": "wf_1", "status": "completed"}, api.EventRunFinished, ""},
-		{"node_start", map[string]any{"workflowId": "wf_1", "nodeId": "a"}, api.EventRunProgress, api.RunProgressNodeStart},
-		{"node_complete", map[string]any{"workflowId": "wf_1", "nodeId": "a"}, api.EventRunProgress, api.RunProgressNodeComplete},
-		{"node_paused", map[string]any{"workflowId": "wf_1", "nodeId": "a"}, api.EventRunProgress, api.RunProgressNodePaused},
-		{"paused", map[string]any{"workflowId": "wf_1"}, api.EventRunProgress, api.RunProgressPaused},
-		{"watch_poll", map[string]any{"workflowId": "wf_1", "nodeId": "w"}, api.EventRunProgress, api.RunProgressWatchPoll},
-		{"steps_queued", map[string]any{"workflowId": "wf_1"}, api.EventRunProgress, api.RunProgressStepsQueued},
+		{"run_start", map[string]any{"workflowId": "wf_1", "workflowName": "publish"}, vibekit.EventRunStarted, ""},
+		{"run_complete", map[string]any{"workflowId": "wf_1", "status": "completed"}, vibekit.EventRunFinished, ""},
+		{"node_start", map[string]any{"workflowId": "wf_1", "nodeId": "a"}, vibekit.EventRunProgress, vibekit.RunProgressNodeStart},
+		{"node_complete", map[string]any{"workflowId": "wf_1", "nodeId": "a"}, vibekit.EventRunProgress, vibekit.RunProgressNodeComplete},
+		{"node_paused", map[string]any{"workflowId": "wf_1", "nodeId": "a"}, vibekit.EventRunProgress, vibekit.RunProgressNodePaused},
+		{"paused", map[string]any{"workflowId": "wf_1"}, vibekit.EventRunProgress, vibekit.RunProgressPaused},
+		{"watch_poll", map[string]any{"workflowId": "wf_1", "nodeId": "w"}, vibekit.EventRunProgress, vibekit.RunProgressWatchPoll},
+		{"steps_queued", map[string]any{"workflowId": "wf_1"}, vibekit.EventRunProgress, vibekit.RunProgressStepsQueued},
 		// loop_iteration names its node in `loopId`, not `nodeId`.
-		{"loop_iteration", map[string]any{"workflowId": "wf_1", "loopId": "loop"}, api.EventRunProgress, api.RunProgressLoopIteration},
+		{"loop_iteration", map[string]any{"workflowId": "wf_1", "loopId": "loop"}, vibekit.EventRunProgress, vibekit.RunProgressLoopIteration},
 	}
 	for _, c := range cases {
 		t.Run(c.method, func(t *testing.T) {
 			t.Parallel()
-			var events []api.ServerEvent
+			var events []vibekit.ServerEvent
 			tr := New(capturing(&events))
 			msg := notif("_kiro/workflow/"+c.method, c.params)
 			switch c.method {
@@ -176,7 +176,7 @@ func TestRunNotifications_NineBecomeThree(t *testing.T) {
 			if c.wantKind == "" {
 				return
 			}
-			p, ok := events[0].Payload.(api.RunProgressPayload)
+			p, ok := events[0].Payload.(vibekit.RunProgressPayload)
 			if !ok {
 				t.Fatalf("%s: payload type %T, want RunProgressPayload", c.method, events[0].Payload)
 			}
@@ -194,11 +194,11 @@ func TestRunNotifications_NineBecomeThree(t *testing.T) {
 // still has something to label the row with.
 func TestRunStart_CarriesTheName(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	tr.HandleRunStart(t.Context(), testChat,
 		notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "publish-pr"}))
-	p, ok := events[0].Payload.(api.RunStartedPayload)
+	p, ok := events[0].Payload.(vibekit.RunStartedPayload)
 	if !ok {
 		t.Fatalf("payload type %T", events[0].Payload)
 	}
@@ -233,7 +233,7 @@ func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			var events []api.ServerEvent
+			var events []vibekit.ServerEvent
 			deps := capturing(&events)
 			deps.scheduledRuns = c.scheduled
 			tr := New(deps)
@@ -243,7 +243,7 @@ func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 			tr.HandleRunStart(t.Context(), "",
 				notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "nightly"}))
 
-			p, ok := events[0].Payload.(api.RunStartedPayload)
+			p, ok := events[0].Payload.(vibekit.RunStartedPayload)
 			if !ok {
 				t.Fatalf("payload type %T, want RunStartedPayload", events[0].Payload)
 			}
@@ -266,7 +266,7 @@ func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 // nothing at all.
 func TestRunComplete_CarriesTheRunsName(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 
 	tr.HandleRunComplete(t.Context(), "", notif("_kiro/workflow/run_complete", map[string]any{
@@ -274,7 +274,7 @@ func TestRunComplete_CarriesTheRunsName(t *testing.T) {
 		"status":     "completed",
 		"finalState": map[string]any{"workflowName": "nightly-publish"},
 	}))
-	p, ok := events[0].Payload.(api.RunFinishedPayload)
+	p, ok := events[0].Payload.(vibekit.RunFinishedPayload)
 	if !ok {
 		t.Fatalf("payload type %T, want RunFinishedPayload", events[0].Payload)
 	}
@@ -291,7 +291,7 @@ func TestRunComplete_CarriesTheRunsName(t *testing.T) {
 	tr.HandleRunComplete(t.Context(), "", notif("_kiro/workflow/run_complete", map[string]any{
 		"workflowId": "wf_2", "status": "failed",
 	}))
-	if p, _ := events[0].Payload.(api.RunFinishedPayload); p.Name != "" {
+	if p, _ := events[0].Payload.(vibekit.RunFinishedPayload); p.Name != "" {
 		t.Errorf("name = %q for a frame with no finalState, want empty", p.Name)
 	}
 }
@@ -300,12 +300,12 @@ func TestRunComplete_CarriesTheRunsName(t *testing.T) {
 // emits nothing rather than an event naming the empty run.
 func TestRunNotifications_IgnoreFramesWithNoWorkflowID(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	ctx := t.Context()
 	tr.HandleRunStart(ctx, testChat, notif("_kiro/workflow/run_start", map[string]any{}))
 	tr.HandleRunComplete(ctx, testChat, notif("_kiro/workflow/run_complete", map[string]any{}))
-	tr.RunProgressHandler(api.RunProgressNodeStart)(ctx, testChat,
+	tr.RunProgressHandler(vibekit.RunProgressNodeStart)(ctx, testChat,
 		notif("_kiro/workflow/node_start", map[string]any{"nodeId": "a"}))
 	if len(events) != 0 {
 		t.Errorf("got %d events for frames with no workflow id, want 0", len(events))
@@ -317,13 +317,13 @@ func TestRunNotifications_IgnoreFramesWithNoWorkflowID(t *testing.T) {
 // is the ONLY frame that announces a step's session id.
 func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 
 	if _, ok := tr.steps.lookup("sess_new"); ok {
 		t.Fatal("registry is not empty before node_start")
 	}
-	tr.RunProgressHandler(api.RunProgressNodeStart)(t.Context(), testChat,
+	tr.RunProgressHandler(vibekit.RunProgressNodeStart)(t.Context(), testChat,
 		notif("_kiro/workflow/node_start", map[string]any{
 			"workflowId": "wf_1", "nodeId": "build", "sessionId": "sess_new",
 		}))
@@ -336,7 +336,7 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 	}
 	// A node_start without a sessionId (the continuation/resume path) records
 	// nothing rather than an entry keyed on "".
-	tr.RunProgressHandler(api.RunProgressNodeStart)(t.Context(), testChat,
+	tr.RunProgressHandler(vibekit.RunProgressNodeStart)(t.Context(), testChat,
 		notif("_kiro/workflow/node_start", map[string]any{"workflowId": "wf_1", "nodeId": "next"}))
 	if _, ok := tr.steps.lookup(""); ok {
 		t.Error("a node_start with no sessionId recorded an empty-keyed entry")
@@ -349,7 +349,7 @@ func TestNodeStart_RecordsTheStepSession(t *testing.T) {
 // bridge unsubscribes on the same frame, so no later frame for that run arrives.
 func TestRunComplete_ForgetsTheRunsStepSessions(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	tr.RecordStepSession("sess_a", "wf_1", "a")
 	tr.RecordStepSession("sess_b", "wf_1", "b")
@@ -370,7 +370,7 @@ func TestRunComplete_ForgetsTheRunsStepSessions(t *testing.T) {
 
 func TestRecordStepSession_IgnoresIncompleteRefs(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	tr.RecordStepSession("", "wf_1", "a")
 	tr.RecordStepSession("sess_x", "", "a")
@@ -381,7 +381,7 @@ func TestRecordStepSession_IgnoresIncompleteRefs(t *testing.T) {
 
 func TestStepOf_EmptySessionIsNeverAStep(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	if _, ok := tr.steps.lookup(""); ok {
 		t.Error("StepOf(\"\") reported a step")
@@ -477,7 +477,7 @@ func TestStepChunk_OpensItsOwnBlock(t *testing.T) {
 	// The attribution also travels on the wire, so a live renderer groups the
 	// step's deltas without waiting for the turn to persist.
 	last := (*events)[len(*events)-1]
-	p, ok := last.Payload.(api.MessageChunkPayload)
+	p, ok := last.Payload.(vibekit.MessageChunkPayload)
 	if !ok {
 		t.Fatalf("last event payload %T, want MessageChunkPayload", last.Payload)
 	}
@@ -514,10 +514,10 @@ func TestStepChunk_TwoIterationsDoNotShareABlock(t *testing.T) {
 // usageStore captures the chat-usage write persistTurnSummary makes.
 type usageStore struct {
 	recStore
-	chat api.Chat
+	chat vibekit.Chat
 }
 
-func (s *usageStore) Mutate(_ context.Context, _ api.ChatID, fn func(*api.Chat, bool) bool) error {
+func (s *usageStore) Mutate(_ context.Context, _ vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
 	s.mutateCalls++
 	fn(&s.chat, true)
 	return nil
@@ -614,7 +614,7 @@ func TestSessionInfoUpdate_StepFramesWithoutMeteringStayDropped(t *testing.T) {
 // step rather than as a subagent.
 func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 
 	if got := tr.ClassifyFrame(testChat, "sess_build", false); got != OwnerSubagent {
@@ -649,7 +649,7 @@ func TestRecordRunSteps_SeedsFromAnInspectRead(t *testing.T) {
 // endpoint passes the same bytes through to the client either way.
 func TestRecordRunSteps_ToleratesJunk(t *testing.T) {
 	t.Parallel()
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 	for _, raw := range []string{`{`, `null`, `[]`, `{"state":null}`, `{"state":{"root":null}}`, `"a string"`, ``} {
 		tr.RecordRunSteps(json.RawMessage(raw))
@@ -732,7 +732,7 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rec := capture.Default(t)
-			var events []api.ServerEvent
+			var events []vibekit.ServerEvent
 			tr := New(capturing(&events))
 			ctx := t.Context()
 
@@ -800,7 +800,7 @@ func TestAgentLaunchedRun_IsRecorded(t *testing.T) {
 func TestRunComplete_ReadsTopLevelParentSessionID(t *testing.T) {
 	const endMsg = "agent-launched workflow run finished"
 	rec := capture.Default(t)
-	var events []api.ServerEvent
+	var events []vibekit.ServerEvent
 	tr := New(capturing(&events))
 
 	tr.HandleRunComplete(t.Context(), testChat, notif("_kiro/workflow/run_complete", map[string]any{

@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // HandleUserInput processes a _kiro/userInput request from KAS (2.14+):
@@ -22,7 +22,7 @@ import (
 // like a permission prompt. The question also arrives as a pending
 // tool_call (kind "other", _meta.kiro.toolId "user_input") that KAS
 // completes itself once answered — no tool bookkeeping here.
-func (t *Translator) HandleUserInput(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if msg.ID == nil {
 		// The request must be answerable; without an id we cannot route
 		// a response, so drop rather than show a dialog whose answer
@@ -36,7 +36,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID api.ChatID, msg
 		Question   string                `json:"question"`
 		Options    []wireUserInputOption `json:"options"`
 	}
-	p, ok := unmarshalParams[userInputParams](msg, api.MethodKiroUserInput)
+	p, ok := unmarshalParams[userInputParams](msg, vibekit.MethodKiroUserInput)
 	if !ok {
 		return
 	}
@@ -47,7 +47,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID api.ChatID, msg
 	reqID := *msg.ID
 
 	step := t.stepRef(p.SessionID)
-	evt := api.NewEvent(api.EventUserInputNeeded, chatID, api.UserInputNeededPayload{
+	evt := vibekit.NewEvent(vibekit.EventUserInputNeeded, chatID, vibekit.UserInputNeededPayload{
 		RequestID:    reqID,
 		Question:     p.Question,
 		Options:      options,
@@ -58,8 +58,8 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID api.ChatID, msg
 	})
 	t.deps.Broadcast(ctx, evt)
 	t.deps.PendingPermsAdd(reqID, evt)
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventWorkingLabel, chatID, api.WorkingLabelPayload{Label: api.WorkingLabelInput}))
-	t.deps.NotifyPush(ctx, "The agent has a question", api.PushKindPermission, chatID)
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventWorkingLabel, chatID, vibekit.WorkingLabelPayload{Label: vibekit.WorkingLabelInput}))
+	t.deps.NotifyPush(ctx, "The agent has a question", vibekit.PushKindPermission, chatID)
 }
 
 // wireUserInputOption / wireUserInputSubOption are KAS's `_kiro/userInput` option
@@ -99,8 +99,8 @@ const (
 // Dropping rather than refusing the whole question: one unusable option among
 // five still leaves a question worth asking, and refusing outright would leave
 // the agent waiting on a request vibekit had already decided not to show.
-func sanitizeUserInputOptions(in []wireUserInputOption) []api.UserInputOption {
-	options := make([]api.UserInputOption, 0, min(len(in), maxUserInputOptions))
+func sanitizeUserInputOptions(in []wireUserInputOption) []vibekit.UserInputOption {
+	options := make([]vibekit.UserInputOption, 0, min(len(in), maxUserInputOptions))
 	seen := make(map[string]struct{}, len(in))
 	for i := range in {
 		o := &in[i]
@@ -112,7 +112,7 @@ func sanitizeUserInputOptions(in []wireUserInputOption) []api.UserInputOption {
 			continue
 		}
 		seen[title] = struct{}{}
-		options = append(options, api.UserInputOption{
+		options = append(options, vibekit.UserInputOption{
 			Title:           title,
 			Description:     o.Description,
 			SubOptionsLabel: o.SubOptionsLabel,
@@ -128,8 +128,8 @@ func sanitizeUserInputOptions(in []wireUserInputOption) []api.UserInputOption {
 
 // sanitizeUserInputSubOptions applies the same three rules one level down. Split
 // out to keep the parent inside the complexity budget.
-func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []api.UserInputSubOption {
-	subs := make([]api.UserInputSubOption, 0, min(len(in), maxUserInputSubOptions))
+func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []vibekit.UserInputSubOption {
+	subs := make([]vibekit.UserInputSubOption, 0, min(len(in), maxUserInputSubOptions))
 	seen := make(map[string]struct{}, len(in))
 	for _, sub := range in {
 		title := strings.TrimSpace(sub.Title)
@@ -140,7 +140,7 @@ func sanitizeUserInputSubOptions(in []wireUserInputSubOption) []api.UserInputSub
 			continue
 		}
 		seen[title] = struct{}{}
-		subs = append(subs, api.UserInputSubOption{Title: title, Description: sub.Description})
+		subs = append(subs, vibekit.UserInputSubOption{Title: title, Description: sub.Description})
 		if len(subs) == maxUserInputSubOptions {
 			break
 		}

@@ -12,7 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // userInputResult is the _kiro/userInput response body. KAS acts on
@@ -26,13 +26,13 @@ type userInputResult struct {
 
 // CmdUserInputResponse forwards the user's answer to kiro-cli as the
 // _kiro/userInput response.
-func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *api.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	sb := d.Bridge().GetBridge(cmd.ChatID)
 	if sb == nil {
 		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
 		return
 	}
-	var p api.UserInputResponseCommand
+	var p vibekit.UserInputResponseCommand
 	if err := json.Unmarshal(cmd.Payload, &p); err != nil {
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -41,12 +41,12 @@ func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	// and would advance anyway — reject so the client bug is visible);
 	// "dismissed" carries none.
 	switch p.Action {
-	case api.UserInputActionAnswered:
+	case vibekit.UserInputActionAnswered:
 		if p.Answer == "" {
 			d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 			return
 		}
-	case api.UserInputActionDismissed:
+	case vibekit.UserInputActionDismissed:
 	default:
 		d.RespondErr(w, http.StatusBadRequest, ErrInvalidPayload)
 		return
@@ -54,12 +54,12 @@ func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	// Take before responding, as CmdPermission does: the agent advances on the
 	// FIRST answer it receives, so a second tab's answer is both discarded and
 	// invisible, and the question the user actually answered stops being knowable.
-	if !d.PendingPerms().TakePendingPerm(p.RequestID, api.SettledByUser) {
+	if !d.PendingPerms().TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
 		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
 		return
 	}
 	result := userInputResult{Action: p.Action}
-	if p.Action == api.UserInputActionAnswered {
+	if p.Action == vibekit.UserInputActionAnswered {
 		result.Answer = p.Answer
 	}
 	if err := sb.Respond(ctx, p.RequestID, result, nil); err != nil {

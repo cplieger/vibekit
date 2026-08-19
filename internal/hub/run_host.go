@@ -49,8 +49,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/runlease"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Workflow RPC param keys, shared across the five verbs.
@@ -65,12 +65,12 @@ const (
 const runChatPrefix = "run:"
 
 // runChatID is the bridge-manager key for a run's bridge.
-func runChatID(workflowID string) api.ChatID {
-	return api.ChatID(runChatPrefix + workflowID)
+func runChatID(workflowID string) vibekit.ChatID {
+	return vibekit.ChatID(runChatPrefix + workflowID)
 }
 
 // isRunChat reports whether a chat id names a run bridge.
-func isRunChat(chatID api.ChatID) bool {
+func isRunChat(chatID vibekit.ChatID) bool {
 	return strings.HasPrefix(string(chatID), runChatPrefix)
 }
 
@@ -148,7 +148,7 @@ func (h *Hub) launchRun(ctx context.Context, source string, inputs map[string]st
 	// session/new-time notifications land there are drained once Forward
 	// starts.
 	bridge := h.bridge.mgr.factory()
-	if sErr := bridge.Start(cctx, &api.StartOpts{Lifetime: h.lifecycle.shutdownCtx}); sErr != nil {
+	if sErr := bridge.Start(cctx, &vibekit.StartOpts{Lifetime: h.lifecycle.shutdownCtx}); sErr != nil {
 		return "", "", fmt.Errorf("run bridge start: %w", sErr)
 	}
 
@@ -346,7 +346,7 @@ func (h *Hub) RetryRun(ctx context.Context, workflowID string) error {
 	recipe := h.recipeOfRun(cctx, workflowID)
 
 	bridge := h.bridge.mgr.factory()
-	if err := bridge.Start(cctx, &api.StartOpts{Lifetime: h.lifecycle.shutdownCtx}); err != nil {
+	if err := bridge.Start(cctx, &vibekit.StartOpts{Lifetime: h.lifecycle.shutdownCtx}); err != nil {
 		return fmt.Errorf("retry bridge start: %w", err)
 	}
 	// Register BEFORE the call, for the same reason LaunchRun does: retry's first
@@ -521,7 +521,7 @@ func (h *Hub) runControl(ctx context.Context, workflowID, method, logLabel strin
 //     transcript — the run tab renders from `inspect` refetches — and buffering
 //     into the synthetic id would open a phantom assistant message on a chat
 //     that must never exist.
-func (h *Hub) runDispatch(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) runDispatch(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if msg.ID != nil {
 		h.runDispatchRequest(ctx, chatID, msg)
 		return
@@ -535,7 +535,7 @@ func (h *Hub) runDispatch(ctx context.Context, chatID api.ChatID, msg *api.RPCRe
 		}
 		return
 	}
-	if msg.Method == api.MethodSessionUpdate {
+	if msg.Method == vibekit.MethodSessionUpdate {
 		return
 	}
 	slog.Debug("run bridge: unhandled notification", "method", msg.Method, "chat_id", chatID)
@@ -545,7 +545,7 @@ func (h *Hub) runDispatch(ctx context.Context, chatID api.ChatID, msg *api.RPCRe
 // mirrors translateACPEvent's request half minus the chat-only concerns; an
 // unmatched request is REFUSED rather than dropped, because an unanswered
 // request wedges the step's turn.
-func (h *Hub) runDispatchRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) runDispatchRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	switch {
 	case h.handleFSRequest(ctx, chatID, msg),
 		h.handleKiroFSRequest(ctx, chatID, msg),
@@ -557,15 +557,15 @@ func (h *Hub) runDispatchRequest(ctx context.Context, chatID api.ChatID, msg *ap
 		return
 	}
 	if fn, ok := h.chatHandlers[msg.Method]; ok &&
-		(msg.Method == api.MethodRequestPermission ||
-			msg.Method == api.MethodElicitationCreate ||
-			msg.Method == api.MethodKiroUserInput) {
+		(msg.Method == vibekit.MethodRequestPermission ||
+			msg.Method == vibekit.MethodElicitationCreate ||
+			msg.Method == vibekit.MethodKiroUserInput) {
 		fn(ctx, chatID, msg)
 		return
 	}
 	slog.Warn("run bridge: refusing unexpected request", "method", msg.Method, "chat_id", chatID)
-	_ = h.BridgeRespond(ctx, chatID, *msg.ID, nil, &api.RPCError{
-		Code:    api.RPCCodeMethodNotFound,
+	_ = h.BridgeRespond(ctx, chatID, *msg.ID, nil, &vibekit.RPCError{
+		Code:    vibekit.RPCCodeMethodNotFound,
 		Message: "unsupported on a run bridge: " + msg.Method,
 	})
 }
@@ -579,7 +579,7 @@ func (h *Hub) runDispatchRequest(ctx context.Context, chatID api.ChatID, msg *ap
 // The close runs in a goroutine because this is called FROM the bridge's own
 // forward loop, and CloseBridge → Stop closes the channel that loop ranges
 // over.
-func (h *Hub) closeFinishedRunBridge(chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) closeFinishedRunBridge(chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		Status string `json:"status"`
 	}
@@ -600,20 +600,20 @@ func terminalRunStatus(s string) bool {
 }
 
 // recipeBySource resolves a launch source against the CURRENT recipe list.
-func (h *Hub) recipeBySource(ctx context.Context, source string) (api.Recipe, error) {
+func (h *Hub) recipeBySource(ctx context.Context, source string) (vibekit.Recipe, error) {
 	if source == "" {
-		return api.Recipe{}, errors.New("missing recipe source")
+		return vibekit.Recipe{}, errors.New("missing recipe source")
 	}
 	recipes, err := h.listRecipes(ctx)
 	if err != nil {
-		return api.Recipe{}, err
+		return vibekit.Recipe{}, err
 	}
 	for _, r := range recipes {
 		if r.Source == source {
 			return r, nil
 		}
 	}
-	return api.Recipe{}, fmt.Errorf("unknown recipe source %q", source)
+	return vibekit.Recipe{}, fmt.Errorf("unknown recipe source %q", source)
 }
 
 // recipeIdle enforces the single-run rule against the current run list.
@@ -650,7 +650,7 @@ func (h *Hub) recipeIdle(ctx context.Context, name string) error {
 }
 
 // kasRecipe is one listRecipes entry as KAS reports it (probe 26). `plan` rides
-// through as raw JSON — see api.Recipe.
+// through as raw JSON — see vibekit.Recipe.
 type kasRecipe struct {
 	Inputs      map[string]string `json:"inputs"`
 	Name        string            `json:"name"`
@@ -662,7 +662,7 @@ type kasRecipe struct {
 
 // listRecipes fetches the launchable recipe list (bundled + workspace) through
 // the utility session — a pure read, safe on the shared connection.
-func (h *Hub) listRecipes(ctx context.Context) ([]api.Recipe, error) {
+func (h *Hub) listRecipes(ctx context.Context) ([]vibekit.Recipe, error) {
 	u := h.ensureUtility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
@@ -677,12 +677,12 @@ func (h *Hub) listRecipes(ctx context.Context) ([]api.Recipe, error) {
 	if err := json.Unmarshal(raw, &list); err != nil {
 		return nil, err
 	}
-	out := make([]api.Recipe, 0, len(list.Recipes))
+	out := make([]vibekit.Recipe, 0, len(list.Recipes))
 	for _, r := range list.Recipes {
 		if r.Name == "" || r.Source == "" {
 			continue
 		}
-		out = append(out, api.Recipe{
+		out = append(out, vibekit.Recipe{
 			Name:        r.Name,
 			Description: r.Description,
 			Source:      r.Source,
@@ -720,7 +720,7 @@ func (h *Hub) workflowNew(ctx context.Context, bridge acpCaller, source string, 
 }
 
 // runCallErr folds a bridge Call's two failure channels into one error.
-func runCallErr(resp *api.RPCResponse, err error) error {
+func runCallErr(resp *vibekit.RPCResponse, err error) error {
 	if err != nil {
 		return err
 	}
@@ -753,7 +753,7 @@ const stalePauseReason = "Interrupted by agent restart; the previously running s
 // resumeAll, which would sweep runs other chats or the TUI paused on purpose),
 // and to the restart pauseReason literal (a deliberately-paused run stays
 // paused).
-func (h *Hub) resumeRestartPausedRuns(ctx context.Context, chatID api.ChatID) {
+func (h *Hub) resumeRestartPausedRuns(ctx context.Context, chatID vibekit.ChatID) {
 	chat, ok := h.chatStore.Get(ctx, chatID)
 	if !ok {
 		return
@@ -782,7 +782,7 @@ func (h *Hub) resumeRestartPausedRuns(ctx context.Context, chatID api.ChatID) {
 // reason is the restart literal. Resumed on the CHAT's bridge, so the chat's
 // process becomes the run's owner again — which is where an agent-launched
 // run's frames belong.
-func (h *Hub) resumeIfRestartPaused(ctx context.Context, chatID api.ChatID, workflowID string) {
+func (h *Hub) resumeIfRestartPaused(ctx context.Context, chatID vibekit.ChatID, workflowID string) {
 	// The same predicate the orphan sweep reads, inverted in action: that one
 	// CANCELS what this one RESUMES. One function rather than two copies of a
 	// literal comparison, so the two cannot drift into disagreeing about which
@@ -828,7 +828,7 @@ func (h *Hub) workflowRunsRaw(ctx context.Context) ([]kasWorkflowRun, error) {
 // Best-effort throughout: a run list failure or a per-run cancel failure is
 // logged and the close proceeds. Blocking a tab close on a workflow RPC would
 // invert the gesture's meaning — the user said stop, not wait.
-func (h *Hub) CancelChatRuns(ctx context.Context, chatID api.ChatID) {
+func (h *Hub) CancelChatRuns(ctx context.Context, chatID vibekit.ChatID) {
 	chat, ok := h.chatStore.Get(ctx, chatID)
 	if !ok {
 		return

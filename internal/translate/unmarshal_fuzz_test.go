@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // FuzzUnmarshalParams pins the cross-function consistency of the generic
@@ -24,7 +24,7 @@ func FuzzUnmarshalParams(f *testing.F) {
 	f.Add([]byte{0xff, 0xfe}) // invalid UTF-8
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		msg := &api.RPCResponse{
+		msg := &vibekit.RPCResponse{
 			JSONRPC: "2.0",
 			Method:  "test",
 			Params:  json.RawMessage(data),
@@ -39,7 +39,7 @@ func FuzzUnmarshalParams(f *testing.F) {
 // assertUnmarshalParamsConsistent checks unmarshalParams[T] against a
 // direct json.Unmarshal[T] oracle: the ok flag must match the decoder's
 // error, and on success the decoded values must be deeply equal.
-func assertUnmarshalParamsConsistent[T any](t *testing.T, msg *api.RPCResponse, data []byte) {
+func assertUnmarshalParamsConsistent[T any](t *testing.T, msg *vibekit.RPCResponse, data []byte) {
 	t.Helper()
 	got, ok := unmarshalParams[T](msg, "test")
 	var want T

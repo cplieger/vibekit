@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestPendingPermsTracker_ConcurrentAddTakeList exercises concurrent
@@ -20,7 +20,7 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 	// Writer: add entries.
 	wg.Go(func() {
 		for i := range N {
-			evt := api.ServerEvent{ChatID: api.ChatID("chat-1"), Type: "permission_needed"}
+			evt := vibekit.ServerEvent{ChatID: vibekit.ChatID("chat-1"), Type: "permission_needed"}
 			tracker.Add(int64(i), evt)
 		}
 	})
@@ -28,7 +28,7 @@ func TestPendingPermsTracker_ConcurrentAddTakeList(t *testing.T) {
 	// Writer: add entries for a different chat.
 	wg.Go(func() {
 		for i := range N {
-			evt := api.ServerEvent{ChatID: api.ChatID("chat-2"), Type: "permission_needed"}
+			evt := vibekit.ServerEvent{ChatID: vibekit.ChatID("chat-2"), Type: "permission_needed"}
 			tracker.Add(int64(N+i), evt)
 		}
 	})
@@ -74,7 +74,7 @@ func TestPendingPermsTracker_TakeIfPresent_OneWinnerPerRequest(t *testing.T) {
 	for round := range rounds {
 		tracker := newPendingPermsTracker()
 		id := int64(round)
-		want := api.ServerEvent{ChatID: "chat-1", Type: api.EventPermissionNeeded}
+		want := vibekit.ServerEvent{ChatID: "chat-1", Type: vibekit.EventPermissionNeeded}
 		tracker.Add(id, want)
 
 		var wins atomic.Int64

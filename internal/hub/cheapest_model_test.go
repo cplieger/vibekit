@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestCheapestModel(t *testing.T) {
 	cases := []struct {
 		name   string
 		want   string
-		models []api.SessionModel
+		models []vibekit.SessionModel
 	}{
 		{
 			name:   "NilCatalog",
@@ -20,12 +20,12 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name:   "EmptyCatalog",
-			models: []api.SessionModel{},
+			models: []vibekit.SessionModel{},
 			want:   "",
 		},
 		{
 			name: "SkipsAuto",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "auto"},
 				{ID: "claude-haiku-4.5", RateMultiplier: 0.4},
 			},
@@ -33,7 +33,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "SelectsCheaperOfTwo",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "claude-haiku-4.5", RateMultiplier: 0.4},
 				{ID: "claude-opus-4.7", RateMultiplier: 2.2},
 			},
@@ -41,7 +41,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "SkipsEmptyIDs",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: ""},
 				{ID: "auto"},
 				{ID: "real", RateMultiplier: 1.0},
@@ -50,7 +50,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "SkipsMultipleConsecutiveIneligible",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "auto"},
 				{ID: ""},
 				{ID: "auto"},
@@ -62,7 +62,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "AllAutoReturnsEmpty",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "auto"},
 				{ID: "auto"},
 			},
@@ -70,7 +70,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "SkipsDeprecated",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "old-model", Description: "[Deprecated] Old model", RateMultiplier: 0.1},
 				{ID: "claude-haiku-4.5", RateMultiplier: 0.4},
 			},
@@ -78,7 +78,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "SkipsLegacy",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "legacy-model", Name: "[Legacy] Old", RateMultiplier: 0.1},
 				{ID: "claude-haiku-4.5", RateMultiplier: 0.4},
 			},
@@ -86,7 +86,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "SkipsInternal",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "agi-nova-beta-1m", Description: "[Internal] AGI Nova SWE Beta", RateMultiplier: 0.01},
 				{ID: "qwen3-coder-480b", Description: "[Internal] Qwen3 Coder", RateMultiplier: 0.01},
 				{ID: "claude-haiku-4.5", RateMultiplier: 0.4},
@@ -95,7 +95,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "SkipsExperimental",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "deepseek-3.2", Description: "[Experimental]", RateMultiplier: 0.25},
 				{ID: "claude-haiku-4.5", RateMultiplier: 0.4},
 			},
@@ -103,7 +103,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "SelectsCheapestByRate",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "claude-opus-4.6", RateMultiplier: 2.2},
 				{ID: "claude-sonnet-4.6", RateMultiplier: 1.3},
 				{ID: "claude-haiku-4.5", RateMultiplier: 0.4},
@@ -113,7 +113,7 @@ func TestCheapestModel(t *testing.T) {
 		},
 		{
 			name: "FallsBackWhenNoRates",
-			models: []api.SessionModel{
+			models: []vibekit.SessionModel{
 				{ID: "auto"},
 				{ID: "claude-opus-4.6"},
 				{ID: "claude-haiku-4.5"},
@@ -155,15 +155,15 @@ func TestModelExcluded(t *testing.T) {
 }
 
 func BenchmarkCheapestModel(b *testing.B) {
-	makeModels := func(n int) []api.SessionModel {
-		ms := make([]api.SessionModel, n)
+	makeModels := func(n int) []vibekit.SessionModel {
+		ms := make([]vibekit.SessionModel, n)
 		for i := range ms {
-			ms[i] = api.SessionModel{
+			ms[i] = vibekit.SessionModel{
 				ID:             fmt.Sprintf("model-%c%d", 'a'+rune(i%26), i/26),
 				RateMultiplier: float64(n-i) * 0.1,
 			}
 		}
-		ms[n-1] = api.SessionModel{ID: "cheapest", RateMultiplier: 0.01}
+		ms[n-1] = vibekit.SessionModel{ID: "cheapest", RateMultiplier: 0.01}
 		return ms
 	}
 

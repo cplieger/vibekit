@@ -32,8 +32,8 @@ import (
 	"net/url"
 	"sync/atomic"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/kiroauth"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // v3-only server->client request method names.
@@ -46,7 +46,7 @@ const (
 // Returns true if msg was one of them (so translateACPEvent stops),
 // false otherwise. Safe to call for every incoming request regardless of
 // engine: v1/v2 never send these methods.
-func (h *Hub) handleKiroClientRequest(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) bool {
+func (h *Hub) handleKiroClientRequest(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) bool {
 	switch msg.Method {
 	case methodKiroGetAccessToken:
 		// kiroauth.Token can perform a blocking (<=15s) SSO-OIDC refresh
@@ -88,7 +88,7 @@ func (h *Hub) handleKiroClientRequest(ctx context.Context, chatID api.ChatID, ms
 // an open_external_url event; the client renders a clickable affordance
 // the user activates. Only http/https URLs are accepted — any other
 // scheme is rejected with an RPC error and not broadcast.
-func (h *Hub) respondKiroOpenExternalURL(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) respondKiroOpenExternalURL(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var p struct {
 		URL string `json:"url"`
 	}
@@ -97,7 +97,7 @@ func (h *Hub) respondKiroOpenExternalURL(ctx context.Context, chatID api.ChatID,
 	}
 	if !isSafeExternalURL(p.URL) {
 		slog.Warn("v3 openExternalUrl: rejecting unsafe scheme", "chat_id", chatID)
-		h.respondBridge(ctx, chatID, msg, nil, &api.RPCError{
+		h.respondBridge(ctx, chatID, msg, nil, &vibekit.RPCError{
 			Code:    -32602,
 			Message: "openExternalUrl: only http/https URLs are allowed",
 		})
@@ -105,7 +105,7 @@ func (h *Hub) respondKiroOpenExternalURL(ctx context.Context, chatID api.ChatID,
 	}
 	// Ack first so the agent's OAuth redirect isn't blocked on the UI.
 	h.respondBridge(ctx, chatID, msg, map[string]any{"success": true}, nil)
-	h.Broadcast(ctx, api.NewEvent(api.EventOpenExternalURL, chatID, api.OpenExternalURLPayload{URL: p.URL}))
+	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventOpenExternalURL, chatID, vibekit.OpenExternalURLPayload{URL: p.URL}))
 }
 
 // isSafeExternalURL reports whether u parses and uses the http or https
@@ -167,7 +167,7 @@ func (h *Hub) AuthTokenUnavailable() bool {
 // than hanging, and broadcasts the failure so the browser can offer a
 // sign-in: KAS's own answer to this error is to run unauthenticated, which
 // looks like a session that opens and then fails every turn.
-func (h *Hub) respondKiroAccessToken(ctx context.Context, chatID api.ChatID, msg *api.RPCResponse) {
+func (h *Hub) respondKiroAccessToken(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	result, err := h.kiroAccessTokenResult(ctx)
 	if err != nil {
 		slog.Error("v3 auth: token unavailable", "chat_id", chatID, "error", err)
@@ -177,8 +177,8 @@ func (h *Hub) respondKiroAccessToken(ctx context.Context, chatID api.ChatID, msg
 		// profile, a missing binary), and no wording invented here could be more
 		// specific. Broadcast AFTER the RPC error so the agent's request is never
 		// waiting on a client fan-out.
-		h.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
-			Code:    api.ErrCodeAuthTokenUnavailable,
+		h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+			Code:    vibekit.ErrCodeAuthTokenUnavailable,
 			Message: err.Error(),
 		}))
 		return

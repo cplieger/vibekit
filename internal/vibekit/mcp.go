@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // MCP runtime types: the event payloads broadcast to clients when kiro-cli
 // reports MCP server state via its _kiro.dev/mcp/* notifications.

@@ -17,22 +17,22 @@ package hub
 import (
 	"sync"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 type chatStatusCache struct {
-	byChat map[api.ChatID]api.ChatStatusPayload
+	byChat map[vibekit.ChatID]vibekit.ChatStatusPayload
 	mu     sync.Mutex
 }
 
 func newChatStatusCache() *chatStatusCache {
-	return &chatStatusCache{byChat: make(map[api.ChatID]api.ChatStatusPayload)}
+	return &chatStatusCache{byChat: make(map[vibekit.ChatID]vibekit.ChatStatusPayload)}
 }
 
 // Set records a chat's latest self-declared status. A status can precede the
 // turn's first content chunk (the agent declares intent before producing
 // output), which is why this is keyed on the chat rather than hung off a turn.
-func (c *chatStatusCache) Set(chatID api.ChatID, p api.ChatStatusPayload) {
+func (c *chatStatusCache) Set(chatID vibekit.ChatID, p vibekit.ChatStatusPayload) {
 	if chatID == "" {
 		return
 	}
@@ -42,7 +42,7 @@ func (c *chatStatusCache) Set(chatID api.ChatID, p api.ChatStatusPayload) {
 }
 
 // Get returns a chat's last status.
-func (c *chatStatusCache) Get(chatID api.ChatID) api.ChatStatusPayload {
+func (c *chatStatusCache) Get(chatID vibekit.ChatID) vibekit.ChatStatusPayload {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.byChat[chatID]
@@ -50,7 +50,7 @@ func (c *chatStatusCache) Get(chatID api.ChatID) api.ChatStatusPayload {
 
 // Clear drops a chat's status at turn end, so a later connect cannot report a
 // finished turn's label as current.
-func (c *chatStatusCache) Clear(chatID api.ChatID) {
+func (c *chatStatusCache) Clear(chatID vibekit.ChatID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.byChat, chatID)

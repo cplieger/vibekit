@@ -6,7 +6,7 @@ package hub
 import (
 	"context"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // cleanupChatState tears down every in-memory bookkeeping entry for a
@@ -20,7 +20,7 @@ import (
 // terminals, clear pending perms, close+remove the assistant buffer) runs on both
 // paths. There is no staging queue to flush and no per-turn trust to clear —
 // both went with internal/pending.
-func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID, reapDurable bool) {
+func (h *Hub) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
 	h.clearPendingPermsForChat(chatID)
 	h.coord.CloseBridge(chatID)
 	h.agentTerms.KillForChat(chatID)
@@ -42,7 +42,7 @@ func (h *Hub) cleanupChatState(ctx context.Context, chatID api.ChatID, reapDurab
 // session (failed session/load, model-switch fallback) has state under every
 // id it ever held, and leaving the retired ones behind makes them orphans the
 // hourly sweep has to find later.
-func (h *Hub) reapChatSession(ctx context.Context, chatID api.ChatID) {
+func (h *Hub) reapChatSession(ctx context.Context, chatID vibekit.ChatID) {
 	if h.sessionReaper == nil {
 		return
 	}
@@ -57,6 +57,6 @@ func (h *Hub) reapChatSession(ctx context.Context, chatID api.ChatID) {
 
 // clearPendingPermsForChat drops every unresolved permission_needed
 // entry owned by chatID.
-func (h *Hub) clearPendingPermsForChat(chatID api.ChatID) {
+func (h *Hub) clearPendingPermsForChat(chatID vibekit.ChatID) {
 	h.sse.pendingPerms.ClearForChat(chatID)
 }

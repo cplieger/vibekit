@@ -41,7 +41,7 @@ const (
 // approval renders identically to one that is working). So a switch that
 // silenced the ask was not a preference — it was a way to stall every later
 // turn of every chat with no signal, discoverable only by noticing that work
-// had stopped. The permission notice is a FLOOR: api.PushKindPermission is
+// had stopped. The permission notice is a FLOOR: vibekit.PushKindPermission is
 // registered with no settings key, so no value in config.json can turn it off
 // (pinned by push.TestPermissionKindHasNoSettingsKey).
 //
@@ -126,7 +126,7 @@ func Default() map[string]any {
 // setting shaped `{last_model, effort}`, so it was keyed by the LAST model rather
 // than by the chat: two chats could not disagree about effort, and switching
 // models discarded the previous model's choice. It is a field on the chat record
-// now (api.Chat.Effort), written by CmdSetEffort and applied at session/new
+// now (vibekit.Chat.Effort), written by CmdSetEffort and applied at session/new
 // through StartOpts.Effort, which is where the other three per-chat composer
 // settings already lived. Nothing reads or writes the old key; a config.json that
 // still carries it warns as an unknown key on the next write and is otherwise

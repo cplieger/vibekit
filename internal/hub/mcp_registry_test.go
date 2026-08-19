@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // fakeMCPConfig is the registry filter tests' MCP name census.
@@ -184,13 +184,13 @@ func TestMCPRegistry_FiltersDisabledServerNotifications(t *testing.T) {
 func TestMCPRegistry_RecordsUnconfiguredServerWithOrigin(t *testing.T) {
 	cases := map[string]struct {
 		inAllNames bool
-		wantOrigin api.Origin
+		wantOrigin vibekit.Origin
 	}{
 		"a power's server is named by the config file's powers block": {
-			inAllNames: true, wantOrigin: api.OriginPower,
+			inAllNames: true, wantOrigin: vibekit.OriginPower,
 		},
 		"a server from a source vibekit cannot read is unattributable": {
-			inAllNames: false, wantOrigin: api.OriginUnknown,
+			inAllNames: false, wantOrigin: vibekit.OriginUnknown,
 		},
 	}
 	for name, tc := range cases {
@@ -224,12 +224,12 @@ func TestMCPRegistry_StampsUserOriginOnConfiguredServers(t *testing.T) {
 	ctx := t.Context()
 	h.mcpRegistry.recordConnected(ctx, "github", nil, nil, nil)
 	h.mcpRegistry.recordOAuth(ctx, "github", "https://oauth.example/auth")
-	if got := h.mcpRegistry.Snapshot()[0].Origin; got != api.OriginUser {
-		t.Errorf("origin after recordOAuth = %q, want %q", got, api.OriginUser)
+	if got := h.mcpRegistry.Snapshot()[0].Origin; got != vibekit.OriginUser {
+		t.Errorf("origin after recordOAuth = %q, want %q", got, vibekit.OriginUser)
 	}
 	h.mcpRegistry.recordInitFailure(ctx, "github", "boom")
-	if got := h.mcpRegistry.Snapshot()[0].Origin; got != api.OriginUser {
-		t.Errorf("origin after recordInitFailure = %q, want %q", got, api.OriginUser)
+	if got := h.mcpRegistry.Snapshot()[0].Origin; got != vibekit.OriginUser {
+		t.Errorf("origin after recordInitFailure = %q, want %q", got, vibekit.OriginUser)
 	}
 }
 
@@ -242,7 +242,7 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 	cases := map[string]struct {
 		cfg        func() *fakeMCPConfig
 		wantRow    bool
-		wantOrigin api.Origin
+		wantOrigin vibekit.Origin
 	}{
 		"the user's own server, enabled: the config row already says off-or-on": {
 			cfg:     func() *fakeMCPConfig { return enabledConfig("mine") },
@@ -263,11 +263,11 @@ func TestMCPRegistry_RecordDisabled(t *testing.T) {
 				c.all["mine"] = struct{}{}
 				return c
 			},
-			wantRow: true, wantOrigin: api.OriginPower,
+			wantRow: true, wantOrigin: vibekit.OriginPower,
 		},
 		"an unattributable server: still shown, origin unknown": {
 			cfg:     func() *fakeMCPConfig { return enabledConfig() },
-			wantRow: true, wantOrigin: api.OriginUnknown,
+			wantRow: true, wantOrigin: vibekit.OriginUnknown,
 		},
 	}
 	for name, tc := range cases {
@@ -319,7 +319,7 @@ func TestMCPRegistry_StatusJSONCarriesOrigin(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Alphabetical: mine, theirs.
-	if body.Servers[0].Origin != api.OriginUser || body.Servers[1].Origin != api.OriginPower {
+	if body.Servers[0].Origin != vibekit.OriginUser || body.Servers[1].Origin != vibekit.OriginPower {
 		t.Errorf("origins = %q / %q", body.Servers[0].Origin, body.Servers[1].Origin)
 	}
 }

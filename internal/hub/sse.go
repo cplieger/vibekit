@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 	"github.com/cplieger/webhttp/sse"
 )
@@ -24,13 +24,13 @@ import (
 // buffer already holds the turn and now snapshots it (buffer.Buffer.Snapshot),
 // so the only thing left to record here is the status, which lives on no
 // message and in no replay.
-func (h *Hub) emit(evt api.ServerEvent) {
+func (h *Hub) emit(evt vibekit.ServerEvent) {
 	switch evt.Type {
-	case api.EventChatStatus:
-		if p, ok := evt.Payload.(api.ChatStatusPayload); ok {
+	case vibekit.EventChatStatus:
+		if p, ok := evt.Payload.(vibekit.ChatStatusPayload); ok {
 			h.sse.chatStatus.Set(evt.ChatID, p)
 		}
-	case api.EventTurnEnded:
+	case vibekit.EventTurnEnded:
 		h.sse.chatStatus.Clear(evt.ChatID)
 	}
 	data, err := json.Marshal(evt)
@@ -56,7 +56,7 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatFilter := api.ChatID(r.URL.Query().Get("chat_id"))
+	chatFilter := vibekit.ChatID(r.URL.Query().Get("chat_id"))
 	lastRaw := r.Header.Get("Last-Event-ID")
 	slog.Info("SSE connected", "chat_filter", chatFilter, "last_event_id", lastRaw)
 
@@ -90,8 +90,8 @@ func (h *Hub) handleSSE(w http.ResponseWriter, r *http.Request) {
 // named by a relative path. The hook runs after the library's
 // Last-Event-ID replay, so the bounds are consistent with what the client
 // has already received.
-func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter api.ChatID) error {
-	connectedEvt := api.NewEvent(api.EventConnected, "", api.ConnectedPayload{
+func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter vibekit.ChatID) error {
+	connectedEvt := vibekit.NewEvent(vibekit.EventConnected, "", vibekit.ConnectedPayload{
 		Workspace: h.lifecycle.workDir,
 		Floor:     floor,
 		Head:      head,
@@ -107,7 +107,7 @@ func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter 
 
 	// writeEvent serializes one replayed state event to the stream (no id:
 	// replayed state is synthesized, not part of the event sequence).
-	writeEvent := func(evt api.ServerEvent) error {
+	writeEvent := func(evt vibekit.ServerEvent) error {
 		data, err := json.Marshal(evt)
 		if err != nil {
 			return nil //nolint:nilerr // skip unmarshalable event, keep stream
@@ -143,13 +143,13 @@ func (h *Hub) streamInitialState(sw *sse.Writer, floor, head uint64, chatFilter 
 // The in-flight message comes straight from the chat's assistant buffer, which
 // is the same object the live stream and the turn-end persist read. There is no
 // separate replica to drift from it.
-func (h *Hub) replayTurnState(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
+func (h *Hub) replayTurnState(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
 	for _, id := range h.bridge.mgr.promptingChatIDs() {
 		if chatFilter != "" && id != chatFilter {
 			continue
 		}
 		status := h.sse.chatStatus.Get(id)
-		payload := api.TurnStatePayload{
+		payload := vibekit.TurnStatePayload{
 			Status:      status.Status,
 			Description: status.Description,
 		}
@@ -161,7 +161,7 @@ func (h *Hub) replayTurnState(writeFn func(api.ServerEvent) error, chatFilter ap
 				payload.ChunkSeq = seq
 			}
 		}
-		if err := writeFn(api.NewEvent(api.EventTurnState, id, payload)); err != nil {
+		if err := writeFn(vibekit.NewEvent(vibekit.EventTurnState, id, payload)); err != nil {
 			return err
 		}
 	}
@@ -190,7 +190,7 @@ func (h *Hub) replayBounds() (floor, head uint64) {
 // shown and the answer the server will take cannot disagree. The ORDER is List's
 // too — ascending request id, i.e. the order the agent asked — so this loop
 // writes the queue rather than a set.
-func (h *Hub) replayPendingPermissions(writeFn func(api.ServerEvent) error, chatFilter api.ChatID) error {
+func (h *Hub) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
 	for _, evt := range h.sse.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {
 			return err

@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // Whether this account can actually use a model id.
 //

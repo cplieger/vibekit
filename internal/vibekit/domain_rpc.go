@@ -1,4 +1,4 @@
-package api
+package vibekit
 
 // ACP JSON-RPC wire types: request/response/notification envelopes for
 // communication with kiro-cli over the ACP protocol.
@@ -126,7 +126,7 @@ var ErrBridgeExited = errors.New("ACP bridge exited")
 // failure. A user who wants it again presses Send.
 var ErrFrameTooLarge = errors.New("a message from kiro-cli was too large to read and was dropped, so this turn was stopped")
 
-// There is no api.ErrChatNotFound sentinel. It existed for errors.Is
+// There is no vibekit.ErrChatNotFound sentinel. It existed for errors.Is
 // classification against a store TRANSITION, and PromoteRewind was the only
 // transition that returned it. (command.ErrChatNotFound is a different, live
 // value: the 404 response body, not a sentinel to match on.)

@@ -9,9 +9,9 @@ package hub
 import (
 	"net/http"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -32,7 +32,7 @@ func (h *Hub) handleFileChanges(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "path query param is required")
 		return
 	}
-	ranges := h.lines.Get(api.ChatID(chatID), path)
+	ranges := h.lines.Get(vibekit.ChatID(chatID), path)
 	if ranges == nil {
 		ranges = []buffer.LineRange{}
 	}

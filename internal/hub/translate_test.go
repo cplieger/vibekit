@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Tests for the translate*.go family: ACP notification → domain-event
@@ -19,11 +19,11 @@ import (
 
 func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	_, before := h.sse.hub.Bounds()
 	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello "}}`)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	}
@@ -42,7 +42,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 
 func TestTranslateACPEvent_SecondChunkReusesMessageID(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	h.translateACPEvent("c1", newChunkMsg(t, "one"))
 	firstID := h.bridge.assistantBufs.GetOrInit("c1").MessageID
@@ -71,7 +71,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 				json.RawMessage(`{"sessionUpdate":"tool_call","toolCallId":"tc-1","title":"readFile","kind":"read","status":"pending"}`),
 			},
 			assert: func(t *testing.T, buf *buffer.Buffer) {
-				if len(buf.ToolCalls) != 1 || buf.ToolCalls[0].ID != "tc-1" || buf.ToolCalls[0].Status != api.ToolPending {
+				if len(buf.ToolCalls) != 1 || buf.ToolCalls[0].ID != "tc-1" || buf.ToolCalls[0].Status != vibekit.ToolPending {
 					t.Errorf("buffer tool_calls = %+v", buf.ToolCalls)
 				}
 			},
@@ -87,7 +87,7 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 					t.Fatalf("tool_calls = %+v", buf.ToolCalls)
 				}
 				tc := buf.ToolCalls[0]
-				if tc.Status != api.ToolCompleted {
+				if tc.Status != vibekit.ToolCompleted {
 					t.Errorf("status = %q, want completed", tc.Status)
 				}
 				if !strings.Contains(tc.Output, "file contents") {
@@ -169,12 +169,12 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+			_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 			if tc.setup != nil {
 				tc.setup(h)
 			}
 			for _, raw := range tc.events {
-				h.translateACPEvent("c1", &api.RPCResponse{
+				h.translateACPEvent("c1", &vibekit.RPCResponse{
 					Method: "session/update",
 					Params: mustJSON(t, map[string]any{"update": raw}),
 				})
@@ -187,10 +187,10 @@ func TestTranslateACPEvent_ToolCalls(t *testing.T) {
 
 func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	raw := json.RawMessage(`{"sessionUpdate":"plan","entries":[{"content":"step 1","priority":"high","status":"pending"}]}`)
-	h.translateACPEvent("c1", &api.RPCResponse{
+	h.translateACPEvent("c1", &vibekit.RPCResponse{
 		Method: "session/update",
 		Params: mustJSON(t, map[string]any{"update": raw}),
 	})
@@ -200,14 +200,14 @@ func TestTranslateACPEvent_PlanPersistsAsMessage(t *testing.T) {
 		t.Fatalf("messages = %+v", c.Messages)
 	}
 	m := c.Messages[0]
-	if m.Role != api.RoleAssistant || len(m.Plan) != 1 || m.Plan[0].Content != "step 1" {
+	if m.Role != vibekit.RoleAssistant || len(m.Plan) != 1 || m.Plan[0].Content != "step 1" {
 		t.Errorf("plan message mismatch: %+v", m)
 	}
 }
 
 func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	_, before := h.sse.hub.Bounds()
 	// v3 wire shape: the correlation id is on the JSON-RPC envelope (msg.ID)
@@ -216,7 +216,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	// msg.Params and used option_id — which decoded to an empty, unanswerable
 	// request; see HandlePermissionRequest.)
 	permID := int64(42)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &permID,
 		Method: "session/request_permission",
 		Params: mustJSON(t, map[string]any{
@@ -237,10 +237,10 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 
 func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Each of these must be a silent no-op, not a panic.
-	bad := []*api.RPCResponse{
+	bad := []*vibekit.RPCResponse{
 		{Method: "session/update", Params: json.RawMessage(`{bad`)},
 		{Method: "session/update", Params: json.RawMessage(`{"params":{"update":null}}`)},
 		{Method: "session/update", Params: nil},
@@ -261,26 +261,26 @@ func TestTranslateACPEvent_MalformedJSONIgnored(t *testing.T) {
 // growth under varying iteration counts.
 func BenchmarkTranslateACPEvent(b *testing.B) {
 	payloads := []struct {
-		msg  *api.RPCResponse
+		msg  *vibekit.RPCResponse
 		name string
 	}{
 		{
 			name: "agent_message_chunk",
-			msg: &api.RPCResponse{
+			msg: &vibekit.RPCResponse{
 				Method: "session/update",
 				Params: json.RawMessage(`{"update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Hello, world! This is a representative chunk of assistant output."}}}`),
 			},
 		},
 		{
 			name: "tool_call",
-			msg: &api.RPCResponse{
+			msg: &vibekit.RPCResponse{
 				Method: "session/update",
 				Params: json.RawMessage(`{"update":{"sessionUpdate":"tool_call","toolCallId":"tc-bench-1","title":"readFile","kind":"read","status":"pending","locations":[{"path":"main.go","line":10}]}}`),
 			},
 		},
 		{
 			name: "tool_call_update",
-			msg: &api.RPCResponse{
+			msg: &vibekit.RPCResponse{
 				Method: "session/update",
 				Params: json.RawMessage(`{"update":{"sessionUpdate":"tool_call_update","toolCallId":"tc-bench-1","status":"completed","content":[{"type":"content","content":{"text":"package main\nfunc main() {}\n"}}]}}`),
 			},
@@ -290,7 +290,7 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 	for _, p := range payloads {
 		b.Run(p.name, func(b *testing.B) {
 			h, cs, _ := newTestHub()
-			_ = cs.Mutate(b.Context(), "bench", func(c *api.Chat, _ bool) bool {
+			_ = cs.Mutate(b.Context(), "bench", func(c *vibekit.Chat, _ bool) bool {
 				c.Name = "bench"
 				return true
 			})
@@ -299,7 +299,7 @@ func BenchmarkTranslateACPEvent(b *testing.B) {
 				buf := h.bridge.assistantBufs.GetOrInit("bench")
 				buf.Started = true
 				buf.MessageID = "msg-bench"
-				buf.ToolCalls = append(buf.ToolCalls, api.ToolCall{ID: "tc-bench-1", Status: api.ToolPending})
+				buf.ToolCalls = append(buf.ToolCalls, vibekit.ToolCall{ID: "tc-bench-1", Status: vibekit.ToolPending})
 				buf.RecordToolStart("tc-bench-1")
 			}
 			b.ResetTimer()
@@ -336,7 +336,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(f.Context(), "fuzz", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})
@@ -354,7 +354,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 		if len(data) > 0 {
 			idx = int(data[0]) % len(methods)
 		}
-		msg := &api.RPCResponse{
+		msg := &vibekit.RPCResponse{
 			Method: methods[idx],
 			Params: data,
 		}
@@ -388,13 +388,13 @@ func FuzzTranslateMCP(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(f.Context(), "fuzz", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		msg := &api.RPCResponse{
+		msg := &vibekit.RPCResponse{
 			Method: "_kiro/mcp/status",
 			Params: data,
 		}
@@ -426,13 +426,13 @@ func FuzzHandleSessionUpdate(f *testing.F) {
 	}
 
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(f.Context(), "fuzz", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(f.Context(), "fuzz", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "fuzz"
 		return true
 	})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		msg := &api.RPCResponse{
+		msg := &vibekit.RPCResponse{
 			Method: "session/update",
 			Params: json.RawMessage(`{"update":` + string(data) + `}`),
 		}
@@ -452,9 +452,9 @@ func TestTranslateACPEvent_RoutesFSRequest(t *testing.T) {
 	}
 	h, br := hubForFSTest(t, work)
 	id := int64(7106)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
-		Method: api.MethodFSRead,
+		Method: vibekit.MethodFSRead,
 		Params: mustJSON(t, map[string]any{"path": "r.txt"}),
 	}
 	h.translateACPEvent("c1", msg)
@@ -476,7 +476,7 @@ func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
 	h.agentTerms.mu.Unlock()
 
 	id := int64(7110)
-	msg := &api.RPCResponse{
+	msg := &vibekit.RPCResponse{
 		ID:     &id,
 		Method: methodTermOutput,
 		Params: mustJSON(t, map[string]any{"terminalId": "term-1"}),
@@ -493,7 +493,7 @@ func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
 
 // registerParentSession registers a bridge for chatID whose SessionID
 // is parentSession, so h.parentACPSession(chatID) returns it.
-func registerParentSession(t *testing.T, h *Hub, chatID api.ChatID, parentSession string) {
+func registerParentSession(t *testing.T, h *Hub, chatID vibekit.ChatID, parentSession string) {
 	t.Helper()
 	sb, _ := h.bridge.mgr.getOrInsert(chatID)
 	br := newFakeBridge()
@@ -507,23 +507,23 @@ func registerParentSession(t *testing.T, h *Hub, chatID api.ChatID, parentSessio
 // notification carrying sessionID, and returns the subSessionID the
 // dispatcher computed plus whether the handler ran (false => sub
 // dispatch returned early).
-func captureSubSession(t *testing.T, h *Hub, chatID api.ChatID, sessionID string) (got string, called bool) {
+func captureSubSession(t *testing.T, h *Hub, chatID vibekit.ChatID, sessionID string) (got string, called bool) {
 	t.Helper()
-	h.sessUpdateHandlers = map[api.ACPUpdateKind]sessionUpdateHandler{
-		api.ACPUpdateAgentChunk: func(_ context.Context, _ api.ChatID, _ json.RawMessage, sub string) {
+	h.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
+		vibekit.ACPUpdateAgentChunk: func(_ context.Context, _ vibekit.ChatID, _ json.RawMessage, sub string) {
 			got = sub
 			called = true
 		},
 	}
 	update := mustJSON(t, map[string]any{
-		"sessionUpdate": string(api.ACPUpdateAgentChunk),
+		"sessionUpdate": string(vibekit.ACPUpdateAgentChunk),
 		"content":       map[string]any{"type": "text", "text": "x"},
 	})
 	params := mustJSON(t, map[string]any{
 		"sessionId": sessionID,
 		"update":    update,
 	})
-	msg := &api.RPCResponse{Method: "session/update", Params: params}
+	msg := &vibekit.RPCResponse{Method: "session/update", Params: params}
 	h.handleSessionUpdate(t.Context(), chatID, msg)
 	return got, called
 }
@@ -534,7 +534,7 @@ func captureSubSession(t *testing.T, h *Hub, chatID api.ChatID, sessionID string
 func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
 	cases := []struct {
 		name       string
-		chatID     api.ChatID
+		chatID     vibekit.ChatID
 		registerPS string // parent session to register; "" => no bridge (parent == "")
 		sessionID  string
 		want       string
@@ -585,16 +585,16 @@ func TestHandleSessionUpdate_SubSessionAttribution(t *testing.T) {
 // dispatchUpdate installs a capturing sub-handler for `kind`, drives
 // handleSessionUpdate with an update carrying that kind plus whatever extra
 // fields `extra` supplies, and reports whether the live handler ran.
-func dispatchUpdate(t *testing.T, h *Hub, kind api.ACPUpdateKind, extra map[string]any) (called bool) {
+func dispatchUpdate(t *testing.T, h *Hub, kind vibekit.ACPUpdateKind, extra map[string]any) (called bool) {
 	t.Helper()
-	h.sessUpdateHandlers = map[api.ACPUpdateKind]sessionUpdateHandler{
-		kind: func(_ context.Context, _ api.ChatID, _ json.RawMessage, _ string) { called = true },
+	h.sessUpdateHandlers = map[vibekit.ACPUpdateKind]sessionUpdateHandler{
+		kind: func(_ context.Context, _ vibekit.ChatID, _ json.RawMessage, _ string) { called = true },
 	}
 	update := map[string]any{"sessionUpdate": string(kind)}
 	maps.Copy(update, extra)
 	params := mustJSON(t, map[string]any{"sessionId": "", "update": mustJSON(t, update)})
 	h.handleSessionUpdate(t.Context(), "c1",
-		&api.RPCResponse{Method: "session/update", Params: params})
+		&vibekit.RPCResponse{Method: "session/update", Params: params})
 	return called
 }
 
@@ -656,7 +656,7 @@ func TestHandleSessionUpdate_DropsReplayedFrames(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
-			if got := dispatchUpdate(t, h, api.ACPUpdateAgentChunk, tt.extra); got != tt.wantCalled {
+			if got := dispatchUpdate(t, h, vibekit.ACPUpdateAgentChunk, tt.extra); got != tt.wantCalled {
 				t.Errorf("live handler called = %v, want %v", got, tt.wantCalled)
 			}
 		})
@@ -678,7 +678,7 @@ func TestHandleSessionUpdate_DropsReplayedFrames(t *testing.T) {
 // load-bearing, not less.
 func TestHandleSessionUpdate_CatalogFrameSurvivesALoad(t *testing.T) {
 	h, _, _ := newTestHub()
-	if !dispatchUpdate(t, h, api.ACPUpdateConfigOption, nil) {
+	if !dispatchUpdate(t, h, vibekit.ACPUpdateConfigOption, nil) {
 		t.Error("config_option_update was dropped; it is untagged by KAS and carries current session state")
 	}
 }

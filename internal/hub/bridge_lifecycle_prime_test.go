@@ -12,16 +12,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/translate"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestPrimeIfNeeded_NoneIsNoOp(t *testing.T) {
 	t.Parallel()
 	h, cs, br := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Messages = []api.Message{{Role: api.RoleUser, Content: "hi"}}
+		c.Messages = []vibekit.Message{{Role: vibekit.RoleUser, Content: "hi"}}
 		return true
 	})
 	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
@@ -47,11 +47,11 @@ func TestPrimeIfNeeded_NoneIsNoOp(t *testing.T) {
 func TestPrimeIfNeeded_SwitchSendsPromptWithHistory(t *testing.T) {
 	t.Parallel()
 	h, cs, br := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Messages = []api.Message{
-			{Role: api.RoleUser, Content: "what time is it?"},
-			{Role: api.RoleAssistant, Content: "it's late"},
+		c.Messages = []vibekit.Message{
+			{Role: vibekit.RoleUser, Content: "what time is it?"},
+			{Role: vibekit.RoleAssistant, Content: "it's late"},
 		}
 		return true
 	})
@@ -77,7 +77,7 @@ func TestPrimeIfNeeded_EmptyHistoryEarlyReturn(t *testing.T) {
 	h, cs, br := newTestHub()
 	// Chat with no messages → BuildHistory returns "" → primeIfNeeded
 	// must return before inspecting primeReason.
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
@@ -134,18 +134,18 @@ func promptText(t *testing.T, br *fakeBridge) string {
 func TestPrimeIfNeeded_ForkPrimesFromTheParentChat(t *testing.T) {
 	t.Parallel()
 	h, cs, br := newTestHub()
-	_ = cs.Mutate(t.Context(), "c-parent", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c-parent", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Parent"
-		c.Messages = []api.Message{
-			{Role: api.RoleUser, Content: "how does the reaper keep-list work?"},
-			{Role: api.RoleAssistant, Content: "it reads the whole session chain"},
+		c.Messages = []vibekit.Message{
+			{Role: vibekit.RoleUser, Content: "how does the reaper keep-list work?"},
+			{Role: vibekit.RoleAssistant, Content: "it reads the whole session chain"},
 		}
 		return true
 	})
 	// The tangent itself is empty, which is exactly the state a refused fork
 	// leaves it in.
-	_ = cs.Mutate(t.Context(), "c-tangent", func(c *api.Chat, _ bool) bool {
-		c.Name = api.DefaultChatName
+	_ = cs.Mutate(t.Context(), "c-tangent", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = vibekit.DefaultChatName
 		return true
 	})
 	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c-tangent", "")
@@ -172,9 +172,9 @@ func TestPrimeIfNeeded_ForkPrimesFromTheParentChat(t *testing.T) {
 func TestPrimeIfNeeded_ForkWithoutASourceReadsItsOwnChat(t *testing.T) {
 	t.Parallel()
 	h, cs, br := newTestHub()
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "A"
-		c.Messages = []api.Message{{Role: api.RoleUser, Content: "its own history"}}
+		c.Messages = []vibekit.Message{{Role: vibekit.RoleUser, Content: "its own history"}}
 		return true
 	})
 	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
@@ -213,7 +213,7 @@ func TestPrimeFromChat_IsClaimedOnce(t *testing.T) {
 // and a duplicate of everything the session already has.
 func TestPrimeFromChat_RefusesDegenerateNotes(t *testing.T) {
 	t.Parallel()
-	cases := map[string][2]api.ChatID{
+	cases := map[string][2]vibekit.ChatID{
 		"self":         {"c1", "c1"},
 		"empty chat":   {"", "c-parent"},
 		"empty source": {"c1", ""},
@@ -236,13 +236,13 @@ func TestPrimeFromChat_RefusesDegenerateNotes(t *testing.T) {
 func TestSpawnBridge_ClaimsThePrimeNote(t *testing.T) {
 	t.Parallel()
 	h, cs, _ := newTestHub()
-	_ = cs.Mutate(t.Context(), "c-parent", func(c *api.Chat, _ bool) bool {
+	_ = cs.Mutate(t.Context(), "c-parent", func(c *vibekit.Chat, _ bool) bool {
 		c.Name = "Parent"
-		c.Messages = []api.Message{{Role: api.RoleUser, Content: "parent history"}}
+		c.Messages = []vibekit.Message{{Role: vibekit.RoleUser, Content: "parent history"}}
 		return true
 	})
-	_ = cs.Mutate(t.Context(), "c-tangent", func(c *api.Chat, _ bool) bool {
-		c.Name = api.DefaultChatName
+	_ = cs.Mutate(t.Context(), "c-tangent", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = vibekit.DefaultChatName
 		return true
 	})
 	h.coord.PrimeFromChat("c-tangent", "c-parent")

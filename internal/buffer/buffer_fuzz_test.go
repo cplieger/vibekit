@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func FuzzBufferTrackFileChanges(f *testing.F) {
@@ -20,7 +20,7 @@ func FuzzBufferTrackFileChanges(f *testing.F) {
 		count := int(data[0]%10) + 1
 		data = data[1:]
 
-		diffs := make([]api.ToolDiff, 0, count)
+		diffs := make([]vibekit.ToolDiff, 0, count)
 		for i := range count {
 			_ = i
 			if len(data) < 3 {
@@ -50,7 +50,7 @@ func FuzzBufferTrackFileChanges(f *testing.F) {
 			newText := string(data[:newLen])
 			data = data[newLen:]
 
-			diffs = append(diffs, api.ToolDiff{Path: path, OldText: oldText, NewText: newText})
+			diffs = append(diffs, vibekit.ToolDiff{Path: path, OldText: oldText, NewText: newText})
 		}
 
 		buf := &Buffer{}

@@ -38,8 +38,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -60,7 +60,7 @@ const (
 // 1 method against a *hub.Hub exporting well over a hundred; this package fires
 // exactly one event kind and needs nothing else from the hub at all.
 type broadcaster interface {
-	Broadcast(ctx context.Context, evt api.ServerEvent)
+	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
 }
 
 // HTTPHandler exposes the forges package over HTTP.
@@ -94,7 +94,7 @@ func (h *HTTPHandler) SetOnChange(fn func()) { h.onChange = fn }
 // callback. No-op parts are skipped when unwired.
 func (h *HTTPHandler) notifyChanged(ctx context.Context) {
 	if h.broadcaster != nil {
-		h.broadcaster.Broadcast(ctx, api.NewEvent(api.EventForgesChanged, "", api.ForgesChangedPayload{}))
+		h.broadcaster.Broadcast(ctx, vibekit.NewEvent(vibekit.EventForgesChanged, "", vibekit.ForgesChangedPayload{}))
 	}
 	if h.onChange != nil {
 		h.onChange()

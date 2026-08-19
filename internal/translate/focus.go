@@ -38,7 +38,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // PrimePreambleSwitch is the fixed prefix of the invisible priming prompt the
@@ -110,7 +110,7 @@ type focusUpdate struct {
 // status/description as an ephemeral chat_status event. Parent-only by
 // construction — HandleSessionInfoUpdate drops subagent frames before
 // dispatching here.
-func (t *Translator) handleFocusUpdate(ctx context.Context, chatID api.ChatID, f *focusUpdate) {
+func (t *Translator) handleFocusUpdate(ctx context.Context, chatID vibekit.ChatID, f *focusUpdate) {
 	if title := strings.TrimSpace(f.Title); title != "" && utf8.RuneCountInString(title) <= maxFocusTitleRunes {
 		t.applyFocusTitle(ctx, chatID, title)
 	}
@@ -119,7 +119,7 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID api.ChatID, f
 	if status == "" && desc == "" {
 		return
 	}
-	t.deps.Broadcast(ctx, api.NewEvent(api.EventChatStatus, chatID, api.ChatStatusPayload{
+	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventChatStatus, chatID, vibekit.ChatStatusPayload{
 		Status:      status,
 		Description: desc,
 	}))
@@ -129,9 +129,9 @@ func (t *Translator) handleFocusUpdate(ctx context.Context, chatID api.ChatID, f
 // derivation filter runs inside the Mutate closure because it needs the
 // chat's messages; Mutate broadcasts chat_updated on change, which is what
 // flips the tab label live.
-func (t *Translator) applyFocusTitle(ctx context.Context, chatID api.ChatID, title string) {
+func (t *Translator) applyFocusTitle(ctx context.Context, chatID vibekit.ChatID, title string) {
 	renamed := false
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *api.Chat, exists bool) bool {
+	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.Name == title || titleIsPromptDerived(title, c) {
 			return false
 		}
@@ -165,7 +165,7 @@ func titleIsPrimeDerived(stripped string) bool {
 // truncation (long prompt); the prompt KAS saw is either one of the
 // chat's user messages or, on a freshly primed session, the priming
 // preamble + transcript.
-func titleIsPromptDerived(title string, c *api.Chat) bool {
+func titleIsPromptDerived(title string, c *vibekit.Chat) bool {
 	stripped, ellipsized := strings.CutSuffix(title, derivedTitleEllipsis)
 	// The prime is always far longer than the title cap, so a prime-derived
 	// title is always ellipsized — only check there.
@@ -174,7 +174,7 @@ func titleIsPromptDerived(title string, c *api.Chat) bool {
 	}
 	for i := range c.Messages {
 		m := &c.Messages[i]
-		if m.Role != api.RoleUser {
+		if m.Role != vibekit.RoleUser {
 			continue
 		}
 		text := strings.TrimSpace(m.Content)

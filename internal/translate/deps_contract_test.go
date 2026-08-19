@@ -3,7 +3,7 @@ package translate
 import (
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestStubDeps_Contract verifies that baseDeps satisfies the Deps
@@ -43,7 +43,7 @@ func TestStubDeps_Contract(t *testing.T) {
 	}
 
 	// Broadcast must not panic.
-	d.Broadcast(ctx, api.ServerEvent{})
+	d.Broadcast(ctx, vibekit.ServerEvent{})
 }
 
 // TestBaseDeps_FullContract mirrors the hub's TranslateDepsContractTest
@@ -65,7 +65,7 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("Broadcast_does_not_panic", func(t *testing.T) {
-		d.Broadcast(ctx, api.ServerEvent{Type: "test_event", ChatID: "chat-1"})
+		d.Broadcast(ctx, vibekit.ServerEvent{Type: "test_event", ChatID: "chat-1"})
 	})
 
 	t.Run("ParentACPSession_empty_for_unknown_chat", func(t *testing.T) {
@@ -84,11 +84,11 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
-		d.PendingPermsAdd(42, api.ServerEvent{Type: "permission_needed", ChatID: "c1"})
+		d.PendingPermsAdd(42, vibekit.ServerEvent{Type: "permission_needed", ChatID: "c1"})
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
-		d.NotifyPush(ctx, "test body", api.PushKindPermission, "")
+		d.NotifyPush(ctx, "test body", vibekit.PushKindPermission, "")
 	})
 
 	t.Run("BufferStore_non_nil", func(t *testing.T) {

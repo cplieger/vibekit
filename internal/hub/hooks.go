@@ -52,8 +52,8 @@ import (
 	"time"
 
 	"github.com/cplieger/pathinside/v2"
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/vibekit"
 	"github.com/cplieger/webhttp"
 )
 
@@ -325,7 +325,7 @@ func (h *Hub) handleHookSetEnabled(w http.ResponseWriter, r *http.Request) {
 // names, so an in-place body edit changes neither and that endpoint alone would
 // serve a stale trigger forever.
 func (h *Hub) broadcastHooksChanged() {
-	h.Broadcast(context.Background(), api.NewEvent(api.EventHooksChanged, "", api.HooksChangedPayload{}))
+	h.Broadcast(context.Background(), vibekit.NewEvent(vibekit.EventHooksChanged, "", vibekit.HooksChangedPayload{}))
 }
 
 // hookIDFromPath decodes the base64url {id} path segment into a KAS hook id,

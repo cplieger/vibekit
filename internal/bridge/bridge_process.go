@@ -14,9 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
 	"github.com/cplieger/vibekit/internal/procgroup"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Start launches the kiro-cli subprocess and either creates a new ACP
@@ -25,9 +25,9 @@ import (
 //
 // ctx bounds the startup handshake only; opts.Lifetime bounds the subprocess
 // and is required.
-func (b *Bridge) Start(ctx context.Context, opts *api.StartOpts) error {
+func (b *Bridge) Start(ctx context.Context, opts *vibekit.StartOpts) error {
 	// The subprocess outlives this call. Start's ctx bounds the handshake
-	// below; opts.Lifetime bounds the process. See api.StartOpts.Lifetime for
+	// below; opts.Lifetime bounds the process. See vibekit.StartOpts.Lifetime for
 	// what taking the process lifetime from a turn context measured like, and
 	// for why the field is required rather than defaulted here.
 	if opts.Lifetime == nil {
@@ -133,7 +133,7 @@ func buildACPArgs(engine string) []string {
 	// answer the _kiro/auth/getAccessToken + _kiro/terminal/shell_type
 	// callbacks (see internal/hub/bridge_v3_auth.go).
 	if engine == "" {
-		engine = api.AgentEngineV3
+		engine = vibekit.AgentEngineV3
 	}
 	return []string{"acp", "--agent-engine", engine}
 }
@@ -160,7 +160,7 @@ func (b *Bridge) startProcess(engine string) error {
 	// this is non-nil by construction and needs no fallback — the
 	// context.Background() one that used to live here was a second
 	// uncancellable substitution behind Start's own. It is never a request or
-	// turn context — see api.StartOpts.Lifetime.
+	// turn context — see vibekit.StartOpts.Lifetime.
 	b.cmd = exec.CommandContext(b.lifecycleCtx, b.cliPath, args...) //nolint:gosec // G204: binary path from the install manager, never user input
 	// Own process group, so teardown can reclaim the whole tree. Closing stdin
 	// first is still what gives kiro-cli a chance to exit on its own, but it is

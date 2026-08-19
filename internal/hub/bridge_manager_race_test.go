@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // TestBridgeManager_ConcurrentGetOrInsertClose exercises the race
@@ -21,7 +21,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	// Inserters.
 	wg.Go(func() {
 		for i := range N {
-			chatID := api.ChatID("chat-" + string(rune('A'+i%5)))
+			chatID := vibekit.ChatID("chat-" + string(rune('A'+i%5)))
 			bm.getOrInsert(chatID)
 		}
 	})
@@ -29,7 +29,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	// Closers.
 	wg.Go(func() {
 		for i := range N {
-			chatID := api.ChatID("chat-" + string(rune('A'+i%5)))
+			chatID := vibekit.ChatID("chat-" + string(rune('A'+i%5)))
 			bm.close(chatID)
 		}
 	})
@@ -37,7 +37,7 @@ func TestBridgeManager_ConcurrentGetOrInsertClose(t *testing.T) {
 	// Readers.
 	wg.Go(func() {
 		for i := range N {
-			chatID := api.ChatID("chat-" + string(rune('A'+i%5)))
+			chatID := vibekit.ChatID("chat-" + string(rune('A'+i%5)))
 			_ = bm.get(chatID)
 		}
 	})
@@ -61,14 +61,14 @@ func TestBridgeManager_CloseConcurrentDrain(t *testing.T) {
 
 	// Seed bridges.
 	for i := range 20 {
-		chatID := api.ChatID("drain-" + string(rune('A'+i)))
+		chatID := vibekit.ChatID("drain-" + string(rune('A'+i)))
 		bm.getOrInsert(chatID)
 	}
 
 	var wg sync.WaitGroup
 
 	wg.Go(func() {
-		for _, id := range []api.ChatID{"drain-A", "drain-B", "drain-C"} {
+		for _, id := range []vibekit.ChatID{"drain-A", "drain-B", "drain-C"} {
 			bm.close(id)
 		}
 	})

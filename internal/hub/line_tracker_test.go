@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestLineTrackerRecord(t *testing.T) {
@@ -42,7 +42,7 @@ func TestLineTrackerRecord(t *testing.T) {
 
 func TestLineTrackerRecordFromDiffs(t *testing.T) {
 	lt := buffer.NewLineTracker()
-	diffs := []api.ToolDiff{
+	diffs := []vibekit.ToolDiff{
 		{Path: "a.go", NewText: "line1\nline2\nline3\n"},
 		{Path: "b.go", NewText: "single"},
 		{Path: "", NewText: "skip"}, // empty path skipped
@@ -117,9 +117,9 @@ func BenchmarkLineTrackerRecordFromDiffs(b *testing.B) {
 	for _, n := range []int{1, 10, 50} {
 		b.Run(fmt.Sprintf("diffs_%d", n), func(b *testing.B) {
 			lt := buffer.NewLineTracker()
-			diffs := make([]api.ToolDiff, n)
+			diffs := make([]vibekit.ToolDiff, n)
 			for i := range n {
-				diffs[i] = api.ToolDiff{
+				diffs[i] = vibekit.ToolDiff{
 					Path:    fmt.Sprintf("file%d.go", i),
 					NewText: "line1\nline2\nline3\n",
 				}

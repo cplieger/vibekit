@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestShutdownCompletesWithoutHanging(t *testing.T) {
@@ -45,9 +45,9 @@ func newHangingBridge() *hangingBridge {
 	}
 }
 
-func (b *hangingBridge) Call(_ context.Context, _ string, _ any) (*api.RPCResponse, error) {
+func (b *hangingBridge) Call(_ context.Context, _ string, _ any) (*vibekit.RPCResponse, error) {
 	<-b.released
-	return &api.RPCResponse{}, nil
+	return &vibekit.RPCResponse{}, nil
 }
 
 func (b *hangingBridge) Stop() {
@@ -66,7 +66,7 @@ func TestShutdown_StopsBridgesBeforeWaitingOnInflight(t *testing.T) {
 	h := New(t.Context(), "/tmp/work", factory, cs)
 	cs.Bus = h
 
-	_ = cs.Mutate(t.Context(), "c1", func(c *api.Chat, _ bool) bool { c.Name = "A"; return true })
+	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	// Register the bridge directly so we don't have to drive a full
 	// cmdPrompt flow; we're testing Shutdown ordering, not prompt

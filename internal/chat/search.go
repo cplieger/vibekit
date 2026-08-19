@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // Transcript search.
@@ -62,7 +62,7 @@ type SearchHit struct {
 	Excerpt       string `json:"excerpt"`
 	// Role of the matched message, so a result list can say where a hit came
 	// from without a second lookup.
-	Role api.Role `json:"role"`
+	Role vibekit.Role `json:"role"`
 	// Turn is the 1-based session-absolute turn ordinal, matching
 	// projectTurnSummaries so a hit can mark the timeline rail.
 	Turn int `json:"turn"`
@@ -134,7 +134,7 @@ func parseSearchQuery(raw string, caseSensitive bool) searchQuery {
 // in-chat search have to agree on it — the client highlights and counts in the
 // DOM while this enumerates session-wide — so the flag travels on the request
 // rather than being a server default either side could get wrong.
-func Search(msgs []api.Message, raw string, caseSensitive bool) []SearchHit {
+func Search(msgs []vibekit.Message, raw string, caseSensitive bool) []SearchHit {
 	q := parseSearchQuery(raw, caseSensitive)
 	if q.text == "" && q.file == "" && q.tool == "" && q.role == "" && q.turn < 0 {
 		return []SearchHit{}
@@ -157,7 +157,7 @@ func Search(msgs []api.Message, raw string, caseSensitive bool) []SearchHit {
 
 // turnIndexByMessage maps every message id to its turn's absolute ordinal, via
 // the shared projection so numbering cannot disagree with the rail's.
-func turnIndexByMessage(msgs []api.Message) (turns map[string]int, openers map[string]string) {
+func turnIndexByMessage(msgs []vibekit.Message) (turns map[string]int, openers map[string]string) {
 	turns = make(map[string]int, len(msgs))
 	openers = make(map[string]string, len(msgs))
 	summaries := projectTurnSummaries(msgs, false)
@@ -179,7 +179,7 @@ func turnIndexByMessage(msgs []api.Message) (turns map[string]int, openers map[s
 }
 
 // messageMatchesFilters applies the scoped filters, all of which must hold.
-func messageMatchesFilters(m *api.Message, q *searchQuery, turn int) bool {
+func messageMatchesFilters(m *vibekit.Message, q *searchQuery, turn int) bool {
 	if q.turn >= 0 && turn != q.turn {
 		return false
 	}
@@ -198,7 +198,7 @@ func messageMatchesFilters(m *api.Message, q *searchQuery, turn int) bool {
 // messageTouchesFile matches a substring against changed-file paths AND tool
 // locations. Both, because a turn that only READ a file never appears in
 // changed_files, and "the turn where you looked at auth.go" is a real question.
-func messageTouchesFile(m *api.Message, want string) bool {
+func messageTouchesFile(m *vibekit.Message, want string) bool {
 	for path := range m.ChangedFiles {
 		if strings.Contains(strings.ToLower(path), want) {
 			return true
@@ -214,7 +214,7 @@ func messageTouchesFile(m *api.Message, want string) bool {
 	return false
 }
 
-func messageUsesTool(m *api.Message, want string) bool {
+func messageUsesTool(m *vibekit.Message, want string) bool {
 	for i := range m.ToolCalls {
 		tc := &m.ToolCalls[i]
 		if strings.Contains(strings.ToLower(tc.Title), want) ||
@@ -230,7 +230,7 @@ func messageUsesTool(m *api.Message, want string) bool {
 // A filter-only query (`file:auth.go` with no text) still yields one hit per
 // matching message, so a scoped search without free text is a way to LIST turns
 // rather than a query that finds nothing.
-func appendMessageHits(hits []SearchHit, m *api.Message, q *searchQuery, turn int, opener string) []SearchHit {
+func appendMessageHits(hits []SearchHit, m *vibekit.Message, q *searchQuery, turn int, opener string) []SearchHit {
 	body := searchableText(m)
 	if q.text == "" {
 		return append(hits, SearchHit{
@@ -277,7 +277,7 @@ func appendMessageHits(hits []SearchHit, m *api.Message, q *searchQuery, turn in
 // the prose, the thinking trace, and each tool call's title and output. Tool
 // output matters — "which turn printed that error" is asked more often than
 // "which turn mentioned it".
-func searchableText(m *api.Message) string {
+func searchableText(m *vibekit.Message) string {
 	var b strings.Builder
 	b.Grow(len(m.Content) + len(m.Reasoning) + 64)
 	b.WriteString(m.Content)

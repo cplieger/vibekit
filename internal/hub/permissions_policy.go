@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 // policyCallTimeout bounds one _kiro/permissions/{list,explain} round-trip.
@@ -73,7 +73,7 @@ func (h *Hub) ensureUtility() *utilityRuntime {
 // PolicyList returns the native policy rules, optionally filtered to one
 // scope (empty = all scopes). Backed by _kiro/permissions/list on the
 // utility bridge.
-func (h *Hub) PolicyList(ctx context.Context, scope string) ([]api.PolicyRule, error) {
+func (h *Hub) PolicyList(ctx context.Context, scope string) ([]vibekit.PolicyRule, error) {
 	extra := map[string]any{}
 	if scope != "" {
 		extra["scope"] = scope
@@ -85,16 +85,16 @@ func (h *Hub) PolicyList(ctx context.Context, scope string) ([]api.PolicyRule, e
 		return nil, err
 	}
 	var out struct {
-		Rules []api.PolicyRule `json:"rules"`
+		Rules []vibekit.PolicyRule `json:"rules"`
 	}
 	if len(raw) == 0 {
-		return []api.PolicyRule{}, nil
+		return []vibekit.PolicyRule{}, nil
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("parse permissions/list: %w", err)
 	}
 	if out.Rules == nil {
-		out.Rules = []api.PolicyRule{}
+		out.Rules = []vibekit.PolicyRule{}
 	}
 	return out.Rules, nil
 }
@@ -119,7 +119,7 @@ type explainWire struct {
 // WITHOUT executing anything or raising a consent prompt (KAS
 // evaluateSingleResource). Exactly one of Capability / ToolID is required;
 // KAS additionally requires a resource for the shell capability.
-func (h *Hub) PolicyExplain(ctx context.Context, req api.PolicyExplainRequest) (*api.PolicyExplainResult, error) {
+func (h *Hub) PolicyExplain(ctx context.Context, req vibekit.PolicyExplainRequest) (*vibekit.PolicyExplainResult, error) {
 	extra := map[string]any{}
 	switch {
 	case req.Capability != "":
@@ -142,7 +142,7 @@ func (h *Hub) PolicyExplain(ctx context.Context, req api.PolicyExplainRequest) (
 	if err := json.Unmarshal(raw, &w); err != nil {
 		return nil, fmt.Errorf("parse permissions/explain: %w", err)
 	}
-	res := &api.PolicyExplainResult{
+	res := &vibekit.PolicyExplainResult{
 		Capability:    w.Capability,
 		Resource:      w.Resource,
 		Effect:        w.Effect,
@@ -151,7 +151,7 @@ func (h *Hub) PolicyExplain(ctx context.Context, req api.PolicyExplainRequest) (
 		Source:        w.Source,
 	}
 	if w.MatchedRule != nil {
-		res.MatchedRule = &api.PolicyRuleCore{
+		res.MatchedRule = &vibekit.PolicyRuleCore{
 			Capability: w.MatchedRule.Capability,
 			Match:      w.MatchedRule.Match,
 			Exclude:    w.MatchedRule.Exclude,
