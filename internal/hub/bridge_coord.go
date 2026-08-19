@@ -27,7 +27,6 @@ type BridgeCoordinator struct {
 	broadcast      func(ctx context.Context, e api.ServerEvent)
 	translateEvent func(chatID api.ChatID, msg *api.RPCResponse)
 	push           api.PushService
-	mcpConfig      api.MCPConfig
 	mcpRegistry    *mcpRegistry
 	lifecycle      *lifecyclePlane
 	preBridgeSpawn func(context.Context)
@@ -116,7 +115,6 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		broadcast:      h.Broadcast,
 		translateEvent: h.translateACPEvent,
 		push:           h.push,
-		mcpConfig:      h.mcpConfig,
 		mcpRegistry:    h.mcpRegistry,
 		lifecycle:      h.lifecycle,
 		preBridgeSpawn: h.preBridgeSpawn,

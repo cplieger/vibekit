@@ -1,60 +1,21 @@
 package api
 
-import "context"
-
-// MCP runtime types: the interface the hub uses to pull enabled server
-// configs, and the event payloads broadcast to clients when kiro-cli
+// MCP runtime types: the event payloads broadcast to clients when kiro-cli
 // reports MCP server state via its _kiro.dev/mcp/* notifications.
 //
-// The persisted config types live in internal/mcp; keeping the runtime
-// contract here avoids a cycle (hub → mcp) when mcp's RegisterRoutes
-// lives in the same package as its storage.
+// The persisted config types live in internal/mcp.
 
-// MCPConfig is the hub's view of the user's MCP server configuration.
+// There is no MCPConfig interface here. The name census the hub reads is
+// declared at that consumer (internal/hub's mcpNameSets); *mcp.Store implements
+// it and the composition root's hub.WithMCPConfig call forces the check.
 //
-// There is no ACPServers: vibekit no longer sends servers inline on session/new
-// — it renders KAS's own hot-reloading config file, and KAS merges
-// `client > file-based`, so an inline copy would silently outrank the file. And
-// no SetKnownTools: a connected server's tool names are runtime state that
-// arrives with its prompts and resources, so they live in the hub's registry
-// rather than being written back into a user-config file on every notification.
-//
-// The three name sets are nested — EnabledNames ⊆ ConfiguredNames ⊆ AllNames —
-// and each boundary answers a different question about a name KAS reports:
-//
-//	in EnabledNames                     the user's own server, running
-//	in ConfiguredNames, not enabled     the user's own server, switched off
-//	in AllNames, not configured         a Power's server (the powers block)
-//	in none of them                     a source vibekit cannot see
-//
-// One set alone cannot separate "the user turned this off" from "vibekit never
-// configured this", and those two need opposite treatment: the first is a stale
-// frame to drop, the second is an integration the MCP page would otherwise be
-// silent about while its tools sit in the agent's tool list.
-type MCPConfig interface {
-	// EnabledNames returns the set of enabled server names. Used by the
-	// hub to filter status notifications that belong to disabled entries
-	// (defensive — KAS reports a disabled server as "disabled" rather than
-	// as connected, but we don't trust the boundary).
-	EnabledNames(ctx context.Context) map[string]struct{}
-
-	// ConfiguredNames returns every server name vibekit's OWN config holds,
-	// enabled or disabled. The difference from EnabledNames is exactly the set
-	// of servers the user switched off, which is the only case the registry
-	// still drops a status frame for.
-	ConfiguredNames(ctx context.Context) map[string]struct{}
-
-	// AllNames returns every server name reachable through the config file
-	// vibekit renders: its own block plus the `powers.mcpServers` block KAS
-	// reads out of the same file and vibekit never writes. A name in here but
-	// not in ConfiguredNames came from an installed Power.
-	//
-	// Best-effort by construction: the powers block lives in a file a hand-edit
-	// can make unparseable, and a server may reach KAS through a config vibekit
-	// does not read at all. A name this set misses is reported as
-	// OriginUnknown, never dropped.
-	AllNames(ctx context.Context) map[string]struct{}
-}
+// Two members it never had are worth recording. No ACPServers: vibekit no longer
+// sends servers inline on session/new — it renders KAS's own hot-reloading
+// config file, and KAS merges `client > file-based`, so an inline copy would
+// silently outrank the file. No SetKnownTools: a connected server's tool names
+// are runtime state that arrives with its prompts and resources, so they live in
+// the hub's registry rather than being written back into a user-config file on
+// every notification.
 
 // Origin records where an MCP server came from, so a runtime status row can say
 // so and the UI can withhold the edit affordances for one vibekit does not own.

@@ -119,7 +119,7 @@ type Hub struct {
 
 	push               api.PushService
 	chatStore          api.ChatStore
-	mcpConfig          api.MCPConfig
+	mcpConfig          mcpNameSets
 	mcpRegistry        *mcpRegistry
 	shellMgr           *ShellManager
 	kiroToken          *kiroauth.CLISource
@@ -228,14 +228,15 @@ func WithPush(p api.PushService) Option {
 	return func(h *Hub) { h.push = p }
 }
 
-// WithMCPConfig wires the MCP configuration store. The hub reads
-// EnabledNames() to filter status notifications belonging to disabled entries.
+// WithMCPConfig wires the MCP configuration store. The hub reads the three
+// name sets to classify a status notification's origin and to drop the frames
+// of a server the user switched off.
 //
 // It used to read an ACPServers() that no longer exists: vibekit stopped sending
 // servers inline and adopted KAS's own mcp.json, leaving `mcpServers` on the
 // session methods as a required-but-empty array (bridge_session.go). The comment
 // outlived the method.
-func WithMCPConfig(c api.MCPConfig) Option {
+func WithMCPConfig(c mcpNameSets) Option {
 	return func(h *Hub) { h.mcpConfig = c }
 }
 

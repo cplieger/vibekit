@@ -39,7 +39,6 @@ var (
 	_ api.RouteHandler         = (*filebrowse.Handler)(nil)
 	_ api.RouteHandler         = (*auth.Handler)(nil)
 	_ api.PushService          = (*push.Service)(nil)
-	_ api.MCPConfig            = (*mcp.Store)(nil)
 	_ api.RouteHandler         = (*mcp.Store)(nil)
 	_ api.RouteHandler         = (*mcp.RegistryProxy)(nil)
 )

@@ -145,15 +145,8 @@ func TestFakeChatStore_Contract(t *testing.T) {
 
 // --- MCPConfig contract test ---
 
-// MCPConfigContractTest delegates to the shared testsupport version
-// so all packages run the same contract suite.
-func MCPConfigContractTest(t *testing.T, newConfig func(t *testing.T) api.MCPConfig) {
-	t.Helper()
-	testsupport.MCPConfigContractTest(t, newConfig)
-}
-
 func TestFakeMCPConfig_Contract(t *testing.T) {
-	MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
+	testsupport.MCPConfigContractTest(t, func(t *testing.T) testsupport.MCPNameSets {
 		t.Helper()
 		return &fakeMCPConfig{
 			enabled:    map[string]struct{}{},

@@ -11,7 +11,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/testsupport"
 )
 
@@ -1040,7 +1039,7 @@ func TestCreate_RejectsControlCharsInOAuthClientID(t *testing.T) {
 // against the real mcp.Store to catch drift between the fake and the
 // production implementation.
 func TestStore_MCPConfigContract(t *testing.T) {
-	testsupport.MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
+	testsupport.MCPConfigContractTest(t, func(t *testing.T) testsupport.MCPNameSets {
 		t.Helper()
 		return newTestStore(t)
 	})

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -17,10 +16,9 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/mcp"
 )
 
-// fakeMCPConfig implements api.MCPConfig for registry filter tests.
+// fakeMCPConfig is the registry filter tests' MCP name census.
 //
 // The three sets are independent fields rather than one set plus derived views,
 // so a test can stage the case that matters: a name in `configured` but not
@@ -57,7 +55,7 @@ func (f *fakeMCPConfig) copyOf(src map[string]struct{}) map[string]struct{} {
 	return out
 }
 
-func newHubWithMCPConfig(cfg api.MCPConfig) *Hub {
+func newHubWithMCPConfig(cfg mcpNameSets) *Hub {
 	cs := newFakeChatStore()
 	factory := func() api.ACPBridge { return newFakeBridge() }
 	var opts []Option
@@ -436,16 +434,7 @@ func BenchmarkMCPRegistrySnapshot(b *testing.B) {
 	}
 }
 
-// TestRealMCPConfig_Contract runs the shared MCPConfigContractTest against
-// the real mcp.Store implementation to catch drift between the fake and real.
-func TestRealMCPConfig_Contract(t *testing.T) {
-	MCPConfigContractTest(t, func(t *testing.T) api.MCPConfig {
-		t.Helper()
-		dir := t.TempDir()
-		s, err := mcp.New(t.Context(), dir, nil, mcp.WithKASConfigPath(filepath.Join(dir, "kas-mcp.json")))
-		if err != nil {
-			t.Fatalf("mcp.New: %v", err)
-		}
-		return s
-	})
-}
+// The real *mcp.Store's run of MCPConfigContractTest lives in internal/mcp's
+// own test binary (TestStore_MCPConfigContract). It used to be duplicated here
+// as well, which spent a second run on the identical assertion and made the
+// hub's test binary import internal/mcp for nothing else.

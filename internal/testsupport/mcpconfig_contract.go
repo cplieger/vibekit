@@ -3,14 +3,23 @@ package testsupport
 import (
 	"context"
 	"testing"
-
-	"github.com/cplieger/vibekit/internal/api"
 )
 
-// MCPConfigContractTest exercises the behavioral expectations of any
-// api.MCPConfig implementation. Run against both fakes and real
-// implementations to catch drift.
-func MCPConfigContractTest(t *testing.T, newConfig func(t *testing.T) api.MCPConfig) {
+// MCPNameSets is the UNION of what the MCP name-census consumers declare, and
+// it lives here only because a shared contract suite has to name its subject.
+// internal/hub declares its own mcpNameSets (3 methods, unexported); *mcp.Store
+// implements them. This is the third copy on purpose: a consumer that grows a
+// fourth set has to add it here too, or the suite goes silent on it.
+type MCPNameSets interface {
+	EnabledNames(ctx context.Context) map[string]struct{}
+	ConfiguredNames(ctx context.Context) map[string]struct{}
+	AllNames(ctx context.Context) map[string]struct{}
+}
+
+// MCPConfigContractTest exercises the behavioral expectations any MCP
+// name-census implementation must meet. Run against both fakes and the real
+// store to catch drift.
+func MCPConfigContractTest(t *testing.T, newConfig func(t *testing.T) MCPNameSets) {
 	t.Helper()
 
 	// All three sets are empty on an empty config. AllNames included: a real
