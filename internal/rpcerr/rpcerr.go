@@ -1,13 +1,22 @@
-package api
-
-// Turning a JSON-RPC error from kiro-cli into text a person can read.
+// Package rpcerr turns a JSON-RPC error from kiro-cli into text a person can
+// read.
 //
-// This lives in api rather than in a domain package because EVERY caller that
-// surfaces an ACP failure needs it: the prompt path, the model switch, the
-// command dispatcher's shared 502 and the workflow read endpoints. It used to
-// live in internal/workflow as Details, reachable only from the run handlers, so
-// the 127-of-137 error frames that carry their text in `error.data` rendered to
-// chat users as the literal "ACP error -32603: Internal error".
+// It exists as its own package because THREE packages surface an ACP failure and
+// none of them owns the rule: internal/command (the prompt path, the retry, the
+// bridge-start failure and the dispatcher's shared 502), internal/hub (the model
+// switch and every workflow read endpoint) and internal/workflow (Classify's
+// feature detection). It used to live in internal/workflow as Details, reachable
+// only from the run handlers, so the 127-of-137 error frames that carry their
+// text in `error.data` rendered to chat users as the literal
+// "ACP error -32603: Internal error". Then it lived in internal/api beside the
+// wire and domain TYPES, which is what made that package's own claim to declare
+// no interfaces false — the detailer below is the interface it was declaring
+// three files away.
+//
+// Nothing here imports another vibekit package. The one shape it needs is
+// reached through detailer rather than through *api.RPCError, so an error is
+// found by errors.As at any wrapping depth and this package stays a leaf.
+package rpcerr
 
 import (
 	"encoding/json"
@@ -17,31 +26,31 @@ import (
 	"github.com/cplieger/runesafe"
 )
 
-// MaxRPCErrorTextBytes bounds one error string on its way to a user surface.
+// maxTextBytes bounds one error string on its way to a user surface.
 //
-// A bound is required rather than tidy: RPCDetails' last fallback returns the
+// A bound is required rather than tidy: Details' last fallback returns the
 // raw `error.data` blob, which on a Zod failure over a large params object is
 // unbounded, and the same value reaches an SSE payload, a chat banner and a log
 // line. 2 KiB is far more than any real cause needs and far less than a
 // transcript-sized blob.
-const MaxRPCErrorTextBytes = 2048
+const maxTextBytes = 2048
 
-// rpcDetailer is satisfied by an error carrying KAS's `error.data`. An interface
+// detailer is satisfied by an error carrying KAS's `error.data`. An interface
 // rather than *RPCError so a wrapped error is found by errors.As at any depth.
-type rpcDetailer interface {
+type detailer interface {
 	ErrorData() json.RawMessage
 }
 
-// RPCDetails extracts the text KAS put in `error.data`, or "" when there is
+// Details extracts the text KAS put in `error.data`, or "" when there is
 // none.
 //
 // Returning "" for an error whose text is in `error.message` is why this is not
-// the function callers should reach for: use RPCErrorText, which composes both.
+// the function callers should reach for: use Text, which composes both.
 // It stays exported because workflow.Classify's feature detection wants the data
 // half specifically, and matching its marker against the message too would widen
 // it to any error that merely quotes KAS.
-func RPCDetails(err error) string {
-	var d rpcDetailer
+func Details(err error) string {
+	var d detailer
 	if !errors.As(err, &d) {
 		return ""
 	}
@@ -77,7 +86,7 @@ func RPCDetails(err error) string {
 	return string(raw)
 }
 
-// RPCErrorText is the one function a user-facing surface should call on an ACP
+// Text is the one function a user-facing surface should call on an ACP
 // error. It answers the most specific text the error carries, sanitized and
 // bounded.
 //
@@ -95,12 +104,12 @@ func RPCDetails(err error) string {
 // DEL, Bidi overrides and the paragraph separators into spaces, so a hostile or
 // merely mangled provider message cannot forge a log record or reorder a
 // sentence in a viewer. It is capped on a rune boundary for the reason
-// MaxRPCErrorTextBytes gives.
-func RPCErrorText(err error) string {
+// maxTextBytes gives.
+func Text(err error) string {
 	if err == nil {
 		return ""
 	}
-	text := RPCDetails(err)
+	text := Details(err)
 	if text == "" {
 		text = err.Error()
 	}
@@ -108,6 +117,6 @@ func RPCErrorText(err error) string {
 	// elision marker OUTSIDE the cap, so a truncated value runs to n+3 bytes and
 	// every caller with a real budget subtracts the marker width by hand. Capped
 	// bounds the TOTAL, which is what a cap is for.
-	capped, _ := runesafe.SanitizeSingleLineCapped(text, MaxRPCErrorTextBytes, "...")
+	capped, _ := runesafe.SanitizeSingleLineCapped(text, maxTextBytes, "...")
 	return capped
 }

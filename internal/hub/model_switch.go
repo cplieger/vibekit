@@ -23,6 +23,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/command"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/rpcerr"
 )
 
 // resolveSwitchModel returns the effective model after applying the
@@ -102,7 +103,7 @@ func (h *Hub) switchByRestart(
 
 	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, model)
 	if err != nil {
-		h.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeSwitchFailed, Message: api.RPCErrorText(err)}))
+		h.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
 		h.respondErr(w, http.StatusInternalServerError, err)
 		return
 	}

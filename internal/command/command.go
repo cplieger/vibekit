@@ -18,6 +18,7 @@ import (
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/rpcerr"
 )
 
 // maxCommandBody caps the whole POST /api/command envelope. It is the generic
@@ -102,13 +103,13 @@ type errorResponse struct {
 
 // RespondErr writes a JSON error response with the given status code.
 //
-// The body goes through api.RPCErrorText rather than err.Error() because four of
+// The body goes through rpcerr.Text rather than err.Error() because four of
 // the handlers reaching here (compact, mode, rewind, steer) forward a bridge Call
 // failure verbatim, and on a -32603 the error string is KAS's literal "Internal
 // error" while the cause sits unread in `error.data`. RPCErrorText is a no-op for
 // every ordinary Go error, so the one call covers both populations.
 func (d *Dispatcher) RespondErr(w http.ResponseWriter, code int, err error) {
-	webhttp.WriteJSONStatus(w, code, errorResponse{Error: api.RPCErrorText(err)})
+	webhttp.WriteJSONStatus(w, code, errorResponse{Error: rpcerr.Text(err)})
 }
 
 // RequireChatID validates that cmd.ChatID is non-empty and writes a

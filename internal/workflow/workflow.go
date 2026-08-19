@@ -35,7 +35,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/rpcerr"
 )
 
 // Node is one node of a run's state tree, decoded only as far as step
@@ -128,7 +128,7 @@ func Classify(err error) error {
 	if err == nil {
 		return nil
 	}
-	if strings.Contains(api.RPCDetails(err), unknownMethodMarker) {
+	if strings.Contains(rpcerr.Details(err), unknownMethodMarker) {
 		return fmt.Errorf("%w: %w", ErrUnknownMethod, err)
 	}
 	return err

@@ -15,6 +15,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/settings"
 )
 
@@ -127,7 +128,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 			"chat_id", chatID, keyError, err2)
 		deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
 			Code:    api.ErrCodeRecoveryFailed,
-			Message: "Session refresh failed: " + api.RPCErrorText(err2),
+			Message: "Session refresh failed: " + rpcerr.Text(err2),
 		}))
 		return resp
 	}
@@ -164,7 +165,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID api.ChatID,
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
 		deps.Broadcast(ctx, api.NewEvent(api.EventError, chatID, api.ErrorPayload{
 			Code:    api.ErrCodeRecoveryFailed,
-			Message: "Retry prompt failed: " + api.RPCErrorText(retryErr),
+			Message: "Retry prompt failed: " + rpcerr.Text(retryErr),
 		}))
 		return resp
 	}
@@ -282,7 +283,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	defer cancel()
 	sb, err := deps.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
-		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeBridgeStartFailed, Message: api.RPCErrorText(err)}))
+		deps.Broadcast(ctx, api.NewEvent(api.EventError, cmd.ChatID, api.ErrorPayload{Code: api.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -546,7 +547,7 @@ func isAuthShaped(re *api.RPCError) bool {
 func promptFailureReason(err error) string {
 	re, ok := errors.AsType[*api.RPCError](err)
 	if !ok {
-		return api.RPCErrorText(err)
+		return rpcerr.Text(err)
 	}
 	d := mappedFromData(re)
 	if d == nil {
@@ -555,7 +556,7 @@ func promptFailureReason(err error) string {
 		// is the literal "Internal error" and whose cause is in `error.data`.
 		// This used to return err.Error(), i.e. that literal, so the real cause
 		// was on the wire and the user was told nothing.
-		return api.RPCErrorText(err)
+		return rpcerr.Text(err)
 	}
 	// A MAPPED error is the one case where `error.data` is NOT the text: it is the
 	// machine triplet (errorType / retryErrorType / requestId), and the prose is

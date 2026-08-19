@@ -51,10 +51,12 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/cplieger/webhttp"
+
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/rpcerr"
 	"github.com/cplieger/vibekit/internal/workflow"
-	"github.com/cplieger/webhttp"
 )
 
 // rawInspectRun issues `_kiro/workflow/inspect` for one run and TYPES its failure
@@ -106,13 +108,13 @@ func (h *Hub) handleRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, workflow.ErrUnknownMethod) {
 			slog.Warn("workflow inspect: engine not available on this kiro-cli",
-				"workflow_id", id, "detail", api.RPCDetails(err))
+				"workflow_id", id, "detail", rpcerr.Details(err))
 			webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable,
 				map[string]string{"error": "the workflow engine is not available on this kiro-cli build"})
 			return
 		}
 		slog.Warn("workflow inspect failed", "workflow_id", id,
-			"error", err, "detail", api.RPCDetails(err))
+			"error", err, "detail", rpcerr.Details(err))
 		httpreply.NotFound(w, "workflow run not found")
 		return
 	}
@@ -158,7 +160,7 @@ func (h *Hub) handleRecipes(w http.ResponseWriter, r *http.Request) {
 	}
 	recipes, err := h.listRecipes(r.Context())
 	if err != nil {
-		slog.Warn("recipe list failed", "error", err, "detail", api.RPCDetails(err))
+		slog.Warn("recipe list failed", "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New("recipe list unavailable"))
 		return
 	}
@@ -184,11 +186,11 @@ func (h *Hub) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
 			httpreply.Conflict(w, errRecipeBusy.Error())
 			return
 		}
-		slog.Warn("run launch failed", "source", req.Source, "error", err, "detail", api.RPCDetails(err))
+		slog.Warn("run launch failed", "source", req.Source, "error", err, "detail", rpcerr.Details(err))
 		// KAS's launch-time validation is precise (a bad input set, an
 		// unregistered agent) and the message names the problem; forward it
 		// rather than a generic sentinel, because the fix is the user's.
-		httpreply.BadRequest(w, api.RPCErrorText(err))
+		httpreply.BadRequest(w, rpcerr.Text(err))
 		return
 	}
 	webhttp.WriteJSON(w, api.RunLaunchedResponse{WorkflowID: id, Name: name})
@@ -344,7 +346,7 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 		status, err := h.runStatus(r.Context(), id)
 		if err != nil {
 			slog.Warn("run control: status read failed",
-				"verb", verb.name, "workflow_id", id, "error", err, "detail", api.RPCDetails(err))
+				"verb", verb.name, "workflow_id", id, "error", err, "detail", rpcerr.Details(err))
 			httpreply.InternalError(w, errors.New(verb.name+" failed"))
 			return
 		}
@@ -369,7 +371,7 @@ func (h *Hub) runControlHandler(w http.ResponseWriter, r *http.Request, verb run
 			return
 		}
 		slog.Warn("run control failed",
-			"verb", verb.name, "workflow_id", id, "error", err, "detail", api.RPCDetails(err))
+			"verb", verb.name, "workflow_id", id, "error", err, "detail", rpcerr.Details(err))
 		httpreply.InternalError(w, errors.New(verb.name+" failed"))
 		return
 	}
