@@ -45,11 +45,6 @@ type Dependencies interface {
 	RecordDedup(reqID string, result []byte)
 }
 
-// Bridge is the per-chat ACP bridge contract for command handlers.
-// The canonical definition lives in api.CommandBridge; this alias
-// preserves backward compatibility within the command package.
-type Bridge = api.CommandBridge
-
 // Dispatcher holds the command dispatch table and serves the
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
@@ -180,7 +175,10 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // SessionParams builds the base ACP parameter map with the "sessionId"
 // key set from the bridge. Extra key-value pairs from extra maps are
 // merged in (last-wins).
-func SessionParams(b Bridge, extra ...map[string]any) map[string]any {
+//
+// Takes the 1-method sessionScoped rather than a whole Bridge: reading an id is
+// not a licence to call, notify or take the turn slot.
+func SessionParams(b sessionScoped, extra ...map[string]any) map[string]any {
 	m := map[string]any{keySessionID: b.SessionID()}
 	for _, e := range extra {
 		maps.Copy(m, e)

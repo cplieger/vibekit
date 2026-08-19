@@ -19,7 +19,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"time"
 )
 
 // --- Persistence ---
@@ -70,41 +69,6 @@ type ChatStore interface {
 }
 
 // --- Communication ---
-
-// CommandBridge abstracts the per-chat ACP bridge for command handlers.
-// Declared here (consumer-side) so both command and hub can reference
-// the same contract without circular imports.
-type CommandBridge interface {
-	// Call sends an RPC call to kiro-cli.
-	Call(ctx context.Context, method string, params any) (*RPCResponse, error)
-	// Notify sends a one-way notification to kiro-cli.
-	Notify(ctx context.Context, method string, params any) error
-	// Respond sends a permission response to kiro-cli.
-	Respond(ctx context.Context, requestID int64, result any, err error) error
-	// SessionID returns the current ACP session ID.
-	SessionID() SessionID
-	// TryAcquireForPrompt attempts to lock the bridge for prompting.
-	TryAcquireForPrompt() bool
-	// ReleaseAfterPrompt releases the prompt lock.
-	ReleaseAfterPrompt()
-	// BeginPromptCall registers the cancel func of the in-flight prompt's
-	// context and returns the turn generation it belongs to. Paired with
-	// EndPromptCall in the prompt handler's defer.
-	BeginPromptCall(cancel context.CancelFunc) uint64
-	// EndPromptCall forgets the in-flight prompt's cancel func.
-	EndPromptCall()
-	// ArmCancelGrace starts the unresponsive-cancel budget: if the turn
-	// identified by gen is still in flight after d, the prompt's context is
-	// cancelled so the blocked Call returns and the slot is released.
-	// Reports false if there was no in-flight prompt to arm against.
-	ArmCancelGrace(gen uint64, d time.Duration) bool
-	// PromptGeneration returns the current turn generation.
-	PromptGeneration() uint64
-	// IsPrimed reports whether the bridge has been primed.
-	IsPrimed() bool
-	// SetPrimed marks the bridge as primed.
-	SetPrimed()
-}
 
 // Broadcaster sends events to all connected SSE clients.
 type Broadcaster interface {

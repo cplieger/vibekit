@@ -126,7 +126,7 @@ type revertResult struct {
 // `success:false` with a reason. The reason is forwarded verbatim: it is more
 // specific than anything vibekit could infer, and a revert that did not happen
 // must never read like one that did.
-func revertToMessage(ctx context.Context, bridge Bridge, messageID string) (revertResult, int, error) {
+func revertToMessage(ctx context.Context, bridge sessionCaller, messageID string) (revertResult, int, error) {
 	var result revertResult
 	resp, err := bridge.Call(ctx, api.MethodCheckpointRevertMultiple, SessionParams(bridge, map[string]any{
 		"messageId": messageID,

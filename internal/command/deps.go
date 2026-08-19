@@ -1,13 +1,19 @@
 package command
 
-// Role-based consumer interfaces decomposed from the Dependencies
-// god-interface. Each interface is shaped by what its consumers
-// actually need, enabling minimal stub surfaces in tests and
-// documenting each handler's actual dependency footprint.
+import (
+	"context"
+	"time"
+
+	"github.com/cplieger/vibekit/internal/api"
+)
+
+// This file is the package's dependency contracts: the role interfaces the
+// Dispatcher's dependencies are read through, and the per-chat bridge
+// interfaces the handlers call. Each is shaped by what THIS package invokes,
+// which is what keeps a test stub small enough to be obviously correct.
 //
-// The Dependencies interface remains as the composite that Hub
-// satisfies. These narrow interfaces are embedded into Dependencies
-// for compile-time verification.
+// Dependencies remains the composite the Hub satisfies, and the narrow role
+// interfaces are embedded into it so the compiler verifies the decomposition.
 //
 // InfraDeps used to sit at the bottom of this file as the outlier: ten
 // unrelated methods behind one name, in a file whose other members were already
@@ -17,12 +23,98 @@ package command
 // named had already left for Dependencies, which is how long the description had
 // been drifting from the members.
 
-import (
-	"context"
-	"time"
+// The bridge interfaces below are declared HERE, at the consumer, rather than in
+// a shared contract package. *hub.sharedBridge is what satisfies them, and the
+// check is forced where hub calls SessionParams(sb, …) rather than by an
+// assertion anybody has to remember to write.
+//
+// The width arithmetic runs from the inside out: SessionParams needs 1 of the
+// bridge's 12 methods, the prompt retry needs 1, a rewind needs 2, and only a
+// handler that holds the bridge for a whole turn needs all 12. A single Bridge
+// parameter on every one of those made each helper claim the whole surface, so
+// the seams are named and each signature takes the narrowest that fits.
 
-	"github.com/cplieger/vibekit/internal/api"
-)
+// sessionScoped names the ACP session an RPC is addressed to. 1 of the 12
+// methods the bridge offers, and the only one SessionParams — which every RPC
+// helper on this path funnels through — has any use for.
+type sessionScoped interface {
+	// SessionID returns the current ACP session ID.
+	SessionID() api.SessionID
+}
+
+// bridgeCaller sends one request to kiro-cli and waits for its answer. 1 of 12:
+// the prompt retry loop re-invokes exactly this and nothing else, so a wider
+// parameter would let a future edit reach the prompt slot from inside a retry.
+type bridgeCaller interface {
+	// Call sends an RPC call to kiro-cli.
+	Call(ctx context.Context, method string, params any) (*api.RPCResponse, error)
+}
+
+// sessionCaller is the commonest shape on this path: one call, addressed to the
+// bridge's own session. 2 of 12.
+type sessionCaller interface {
+	bridgeCaller
+	sessionScoped
+}
+
+// bridgeRPC is the full JSON-RPC surface — request, notification, and the
+// answer to an inbound request from kiro-cli. 4 of 12. It carries no prompt-slot
+// method on purpose: sending a frame and owning the turn are different rights,
+// and the cancel path sends a notification without holding the slot.
+type bridgeRPC interface {
+	sessionCaller
+
+	// Notify sends a one-way notification to kiro-cli.
+	Notify(ctx context.Context, method string, params any) error
+	// Respond sends a permission response to kiro-cli.
+	Respond(ctx context.Context, requestID int64, result any, err error) error
+}
+
+// promptSlot is the per-chat turn lock and its unresponsive-cancel budget. 6 of
+// 12, and they are one protocol rather than six methods: acquire the slot,
+// register the in-flight call's cancel func against a turn GENERATION, arm the
+// grace budget for that generation, then release. The generation is what stops
+// an expired budget cancelling a turn that started after the one it was armed
+// for — time.Timer.Stop does not halt an already-running func.
+type promptSlot interface {
+	// TryAcquireForPrompt attempts to lock the bridge for prompting.
+	TryAcquireForPrompt() bool
+	// ReleaseAfterPrompt releases the prompt lock.
+	ReleaseAfterPrompt()
+	// BeginPromptCall registers the cancel func of the in-flight prompt's
+	// context and returns the turn generation it belongs to. Paired with
+	// EndPromptCall in the prompt handler's defer.
+	BeginPromptCall(cancel context.CancelFunc) uint64
+	// EndPromptCall forgets the in-flight prompt's cancel func.
+	EndPromptCall()
+	// ArmCancelGrace starts the unresponsive-cancel budget: if the turn
+	// identified by gen is still in flight after d, the prompt's context is
+	// cancelled so the blocked Call returns and the slot is released.
+	// Reports false if there was no in-flight prompt to arm against.
+	ArmCancelGrace(gen uint64, d time.Duration) bool
+	// PromptGeneration returns the current turn generation.
+	PromptGeneration() uint64
+}
+
+// bridgePriming is whether this bridge's session has already been given the
+// chat's transcript. 2 of 12, read and written only by the prompt path.
+type bridgePriming interface {
+	// IsPrimed reports whether the bridge has been primed.
+	IsPrimed() bool
+	// SetPrimed marks the bridge as primed.
+	SetPrimed()
+}
+
+// Bridge is the per-chat ACP bridge as a whole: all 12 methods, composed from
+// the three seams above. Only a handler that owns a chat for the length of a
+// turn needs it — the helpers take a narrower parameter.
+//
+// Exported because BridgeAccess returns it and hub's dispatcher wiring names it.
+type Bridge interface {
+	bridgeRPC
+	promptSlot
+	bridgePriming
+}
 
 // BridgeAccess provides bridge lifecycle operations needed by prompt,
 // cancel, subagent, slash, and permission handlers.

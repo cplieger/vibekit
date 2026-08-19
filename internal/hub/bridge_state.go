@@ -18,9 +18,6 @@ const (
 	bridgePrompting                    // prompt in flight
 )
 
-// Compile-time assertion: sharedBridge satisfies api.CommandBridge.
-var _ api.CommandBridge = (*sharedBridge)(nil)
-
 // sharedBridge wraps an ACP bridge with the hub's per-chat state.
 // The mu mutex protects field access; the state field encodes the
 // lifecycle phase so callers can check "busy" via a readable state
@@ -88,7 +85,7 @@ func (sb *sharedBridge) stopCancelTimerLocked() {
 	}
 }
 
-// --- api.CommandBridge implementation on sharedBridge ---
+// --- command.Bridge implementation on sharedBridge ---
 
 func (sb *sharedBridge) Call(ctx context.Context, method string, params any) (*api.RPCResponse, error) {
 	return sb.bridge.Call(ctx, method, params)

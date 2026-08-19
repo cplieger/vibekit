@@ -69,7 +69,7 @@ func retryWithBackoff(ctx context.Context, maxAttempts int, delay time.Duration,
 // second attempt can actually fix. The class is logged either way, because the
 // old single-boolean version logged "prompt retry" for a dead bridge and nothing
 // at all for a throttle, which is exactly backwards from what a reader needs.
-func callPromptWithRetry(ctx context.Context, sb Bridge, params map[string]any, chatID api.ChatID) (*api.RPCResponse, error) {
+func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string]any, chatID api.ChatID) (*api.RPCResponse, error) {
 	return retryWithBackoff(ctx, 2, 2*time.Second, func(err error) bool {
 		class := classifyPromptFailure(err)
 		retry := class == classBusy || class == classTransient
@@ -368,8 +368,9 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *a
 	d.RespondOK(w, cmd.RequestID)
 }
 
-// BuildPromptParams constructs the full session/prompt parameter map.
-func BuildPromptParams(ctx context.Context, deps WorkspaceAccess, sb Bridge, p *api.PromptCommand) map[string]any {
+// BuildPromptParams constructs the full session/prompt parameter map. Takes
+// sessionScoped, not Bridge: building a parameter map reads an id, nothing more.
+func BuildPromptParams(ctx context.Context, deps WorkspaceAccess, sb sessionScoped, p *api.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
 		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
 	})
