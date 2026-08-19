@@ -45,7 +45,7 @@ func (s *Store) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var raw json.RawMessage
-	if !decodeJSONBody(w, r, &raw) {
+	if !httpreply.DecodeJSON(w, r, &raw) {
 		return
 	}
 	req, err := parseImportBody(raw)
@@ -68,7 +68,7 @@ func (s *Store) handleCollection(w http.ResponseWriter, r *http.Request) {
 		webhttp.WriteJSON(w, map[string]any{"servers": s.List(r.Context())})
 	case http.MethodPost:
 		var in Server
-		if !decodeJSONBody(w, r, &in) {
+		if !httpreply.DecodeJSON(w, r, &in) {
 			return
 		}
 		created, err := s.Create(r.Context(), &in)
@@ -125,7 +125,7 @@ func (s *Store) getOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 // secret values), or map the store error to its status via writeErr.
 func (s *Store) putOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	var in Server
-	if !decodeJSONBody(w, r, &in) {
+	if !httpreply.DecodeJSON(w, r, &in) {
 		return
 	}
 	updated, err := s.Update(r.Context(), id, &in)
@@ -142,7 +142,7 @@ func (s *Store) patchOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 	var patch struct {
 		Enabled *bool `json:"enabled"`
 	}
-	if !decodeJSONBody(w, r, &patch) {
+	if !httpreply.DecodeJSON(w, r, &patch) {
 		return
 	}
 	if patch.Enabled == nil {
@@ -167,12 +167,6 @@ func (s *Store) deleteOne(w http.ResponseWriter, r *http.Request, id ServerID) {
 		return
 	}
 	webhttp.Ok(w)
-}
-
-// decodeJSONBody delegates to httpreply.DecodeJSON for backward compatibility
-// within this package. Existing call sites use the local name.
-func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) bool {
-	return httpreply.DecodeJSON(w, r, v)
 }
 
 // writeErr maps package-level sentinel errors to the right HTTP status.
