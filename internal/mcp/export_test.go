@@ -6,7 +6,7 @@ package mcp
 import (
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -211,7 +211,7 @@ func TestMergeSecrets_IdempotentAndNoMutation(t *testing.T) {
 	for _, patch := range cases {
 		once := mergeSecrets(patch, existing)
 		twice := mergeSecrets(once, existing)
-		if !reflect.DeepEqual(once, twice) {
+		if !slices.Equal(once, twice) {
 			t.Errorf("not idempotent:\n patch=%+v\n once=%+v\n twice=%+v", patch, once, twice)
 		}
 		if existing[0].Value != "secret" || existing[1].Value != "https://old" {
@@ -240,7 +240,7 @@ func FuzzMergeSecrets(f *testing.F) {
 		twice := mergeSecrets(once, existing)
 
 		// Idempotency: merging the result again yields the same output.
-		if !reflect.DeepEqual(once, twice) {
+		if !slices.Equal(once, twice) {
 			t.Errorf("not idempotent:\n patch=%+v\n once=%+v\n twice=%+v", patch, once, twice)
 		}
 		// No mutation of existing slice.
@@ -331,7 +331,7 @@ func TestMergeSecrets_RapidRoundTrip(t *testing.T) {
 		}
 
 		// Invariant 4: existing slice not mutated.
-		if !reflect.DeepEqual(existing, existingSnapshot) {
+		if !slices.Equal(existing, existingSnapshot) {
 			t.Fatalf("existing was mutated: got %+v, want %+v", existing, existingSnapshot)
 		}
 	})

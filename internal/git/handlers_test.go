@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -176,7 +175,7 @@ func TestParseGitStatusOutput(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := parseGitStatusOutput(tt.in)
-			if !reflect.DeepEqual(got, tt.want) {
+			if !slices.Equal(got, tt.want) {
 				t.Errorf("parseGitStatusOutput(%q) = %+v, want %+v", tt.in, got, tt.want)
 			}
 		})
@@ -820,7 +819,7 @@ func TestSanitizeRepoPaths_Accepts(t *testing.T) {
 		t.Fatalf("err = %v, want nil", err)
 	}
 	want := []string{"a/b.txt", "c", filepath.Clean("d/e/f.go"), "single"}
-	if !reflect.DeepEqual(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("got = %v, want %v", got, want)
 	}
 }
@@ -830,7 +829,7 @@ func TestSanitizeRepoPaths_SkipsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	if !reflect.DeepEqual(got, []string{"a"}) {
+	if !slices.Equal(got, []string{"a"}) {
 		t.Errorf("got = %v, want [a]", got)
 	}
 }
@@ -2155,7 +2154,7 @@ func BenchmarkParseGitStatusOutput(b *testing.B) {
 	for _, n := range []int{10, 100, 1000} {
 		data := generate(n)
 		b.Run(strconv.Itoa(n)+"_files", func(b *testing.B) {
-			for range b.N {
+			for b.Loop() {
 				_ = parseGitStatusOutput(data)
 			}
 		})
@@ -2178,7 +2177,7 @@ func BenchmarkScrubAuth(b *testing.B) {
 		{"long_output_1KB", longOutput},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
-			for range b.N {
+			for b.Loop() {
 				_ = scrubAuth(tc.input)
 			}
 		})
