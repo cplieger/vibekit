@@ -12,7 +12,7 @@
 // The capture is deliberately NOT an HTTP concern and used to live in the HTTP
 // package because a refactor moved two files together. Nothing here touches
 // net/http, and no consumer of it serves the bytes to a client unread: both run
-// them through api.SanitizeOutput first.
+// them through sanitize.Output first.
 //
 // # Write always reports a full write, and that is the whole point
 //

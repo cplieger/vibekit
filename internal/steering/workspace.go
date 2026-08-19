@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/git"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 func writeWorkspace(ctx context.Context, b *strings.Builder, workDir string, forgeKinds map[string]bool) {
@@ -335,7 +335,7 @@ func findNotableFiles(workDir string) []string {
 //  2. Drop CR/LF/tab in the candidate line before truncation so a
 //     newline-smuggled second "line" can't appear in the output.
 //  3. Strip hidden Unicode codepoints (TAG chars, zero-width joiners,
-//     bidi controls) via api.SanitizeUnicode.
+//     bidi controls) via sanitize.Unicode.
 //  4. Drop lines containing markdown link syntax (inline, reference,
 //     or image), HTML tags, backticks, or bare URLs — each of which
 //     the agent renders or follows.
@@ -360,7 +360,7 @@ func readFirstLine(path string) string {
 		}, line)
 		// Strip hidden Unicode (TAG chars, zero-width joiners,
 		// bidi controls). Same helper we apply to tool output.
-		line = api.SanitizeUnicode(line)
+		line = sanitize.Unicode(line)
 		// Drop lines that contain markdown link syntax (inline
 		// `](`, reference `[`/`]`, image `![`), HTML tags,
 		// backticks, or bare URLs. Safer to show no description

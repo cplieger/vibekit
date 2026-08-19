@@ -1,4 +1,24 @@
-package api
+// Package sanitize defuses text vibekit did not write before it is persisted,
+// echoed to a client, or written to a log.
+//
+// The upstream is an agent's stdout and the tool output it relays, which is to
+// say a channel an attacker can reach through a file the agent reads or a page
+// it fetches. Two families of bytes on that channel are not text: ANSI escape
+// sequences, which move a cursor and repaint a terminal, and the invisible
+// Unicode codepoints — TAG characters, zero-width joiners, bidi overrides —
+// that carry prompt injections a human reviewer cannot see.
+//
+// It exists because this is BEHAVIOUR, and it used to sit in internal/api
+// beside the wire and domain TYPES. Eight packages call it (auth, chat,
+// command, server, translate, hub, steering, procout) with no wire shape in
+// sight, so it never belonged in the one package the code generator walks for
+// the cross-language type contract.
+//
+// Sibling of internal/ansitext, which parses the SAME escape sequences for the
+// opposite purpose: ansitext.Parse keeps them, as offset-addressed style spans
+// a transcript can render. Reach for that one when the styling matters and this
+// one when it does not.
+package sanitize
 
 import (
 	"regexp"
@@ -6,8 +26,6 @@ import (
 
 	"github.com/cplieger/runesafe"
 )
-
-// --- Terminal helpers ---
 
 // ansiRe matches the ANSI escape sequences produced by kiro-cli and its
 // subprocesses. Covered forms: CSI (`ESC [ ... letter`), OSC
@@ -36,28 +54,28 @@ func StripANSI(s string) string {
 	}
 }
 
-// SanitizeUnicode strips hidden Unicode characters that could be used
+// Unicode strips hidden Unicode characters that could be used
 // for prompt injection via tool output. Covers TAG characters
 // (U+E0000-E007F), zero-width spaces/joiners, format controls, and
 // other invisible codepoints that Q Developer CLI's ExecuteCmd also
 // strips. Apply alongside StripANSI on all tool output before
 // persisting to chat files.
-func SanitizeUnicode(s string) string {
+func Unicode(s string) string {
 	return strings.Map(func(r rune) rune {
-		if isHiddenUnicode(r) {
+		if isHidden(r) {
 			return -1
 		}
 		return r
 	}, s)
 }
 
-// isHiddenUnicode reports whether r is an invisible Unicode codepoint
+// isHidden reports whether r is an invisible Unicode codepoint
 // used for prompt injection: TAG characters, zero-width spaces/joiners,
 // bidi controls, format controls, and soft hyphens. The bidi set delegates
 // to runesafe.IsBidiControl (the exact unicode.Bidi_Control set), which
 // also covers U+061C ARABIC LETTER MARK — a gap in the previous hand-rolled
 // ranges, which had drifted from the full Bidi_Control set.
-func isHiddenUnicode(r rune) bool {
+func isHidden(r rune) bool {
 	if r >= 0xE0000 && r <= 0xE007F {
 		return true // TAG characters
 	}
@@ -74,7 +92,7 @@ func isHiddenUnicode(r rune) bool {
 	return false
 }
 
-// SanitizeOutput applies both ANSI stripping and Unicode sanitization,
+// Output applies both ANSI stripping and Unicode sanitization,
 // iterating to a fixed point. A single pass is not enough: removing a
 // hidden Unicode char (e.g. a zero-width space inside "\x1b(\u200b0")
 // can complete an escape sequence that the next StripANSI pass then
@@ -82,7 +100,7 @@ func isHiddenUnicode(r rune) bool {
 // residual escapes an attacker hid behind zero-width chars — and makes
 // the function idempotent.
 //
-// Termination: SanitizeUnicode normalizes any invalid UTF-8 byte to a
+// Termination: Unicode normalizes any invalid UTF-8 byte to a
 // single U+FFFD rune (via strings.Map), so after the first pass the
 // string is valid UTF-8 and every subsequent pass only removes runes.
 // The rune count is therefore non-increasing and the fixed point is
@@ -90,9 +108,9 @@ func isHiddenUnicode(r rune) bool {
 // invalid byte expands to a 3-byte U+FFFD on the first pass — so the
 // guarantee is stated in runes, not bytes.) The output is always valid
 // UTF-8, safe to persist to JSON chat files or echo to clients.
-func SanitizeOutput(s string) string {
+func Output(s string) string {
 	for {
-		out := SanitizeUnicode(StripANSI(s))
+		out := Unicode(StripANSI(s))
 		if out == s {
 			return out
 		}

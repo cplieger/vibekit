@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // Doc is one classified per-repo steering markdown file. The
@@ -414,7 +414,7 @@ func sanitizeHookField(s string) string {
 		}
 		return r
 	}, s)
-	return api.SanitizeUnicode(s)
+	return sanitize.Unicode(s)
 }
 
 // findMdDocsInDir scans a flat directory of `.md` files, classifying

@@ -11,10 +11,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/webhttp"
+
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/procout"
-	"github.com/cplieger/webhttp"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // handleLogout shells out to `kiro-cli logout`, feeding "y\n" on stdin
@@ -63,7 +64,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	// SanitizeOutput strips ANSI + hidden Unicode (matches the
 	// convention used elsewhere in vibekit for all subprocess
 	// output before it reaches clients).
-	result := map[string]string{"output": api.SanitizeOutput(string(out))}
+	result := map[string]string{"output": sanitize.Output(string(out))}
 	if err != nil {
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):

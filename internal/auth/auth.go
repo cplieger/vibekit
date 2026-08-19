@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
 	"github.com/cplieger/vibekit/internal/procout"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // Compile-time interface assertion.
@@ -158,7 +158,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // useless key-value pair and gives the false impression that stderr
 // was empty-but-captured rather than empty-and-unavailable.
 func stderrAttr(stderr *procout.Buffer) []any {
-	s := api.SanitizeOutput(strings.TrimSpace(stderr.String()))
+	s := sanitize.Output(strings.TrimSpace(stderr.String()))
 	if s == "" {
 		return nil
 	}

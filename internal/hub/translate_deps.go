@@ -10,6 +10,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/runlease"
+	"github.com/cplieger/vibekit/internal/sanitize"
 	"github.com/cplieger/vibekit/internal/translate"
 )
 
@@ -121,7 +122,7 @@ func (h *Hub) TerminalOutput(terminalID string) (string, []api.TextSpan, bool) {
 	if raw == "" {
 		return "", nil, true
 	}
-	text, spans := ansitext.Parse(api.SanitizeUnicode(raw))
+	text, spans := ansitext.Parse(sanitize.Unicode(raw))
 	return text, wireSpans(spans), true
 }
 

@@ -1,4 +1,4 @@
-package api
+package sanitize
 
 import (
 	"testing"
@@ -14,23 +14,23 @@ func FuzzSanitizeOutput(f *testing.F) {
 	f.Add("\x1b]\u2060title\x07")
 
 	f.Fuzz(func(t *testing.T, s string) {
-		out := SanitizeOutput(s)
+		out := Output(s)
 		if ansiRe.MatchString(out) {
-			t.Errorf("SanitizeOutput(%q) still contains ANSI", s)
+			t.Errorf("Output(%q) still contains ANSI", s)
 		}
 		for _, r := range out {
-			if isHiddenUnicode(r) {
-				t.Errorf("SanitizeOutput(%q) contains hidden U+%04X", s, r)
+			if isHidden(r) {
+				t.Errorf("Output(%q) contains hidden U+%04X", s, r)
 			}
 		}
-		if out2 := SanitizeOutput(out); out2 != out {
+		if out2 := Output(out); out2 != out {
 			t.Errorf("not idempotent: %q → %q → %q", s, out, out2)
 		}
 		// Output must always be valid UTF-8: strings.Map normalizes any
 		// invalid byte in the input to U+FFFD, so the persisted result is
 		// always safe to JSON-encode.
 		if !utf8.ValidString(out) {
-			t.Errorf("SanitizeOutput(%q) = %q is not valid UTF-8", s, out)
+			t.Errorf("Output(%q) = %q is not valid UTF-8", s, out)
 		}
 		// Sanitizing only removes runes or replaces an invalid byte with a
 		// single U+FFFD rune, so the rune count never grows. (Byte length

@@ -141,7 +141,7 @@ func utf16Len(s string) int {
 // mid-sequence. Without it those paths would put a raw ESC into the plain text,
 // and that text is persisted to a JSON chat file and re-served.
 //
-// This is what lets the parser stand in for api.StripANSI rather than run after
+// This is what lets the parser stand in for sanitize.StripANSI rather than run after
 // it. The caller sanitizes hidden Unicode first (so nothing can hide a sequence
 // behind a zero-width character), the parser then consumes SGR and drops every
 // other escape family StripANSI matched — CSI, OSC, charset designation,

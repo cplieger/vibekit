@@ -11,9 +11,10 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/cplieger/webhttp"
+
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/vibekit/internal/procout"
-	"github.com/cplieger/webhttp"
 )
 
 // WhoamiResponse is the typed wire shape returned by /api/whoami. The
@@ -73,7 +74,7 @@ func (h *Handler) handleWhoami(w http.ResponseWriter, r *http.Request) {
 		// so Grafana can alert on each independently. All three
 		// still return the generic msgWhoamiUnavailable sentinel
 		// to the client (fail-soft banner). Every stderr log
-		// attribute is run through api.SanitizeOutput so ANSI /
+		// attribute is run through sanitize.Output so ANSI /
 		// hidden Unicode from a compromised kiro-cli can't inject
 		// into Loki or any downstream AI log pipeline.
 		switch {

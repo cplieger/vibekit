@@ -11,8 +11,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // classifyLoginStartErr maps a cmd.Start error to an HTTP status code
@@ -159,7 +159,7 @@ func scanLoginOutput(stdout io.Reader, urlCh chan<- map[string]string) {
 	var code, authURL string
 	var lineCount int
 	for scanner.Scan() {
-		line := strings.TrimSpace(api.StripANSI(scanner.Text()))
+		line := strings.TrimSpace(sanitize.StripANSI(scanner.Text()))
 		lineCount++
 		ring.Push(line)
 		// Fast path: kiro-cli refuses a fresh login when a session

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/cplieger/vibekit/internal/api"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // renderChatMarkdown renders a persisted chat as a self-contained Markdown
@@ -16,7 +17,7 @@ import (
 // and collapsible tool-call summaries. It is pure (no I/O) so it is
 // unit-testable and safe to call inline on the chat read path.
 //
-// Tool input/output is passed through api.SanitizeOutput before embedding —
+// Tool input/output is passed through sanitize.Output before embedding —
 // the same ANSI-strip + hidden-codepoint scrub the store applies when
 // persisting tool output — so a hostile tool result can't smuggle terminal
 // escapes or prompt-injection codepoints into the exported file.
@@ -148,11 +149,11 @@ func writeToolCallMarkdown(b *strings.Builder, tc *api.ToolCall) {
 	writeToolLocations(b, tc.Locations)
 	if in := formatToolInput(tc.Input); in != "" {
 		b.WriteString("Input:\n\n")
-		b.WriteString(fencedCode(api.SanitizeOutput(in), "json"))
+		b.WriteString(fencedCode(sanitize.Output(in), "json"))
 	}
 	if out := strings.TrimSpace(tc.Output); out != "" {
 		b.WriteString("Output:\n\n")
-		b.WriteString(fencedCode(api.SanitizeOutput(out), ""))
+		b.WriteString(fencedCode(sanitize.Output(out), ""))
 	}
 	b.WriteString("</details>\n\n")
 }

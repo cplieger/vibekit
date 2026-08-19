@@ -7,10 +7,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/cplieger/vibekit/internal/api"
-	"github.com/cplieger/vibekit/internal/httpreply"
-	"github.com/cplieger/vibekit/internal/version"
 	"github.com/cplieger/webhttp"
+
+	"github.com/cplieger/vibekit/internal/httpreply"
+	"github.com/cplieger/vibekit/internal/sanitize"
+	"github.com/cplieger/vibekit/internal/version"
 )
 
 // The former handleModels (`kiro-cli chat --list-models` shell-out behind
@@ -47,7 +48,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Sanitize (ANSI + hidden Unicode) before the report reaches the browser.
-	report := api.SanitizeOutput(string(out))
+	report := sanitize.Output(string(out))
 	if truncated {
 		report += "\n\n[truncated]"
 	}

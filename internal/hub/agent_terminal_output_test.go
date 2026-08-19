@@ -214,7 +214,7 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 // The live stream carries PLAIN text plus spans, and the order of the two
 // sanitizers is what makes that possible.
 //
-// api.SanitizeOutput is SanitizeUnicode(StripANSI(s)) iterated to a fixed point,
+// sanitize.Output is SanitizeUnicode(StripANSI(s)) iterated to a fixed point,
 // so calling it here would delete every escape BEFORE the parser saw one and
 // every chunk would arrive unstyled — worse than the client library this
 // replaced. SanitizeUnicode alone keeps the hidden-Unicode defence (nothing can

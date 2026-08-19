@@ -98,7 +98,7 @@ func TestRenderChatMarkdown_FallbackTitleAndOneLineName(t *testing.T) {
 
 func TestRenderChatMarkdown_SanitisesToolOutput(t *testing.T) {
 	// A hidden bidi-control codepoint in tool output must be scrubbed by the
-	// api.SanitizeOutput pass the renderer applies.
+	// sanitize.Output pass the renderer applies.
 	c := &api.Chat{
 		ID: "c1", Name: "S",
 		Messages: []api.Message{{

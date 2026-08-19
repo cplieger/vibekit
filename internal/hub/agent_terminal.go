@@ -27,6 +27,7 @@ import (
 	"github.com/cplieger/vibekit/internal/ansitext"
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/procgroup"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // keySignal is the wire key for a terminating signal in an ACP terminal
@@ -759,7 +760,7 @@ func (h *Hub) terminalEmitter(
 ) func(string) {
 	return func(raw string) {
 		base := term.ansi.Offset()
-		text, parsed := term.ansi.Write(api.SanitizeUnicode(raw))
+		text, parsed := term.ansi.Write(sanitize.Unicode(raw))
 		if text == "" && len(parsed) == 0 {
 			return
 		}

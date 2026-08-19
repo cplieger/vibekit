@@ -13,6 +13,7 @@ import (
 
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // ShellOutputCap bounds the captured stdout+stderr of a `!cmd` shell interception.
@@ -133,7 +134,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	if capped.Truncated {
 		raw += "\n[output truncated at 1 MiB]"
 	}
-	output := api.SanitizeOutput(raw)
+	output := sanitize.Output(raw)
 	timedOut := errors.Is(shellCtx.Err(), context.DeadlineExceeded)
 
 	slog.Info("shell interception complete",

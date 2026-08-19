@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/cplieger/pathinside/v2"
+
 	"github.com/cplieger/vibekit/internal/api"
 	"github.com/cplieger/vibekit/internal/buffer"
+	"github.com/cplieger/vibekit/internal/sanitize"
 )
 
 // HandleToolCall adds a tool call to the current assistant message
@@ -123,7 +125,7 @@ func (t *Translator) parseToolUpdateContent(items []ACPToolCallContentBlock) too
 	for _, item := range items {
 		switch {
 		case item.Type == ContentTypeContent && item.Content.Text != "":
-			outputDelta.WriteString(api.SanitizeOutput(item.Content.Text))
+			outputDelta.WriteString(sanitize.Output(item.Content.Text))
 			outputDelta.WriteByte('\n')
 		case item.Type == ContentTypeDiff && item.Path != "":
 			out.diffs = append(out.diffs, api.ToolDiff{

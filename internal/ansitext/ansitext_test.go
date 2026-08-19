@@ -515,7 +515,7 @@ func FuzzParse(f *testing.F) {
 		}
 
 		// 4. The plain text never carries an escape byte. This is the invariant
-		//    that lets the parser stand in for api.StripANSI: the text is
+		//    that lets the parser stand in for sanitize.StripANSI: the text is
 		//    persisted to a JSON chat file and re-served, so a surviving ESC
 		//    would be a residual escape in stored output.
 		if strings.ContainsRune(text, 0x1b) {
