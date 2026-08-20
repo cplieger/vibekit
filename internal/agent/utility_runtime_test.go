@@ -171,7 +171,6 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 
 	const goroutines = 5
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
 	results := make([]string, goroutines)
 	errs := make([]error, goroutines)
 
@@ -179,7 +178,9 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 	// each prompt drains the idle timer before the next starts.
 	go func() {
 		for i := range goroutines {
-			// Wait a bit for each call to start draining.
+			// Pace the feed so each chunk lands inside a live drain window
+			// rather than between two of them (the fixture, not a wait for an
+			// async effect: 20ms against drainResponse's 50ms idle debounce).
 			time.Sleep(20 * time.Millisecond)
 			params, _ := json.Marshal(map[string]any{
 				"sessionUpdate": "agent_message_chunk",
@@ -196,10 +197,9 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 	}()
 
 	for i := range goroutines {
-		go func(idx int) {
-			defer wg.Done()
-			results[idx], errs[idx] = h.UtilityPrompt(t.Context(), fmt.Sprintf("prompt-%d", idx), "")
-		}(i)
+		wg.Go(func() {
+			results[i], errs[i] = h.UtilityPrompt(t.Context(), fmt.Sprintf("prompt-%d", i), "")
+		})
 	}
 
 	wg.Wait()
@@ -582,9 +582,8 @@ func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
 	u.session.mu.Unlock()
 
 	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); h.cullIdleUtilityBridgeOnce() }()
-	go func() { defer wg.Done(); h.stopUtilityBridge() }()
+	wg.Go(h.cullIdleUtilityBridgeOnce)
+	wg.Go(h.stopUtilityBridge)
 	wg.Wait()
 }
 
