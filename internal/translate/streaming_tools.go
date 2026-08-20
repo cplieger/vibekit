@@ -69,11 +69,7 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 		Denial:         denialFrom(tc.Meta.Kiro.PolicyDenial),
 		Ts:             time.Now().UnixMilli(),
 	}
-	buf.ToolCalls = append(buf.ToolCalls, call)
-	if buf.ToolCallIndex == nil {
-		buf.ToolCallIndex = make(map[string]int)
-	}
-	buf.ToolCallIndex[tc.ToolCallID] = len(buf.ToolCalls) - 1
+	turn := buf.AppendToolCall(&call) + 1
 	// Anchor the tool in the chronological block array. Always a new
 	// block — back-to-back tool calls each get their own tool_use
 	// block (the next text chunk after this will also start a new
@@ -83,7 +79,6 @@ func (t *Translator) HandleToolCall(ctx context.Context, chatID vibekit.ChatID, 
 	if len(diffs) > 0 {
 		isNew := tc.Kind == vibekit.ToolKindEdit && tc.Status == vibekit.ToolPending
 		buf.TrackFileChanges(diffs, isNew)
-		turn := len(buf.ToolCalls)
 		t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
 	}
 	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCall, chatID,
@@ -101,12 +96,16 @@ func (t *Translator) HandleToolCallUpdate(ctx context.Context, chatID vibekit.Ch
 	}
 	content := t.parseToolUpdateContent(tu.Content)
 	buf := t.buffers.GetOrInit(chatID)
-	idx, ok := buf.ToolCallIndex[tu.ToolCallID]
-	if !ok || idx >= len(buf.ToolCalls) {
+	// A COPY, folded locally and written back, because the fold below reaches the
+	// terminal registry, the line tracker and the event bus — none of which may
+	// run under the buffer's mutex.
+	tc, idx, ok := buf.ToolCall(tu.ToolCallID)
+	if !ok {
 		return
 	}
-	t.applyToolCallUpdate(ctx, chatID, buf, idx, &tu, content, subSessionID)
-	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: buf.ToolCalls[idx]}))
+	t.applyToolCallUpdate(ctx, chatID, buf, &tc, &tu, content, subSessionID)
+	buf.SetToolCall(idx, &tc)
+	t.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventToolCallUpdate, chatID, vibekit.ToolCallUpdatePayload{MessageID: buf.MessageID, ToolCall: tc}))
 }
 
 // parseToolUpdateContent extracts the sanitized output delta, any file diffs,
@@ -151,8 +150,7 @@ type toolUpdateContent struct {
 // tool call at idx: status (emitting a working label on terminal
 // status), appended output, replaced locations, appended diffs (with
 // line tracking), and a first-seen subsession id.
-func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, idx int, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
-	tc := &buf.ToolCalls[idx]
+func (t *Translator) applyToolCallUpdate(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer, tc *vibekit.ToolCall, tu *ACPToolCallUpdateWire, content toolUpdateContent, subSessionID string) {
 	// A mid-flight update may refine the card's title/kind (KAS sends them
 	// nullish on tool_call_update); apply only when present so an update
 	// that omits them doesn't wipe the values set on the initial tool_call.
@@ -224,8 +222,7 @@ func (t *Translator) applyToolCallDiffs(
 	}
 	tc.Diffs = append(tc.Diffs, diffs...)
 	buf.TrackFileChanges(diffs, false)
-	turn := len(buf.ToolCalls)
-	t.lines.RecordFromDiffs(chatID, diffs, turn, string(tc.Kind))
+	t.lines.RecordFromDiffs(chatID, diffs, buf.ToolCallCount(), string(tc.Kind))
 }
 
 // adoptTerminalOutput copies a finished terminal's output onto its tool call, so
@@ -429,11 +426,9 @@ func (t *Translator) relPath(ref string) string {
 // tool-first turn is covered from its first tool call rather than from its
 // first text.
 func (t *Translator) ensureTurnStarted(ctx context.Context, chatID vibekit.ChatID, buf *buffer.Buffer) {
-	if buf.Started {
+	if !buf.StartTurn(t.newMsgID()) {
 		return
 	}
-	buf.Started = true
-	buf.MessageID = t.newMsgID()
 	// FALLBACK attribution only. A prompt latches the model at DISPATCH
 	// (CmdPrompt -> LatchTurnModel), which is what closes the window where a fast
 	// switch lands before the old model's first frame; SetModel is first-write-wins,

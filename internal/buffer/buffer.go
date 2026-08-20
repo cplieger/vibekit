@@ -30,10 +30,15 @@ const DefaultOutputCap = 64 * 1024
 // chunk to the appropriate builder based on the upstream IsReasoning
 // flag.
 //
-// SAFETY: Buffer is not goroutine-safe by design — the single-writer
-// invariant is enforced by the runtime's per-chat dispatch loop. The mu
-// field guards against silent corruption if the invariant is ever
-// violated by a future refactor.
+// SAFETY: every field of a Buffer is written under mu and read under mu, and
+// that is not belt-and-braces — it is load-bearing. Three goroutines touch a
+// live buffer: the per-chat dispatch loop that fills it, the prompt handler that
+// latches the turn's model at dispatch, and the SSE connect handler that calls
+// Snapshot for a client joining mid-turn. The exported fields are therefore a
+// READ surface for code running on the dispatch loop; a write to one from
+// outside this package races Snapshot, and did — measured with -race on
+// go1.27.0, Buffer.MessageID written at translate/streaming_tools.go:436 against
+// Snapshot's read here. Add a guarded method rather than a field write.
 type Buffer struct {
 	ToolStartTimes map[string]int64
 	ToolCallIndex  map[string]int
@@ -102,6 +107,87 @@ func (buf *Buffer) MarkOverCap() bool {
 	}
 	buf.overCap = true
 	return true
+}
+
+// StartTurn latches the turn's message id and reports whether THIS call opened
+// the turn, so exactly one caller announces it. Same latch-and-report shape as
+// MarkOverCap above.
+//
+// Both fields move under ONE lock, which is what makes the pair atomic to a
+// reader: Snapshot keys on MessageID and the code-reference handler keys on
+// Started, so setting them in sequence left a window where Started was true and
+// MessageID was still empty.
+func (buf *Buffer) StartTurn(messageID string) bool {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	if buf.Started {
+		return false
+	}
+	buf.Started = true
+	buf.MessageID = messageID
+	return true
+}
+
+// BufferedBytes is the turn's accumulated content plus reasoning length, for a
+// caller enforcing a byte cap on the pair.
+func (buf *Buffer) BufferedBytes() int {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	return buf.Content.Len() + buf.Reasoning.Len()
+}
+
+// AppendToolCall records a newly opened tool call and returns its index, keeping
+// the id index in step with the slice under one lock. By pointer because the
+// struct is 264 bytes; the append copies it, so the caller keeps ownership.
+func (buf *Buffer) AppendToolCall(call *vibekit.ToolCall) int {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	buf.ToolCalls = append(buf.ToolCalls, *call)
+	if buf.ToolCallIndex == nil {
+		buf.ToolCallIndex = make(map[string]int)
+	}
+	idx := len(buf.ToolCalls) - 1
+	buf.ToolCallIndex[call.ID] = idx
+	return idx
+}
+
+// ToolCall returns a COPY of the buffered call with the given id, plus the index
+// SetToolCall takes to write it back.
+//
+// A copy rather than the pointer the caller used to take into the slice, because
+// folding an update touches a dozen fields and calls out to the terminal
+// registry, the line tracker and the event bus along the way — none of which can
+// run under this mutex (two of them re-enter it). Read-modify-write is sound
+// because the dispatch loop is the only writer: a concurrent Snapshot sees
+// either the whole old call or the whole new one, never a half-folded update.
+func (buf *Buffer) ToolCall(id string) (call vibekit.ToolCall, idx int, ok bool) {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	idx, ok = buf.ToolCallIndex[id]
+	if !ok || idx < 0 || idx >= len(buf.ToolCalls) {
+		return vibekit.ToolCall{}, 0, false
+	}
+	return buf.ToolCalls[idx], idx, true
+}
+
+// SetToolCall writes a folded call back at idx. A stale index is dropped rather
+// than panicking: nothing removes a tool call mid-turn, so an out-of-range idx
+// means the caller's own bookkeeping is wrong and the turn should not die for it.
+func (buf *Buffer) SetToolCall(idx int, call *vibekit.ToolCall) {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	if idx < 0 || idx >= len(buf.ToolCalls) {
+		return
+	}
+	buf.ToolCalls[idx] = *call
+}
+
+// ToolCallCount is how many tool calls the turn has opened, which the line
+// tracker uses as the turn ordinal.
+func (buf *Buffer) ToolCallCount() int {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	return len(buf.ToolCalls)
 }
 
 // SteerCarry returns the withheld marker-candidate text and its attribution.
@@ -193,12 +279,17 @@ func (buf *Buffer) SetRefusal(r *vibekit.RefusalInfo) {
 	}
 }
 
-// AppendTextDelta extends the last text block with a delta, or starts
-// a new text block if the trailing block isn't text. Returns the index
-// of the (possibly new) text block — broadcast on
+// AppendTextDelta accumulates a text delta into the turn's content and extends
+// the last text block with it, or starts a new text block if the trailing block
+// isn't text. Returns the index of the (possibly new) text block — broadcast on
 // MessageChunkPayload.BlockIndex so the client knows which block the
 // delta belongs to — and the delta's sequence number (broadcast as
 // MessageChunkPayload.Seq; see the chunkSeq field).
+//
+// The builder write is IN here rather than beside every call, because all five
+// callers did both and a Snapshot needs them consistent: written separately, a
+// mid-turn reader could see the block without the content or the content without
+// the block, and the two are what it assembles the message from.
 //
 // subtaskID attributes the block to the agent that produced it ("" =
 // top-level agent). A trailing text block is only extended when it
@@ -207,6 +298,7 @@ func (buf *Buffer) SetRefusal(r *vibekit.RefusalInfo) {
 func (buf *Buffer) AppendTextDelta(delta, subtaskID string) (idx int, seq int64) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
+	buf.Content.WriteString(delta)
 	buf.chunkSeq++
 	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == vibekit.BlockText && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
 		buf.Blocks[n-1].Text += delta
@@ -216,15 +308,16 @@ func (buf *Buffer) AppendTextDelta(delta, subtaskID string) (idx int, seq int64)
 	return len(buf.Blocks) - 1, buf.chunkSeq
 }
 
-// AppendThinkingDelta is the BlockThinking analogue of AppendTextDelta.
-// Reasoning chunks share a block until a non-thinking block (tool_use
-// or text) breaks the run — or until the subtask id differs, so a
-// subagent's reasoning starts its own block rather than merging into
-// the parent's trailing thinking block. subtaskID attributes the block
-// to the producing agent ("" = top-level).
+// AppendThinkingDelta is the BlockThinking analogue of AppendTextDelta, and
+// accumulates into Reasoning rather than Content. Reasoning chunks share a block
+// until a non-thinking block (tool_use or text) breaks the run — or until the
+// subtask id differs, so a subagent's reasoning starts its own block rather than
+// merging into the parent's trailing thinking block. subtaskID attributes the
+// block to the producing agent ("" = top-level).
 func (buf *Buffer) AppendThinkingDelta(delta, subtaskID string) (idx int, seq int64) {
 	buf.mu.Lock()
 	defer buf.mu.Unlock()
+	buf.Reasoning.WriteString(delta)
 	buf.chunkSeq++
 	if n := len(buf.Blocks); n > 0 && buf.Blocks[n-1].Type == vibekit.BlockThinking && buf.Blocks[n-1].AgentSubtaskID == subtaskID {
 		buf.Blocks[n-1].Thinking += delta

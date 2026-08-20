@@ -231,7 +231,6 @@ func (p *Projection) ingestAgentText(raw json.RawMessage, thinking bool) {
 	sub := c.Meta.Kiro.AgentSubtaskID
 	if thinking {
 		p.buf.AppendThinkingDelta(c.Content.Text, sub)
-		p.buf.Reasoning.WriteString(c.Content.Text)
 		return
 	}
 	// The same marker filter as the live path, and not optional here: KAS replays
@@ -250,7 +249,6 @@ func (p *Projection) ingestAgentText(raw json.RawMessage, thinking bool) {
 		return
 	}
 	p.buf.AppendTextDelta(text, sub)
-	p.buf.Content.WriteString(text)
 }
 
 func (p *Projection) ingestToolCall(raw json.RawMessage) {
@@ -270,11 +268,7 @@ func (p *Projection) ingestToolCall(raw json.RawMessage) {
 		Locations:      tc.Locations,
 		Ts:             p.frameTS(tc.Meta.Kiro.Timestamp),
 	}
-	p.buf.ToolCalls = append(p.buf.ToolCalls, call)
-	if p.buf.ToolCallIndex == nil {
-		p.buf.ToolCallIndex = make(map[string]int)
-	}
-	p.buf.ToolCallIndex[tc.ToolCallID] = len(p.buf.ToolCalls) - 1
+	p.buf.AppendToolCall(&call)
 	p.buf.AppendToolUseBlock(tc.ToolCallID, tc.Meta.Kiro.AgentSubtaskID)
 }
 
@@ -288,11 +282,10 @@ func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 	if json.Unmarshal(raw, &tu) != nil || p.buf == nil {
 		return
 	}
-	idx, ok := p.buf.ToolCallIndex[tu.ToolCallID]
-	if !ok || idx >= len(p.buf.ToolCalls) {
+	tc, idx, ok := p.buf.ToolCall(tu.ToolCallID)
+	if !ok {
 		return
 	}
-	tc := &p.buf.ToolCalls[idx]
 	if tu.Title != "" {
 		tc.Title = tu.Title
 	}
@@ -310,7 +303,8 @@ func (p *Projection) ingestToolUpdate(raw json.RawMessage) {
 			tc.Output += sanitize.Output(item.Content.Text) + "\n"
 		}
 	}
-	mergeCheckpoint(tc, tu.Meta.Kiro.Checkpoint)
+	mergeCheckpoint(&tc, tu.Meta.Kiro.Checkpoint)
+	p.buf.SetToolCall(idx, &tc)
 }
 
 func (p *Projection) ingestInfo(raw json.RawMessage) {

@@ -69,17 +69,13 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 		}
 	}
 
-	totalLen := buf.Content.Len() + buf.Reasoning.Len()
+	totalLen := buf.BufferedBytes()
 	if totalLen+len(text) > maxBufferBytes {
 		t.announceTruncation(ctx, chatID, buf, subtask, totalLen)
 		return
 	}
-	if isReasoning {
-		buf.Reasoning.WriteString(text)
-	} else {
-		buf.Content.WriteString(text)
-	}
-	// Mirror the delta into the chronological block array. For runs of
+	// Mirror the delta into the chronological block array, which also
+	// accumulates it into the turn's content (or reasoning) builder. For runs of
 	// same-kind chunks the helper extends the trailing block; a switch
 	// from text to thinking (or vice versa) starts a new block. Tool
 	// calls between chunks bump the next text run to its own block via
@@ -156,7 +152,6 @@ func (t *Translator) announceTruncation(
 		return
 	}
 	const notice = "\n\n[Reply truncated: this turn exceeded vibekit's 32 MiB buffer.]"
-	buf.Content.WriteString(notice)
 	blockIndex, seq := buf.AppendTextDelta(notice, subtask)
 	slog.Warn("turn exceeded the assistant buffer cap; dropping the remainder",
 		"chat_id", chatID, "message_id", buf.MessageID, "buffered_bytes", buffered)
