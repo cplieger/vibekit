@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/jsonx/bounded"
+	"github.com/cplieger/jsoncap"
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
@@ -112,7 +112,7 @@ func readChatHeader(path, label string) (*vibekit.ChatHeader, error) {
 }
 
 // countJSONArrayElements counts top-level elements in a JSON array without
-// materializing them: each element is token-skipped via jsonx/bounded, so
+// materializing them: each element is token-skipped via jsoncap, so
 // counting never allocates per-element buffers. Returns 0 for
 // nil/empty/invalid input (count-so-far when an element mid-array is
 // malformed).
@@ -124,7 +124,7 @@ func countJSONArrayElements(raw json.RawMessage) int {
 	if len(raw) == 0 {
 		return 0
 	}
-	dec := bounded.NewDecoder(bytes.NewReader(raw), 0)
+	dec := jsoncap.NewDecoder(bytes.NewReader(raw), 0)
 	if ok, err := dec.Open('['); err != nil || !ok {
 		return 0
 	}

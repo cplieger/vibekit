@@ -14,8 +14,7 @@ require (
 require (
 	github.com/cplieger/atomicfile/v3 v3.0.0
 	github.com/cplieger/envx/yamlenv/v2 v2.0.0
-	github.com/cplieger/jsonx v1.4.1
-	github.com/cplieger/keyenc v1.0.3
+	github.com/cplieger/keyenc v1.0.4
 	github.com/cplieger/pathinside/v2 v2.0.0
 	github.com/cplieger/pinstall/v2 v2.3.3
 	github.com/cplieger/runesafe v1.4.1
@@ -34,6 +33,7 @@ require (
 require (
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cplieger/envx/v2 v2.0.0
+	github.com/cplieger/jsoncap v1.0.0
 	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 )
