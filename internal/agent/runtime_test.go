@@ -222,3 +222,47 @@ func TestShutdown_JoinsTheTickerLoops(t *testing.T) {
 		t.Error("Shutdown returned with a background loop still running")
 	}
 }
+
+// TestShutdown_WaitsForARunningMCPNotifier is the third loop's twin of
+// TestShutdown_WaitsForARunningSweep, and the one that was missing while the
+// notifier was a bare `go func()`. It holds the debounced notifier inside its
+// callback — which in production is the environment.md generator, a .kiro walk
+// plus an atomic write — and asserts Shutdown notices.
+//
+// Nothing else could catch this: the loop exits on lifecycle.done correctly, so
+// no test hangs, and no linter reports an unjoined goroutine. The only
+// observable symptom was that Shutdown's "background loops" wait was silent
+// about one of the three loops it claims to cover.
+func TestShutdown_WaitsForARunningMCPNotifier(t *testing.T) {
+	h := newHubWithMCPConfig(nil)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	h.SetMCPOnChange(func() {
+		once.Do(func() { close(entered) })
+		<-release
+	})
+	// Any mutation signals the notifier; it debounces 100ms before calling back.
+	h.mcpRegistry.RecordConnected(t.Context(), "a", nil, nil, nil)
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the notifier callback never ran, so the fixture is holding nothing")
+	}
+
+	const budget = 150 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	if err := h.Shutdown(ctx); err == nil {
+		t.Error("Shutdown reported success while the MCP notifier was still in its callback")
+	} else if !strings.Contains(err.Error(), "background loops") {
+		t.Errorf("error %q does not name the background-loop wait", err)
+	}
+
+	// The control that keeps the assertion above off a bound that can never be
+	// met: released, the loop returns and a second pass joins it cleanly.
+	close(release)
+	shutdownHub(t, h)
+}

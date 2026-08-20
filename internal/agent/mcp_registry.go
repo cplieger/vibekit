@@ -476,8 +476,21 @@ func (reg *mcpRegistry) handleStatus(w http.ResponseWriter, _ *http.Request) {
 // startNotifier launches the single long-lived goroutine that drains
 // notifyCh and calls onChange with a short debounce. Must be called
 // after SetOnChange. Exits when h.lifecycle.done closes.
+//
+// It joins lifetime.loops, the same group as the two loops New starts, so
+// Shutdown's "background loops" wait covers it. It was a bare `go func()` for
+// the whole of this package's life, which made Shutdown's own claim about that
+// wait false for one of the three loops: onChange is the environment.md
+// generator, so an unjoined notifier could be walking .kiro and writing that
+// file at the instant the process decided it had stopped, with no wait able to
+// say so and no name to report it under. Nothing detects this — the loop exits
+// on done correctly, so no test hangs and no linter fires; the gap is only that
+// nobody waits for it to. There is at most one of these goroutines ever
+// (SetOnChange starts it on the first non-nil callback and never again), and it
+// is started from the composition root during wiring, so the Go-after-Wait
+// hazard a reusable group would have does not arise.
 func (reg *mcpRegistry) startNotifier() {
-	go func() {
+	reg.lifetime.loops.Go(func() {
 		const debounce = 100 * time.Millisecond
 		for {
 			select {
@@ -505,7 +518,7 @@ func (reg *mcpRegistry) startNotifier() {
 				cb()
 			}
 		}
-	}()
+	})
 }
 
 // signalChange sends a non-blocking signal to the notifier goroutine.

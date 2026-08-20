@@ -77,7 +77,9 @@ type lifetime struct {
 	workDir        string
 	configDir      string
 	inflight       sync.WaitGroup
-	// loops covers the background goroutines New starts, which exit on done.
+	// loops covers the background goroutines that exit on done: the two New
+	// starts, plus the MCP registry's debounced notifier, which SetOnChange
+	// starts once from the composition root.
 	// It is a SEPARATE group from inflight and must stay one: Shutdown waits on
 	// inflight only after every bridge has been stopped, and the two groups are
 	// reported apart so a shutdown that times out names a wedged handler or a
@@ -559,8 +561,11 @@ func (rt *Runtime) Shutdown(ctx context.Context) error {
 	// 2. Wait for in-flight prompt handlers to clean up.
 	teardownErr := awaitBounded(ctx, "in-flight handlers", rt.lifecycle.inflight.Wait)
 
-	// 2b. Join the background loops New started. Step 0 signalled them; this is
-	// the wait that makes "the runtime has stopped" true of them.
+	// 2b. Join the background loops. Step 0 signalled them; this is the wait
+	// that makes "the runtime has stopped" true of them. All THREE are in the
+	// group: the two New starts plus the MCP notifier, whose callback is the
+	// environment.md generator and so has real work to be caught in the middle
+	// of.
 	if teardownErr == nil {
 		teardownErr = awaitBounded(ctx, "background loops", rt.lifecycle.loops.Wait)
 	}
