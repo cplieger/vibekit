@@ -31,7 +31,7 @@ import (
 // with until the next session, which is the kind of silent lag that makes a
 // safety toggle untrustworthy. On a chat with no bridge yet the persisted value
 // is enough — `spawnBridge` passes it at `session/new`.
-func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatA
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
-	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.SupervisedMode == p.Enabled {
 			return false
 		}

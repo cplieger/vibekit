@@ -43,7 +43,7 @@ import (
 // ("Cannot revert while the agent is still running"), and refuses a concurrent
 // revert per session — so both races are settled upstream and vibekit forwards
 // the reason instead of reimplementing the guard.
-func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, 
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
-	chat, ok := chats.ChatStore().Get(ctx, cmd.ChatID)
+	chat, ok := chats.Get(ctx, cmd.ChatID)
 	if !ok {
 		return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 	}
@@ -77,7 +77,7 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, 
 	// Cut at idx, not idx+1: the addressed message is discarded WITH its
 	// successors (KAS slices from the target inclusive), so the prompt at that
 	// turn is gone and has to be retyped. That is the operation, not a bug.
-	if mErr := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if mErr := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -173,7 +173,7 @@ func userMessageIndex(messages []vibekit.Message, id string) int {
 // instead. Auto-create mirrors CmdSetMode for the same reason — a fresh chat is
 // client-side only until its first prompt, so without it every pick before the
 // first message 404'd and the control rolled back.
-func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -194,7 +194,7 @@ func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatAccess, c
 		}
 	}
 
-	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			c.Name = vibekit.DefaultChatName
 			c.Effort = string(p.Level)

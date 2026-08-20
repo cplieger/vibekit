@@ -25,7 +25,7 @@ import (
 // abandoned message is cleared. The reply carries the byte length rather than
 // the text, because echoing a draft back would put the user's unsent words in
 // the response body of a request that already carried them.
-func CmdSetDraft(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSetDraft(ctx context.Context, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func CmdSetDraft(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientComma
 	// it guards the Go-level API, the same way validateChatUTF8 guards Name and
 	// message content.
 
-	if err := chats.ChatStore().SetDraft(ctx, cmd.ChatID, p.Text); err != nil {
+	if err := chats.SetDraft(ctx, cmd.ChatID, p.Text); err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 

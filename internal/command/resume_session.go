@@ -26,7 +26,7 @@ import (
 
 // CmdResumeSession creates a chat bound to an existing KAS session so the
 // stored conversation can be opened.
-func CmdResumeSession(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdResumeSession(ctx context.Context, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func CmdResumeSession(ctx context.Context, chats ChatAccess, cmd *vibekit.Client
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
 
-	err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		// Refuse to rebind an existing chat. Pointing a live chat at another
 		// session would strand its own session (its transcript still on disk,
 		// no longer referenced, so the reaper sweeps it) and hand the user a

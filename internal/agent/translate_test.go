@@ -21,7 +21,7 @@ func TestTranslateACPEvent_AssistantChunk(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 	raw := json.RawMessage(`{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"hello "}}`)
 	msg := &vibekit.RPCResponse{
 		Method: "session/update",
@@ -209,7 +209,7 @@ func TestTranslateACPEvent_PermissionRequestEmitsAndPushes(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 	// v3 wire shape: the correlation id is on the JSON-RPC envelope (msg.ID)
 	// and the params are FLAT ({sessionId, toolCall, options}); the option id
 	// is camelCase `optionId`. (The pre-fix shape nested id+params inside
@@ -349,7 +349,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, before := h.sse.hub.Bounds()
+		_, before := h.bus.hub.Bounds()
 		var idx int
 		if len(data) > 0 {
 			idx = int(data[0]) % len(methods)
@@ -360,7 +360,7 @@ func FuzzTranslateInitErrors(f *testing.F) {
 		}
 		// Must not panic.
 		h.translateACPEvent("fuzz", msg)
-		if _, head := h.sse.hub.Bounds(); head < before {
+		if _, head := h.bus.hub.Bounds(); head < before {
 			t.Errorf("event head went backwards from %d", before)
 		}
 	})

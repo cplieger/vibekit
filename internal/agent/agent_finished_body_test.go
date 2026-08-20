@@ -66,7 +66,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 
 	// The agent declared what it was doing mid-turn, exactly as
 	// translate/focus.go's chat_status path records it.
-	h.sse.chatStatus.Set("c1", vibekit.ChatStatusPayload{
+	h.bus.chatStatus.Set("c1", vibekit.ChatStatusPayload{
 		Status:      "in_progress",
 		Description: "Wiring the PR status poller",
 	})
@@ -85,7 +85,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 
 	// And the status is still cleared afterwards, so a later connect cannot report
 	// a finished turn's label as current.
-	if got := h.sse.chatStatus.Get("c1"); got.Description != "" {
+	if got := h.bus.chatStatus.Get("c1"); got.Description != "" {
 		t.Errorf("the chat status survived turn end: %+v", got)
 	}
 }

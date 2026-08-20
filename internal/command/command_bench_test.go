@@ -17,9 +17,19 @@ type benchDeps struct{}
 
 func newBenchDeps() *benchDeps { return &benchDeps{} }
 
-func (d *benchDeps) ChatStore() ChatStore                           { return nil }
-func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent) {}
-func (d *benchDeps) GetBridge(vibekit.ChatID) Bridge                { return nil }
+// The store methods are answered directly now: Roles holds ChatStore, so the
+// ChatStore() getter it used to return is gone.
+func (d *benchDeps) Get(context.Context, vibekit.ChatID) (*vibekit.Chat, bool) { return nil, false }
+func (d *benchDeps) Mutate(context.Context, vibekit.ChatID, func(*vibekit.Chat, bool) bool) error {
+	return nil
+}
+func (d *benchDeps) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Message) error {
+	return nil
+}
+func (d *benchDeps) SetDraft(context.Context, vibekit.ChatID, string) error { return nil }
+func (d *benchDeps) Delete(context.Context, vibekit.ChatID) error           { return nil }
+func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent)         {}
+func (d *benchDeps) GetBridge(vibekit.ChatID) Bridge                        { return nil }
 func (d *benchDeps) GetOrCreateBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
@@ -31,9 +41,8 @@ func (d *benchDeps) TurnContext(reqCtx context.Context) (context.Context, contex
 }
 func (d *benchDeps) InflightAdd(int)                                       {}
 func (d *benchDeps) InflightDone()                                         {}
-func (d *benchDeps) CleanupChatState(context.Context, vibekit.ChatID)      {}
+func (d *benchDeps) DeleteChatState(context.Context, vibekit.ChatID)       {}
 func (d *benchDeps) CloseChatState(context.Context, vibekit.ChatID)        {}
-func (d *benchDeps) CancelChatRuns(context.Context, vibekit.ChatID)        {}
 func (d *benchDeps) KillForTurn(vibekit.ChatID)                            {}
 func (d *benchDeps) WaitForReady(context.Context, time.Duration) bool      { return true }
 func (d *benchDeps) PrimeIfNeeded(context.Context, vibekit.ChatID)         {}
@@ -68,7 +77,7 @@ func TestBenchDeps_NoPanic(t *testing.T) {
 	d.TakePendingPerm(0, vibekit.SettledByUser)
 	d.InflightAdd(1)
 	d.InflightDone()
-	d.CleanupChatState(t.Context(), "x")
+	d.DeleteChatState(t.Context(), "x")
 	d.PrimeIfNeeded(t.Context(), "x")
 	d.LatchTurnModel("x", "sonnet-4")
 }
@@ -90,9 +99,6 @@ func TestBenchDeps_Contract(t *testing.T) {
 
 	// --- Intentionally nil (safe only for dispatch-overhead benchmarks) ---
 	t.Run("intentionally_nil", func(t *testing.T) {
-		if d.ChatStore() != nil {
-			t.Error("ChatStore expected nil for bench stub")
-		}
 		if d.GetBridge("any") != nil {
 			t.Error("GetBridge expected nil for bench stub")
 		}
@@ -106,7 +112,7 @@ func TestBenchDeps_Contract(t *testing.T) {
 		d.TakePendingPerm(0, vibekit.SettledByUser)
 		d.InflightAdd(1)
 		d.InflightDone()
-		d.CleanupChatState(t.Context(), "x")
+		d.DeleteChatState(t.Context(), "x")
 		d.PrimeIfNeeded(t.Context(), "x")
 		if d.IsEmptyTurn(nil, "x") {
 			t.Error("IsEmptyTurn should be false")
@@ -165,7 +171,9 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 // what lets one value fill every slot a handler asks for.
 type hostDouble interface {
 	BridgeAccess
-	ChatAccess
+	ChatStore
+	Broadcaster
+	ChatTeardown
 	PendingPermAccess
 	TerminalAccess
 	LifecycleAccess
@@ -181,6 +189,7 @@ func promptRolesOf(d hostDouble) *promptRoles {
 	return &promptRoles{
 		bridges:     d,
 		chats:       d,
+		bus:         d,
 		workspace:   Workspace{Dir: "/tmp", ConfigDir: "/tmp"},
 		lifecycle:   d,
 		mcp:         d,

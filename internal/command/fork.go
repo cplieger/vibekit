@@ -51,7 +51,7 @@ var errForkParentUnknown = errors.New("the chat this tangent came from no longer
 var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens into")
 
 // CmdForkChat opens a tangent off another chat.
-func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, ws Workspace, cmd *vibekit.ClientCommand) (any, error) {
+func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws Workspace, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, ws
 		return nil, StatusError(http.StatusBadRequest, errForkParentIsSelf)
 	}
 
-	parent, ok := chats.ChatStore().Get(ctx, p.ParentChatID)
+	parent, ok := chats.Get(ctx, p.ParentChatID)
 	if !ok {
 		return nil, StatusError(http.StatusNotFound, errForkParentUnknown)
 	}
@@ -81,7 +81,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, ws
 		outcome = vibekit.ForkOutcomePrimed
 	}
 
-	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		// Refuse to reshape an existing chat, for CmdResumeSession's reason:
 		// binding a live chat to another session strands its own (the transcript
 		// stays on disk unreferenced, so the reaper sweeps it) and silently

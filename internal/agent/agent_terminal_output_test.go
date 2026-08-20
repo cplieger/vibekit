@@ -259,7 +259,7 @@ func terminalOutputPayloads(t *testing.T, h *Runtime) []vibekit.TerminalOutputPa
 		id uint64
 	}
 	var found []idPayload
-	for _, e := range h.sse.hub.Buffered() {
+	for _, e := range h.bus.hub.Buffered() {
 		var env struct {
 			Type    string                        `json:"type"`
 			Payload vibekit.TerminalOutputPayload `json:"payload"`

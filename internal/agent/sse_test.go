@@ -23,10 +23,10 @@ import (
 
 func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 	h, _, _ := newTestHub()
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
 
-	evts := h.sse.hub.Buffered()
+	evts := h.bus.hub.Buffered()
 	if len(evts) != 2 {
 		t.Fatalf("replay len = %d, want 2", len(evts))
 	}
@@ -44,7 +44,7 @@ func TestEmit_AppendsToReplayBuffer(t *testing.T) {
 func TestEmit_CapsBufferAtReplayBufSize(t *testing.T) {
 	h, _, _ := newTestHub()
 	for range replayBufSize + 100 {
-		h.sse.emit(vibekit.ServerEvent{Type: "test"})
+		h.bus.emit(vibekit.ServerEvent{Type: "test"})
 	}
 	floor, head := h.replayBounds()
 	if head-floor+1 != uint64(replayBufSize) {
@@ -57,11 +57,11 @@ func TestEmit_TopicCarriesChatID(t *testing.T) {
 	// vibekit's contract is that emit maps ChatID onto the event topic
 	// (empty ChatID = global broadcast) so that filtering applies.
 	h, _, _ := newTestHub()
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
-	h.sse.emit(vibekit.ServerEvent{Type: "connected"}) // global: empty topic
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(vibekit.ServerEvent{Type: "connected"}) // global: empty topic
 
-	got := h.sse.hub.Buffered()
+	got := h.bus.hub.Buffered()
 	if len(got) != 3 {
 		t.Fatalf("buffered = %d events, want 3", len(got))
 	}
@@ -78,9 +78,9 @@ func TestEmit_TopicCarriesChatID(t *testing.T) {
 func TestHandleSSE_EmitsConnectedHandshake(t *testing.T) {
 	h, _, _ := newTestHub()
 	// Seed 3 events so the replay buffer has a known floor/head.
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
@@ -122,7 +122,7 @@ func TestReplayBounds_FollowsBufferWindow(t *testing.T) {
 	h, _, _ := newTestHub()
 	// Overflow the ring so the floor advances past 1.
 	for range replayBufSize + 5 {
-		h.sse.emit(vibekit.ServerEvent{Type: "test"})
+		h.bus.emit(vibekit.ServerEvent{Type: "test"})
 	}
 	floor, head := h.replayBounds()
 	if floor <= 1 {
@@ -140,9 +140,9 @@ func TestReplayBounds_FollowsBufferWindow(t *testing.T) {
 func TestHandleSSE_ReplaysSinceLastEventID(t *testing.T) {
 	h, _, _ := newTestHub()
 
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
-	h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c1"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c2"})
+	h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: "c3"})
 
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
@@ -170,7 +170,7 @@ func TestHandleSSE_ReplaysNewestBeyondClientBuffer(t *testing.T) {
 
 	const n = 300
 	for i := 1; i <= n; i++ {
-		h.sse.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: vibekit.ChatID(fmt.Sprintf("c%d", i))})
+		h.bus.emit(vibekit.ServerEvent{Type: "chat_updated", ChatID: vibekit.ChatID(fmt.Sprintf("c%d", i))})
 	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
@@ -291,7 +291,7 @@ func BenchmarkEmit(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		h.sse.emit(evt)
+		h.bus.emit(evt)
 	}
 }
 

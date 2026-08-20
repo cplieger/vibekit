@@ -17,7 +17,7 @@ func TestUtilityBridge_LazyStart(t *testing.T) {
 
 	// Utility bridge should not exist yet.
 	h.lifecycle.mu.Lock()
-	if h.bridge.utility != nil && h.bridge.utility.session.started {
+	if u := h.utility.peek(); u != nil && u.session.started {
 		t.Error("utility bridge started before first call")
 	}
 	h.lifecycle.mu.Unlock()
@@ -32,7 +32,7 @@ func TestUtilityBridge_LazyStart(t *testing.T) {
 	_ = br // notifCh unused in this test
 
 	h.lifecycle.mu.Lock()
-	if h.bridge.utility == nil || !h.bridge.utility.session.started {
+	if u := h.utility.peek(); u == nil || !u.session.started {
 		t.Error("utility bridge not started after first call")
 	}
 	h.lifecycle.mu.Unlock()
@@ -63,13 +63,13 @@ func TestUtilityBridge_StopAndRestart(t *testing.T) {
 	// Manually set up a utility runtime with a started session.
 	s := &utilitySession{shutdownCtx: t.Context(), started: true, bridge: newFakeBridge()}
 	h.lifecycle.mu.Lock()
-	h.bridge.utility = &utilityRuntime{session: s, textgen: newUtilityAgent(s)}
+	h.utility = &utilityLease{rt: &utilityRuntime{session: s, textgen: newUtilityAgent(s)}}
 	h.lifecycle.mu.Unlock()
 
 	h.stopUtilityBridge()
 
 	h.lifecycle.mu.Lock()
-	if h.bridge.utility != nil {
+	if h.utility.peek() != nil {
 		t.Error("utility bridge not nil after stop")
 	}
 	h.lifecycle.mu.Unlock()
@@ -160,7 +160,7 @@ func TestUtilityBridge_ConcurrentPrompts(t *testing.T) {
 
 	// Replace the bridge with a fresh one that won't be stopped.
 	freshBr := newFakeBridge()
-	u := h.bridge.utility
+	u := h.utility.peek()
 	u.session.mu.Lock()
 	u.session.bridge = freshBr
 	u.session.mu.Unlock()
@@ -570,7 +570,7 @@ func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 
 // TestStopUtilityBridge_ConcurrentWithCull_NoRace exercises stopUtilityBridge
 // concurrently with the cull. Both must coordinate on h.lifecycle.mu for the
-// h.bridge.utility field read/nil; -race flags the fix's absence.
+// the utility slot's read/nil; -race flags the fix's absence.
 func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
 	h, _, _ := newTestHub()
 	u := h.ensureUtility()

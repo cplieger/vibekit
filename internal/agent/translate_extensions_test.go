@@ -68,7 +68,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h, _, _ := newTestHub()
-			_, before := h.sse.hub.Bounds()
+			_, before := h.bus.hub.Bounds()
 			msg := &vibekit.RPCResponse{Method: "_kiro/mcp/status", Params: mustJSON(t, tc.params)}
 			h.translateACPEvent("", msg)
 
@@ -101,7 +101,7 @@ func TestTranslateMCPStatus(t *testing.T) {
 func TestTranslateV3_AvailableCommandsUpdateIsIgnored(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 
 	msg := &vibekit.RPCResponse{
 		Method: vibekit.MethodSessionUpdate,
@@ -126,7 +126,7 @@ func TestTranslateV3_AvailableCommandsUpdateIsIgnored(t *testing.T) {
 func TestTranslateV3_SummarizationRunningEmitsTransient(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 
 	msg := &vibekit.RPCResponse{
 		Method: vibekit.MethodSessionUpdate,
@@ -209,7 +209,7 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 		c.CurrentModeID = "nonexistent"
 		return true
 	})
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 	msg := &vibekit.RPCResponse{
 		Method: "_kiro/customAgent/not_found",
 		Params: mustJSON(t, map[string]any{
@@ -232,7 +232,7 @@ func TestTranslateInitErrors_AgentNotFoundPersistsFallback(t *testing.T) {
 func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 	msg := &vibekit.RPCResponse{
 		Method: "_kiro/customAgent/config_error",
 		Params: mustJSON(t, map[string]any{
@@ -250,7 +250,7 @@ func TestTranslateInitErrors_AgentConfigErrorEmitsError(t *testing.T) {
 func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 	msg := &vibekit.RPCResponse{
 		Method: "_kiro/error/rate_limit",
 		Params: mustJSON(t, map[string]any{
@@ -268,7 +268,7 @@ func TestTranslateInitErrors_RateLimitEmitsError(t *testing.T) {
 
 func TestTranslateSystemNotify_EmitsError(t *testing.T) {
 	h, _, _ := newTestHub()
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 	// No sessionId on _kiro/system/notify — broadcast at bridge scope.
 	msg := &vibekit.RPCResponse{
 		Method: "_kiro/system/notify",

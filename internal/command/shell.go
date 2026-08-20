@@ -51,8 +51,8 @@ func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
 // chat's first message, derives an initial chat name from the command text.
 // Returns whether the message was persisted (false when the chat record
 // doesn't exist).
-func appendShellUserMessage(ctx context.Context, chats ChatAccess, chatID vibekit.ChatID, msg *vibekit.Message, text string) (persisted bool, err error) {
-	err = chats.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+func appendShellUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, chatID vibekit.ChatID, msg *vibekit.Message, text string) (persisted bool, err error) {
+	err = chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			c.Name = vibekit.DefaultChatName
 		}
@@ -64,7 +64,7 @@ func appendShellUserMessage(ctx context.Context, chats ChatAccess, chatID vibeki
 			}
 			c.Name = name
 		}
-		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
+		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
 		persisted = true
 		return true
 	})
@@ -103,7 +103,7 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 		ID: p.MessageID, Role: vibekit.RoleUser, Ts: time.Now().UnixMilli(),
 		Content: p.Text,
 	}
-	persisted, err := appendShellUserMessage(ctx, roles.chats, cmd.ChatID, &userMsg, p.Text)
+	persisted, err := appendShellUserMessage(ctx, roles.chats, roles.bus, cmd.ChatID, &userMsg, p.Text)
 	if err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
@@ -146,13 +146,13 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 		ID: msgID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli(),
 		Content: content,
 	}
-	appendErr := roles.chats.ChatStore().AppendMessage(ctx, cmd.ChatID, &assistantMsg)
+	appendErr := roles.chats.AppendMessage(ctx, cmd.ChatID, &assistantMsg)
 	if appendErr != nil {
 		slog.Error("shell interception: persist output", "chat_id", cmd.ChatID, keyError, appendErr)
 	}
-	if _, stillExists := roles.chats.ChatStore().Get(ctx, cmd.ChatID); stillExists {
-		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
-		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
+	if _, stillExists := roles.chats.Get(ctx, cmd.ChatID); stillExists {
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
 	}
 	return responseOK, nil
 }

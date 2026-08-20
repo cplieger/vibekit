@@ -105,7 +105,7 @@ func (h *Runtime) respondKiroOpenExternalURL(ctx context.Context, chatID vibekit
 	}
 	// Ack first so the agent's OAuth redirect isn't blocked on the UI.
 	h.respondBridge(ctx, chatID, msg, map[string]any{"success": true}, nil)
-	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventOpenExternalURL, chatID, vibekit.OpenExternalURLPayload{URL: p.URL}))
+	h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventOpenExternalURL, chatID, vibekit.OpenExternalURLPayload{URL: p.URL}))
 }
 
 // isSafeExternalURL reports whether u parses and uses the http or https
@@ -177,7 +177,7 @@ func (h *Runtime) respondKiroAccessToken(ctx context.Context, chatID vibekit.Cha
 		// profile, a missing binary), and no wording invented here could be more
 		// specific. Broadcast AFTER the RPC error so the agent's request is never
 		// waiting on a client fan-out.
-		h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeAuthTokenUnavailable,
 			Message: err.Error(),
 		}))

@@ -21,7 +21,7 @@ import (
 // paths. There is no staging queue to flush and no per-turn trust to clear —
 // both went with internal/pending.
 func (h *Runtime) cleanupChatState(ctx context.Context, chatID vibekit.ChatID, reapDurable bool) {
-	h.sse.ClearPendingPermsForChat(chatID)
+	h.bus.ClearPendingPermsForChat(chatID)
 	h.coord.CloseBridge(chatID)
 	h.agentTerms.KillForChat(chatID)
 	h.lifecycle.mu.Lock()

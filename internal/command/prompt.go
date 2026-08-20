@@ -83,7 +83,7 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 }
 
 // recoverEmptyTurn handles empty turn recovery: recreate session and retry.
-func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatAccess, outcome TurnOutcomeAccess, chatID vibekit.ChatID, resp *vibekit.RPCResponse, p *vibekit.PromptCommand, params map[string]any) *vibekit.RPCResponse {
+func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, outcome TurnOutcomeAccess, chatID vibekit.ChatID, resp *vibekit.RPCResponse, p *vibekit.PromptCommand, params map[string]any) *vibekit.RPCResponse {
 	// A verb KAS answers itself produces no content BY DESIGN, so an empty turn
 	// is the correct outcome and recovery is pure damage: it would close the
 	// bridge the launched run is parented on, detach the session, badge the turn
@@ -98,7 +98,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatAcces
 	}
 	slog.Warn("empty turn detected, recreating session", "chat_id", chatID)
 	bridges.CloseBridge(chatID)
-	if err := chats.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -119,14 +119,14 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatAcces
 		ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
 		EventKind: vibekit.EventInterrupted, Content: "Session refreshed, retrying",
 	}
-	if err := chats.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
+	if err := chats.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("empty turn: append event", "chat_id", chatID, keyError, err)
 	}
 	sb2, err2 := bridges.GetOrCreateBridge(ctx, chatID, p.Model)
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
 			"chat_id", chatID, keyError, err2)
-		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeRecoveryFailed,
 			Message: "Session refresh failed: " + rpcerr.Text(err2),
 		}))
@@ -163,7 +163,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatAcces
 	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
-		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeRecoveryFailed,
 			Message: "Retry prompt failed: " + rpcerr.Text(retryErr),
 		}))
@@ -190,9 +190,9 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(ctx context.Context, chats ChatAccess, ws Workspace, chatID vibekit.ChatID, p *vibekit.PromptCommand) error {
+func appendUserMessage(ctx context.Context, chats ChatStore, bus Broadcaster, ws Workspace, chatID vibekit.ChatID, p *vibekit.PromptCommand) error {
 	supervisedDefault := supervisedDefaultSetting(ctx, ws.ConfigDir)
-	err := chats.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	err := chats.Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		// Idempotent by message id (the documented invariant): if this id
 		// is already in the store — e.g. a 409-queued prompt whose first
 		// attempt persisted the user message before the busy check, now
@@ -230,7 +230,7 @@ func appendUserMessage(ctx context.Context, chats ChatAccess, ws Workspace, chat
 			}
 			c.Name = name
 		}
-		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg))
+		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg))
 		return true
 	})
 	return err
@@ -265,7 +265,7 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 
 	// 1. Ensure the chat exists and append the user message, naming the chat
 	// from its first prompt.
-	if err := appendUserMessage(ctx, roles.chats, roles.workspace, cmd.ChatID, &p); err != nil {
+	if err := appendUserMessage(ctx, roles.chats, roles.bus, roles.workspace, cmd.ChatID, &p); err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 
@@ -278,7 +278,7 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 	defer cancel()
 	sb, err := roles.bridges.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
-		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if !sb.TryAcquireForPrompt() {
@@ -307,7 +307,7 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 		slog.Warn("MCP readiness timeout, proceeding anyway", "chat_id", cmd.ChatID)
 	}
 	var creditsBeforeTurn float64
-	if chat, ok := roles.chats.ChatStore().Get(ctx, cmd.ChatID); ok {
+	if chat, ok := roles.chats.Get(ctx, cmd.ChatID); ok {
 		creditsBeforeTurn = chat.Usage.Credits
 		// Latch the answering model HERE, at dispatch, not on the turn's first
 		// frame. The bridge is up and its model persisted by this point, and
@@ -338,18 +338,18 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 		// prose promptFailureReason exists to produce. The chain is already in the
 		// log line above; what travels to the user is the reason.
 		reason := promptFailureReason(err)
-		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID,
+		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID,
 			vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
 		return nil, StatusError(http.StatusInternalServerError, errors.New(reason))
 	}
 	slog.Info("prompt complete", "chat_id", cmd.ChatID, "elapsed", elapsed)
 
 	// Empty turn recovery.
-	resp = recoverEmptyTurn(ctx, roles.bridges, roles.chats, roles.turnOutcome, cmd.ChatID, resp, &p, promptParams)
+	resp = recoverEmptyTurn(ctx, roles.bridges, roles.chats, roles.bus, roles.turnOutcome, cmd.ChatID, resp, &p, promptParams)
 
 	// Compute credit delta for the turn summary.
 	var creditsDelta float64
-	if chat, ok := roles.chats.ChatStore().Get(ctx, cmd.ChatID); ok {
+	if chat, ok := roles.chats.Get(ctx, cmd.ChatID); ok {
 		creditsDelta = chat.Usage.Credits - creditsBeforeTurn
 	}
 	roles.turnOutcome.EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, TurnStats{

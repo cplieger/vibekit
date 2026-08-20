@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -16,7 +17,29 @@ type storeDeps struct {
 	store ChatStore
 }
 
-func (d *storeDeps) ChatStore() ChatStore { return d.store }
+// The five store methods are promoted from the embedded store, not handed back
+// through a ChatStore() getter: Roles holds the interface directly now, so a
+// double that only overrode the getter left benchDeps' no-op methods winning and
+// silently stored nothing.
+func (d *storeDeps) Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool) {
+	return d.store.Get(ctx, id)
+}
+
+func (d *storeDeps) Mutate(ctx context.Context, id vibekit.ChatID, fn func(*vibekit.Chat, bool) bool) error {
+	return d.store.Mutate(ctx, id, fn)
+}
+
+func (d *storeDeps) AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error {
+	return d.store.AppendMessage(ctx, chatID, msg)
+}
+
+func (d *storeDeps) SetDraft(ctx context.Context, id vibekit.ChatID, text string) error {
+	return d.store.SetDraft(ctx, id, text)
+}
+
+func (d *storeDeps) Delete(ctx context.Context, id vibekit.ChatID) error {
+	return d.store.Delete(ctx, id)
+}
 
 func newTestHost(t *testing.T, store ChatStore) hostDouble {
 	t.Helper()

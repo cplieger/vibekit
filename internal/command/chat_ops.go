@@ -19,7 +19,7 @@ import (
 const cancelGrace = 10 * time.Second
 
 // CmdCreateChat creates a new chat with the given metadata.
-func CmdCreateChat(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdCreateChat(ctx context.Context, chats ChatStore, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -39,7 +39,7 @@ func CmdCreateChat(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientCom
 	if !ValidIdent(p.Model) {
 		return nil, StatusError(http.StatusBadRequest, ErrInvalidPayload)
 	}
-	err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if exists {
 			return false
 		}
@@ -64,14 +64,13 @@ func CmdCreateChat(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientCom
 // nothing to order or to half-fail. The transition, its ordering guarantee and
 // the `failed_children` response are all gone rather than kept as a
 // single-element loop.
-func CmdDeleteChat(ctx context.Context, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
-	// Delete implies close semantics: the chat's runs are cancelled first,
-	// because a run is durable state a dead bridge only PAUSES — without this,
-	// deleting a chat mid-run left the run to revive and edit files attributed
-	// to a chat that no longer exists.
-	chats.CancelChatRuns(ctx, cmd.ChatID)
-	chats.CleanupChatState(ctx, cmd.ChatID)
-	if err := chats.ChatStore().Delete(ctx, cmd.ChatID); err != nil {
+func CmdDeleteChat(ctx context.Context, chats ChatStore, teardown ChatTeardown, cmd *vibekit.ClientCommand) (any, error) {
+	// Delete implies close semantics, and DeleteChatState owns that: it cancels
+	// the chat's runs before dropping the bridge, because a run is durable state
+	// a dead bridge only PAUSES — without it, deleting a chat mid-run left the run
+	// to revive and edit files attributed to a chat that no longer exists.
+	teardown.DeleteChatState(ctx, cmd.ChatID)
+	if err := chats.Delete(ctx, cmd.ChatID); err != nil {
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	slog.Info("chat deleted", "chat_id", cmd.ChatID)
@@ -129,15 +128,14 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 // and a paused run later revives and edits files nobody is watching), then the
 // process teardown, which also flushes the in-flight buffer and kills the
 // chat's agent terminals.
-func CmdCloseChat(ctx context.Context, bridges BridgeAccess, chats ChatAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdCloseChat(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, cmd *vibekit.ClientCommand) (any, error) {
 	perms.ClearPendingPermsForChat(cmd.ChatID)
 	if sb := bridges.GetBridge(cmd.ChatID); sb != nil {
 		if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", cmd.ChatID, keyError, err)
 		}
 	}
-	chats.CancelChatRuns(ctx, cmd.ChatID)
-	chats.CloseChatState(ctx, cmd.ChatID)
+	teardown.CloseChatState(ctx, cmd.ChatID)
 	return responseOK, nil
 }
 

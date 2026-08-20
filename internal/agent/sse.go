@@ -72,7 +72,7 @@ func (h *Runtime) handleSSE(w http.ResponseWriter, r *http.Request) {
 		h.push.ReloadPreferences(r.Context())
 	}
 
-	h.sse.hub.Serve(w, r,
+	h.bus.hub.Serve(w, r,
 		sse.WithTopic(string(chatFilter)),
 		sse.OnConnect(func(sw *sse.Writer, floor, head uint64) error {
 			return h.streamInitialState(sw, floor, head, chatFilter)
@@ -153,7 +153,7 @@ func (h *Runtime) replayTurnState(writeFn func(vibekit.ServerEvent) error, chatF
 		if chatFilter != "" && id != chatFilter {
 			continue
 		}
-		status := h.sse.chatStatus.Get(id)
+		status := h.bus.chatStatus.Get(id)
 		payload := vibekit.TurnStatePayload{
 			Status:      status.Status,
 			Description: status.Description,
@@ -177,7 +177,7 @@ func (h *Runtime) replayTurnState(writeFn func(vibekit.ServerEvent) error, chatF
 // inclusive. Floor is the oldest event ID still replayable; head is the
 // newest. Clients with last-seen-id < floor know they missed events.
 func (h *Runtime) replayBounds() (floor, head uint64) {
-	return h.sse.hub.Bounds()
+	return h.bus.hub.Bounds()
 }
 
 // replayPendingPermissions sends the unresolved permission_needed events to
@@ -196,7 +196,7 @@ func (h *Runtime) replayBounds() (floor, head uint64) {
 // too — ascending request id, i.e. the order the agent asked — so this loop
 // writes the queue rather than a set.
 func (h *Runtime) replayPendingPermissions(writeFn func(vibekit.ServerEvent) error, chatFilter vibekit.ChatID) error {
-	for _, evt := range h.sse.pendingPerms.List(chatFilter) {
+	for _, evt := range h.bus.pendingPerms.List(chatFilter) {
 		if err := writeFn(evt); err != nil {
 			return err
 		}

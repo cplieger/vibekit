@@ -112,7 +112,7 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 	return &BridgeCoordinator{
 		bridge:         h.bridge,
 		chatStore:      h.chatStore,
-		broadcast:      h.Broadcast,
+		broadcast:      h.bus.Broadcast,
 		translateEvent: h.translateACPEvent,
 		push:           h.push,
 		mcpRegistry:    h.mcpRegistry,
@@ -120,7 +120,7 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		preBridgeSpawn: h.preBridgeSpawn,
 		// h implements replayProjector via load_projection.go.
 		replayProjection: h,
-		chatStatus:       h.sse.chatStatus.Get,
+		chatStatus:       h.bus.chatStatus.Get,
 		agentEngine:      resolveAgentEngine(),
 		acpArgs:          h.acpArgs,
 		secretStorage:    func() bool { return h.secrets != nil },

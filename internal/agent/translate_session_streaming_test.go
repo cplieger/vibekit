@@ -82,21 +82,21 @@ func TestHandleModeUpdate_BroadcastsOnlyOnChange(t *testing.T) {
 		return true
 	})
 
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 
 	// Same mode → no broadcast. KAS's current_mode_update keys the new
 	// mode on currentModeId (not modeId — that is the outbound set_mode
 	// request's field).
 	raw := json.RawMessage(`{"currentModeId":"code"}`)
 	h.translator.HandleModeUpdate(t.Context(), "c1", raw)
-	if _, head := h.sse.hub.Bounds(); head != before {
+	if _, head := h.bus.hub.Bounds(); head != before {
 		t.Errorf("expected no broadcast for same mode")
 	}
 
 	// Different mode → broadcast.
 	raw2 := json.RawMessage(`{"currentModeId":"chat"}`)
 	h.translator.HandleModeUpdate(t.Context(), "c1", raw2)
-	if _, head := h.sse.hub.Bounds(); head == before {
+	if _, head := h.bus.hub.Bounds(); head == before {
 		t.Error("expected broadcast for mode change, got none")
 	}
 

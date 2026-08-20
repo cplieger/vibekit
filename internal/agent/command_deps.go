@@ -16,25 +16,6 @@ import (
 // the dispatcher takes no collaborator at all now that idempotency is the
 // header middleware's.
 
-// CancelChatRuns cancels every non-terminal run parented on any session in the
-// chat's chain. It is the one place Runtime still stands between a role and its
-// owner, and deliberately so: command.ChatAccess is the CHAT lifecycle, and
-// closing or deleting a chat has to reach both the chat record and the run
-// surface. The alternative was a fourth role on two handlers to say "and also
-// cancel this chat's runs", which spreads a single lifecycle decision across two
-// declarations. CleanupChatState and CloseChatState on the same interface already
-// span six fields for the same reason.
-func (h *Runtime) CancelChatRuns(ctx context.Context, chatID vibekit.ChatID) {
-	h.runs.CancelChatRuns(ctx, chatID)
-}
-
-// ChatStore returns the runtime's chat store as the command handlers use it (5 of
-// its 9 methods). Beside ChatRecords() in translate_deps.go, which is the same
-// store at 3 methods for the translator: Go matches an interface method by
-// exact signature, so two consumers with two narrow contracts need two
-// accessors rather than one that returns whichever is wider.
-func (h *Runtime) ChatStore() command.ChatStore { return h.chatStore }
-
 // GetBridge returns the active bridge for a chat, or nil.
 func (h *Runtime) GetBridge(chatID vibekit.ChatID) command.Bridge {
 	sb := h.coord.GetBridge(chatID)
@@ -58,10 +39,10 @@ func (h *Runtime) CloseBridge(chatID vibekit.ChatID) {
 	h.coord.CloseBridge(chatID)
 }
 
-// CleanupChatState tears down all in-memory state for a chat that is being
-// permanently deleted (the delete path), reaping the chat's durable KAS session
-// state too.
-func (h *Runtime) CleanupChatState(ctx context.Context, chatID vibekit.ChatID) {
+// DeleteChatState tears down all in-memory state for a chat being permanently
+// deleted, cancelling its runs first and reaping its durable KAS session too.
+func (h *Runtime) DeleteChatState(ctx context.Context, chatID vibekit.ChatID) {
+	h.runs.CancelChatRuns(ctx, chatID)
 	h.cleanupChatState(ctx, chatID, true)
 }
 
@@ -76,6 +57,7 @@ func (h *Runtime) CleanupChatState(ctx context.Context, chatID vibekit.ChatID) {
 // the reopened chat had no session to load, and the History page, which lists
 // KAS's sessions, could only ever show chats that were still open.
 func (h *Runtime) CloseChatState(ctx context.Context, chatID vibekit.ChatID) {
+	h.runs.CancelChatRuns(ctx, chatID)
 	h.cleanupChatState(ctx, chatID, false)
 }
 

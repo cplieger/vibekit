@@ -80,11 +80,11 @@ func (rp *Runs) IsScheduledRun(workflowID string) bool {
 // panic on the first session update.
 func (h *Runtime) translateRoles() *translate.Roles {
 	return requireWired(&translate.Roles{
-		Bus:          h.sse,
+		Bus:          h.bus,
 		Chats:        h.chatStore,
 		Buffers:      h.bridge.assistantBufs,
 		Lines:        h.lines,
-		PendingPerms: h.sse,
+		PendingPerms: h.bus,
 		Push:         h.coord,
 		Sessions:     h.coord,
 		Terminals:    h.agentTerms,

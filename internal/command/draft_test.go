@@ -166,7 +166,7 @@ func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
 	}
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(t.Context(), deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
 		Text:      "the message about to be sent",
 		MessageID: "m-1",
 	})
@@ -200,7 +200,7 @@ func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
 		{Path: "out/shot.png", Name: "shot.png"},
 		{Path: "docs/spec.pdf", Name: "spec.pdf"},
 	}
-	err := appendUserMessage(t.Context(), deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
 		Text:        "have a look at these",
 		MessageID:   "m-1",
 		Attachments: atts,
@@ -242,7 +242,7 @@ func TestAppendUserMessage_NoAttachmentsPersistsNone(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(t.Context(), deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(t.Context(), deps, deps, Workspace{Dir: t.TempDir(), ConfigDir: t.TempDir()}, "c1", &vibekit.PromptCommand{
 		Text:      "just a question",
 		MessageID: "m-1",
 	})

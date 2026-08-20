@@ -184,7 +184,7 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 	}
 	// The request has to BE pending: the handler claims it before answering, so
 	// a tracked entry is what makes the answer legal.
-	h.sse.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
+	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
 		vibekit.PermissionNeededPayload{RequestID: 42}))
 	rec := postCmd(t, h, vibekit.ClientCommand{
 		Type: "permission_response", ChatID: "c1",
@@ -205,7 +205,7 @@ func TestPermission_SecondAnswerIs409(t *testing.T) {
 	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
-	h.sse.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
+	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
 		vibekit.PermissionNeededPayload{RequestID: 42}))
 
 	answer := func(reqID string) int {

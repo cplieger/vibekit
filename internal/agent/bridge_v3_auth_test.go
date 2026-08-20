@@ -44,7 +44,7 @@ func openExternalURLMsg(t *testing.T, id int64, url string) *vibekit.RPCResponse
 func TestHandleOpenExternalURL(t *testing.T) {
 	t.Run("SafeURLBroadcasts", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		_, before := h.sse.hub.Bounds()
+		_, before := h.bus.hub.Bounds()
 		h.translateACPEvent("c1", openExternalURLMsg(t, 1, "https://auth.example.com/oauth"))
 		types := extractTypes(t, bufferedSince(h, before))
 		if missing := missingEvents(types, string(vibekit.EventOpenExternalURL)); len(missing) > 0 {
@@ -54,7 +54,7 @@ func TestHandleOpenExternalURL(t *testing.T) {
 
 	t.Run("UnsafeURLDoesNotBroadcast", func(t *testing.T) {
 		h, _, _ := newTestHub()
-		_, before := h.sse.hub.Bounds()
+		_, before := h.bus.hub.Bounds()
 		h.translateACPEvent("c1", openExternalURLMsg(t, 2, "javascript:alert(1)"))
 		types := extractTypes(t, bufferedSince(h, before))
 		for _, ty := range types {
@@ -125,7 +125,7 @@ func TestAuthTokenLatchIsNilSafe(t *testing.T) {
 // routes to the sign-in banner.
 func TestAccessTokenFailureBroadcastsTheAuthError(t *testing.T) {
 	h, _, _ := newTestHub()
-	_, before := h.sse.hub.Bounds()
+	_, before := h.bus.hub.Bounds()
 
 	// kiroToken is nil on a test hub, so the vend fails with ErrNoSource.
 	id := int64(7)

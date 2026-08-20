@@ -142,7 +142,7 @@ type BridgeAccess interface {
 // it cannot UpdateMessage, and it cannot RegisterRoutes.
 //
 // Exported because ChatAccess is exported and *agent.Runtime has to name this as its
-// ChatStore() return type. internal/translate declares its own narrower
+// internal/translate declares its own narrower
 // ChatRecords for the same store — see its deps.go for why the two accessors
 // cannot share one name.
 type ChatStore interface {
@@ -166,22 +166,30 @@ type ChatStore interface {
 	Delete(ctx context.Context, id vibekit.ChatID) error
 }
 
-// ChatAccess provides chat store and broadcast operations needed by
-// create, delete, rewind, and supervised-mode handlers.
-type ChatAccess interface {
-	ChatStore() ChatStore
+// Broadcaster publishes a domain event to every connected client.
+type Broadcaster interface {
 	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
-	CleanupChatState(ctx context.Context, chatID vibekit.ChatID)
-	// CloseChatState is the close path's teardown: same in-memory cleanup,
-	// but it leaves the chat's durable KAS session on disk so the chat can be
-	// reopened and so History can still list it.
+}
+
+// ChatTeardown ends a chat's life, in one of two ways. It stays a composite
+// because both members genuinely span the host: each reaches the pending-decision
+// tracker, the bridge coordinator, the terminal registry, the assistant buffers,
+// the line tracker AND the run surface, so there is no single owner to name.
+//
+// Cancelling the chat's runs is INSIDE both, not a third role a caller pairs with
+// them. Both call sites did that pairing by hand, in the same order, for the same
+// reason: a run is durable state a dead bridge only PAUSES — KAS reconciles it to
+// paused and a later read revives it — so it must be told to cancel, per run,
+// before the bridge goes. A contract two callers have to remember is one a third
+// caller will forget.
+type ChatTeardown interface {
+	// DeleteChatState is the delete path: cancel the chat's runs, drop every
+	// in-memory trace, and reap the durable KAS session too.
+	DeleteChatState(ctx context.Context, chatID vibekit.ChatID)
+	// CloseChatState is the close path: the same cancel and in-memory cleanup,
+	// but it LEAVES the durable KAS session on disk so the chat can be reopened
+	// and so History can still list it.
 	CloseChatState(ctx context.Context, chatID vibekit.ChatID)
-	// CancelChatRuns cancels every non-terminal workflow run this chat's
-	// sessions launched. Part of the tab-close contract: closing the tab kills
-	// the work, and a run is durable state a dead process does NOT stop — KAS
-	// reconciles it to paused and a later read revives it, so it must be told
-	// to cancel, per run, before the bridge goes.
-	CancelChatRuns(ctx context.Context, chatID vibekit.ChatID)
 }
 
 // PendingPermAccess provides the pending-PERMISSION bookkeeping handlers need:
@@ -314,11 +322,20 @@ type TurnOutcomeAccess interface {
 // Taken by POINTER wherever it travels: eight interface fields is 128 bytes, and
 // copying a wiring record per call buys nothing.
 type Roles struct {
-	Bridges     BridgeAccess
-	Chats       ChatAccess
-	Perms       PendingPermAccess
-	Terminals   TerminalAccess
-	Workspace   Workspace
+	Bridges BridgeAccess
+	// Chats is the chat store directly. It used to arrive through a ChatStore()
+	// GETTER on a ChatAccess composite, which was a second indirection for
+	// nothing, and the composite also carried Broadcast and CancelChatRuns — so
+	// only a type holding the store AND the bus AND the run surface could satisfy
+	// it. That is how a host becomes the one thing that qualifies.
+	Chats     ChatStore
+	Bus       Broadcaster
+	Teardown  ChatTeardown
+	Perms     PendingPermAccess
+	Terminals TerminalAccess
+	Workspace Workspace
+	// Lifecycle is the process lifetime: the turn context and the in-flight
+	// counter a shutdown waits on.
 	Lifecycle   LifecycleAccess
 	MCP         MCPAccess
 	TurnOutcome TurnOutcomeAccess
@@ -330,8 +347,12 @@ type Roles struct {
 // is what would actually obscure which one needs what. Passed by pointer, built
 // once at registration: 96 bytes is not a per-request copy worth making.
 type promptRoles struct {
-	bridges     BridgeAccess
-	chats       ChatAccess
+	bridges BridgeAccess
+	chats   ChatStore
+	// bus is separate from chats because they are separate owners. It arrived as
+	// a Broadcast member on the old ChatAccess composite, which is what made the
+	// chat store and the event bus inseparable to every consumer of it.
+	bus         Broadcaster
 	workspace   Workspace
 	lifecycle   LifecycleAccess
 	mcp         MCPAccess

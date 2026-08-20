@@ -454,7 +454,7 @@ func TestPersistNewSessionMetadata_ReportsAModeThatWasNotApplied(t *testing.T) {
 				return true
 			})
 
-			_, since := h.sse.hub.Bounds()
+			_, since := h.bus.hub.Bounds()
 			h.coord.persistNewSessionMetadata(t.Context(), "c1", br)
 
 			// The record always holds the mode the session is really in.
@@ -514,7 +514,7 @@ func TestChatTeardown_CloseKeepsSessionDeleteReapsIt(t *testing.T) {
 		},
 		{
 			name:        "delete reaps it (control)",
-			teardown:    func(h *Runtime, ctx context.Context, id vibekit.ChatID) { h.CleanupChatState(ctx, id) },
+			teardown:    func(h *Runtime, ctx context.Context, id vibekit.ChatID) { h.DeleteChatState(ctx, id) },
 			wantSurvive: false,
 		},
 	}

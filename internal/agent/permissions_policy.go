@@ -55,19 +55,25 @@ const policyCallTimeout = 45 * time.Second
 // take the hook/governance owners WITH it (or inject them forward-only
 // from composition), not split them across a package boundary.
 func (h *Runtime) ensureUtility() *utilityRuntime {
-	h.bridge.utilityOnce.Do(func() {
-		h.bridge.utility = newUtilityRuntime(
-			h.lifecycle.shutdownCtx, h.bridge.factory, h.Models,
-			utilitySessionHooks{
-				onHooksChanged:    h.config.broadcastHooksChanged,
-				onGovernanceState: h.config.cacheGovernanceFromUtility,
-				tokenSource:       h.kiroAccessTokenResult,
-			},
-			h.secrets,
-			true, // enableHooks
-		)
-	})
-	return h.bridge.utility
+	return h.utility.get()
+}
+
+// buildUtility is the lease's constructor, handed to it at wiring time. It lives
+// here rather than inside the lease because of what it CLOSES OVER: two Settings
+// hooks and the token source, all of which point back into runtime services while
+// those same services lease the utility runtime. Keeping the construction at the
+// wiring site is what keeps that bidirectional edge visible.
+func (h *Runtime) buildUtility() *utilityRuntime {
+	return newUtilityRuntime(
+		h.lifecycle.shutdownCtx, h.bridge.factory, h.Models,
+		utilitySessionHooks{
+			onHooksChanged:    h.config.broadcastHooksChanged,
+			onGovernanceState: h.config.cacheGovernanceFromUtility,
+			tokenSource:       h.kiroAccessTokenResult,
+		},
+		h.secrets,
+		true, // enableHooks
+	)
 }
 
 // PolicyList returns the native policy rules, optionally filtered to one

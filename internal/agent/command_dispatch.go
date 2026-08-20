@@ -20,9 +20,15 @@ func (h *Runtime) registerCommandHandlers() {
 	// ending must close its terminal attribution); Bridges is one collaborator's
 	// but needs the *sharedBridge <-> command.Bridge adaptation the runtime performs.
 	command.RegisterDefaults(h.dispatcher, &command.Roles{
-		Bridges:   h,
-		Chats:     h,
-		Perms:     h.sse,
+		Bridges: h,
+		Chats:   h.chatStore,
+		Bus:     h.bus,
+		// Teardown is the runtime's own, and it is the LAST role that has to be:
+		// each member reaches the decision tracker, the coordinator, the terminal
+		// registry, the buffers, the line tracker and the run surface at once, so
+		// no collaborator can own it.
+		Teardown:  h,
+		Perms:     h.bus,
 		Terminals: h.agentTerms,
 		// A value, not h: the two paths are process constants, so nothing is
 		// substituted and the runtime is not in the middle of reading a string.

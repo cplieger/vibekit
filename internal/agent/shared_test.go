@@ -83,7 +83,7 @@ func postCmd(t *testing.T, h *Runtime, cmd vibekit.ClientCommand) *httptest.Resp
 // inspection surface is a parameterless snapshot).
 func bufferedSince(h *Runtime, sinceID uint64) []sse.ReplayEvent {
 	var out []sse.ReplayEvent
-	for _, e := range h.sse.hub.Buffered() {
+	for _, e := range h.bus.hub.Buffered() {
 		if e.ID > sinceID {
 			out = append(out, e)
 		}

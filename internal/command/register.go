@@ -16,7 +16,7 @@ func RegisterDefaults(d *Dispatcher, r *Roles) {
 	d.Register(vibekit.CmdCreateChat, bind1(r.Chats, CmdCreateChat))
 	d.Register(vibekit.CmdResumeSession, bind1(r.Chats, CmdResumeSession))
 	d.Register(vibekit.CmdSetDraft, bind1(r.Chats, CmdSetDraft))
-	d.Register(vibekit.CmdDeleteChat, bind1(r.Chats, CmdDeleteChat))
+	d.Register(vibekit.CmdDeleteChat, bind2(r.Chats, r.Teardown, CmdDeleteChat))
 	d.Register(vibekit.CmdCompact, bind1(r.Bridges, CmdCompact))
 	d.Register(vibekit.CmdSteer, bind1(r.Bridges, CmdSteer))
 	d.Register(vibekit.CmdSteerClear, bind1(r.Bridges, CmdSteerClear))
@@ -27,16 +27,17 @@ func RegisterDefaults(d *Dispatcher, r *Roles) {
 	d.Register(vibekit.CmdUserInputResponse, bind2(r.Bridges, r.Perms, CmdUserInputResponse))
 	d.Register(vibekit.CmdRewindChat, bind2(r.Bridges, r.Chats, CmdRewindChat))
 	d.Register(vibekit.CmdSetEffort, bind2(r.Bridges, r.Chats, CmdSetEffort))
-	d.Register(vibekit.CmdSetMode, bind2(r.Bridges, r.Chats, CmdSetMode))
+	d.Register(vibekit.CmdSetMode, bind3(r.Bridges, r.Chats, r.Bus, CmdSetMode))
 	d.Register(vibekit.CmdSetSupervisedMode, bind2(r.Bridges, r.Chats, CmdSetSupervisedMode))
 
 	d.Register(vibekit.CmdCancel, bind3(r.Bridges, r.Perms, r.Terminals, CmdCancel))
-	d.Register(vibekit.CmdCloseChat, bind3(r.Bridges, r.Chats, r.Perms, CmdCloseChat))
+	d.Register(vibekit.CmdCloseChat, bind3(r.Bridges, r.Perms, r.Teardown, CmdCloseChat))
 	d.Register(vibekit.CmdForkChat, bind3(r.Bridges, r.Chats, r.Workspace, CmdForkChat))
 
 	d.Register(vibekit.CmdPrompt, bind1(&promptRoles{
 		bridges:     r.Bridges,
 		chats:       r.Chats,
+		bus:         r.Bus,
 		workspace:   r.Workspace,
 		lifecycle:   r.Lifecycle,
 		mcp:         r.MCP,

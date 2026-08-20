@@ -138,14 +138,15 @@ func (lc *lifetime) InflightDone() {
 	lc.inflight.Done()
 }
 
-// bridges groups Runtime fields related to ACP bridge management
-// and the utility runtime (session + text-gen agent).
+// bridges groups Runtime fields related to ACP bridge management.
+//
+// The utility runtime left: it was a field plus a sync.Once here, guarded by the
+// process-lifetime mutex at its three readers and by nothing at its writer. It is
+// utilityLease now, which owns its own lock — see utility_lease.go.
 type bridges struct {
 	factory       ACPBridgeFactory
 	mgr           *bridgeManager
 	assistantBufs *buffer.Store
-	utility       *utilityRuntime
-	utilityOnce   sync.Once
 }
 
 // bus groups Runtime fields related to SSE transport, replay,
@@ -171,7 +172,7 @@ type perms struct {
 type Runtime struct {
 	lifecycle *lifetime
 	bridge    *bridges
-	sse       *bus
+	bus       *bus
 	perm      *perms
 	coord     *BridgeCoordinator
 
@@ -193,6 +194,7 @@ type Runtime struct {
 	// runs owns the workflow-run surface: 74 methods and the four fields only it
 	// touched (see run_plane.go). Runtime reaches it like any collaborator.
 	runs          *Runs
+	utility       *utilityLease
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
 	lines         *buffer.LineTracker
@@ -361,7 +363,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	h := &Runtime{
 		lifecycle:    lc,
 		bridge:       bridgeP,
-		sse:          sseP,
+		bus:          sseP,
 		runs:         runs,
 		config:       configP,
 		perm:         &perms{},
@@ -383,11 +385,12 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// did when every role named h. Three roles (coord, lines, agentTerms) were
 	// assigned after the translator and captured nil until this was reordered.
 	// TestNew_EveryTranslateRoleIsWired pins it.
+	h.utility = &utilityLease{build: h.buildUtility}
 	h.mcpRegistry = newMCPRegistry(bridgeP.mgr, sseP, lc, h.mcpConfig)
 	h.coord = newBridgeCoordinator(h)
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
-	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, h.Broadcast)
+	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, sseP.Broadcast)
 	// A settled session/load replay becomes the chat's transcript. Assigned here
 	// (not in the struct literal) because it is a method value on the fully-built
 	// Runtime; see load_projection.go.
@@ -398,7 +401,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	runs.utility = h.ensureUtility
 	runs.coord = h.coord
 	configP.utility = h.ensureUtility
-	configP.broadcast = h.Broadcast
+	configP.broadcast = sseP.Broadcast
 
 	h.translator = translate.New(h.translateRoles())
 	runs.translate = h.translator
@@ -581,7 +584,7 @@ func (h *Runtime) Shutdown(ctx context.Context) error {
 	// PTY child and the SSE clients must be told to go even when nothing is left
 	// to watch them leave with — kill signals first and only then waits on ctx.
 	h.shellMgr.kill(ctx)
-	h.sse.hub.Shutdown()
+	h.bus.hub.Shutdown()
 	if teardownErr != nil {
 		return teardownErr
 	}
@@ -617,11 +620,19 @@ const bridgeIdleTimeout = 30 * time.Minute
 
 // --- Broadcast ---
 
-// Broadcast sends a ServerEvent to every connected SSE client. Used by the
+// Broadcast sends a ServerEvent to every connected SSE client.
+//
+// The one forward to the bus that survives, and deliberately: it is the
+// APP-FACING door. internal/server wants RegisterRoutes, Broadcast and Shutdown
+// off one value, and internal/composition publishes prewarm and tool-job events;
+// making either hop through an accessor to reach a one-method contract would add
+// a call that carries no information. Every caller INSIDE this package uses
+// h.bus.Broadcast, because in here the bus is right there and routing through the
+// runtime is the topology this refactor removes. Used by the
 // chat store (chat_created / chat_updated / message_* etc.) and by the runtime
 // itself for turn_ended / permission_needed / error.
 func (h *Runtime) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
-	h.sse.emit(evt)
+	h.bus.emit(evt)
 }
 
 // refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two
@@ -733,36 +744,33 @@ func (h *Runtime) liveSessionIDs() []string {
 	return ids
 }
 
-// utilityLiveSessionID snapshots the utility runtime pointer under
-// lifecycle.mu (same order as the cull path) and asks its session for the
-// live ACP session id. "" when the runtime was never created or is stopped.
+// utilityLiveSessionID asks the utility session for its live ACP session id, or
+// "" when no runtime has been built or it is stopped.
+//
+// peek, not get: this is the orphan-session sweep asking whether a utility
+// session's id must be spared, and building one to answer would create the
+// session it is inspecting. It was also the goroutine on the losing side of the
+// race — it read the field under the lifetime mutex while the builder wrote it
+// under a sync.Once, which orders nothing against a reader that never builds.
 func (h *Runtime) utilityLiveSessionID() string {
-	h.lifecycle.mu.Lock()
-	u := h.bridge.utility
-	h.lifecycle.mu.Unlock()
+	u := h.utility.peek()
 	if u == nil {
 		return ""
 	}
 	return u.session.liveSessionID()
 }
 
-// stopUtilityBridge stops the utility session if it exists.
+// stopUtilityBridge stops the utility session if one was built.
 //
-// The h.bridge.utility field read + nil is guarded by h.lifecycle.mu so it
-// serialises with cullIdleUtilityBridgeOnce, which reads the same field under
-// that lock (snapshot-and-release). Only called from Shutdown, after the
-// inflight wait, so an in-flight turn holds a lease on the session being
-// stopped only when that wait ran out of budget — the same degradation the cull
-// path takes, where a lease-held chunk channel just closes.
+// take, so the slot is cleared and stopped as one step and nothing else can be
+// holding the runtime by the time Stop is called. Only reached from Shutdown,
+// after the inflight wait, so an in-flight turn holds a lease on the session
+// being stopped only when that wait ran out of budget — the same degradation the
+// cull path takes, where a lease-held chunk channel just closes.
 func (h *Runtime) stopUtilityBridge() {
-	h.lifecycle.mu.Lock()
-	u := h.bridge.utility
-	h.bridge.utility = nil
-	h.lifecycle.mu.Unlock()
-	if u == nil {
-		return
+	if u := h.utility.take(); u != nil {
+		u.session.Stop()
 	}
-	u.session.Stop()
 }
 
 // cullIdleUtilityBridge stops the utility session once it has been idle
@@ -787,17 +795,15 @@ func (h *Runtime) cullIdleUtilityBridge() {
 	}
 }
 
-// cullIdleUtilityBridgeOnce runs one utility-session sweep. stopIfIdle owns
-// the victim-capture dance (the session mutex is short-held, so this never
-// waits behind an in-flight text turn; acquire bumps lastActiveAt at turn
-// start, so a live turn is trivially "recently active"). h.bridge.utility
-// itself is read under h.lifecycle.mu (snapshot-and-release) so a concurrent
-// stopUtilityBridge clearing the field can't tear the pointer read. Lowercase
-// rather than inlined so the sweep is testable without driving a real ticker.
+// cullIdleUtilityBridgeOnce runs one utility-session sweep. stopIfIdle owns the
+// victim-capture dance (the session mutex is short-held, so this never waits
+// behind an in-flight text turn; acquire bumps lastActiveAt at turn start, so a
+// live turn is trivially "recently active"). peek rather than get, because a
+// sweep that BUILT a utility bridge in order to check whether one was idle would
+// be creating work forever. Lowercase rather than inlined so the sweep is
+// testable without driving a real ticker.
 func (h *Runtime) cullIdleUtilityBridgeOnce() {
-	h.lifecycle.mu.Lock()
-	u := h.bridge.utility
-	h.lifecycle.mu.Unlock()
+	u := h.utility.peek()
 	if u != nil && u.session.stopIfIdle(time.Now().Add(-bridgeIdleTimeout)) {
 		slog.Info("culled idle utility bridge")
 	}

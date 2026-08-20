@@ -22,7 +22,7 @@ import (
 // yet (empty chat, first prompt not sent) there is nothing to switch
 // live — the mode is persisted and applied when the bridge's session/new
 // completes (spawnBridge threads chat.CurrentModeID into StartOpts.Mode).
-func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd *vibekit.ClientCommand) (any, error) {
+func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus Broadcaster, cmd *vibekit.ClientCommand) (any, error) {
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd
 	}
 
 	var changed bool
-	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
+	if err := chats.Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			// New chat whose first prompt hasn't been sent — the record
 			// exists only client-side. Auto-create it (mirroring
@@ -64,14 +64,14 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatAccess, cmd
 		return nil, StatusError(http.StatusInternalServerError, err)
 	}
 	if !changed {
-		if _, ok := chats.ChatStore().Get(ctx, cmd.ChatID); !ok {
+		if _, ok := chats.Get(ctx, cmd.ChatID); !ok {
 			// Only reachable for a tombstoned id (Mutate refuses to
 			// resurrect a just-deleted chat).
 			return nil, StatusError(http.StatusNotFound, ErrChatNotFound)
 		}
 	}
 	if changed {
-		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, cmd.ChatID, vibekit.ModeChangedPayload(p)))
+		bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, cmd.ChatID, vibekit.ModeChangedPayload(p)))
 	}
 	slog.Info("mode set", "chat", cmd.ChatID, "mode", p.ModeID)
 	return responseWith(map[string]any{"mode_id": p.ModeID}), nil

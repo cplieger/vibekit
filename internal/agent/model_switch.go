@@ -99,7 +99,7 @@ func (h *Runtime) switchByRestart(
 
 	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, model)
 	if err != nil {
-		h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
+		h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
 		return nil, command.StatusError(http.StatusInternalServerError, err)
 	}
 	if isSwitch {
@@ -154,7 +154,7 @@ func (h *Runtime) refuseUnservedModel(
 	}
 	slog.Warn("refusing a model switch this account does not serve",
 		"chat_id", chatID, "model", model)
-	h.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+	h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeModelNotServed,
 		Message: "\"" + model + "\" is not available on this account. Pick another model.",
 	}))
