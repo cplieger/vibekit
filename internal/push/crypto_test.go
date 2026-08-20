@@ -238,7 +238,6 @@ func BenchmarkPushEncrypt(b *testing.B) {
 	payload := []byte(`{"title":"Agent finished","body":"Task completed"}`)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		ephPriv, err := ecdh.P256().GenerateKey(rand.Reader)
 		if err != nil {

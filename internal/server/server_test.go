@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -427,7 +428,10 @@ func BenchmarkScanKiroDirFS(b *testing.B) {
 			},
 		}
 		for i := range n {
-			name := "steering/doc" + strings.Repeat("x", 3) + string(rune('a'+i%26)) + ".md"
+			// strconv.Itoa, not a 26-letter alphabet: the old
+			// "doc"+rune('a'+i%26) COLLIDED after 26 entries, so makeDocs(50)
+			// built 26 distinct steering docs rather than 50.
+			name := "steering/doc" + strconv.Itoa(i) + ".md"
 			m[name] = &fstest.MapFile{
 				Data: []byte("---\ninclusion: manual\ndescription: benchmark doc\n---\n# Heading\nContent here for realism.\n"),
 			}
@@ -435,12 +439,18 @@ func BenchmarkScanKiroDirFS(b *testing.B) {
 		return m
 	}
 
+	// The axis FLATTENS at maxSteeringPerDir (20): scanSteering stops once it
+	// has 20 items, so the 50 case measures the capped path — 50 directory
+	// entries read, 20 files opened — not 50 docs' worth of work. Measured on
+	// go1.27.0 at -benchtime=200x: 5 docs 6.3 µs / 7,688 B / 71 allocs, 20 docs
+	// 20.8 µs / 30,268 B / 210 allocs, 50 docs 29.5 µs / 32,664 B / 211 allocs.
+	// The near-flat allocation count between the last two IS the cap, and it is
+	// stated here because the name says 50 and the work does not.
 	for _, count := range []int{5, 20, 50} {
-		name := string(rune('0'+count/10)) + string(rune('0'+count%10)) + "_docs"
-		b.Run(name, func(b *testing.B) {
+		b.Run(strconv.Itoa(count)+"_docs", func(b *testing.B) {
 			m := makeDocs(count)
 			ctx := b.Context()
-			b.ResetTimer()
+			b.ReportAllocs()
 			for b.Loop() {
 				_ = scanKiroDirFS(ctx, m, "test/.kiro")
 			}

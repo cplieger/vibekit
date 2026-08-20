@@ -189,7 +189,6 @@ func BenchmarkSecurityMiddleware(b *testing.B) {
 		req := httptest.NewRequest(http.MethodGet, "http://example.com/", http.NoBody)
 		rec := httptest.NewRecorder()
 		b.ReportAllocs()
-		b.ResetTimer()
 		for b.Loop() {
 			rec.Body.Reset()
 			h.ServeHTTP(rec, req)
@@ -201,7 +200,6 @@ func BenchmarkSecurityMiddleware(b *testing.B) {
 		req.Header.Set("Origin", "http://example.com")
 		rec := httptest.NewRecorder()
 		b.ReportAllocs()
-		b.ResetTimer()
 		for b.Loop() {
 			rec.Body.Reset()
 			h.ServeHTTP(rec, req)
