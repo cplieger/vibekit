@@ -204,15 +204,13 @@ func BroadcasterContractTest(t *testing.T, newBroadcaster func() broadcaster) {
 		done := make(chan struct{})
 		go func() {
 			var wg sync.WaitGroup
-			wg.Add(N)
 			for i := range N {
-				go func(i int) {
-					defer wg.Done()
+				wg.Go(func() {
 					b.Broadcast(t.Context(), vibekit.ServerEvent{
 						Type:   "test_event",
 						ChatID: vibekit.ChatID(fmt.Sprintf("c%d", i)),
 					})
-				}(i)
+				})
 			}
 			wg.Wait()
 			close(done)
@@ -991,14 +989,12 @@ func TestMutate_SerializesSameChatConcurrentAppends(t *testing.T) {
 
 	const N = 50
 	var wg sync.WaitGroup
-	wg.Add(N)
 	for i := range N {
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = s.AppendMessage(t.Context(), "c1", &vibekit.Message{
 				ID: fmt.Sprintf("m%d", i), Role: vibekit.RoleUser, Content: "x",
 			})
-		}(i)
+		})
 	}
 	wg.Wait()
 	got, _ := s.Get(t.Context(), "c1")
@@ -1016,16 +1012,13 @@ func TestMutate_DifferentChatsAreIndependent(t *testing.T) {
 
 	const N = 20
 	var wg sync.WaitGroup
-	wg.Add(2 * N)
 	for i := range N {
-		go func(i int) {
-			defer wg.Done()
+		wg.Go(func() {
 			_ = s.AppendMessage(t.Context(), "a", &vibekit.Message{ID: fmt.Sprintf("a%d", i), Role: vibekit.RoleUser, Content: "x"})
-		}(i)
-		go func(i int) {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			_ = s.AppendMessage(t.Context(), "b", &vibekit.Message{ID: fmt.Sprintf("b%d", i), Role: vibekit.RoleUser, Content: "x"})
-		}(i)
+		})
 	}
 	wg.Wait()
 	a, _ := s.Get(t.Context(), "a")
@@ -1593,7 +1586,7 @@ func TestBuildHistory_TrimsOldestFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	chatID := vibekit.ChatID("prime-trim")
 
 	// Twelve messages of ~8 KiB each: comfortably over the 64 KiB cap, so the
@@ -1639,7 +1632,7 @@ func TestBuildHistory_KeepsTheLastMessageEvenOversize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	ctx := context.Background()
+	ctx := t.Context()
 	chatID := vibekit.ChatID("prime-oversize")
 
 	if err := s.Mutate(ctx, chatID, func(c *vibekit.Chat, _ bool) bool {

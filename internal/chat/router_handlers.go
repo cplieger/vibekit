@@ -90,6 +90,12 @@ func (rt *Router) serveChatMessages(w http.ResponseWriter, r *http.Request, id s
 		end = indexOfMessage(msgs, beforeID)
 	}
 	start := max(end-limit, 0)
+	// NOT slices.Clone: measured on go1.27.0, cloning a sub-slice of a NIL
+	// messages array yields nil and marshals as `null`, where make+copy yields a
+	// non-nil empty slice and marshals as `[]`. A chat with no messages is
+	// ordinary, and the wire decoder rejects `null` for an array (see List's doc
+	// for the same rule). The idiom is right in general and wrong wherever the
+	// empty result has to keep its shape on the wire.
 	window := make([]vibekit.Message, end-start)
 	copy(window, msgs[start:end])
 

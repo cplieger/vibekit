@@ -75,7 +75,7 @@ func FuzzSettingsReadBytes(f *testing.F) {
 		ctx := t.Context()
 
 		// Must not panic regardless of content.
-		got, err := ReadBytes(ctx, dir)
+		got, err := readBytes(ctx, dir)
 		if err != nil {
 			return
 		}
@@ -86,7 +86,7 @@ func FuzzSettingsReadBytes(f *testing.F) {
 			expected = expected[:MaxBytes]
 		}
 		if !bytes.Equal(got, expected) {
-			t.Errorf("ReadBytes content mismatch: got %d bytes, want %d", len(got), len(expected))
+			t.Errorf("readBytes content mismatch: got %d bytes, want %d", len(got), len(expected))
 		}
 	})
 }

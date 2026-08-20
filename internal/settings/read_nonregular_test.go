@@ -57,16 +57,16 @@ func TestReadBytes_RefusesANonRegularFile(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := ReadBytes(t.Context(), dir)
+		_, err := readBytes(t.Context(), dir)
 		done <- err
 	}()
 	select {
 	case err := <-done:
 		if !errors.Is(err, atomicfile.ErrNotRegular) {
-			t.Errorf("ReadBytes over a FIFO = %v, want atomicfile.ErrNotRegular", err)
+			t.Errorf("readBytes over a FIFO = %v, want atomicfile.ErrNotRegular", err)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("ReadBytes still blocked after 3s over a FIFO")
+		t.Fatal("readBytes still blocked after 3s over a FIFO")
 	}
 }
 

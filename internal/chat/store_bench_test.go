@@ -41,8 +41,10 @@ func BenchmarkStore_AppendMessage(b *testing.B) {
 		Content: strings.Repeat("benchmark content ", 28), // ~504 bytes
 	}
 
+	// No b.ResetTimer: b.Loop resets the timer itself on its first call, so the
+	// call here was dead. No tool reports this — there is no bloop analyzer in
+	// go fix's 26 modernizers and golangci-lint's modernize is the same analyzer.
 	b.ReportAllocs()
-	b.ResetTimer()
 	i := 0
 	for b.Loop() {
 		msg.ID = fmt.Sprintf("bench-%d", i)

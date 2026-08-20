@@ -300,7 +300,7 @@ func TestPurgeScheduler_ClampsMinWaitSo1HzSpinIsAvoided(t *testing.T) {
 
 func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
 	s, _ := newTestStore(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	p := NewPurgeScheduler(s, func() time.Duration { return 24 * time.Hour })
 	p.Start(ctx)
 

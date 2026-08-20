@@ -62,19 +62,27 @@ const (
 	maxPolicyFileSize = 1 << 20 // 1 MiB — the policy file is tiny in practice
 )
 
-// Rule is one policy rule. yaml tags drive the on-disk block YAML; json tags
-// keep it decodable from the REST layer. Field order (capability, effect,
-// match, exclude) is the canonical KAS order.
+// Rule is one policy rule. Field order (capability, effect, match, exclude) is
+// the canonical KAS order.
+//
+// YAML TAGS ONLY. This type had json tags too, on the stated grounds that they
+// "keep it decodable from the REST layer" — measured false: nothing in the
+// workspace ever encodes or decodes a Rule or a File as JSON. The REST layer
+// decodes into its own policyRuleBody and maps the fields across by name, so the
+// tags were dead. They also carried a latent surprise: `omitempty` on a slice
+// changes the wire under encoding/json/v2, where a nil slice emits `[]` instead
+// of being omitted, and sanitizePatterns returns nil for the empty case that the
+// workspace relaxation writes for every rule. Deleting them removes both.
 type Rule struct {
-	Capability string   `yaml:"capability" json:"capability"`
-	Effect     string   `yaml:"effect" json:"effect"`
-	Match      []string `yaml:"match,omitempty" json:"match,omitempty"`
-	Exclude    []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	Capability string   `yaml:"capability"`
+	Effect     string   `yaml:"effect"`
+	Match      []string `yaml:"match,omitempty"`
+	Exclude    []string `yaml:"exclude,omitempty"`
 }
 
 // File is the whole permissions.yaml document.
 type File struct {
-	Rules []Rule `yaml:"rules" json:"rules"`
+	Rules []Rule `yaml:"rules"`
 }
 
 // Scope names vibekit can write. Kiro/administration are read-only
@@ -425,8 +433,8 @@ func isCtrl(r rune) bool { return r < 0x20 || r == 0x7f }
 // sorted match + sorted exclude. Mirrors KAS ruleSignature so vibekit's
 // notion of "same rule" matches the engine's.
 func Signature(r *Rule) string {
-	m := append([]string(nil), r.Match...)
-	e := append([]string(nil), r.Exclude...)
+	m := slices.Clone(r.Match)
+	e := slices.Clone(r.Exclude)
 	slices.Sort(m)
 	slices.Sort(e)
 	var b strings.Builder
@@ -472,7 +480,11 @@ func (f *File) Remove(r *Rule) bool {
 	sig := Signature(r)
 	for i := range f.Rules {
 		if Signature(&f.Rules[i]) == sig {
-			f.Rules = append(f.Rules[:i], f.Rules[i+1:]...)
+			// slices.Delete, not append(a[:i], a[i+1:]...): it zeroes the vacated
+			// tail, so the removed rule's Match and Exclude slices are not still
+			// reachable through the backing array of a security policy the caller
+			// is about to hand to Save.
+			f.Rules = slices.Delete(f.Rules, i, i+1)
 			return true
 		}
 	}
@@ -506,7 +518,7 @@ func (f *File) ReplaceEffect(old *Rule, effect string) bool {
 	}
 	for i := range f.Rules {
 		if i != idx && Signature(&f.Rules[i]) == nextSig {
-			f.Rules = append(f.Rules[:idx], f.Rules[idx+1:]...)
+			f.Rules = slices.Delete(f.Rules, idx, idx+1)
 			return true
 		}
 	}

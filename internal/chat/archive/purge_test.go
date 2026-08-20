@@ -215,7 +215,7 @@ func TestPurgeScheduler_StopClosesDone(t *testing.T) {
 // ctx arm were gone).
 func TestPurgeScheduler_ContextCancellationStopsLoop(t *testing.T) {
 	svc, _, _ := newPurgeTestService(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	sched := NewPurgeScheduler(svc, func() time.Duration { return 24 * time.Hour })
 	sched.Start(ctx)
 
@@ -327,7 +327,7 @@ func TestOldestChatMTime(t *testing.T) {
 		}
 		writeAgedChat(t, dir, "present", 24*time.Hour)
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		if _, ok := OldestChatMTime(ctx, dir); ok {
 			t.Error("ok = true for cancelled context, want false")

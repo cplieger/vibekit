@@ -13,7 +13,7 @@ func TestReadBytes_MissingFile(t *testing.T) {
 	dir := t.TempDir()
 	resetCache(t, dir)
 
-	data, err := ReadBytes(t.Context(), dir)
+	data, err := readBytes(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -23,7 +23,7 @@ func TestReadBytes_MissingFile(t *testing.T) {
 }
 
 func TestReadBytes_EmptyConfigDir(t *testing.T) {
-	data, err := ReadBytes(t.Context(), "")
+	data, err := readBytes(t.Context(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestReadBytes_ValidFile(t *testing.T) {
 	content := []byte(`{"key":"value"}`)
 	writeSettings(t, dir, content)
 
-	data, err := ReadBytes(t.Context(), dir)
+	data, err := readBytes(t.Context(), dir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -52,10 +52,10 @@ func TestReadBytes_CancelledContext(t *testing.T) {
 	resetCache(t, dir)
 	writeSettings(t, dir, []byte(`{}`))
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	_, err := ReadBytes(ctx, dir)
+	_, err := readBytes(ctx, dir)
 	if err == nil {
 		t.Fatal("expected error for cancelled context")
 	}
@@ -136,10 +136,10 @@ func TestReadBytes_MtimeCache(t *testing.T) {
 	resetCache(t, dir)
 
 	writeSettings(t, dir, []byte(`{"v":1}`))
-	data1, _ := ReadBytes(t.Context(), dir)
+	data1, _ := readBytes(t.Context(), dir)
 
 	// Second read should return cached data.
-	data2, _ := ReadBytes(t.Context(), dir)
+	data2, _ := readBytes(t.Context(), dir)
 	if string(data1) != string(data2) {
 		t.Fatalf("cache miss: got %q then %q", data1, data2)
 	}
@@ -208,8 +208,8 @@ func TestReadBytes_SizeChangeBypassesMtimeCache(t *testing.T) {
 	if err := os.Chtimes(path, fixed, fixed); err != nil {
 		t.Fatalf("chtimes c1: %v", err)
 	}
-	if d1, err := ReadBytes(ctx, dir); err != nil || string(d1) != c1 {
-		t.Fatalf("first ReadBytes = (%q,%v), want (%q,nil)", d1, err, c1)
+	if d1, err := readBytes(ctx, dir); err != nil || string(d1) != c1 {
+		t.Fatalf("first readBytes = (%q,%v), want (%q,nil)", d1, err, c1)
 	}
 
 	if err := os.WriteFile(path, []byte(c2), 0o600); err != nil {
@@ -218,12 +218,12 @@ func TestReadBytes_SizeChangeBypassesMtimeCache(t *testing.T) {
 	if err := os.Chtimes(path, fixed, fixed); err != nil {
 		t.Fatalf("chtimes c2: %v", err)
 	}
-	d2, err := ReadBytes(ctx, dir)
+	d2, err := readBytes(ctx, dir)
 	if err != nil {
-		t.Fatalf("second ReadBytes err = %v", err)
+		t.Fatalf("second readBytes err = %v", err)
 	}
 	if string(d2) != c2 {
-		t.Errorf("second ReadBytes = %q, want %q (stale size-cache hit)", d2, c2)
+		t.Errorf("second readBytes = %q, want %q (stale size-cache hit)", d2, c2)
 	}
 }
 

@@ -1,10 +1,19 @@
 // Package settings provides a single-source-of-truth reader for
 // <configDir>/config.json. All packages that need to extract a key
-// from the user's settings file should use ReadBytes or Field rather
+// from the user's settings file should use Field or FieldInto rather
 // than implementing their own open+read+unmarshal pattern.
 //
-// ReadBytes returns the raw bytes with mtime-based caching and size
-// capping (1 MiB). Field extracts a single typed key via generics.
+// Field extracts a single typed key via generics; FieldInto is its
+// pointer-target variant. Both read through one mtime-keyed cache with a
+// 1 MiB size cap (MaxBytes).
+//
+// There is deliberately no exported raw-bytes reader. The cache OWNS the
+// slice it hands out — one backing array, shared by every caller and
+// retained until the file's mtime or size changes — so an exported
+// accessor for it would let any caller silently corrupt the settings of
+// every other, including the agent_ignore_files list that decides which
+// files the agent may read. Nothing outside this package ever wanted the
+// whole file: the typed getters were the entire production surface.
 package settings
 
 import (
@@ -174,10 +183,16 @@ func (c *cache) forget() {
 	c.gen++
 }
 
-// ReadBytes returns the raw config.json content for configDir with
+// readBytes returns the raw config.json content for configDir with
 // mtime-based caching. Returns (nil, nil) when the file is missing
 // or configDir is empty.
-func ReadBytes(ctx context.Context, configDir string) ([]byte, error) {
+//
+// UNEXPORTED, and that is the aliasing fix: the returned slice IS the cache's
+// own, so a caller that wrote into it would change what every later reader sees,
+// process-wide. Held to the one caller that provably only reads it (parsedMap
+// hands it to json.Unmarshal), the sharing costs nothing and saves a copy of the
+// file per key lookup.
+func readBytes(ctx context.Context, configDir string) ([]byte, error) {
 	if configDir == "" {
 		return nil, nil
 	}
@@ -239,9 +254,9 @@ func FieldInto(ctx context.Context, configDir, key string, out any) bool {
 
 // parsedMap returns the cached parsed map[string]json.RawMessage for
 // the given configDir. The map is invalidated when the underlying
-// bytes change (mtime-based via ReadBytes).
+// bytes change (mtime-based via readBytes).
 func parsedMap(ctx context.Context, configDir string) (map[string]json.RawMessage, error) {
-	data, err := ReadBytes(ctx, configDir)
+	data, err := readBytes(ctx, configDir)
 	if err != nil {
 		return nil, err
 	}
