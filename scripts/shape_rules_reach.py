@@ -19,6 +19,7 @@ import collections
 import os
 import pathlib
 import re
+import subprocess
 
 # The repo to audit. Defaults to this script's own repo and is overridable with
 # SHAPE_AUDIT_ROOT so the rules can be pointed at a sibling repo — the same fix
@@ -55,6 +56,73 @@ STDLIB_CONTRACT = {
     "Format",
     "LogValue",
 }
+
+
+def dependency_interface_members():
+    """Interface method names declared by this module's FIRST-PARTY dependencies.
+
+    A method satisfying a third-party contract is not named by the repo that
+    implements it. Running the Get-prefix rule on subflux renamed eight
+    authstore methods before the compiler objected: GetUserByID, GetSessionByHash
+    and six others are members of cplieger/auth's UserStore, SessionPersister,
+    PasskeyStore and KeyStore. Reading only the audited repo's own interfaces
+    cannot see that, so the rule reported eight findings that were not the repo's
+    to fix.
+
+    Scoped to github.com/cplieger/* requirements: those are the fleet's own
+    libraries, which is where this actually bites. A rule cannot be
+    self-consistent across a fleet if it flags a name the fleet's own library
+    imposes.
+    """
+    names = set()
+    if not (ROOT / "go.mod").exists():
+        return names
+    # `go list` rather than parsing go.mod and guessing a cache path: a /vN module
+    # lives under a versioned directory, and this fleet rides unpublished majors
+    # through local `replace` directives in go.work, so the real directory is
+    # often a sibling checkout. Asking the toolchain is the only way to be right
+    # about both.
+    try:
+        out = subprocess.run(
+            ["go", "list", "-m", "-f", "{{.Path}} {{.Dir}}", "all"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return names
+    for line in out.split("\n"):
+        parts = line.split(" ", 1)
+        if len(parts) != 2:
+            continue
+        mod, d = parts[0], parts[1].strip()
+        if not mod.startswith("github.com/cplieger/") or not d:
+            continue
+        if pathlib.Path(d) == ROOT:
+            continue
+        for f in pathlib.Path(d).rglob("*.go"):
+            if f.name.endswith("_test.go") or "node_modules" in str(f):
+                continue
+            try:
+                text = f.read_text(errors="replace")
+            except OSError:
+                continue
+            inside = False
+            for line2 in text.split("\n"):
+                s = line2.strip()
+                if re.match(r"^type \w+ interface \{", s):
+                    inside = True
+                    continue
+                if inside:
+                    if s.startswith("}"):
+                        inside = False
+                        continue
+                    m = re.match(r"^(\w+)\(", s)
+                    if m:
+                        names.add(m.group(1))
+    return names
 
 
 def _go_files(include_tests):
@@ -239,11 +307,16 @@ def rule_method_ignores_receiver(report):
             #
             # A line ending in `{` opens a multi-line body; anything else carries
             # its body inline after the LAST brace.
-            if line.rstrip().endswith("{"):
+            # Strip a trailing line comment first: a signature ending in
+            # `{ //nolint:gocritic ...` does not end with the brace, so the
+            # inline-body path read the COMMENT as the body and reported
+            # activity.Log.startLocked, which uses its receiver eight times.
+            code = re.sub(r"//.*$", "", line).rstrip()
+            if code.endswith("{"):
                 blob = None
             else:
-                lb = line.rfind("{")
-                blob = line[lb + 1 :].rsplit("}", 1)[0] if lb != -1 else ""
+                lb = code.rfind("{")
+                blob = code[lb + 1 :].rsplit("}", 1)[0] if lb != -1 else ""
             if blob is None:
                 body, j = [], i + 1
                 while j < len(lines) and lines[j] != "}":
@@ -278,11 +351,19 @@ def rule_stutter(report):
             name = d.group(1)
             if not name[0].isupper() or ENTRY.match(name):
                 continue
-            if name.lower().startswith(pkg.lower()) and len(name) > len(pkg):
-                report(
-                    "stutter",
-                    f"{p.relative_to(ROOT)}:{i} {pkg}.{name} repeats the package name",
-                )
+            if not name.lower().startswith(pkg.lower()) or len(name) <= len(pkg):
+                continue
+            # An AGENT NOUN derived from a verb package is not the stutter Google
+            # warns about. Its examples are noun repetition — http.HTTPServer,
+            # strings.StringReader — where the prefix carries nothing. resolve.
+            # Resolver is the same word in a different part of speech: the type IS
+            # the thing the package does, and there is no shorter honest name.
+            if name[len(pkg) :].lower() in ("r", "er", "or"):
+                continue
+            report(
+                "stutter",
+                f"{p.relative_to(ROOT)}:{i} {pkg}.{name} repeats the package name",
+            )
 
 
 REACH_RULES = [

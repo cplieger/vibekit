@@ -31,7 +31,7 @@ import pathlib
 import re
 import sys
 
-from shape_rules_reach import REACH_RULES
+from shape_rules_reach import REACH_RULES, dependency_interface_members
 
 # The repo to audit. Defaults to this script's own repo and is overridable with
 # SHAPE_AUDIT_ROOT so the rules can be pointed at a sibling repo — the same fix
@@ -139,7 +139,15 @@ def rule_name_repeats_receiver(f):
 
 
 def rule_get_prefix(f):
+    # A method satisfying a FIRST-PARTY DEPENDENCY's interface is not named by this
+    # repo. cplieger/auth's UserStore, SessionPersister, PasskeyStore and KeyStore
+    # all spell their reads Get*, so eight of subflux's authstore methods were
+    # reported and renamed before the compiler objected. The library's own naming
+    # is a finding against the LIBRARY, not against every implementer of it.
+    external = dependency_interface_members()
     for p, ln, _, typ, name in methods():
+        if name in external:
+            continue
         # GetOrX is a get-or-CREATE, which is an action; Go's rule targets pure
         # accessors ("LookupUser, not GetUser"). Dropping the prefix there would
         # lose the "or create" the caller needs to see.
