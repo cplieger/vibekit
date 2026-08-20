@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -1514,13 +1515,16 @@ func TestHandleUpload_RefusesSensitiveFilename(t *testing.T) {
 	}
 }
 
-// F1 regression: writeFile now uses O_NOFOLLOW. A dangling symlink
-// planted between resolvePath's EvalSymlinks and the write must not
-// create the target. resolvePath returns the lexical form when the
-// symlink target doesn't exist; without O_NOFOLLOW on the open,
-// os.WriteFile would follow the symlink and materialise the
-// sensitive target. ELOOP surfaces as a 500 "write failed" — the
-// important post-condition is the sensitive target is not created.
+// A symlink planted between resolvePath's EvalSymlinks and the write must not
+// materialise its target.
+//
+// The premise this test used to carry was wrong: it credited
+// syscall.O_NOFOLLOW on the old root.OpenFile, and that flag never did anything
+// here (see TestWriteFile_RelativeSymlinkCannotClobberVictim for the
+// measurement). What blocked THIS case was os.Root's own rule that a symlink
+// must not be absolute, and the target here is absolute. The write now refuses
+// a non-regular target outright, so the answer is a 400 naming it; the
+// post-condition is unchanged and is what matters.
 func TestWriteFile_DanglingSymlinkToSensitive_Blocked(t *testing.T) {
 	h, dir, prefix := testDir(t)
 
@@ -1536,15 +1540,88 @@ func TestWriteFile_DanglingSymlinkToSensitive_Blocked(t *testing.T) {
 
 	rec := putReq(t, h, "/api/file?path="+prefix+"/trojan",
 		`{"content":"pwn"}`)
-	// 403 (resolve layer catches it via the real-path enforceAccess
-	// against the sensitive target) or 500 (O_NOFOLLOW trips ELOOP)
-	// are both acceptable; the critical invariant is the target is
-	// never materialised.
-	if rec.Code != 403 && rec.Code != 500 {
-		t.Errorf("status = %d, want 403 or 500; body=%s", rec.Code, rec.Body.String())
+	if rec.Code != 400 && rec.Code != 403 && rec.Code != 500 {
+		t.Errorf("status = %d, want 400, 403 or 500; body=%s", rec.Code, rec.Body.String())
 	}
 	if _, err := os.Stat(target); err == nil {
 		t.Error("sensitive target file was created despite symlink guard")
+	}
+}
+
+// The case the deleted syscall.O_NOFOLLOW claimed to cover and did not: a
+// RELATIVE symlink swapped in AFTER resolvePath accepted a regular file.
+//
+// A symlink that already exists is not the exposure — resolvePath EvalSymlinks
+// the leaf, so it names the target and IsSensitive judges the target. The
+// exposure is the race, so the race is what this stages: resolve, swap, write.
+//
+// Measured on go1.27.0: os.Root.OpenFile ORs O_NOFOLLOW in itself and then
+// re-resolves the link on the resulting ELOOP, so a caller-supplied O_NOFOLLOW
+// is ignored and the open lands on the target. The red check performs the exact
+// deleted open and shows the victim clobbered; the handler then refuses. An
+// ABSOLUTE-target link is a different case that os.Root refuses on its own
+// (symlinks must not be absolute), which is why the sibling test above passed
+// for a reason unrelated to the flag.
+func TestWriteFile_RelativeSymlinkSwappedAfterResolve(t *testing.T) {
+	h, dir, _ := testDir(t)
+
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("KEEP"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	decoy := filepath.Join(dir, "decoy.txt")
+	if err := os.WriteFile(decoy, []byte("decoy"), 0o600); err != nil {
+		t.Fatalf("seed decoy: %v", err)
+	}
+
+	// The resolve the handler performs, on the regular file.
+	l, err := h.resolvePath(strings.TrimPrefix(decoy, "/"))
+	if err != nil {
+		t.Fatalf("resolvePath(%q) = %v, want nil", decoy, err)
+	}
+
+	swap := func() {
+		t.Helper()
+		if rErr := os.Remove(decoy); rErr != nil && !errors.Is(rErr, os.ErrNotExist) {
+			t.Fatalf("remove decoy: %v", rErr)
+		}
+		if sErr := os.Symlink("victim.txt", decoy); sErr != nil {
+			t.Fatalf("symlink decoy -> victim: %v", sErr)
+		}
+	}
+
+	// Red check: the deleted open writes through the link.
+	swap()
+	f, err := l.m.root.OpenFile(l.rel(),
+		os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, 0o644)
+	if err != nil {
+		t.Fatalf("Root.OpenFile with O_NOFOLLOW refused a relative in-root symlink (%v); "+
+			"the exposure this test exists to close is not reachable, so the refusal "+
+			"below proves nothing", err)
+	}
+	if _, err := f.WriteString("CLOBBERED"); err != nil {
+		t.Fatalf("write through the link: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "CLOBBERED" {
+		t.Fatalf("victim after the ambient write = %q, want %q", got, "CLOBBERED")
+	}
+
+	// Reset and run the handler's own write against the same stale loc.
+	if err := os.WriteFile(victim, []byte("KEEP"), 0o600); err != nil {
+		t.Fatalf("restore victim: %v", err)
+	}
+	swap()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/file", strings.NewReader(`{"content":"pwn"}`))
+	writeFile(rec, req, l)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if got, _ := os.ReadFile(victim); string(got) != "KEEP" {
+		t.Errorf("victim after the refused write = %q, want %q", got, "KEEP")
 	}
 }
 

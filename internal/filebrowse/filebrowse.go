@@ -39,7 +39,6 @@ const (
 	maxUploadSize = 50 * 1024 * 1024  // 50 MB per multipart upload
 	maxCopySize   = 100 * 1024 * 1024 // 100 MB per single-file copy
 	binarySniffN  = 8192              // bytes of prefix checked for NUL
-	copyBufSize   = 32 * 1024         // io.CopyBuffer slab size
 	// multipartMaxMemory is the in-RAM buffer ceiling
 	// ParseMultipartForm uses before spilling parts to a tmpfile.
 	// Small on purpose: the HTTP body cap is enforced by

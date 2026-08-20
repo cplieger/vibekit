@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
+	"github.com/cplieger/atomicfile/v3"
 	"github.com/cplieger/vibekit/internal/httpreply"
 	"github.com/cplieger/webhttp"
 )
@@ -132,8 +133,22 @@ func actionTouch(_ context.Context, w http.ResponseWriter, _ fileAction, l loc, 
 	if l.isMountPoint() {
 		return refuseMountPoint(w, "touch", l)
 	}
-	f, err := l.m.root.OpenFile(l.rel(), os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o644)
+	// O_EXCL rather than the syscall.O_NOFOLLOW this used to carry. The flag was
+	// INERT: os.Root.OpenFile ORs O_NOFOLLOW in itself and re-resolves the link
+	// on the resulting ELOOP, so a caller-supplied one is silently ignored
+	// (go1.27.0, src/os/root_unix.go:85-101, and pinned by this package's own
+	// search_test.go). O_EXCL is a refusal the kernel does honour: anything
+	// already at the name — including a symlink planted after resolvePath
+	// accepted it — makes the create fail instead of opening whatever it points
+	// at. An existing entry is touch's no-op case, so EEXIST is success, which
+	// keeps the observable behaviour identical (O_CREATE|O_WRONLY without
+	// truncation never modified an existing file or its mtime either).
+	f, err := l.m.root.OpenFile(l.rel(), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			slog.Info("filebrowse: touch (already present)", "path", l.abs)
+			return nil
+		}
 		return err
 	}
 	if closeErr := f.Close(); closeErr != nil {
@@ -269,9 +284,18 @@ func actionCopy(ctx context.Context, w http.ResponseWriter, body fileAction, l l
 var errOversize = errors.New("source file too large")
 
 // streamCopy streams the file at src into dest atomically via
-// write-to-temp-then-rename. The copy is capped at sizeCap bytes;
-// exceeding it returns errOversize. The context allows callers to
-// cancel mid-stream (e.g. on client disconnect).
+// write-to-temp-then-rename, kernel-confined to the destination mount. The copy
+// is capped at sizeCap bytes; exceeding it returns errOversize. The context
+// allows callers to cancel mid-stream (e.g. on client disconnect).
+//
+// The temp used to be created with os.CreateTemp on the destination's ABSOLUTE
+// parent, which is an ambient path — the one write in this handler that did not
+// go through a root. That was an escape, not an inconsistency: a destination
+// parent replaced by a symlink pointing out of every granted mount after
+// resolvePath accepted it received the source file's bytes, which turns the copy
+// action into an exfiltration primitive. atomicfile.WriteReaderInRoot stages the
+// temp INSIDE the root, so the whole sequence is confined; it is the same call
+// writeOneUpload already makes for the identical job.
 func streamCopy(ctx context.Context, src, dest loc, sizeCap int64) (int64, error) {
 	in, err := src.m.root.Open(src.rel())
 	if err != nil {
@@ -283,58 +307,27 @@ func streamCopy(ctx context.Context, src, dest loc, sizeCap int64) (int64, error
 	// allocating the destination and burning IO bandwidth.
 	info, statErr := in.Stat()
 	if statErr != nil {
-		slog.Debug("filebrowse: copy source stat failed, relying on LimitReader",
+		slog.Debug("filebrowse: copy source stat failed, relying on the write cap",
 			"path", src.abs, "error", statErr)
 	} else if info.Size() > sizeCap {
 		return 0, errOversize
 	}
 
-	// Stream into a temp sibling of dest; rename into place on
-	// success so a crash / size-cap trip / mid-stream disconnect
-	// never leaves a truncated file at dest. The temp is a sibling,
-	// so the final rename stays inside the destination mount's root.
-	destDir := filepath.Dir(dest.abs)
-	tmp, err := os.CreateTemp(destDir, filepath.Base(dest.abs)+".copy-*")
-	if err != nil {
-		return 0, err
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = os.Remove(tmpName)
+	// 0o600 preserves the mode the deleted os.CreateTemp produced, so a copied
+	// file lands with exactly the bits it did before. WithMaxBytes REJECTS an
+	// over-cap source (a sparse file, or one growing under the copy) where the
+	// old io.LimitReader tail guard had to detect it after the fact.
+	cr := &countingReader{r: &ctxReader{ctx: ctx, r: in}}
+	if _, wErr := atomicfile.WriteReaderInRoot(ctx, dest.m.root, dest.rel(), cr,
+		atomicfile.WithMode(0o600), atomicfile.WithMaxBytes(sizeCap)); wErr != nil {
+		if errors.Is(wErr, atomicfile.ErrFileTooLarge) {
+			slog.Warn("filebrowse: copy source exceeded cap after stat",
+				"path", src.abs, "copied_bytes", cr.n)
+			return 0, errOversize
 		}
-	}()
-
-	// LimitReader with sizeCap+1 catches sparse files / races
-	// where Stat under-reports size.
-	buf := make([]byte, copyBufSize)
-	n, copyErr := io.CopyBuffer(tmp, &ctxReader{
-		ctx: ctx,
-		r:   io.LimitReader(in, sizeCap+1),
-	}, buf)
-	if copyErr != nil {
-		_ = tmp.Close()
-		return 0, copyErr
+		return 0, wErr
 	}
-	if n > sizeCap {
-		_ = tmp.Close()
-		slog.Warn("filebrowse: copy source exceeded cap after stat",
-			"path", src.abs, "copied_bytes", n)
-		return 0, errOversize
-	}
-	if syncErr := tmp.Sync(); syncErr != nil {
-		_ = tmp.Close()
-		return 0, syncErr
-	}
-	if closeErr := tmp.Close(); closeErr != nil {
-		return 0, closeErr
-	}
-	if renameErr := dest.m.root.Rename(dest.relOf(tmpName), dest.rel()); renameErr != nil {
-		return 0, renameErr
-	}
-	cleanup = false
-	return n, nil
+	return cr.n, nil
 }
 
 func actionMove(_ context.Context, w http.ResponseWriter, body fileAction, l loc, h *Handler) error {
