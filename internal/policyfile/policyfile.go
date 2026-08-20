@@ -38,7 +38,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -282,16 +282,39 @@ func PathFor(scope string, roots Roots) (string, error) {
 // File and nil error (the common "no rules yet" case). Parse failures and
 // oversize files are errors so the caller never silently clobbers a
 // hand-authored file it couldn't understand.
+//
+// The open is atomicfile.OpenRegular rather than os.ReadFile for two reasons,
+// both measured. A FIFO at the name blocks os.ReadFile in open(2) with no
+// context deadline able to rescue it (still blocked past 2s on go1.27.0), and
+// this file lives under $HOME/.kiro, which the agent's own shell can write — so
+// one mkfifo wedged the whole permissions REST surface permanently. And
+// os.ReadFile sized its buffer from the file and read all of it BEFORE the
+// maxPolicyFileSize check ran on the result, so the 1 MiB bound was enforced
+// after an arbitrarily large file had been pulled into memory; ReadBoundedFile
+// stats the descriptor first. OpenRegular also refuses a symlink at the final
+// component, which matches Save: atomicfile's write entry points already refuse
+// to write through one, so a policy vibekit would not write is now a policy it
+// will not read either.
+//
+// The path is made absolute first because OpenRegular requires that. os.ReadFile
+// resolved a relative path against the process cwd, and filepath.Abs preserves
+// exactly that, so no caller's meaning changes.
 func Load(path string) (*File, error) {
-	data, err := os.ReadFile(path)
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		return nil, fmt.Errorf("resolve %s: %w", filename, err)
+	}
+	fh, _, err := atomicfile.OpenRegular(abs)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return &File{Rules: []Rule{}}, nil
 		}
 		return nil, err
 	}
-	if len(data) > maxPolicyFileSize {
-		return nil, fmt.Errorf("policy file too large: %d bytes", len(data))
+	defer func() { _ = fh.Close() }()
+	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, maxPolicyFileSize)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", filename, err)
 	}
 	if strings.TrimSpace(string(data)) == "" {
 		return &File{Rules: []Rule{}}, nil

@@ -138,48 +138,77 @@ func New(configDir string) (*Store, error) {
 }
 
 func (s *Store) load() error {
-	data, err := os.ReadFile(s.path)
+	// THE VERDICT ON THE NAME COMES FIRST, and that ordering is the fix rather
+	// than a rearrangement. This function used to os.ReadFile the path and only
+	// then ask filemode.EnforceFile whether the mode could be verified, so the
+	// two guarantees EnforceFile's own doc calls load-bearing were both defeated
+	// by the line above it: a symlink planted at the name had its TARGET's bytes
+	// read and parsed as the credential store before O_NOFOLLOW refused
+	// anything, and a FIFO at the name blocked os.ReadFile in open(2) forever —
+	// on the BOOT path, so the container never finished starting — which is
+	// exactly the exposure the O_NONBLOCK in EnforceFile exists to prevent.
+	// Measured on go1.27.0: os.ReadFile over a FIFO is still blocked after 2s
+	// and no context deadline can rescue it, while the O_NONBLOCK open returns
+	// immediately.
+	if _, chErr := filemode.EnforceFile(s.path, fileMode); chErr != nil {
+		if errors.Is(chErr, os.ErrNotExist) {
+			return nil // first run
+		}
+		// The values here are OAuth client secrets, refresh and access tokens and
+		// PKCE verifiers, and the package doc is explicit that the base64 is an
+		// encoding, NOT encryption: the file's 0600 is its whole protection.
+		// os.Chmod only ASKS for that mode, so on a filesystem that stores 0660
+		// for the request the old code tightened nothing and reported nothing.
+		// EnforceFile re-stats the descriptor it chmod'ed, and refuses a symlink
+		// at the name rather than tightening whatever the name points at this
+		// instant.
+		//
+		// POSTURE (unchanged): an unverifiable mode FAILS the load. A
+		// group-readable token file is the exact exposure the 0600 exists to
+		// prevent, so continuing would mean writing every credential KAS hands us
+		// into a file we know we cannot protect. Failing here does not brick boot
+		// — agent treats a secretstore that will not open as best-effort, logs one
+		// ERROR and runs with h.secrets nil, which degrades MCP OAuth to the
+		// per-spawn DCR it did before this package existed. That is vibekit
+		// invariant 6's shape: remove the exposure, do not abort startup over
+		// persistent-volume state.
+		//
+		// What this does NOT do is delete the file. On a filesystem that widens
+		// every mode, removing it would destroy re-derivable credentials on every
+		// single boot with no path to recovery, trading a reported confidentiality
+		// problem for repeated silent data loss. The exposure of a file that was
+		// already wide when we found it is not ours to undo; growing it is.
+		return fmt.Errorf("refusing to use %s: its mode could not be verified as %#o, so the credentials in it may be readable by other users on this host: %w",
+			fileName, fileMode, chErr)
+	}
+	// EnforceFile opens O_NONBLOCK so it cannot hang, but it has no O_REGULAR to
+	// ask for: a FIFO's permission bits compare equal to 0600, so it reads as
+	// COMPLIANT there. OpenRegular is what refuses it (ErrNotRegular), along with
+	// a directory, device node or socket, and it hands back the descriptor the
+	// bytes are read from — so the object judged for size is the object read.
+	fh, _, err := atomicfile.OpenRegular(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read %s: %w", fileName, err)
 	}
-	if len(data) > maxFileBytes {
-		return fmt.Errorf("read %s: %d bytes exceeds the %d-byte bound", fileName, len(data), maxFileBytes)
+	defer func() { _ = fh.Close() }()
+	// ReadBoundedFile stats BEFORE it allocates. os.ReadFile did the opposite:
+	// it sized its buffer from the file and read the whole thing, and the
+	// maxFileBytes check ran on the result — so an 8 MiB bound was enforced
+	// after an arbitrarily large file had already been pulled into memory, on
+	// the boot path, over a file the agent's own shell can grow.
+	data, err := atomicfile.ReadBoundedFile(context.Background(), fh, maxFileBytes)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", fileName, err)
 	}
-	// The values here are OAuth client secrets, refresh and access tokens and PKCE
-	// verifiers, and the package doc is explicit that the base64 is an encoding,
-	// NOT encryption: the file's 0600 is its whole protection. os.Chmod only ASKS
-	// for that mode, so on a filesystem that stores 0660 for the request the old
-	// code tightened nothing and reported nothing. EnforceFile re-stats the
-	// descriptor it chmod'ed, and refuses a symlink at the name rather than
-	// tightening whatever the name points at this instant.
-	//
-	// POSTURE CHANGED (was warn-and-continue): an unverifiable mode FAILS the
-	// load. A group-readable token file is the exact exposure the 0600 exists to
-	// prevent, so continuing would mean writing every credential KAS hands us
-	// into a file we know we cannot protect. Failing here does not brick boot —
-	// agent treats a secretstore that will not open as best-effort, logs one ERROR
-	// and runs with h.secrets nil, which degrades MCP OAuth to the per-spawn DCR
-	// it did before this package existed. That is vibekit invariant 6's shape:
-	// remove the exposure, do not abort startup over persistent-volume state.
-	//
-	// What this does NOT do is delete the file. On a filesystem that widens every
-	// mode, removing it would destroy re-derivable credentials on every single
-	// boot with no path to recovery, trading a reported confidentiality problem
-	// for repeated silent data loss. The exposure of a file that was already wide
-	// when we found it is not ours to undo; growing it is.
-	if _, chErr := filemode.EnforceFile(s.path, fileMode); chErr != nil {
-		return fmt.Errorf("refusing to use %s: its mode could not be verified as %#o, so the credentials in it may be readable by other users on this host: %w",
-			fileName, fileMode, chErr)
-	}
-	var f file
-	if uErr := json.Unmarshal(data, &f); uErr != nil {
+	var stored file
+	if uErr := json.Unmarshal(data, &stored); uErr != nil {
 		s.moveCorruptAside(uErr)
 		return nil
 	}
-	for k, encoded := range f.Secrets {
+	for k, encoded := range stored.Secrets {
 		raw, dErr := base64.StdEncoding.DecodeString(encoded)
 		if dErr != nil {
 			// Drop the one unreadable entry rather than the whole store: the
