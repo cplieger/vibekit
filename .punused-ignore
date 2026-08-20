@@ -212,3 +212,16 @@ function WithCommand
 function WithURL is
 function WithOAuthClientID
 function WithEnv is
+
+
+# --- 17. Reached only through errors.As, which punused cannot see.
+# statusError wraps a handler's error with the HTTP status the dispatcher
+# answers with. Unwrap is what lets rpcerr.Details reach the wrapped
+# error: Details does errors.As(err, &detailer) to pull ErrorData off a
+# bridge RPC failure, and four handlers (compact, mode, rewind, steer)
+# return exactly that failure wrapped in a status. Without Unwrap the
+# As fails, Text falls back to err.Error(), and on a -32603 that string
+# is KAS's literal "Internal error" while the real cause sits unread in
+# error.data — the precise defect rpcerr.Text exists to prevent.
+# TestStatusError_UnwrapsToTheCause pins it.
+method (*statusError).Unwrap

@@ -2,12 +2,16 @@ package command
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/cplieger/vibekit/internal/ids"
+	"github.com/cplieger/vibekit/internal/rpcerr"
+	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
 func TestDispatcher_MethodNotAllowed(t *testing.T) {
@@ -87,5 +91,41 @@ func TestDispatcher_BodyTooLarge(t *testing.T) {
 	d.ServeHTTP(w, req)
 	if w.Code != http.StatusRequestEntityTooLarge && w.Code != http.StatusBadRequest {
 		t.Fatalf("got %d, want 413 or 400", w.Code)
+	}
+}
+
+// TestStatusError_UnwrapsToTheCause pins the reason statusError has an Unwrap
+// that no code names directly, which is why it needs a test rather than a
+// comment: the reference is an errors.As inside rpcerr, and both punused and a
+// reader lose it.
+//
+// Four handlers (compact, mode, rewind, steer) forward a bridge Call failure and
+// the dispatcher renders it with rpcerr.Text. Text asks rpcerr.Details, which
+// does errors.As for an error carrying KAS's `error.data`. If the status wrapper
+// does not Unwrap, that As fails, Text falls back to err.Error(), and on a
+// -32603 err.Error() is KAS's literal "Internal error" while the real cause sits
+// unread in error.data.
+//
+// Red-check: delete (*statusError).Unwrap and the details assertion fails with
+// "Internal error".
+func TestStatusError_UnwrapsToTheCause(t *testing.T) {
+	cause := &vibekit.RPCError{
+		Code:    -32603,
+		Message: "Internal error",
+		Data:    json.RawMessage(`{"details":"the model refused the tool call"}`),
+	}
+	wrapped := StatusError(http.StatusBadGateway, cause)
+
+	if got := statusOf(wrapped); got != http.StatusBadGateway {
+		t.Errorf("statusOf = %d, want %d", got, http.StatusBadGateway)
+	}
+	// The property: the wrapper does not hide what the dispatcher renders.
+	if got := rpcerr.Text(wrapped); got != "the model refused the tool call" {
+		t.Errorf("rpcerr.Text(wrapped) = %q, want the error.data details — the status "+
+			"wrapper is hiding the cause from errors.As", got)
+	}
+	// And the sentinel case, which is the other thing an Unwrap buys.
+	if !errors.Is(StatusError(http.StatusNotFound, ErrChatNotFound), ErrChatNotFound) {
+		t.Error("errors.Is cannot see ErrChatNotFound through the status wrapper")
 	}
 }

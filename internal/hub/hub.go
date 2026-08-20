@@ -623,11 +623,6 @@ func (h *Hub) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 	h.sse.emit(evt)
 }
 
-// Draining reports whether the server is shutting down.
-func (h *Hub) Draining() bool {
-	return h.lifecycle.draining.Load()
-}
-
 // refuseWhenDraining answers 503 once Shutdown has flipped draining, for the two
 // routes that must stop accepting work before the HTTP drain begins: commands and
 // the event stream.
