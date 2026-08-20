@@ -111,9 +111,19 @@ func fitTree(t *testing.T) (configDir, toolsDir string) {
 // through the job callbacks and the code-intelligence wiring, and a nil hub turns
 // that regression into a SIGSEGV stack trace instead of the assertion that names
 // what actually broke.
+//
+// The chat store is REAL. It used to be nil on the same "correct code never
+// touches it" reasoning, and hub.New's own role guard refuted that: the store is
+// read at construction to wire the translator, so a nil one is a hub that cannot
+// serve a single chat. Passing nil built one anyway and deferred the crash to the
+// first ACP frame.
 func testHub(t *testing.T) *hub.Hub {
 	t.Helper()
-	h := hub.New(t.Context(), t.TempDir(), nil, nil)
+	store, err := chat.NewStore(filepath.Join(t.TempDir(), "chats"))
+	if err != nil {
+		t.Fatalf("chat store: %v", err)
+	}
+	h := hub.New(t.Context(), t.TempDir(), nil, store)
 	t.Cleanup(func() {
 		if err := h.Shutdown(context.Background()); err != nil {
 			t.Errorf("hub shutdown: %v", err)

@@ -322,6 +322,11 @@ func WithSessionReaper(r *kirosession.Reaper, refs func(context.Context) (map[st
 // New does NOT take ownership of ctx's cancellation. Shutdown cancels the hub's
 // own child of it, so the caller may tear the hub down first and end the app's
 // lifetime afterwards.
+//
+// chatStore is REQUIRED, on the same terms as ctx: it is read here to wire the
+// translator, so a nil one builds a hub that cannot serve a single chat and
+// defers the crash to the first ACP frame. requireWired refuses it at
+// construction, which is where a caller can still fix it.
 func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStore chatRecords, opts ...Option) *Hub {
 	sseHub := sse.NewHub(sse.WithReplay(replayBufSize), sse.WithKeepalive(keepaliveInterval))
 	lc := &lifecyclePlane{
