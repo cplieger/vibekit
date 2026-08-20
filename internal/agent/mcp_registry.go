@@ -198,7 +198,7 @@ func (reg *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
 // signalReady closes the readyCh so any goroutine waiting in
 // WaitForReady unblocks. Called when the first commands/available
 // notification arrives. Safe to call multiple times.
-func (reg *mcpRegistry) signalReady() {
+func (reg *mcpRegistry) SignalReady() {
 	reg.mu.Lock()
 	defer reg.mu.Unlock()
 	select {
@@ -213,7 +213,7 @@ func (reg *mcpRegistry) signalReady() {
 // resources it advertises), broadcasts mcp_connected, and fires onChange.
 // Called from the _kiro/mcp/status handler when a server reports the
 // "connected" state. prompts/resources may be nil (server exposes none).
-func (reg *mcpRegistry) recordConnected(ctx context.Context, name string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
+func (reg *mcpRegistry) RecordConnected(ctx context.Context, name string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
 	origin, ok := reg.originFor(ctx, name)
 	if !ok {
 		return
@@ -234,7 +234,7 @@ func (reg *mcpRegistry) recordConnected(ctx context.Context, name string, tools 
 }
 
 // recordOAuth marks a server as waiting for OAuth and broadcasts the URL.
-func (reg *mcpRegistry) recordOAuth(ctx context.Context, name, url string) {
+func (reg *mcpRegistry) RecordOAuth(ctx context.Context, name, url string) {
 	origin, ok := reg.originFor(ctx, name)
 	if !ok {
 		return
@@ -256,7 +256,7 @@ func (reg *mcpRegistry) recordOAuth(ctx context.Context, name, url string) {
 // Broadcast mcp_failed so the client can render a red status and
 // surface the error message. A server the user disabled is silently dropped —
 // they have already chosen not to run it.
-func (reg *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg string) {
+func (reg *mcpRegistry) RecordInitFailure(ctx context.Context, name, errMsg string) {
 	origin, ok := reg.originFor(ctx, name)
 	if !ok {
 		return
@@ -289,7 +289,7 @@ func (reg *mcpRegistry) recordInitFailure(ctx context.Context, name, errMsg stri
 // transitions on its own, so the row lands on the next /api/mcp/status read (the
 // MCP page's own load, or any sibling server connecting in the same
 // notification). signalChange still fires so the steering doc regenerates.
-func (reg *mcpRegistry) recordDisabled(ctx context.Context, name string) {
+func (reg *mcpRegistry) RecordDisabled(ctx context.Context, name string) {
 	origin, ok := reg.originFor(ctx, name)
 	if !ok || origin == vibekit.OriginUser {
 		return

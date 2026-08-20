@@ -96,7 +96,7 @@ func newCallbackListener(t *testing.T, status int) *callbackListener {
 // authorization URL KAS would have advertised.
 func stageFlow(t *testing.T, h *Runtime, server, listenerURL, state string) {
 	t.Helper()
-	h.mcpRegistry.recordOAuth(t.Context(), server, authURLFor(t, listenerURL, state))
+	h.mcpRegistry.RecordOAuth(t.Context(), server, authURLFor(t, listenerURL, state))
 }
 
 // relayState reads the server's latch off the registry SNAPSHOT, which is the
@@ -324,7 +324,7 @@ func TestOAuthRelay_RefusesWithNoFlowInFlight(t *testing.T) {
 			h := newHubWithMCPConfig(nil)
 			if server == "linear" {
 				// Connected, not awaiting authorization.
-				h.mcpRegistry.recordConnected(t.Context(), server, nil, nil, nil)
+				h.mcpRegistry.RecordConnected(t.Context(), server, nil, nil, nil)
 			}
 			rec := postRelay(t, h, server, pastedFor(t, l.srv.URL, "c", "st"))
 			if rec.Code != http.StatusConflict {

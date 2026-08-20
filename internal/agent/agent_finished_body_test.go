@@ -60,7 +60,7 @@ func TestEmitTurnEnded_PushBodyCarriesAgentText(t *testing.T) {
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(context.Background(), "/tmp/push-desc", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.Bus = h
-	h.mcpRegistry.signalReady()
+	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
@@ -98,7 +98,7 @@ func TestEmitTurnEnded_PushSubjectIsTheChat(t *testing.T) {
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(context.Background(), "/tmp/push-subject", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.Bus = h
-	h.mcpRegistry.signalReady()
+	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 

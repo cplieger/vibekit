@@ -55,7 +55,7 @@ func newRecordingStartHub(t *testing.T) (*Runtime, *fakeChatStore, *recordingSta
 	rb := newRecordingStartBridge()
 	h := New(t.Context(), "/tmp/rec-start", func() ACPBridge { return rb }, cs)
 	cs.Bus = h
-	h.mcpRegistry.signalReady()
+	h.mcpRegistry.SignalReady()
 	return h, cs, rb
 }
 
@@ -173,7 +173,7 @@ func TestEmitTurnEnded_NonCancelledFiresPush(t *testing.T) {
 	fp := &recordingPush{sends: make(chan string, 4)}
 	h := New(t.Context(), "/tmp/push", func() ACPBridge { return newFakeBridge() }, cs, WithPush(fp))
 	cs.Bus = h
-	h.mcpRegistry.signalReady()
+	h.mcpRegistry.SignalReady()
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 

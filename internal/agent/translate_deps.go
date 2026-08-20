@@ -13,43 +13,11 @@ package agent
 // ring on demand.
 
 import (
-	"context"
 	"reflect"
 
 	"github.com/cplieger/vibekit/internal/runlease"
 	"github.com/cplieger/vibekit/internal/translate"
-	"github.com/cplieger/vibekit/internal/vibekit"
 )
-
-// MCPRecorder returns the Runtime's MCP state recorder.
-func (rt *Runtime) MCPRecorder() translate.MCPRecorder {
-	return &mcpRecorder{reg: rt.mcpRegistry}
-}
-
-// mcpRecorder adapts the registry's five unexported record* methods to the
-// exported MCPRecorder contract translate consumes. It holds the REGISTRY, not the
-// Runtime: it was hubMCPRecorder holding a whole *Runtime to reach one field.
-type mcpRecorder struct{ reg *mcpRegistry }
-
-func (r *mcpRecorder) RecordConnected(ctx context.Context, serverName string, tools []string, prompts []vibekit.MCPPromptInfo, resources []vibekit.MCPResourceInfo) {
-	r.reg.recordConnected(ctx, serverName, tools, prompts, resources)
-}
-
-func (r *mcpRecorder) RecordOAuth(ctx context.Context, serverName, oauthURL string) {
-	r.reg.recordOAuth(ctx, serverName, oauthURL)
-}
-
-func (r *mcpRecorder) RecordInitFailure(ctx context.Context, serverName, errMsg string) {
-	r.reg.recordInitFailure(ctx, serverName, errMsg)
-}
-
-func (r *mcpRecorder) RecordDisabled(ctx context.Context, serverName string) {
-	r.reg.recordDisabled(ctx, serverName)
-}
-
-func (r *mcpRecorder) SignalReady() {
-	r.reg.signalReady()
-}
 
 // IsScheduled reports whether a run was launched by a schedule.
 //
@@ -92,7 +60,7 @@ func (rt *Runtime) translateRoles() *translate.Roles {
 		Terminals:    rt.agentTerms,
 		HookStatus:   rt.hookStatus,
 		WorkDir:      rt.lifecycle.workDir,
-		MCP:          rt.MCPRecorder(),
+		MCP:          rt.mcpRegistry,
 		Governance:   rt.config,
 		RunOrigin:    rt.runs,
 		RunBounds:    rt.runs,

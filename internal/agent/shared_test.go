@@ -43,7 +43,7 @@ func newTestHubIn(workDir string) (*Runtime, *fakeChatStore, *fakeBridge) {
 	h := New(context.Background(), workDir, factory, cs)
 	cs.Bus = h
 	// Signal MCP readiness immediately so tests don't wait 30 seconds.
-	h.mcpRegistry.signalReady()
+	h.mcpRegistry.SignalReady()
 	return h, cs, br
 }
 

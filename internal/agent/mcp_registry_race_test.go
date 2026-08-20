@@ -24,14 +24,14 @@ func TestMCPRegistry_ConcurrentRecordClear(t *testing.T) {
 	wg.Go(func() {
 		for i := range N {
 			name := "server-" + string(rune('A'+i%10))
-			reg.recordConnected(h.lifecycle.shutdownCtx, name, nil, nil, nil)
+			reg.RecordConnected(h.lifecycle.shutdownCtx, name, nil, nil, nil)
 		}
 	})
 
 	wg.Go(func() {
 		for i := range N {
 			name := "server-" + string(rune('A'+i%10))
-			reg.recordInitFailure(h.lifecycle.shutdownCtx, name, "timeout")
+			reg.RecordInitFailure(h.lifecycle.shutdownCtx, name, "timeout")
 		}
 	})
 
@@ -62,7 +62,7 @@ func TestMCPRegistry_SignalReadyConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Go(func() {
-			reg.signalReady()
+			reg.SignalReady()
 		})
 	}
 	wg.Wait()

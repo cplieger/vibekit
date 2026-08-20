@@ -16,7 +16,7 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 	want := []string{"-v"}
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs(want))
 	cs.Bus = h
-	h.mcpRegistry.signalReady()
+	h.mcpRegistry.SignalReady()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
@@ -44,7 +44,7 @@ func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 	br := newFakeBridge()
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs, WithACPArgs([]string{"--effort", "max"}))
 	cs.Bus = h
-	h.mcpRegistry.signalReady()
+	h.mcpRegistry.SignalReady()
 
 	u := h.utility.get()
 	if _, err := u.session.acquire(t.Context()); err != nil {
@@ -68,7 +68,7 @@ func TestACPArgsUnsetIsEmpty(t *testing.T) {
 	br := newFakeBridge()
 	h := New(context.Background(), "/tmp/work", func() ACPBridge { return br }, cs)
 	cs.Bus = h
-	h.mcpRegistry.signalReady()
+	h.mcpRegistry.SignalReady()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
 	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {

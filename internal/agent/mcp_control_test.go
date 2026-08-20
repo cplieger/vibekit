@@ -177,7 +177,7 @@ func TestMCPRegistry_RecordConnectedStoresDiscovery(t *testing.T) {
 	h := newHubWithMCPConfig(nil)
 	prompts := []vibekit.MCPPromptInfo{{Name: "Simple Prompt", PromptName: "simple-prompt", Description: "no args"}}
 	resources := []vibekit.MCPResourceInfo{{Name: "doc", URI: "demo://doc", MimeType: "text/markdown"}}
-	h.mcpRegistry.recordConnected(t.Context(), "everything", nil, prompts, resources)
+	h.mcpRegistry.RecordConnected(t.Context(), "everything", nil, prompts, resources)
 
 	snap := h.mcpRegistry.Snapshot()
 	if len(snap) != 1 {
