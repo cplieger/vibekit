@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -303,23 +304,45 @@ func TestGet_MissingChat(t *testing.T) {
 
 // --- List ---
 
+// TestList_SortsByUpdatedAtDesc runs in a synctest bubble, which is what lets it
+// assert the gap between the two timestamps EXACTLY rather than nudge a real
+// clock and hope.
+//
+// The two `time.Sleep(2 * time.Millisecond)` calls this replaces were class (b)
+// — advancing a real clock the test could not fake — and their comment said so:
+// "nudge the wall clock so the UpdatedAt ms timestamps don't collide on fast
+// machines". Inside the bubble the clock is synthetic, so the nudge is exact and
+// the ordering is deterministic by construction instead of by resolution.
+//
+// Measured: atomicfile.WriteFile's real filesystem work (mkdir walk, fsync,
+// rename, parent fsync) is fine in here. That is the documented boundary —
+// TRANSIENT file I/O reaches a durably-blocked state afterwards, so the clock
+// still advances; only a goroutine parked indefinitely on an external FD defeats
+// a bubble.
 func TestList_SortsByUpdatedAtDesc(t *testing.T) {
-	s, _ := newTestStore(t)
-	_ = s.Mutate(t.Context(), "a", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	// Nudge the wall clock between mutations so the UpdatedAt ms
-	// timestamps don't collide on fast machines and the sort order
-	// is deterministic.
-	time.Sleep(2 * time.Millisecond)
-	_ = s.Mutate(t.Context(), "b", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
-	time.Sleep(2 * time.Millisecond)
-	_ = s.Mutate(t.Context(), "a", func(c *vibekit.Chat, _ bool) bool { return true }) // bump updated_at
-	headers := s.List(t.Context())
-	if len(headers) != 2 {
-		t.Fatalf("len = %d, want 2", len(headers))
-	}
-	if headers[0].ID != "a" {
-		t.Errorf("first = %q, want a (most recently updated)", headers[0].ID)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		s, _ := newTestStore(t)
+		_ = s.Mutate(t.Context(), "a", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
+		synctest.Sleep(2 * time.Millisecond)
+		_ = s.Mutate(t.Context(), "b", func(c *vibekit.Chat, _ bool) bool { c.Name = "B"; return true })
+		synctest.Sleep(2 * time.Millisecond)
+		_ = s.Mutate(t.Context(), "a", func(c *vibekit.Chat, _ bool) bool { return true }) // bump updated_at
+		headers := s.List(t.Context())
+		// Fatal: every assertion below indexes headers.
+		if len(headers) != 2 {
+			t.Fatalf("len = %d, want 2", len(headers))
+		}
+		if headers[0].ID != "a" {
+			t.Errorf("first = %q, want a (most recently updated)", headers[0].ID)
+		}
+		// Exactly 4ms of synthetic time separates a's second mutation from b's
+		// only one. On a real clock this could only ever be asserted as `> 0`,
+		// which a save that stamped the wrong field, or stamped once and reused
+		// the value, would satisfy.
+		if gap := headers[0].UpdatedAt - headers[1].UpdatedAt; gap != 2 {
+			t.Errorf("UpdatedAt gap = %dms, want exactly 2 (b at +2ms, a re-stamped at +4ms)", gap)
+		}
+	})
 }
 
 func TestList_IgnoresNonChatFiles(t *testing.T) {
