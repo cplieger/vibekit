@@ -349,7 +349,7 @@ func (c *chunkReader) Read(p []byte) (int, error) {
 }
 
 // A multi-byte rune split across the 4 KB read boundary must not be corrupted
-// in the live SSE broadcast: pumpTerminalOutput carries the incomplete tail to
+// in the live SSE broadcast: pumpOutput carries the incomplete tail to
 // the next chunk so every terminal_output chunk is valid UTF-8, while the ring
 // still receives every raw byte.
 func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T) {
@@ -368,7 +368,7 @@ func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T
 	}}
 	const want = "aé€😀"
 
-	h.agentTerms.pumpTerminalOutput(term, "t1", "c1", r)
+	h.agentTerms.pumpOutput(term, "t1", "c1", r)
 
 	// Reassemble the broadcast chunks. A split rune would have its halves
 	// coerced to U+FFFD by the SSE JSON marshal, so the reassembly would not
@@ -457,7 +457,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 		chunkSize := int(chunkRaw)%8 + 1
 		_, preSeq := h.bus.hub.Bounds()
 		term := newAgentTerminal(nil, "c1", 1<<20)
-		h.agentTerms.pumpTerminalOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
+		h.agentTerms.pumpOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
 
 		// The ring receives every raw byte exactly once, for any input.
 		if ring := term.output.Bytes(); !bytes.Equal(ring, data) {

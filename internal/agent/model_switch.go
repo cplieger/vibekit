@@ -84,7 +84,7 @@ func (h *Runtime) cmdSwitchModel(ctx context.Context, cmd *vibekit.ClientCommand
 }
 
 // switchByRestart is the fallback when the in-session swap did not take: tear the
-// bridge down and let GetOrCreateBridge try session/load, then session/new.
+// bridge down and let OpenBridge try session/load, then session/new.
 //
 // Extracted from cmdSwitchModel because it is the one coherent unit in it — the
 // dispatcher now reads validate, try fast, else restart — and because leaving it
@@ -97,7 +97,7 @@ func (h *Runtime) switchByRestart(
 	h.coord.FlushInFlightTurnOnSwitch(ctx, cmd.ChatID)
 	h.coord.CloseBridge(cmd.ChatID)
 
-	sb, err := h.coord.GetOrCreateBridge(ctx, cmd.ChatID, model)
+	sb, err := h.coord.OpenBridge(ctx, cmd.ChatID, model)
 	if err != nil {
 		h.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeSwitchFailed, Message: rpcerr.Text(err)}))
 		return nil, command.StatusError(http.StatusInternalServerError, err)
@@ -144,7 +144,7 @@ func (h *Runtime) refuseUnservedModel(
 	ctx context.Context, chatID vibekit.ChatID, chat *vibekit.Chat, model string,
 ) error {
 	served := chat.ServedModelIDs
-	if sb := h.coord.GetBridge(chatID); sb != nil {
+	if sb := h.coord.Bridge(chatID); sb != nil {
 		if live := sb.bridge.ServedModels(); len(live) > 0 {
 			served = live
 		}

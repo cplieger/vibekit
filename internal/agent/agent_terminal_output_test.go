@@ -223,7 +223,7 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
-	emit := h.agentTerms.terminalEmitter(t.Context(), term, "t1", "c1")
+	emit := h.agentTerms.emitter(t.Context(), term, "t1", "c1")
 
 	// The measured real shape: gitleaks' zerolog console writer, with a
 	// zero-width space smuggled into the middle of it.
@@ -286,7 +286,7 @@ func terminalOutputPayloads(t *testing.T, h *Runtime) []vibekit.TerminalOutputPa
 func TestTerminalEmitter_OffsetIsTheUTF16BaseOfEachChunk(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
-	emit := h.agentTerms.terminalEmitter(t.Context(), term, "t1", "c1")
+	emit := h.agentTerms.emitter(t.Context(), term, "t1", "c1")
 
 	emit("\U0001F600ok")       // 4 UTF-16 units (2 for the pair, 2 for "ok"), 6 bytes
 	emit("\x1b[31mred\x1b[0m") // styled, must start at unit 4

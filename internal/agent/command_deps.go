@@ -16,18 +16,18 @@ import (
 // the dispatcher takes no collaborator at all now that idempotency is the
 // header middleware's.
 
-// GetBridge returns the active bridge for a chat, or nil.
-func (h *Runtime) GetBridge(chatID vibekit.ChatID) command.Bridge {
-	sb := h.coord.GetBridge(chatID)
+// Bridge returns the active bridge for a chat, or nil.
+func (h *Runtime) Bridge(chatID vibekit.ChatID) command.Bridge {
+	sb := h.coord.Bridge(chatID)
 	if sb == nil {
 		return nil
 	}
 	return sb
 }
 
-// GetOrCreateBridge ensures a bridge exists for the chat.
-func (h *Runtime) GetOrCreateBridge(ctx context.Context, chatID vibekit.ChatID, model string) (command.Bridge, error) {
-	sb, err := h.coord.GetOrCreateBridge(ctx, chatID, model)
+// OpenBridge ensures a bridge exists for the chat.
+func (h *Runtime) OpenBridge(ctx context.Context, chatID vibekit.ChatID, model string) (command.Bridge, error) {
+	sb, err := h.coord.OpenBridge(ctx, chatID, model)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func (h *Runtime) CloseBridge(chatID vibekit.ChatID) {
 // DeleteChatState tears down all in-memory state for a chat being permanently
 // deleted, cancelling its runs first and reaping its durable KAS session too.
 func (h *Runtime) DeleteChatState(ctx context.Context, chatID vibekit.ChatID) {
-	h.runs.CancelChatRuns(ctx, chatID)
+	h.runs.CancelForChat(ctx, chatID)
 	h.cleanupChatState(ctx, chatID, true)
 }
 
@@ -57,7 +57,7 @@ func (h *Runtime) DeleteChatState(ctx context.Context, chatID vibekit.ChatID) {
 // the reopened chat had no session to load, and the History page, which lists
 // KAS's sessions, could only ever show chats that were still open.
 func (h *Runtime) CloseChatState(ctx context.Context, chatID vibekit.ChatID) {
-	h.runs.CancelChatRuns(ctx, chatID)
+	h.runs.CancelForChat(ctx, chatID)
 	h.cleanupChatState(ctx, chatID, false)
 }
 

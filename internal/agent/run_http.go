@@ -58,13 +58,13 @@ import (
 	"github.com/cplieger/webhttp"
 )
 
-// rawInspectRun issues `_kiro/workflow/inspect` for one run and TYPES its failure
+// rawInspect issues `_kiro/workflow/inspect` for one run and TYPES its failure
 // at the boundary: an unregistered verb comes back wrapping
 // workflow.ErrUnknownMethod, so callers ask errors.Is instead of re-reading KAS's
 // error text. One helper rather than a copy per caller because the classification
 // has to happen where the RPC error still carries its `error.data` — a caller
 // that wrapped first and asked second would be sniffing its own message.
-func (rp *Runs) rawInspectRun(ctx context.Context, workflowID string) (json.RawMessage, error) {
+func (rp *Runs) rawInspect(ctx context.Context, workflowID string) (json.RawMessage, error) {
 	u := rp.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
@@ -103,7 +103,7 @@ func (rp *Runs) handleRun(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "missing workflow id")
 		return
 	}
-	raw, err := rp.rawInspectRun(r.Context(), id)
+	raw, err := rp.rawInspect(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, workflow.ErrUnknownMethod) {
 			slog.Warn("workflow inspect: engine not available on this kiro-cli",
@@ -121,15 +121,15 @@ func (rp *Runs) handleRun(w http.ResponseWriter, r *http.Request) {
 	httpreply.WriteRawJSON(w, raw)
 }
 
-// runStatus reads one run's current status via `_kiro/workflow/inspect`.
+// status reads one run's current status via `_kiro/workflow/inspect`.
 // Returns "" when the run is unknown, which the caller turns into a 404.
 //
 // Its own inspect call rather than a shared cache: a control decision must be
 // made against the status as of NOW, and the run list the client rendered its
 // buttons from is by definition older than the click. This is one round trip on
 // a deliberate user action, not a hot path.
-func (rp *Runs) runStatus(ctx context.Context, workflowID string) (string, error) {
-	raw, err := rp.rawInspectRun(ctx, workflowID)
+func (rp *Runs) status(ctx context.Context, workflowID string) (string, error) {
+	raw, err := rp.rawInspect(ctx, workflowID)
 	if err != nil {
 		// An unknown run and an unavailable engine are both "no status to gate
 		// on" rather than a fault to report: the caller 404s, and the verb is
@@ -166,11 +166,11 @@ func (rp *Runs) handleRecipes(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, vibekit.RecipesResponse{Recipes: recipes})
 }
 
-// handleRunLaunch: POST /api/runs → launch one PARENTLESS run and answer with
+// handleLaunch: POST /api/runs → launch one PARENTLESS run and answer with
 // its id and name. 409 when the recipe already has a live run — the wire shape
 // of the single-run rule, which is what keeps the Workflows row's Run ⇄ Cancel
 // button able to name one run.
-func (rp *Runs) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
+func (rp *Runs) handleLaunch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
@@ -179,7 +179,7 @@ func (rp *Runs) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
 	if !httpreply.DecodeJSON(w, r, &req) {
 		return
 	}
-	id, name, err := rp.LaunchRun(r.Context(), req.Source, req.Inputs)
+	id, name, err := rp.Launch(r.Context(), req.Source, req.Inputs)
 	if err != nil {
 		if errors.Is(err, errRecipeBusy) {
 			httpreply.Conflict(w, errRecipeBusy.Error())
@@ -195,46 +195,46 @@ func (rp *Runs) handleRunLaunch(w http.ResponseWriter, r *http.Request) {
 	webhttp.WriteJSON(w, vibekit.RunLaunchedResponse{WorkflowID: id, Name: name})
 }
 
-// handleRunCancel: POST /api/runs/{id}/cancel → ask the run to stop. The
+// handleCancel: POST /api/runs/{id}/cancel → ask the run to stop. The
 // response confirms the ASK, not the stop: cancel is a node-boundary verb, so
 // the terminal run_complete (and the run_finished SSE it becomes) follows at
 // the in-flight node's end.
-func (rp *Runs) handleRunCancel(w http.ResponseWriter, r *http.Request) {
-	rp.runControlHandler(w, r, runVerbCancel)
+func (rp *Runs) handleCancel(w http.ResponseWriter, r *http.Request) {
+	rp.controlHandler(w, r, runVerbCancel)
 }
 
-// handleRunPause / handleRunResume are the two run-control verbs added once the
+// handlePause / handleResume are the two run-control verbs added once the
 // sweep established they were already live server-side. Each is the same shape as
 // cancel; the difference is which statuses permit them, which runVerb carries.
 //
 // Retry is absent by design -- see run_host.go, where the reason lives with the
 // mechanism that causes it.
-func (rp *Runs) handleRunPause(w http.ResponseWriter, r *http.Request) {
-	rp.runControlHandler(w, r, runVerbPause)
+func (rp *Runs) handlePause(w http.ResponseWriter, r *http.Request) {
+	rp.controlHandler(w, r, runVerbPause)
 }
 
-func (rp *Runs) handleRunResume(w http.ResponseWriter, r *http.Request) {
-	rp.runControlHandler(w, r, runVerbResume)
+func (rp *Runs) handleResume(w http.ResponseWriter, r *http.Request) {
+	rp.controlHandler(w, r, runVerbResume)
 }
 
-func (rp *Runs) handleRunRetry(w http.ResponseWriter, r *http.Request) {
-	rp.runControlHandler(w, r, runVerbRetry)
+func (rp *Runs) handleRetry(w http.ResponseWriter, r *http.Request) {
+	rp.controlHandler(w, r, runVerbRetry)
 }
 
-// handleRunDelete: DELETE /api/runs/{id} — the History row's delete. Removes the
+// handleDelete: DELETE /api/runs/{id} — the History row's delete. Removes the
 // run from KAS (its directory included) and drops vibekit's lease, timer and
 // recorded end reason. Not recoverable, which is why it is the one run verb the
 // client confirms before sending.
-func (rp *Runs) handleRunDelete(w http.ResponseWriter, r *http.Request) {
-	rp.runControlHandler(w, r, runVerbDelete)
+func (rp *Runs) handleDelete(w http.ResponseWriter, r *http.Request) {
+	rp.controlHandler(w, r, runVerbDelete)
 }
 
-// handleRunStepStatus: POST /api/runs/{id}/step — mark an IN-FLIGHT step
+// handleStepStatus: POST /api/runs/{id}/step — mark an IN-FLIGHT step
 // completed or failed so a wedged run advances.
 //
 // Its own handler rather than a runVerb because it carries a body (which step,
 // which status) and the verb table's issue signature is id-only.
-func (rp *Runs) handleRunStepStatus(w http.ResponseWriter, r *http.Request) {
+func (rp *Runs) handleStepStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
@@ -252,7 +252,7 @@ func (rp *Runs) handleRunStepStatus(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid step-status payload")
 		return
 	}
-	if err := rp.SetRunStepStatus(r.Context(), id, body.NodeID, body.Status); err != nil {
+	if err := rp.SetStepStatus(r.Context(), id, body.NodeID, body.Status); err != nil {
 		if errors.Is(err, errRunNotHosted) {
 			httpreply.Conflict(w, err.Error())
 			return
@@ -295,28 +295,28 @@ var (
 		// Deliberately unrestricted. Cancel is the tab-close gesture and must
 		// never be the verb that fails; KAS is idempotent on an
 		// already-terminal run (it answers ok with the previous status).
-		issue:  (*Runs).CancelRun,
+		issue:  (*Runs).Cancel,
 		method: http.MethodPost,
 	}
 	runVerbPause = runVerb{
 		name:   "pause",
-		issue:  (*Runs).PauseRun,
+		issue:  (*Runs).Pause,
 		method: http.MethodPost,
 		from:   []string{"running"},
 	}
 	runVerbResume = runVerb{
 		name:   "resume",
-		issue:  (*Runs).ResumeRun,
+		issue:  (*Runs).Resume,
 		method: http.MethodPost,
 		from:   []string{"paused"},
 	}
 	// Retry's window is exactly the two statuses at which a run's own bridge has
-	// already been closed, which is why RetryRun re-hosts instead of requiring
+	// already been closed, which is why Retry re-hosts instead of requiring
 	// one. The gate still earns its place: it turns a click on an
 	// already-restarted run into a 409 naming the status.
 	runVerbRetry = runVerb{
 		name:   "retry",
-		issue:  (*Runs).RetryRun,
+		issue:  (*Runs).Retry,
 		method: http.MethodPost,
 		from:   []string{"failed", "aborted"},
 	}
@@ -326,12 +326,12 @@ var (
 	// run itself before removing it.
 	runVerbDelete = runVerb{
 		name:   "delete",
-		issue:  (*Runs).DeleteRun,
+		issue:  (*Runs).Delete,
 		method: http.MethodDelete,
 	}
 )
 
-func (rp *Runs) runControlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
+func (rp *Runs) controlHandler(w http.ResponseWriter, r *http.Request, verb runVerb) {
 	if r.Method != verb.method {
 		httpreply.MethodNotAllowed(w, verb.method)
 		return
@@ -342,7 +342,7 @@ func (rp *Runs) runControlHandler(w http.ResponseWriter, r *http.Request, verb r
 		return
 	}
 	if len(verb.from) > 0 {
-		status, err := rp.runStatus(r.Context(), id)
+		status, err := rp.status(r.Context(), id)
 		if err != nil {
 			slog.Warn("run control: status read failed",
 				"verb", verb.name, "workflow_id", id, "error", err, "detail", rpcerr.Details(err))
@@ -361,7 +361,7 @@ func (rp *Runs) runControlHandler(w http.ResponseWriter, r *http.Request, verb r
 	if err := verb.issue(rp, r.Context(), id); err != nil {
 		// A run with no live bridge here is a state of the world, not a fault, so
 		// it earns a 409 naming the situation rather than a 500. See
-		// hostedRunControl for which runs fall outside and why the utility bridge
+		// hostedControl for which runs fall outside and why the utility bridge
 		// is not a fallback for the verbs that execute.
 		if errors.Is(err, errRunNotHosted) {
 			slog.Info("run control unavailable: run not hosted here",

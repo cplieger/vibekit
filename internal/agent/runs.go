@@ -26,8 +26,8 @@ import (
 // work reaches the bridge manager, the coordinator, the utility runtime, the chat
 // store, the translator and the pending-permission tracker, so those arrive as
 // named dependencies instead of through a *Runtime back-pointer. That was a choice
-// with a cost attached: three methods stay on Runtime for it (see runDispatch,
-// runDispatchRequest and closeFinishedRunBridge in run_host.go), because they are
+// with a cost attached: three methods stay on Runtime for it (see dispatch,
+// dispatchRequest and closeFinishedBridge in run_host.go), because they are
 // the ACP request ladder for a run's bridge — bridge plumbing reached on a run
 // topic rather than run logic — and moving them would have meant handing this
 // type the chat-handler map and six responder methods, which is a back-reference
@@ -113,5 +113,5 @@ func (rp *Runs) hubContext() (context.Context, context.CancelFunc) {
 //
 // the type is package-internal on purpose and the caller only forwards it on.
 //
-//nolint:revive // unexported-return: same reason as BridgeCoordinator.GetBridge —
+//nolint:revive // unexported-return: same reason as BridgeCoordinator.Bridge —
 func (h *Runtime) Runs() *Runs { return h.runs }

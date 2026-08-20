@@ -205,14 +205,14 @@ func (fakeBusyBridge) EndPromptCall()                                   {}
 func (fakeBusyBridge) PromptGeneration() uint64                         { return 0 }
 func (fakeBusyBridge) ArmCancelGrace(uint64, time.Duration) bool        { return false }
 
-// busyGuardDeps overrides GetBridge on the bench stub to hand back a
+// busyGuardDeps overrides Bridge on the bench stub to hand back a
 // bridge whose turn lock is already held.
 type busyGuardDeps struct {
 	*benchDeps
 	bridge Bridge
 }
 
-func (d *busyGuardDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
+func (d *busyGuardDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
 
 // TestHandleShellInterception_BusyReturns409 pins the busy-guard (MED
 // bug): when a bridge exists and its turn lock can't be acquired (a real

@@ -88,7 +88,7 @@ func HandleShellInterception(ctx context.Context, roles *promptRoles, cmd *vibek
 	// bridge yet has never run a turn, so !cmd runs locally with no lock
 	// (nothing to collide with); we broadcast the shell turn_ended only
 	// when we own the turn (locked) or when there is no bridge at all.
-	if sb := roles.bridges.GetBridge(cmd.ChatID); sb != nil {
+	if sb := roles.bridges.Bridge(cmd.ChatID); sb != nil {
 		if !sb.TryAcquireForPrompt() {
 			return nil, StatusError(http.StatusConflict, errBusy)
 		}

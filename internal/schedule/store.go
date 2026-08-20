@@ -20,7 +20,7 @@ const FileName = "schedules.json"
 var ErrNotFound = errors.New("schedule not found")
 
 // Entry is one scheduled workflow. Source is the recipe launch key that
-// LaunchRun takes; it is re-validated at launch time rather than trusted here,
+// Launch takes; it is re-validated at launch time rather than trusted here,
 // because it looks like a path.
 type Entry struct {
 	// Anchor is what NextRun measures from: the last fire (or skip), falling

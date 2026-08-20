@@ -469,7 +469,7 @@ func TestTranslateACPEvent_RoutesFSRequest(t *testing.T) {
 // which responds back through the bridge.
 func TestTranslateACPEvent_RoutesTerminalRequest(t *testing.T) {
 	h, br := hubForFSTest(t, t.TempDir())
-	// Pre-register a terminal owned by "c1" so termOutput resolves it
+	// Pre-register a terminal owned by "c1" so output resolves it
 	// and responds through the registered respondingBridge.
 	h.agentTerms.mu.Lock()
 	h.agentTerms.terms["term-1"] = newAgentTerminal(nil, "c1", 64)

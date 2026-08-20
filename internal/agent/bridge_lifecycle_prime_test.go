@@ -24,7 +24,7 @@ func TestPrimeIfNeeded_NoneIsNoOp(t *testing.T) {
 		c.Messages = []vibekit.Message{{Role: vibekit.RoleUser, Content: "hi"}}
 		return true
 	})
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestPrimeIfNeeded_SwitchSendsPromptWithHistory(t *testing.T) {
 		}
 		return true
 	})
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestPrimeIfNeeded_EmptyHistoryEarlyReturn(t *testing.T) {
 	// Chat with no messages → BuildHistory returns "" → primeIfNeeded
 	// must return before inspecting primeReason.
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestPrimeIfNeeded_ForkPrimesFromTheParentChat(t *testing.T) {
 		c.Name = vibekit.DefaultChatName
 		return true
 	})
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c-tangent", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c-tangent", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestPrimeIfNeeded_ForkWithoutASourceReadsItsOwnChat(t *testing.T) {
 		c.Messages = []vibekit.Message{{Role: vibekit.RoleUser, Content: "its own history"}}
 		return true
 	})
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestSpawnBridge_ClaimsThePrimeNote(t *testing.T) {
 	})
 	h.coord.PrimeFromChat("c-tangent", "c-parent")
 
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c-tangent", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c-tangent", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}

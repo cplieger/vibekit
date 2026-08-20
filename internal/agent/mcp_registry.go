@@ -180,9 +180,9 @@ func (reg *mcpRegistry) Snapshot() []mcpServerRuntime {
 // for the handlers.
 func (reg *mcpRegistry) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/mcp/status", reg.handleStatus)
-	mux.HandleFunc("/api/mcp/reconnect", reg.handleMCPReconnect)
-	mux.HandleFunc("/api/mcp/prompt", reg.handleMCPGetPrompt)
-	mux.HandleFunc("/api/mcp/resource", reg.handleMCPGetResource)
+	mux.HandleFunc("/api/mcp/reconnect", reg.handleReconnect)
+	mux.HandleFunc("/api/mcp/prompt", reg.handlePrompt)
+	mux.HandleFunc("/api/mcp/resource", reg.handleResource)
 	// The OAuth loopback relay (mcp_oauth_relay.go). Registering it here is
 	// mandatory, not optional: internal/mcp's "/api/mcp/" SUBTREE handler would
 	// otherwise swallow this path and read "oauth-relay" as a server id, so an

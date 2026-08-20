@@ -169,7 +169,7 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// App.Shutdown. In the background because the sweep issues one RPC per lease
 	// over a utility bridge whose kiro-cli may still be installing; a boot must not
 	// wait on that.
-	go h.Runs().SweepOrphanedRuns(appCtx)
+	go h.Runs().SweepOrphaned(appCtx)
 
 	startScheduleRunner(appCtx, scheduleStore, h.Runs())
 
@@ -802,7 +802,7 @@ func openRunLeaseStore(dir string) *runlease.Store {
 
 // startScheduleRunner starts the schedule sweep when scheduling is available.
 //
-// The runner reuses Runtime.LaunchRun, which already launches a PARENTLESS run on
+// The runner reuses Runtime.Launch, which already launches a PARENTLESS run on
 // its own bridge, so a scheduled run needs no host chat and never shows up in
 // the chat list.
 //

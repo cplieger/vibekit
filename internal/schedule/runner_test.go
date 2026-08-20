@@ -31,7 +31,7 @@ type fakeLauncher struct {
 	err       error
 }
 
-func (f *fakeLauncher) LaunchScheduledRun(
+func (f *fakeLauncher) LaunchScheduled(
 	_ context.Context, source, scheduleID string, deadline time.Time,
 ) (string, string, error) {
 	f.sources = append(f.sources, source)

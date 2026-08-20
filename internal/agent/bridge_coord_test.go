@@ -82,7 +82,7 @@ func (p *recordingPush) Send(_ context.Context, _, body string, _ vibekit.PushKi
 	}
 }
 
-// --- GetOrCreateBridge overrides + persisted model ---
+// --- OpenBridge overrides + persisted model ---
 
 // On a fresh session/new path the override model wins over the chat's
 // stored value, and the persisted chat model is copied from the started
@@ -96,8 +96,8 @@ func TestGetOrCreateBridge_AppliesOverrides(t *testing.T) {
 		return true // no ACPSessionID -> fresh session/new path
 	})
 
-	if _, err := h.coord.GetOrCreateBridge(ctx, "c1", "model-override"); err != nil {
-		t.Fatalf("GetOrCreateBridge: %v", err)
+	if _, err := h.coord.OpenBridge(ctx, "c1", "model-override"); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
 	}
 
 	opts := rb.startOpts()
@@ -118,8 +118,8 @@ func TestTryFastModelSwitch_SucceedsReturnsTrue(t *testing.T) {
 	h, cs, _ := newTestHub()
 	ctx := t.Context()
 	_ = cs.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; c.Model = "m-old"; return true })
-	if _, err := h.coord.GetOrCreateBridge(ctx, "c1", ""); err != nil {
-		t.Fatalf("GetOrCreateBridge: %v", err)
+	if _, err := h.coord.OpenBridge(ctx, "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
 	}
 
 	if got := h.coord.TryFastModelSwitch(ctx, "c1", "m-new"); got != true {
@@ -201,9 +201,9 @@ func TestPrimeIfNeeded_NoErrorLogOnSuccess(t *testing.T) {
 		c.Messages = []vibekit.Message{{Role: vibekit.RoleUser, Content: "hi"}}
 		return true
 	})
-	sb, err := h.coord.GetOrCreateBridge(ctx, "c1", "")
+	sb, err := h.coord.OpenBridge(ctx, "c1", "")
 	if err != nil {
-		t.Fatalf("GetOrCreateBridge: %v", err)
+		t.Fatalf("OpenBridge: %v", err)
 	}
 	sb.primeReason = primeReasonSwitch
 

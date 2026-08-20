@@ -217,9 +217,9 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 				t.Fatal("the fixture registered a bridge; the sweep must be wrong-by-default without one")
 			}
 
-			h.runs.SweepOrphanedRuns(t.Context())
+			h.runs.SweepOrphaned(t.Context())
 
-			if got := h.runs.runEndReason("wf_1"); got != "" {
+			if got := h.runs.endReason("wf_1"); got != "" {
 				t.Errorf("the sweep recorded %q against a run it does not own", got)
 			}
 			for _, m := range br.callLog() {
@@ -260,7 +260,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphanedRuns(t.Context())
+	h.runs.SweepOrphaned(t.Context())
 
 	var cancelled bool
 	for _, m := range br.callLog() {
@@ -273,7 +273,7 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	}
 	// Its own reason, not `cancelled`: a user cancel, a blown deadline, a step-cap
 	// trip and a restart orphan are four different facts and the row names which.
-	if got := h.runs.runEndReason("wf_1"); got != runEndOrphaned {
+	if got := h.runs.endReason("wf_1"); got != runEndOrphaned {
 		t.Errorf("the orphan recorded %q, want %q", got, runEndOrphaned)
 	}
 	if _, held := h.runs.lease("wf_1"); held {
@@ -304,12 +304,12 @@ func TestSweepOrphanedRuns_ReleasesTheLeaseOfARunThatIsOver(t *testing.T) {
 				t.Fatalf("Put: %v", err)
 			}
 
-			h.runs.SweepOrphanedRuns(t.Context())
+			h.runs.SweepOrphaned(t.Context())
 
 			if _, held := h.runs.lease("wf_1"); held {
 				t.Error("the lease of a finished run survived the sweep")
 			}
-			if got := h.runs.runEndReason("wf_1"); got != "" {
+			if got := h.runs.endReason("wf_1"); got != "" {
 				t.Errorf("a finished run was recorded as %q; nothing was cancelled", got)
 			}
 		})
@@ -328,7 +328,7 @@ func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphanedRuns(t.Context())
+	h.runs.SweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("an unreadable run list released a lease, so a live run's envelope is gone")
@@ -366,19 +366,19 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.runs.SweepOrphanedRuns(t.Context())
+	h.runs.SweepOrphaned(t.Context())
 
 	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("a failed cancel released the lease, stranding a paused KAS row with nothing " +
 			"left to explain it")
 	}
-	if got := h.runs.runEndReason("wf_1"); got != "" {
+	if got := h.runs.endReason("wf_1"); got != "" {
 		t.Errorf("the row reads %q after a cancel that never landed; the run is still paused "+
 			"in KAS and the next admission attempt retries the clear, so History must not "+
 			"already say it was stopped", got)
 	}
 	// And the claim is back, or the retry this lease was kept for cannot happen.
-	if !h.runs.claimRunTermination("wf_1") {
+	if !h.runs.claimTermination("wf_1") {
 		t.Error("the failed cancel kept the termination claim, so nothing can clear the orphan")
 	}
 }
@@ -394,7 +394,7 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 // `cancel` will honour, so the test and the cancel cannot be made atomic.
 //
 // What makes the remainder safe is that nothing vibekit owns can resume a run this
-// function can reach — ResumeRun needs the run's own `run:<id>` bridge, which a
+// function can reach — Resume needs the run's own `run:<id>` bridge, which a
 // restart is precisely what destroys, and the chat-parented resume sweep is scoped
 // to a chat's session chain that a parentless run is not in. This test pins the
 // second read itself: without it, a run that stopped reading as an orphan is
@@ -416,20 +416,20 @@ func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T)
 				t.Fatalf("Put: %v", err)
 			}
 
-			if h.runs.clearOrphanedRun(t.Context(), &l) {
+			if h.runs.clearOrphaned(t.Context(), &l) {
 				t.Error("a run that no longer reads as an orphan was cleared")
 			}
 			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 				t.Errorf("a cancel went out for a run that is not an orphan: %v", br.callLog())
 			}
-			if got := h.runs.runEndReason("wf_1"); got != "" {
+			if got := h.runs.endReason("wf_1"); got != "" {
 				t.Errorf("the row reads %q for a run nothing ended", got)
 			}
 			if _, held := h.runs.lease("wf_1"); !held {
 				t.Error("the lease of a run that was left alone was released")
 			}
 			// The claim goes back, or the run can never be ended by anything again.
-			if !h.runs.claimRunTermination("wf_1") {
+			if !h.runs.claimTermination("wf_1") {
 				t.Error("the refusal kept the termination claim, so no bound and no Cancel " +
 					"button can ever act on this run")
 			}
@@ -459,7 +459,7 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 	if err := h.runs.recipeIdle(t.Context(), "publish"); err != nil {
 		t.Fatalf("admission refused a launch over an orphan it owns: %v", err)
 	}
-	if got := h.runs.runEndReason("wf_old"); got != runEndOrphaned {
+	if got := h.runs.endReason("wf_old"); got != runEndOrphaned {
 		t.Errorf("the cleared orphan recorded %q, want %q", got, runEndOrphaned)
 	}
 	if _, held := h.runs.lease("wf_old"); held {

@@ -36,7 +36,7 @@ type takeDeps struct {
 	takeOK bool
 }
 
-func (d *takeDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
+func (d *takeDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
 
 func (d *takeDeps) TakePendingPerm(requestID int64, _ vibekit.SettledBy) bool {
 	d.takes = append(d.takes, requestID)

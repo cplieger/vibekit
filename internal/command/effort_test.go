@@ -81,7 +81,7 @@ func TestCmdSetEffort_TwoChatsHoldDifferentLevels(t *testing.T) {
 // prompt.
 type noBridgeDeps struct{ *storeDeps }
 
-func (d *noBridgeDeps) GetBridge(vibekit.ChatID) Bridge { return nil }
+func (d *noBridgeDeps) Bridge(vibekit.ChatID) Bridge { return nil }
 
 // A bridgeless chat used to answer 409, which is why the client had a second
 // path that wrote a GLOBAL setting instead — a different store and a different

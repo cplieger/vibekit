@@ -132,7 +132,7 @@ func TestCancel_NotifiesBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestPermission_RequiresBridge(t *testing.T) {
 func TestPermission_InvalidPayloadIs400(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	_, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestPermission_InvalidPayloadIs400(t *testing.T) {
 func TestPermission_ForwardsToBridge(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	_, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	_, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestPermission_ForwardsToBridge(t *testing.T) {
 func TestPermission_SecondAnswerIs409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
+	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
 		t.Fatal(err)
 	}
 	h.bus.pendingPerms.Add(42, vibekit.NewEvent(vibekit.EventPermissionNeeded, "c1",
@@ -656,7 +656,7 @@ func TestShellCappedBuffer(t *testing.T) {
 func TestPrompt_BusyReturns409(t *testing.T) {
 	h, cs, _ := newTestHub()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatal(err)
 	}

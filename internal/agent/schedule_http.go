@@ -101,7 +101,7 @@ func (rp *Runs) scheduleViewOf(e *schedule.Entry) scheduleView {
 // handleSchedulePut: POST /api/schedules → insert or replace one schedule.
 //
 // The recipe source is validated against the live recipe list rather than
-// trusted, for the same reason handleRunLaunch does it: the value looks like a
+// trusted, for the same reason handleLaunch does it: the value looks like a
 // path, and storing an arbitrary one would let a client aim the scheduler at a
 // file that is not a recipe.
 func (rp *Runs) handleSchedulePut(w http.ResponseWriter, r *http.Request) {

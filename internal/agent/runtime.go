@@ -395,12 +395,13 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// (not in the struct literal) because it is a method value on the fully-built
 	// Runtime; see load_projection.go.
 	h.onProjection = h.swapProjectedTranscript
-	// ensureUtility is a thunk, not a value: the utility runtime is built under a
-	// sync.Once whose hooks call back into hub surfaces, so a holder must ask for
-	// it at use rather than hold one built here.
-	runs.utility = h.ensureUtility
+	// Both planes take the LEASE's own accessor, not a Runtime method value. A
+	// thunk is still needed — the runtime is built lazily, and its build closes
+	// over two Settings hooks — but pointing it at the lease is what leaves
+	// neither plane holding a reference to the Runtime at all.
+	runs.utility = h.utility.get
 	runs.coord = h.coord
-	configP.utility = h.ensureUtility
+	configP.utility = h.utility.get
 	configP.broadcast = sseP.Broadcast
 
 	h.translator = translate.New(h.translateRoles())
@@ -438,7 +439,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 // internal/git); this is not used for chat titles, which come from KAS (see
 // translate/focus.go).
 func (h *Runtime) UtilityPrompt(ctx context.Context, prompt string, effort vibekit.EffortLevel) (string, error) {
-	return h.ensureUtility().textgen.UtilityPrompt(ctx, prompt, effort)
+	return h.utility.get().textgen.UtilityPrompt(ctx, prompt, effort)
 }
 
 // MCPRegistry returns the in-memory registry of currently-connected MCP servers
@@ -501,13 +502,13 @@ func (h *Runtime) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config-template", h.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", h.handleSessionList)
 	mux.HandleFunc("GET /api/runs/{id}", h.runs.handleRun)
-	mux.HandleFunc("POST /api/runs", h.runs.handleRunLaunch)
-	mux.HandleFunc("POST /api/runs/{id}/cancel", h.runs.handleRunCancel)
-	mux.HandleFunc("POST /api/runs/{id}/pause", h.runs.handleRunPause)
-	mux.HandleFunc("POST /api/runs/{id}/resume", h.runs.handleRunResume)
-	mux.HandleFunc("POST /api/runs/{id}/retry", h.runs.handleRunRetry)
-	mux.HandleFunc("DELETE /api/runs/{id}", h.runs.handleRunDelete)
-	mux.HandleFunc("POST /api/runs/{id}/step", h.runs.handleRunStepStatus)
+	mux.HandleFunc("POST /api/runs", h.runs.handleLaunch)
+	mux.HandleFunc("POST /api/runs/{id}/cancel", h.runs.handleCancel)
+	mux.HandleFunc("POST /api/runs/{id}/pause", h.runs.handlePause)
+	mux.HandleFunc("POST /api/runs/{id}/resume", h.runs.handleResume)
+	mux.HandleFunc("POST /api/runs/{id}/retry", h.runs.handleRetry)
+	mux.HandleFunc("DELETE /api/runs/{id}", h.runs.handleDelete)
+	mux.HandleFunc("POST /api/runs/{id}/step", h.runs.handleStepStatus)
 	mux.HandleFunc("GET /api/recipes", h.runs.handleRecipes)
 	h.runs.registerScheduleRoutes(mux)
 }

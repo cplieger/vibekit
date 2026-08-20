@@ -281,7 +281,7 @@ func (t *Translator) MCP() MCPRecorder {
 // afterwards: the mark is gone, and vibekit genuinely no longer knows the run was
 // scheduled. That is a missing start signal on a resume, not a wrong one.
 type RunOriginAccess interface {
-	IsScheduledRun(workflowID string) bool
+	IsScheduled(workflowID string) bool
 }
 
 // RunBoundsAccess reports a workflow STEP that blew its turn cap.

@@ -61,7 +61,7 @@ func CmdRewindChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, c
 		return nil, StatusError(http.StatusBadRequest, errRewindTargetNotFound)
 	}
 
-	bridge := bridges.GetBridge(cmd.ChatID)
+	bridge := bridges.Bridge(cmd.ChatID)
 	if bridge == nil {
 		// No live session to revert. The files and the transcript move together
 		// or not at all, so truncating the record alone is not an option.
@@ -184,7 +184,7 @@ func CmdSetEffort(ctx context.Context, bridges BridgeAccess, chats ChatStore, cm
 
 	// Switch live first (fail fast) when a bridge is running, so a refusal is
 	// reported rather than persisted as a level the session never took.
-	if bridge := bridges.GetBridge(cmd.ChatID); bridge != nil {
+	if bridge := bridges.Bridge(cmd.ChatID); bridge != nil {
 		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
 			"configId": vibekit.ConfigOptionEffort,
 			"value":    string(p.Level),

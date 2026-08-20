@@ -33,7 +33,7 @@ func CmdSetMode(ctx context.Context, bridges BridgeAccess, chats ChatStore, bus 
 
 	// Switch live first (fail fast) when a bridge is running. When there
 	// is no bridge yet the persisted mode below is applied at session/new.
-	if bridge := bridges.GetBridge(cmd.ChatID); bridge != nil {
+	if bridge := bridges.Bridge(cmd.ChatID); bridge != nil {
 		if _, err := bridge.Call(ctx, vibekit.MethodSetMode, SessionParams(bridge, map[string]any{"modeId": p.ModeID})); err != nil {
 			slog.Warn("set_mode: bridge call failed", "chat", cmd.ChatID, keyError, err)
 			return nil, StatusError(http.StatusBadGateway, err)

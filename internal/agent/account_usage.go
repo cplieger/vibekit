@@ -37,7 +37,7 @@ const accountUsageCallTimeout = 45 * time.Second
 func (h *Runtime) AccountUsage(ctx context.Context) (*vibekit.AccountUsage, error) {
 	cctx, cancel := context.WithTimeout(ctx, accountUsageCallTimeout)
 	defer cancel()
-	raw, err := h.ensureUtility().session.accountUsageRaw(cctx)
+	raw, err := h.utility.get().session.accountUsageRaw(cctx)
 	if err != nil {
 		return nil, err
 	}

@@ -752,7 +752,7 @@ type WorkflowRun struct {
 	// the universal ceiling) or "step_cap" (one of its steps blew its turn cap).
 	//
 	// It exists because KAS's status cannot answer the question. Both bounds
-	// terminate a run through the same CancelRun the Cancel button reaches, so the
+	// terminate a run through the same Cancel the Cancel button reaches, so the
 	// run reports `cancelled` either way and a reader cannot tell a backstop from
 	// a person. Recording the reason rather than wrapping the cancel in a timeout
 	// is deliberate for that reason: a plain timeout wrapper conflates "exceeded

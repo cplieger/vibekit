@@ -101,8 +101,8 @@ func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *trans
 		// matters: reporting a manual run as scheduled would put a start toast on
 		// every launch the user made by hand.
 		r := newRoles(t)
-		if r.RunOrigin.IsScheduledRun("wf-never-launched") {
-			t.Error("IsScheduledRun(unlaunched) = true, want false")
+		if r.RunOrigin.IsScheduled("wf-never-launched") {
+			t.Error("IsScheduled(unlaunched) = true, want false")
 		}
 	})
 

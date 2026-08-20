@@ -38,29 +38,29 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
 	h := &Runs{}
 
-	if h.IsScheduledRun("wf_1") {
+	if h.IsScheduled("wf_1") {
 		t.Error("an unknown run reported scheduled; a manual launch must never be marked")
 	}
 	h.grantLease(t.Context(), "wf_manual", "publish", manualLaunch())
-	if h.IsScheduledRun("wf_manual") {
+	if h.IsScheduled("wf_manual") {
 		t.Error("a manual run reported scheduled")
 	}
 	h.grantLease(t.Context(), "wf_1", "publish", scheduledLaunch("sched-1", time.Time{}))
-	if !h.IsScheduledRun("wf_1") {
+	if !h.IsScheduled("wf_1") {
 		t.Error("a scheduled run did not report scheduled")
 	}
-	if h.IsScheduledRun("wf_2") {
+	if h.IsScheduled("wf_2") {
 		t.Error("the origin leaked to another run")
 	}
 	// A terminal run_complete releases the lease, and the flag must go with it: the
 	// run is over, so a later frame naming it is not a scheduled run starting.
 	h.releaseLease(t.Context(), "wf_1")
-	if h.IsScheduledRun("wf_1") {
+	if h.IsScheduled("wf_1") {
 		t.Error("a released run still reported scheduled")
 	}
 	// An empty id is not a run. Answering true here would mark every frame that
 	// arrived without one.
-	if h.IsScheduledRun("") {
+	if h.IsScheduled("") {
 		t.Error("the empty workflow id reported scheduled")
 	}
 }
@@ -99,7 +99,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	if l.ScheduleID != "sched-1" {
 		t.Errorf("ScheduleID = %q; the denial could not be attributed to a row", l.ScheduleID)
 	}
-	if !after.IsScheduledRun("wf_1") {
+	if !after.IsScheduled("wf_1") {
 		t.Error("the origin did not survive")
 	}
 }

@@ -39,7 +39,7 @@ func hubWithBridge(t *testing.T, workDir string, br ACPBridge) *Runtime {
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "")
+	sb, err := h.coord.OpenBridge(t.Context(), "c1", "")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestTranslateACPEvent_TermOutputUnknownID_RespondsError_H2(t *testing.T) {
 		Params: mustJSON(t, map[string]any{"terminalId": "does-not-exist"}),
 	}
 
-	h.translateACPEvent("c1", msg) // termOutput is synchronous
+	h.translateACPEvent("c1", msg) // output is synchronous
 
 	select {
 	case <-br.respCh:
@@ -366,7 +366,7 @@ func TestTerminalEnv_PopulatesCommandEnv_M1(t *testing.T) {
 
 // TestTermCreate_RefusesExecutionRedirectingEnv is the WIRING test for the
 // environment guard, and it exists because the unit tests beside
-// screenAgentEnv cannot fail if the call is deleted from termCreate.
+// screenAgentEnv cannot fail if the call is deleted from create.
 //
 // Two assertions, and the second is the one that matters: the request is answered
 // with an error, and NO terminal is created — so nothing was spawned before the

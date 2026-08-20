@@ -49,14 +49,14 @@ func (r *hubMCPRecorder) SignalReady() {
 	r.h.mcpRegistry.signalReady()
 }
 
-// IsScheduledRun reports whether a run was launched by a schedule.
+// IsScheduled reports whether a run was launched by a schedule.
 //
 // The run's LEASE is already the record of that — it is what gates the deny-fast
 // permission floor — so this exports the fact rather than tracking it twice.
-// Granted between `new` and `invoke` in launchRun, which is before the first
+// Granted between `new` and `invoke` in launch, which is before the first
 // lifecycle frame can arrive, so a run_start reaching translate always sees the
 // origin its launch recorded.
-func (rp *Runs) IsScheduledRun(workflowID string) bool {
+func (rp *Runs) IsScheduled(workflowID string) bool {
 	l, ok := rp.lease(workflowID)
 	return ok && l.Origin == runlease.OriginScheduled
 }
@@ -123,7 +123,7 @@ func requireWired(r *translate.Roles) *translate.Roles {
 			// Two nils, and the second is the one that actually shipped. A role
 			// assigned from a nil *T is a non-nil INTERFACE holding a nil pointer,
 			// so IsNil() on the field is false and the check passed while the
-			// receiver was nil — the same typed-nil trap GetBridge normalizes for.
+			// receiver was nil — the same typed-nil trap Bridge normalizes for.
 			// Reaching through with Elem() is what catches it.
 			if f.IsNil() {
 				panic("agent: translate role " + name + " is nil at construction — its owner is " +

@@ -64,7 +64,7 @@ type bridgeDeps struct {
 	bridge Bridge
 }
 
-func (d *bridgeDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
+func (d *bridgeDeps) Bridge(vibekit.ChatID) Bridge { return d.bridge }
 
 // newBridgeHost builds the all-in-one double a handler is called with. It used
 // to return a *Dispatcher beside it, because every handler took one to reach its

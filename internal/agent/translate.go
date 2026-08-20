@@ -90,8 +90,8 @@ func (h *Runtime) initDispatch() {
 		// Wrapped rather than registered bare: the run clock (run_bounds.go) has
 		// to see a run start, pause and finish, and `run_start` is the only frame
 		// vibekit gets for an AGENT-launched run, whose launch path is KAS's.
-		methodWFRunStart:    h.runs.observeRunStart,
-		methodWFRunComplete: h.runs.observeRunComplete,
+		methodWFRunStart:    h.runs.observeStart,
+		methodWFRunComplete: h.runs.observeComplete,
 	}
 	for method, kind := range map[string]vibekit.RunProgressKind{
 		methodWFNodeStart:     vibekit.RunProgressNodeStart,
@@ -108,7 +108,7 @@ func (h *Runtime) initDispatch() {
 	// EXECUTING time: a run parked on purpose must not be cancelled for having
 	// been parked. Node-level pauses keep it — a step waiting inside a run that is
 	// still going is exactly what the ceiling is for.
-	h.chatHandlers[methodWFPaused] = h.runs.observeRunPaused(h.chatHandlers[methodWFPaused])
+	h.chatHandlers[methodWFPaused] = h.runs.observePaused(h.chatHandlers[methodWFPaused])
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via
 	// REST, and the session inventory diff which has no client consumer now
@@ -158,7 +158,7 @@ func (h *Runtime) translateACPEvent(chatID vibekit.ChatID, msg *vibekit.RPCRespo
 	// into any transcript, and this connection's workflow lifecycle frames are
 	// workspace-global rather than a chat's. See run_host.go.
 	if isRunChat(chatID) {
-		h.runDispatch(ctx, chatID, msg)
+		h.dispatch(ctx, chatID, msg)
 		return
 	}
 

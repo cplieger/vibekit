@@ -34,7 +34,7 @@ import (
 // exit status (KAS zTerminalExitStatus {exitCode?, signal?}).
 const keySignal = "signal"
 
-// terminalDrainGrace bounds how long awaitTerminalExit waits for the output
+// terminalDrainGrace bounds how long awaitExit waits for the output
 // pipe to reach EOF AFTER the process has exited, before it force-closes the
 // read end. Only a grandchild still holding the write end can reach it. Matches
 // cmd.WaitDelay, which bounds the mirror case inside Wait.
@@ -424,15 +424,15 @@ func (at *agentTerminals) release(terminalID string) (*agentTerminal, bool) {
 func (h *Runtime) handleTerminalRequest(ctx context.Context, chatID vibekit.ChatID, method string, msg *vibekit.RPCResponse) {
 	switch method {
 	case methodTermCreate:
-		h.agentTerms.termCreate(ctx, chatID, msg)
+		h.agentTerms.respondCreate(ctx, chatID, msg)
 	case methodTermOutput:
-		h.agentTerms.termOutput(ctx, chatID, msg)
+		h.agentTerms.respondOutput(ctx, chatID, msg)
 	case methodTermRelease:
-		h.agentTerms.termRelease(ctx, chatID, msg)
+		h.agentTerms.respondRelease(ctx, chatID, msg)
 	case methodTermWaitForExit:
-		h.agentTerms.termWaitForExit(ctx, chatID, msg)
+		h.agentTerms.respondWaitForExit(ctx, chatID, msg)
 	case methodTermKill:
-		h.agentTerms.termKill(ctx, chatID, msg)
+		h.agentTerms.respondKill(ctx, chatID, msg)
 	default:
 		// The caller routes here on a `terminal/` PREFIX match, so a verb KAS
 		// adds later reaches this switch and must still be answered. Falling
@@ -493,7 +493,7 @@ var agentShell = sync.OnceValue(func() string {
 //
 // The shell branch does not widen what the agent may run. Authorization is
 // kiro-cli's Cedar policy, which decides on the command LINE the agent asked
-// for; the environment it runs with is screened separately in termCreate, and
+// for; the environment it runs with is screened separately in create, and
 // that screen is what stops a variable redirecting the approved command into
 // something else.
 func agentCommand(ctx context.Context, command string, args *[]string) *exec.Cmd {
@@ -511,18 +511,18 @@ func derefArgs(args *[]string) []string {
 	return *args
 }
 
-// failTermCreate answers a terminal/create that could not start, and logs it.
+// failCreate answers a terminal/create that could not start, and logs it.
 // Every failure path goes through this one door, because before it six
 // respondErr returns logged nothing at all: a command that failed to exec left
 // NO server-side trace, broadcast no event and produced no tab, so the only
 // party that ever learned was the agent, in its own tool result. That is how
 // the exec-without-a-shell bug above stayed invisible for as long as it did.
-func (at *agentTerminals) failTermCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, command, reason string) {
+func (at *agentTerminals) failCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse, command, reason string) {
 	slog.Warn("agent terminal create failed", "chat_id", chatID, "cmd", command, "reason", reason)
 	respondErr(ctx, at.bridges, chatID, msg, reason)
 }
 
-func (at *agentTerminals) termCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondCreate(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		Command string `json:"command"`
 		Cwd     string `json:"cwd"`
@@ -539,11 +539,11 @@ func (at *agentTerminals) termCreate(ctx context.Context, chatID vibekit.ChatID,
 		OutputByteLimit int          `json:"outputByteLimit"`
 	}
 	if parseRequest(msg, &params) != nil {
-		at.failTermCreate(ctx, chatID, msg, params.Command, "invalid params")
+		at.failCreate(ctx, chatID, msg, params.Command, "invalid params")
 		return
 	}
 	if params.Command == "" {
-		at.failTermCreate(ctx, chatID, msg, params.Command, "command is required")
+		at.failCreate(ctx, chatID, msg, params.Command, "command is required")
 		return
 	}
 	// Screen the requested environment BEFORE anything is created, so the refusal
@@ -592,7 +592,7 @@ func (at *agentTerminals) termCreate(ctx context.Context, chatID vibekit.ChatID,
 		if err != nil {
 			stop()
 			cmdCancel()
-			at.failTermCreate(ctx, chatID, msg, params.Command, "cwd escapes workspace: "+err.Error())
+			at.failCreate(ctx, chatID, msg, params.Command, "cwd escapes workspace: "+err.Error())
 			return
 		}
 		cmd.Dir = abs
@@ -622,7 +622,7 @@ func (at *agentTerminals) termCreate(ctx context.Context, chatID vibekit.ChatID,
 	if err != nil {
 		stop()
 		cmdCancel()
-		at.failTermCreate(ctx, chatID, msg, params.Command, "pipe: "+err.Error())
+		at.failCreate(ctx, chatID, msg, params.Command, "pipe: "+err.Error())
 		return
 	}
 	cmd.Stdout = pw
@@ -633,7 +633,7 @@ func (at *agentTerminals) termCreate(ctx context.Context, chatID vibekit.ChatID,
 		_ = pr.Close()
 		stop()
 		cmdCancel()
-		at.failTermCreate(ctx, chatID, msg, params.Command, err.Error())
+		at.failCreate(ctx, chatID, msg, params.Command, err.Error())
 		return
 	}
 	// The child holds its own duplicate of the write end, so closing ours is
@@ -669,24 +669,24 @@ func (at *agentTerminals) termCreate(ctx context.Context, chatID vibekit.ChatID,
 
 	// Stream the merged output into the ring buffer. Started only after the
 	// terminal is registered and terminal_created is broadcast (see above).
-	// drained closes at EOF, which awaitTerminalExit waits for after Wait.
+	// drained closes at EOF, which awaitExit waits for after Wait.
 	drained := make(chan struct{})
 	at.lifecycle.inflight.Go(func() {
 		defer close(drained)
 		defer func() { _ = pr.Close() }()
-		at.pumpTerminalOutput(term, termID, chatID, pr)
+		at.pumpOutput(term, termID, chatID, pr)
 	})
 
 	// Wait for exit in background.
 	at.lifecycle.inflight.Go(func() {
-		at.awaitTerminalExit(term, termID, chatID, cmd, stop, cmdCancel, drained, pr)
+		at.awaitExit(term, termID, chatID, cmd, stop, cmdCancel, drained, pr)
 	})
 }
 
-// pumpTerminalOutput streams a terminal's combined stdout/stderr into
+// pumpOutput streams a terminal's combined stdout/stderr into
 // its ring buffer and broadcasts each chunk to SSE clients until the
 // reader hits EOF or an error.
-func (at *agentTerminals) pumpTerminalOutput(term *agentTerminal, termID string, chatID vibekit.ChatID, r io.Reader) {
+func (at *agentTerminals) pumpOutput(term *agentTerminal, termID string, chatID vibekit.ChatID, r io.Reader) {
 	// Runtime-scoped context: this goroutine outlives the per-event ctx that
 	// spawned it (translateACPEvent cancels that on return), so derive a
 	// fresh one that lives until the reader hits EOF or the runtime shuts down.
@@ -704,7 +704,7 @@ func (at *agentTerminals) pumpTerminalOutput(term *agentTerminal, termID string,
 	// exactly once (the agent pull path via byteRing.String() runs its own
 	// ToValidUTF8), so only the SSE broadcast needs the carry.
 	var pending []byte
-	emit := at.terminalEmitter(ctx, term, termID, chatID)
+	emit := at.emitter(ctx, term, termID, chatID)
 	for {
 		n, readErr := r.Read(buf)
 		if n > 0 {
@@ -738,11 +738,11 @@ func (at *agentTerminals) pumpTerminalOutput(term *agentTerminal, termID string,
 	// truncated sequence shows its bytes rather than vanishing.
 	base := term.ansi.Offset()
 	if text, parsed := term.ansi.Flush(); text != "" {
-		at.publishTerminalText(ctx, termID, chatID, text, wireSpans(parsed), base)
+		at.publishText(ctx, termID, chatID, text, wireSpans(parsed), base)
 	}
 }
 
-// terminalEmitter returns the function that turns one raw chunk into what the
+// emitter returns the function that turns one raw chunk into what the
 // TRANSCRIPT renders: hidden Unicode stripped, escape sequences parsed off into
 // style spans, plain text out.
 //
@@ -770,7 +770,7 @@ func (at *agentTerminals) pumpTerminalOutput(term *agentTerminal, termID string,
 // rest of the app does not have, on one surface, which is worse than not having
 // it: it would make the transcript disagree with the tool card's own content
 // blocks about what the command printed.
-func (at *agentTerminals) terminalEmitter(
+func (at *agentTerminals) emitter(
 	ctx context.Context, term *agentTerminal, termID string, chatID vibekit.ChatID,
 ) func(string) {
 	return func(raw string) {
@@ -779,11 +779,11 @@ func (at *agentTerminals) terminalEmitter(
 		if text == "" && len(parsed) == 0 {
 			return
 		}
-		at.publishTerminalText(ctx, termID, chatID, text, wireSpans(parsed), base)
+		at.publishText(ctx, termID, chatID, text, wireSpans(parsed), base)
 	}
 }
 
-// publishTerminalText broadcasts one rendered chunk.
+// publishText broadcasts one rendered chunk.
 //
 // base is where this chunk starts in the terminal's accumulated plain text,
 // counted in UTF-16 code units, read off the parser's own counter before the
@@ -792,7 +792,7 @@ func (at *agentTerminals) terminalEmitter(
 // base has to be the same quantity from the same source, or every live span
 // rebases onto the wrong character the moment output contains anything
 // non-ASCII.
-func (at *agentTerminals) publishTerminalText(
+func (at *agentTerminals) publishText(
 	ctx context.Context, termID string, chatID vibekit.ChatID,
 	text string, spans []vibekit.TextSpan, base int,
 ) {
@@ -809,7 +809,7 @@ func (at *agentTerminals) publishTerminalText(
 // rune whose continuation bytes have not arrived yet. It returns 0 when b
 // ends on a complete rune, is empty, or ends in a standalone invalid byte
 // that will never complete. At most utf8.UTFMax-1 (3) bytes are ever held.
-// Used by pumpTerminalOutput to avoid splitting a rune across the read
+// Used by pumpOutput to avoid splitting a rune across the read
 // boundary in the live SSE stream.
 func incompleteTailLen(b []byte) int {
 	if r, size := utf8.DecodeLastRune(b); r != utf8.RuneError || size > 1 {
@@ -831,14 +831,14 @@ func incompleteTailLen(b []byte) int {
 	return 0
 }
 
-// awaitTerminalExit blocks on cmd.Wait, records the exit status on the
+// awaitExit blocks on cmd.Wait, records the exit status on the
 // terminal, releases the per-terminal context resources (stop
 // unregisters the shutdown AfterFunc, cmdCancel releases the command
 // context), closes term.done, and broadcasts terminal_exited. A
 // signal-killed process records a signal string (ProcessState.ExitCode()
 // is -1) rather than exitCode -1, so the exit reports signal:"..." and
 // omits exit_code (KAS's zTerminalExitStatus requires exitCode>=0).
-func (at *agentTerminals) awaitTerminalExit(
+func (at *agentTerminals) awaitExit(
 	term *agentTerminal, termID string, chatID vibekit.ChatID, cmd *exec.Cmd,
 	stop func() bool, cmdCancel context.CancelFunc,
 	drained <-chan struct{}, pr *os.File,
@@ -848,7 +848,7 @@ func (at *agentTerminals) awaitTerminalExit(
 	defer cancel()
 
 	// Wait FIRST, then drain. Safe in that order only because the pipe is
-	// caller-owned (see termCreate): os/exec closes the pipes IT hands out
+	// caller-owned (see create): os/exec closes the pipes IT hands out
 	// inside Wait, so with Cmd.StdoutPipe this order would truncate the pump.
 	err := cmd.Wait()
 
@@ -892,7 +892,7 @@ func (at *agentTerminals) awaitTerminalExit(
 	at.broadcast(ctx, vibekit.NewEvent(vibekit.EventTerminalExited, chatID, payload))
 }
 
-func (at *agentTerminals) termOutput(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondOutput(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -925,7 +925,7 @@ func (at *agentTerminals) termOutput(ctx context.Context, chatID vibekit.ChatID,
 	respondOK(ctx, at.bridges, chatID, msg, result)
 }
 
-func (at *agentTerminals) termRelease(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondRelease(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -945,7 +945,7 @@ func (at *agentTerminals) termRelease(ctx context.Context, chatID vibekit.ChatID
 	respondOK(ctx, at.bridges, chatID, msg, map[string]any{})
 }
 
-func (at *agentTerminals) termWaitForExit(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondWaitForExit(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -956,7 +956,7 @@ func (at *agentTerminals) termWaitForExit(ctx context.Context, chatID vibekit.Ch
 	term, ok := at.terms[params.TerminalID]
 	at.mu.Unlock()
 	if !ok {
-		// Real chatID so the not-found error resolves a bridge (see termOutput).
+		// Real chatID so the not-found error resolves a bridge (see output).
 		respondErr(ctx, at.bridges, chatID, msg, "terminal not found")
 		return
 	}
@@ -978,7 +978,7 @@ func (at *agentTerminals) termWaitForExit(ctx context.Context, chatID vibekit.Ch
 	})
 }
 
-func (at *agentTerminals) termKill(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (at *agentTerminals) respondKill(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	var params struct {
 		TerminalID string `json:"terminalId"`
 	}
@@ -989,7 +989,7 @@ func (at *agentTerminals) termKill(ctx context.Context, chatID vibekit.ChatID, m
 	term, ok := at.terms[params.TerminalID]
 	at.mu.Unlock()
 	if !ok {
-		// Real chatID so the not-found error resolves a bridge (see termOutput).
+		// Real chatID so the not-found error resolves a bridge (see output).
 		respondErr(ctx, at.bridges, chatID, msg, "terminal not found")
 		return
 	}

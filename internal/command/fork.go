@@ -128,7 +128,7 @@ func CmdForkChat(ctx context.Context, bridges BridgeAccess, chats ChatStore, ws 
 // never prompted, or its process is gone) and "KAS refused" want different
 // follow-ups.
 func forkSession(ctx context.Context, bridges BridgeAccess, ws Workspace, p vibekit.ForkChatCommand, newChat vibekit.ChatID) string {
-	bridge := bridges.GetBridge(p.ParentChatID)
+	bridge := bridges.Bridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
 		// No live session to branch. Deliberately NOT started here: spawning a
 		// bridge for the parent as a side effect of opening a tangent would

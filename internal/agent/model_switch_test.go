@@ -58,7 +58,7 @@ func TestSwitchModel_FastPath_SessionLoadSucceeds(t *testing.T) {
 	if len(c.Messages) != 1 || c.Messages[0].EventKind != vibekit.EventModelSwitched {
 		t.Errorf("expected model_switched event, got %+v", c.Messages)
 	}
-	sb := h.coord.GetBridge("c1")
+	sb := h.coord.Bridge("c1")
 	if sb == nil {
 		t.Fatal("no bridge after switch")
 	}
@@ -208,7 +208,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 		return true
 	})
 	// Create a bridge first so the fast path has something to call.
-	sb, err := h.coord.GetOrCreateBridge(t.Context(), "c1", "old-model")
+	sb, err := h.coord.OpenBridge(t.Context(), "c1", "old-model")
 	if err != nil {
 		t.Fatalf("getOrCreateBridge: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestSwitchModel_FastPath_SetModelSucceeds(t *testing.T) {
 	}
 
 	// The bridge should still be the same instance (no restart).
-	sb2 := h.coord.GetBridge("c1")
+	sb2 := h.coord.Bridge("c1")
 	if sb2 == nil {
 		t.Fatal("bridge gone after fast-path switch")
 	}
@@ -283,7 +283,7 @@ func TestSwitchModel_RefusesAModelTheAccountDoesNotServe(t *testing.T) {
 	if c.Model != "m-old" {
 		t.Errorf("chat.Model = %q, want the previous model preserved", c.Model)
 	}
-	if sb := h.coord.GetBridge("c1"); sb != nil {
+	if sb := h.coord.Bridge("c1"); sb != nil {
 		t.Error("a bridge was created for a refused switch")
 	}
 }

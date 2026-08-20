@@ -58,7 +58,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 			h.grantLease(t.Context(), id, "publish", o)
 
 			before := time.Now()
-			h.armRunDeadline(t.Context(), id)
+			h.armDeadline(t.Context(), id)
 			l, ok := h.lease(id)
 			if !ok || !l.Bounded() {
 				t.Fatal("the run took no deadline, so nothing bounds it")
@@ -75,7 +75,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 
 // TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline is the
 // atomicity the arm's three steps need, and the race is by design rather than
-// exotic: launchRun arms after `invoke` while that run's own `run_start` frame is
+// exotic: launch arms after `invoke` while that run's own `run_start` frame is
 // already arriving on its bridge, so two arms contend on every launch.
 //
 // Read as three separately-locked steps — check, store, install — both callers can
@@ -142,7 +142,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 		for range arms {
 			wg.Go(func() {
 				<-release
-				h.runs.armRunDeadline(t.Context(), id)
+				h.runs.armDeadline(t.Context(), id)
 			})
 		}
 		close(release)
@@ -177,7 +177,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 		// nothing and records nothing.
 		timer.Reset(time.Millisecond)
 		stop := time.Now().Add(2 * time.Second)
-		for h.runs.runEndReason(id) == "" {
+		for h.runs.endReason(id) == "" {
 			if time.Now().After(stop) {
 				t.Fatalf("round %d: the surviving timer was armed for a deadline the lease no "+
 					"longer holds (lease says %v), so the run reads as bounded with no callback "+
@@ -185,7 +185,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 			}
 			time.Sleep(time.Millisecond)
 		}
-		if got := h.runs.runEndReason(id); got != runEndOverran {
+		if got := h.runs.endReason(id); got != runEndOverran {
 			t.Fatalf("round %d: the fired timer recorded %q, want %q", round, got, runEndOverran)
 		}
 	}
@@ -223,7 +223,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 		t.Fatal("a persist failure lost the lease from memory as well")
 	}
 
-	h.runs.armRunDeadline(t.Context(), id)
+	h.runs.armDeadline(t.Context(), id)
 
 	l, _ := h.runs.lease(id)
 	if !l.Bounded() {
@@ -239,7 +239,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 	// A live callback rather than a map entry: fire it and watch the run end.
 	timer.Reset(time.Millisecond)
 	stop := time.Now().Add(5 * time.Second)
-	for h.runs.runEndReason(id) == "" {
+	for h.runs.endReason(id) == "" {
 		if time.Now().After(stop) {
 			t.Fatal("the installed timer's callback could not act on the run")
 		}
@@ -247,7 +247,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 	}
 	// And the second arm must still be the no-op it is for a healthy run: a run
 	// already bounded is not re-stamped.
-	if got := h.runs.runEndReason(id); got != runEndOverran {
+	if got := h.runs.endReason(id); got != runEndOverran {
 		t.Errorf("recorded %q, want %q", got, runEndOverran)
 	}
 }
@@ -263,10 +263,10 @@ func TestArmRunDeadline_IsIdempotent(t *testing.T) {
 	const id = "wf_1"
 	leased(t, h, id)
 
-	h.armRunDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
 	first, _ := h.lease(id)
-	h.armRunDeadline(t.Context(), id)
-	h.armRunDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
 	after, _ := h.lease(id)
 
 	if !after.Deadline.Equal(first.Deadline) {
@@ -289,8 +289,8 @@ func TestArmRunDeadline_IsIdempotent(t *testing.T) {
 // it would schedule a cancel against a run this process cannot certify.
 func TestArmRunDeadline_RefusesARunWithNoLease(t *testing.T) {
 	h := &Runs{}
-	h.armRunDeadline(t.Context(), "wf_tui")
-	if h.runBounded("wf_tui") {
+	h.armDeadline(t.Context(), "wf_tui")
+	if h.bounded("wf_tui") {
 		t.Error("a run with no lease was bounded")
 	}
 	h.mu.Lock()
@@ -311,7 +311,7 @@ func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
 	leased(t, h, id)
-	h.armRunDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
 
 	h.mu.Lock()
 	timer := h.bounds.timers[id]
@@ -320,7 +320,7 @@ func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
 		t.Fatal("the arm installed no timer, so nothing can ever stop the run")
 	}
 
-	if !h.disarmRunDeadline(t.Context(), id) {
+	if !h.disarmDeadline(t.Context(), id) {
 		t.Fatal("the disarm reported holding no deadline")
 	}
 	if l, _ := h.lease(id); l.Bounded() {
@@ -331,13 +331,13 @@ func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
 	if timer.Stop() {
 		t.Error("the timer was still live after its run was parked")
 	}
-	if h.disarmRunDeadline(t.Context(), id) {
+	if h.disarmDeadline(t.Context(), id) {
 		t.Error("a parked run reported holding a deadline")
 	}
-	if h.disarmRunDeadline(t.Context(), "wf_never_armed") {
+	if h.disarmDeadline(t.Context(), "wf_never_armed") {
 		t.Error("an unleased run reported holding a deadline")
 	}
-	if h.disarmRunDeadline(t.Context(), "") {
+	if h.disarmDeadline(t.Context(), "") {
 		t.Error("the empty workflow id reported holding a deadline")
 	}
 }
@@ -360,10 +360,10 @@ func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
 	const id = "wf_1"
 	leased(t, h, id)
 
-	h.armRunDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
 	first, _ := h.lease(id)
 
-	if !h.disarmRunDeadline(t.Context(), id) { // the pause
+	if !h.disarmDeadline(t.Context(), id) { // the pause
 		t.Fatal("the pause reported holding no deadline")
 	}
 	// The parked lease carries NO deadline, which is what makes the re-arm a fresh
@@ -374,7 +374,7 @@ func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
 	}
 
 	resumedAt := time.Now()
-	h.armRunDeadline(t.Context(), id) // the resume
+	h.armDeadline(t.Context(), id) // the resume
 
 	second, _ := h.lease(id)
 	if !second.Bounded() {
@@ -407,11 +407,11 @@ func TestCancelExpiredRun_ASupersededTimerDoesNothing(t *testing.T) {
 	const id = "wf_1"
 	leased(t, h, id)
 
-	h.armRunDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
 	stale, _ := h.lease(id)
 
-	h.disarmRunDeadline(t.Context(), id) // the pause
-	h.armRunDeadline(t.Context(), id)    // the resume
+	h.disarmDeadline(t.Context(), id) // the pause
+	h.armDeadline(t.Context(), id)    // the resume
 	live, _ := h.lease(id)
 	if live.Deadline.Equal(stale.Deadline) {
 		t.Fatal("the resume reused the same deadline, so the guard cannot distinguish them")
@@ -422,7 +422,7 @@ func TestCancelExpiredRun_ASupersededTimerDoesNothing(t *testing.T) {
 		t.Fatal("a superseded timer claimed the resumed run; it would be cancelled after the " +
 			"old deadline's remainder")
 	}
-	if !h.runBounded(id) {
+	if !h.bounded(id) {
 		t.Error("the resumed run lost its deadline to the superseded callback, so nothing bounds it")
 	}
 
@@ -459,19 +459,19 @@ func TestRunDeadline_FiresAndCancelsAtTheDeadline(t *testing.T) {
 	// under unattendedMu, and no budget the arm would compute is short enough to
 	// observe (NextDeadline floors at minRunBudget).
 	h.runs.mu.Lock()
-	h.runs.setRunTimerLocked(id, deadline)
+	h.runs.setTimerLocked(id, deadline)
 	h.runs.mu.Unlock()
 
 	// A deadline-bounded poll rather than a sleep: it fails closed with a
 	// diagnostic and cannot flake into a false pass.
 	stop := time.Now().Add(5 * time.Second)
-	for h.runs.runEndReason(id) == "" {
+	for h.runs.endReason(id) == "" {
 		if time.Now().After(stop) {
-			t.Fatalf("the deadline never fired: bounded=%v calls=%v", h.runs.runBounded(id), br.callLog())
+			t.Fatalf("the deadline never fired: bounded=%v calls=%v", h.runs.bounded(id), br.callLog())
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if got := h.runs.runEndReason(id); got != runEndOverran {
+	if got := h.runs.endReason(id); got != runEndOverran {
 		t.Errorf("the expired run recorded %q, want %q", got, runEndOverran)
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
@@ -513,17 +513,17 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	// A slot INSIDE the floor: the floor wins, so the armed deadline is later than
 	// SlotAt and equality can no longer recognise the slot.
 	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-1", time.Now().Add(30*time.Second)))
-	h.runs.armRunDeadline(t.Context(), id)
+	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 	if !l.Deadline.After(l.SlotAt) {
 		t.Fatalf("the fixture did not produce a floor-adjusted deadline: slot %v, deadline %v",
 			l.SlotAt, l.Deadline)
 	}
 
-	h.runs.cancelExpiredRun(id, l.Deadline)
+	h.runs.cancelExpired(id, l.Deadline)
 
-	if got := h.runs.runEndReason(id); got != runEndOverran {
-		t.Errorf("runEndReason = %q, want %q", got, runEndOverran)
+	if got := h.runs.endReason(id); got != runEndOverran {
+		t.Errorf("endReason = %q, want %q", got, runEndOverran)
 	}
 	if out := logs.String(); !strings.Contains(out, logMsgRunOverran) {
 		t.Errorf("the callback did not log the schedule bound (%q); a floor-adjusted slot is "+
@@ -561,17 +561,17 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	// A manual lease carrying a slot: exactly what launchRun now mints for a manual
+	// A manual lease carrying a slot: exactly what launch now mints for a manual
 	// run of a scheduled recipe. No schedule id, because no row asked for this run.
 	h.runs.grantLease(t.Context(), id, "publish",
 		launchOrigin{origin: runlease.OriginManual, slotAt: time.Now().Add(10 * time.Minute)})
-	h.runs.armRunDeadline(t.Context(), id)
+	h.runs.armDeadline(t.Context(), id)
 	l, _ := h.runs.lease(id)
 
-	h.runs.cancelExpiredRun(id, l.Deadline)
+	h.runs.cancelExpired(id, l.Deadline)
 
-	if got := h.runs.runEndReason(id); got != runEndOverran {
-		t.Errorf("runEndReason = %q, want %q; the run did run past its bound", got, runEndOverran)
+	if got := h.runs.endReason(id); got != runEndOverran {
+		t.Errorf("endReason = %q, want %q; the run did run past its bound", got, runEndOverran)
 	}
 	out := logs.String()
 	if !strings.Contains(out, logMsgRunYieldedToSlot) {
@@ -596,17 +596,17 @@ func TestClaimRunTermination_IsTakenOnce(t *testing.T) {
 	t.Parallel()
 	h := &Runs{}
 
-	if !h.claimRunTermination("wf_1") {
+	if !h.claimTermination("wf_1") {
 		t.Fatal("the first claim failed")
 	}
-	if h.claimRunTermination("wf_1") {
+	if h.claimTermination("wf_1") {
 		t.Error("a second caller also took the claim; both would cancel and record")
 	}
 	// Independent per run: one run terminating must not stop another's cancel.
-	if !h.claimRunTermination("wf_2") {
+	if !h.claimTermination("wf_2") {
 		t.Error("an unrelated run could not be terminated")
 	}
-	if h.claimRunTermination("") {
+	if h.claimTermination("") {
 		t.Error("the empty workflow id took a claim")
 	}
 }
@@ -621,13 +621,13 @@ func TestClaimRunTermination_UserCancelBeatsALaterBound(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
 	leased(t, h, id)
-	h.armRunDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
 
 	// The user's cancel, arriving first and recording nothing.
-	if !h.claimRunTermination(id) {
+	if !h.claimTermination(id) {
 		t.Fatal("the user's cancel could not claim the run")
 	}
-	h.recordRunEnd(id, "")
+	h.recordEnd(id, "")
 
 	// The deadline, whose timer fired just before. Its stored value still
 	// matches, so only the claim can stop it writing.
@@ -636,7 +636,7 @@ func TestClaimRunTermination_UserCancelBeatsALaterBound(t *testing.T) {
 		t.Fatal("the deadline claimed a run the user had already cancelled")
 	}
 
-	if got := h.runEndReason(id); got != "" {
+	if got := h.endReason(id); got != "" {
 		t.Errorf("the row reads %q for a user cancel; the absence IS the third value", got)
 	}
 }
@@ -652,17 +652,17 @@ func TestClaimRunTermination_ScheduleDeadlineAndStepCapCannotBothRecord(t *testi
 	const id = "wf_1"
 
 	// The step cap gets there first.
-	if !h.claimRunTermination(id) {
+	if !h.claimTermination(id) {
 		t.Fatal("the step cap could not claim the run")
 	}
-	h.recordRunEnd(id, runEndStepCap)
+	h.recordEnd(id, runEndStepCap)
 
 	// The schedule deadline, arriving on the same run.
-	if h.claimRunTermination(id) {
+	if h.claimTermination(id) {
 		t.Fatal("the schedule deadline claimed a run the step cap was already ending")
 	}
-	if got := h.runEndReason(id); got != runEndStepCap {
-		t.Errorf("runEndReason = %q, want the first reason %q", got, runEndStepCap)
+	if got := h.endReason(id); got != runEndStepCap {
+		t.Errorf("endReason = %q, want the first reason %q", got, runEndStepCap)
 	}
 }
 
@@ -673,11 +673,11 @@ func TestReleaseRunTermination_ReopensAFailedCancel(t *testing.T) {
 	t.Parallel()
 	h := &Runs{}
 
-	if !h.claimRunTermination("wf_1") {
+	if !h.claimTermination("wf_1") {
 		t.Fatal("the first claim failed")
 	}
-	h.releaseRunTermination("wf_1")
-	if !h.claimRunTermination("wf_1") {
+	h.releaseTermination("wf_1")
+	if !h.claimTermination("wf_1") {
 		t.Error("the run stayed claimed after its cancel failed, so nothing can stop it")
 	}
 }
@@ -690,10 +690,10 @@ func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
 	leased(t, h, id)
-	h.armRunDeadline(t.Context(), id)
-	h.claimRunTermination(id)
+	h.armDeadline(t.Context(), id)
+	h.claimTermination(id)
 
-	h.forgetRunBounds(t.Context(), id)
+	h.forgetBounds(t.Context(), id)
 
 	h.mu.Lock()
 	claims := len(h.bounds.terminating)
@@ -723,16 +723,16 @@ func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
 
-	h.claimRunTermination(id)
-	h.recordRunEnd(id, runEndOverran)
-	h.recordRunEnd("wf_other", runEndStepCap)
+	h.claimTermination(id)
+	h.recordEnd(id, runEndOverran)
+	h.recordEnd("wf_other", runEndStepCap)
 
-	h.clearRunEnd(id)
+	h.clearEnd(id)
 
-	if got := h.runEndReason(id); got != "" {
+	if got := h.endReason(id); got != "" {
 		t.Errorf("the retried run still reads %q, so its row renders as aborted", got)
 	}
-	if !h.claimRunTermination(id) {
+	if !h.claimTermination(id) {
 		t.Error("the retried run kept its termination claim, so no bound can ever stop it")
 	}
 	// The eviction queue must lose the entry too, or it names a key the map no
@@ -744,7 +744,7 @@ func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 		t.Errorf("the eviction queue still names the cleared run: %v", order)
 	}
 	// A neighbour is untouched.
-	if got := h.runEndReason("wf_other"); got != runEndStepCap {
+	if got := h.endReason("wf_other"); got != runEndStepCap {
 		t.Errorf("clearing one run's reason changed another's to %q", got)
 	}
 }
@@ -757,15 +757,15 @@ func TestClearRunEnd_ClearsTheClaimOfAUserCancelledRun(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
 
-	h.claimRunTermination(id) // the user's cancel
-	h.clearRunEnd(id)         // the retry
+	h.claimTermination(id) // the user's cancel
+	h.clearEnd(id)         // the retry
 
-	if !h.claimRunTermination(id) {
+	if !h.claimTermination(id) {
 		t.Error("a user-cancelled run stayed claimed through its retry, so nothing bounds it")
 	}
 }
 
-// TestRearmRetriedRun_GivesAFreshClock: RetryRun's already-hosted branch exists
+// TestRearmRetriedRun_GivesAFreshClock: Retry's already-hosted branch exists
 // for a run aborted WITHOUT a terminal frame, which can still carry the deadline
 // it was launched with — and the arm is idempotent on an already-bounded run, so
 // without the disarm that run is retried under the remainder of its old clock.
@@ -774,10 +774,10 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 	const id = "wf_1"
 	leased(t, h, id)
 
-	h.armRunDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
 	before, _ := h.lease(id)
 
-	h.rearmRetriedRun(t.Context(), id, "publish")
+	h.rearmRetried(t.Context(), id, "publish")
 
 	after, held := h.lease(id)
 	if !held || !after.Bounded() {
@@ -803,7 +803,7 @@ func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testi
 	h := &Runs{}
 	const id = "wf_1"
 
-	h.rearmRetriedRun(t.Context(), id, "nightly")
+	h.rearmRetried(t.Context(), id, "nightly")
 
 	l, held := h.lease(id)
 	if !held {
@@ -872,7 +872,7 @@ func TestObserveRunStart_AParentlessFrameMintsASweepableLease(t *testing.T) {
 	h, _, _ := newTestHub()
 	const id = "wf_retry"
 
-	h.runs.observeRunStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
+	h.runs.observeStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": id, "workflowName": "nightly",
 	}))
 
@@ -895,7 +895,7 @@ func TestObserveRunStart_AParentlessFrameMintsASweepableLease(t *testing.T) {
 	}
 
 	// The other carrier, on the same handler: a chat's own agent run stays agent.
-	h.runs.observeRunStart(t.Context(), "c-abc", runNotif(methodWFRunStart, map[string]any{
+	h.runs.observeStart(t.Context(), "c-abc", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
 	}))
 	if l, _ := h.runs.lease("wf_agent"); l.Origin != runlease.OriginAgent {
@@ -905,7 +905,7 @@ func TestObserveRunStart_AParentlessFrameMintsASweepableLease(t *testing.T) {
 
 // TestRunEndReason_DistinguishesABoundFromAUserCancel is D56c's whole point.
 //
-// Both bounds stop a run through the same CancelRun the Cancel button reaches,
+// Both bounds stop a run through the same Cancel the Cancel button reaches,
 // and KAS's status vocabulary has no "cancelled" — a cancel lands on `aborted`
 // whoever asked for it. So the row cannot tell a backstop from a person unless
 // the side that decided records it, and a user cancel must record NOTHING or the
@@ -914,21 +914,21 @@ func TestRunEndReason_DistinguishesABoundFromAUserCancel(t *testing.T) {
 	t.Parallel()
 	h := &Runs{}
 
-	if got := h.runEndReason("wf_user_cancelled"); got != "" {
+	if got := h.endReason("wf_user_cancelled"); got != "" {
 		t.Errorf("a run nothing recorded reported %q; a user cancel must read as empty", got)
 	}
-	h.recordRunEnd("wf_overran", runEndOverran)
-	h.recordRunEnd("wf_step", runEndStepCap)
+	h.recordEnd("wf_overran", runEndOverran)
+	h.recordEnd("wf_step", runEndStepCap)
 
-	if got := h.runEndReason("wf_overran"); got != runEndOverran {
-		t.Errorf("runEndReason(overran) = %q, want %q", got, runEndOverran)
+	if got := h.endReason("wf_overran"); got != runEndOverran {
+		t.Errorf("endReason(overran) = %q, want %q", got, runEndOverran)
 	}
-	if got := h.runEndReason("wf_step"); got != runEndStepCap {
-		t.Errorf("runEndReason(step cap) = %q, want %q", got, runEndStepCap)
+	if got := h.endReason("wf_step"); got != runEndStepCap {
+		t.Errorf("endReason(step cap) = %q, want %q", got, runEndStepCap)
 	}
 	// Still nothing for the run nobody bounded, now that its neighbours have
 	// entries: a shared map must not answer for a key it does not hold.
-	if got := h.runEndReason("wf_user_cancelled"); got != "" {
+	if got := h.endReason("wf_user_cancelled"); got != "" {
 		t.Errorf("the reason leaked to an unrecorded run: %q", got)
 	}
 }
@@ -944,7 +944,7 @@ func TestRecordRunEnd_IsBounded(t *testing.T) {
 	h := &Runs{}
 
 	for i := range maxRunEndReasons + 10 {
-		h.recordRunEnd("wf_"+strconv.Itoa(i), runEndOverran)
+		h.recordEnd("wf_"+strconv.Itoa(i), runEndOverran)
 	}
 	h.mu.Lock()
 	got := len(h.bounds.reasons)
@@ -959,10 +959,10 @@ func TestRecordRunEnd_IsBounded(t *testing.T) {
 	}
 	// Oldest first: the reason for a run nobody is still looking at is the one to
 	// lose.
-	if h.runEndReason("wf_0") != "" {
+	if h.endReason("wf_0") != "" {
 		t.Error("the oldest reason survived eviction")
 	}
-	if h.runEndReason("wf_"+strconv.Itoa(maxRunEndReasons+9)) != runEndOverran {
+	if h.endReason("wf_"+strconv.Itoa(maxRunEndReasons+9)) != runEndOverran {
 		t.Error("the newest reason was evicted")
 	}
 }
@@ -974,8 +974,8 @@ func TestRecordRunEnd_RewriteDoesNotDoubleQueue(t *testing.T) {
 	t.Parallel()
 	h := &Runs{}
 
-	h.recordRunEnd("wf_1", runEndOverran)
-	h.recordRunEnd("wf_1", runEndStepCap)
+	h.recordEnd("wf_1", runEndOverran)
+	h.recordEnd("wf_1", runEndStepCap)
 
 	h.mu.Lock()
 	order := len(h.bounds.order)
@@ -983,13 +983,13 @@ func TestRecordRunEnd_RewriteDoesNotDoubleQueue(t *testing.T) {
 	if order != 1 {
 		t.Errorf("the eviction queue holds %d entries for one run, want 1", order)
 	}
-	if got := h.runEndReason("wf_1"); got != runEndStepCap {
-		t.Errorf("runEndReason = %q, want the latest reason %q", got, runEndStepCap)
+	if got := h.endReason("wf_1"); got != runEndStepCap {
+		t.Errorf("endReason = %q, want the latest reason %q", got, runEndStepCap)
 	}
 	// An empty reason is not a reason: recording one would put a run in the queue
 	// whose row then reads as unbounded anyway.
-	h.recordRunEnd("wf_2", "")
-	if got := h.runEndReason("wf_2"); got != "" {
+	h.recordEnd("wf_2", "")
+	if got := h.endReason("wf_2"); got != "" {
 		t.Errorf("an empty reason was recorded as %q", got)
 	}
 }
@@ -1008,7 +1008,7 @@ func TestStepTurnCapExceeded_CancelsOncePerRun(t *testing.T) {
 	// Unarmed: a run vibekit is not bounding is not one it may cancel, and a
 	// breach reported for it records nothing.
 	h.StepTurnCapExceeded("wf_unarmed", "node-1", 200)
-	if got := h.runEndReason("wf_unarmed"); got != "" {
+	if got := h.endReason("wf_unarmed"); got != "" {
 		t.Errorf("an unarmed run recorded %q; the arm is the authority to act", got)
 	}
 }
@@ -1021,18 +1021,18 @@ func TestStepTurnCapExceeded_DoesNotConsumeTheDeadlineItLoses(t *testing.T) {
 	h := &Runs{}
 	const id = "wf_1"
 	leased(t, h, id)
-	h.armRunDeadline(t.Context(), id)
+	h.armDeadline(t.Context(), id)
 
 	// Something else is already ending the run.
-	if !h.claimRunTermination(id) {
+	if !h.claimTermination(id) {
 		t.Fatal("the fixture could not take the claim it needs to hold")
 	}
 	h.StepTurnCapExceeded(id, "node-1", 200)
 
-	if !h.runBounded(id) {
+	if !h.bounded(id) {
 		t.Error("a losing step-cap breach dropped the deadline of a run it did not terminate")
 	}
-	if got := h.runEndReason(id); got != "" {
+	if got := h.endReason(id); got != "" {
 		t.Errorf("a losing step-cap breach recorded %q over the winner's reason", got)
 	}
 }

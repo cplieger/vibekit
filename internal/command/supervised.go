@@ -53,7 +53,7 @@ func CmdSetSupervisedMode(ctx context.Context, bridges BridgeAccess, chats ChatS
 	// Best-effort on the live session, and logged at ERROR when it fails while
 	// ENABLING: the user asked to review writes and would not be asked. The
 	// disabling direction failing is a nuisance, not a hazard.
-	if bridge := bridges.GetBridge(cmd.ChatID); bridge != nil {
+	if bridge := bridges.Bridge(cmd.ChatID); bridge != nil {
 		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
 			"configId": vibekit.ConfigOptionAutopilot,
 			"value":    !p.Enabled,

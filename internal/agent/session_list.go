@@ -106,7 +106,7 @@ func (h *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("session list failed", "error", err)
 		rows = []vibekit.ResumableSession{}
 	}
-	runs, rErr := h.runs.workflowRuns(r.Context(), claimed)
+	runs, rErr := h.runs.list(r.Context(), claimed)
 	if rErr != nil {
 		slog.Warn("workflow run list failed", "error", rErr)
 		runs = []vibekit.WorkflowRun{}
@@ -116,7 +116,7 @@ func (h *Runtime) handleSessionList(w http.ResponseWriter, r *http.Request) {
 
 // resumableSessions fetches and filters the workspace's stored sessions.
 func (h *Runtime) resumableSessions(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.ResumableSession, error) {
-	u := h.ensureUtility()
+	u := h.utility.get()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
@@ -319,8 +319,8 @@ type kasWorkflowRun struct {
 	ParentSessionID string `json:"parentSessionId"`
 }
 
-// workflowRuns fetches the workspace's workflow runs, newest first.
-func (rp *Runs) workflowRuns(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.WorkflowRun, error) {
+// list fetches the workspace's workflow runs, newest first.
+func (rp *Runs) list(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.WorkflowRun, error) {
 	u := rp.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
@@ -335,14 +335,14 @@ func (rp *Runs) workflowRuns(ctx context.Context, claimed map[string]vibekit.Cha
 	if uErr := json.Unmarshal(raw, &list); uErr != nil {
 		return nil, uErr
 	}
-	return rp.toWorkflowRuns(claimed, list.Runs), nil
+	return rp.toWire(claimed, list.Runs), nil
 }
 
-// toWorkflowRuns maps the raw run inventory to the wire rows, dropping the ones
-// that do not belong in a history list. Split out of workflowRuns for the reason
+// toWire maps the raw run inventory to the wire rows, dropping the ones
+// that do not belong in a history list. Split out of list for the reason
 // toResumable is split out of resumableSessions: the filtering is the part worth
 // testing and the RPC is not.
-func (rp *Runs) toWorkflowRuns(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun) []vibekit.WorkflowRun {
+func (rp *Runs) toWire(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun) []vibekit.WorkflowRun {
 	out := make([]vibekit.WorkflowRun, 0, len(runs))
 	for i := range runs {
 		r := &runs[i]
@@ -383,7 +383,7 @@ func (rp *Runs) toWorkflowRuns(claimed map[string]vibekit.ChatID, runs []kasWork
 			// bounds stop a run through the same cancel a person does, so the
 			// reason has to come from the side that decided. "" for everything
 			// else, including a user cancel. See run_bounds.go.
-			EndReason: rp.runEndReason(r.WorkflowID),
+			EndReason: rp.endReason(r.WorkflowID),
 		})
 	}
 	// Stable: ties must keep insertion order or the run list reshuffles

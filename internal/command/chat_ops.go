@@ -92,7 +92,7 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 	// an earlier turn started on purpose is not this gesture's to kill.
 	terms.KillForTurn(cmd.ChatID)
 
-	sb := bridges.GetBridge(cmd.ChatID)
+	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
 		return responseOK, nil
 	}
@@ -130,7 +130,7 @@ func CmdCancel(ctx context.Context, bridges BridgeAccess, perms PendingPermAcces
 // chat's agent terminals.
 func CmdCloseChat(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, teardown ChatTeardown, cmd *vibekit.ClientCommand) (any, error) {
 	perms.ClearPendingPermsForChat(cmd.ChatID)
-	if sb := bridges.GetBridge(cmd.ChatID); sb != nil {
+	if sb := bridges.Bridge(cmd.ChatID); sb != nil {
 		if err := sb.Notify(ctx, vibekit.MethodCancel, SessionParams(sb)); err != nil {
 			slog.Warn("close: turn cancel failed", "chat_id", cmd.ChatID, keyError, err)
 		}
@@ -141,7 +141,7 @@ func CmdCloseChat(ctx context.Context, bridges BridgeAccess, perms PendingPermAc
 
 // CmdPermission forwards the user's permission dialog choice to kiro-cli.
 func CmdPermission(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
-	sb := bridges.GetBridge(cmd.ChatID)
+	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
 		return nil, StatusError(http.StatusBadRequest, errNoBridge)
 	}

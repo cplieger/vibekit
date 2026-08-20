@@ -34,30 +34,6 @@ import (
 // 45s the knowledge/spec sibling reads use.
 const policyCallTimeout = 45 * time.Second
 
-// ensureUtility lazily constructs the shared utility runtime (session +
-// text-gen agent; same guard used by UtilityPrompt / AccountUsage / spec /
-// knowledge) with its hooks-management plumbing injected.
-//
-// The utility session opts into KAS's v2 hook engine (enableHooks →
-// _meta.kiro.hooks) so the Hooks tab can list and toggle hooks over it. Chat
-// bridges opt in too (bridge_coord.go passes EnableHooks:true on both the new-
-// and the loaded-session path), because that is what makes hook AUTOFIRE work.
-// Neither answers `executeHook`, and neither needs to: autofire runs the hook
-// inside KAS and never reaches for that callback, so the deleted responder is not
-// a gap in either session's plumbing (see hooks.go).
-//
-// NOTE the deliberate cycle this lazy in-package constructor resolves:
-// the utilitySessionHooks callbacks below (broadcastHooksChanged,
-// cacheGovernanceFromUtility) point back INTO the
-// runtime's service surfaces, while those same services lease the utility
-// runtime through this method — a bidirectional edge, not a forward-only
-// seam. Any extraction of the utility runtime into its own package must
-// take the hook/governance owners WITH it (or inject them forward-only
-// from composition), not split them across a package boundary.
-func (h *Runtime) ensureUtility() *utilityRuntime {
-	return h.utility.get()
-}
-
 // buildUtility is the lease's constructor, handed to it at wiring time. It lives
 // here rather than inside the lease because of what it CLOSES OVER: two Settings
 // hooks and the token source, all of which point back into runtime services while

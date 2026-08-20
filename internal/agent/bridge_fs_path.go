@@ -80,7 +80,7 @@ func (h *Runtime) respondBridge(ctx context.Context, chatID vibekit.ChatID, msg 
 		slog.Warn("fs request missing id", "chat_id", chatID, "method", msg.Method)
 		return
 	}
-	sb := h.coord.GetBridge(chatID)
+	sb := h.coord.Bridge(chatID)
 	if sb == nil {
 		slog.Warn("fs response dropped: no bridge", "chat_id", chatID, "method", msg.Method)
 		return

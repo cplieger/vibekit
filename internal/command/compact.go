@@ -41,7 +41,7 @@ func CmdCompact(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientCo
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	bridge := bridges.GetBridge(cmd.ChatID)
+	bridge := bridges.Bridge(cmd.ChatID)
 	if bridge == nil {
 		return nil, StatusError(http.StatusConflict, errNoBridge)
 	}

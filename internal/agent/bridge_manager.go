@@ -37,7 +37,7 @@ func (bm *bridgeManager) get(chatID vibekit.ChatID) *sharedBridge {
 // getOrInsert returns an existing bridge for chatID if present.
 // If not, it creates a new sharedBridge via the factory, inserts it
 // into the map, and returns (newBridge, false). With singleflight in
-// GetOrCreateBridge, concurrent callers coalesce so the new bridge
+// OpenBridge, concurrent callers coalesce so the new bridge
 // no longer needs to be returned locked.
 func (bm *bridgeManager) getOrInsert(chatID vibekit.ChatID) (sb *sharedBridge, existed bool) {
 	bm.mu.Lock()

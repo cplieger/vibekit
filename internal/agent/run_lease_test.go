@@ -38,8 +38,8 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
 
-		if _, _, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
-			t.Fatalf("LaunchRun: %v", err)
+		if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
+			t.Fatalf("Launch: %v", err)
 		}
 		l, ok := h.runs.lease("wf_manual")
 		if !ok {
@@ -69,8 +69,8 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
 
-		if _, _, err := h.runs.LaunchScheduledRun(t.Context(), "bundled://publish", "sched-1", slot); err != nil {
-			t.Fatalf("LaunchScheduledRun: %v", err)
+		if _, _, err := h.runs.LaunchScheduled(t.Context(), "bundled://publish", "sched-1", slot); err != nil {
+			t.Fatalf("LaunchScheduled: %v", err)
 		}
 		l, ok := h.runs.lease("wf_sched")
 		if !ok {
@@ -100,7 +100,7 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 // whole bound — it held the recipe for up to an hour while the single-run rule
 // refused every slot underneath it, up to ELEVEN at the 5-minute schedule floor.
 //
-// Driven through LaunchRun rather than through the arm, because that is where the
+// Driven through Launch rather than through the arm, because that is where the
 // defect lived: the test this replaces asserted the arithmetic with a
 // scheduledLaunch substituted into every nonzero-slot case, so it passed while the
 // manual path resolved no slot at all.
@@ -129,8 +129,8 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	h.runs.schedules = st
 
 	before := time.Now()
-	if _, _, lErr := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); lErr != nil {
-		t.Fatalf("LaunchRun: %v", lErr)
+	if _, _, lErr := h.runs.Launch(t.Context(), "bundled://publish", nil); lErr != nil {
+		t.Fatalf("Launch: %v", lErr)
 	}
 	wantSlot, err := schedule.NextRunFrom(spec, anchor, before)
 	if err != nil {
@@ -205,8 +205,8 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 			}
 			h.runs.schedules = st
 
-			if _, _, lErr := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); lErr != nil {
-				t.Fatalf("LaunchRun: %v", lErr)
+			if _, _, lErr := h.runs.Launch(t.Context(), "bundled://publish", nil); lErr != nil {
+				t.Fatalf("Launch: %v", lErr)
 			}
 			l, _ := h.runs.lease("wf_manual")
 			if !l.SlotAt.IsZero() {
@@ -219,8 +219,8 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	t.Run("no schedule store at all", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
-		if _, _, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
-			t.Fatalf("LaunchRun: %v", err)
+		if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err != nil {
+			t.Fatalf("Launch: %v", err)
 		}
 		if l, _ := h.runs.lease("wf_manual"); !l.SlotAt.IsZero() {
 			t.Errorf("SlotAt = %v with scheduling switched off", l.SlotAt)
@@ -237,7 +237,7 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errRecipeBusy}
 
-	if _, _, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); err == nil {
+	if _, _, err := h.runs.Launch(t.Context(), "bundled://publish", nil); err == nil {
 		t.Fatal("a failed invoke reported success")
 	}
 	if _, ok := h.runs.lease("wf_1"); ok {
@@ -266,7 +266,7 @@ func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
 			const id = "wf_1"
 			h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
 
-			h.runs.observeRunComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+			h.runs.observeComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": id, "status": tc.status,
 			}))
 

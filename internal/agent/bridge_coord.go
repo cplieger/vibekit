@@ -127,7 +127,7 @@ func newBridgeCoordinator(h *Runtime) *BridgeCoordinator {
 		onSessionRehydrated: func(chatID vibekit.ChatID) {
 			ctx, cancel := h.hubContext()
 			defer cancel()
-			h.runs.resumeRestartPausedRuns(ctx, chatID)
+			h.runs.resumeRestartPaused(ctx, chatID)
 		},
 	}
 }
@@ -171,12 +171,12 @@ func resolveAgentEngine() string {
 	return vibekit.AgentEngineV3
 }
 
-// GetOrCreateBridge returns an existing bridge for chatID, or creates one.
+// OpenBridge returns an existing bridge for chatID, or creates one.
 // Concurrent callers for the same chatID coalesce via singleflight, keyed by
 // bridgeSpawnKey.
 //
 //nolint:revive // unexported-return: sharedBridge is package-internal; callers within hub use the methods on it. Exporting would leak ACP wiring outside the runtime package.
-func (bc *BridgeCoordinator) GetOrCreateBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
+func (bc *BridgeCoordinator) OpenBridge(ctx context.Context, chatID vibekit.ChatID, modelOverride string) (*sharedBridge, error) {
 	// Fast path: bridge already exists.
 	if sb := bc.bridge.mgr.get(chatID); sb != nil {
 		return sb, nil
@@ -504,10 +504,10 @@ func (bc *BridgeCoordinator) reportModeNotApplied(ctx context.Context, chatID vi
 	}))
 }
 
-// GetBridge returns the bridge for chatID, or nil.
+// Bridge returns the bridge for chatID, or nil.
 //
-//nolint:revive // unexported-return: see GetOrCreateBridge above.
-func (bc *BridgeCoordinator) GetBridge(chatID vibekit.ChatID) *sharedBridge {
+//nolint:revive // unexported-return: see OpenBridge above.
+func (bc *BridgeCoordinator) Bridge(chatID vibekit.ChatID) *sharedBridge {
 	return bc.bridge.mgr.get(chatID)
 }
 

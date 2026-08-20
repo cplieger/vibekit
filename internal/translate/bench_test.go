@@ -20,7 +20,7 @@ type baseDeps struct {
 	// onSetGovernance, when set, is invoked by SetGovernance so a test can
 	// assert the hub-side cache write (mirrors onBroadcast).
 	onSetGovernance func(vibekit.GovernanceStatePayload)
-	// scheduledRuns are the workflow ids IsScheduledRun answers true for, so a
+	// scheduledRuns are the workflow ids IsScheduled answers true for, so a
 	// test can stage a scheduled run without a hub or a scheduler.
 	scheduledRuns map[string]bool
 	// stepCapBreaches records every StepTurnCapExceeded call, so a test can
@@ -88,7 +88,7 @@ func (d *baseDeps) RecordFromDiffs(chatID vibekit.ChatID, diffs []vibekit.ToolDi
 	d.lineTracker.RecordFromDiffs(chatID, diffs, turn, kind)
 }
 func (d *baseDeps) ParentACPSession(vibekit.ChatID) string { return d.parent }
-func (d *baseDeps) IsScheduledRun(workflowID string) bool {
+func (d *baseDeps) IsScheduled(workflowID string) bool {
 	return d.scheduledRuns[workflowID]
 }
 

@@ -136,7 +136,7 @@ func (t *Translator) HandleRunStart(ctx context.Context, chatID vibekit.ChatID, 
 		Name:       p.WorkflowName,
 		// Keyed on the workflow id, NOT on chatID: this frame's chat id is empty
 		// for exactly the runs the flag is about (see RunOriginAccess).
-		Scheduled: t.runOrigin.IsScheduledRun(p.WorkflowID),
+		Scheduled: t.runOrigin.IsScheduled(p.WorkflowID),
 	}))
 }
 

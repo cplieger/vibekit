@@ -238,7 +238,7 @@ func TestRunStart_CarriesTheScheduledMark(t *testing.T) {
 			deps.scheduledRuns = c.scheduled
 			tr := New(rolesOf(deps))
 
-			// The empty chat id is the real shape: runDispatch passes "" for a
+			// The empty chat id is the real shape: dispatch passes "" for a
 			// parentless run's lifecycle frames.
 			tr.HandleRunStart(t.Context(), "",
 				notif("_kiro/workflow/run_start", map[string]any{"workflowId": "wf_1", "workflowName": "nightly"}))

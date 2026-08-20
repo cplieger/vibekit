@@ -19,8 +19,8 @@ func TestACPArgsReachChatBridges(t *testing.T) {
 	h.mcpRegistry.signalReady()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("GetOrCreateBridge: %v", err)
+	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
 	}
 	opts := br.lastStartOpts()
 	if opts == nil {
@@ -46,7 +46,7 @@ func TestACPArgsNeverReachTheUtilityBridge(t *testing.T) {
 	cs.Bus = h
 	h.mcpRegistry.signalReady()
 
-	u := h.ensureUtility()
+	u := h.utility.get()
 	if _, err := u.session.acquire(t.Context()); err != nil {
 		t.Fatalf("acquire utility session: %v", err)
 	}
@@ -71,8 +71,8 @@ func TestACPArgsUnsetIsEmpty(t *testing.T) {
 	h.mcpRegistry.signalReady()
 	_ = cs.Mutate(t.Context(), "c1", func(c *vibekit.Chat, _ bool) bool { c.Name = "A"; return true })
 
-	if _, err := h.coord.GetOrCreateBridge(t.Context(), "c1", ""); err != nil {
-		t.Fatalf("GetOrCreateBridge: %v", err)
+	if _, err := h.coord.OpenBridge(t.Context(), "c1", ""); err != nil {
+		t.Fatalf("OpenBridge: %v", err)
 	}
 	if opts := br.lastStartOpts(); opts != nil && len(opts.ExtraArgs) != 0 {
 		t.Errorf("ExtraArgs = %v with no WithACPArgs, want empty", opts.ExtraArgs)

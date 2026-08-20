@@ -16,7 +16,7 @@ package agent
 // restart is supposed to keep. The ADMISSION backstop answers "may this run
 // start": a run can be orphaned without a restart, because its own bridge can die
 // mid-session and nothing else would notice. They share one release function,
-// which is what keeps them from disagreeing — the same shape claimRunTermination
+// which is what keeps them from disagreeing — the same shape claimTermination
 // gives the ending paths.
 //
 // NO AUTOMATIC RELAUNCH (user decision). The stated recovery is a manual run
@@ -46,7 +46,7 @@ const runStatusPaused = "paused"
 // deciding how long the rest may take.
 const orphanSweepBudget = 2 * time.Minute
 
-// SweepOrphanedRuns clears every lease whose run a dead process left paused, so
+// SweepOrphaned clears every lease whose run a dead process left paused, so
 // that after boot nothing reads as live unless it genuinely is.
 //
 // Runs in the background on the runtime's own shutdown context. At boot the most
@@ -54,7 +54,7 @@ const orphanSweepBudget = 2 * time.Minute
 // sweep is best-effort: skipping an orphan costs one stale row until the next
 // launch attempt releases it, while cancelling a live run destroys work. Every
 // branch resolves in that direction.
-func (rp *Runs) SweepOrphanedRuns(ctx context.Context) {
+func (rp *Runs) SweepOrphaned(ctx context.Context) {
 	held := rp.leaseStore().List()
 	if len(held) == 0 {
 		return
@@ -62,7 +62,7 @@ func (rp *Runs) SweepOrphanedRuns(ctx context.Context) {
 	cctx, cancel := context.WithTimeout(ctx, orphanSweepBudget)
 	defer cancel()
 
-	runs, err := rp.workflowRunsRaw(cctx)
+	runs, err := rp.listRaw(cctx)
 	if err != nil {
 		// Leave every lease alone. The admission backstop is the second chance,
 		// and it runs with a bridge that answered.
@@ -78,7 +78,7 @@ func (rp *Runs) SweepOrphanedRuns(ctx context.Context) {
 		if l.Origin == runlease.OriginAgent {
 			// Chat-parented by construction: KAS parents an agent's run on the
 			// calling chat's session, so it heals WITH that chat when the user's
-			// next message rehydrates its bridge (resumeRestartPausedRuns). This
+			// next message rehydrates its bridge (resumeRestartPaused). This
 			// exclusion is why the sweep needs no session-chain walk.
 			continue
 		}
@@ -92,7 +92,7 @@ func (rp *Runs) SweepOrphanedRuns(ctx context.Context) {
 				"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
 			rp.releaseLease(cctx, l.WorkflowID)
 		case st == runStatusPaused && rp.restartPaused(cctx, l.WorkflowID):
-			rp.clearOrphanedRun(cctx, &l)
+			rp.clearOrphaned(cctx, &l)
 		}
 	}
 }
@@ -123,10 +123,10 @@ func (rp *Runs) clearBlockingOrphan(ctx context.Context, workflowID, status stri
 	if !rp.restartPaused(ctx, workflowID) {
 		return false
 	}
-	return rp.clearOrphanedRun(ctx, &l)
+	return rp.clearOrphaned(ctx, &l)
 }
 
-// clearOrphanedRun is the release both paths share: claim the termination,
+// clearOrphaned is the release both paths share: claim the termination,
 // re-confirm the run is still an orphan, cancel, and only then say so and give up
 // the lease.
 //
@@ -136,7 +136,7 @@ func (rp *Runs) clearBlockingOrphan(ctx context.Context, workflowID, status stri
 // admission attempt retries this same clear.
 //
 // The REASON is recorded only after the cancel landed, which is the opposite
-// order from finishRunTermination and the reason this composes the primitives
+// order from finishTermination and the reason this composes the primitives
 // instead of calling it. The other ending paths record first on purpose: a run
 // that blew its ceiling breached its bound whether or not the cancel went
 // through, so the row should say so. An orphan is not that — a failed cancel
@@ -156,11 +156,11 @@ func (rp *Runs) clearBlockingOrphan(ctx context.Context, workflowID, status stri
 //
 //   - the sweep only ever touches a lease vibekit minted, so a TUI-launched run
 //     (no lease) and an agent-launched run (excluded by origin) are out of reach;
-//   - vibekit owns no verb that can resume what is left. ResumeRun needs the
-//     run's OWN `run:<id>` bridge (hostedRunControl), and a restart is precisely
+//   - vibekit owns no verb that can resume what is left. Resume needs the
+//     run's OWN `run:<id>` bridge (hostedControl), and a restart is precisely
 //     what destroys that bridge — so it answers errRunNotHosted for every run
 //     this function can reach;
-//   - and the chat-parented resume sweep (resumeRestartPausedRuns) is scoped to a
+//   - and the chat-parented resume sweep (resumeRestartPaused) is scoped to a
 //     chat's session chain, which a parentless run is not in.
 //
 // So the resumer would have to be another KAS client acting on a parentless run
@@ -168,8 +168,8 @@ func (rp *Runs) clearBlockingOrphan(ctx context.Context, workflowID, status stri
 // the auto-cancel — the ratified behaviour is to cancel and say so in History —
 // and do not re-open it as a defect without first checking whether KAS has gained
 // a conditional cancel.
-func (rp *Runs) clearOrphanedRun(ctx context.Context, l *runlease.Lease) bool {
-	if !rp.claimRunTermination(l.WorkflowID) {
+func (rp *Runs) clearOrphaned(ctx context.Context, l *runlease.Lease) bool {
+	if !rp.claimTermination(l.WorkflowID) {
 		// Something is already ending it. Not this path's run to clear, and not a
 		// reason to refuse the launch either — the winner will release the lease.
 		return false
@@ -178,19 +178,19 @@ func (rp *Runs) clearOrphanedRun(ctx context.Context, l *runlease.Lease) bool {
 		// It stopped being an orphan between the caller's read and now. Hand the
 		// claim back: whatever is true of the run now, this is not the path that
 		// gets to end it.
-		rp.releaseRunTermination(l.WorkflowID)
+		rp.releaseTermination(l.WorkflowID)
 		slog.Info("a run stopped reading as restart-orphaned before its cancel; leaving it alone",
 			"workflow_id", l.WorkflowID, "recipe", l.Recipe)
 		return false
 	}
-	rp.disarmRunDeadline(ctx, l.WorkflowID)
-	if err := rp.cancelRunRPC(ctx, l.WorkflowID); err != nil {
-		rp.releaseRunTermination(l.WorkflowID)
+	rp.disarmDeadline(ctx, l.WorkflowID)
+	if err := rp.cancelRPC(ctx, l.WorkflowID); err != nil {
+		rp.releaseTermination(l.WorkflowID)
 		slog.Error("could not cancel a restart-orphaned run; its recipe stays busy until the next try",
 			"workflow_id", l.WorkflowID, "error", err)
 		return false
 	}
-	rp.recordRunEnd(l.WorkflowID, runEndOrphaned)
+	rp.recordEnd(l.WorkflowID, runEndOrphaned)
 	// ERROR for the same reason the other two bounds log at ERROR: an unattended
 	// run cut off by a restart is a failure a homelab Loki rule should be able to
 	// key on, and the schedule row only tells the user once they look.
@@ -233,7 +233,7 @@ func (rp *Runs) restartPaused(ctx context.Context, workflowID string) bool {
 	if workflowID == "" {
 		return false
 	}
-	res, ok := rp.inspectRun(ctx, workflowID)
+	res, ok := rp.inspect(ctx, workflowID)
 	if !ok {
 		return false
 	}
@@ -256,10 +256,10 @@ type inspectRunState struct {
 	WorkflowID string `json:"workflowId"`
 }
 
-// inspectRun reads one run's inspect reply, reporting false when it cannot be
+// inspect reads one run's inspect reply, reporting false when it cannot be
 // read or decoded at all.
-func (rp *Runs) inspectRun(ctx context.Context, workflowID string) (inspectRunState, bool) {
-	raw, err := rp.rawInspectRun(ctx, workflowID)
+func (rp *Runs) inspect(ctx context.Context, workflowID string) (inspectRunState, bool) {
+	raw, err := rp.rawInspect(ctx, workflowID)
 	if err != nil {
 		slog.Warn("could not read a paused run's state, so it is left alone",
 			"workflow_id", workflowID, "error", err)

@@ -8,7 +8,7 @@ import (
 // TestNextDeadline_TakesTheTighterBoundAndNeverGoesBelowTheFloor is the whole
 // arithmetic of "one clock, two inputs".
 //
-// Before the lease these were two independent mechanisms: armRunDeadline (the
+// Before the lease these were two independent mechanisms: armDeadline (the
 // slot, armed only by the scheduler's launch) and the run ceiling (armed by
 // everything). So a manual run of a scheduled recipe held that recipe for the
 // whole ceiling and refused every slot underneath it, and a slot that fired late

@@ -122,7 +122,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 	if err := chats.AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("empty turn: append event", "chat_id", chatID, keyError, err)
 	}
-	sb2, err2 := bridges.GetOrCreateBridge(ctx, chatID, p.Model)
+	sb2, err2 := bridges.OpenBridge(ctx, chatID, p.Model)
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
 			"chat_id", chatID, keyError, err2)
@@ -133,7 +133,7 @@ func recoverEmptyTurn(ctx context.Context, bridges BridgeAccess, chats ChatStore
 		return resp
 	}
 	// Take the new bridge's prompt slot the same way CmdPrompt takes it, rather
-	// than asserting it with SetPrompting. GetOrCreateBridge leaves the bridge
+	// than asserting it with SetPrompting. OpenBridge leaves the bridge
 	// registered and IDLE, so between that return and this line a concurrent
 	// prompt can win the slot -- and an unconditional SetPrompting would then let
 	// the deferred release below flip that turn's slot to idle while it is still
@@ -276,7 +276,7 @@ func CmdPrompt(ctx context.Context, roles *promptRoles, cmd *vibekit.ClientComma
 	// finalize and persist the assistant buffer.
 	ctx, cancel := roles.lifecycle.TurnContext(ctx)
 	defer cancel()
-	sb, err := roles.bridges.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
+	sb, err := roles.bridges.OpenBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
 		roles.bus.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
 		return nil, StatusError(http.StatusInternalServerError, err)

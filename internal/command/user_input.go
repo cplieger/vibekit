@@ -27,7 +27,7 @@ type userInputResult struct {
 // CmdUserInputResponse forwards the user's answer to kiro-cli as the
 // _kiro/userInput response.
 func CmdUserInputResponse(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
-	sb := bridges.GetBridge(cmd.ChatID)
+	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
 		return nil, StatusError(http.StatusBadRequest, errNoBridge)
 	}

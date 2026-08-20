@@ -93,7 +93,7 @@ func CmdSteer(ctx context.Context, bridges BridgeAccess, cmd *vibekit.ClientComm
 		return nil, StatusError(http.StatusBadRequest, errSteerLooksLikeNotification)
 	}
 
-	bridge := bridges.GetBridge(cmd.ChatID)
+	bridge := bridges.Bridge(cmd.ChatID)
 	if bridge == nil {
 		return nil, StatusError(http.StatusConflict, errSteerNoTurn)
 	}
@@ -145,7 +145,7 @@ func CmdSteerClear(ctx context.Context, bridges BridgeAccess, cmd *vibekit.Clien
 	if err := requireChatID(cmd); err != nil {
 		return nil, err
 	}
-	bridge := bridges.GetBridge(cmd.ChatID)
+	bridge := bridges.Bridge(cmd.ChatID)
 	if bridge == nil {
 		// Nothing to clear without a session, and no buffer survives a bridge, so
 		// this is success rather than a refusal: the caller's desired state holds.

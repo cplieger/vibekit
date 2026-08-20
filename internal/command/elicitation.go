@@ -28,7 +28,7 @@ func validElicitationAction(a string) bool {
 // CmdElicitationResponse forwards the user's elicitation form answer to
 // kiro-cli as the elicitation/create response.
 func CmdElicitationResponse(ctx context.Context, bridges BridgeAccess, perms PendingPermAccess, cmd *vibekit.ClientCommand) (any, error) {
-	sb := bridges.GetBridge(cmd.ChatID)
+	sb := bridges.Bridge(cmd.ChatID)
 	if sb == nil {
 		return nil, StatusError(http.StatusBadRequest, errNoBridge)
 	}

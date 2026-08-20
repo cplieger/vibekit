@@ -29,8 +29,8 @@ func (d *benchDeps) AppendMessage(context.Context, vibekit.ChatID, *vibekit.Mess
 func (d *benchDeps) SetDraft(context.Context, vibekit.ChatID, string) error { return nil }
 func (d *benchDeps) Delete(context.Context, vibekit.ChatID) error           { return nil }
 func (d *benchDeps) Broadcast(context.Context, vibekit.ServerEvent)         {}
-func (d *benchDeps) GetBridge(vibekit.ChatID) Bridge                        { return nil }
-func (d *benchDeps) GetOrCreateBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
+func (d *benchDeps) Bridge(vibekit.ChatID) Bridge                           { return nil }
+func (d *benchDeps) OpenBridge(context.Context, vibekit.ChatID, string) (Bridge, error) {
 	return nil, nil
 }
 func (d *benchDeps) CloseBridge(vibekit.ChatID)                    {}
@@ -99,8 +99,8 @@ func TestBenchDeps_Contract(t *testing.T) {
 
 	// --- Intentionally nil (safe only for dispatch-overhead benchmarks) ---
 	t.Run("intentionally_nil", func(t *testing.T) {
-		if d.GetBridge("any") != nil {
-			t.Error("GetBridge expected nil for bench stub")
+		if d.Bridge("any") != nil {
+			t.Error("Bridge expected nil for bench stub")
 		}
 	})
 
@@ -118,8 +118,8 @@ func TestBenchDeps_Contract(t *testing.T) {
 			t.Error("IsEmptyTurn should be false")
 		}
 		d.EmitTurnEndedWithStats(t.Context(), "x", nil, TurnStats{})
-		if _, err := d.GetOrCreateBridge(t.Context(), "x", ""); err != nil {
-			t.Errorf("GetOrCreateBridge returned error: %v", err)
+		if _, err := d.OpenBridge(t.Context(), "x", ""); err != nil {
+			t.Errorf("OpenBridge returned error: %v", err)
 		}
 	})
 }

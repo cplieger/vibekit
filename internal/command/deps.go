@@ -109,8 +109,8 @@ type Bridge interface {
 // BridgeAccess provides bridge lifecycle operations needed by prompt,
 // cancel, subagent, slash, and permission handlers.
 type BridgeAccess interface {
-	GetBridge(chatID vibekit.ChatID) Bridge
-	GetOrCreateBridge(ctx context.Context, chatID vibekit.ChatID, model string) (Bridge, error)
+	Bridge(chatID vibekit.ChatID) Bridge
+	OpenBridge(ctx context.Context, chatID vibekit.ChatID, model string) (Bridge, error)
 	CloseBridge(chatID vibekit.ChatID)
 	// PrimeIfNeeded gives the chat's current session its transcript, if that
 	// session has not had it yet. It takes no Bridge: it looks the bridge up
@@ -325,7 +325,7 @@ type Roles struct {
 	Bridges BridgeAccess
 	// Chats is the chat store directly. It used to arrive through a ChatStore()
 	// GETTER on a ChatAccess composite, which was a second indirection for
-	// nothing, and the composite also carried Broadcast and CancelChatRuns — so
+	// nothing, and the composite also carried Broadcast and CancelForChat — so
 	// only a type holding the store AND the bus AND the run surface could satisfy
 	// it. That is how a host becomes the one thing that qualifies.
 	Chats     ChatStore

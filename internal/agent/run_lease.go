@@ -29,7 +29,7 @@ type launchOrigin struct {
 	// slotAt is the instant this run's own next slot comes due, and it is an
 	// INPUT to the lease's deadline. Zero for a schedule that cannot name its
 	// next slot, and zero for a manual launch of a recipe NOTHING schedules —
-	// but not for a manual launch as such: launchRun fills it in from the
+	// but not for a manual launch as such: launch fills it in from the
 	// recipe's own enabled schedules, which is what stops a manual run from
 	// holding a scheduled recipe for the whole ceiling (see manualSlot).
 	slotAt     time.Time
@@ -41,7 +41,7 @@ type launchOrigin struct {
 // with no schedule row to attribute an outcome to.
 //
 // The SLOT is not set here because it is not knowable here: it depends on the
-// resolved recipe, which only launchRun has. A manual launch that reaches
+// resolved recipe, which only launch has. A manual launch that reaches
 // grantLease with a zero slot is therefore either a retry (whose recipe source
 // this process never saw) or a recipe nothing schedules.
 func manualLaunch() launchOrigin {

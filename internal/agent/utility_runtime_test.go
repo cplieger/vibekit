@@ -530,7 +530,7 @@ func TestPolicyExplain_CallHasTimeout(t *testing.T) {
 // idle timer — a chat bridge is owned by its tab and never swept.
 func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 	h, _, _ := newTestHub()
-	u := h.ensureUtility()
+	u := h.utility.get()
 	if _, err := u.textgen.UtilityPrompt(t.Context(), "warm", ""); err != nil {
 		t.Fatalf("warm: %v", err)
 	}
@@ -573,7 +573,7 @@ func TestCullIdleUtilityBridgeOnce_StopsIdleUtilityBridge(t *testing.T) {
 // the utility slot's read/nil; -race flags the fix's absence.
 func TestStopUtilityBridge_ConcurrentWithCull_NoRace(t *testing.T) {
 	h, _, _ := newTestHub()
-	u := h.ensureUtility()
+	u := h.utility.get()
 	if _, err := u.textgen.UtilityPrompt(t.Context(), "warm", ""); err != nil {
 		t.Fatalf("warm: %v", err)
 	}

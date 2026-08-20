@@ -305,7 +305,7 @@ func wfRun(id, name, status, parentSession, updated string) kasWorkflowRun {
 // on a finished run, so this page is the only place its outcome is ever read.
 func TestToWorkflowRuns_KeepsOnlyParentlessRuns(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_now"}})
-	got := h.runs.toWorkflowRuns(h.claimedSessions(t.Context()), []kasWorkflowRun{
+	got := h.runs.toWire(h.claimedSessions(t.Context()), []kasWorkflowRun{
 		wfRun("wf_manual", "nightly", "completed", "", "2026-08-02T12:00:00.000Z"),
 		wfRun("wf_agent", "goal", "completed", "sess_now", "2026-08-02T11:00:00.000Z"),
 		// Launched from a session the chat has since RETIRED. The chain claim is

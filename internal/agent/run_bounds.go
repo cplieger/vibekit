@@ -27,7 +27,7 @@ package agent
 //
 // NEITHER IS A SETTING, and that is the point rather than an omission: a backstop
 // the user can raise stops being a backstop. There is no per-run override either,
-// because launchRun is shared between the Workflows tab's Run button and the
+// because launch is shared between the Workflows tab's Run button and the
 // scheduler, so a per-run ceiling would let the bounded thing choose its own
 // bound.
 
@@ -156,8 +156,8 @@ type runBoundsState struct {
 	// cancel racing a bound cannot be rewritten into a timeout in History, and
 	// the deadline and the step cap cannot both record over each other.
 	//
-	// Dropped when the run reports terminal (forgetRunBounds) and when a retry
-	// re-drives it (clearRunEnd), which is what bounds it: membership is the set
+	// Dropped when the run reports terminal (forgetBounds) and when a retry
+	// re-drives it (clearEnd), which is what bounds it: membership is the set
 	// of runs currently terminating, not a log of runs that did.
 	terminating map[string]struct{}
 	// reasons maps a workflow id to why it was stopped; order is the FIFO
@@ -166,7 +166,7 @@ type runBoundsState struct {
 	order   []string
 }
 
-// armRunDeadline gives a run its deadline and the timer that enforces it.
+// armDeadline gives a run its deadline and the timer that enforces it.
 //
 // IDEMPOTENT on an already-bounded run, which is the property `run_start` forces:
 // that frame re-fires on every resume (probe 6 saw three for one run) and the
@@ -176,7 +176,7 @@ type runBoundsState struct {
 // the resume arrives.
 //
 // A run with no lease is not armed at all. That is not a gap: a lease exists for
-// every run vibekit put on the wire, and observeRunStart mints one for the
+// every run vibekit put on the wire, and observeStart mints one for the
 // agent's launch path, so the only runs reaching here without one are the TUI's —
 // which vibekit does not host, cannot cancel through a bridge of its own, and has
 // no business bounding.
@@ -198,7 +198,7 @@ type runBoundsState struct {
 // Lock order is the one documented on claimExpiredDeadline and taken nowhere else
 // in reverse: unattendedMu, then the lease store's. leaseStore() takes
 // unattendedMu itself, so it is resolved BEFORE the hold.
-func (rp *Runs) armRunDeadline(ctx context.Context, workflowID string) {
+func (rp *Runs) armDeadline(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
 	}
@@ -230,17 +230,17 @@ func (rp *Runs) armRunDeadline(ctx context.Context, workflowID string) {
 			"this process still bounds the run",
 			"workflow_id", workflowID, "deadline", deadline, "error", err)
 	}
-	rp.setRunTimerLocked(workflowID, deadline)
+	rp.setTimerLocked(workflowID, deadline)
 }
 
-// setRunTimerLocked installs the one timer a run's current deadline gets,
+// setTimerLocked installs the one timer a run's current deadline gets,
 // replacing any timer left from an earlier one. The caller holds unattendedMu,
 // because installing the timer is the last step of the arm's single transaction.
 //
 // The replaced timer is STOPPED rather than forgotten: an un-stopped AfterFunc
 // stays live until its own deadline, and a run cycling through pause and resume
 // would accumulate one per cycle.
-func (rp *Runs) setRunTimerLocked(workflowID string, deadline time.Time) {
+func (rp *Runs) setTimerLocked(workflowID string, deadline time.Time) {
 	if old := rp.bounds.timers[workflowID]; old != nil {
 		old.Stop()
 	}
@@ -251,11 +251,11 @@ func (rp *Runs) setRunTimerLocked(workflowID string, deadline time.Time) {
 	// what the lease says at fire time. That comparison is the whole liveness
 	// test, and it is why no generation token is needed.
 	rp.bounds.timers[workflowID] = time.AfterFunc(time.Until(deadline),
-		func() { rp.cancelExpiredRun(workflowID, deadline) })
+		func() { rp.cancelExpired(workflowID, deadline) })
 }
 
-// stopRunTimer stops and forgets a run's timer.
-func (rp *Runs) stopRunTimer(workflowID string) {
+// stopTimer stops and forgets a run's timer.
+func (rp *Runs) stopTimer(workflowID string) {
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
 	t, ok := rp.bounds.timers[workflowID]
@@ -266,7 +266,7 @@ func (rp *Runs) stopRunTimer(workflowID string) {
 	delete(rp.bounds.timers, workflowID)
 }
 
-// disarmRunDeadline parks a run vibekit is no longer bounding: the lease's
+// disarmDeadline parks a run vibekit is no longer bounding: the lease's
 // deadline is cleared and its timer stopped. Reports whether the run held a
 // deadline at all.
 //
@@ -274,7 +274,7 @@ func (rp *Runs) stopRunTimer(workflowID string) {
 // timer that leaves a stale deadline behind would make the step cap believe the
 // run is still executing, and would hand the next re-arm an "already bounded" run
 // to skip — so the run would never be bounded again.
-func (rp *Runs) disarmRunDeadline(ctx context.Context, workflowID string) bool {
+func (rp *Runs) disarmDeadline(ctx context.Context, workflowID string) bool {
 	if workflowID == "" {
 		return false
 	}
@@ -282,37 +282,37 @@ func (rp *Runs) disarmRunDeadline(ctx context.Context, workflowID string) bool {
 	if !ok || !l.Bounded() {
 		// Stop any timer anyway: a lease already released by a terminal frame can
 		// still have a timer pending against it.
-		rp.stopRunTimer(workflowID)
+		rp.stopTimer(workflowID)
 		return false
 	}
 	if err := rp.leaseStore().SetDeadline(ctx, workflowID, time.Time{}); err != nil {
 		slog.Warn("could not park a run's deadline", "workflow_id", workflowID, "error", err)
 	}
-	rp.stopRunTimer(workflowID)
+	rp.stopTimer(workflowID)
 	return true
 }
 
-// runBounded reports whether vibekit currently believes the run to be EXECUTING
+// bounded reports whether vibekit currently believes the run to be EXECUTING
 // under a deadline it set — the step cap's gate, which must not CLEAR that
 // deadline the way the timer's own callback path does: a breach that loses the
 // termination claim leaves the wall clock to whoever won it.
-func (rp *Runs) runBounded(workflowID string) bool {
+func (rp *Runs) bounded(workflowID string) bool {
 	l, ok := rp.lease(workflowID)
 	return ok && l.Bounded()
 }
 
-// claimRunTermination takes a run's single termination claim, reporting true for
+// claimTermination takes a run's single termination claim, reporting true for
 // the ONE caller that may end it.
 //
 // Four callers race for this and they are not variations of one thing: a user
 // pressing Cancel, a schedule's own repeat interval, the universal wall clock,
 // and a step's turn cap. Before the claim each had its own gate — the arm for two
 // of them, the unattended mark for the third, nothing at all for the user — so
-// two could pass simultaneously, and the second `recordRunEnd` overwrote the
+// two could pass simultaneously, and the second `recordEnd` overwrote the
 // first. The user's cancel was the one that lost worst: it records nothing, so a
 // bound that claimed alongside it turned a deliberate stop into a timeout on the
 // History row.
-func (rp *Runs) claimRunTermination(workflowID string) bool {
+func (rp *Runs) claimTermination(workflowID string) bool {
 	if workflowID == "" {
 		return false
 	}
@@ -357,33 +357,33 @@ func (rp *Runs) claimLocked(workflowID string) bool {
 	return true
 }
 
-// releaseRunTermination hands a claim back, for the one case where the winner did
+// releaseTermination hands a claim back, for the one case where the winner did
 // not actually terminate anything: the cancel RPC failed, so nothing is in
 // flight and the next caller must be able to try. Holding a claim on a run still
 // executing would make the Cancel button silently do nothing.
-func (rp *Runs) releaseRunTermination(workflowID string) {
+func (rp *Runs) releaseTermination(workflowID string) {
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
 	delete(rp.bounds.terminating, workflowID)
 }
 
-// finishRunTermination is what the claim WINNER does, and the only place a run's
+// finishTermination is what the claim WINNER does, and the only place a run's
 // reason is recorded alongside its cancel.
 //
-// reason empty means a user cancel: recordRunEnd ignores it, and that absence is
+// reason empty means a user cancel: recordEnd ignores it, and that absence is
 // what makes the two bounds distinguishable from a person (see
 // vibekit.WorkflowRun.EndReason).
-func (rp *Runs) finishRunTermination(ctx context.Context, workflowID, reason string) error {
-	rp.disarmRunDeadline(ctx, workflowID)
-	rp.recordRunEnd(workflowID, reason)
-	err := rp.cancelRunRPC(ctx, workflowID)
+func (rp *Runs) finishTermination(ctx context.Context, workflowID, reason string) error {
+	rp.disarmDeadline(ctx, workflowID)
+	rp.recordEnd(workflowID, reason)
+	err := rp.cancelRPC(ctx, workflowID)
 	if err != nil {
-		rp.releaseRunTermination(workflowID)
+		rp.releaseTermination(workflowID)
 	}
 	return err
 }
 
-// forgetRunBounds drops what a run that stopped executing for good no longer
+// forgetBounds drops what a run that stopped executing for good no longer
 // needs: its wall clock, its termination claim and its lease.
 //
 // The lease goes HERE rather than beside the bridge teardown because this is the
@@ -395,13 +395,13 @@ func (rp *Runs) finishRunTermination(ctx context.Context, workflowID, reason str
 // run finished, which is the only moment it is useful. Nothing can act on the run
 // after this: every bound's gate (a current arm for the ceiling, any arm for the
 // step cap, the unattended mark for the schedule deadline) is already false.
-func (rp *Runs) forgetRunBounds(ctx context.Context, workflowID string) {
-	rp.stopRunTimer(workflowID)
-	rp.releaseRunTermination(workflowID)
+func (rp *Runs) forgetBounds(ctx context.Context, workflowID string) {
+	rp.stopTimer(workflowID)
+	rp.releaseTermination(workflowID)
 	rp.releaseLease(ctx, workflowID)
 }
 
-// clearRunEnd forgets a run's recorded termination, so a RE-DRIVEN run is bounded
+// clearEnd forgets a run's recorded termination, so a RE-DRIVEN run is bounded
 // again and its row stops reading as the failure it used to be.
 //
 // Both halves are required and for different reasons. The reason has to go
@@ -414,7 +414,7 @@ func (rp *Runs) forgetRunBounds(ctx context.Context, workflowID string) {
 // The claim is dropped BEFORE the reason lookup returns, because a user-cancelled
 // run holds a claim and records no reason: keying the whole clear on a recorded
 // reason would leave exactly that run unbounded on retry.
-func (rp *Runs) clearRunEnd(workflowID string) {
+func (rp *Runs) clearEnd(workflowID string) {
 	if workflowID == "" {
 		return
 	}
@@ -432,15 +432,15 @@ func (rp *Runs) clearRunEnd(workflowID string) {
 		func(id string) bool { return id == workflowID })
 }
 
-// rearmRetriedRun gives a re-driven run a clean row and a FRESH wall clock.
+// rearmRetried gives a re-driven run a clean row and a FRESH wall clock.
 //
 // The disarm is not redundant with the terminal state that made retry legal:
-// RetryRun's already-hosted branch exists for a run aborted WITHOUT a terminal
+// Retry's already-hosted branch exists for a run aborted WITHOUT a terminal
 // frame, which can still carry the deadline it was launched with — and the arm is
 // idempotent on an already-bounded run, so without the disarm that run would be
 // retried under the remainder of its previous clock.
 //
-// A retry after a TERMINAL frame has no lease left (forgetRunBounds released it),
+// A retry after a TERMINAL frame has no lease left (forgetBounds released it),
 // so it needs a fresh one — and it gets the recipe NAME the caller read off KAS's
 // own run list, because that list carries it (`kasWorkflowRun.Name`) for a run
 // this process never launched. An empty name used to be minted here on the
@@ -453,17 +453,17 @@ func (rp *Runs) clearRunEnd(workflowID string) {
 // launch SOURCE (manualSlot) and the run list reports only the name, so a retried
 // run of a scheduled recipe is bounded by the ceiling alone rather than by the
 // schedule's next slot.
-func (rp *Runs) rearmRetriedRun(ctx context.Context, workflowID, recipe string) {
-	rp.clearRunEnd(workflowID)
-	rp.disarmRunDeadline(ctx, workflowID)
+func (rp *Runs) rearmRetried(ctx context.Context, workflowID, recipe string) {
+	rp.clearEnd(workflowID)
+	rp.disarmDeadline(ctx, workflowID)
 	if _, held := rp.lease(workflowID); !held {
 		rp.grantLease(ctx, workflowID, recipe, manualLaunch())
 	}
-	rp.armRunDeadline(ctx, workflowID)
+	rp.armDeadline(ctx, workflowID)
 }
 
-// recordRunEnd notes why a run was stopped, so its row can say so.
-func (rp *Runs) recordRunEnd(workflowID, reason string) {
+// recordEnd notes why a run was stopped, so its row can say so.
+func (rp *Runs) recordEnd(workflowID, reason string) {
 	if workflowID == "" || reason == "" {
 		return
 	}
@@ -482,15 +482,15 @@ func (rp *Runs) recordRunEnd(workflowID, reason string) {
 	}
 }
 
-// runEndReason reports why a run was stopped, or "" for a run that ended on its
+// endReason reports why a run was stopped, or "" for a run that ended on its
 // own terms — including a user cancel, which records nothing.
-func (rp *Runs) runEndReason(workflowID string) string {
+func (rp *Runs) endReason(workflowID string) string {
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
 	return rp.bounds.reasons[workflowID]
 }
 
-// cancelExpiredRun is the deadline's callback: stop the run, say why, and tell the
+// cancelExpired is the deadline's callback: stop the run, say why, and tell the
 // schedule row when the slot is what ran out.
 //
 // armedFor is the deadline this callback was armed for, and claimExpiredDeadline
@@ -517,7 +517,7 @@ func (rp *Runs) runEndReason(workflowID string) string {
 // stopped producing" and "a run blew the universal ceiling", and a manual run
 // standing aside for its recipe's next slot is neither — it is the bound working,
 // so it says so at INFO instead of paging somebody.
-func (rp *Runs) cancelExpiredRun(workflowID string, armedFor time.Time) {
+func (rp *Runs) cancelExpired(workflowID string, armedFor time.Time) {
 	l, held := rp.lease(workflowID)
 	if !rp.claimExpiredDeadline(workflowID, armedFor) {
 		return
@@ -533,7 +533,7 @@ func (rp *Runs) cancelExpiredRun(workflowID string, armedFor time.Time) {
 	default:
 		slog.Error(logMsgRunCeiling, "workflow_id", workflowID, "ceiling", runCeiling.String())
 	}
-	rp.cancelBoundedRun(workflowID, runEndOverran)
+	rp.cancelBounded(workflowID, runEndOverran)
 	if !slotRanOut || rp.schedules == nil || l.ScheduleID == "" {
 		return
 	}
@@ -559,32 +559,32 @@ func (rp *Runs) cancelExpiredRun(workflowID string, armedFor time.Time) {
 // cap did, and a second field for the node id would be a second representation of
 // state vibekit does not own.
 func (rp *Runs) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
-	if !rp.runBounded(workflowID) {
+	if !rp.bounded(workflowID) {
 		// A run vibekit is not bounding is not one it may cancel: either it never
 		// was armed, or it already reached a terminal state or a pause.
 		return
 	}
-	if !rp.claimRunTermination(workflowID) {
+	if !rp.claimTermination(workflowID) {
 		// Already terminating — a sibling step breached first, the ceiling fired,
 		// or the user cancelled. Either way this is not the cancel.
 		return
 	}
 	slog.Error(logMsgStepCap,
 		"workflow_id", workflowID, "node_id", nodeID, "turns", turns, "cap", translate.StepTurnCap)
-	rp.cancelBoundedRun(workflowID, runEndStepCap)
+	rp.cancelBounded(workflowID, runEndStepCap)
 }
 
-// cancelBoundedRun issues the cancel both bounds end in, for a caller that has
+// cancelBounded issues the cancel both bounds end in, for a caller that has
 // already WON the termination claim.
 //
-// Not the public CancelRun, deliberately: that one claims, so a bound calling it
+// Not the public Cancel, deliberately: that one claims, so a bound calling it
 // would race itself and refuse its own cancel. Reported on failure rather than
 // retried: the run breached its bound whether or not the cancel landed, and a row
 // left reading "running" is exactly the silence these bounds exist to end.
-func (rp *Runs) cancelBoundedRun(workflowID, reason string) {
+func (rp *Runs) cancelBounded(workflowID, reason string) {
 	ctx, cancel := rp.hubContext()
 	defer cancel()
-	if err := rp.finishRunTermination(ctx, workflowID, reason); err != nil {
+	if err := rp.finishTermination(ctx, workflowID, reason); err != nil {
 		slog.Error("could not cancel a run that breached its bound",
 			"workflow_id", workflowID, "error", err)
 	}
@@ -600,7 +600,7 @@ func (rp *Runs) cancelBoundedRun(workflowID, reason string) {
 // sweep because the chat rehydrate's resume sweep owns it.
 //
 // Anything else is PARENTLESS: run-bridge frames are dispatched with an empty chat
-// id (runDispatch), and the bridge itself is registered under the synthetic
+// id (dispatch), and the bridge itself is registered under the synthetic
 // `run:<id>`, so both spellings mean "this run has no chat". Such a run is
 // vibekit's own manual work and MUST be sweepable.
 //
@@ -608,7 +608,7 @@ func (rp *Runs) cancelBoundedRun(workflowID, reason string) {
 // the case that matters. A retry re-hosts a parentless run and grants its lease
 // after the retry call returns, while the code itself notes the first lifecycle
 // frame can arrive immediately — so `run_start` landing first saw no lease and
-// stamped OriginAgent on a run no chat owns. rearmRetriedRun then kept that lease,
+// stamped OriginAgent on a run no chat owns. rearmRetried then kept that lease,
 // and the agent exclusion made the run permanently unsweepable: if its bridge died
 // or vibekit restarted, its restart-paused row was never cleared and blocked every
 // later launch of the recipe. The carrier is knowable at the frame, so nothing is
@@ -620,7 +620,7 @@ func runStartOrigin(chatID vibekit.ChatID) runlease.Origin {
 	return runlease.OriginAgent
 }
 
-// observeRunStart arms the run's deadline, then hands the frame to the
+// observeStart arms the run's deadline, then hands the frame to the
 // translator.
 //
 // `run_start` is the arming point that covers the launch path vibekit does not
@@ -643,35 +643,35 @@ func runStartOrigin(chatID vibekit.ChatID) runlease.Origin {
 // It also re-arms a RESUMED run, which is why the deadline is parked on a pause:
 // each arm is a fresh budget of EXECUTING time, and a run deliberately parked for
 // a week must not be cancelled for having been parked.
-func (rp *Runs) observeRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rp *Runs) observeStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
 		if _, held := rp.lease(f.WorkflowID); !held {
 			rp.grantLease(ctx, f.WorkflowID, f.WorkflowName,
 				launchOrigin{origin: runStartOrigin(chatID)})
 		}
-		rp.armRunDeadline(ctx, f.WorkflowID)
+		rp.armDeadline(ctx, f.WorkflowID)
 	}
 	rp.translate.HandleRunStart(ctx, chatID, msg)
 }
 
-// observeRunComplete drops the bounds of a TERMINAL run, then translates.
+// observeComplete drops the bounds of a TERMINAL run, then translates.
 //
 // Non-terminal run_complete frames keep the arm: KAS reports an `onMaxIterations`
 // policy pause through this same frame, and that run is still this process's to
 // resume.
-func (rp *Runs) observeRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rp *Runs) observeComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" && terminalRunStatus(f.Status) {
-		rp.forgetRunBounds(ctx, f.WorkflowID)
+		rp.forgetBounds(ctx, f.WorkflowID)
 	}
 	rp.translate.HandleRunComplete(ctx, chatID, msg)
 }
 
-// observeRunPaused parks the deadline of a run that stopped executing, then
+// observePaused parks the deadline of a run that stopped executing, then
 // translates. The run-level `paused` kind only: a node-level pause is a step
 // waiting inside a run that is still going.
-func (rp *Runs) observeRunPaused(next func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
+func (rp *Runs) observePaused(next func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
 	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-		rp.disarmRunDeadline(ctx, workflowIDOfFrame(msg))
+		rp.disarmDeadline(ctx, workflowIDOfFrame(msg))
 		next(ctx, chatID, msg)
 	}
 }

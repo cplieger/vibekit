@@ -99,8 +99,8 @@ func TestBaseDeps_FullContract(t *testing.T) {
 	t.Run("IsScheduledRun_false_for_an_unmarked_run", func(t *testing.T) {
 		// False is the default that matters: a manual run must never be reported
 		// as scheduled, so the stub's zero value is the manual case.
-		if d.IsScheduledRun("wf-unknown") {
-			t.Error("IsScheduledRun(unknown) = true, want false")
+		if d.IsScheduled("wf-unknown") {
+			t.Error("IsScheduled(unknown) = true, want false")
 		}
 	})
 }
