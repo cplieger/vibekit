@@ -37,7 +37,13 @@ var (
 // directory and the final target are evaluated. Delegates to
 // workspace.ResolveInsideAbs (skips redundant filepath.Abs since h.lifecycle.workDir is already absolute).
 func (h *Hub) resolveInsideWorkDir(p string) (string, error) {
-	return workspace.ResolveInsideAbs(h.lifecycle.workDir, p)
+	return h.lifecycle.resolveInsideWorkDir(p)
+}
+
+// resolveInsideWorkDir confines p to the workspace. On the plane that holds
+// workDir, so a collaborator needing it does not need a *Hub.
+func (lc *lifecyclePlane) resolveInsideWorkDir(p string) (string, error) {
+	return workspace.ResolveInsideAbs(lc.workDir, p)
 }
 
 // respondFSError writes a JSON-RPC error response for an fs request and
@@ -93,11 +99,11 @@ func parseRequest(msg *vibekit.RPCResponse, v any) error {
 	return json.Unmarshal(msg.Params, v)
 }
 
-func respondOK(ctx context.Context, h *Hub, chatID vibekit.ChatID, msg *vibekit.RPCResponse, result any) {
+func respondOK(ctx context.Context, bridges *bridgeManager, chatID vibekit.ChatID, msg *vibekit.RPCResponse, result any) {
 	if msg.ID == nil {
 		return
 	}
-	sb := h.bridge.mgr.get(chatID)
+	sb := bridges.get(chatID)
 	if sb == nil {
 		return
 	}
@@ -106,11 +112,11 @@ func respondOK(ctx context.Context, h *Hub, chatID vibekit.ChatID, msg *vibekit.
 	}
 }
 
-func respondErr(ctx context.Context, h *Hub, chatID vibekit.ChatID, msg *vibekit.RPCResponse, errMsg string) {
+func respondErr(ctx context.Context, bridges *bridgeManager, chatID vibekit.ChatID, msg *vibekit.RPCResponse, errMsg string) {
 	if msg.ID == nil {
 		return
 	}
-	sb := h.bridge.mgr.get(chatID)
+	sb := bridges.get(chatID)
 	if sb == nil {
 		return
 	}

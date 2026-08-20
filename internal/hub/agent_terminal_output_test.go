@@ -223,7 +223,7 @@ func TestTerminalExited_IsOrderedAfterEveryOutputEvent(t *testing.T) {
 func TestTerminalEmitter_ParsesStylingAndStillStripsHiddenUnicode(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
-	emit := h.terminalEmitter(t.Context(), term, "t1", "c1")
+	emit := h.agentTerms.terminalEmitter(t.Context(), term, "t1", "c1")
 
 	// The measured real shape: gitleaks' zerolog console writer, with a
 	// zero-width space smuggled into the middle of it.
@@ -286,7 +286,7 @@ func terminalOutputPayloads(t *testing.T, h *Hub) []vibekit.TerminalOutputPayloa
 func TestTerminalEmitter_OffsetIsTheUTF16BaseOfEachChunk(t *testing.T) {
 	h := hubWithBridge(t, t.TempDir(), newRecordingTermBridge())
 	term := newAgentTerminal(nil, "c1", 4096)
-	emit := h.terminalEmitter(t.Context(), term, "t1", "c1")
+	emit := h.agentTerms.terminalEmitter(t.Context(), term, "t1", "c1")
 
 	emit("\U0001F600ok")       // 4 UTF-16 units (2 for the pair, 2 for "ok"), 6 bytes
 	emit("\x1b[31mred\x1b[0m") // styled, must start at unit 4
@@ -397,7 +397,7 @@ func TestTerminalOutput_KnownButSilentIsNotMissing(t *testing.T) {
 // transcript left to adopt into, and holding the bytes would keep a deleted
 // chat's command output in memory until the next turn boundary that never comes.
 func TestKillForChat_DropsRetiredOutput(t *testing.T) {
-	at := newAgentTerminals()
+	at := bareTerminals()
 	term := newAgentTerminal(&exec.Cmd{}, "c1", 64)
 	term.output.Write([]byte("secret\n"))
 	at.terms["t1"] = term

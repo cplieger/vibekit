@@ -276,7 +276,7 @@ func TestBridgeManagerInsert_RefusesReplacement(t *testing.T) {
 // R3): a cancel kills the CURRENT turn's terminals and leaves a background
 // command an earlier turn started on purpose alone.
 func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
-	at := newAgentTerminals()
+	at := bareTerminals()
 	add := func(id string, chat vibekit.ChatID) {
 		at.mu.Lock()
 		term := newAgentTerminal(&exec.Cmd{}, chat, 1024)
@@ -316,7 +316,7 @@ func TestKillForTurn_ScopedToTheOpenTurn(t *testing.T) {
 // TestKillForTurn_NothingOpenIsANoOp pins that a cancel with no terminals (the
 // overwhelmingly common case) touches nothing.
 func TestKillForTurn_NothingOpenIsANoOp(t *testing.T) {
-	at := newAgentTerminals()
+	at := bareTerminals()
 	at.AdvanceTurn("c1")
 	at.KillForTurn("c1") // must not panic or create entries
 	at.mu.Lock()

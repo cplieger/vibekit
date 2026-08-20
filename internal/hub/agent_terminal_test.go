@@ -21,6 +21,13 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
+// bareTerminals builds the registry with NO collaborators, for the tests that
+// exercise its bookkeeping only: turn scoping, kill, retired output. A test that
+// reaches a collaborator through this fixture nil-panics, and that is the right
+// failure — it says the test left the half this fixture serves and wants the
+// wired one from newTestHub.
+func bareTerminals() *agentTerminals { return newAgentTerminals(nil, nil, nil) }
+
 func TestRingBuffer(t *testing.T) {
 	r := newByteRing(10)
 	r.Write([]byte("hello"))
@@ -52,7 +59,7 @@ func TestRingBufferUTF8(t *testing.T) {
 }
 
 func TestAgentTerminalsNewAndLookup(t *testing.T) {
-	terms := newAgentTerminals()
+	terms := bareTerminals()
 	if len(terms.terms) != 0 {
 		t.Errorf("expected empty, got %d", len(terms.terms))
 	}
@@ -159,7 +166,7 @@ func FuzzByteRing_WriteRead(f *testing.F) {
 // drainAll clears the terminal maps even when a registered terminal has
 // already exited (its done channel is closed).
 func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
-	at := newAgentTerminals()
+	at := bareTerminals()
 	done := make(chan struct{})
 	close(done) // already exited
 	t1 := newAgentTerminal(nil, "", 64)
@@ -180,7 +187,7 @@ func TestDrainAll_ClearsExitedTerminals(t *testing.T) {
 // release removes only the named terminal from both maps (dropping just
 // its id from the chat's slice) and reports (nil,false) for an unknown id.
 func TestAgentTerminals_Release(t *testing.T) {
-	at := newAgentTerminals()
+	at := bareTerminals()
 	at.terms["t1"] = newAgentTerminal(nil, "c1", 64)
 	at.terms["t2"] = newAgentTerminal(nil, "c1", 64)
 	at.byChatID["c1"] = []string{"t1", "t2"}
@@ -361,7 +368,7 @@ func TestPumpTerminalOutput_RuneSplitAcrossReadBoundaryNotCorrupted(t *testing.T
 	}}
 	const want = "aé€😀"
 
-	h.pumpTerminalOutput(term, "t1", "c1", r)
+	h.agentTerms.pumpTerminalOutput(term, "t1", "c1", r)
 
 	// Reassemble the broadcast chunks. A split rune would have its halves
 	// coerced to U+FFFD by the SSE JSON marshal, so the reassembly would not
@@ -450,7 +457,7 @@ func FuzzPumpTerminalOutput_UTF8Broadcast(f *testing.F) {
 		chunkSize := int(chunkRaw)%8 + 1
 		_, preSeq := h.sse.hub.Bounds()
 		term := newAgentTerminal(nil, "c1", 1<<20)
-		h.pumpTerminalOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
+		h.agentTerms.pumpTerminalOutput(term, "t1", "c1", &sizeChunkReader{data: data, size: chunkSize})
 
 		// The ring receives every raw byte exactly once, for any input.
 		if ring := term.output.Bytes(); !bytes.Equal(ring, data) {

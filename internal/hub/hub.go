@@ -87,6 +87,14 @@ type lifecyclePlane struct {
 	draining atomic.Bool
 }
 
+// derivedContext returns a cancellable child of the process lifetime, for work
+// that must outlive the request that started it. Hub's hubContext() is the same
+// two lines; this is the copy the planes use, so a plane does not need a *Hub to
+// ask a question about the lifetime this struct owns.
+func (lc *lifecyclePlane) derivedContext() (context.Context, context.CancelFunc) {
+	return context.WithCancel(lc.shutdownCtx)
+}
+
 // TurnContext returns the context a turn runs under, plus the teardown its
 // handler must defer.
 //
@@ -386,7 +394,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	runs.coord = h.coord
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
-	h.agentTerms = newAgentTerminals()
+	h.agentTerms = newAgentTerminals(bridgeP.mgr, lc, h.Broadcast)
 	h.dispatcher = command.New()
 	h.registerCommandHandlers()
 	h.initDispatch()
