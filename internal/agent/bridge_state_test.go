@@ -31,15 +31,23 @@ func newPromptingBridge(t *testing.T) (*sharedBridge, context.Context, uint64) {
 // KAS never answers the pending prompt, so vibekit cancels its context itself
 // and the blocked Call returns.
 func TestArmCancelGrace_UnblocksAnUnackedCancel(t *testing.T) {
-	sb, ctx, gen := newPromptingBridge(t)
-	if !sb.ArmCancelGrace(gen, testGrace) {
-		t.Fatalf("arming against an in-flight prompt must succeed")
-	}
-	select {
-	case <-ctx.Done():
-	case <-time.After(2 * time.Second):
-		t.Errorf("prompt context was never cancelled; the turn would stay stuck busy")
-	}
+	// In a bubble the WHEN is assertable, not just the whether. On a real clock
+	// this could only say "cancelled inside a 2s ceiling", which a budget armed
+	// for any duration up to 2s satisfies — including one armed for zero. Here
+	// the elapsed time is exactly the grace, so an arm that fires early or late
+	// fails.
+	synctest.Test(t, func(t *testing.T) {
+		sb, ctx, gen := newPromptingBridge(t)
+		start := time.Now()
+		if !sb.ArmCancelGrace(gen, testGrace) {
+			t.Fatalf("arming against an in-flight prompt must succeed")
+		}
+		<-ctx.Done()
+		if elapsed := time.Since(start); elapsed != testGrace {
+			t.Errorf("prompt context cancelled after %v, want exactly the armed grace %v",
+				elapsed, testGrace)
+		}
+	})
 }
 
 // TestArmCancelGrace_AckedCancelLeavesContextAlone covers the ordinary path: the
@@ -56,8 +64,8 @@ func TestArmCancelGrace_AckedCancelLeavesContextAlone(t *testing.T) {
 		sb.ArmCancelGrace(gen, testGrace)
 		sb.releaseAfterPrompt() // KAS answered; the prompt handler's defer runs.
 
-		time.Sleep(4 * testGrace)
-		synctest.Wait()
+		// synctest.Sleep (Go 1.27) is time.Sleep + synctest.Wait in one call.
+		synctest.Sleep(4 * testGrace)
 		if ctx.Err() != nil {
 			t.Errorf("context cancelled after the turn already ended: %v", ctx.Err())
 		}
@@ -130,8 +138,7 @@ func TestEndPromptCall_DisarmsTheTimer(t *testing.T) {
 		sb.ArmCancelGrace(gen, testGrace)
 		sb.EndPromptCall()
 
-		time.Sleep(4 * testGrace)
-		synctest.Wait()
+		synctest.Sleep(4 * testGrace)
 		if ctx.Err() != nil {
 			t.Errorf("context cancelled after EndPromptCall disarmed the budget: %v", ctx.Err())
 		}
