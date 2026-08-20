@@ -136,6 +136,35 @@ func (buf *Buffer) BufferedBytes() int {
 	return buf.Content.Len() + buf.Reasoning.Len()
 }
 
+// EmittedNothing reports whether the turn has produced no content of any kind.
+//
+// All FOUR accumulators, not just Content and ToolCalls: a turn that streamed
+// only thinking (an agent_thought_chunk with no agent_message_chunk and no tool
+// call) has emitted something, and Blocks is counted because it is the canonical
+// chronological array the client renders from, so a future block kind that lands
+// in neither builder still counts.
+//
+// This lives here rather than at its caller because the four fields are exported
+// and documented "guarded by mu", and the caller read them from a DIFFERENT
+// goroutine than the dispatch loop that appends to them — a mutex every method
+// in this file takes and one caller bypassed through the field. The answer is
+// only meaningful as of one instant anyway, so it has to be computed under the
+// same lock that makes the four fields agree with each other.
+//
+// Deliberately NOT the same predicate as Snapshot's early return, which tests
+// three of these four and omits Blocks. Snapshot is asking "is there a message
+// worth sending"; this asks "did the model produce anything at all". Unifying
+// them would change what Snapshot returns for a turn holding only a tool-use
+// block, which is a wire question, not a locking one.
+func (buf *Buffer) EmittedNothing() bool {
+	buf.mu.Lock()
+	defer buf.mu.Unlock()
+	return buf.Content.Len() == 0 &&
+		buf.Reasoning.Len() == 0 &&
+		len(buf.ToolCalls) == 0 &&
+		len(buf.Blocks) == 0
+}
+
 // AppendToolCall records a newly opened tool call and returns its index, keeping
 // the id index in step with the slice under one lock. By pointer because the
 // struct is 264 bytes; the append copies it, so the caller keeps ownership.

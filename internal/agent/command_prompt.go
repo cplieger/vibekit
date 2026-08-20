@@ -41,15 +41,10 @@ func (rt *Runtime) isEmptyTurn(resp *vibekit.RPCResponse, chatID vibekit.ChatID)
 	if buf == nil {
 		return true
 	}
-	// Reasoning and Blocks are part of "emitted anything", not just Content and
-	// ToolCalls. A turn that streamed only thinking (an agent_thought_chunk with
-	// no agent_message_chunk and no tool call) is not an empty turn: recreating
-	// the session and resending would spend a second model call to reproduce work
-	// the user already watched arrive. Blocks is checked as well because it is
-	// the canonical chronological array the client renders from, so a future
-	// block kind that lands in neither builder still counts as content.
-	return buf.Content.Len() == 0 &&
-		buf.Reasoning.Len() == 0 &&
-		len(buf.ToolCalls) == 0 &&
-		len(buf.Blocks) == 0
+	// Through the buffer's own accessor, which takes the mutex the four
+	// accumulators are guarded by. This function runs on the prompt's goroutine
+	// while the dispatch loop is still appending to that buffer, so reading the
+	// exported fields directly was a data race — and the rule for WHICH fields
+	// count belongs with the fields, not here.
+	return buf.EmittedNothing()
 }
