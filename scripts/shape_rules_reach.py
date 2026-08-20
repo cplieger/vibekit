@@ -250,6 +250,19 @@ def _reference_counts():
                     inside = False
                 continue
             if re.match(r"^func (\(\w+ \*?\w+\) )?\w+\(", ln):
+                # Drop the SIGNATURE, keep an inline body. A one-line function
+                # carries its call on the declaration line, so dropping the whole
+                # line hid it: `func unusableFeedKey(k string) bool { return
+                # secretref.Unusable(k) }` is the only production caller of
+                # Unusable, and the rule reported Unusable as test-only because
+                # this strip ate it.
+                code = re.sub(r"//.*$", "", ln).rstrip()
+                if code.endswith("{"):
+                    continue
+                lb = code.rfind("{")
+                if lb == -1:
+                    continue
+                keep.append(code[lb + 1 :])
                 continue
             # A doc comment NAMES its symbol, by the convention revive enforces, so
             # counting comment text made every documented symbol look referenced.
@@ -375,7 +388,10 @@ def rule_method_ignores_receiver(report):
     the type's state that the body does not have. Interface members are exempt —
     an implementation may legitimately ignore state the contract allows it to.
     """
-    iface = _interface_member_names()
+    # Dependency interfaces too: httpx.Transient declares IsTransient, and an
+    # implementation of it may legitimately return a constant without touching its
+    # receiver. Reading only this repo's interfaces reported that as a defect.
+    iface = _interface_member_names() | dependency_interface_members()
     owners = _method_names_by_type()
     for p in _go_files(include_tests=False):
         lines = p.read_text(errors="replace").split("\n")
