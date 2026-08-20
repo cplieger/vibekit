@@ -31,7 +31,7 @@ func findPermissionNeeded(t *testing.T, events *[]vibekit.ServerEvent) (vibekit.
 // and passes with the flat decode.
 func TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	id := int64(4242)
 	msg := &vibekit.RPCResponse{
@@ -74,7 +74,7 @@ func TestHandlePermissionRequest_DecodesFlatParamsAndEnvelopeID(t *testing.T) {
 // rather than surfaced as an unanswerable dialog.
 func TestHandlePermissionRequest_MissingIDDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	msg := &vibekit.RPCResponse{ // no ID
 		Params: mustJSON(t, map[string]any{
@@ -133,7 +133,7 @@ func turnApprovalParams(t *testing.T, files []map[string]any) []byte {
 func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 	base, events := newEventCaptureDeps()
 	deps := &workDirDeps{baseDeps: base, workDir: "/work"}
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	id := int64(77)
 	msg := &vibekit.RPCResponse{
@@ -172,7 +172,7 @@ func TestHandlePermissionRequest_TurnApprovalCarriesFiles(t *testing.T) {
 func TestHandlePermissionRequest_SharedActionIDPreserved(t *testing.T) {
 	base, events := newEventCaptureDeps()
 	deps := &workDirDeps{baseDeps: base, workDir: "/work"}
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	id := int64(78)
 	msg := &vibekit.RPCResponse{
@@ -200,7 +200,7 @@ func TestHandlePermissionRequest_SharedActionIDPreserved(t *testing.T) {
 // for a bash command.
 func TestHandlePermissionRequest_OrdinaryPermissionHasNoFiles(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	id := int64(79)
 	// _meta present but a DIFFERENT type, with files attached: the type is what

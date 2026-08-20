@@ -14,8 +14,19 @@ import (
 // registerCommandHandlers populates the dispatcher with the concrete
 // dispatch table. Called once from NewHub.
 func (h *Hub) registerCommandHandlers() {
-	// Register all standard handlers from the command package.
-	command.RegisterDefaults(h.dispatcher)
+	// Register all standard handlers from the command package. Every role is
+	// the Hub under a narrower interface; which handler receives which is
+	// command.RegisterDefaults' table.
+	command.RegisterDefaults(h.dispatcher, &command.Roles{
+		Bridges:     h,
+		Chats:       h,
+		Perms:       h,
+		Terminals:   h,
+		Workspace:   h,
+		Lifecycle:   h,
+		MCP:         h,
+		TurnOutcome: h,
+	})
 
 	// Register handlers that remain on Hub (complex internal coupling).
 	h.dispatcher.Register(vibekit.CmdSwitchModel, h.cmdSwitchModel)

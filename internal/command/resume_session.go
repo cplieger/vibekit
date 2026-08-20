@@ -28,7 +28,7 @@ import (
 // stored conversation can be opened.
 //
 //nolint:revive // context-as-argument: dispatcher handler signature
-func CmdResumeSession(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
+func CmdResumeSession(d *Dispatcher, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -53,7 +53,7 @@ func CmdResumeSession(d *Dispatcher, ctx context.Context, w http.ResponseWriter,
 		return
 	}
 
-	err := d.Chat().ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		// Refuse to rebind an existing chat. Pointing a live chat at another
 		// session would strand its own session (its transcript still on disk,
 		// no longer referenced, so the reaper sweeps it) and hand the user a

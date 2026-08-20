@@ -61,10 +61,10 @@ func TestCmdSetDraft(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedEmptyChat(t, store, "c1")
 			b := &recordingBridge{sessionID: "sess-1"}
-			d := newBridgeDispatcher(store, b)
+			d, host := newBridgeDispatcher(store, b)
 			w := httptest.NewRecorder()
 
-			CmdSetDraft(d, t.Context(), w, draftReq(t, "c1", tc.text))
+			CmdSetDraft(d, host, t.Context(), w, draftReq(t, "c1", tc.text))
 
 			if w.Code != tc.wantStatus {
 				t.Errorf("status = %d, want %d (body %s)", w.Code, tc.wantStatus, w.Body.String())
@@ -93,12 +93,12 @@ func TestCmdSetDraft(t *testing.T) {
 func TestCmdSetDraft_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
-	d := newBridgeDispatcher(store, &recordingBridge{})
+	d, host := newBridgeDispatcher(store, &recordingBridge{})
 	w := httptest.NewRecorder()
 
 	// Raw bytes, not json.Marshal: marshalling would sanitize them before the
 	// handler ever saw them, which is the same coercion under test.
-	CmdSetDraft(d, t.Context(), w, &vibekit.ClientCommand{
+	CmdSetDraft(d, host, t.Context(), w, &vibekit.ClientCommand{
 		Type:      vibekit.CmdSetDraft,
 		ChatID:    "c1",
 		RequestID: "r1",
@@ -116,10 +116,10 @@ func TestCmdSetDraft_JSONDecodingSanitizesInvalidUTF8(t *testing.T) {
 
 func TestCmdSetDraft_RefusesAMissingChatID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d := newBridgeDispatcher(store, &recordingBridge{})
+	d, host := newBridgeDispatcher(store, &recordingBridge{})
 	w := httptest.NewRecorder()
 
-	CmdSetDraft(d, t.Context(), w, draftReq(t, "", "text"))
+	CmdSetDraft(d, host, t.Context(), w, draftReq(t, "", "text"))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
@@ -129,10 +129,10 @@ func TestCmdSetDraft_RefusesAMissingChatID(t *testing.T) {
 func TestCmdSetDraft_RejectsAMalformedPayload(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedEmptyChat(t, store, "c1")
-	d := newBridgeDispatcher(store, &recordingBridge{})
+	d, host := newBridgeDispatcher(store, &recordingBridge{})
 	w := httptest.NewRecorder()
 
-	CmdSetDraft(d, t.Context(), w, &vibekit.ClientCommand{
+	CmdSetDraft(d, host, t.Context(), w, &vibekit.ClientCommand{
 		Type:      vibekit.CmdSetDraft,
 		ChatID:    "c1",
 		RequestID: "r1",
@@ -151,10 +151,10 @@ func TestCmdSetDraft_RejectsAMalformedPayload(t *testing.T) {
 // DOES auto-create, this is typing rather than a deliberate pick.
 func TestCmdSetDraft_DoesNotCreateAChat(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d := newBridgeDispatcher(store, &recordingBridge{})
+	d, host := newBridgeDispatcher(store, &recordingBridge{})
 	w := httptest.NewRecorder()
 
-	CmdSetDraft(d, t.Context(), w, draftReq(t, "c-never-prompted", "typed but nothing sent"))
+	CmdSetDraft(d, host, t.Context(), w, draftReq(t, "c-never-prompted", "typed but nothing sent"))
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200: a draft on an unsaved chat is a no-op, not an error", w.Code)
@@ -175,7 +175,7 @@ func TestAppendUserMessage_ClearsTheDraft(t *testing.T) {
 	}
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(deps, t.Context(), "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(deps, deps, t.Context(), "c1", &vibekit.PromptCommand{
 		Text:      "the message about to be sent",
 		MessageID: "m-1",
 	})
@@ -209,7 +209,7 @@ func TestAppendUserMessage_PersistsTheAttachments(t *testing.T) {
 		{Path: "out/shot.png", Name: "shot.png"},
 		{Path: "docs/spec.pdf", Name: "spec.pdf"},
 	}
-	err := appendUserMessage(deps, t.Context(), "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(deps, deps, t.Context(), "c1", &vibekit.PromptCommand{
 		Text:        "have a look at these",
 		MessageID:   "m-1",
 		Attachments: atts,
@@ -251,7 +251,7 @@ func TestAppendUserMessage_NoAttachmentsPersistsNone(t *testing.T) {
 	seedEmptyChat(t, store, "c1")
 	deps := &storeDeps{benchDeps: newBenchDeps(), store: store}
 
-	err := appendUserMessage(deps, t.Context(), "c1", &vibekit.PromptCommand{
+	err := appendUserMessage(deps, deps, t.Context(), "c1", &vibekit.PromptCommand{
 		Text:      "just a question",
 		MessageID: "m-1",
 	})

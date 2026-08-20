@@ -220,7 +220,7 @@ func TestAdoptTerminalOutput_MissIsLogged(t *testing.T) {
 // an update.
 func TestHandleToolCall_TakesTheTerminalLinkFromTheCreateFrame(t *testing.T) {
 	deps, _, events := newLineCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "tc-mid" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "tc-mid" }))
 	tr.HandleToolCall(t.Context(), "c1", mustJSON(t, map[string]any{
 		"toolCallId": "tc-9", "title": "run", "kind": "execute", "status": "in_progress",
 		"content": []map[string]any{{"type": "terminal", "terminalId": "term-9"}},

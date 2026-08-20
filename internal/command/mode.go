@@ -22,8 +22,7 @@ import (
 // yet (empty chat, first prompt not sent) there is nothing to switch
 // live — the mode is persisted and applied when the bridge's session/new
 // completes (spawnBridge threads chat.CurrentModeID into StartOpts.Mode).
-func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
+func CmdSetMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -35,7 +34,7 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 
 	// Switch live first (fail fast) when a bridge is running. When there
 	// is no bridge yet the persisted mode below is applied at session/new.
-	if bridge := deps.GetBridge(cmd.ChatID); bridge != nil {
+	if bridge := bridges.GetBridge(cmd.ChatID); bridge != nil {
 		if _, err := bridge.Call(ctx, vibekit.MethodSetMode, SessionParams(bridge, map[string]any{"modeId": p.ModeID})); err != nil {
 			slog.Warn("set_mode: bridge call failed", "chat", cmd.ChatID, keyError, err)
 			d.RespondErr(w, http.StatusBadGateway, err)
@@ -44,7 +43,7 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 	}
 
 	var changed bool
-	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
+	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			// New chat whose first prompt hasn't been sent — the record
 			// exists only client-side. Auto-create it (mirroring
@@ -68,7 +67,7 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 		return
 	}
 	if !changed {
-		if _, ok := deps.ChatStore().Get(ctx, cmd.ChatID); !ok {
+		if _, ok := chats.ChatStore().Get(ctx, cmd.ChatID); !ok {
 			// Only reachable for a tombstoned id (Mutate refuses to
 			// resurrect a just-deleted chat).
 			d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
@@ -76,7 +75,7 @@ func CmdSetMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *
 		}
 	}
 	if changed {
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, cmd.ChatID, vibekit.ModeChangedPayload(p)))
+		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, cmd.ChatID, vibekit.ModeChangedPayload(p)))
 	}
 	slog.Info("mode set", "chat", cmd.ChatID, "mode", p.ModeID)
 	d.Respond(w, cmd.RequestID, responseWith(map[string]any{"mode_id": p.ModeID}))

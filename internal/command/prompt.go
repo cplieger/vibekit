@@ -83,7 +83,7 @@ func callPromptWithRetry(ctx context.Context, sb bridgeCaller, params map[string
 }
 
 // recoverEmptyTurn handles empty turn recovery: recreate session and retry.
-func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, p *vibekit.PromptCommand, params map[string]any) *vibekit.RPCResponse { //nolint:revive // context-as-argument: dispatcher handler signature
+func recoverEmptyTurn(bridges BridgeAccess, chats ChatAccess, outcome TurnOutcomeAccess, ctx context.Context, chatID vibekit.ChatID, resp *vibekit.RPCResponse, p *vibekit.PromptCommand, params map[string]any) *vibekit.RPCResponse { //nolint:revive // context-as-argument: dispatcher handler signature
 	// A verb KAS answers itself produces no content BY DESIGN, so an empty turn
 	// is the correct outcome and recovery is pure damage: it would close the
 	// bridge the launched run is parented on, detach the session, badge the turn
@@ -93,12 +93,12 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID vibekit.Cha
 	if kasClaimsPromptText(p.Text) {
 		return resp
 	}
-	if !deps.IsEmptyTurn(resp, chatID) {
+	if !outcome.IsEmptyTurn(resp, chatID) {
 		return resp
 	}
 	slog.Warn("empty turn detected, recreating session", "chat_id", chatID)
-	deps.CloseBridge(chatID)
-	if err := deps.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	bridges.CloseBridge(chatID)
+	if err := chats.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -119,14 +119,14 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID vibekit.Cha
 		ID: ids.NewMessageID(), Role: vibekit.RoleEvent, Ts: time.Now().UnixMilli(),
 		EventKind: vibekit.EventInterrupted, Content: "Session refreshed, retrying",
 	}
-	if err := deps.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
+	if err := chats.ChatStore().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("empty turn: append event", "chat_id", chatID, keyError, err)
 	}
-	sb2, err2 := deps.GetOrCreateBridge(ctx, chatID, p.Model)
+	sb2, err2 := bridges.GetOrCreateBridge(ctx, chatID, p.Model)
 	if err2 != nil {
 		slog.Error("empty turn: respawn failed",
 			"chat_id", chatID, keyError, err2)
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeRecoveryFailed,
 			Message: "Session refresh failed: " + rpcerr.Text(err2),
 		}))
@@ -163,7 +163,7 @@ func recoverEmptyTurn(deps Dependencies, ctx context.Context, chatID vibekit.Cha
 	retryResp, retryErr := callPromptWithRetry(ctx, sb2, params, chatID)
 	if retryErr != nil {
 		slog.Error("retry prompt failed", "chat_id", chatID, keyError, retryErr)
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 			Code:    vibekit.ErrCodeRecoveryFailed,
 			Message: "Retry prompt failed: " + rpcerr.Text(retryErr),
 		}))
@@ -190,9 +190,9 @@ func supervisedDefaultSetting(ctx context.Context, configDir string) bool {
 }
 
 // appendUserMessage adds the prompt's user message to the chat.
-func appendUserMessage(deps Dependencies, ctx context.Context, chatID vibekit.ChatID, p *vibekit.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
-	supervisedDefault := supervisedDefaultSetting(ctx, deps.ConfigDir())
-	err := deps.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+func appendUserMessage(chats ChatAccess, workspace WorkspaceAccess, ctx context.Context, chatID vibekit.ChatID, p *vibekit.PromptCommand) error { //nolint:revive // context-as-argument: dispatcher handler signature
+	supervisedDefault := supervisedDefaultSetting(ctx, workspace.ConfigDir())
+	err := chats.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		// Idempotent by message id (the documented invariant): if this id
 		// is already in the store — e.g. a 409-queued prompt whose first
 		// attempt persisted the user message before the busy check, now
@@ -230,7 +230,7 @@ func appendUserMessage(deps Dependencies, ctx context.Context, chatID vibekit.Ch
 			}
 			c.Name = name
 		}
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg))
+		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, &userMsg))
 		return true
 	})
 	return err
@@ -249,8 +249,7 @@ func hasMessageID(c *vibekit.Chat, id string) bool {
 }
 
 // CmdPrompt handles the prompt command.
-func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	deps := d.Deps()
+func CmdPrompt(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	if cmd.ChatID == "" {
 		d.RespondErr(w, http.StatusBadRequest, ErrMissingChatID)
 		return
@@ -263,27 +262,27 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *v
 
 	// Shell command interception.
 	if strings.HasPrefix(p.Text, "!") {
-		HandleShellInterception(d, deps, ctx, w, cmd, &p)
+		HandleShellInterception(d, roles, ctx, w, cmd, &p)
 		return
 	}
 
 	// 1. Ensure the chat exists and append the user message, naming the chat
 	// from its first prompt.
-	if err := appendUserMessage(deps, ctx, cmd.ChatID, &p); err != nil {
+	if err := appendUserMessage(roles.chats, roles.workspace, ctx, cmd.ChatID, &p); err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	// 2. Ensure the bridge exists and serialize per-chat prompts. The turn
 	// runs under a context detached from the prompt POST's r.Context()
-	// (see Dependencies.TurnContext): a mid-turn client disconnect must not
+	// (see LifecycleAccess.TurnContext): a mid-turn client disconnect must not
 	// cancel the in-flight bridge Call, or the turn fails before it can
 	// finalize and persist the assistant buffer.
-	ctx, cancel := d.Lifecycle().TurnContext(ctx)
+	ctx, cancel := roles.lifecycle.TurnContext(ctx)
 	defer cancel()
-	sb, err := deps.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
+	sb, err := roles.bridges.GetOrCreateBridge(ctx, cmd.ChatID, p.Model)
 	if err != nil {
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
+		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeBridgeStartFailed, Message: rpcerr.Text(err)}))
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -302,32 +301,32 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *v
 	sb.BeginPromptCall(cancelPrompt)
 	defer sb.EndPromptCall()
 
-	d.Lifecycle().InflightAdd(1)
-	defer d.Lifecycle().InflightDone()
+	roles.lifecycle.InflightAdd(1)
+	defer roles.lifecycle.InflightDone()
 
 	// 3. Prime with history if the bridge needs it.
 	if !sb.IsPrimed() {
 		sb.SetPrimed()
-		deps.PrimeIfNeeded(ctx, cmd.ChatID, sb)
+		roles.bridges.PrimeIfNeeded(ctx, cmd.ChatID, sb)
 	}
 
 	// 4. Send the prompt to kiro-cli.
-	if !d.MCP().MCPWaitForReady(ctx, 30*time.Second) {
+	if !roles.mcp.MCPWaitForReady(ctx, 30*time.Second) {
 		slog.Warn("MCP readiness timeout, proceeding anyway", "chat_id", cmd.ChatID)
 	}
 	var creditsBeforeTurn float64
-	if chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID); ok {
+	if chat, ok := roles.chats.ChatStore().Get(ctx, cmd.ChatID); ok {
 		creditsBeforeTurn = chat.Usage.Credits
 		// Latch the answering model HERE, at dispatch, not on the turn's first
 		// frame. The bridge is up and its model persisted by this point, and
 		// switch_model's fast path can land any time from now on — including
 		// before the old model has emitted anything, which is precisely when the
 		// first-frame read attributed one model's answer to another.
-		d.TurnOutcome().LatchTurnModel(cmd.ChatID, chat.Model)
+		roles.turnOutcome.LatchTurnModel(cmd.ChatID, chat.Model)
 	}
 	slog.Info("prompt", "chat_id", cmd.ChatID, "len", len(p.Text))
 	start := time.Now()
-	promptParams := BuildPromptParams(ctx, deps, sb, &p)
+	promptParams := BuildPromptParams(ctx, roles.workspace, sb, &p)
 	resp, err := callPromptWithRetry(ctx, sb, promptParams, cmd.ChatID)
 	elapsed := time.Since(start)
 	if err != nil {
@@ -338,7 +337,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *v
 		// under this dead turn's message id: one persisted assistant message
 		// holding two turns' replies. The partial is persisted rather than
 		// dropped -- see AbandonInFlightTurn for why that direction.
-		d.TurnOutcome().AbandonInFlightTurn(ctx, cmd.ChatID)
+		roles.turnOutcome.AbandonInFlightTurn(ctx, cmd.ChatID)
 		// ONE rendering of the cause on both channels. The SSE frame and this
 		// POST's error body land on the same send-button tooltip and the client
 		// paints whichever arrives last, so handing the raw error to RespondErr
@@ -347,7 +346,7 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *v
 		// prose promptFailureReason exists to produce. The chain is already in the
 		// log line above; what travels to the user is the reason.
 		reason := promptFailureReason(err)
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID,
+		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, cmd.ChatID,
 			vibekit.ErrorPayload{Code: vibekit.ErrCodePromptFailed, Message: reason}))
 		d.RespondErr(w, http.StatusInternalServerError, errors.New(reason))
 		return
@@ -355,14 +354,14 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *v
 	slog.Info("prompt complete", "chat_id", cmd.ChatID, "elapsed", elapsed)
 
 	// Empty turn recovery.
-	resp = recoverEmptyTurn(deps, ctx, cmd.ChatID, resp, &p, promptParams)
+	resp = recoverEmptyTurn(roles.bridges, roles.chats, roles.turnOutcome, ctx, cmd.ChatID, resp, &p, promptParams)
 
 	// Compute credit delta for the turn summary.
 	var creditsDelta float64
-	if chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID); ok {
+	if chat, ok := roles.chats.ChatStore().Get(ctx, cmd.ChatID); ok {
 		creditsDelta = chat.Usage.Credits - creditsBeforeTurn
 	}
-	d.TurnOutcome().EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, TurnStats{
+	roles.turnOutcome.EmitTurnEndedWithStats(ctx, cmd.ChatID, resp, TurnStats{
 		CreditsDelta: creditsDelta,
 		ElapsedMs:    float64(elapsed.Milliseconds()),
 	})
@@ -371,9 +370,9 @@ func CmdPrompt(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *v
 
 // BuildPromptParams constructs the full session/prompt parameter map. Takes
 // sessionScoped, not Bridge: building a parameter map reads an id, nothing more.
-func BuildPromptParams(ctx context.Context, deps WorkspaceAccess, sb sessionScoped, p *vibekit.PromptCommand) map[string]any {
+func BuildPromptParams(ctx context.Context, workspace WorkspaceAccess, sb sessionScoped, p *vibekit.PromptCommand) map[string]any {
 	params := SessionParams(sb, map[string]any{
-		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, deps.ResolveInsideWorkDir),
+		"prompt": BuildPromptBlocks(ctx, p.Text, p.Attachments, workspace.ResolveInsideWorkDir),
 	})
 	// Forward the client-generated user message id so KAS stores this turn under
 	// vibekit's own id. That shared id space is what makes rewind addressable:

@@ -35,7 +35,7 @@ func configModelUpdate(t *testing.T, current string, choices []map[string]any) [
 // multiplier nor effort) decodes as HasEffort=false.
 func TestHandleConfigOptionUpdate_PlumbsHasEffort(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	raw := configModelUpdate(t, "model-a", []map[string]any{
 		{"value": "model-a", "name": "Model A", "_meta": map[string]any{"kiro": map[string]any{"hasEffort": true, "rateMultiplier": 1.0}}},
@@ -92,7 +92,7 @@ func configEffortUpdate(t *testing.T, current string, choices []map[string]any) 
 // which is what the UI marks for a chat that has chosen nothing of its own.
 func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	raw := configEffortUpdate(t, "medium", []map[string]any{
 		{"value": "low", "name": "Low"},
@@ -134,7 +134,7 @@ func TestHandleConfigOptionUpdate_PlumbsEffortOption(t *testing.T) {
 // showing the previous model's.
 func TestHandleConfigOptionUpdate_EmptyEffortOptionApplies(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleConfigOptionUpdate(t.Context(), "c1",
 		configEffortUpdate(t, "high", []map[string]any{{"value": "high", "name": "High"}}))
@@ -243,7 +243,7 @@ func TestSessionInfoUpdate_UnknownKindWarns(t *testing.T) {
 			defer restore()
 
 			deps, _, _ := depsWithStore(t, "c1")
-			New(deps).HandleSessionInfoUpdate(t.Context(), "c1", infoKindFrame(t, tt.kind), "")
+			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1", infoKindFrame(t, tt.kind), "")
 
 			out := buf.String()
 			gotWarn := strings.Contains(out, "level=WARN") && strings.Contains(out, "UNKNOWN kind")
@@ -268,7 +268,7 @@ func TestSessionInfoUpdate_NoKindIsSilent(t *testing.T) {
 	defer restore()
 
 	deps, _, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		json.RawMessage(`{"_meta":{"kiro":{}}}`), "")
 
 	if out := buf.String(); out != "" {

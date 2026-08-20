@@ -104,6 +104,6 @@ func (t *Translator) HandleGovernanceState(ctx context.Context, chatID vibekit.C
 		return
 	}
 	payload := p.payload()
-	t.deps.SetGovernance(payload)
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventGovernanceState, "", payload))
+	t.governance.SetGovernance(payload)
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventGovernanceState, "", payload))
 }

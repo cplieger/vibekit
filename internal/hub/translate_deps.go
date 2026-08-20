@@ -1,8 +1,9 @@
 package hub
 
-// Deps interface implementation for translate.Translator.
-// Hub satisfies translate.Deps so the Translator can access
-// Hub internals without importing the hub package.
+// translate role implementations for Hub.
+// Hub satisfies the translate package's role interfaces so the Translator can
+// access Hub internals without importing the hub package. Satisfaction is forced
+// by the translate.Roles literal in hub.go, so no assertion is repeated here.
 
 import (
 	"context"
@@ -13,8 +14,6 @@ import (
 	"github.com/cplieger/vibekit/internal/translate"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
-
-var _ translate.Deps = (*Hub)(nil)
 
 // ChatRecords returns the hub's chat store as translate reads it (3 of its 9
 // methods). Separate from ChatStore() below it because internal/command needs 5,

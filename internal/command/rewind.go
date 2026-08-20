@@ -43,8 +43,7 @@ import (
 // ("Cannot revert while the agent is still running"), and refuses a concurrent
 // revert per session — so both races are settled upstream and vibekit forwards
 // the reason instead of reimplementing the guard.
-func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	deps := d.Deps()
+func CmdRewindChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -54,7 +53,7 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		return
 	}
 
-	chat, ok := deps.ChatStore().Get(ctx, cmd.ChatID)
+	chat, ok := chats.ChatStore().Get(ctx, cmd.ChatID)
 	if !ok {
 		d.RespondErr(w, http.StatusNotFound, ErrChatNotFound)
 		return
@@ -65,7 +64,7 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 		return
 	}
 
-	bridge := deps.GetBridge(cmd.ChatID)
+	bridge := bridges.GetBridge(cmd.ChatID)
 	if bridge == nil {
 		// No live session to revert. The files and the transcript move together
 		// or not at all, so truncating the record alone is not an option.
@@ -83,7 +82,7 @@ func CmdRewindChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cm
 	// Cut at idx, not idx+1: the addressed message is discarded WITH its
 	// successors (KAS slices from the target inclusive), so the prompt at that
 	// turn is gone and has to be retyped. That is the operation, not a bug.
-	if mErr := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if mErr := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -180,8 +179,7 @@ func userMessageIndex(messages []vibekit.Message, id string) int {
 // instead. Auto-create mirrors CmdSetMode for the same reason — a fresh chat is
 // client-side only until its first prompt, so without it every pick before the
 // first message 404'd and the control rolled back.
-func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
-	deps := d.Deps()
+func CmdSetEffort(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -193,7 +191,7 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 
 	// Switch live first (fail fast) when a bridge is running, so a refusal is
 	// reported rather than persisted as a level the session never took.
-	if bridge := deps.GetBridge(cmd.ChatID); bridge != nil {
+	if bridge := bridges.GetBridge(cmd.ChatID); bridge != nil {
 		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
 			"configId": vibekit.ConfigOptionEffort,
 			"value":    string(p.Level),
@@ -204,7 +202,7 @@ func CmdSetEffort(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd
 		}
 	}
 
-	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			c.Name = vibekit.DefaultChatName
 			c.Effort = string(p.Level)

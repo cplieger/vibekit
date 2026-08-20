@@ -35,7 +35,7 @@ func TestHandleGovernanceState_BroadcastsAndCaches(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	var cached *vibekit.GovernanceStatePayload
 	deps.onSetGovernance = func(g vibekit.GovernanceStatePayload) { cp := g; cached = &cp }
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleGovernanceState(t.Context(), vibekit.ChatID("c1"),
 		govMsg(t, "sess-parent", map[string]any{"isEnterprise": false}))
@@ -83,7 +83,7 @@ func TestHandleGovernanceState_SubagentSkipped(t *testing.T) {
 	cached := false
 	deps.onSetGovernance = func(vibekit.GovernanceStatePayload) { cached = true }
 	deps.parent = "sess-parent"
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleGovernanceState(t.Context(), vibekit.ChatID("c1"),
 		govMsg(t, "sess-subagent", nil))
@@ -98,7 +98,7 @@ func TestHandleGovernanceState_Malformed(t *testing.T) {
 	deps, events := newEventCaptureDeps()
 	cached := false
 	deps.onSetGovernance = func(vibekit.GovernanceStatePayload) { cached = true }
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleGovernanceState(t.Context(), "c1", &vibekit.RPCResponse{Params: []byte("{")})
 

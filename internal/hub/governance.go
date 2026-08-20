@@ -70,7 +70,7 @@ func (c *governanceCache) get() (vibekit.GovernanceStatePayload, bool) {
 	return *c.state, true
 }
 
-// SetGovernance caches the latest governance state. Satisfies translate.Deps
+// SetGovernance caches the latest governance state. Satisfies translate.GovernanceAccess
 // (called by translate.HandleGovernanceState on the chat-bridge path).
 func (h *Hub) SetGovernance(p vibekit.GovernanceStatePayload) {
 	h.governance.set(p)

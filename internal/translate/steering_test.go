@@ -27,7 +27,7 @@ func steerFrame(t *testing.T, kind string, fields map[string]any) []byte {
 
 func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
@@ -55,7 +55,7 @@ func TestSteeringQueued_BroadcastsTheWaitingSteer(t *testing.T) {
 // words on the composer's chip row as though the user had typed them.
 func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_queued", map[string]any{
 			"messageId":            "notify-1",
 			"content":              "[notification/error] a step failed",
@@ -83,7 +83,7 @@ func TestSteeringQueued_AgentNoticeLeavesAsItsOwnEvent(t *testing.T) {
 
 func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_injected", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",
@@ -103,7 +103,7 @@ func TestSteeringInjected_BroadcastsTheRead(t *testing.T) {
 
 func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{
 			"messageIds": []string{"steer-1", "steer-2"},
 		}), "")
@@ -125,7 +125,7 @@ func TestSteeringCleared_BroadcastsTheDroppedIDs(t *testing.T) {
 // the wire per turn for every chat.
 func TestSteeringCleared_EmptyListIsNotBroadcast(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_cleared", map[string]any{"messageIds": []string{}}), "")
 
 	if len(*events) != 0 {
@@ -141,7 +141,7 @@ func TestSteering_IDlessFramesAreDroppedNotForwarded(t *testing.T) {
 	for _, kind := range []string{"steering_queued", "steering_injected"} {
 		t.Run(kind, func(t *testing.T) {
 			deps, events, _ := depsWithStore(t, "c1")
-			New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+			New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 				steerFrame(t, kind, map[string]any{"content": "orphan"}), "")
 
 			if len(*events) != 0 {
@@ -158,7 +158,7 @@ func TestSteering_IDlessFramesAreDroppedNotForwarded(t *testing.T) {
 // leaving a chip that says "waiting" over a message the model has read.
 func TestSteering_SurvivesSubagentAttribution(t *testing.T) {
 	deps, events, _ := depsWithStore(t, "c1")
-	New(deps).HandleSessionInfoUpdate(t.Context(), "c1",
+	New(rolesOf(deps)).HandleSessionInfoUpdate(t.Context(), "c1",
 		steerFrame(t, "steering_injected", map[string]any{
 			"messageId": "steer-1",
 			"content":   "use tabs",

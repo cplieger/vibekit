@@ -88,10 +88,10 @@ func TestCmdForkChat_BindsTheForkedSession(t *testing.T) {
 		sessionID: "sess_parent",
 		result:    map[string]any{"sessionId": "sess_tangent"},
 	}
-	d, deps := newForkDispatcher(store, br)
+	d, host := newForkDispatcher(store, br)
 	w := httptest.NewRecorder()
 
-	CmdForkChat(d, t.Context(), w, forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
+	CmdForkChat(d, host, host, host, t.Context(), w, forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
@@ -120,8 +120,8 @@ func TestCmdForkChat_BindsTheForkedSession(t *testing.T) {
 		t.Errorf("session chain = %v, want [sess_tangent]", chain)
 	}
 	// A forked tangent needs no prime: it HAS the context.
-	if len(deps.primed) != 0 {
-		t.Errorf("a forked tangent was also marked for priming: %v", deps.primed)
+	if len(host.primed) != 0 {
+		t.Errorf("a forked tangent was also marked for priming: %v", host.primed)
 	}
 }
 
@@ -137,9 +137,9 @@ func TestCmdForkChat_SendsTangentMeta(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	d, _ := newForkDispatcher(store, br)
+	d, host := newForkDispatcher(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(),
+	CmdForkChat(d, host, host, host, t.Context(), httptest.NewRecorder(),
 		forkReq(t, "c-tangent", "c-parent", "Reaper detour"))
 
 	if _, ok := br.gotParams["messageId"]; ok {
@@ -171,9 +171,9 @@ func TestCmdForkChat_OmitsAnEmptyTitle(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	d, _ := newForkDispatcher(store, br)
+	d, host := newForkDispatcher(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
+	CmdForkChat(d, host, host, host, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
 
 	meta := br.gotParams["_meta"].(map[string]any) //nolint:forcetypeassert // shape pinned by TestCmdForkChat_SendsTangentMeta
 	kiro := meta["kiro"].(map[string]any)          //nolint:forcetypeassert // shape pinned by TestCmdForkChat_SendsTangentMeta
@@ -190,9 +190,9 @@ func TestCmdForkChat_InheritsTheParentsAgent(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	d, _ := newForkDispatcher(store, br)
+	d, host := newForkDispatcher(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
+	CmdForkChat(d, host, host, host, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
 
 	c, _ := store.Get(t.Context(), "c-tangent")
 	if c.Model != "parent-model" {
@@ -234,10 +234,10 @@ func TestCmdForkChat_FallsBackToPrimingOnRefusal(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedParent(t, store, "c-parent")
-			d, deps := newForkDispatcher(store, br)
+			d, host := newForkDispatcher(store, br)
 			w := httptest.NewRecorder()
 
-			CmdForkChat(d, t.Context(), w, forkReq(t, "c-tangent", "c-parent", ""))
+			CmdForkChat(d, host, host, host, t.Context(), w, forkReq(t, "c-tangent", "c-parent", ""))
 
 			if w.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200: a refused fork still opens the tangent (body %s)",
@@ -266,7 +266,7 @@ func TestCmdForkChat_FallsBackToPrimingOnRefusal(t *testing.T) {
 			// The prime note is what carries the parent's history into the
 			// tangent's first session. Without it that session starts blind on the
 			// conversation the user opened it FROM.
-			if got := deps.primed["c-tangent"]; got != "c-parent" {
+			if got := host.primed["c-tangent"]; got != "c-parent" {
 				t.Errorf("prime note = %q, want c-parent", got)
 			}
 			// The inheritance that does not depend on the fork still happens.
@@ -294,10 +294,10 @@ func TestCmdForkChat_PrimesWhenTheParentHasNoLiveSession(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
 			seedParent(t, store, "c-parent")
-			d, deps := newForkDispatcher(store, br)
+			d, host := newForkDispatcher(store, br)
 			w := httptest.NewRecorder()
 
-			CmdForkChat(d, t.Context(), w, forkReq(t, "c-tangent", "c-parent", ""))
+			CmdForkChat(d, host, host, host, t.Context(), w, forkReq(t, "c-tangent", "c-parent", ""))
 
 			if w.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
@@ -306,7 +306,7 @@ func TestCmdForkChat_PrimesWhenTheParentHasNoLiveSession(t *testing.T) {
 				t.Errorf("made %d calls, want 0: a bridgeless parent is not started to be forked",
 					rb.callCount)
 			}
-			if got := deps.primed["c-tangent"]; got != "c-parent" {
+			if got := host.primed["c-tangent"]; got != "c-parent" {
 				t.Errorf("prime note = %q, want c-parent", got)
 			}
 		})
@@ -328,9 +328,9 @@ func TestCmdForkChat_RefusesToReshapeAnExistingChat(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_new"}}
-	d, _ := newForkDispatcher(store, br)
+	d, host := newForkDispatcher(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
+	CmdForkChat(d, host, host, host, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
 
 	c, _ := store.Get(t.Context(), "c-tangent")
 	if c.ACPSessionID != "sess_existing" {
@@ -368,10 +368,10 @@ func TestCmdForkChat_Rejects(t *testing.T) {
 				seedParent(t, store, "c-parent")
 			}
 			br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-			d, _ := newForkDispatcher(store, br)
+			d, host := newForkDispatcher(store, br)
 			w := httptest.NewRecorder()
 
-			CmdForkChat(d, t.Context(), w, forkReq(t, tc.newChat, tc.parent, tc.title))
+			CmdForkChat(d, host, host, host, t.Context(), w, forkReq(t, tc.newChat, tc.parent, tc.title))
 
 			if w.Code != tc.want {
 				t.Errorf("status = %d, want %d (body %s)", w.Code, tc.want, w.Body.String())
@@ -391,10 +391,10 @@ func TestCmdForkChat_Rejects(t *testing.T) {
 // TestCmdForkChat_RejectsAMalformedPayload: the envelope's own failure mode.
 func TestCmdForkChat_RejectsAMalformedPayload(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d, _ := newForkDispatcher(store, nil)
+	d, host := newForkDispatcher(store, nil)
 	w := httptest.NewRecorder()
 
-	CmdForkChat(d, t.Context(), w, &vibekit.ClientCommand{
+	CmdForkChat(d, host, host, host, t.Context(), w, &vibekit.ClientCommand{
 		Type:    vibekit.CmdForkChat,
 		ChatID:  "c-tangent",
 		Payload: json.RawMessage(`{"parent_chat_id":`),
@@ -416,10 +416,10 @@ func TestCmdForkChat_TheRecordSurvivesAClose(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedParent(t, store, "c-parent")
 	br := &recordingBridge{sessionID: "sess_parent", result: map[string]any{"sessionId": "sess_t"}}
-	d, _ := newForkDispatcher(store, br)
+	d, host := newForkDispatcher(store, br)
 
-	CmdForkChat(d, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
-	CmdCloseChat(d, t.Context(), httptest.NewRecorder(), &vibekit.ClientCommand{
+	CmdForkChat(d, host, host, host, t.Context(), httptest.NewRecorder(), forkReq(t, "c-tangent", "c-parent", ""))
+	CmdCloseChat(d, host, host, host, t.Context(), httptest.NewRecorder(), &vibekit.ClientCommand{
 		Type:      vibekit.CmdCloseChat,
 		ChatID:    "c-tangent",
 		RequestID: "r2",

@@ -103,7 +103,7 @@ func (d *baseDeps) IsHookStatusEnabled() bool                                   
 var toolCallPayload = json.RawMessage(`{"toolCallId":"tc-1","title":"ReadFile","kind":"read","status":"pending","rawInput":{},"locations":[],"content":[{"type":"text","content":{"text":"reading file"}}]}`)
 
 func BenchmarkTranslator_HandleToolCall(b *testing.B) {
-	tr := New(newBaseDeps(), withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(newBaseDeps()), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
 	chatID := vibekit.ChatID("bench-chat")
 
@@ -117,7 +117,7 @@ func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 // overhead on the steady-state path (buffer already started).
 func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
 	chatID := vibekit.ChatID("bench-chunk")
 
@@ -139,7 +139,7 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 // Measures end-to-end throughput including buffer management.
 func BenchmarkTranslator_FullTurn(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
 
 	chunkPayload := json.RawMessage(`{"content":{"type":"text","text":"Hello world, this is a streaming token. "}}`)
@@ -167,7 +167,7 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 
 func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	deps := newBaseDeps()
-	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	ctx := b.Context()
 	chatID := vibekit.ChatID("bench-usage")
 	raw := json.RawMessage(`{"size":100000,"used":42500}`)

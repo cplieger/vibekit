@@ -73,7 +73,7 @@ var (
 // precondition — a steer with no turn to join would sit in KAS's buffer until
 // some later turn happened to pick it up, which is a worse outcome than a clear
 // refusal. The client only reaches this path while a turn is streaming.
-func CmdSteer(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdSteer(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -98,7 +98,7 @@ func CmdSteer(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vi
 		return
 	}
 
-	bridge := d.Deps().GetBridge(cmd.ChatID)
+	bridge := bridges.GetBridge(cmd.ChatID)
 	if bridge == nil {
 		d.RespondErr(w, http.StatusConflict, errSteerNoTurn)
 		return
@@ -149,11 +149,11 @@ func CmdSteer(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vi
 // steers go away. That is KAS's semantic and it is the right one for this
 // command: discarding a message you changed your mind about should not also
 // throw away the work in flight.
-func CmdSteerClear(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdSteerClear(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	bridge := d.Deps().GetBridge(cmd.ChatID)
+	bridge := bridges.GetBridge(cmd.ChatID)
 	if bridge == nil {
 		// Nothing to clear without a session, and no buffer survives a bridge, so
 		// this is success rather than a refusal: the caller's desired state holds.

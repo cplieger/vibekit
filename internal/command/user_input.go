@@ -26,8 +26,8 @@ type userInputResult struct {
 
 // CmdUserInputResponse forwards the user's answer to kiro-cli as the
 // _kiro/userInput response.
-func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	sb := d.Bridge().GetBridge(cmd.ChatID)
+func CmdUserInputResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPermAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+	sb := bridges.GetBridge(cmd.ChatID)
 	if sb == nil {
 		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
 		return
@@ -54,7 +54,7 @@ func CmdUserInputResponse(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	// Take before responding, as CmdPermission does: the agent advances on the
 	// FIRST answer it receives, so a second tab's answer is both discarded and
 	// invisible, and the question the user actually answered stops being knowable.
-	if !d.PendingPerms().TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
+	if !perms.TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
 		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
 		return
 	}

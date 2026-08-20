@@ -29,7 +29,7 @@ func (b *countingBridge) Respond(_ context.Context, id int64, _ any, _ error) er
 	return nil
 }
 
-// takeDeps is a Dependencies whose claim outcome the test scripts.
+// takeDeps is a host double whose claim outcome the test scripts.
 type takeDeps struct {
 	*benchDeps
 	bridge Bridge
@@ -59,7 +59,7 @@ const decisionRequestID = int64(7)
 // request 7 in the least eventful way its wire allows.
 func decisionCases(t *testing.T) []struct {
 	name string
-	run  func(*Dispatcher, http.ResponseWriter)
+	run  func(*Dispatcher, hostDouble, http.ResponseWriter)
 } {
 	t.Helper()
 	perm := decisionCommand(t, vibekit.CmdPermissionResponse,
@@ -70,16 +70,16 @@ func decisionCases(t *testing.T) []struct {
 		vibekit.UserInputResponseCommand{RequestID: decisionRequestID, Action: vibekit.UserInputActionDismissed})
 	return []struct {
 		name string
-		run  func(*Dispatcher, http.ResponseWriter)
+		run  func(*Dispatcher, hostDouble, http.ResponseWriter)
 	}{
-		{name: "permission", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdPermission(d, t.Context(), w, perm)
+		{name: "permission", run: func(d *Dispatcher, host hostDouble, w http.ResponseWriter) {
+			CmdPermission(d, host, host, t.Context(), w, perm)
 		}},
-		{name: "elicitation", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdElicitationResponse(d, t.Context(), w, elicit)
+		{name: "elicitation", run: func(d *Dispatcher, host hostDouble, w http.ResponseWriter) {
+			CmdElicitationResponse(d, host, host, t.Context(), w, elicit)
 		}},
-		{name: "user_input", run: func(d *Dispatcher, w http.ResponseWriter) {
-			CmdUserInputResponse(d, t.Context(), w, input)
+		{name: "user_input", run: func(d *Dispatcher, host hostDouble, w http.ResponseWriter) {
+			CmdUserInputResponse(d, host, host, t.Context(), w, input)
 		}},
 	}
 }
@@ -94,7 +94,7 @@ func TestDecisionHandlers_LostClaimIsRefusedAndNotAnswered(t *testing.T) {
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: false}
 			w := httptest.NewRecorder()
 
-			tc.run(New(deps), w)
+			tc.run(New(deps), deps, w)
 
 			if w.Code != http.StatusConflict {
 				t.Errorf("status = %d, want %d", w.Code, http.StatusConflict)
@@ -121,7 +121,7 @@ func TestDecisionHandlers_WonClaimAnswersOnce(t *testing.T) {
 			deps := &takeDeps{benchDeps: newBenchDeps(), bridge: bridge, takeOK: true}
 			w := httptest.NewRecorder()
 
-			tc.run(New(deps), w)
+			tc.run(New(deps), deps, w)
 
 			if w.Code != http.StatusOK {
 				t.Errorf("status = %d, want %d (body %q)", w.Code, http.StatusOK, w.Body.String())

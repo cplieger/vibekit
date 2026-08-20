@@ -24,7 +24,7 @@ func newEventCaptureDeps() (*baseDeps, *[]vibekit.ServerEvent) {
 
 func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := vibekit.ChatID("c1")
 
 	// First chunk: should create message + emit chunk
@@ -60,7 +60,7 @@ func TestSequence_AssistantChunk_CreatesMessageThenChunks(t *testing.T) {
 
 func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := vibekit.ChatID("c1")
 
 	// Start a streaming turn first (tool calls require an active buffer)
@@ -91,7 +91,7 @@ func TestSequence_ToolCall_EmitsToolCallEvent(t *testing.T) {
 
 func TestSequence_ToolCallUpdate_EmitsUpdateEvent(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := vibekit.ChatID("c1")
 
 	// Start turn + add tool call
@@ -128,7 +128,7 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	var recorded string
 	wrapper := &mcpCaptureDeps{baseDeps: deps, connected: &recorded}
-	tr := &Translator{deps: wrapper}
+	tr := New(rolesOf(wrapper))
 
 	// v3 consolidated MCP status: a "connected" server records a connection.
 	tr.HandleMCPStatus(t.Context(), "", &vibekit.RPCResponse{
@@ -152,7 +152,7 @@ func TestSequence_MCPStatus_RecordsConnection(t *testing.T) {
 func TestSequence_MCPStatus_RoutesDisabledToTheRecorder(t *testing.T) {
 	deps, _ := newEventCaptureDeps()
 	var disabled []string
-	tr := &Translator{deps: &mcpCaptureDeps{baseDeps: deps, disabled: &disabled}}
+	tr := New(rolesOf(&mcpCaptureDeps{baseDeps: deps, disabled: &disabled}))
 
 	tr.HandleMCPStatus(t.Context(), "", &vibekit.RPCResponse{
 		Params: mustJSON(t, map[string]any{
@@ -178,7 +178,7 @@ func TestSequence_MCPStatus_CapturesPromptsAndResources(t *testing.T) {
 	var prompts []vibekit.MCPPromptInfo
 	var resources []vibekit.MCPResourceInfo
 	wrapper := &mcpCaptureDeps{baseDeps: deps, connected: &connected, prompts: &prompts, resources: &resources}
-	tr := &Translator{deps: wrapper}
+	tr := New(rolesOf(wrapper))
 
 	tr.HandleMCPStatus(t.Context(), "", &vibekit.RPCResponse{
 		Params: mustJSON(t, map[string]any{
@@ -264,7 +264,7 @@ func (r *captureMCPRecorder) RecordDisabled(_ context.Context, name string) {
 
 func TestSequence_ReasoningChunk_RoutesToReasoningBuilder(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 	chatID := vibekit.ChatID("c-reason")
 
 	// Send a reasoning chunk (isReasoning=true)

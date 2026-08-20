@@ -13,7 +13,7 @@ func TestStubDeps_Contract(t *testing.T) {
 	d := newBaseDeps()
 
 	// Verify interface satisfaction at compile time.
-	var _ Deps = d
+	var _ hostDouble = d
 
 	ctx := t.Context()
 

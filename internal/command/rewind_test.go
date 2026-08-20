@@ -67,11 +67,12 @@ type bridgeDeps struct {
 
 func (d *bridgeDeps) GetBridge(vibekit.ChatID) Bridge { return d.bridge }
 
-func newBridgeDispatcher(store ChatStore, bridge Bridge) *Dispatcher {
-	return New(&bridgeDeps{
+func newBridgeDispatcher(store ChatStore, bridge Bridge) (*Dispatcher, hostDouble) {
+	host := &bridgeDeps{
 		storeDeps: &storeDeps{benchDeps: newBenchDeps(), store: store},
 		bridge:    bridge,
-	})
+	}
+	return New(host), host
 }
 
 func rewindReq(t *testing.T, chatID vibekit.ChatID, messageID string) *vibekit.ClientCommand {
@@ -117,10 +118,10 @@ func TestCmdRewindChat_DropsTheTargetAndEverythingAfter(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
+	d, host := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u2"))
+	CmdRewindChat(d, host, host, t.Context(), w, rewindReq(t, "c1", "u2"))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
@@ -145,9 +146,9 @@ func TestCmdRewindChat_CallsTheRevertVerbWithTheSessionAndMessage(t *testing.T) 
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
+	d, host := newBridgeDispatcher(store, b)
 
-	CmdRewindChat(d, t.Context(), httptest.NewRecorder(), rewindReq(t, "c1", "u1"))
+	CmdRewindChat(d, host, host, t.Context(), httptest.NewRecorder(), rewindReq(t, "c1", "u1"))
 
 	if b.gotMethod != vibekit.MethodCheckpointRevertMultiple {
 		t.Errorf("method = %q, want %q", b.gotMethod, vibekit.MethodCheckpointRevertMultiple)
@@ -169,10 +170,10 @@ func TestCmdRewindChat_RefusesANonUserTarget(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
+	d, host := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "a1"))
+	CmdRewindChat(d, host, host, t.Context(), w, rewindReq(t, "c1", "a1"))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
@@ -190,10 +191,10 @@ func TestCmdRewindChat_RefusesAnUnknownTarget(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
+	d, host := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "nope"))
+	CmdRewindChat(d, host, host, t.Context(), w, rewindReq(t, "c1", "nope"))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
@@ -206,10 +207,10 @@ func TestCmdRewindChat_RefusesAnUnknownTarget(t *testing.T) {
 func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	d := newBridgeDispatcher(store, &recordingBridge{result: okResult()})
+	d, host := newBridgeDispatcher(store, &recordingBridge{result: okResult()})
 	w := httptest.NewRecorder()
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", ""))
+	CmdRewindChat(d, host, host, t.Context(), w, rewindReq(t, "c1", ""))
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
@@ -221,10 +222,10 @@ func TestCmdRewindChat_RejectsAnEmptyMessageID(t *testing.T) {
 func TestCmdRewindChat_RequiresALiveBridge(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
-	d := newBridgeDispatcher(store, nil)
+	d, host := newBridgeDispatcher(store, nil)
 	w := httptest.NewRecorder()
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u2"))
+	CmdRewindChat(d, host, host, t.Context(), w, rewindReq(t, "c1", "u2"))
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409", w.Code)
@@ -248,10 +249,10 @@ func TestCmdRewindChat_InBandRefusalLeavesTheRecordIntact(t *testing.T) {
 		},
 		sessionID: "sess-1",
 	}
-	d := newBridgeDispatcher(store, b)
+	d, host := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u2"))
+	CmdRewindChat(d, host, host, t.Context(), w, rewindReq(t, "c1", "u2"))
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409", w.Code)
@@ -271,10 +272,10 @@ func TestCmdRewindChat_TransportFailureLeavesTheRecordIntact(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{callErr: errors.New("broken pipe"), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
+	d, host := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u2"))
+	CmdRewindChat(d, host, host, t.Context(), w, rewindReq(t, "c1", "u2"))
 
 	if w.Code != http.StatusBadGateway {
 		t.Errorf("status = %d, want 502", w.Code)
@@ -291,10 +292,10 @@ func TestCmdRewindChat_ToTheFirstMessageEmptiesTheTranscript(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
 	seedChat(t, store, "c1")
 	b := &recordingBridge{result: okResult(), sessionID: "sess-1"}
-	d := newBridgeDispatcher(store, b)
+	d, host := newBridgeDispatcher(store, b)
 	w := httptest.NewRecorder()
 
-	CmdRewindChat(d, t.Context(), w, rewindReq(t, "c1", "u1"))
+	CmdRewindChat(d, host, host, t.Context(), w, rewindReq(t, "c1", "u1"))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)

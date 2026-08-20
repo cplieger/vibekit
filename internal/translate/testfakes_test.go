@@ -47,3 +47,30 @@ func (nopMCPRecorder) RecordDisabled(context.Context, string) {}
 func (nopMCPRecorder) SignalReady() {}
 
 var _ MCPRecorder = nopMCPRecorder{}
+
+// hostDouble is what a single all-in-one test double answers: every role a
+// Translator takes. It exists ONLY for the doubles below and in the handler
+// tests — production code has no aggregate over the roles, and the shape pin in
+// shape_test.go reads production files only, for exactly this reason. A double
+// stands in for the whole host, so naming every role once is what makes one
+// value fillable into every slot of Roles.
+type hostDouble interface {
+	StreamingAccess
+	PermissionAccess
+	RunOriginAccess
+	RunBoundsAccess
+	MCPRecorder() MCPRecorder
+	SetGovernance(state vibekit.GovernanceStatePayload)
+}
+
+// rolesOf wires one double into every role slot, the way hub wires one *Hub.
+func rolesOf(d hostDouble) *Roles {
+	return &Roles{
+		Streaming:  d,
+		Perms:      d,
+		MCP:        d.MCPRecorder(),
+		Governance: d,
+		RunOrigin:  d,
+		RunBounds:  d,
+	}
+}

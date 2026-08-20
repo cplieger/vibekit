@@ -47,7 +47,7 @@ func safetyPropsPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.
 // violated properties.
 func TestHandleSafetyStatusChanged_Blocked(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status":            "blocked",
@@ -76,7 +76,7 @@ func TestHandleSafetyStatusChanged_Blocked(t *testing.T) {
 // (the client uses it to clear a stale banner).
 func TestHandleSafetyStatusChanged_IdleForwarded(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "idle",
@@ -92,7 +92,7 @@ func TestHandleSafetyStatusChanged_IdleForwarded(t *testing.T) {
 // status is dropped rather than surfaced as a mystery banner.
 func TestHandleSafetyStatusChanged_UnknownDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "quantum-entangled",
@@ -106,7 +106,7 @@ func TestHandleSafetyStatusChanged_UnknownDropped(t *testing.T) {
 // TestHandleSafetyStatusChanged_MalformedNoop pins defensive decode.
 func TestHandleSafetyStatusChanged_MalformedNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: []byte("{")})
 	if got := safetyStatusPayloads(t, events); len(got) != 0 {
 		t.Fatalf("want no broadcast for malformed params, got %+v", got)
@@ -117,7 +117,7 @@ func TestHandleSafetyStatusChanged_MalformedNoop(t *testing.T) {
 // ({index, description, enabled}) translate to one safety_properties event.
 func TestHandleSafetyPropertiesChanged_ObjectForm(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"sessionId": "",
@@ -145,7 +145,7 @@ func TestHandleSafetyPropertiesChanged_ObjectForm(t *testing.T) {
 // Enabled=true.
 func TestHandleSafetyPropertiesChanged_StringForm(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"properties": []any{"no public S3 buckets", ""},
@@ -167,7 +167,7 @@ func TestHandleSafetyPropertiesChanged_StringForm(t *testing.T) {
 // no usable properties produces no broadcast.
 func TestHandleSafetyPropertiesChanged_EmptyDropped(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"properties": []any{},
@@ -184,7 +184,7 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 	t.Run("SubagentSkipped", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
-		tr := New(deps)
+		tr := New(rolesOf(deps))
 		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 			"sessionId":  "sess-sub",
 			"properties": []any{"no public S3 buckets"},
@@ -196,7 +196,7 @@ func TestHandleSafetyPropertiesChanged_SkipsSubagent(t *testing.T) {
 	t.Run("ParentProcessed", func(t *testing.T) {
 		deps, events := newEventCaptureDeps()
 		deps.parent = "sess-parent"
-		tr := New(deps)
+		tr := New(rolesOf(deps))
 		tr.HandleSafetyPropertiesChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 			"sessionId":  "sess-parent",
 			"properties": []any{"no public S3 buckets"},
@@ -244,7 +244,7 @@ func depsWithStore(t *testing.T, chatID vibekit.ChatID) (*baseDeps, *[]vibekit.S
 // what makes the refusal outlive the fleeting banner.
 func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status":            "blocked",
@@ -274,7 +274,7 @@ func TestHandleSafetyStatusChanged_BlockedPersistsEvent(t *testing.T) {
 // no properties records the gate's detail rather than an empty event.
 func TestHandleSafetyStatusChanged_BlockedFallsBackToDetail(t *testing.T) {
 	deps, _, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 		"status": "blocked",
@@ -294,7 +294,7 @@ func TestHandleSafetyStatusChanged_NonBlockedNoPersist(t *testing.T) {
 	for _, status := range []string{"idle", "formalizing", "evaluating", "error"} {
 		t.Run(status, func(t *testing.T) {
 			deps, _, store := depsWithStore(t, "c1")
-			tr := New(deps)
+			tr := New(rolesOf(deps))
 
 			tr.HandleSafetyStatusChanged(t.Context(), "c1", &vibekit.RPCResponse{Params: mustJSON(t, map[string]any{
 				"status": status,

@@ -41,7 +41,7 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID vibekit.Cha
 		return
 	}
 	if p.Fallback != "" && chatID != "" {
-		if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+		if err := t.streaming.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 			if !ex {
 				return false
 			}
@@ -51,7 +51,7 @@ func (t *Translator) HandleAgentNotFound(ctx context.Context, chatID vibekit.Cha
 			slog.Error("agent_not_found: persist fallback", "error", err)
 		}
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeAgentNotFound,
 		Message: "\"" + notifyText(p.Requested) + "\" not found, using \"" + notifyText(p.Fallback) + "\"",
 	}))
@@ -67,7 +67,7 @@ func (t *Translator) HandleAgentConfigError(ctx context.Context, chatID vibekit.
 	if !ok {
 		return
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeAgentConfigError,
 		Message: notifyText(t.relPath(p.Path)) + ": " + notifyText(p.Error),
 	}))
@@ -83,7 +83,7 @@ func (t *Translator) HandleRateLimit(ctx context.Context, chatID vibekit.ChatID,
 	if !ok {
 		return
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeRateLimit,
 		Message: notifyText(p.Message),
 	}))
@@ -104,7 +104,7 @@ func (t *Translator) HandleSystemNotify(ctx context.Context, chatID vibekit.Chat
 	if !ok || p.Message == "" {
 		return
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{
 		Code:    vibekit.ErrCodeRateLimit,
 		Message: notifyText(p.Message),
 	}))

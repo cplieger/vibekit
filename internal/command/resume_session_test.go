@@ -19,9 +19,10 @@ type storeDeps struct {
 
 func (d *storeDeps) ChatStore() ChatStore { return d.store }
 
-func newTestDispatcher(t *testing.T, store ChatStore) *Dispatcher {
+func newTestDispatcher(t *testing.T, store ChatStore) (*Dispatcher, hostDouble) {
 	t.Helper()
-	return New(&storeDeps{benchDeps: newBenchDeps(), store: store})
+	host := &storeDeps{benchDeps: newBenchDeps(), store: store}
+	return New(host), host
 }
 
 // resumeReq builds a resume_session command envelope.
@@ -45,11 +46,11 @@ func resumeReq(t *testing.T, chatID vibekit.ChatID, sessionID, name string) *vib
 // copies no messages.
 func TestCmdResumeSession_BindsTheSession(t *testing.T) {
 	store := testsupport.NewInMemoryChatStore()
-	d := newTestDispatcher(t, store)
+	d, host := newTestDispatcher(t, store)
 	ctx := t.Context()
 	w := httptest.NewRecorder()
 
-	CmdResumeSession(d, ctx, w, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
+	CmdResumeSession(d, host, ctx, w, resumeReq(t, "c1", "sess_abc-123", "Earlier work"))
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (body %s)", w.Code, w.Body.String())
@@ -90,10 +91,10 @@ func TestCmdResumeSession_RefusesToRebindAnExistingChat(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	d := newTestDispatcher(t, store)
+	d, host := newTestDispatcher(t, store)
 	w := httptest.NewRecorder()
 
-	CmdResumeSession(d, ctx, w, resumeReq(t, "c1", "sess_other", "Hijack"))
+	CmdResumeSession(d, host, ctx, w, resumeReq(t, "c1", "sess_other", "Hijack"))
 
 	c, _ := store.Get(ctx, "c1")
 	if c.ACPSessionID != "sess_original" {
@@ -133,10 +134,10 @@ func TestCmdResumeSession_RejectsPathUnsafeIDs(t *testing.T) {
 	for name, sid := range cases {
 		t.Run(name, func(t *testing.T) {
 			store := testsupport.NewInMemoryChatStore()
-			d := newTestDispatcher(t, store)
+			d, host := newTestDispatcher(t, store)
 			w := httptest.NewRecorder()
 
-			CmdResumeSession(d, t.Context(), w, resumeReq(t, "c1", sid, ""))
+			CmdResumeSession(d, host, t.Context(), w, resumeReq(t, "c1", sid, ""))
 
 			if w.Code != http.StatusBadRequest {
 				t.Errorf("status = %d for session id %q, want 400", w.Code, sid)

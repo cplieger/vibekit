@@ -1,6 +1,6 @@
 package hub
 
-// command.Dependencies implementation methods for Hub.
+// command role implementation methods for Hub.
 // These expose Hub internals to the command package handlers.
 
 import (
@@ -13,8 +13,14 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// Compile-time assertion: Hub satisfies command.Dependencies.
-var _ command.Dependencies = (*Hub)(nil)
+// Hub satisfies each of the command package's role interfaces; the assertions
+// are the ones the Roles literal in command_dispatch.go already forces, so they
+// are not repeated here.
+//
+// The one method whose satisfaction is NOT forced by that literal is the
+// envelope seam, because command.New takes it as a parameter rather than a
+// field.
+var _ command.DedupGate = (*Hub)(nil)
 
 // ChatStore returns the hub's chat store as the command handlers use it (5 of
 // its 9 methods). Beside ChatRecords() in translate_deps.go, which is the same

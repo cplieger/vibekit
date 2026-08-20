@@ -31,40 +31,39 @@ const maxCommandBody = webhttp.MaxJSONBody
 // Handler is the signature for a command handler function.
 type Handler func(ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand)
 
-// Dependencies defines what the Dispatcher needs from its host (Hub).
-// Composed from the role-based sub-interfaces declared in interfaces.go.
-type Dependencies interface {
-	BridgeAccess
-	ChatAccess
-	PendingPermAccess
-	TerminalAccess
-	WorkspaceAccess
-	LifecycleAccess
-	MCPAccess
-	TurnOutcomeAccess
+// DedupGate is the request-envelope seam: whether the server still accepts
+// commands, and the request_id idempotency cache. Held by the Dispatcher rather
+// than passed to handlers, because all three are envelope-level concerns the
+// router owns — a handler decides nothing about draining or replay.
+//
+// The three are one protocol: a command is refused while draining, replayed from
+// the cache when its request_id repeats, and recorded there when it answers.
+type DedupGate interface {
+	// Draining reports whether the server is shutting down.
 	Draining() bool
+	// CheckDedup returns the cached response for reqID, if any.
 	CheckDedup(reqID string) ([]byte, bool)
+	// RecordDedup caches a response for idempotent replay.
 	RecordDedup(reqID string, result []byte)
 }
 
 // Dispatcher holds the command dispatch table and serves the
 // POST /api/command HTTP endpoint.
 type Dispatcher struct {
-	deps     Dependencies
+	gate     DedupGate
 	handlers map[vibekit.CommandType]Handler
 	mu       sync.RWMutex
 }
 
-// New constructs a Dispatcher with the given dependencies.
-func New(deps Dependencies) *Dispatcher {
+// New constructs a Dispatcher over the envelope seam. A handler's own
+// collaborators arrive at registration (see RegisterDefaults), so nothing here
+// can reach the host's wider surface.
+func New(gate DedupGate) *Dispatcher {
 	return &Dispatcher{
-		deps:     deps,
+		gate:     gate,
 		handlers: make(map[vibekit.CommandType]Handler),
 	}
 }
-
-// Deps returns the dependencies for use by handler functions.
-func (d *Dispatcher) Deps() Dependencies { return d.deps }
 
 // Register adds a handler for the given command type.
 func (d *Dispatcher) Register(t vibekit.CommandType, h Handler) {
@@ -81,7 +80,7 @@ func (d *Dispatcher) Respond(w http.ResponseWriter, reqID string, body any) {
 		httpreply.InternalError(w, err)
 		return
 	}
-	d.deps.RecordDedup(reqID, data)
+	d.gate.RecordDedup(reqID, data)
 	httpreply.WriteRawJSON(w, data)
 }
 
@@ -127,7 +126,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		httpreply.MethodNotAllowed(w, http.MethodPost)
 		return
 	}
-	if d.deps.Draining() {
+	if d.gate.Draining() {
 		webhttp.WriteJSONStatus(w, http.StatusServiceUnavailable, errorResponse{Error: "shutting down"})
 		return
 	}
@@ -152,7 +151,7 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Idempotent retries: same request_id → cached response.
-	if cached, ok := d.deps.CheckDedup(cmd.RequestID); ok {
+	if cached, ok := d.gate.CheckDedup(cmd.RequestID); ok {
 		slog.Debug("idempotent replay", "request_id", cmd.RequestID, keyType, cmd.Type)
 		httpreply.WriteRawJSON(w, cached)
 		return

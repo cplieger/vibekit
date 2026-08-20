@@ -76,7 +76,7 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 	for _, status := range []string{"canceled", "cancelled"} {
 		t.Run(status, func(t *testing.T) {
 			deps, events, store := depsWithStore(t, "c1")
-			tr := New(deps)
+			tr := New(rolesOf(deps))
 
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, status, ""), "")
 
@@ -105,7 +105,7 @@ func TestHandleV3Summarization_CanceledIsBenign(t *testing.T) {
 // CompactionWatermark is set to that message's id — with no failure surface.
 func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps, withIDGenerator(func() string { return "evt-1" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "evt-1" }))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "success", "history summary"), "")
 
@@ -134,7 +134,7 @@ func TestHandleV3Summarization_SuccessCompletes(t *testing.T) {
 // compaction_failed error banner.
 func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "error", ""), "")
 
@@ -162,7 +162,7 @@ func TestHandleV3Summarization_GenuineErrorFails(t *testing.T) {
 // (compacted/failed) event.
 func TestHandleV3Summarization_RunningStarts(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", summarizationInfo(t, "running", ""), "")
 

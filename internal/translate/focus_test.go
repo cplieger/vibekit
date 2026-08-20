@@ -44,7 +44,7 @@ func chatStatusPayloads(t *testing.T, events *[]vibekit.ServerEvent) []vibekit.C
 // broadcasts the status/description as an ephemeral chat_status event.
 func TestHandleSessionInfoUpdate_FocusAdoptsTitleAndStatus(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title":       "Photo organizer CLI setup",
@@ -69,7 +69,7 @@ func TestHandleSessionInfoUpdate_FocusAdoptsTitleAndStatus(t *testing.T) {
 // the title untouched and still broadcasts chat_status.
 func TestHandleSessionInfoUpdate_FocusStatusOnly(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"description": "Step 1 complete.",
@@ -89,7 +89,7 @@ func TestHandleSessionInfoUpdate_FocusStatusOnly(t *testing.T) {
 // Subagent focus frames are dropped by the parent-only gate.
 func TestHandleSessionInfoUpdate_FocusDropsSubagent(t *testing.T) {
 	deps, events, store := depsWithStore(t, "c1")
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{
 		"title": "Sub focus", "status": "in_progress",
@@ -131,7 +131,7 @@ func TestHandleSessionInfoUpdate_FocusFiltersDerivedTitle(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			tr := New(deps)
+			tr := New(rolesOf(deps))
 
 			tr.HandleSessionInfoUpdate(t.Context(), "c1", focusFrame(t, map[string]any{"title": tc.title}), "")
 

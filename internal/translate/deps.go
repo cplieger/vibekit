@@ -12,9 +12,12 @@ import (
 // This file is the package's dependency contracts: the role interfaces the
 // Translator reads its host through. Each is shaped by what THIS package
 // invokes, which keeps a test stub small enough to be obviously correct and
-// documents each handler file's actual dependency footprint. Deps remains the
-// composite the Hub satisfies, and the narrow ones are embedded into it so the
-// compiler verifies the decomposition.
+// documents each handler file's actual dependency footprint.
+//
+// The Translator holds the roles as separate fields and every method names the
+// one it uses. There is no composite over them, and must not be: a method's
+// reach is the field it names, so widening one is a diff at that line rather
+// than a consequence of the host growing a method.
 //
 // The chat-store width arithmetic: this package reads and writes chats through
 // 3 of the 9 methods *chat.Store offers. It never lists chats, never builds a
@@ -42,8 +45,8 @@ type LineRecorder interface {
 // ChatRecords is the chat store as this package uses it: read a chat, mutate it,
 // append a message. 3 of the 9 methods *chat.Store offers.
 //
-// Exported because Deps is exported and *hub.Hub has to name this as its
-// ChatRecords() return type.
+// Exported because StreamingAccess returns it and *hub.Hub has to name this as
+// its ChatRecords() return type.
 type ChatRecords interface {
 	// Get returns the full chat at id, or false if it does not exist.
 	Get(ctx context.Context, id vibekit.ChatID) (*vibekit.Chat, bool)
@@ -53,24 +56,35 @@ type ChatRecords interface {
 	AppendMessage(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.Message) error
 }
 
-// Deps abstracts the Hub methods that stateful translate handlers need.
-// Hub satisfies this interface, allowing the Translator to operate
-// without importing the hub package.
-type Deps interface {
-	StreamingAccess
-	PermissionAccess
-	RunOriginAccess
-	RunBoundsAccess
-	// MCPRecorder returns the MCP state recorder sub-interface.
-	MCPRecorder() MCPRecorder
-	// SetGovernance caches the latest account/workspace governance state so
-	// GET /api/governance can serve it with no chat open (see hub/governance.go).
+// Roles is the wiring-time role set: the host names which of its interfaces
+// answers each role once, at construction, and the Translator keeps them as
+// separate fields so every method names the one role it uses.
+//
+// A plain struct rather than an interface, deliberately. Nothing in the package
+// takes this type, so no method can reach the host through it, and it never
+// widens as the host grows. Taken by pointer: six interface fields is 96 bytes,
+// and New copies them into its own fields anyway.
+type Roles struct {
+	Streaming  StreamingAccess
+	Perms      PermissionAccess
+	MCP        MCPRecorder
+	Governance GovernanceAccess
+	RunOrigin  RunOriginAccess
+	RunBounds  RunBoundsAccess
+}
+
+// GovernanceAccess caches the latest account/workspace governance state so GET
+// /api/governance can serve it with no chat open (see hub/governance.go).
+//
+// One method, and its own name rather than a loose method on a composite,
+// because it is the only thing this package asks of that cache.
+type GovernanceAccess interface {
+	// SetGovernance replaces the cached governance state.
 	SetGovernance(state vibekit.GovernanceStatePayload)
 }
 
-// MCPRecorder groups MCP server state tracking methods.
-// Extracted from Deps to narrow the interface (21→17 methods) and
-// allow independent stubbing in tests.
+// MCPRecorder groups MCP server state tracking methods, so the MCP frames can
+// be stubbed independently of the rest of the host.
 type MCPRecorder interface {
 	// RecordConnected marks a server connected and records what it advertises
 	// (from _kiro/mcp/status): its tool names, prompts and resources. All three
@@ -88,21 +102,31 @@ type MCPRecorder interface {
 	SignalReady()
 }
 
-// Translator holds stateful translate logic extracted from Hub.
-// It delegates Hub access through Deps.
+// Translator holds stateful translate logic extracted from Hub. Each role is
+// its own field, so a handler method's reach is the field it names.
 type Translator struct {
-	deps     Deps
-	newMsgID func() string
+	streaming  StreamingAccess
+	perms      PermissionAccess
+	mcp        MCPRecorder
+	governance GovernanceAccess
+	runOrigin  RunOriginAccess
+	runBounds  RunBoundsAccess
+	newMsgID   func() string
 	// steps maps a workflow step's ACP session id to its run and node. Fed from
 	// the wire (`node_start`) and from an `inspect` read; see workflow_steps.go.
 	steps *stepRegistry
 }
 
-// New constructs a Translator with the given Hub dependency surface.
-func New(deps Deps, opts ...Option) *Translator {
+// New constructs a Translator over the roles the host supplies.
+func New(r *Roles, opts ...Option) *Translator {
 	t := &Translator{
-		deps:  deps,
-		steps: newStepRegistry(),
+		streaming:  r.Streaming,
+		perms:      r.Perms,
+		mcp:        r.MCP,
+		governance: r.Governance,
+		runOrigin:  r.RunOrigin,
+		runBounds:  r.RunBounds,
+		steps:      newStepRegistry(),
 	}
 	for _, o := range opts {
 		o(t)
@@ -153,11 +177,8 @@ func (t *Translator) deriveSubSession(chatID vibekit.ChatID, sessionID string) s
 
 // MCP returns the MCP state recorder sub-interface.
 func (t *Translator) MCP() MCPRecorder {
-	return t.deps.MCPRecorder()
+	return t.mcp
 }
-
-// Compile-time assertion: Deps satisfies ChatStoreDeps (not embedded).
-var _ ChatStoreDeps = Deps(nil)
 
 // StreamingAccess provides the methods needed by streaming_content.go /
 // streaming_tools.go for content buffering, partial file recovery, and
@@ -201,14 +222,6 @@ type PermissionAccess interface {
 	NotifyPush(ctx context.Context, body string, kind vibekit.PushKind, chatID vibekit.ChatID)
 	ParentACPSession(chatID vibekit.ChatID) string
 	PendingPermsAdd(requestID int64, evt vibekit.ServerEvent)
-}
-
-// ChatStoreDeps provides the minimal interface needed by handlers that
-// only require chat store access and broadcast (init_errors).
-type ChatStoreDeps interface {
-	Broadcast(ctx context.Context, evt vibekit.ServerEvent)
-	ChatRecords() ChatRecords
-	ParentACPSession(chatID vibekit.ChatID) string
 }
 
 // RunOriginAccess answers whether a workflow run was launched by a SCHEDULE.

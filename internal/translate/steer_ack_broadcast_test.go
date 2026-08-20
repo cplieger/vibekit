@@ -35,7 +35,7 @@ func feedChunk(t *testing.T, tr *Translator, chatID vibekit.ChatID, text string)
 // being discarded with the marker.
 func TestHandleAssistantChunk_BroadcastsTheAgentsAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 	chatID := vibekit.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "Done. [STEERING steer-abc: rebased onto main instead]")
@@ -63,7 +63,7 @@ func TestHandleAssistantChunk_BroadcastsTheAgentsAcknowledgement(t *testing.T) {
 // worth pinning.
 func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 	chatID := vibekit.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "All set.")
@@ -88,7 +88,7 @@ func TestHandleAssistantChunk_AcknowledgementSurvivesAMarkerOnlyDelta(t *testing
 // chip and then correct it.
 func TestHandleAssistantChunk_AcknowledgementFiresOnceWhenSplit(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 	chatID := vibekit.ChatID("c1")
 
 	for _, part := range []string{"ok ", "[STEERING ste", "er-split: kept the ", "existing shape]", " bye"} {
@@ -109,7 +109,7 @@ func TestHandleAssistantChunk_AcknowledgementFiresOnceWhenSplit(t *testing.T) {
 // broadcast an ack for a steer nothing answered.
 func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 	chatID := vibekit.ChatID("c1")
 
 	tr.HandleAssistantChunk(t.Context(), chatID, mustJSON(t, map[string]any{
@@ -127,7 +127,7 @@ func TestHandleAssistantChunk_ReasoningYieldsNoAcknowledgement(t *testing.T) {
 // it is worse than a chip reading "read".
 func TestHandleAssistantChunk_EmptyAcknowledgementIsNotBroadcast(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps, withIDGenerator(func() string { return "m1" }))
+	tr := New(rolesOf(deps), withIDGenerator(func() string { return "m1" }))
 	chatID := vibekit.ChatID("c1")
 
 	feedChunk(t, tr, chatID, "done [STEERING steer-blank:    ]")

@@ -323,7 +323,14 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	for _, o := range opts {
 		o(h)
 	}
-	h.translator = translate.New(h)
+	h.translator = translate.New(&translate.Roles{
+		Streaming:  h,
+		Perms:      h,
+		MCP:        h.MCPRecorder(),
+		Governance: h,
+		RunOrigin:  h,
+		RunBounds:  h,
+	})
 	h.dispatcher = command.New(h)
 	h.registerCommandHandlers()
 	h.initDispatch()
@@ -554,19 +561,16 @@ func (h *Hub) Broadcast(_ context.Context, evt vibekit.ServerEvent) {
 }
 
 // CheckDedup returns a cached response for the given request ID.
-// Satisfies command.Dependencies.
 func (h *Hub) CheckDedup(reqID string) ([]byte, bool) {
 	return h.sse.idempotency.Check(reqID)
 }
 
 // RecordDedup caches a response for idempotent replay.
-// Satisfies command.Dependencies.
 func (h *Hub) RecordDedup(reqID string, result []byte) {
 	h.sse.idempotency.Record(reqID, result)
 }
 
 // Draining reports whether the server is shutting down.
-// Satisfies command.Dependencies.
 func (h *Hub) Draining() bool {
 	return h.lifecycle.draining.Load()
 }
@@ -597,7 +601,7 @@ func (h *Hub) recordDedup(reqID string, result []byte) {
 	h.sse.idempotency.Record(reqID, result)
 }
 
-// Compile-time assertion: Hub satisfies command.Dependencies.
+// cleanIdempotency runs the idempotency cache's cleaner until shutdown.
 func (h *Hub) cleanIdempotency() {
 	h.sse.idempotency.StartCleaner(h.lifecycle.done)
 }

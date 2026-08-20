@@ -31,7 +31,7 @@ import (
 // with until the next session, which is the kind of silent lag that makes a
 // safety toggle untrustworthy. On a chat with no bridge yet the persisted value
 // is enough — `spawnBridge` passes it at `session/new`.
-func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdSetSupervisedMode(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -41,7 +41,7 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 		return
 	}
 
-	if err := d.Deps().ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists || c.SupervisedMode == p.Enabled {
 			return false
 		}
@@ -55,7 +55,7 @@ func CmdSetSupervisedMode(d *Dispatcher, ctx context.Context, w http.ResponseWri
 	// Best-effort on the live session, and logged at ERROR when it fails while
 	// ENABLING: the user asked to review writes and would not be asked. The
 	// disabling direction failing is a nuisance, not a hazard.
-	if bridge := d.Deps().GetBridge(cmd.ChatID); bridge != nil {
+	if bridge := bridges.GetBridge(cmd.ChatID); bridge != nil {
 		if _, err := bridge.Call(ctx, vibekit.MethodSetConfigOption, SessionParams(bridge, map[string]any{
 			"configId": vibekit.ConfigOptionAutopilot,
 			"value":    !p.Enabled,

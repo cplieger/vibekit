@@ -27,7 +27,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	if json.Unmarshal(raw, &chunk) != nil || chunk.Content.Type != vibekit.ContentTypeText || chunk.Content.Text == "" {
 		return
 	}
-	buf := t.deps.BufferStore().GetOrInit(chatID)
+	buf := t.streaming.BufferStore().GetOrInit(chatID)
 	t.ensureTurnStarted(ctx, chatID, buf)
 
 	// A workflow STEP's frames arrive on this chat's connection with an EMPTY
@@ -103,7 +103,7 @@ func (t *Translator) HandleAssistantChunk(ctx context.Context, chatID vibekit.Ch
 	} else {
 		refusal = nil
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
 		vibekit.MessageChunkPayload{
 			MessageID:      buf.MessageID,
 			Delta:          text,
@@ -131,7 +131,7 @@ func (t *Translator) broadcastSteerAcks(ctx context.Context, chatID vibekit.Chat
 		if ack.SteerID == "" || ack.Text == "" {
 			continue
 		}
-		t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
+		t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSteerInjected, chatID, vibekit.SteerInjectedPayload{
 			SteerID: ack.SteerID,
 			Ack:     ack.Text,
 		}))
@@ -160,7 +160,7 @@ func (t *Translator) announceTruncation(
 	blockIndex, seq := buf.AppendTextDelta(notice, subtask)
 	slog.Warn("turn exceeded the assistant buffer cap; dropping the remainder",
 		"chat_id", chatID, "message_id", buf.MessageID, "buffered_bytes", buffered)
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageChunk, chatID,
 		vibekit.MessageChunkPayload{
 			MessageID:  buf.MessageID,
 			Delta:      notice,
@@ -196,7 +196,7 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw 
 		Ts:   time.Now().UnixMilli(),
 		Plan: p.Entries,
 	}
-	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &msg); err != nil {
+	if err := t.streaming.ChatRecords().AppendMessage(ctx, chatID, &msg); err != nil {
 		slog.Error("persist plan", "chat_id", chatID, "error", err)
 	}
 	if ctx.Err() != nil {
@@ -213,7 +213,7 @@ func (t *Translator) HandlePlan(ctx context.Context, chatID vibekit.ChatID, raw 
 	if !allDone {
 		plan = p.Entries
 	}
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if err := t.streaming.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -231,7 +231,7 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID vibekit.ChatID
 		return
 	}
 	changed := false
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if err := t.streaming.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex || c.CurrentModeID == p.ModeID {
 			return false
 		}
@@ -242,6 +242,6 @@ func (t *Translator) HandleModeUpdate(ctx context.Context, chatID vibekit.ChatID
 		slog.Error("mode update persist", "chat_id", chatID, "error", err)
 	}
 	if changed {
-		t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, chatID, vibekit.ModeChangedPayload{ModeID: p.ModeID}))
+		t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventModeChanged, chatID, vibekit.ModeChangedPayload{ModeID: p.ModeID}))
 	}
 }

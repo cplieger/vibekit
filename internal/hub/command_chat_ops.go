@@ -1,7 +1,7 @@
 package hub
 
 // Internal hub methods for chat state cleanup. These are called by
-// command_deps.go to satisfy command.Dependencies.
+// command_deps.go to satisfy the command package's role interfaces.
 
 import (
 	"context"

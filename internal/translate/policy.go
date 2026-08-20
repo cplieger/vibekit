@@ -34,7 +34,7 @@ func (t *Translator) HandlePolicyChanged(ctx context.Context, _ vibekit.ChatID, 
 	if !ok {
 		return
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPermissionsChanged, "", vibekit.PermissionsChangedPayload{
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPermissionsChanged, "", vibekit.PermissionsChangedPayload{
 		Status: p.Status,
 		Errors: p.Errors,
 	}))
@@ -53,5 +53,5 @@ func (t *Translator) HandlePolicyError(ctx context.Context, _ vibekit.ChatID, ms
 	if !ok {
 		return
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPolicyError, "", vibekit.PolicyErrorPayload{Errors: p.Errors}))
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventPolicyError, "", vibekit.PolicyErrorPayload{Errors: p.Errors}))
 }

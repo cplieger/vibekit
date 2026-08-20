@@ -230,7 +230,7 @@ func TestHandleShellInterception_BusyReturns409(t *testing.T) {
 	cmd := &vibekit.ClientCommand{Type: "prompt", RequestID: "r1", ChatID: "c1"}
 	p := &vibekit.PromptCommand{Text: "!echo hi", MessageID: "m-1"}
 
-	HandleShellInterception(d, deps, t.Context(), w, cmd, p)
+	HandleShellInterception(d, promptRolesOf(deps), t.Context(), w, cmd, p)
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("status = %d, want 409 (busy)", w.Code)

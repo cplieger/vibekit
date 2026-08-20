@@ -222,7 +222,7 @@ func (t *Translator) RecordRunSteps(raw json.RawMessage) {
 // `_meta.kiro.workflow` is present — and is what makes a `session/update` frame
 // classify correctly even on the recovery path where the registry is cold.
 func (t *Translator) ClassifyFrame(chatID vibekit.ChatID, sessionID string, workflowMarked bool) FrameOwner {
-	parent := t.deps.ParentACPSession(chatID)
+	parent := t.streaming.ParentACPSession(chatID)
 	if sessionID == "" || parent == "" || sessionID == parent {
 		return OwnerChat
 	}
@@ -272,7 +272,7 @@ func (t *Translator) countStepTurn(wf *ACPWorkflowMeta, stepKey string) {
 		return
 	}
 	if turns := t.steps.countTurn(wf.WorkflowID, stepKey); turns == StepTurnCap {
-		t.deps.StepTurnCapExceeded(wf.WorkflowID, wf.NodeID, turns)
+		t.runBounds.StepTurnCapExceeded(wf.WorkflowID, wf.NodeID, turns)
 	}
 }
 

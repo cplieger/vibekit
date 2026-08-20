@@ -34,7 +34,7 @@ func TestHandleUserInput(t *testing.T) {
 	t.Run("question with options broadcasts payload and registers pending", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
-		tr := New(deps)
+		tr := New(rolesOf(deps))
 		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, &reqID, map[string]any{
 			"sessionId":  "sess_1",
 			"toolCallId": "tc-9",
@@ -80,7 +80,7 @@ func TestHandleUserInput(t *testing.T) {
 	t.Run("free-form question keeps an empty options list", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
-		tr := New(deps)
+		tr := New(rolesOf(deps))
 		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, &reqID, map[string]any{
 			"sessionId": "sess_1",
 			"question":  "Describe the goal",
@@ -99,7 +99,7 @@ func TestHandleUserInput(t *testing.T) {
 	t.Run("request without id is dropped", func(t *testing.T) {
 		base, events := newEventCaptureDeps()
 		deps := &pendingCaptureDeps{baseDeps: base}
-		tr := New(deps)
+		tr := New(rolesOf(deps))
 		tr.HandleUserInput(t.Context(), "c1", userInputMsg(t, nil, map[string]any{
 			"question": "unanswerable",
 		}))

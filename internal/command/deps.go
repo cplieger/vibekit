@@ -7,21 +7,14 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// This file is the package's dependency contracts: the role interfaces the
-// Dispatcher's dependencies are read through, and the per-chat bridge
-// interfaces the handlers call. Each is shaped by what THIS package invokes,
-// which is what keeps a test stub small enough to be obviously correct.
+// This file is the package's dependency contracts: the role interfaces each
+// handler names in its own signature, and the per-chat bridge interfaces the
+// handlers call. Each is shaped by what THIS package invokes, which is what
+// keeps a test stub small enough to be obviously correct.
 //
-// Dependencies remains the composite the Hub satisfies, and the narrow role
-// interfaces are embedded into it so the compiler verifies the decomposition.
-//
-// InfraDeps used to sit at the bottom of this file as the outlier: ten
-// unrelated methods behind one name, in a file whose other members were already
-// correctly segregated. Its own doc comment named the seams (workspace,
-// lifecycle, MCP readiness) so it is split along them, plus a fourth its comment
-// omitted — the four turn-outcome methods. The "dedup" seam that comment also
-// named had already left for Dependencies, which is how long the description had
-// been drifting from the members.
+// The package declares no composite over these roles, and must not: a handler's
+// reach is its signature, so widening one is a diff at its declaration rather
+// than a consequence of the host growing a method.
 
 // The bridge interfaces below are declared HERE, at the consumer, rather than in
 // a shared contract package. *hub.sharedBridge is what satisfies them, and the
@@ -292,30 +285,40 @@ type TurnOutcomeAccess interface {
 	LatchTurnModel(chatID vibekit.ChatID, model string)
 }
 
-// Typed accessors on Dispatcher for narrow interface access.
-// These allow handler functions to document and use only the
-// subset of Dependencies they actually need.
+// Roles is the wiring-time role set: the host names which of its interfaces
+// answers each role once, at registration, and RegisterDefaults hands every
+// handler only the roles that handler's signature declares.
+//
+// A plain struct rather than an interface, deliberately. No handler, helper or
+// constructor takes this type, so nothing in the package widens as the host
+// grows, and the compiler stops a handler reaching a role it was not given. It
+// is the composition root's argument list with names on it; the alternative,
+// eight positional parameters all satisfied by the same value, is the same
+// wiring spelled worse.
+//
+// Taken by POINTER wherever it travels: eight interface fields is 128 bytes, and
+// copying a wiring record per call buys nothing.
+type Roles struct {
+	Bridges     BridgeAccess
+	Chats       ChatAccess
+	Perms       PendingPermAccess
+	Terminals   TerminalAccess
+	Workspace   WorkspaceAccess
+	Lifecycle   LifecycleAccess
+	MCP         MCPAccess
+	TurnOutcome TurnOutcomeAccess
+}
 
-// Bridge returns the BridgeAccess subset of dependencies.
-func (d *Dispatcher) Bridge() BridgeAccess { return d.deps }
-
-// Chat returns the ChatAccess subset of dependencies.
-func (d *Dispatcher) Chat() ChatAccess { return d.deps }
-
-// PendingPerms returns the PendingPermAccess subset of dependencies.
-func (d *Dispatcher) PendingPerms() PendingPermAccess { return d.deps }
-
-// Terminals returns the TerminalAccess subset of dependencies.
-func (d *Dispatcher) Terminals() TerminalAccess { return d.deps }
-
-// Workspace returns the WorkspaceAccess subset of dependencies.
-func (d *Dispatcher) Workspace() WorkspaceAccess { return d.deps }
-
-// Lifecycle returns the LifecycleAccess subset of dependencies.
-func (d *Dispatcher) Lifecycle() LifecycleAccess { return d.deps }
-
-// MCP returns the MCPAccess subset of dependencies.
-func (d *Dispatcher) MCP() MCPAccess { return d.deps }
-
-// TurnOutcome returns the TurnOutcomeAccess subset of dependencies.
-func (d *Dispatcher) TurnOutcome() TurnOutcomeAccess { return d.deps }
+// promptRoles is the prompt path's six roles. The one handler that takes a
+// struct rather than plain parameters, because the same set is threaded through
+// the shell interception as well, and six parameters ahead of ctx at each site
+// is what would actually obscure which one needs what. Passed by pointer, built
+// once at registration: 96 bytes is not a per-request copy worth making.
+type promptRoles struct {
+	bridges     BridgeAccess
+	chats       ChatAccess
+	workspace   WorkspaceAccess
+	lifecycle   LifecycleAccess
+	mcp         MCPAccess
+	turnOutcome TurnOutcomeAccess
+}

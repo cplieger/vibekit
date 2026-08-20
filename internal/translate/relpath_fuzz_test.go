@@ -28,7 +28,7 @@ func FuzzTranslatorRelPath(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, workDir, abs string) {
 		deps := &relPathDeps{baseDeps: newBaseDeps(), workDir: workDir}
-		tr := &Translator{deps: deps}
+		tr := New(rolesOf(deps))
 
 		result := tr.relPath(abs)
 

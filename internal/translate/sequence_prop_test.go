@@ -13,7 +13,7 @@ import (
 func TestTranslator_SequenceInvariants_Rapid(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		deps, events := newEventCaptureDeps()
-		tr := New(deps, withIDGenerator(func() string { return "stub-msg-id" }))
+		tr := New(rolesOf(deps), withIDGenerator(func() string { return "stub-msg-id" }))
 		chatID := vibekit.ChatID("prop-chat")
 
 		type action int

@@ -53,8 +53,7 @@ var errForkParentIsSelf = errors.New("a tangent cannot fork the chat it opens in
 // CmdForkChat opens a tangent off another chat.
 //
 //nolint:revive // context-as-argument: dispatcher handler signature
-func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
-	deps := d.Deps()
+func CmdForkChat(d *Dispatcher, bridges BridgeAccess, chats ChatAccess, workspace WorkspaceAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) {
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
@@ -72,7 +71,7 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 		return
 	}
 
-	parent, ok := deps.ChatStore().Get(ctx, p.ParentChatID)
+	parent, ok := chats.ChatStore().Get(ctx, p.ParentChatID)
 	if !ok {
 		d.RespondErr(w, http.StatusNotFound, errForkParentUnknown)
 		return
@@ -82,13 +81,13 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 	// the same agent that produced the conversation it inherited. Read here
 	// rather than sent by the client: the record is the truth about both, and a
 	// client value could be a tab's stale projection.
-	sessionID := forkSession(ctx, deps, p, cmd.ChatID)
+	sessionID := forkSession(ctx, bridges, workspace, p, cmd.ChatID)
 	outcome := vibekit.ForkOutcomeForked
 	if sessionID == "" {
 		outcome = vibekit.ForkOutcomePrimed
 	}
 
-	if err := deps.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := chats.ChatStore().Mutate(ctx, cmd.ChatID, func(c *vibekit.Chat, exists bool) bool {
 		// Refuse to reshape an existing chat, for CmdResumeSession's reason:
 		// binding a live chat to another session strands its own (the transcript
 		// stays on disk unreferenced, so the reaper sweeps it) and silently
@@ -115,7 +114,7 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 	if outcome == vibekit.ForkOutcomePrimed {
 		// Marked AFTER the record exists, so nothing can observe a prime note for
 		// a chat that failed to create.
-		deps.PrimeFromChat(cmd.ChatID, p.ParentChatID)
+		bridges.PrimeFromChat(cmd.ChatID, p.ParentChatID)
 	}
 
 	slog.Info("tangent opened",
@@ -135,8 +134,8 @@ func CmdForkChat(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd 
 // reasons are still distinguished in the log, since "no bridge" (the parent was
 // never prompted, or its process is gone) and "KAS refused" want different
 // follow-ups.
-func forkSession(ctx context.Context, deps Dependencies, p vibekit.ForkChatCommand, newChat vibekit.ChatID) string {
-	bridge := deps.GetBridge(p.ParentChatID)
+func forkSession(ctx context.Context, bridges BridgeAccess, workspace WorkspaceAccess, p vibekit.ForkChatCommand, newChat vibekit.ChatID) string {
+	bridge := bridges.GetBridge(p.ParentChatID)
 	if bridge == nil || bridge.SessionID() == "" {
 		// No live session to branch. Deliberately NOT started here: spawning a
 		// bridge for the parent as a side effect of opening a tangent would
@@ -152,7 +151,7 @@ func forkSession(ctx context.Context, deps Dependencies, p vibekit.ForkChatComma
 		meta["title"] = p.Title
 	}
 	resp, err := bridge.Call(ctx, vibekit.MethodSessionFork, SessionParams(bridge, map[string]any{
-		"cwd":   deps.WorkDir(),
+		"cwd":   workspace.WorkDir(),
 		"_meta": map[string]any{"kiro": meta},
 	}))
 	if err != nil {

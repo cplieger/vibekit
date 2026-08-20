@@ -13,7 +13,7 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// benchDeps is a minimal Dependencies stub for benchmarking dispatch overhead.
+// benchDeps is a minimal host double for benchmarking dispatch overhead.
 type benchDeps struct {
 	dedup map[string][]byte
 }
@@ -218,4 +218,37 @@ func BenchmarkDispatcherServeHTTP(b *testing.B) {
 			d.ServeHTTP(w, req)
 		}
 	})
+}
+
+// hostDouble is what a single all-in-one test double answers: every role a
+// handler declares, plus the envelope seam. It exists ONLY for the doubles in
+// this package's tests — production code has no aggregate over the roles, and
+// the shape pin in shape_test.go reads production files only, for exactly this
+// reason. A double stands in for the whole host, so naming every role once is
+// what lets one value fill every slot a handler asks for.
+type hostDouble interface {
+	DedupGate
+	BridgeAccess
+	ChatAccess
+	PendingPermAccess
+	TerminalAccess
+	WorkspaceAccess
+	LifecycleAccess
+	MCPAccess
+	TurnOutcomeAccess
+}
+
+var _ hostDouble = (*benchDeps)(nil)
+
+// promptRolesOf wires one double into the prompt path's role set, the way
+// RegisterDefaults wires the Hub into it.
+func promptRolesOf(d hostDouble) *promptRoles {
+	return &promptRoles{
+		bridges:     d,
+		chats:       d,
+		workspace:   d,
+		lifecycle:   d,
+		mcp:         d,
+		turnOutcome: d,
+	}
 }

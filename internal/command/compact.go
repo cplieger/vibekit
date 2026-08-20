@@ -37,11 +37,11 @@ var errCompactRefused = errors.New("can't compact right now — finish or cancel
 // Requires a LIVE RESIDENT session: compaction operates on the session's own
 // message log, so there is nothing to compact without a bridge, and KAS throws
 // rather than answering for a session it does not hold.
-func CmdCompact(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
+func CmdCompact(d *Dispatcher, bridges BridgeAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // dispatcher handler signature
 	if !d.RequireChatID(w, cmd) {
 		return
 	}
-	bridge := d.Deps().GetBridge(cmd.ChatID)
+	bridge := bridges.GetBridge(cmd.ChatID)
 	if bridge == nil {
 		d.RespondErr(w, http.StatusConflict, errNoBridge)
 		return

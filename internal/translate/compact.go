@@ -21,13 +21,13 @@ func (t *Translator) handleCompactionCompleted(ctx context.Context, chatID vibek
 		summary = *summaryPtr
 	}
 	evt := t.newEventMessage(vibekit.EventCompacted, summary)
-	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
+	if err := t.streaming.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("compaction: append event", "chat_id", chatID, "error", err)
 	}
 	if ctx.Err() != nil {
 		return
 	}
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
+	if err := t.streaming.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, ex bool) bool {
 		if !ex {
 			return false
 		}
@@ -45,8 +45,8 @@ func (t *Translator) handleCompactionFailed(ctx context.Context, chatID vibekit.
 		errMsg = "compaction failed"
 	}
 	evt := t.newEventMessage(vibekit.EventCompactFailed, errMsg)
-	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
+	if err := t.streaming.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("compaction: append failed event", "chat_id", chatID, "error", err)
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeCompactionFailed, Message: errMsg}))
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventError, chatID, vibekit.ErrorPayload{Code: vibekit.ErrCodeCompactionFailed, Message: errMsg}))
 }

@@ -93,7 +93,7 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID vibek
 	if _, known := knownSafetyStatuses[status]; !known {
 		return
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSafetyStatus, chatID, vibekit.SafetyStatusPayload{
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSafetyStatus, chatID, vibekit.SafetyStatusPayload{
 		Status:            status,
 		Detail:            p.Detail,
 		ToolID:            p.ToolID,
@@ -119,7 +119,7 @@ func (t *Translator) HandleSafetyStatusChanged(ctx context.Context, chatID vibek
 // breadcrumb never blocks the stream.
 func (t *Translator) persistSafetyBlock(ctx context.Context, chatID vibekit.ChatID, p v3SafetyStatusChanged) {
 	evt := t.newEventMessage(vibekit.EventInfraSafetyBlocked, safetyBlockContent(p))
-	if err := t.deps.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
+	if err := t.streaming.ChatRecords().AppendMessage(ctx, chatID, &evt); err != nil {
 		slog.Error("safety: append block event", "chat_id", chatID, "error", err)
 	}
 }
@@ -152,7 +152,7 @@ func (t *Translator) HandleSafetyPropertiesChanged(ctx context.Context, chatID v
 	if len(props) == 0 {
 		return
 	}
-	t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSafetyProperties, chatID, vibekit.SafetyPropertiesPayload{
+	t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventSafetyProperties, chatID, vibekit.SafetyPropertiesPayload{
 		Properties: props,
 		Reason:     p.Reason,
 	}))

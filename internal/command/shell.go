@@ -51,8 +51,8 @@ func (b *ShellCappedBuffer) Write(p []byte) (int, error) {
 // chat's first message, derives an initial chat name from the command text.
 // Returns whether the message was persisted (false when the chat record
 // doesn't exist).
-func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID vibekit.ChatID, msg *vibekit.Message, text string) (persisted bool, err error) {
-	err = deps.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+func appendShellUserMessage(ctx context.Context, chats ChatAccess, chatID vibekit.ChatID, msg *vibekit.Message, text string) (persisted bool, err error) {
+	err = chats.ChatStore().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			c.Name = vibekit.DefaultChatName
 		}
@@ -64,7 +64,7 @@ func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID vibek
 			}
 			c.Name = name
 		}
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
+		chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, chatID, msg))
 		persisted = true
 		return true
 	})
@@ -72,7 +72,7 @@ func appendShellUserMessage(ctx context.Context, deps Dependencies, chatID vibek
 }
 
 // HandleShellInterception runs a "!" prefixed prompt as a local shell command.
-func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand, p *vibekit.PromptCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+func HandleShellInterception(d *Dispatcher, roles *promptRoles, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand, p *vibekit.PromptCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
 	shellCmd := strings.TrimPrefix(p.Text, "!")
 	shellCmd = strings.TrimSpace(shellCmd)
 	if shellCmd == "" {
@@ -89,7 +89,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	// bridge yet has never run a turn, so !cmd runs locally with no lock
 	// (nothing to collide with); we broadcast the shell turn_ended only
 	// when we own the turn (locked) or when there is no bridge at all.
-	if sb := deps.GetBridge(cmd.ChatID); sb != nil {
+	if sb := roles.bridges.GetBridge(cmd.ChatID); sb != nil {
 		if !sb.TryAcquireForPrompt() {
 			d.RespondErr(w, http.StatusConflict, errBusy)
 			return
@@ -97,15 +97,15 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		defer sb.ReleaseAfterPrompt()
 	}
 
-	d.Lifecycle().InflightAdd(1)
-	defer d.Lifecycle().InflightDone()
+	roles.lifecycle.InflightAdd(1)
+	defer roles.lifecycle.InflightDone()
 
 	// Persist the user message.
 	userMsg := vibekit.Message{
 		ID: p.MessageID, Role: vibekit.RoleUser, Ts: time.Now().UnixMilli(),
 		Content: p.Text,
 	}
-	persisted, err := appendShellUserMessage(ctx, deps, cmd.ChatID, &userMsg, p.Text)
+	persisted, err := appendShellUserMessage(ctx, roles.chats, cmd.ChatID, &userMsg, p.Text)
 	if err != nil {
 		d.RespondErr(w, http.StatusInternalServerError, err)
 		return
@@ -124,7 +124,7 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 	defer cancel()
 
 	shellProc := exec.CommandContext(shellCtx, "sh", "-c", shellCmd)
-	shellProc.Dir = d.Workspace().WorkDir()
+	shellProc.Dir = roles.workspace.WorkDir()
 	var capped ShellCappedBuffer
 	shellProc.Stdout = &capped
 	shellProc.Stderr = &capped
@@ -150,13 +150,13 @@ func HandleShellInterception(d *Dispatcher, deps Dependencies, ctx context.Conte
 		ID: msgID, Role: vibekit.RoleAssistant, Ts: time.Now().UnixMilli(),
 		Content: content,
 	}
-	appendErr := deps.ChatStore().AppendMessage(ctx, cmd.ChatID, &assistantMsg)
+	appendErr := roles.chats.ChatStore().AppendMessage(ctx, cmd.ChatID, &assistantMsg)
 	if appendErr != nil {
 		slog.Error("shell interception: persist output", "chat_id", cmd.ChatID, keyError, appendErr)
 	}
-	if _, stillExists := deps.ChatStore().Get(ctx, cmd.ChatID); stillExists {
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
-		deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
+	if _, stillExists := roles.chats.ChatStore().Get(ctx, cmd.ChatID); stillExists {
+		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventMessageAppended, cmd.ChatID, &assistantMsg))
+		roles.chats.Broadcast(ctx, vibekit.NewEvent(vibekit.EventTurnEnded, cmd.ChatID, vibekit.TurnEndedPayload{StopReason: vibekit.StopReasonEndTurn}))
 	}
 	d.RespondOK(w, cmd.RequestID)
 }

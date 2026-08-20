@@ -27,8 +27,8 @@ func validElicitationAction(a string) bool {
 
 // CmdElicitationResponse forwards the user's elicitation form answer to
 // kiro-cli as the elicitation/create response.
-func CmdElicitationResponse(d *Dispatcher, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
-	sb := d.Bridge().GetBridge(cmd.ChatID)
+func CmdElicitationResponse(d *Dispatcher, bridges BridgeAccess, perms PendingPermAccess, ctx context.Context, w http.ResponseWriter, cmd *vibekit.ClientCommand) { //nolint:revive // context-as-argument: dispatcher handler signature
+	sb := bridges.GetBridge(cmd.ChatID)
 	if sb == nil {
 		d.RespondErr(w, http.StatusBadRequest, errNoBridge)
 		return
@@ -45,7 +45,7 @@ func CmdElicitationResponse(d *Dispatcher, ctx context.Context, w http.ResponseW
 	// Take before responding, for the same reason CmdPermission does: an
 	// elicitation form open in two tabs can be submitted twice, and the second
 	// ElicitResult is dropped by the MCP server's caller without a word.
-	if !d.PendingPerms().TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
+	if !perms.TakePendingPerm(p.RequestID, vibekit.SettledByUser) {
 		d.RespondErr(w, http.StatusConflict, errAlreadyAnswered)
 		return
 	}

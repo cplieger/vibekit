@@ -21,7 +21,7 @@ func countEvents(events *[]vibekit.ServerEvent, typ vibekit.EventType) int {
 // status — the signal the client refetches GET /api/permissions on.
 func TestHandlePolicyChanged(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandlePolicyChanged(t.Context(), vibekit.ChatID("c1"), &vibekit.RPCResponse{
 		Params: mustJSON(t, map[string]any{"sessionId": "sess-1", "status": "success"}),
@@ -55,7 +55,7 @@ func TestHandlePolicyChanged(t *testing.T) {
 // stops broadcasting, a bad rule becomes silent.
 func TestHandlePolicyError(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 
 	tr.HandlePolicyError(t.Context(), vibekit.ChatID("c1"), &vibekit.RPCResponse{
 		Params: mustJSON(t, map[string]any{
@@ -84,7 +84,7 @@ func TestHandlePolicyError(t *testing.T) {
 // without a broadcast.
 func TestHandlePolicyMalformedNoop(t *testing.T) {
 	deps, events := newEventCaptureDeps()
-	tr := New(deps)
+	tr := New(rolesOf(deps))
 	tr.HandlePolicyChanged(t.Context(), vibekit.ChatID("c1"), &vibekit.RPCResponse{Params: []byte("{")})
 	tr.HandlePolicyError(t.Context(), vibekit.ChatID("c1"), &vibekit.RPCResponse{Params: []byte("{")})
 	if len(*events) != 0 {

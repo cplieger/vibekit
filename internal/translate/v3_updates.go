@@ -213,7 +213,7 @@ func (t *Translator) logUnconsumedInfoKind(chatID vibekit.ChatID, kind string) {
 func (t *Translator) handleV3Summarization(ctx context.Context, chatID vibekit.ChatID, s *v3Summarization) {
 	switch s.Status {
 	case "running":
-		t.deps.Broadcast(ctx, vibekit.NewEvent(vibekit.EventCompactionStarted, chatID, vibekit.CompactionStartedPayload{}))
+		t.streaming.Broadcast(ctx, vibekit.NewEvent(vibekit.EventCompactionStarted, chatID, vibekit.CompactionStartedPayload{}))
 	case "success":
 		var summary *string
 		if s.Summary != nil {
@@ -252,7 +252,7 @@ func (t *Translator) persistTurnSummary(ctx context.Context, chatID vibekit.Chat
 			credits += summaries[i].Usage
 		}
 	}
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := t.streaming.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -324,7 +324,7 @@ func (t *Translator) HandleUsageUpdate(ctx context.Context, chatID vibekit.ChatI
 // on (80 = warning, 95 = critical) so a crossing is never rounded away. A
 // change the UI cannot show is not worth a transcript rewrite.
 func (t *Translator) persistUsage(ctx context.Context, chatID vibekit.ChatID, pct float64, size int, credits float64) {
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := t.streaming.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}
@@ -428,7 +428,7 @@ func (t *Translator) HandleConfigOptionUpdate(ctx context.Context, chatID vibeki
 	if len(cat.models) == 0 && !cat.sawEffort {
 		return
 	}
-	if err := t.deps.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
+	if err := t.streaming.ChatRecords().Mutate(ctx, chatID, func(c *vibekit.Chat, exists bool) bool {
 		if !exists {
 			return false
 		}

@@ -7,87 +7,121 @@ import (
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
 
-// TranslateDepsContractTest exercises every method of translate.Deps
-// against a concrete implementation. Purpose: catch interface drift between
-// Hub's Deps implementation and translate package's expectations.
-func TranslateDepsContractTest(t *testing.T, newDeps func(t *testing.T) translate.Deps) {
+// TranslateRolesContractTest exercises every method of every translate role
+// against a concrete wiring. Purpose: catch drift between Hub's implementations
+// and the translate package's expectations.
+//
+// It takes the Roles value rather than one aggregate interface, so the subject
+// is the wiring hub actually performs: a role Hub stopped satisfying fails to
+// compile at the literal, and a method that regresses fails here.
+func TranslateRolesContractTest(t *testing.T, newRoles func(t *testing.T) *translate.Roles) {
 	t.Helper()
 
 	t.Run("ChatRecords_non_nil", func(t *testing.T) {
-		d := newDeps(t)
-		if d.ChatRecords() == nil {
+		r := newRoles(t)
+		if r.Streaming.ChatRecords() == nil {
 			t.Error("ChatRecords() returned nil")
 		}
 	})
 
 	t.Run("WorkDir_non_empty", func(t *testing.T) {
-		d := newDeps(t)
-		if d.WorkDir() == "" {
+		r := newRoles(t)
+		if r.Streaming.WorkDir() == "" {
 			t.Error("WorkDir() returned empty string")
 		}
 	})
 
 	t.Run("Broadcast_does_not_panic", func(t *testing.T) {
-		d := newDeps(t)
-		d.Broadcast(t.Context(), vibekit.ServerEvent{Type: "test_event", ChatID: "chat-1"})
+		r := newRoles(t)
+		r.Streaming.Broadcast(t.Context(), vibekit.ServerEvent{Type: "test_event", ChatID: "chat-1"})
 	})
 
 	t.Run("ParentACPSession_empty_for_unknown_chat", func(t *testing.T) {
-		d := newDeps(t)
-		if s := d.ParentACPSession("unknown-chat"); s != "" {
+		r := newRoles(t)
+		if s := r.Streaming.ParentACPSession("unknown-chat"); s != "" {
 			t.Errorf("ParentACPSession(unknown) = %q, want empty", s)
 		}
 	})
 
-	t.Run("MCPRecorder_does_not_panic", func(t *testing.T) {
-		d := newDeps(t)
-		r := d.MCPRecorder()
-		if r == nil {
-			t.Fatal("MCPRecorder() returned nil")
+	t.Run("IsHookStatusEnabled_returns_bool", func(t *testing.T) {
+		r := newRoles(t)
+		_ = r.Streaming.IsHookStatusEnabled()
+	})
+
+	t.Run("TerminalOutput_unknown_terminal_is_not_ok", func(t *testing.T) {
+		// The false direction is the one that matters: an unknown terminal must
+		// report not-known, because adoption logs a miss on exactly that.
+		r := newRoles(t)
+		if _, _, ok := r.Streaming.TerminalOutput("term-never-created"); ok {
+			t.Error("TerminalOutput(unknown) reported ok, want false")
 		}
-		r.RecordConnected(t.Context(), "test-server", nil, nil, nil)
-		r.SignalReady()
+	})
+
+	t.Run("MCPRecorder_does_not_panic", func(t *testing.T) {
+		r := newRoles(t)
+		if r.MCP == nil {
+			t.Fatal("MCP role is nil")
+		}
+		r.MCP.RecordConnected(t.Context(), "test-server", nil, nil, nil)
+		r.MCP.SignalReady()
 	})
 
 	t.Run("PendingPermsAdd_does_not_panic", func(t *testing.T) {
-		d := newDeps(t)
-		d.PendingPermsAdd(42, vibekit.ServerEvent{Type: "permission_needed", ChatID: "c1"})
+		r := newRoles(t)
+		r.Perms.PendingPermsAdd(42, vibekit.ServerEvent{Type: "permission_needed", ChatID: "c1"})
 	})
 
 	t.Run("NotifyPush_does_not_panic", func(t *testing.T) {
-		d := newDeps(t)
-		d.NotifyPush(t.Context(), "test body", vibekit.PushKindPermission, "")
+		r := newRoles(t)
+		r.Perms.NotifyPush(t.Context(), "test body", vibekit.PushKindPermission, "")
 	})
 
 	t.Run("BufferStore_non_nil", func(t *testing.T) {
-		d := newDeps(t)
-		if d.BufferStore() == nil {
+		r := newRoles(t)
+		if r.Streaming.BufferStore() == nil {
 			t.Error("BufferStore() returned nil")
 		}
 	})
 
 	t.Run("LineTracker_non_nil", func(t *testing.T) {
-		d := newDeps(t)
-		if d.LineTracker() == nil {
+		r := newRoles(t)
+		if r.Streaming.LineTracker() == nil {
 			t.Error("LineTracker() returned nil")
 		}
+	})
+
+	t.Run("SetGovernance_does_not_panic", func(t *testing.T) {
+		r := newRoles(t)
+		r.Governance.SetGovernance(vibekit.GovernanceStatePayload{})
 	})
 
 	t.Run("IsScheduledRun_false_for_an_unlaunched_run", func(t *testing.T) {
 		// A run nothing launched is not scheduled. This is the direction that
 		// matters: reporting a manual run as scheduled would put a start toast on
 		// every launch the user made by hand.
-		d := newDeps(t)
-		if d.IsScheduledRun("wf-never-launched") {
+		r := newRoles(t)
+		if r.RunOrigin.IsScheduledRun("wf-never-launched") {
 			t.Error("IsScheduledRun(unlaunched) = true, want false")
 		}
 	})
+
+	t.Run("StepTurnCapExceeded_does_not_panic", func(t *testing.T) {
+		r := newRoles(t)
+		r.RunBounds.StepTurnCapExceeded("wf-never-launched", "node-1", 99)
+	})
 }
 
-func TestHub_TranslateDepsContract(t *testing.T) {
-	TranslateDepsContractTest(t, func(t *testing.T) translate.Deps {
+func TestHub_TranslateRolesContract(t *testing.T) {
+	TranslateRolesContractTest(t, func(t *testing.T) *translate.Roles {
 		t.Helper()
 		h, _, _ := newTestHub()
-		return h
+		return &translate.Roles{
+			Streaming:  h,
+			Perms:      h,
+			MCP:        h.MCPRecorder(),
+			Governance: h,
+			RunOrigin:  h,
+			RunBounds:  h,
+		}
 	})
 }
