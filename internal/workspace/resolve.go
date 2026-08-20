@@ -12,9 +12,17 @@ import (
 	"github.com/cplieger/pathinside/v2"
 )
 
-// ResolveInsideAbs is like ResolveInside but accepts an already-absolute
-// workDir, skipping the filepath.Abs call. Use this when the caller
-// stores workDir as an absolute path set once at startup (e.g. Runtime.workDir).
+// ResolveInsideAbs confines p to absWork, which must already be absolute — the
+// caller stores it once at startup (Runtime.workDir, Handler.workDir), so an Abs
+// call per request would be work with no answer to give.
+//
+// It answers a LEXICAL question and nothing more. EvalSymlinks runs once, the
+// containment is checked once, and the absolute path comes back; the operation
+// happens later, and if it happens through ambient os calls the kernel re-resolves
+// every component with no boundary attached. A caller that goes on to touch the
+// filesystem must name the operation through an os.Root rooted at absWork — see
+// agent's lifetime.confineInWorkDir and filebrowse's mount.root for the two
+// consumers that do. This function's job is the verdict, not the enforcement.
 //
 // The boundary is built ONCE, before anything is compared against it, which is
 // what keeps the three containment questions below from being asked backwards:
