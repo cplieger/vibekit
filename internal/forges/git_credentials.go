@@ -24,7 +24,13 @@ import (
 // scrubGitCredentials removes every ~/.git-credentials line that
 // carries a credential for host. Removing the file's last line removes
 // the file. A missing file is a no-op.
-func scrubGitCredentials(host string) error {
+//
+// ctx bounds the rewrite. It used to be context.Background(), which meant a
+// login or logout cancelled mid-flight still wrote the file, and the write is
+// the one step here that touches the disk — both callers already hold a ctx
+// with the CLI command's own timeout on it, so the substitution was discarding
+// a signal that was in scope at every call site.
+func scrubGitCredentials(ctx context.Context, host string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -57,7 +63,7 @@ func scrubGitCredentials(host string) error {
 	if len(kept) == 0 {
 		return os.Remove(credFile)
 	}
-	_, err = atomicfile.WriteFile(context.Background(), credFile,
+	_, err = atomicfile.WriteFile(ctx, credFile,
 		[]byte(strings.Join(kept, "\n")+"\n"), atomicfile.WithMode(0o600))
 	return err
 }
