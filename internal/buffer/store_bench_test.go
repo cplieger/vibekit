@@ -16,18 +16,24 @@ func BenchmarkBufferStore_Contention(b *testing.B) {
 			b.ResetTimer()
 
 			var wg sync.WaitGroup
-			perG := b.N / goroutines
 			for g := range goroutines {
-				wg.Add(1)
-				go func(id int) {
-					defer wg.Done()
-					chatID := vibekit.ChatID(fmt.Sprintf("chat-%d", id))
-					for range perG {
+				// The remainder is distributed rather than dropped. A bare
+				// b.N/goroutines loses up to goroutines-1 iterations while the
+				// framework still divides the elapsed time by b.N, so every
+				// count that does not divide b.N reported a per-op cost that
+				// was too low by the shortfall.
+				iters := b.N / goroutines
+				if g < b.N%goroutines {
+					iters++
+				}
+				wg.Go(func() {
+					chatID := vibekit.ChatID(fmt.Sprintf("chat-%d", g))
+					for range iters {
 						buf := store.GetOrInit(chatID)
-						buf.Content.WriteString("x")
+						buf.AppendTextDelta("x", "")
 						store.Take(chatID)
 					}
-				}(g)
+				})
 			}
 			wg.Wait()
 		})
@@ -62,7 +68,6 @@ func BenchmarkBufferTrackFileChanges(b *testing.B) {
 				}
 			}
 			b.ReportAllocs()
-			b.ResetTimer()
 			for b.Loop() {
 				buf := &Buffer{ToolStartTimes: make(map[string]int64)}
 				buf.TrackFileChanges(diffs, false)
@@ -81,7 +86,6 @@ func BenchmarkLineTrackerEviction(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	i := 0
 	for b.Loop() {
 		// Each Record triggers eviction since we're at capacity with a new file.

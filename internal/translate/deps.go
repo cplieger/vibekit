@@ -263,11 +263,6 @@ func (t *Translator) deriveSubSession(chatID vibekit.ChatID, sessionID string) s
 	return ""
 }
 
-// MCP returns the MCP state recorder sub-interface.
-func (t *Translator) MCP() MCPRecorder {
-	return t.mcp
-}
-
 // RunOriginAccess answers whether a workflow run was launched by a SCHEDULE.
 //
 // One method, because that is the whole question workflow.go asks. The fact lives

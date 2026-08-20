@@ -80,13 +80,13 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ vibekit.ChatID, msg 
 			// land in one registry write. They used to split: the tool names went to
 			// the MCP config store — a disk write, on a notification path, of
 			// agent-derived data into a user-intent file.
-			t.MCP().RecordConnected(ctx, s.Name, mcpToolNames(s.Tools), mcpPrompts(s.Prompts), mcpResources(s.Resources))
+			t.mcp.RecordConnected(ctx, s.Name, mcpToolNames(s.Tools), mcpPrompts(s.Prompts), mcpResources(s.Resources))
 		case "failed":
 			if s.AuthorizationURL != "" {
-				t.MCP().RecordOAuth(ctx, s.Name, s.AuthorizationURL)
+				t.mcp.RecordOAuth(ctx, s.Name, s.AuthorizationURL)
 				continue
 			}
-			t.MCP().RecordInitFailure(ctx, s.Name, s.ErrorMessage)
+			t.mcp.RecordInitFailure(ctx, s.Name, s.ErrorMessage)
 		case "disabled":
 			// A vibekit-configured server's off state is already on its config
 			// row, which is what the MCP page renders it from — so the recorder
@@ -95,13 +95,13 @@ func (t *Translator) HandleMCPStatus(ctx context.Context, _ vibekit.ChatID, msg 
 			// this is the ONLY evidence the server exists: without it, a Power's
 			// disabled server is invisible on a page that claims to list the
 			// agent's integrations.
-			t.MCP().RecordDisabled(ctx, s.Name)
+			t.mcp.RecordDisabled(ctx, s.Name)
 		default:
 			// connecting: transient, not terminal. Recording it would paint a row
 			// the same notification's next frame for this server replaces.
 		}
 	}
-	t.MCP().SignalReady()
+	t.mcp.SignalReady()
 }
 
 // mcpToolNames extracts the tool-name list from a v3 MCP server entry.

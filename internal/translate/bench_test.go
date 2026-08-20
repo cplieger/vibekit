@@ -128,7 +128,6 @@ func BenchmarkTranslator_HandleToolCall(b *testing.B) {
 	ctx := b.Context()
 	chatID := vibekit.ChatID("bench-chat")
 
-	b.ResetTimer()
 	for b.Loop() {
 		tr.HandleToolCall(ctx, chatID, toolCallPayload, "")
 	}
@@ -149,7 +148,6 @@ func BenchmarkTranslator_HandleAssistantChunk(b *testing.B) {
 	tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		tr.HandleAssistantChunk(ctx, chatID, chunkPayload, false)
 	}
@@ -167,7 +165,6 @@ func BenchmarkTranslator_FullTurn(b *testing.B) {
 	toolCallPL := toolCallPayload
 	toolUpdatePL := json.RawMessage(`{"toolCallId":"tc-1","status":"completed","content":[{"type":"text","content":{"text":"done"}}]}`)
 
-	b.ResetTimer()
 	for b.Loop() {
 		chatID := vibekit.ChatID("bench-turn")
 		// Phase 1: initial streaming chunks
@@ -197,7 +194,6 @@ func BenchmarkTranslator_HandleUsageUpdate(b *testing.B) {
 	_ = deps.store.Mutate(ctx, chatID, func(_ *vibekit.Chat, _ bool) bool { return true })
 
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		tr.HandleUsageUpdate(ctx, chatID, raw)
 	}

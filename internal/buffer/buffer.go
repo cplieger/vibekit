@@ -234,9 +234,7 @@ func (buf *Buffer) AppendCodeReferences(refs []vibekit.CodeReference) []vibekit.
 	}
 	// Return a copy so the caller's broadcast can't race a later append
 	// mutating the backing array.
-	out := make([]vibekit.CodeReference, len(buf.CodeReferences))
-	copy(out, buf.CodeReferences)
-	return out
+	return slices.Clone(buf.CodeReferences)
 }
 
 // SetModel records which model is answering this turn. First write wins: a

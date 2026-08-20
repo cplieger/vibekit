@@ -2,6 +2,7 @@ package kascap
 
 import (
 	"flag"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -162,12 +163,7 @@ func keysIn(re *regexp.Regexp, src string) []string {
 	for _, m := range re.FindAllStringSubmatch(src, -1) {
 		seen[m[1]] = true
 	}
-	out := make([]string, 0, len(seen))
-	for k := range seen {
-		out = append(out, k)
-	}
-	slices.Sort(out)
-	return out
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // requireNonEmpty is the guard that keeps this census honest. Every source is
