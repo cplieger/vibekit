@@ -8,8 +8,8 @@ github.com/cplieger/envx/yamlenv v1.2.3 h1:cU/DWjqWnluTCSls+qadcpb1tuo2zS1YDKLIw
 github.com/cplieger/envx/yamlenv v1.2.3/go.mod h1:BZhjmGpeC0+aV5iXXMrdGgM1l0flmv79BYAAsL4mAGE=
 github.com/cplieger/httpx/v4 v4.3.2 h1:Vba8zyuBmPpeRAKtS9luI/DD5aNoxU+oVO76GQwsIIM=
 github.com/cplieger/httpx/v4 v4.3.2/go.mod h1:5zw0hQHzTI3P6WZHOkZtU/pNhgNCckXvvUykAsH+4PA=
-github.com/cplieger/jsoncap v1.0.0 h1:4mJ+rD9sPCoWNUb9jP30SknNysX12EAUZb2h3aercBk=
-github.com/cplieger/jsoncap v1.0.0/go.mod h1:X3auAdHApwFvUPyz1zPeY264uZ2tTL0MZF626xzPV7M=
+github.com/cplieger/jsoncap/v2 v2.0.0 h1:Q/GLv75foxGGhxG8uTmiXgrPAnv5tUiBiFhvcw5+3XU=
+github.com/cplieger/jsoncap/v2 v2.0.0/go.mod h1:tE1ti+CmjfXHpgAbjNdlbAe7/tZaxIOmGO5sMPQbtAY=
 github.com/cplieger/keyenc v1.0.4 h1:05UgFc/1WuJjiVh4akE42Pg9pb4xc65XzEzug6jSsAM=
 github.com/cplieger/keyenc v1.0.4/go.mod h1:mTELWm83F5U4bcpkYcq9cF0WLS5dje6e89fd/U9Smm8=
 github.com/cplieger/pathinside v1.0.2 h1:KP06X7uiKCrXDhgpg3tv3VYs40vEsECEVhxT1Qu6JGc=

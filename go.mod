@@ -33,7 +33,7 @@ require (
 require (
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/cplieger/envx/v2 v2.0.0
-	github.com/cplieger/jsoncap v1.0.0
+	github.com/cplieger/jsoncap/v2 v2.0.0
 	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect
 )

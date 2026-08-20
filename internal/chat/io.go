@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cplieger/jsoncap"
+	"github.com/cplieger/jsoncap/v2"
 	"github.com/cplieger/pathinside/v2"
 	"github.com/cplieger/vibekit/internal/vibekit"
 )
