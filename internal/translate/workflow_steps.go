@@ -158,6 +158,23 @@ func (s *stepRegistry) lookup(sessionID string) (StepRef, bool) {
 	return ref, ok
 }
 
+// refFor resolves a frame's session id to its run and node, when it is a step's.
+//
+// The empty StepRef for everything else lets an ask handler stamp
+// unconditionally: a non-step ask stamps two empty strings, which omitempty then
+// keeps off the wire. That is why the miss is not an error.
+//
+// On the registry rather than on the Translator, where it was: it is a guard on
+// the map's key, and the map is here. The three ask handlers that call it reach a
+// field instead of a sibling method.
+func (s *stepRegistry) refFor(sessionID string) StepRef {
+	if sessionID == "" {
+		return StepRef{}
+	}
+	ref, _ := s.lookup(sessionID)
+	return ref
+}
+
 // forgetRun drops every step session and turn count of a terminated run.
 //
 // Bounded growth is the point: a long-lived container running many workflows
@@ -274,16 +291,4 @@ func (t *Translator) countStepTurn(wf *ACPWorkflowMeta, stepKey string) {
 	if turns := t.steps.countTurn(wf.WorkflowID, stepKey); turns == StepTurnCap {
 		t.runBounds.StepTurnCapExceeded(wf.WorkflowID, wf.NodeID, turns)
 	}
-}
-
-// stepRef resolves a frame's session id to its run and node, when it is a
-// step's. The empty StepRef for everything else lets an ask handler stamp
-// unconditionally: a non-step ask stamps two empty strings, which omitempty
-// then keeps off the wire.
-func (t *Translator) stepRef(sessionID string) StepRef {
-	if sessionID == "" {
-		return StepRef{}
-	}
-	ref, _ := t.steps.lookup(sessionID)
-	return ref
 }

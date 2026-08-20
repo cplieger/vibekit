@@ -47,7 +47,7 @@ func (t *Translator) HandleElicitationCreate(ctx context.Context, chatID vibekit
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 	reqID := *msg.ID
 
-	step := t.stepRef(p.SessionID)
+	step := t.steps.refFor(p.SessionID)
 	evt := vibekit.NewEvent(vibekit.EventElicitationNeeded, chatID, vibekit.ElicitationNeededPayload{
 		RequestID:       reqID,
 		Mode:            p.Elicitation.Mode,

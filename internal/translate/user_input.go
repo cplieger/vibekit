@@ -46,7 +46,7 @@ func (t *Translator) HandleUserInput(ctx context.Context, chatID vibekit.ChatID,
 	subSessionID := t.deriveSubSession(chatID, p.SessionID)
 	reqID := *msg.ID
 
-	step := t.stepRef(p.SessionID)
+	step := t.steps.refFor(p.SessionID)
 	evt := vibekit.NewEvent(vibekit.EventUserInputNeeded, chatID, vibekit.UserInputNeededPayload{
 		RequestID:    reqID,
 		Question:     p.Question,

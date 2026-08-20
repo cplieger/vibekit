@@ -98,7 +98,7 @@ func (t *Translator) HandlePermissionRequest(ctx context.Context, chatID vibekit
 	// bridge for a manual one. The run id is what lets a run tab render an ask
 	// keyed to a different surface, and the node id is what makes the card say
 	// WHO is asking.
-	step := t.stepRef(req.SessionID)
+	step := t.steps.refFor(req.SessionID)
 	evt := vibekit.NewEvent(vibekit.EventPermissionNeeded, chatID, vibekit.PermissionNeededPayload{
 		RequestID:    reqID,
 		ToolCallID:   req.ToolCall.ToolCallID,

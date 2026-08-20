@@ -176,13 +176,28 @@ def field_seams(methods, own):
 
 
 def main():
-    target = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "internal/agent"
+    # Resolved against the repo root, so `cohesion.py internal/server` works from
+    # anywhere. Taking the argument literally made every relative path crash in
+    # relative_to below, which is a good part of why this only ever ran on its
+    # own default and the rest of the repo went unmeasured.
+    if len(sys.argv) > 1:
+        arg = pathlib.Path(sys.argv[1])
+        target = arg if arg.is_absolute() else ROOT / arg
+    else:
+        target = ROOT / "internal/agent"
 
     by_type = collections.defaultdict(list)
     for typ, name, fields in method_bodies(target):
         by_type[typ].append((name, fields))
 
-    print(f"cohesion report for {target.relative_to(ROOT)}\n")
+    # Not relative_to(ROOT): that raises for any target outside this repo, which
+    # made the script unable to measure a sibling repo at all — the other half of
+    # why it only ever ran on its own default.
+    try:
+        shown = target.relative_to(ROOT)
+    except ValueError:
+        shown = target
+    print(f"cohesion report for {shown}\n")
     print(f"{'type':24} {'methods':>7}  narrowly-read fields (field:readers)")
     for typ, ms in sorted(by_type.items(), key=lambda kv: -len(kv[1])):
         if len(ms) < 8:
