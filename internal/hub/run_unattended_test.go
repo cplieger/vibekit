@@ -36,7 +36,7 @@ func TestUnattendedBudget_MatchesTheDisclaimer(t *testing.T) {
 // launch is parentless too, so watching events cannot separate the two. Only the
 // launch path knows, and the lease is where it says so.
 func TestIsScheduledRun_ReadsTheLeasesOrigin(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 
 	if h.IsScheduledRun("wf_1") {
 		t.Error("an unknown run reported scheduled; a manual launch must never be marked")
@@ -78,7 +78,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	h := &Hub{leases: store}
+	h := &runPlane{leases: store}
 	h.grantLease(t.Context(), "wf_1", "nightly", scheduledLaunch("sched-1", time.Time{}))
 
 	// The restart: a brand-new store over the same directory, and a hub that
@@ -87,7 +87,7 @@ func TestUnattendedFloor_ArmsFromTheLeaseAndSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	after := &Hub{leases: reopened}
+	after := &runPlane{leases: reopened}
 
 	l, held := after.lease("wf_1")
 	if !held {

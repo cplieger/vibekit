@@ -79,13 +79,13 @@ func scheduledLaunch(scheduleID string, slotAt time.Time) launchOrigin {
 // Zero when there is no schedule store, no enabled schedule for this source, or
 // no computable next slot. Such a run is bounded by the ceiling alone, which is
 // the behaviour every manual run used to get.
-func (h *Hub) manualSlot(source string) time.Time {
-	if h.schedules == nil || source == "" {
+func (rp *runPlane) manualSlot(source string) time.Time {
+	if rp.schedules == nil || source == "" {
 		return time.Time{}
 	}
 	now := time.Now()
 	var earliest time.Time
-	list := h.schedules.List()
+	list := rp.schedules.List()
 	for i := range list {
 		e := &list[i]
 		if !e.Enabled || e.Source != source {
@@ -115,13 +115,13 @@ func (h *Hub) manualSlot(source string) time.Time {
 // assembled without a config dir (every unit test) needs, because a lease is no
 // longer optional bookkeeping: it carries the run's wall clock. Durability is the
 // part WithRunLeases adds.
-func (h *Hub) leaseStore() *runlease.Store {
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	if h.leases == nil {
-		h.leases = runlease.NewMemory()
+func (rp *runPlane) leaseStore() *runlease.Store {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	if rp.leases == nil {
+		rp.leases = runlease.NewMemory()
 	}
-	return h.leases
+	return rp.leases
 }
 
 // grantLease records the envelope of a run vibekit just put on the wire.
@@ -135,7 +135,7 @@ func (h *Hub) leaseStore() *runlease.Store {
 // A persist failure is logged, not returned: the run is on the wire either way,
 // and the lease is kept in memory, so this process still bounds and attributes
 // it. Failing the launch over it would trade a live run for a bookkeeping error.
-func (h *Hub) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin) {
+func (rp *runPlane) grantLease(ctx context.Context, workflowID, recipe string, o launchOrigin) {
 	if workflowID == "" {
 		return
 	}
@@ -148,7 +148,7 @@ func (h *Hub) grantLease(ctx context.Context, workflowID, recipe string, o launc
 		ScheduleID: o.scheduleID,
 		Unattended: o.origin == runlease.OriginScheduled,
 	}
-	if err := h.leaseStore().Put(ctx, &l); err != nil {
+	if err := rp.leaseStore().Put(ctx, &l); err != nil {
 		slog.Error("run lease not persisted; this run's envelope will not survive a restart",
 			"workflow_id", workflowID, "recipe", recipe, "origin", o.origin, "error", err)
 	}
@@ -157,16 +157,16 @@ func (h *Hub) grantLease(ctx context.Context, workflowID, recipe string, o launc
 // releaseLease forgets a run's envelope, for a run that is over or was never
 // started. Idempotent: the terminal frame and the cancel path both release, and
 // neither knows which arrived first.
-func (h *Hub) releaseLease(ctx context.Context, workflowID string) {
+func (rp *runPlane) releaseLease(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
 	}
-	if err := h.leaseStore().Release(ctx, workflowID); err != nil {
+	if err := rp.leaseStore().Release(ctx, workflowID); err != nil {
 		slog.Warn("run lease not released on disk", "workflow_id", workflowID, "error", err)
 	}
 }
 
 // lease reads a run's envelope.
-func (h *Hub) lease(workflowID string) (runlease.Lease, bool) {
-	return h.leaseStore().Get(workflowID)
+func (rp *runPlane) lease(workflowID string) (runlease.Lease, bool) {
+	return rp.leaseStore().Get(workflowID)
 }

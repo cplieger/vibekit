@@ -19,7 +19,7 @@ import (
 // leased grants a manual lease so a bounds test has something to arm. A run with
 // no lease is deliberately unbounded (only the TUI's runs reach that state), so a
 // fixture that forgot this would pass vacuously.
-func leased(t *testing.T, h *Hub, workflowID string) {
+func leased(t *testing.T, h *runPlane, workflowID string) {
 	t.Helper()
 	h.grantLease(t.Context(), workflowID, "publish", manualLaunch())
 }
@@ -49,7 +49,7 @@ func TestArmRunDeadline_FeedsTheLeasesSlotIntoTheOneDeadline(t *testing.T) {
 		"a slot already gone is floored, not honoured": {-time.Minute, minRunBudget},
 	} {
 		t.Run(name, func(t *testing.T) {
-			h := &Hub{}
+			h := &runPlane{}
 			const id = "wf_1"
 			o := manualLaunch()
 			if tc.slotIn != 0 {
@@ -115,8 +115,8 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 		if err != nil {
 			t.Fatalf("round %d: NewStore: %v", round, err)
 		}
-		h.leases = st
-		h.grantLease(t.Context(), id, "publish", manualLaunch())
+		h.runs.leases = st
+		h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
 
 		release, halt := make(chan struct{}), make(chan struct{})
 		torn := make(chan time.Time, 1)
@@ -129,11 +129,11 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 				default:
 				}
 				// ONE observation of both halves. Read through the store directly:
-				// h.lease would take unattendedMu again.
-				h.unattendedMu.Lock()
-				_, hasTimer := h.runBounds.timers[id]
+				// h.runs.lease would take unattendedMu again.
+				h.runs.mu.Lock()
+				_, hasTimer := h.runs.bounds.timers[id]
 				l, held := st.Get(id)
-				h.unattendedMu.Unlock()
+				h.runs.mu.Unlock()
 				if held && l.Bounded() && !hasTimer && len(torn) == 0 {
 					torn <- l.Deadline
 				}
@@ -142,7 +142,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 		for range arms {
 			wg.Go(func() {
 				<-release
-				h.armRunDeadline(t.Context(), id)
+				h.runs.armRunDeadline(t.Context(), id)
 			})
 		}
 		close(release)
@@ -157,14 +157,14 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 				round, <-torn)
 		}
 
-		l, ok := h.lease(id)
+		l, ok := h.runs.lease(id)
 		if !ok || !l.Bounded() {
 			t.Fatalf("round %d: no arm recorded a deadline", round)
 		}
-		h.unattendedMu.Lock()
-		timer := h.runBounds.timers[id]
-		timers := len(h.runBounds.timers)
-		h.unattendedMu.Unlock()
+		h.runs.mu.Lock()
+		timer := h.runs.bounds.timers[id]
+		timers := len(h.runs.bounds.timers)
+		h.runs.mu.Unlock()
 		if timer == nil {
 			t.Fatalf("round %d: the arms left no timer, so nothing can ever stop the run", round)
 		}
@@ -177,7 +177,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 		// nothing and records nothing.
 		timer.Reset(time.Millisecond)
 		stop := time.Now().Add(2 * time.Second)
-		for h.runEndReason(id) == "" {
+		for h.runs.runEndReason(id) == "" {
 			if time.Now().After(stop) {
 				t.Fatalf("round %d: the surviving timer was armed for a deadline the lease no "+
 					"longer holds (lease says %v), so the run reads as bounded with no callback "+
@@ -185,7 +185,7 @@ func TestArmRunDeadline_ConcurrentArmsLeaveALiveTimerForTheStoredDeadline(t *tes
 			}
 			time.Sleep(time.Millisecond)
 		}
-		if got := h.runEndReason(id); got != runEndOverran {
+		if got := h.runs.runEndReason(id); got != runEndOverran {
 			t.Fatalf("round %d: the fired timer recorded %q, want %q", round, got, runEndOverran)
 		}
 	}
@@ -216,22 +216,22 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 		t.Fatalf("stage the unwritable store: %v", err)
 	}
 	st, _ := runlease.NewStore(notADir) // the error is diagnostic; the store is usable
-	h.leases = st
+	h.runs.leases = st
 
-	h.grantLease(t.Context(), id, "publish", manualLaunch())
-	if _, held := h.lease(id); !held {
+	h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+	if _, held := h.runs.lease(id); !held {
 		t.Fatal("a persist failure lost the lease from memory as well")
 	}
 
-	h.armRunDeadline(t.Context(), id)
+	h.runs.armRunDeadline(t.Context(), id)
 
-	l, _ := h.lease(id)
+	l, _ := h.runs.lease(id)
 	if !l.Bounded() {
 		t.Fatal("the run took no deadline at all")
 	}
-	h.unattendedMu.Lock()
-	timer := h.runBounds.timers[id]
-	h.unattendedMu.Unlock()
+	h.runs.mu.Lock()
+	timer := h.runs.bounds.timers[id]
+	h.runs.mu.Unlock()
 	if timer == nil {
 		t.Fatal("a run whose deadline could not be persisted got no timer, so it reads as " +
 			"bounded and nothing can ever stop it")
@@ -239,7 +239,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 	// A live callback rather than a map entry: fire it and watch the run end.
 	timer.Reset(time.Millisecond)
 	stop := time.Now().Add(5 * time.Second)
-	for h.runEndReason(id) == "" {
+	for h.runs.runEndReason(id) == "" {
 		if time.Now().After(stop) {
 			t.Fatal("the installed timer's callback could not act on the run")
 		}
@@ -247,7 +247,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 	}
 	// And the second arm must still be the no-op it is for a healthy run: a run
 	// already bounded is not re-stamped.
-	if got := h.runEndReason(id); got != runEndOverran {
+	if got := h.runs.runEndReason(id); got != runEndOverran {
 		t.Errorf("recorded %q, want %q", got, runEndOverran)
 	}
 }
@@ -259,7 +259,7 @@ func TestArmRunDeadline_KeepsBoundingWhenOnlyDurabilityFails(t *testing.T) {
 // EARLIEST arm wins. A second arm must not re-stamp the deadline or restart the
 // clock, or a run emitting frames could extend its own budget indefinitely.
 func TestArmRunDeadline_IsIdempotent(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 	leased(t, h, id)
 
@@ -275,9 +275,9 @@ func TestArmRunDeadline_IsIdempotent(t *testing.T) {
 	}
 	// One timer, whatever the arm count: a second live timer means a second
 	// callback, and only the termination claim would stand between them.
-	h.unattendedMu.Lock()
-	timers := len(h.runBounds.timers)
-	h.unattendedMu.Unlock()
+	h.mu.Lock()
+	timers := len(h.bounds.timers)
+	h.mu.Unlock()
 	if timers != 1 {
 		t.Errorf("three arms left %d timers, want 1", timers)
 	}
@@ -288,14 +288,14 @@ func TestArmRunDeadline_IsIdempotent(t *testing.T) {
 // lease, no bridge here, and no cancel path vibekit owns — so arming a timer for
 // it would schedule a cancel against a run this process cannot certify.
 func TestArmRunDeadline_RefusesARunWithNoLease(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	h.armRunDeadline(t.Context(), "wf_tui")
 	if h.runBounded("wf_tui") {
 		t.Error("a run with no lease was bounded")
 	}
-	h.unattendedMu.Lock()
-	timers := len(h.runBounds.timers)
-	h.unattendedMu.Unlock()
+	h.mu.Lock()
+	timers := len(h.bounds.timers)
+	h.mu.Unlock()
 	if timers != 0 {
 		t.Errorf("a leaseless run left %d timers behind", timers)
 	}
@@ -308,14 +308,14 @@ func TestArmRunDeadline_RefusesARunWithNoLease(t *testing.T) {
 // and would make the next re-arm skip it as "already bounded" — so the run would
 // never be bounded again.
 func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armRunDeadline(t.Context(), id)
 
-	h.unattendedMu.Lock()
-	timer := h.runBounds.timers[id]
-	h.unattendedMu.Unlock()
+	h.mu.Lock()
+	timer := h.bounds.timers[id]
+	h.mu.Unlock()
 	if timer == nil {
 		t.Fatal("the arm installed no timer, so nothing can ever stop the run")
 	}
@@ -356,7 +356,7 @@ func TestDisarmRunDeadline_ParksTheLeaseAndStopsTheTimer(t *testing.T) {
 // hold is that the resumed budget is a FULL ceiling measured from the resume, and
 // that the pause left no deadline behind for a remainder to be computed from.
 func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 	leased(t, h, id)
 
@@ -403,7 +403,7 @@ func TestRunDeadline_ResumeGetsAFreshBudgetRatherThanARemainder(t *testing.T) {
 // still the one it was armed for. Calling the callback directly with the old
 // deadline is exactly that in-flight state.
 func TestCancelExpiredRun_ASupersededTimerDoesNothing(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 	leased(t, h, id)
 
@@ -449,29 +449,29 @@ func TestRunDeadline_FiresAndCancelsAtTheDeadline(t *testing.T) {
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	leased(t, h, id)
+	leased(t, h.runs, id)
 
 	deadline := time.Now().Add(20 * time.Millisecond)
-	if err := h.leaseStore().SetDeadline(t.Context(), id, deadline); err != nil {
+	if err := h.runs.leaseStore().SetDeadline(t.Context(), id, deadline); err != nil {
 		t.Fatalf("SetDeadline: %v", err)
 	}
 	// The arm's own transaction, staged by hand: the timer install is the last step
 	// under unattendedMu, and no budget the arm would compute is short enough to
 	// observe (NextDeadline floors at minRunBudget).
-	h.unattendedMu.Lock()
-	h.setRunTimerLocked(id, deadline)
-	h.unattendedMu.Unlock()
+	h.runs.mu.Lock()
+	h.runs.setRunTimerLocked(id, deadline)
+	h.runs.mu.Unlock()
 
 	// A deadline-bounded poll rather than a sleep: it fails closed with a
 	// diagnostic and cannot flake into a false pass.
 	stop := time.Now().Add(5 * time.Second)
-	for h.runEndReason(id) == "" {
+	for h.runs.runEndReason(id) == "" {
 		if time.Now().After(stop) {
-			t.Fatalf("the deadline never fired: bounded=%v calls=%v", h.runBounded(id), br.callLog())
+			t.Fatalf("the deadline never fired: bounded=%v calls=%v", h.runs.runBounded(id), br.callLog())
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if got := h.runEndReason(id); got != runEndOverran {
+	if got := h.runs.runEndReason(id); got != runEndOverran {
 		t.Errorf("the expired run recorded %q, want %q", got, runEndOverran)
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
@@ -508,21 +508,21 @@ func TestCancelExpiredRun_AFlooredSlotStillReportsAsTheScheduleBound(t *testing.
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
 	}
-	h.schedules = st
+	h.runs.schedules = st
 
 	// A slot INSIDE the floor: the floor wins, so the armed deadline is later than
 	// SlotAt and equality can no longer recognise the slot.
-	h.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-1", time.Now().Add(30*time.Second)))
-	h.armRunDeadline(t.Context(), id)
-	l, _ := h.lease(id)
+	h.runs.grantLease(t.Context(), id, "nightly", scheduledLaunch("sched-1", time.Now().Add(30*time.Second)))
+	h.runs.armRunDeadline(t.Context(), id)
+	l, _ := h.runs.lease(id)
 	if !l.Deadline.After(l.SlotAt) {
 		t.Fatalf("the fixture did not produce a floor-adjusted deadline: slot %v, deadline %v",
 			l.SlotAt, l.Deadline)
 	}
 
-	h.cancelExpiredRun(id, l.Deadline)
+	h.runs.cancelExpiredRun(id, l.Deadline)
 
-	if got := h.runEndReason(id); got != runEndOverran {
+	if got := h.runs.runEndReason(id); got != runEndOverran {
 		t.Errorf("runEndReason = %q, want %q", got, runEndOverran)
 	}
 	if out := logs.String(); !strings.Contains(out, logMsgRunOverran) {
@@ -563,14 +563,14 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 
 	// A manual lease carrying a slot: exactly what launchRun now mints for a manual
 	// run of a scheduled recipe. No schedule id, because no row asked for this run.
-	h.grantLease(t.Context(), id, "publish",
+	h.runs.grantLease(t.Context(), id, "publish",
 		launchOrigin{origin: runlease.OriginManual, slotAt: time.Now().Add(10 * time.Minute)})
-	h.armRunDeadline(t.Context(), id)
-	l, _ := h.lease(id)
+	h.runs.armRunDeadline(t.Context(), id)
+	l, _ := h.runs.lease(id)
 
-	h.cancelExpiredRun(id, l.Deadline)
+	h.runs.cancelExpiredRun(id, l.Deadline)
 
-	if got := h.runEndReason(id); got != runEndOverran {
+	if got := h.runs.runEndReason(id); got != runEndOverran {
 		t.Errorf("runEndReason = %q, want %q; the run did run past its bound", got, runEndOverran)
 	}
 	out := logs.String()
@@ -594,7 +594,7 @@ func TestCancelExpiredRun_AManualRunYieldingToASlotIsNotAScheduleFailure(t *test
 // gate, so two could pass at once and the second reason overwrote the first.
 func TestClaimRunTermination_IsTakenOnce(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 
 	if !h.claimRunTermination("wf_1") {
 		t.Fatal("the first claim failed")
@@ -618,7 +618,7 @@ func TestClaimRunTermination_IsTakenOnce(t *testing.T) {
 // from the two bounds on the History row. So a bound that claimed alongside it and
 // recorded `overran` did not merely duplicate work — it rewrote what the user did.
 func TestClaimRunTermination_UserCancelBeatsALaterBound(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armRunDeadline(t.Context(), id)
@@ -648,7 +648,7 @@ func TestClaimRunTermination_UserCancelBeatsALaterBound(t *testing.T) {
 // cancel for one run.
 func TestClaimRunTermination_ScheduleDeadlineAndStepCapCannotBothRecord(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 
 	// The step cap gets there first.
@@ -671,7 +671,7 @@ func TestClaimRunTermination_ScheduleDeadlineAndStepCapCannotBothRecord(t *testi
 // would leave the Cancel button silently doing nothing on a run still executing.
 func TestReleaseRunTermination_ReopensAFailedCancel(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 
 	if !h.claimRunTermination("wf_1") {
 		t.Fatal("the first claim failed")
@@ -687,7 +687,7 @@ func TestReleaseRunTermination_ReopensAFailedCancel(t *testing.T) {
 // ever was — and the terminal frame is the moment nothing can act on the run
 // again, because every bound's own gate is already false by then.
 func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armRunDeadline(t.Context(), id)
@@ -695,10 +695,10 @@ func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
 
 	h.forgetRunBounds(t.Context(), id)
 
-	h.unattendedMu.Lock()
-	claims := len(h.runBounds.terminating)
-	timers := len(h.runBounds.timers)
-	h.unattendedMu.Unlock()
+	h.mu.Lock()
+	claims := len(h.bounds.terminating)
+	timers := len(h.bounds.timers)
+	h.mu.Unlock()
 	if claims != 0 {
 		t.Errorf("the terminal frame left %d claims behind", claims)
 	}
@@ -720,7 +720,7 @@ func TestForgetRunBounds_ClearsTheClaimOnATerminalRun(t *testing.T) {
 // the retry with no wall clock at all, since no bound can claim a run twice).
 func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 
 	h.claimRunTermination(id)
@@ -737,9 +737,9 @@ func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 	}
 	// The eviction queue must lose the entry too, or it names a key the map no
 	// longer holds and eviction stops bounding the map.
-	h.unattendedMu.Lock()
-	order := slices.Clone(h.runBounds.order)
-	h.unattendedMu.Unlock()
+	h.mu.Lock()
+	order := slices.Clone(h.bounds.order)
+	h.mu.Unlock()
 	if slices.Contains(order, id) {
 		t.Errorf("the eviction queue still names the cleared run: %v", order)
 	}
@@ -754,7 +754,7 @@ func TestClearRunEnd_RestoresARetriedRunToUnbounded(t *testing.T) {
 // recorded reason would leave exactly that run unbounded after a retry.
 func TestClearRunEnd_ClearsTheClaimOfAUserCancelledRun(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 
 	h.claimRunTermination(id) // the user's cancel
@@ -770,7 +770,7 @@ func TestClearRunEnd_ClearsTheClaimOfAUserCancelledRun(t *testing.T) {
 // it was launched with — and the arm is idempotent on an already-bounded run, so
 // without the disarm that run is retried under the remainder of its old clock.
 func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 	leased(t, h, id)
 
@@ -800,7 +800,7 @@ func TestRearmRetriedRun_GivesAFreshClock(t *testing.T) {
 // recipe. The SLOT is still zero, which is a real narrowing: a schedule is matched
 // by launch source and the run list reports only the name.
 func TestRearmRetriedRun_MintsALeaseForARunWhoseTerminalFrameReleasedIt(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 
 	h.rearmRetriedRun(t.Context(), id, "nightly")
@@ -872,11 +872,11 @@ func TestObserveRunStart_AParentlessFrameMintsASweepableLease(t *testing.T) {
 	h, _, _ := newTestHub()
 	const id = "wf_retry"
 
-	h.observeRunStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
+	h.runs.observeRunStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": id, "workflowName": "nightly",
 	}))
 
-	l, held := h.lease(id)
+	l, held := h.runs.lease(id)
 	if !held {
 		t.Fatal("a parentless run_start minted no lease")
 	}
@@ -895,10 +895,10 @@ func TestObserveRunStart_AParentlessFrameMintsASweepableLease(t *testing.T) {
 	}
 
 	// The other carrier, on the same handler: a chat's own agent run stays agent.
-	h.observeRunStart(t.Context(), "c-abc", runNotif(methodWFRunStart, map[string]any{
+	h.runs.observeRunStart(t.Context(), "c-abc", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": "wf_agent", "workflowName": "publish",
 	}))
-	if l, _ := h.lease("wf_agent"); l.Origin != runlease.OriginAgent {
+	if l, _ := h.runs.lease("wf_agent"); l.Origin != runlease.OriginAgent {
 		t.Errorf("a chat-parented run was leased as %q, want agent", l.Origin)
 	}
 }
@@ -912,7 +912,7 @@ func TestObserveRunStart_AParentlessFrameMintsASweepableLease(t *testing.T) {
 // absence stops being the third value.
 func TestRunEndReason_DistinguishesABoundFromAUserCancel(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 
 	if got := h.runEndReason("wf_user_cancelled"); got != "" {
 		t.Errorf("a run nothing recorded reported %q; a user cancel must read as empty", got)
@@ -941,15 +941,15 @@ func TestRunEndReason_DistinguishesABoundFromAUserCancel(t *testing.T) {
 // would keep every reason forever.
 func TestRecordRunEnd_IsBounded(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 
 	for i := range maxRunEndReasons + 10 {
 		h.recordRunEnd("wf_"+strconv.Itoa(i), runEndOverran)
 	}
-	h.unattendedMu.Lock()
-	got := len(h.runBounds.reasons)
-	order := len(h.runBounds.order)
-	h.unattendedMu.Unlock()
+	h.mu.Lock()
+	got := len(h.bounds.reasons)
+	order := len(h.bounds.order)
+	h.mu.Unlock()
 
 	if got > maxRunEndReasons {
 		t.Errorf("kept %d reasons, cap is %d", got, maxRunEndReasons)
@@ -972,14 +972,14 @@ func TestRecordRunEnd_IsBounded(t *testing.T) {
 // the map and eviction starts deleting keys that are already gone.
 func TestRecordRunEnd_RewriteDoesNotDoubleQueue(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 
 	h.recordRunEnd("wf_1", runEndOverran)
 	h.recordRunEnd("wf_1", runEndStepCap)
 
-	h.unattendedMu.Lock()
-	order := len(h.runBounds.order)
-	h.unattendedMu.Unlock()
+	h.mu.Lock()
+	order := len(h.bounds.order)
+	h.mu.Unlock()
 	if order != 1 {
 		t.Errorf("the eviction queue holds %d entries for one run, want 1", order)
 	}
@@ -1003,7 +1003,7 @@ func TestRecordRunEnd_RewriteDoesNotDoubleQueue(t *testing.T) {
 // the wall clock.
 func TestStepTurnCapExceeded_CancelsOncePerRun(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 
 	// Unarmed: a run vibekit is not bounding is not one it may cancel, and a
 	// breach reported for it records nothing.
@@ -1018,7 +1018,7 @@ func TestStepTurnCapExceeded_CancelsOncePerRun(t *testing.T) {
 // the termination claim must leave the wall clock to whoever won. Clearing it would
 // strip the bound from a run that is still executing.
 func TestStepTurnCapExceeded_DoesNotConsumeTheDeadlineItLoses(t *testing.T) {
-	h := &Hub{}
+	h := &runPlane{}
 	const id = "wf_1"
 	leased(t, h, id)
 	h.armRunDeadline(t.Context(), id)

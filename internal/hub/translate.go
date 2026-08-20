@@ -53,7 +53,7 @@ func (h *Hub) initDispatch() {
 		// Wrapped so a SCHEDULED run's request is refused on a short budget
 		// rather than parking the run forever (run_unattended.go). The wrapper
 		// is a no-op for every attended chat.
-		vibekit.MethodRequestPermission: h.permissionWithUnattendedFloor(h.translator.HandlePermissionRequest),
+		vibekit.MethodRequestPermission: h.runs.permissionWithUnattendedFloor(h.translator.HandlePermissionRequest),
 		// _kiro/mcp/elicitation (a request with an id). Routed here by method.
 		vibekit.MethodElicitationCreate: h.translator.HandleElicitationCreate,
 		// _kiro/userInput (a request with an id, 2.14+): the agent's
@@ -90,8 +90,8 @@ func (h *Hub) initDispatch() {
 		// Wrapped rather than registered bare: the run clock (run_bounds.go) has
 		// to see a run start, pause and finish, and `run_start` is the only frame
 		// vibekit gets for an AGENT-launched run, whose launch path is KAS's.
-		methodWFRunStart:    h.observeRunStart,
-		methodWFRunComplete: h.observeRunComplete,
+		methodWFRunStart:    h.runs.observeRunStart,
+		methodWFRunComplete: h.runs.observeRunComplete,
 	}
 	for method, kind := range map[string]vibekit.RunProgressKind{
 		methodWFNodeStart:     vibekit.RunProgressNodeStart,
@@ -108,7 +108,7 @@ func (h *Hub) initDispatch() {
 	// EXECUTING time: a run parked on purpose must not be cancelled for having
 	// been parked. Node-level pauses keep it — a step waiting inside a run that is
 	// still going is exactly what the ceiling is for.
-	h.chatHandlers[methodWFPaused] = h.observeRunPaused(h.chatHandlers[methodWFPaused])
+	h.chatHandlers[methodWFPaused] = h.runs.observeRunPaused(h.chatHandlers[methodWFPaused])
 	// Explicit noops: v3 methods we recognise but intentionally ignore
 	// (feature flags, tool/steering/skills catalogs vibekit sources via
 	// REST, and the session inventory diff which has no client consumer now

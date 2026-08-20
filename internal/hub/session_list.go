@@ -106,7 +106,7 @@ func (h *Hub) handleSessionList(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("session list failed", "error", err)
 		rows = []vibekit.ResumableSession{}
 	}
-	runs, rErr := h.workflowRuns(r.Context(), claimed)
+	runs, rErr := h.runs.workflowRuns(r.Context(), claimed)
 	if rErr != nil {
 		slog.Warn("workflow run list failed", "error", rErr)
 		runs = []vibekit.WorkflowRun{}
@@ -320,14 +320,14 @@ type kasWorkflowRun struct {
 }
 
 // workflowRuns fetches the workspace's workflow runs, newest first.
-func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.WorkflowRun, error) {
-	u := h.ensureUtility()
+func (rp *runPlane) workflowRuns(ctx context.Context, claimed map[string]vibekit.ChatID) ([]vibekit.WorkflowRun, error) {
+	u := rp.utility()
 	cctx, cancel := context.WithTimeout(ctx, sessionListTimeout)
 	defer cancel()
 
 	// workspacePaths is an ARRAY and is required — see methodKiroWorkflowList.
 	raw, err := u.session.rawCall(cctx, "workflow list call", methodKiroWorkflowList,
-		callerParams(map[string]any{keyWorkspacePaths: []string{h.lifecycle.workDir}}))
+		callerParams(map[string]any{keyWorkspacePaths: []string{rp.lifecycle.workDir}}))
 	if err != nil {
 		return nil, err
 	}
@@ -335,14 +335,14 @@ func (h *Hub) workflowRuns(ctx context.Context, claimed map[string]vibekit.ChatI
 	if uErr := json.Unmarshal(raw, &list); uErr != nil {
 		return nil, uErr
 	}
-	return h.toWorkflowRuns(claimed, list.Runs), nil
+	return rp.toWorkflowRuns(claimed, list.Runs), nil
 }
 
 // toWorkflowRuns maps the raw run inventory to the wire rows, dropping the ones
 // that do not belong in a history list. Split out of workflowRuns for the reason
 // toResumable is split out of resumableSessions: the filtering is the part worth
 // testing and the RPC is not.
-func (h *Hub) toWorkflowRuns(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun) []vibekit.WorkflowRun {
+func (rp *runPlane) toWorkflowRuns(claimed map[string]vibekit.ChatID, runs []kasWorkflowRun) []vibekit.WorkflowRun {
 	out := make([]vibekit.WorkflowRun, 0, len(runs))
 	for i := range runs {
 		r := &runs[i]
@@ -383,7 +383,7 @@ func (h *Hub) toWorkflowRuns(claimed map[string]vibekit.ChatID, runs []kasWorkfl
 			// bounds stop a run through the same cancel a person does, so the
 			// reason has to come from the side that decided. "" for everything
 			// else, including a user cancel. See run_bounds.go.
-			EndReason: h.runEndReason(r.WorkflowID),
+			EndReason: rp.runEndReason(r.WorkflowID),
 		})
 	}
 	// Stable: ties must keep insertion order or the run list reshuffles

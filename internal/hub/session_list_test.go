@@ -40,7 +40,9 @@ func ownedBy(t *testing.T, owners map[string][]string) *Hub {
 			t.Fatalf("seed chat %s: %v", chatID, err)
 		}
 	}
-	return &Hub{chatStore: store}
+	// runs is populated because the run projection reads the bounds state for a
+	// run's end reason; a nil plane is a nil receiver at the first lookup.
+	return &Hub{chatStore: store, runs: &runPlane{}}
 }
 
 // TestToResumable_ExcludesWorkflowSessions pins the discriminator that makes a
@@ -132,7 +134,7 @@ func TestToResumable_OffersOneRowPerOwningChat(t *testing.T) {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	h := &Hub{chatStore: store}
+	h := &Hub{chatStore: store, runs: &runPlane{}}
 	got := h.toResumable(h.claimedSessions(ctx), []kasSessionRow{
 		row("sess_current", "current", "2026-08-02T12:00:00.000Z", false),
 		row("sess_retired", "retired", "2026-08-02T11:00:00.000Z", false),
@@ -238,7 +240,7 @@ func TestWorkflowRunAttribution(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
-	h := &Hub{chatStore: store}
+	h := &Hub{chatStore: store, runs: &runPlane{}}
 	claimed := h.claimedSessions(ctx)
 
 	if got := claimed["sess_launched_from"]; got != "c1" {
@@ -303,7 +305,7 @@ func wfRun(id, name, status, parentSession, updated string) kasWorkflowRun {
 // on a finished run, so this page is the only place its outcome is ever read.
 func TestToWorkflowRuns_KeepsOnlyParentlessRuns(t *testing.T) {
 	h := ownedBy(t, map[string][]string{"c1": {"sess_retired", "sess_now"}})
-	got := h.toWorkflowRuns(h.claimedSessions(t.Context()), []kasWorkflowRun{
+	got := h.runs.toWorkflowRuns(h.claimedSessions(t.Context()), []kasWorkflowRun{
 		wfRun("wf_manual", "nightly", "completed", "", "2026-08-02T12:00:00.000Z"),
 		wfRun("wf_agent", "goal", "completed", "sess_now", "2026-08-02T11:00:00.000Z"),
 		// Launched from a session the chat has since RETIRED. The chain claim is

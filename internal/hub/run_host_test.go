@@ -169,7 +169,7 @@ func TestLaunchRun_SequencesNewRegisterInvoke(t *testing.T) {
 		methodKiroWorkflowInvoke:      json.RawMessage(`{}`),
 	}
 
-	id, name, err := h.LaunchRun(t.Context(), "bundled://publish", nil)
+	id, name, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil)
 	if err != nil {
 		t.Fatalf("LaunchRun: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestLaunchRun_RefusesAnUnknownSource(t *testing.T) {
 	br.callResults = map[string]json.RawMessage{
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
 	}
-	if _, _, err := h.LaunchRun(t.Context(), "/etc/passwd", nil); err == nil {
+	if _, _, err := h.runs.LaunchRun(t.Context(), "/etc/passwd", nil); err == nil {
 		t.Fatal("an unlisted source launched")
 	}
 	if !strings.Contains(br.lastCall(), "listRecipes") {
@@ -219,7 +219,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 		methodKiroWorkflowListRecipes: json.RawMessage(`{"recipes":[{"name":"publish","source":"bundled://publish"}]}`),
 		methodKiroWorkflowList:        json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","status":"running"}]}`),
 	}
-	_, _, err := h.LaunchRun(t.Context(), "bundled://publish", nil)
+	_, _, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil)
 	if err == nil || !strings.Contains(err.Error(), "live run") {
 		t.Fatalf("err = %v, want the single-run refusal", err)
 	}
@@ -227,7 +227,7 @@ func TestLaunchRun_SingleRunRule(t *testing.T) {
 	br.callResults[methodKiroWorkflowList] = json.RawMessage(`{"runs":[{"workflowId":"wf_1","name":"publish","status":"completed"}]}`)
 	br.callResults[methodKiroWorkflowNew] = json.RawMessage(`{"workflowId":"wf_2"}`)
 	br.callResults[methodKiroWorkflowInvoke] = json.RawMessage(`{}`)
-	if _, _, err := h.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
+	if _, _, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
 		t.Fatalf("a terminal run blocked a relaunch: %v", err)
 	}
 }
@@ -340,20 +340,20 @@ func TestRetryRun_SuccessClearsTheOldTerminalReason(t *testing.T) {
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
 	// The run as the bounds left it: terminated, reason recorded, claim taken.
-	h.claimRunTermination(id)
-	h.recordRunEnd(id, runEndOverran)
+	h.runs.claimRunTermination(id)
+	h.runs.recordRunEnd(id, runEndOverran)
 
-	if err := h.RetryRun(t.Context(), id); err != nil {
+	if err := h.runs.RetryRun(t.Context(), id); err != nil {
 		t.Fatalf("RetryRun: %v", err)
 	}
-	if got := h.runEndReason(id); got != "" {
+	if got := h.runs.runEndReason(id); got != "" {
 		t.Errorf("the retried run still reads %q, so its row renders as aborted", got)
 	}
-	if !h.runBounded(id) {
+	if !h.runs.runBounded(id) {
 		t.Error("the retried run holds no deadline, so nothing bounds it")
 	}
 	// The claim went with the reason, or no bound could ever stop the retry.
-	if !h.claimRunTermination(id) {
+	if !h.runs.claimRunTermination(id) {
 		t.Error("the retried run kept its termination claim")
 	}
 }
@@ -368,16 +368,16 @@ func TestRetryRun_FailureKeepsTheOldTerminalReason(t *testing.T) {
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	h.claimRunTermination(id)
-	h.recordRunEnd(id, runEndOverran)
+	h.runs.claimRunTermination(id)
+	h.runs.recordRunEnd(id, runEndOverran)
 
-	if err := h.RetryRun(t.Context(), id); err == nil {
+	if err := h.runs.RetryRun(t.Context(), id); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
-	if got := h.runEndReason(id); got != runEndOverran {
+	if got := h.runs.runEndReason(id); got != runEndOverran {
 		t.Errorf("the refused retry cleared the reason to %q; the run is still aborted", got)
 	}
-	if h.runBounded(id) {
+	if h.runs.runBounded(id) {
 		t.Error("a refused retry bounded a run that is not executing")
 	}
 }
@@ -409,7 +409,7 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
 	done := make(chan error, 1)
-	go func() { done <- h.RetryRun(t.Context(), id) }()
+	go func() { done <- h.runs.RetryRun(t.Context(), id) }()
 
 	// Wait until the retry is genuinely in flight, then deliver the frame the way
 	// runDispatch does: a run bridge's workflow frames carry an EMPTY chat id.
@@ -420,7 +420,7 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 		}
 		time.Sleep(time.Millisecond)
 	}
-	h.observeRunStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
+	h.runs.observeRunStart(t.Context(), "", runNotif(methodWFRunStart, map[string]any{
 		"workflowId": id, "workflowName": "nightly",
 	}))
 	close(held)
@@ -428,7 +428,7 @@ func TestRetryRun_AFrameArrivingDuringTheRetryCannotMakeTheRunUnsweepable(t *tes
 		t.Fatalf("RetryRun: %v", err)
 	}
 
-	l, ok := h.lease(id)
+	l, ok := h.runs.lease(id)
 	if !ok {
 		t.Fatal("the retried run holds no lease")
 	}
@@ -471,10 +471,10 @@ func TestRetryRun_ReHostedRunTakesItsRecipeFromTheRunList(t *testing.T) {
 		t.Fatal("the fixture registered a bridge, so this exercises the wrong branch")
 	}
 
-	if err := h.RetryRun(t.Context(), id); err != nil {
+	if err := h.runs.RetryRun(t.Context(), id); err != nil {
 		t.Fatalf("RetryRun: %v", err)
 	}
-	l, ok := h.lease(id)
+	l, ok := h.runs.lease(id)
 	if !ok {
 		t.Fatal("the re-hosted run holds no lease, so nothing bounds it")
 	}
@@ -503,10 +503,10 @@ func TestRetryRun_CancelsNothingAndKeepsNoLeaseWhenTheRetryIsRefused(t *testing.
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowRetry: errors.New("kas refused")}
 
-	if err := h.RetryRun(t.Context(), id); err == nil {
+	if err := h.runs.RetryRun(t.Context(), id); err == nil {
 		t.Fatal("a refused retry reported success")
 	}
-	if _, ok := h.lease(id); ok {
+	if _, ok := h.runs.lease(id); ok {
 		t.Error("the refused retry kept the lease it minted, so the recipe reads as busy and a " +
 			"run that is not executing carries a deadline")
 	}
@@ -522,18 +522,18 @@ func TestCancelRun_LostClaimIssuesNoSecondCancel(t *testing.T) {
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
 	// A bound got there first.
-	if !h.claimRunTermination(id) {
+	if !h.runs.claimRunTermination(id) {
 		t.Fatal("the fixture could not take the claim it needs to hold")
 	}
-	h.recordRunEnd(id, runEndStepCap)
+	h.runs.recordRunEnd(id, runEndStepCap)
 
-	if err := h.CancelRun(t.Context(), id); err != nil {
+	if err := h.runs.CancelRun(t.Context(), id); err != nil {
 		t.Errorf("CancelRun on an already-terminating run = %v, want nil", err)
 	}
 	if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Error("a second cancel went out for a run already being cancelled")
 	}
-	if got := h.runEndReason(id); got != runEndStepCap {
+	if got := h.runs.runEndReason(id); got != runEndStepCap {
 		t.Errorf("the row reads %q; the losing cancel overwrote the winner's reason", got)
 	}
 }
@@ -546,23 +546,23 @@ func TestCancelRun_WinsTheClaimAndRecordsNothing(t *testing.T) {
 	const id = "wf_1"
 	br.callResults = map[string]json.RawMessage{methodKiroWorkflowCancel: json.RawMessage(`{}`)}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
-	h.grantLease(t.Context(), id, "publish", manualLaunch())
-	h.armRunDeadline(t.Context(), id)
+	h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
+	h.runs.armRunDeadline(t.Context(), id)
 
-	if err := h.CancelRun(t.Context(), id); err != nil {
+	if err := h.runs.CancelRun(t.Context(), id); err != nil {
 		t.Fatalf("CancelRun: %v", err)
 	}
 	if !slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 		t.Error("the cancel verb never went out")
 	}
-	if got := h.runEndReason(id); got != "" {
+	if got := h.runs.runEndReason(id); got != "" {
 		t.Errorf("a user cancel recorded %q", got)
 	}
-	if h.runBounded(id) {
+	if h.runs.runBounded(id) {
 		t.Error("the cancelled run kept its wall clock running")
 	}
 	// The claim is held, so a bound firing behind the cancel cannot relabel it.
-	if h.claimRunTermination(id) {
+	if h.runs.claimRunTermination(id) {
 		t.Error("the cancelled run's claim was not held, so a late bound can still record over it")
 	}
 }
@@ -576,10 +576,10 @@ func TestCancelRun_FailedRPCHandsTheClaimBack(t *testing.T) {
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errors.New("kas refused")}
 	h.bridge.mgr.insert(runChatID(id), &sharedBridge{bridge: br, state: bridgeIdle})
 
-	if err := h.CancelRun(t.Context(), id); err == nil {
+	if err := h.runs.CancelRun(t.Context(), id); err == nil {
 		t.Fatal("a refused cancel reported success")
 	}
-	if !h.claimRunTermination(id) {
+	if !h.runs.claimRunTermination(id) {
 		t.Error("the run stayed claimed after its cancel failed, so nothing can stop it")
 	}
 }

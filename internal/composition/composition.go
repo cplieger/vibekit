@@ -169,9 +169,9 @@ func Build(ctx context.Context, cfg *Config, staticFS fs.FS) (*App, error) {
 	// App.Shutdown. In the background because the sweep issues one RPC per lease
 	// over a utility bridge whose kiro-cli may still be installing; a boot must not
 	// wait on that.
-	go h.SweepOrphanedRuns(appCtx)
+	go h.Runs().SweepOrphanedRuns(appCtx)
 
-	startScheduleRunner(appCtx, scheduleStore, h)
+	startScheduleRunner(appCtx, scheduleStore, h.Runs())
 
 	mcpRegistry := mcp.NewRegistryProxy()
 	mcpPrewarm := prewarm.NewRunner(appCtx, mcpStore)

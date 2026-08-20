@@ -87,7 +87,7 @@ func workflowIDOf(chatID vibekit.ChatID) string {
 // The request still reaches the client exactly as it would otherwise: the run's
 // page shows the card, and a user with it open can answer inside the budget.
 // What the wrapper adds is a deadline after which vibekit answers for them.
-func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
+func (rp *runPlane) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 		inner(ctx, chatID, msg)
 
@@ -100,7 +100,7 @@ func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 		// id, so the floor reaches only a parentless run on its own bridge. An
 		// agent-launched run's asks arrive on its chat's real id and are attended
 		// by the person who asked for them.
-		l, held := h.lease(workflowIDOf(chatID))
+		l, held := rp.lease(workflowIDOf(chatID))
 		if !held || !l.Unattended || msg.ID == nil {
 			return
 		}
@@ -113,22 +113,22 @@ func (h *Hub) permissionWithUnattendedFloor(inner chatHandler) chatHandler {
 		// already claimed it.
 		params := msg.Params
 		time.AfterFunc(unattendedApprovalBudget, func() {
-			h.answerUnattendedPermission(chatID, requestID, scheduleID, tool, params)
+			rp.answerUnattendedPermission(chatID, requestID, scheduleID, tool, params)
 		})
 	}
 }
 
 // answerUnattendedPermission settles a still-pending request for an absent
 // user: refuse by default, or approve when the operator opted in.
-func (h *Hub) answerUnattendedPermission(chatID vibekit.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
-	ctx, cancel := h.hubContext()
+func (rp *runPlane) answerUnattendedPermission(chatID vibekit.ChatID, requestID int64, scheduleID, tool string, msgParams json.RawMessage) {
+	ctx, cancel := rp.hubContext()
 	defer cancel()
 
-	sb := h.bridge.mgr.get(chatID)
+	sb := rp.bridges.get(chatID)
 	if sb == nil {
 		return
 	}
-	approve := scheduledAutoApprove(ctx, h.lifecycle.configDir)
+	approve := scheduledAutoApprove(ctx, rp.lifecycle.configDir)
 	outcome := vibekit.PermissionOutcomeCancelled()
 	verb := outcomeRefused
 	if approve {
@@ -154,7 +154,7 @@ func (h *Hub) answerUnattendedPermission(chatID vibekit.ChatID, requestID int64,
 	// Taking it also retires the entry, so nothing below has to, and announces
 	// the answer as the MACHINE's: a card collapsing under a reader who was
 	// deciding must say that a deadline answered it, and which way.
-	if !h.sse.TakePendingPerm(requestID, vibekit.SettledByUnattended) {
+	if !rp.perms.TakePendingPerm(requestID, vibekit.SettledByUnattended) {
 		return
 	}
 	// A FIXED message with the outcome as a field, not a message built from the
@@ -176,14 +176,14 @@ func (h *Hub) answerUnattendedPermission(chatID vibekit.ChatID, requestID int64,
 	// Surface it. Without this the schedule row still reads "started" while the
 	// run fails the same way every night, which is exactly the silent-repeat
 	// failure this floor exists to make visible.
-	if h.schedules == nil || scheduleID == "" {
+	if rp.schedules == nil || scheduleID == "" {
 		return
 	}
 	reason := "failed: needed approval for " + tool + " with nobody watching — add a permission rule to allow it"
 	if tool == "" {
 		reason = "failed: needed an approval with nobody watching — add a permission rule to allow it"
 	}
-	if err := h.schedules.RecordOutcome(ctx, scheduleID, reason); err != nil {
+	if err := rp.schedules.RecordOutcome(ctx, scheduleID, reason); err != nil {
 		slog.Warn("could not record the schedule's outcome", "schedule_id", scheduleID, "error", err)
 	}
 }

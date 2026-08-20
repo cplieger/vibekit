@@ -123,8 +123,8 @@ func (h *Hub) TerminalOutput(terminalID string) (string, []vibekit.TextSpan, boo
 // Granted between `new` and `invoke` in launchRun, which is before the first
 // lifecycle frame can arrive, so a run_start reaching translate always sees the
 // origin its launch recorded.
-func (h *Hub) IsScheduledRun(workflowID string) bool {
-	l, ok := h.lease(workflowID)
+func (rp *runPlane) IsScheduledRun(workflowID string) bool {
+	l, ok := rp.lease(workflowID)
 	return ok && l.Origin == runlease.OriginScheduled
 }
 

@@ -54,15 +54,15 @@ const orphanSweepBudget = 2 * time.Minute
 // sweep is best-effort: skipping an orphan costs one stale row until the next
 // launch attempt releases it, while cancelling a live run destroys work. Every
 // branch resolves in that direction.
-func (h *Hub) SweepOrphanedRuns(ctx context.Context) {
-	held := h.leaseStore().List()
+func (rp *runPlane) SweepOrphanedRuns(ctx context.Context) {
+	held := rp.leaseStore().List()
 	if len(held) == 0 {
 		return
 	}
 	cctx, cancel := context.WithTimeout(ctx, orphanSweepBudget)
 	defer cancel()
 
-	runs, err := h.workflowRunsRaw(cctx)
+	runs, err := rp.workflowRunsRaw(cctx)
 	if err != nil {
 		// Leave every lease alone. The admission backstop is the second chance,
 		// and it runs with a bridge that answered.
@@ -90,9 +90,9 @@ func (h *Hub) SweepOrphanedRuns(ctx context.Context) {
 			// otherwise make the recipe look busy to the backstop.
 			slog.Info("boot: releasing the lease of a run that is over",
 				"workflow_id", l.WorkflowID, "recipe", l.Recipe, "status", st)
-			h.releaseLease(cctx, l.WorkflowID)
-		case st == runStatusPaused && h.restartPaused(cctx, l.WorkflowID):
-			h.clearOrphanedRun(cctx, &l)
+			rp.releaseLease(cctx, l.WorkflowID)
+		case st == runStatusPaused && rp.restartPaused(cctx, l.WorkflowID):
+			rp.clearOrphanedRun(cctx, &l)
 		}
 	}
 }
@@ -108,22 +108,22 @@ func (h *Hub) SweepOrphanedRuns(ctx context.Context) {
 // of one recipe could start. What the lease adds is not a second source of truth
 // but the ability to EXPLAIN a row admission would otherwise have to refuse
 // blindly.
-func (h *Hub) clearBlockingOrphan(ctx context.Context, workflowID, status string) bool {
+func (rp *runPlane) clearBlockingOrphan(ctx context.Context, workflowID, status string) bool {
 	if status != runStatusPaused {
 		// A running row is not an orphan, whatever else is true of it.
 		return false
 	}
-	l, held := h.lease(workflowID)
+	l, held := rp.lease(workflowID)
 	if !held || l.Origin == runlease.OriginAgent {
 		// Not vibekit's own to clear. A run with no lease was launched by the TUI
 		// or by a build that did not keep leases, and an agent's run belongs to
 		// its chat.
 		return false
 	}
-	if !h.restartPaused(ctx, workflowID) {
+	if !rp.restartPaused(ctx, workflowID) {
 		return false
 	}
-	return h.clearOrphanedRun(ctx, &l)
+	return rp.clearOrphanedRun(ctx, &l)
 }
 
 // clearOrphanedRun is the release both paths share: claim the termination,
@@ -168,35 +168,35 @@ func (h *Hub) clearBlockingOrphan(ctx context.Context, workflowID, status string
 // the auto-cancel — the ratified behaviour is to cancel and say so in History —
 // and do not re-open it as a defect without first checking whether KAS has gained
 // a conditional cancel.
-func (h *Hub) clearOrphanedRun(ctx context.Context, l *runlease.Lease) bool {
-	if !h.claimRunTermination(l.WorkflowID) {
+func (rp *runPlane) clearOrphanedRun(ctx context.Context, l *runlease.Lease) bool {
+	if !rp.claimRunTermination(l.WorkflowID) {
 		// Something is already ending it. Not this path's run to clear, and not a
 		// reason to refuse the launch either — the winner will release the lease.
 		return false
 	}
-	if !h.restartPaused(ctx, l.WorkflowID) {
+	if !rp.restartPaused(ctx, l.WorkflowID) {
 		// It stopped being an orphan between the caller's read and now. Hand the
 		// claim back: whatever is true of the run now, this is not the path that
 		// gets to end it.
-		h.releaseRunTermination(l.WorkflowID)
+		rp.releaseRunTermination(l.WorkflowID)
 		slog.Info("a run stopped reading as restart-orphaned before its cancel; leaving it alone",
 			"workflow_id", l.WorkflowID, "recipe", l.Recipe)
 		return false
 	}
-	h.disarmRunDeadline(ctx, l.WorkflowID)
-	if err := h.cancelRunRPC(ctx, l.WorkflowID); err != nil {
-		h.releaseRunTermination(l.WorkflowID)
+	rp.disarmRunDeadline(ctx, l.WorkflowID)
+	if err := rp.cancelRunRPC(ctx, l.WorkflowID); err != nil {
+		rp.releaseRunTermination(l.WorkflowID)
 		slog.Error("could not cancel a restart-orphaned run; its recipe stays busy until the next try",
 			"workflow_id", l.WorkflowID, "error", err)
 		return false
 	}
-	h.recordRunEnd(l.WorkflowID, runEndOrphaned)
+	rp.recordRunEnd(l.WorkflowID, runEndOrphaned)
 	// ERROR for the same reason the other two bounds log at ERROR: an unattended
 	// run cut off by a restart is a failure a homelab Loki rule should be able to
 	// key on, and the schedule row only tells the user once they look.
 	slog.Error(logMsgRunOrphaned, "workflow_id", l.WorkflowID, "recipe", l.Recipe,
 		"origin", string(l.Origin), "schedule_id", l.ScheduleID)
-	h.releaseLease(ctx, l.WorkflowID)
+	rp.releaseLease(ctx, l.WorkflowID)
 	return true
 }
 
@@ -229,11 +229,11 @@ func (h *Hub) clearOrphanedRun(ctx context.Context, l *runlease.Lease) bool {
 // FALSE on any RPC failure, never "assume dead". At boot the likeliest cause is
 // that kiro-cli is still installing, and the asymmetry is total: a skipped orphan
 // costs one stale row, a wrongly cancelled run costs the work.
-func (h *Hub) restartPaused(ctx context.Context, workflowID string) bool {
+func (rp *runPlane) restartPaused(ctx context.Context, workflowID string) bool {
 	if workflowID == "" {
 		return false
 	}
-	res, ok := h.inspectRun(ctx, workflowID)
+	res, ok := rp.inspectRun(ctx, workflowID)
 	if !ok {
 		return false
 	}
@@ -258,8 +258,8 @@ type inspectRunState struct {
 
 // inspectRun reads one run's inspect reply, reporting false when it cannot be
 // read or decoded at all.
-func (h *Hub) inspectRun(ctx context.Context, workflowID string) (inspectRunState, bool) {
-	raw, err := h.rawInspectRun(ctx, workflowID)
+func (rp *runPlane) inspectRun(ctx context.Context, workflowID string) (inspectRunState, bool) {
+	raw, err := rp.rawInspectRun(ctx, workflowID)
 	if err != nil {
 		slog.Warn("could not read a paused run's state, so it is left alone",
 			"workflow_id", workflowID, "error", err)

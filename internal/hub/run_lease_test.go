@@ -38,10 +38,10 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
 
-		if _, _, err := h.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
 			t.Fatalf("LaunchRun: %v", err)
 		}
-		l, ok := h.lease("wf_manual")
+		l, ok := h.runs.lease("wf_manual")
 		if !ok {
 			t.Fatal("the manual launch granted no lease, so nothing bounds or explains the run")
 		}
@@ -69,10 +69,10 @@ func TestLaunchRun_GrantsTheRunsEnvelope(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_sched")
 
-		if _, _, err := h.LaunchScheduledRun(t.Context(), "bundled://publish", "sched-1", slot); err != nil {
+		if _, _, err := h.runs.LaunchScheduledRun(t.Context(), "bundled://publish", "sched-1", slot); err != nil {
 			t.Fatalf("LaunchScheduledRun: %v", err)
 		}
-		l, ok := h.lease("wf_sched")
+		l, ok := h.runs.lease("wf_sched")
 		if !ok {
 			t.Fatal("the scheduled launch granted no lease")
 		}
@@ -126,10 +126,10 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 	if pErr := st.Put(t.Context(), &entry); pErr != nil {
 		t.Fatalf("Put schedule: %v", pErr)
 	}
-	h.schedules = st
+	h.runs.schedules = st
 
 	before := time.Now()
-	if _, _, lErr := h.LaunchRun(t.Context(), "bundled://publish", nil); lErr != nil {
+	if _, _, lErr := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); lErr != nil {
 		t.Fatalf("LaunchRun: %v", lErr)
 	}
 	wantSlot, err := schedule.NextRunFrom(spec, anchor, before)
@@ -137,7 +137,7 @@ func TestLaunchRun_ManualRunOfAScheduledRecipeYieldsToItsNextSlot(t *testing.T) 
 		t.Fatalf("NextRunFrom: %v", err)
 	}
 
-	l, ok := h.lease("wf_manual")
+	l, ok := h.runs.lease("wf_manual")
 	if !ok {
 		t.Fatal("the manual launch granted no lease")
 	}
@@ -203,12 +203,12 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 			if pErr := st.Put(t.Context(), &e); pErr != nil {
 				t.Fatalf("Put schedule: %v", pErr)
 			}
-			h.schedules = st
+			h.runs.schedules = st
 
-			if _, _, lErr := h.LaunchRun(t.Context(), "bundled://publish", nil); lErr != nil {
+			if _, _, lErr := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); lErr != nil {
 				t.Fatalf("LaunchRun: %v", lErr)
 			}
-			l, _ := h.lease("wf_manual")
+			l, _ := h.runs.lease("wf_manual")
 			if !l.SlotAt.IsZero() {
 				t.Errorf("SlotAt = %v; this schedule cannot bind this run, so the ceiling is the "+
 					"whole bound", l.SlotAt)
@@ -219,10 +219,10 @@ func TestLaunchRun_ManualSlotIgnoresWhatCannotBindThisRun(t *testing.T) {
 	t.Run("no schedule store at all", func(t *testing.T) {
 		h, _, br := newTestHub()
 		launchableRecipe(br, "wf_manual")
-		if _, _, err := h.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
+		if _, _, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); err != nil {
 			t.Fatalf("LaunchRun: %v", err)
 		}
-		if l, _ := h.lease("wf_manual"); !l.SlotAt.IsZero() {
+		if l, _ := h.runs.lease("wf_manual"); !l.SlotAt.IsZero() {
 			t.Errorf("SlotAt = %v with scheduling switched off", l.SlotAt)
 		}
 	})
@@ -237,10 +237,10 @@ func TestLaunchRun_ReleasesTheLeaseWhenInvokeFails(t *testing.T) {
 	delete(br.callResults, methodKiroWorkflowInvoke)
 	br.callErrs = map[string]error{methodKiroWorkflowInvoke: errRecipeBusy}
 
-	if _, _, err := h.LaunchRun(t.Context(), "bundled://publish", nil); err == nil {
+	if _, _, err := h.runs.LaunchRun(t.Context(), "bundled://publish", nil); err == nil {
 		t.Fatal("a failed invoke reported success")
 	}
-	if _, ok := h.lease("wf_1"); ok {
+	if _, ok := h.runs.lease("wf_1"); ok {
 		t.Error("the lease of a run that never started survived its failed launch")
 	}
 }
@@ -264,13 +264,13 @@ func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h, _, _ := newTestHub()
 			const id = "wf_1"
-			h.grantLease(t.Context(), id, "publish", manualLaunch())
+			h.runs.grantLease(t.Context(), id, "publish", manualLaunch())
 
-			h.observeRunComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
+			h.runs.observeRunComplete(t.Context(), "", runNotif(methodWFRunComplete, map[string]any{
 				"workflowId": id, "status": tc.status,
 			}))
 
-			_, held := h.lease(id)
+			_, held := h.runs.lease(id)
 			if held != tc.stillHeld {
 				t.Errorf("lease held = %v after status %q, want %v", held, tc.status, tc.stillHeld)
 			}
@@ -283,7 +283,7 @@ func TestObserveRunComplete_ReleasesTheLeaseOfATerminalRun(t *testing.T) {
 // lease carries the run's wall clock. There is no "leases off" mode.
 func TestLeaseStore_FallsBackToMemory(t *testing.T) {
 	t.Parallel()
-	h := &Hub{}
+	h := &runPlane{}
 	h.grantLease(t.Context(), "wf_1", "publish", manualLaunch())
 	if _, ok := h.lease("wf_1"); !ok {
 		t.Fatal("a hub with no durable store lost the lease, so the run would be unbounded")

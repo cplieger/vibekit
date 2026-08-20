@@ -80,7 +80,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 			br.callResults = map[string]json.RawMessage{
 				methodKiroWorkflowInspect: inspectPaused(t, "wf_1", tc.reason),
 			}
-			if got := h.restartPaused(t.Context(), "wf_1"); got != tc.want {
+			if got := h.runs.restartPaused(t.Context(), "wf_1"); got != tc.want {
 				t.Errorf("restartPaused(%q) = %v, want %v", tc.reason, got, tc.want)
 			}
 		})
@@ -89,7 +89,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 	t.Run("a failed inspect leaves the run alone", func(t *testing.T) {
 		h, _, br := newTestHub()
 		br.callErrs = map[string]error{methodKiroWorkflowInspect: errRecipeBusy}
-		if h.restartPaused(t.Context(), "wf_1") {
+		if h.runs.restartPaused(t.Context(), "wf_1") {
 			t.Error("an unreadable pause reason was treated as a dead process; at boot the " +
 				"likeliest cause is that kiro-cli is still installing")
 		}
@@ -100,7 +100,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 		br.callResults = map[string]json.RawMessage{
 			methodKiroWorkflowInspect: json.RawMessage(`{"state":`),
 		}
-		if h.restartPaused(t.Context(), "wf_1") {
+		if h.runs.restartPaused(t.Context(), "wf_1") {
 			t.Error("a malformed inspect reply was treated as a dead process")
 		}
 	})
@@ -127,7 +127,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				h, _, br := newTestHub()
 				br.callResults = map[string]json.RawMessage{methodKiroWorkflowInspect: reply}
-				if h.restartPaused(t.Context(), "wf_1") {
+				if h.runs.restartPaused(t.Context(), "wf_1") {
 					t.Errorf("reply %s was accepted as proof that wf_1's process died", reply)
 				}
 			})
@@ -143,7 +143,7 @@ func TestRestartPaused_AcceptsOnlyKASsOwnRestartLiteral(t *testing.T) {
 			methodKiroWorkflowInspect: json.RawMessage(
 				`{"state":{"status":"paused","pauseReason":"` + stalePauseReason + `"}}`),
 		}
-		if h.restartPaused(t.Context(), "") {
+		if h.runs.restartPaused(t.Context(), "") {
 			t.Error("the empty workflow id read as a dead process")
 		}
 		if len(br.callLog()) != 0 {
@@ -206,7 +206,7 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 				methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 			}
 			if tc.lease != nil {
-				if err := h.leaseStore().Put(t.Context(), tc.lease); err != nil {
+				if err := h.runs.leaseStore().Put(t.Context(), tc.lease); err != nil {
 					t.Fatalf("Put: %v", err)
 				}
 			}
@@ -217,9 +217,9 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 				t.Fatal("the fixture registered a bridge; the sweep must be wrong-by-default without one")
 			}
 
-			h.SweepOrphanedRuns(t.Context())
+			h.runs.SweepOrphanedRuns(t.Context())
 
-			if got := h.runEndReason("wf_1"); got != "" {
+			if got := h.runs.runEndReason("wf_1"); got != "" {
 				t.Errorf("the sweep recorded %q against a run it does not own", got)
 			}
 			for _, m := range br.callLog() {
@@ -229,7 +229,7 @@ func TestSweepOrphanedRuns_NeverTouchesARunItDoesNotOwn(t *testing.T) {
 				}
 			}
 			if tc.lease != nil {
-				if _, held := h.lease("wf_1"); !held {
+				if _, held := h.runs.lease("wf_1"); !held {
 					t.Error("the sweep released the lease of a run it must leave alone")
 				}
 			}
@@ -253,14 +253,14 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 	}
-	if err := h.leaseStore().Put(t.Context(), &runlease.Lease{
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "nightly", Origin: runlease.OriginScheduled,
 		ScheduleID: "sched-1", Unattended: true,
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.SweepOrphanedRuns(t.Context())
+	h.runs.SweepOrphanedRuns(t.Context())
 
 	var cancelled bool
 	for _, m := range br.callLog() {
@@ -273,10 +273,10 @@ func TestSweepOrphanedRuns_ClearsTheRunARestartOrphaned(t *testing.T) {
 	}
 	// Its own reason, not `cancelled`: a user cancel, a blown deadline, a step-cap
 	// trip and a restart orphan are four different facts and the row names which.
-	if got := h.runEndReason("wf_1"); got != runEndOrphaned {
+	if got := h.runs.runEndReason("wf_1"); got != runEndOrphaned {
 		t.Errorf("the orphan recorded %q, want %q", got, runEndOrphaned)
 	}
-	if _, held := h.lease("wf_1"); held {
+	if _, held := h.runs.lease("wf_1"); held {
 		t.Error("the cleared orphan kept its lease, so the recipe still reads as vibekit's own")
 	}
 }
@@ -298,18 +298,18 @@ func TestSweepOrphanedRuns_ReleasesTheLeaseOfARunThatIsOver(t *testing.T) {
 				methodKiroWorkflowList:   kasRuns(t, rows...),
 				methodKiroWorkflowCancel: json.RawMessage(`{}`),
 			}
-			if err := h.leaseStore().Put(t.Context(), &runlease.Lease{
+			if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 				WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
 			}); err != nil {
 				t.Fatalf("Put: %v", err)
 			}
 
-			h.SweepOrphanedRuns(t.Context())
+			h.runs.SweepOrphanedRuns(t.Context())
 
-			if _, held := h.lease("wf_1"); held {
+			if _, held := h.runs.lease("wf_1"); held {
 				t.Error("the lease of a finished run survived the sweep")
 			}
-			if got := h.runEndReason("wf_1"); got != "" {
+			if got := h.runs.runEndReason("wf_1"); got != "" {
 				t.Errorf("a finished run was recorded as %q; nothing was cancelled", got)
 			}
 		})
@@ -322,15 +322,15 @@ func TestSweepOrphanedRuns_ReleasesTheLeaseOfARunThatIsOver(t *testing.T) {
 func TestSweepOrphanedRuns_LeavesEveryLeaseAloneWhenTheListFails(t *testing.T) {
 	h, _, br := newTestHub()
 	br.callErrs = map[string]error{methodKiroWorkflowList: errRecipeBusy}
-	if err := h.leaseStore().Put(t.Context(), &runlease.Lease{
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginScheduled,
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.SweepOrphanedRuns(t.Context())
+	h.runs.SweepOrphanedRuns(t.Context())
 
-	if _, held := h.lease("wf_1"); !held {
+	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("an unreadable run list released a lease, so a live run's envelope is gone")
 	}
 	for _, m := range br.callLog() {
@@ -360,25 +360,25 @@ func TestSweepOrphanedRuns_KeepsTheLeaseWhenTheCancelFails(t *testing.T) {
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_1", stalePauseReason),
 	}
 	br.callErrs = map[string]error{methodKiroWorkflowCancel: errRecipeBusy}
-	if err := h.leaseStore().Put(t.Context(), &runlease.Lease{
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual,
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
-	h.SweepOrphanedRuns(t.Context())
+	h.runs.SweepOrphanedRuns(t.Context())
 
-	if _, held := h.lease("wf_1"); !held {
+	if _, held := h.runs.lease("wf_1"); !held {
 		t.Error("a failed cancel released the lease, stranding a paused KAS row with nothing " +
 			"left to explain it")
 	}
-	if got := h.runEndReason("wf_1"); got != "" {
+	if got := h.runs.runEndReason("wf_1"); got != "" {
 		t.Errorf("the row reads %q after a cancel that never landed; the run is still paused "+
 			"in KAS and the next admission attempt retries the clear, so History must not "+
 			"already say it was stopped", got)
 	}
 	// And the claim is back, or the retry this lease was kept for cannot happen.
-	if !h.claimRunTermination("wf_1") {
+	if !h.runs.claimRunTermination("wf_1") {
 		t.Error("the failed cancel kept the termination claim, so nothing can clear the orphan")
 	}
 }
@@ -412,24 +412,24 @@ func TestClearOrphanedRun_RefusesWhenTheRunNoLongerReadsAsAnOrphan(t *testing.T)
 				methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 			}
 			l := runlease.Lease{WorkflowID: "wf_1", Recipe: "publish", Origin: runlease.OriginManual}
-			if err := h.leaseStore().Put(t.Context(), &l); err != nil {
+			if err := h.runs.leaseStore().Put(t.Context(), &l); err != nil {
 				t.Fatalf("Put: %v", err)
 			}
 
-			if h.clearOrphanedRun(t.Context(), &l) {
+			if h.runs.clearOrphanedRun(t.Context(), &l) {
 				t.Error("a run that no longer reads as an orphan was cleared")
 			}
 			if slices.Contains(br.callLog(), methodKiroWorkflowCancel) {
 				t.Errorf("a cancel went out for a run that is not an orphan: %v", br.callLog())
 			}
-			if got := h.runEndReason("wf_1"); got != "" {
+			if got := h.runs.runEndReason("wf_1"); got != "" {
 				t.Errorf("the row reads %q for a run nothing ended", got)
 			}
-			if _, held := h.lease("wf_1"); !held {
+			if _, held := h.runs.lease("wf_1"); !held {
 				t.Error("the lease of a run that was left alone was released")
 			}
 			// The claim goes back, or the run can never be ended by anything again.
-			if !h.claimRunTermination("wf_1") {
+			if !h.runs.claimRunTermination("wf_1") {
 				t.Error("the refusal kept the termination claim, so no bound and no Cancel " +
 					"button can ever act on this run")
 			}
@@ -449,20 +449,20 @@ func TestRecipeIdle_ClearsABlockingOrphanAndProceeds(t *testing.T) {
 		methodKiroWorkflowInspect: inspectPaused(t, "wf_old", stalePauseReason),
 		methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 	}
-	if err := h.leaseStore().Put(t.Context(), &runlease.Lease{
+	if err := h.runs.leaseStore().Put(t.Context(), &runlease.Lease{
 		WorkflowID: "wf_old", Recipe: "publish", Origin: runlease.OriginScheduled,
 		ScheduleID: "sched-1", Unattended: true,
 	}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if err := h.recipeIdle(t.Context(), "publish"); err != nil {
+	if err := h.runs.recipeIdle(t.Context(), "publish"); err != nil {
 		t.Fatalf("admission refused a launch over an orphan it owns: %v", err)
 	}
-	if got := h.runEndReason("wf_old"); got != runEndOrphaned {
+	if got := h.runs.runEndReason("wf_old"); got != runEndOrphaned {
 		t.Errorf("the cleared orphan recorded %q, want %q", got, runEndOrphaned)
 	}
-	if _, held := h.lease("wf_old"); held {
+	if _, held := h.runs.lease("wf_old"); held {
 		t.Error("the cleared orphan kept its lease")
 	}
 }
@@ -506,12 +506,12 @@ func TestRecipeIdle_StillRefusesEveryBlockingRowItCannotExplain(t *testing.T) {
 				methodKiroWorkflowCancel:  json.RawMessage(`{}`),
 			}
 			if tc.lease != nil {
-				if err := h.leaseStore().Put(t.Context(), tc.lease); err != nil {
+				if err := h.runs.leaseStore().Put(t.Context(), tc.lease); err != nil {
 					t.Fatalf("Put: %v", err)
 				}
 			}
 
-			if err := h.recipeIdle(t.Context(), "publish"); err == nil {
+			if err := h.runs.recipeIdle(t.Context(), "publish"); err == nil {
 				t.Fatal("admission allowed a second live run of one recipe")
 			}
 			for _, m := range br.callLog() {

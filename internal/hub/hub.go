@@ -179,13 +179,9 @@ type Hub struct {
 	noopMethods        map[string]struct{}
 	dispatcher         *command.Dispatcher
 	translator         *translate.Translator
-	schedules          *schedule.Store
-	// leases is what vibekit knows about the runs it put on the wire: the
-	// envelope around a run KAS owns (see internal/runlease). Reach it through
-	// leaseStore(), which supplies an in-memory registry when the durable store
-	// was not wired — a lease carries the run's wall clock, so there is no
-	// "leases off" mode the way there is a "scheduling off" mode.
-	leases        *runlease.Store
+	// runs owns the workflow-run surface: 74 methods and the four fields only it
+	// touched (see run_plane.go). Hub reaches it like any collaborator.
+	runs          *runPlane
 	sessionReaper *kirosession.Reaper
 	sessionRefs   func(context.Context) (map[string]struct{}, bool)
 	lines         *buffer.LineTracker
@@ -218,25 +214,7 @@ type Hub struct {
 	// among the pointer-bearing fields for govet fieldalignment: a slice is 8
 	// of 24 pointer bytes, less dense than a string's 8 of 16.
 	acpArgs []string
-	// runBounds holds the ceiling arms, the termination claims and the recorded
-	// abnormal terminations that let a run's row say what actually happened to it.
-	// See run_bounds.go.
-	//
-	// It carries pointers (three maps and a slice) but ENDS in a plain counter, so
-	// govet fieldalignment wants it after the pointer-only fields above rather than
-	// among them: embedded higher up, that trailing word sits inside the struct's
-	// pointer prefix and costs 8 bytes of scan.
-	runBounds runBoundsState
-	ciBusy    atomic.Bool
-	// unattendedMu guards runBounds. Non-pointer, so it sits in the tail with
-	// ciBusy rather than among the pointer fields.
-	//
-	// It used to guard a second map, unattendedRuns, which held a run's schedule
-	// mark; that fact lives on the run's lease now, and the lease store carries its
-	// own mutex. Where the deadline callback needs BOTH atomically it takes this
-	// one first and the store's second (claimExpiredDeadline), which is the only
-	// place two are held and the only order they are ever taken in.
-	unattendedMu sync.Mutex
+	ciBusy  atomic.Bool
 }
 
 // Option configures optional Hub parameters.
@@ -260,7 +238,7 @@ func WithACPArgs(args []string) Option {
 // are not registered at all and nothing fires — scheduling is off rather than
 // half-present.
 func WithSchedules(st *schedule.Store) Option {
-	return func(h *Hub) { h.schedules = st }
+	return func(h *Hub) { h.runs.schedules = st }
 }
 
 // WithRunLeases wires the DURABLE run-lease store.
@@ -270,7 +248,7 @@ func WithSchedules(st *schedule.Store) Option {
 // and its unattended mark. What this option adds is survival across a restart —
 // which is the whole point of the record, so production always wires it.
 func WithRunLeases(st *runlease.Store) Option {
-	return func(h *Hub) { h.leases = st }
+	return func(h *Hub) { h.runs.leases = st }
 }
 
 // WithPush wires the push notification service at construction time.
@@ -341,18 +319,33 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	}
 	lc.shutdownCtx, lc.shutdownCancel = context.WithCancel(ctx)
 
-	h := &Hub{
+	// The planes are locals first so the run plane can name the two it depends on
+	// (the bridge registry and the pending-decision tracker) rather than reaching
+	// them through a *Hub. Its remaining three collaborators do not exist yet and
+	// are assigned below; those assignments are the honest back-edges, in one
+	// place, instead of a back-pointer that hides them.
+	bridgeP := &bridgePlane{
+		factory:       factory,
+		mgr:           newBridgeManager(factory),
+		assistantBufs: buffer.NewStore(),
+	}
+	sseP := &ssePlane{
+		hub:          sseHub,
+		pendingPerms: newPendingPermsTracker(),
+		chatStatus:   newChatStatusCache(),
+	}
+	runs := &runPlane{
+		bridges:   bridgeP.mgr,
 		lifecycle: lc,
-		bridge: &bridgePlane{
-			factory:       factory,
-			mgr:           newBridgeManager(factory),
-			assistantBufs: buffer.NewStore(),
-		},
-		sse: &ssePlane{
-			hub:          sseHub,
-			pendingPerms: newPendingPermsTracker(),
-			chatStatus:   newChatStatusCache(),
-		},
+		chats:     chatStore,
+		perms:     sseP,
+	}
+
+	h := &Hub{
+		lifecycle:    lc,
+		bridge:       bridgeP,
+		sse:          sseP,
+		runs:         runs,
 		perm:         &permPlane{},
 		chatStore:    chatStore,
 		hookStatus:   newHookStatusCache(kiroSettingsPath()),
@@ -361,17 +354,24 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 		chatHandlers: make(map[string]chatHandler),
 		noopMethods:  make(map[string]struct{}),
 	}
+	// Options may write the run plane's two stores (WithSchedules, WithRunLeases),
+	// so they run after it exists and before anything reads it.
 	for _, o := range opts {
 		o(h)
 	}
+	// ensureUtility is a thunk, not a value: the utility runtime is built under a
+	// sync.Once whose hooks call back into hub surfaces, so the plane must ask for
+	// it at use rather than hold one built here.
+	runs.utility = h.ensureUtility
 	h.translator = translate.New(&translate.Roles{
 		Streaming:  h,
 		Perms:      h,
 		MCP:        h.MCPRecorder(),
 		Governance: h,
-		RunOrigin:  h,
-		RunBounds:  h,
+		RunOrigin:  h.runs,
+		RunBounds:  h.runs,
 	})
+	runs.translate = h.translator
 	// Collaborators are constructed BEFORE the dispatch wiring below, because
 	// the Roles literal binds some of them into role interfaces by value. A
 	// field read at wiring time must already hold its collaborator; when the
@@ -383,6 +383,7 @@ func New(ctx context.Context, workDir string, factory ACPBridgeFactory, chatStor
 	// fully-built Hub; see load_projection.go.
 	h.onProjection = h.swapProjectedTranscript
 	h.coord = newBridgeCoordinator(h)
+	runs.coord = h.coord
 	h.shellMgr = NewShellManager(lc.shutdownCtx, workDir)
 	h.lines = buffer.NewLineTracker()
 	h.agentTerms = newAgentTerminals()
@@ -481,16 +482,16 @@ func (h *Hub) RegisterRoutes(mux *http.ServeMux) {
 	// Pre-session mode + model catalog (kiro-cli 2.14 _kiro/config/template).
 	mux.HandleFunc("GET /api/config-template", h.handleConfigTemplate)
 	mux.HandleFunc("GET /api/sessions", h.handleSessionList)
-	mux.HandleFunc("GET /api/runs/{id}", h.handleRun)
-	mux.HandleFunc("POST /api/runs", h.handleRunLaunch)
-	mux.HandleFunc("POST /api/runs/{id}/cancel", h.handleRunCancel)
-	mux.HandleFunc("POST /api/runs/{id}/pause", h.handleRunPause)
-	mux.HandleFunc("POST /api/runs/{id}/resume", h.handleRunResume)
-	mux.HandleFunc("POST /api/runs/{id}/retry", h.handleRunRetry)
-	mux.HandleFunc("DELETE /api/runs/{id}", h.handleRunDelete)
-	mux.HandleFunc("POST /api/runs/{id}/step", h.handleRunStepStatus)
-	mux.HandleFunc("GET /api/recipes", h.handleRecipes)
-	h.registerScheduleRoutes(mux)
+	mux.HandleFunc("GET /api/runs/{id}", h.runs.handleRun)
+	mux.HandleFunc("POST /api/runs", h.runs.handleRunLaunch)
+	mux.HandleFunc("POST /api/runs/{id}/cancel", h.runs.handleRunCancel)
+	mux.HandleFunc("POST /api/runs/{id}/pause", h.runs.handleRunPause)
+	mux.HandleFunc("POST /api/runs/{id}/resume", h.runs.handleRunResume)
+	mux.HandleFunc("POST /api/runs/{id}/retry", h.runs.handleRunRetry)
+	mux.HandleFunc("DELETE /api/runs/{id}", h.runs.handleRunDelete)
+	mux.HandleFunc("POST /api/runs/{id}/step", h.runs.handleRunStepStatus)
+	mux.HandleFunc("GET /api/recipes", h.runs.handleRecipes)
+	h.runs.registerScheduleRoutes(mux)
 }
 
 // Shutdown drains in-flight prompts and closes all bridges, bounded by ctx.

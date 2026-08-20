@@ -198,13 +198,13 @@ type runBoundsState struct {
 // Lock order is the one documented on claimExpiredDeadline and taken nowhere else
 // in reverse: unattendedMu, then the lease store's. leaseStore() takes
 // unattendedMu itself, so it is resolved BEFORE the hold.
-func (h *Hub) armRunDeadline(ctx context.Context, workflowID string) {
+func (rp *runPlane) armRunDeadline(ctx context.Context, workflowID string) {
 	if workflowID == "" {
 		return
 	}
-	store := h.leaseStore()
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
+	store := rp.leaseStore()
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
 	l, ok := store.Get(workflowID)
 	if !ok || l.Bounded() {
 		return
@@ -230,7 +230,7 @@ func (h *Hub) armRunDeadline(ctx context.Context, workflowID string) {
 			"this process still bounds the run",
 			"workflow_id", workflowID, "deadline", deadline, "error", err)
 	}
-	h.setRunTimerLocked(workflowID, deadline)
+	rp.setRunTimerLocked(workflowID, deadline)
 }
 
 // setRunTimerLocked installs the one timer a run's current deadline gets,
@@ -240,30 +240,30 @@ func (h *Hub) armRunDeadline(ctx context.Context, workflowID string) {
 // The replaced timer is STOPPED rather than forgotten: an un-stopped AfterFunc
 // stays live until its own deadline, and a run cycling through pause and resume
 // would accumulate one per cycle.
-func (h *Hub) setRunTimerLocked(workflowID string, deadline time.Time) {
-	if old := h.runBounds.timers[workflowID]; old != nil {
+func (rp *runPlane) setRunTimerLocked(workflowID string, deadline time.Time) {
+	if old := rp.bounds.timers[workflowID]; old != nil {
 		old.Stop()
 	}
-	if h.runBounds.timers == nil {
-		h.runBounds.timers = map[string]*time.Timer{}
+	if rp.bounds.timers == nil {
+		rp.bounds.timers = map[string]*time.Timer{}
 	}
 	// The deadline travels INTO the callback so the callback can compare it with
 	// what the lease says at fire time. That comparison is the whole liveness
 	// test, and it is why no generation token is needed.
-	h.runBounds.timers[workflowID] = time.AfterFunc(time.Until(deadline),
-		func() { h.cancelExpiredRun(workflowID, deadline) })
+	rp.bounds.timers[workflowID] = time.AfterFunc(time.Until(deadline),
+		func() { rp.cancelExpiredRun(workflowID, deadline) })
 }
 
 // stopRunTimer stops and forgets a run's timer.
-func (h *Hub) stopRunTimer(workflowID string) {
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	t, ok := h.runBounds.timers[workflowID]
+func (rp *runPlane) stopRunTimer(workflowID string) {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	t, ok := rp.bounds.timers[workflowID]
 	if !ok {
 		return
 	}
 	t.Stop()
-	delete(h.runBounds.timers, workflowID)
+	delete(rp.bounds.timers, workflowID)
 }
 
 // disarmRunDeadline parks a run vibekit is no longer bounding: the lease's
@@ -274,21 +274,21 @@ func (h *Hub) stopRunTimer(workflowID string) {
 // timer that leaves a stale deadline behind would make the step cap believe the
 // run is still executing, and would hand the next re-arm an "already bounded" run
 // to skip — so the run would never be bounded again.
-func (h *Hub) disarmRunDeadline(ctx context.Context, workflowID string) bool {
+func (rp *runPlane) disarmRunDeadline(ctx context.Context, workflowID string) bool {
 	if workflowID == "" {
 		return false
 	}
-	l, ok := h.lease(workflowID)
+	l, ok := rp.lease(workflowID)
 	if !ok || !l.Bounded() {
 		// Stop any timer anyway: a lease already released by a terminal frame can
 		// still have a timer pending against it.
-		h.stopRunTimer(workflowID)
+		rp.stopRunTimer(workflowID)
 		return false
 	}
-	if err := h.leaseStore().SetDeadline(ctx, workflowID, time.Time{}); err != nil {
+	if err := rp.leaseStore().SetDeadline(ctx, workflowID, time.Time{}); err != nil {
 		slog.Warn("could not park a run's deadline", "workflow_id", workflowID, "error", err)
 	}
-	h.stopRunTimer(workflowID)
+	rp.stopRunTimer(workflowID)
 	return true
 }
 
@@ -296,8 +296,8 @@ func (h *Hub) disarmRunDeadline(ctx context.Context, workflowID string) bool {
 // under a deadline it set — the step cap's gate, which must not CLEAR that
 // deadline the way the timer's own callback path does: a breach that loses the
 // termination claim leaves the wall clock to whoever won it.
-func (h *Hub) runBounded(workflowID string) bool {
-	l, ok := h.lease(workflowID)
+func (rp *runPlane) runBounded(workflowID string) bool {
+	l, ok := rp.lease(workflowID)
 	return ok && l.Bounded()
 }
 
@@ -312,13 +312,13 @@ func (h *Hub) runBounded(workflowID string) bool {
 // first. The user's cancel was the one that lost worst: it records nothing, so a
 // bound that claimed alongside it turned a deliberate stop into a timeout on the
 // History row.
-func (h *Hub) claimRunTermination(workflowID string) bool {
+func (rp *runPlane) claimRunTermination(workflowID string) bool {
 	if workflowID == "" {
 		return false
 	}
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	return h.claimLocked(workflowID)
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	return rp.claimLocked(workflowID)
 }
 
 // claimExpiredDeadline is the deadline callback's claim, and the deadline check
@@ -334,26 +334,26 @@ func (h *Hub) claimRunTermination(workflowID string) bool {
 // Two locks are held, outer first, and only in this order anywhere: the hub's
 // bounds mutex, then the lease store's. The store never calls back into the hub,
 // so there is no path that could take them the other way.
-func (h *Hub) claimExpiredDeadline(workflowID string, armedFor time.Time) bool {
-	store := h.leaseStore()
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
+func (rp *runPlane) claimExpiredDeadline(workflowID string, armedFor time.Time) bool {
+	store := rp.leaseStore()
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
 	l, ok := store.Get(workflowID)
 	if !ok || !l.Deadline.Equal(armedFor) {
 		return false
 	}
-	return h.claimLocked(workflowID)
+	return rp.claimLocked(workflowID)
 }
 
 // claimLocked is the claim itself, for a caller already holding unattendedMu.
-func (h *Hub) claimLocked(workflowID string) bool {
-	if _, taken := h.runBounds.terminating[workflowID]; taken {
+func (rp *runPlane) claimLocked(workflowID string) bool {
+	if _, taken := rp.bounds.terminating[workflowID]; taken {
 		return false
 	}
-	if h.runBounds.terminating == nil {
-		h.runBounds.terminating = map[string]struct{}{}
+	if rp.bounds.terminating == nil {
+		rp.bounds.terminating = map[string]struct{}{}
 	}
-	h.runBounds.terminating[workflowID] = struct{}{}
+	rp.bounds.terminating[workflowID] = struct{}{}
 	return true
 }
 
@@ -361,10 +361,10 @@ func (h *Hub) claimLocked(workflowID string) bool {
 // not actually terminate anything: the cancel RPC failed, so nothing is in
 // flight and the next caller must be able to try. Holding a claim on a run still
 // executing would make the Cancel button silently do nothing.
-func (h *Hub) releaseRunTermination(workflowID string) {
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	delete(h.runBounds.terminating, workflowID)
+func (rp *runPlane) releaseRunTermination(workflowID string) {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	delete(rp.bounds.terminating, workflowID)
 }
 
 // finishRunTermination is what the claim WINNER does, and the only place a run's
@@ -373,12 +373,12 @@ func (h *Hub) releaseRunTermination(workflowID string) {
 // reason empty means a user cancel: recordRunEnd ignores it, and that absence is
 // what makes the two bounds distinguishable from a person (see
 // vibekit.WorkflowRun.EndReason).
-func (h *Hub) finishRunTermination(ctx context.Context, workflowID, reason string) error {
-	h.disarmRunDeadline(ctx, workflowID)
-	h.recordRunEnd(workflowID, reason)
-	err := h.cancelRunRPC(ctx, workflowID)
+func (rp *runPlane) finishRunTermination(ctx context.Context, workflowID, reason string) error {
+	rp.disarmRunDeadline(ctx, workflowID)
+	rp.recordRunEnd(workflowID, reason)
+	err := rp.cancelRunRPC(ctx, workflowID)
 	if err != nil {
-		h.releaseRunTermination(workflowID)
+		rp.releaseRunTermination(workflowID)
 	}
 	return err
 }
@@ -395,10 +395,10 @@ func (h *Hub) finishRunTermination(ctx context.Context, workflowID, reason strin
 // run finished, which is the only moment it is useful. Nothing can act on the run
 // after this: every bound's gate (a current arm for the ceiling, any arm for the
 // step cap, the unattended mark for the schedule deadline) is already false.
-func (h *Hub) forgetRunBounds(ctx context.Context, workflowID string) {
-	h.stopRunTimer(workflowID)
-	h.releaseRunTermination(workflowID)
-	h.releaseLease(ctx, workflowID)
+func (rp *runPlane) forgetRunBounds(ctx context.Context, workflowID string) {
+	rp.stopRunTimer(workflowID)
+	rp.releaseRunTermination(workflowID)
+	rp.releaseLease(ctx, workflowID)
 }
 
 // clearRunEnd forgets a run's recorded termination, so a RE-DRIVEN run is bounded
@@ -414,21 +414,21 @@ func (h *Hub) forgetRunBounds(ctx context.Context, workflowID string) {
 // The claim is dropped BEFORE the reason lookup returns, because a user-cancelled
 // run holds a claim and records no reason: keying the whole clear on a recorded
 // reason would leave exactly that run unbounded on retry.
-func (h *Hub) clearRunEnd(workflowID string) {
+func (rp *runPlane) clearRunEnd(workflowID string) {
 	if workflowID == "" {
 		return
 	}
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	delete(h.runBounds.terminating, workflowID)
-	if _, ok := h.runBounds.reasons[workflowID]; !ok {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	delete(rp.bounds.terminating, workflowID)
+	if _, ok := rp.bounds.reasons[workflowID]; !ok {
 		return
 	}
-	delete(h.runBounds.reasons, workflowID)
+	delete(rp.bounds.reasons, workflowID)
 	// The order slice is the eviction QUEUE for the map, so leaving a dangling
 	// entry would make eviction delete a key that is already gone and let the map
 	// grow past its cap.
-	h.runBounds.order = slices.DeleteFunc(h.runBounds.order,
+	rp.bounds.order = slices.DeleteFunc(rp.bounds.order,
 		func(id string) bool { return id == workflowID })
 }
 
@@ -453,41 +453,41 @@ func (h *Hub) clearRunEnd(workflowID string) {
 // launch SOURCE (manualSlot) and the run list reports only the name, so a retried
 // run of a scheduled recipe is bounded by the ceiling alone rather than by the
 // schedule's next slot.
-func (h *Hub) rearmRetriedRun(ctx context.Context, workflowID, recipe string) {
-	h.clearRunEnd(workflowID)
-	h.disarmRunDeadline(ctx, workflowID)
-	if _, held := h.lease(workflowID); !held {
-		h.grantLease(ctx, workflowID, recipe, manualLaunch())
+func (rp *runPlane) rearmRetriedRun(ctx context.Context, workflowID, recipe string) {
+	rp.clearRunEnd(workflowID)
+	rp.disarmRunDeadline(ctx, workflowID)
+	if _, held := rp.lease(workflowID); !held {
+		rp.grantLease(ctx, workflowID, recipe, manualLaunch())
 	}
-	h.armRunDeadline(ctx, workflowID)
+	rp.armRunDeadline(ctx, workflowID)
 }
 
 // recordRunEnd notes why a run was stopped, so its row can say so.
-func (h *Hub) recordRunEnd(workflowID, reason string) {
+func (rp *runPlane) recordRunEnd(workflowID, reason string) {
 	if workflowID == "" || reason == "" {
 		return
 	}
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	if h.runBounds.reasons == nil {
-		h.runBounds.reasons = map[string]string{}
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	if rp.bounds.reasons == nil {
+		rp.bounds.reasons = map[string]string{}
 	}
-	if _, dup := h.runBounds.reasons[workflowID]; !dup {
-		h.runBounds.order = append(h.runBounds.order, workflowID)
+	if _, dup := rp.bounds.reasons[workflowID]; !dup {
+		rp.bounds.order = append(rp.bounds.order, workflowID)
 	}
-	h.runBounds.reasons[workflowID] = reason
-	for len(h.runBounds.order) > maxRunEndReasons {
-		delete(h.runBounds.reasons, h.runBounds.order[0])
-		h.runBounds.order = h.runBounds.order[1:]
+	rp.bounds.reasons[workflowID] = reason
+	for len(rp.bounds.order) > maxRunEndReasons {
+		delete(rp.bounds.reasons, rp.bounds.order[0])
+		rp.bounds.order = rp.bounds.order[1:]
 	}
 }
 
 // runEndReason reports why a run was stopped, or "" for a run that ended on its
 // own terms — including a user cancel, which records nothing.
-func (h *Hub) runEndReason(workflowID string) string {
-	h.unattendedMu.Lock()
-	defer h.unattendedMu.Unlock()
-	return h.runBounds.reasons[workflowID]
+func (rp *runPlane) runEndReason(workflowID string) string {
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+	return rp.bounds.reasons[workflowID]
 }
 
 // cancelExpiredRun is the deadline's callback: stop the run, say why, and tell the
@@ -517,9 +517,9 @@ func (h *Hub) runEndReason(workflowID string) string {
 // stopped producing" and "a run blew the universal ceiling", and a manual run
 // standing aside for its recipe's next slot is neither — it is the bound working,
 // so it says so at INFO instead of paging somebody.
-func (h *Hub) cancelExpiredRun(workflowID string, armedFor time.Time) {
-	l, held := h.lease(workflowID)
-	if !h.claimExpiredDeadline(workflowID, armedFor) {
+func (rp *runPlane) cancelExpiredRun(workflowID string, armedFor time.Time) {
+	l, held := rp.lease(workflowID)
+	if !rp.claimExpiredDeadline(workflowID, armedFor) {
 		return
 	}
 	slotRanOut := held && !l.SlotAt.IsZero() && !l.SlotAt.After(armedFor)
@@ -533,16 +533,16 @@ func (h *Hub) cancelExpiredRun(workflowID string, armedFor time.Time) {
 	default:
 		slog.Error(logMsgRunCeiling, "workflow_id", workflowID, "ceiling", runCeiling.String())
 	}
-	h.cancelBoundedRun(workflowID, runEndOverran)
-	if !slotRanOut || h.schedules == nil || l.ScheduleID == "" {
+	rp.cancelBoundedRun(workflowID, runEndOverran)
+	if !slotRanOut || rp.schedules == nil || l.ScheduleID == "" {
 		return
 	}
 	// Surface it on the row. Without this the schedule still reads "started"
 	// while it silently stops producing, which is the one failure the launch
 	// alert cannot distinguish from a merely long run.
-	ctx, cancel := h.hubContext()
+	ctx, cancel := rp.hubContext()
 	defer cancel()
-	if err := h.schedules.RecordOutcome(ctx, l.ScheduleID, outcomeOverran); err != nil {
+	if err := rp.schedules.RecordOutcome(ctx, l.ScheduleID, outcomeOverran); err != nil {
 		slog.Warn("could not record the schedule's outcome",
 			"schedule_id", l.ScheduleID, "error", err)
 	}
@@ -558,20 +558,20 @@ func (h *Hub) cancelExpiredRun(workflowID string, armedFor time.Time) {
 // where a reader finds out WHICH step did it — the row's one field says a step
 // cap did, and a second field for the node id would be a second representation of
 // state vibekit does not own.
-func (h *Hub) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
-	if !h.runBounded(workflowID) {
+func (rp *runPlane) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
+	if !rp.runBounded(workflowID) {
 		// A run vibekit is not bounding is not one it may cancel: either it never
 		// was armed, or it already reached a terminal state or a pause.
 		return
 	}
-	if !h.claimRunTermination(workflowID) {
+	if !rp.claimRunTermination(workflowID) {
 		// Already terminating — a sibling step breached first, the ceiling fired,
 		// or the user cancelled. Either way this is not the cancel.
 		return
 	}
 	slog.Error(logMsgStepCap,
 		"workflow_id", workflowID, "node_id", nodeID, "turns", turns, "cap", translate.StepTurnCap)
-	h.cancelBoundedRun(workflowID, runEndStepCap)
+	rp.cancelBoundedRun(workflowID, runEndStepCap)
 }
 
 // cancelBoundedRun issues the cancel both bounds end in, for a caller that has
@@ -581,10 +581,10 @@ func (h *Hub) StepTurnCapExceeded(workflowID, nodeID string, turns int) {
 // would race itself and refuse its own cancel. Reported on failure rather than
 // retried: the run breached its bound whether or not the cancel landed, and a row
 // left reading "running" is exactly the silence these bounds exist to end.
-func (h *Hub) cancelBoundedRun(workflowID, reason string) {
-	ctx, cancel := h.hubContext()
+func (rp *runPlane) cancelBoundedRun(workflowID, reason string) {
+	ctx, cancel := rp.hubContext()
 	defer cancel()
-	if err := h.finishRunTermination(ctx, workflowID, reason); err != nil {
+	if err := rp.finishRunTermination(ctx, workflowID, reason); err != nil {
 		slog.Error("could not cancel a run that breached its bound",
 			"workflow_id", workflowID, "error", err)
 	}
@@ -643,15 +643,15 @@ func runStartOrigin(chatID vibekit.ChatID) runlease.Origin {
 // It also re-arms a RESUMED run, which is why the deadline is parked on a pause:
 // each arm is a fresh budget of EXECUTING time, and a run deliberately parked for
 // a week must not be cancelled for having been parked.
-func (h *Hub) observeRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rp *runPlane) observeRunStart(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" {
-		if _, held := h.lease(f.WorkflowID); !held {
-			h.grantLease(ctx, f.WorkflowID, f.WorkflowName,
+		if _, held := rp.lease(f.WorkflowID); !held {
+			rp.grantLease(ctx, f.WorkflowID, f.WorkflowName,
 				launchOrigin{origin: runStartOrigin(chatID)})
 		}
-		h.armRunDeadline(ctx, f.WorkflowID)
+		rp.armRunDeadline(ctx, f.WorkflowID)
 	}
-	h.translator.HandleRunStart(ctx, chatID, msg)
+	rp.translate.HandleRunStart(ctx, chatID, msg)
 }
 
 // observeRunComplete drops the bounds of a TERMINAL run, then translates.
@@ -659,19 +659,19 @@ func (h *Hub) observeRunStart(ctx context.Context, chatID vibekit.ChatID, msg *v
 // Non-terminal run_complete frames keep the arm: KAS reports an `onMaxIterations`
 // policy pause through this same frame, and that run is still this process's to
 // resume.
-func (h *Hub) observeRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
+func (rp *runPlane) observeRunComplete(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
 	if f := decodeLifecycleFrame(msg); f.WorkflowID != "" && terminalRunStatus(f.Status) {
-		h.forgetRunBounds(ctx, f.WorkflowID)
+		rp.forgetRunBounds(ctx, f.WorkflowID)
 	}
-	h.translator.HandleRunComplete(ctx, chatID, msg)
+	rp.translate.HandleRunComplete(ctx, chatID, msg)
 }
 
 // observeRunPaused parks the deadline of a run that stopped executing, then
 // translates. The run-level `paused` kind only: a node-level pause is a step
 // waiting inside a run that is still going.
-func (h *Hub) observeRunPaused(next func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
+func (rp *runPlane) observeRunPaused(next func(context.Context, vibekit.ChatID, *vibekit.RPCResponse)) func(context.Context, vibekit.ChatID, *vibekit.RPCResponse) {
 	return func(ctx context.Context, chatID vibekit.ChatID, msg *vibekit.RPCResponse) {
-		h.disarmRunDeadline(ctx, workflowIDOfFrame(msg))
+		rp.disarmRunDeadline(ctx, workflowIDOfFrame(msg))
 		next(ctx, chatID, msg)
 	}
 }

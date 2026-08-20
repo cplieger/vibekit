@@ -56,21 +56,21 @@ type scheduleView struct {
 
 // registerScheduleRoutes wires the schedule surface. No-op when scheduling is
 // unavailable (no store), so the routes never 500 on a nil dependency.
-func (h *Hub) registerScheduleRoutes(mux *http.ServeMux) {
-	if h.schedules == nil {
+func (rp *runPlane) registerScheduleRoutes(mux *http.ServeMux) {
+	if rp.schedules == nil {
 		return
 	}
-	mux.HandleFunc("GET /api/schedules", h.handleScheduleList)
-	mux.HandleFunc("POST /api/schedules", h.handleSchedulePut)
-	mux.HandleFunc("DELETE /api/schedules/{id}", h.handleScheduleDelete)
+	mux.HandleFunc("GET /api/schedules", rp.handleScheduleList)
+	mux.HandleFunc("POST /api/schedules", rp.handleSchedulePut)
+	mux.HandleFunc("DELETE /api/schedules/{id}", rp.handleScheduleDelete)
 }
 
 // handleScheduleList: GET /api/schedules → every schedule with its next run.
-func (h *Hub) handleScheduleList(w http.ResponseWriter, _ *http.Request) {
-	entries := h.schedules.List()
+func (rp *runPlane) handleScheduleList(w http.ResponseWriter, _ *http.Request) {
+	entries := rp.schedules.List()
 	out := make([]scheduleView, 0, len(entries))
 	for i := range entries {
-		out = append(out, h.scheduleViewOf(&entries[i]))
+		out = append(out, rp.scheduleViewOf(&entries[i]))
 	}
 	webhttp.WriteJSON(w, map[string]any{"schedules": out})
 }
@@ -78,7 +78,7 @@ func (h *Hub) handleScheduleList(w http.ResponseWriter, _ *http.Request) {
 // scheduleViewOf resolves an entry's next run for display. A spec that cannot
 // be computed yields no next run rather than an error: the row still renders so
 // the user can fix or delete it.
-func (h *Hub) scheduleViewOf(e *schedule.Entry) scheduleView {
+func (rp *runPlane) scheduleViewOf(e *schedule.Entry) scheduleView {
 	v := scheduleView{
 		Spec: e.Spec, ID: e.ID, Source: e.Source, Name: e.Name,
 		LastResult: e.LastResult, Enabled: e.Enabled,
@@ -104,7 +104,7 @@ func (h *Hub) scheduleViewOf(e *schedule.Entry) scheduleView {
 // trusted, for the same reason handleRunLaunch does it: the value looks like a
 // path, and storing an arbitrary one would let a client aim the scheduler at a
 // file that is not a recipe.
-func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
+func (rp *runPlane) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID      string        `json:"id"`
 		Source  string        `json:"source"`
@@ -116,7 +116,7 @@ func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		httpreply.BadRequest(w, "invalid schedule payload")
 		return
 	}
-	recipe, err := h.recipeBySource(r.Context(), req.Source)
+	recipe, err := rp.recipeBySource(r.Context(), req.Source)
 	if err != nil {
 		httpreply.BadRequest(w, "unknown recipe: "+req.Source)
 		return
@@ -129,23 +129,23 @@ func (h *Hub) handleSchedulePut(w http.ResponseWriter, r *http.Request) {
 		ID: id, Source: recipe.Source, Name: recipe.Name,
 		Spec: req.Spec, Enabled: req.Enabled,
 	}
-	if err := h.schedules.Put(r.Context(), &entry); err != nil {
+	if err := rp.schedules.Put(r.Context(), &entry); err != nil {
 		httpreply.BadRequest(w, err.Error())
 		return
 	}
 	slog.Info("schedule saved", "id", logField(entry.ID), "recipe", logField(recipe.Name),
 		"freq", logField(string(entry.Spec.Freq)), "enabled", entry.Enabled)
-	webhttp.WriteJSON(w, h.scheduleViewOf(&entry))
+	webhttp.WriteJSON(w, rp.scheduleViewOf(&entry))
 }
 
 // handleScheduleDelete: DELETE /api/schedules/{id}.
-func (h *Hub) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
+func (rp *runPlane) handleScheduleDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		httpreply.BadRequest(w, "schedule id is required")
 		return
 	}
-	if err := h.schedules.Delete(r.Context(), id); err != nil {
+	if err := rp.schedules.Delete(r.Context(), id); err != nil {
 		httpreply.ServerError(w, "could not delete schedule", err)
 		return
 	}

@@ -127,7 +127,7 @@ func newBridgeCoordinator(h *Hub) *BridgeCoordinator {
 		onSessionRehydrated: func(chatID vibekit.ChatID) {
 			ctx, cancel := h.hubContext()
 			defer cancel()
-			h.resumeRestartPausedRuns(ctx, chatID)
+			h.runs.resumeRestartPausedRuns(ctx, chatID)
 		},
 	}
 }
