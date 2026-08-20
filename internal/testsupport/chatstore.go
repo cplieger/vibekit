@@ -61,8 +61,7 @@ func (s *RecordingChatStore) Get(_ context.Context, id vibekit.ChatID) (*vibekit
 	if !ok {
 		return nil, false
 	}
-	clone := *c
-	return &clone, true
+	return cloneChat(c), true
 }
 
 // List returns headers for all stored chats.

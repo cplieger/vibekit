@@ -35,6 +35,7 @@ func ChatStoreContractTest(t *testing.T, newStore func(t *testing.T) ChatStoreCo
 	t.Helper()
 
 	t.Run("Get_missing_returns_false", func(t *testing.T) { testGetMissingReturnsFalse(t, newStore(t)) })
+	t.Run("Get_returns_an_independent_copy", func(t *testing.T) { testGetReturnsIndependentCopy(t, newStore(t)) })
 	t.Run("Mutate_creates_new_chat", func(t *testing.T) { testMutateCreatesNewChat(t, newStore(t)) })
 	t.Run("Mutate_updates_existing_chat", func(t *testing.T) { testMutateUpdatesExistingChat(t, newStore(t)) })
 	t.Run("Mutate_noop_when_false_returned", func(t *testing.T) { testMutateNoopWhenFalseReturned(t, newStore(t)) })
@@ -50,6 +51,62 @@ func testGetMissingReturnsFalse(t *testing.T, s ChatStoreContract) {
 	_, ok := s.Get(context.Background(), "nonexistent")
 	if ok {
 		t.Error("Get returned true for missing chat")
+	}
+}
+
+// testGetReturnsIndependentCopy pins the property that makes "Mutate is the only
+// write path" true: a caller holding a chat Get handed it cannot reach the stored
+// one through it.
+//
+// The real store gets this for free — Get decodes the file, so the value is new
+// bytes — and the two fakes did NOT, because `clone := *c` copies a struct and
+// shares every slice inside it. Chat has seven slice fields and Message has more,
+// so a caller could edit a stored message's Content, or its Blocks, with no
+// Mutate anywhere. Nothing here asserted it, so both fakes were more permissive
+// than the thing they stand in for, which is the direction that makes a test pass
+// while production breaks.
+//
+// Three depths, because they fail independently: the slice header, an element,
+// and an element's own slice.
+func testGetReturnsIndependentCopy(t *testing.T, s ChatStoreContract) {
+	t.Helper()
+	const tampered = "tampered"
+	ctx := context.Background()
+	_ = s.Mutate(ctx, "c1", func(c *vibekit.Chat, _ bool) bool {
+		c.Name = "keep"
+		c.Messages = []vibekit.Message{{
+			ID: "m1", Role: "assistant", Content: "original",
+			Blocks: []vibekit.Block{{Type: vibekit.BlockText, Text: "block-original"}},
+		}}
+		return true
+	})
+
+	got, ok := s.Get(ctx, "c1")
+	if !ok {
+		t.Fatal("Get returned false for a chat that was just created")
+	}
+	if len(got.Messages) != 1 || len(got.Messages[0].Blocks) != 1 {
+		t.Fatalf("fixture did not store what this case mutates: %+v", got.Messages)
+	}
+	got.Name = tampered
+	got.Messages[0].Content = tampered
+	got.Messages[0].Blocks[0].Text = tampered
+	got.Messages = append(got.Messages, vibekit.Message{ID: "m2"})
+
+	after, _ := s.Get(ctx, "c1")
+	if after.Name != "keep" {
+		t.Errorf("Chat.Name = %q after a caller edited a Get result, want %q", after.Name, "keep")
+	}
+	if len(after.Messages) != 1 {
+		t.Fatalf("Messages len = %d after a caller appended to a Get result, want 1", len(after.Messages))
+	}
+	if after.Messages[0].Content != "original" {
+		t.Errorf("Messages[0].Content = %q after a caller edited a Get result, want %q",
+			after.Messages[0].Content, "original")
+	}
+	if len(after.Messages[0].Blocks) != 1 || after.Messages[0].Blocks[0].Text != "block-original" {
+		t.Errorf("Messages[0].Blocks = %+v after a caller edited a Get result, want the stored block",
+			after.Messages[0].Blocks)
 	}
 }
 
