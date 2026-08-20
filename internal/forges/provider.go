@@ -313,9 +313,9 @@ var ErrNotSupported = errors.New("forges: operation not supported by this forge"
 // ParseRepo splits a "owner/name" string. Returns an error if the
 // format is invalid. Both parts must be non-empty.
 func ParseRepo(s string) (owner, name string, err error) {
-	owner, name, found := strings.Cut(strings.TrimSpace(s), "/")
-	if !found || owner == "" || name == "" {
+	parts := strings.SplitN(strings.TrimSpace(s), "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", fmt.Errorf("invalid repo %q (want owner/name)", s)
 	}
-	return owner, name, nil
+	return parts[0], parts[1], nil
 }

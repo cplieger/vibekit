@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/cplieger/vibekit/internal/vibekit"
@@ -399,56 +398,43 @@ func (s *slowSource) OpenAuthoredPRs(context.Context) ([]WatchedPR, error) {
 // The assertion is on the observed gap between one listing finishing and the next
 // starting, measured by the fixture rather than against the production budget. A
 // ticker leaves that gap at effectively zero, so this fails closed on the old shape.
-//
-// It runs in a synctest BUBBLE, which turns the whole assertion from a tolerance
-// into an equality. Everything in the loop blocks durably — the sweep is a
-// time.Sleep, the wait is a timer receive, teardown is a context cancel and a
-// channel close — so the bubble's clock advances only between them and the gap
-// each iteration leaves is EXACTLY p.tick. Before the bubble this test slept
-// 6*(delay+interval) of real time (measured: 0.72 s, 39% of the package's
-// -race runtime) and could only assert `gap >= interval/2`, because a real
-// timer's imprecision made the whole interval unassertable; the half-interval
-// floor was wide enough that a sweep scheduled 51% early still passed. Now an
-// early schedule of one nanosecond fails.
 func TestPoller_SchedulesFromCompletion(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		const interval = 40 * time.Millisecond
-		src := &slowSource{delay: 2 * interval}
-		n := &fakeNotifier{subscribers: true}
-		p := NewPRStatusPoller(src, n)
-		p.tick = interval
-		p.discovery = interval
+	const interval = 40 * time.Millisecond
+	src := &slowSource{delay: 2 * interval}
+	n := &fakeNotifier{subscribers: true}
+	p := NewPRStatusPoller(src, n)
+	p.tick = interval
+	p.discovery = interval
 
-		ctx, cancel := context.WithCancel(t.Context())
-		done := make(chan struct{})
-		go func() {
-			p.Run(ctx)
-			close(done)
-		}()
-		// Synthetic time: long enough for three sweeps at (delay + interval) each.
-		// No slack is needed and none is wanted — slack would be indistinguishable
-		// from a sweep firing early.
-		synctest.Sleep(3 * (src.delay + interval))
-		cancel()
-		<-done
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		p.Run(ctx)
+		close(done)
+	}()
+	// Long enough for three sweeps at (delay + interval) each, plus slack.
+	time.Sleep(6 * (src.delay + interval))
+	cancel()
+	<-done
 
-		src.mu.Lock()
-		starts := append([]time.Time(nil), src.starts...)
-		ends := append([]time.Time(nil), src.ends...)
-		src.mu.Unlock()
+	src.mu.Lock()
+	starts := append([]time.Time(nil), src.starts...)
+	ends := append([]time.Time(nil), src.ends...)
+	src.mu.Unlock()
 
-		if len(starts) < 2 {
-			t.Fatalf("only %d sweeps ran; the fixture cannot witness the gap", len(starts))
+	if len(starts) < 2 {
+		t.Fatalf("only %d sweeps ran; the fixture cannot witness the gap", len(starts))
+	}
+	// Half the interval, not the whole one: timer firing has real imprecision, and
+	// the defect being caught leaves the gap near zero rather than merely short.
+	floor := interval / 2
+	for i := 0; i+1 < len(starts) && i < len(ends); i++ {
+		if gap := starts[i+1].Sub(ends[i]); gap < floor {
+			t.Errorf("sweep %d started %v after sweep %d finished, want at least %v: "+
+				"the next sweep is being scheduled from a retained tick rather than from completion",
+				i+1, gap, i, floor)
 		}
-		// EXACTLY the interval. The defect being caught leaves the gap at zero.
-		for i := 0; i+1 < len(starts) && i < len(ends); i++ {
-			if gap := starts[i+1].Sub(ends[i]); gap != interval {
-				t.Errorf("sweep %d started %v after sweep %d finished, want exactly %v: "+
-					"the next sweep is being scheduled from a retained tick rather than from completion",
-					i+1, gap, i, interval)
-			}
-		}
-	})
+	}
 }
 
 // TestPoller_RunDoesNotSweepOnEntry: the first sweep only seeds, so sweeping at

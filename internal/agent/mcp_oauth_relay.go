@@ -287,8 +287,11 @@ func replayCallback(ctx context.Context, target *url.URL) (int, error) {
 // (refused, timeout, policy denial) without the target, which is why unwrapping
 // one layer is enough and the port is logged as its own field.
 func dialErrWithoutURL(err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) && ue.Err != nil {
+	// errors.AsType (Go 1.26). `go fix -errorsastype` and golangci-lint's
+	// modernize (the same analyzer) both report 0 hunks here: the fixer only
+	// rewrites a bare positive `if errors.As(...)`, and this one is a clause of
+	// a boolean expression, which is one of its documented blind spots.
+	if ue, ok := errors.AsType[*url.Error](err); ok && ue.Err != nil {
 		return ue.Err
 	}
 	return err
@@ -451,10 +454,13 @@ func matchAdvertisedCallback(pasted *url.URL, pastedState, authURL string) (*url
 		subtle.ConstantTimeCompare([]byte(wantState), []byte(pastedState)) != 1 {
 		return nil, errRelayStateDrift
 	}
-	// A copy: the caller overwrites RawQuery, and the parsed advertisement must
-	// not become a shared mutable value.
-	dial := *want
-	return &dial, nil
+	// A deep copy: the caller overwrites RawQuery, and the parsed advertisement
+	// must not become a shared mutable value. url.Clone (Go 1.27) rather than
+	// `dial := *want`, which shares the User pointer — the only pointer field
+	// url.URL has. That was safe here only because parseLoopbackCallback refuses
+	// a URL carrying userinfo a hundred lines up, so the invariant lived nowhere
+	// near the copy. Clone makes the claim true by construction instead.
+	return want.Clone(), nil
 }
 
 // isLoopbackHost reports whether host is one of the three spellings a loopback

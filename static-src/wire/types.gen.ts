@@ -477,7 +477,7 @@ export interface GovernanceFeatures {
  * from the v3 (KAS) _kiro/governance/state notification (buildNotification:
  * {sessionId, isEnterprise, features, disabledReason}). The account/workspace
  * feature-flag policy KAS pushes on every session/new + session/load, and
- * re-pushes on a prompt when it changes; vibekit caches the latest runtime-side and
+ * re-pushes on a prompt when it changes; vibekit caches the latest hub-side and
  * also serves it at GET /api/governance so a fresh page load can read it with
  * no chat open. The wire sessionId is used only for subagent-copy dedup and is
  * dropped from this payload — governance is account-global, so the SSE is
@@ -584,7 +584,7 @@ export interface MCPConnectedPayload {
 
 /**
  * MCPDisconnectedPayload is the payload for type="mcp_disconnected".
- * Emitted when the runtime's last bridge exits: kiro-cli's MCP subprocesses
+ * Emitted when the hub's last bridge exits: kiro-cli's MCP subprocesses
  * shut down with it, so no configured server is currently live.
  * Clients use this to clear their runtime-state map.
  */
@@ -749,7 +749,7 @@ export interface MeteringItem {
  * window.open() not driven by a user gesture, so the client surfaces a
  * clickable affordance (a banner link) the user activates rather than
  * auto-opening. Only http/https URLs are broadcast (server-side scheme
- * guard in agent/bridge_v3_auth.go; the client re-checks before rendering).
+ * guard in hub/bridge_v3_auth.go; the client re-checks before rendering).
  */
 export interface OpenExternalURLPayload {
   url: string;
@@ -1679,7 +1679,7 @@ export interface TurnEndedPayload {
 export interface TurnStatePayload {
   /**
  * Message is the in-flight assistant message as accumulated so
- * far — the runtime's turn mirror, byte-equivalent to what a
+ * far — the hub's turn mirror, byte-equivalent to what a
  * never-disconnected client would have rendered. Omitted when the
  * turn hasn't produced content yet (busy signal only).
  */

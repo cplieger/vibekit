@@ -37,7 +37,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 )
@@ -191,10 +190,12 @@ func parseServerBlock(block json.RawMessage, req *importRequest) (*importRequest
 	if len(entries) > maxImportServers {
 		return nil, fmt.Errorf(`"%s" names %d servers (max %d)`, kasServerKey, len(entries), maxImportServers)
 	}
-	// Entries are translated in the block's own key order (sorted, since a JSON
-	// object has none once decoded), so a re-paste of the same block produces
-	// the same order.
-	for _, key := range slices.Sorted(maps.Keys(entries)) {
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
 		var obj map[string]json.RawMessage
 		if err := json.Unmarshal(entries[key], &obj); err != nil {
 			return nil, fmt.Errorf("server %q: must be a JSON object: %w", key, err)
@@ -403,7 +404,11 @@ func classifyKeys(where string, obj map[string]json.RawMessage, consumed []strin
 func suggestKey(got string, consumed []string, ignored map[string]string) string {
 	lower := strings.ToLower(got)
 	best, bestDist := "", importSuggestDistance+1
-	candidates := slices.AppendSeq(slices.Clone(consumed), maps.Keys(ignored))
+	candidates := make([]string, 0, len(consumed)+len(ignored))
+	candidates = append(candidates, consumed...)
+	for key := range ignored {
+		candidates = append(candidates, key)
+	}
 	slices.Sort(candidates)
 	for _, cand := range candidates {
 		if d := editDistance(lower, strings.ToLower(cand)); d < bestDist {
