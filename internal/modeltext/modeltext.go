@@ -19,7 +19,10 @@
 // had to defensively copy it before extending.
 package modeltext
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // hiddenTags are the bracketed markers used by the UI model picker and the
 // bridge to hide end-of-life models from the user.
@@ -37,7 +40,7 @@ var hiddenTags = []string{
 // composing a wider policy on top. A caller that only needs the standard rule
 // should use Hidden instead.
 func HiddenTags() []string {
-	return append([]string(nil), hiddenTags...)
+	return slices.Clone(hiddenTags)
 }
 
 // Hidden reports whether a model's description marks it hidden from the user.

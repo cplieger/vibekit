@@ -11,6 +11,7 @@ package steering
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -290,7 +291,7 @@ func writeTools(b *strings.Builder, data []byte) {
 		if st.InstalledVersion == "" {
 			continue
 		}
-		bins := append(append([]string{}, st.Bins...), st.PMBins...)
+		bins := slices.Concat(st.Bins, st.PMBins)
 		if len(bins) == 0 {
 			bins = []string{name}
 		}
@@ -381,10 +382,7 @@ func connectedKinds(snap ForgeSnapshot) map[string]bool {
 func writeForgeProvider(w io.Writer, p *ForgeProvider) {
 	// Every field below is a forge CLI's report of a remote system's state, so
 	// it is defused like any other input vibekit did not author.
-	user := defuse(p.User)
-	if user == "" {
-		user = "(authenticated)"
-	}
+	user := cmp.Or(defuse(p.User), "(authenticated)")
 	fmt.Fprintf(w, "### %s (%s)\n\n", defuse(p.Kind), defuse(p.Host))
 	if p.Email != "" {
 		fmt.Fprintf(w, "- Authenticated as: %s <%s>\n", user, defuse(p.Email))

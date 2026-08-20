@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,17 +80,15 @@ func (s *Store) List() []Entry {
 	return s.sortedLocked()
 }
 
+// sortedLocked returns every entry ordered by id.
+//
+// slices.SortedFunc over maps.Values collects and sorts in one call, replacing a
+// hand-written insertion sort — which is not merely un-idiomatic but quadratic,
+// and sat beside a loop that looked each key up again after ranging it.
 func (s *Store) sortedLocked() []Entry {
-	out := make([]Entry, 0, len(s.entries))
-	for id := range s.entries {
-		out = append(out, s.entries[id])
-	}
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].ID < out[j-1].ID; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
-	return out
+	return slices.SortedFunc(maps.Values(s.entries), func(a, b Entry) int {
+		return strings.Compare(a.ID, b.ID)
+	})
 }
 
 // Put inserts or replaces a schedule, validating the spec first so the runner

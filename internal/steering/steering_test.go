@@ -430,16 +430,16 @@ func TestGenerate_ConcurrentCallsSerialise(t *testing.T) {
 	})
 
 	const n = 16
+	// wg.Go rather than Add(2*n) plus a defer Done per closure. waitgroupgo does
+	// not report this shape — it keys on Add(1) — so it is a manual sweep.
 	var wg sync.WaitGroup
-	wg.Add(2 * n)
 	for range n {
-		go func() { defer wg.Done(); g.Generate(t.Context()) }()
-		go func() {
-			defer wg.Done()
+		wg.Go(func() { g.Generate(t.Context()) })
+		wg.Go(func() {
 			g.SetMCPSnapshot(func() MCPSnapshot {
 				return MCPSnapshot{Servers: []vibekit.MCPSnapshotServer{{Name: "github"}}}
 			})
-		}()
+		})
 	}
 	wg.Wait()
 

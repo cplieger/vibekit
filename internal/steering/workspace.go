@@ -1,6 +1,7 @@
 package steering
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -127,10 +128,7 @@ func writeRepoAgents(b *strings.Builder, repo string, agents []AgentEntry) {
 func writeRepoHooks(b *strings.Builder, repo string, hooks []HookEntry) {
 	fmt.Fprintf(b, "  - **Hooks** (`%s/.kiro/hooks/`):\n", repo)
 	for _, h := range hooks {
-		trigger := h.Trigger
-		if trigger == "" {
-			trigger = "unknown"
-		}
+		trigger := cmp.Or(h.Trigger, "unknown")
 		fmt.Fprintf(b, "    - `%s`", h.Filename)
 		if h.Name != "" {
 			fmt.Fprintf(b, " %s", h.Name)
@@ -258,7 +256,7 @@ func isHostShaped(s string) bool {
 // any user[:pass]@ credentials that appear before the first path slash.
 // Returns "" when the resulting host still carries an "@" or "/".
 func hostFromHTTPURL(url string) string {
-	rest := strings.SplitN(url, "://", 2)[1]
+	_, rest, _ := strings.Cut(url, "://")
 	// Strip credentials if present (https://user:pwd@host/...).
 	// Use the first @ only if it appears before the first /.
 	slash := strings.Index(rest, "/")
