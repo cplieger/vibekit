@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -250,10 +251,7 @@ func (s *Server) handlePolicyRules(w http.ResponseWriter, r *http.Request) {
 func (s *Server) policyRuleAdd(w http.ResponseWriter, r *http.Request, body *policyRuleBody, path string) {
 	// Conservative default: a new rule with no explicit effect is `ask`,
 	// never `allow`. Widening to allow requires the user to choose it.
-	effect := body.Effect
-	if effect == "" {
-		effect = policyfile.EffectAsk
-	}
+	effect := cmp.Or(body.Effect, policyfile.EffectAsk)
 	rule, err := policyfile.SanitizeRule(&policyfile.Rule{
 		Capability: body.Capability, Effect: effect,
 		Match: body.Match, Exclude: body.Exclude,

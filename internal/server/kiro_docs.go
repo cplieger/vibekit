@@ -351,10 +351,7 @@ func scanDocsSkills(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			data = nil
 		}
 		fm := steering.Parse(data)
-		name := fm.Name
-		if name == "" {
-			name = e.Name()
-		}
+		name := cmp.Or(fm.Name, e.Name())
 		// A DECLARED mode only, never the default. KAS's SkillFrontMatterSchema
 		// declares no `inclusion` key — only SteeringContextFrontMatterSchema
 		// does — so steering.Parse's "always" default is the steering default
@@ -404,10 +401,7 @@ func scanDocsAgents(ctx context.Context, root fs.FS, prefix string, guard pathGu
 			data = nil
 		}
 		fm := steering.Parse(data)
-		name := fm.Name
-		if name == "" {
-			name = base
-		}
+		name := cmp.Or(fm.Name, base)
 		docs = append(docs, kiroDoc{
 			Category:        catAgent,
 			Name:            name,
@@ -512,10 +506,7 @@ func hookRows(data []byte, prefix, file string, deleteProtected bool) []kiroDoc 
 	parsed := steering.ParseHooks(data)
 	out := make([]kiroDoc, 0, len(parsed))
 	for _, h := range parsed {
-		name := h.Name
-		if name == "" {
-			name = strings.TrimSuffix(file, ".json")
-		}
+		name := cmp.Or(h.Name, strings.TrimSuffix(file, ".json"))
 		out = append(out, kiroDoc{
 			Category:        catHook,
 			Name:            name,

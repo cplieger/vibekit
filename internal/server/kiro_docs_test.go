@@ -271,6 +271,28 @@ func TestScanKiroDocs_HookFieldsAreSanitized(t *testing.T) {
 	}
 }
 
+// TestScanKiroDocs_NamelessHookFallsBackToTheFileName pins hookRows' name
+// fallback, which was measurably unasserted: replacing
+// cmp.Or(h.Name, strings.TrimSuffix(file, ".json")) with a bare h.Name left the
+// whole internal/server suite green, while the two sibling fallbacks (a skill
+// directory without a manifest, a .json-only agent) each had a test. A row whose
+// Name is empty renders as a blank entry in the browser's Hooks tab, so the
+// derived name is what makes an unnamed hook openable at all.
+func TestScanKiroDocs_NamelessHookFallsBackToTheFileName(t *testing.T) {
+	fsys := fstest.MapFS{
+		"hooks/lint-on-save.json": {Data: []byte(`{"version":"v1","hooks":[
+			{"trigger":"PostFileSave","action":{"type":"command","command":"echo lint"}}
+		]}`)},
+	}
+	hooks := docsByCategory(scanKiroDocsFS(t.Context(), fsys, "ws/.kiro", nil), catHook)
+	if len(hooks) != 1 {
+		t.Fatalf("got %d hook rows, want 1: %+v", len(hooks), hooks)
+	}
+	if hooks[0].Name != "lint-on-save" {
+		t.Errorf("Name = %q, want the file's base name %q", hooks[0].Name, "lint-on-save")
+	}
+}
+
 // TestScanKiroDocs_UnclaimedMarkdownGetsNoRow pins the scope boundary: a file no
 // category claims is simply absent, which is what makes the "is the total 216 or
 // 217" question stop mattering.
